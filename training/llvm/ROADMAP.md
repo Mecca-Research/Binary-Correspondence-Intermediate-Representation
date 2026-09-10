@@ -141,6 +141,20 @@ effect below the rig's resolution, a build compared against itself, a drifting
 baseline, a significant-but-trivial difference, and a wall-clock row used as a
 gate. Three of the analysis tool's five verdicts are refusals.
 
+### BCIR's own approach
+
+[`22-bcir-approach/`](22-bcir-approach): what a correspondence IR is, the twelve
+axes `K_BCIR` prices and which of them anything produces, and why legality is
+decided before cost — with the budget ladder that shows a tighter cap producing a
+*more expensive* plan, then `Infeasible`. Every table in the subject is
+regenerated from `bcir/` by
+[`tools/verify-bcir-approach.py`](tools/verify-bcir-approach.py), which also holds
+the twelve axis names identical across the oracle, the MLIR attribute and
+`docs/PARITY.md`, and refuses any `opt` pass name the installed toolchain lacks.
+
+Before this, `K_BCIR` appeared in the whole corpus once, in an index row, and no
+chapter named a verifier law.
+
 ### Backend target development
 
 [`12-backend-jit/08-target-backend-porting-map.md`](12-backend-jit/08-target-backend-porting-map.md):

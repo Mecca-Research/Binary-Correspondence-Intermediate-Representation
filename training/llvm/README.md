@@ -71,6 +71,7 @@ training/llvm/
 ├── 19-hardware-aware/    intrinsics, pulses, governors, RISC-V, MIR, register/memory hints
 ├── 20-clang-frontend/    driver/-cc1, AST + Sema, exact C and C++ lowering rules, ABI
 ├── 21-performance-methodology/ workloads, trials, noise, significance, counters
+├── 22-bcir-approach/      correspondence, K_BCIR's twelve axes, legality before cost
 ├── exercises/            runnable prompts, expected observations, solutions
 ├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
@@ -131,6 +132,7 @@ fast pre-edit checklist:
 | Calls, ABI attributes, and comparisons | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) | [`05-control-flow/05-call-and-ret.md`](05-control-flow/05-call-and-ret.md), [`05-control-flow/06-comparisons-and-select.md`](05-control-flow/06-comparisons-and-select.md) |
 | Reading Clang's output, and which stage owns a decision | — | [`20-clang-frontend/README.md`](20-clang-frontend/README.md) |
 | Making a performance claim that survives review | — | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) |
+| Understanding what BCIR itself is, and why it refuses plans | — | [`22-bcir-approach/README.md`](22-bcir-approach/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.
