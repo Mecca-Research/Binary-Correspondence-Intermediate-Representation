@@ -417,16 +417,45 @@ def find_baseline_assembler() -> tuple[str, int] | None:
     has checked: CI runs jobs on different LLVM majors, and the strictest one
     decides whether the corpus's declared baseline actually holds.
 
+    Both `llvm-as-N` and a bare `llvm-as` are considered -- the latter by asking it
+    its version, because a name is not a version and a host may ship only the
+    unsuffixed binary.
+
     When the host offers only a recent assembler this check cannot bite, and it
     says nothing rather than claiming a baseline it did not test. The backstop
     is CI's host-portability job, which runs `verify-examples.sh` over the same
     snapshots on an older LLVM than the training job installs -- that is where
     this defect was caught the first time.
     """
+    candidates: list[tuple[int, str]] = []
     for major in range(BASELINE_LLVM_MAJOR, 31):
         if found := shutil.which(f"llvm-as-{major}"):
-            return found, major
-    return None
+            candidates.append((major, found))
+
+    # The unsuffixed `llvm-as` counts too, and asking it is not optional. Searching only
+    # for versioned names says "nothing at or above the baseline" on a host whose ONLY
+    # assembler is `llvm-as` at exactly the baseline major -- a perfectly good baseline
+    # host, reported as having no baseline at all. That is a false negative on the plain
+    # skip path and, once --require-baseline exists, a false FAILURE on the job that owns
+    # the floor. A name is not a version; the binary is asked which major it is.
+    if plain := shutil.which("llvm-as"):
+        try:
+            proc = subprocess.run(
+                [plain, "--version"], capture_output=True, text=True, check=False, timeout=60
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            proc = None
+        if proc is not None:
+            match = re.search(r"LLVM version (\d+)\.", proc.stdout)
+            if match and (major := int(match.group(1))) >= BASELINE_LLVM_MAJOR:
+                candidates.append((major, plain))
+
+    if not candidates:
+        return None
+    # Oldest wins; a suffixed name is preferred at the same major because it is the one a
+    # reader can reproduce from the chapter's own commands.
+    major, binary = min(candidates, key=lambda pair: (pair[0], pair[1].endswith("llvm-as")))
+    return binary, major
 
 
 _SNAPSHOT_MAJOR_RE = re.compile(r"^; Produced by clang (\d+)\.", re.MULTILINE)
