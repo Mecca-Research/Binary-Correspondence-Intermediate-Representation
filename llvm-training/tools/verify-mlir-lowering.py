@@ -65,8 +65,12 @@ def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
     if registry.get("schema_version") != 1 or not isinstance(examples, list):
         return ["registry must have schema_version 1 and an examples array"]
     seen: set[str] = set()
+    # Recursive under examples/, matching verify-manifest.sh's artifact rule: a
+    # .mlir file one directory deeper (a self-contained dialect skeleton, say)
+    # is still an example and still needs a tier declaration.
     registered_sources = {
-        path.relative_to(root).as_posix() for path in root.glob("llvm-training/**/examples/*.mlir")
+        path.relative_to(root).as_posix()
+        for path in root.glob("llvm-training/**/examples/**/*.mlir")
     }
     registered_sources.add("llvm-training/autograder/fixtures/mlir/incomplete-bcir-conversion.mlir")
     for index, entry in enumerate(examples):

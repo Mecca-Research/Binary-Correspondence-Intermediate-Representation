@@ -37,6 +37,14 @@ make the lowering boundary explicit, auditable, and friendly to LLVM IR tools.
    scripting BCIR lowering strategies with transform dialect handles.
 7. [`07-custom-types-attributes-and-metadata.md`](07-custom-types-attributes-and-metadata.md) —
    preserving custom type, attribute, claim, and metadata intent.
+8. [`08-production-dialect-and-build-integration.md`](08-production-dialect-and-build-integration.md) —
+   ODS through `mlir-tblgen` to a built, registered, `lit`-tested dialect:
+   TableGen targets, the dialect library, the three registrations, and the test
+   conventions, anchored on this repository's own law rail.
+9. [`09-production-conversion-pass.md`](09-production-conversion-pass.md) —
+   a production conversion pass: `adaptor` versus `op`, `TypeConverter`,
+   `ConversionTarget`, partial versus full conversion, the greedy-rewriter
+   boundary, and the MLIR 22 → 23 API migration.
 
 ## Lowering pipeline overview
 
@@ -90,6 +98,11 @@ metadata-related examples.
   graph edge weights staged as vector operations.
 - [`examples/bcir-graph-to-llvm-dialect.mlir`](examples/bcir-graph-to-llvm-dialect.mlir) —
   illustrative LLVM-dialect boundary.
+- [`examples/production-dialect/`](examples/production-dialect) — a complete
+  standalone dialect skeleton: ODS, dialect implementation, a partial
+  conversion pass, an `opt`-style tool, and the CMake TableGen wiring. Reviewed
+  reference code; no corpus gate builds it, and its `scale.mlir` is a
+  registered Tier-1 syntax sketch.
 - [`examples/bcir-register-prelock-ham-hints.mlir`](examples/bcir-register-prelock-ham-hints.mlir) —
   source-level prelock and HAM hint shape.
 - [`examples/bcir-register-prelock-ham-hints-lowered.ll`](examples/bcir-register-prelock-ham-hints-lowered.ll) —

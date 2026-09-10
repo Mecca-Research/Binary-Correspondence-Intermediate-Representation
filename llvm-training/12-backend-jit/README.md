@@ -6,6 +6,7 @@
 - TableGen source describes target facts; generated `*Gen*.inc` files normally live in the build tree, not the source tree.
 - ORC/LLJIT layers separate symbol definition, lookup, materialization, and object linking responsibilities.
 - Relocation and MC issues are usually symbol/layout problems, so preserve target triple, data layout, and object ownership evidence.
+- Porting a whole target is dominated by the ABI, encoding, and long-tail lowering work, not by instruction selection; check whether a subtarget, an intrinsic boundary, or an MLIR lowering answers the question first.
 - Advanced BCIR runtimes need explicit lazy/speculative materialization, generation-safe symbol replacement, resource retirement, and target-aware local or remote deployment.
 
 ## Chapter dispatcher
@@ -19,6 +20,7 @@
 | ORC layers, object ownership, and diagnostic flow | [`05-orc-layers.md`](05-orc-layers.md) |
 | Custom BCIR intrinsic lowering, stackmaps/patchpoints, runtime fallback, and JIT policy | [`06-custom-bcir-intrinsics.md`](06-custom-bcir-intrinsics.md) |
 | Advanced ORC runtime integration, hot re-JIT, custom materialization, remote JITLink, and heterogeneous BCIR deployment | [`07-advanced-orc-runtime-integration.md`](07-advanced-orc-runtime-integration.md) |
+| The complete file inventory, build order, and cost of porting a backend target — and when not to | [`08-target-backend-porting-map.md`](08-target-backend-porting-map.md) |
 
 ## Examples
 

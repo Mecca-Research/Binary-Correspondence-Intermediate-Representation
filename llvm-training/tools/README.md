@@ -32,6 +32,12 @@ the same checks without a build-system dependency.
 | `demo-o2.sh` | Runs `default<O2>` on the O2 pipeline inspection fixture, writes the optimized IR to a temporary file, prints it, and optionally smoke-checks the result with `llc` when available. | `opt`; optional `llc` |
 | `demo-vectorize.sh` | Shows loop-vectorization remarks from `clang` on the C fixture, then forces a visible loop-vectorizer experiment over the checked-in IR and prints the transformed IR. | `opt`, `clang` |
 | `demo-debug-pipeline.sh` | Captures `-debug-pass-manager` output for `default<O2>` into a temporary log, then prints the pass schedule for inspection. | `opt` |
+| `build-pass-plugin.sh` | Builds the out-of-tree New PM plugin in `17-new-pass-manager/examples/pass-plugin/` and runs nine assertions through `opt`, including the negative cases (the checker fires on a violating module, `<strict>` exits nonzero, and a stock `loop-unroll-full` breaks the 1:1 contract). Skips cleanly, printing the reason, when the LLVM development headers are absent or when `opt` and `llvm-config` report different LLVM majors. Honours `PASS_PLUGIN_BUILD_DIR` and `PASS_PLUGIN_JOBS`. | `cmake`, a C++17 compiler, LLVM **development** headers, `opt`, `llvm-config` |
+| `verify-frontend-lowering.py` | Compiles the checked-in `20-clang-frontend/examples/` sources and asserts the chapter's lowering claims structurally across x86-64 SysV and AArch64 AAPCS: aggregate layout, packed alignment, bit-field erasure, short-circuit branching, `volatile`, mangling, vtable dispatch, template linkage, and per-target argument classification. `--update` refreshes the normalized `.ll` snapshots; `--require-tools` fails instead of skipping. | `clang`, `clang++` (optional without `--require-tools`) |
+| `verify-mlir-rail-references.py` | Re-checks every file, CMake idiom, and MLIR API that chapters `18/08` and `18/09` cite in this repository's production law rail, resolves their `../../` links, and enforces that the pre-LLVM-23 spellings (`builder.create<`, `applyPatternsAndFoldGreedily`) stay absent. Reads sources only — no MLIR toolchain required. | Python 3 |
+| `analyze-benchmark-samples.py` | Grades a baseline/candidate sample pair into a verdict or a refusal: measures the rig's resolution by comparing the baseline against itself, reports dispersion/drift/outlier diagnostics, then applies Mann-Whitney U (tie- and continuity-corrected), Cliff's delta, a Hodges-Lehmann shift, and a seeded bootstrap interval on the median ratio. `--gate` exits nonzero on a regression and refuses to gate a `wall`-class row at all. Standard library only, deterministic. | Python 3 |
+| `verify-benchmark-analysis.py` | Self-test for the above: statistical kernels against hand-computable values, plus a pinned expected verdict for every fixture in `21-performance-methodology/examples/` — including the refusals — and a check that no fixture goes ungraded. | Python 3 |
+| `probe-hardware-counters.py` | Opens each hardware event with `perf_event_open` and records what the kernel said, alongside the paranoid level, the PMU device list, and a virtualization hint. An unreadable counter is recorded as `null`, never `0`. Exits 0 whether or not counters exist — "no counters here" is a successful measurement of the host — and `--require-counters` inverts that for a rig that must have them. | Python 3, Linux |
 
 
 ## Advanced-content verification map
@@ -45,6 +51,10 @@ Use these script groups when advanced examples or reference paths change:
 | MLIR bridge examples | `verify-mlir-examples.sh`, then `verify-examples.sh` for lowered `.ll` companions |
 | BCIR mapping/source-like fragments | `verify-bcir-mapping.sh`, `verify-examples.sh`, `verify-manifest.sh` |
 | Binary-analysis CSV evidence | `verify-csv-schema.sh`, `verify-binary-analysis-evidence.py`, `generate-binary-analysis-fixtures.py --check` |
+| Out-of-tree pass plugin source or fixtures | `build-pass-plugin.sh`, then `verify-examples.sh` and `verify-manifest.sh` for the `.ll` fixtures |
+| Clang frontend chapters or their example sources | `verify-frontend-lowering.py`, then `verify-examples.sh` and `verify-manifest.sh` for the regenerated snapshots |
+| Production MLIR chapters, or any change to `mlir/` they cite | `verify-mlir-rail-references.py`, then `verify-mlir-examples.sh` for the registry |
+| Performance-methodology chapters, fixtures, or analysis | `verify-benchmark-analysis.py`, then `verify-manifest.sh` for the sample files |
 
 ## CMake batch targets
 

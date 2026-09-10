@@ -452,8 +452,8 @@ jobs:
       - name: Install LLVM toolchain (llvm-as/opt/llc/clang for the corpus checks)
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: clang lld llvm libclang-rt-18-dev
-          version: train-${{ runner.arch }}-v1
+          packages: clang lld llvm llvm-dev libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v2
 
       - name: LLVM training examples and invalid-example tripwire
         run: |
@@ -532,6 +532,37 @@ jobs:
 
       - name: LLVM training BCIR mapping fixtures
         run: bash llvm-training/tools/verify-bcir-mapping.sh
+
+      # Chapter 20 states Clang lowering rules as facts (aggregate layout, bit-field
+      # erasure, per-target argument classification). This compiles the checked-in
+      # sources and asserts those claims structurally, so a Clang release that changes
+      # a rule fails here instead of leaving the prose quietly wrong.
+      - name: LLVM training Clang frontend lowering claims
+        run: python3 llvm-training/tools/verify-frontend-lowering.py --require-tools
+
+      # Chapters 18/08 and 18/09 teach production MLIR by citing mlir/ directly. This
+      # re-checks every cited path, CMake idiom, and API -- and that the pre-LLVM-23
+      # spellings stay gone. Needs no MLIR toolchain.
+      - name: LLVM training MLIR rail citations
+        run: python3 llvm-training/tools/verify-mlir-rail-references.py
+
+      # Statistical kernels against hand-computable values, plus each benchmark
+      # fixture's pinned verdict -- including the refusals.
+      - name: LLVM training benchmark analysis self-test
+        run: python3 llvm-training/tools/verify-benchmark-analysis.py
+
+      # Builds the out-of-tree New PM plugin and runs it through opt, including the
+      # negative cases. Skips cleanly (exit 0, with the reason printed) when the LLVM
+      # development headers are absent, or when opt and llvm-config disagree on the
+      # LLVM major -- a plugin is only loadable by an opt from its own major.
+      - name: LLVM training out-of-tree pass plugin
+        run: bash llvm-training/tools/build-pass-plugin.sh
+
+      # Informational, never a gate: records whether this runner can read hardware
+      # counters. Shared runners generally cannot, and the record says so with the
+      # errno rather than reporting zeros as measurements.
+      - name: LLVM training hardware counter capability record
+        run: python3 llvm-training/tools/probe-hardware-counters.py
 
       - name: LLVM training llc smoke
         run: |

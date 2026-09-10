@@ -131,6 +131,15 @@
       "classification": "expected-failure-fixture",
       "expected_failure": {"kind": "illegal-ops-remaining", "operations": ["bcir.unlowered"]},
       "checks": {"forbid_lowered": ["bcir.unlowered"]}
+    },
+    {
+      "source": "llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/scale.mlir",
+      "required_dialects": ["builtin", "func", "training (unregistered sketch)"],
+      "required_plugins_tools": ["mlir-opt"],
+      "pass_pipeline": null,
+      "expected_tier": 1,
+      "expected_lowered_artifact": null,
+      "classification": "unregistered-dialect-sketch"
     }
   ]
 }

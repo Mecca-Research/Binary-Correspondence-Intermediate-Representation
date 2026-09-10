@@ -281,6 +281,56 @@ module from scratch:
 3. Exercises [`016`](exercises/016-fix-phi-predecessor.prompt.md)-[`019`](exercises/019-fix-atomic-ordering.prompt.md), [`026`](exercises/026-poison-freeze-repair.prompt.md), and [`040`](exercises/040-debug-gaadmsf-lowering.prompt.md) — repair CFG, symbol, intrinsic, atomic-ordering, poison/freeze, and BCIR lowering hazards.
 4. Run `./llvm-training/tools/verify-invalid-fixtures.sh` for broken inputs, `./llvm-training/tools/verify-exercises.sh` for fixed `.solution.ll` outputs, and `./llvm-training/tools/verify-bcir-mapping.sh` when a repair touches BCIR mapping fixtures.
 
+## Frontend path
+
+When the question is "why did the compiler emit *that*", the answer is usually
+above LLVM IR, not inside it:
+
+1. [`20-clang-frontend/01-driver-and-frontend-pipeline.md`](20-clang-frontend/01-driver-and-frontend-pipeline.md) — driver versus `-cc1`, compilation phases, and where each flag acts
+2. [`20-clang-frontend/02-ast-and-sema.md`](20-clang-frontend/02-ast-and-sema.md) — AST node families and the implicit nodes Sema adds
+3. [`20-clang-frontend/03-c-lowering-rules.md`](20-clang-frontend/03-c-lowering-rules.md) — aggregates, packing, bit-field erasure, unions, control flow, `volatile`, promotion and `nsw`
+4. [`20-clang-frontend/05-abi-and-target-lowering.md`](20-clang-frontend/05-abi-and-target-lowering.md) — why the IR signature is not the C signature
+5. [`20-clang-frontend/04-cxx-lowering-rules.md`](20-clang-frontend/04-cxx-lowering-rules.md) — mangling, vtables, constructor/destructor placement, template linkage
+6. [`20-clang-frontend/06-bcir-cfront-correspondence.md`](20-clang-frontend/06-bcir-cfront-correspondence.md) — how this maps onto BCIR's own C front-end rail
+
+Practice next: run
+`python3 llvm-training/tools/verify-frontend-lowering.py`, then compile
+[`20-clang-frontend/examples/abi-boundary.c`](20-clang-frontend/examples/abi-boundary.c)
+for two targets and diff the `define` lines.
+
+## Pass-implementation path
+
+After the performance path, when reading passes is no longer enough:
+
+1. [`17-new-pass-manager/02-custom-passes-and-analyses.md`](17-new-pass-manager/02-custom-passes-and-analyses.md) — pass and analysis shapes
+2. [`17-new-pass-manager/03-passbuilder-callbacks-and-plugins.md`](17-new-pass-manager/03-passbuilder-callbacks-and-plugins.md) — the callback catalog
+3. [`17-new-pass-manager/06-building-an-out-of-tree-pass.md`](17-new-pass-manager/06-building-an-out-of-tree-pass.md) — a complete plugin: source, build, run, test, debug
+4. [`18-mlir-lowering-to-llvm/08-production-dialect-and-build-integration.md`](18-mlir-lowering-to-llvm/08-production-dialect-and-build-integration.md) — ODS to a registered, tested dialect
+5. [`18-mlir-lowering-to-llvm/09-production-conversion-pass.md`](18-mlir-lowering-to-llvm/09-production-conversion-pass.md) — the conversion pass in production form
+6. [`12-backend-jit/08-target-backend-porting-map.md`](12-backend-jit/08-target-backend-porting-map.md) — what a whole backend target would cost, and when not to
+
+Practice next: build and run the plugin with
+`./llvm-training/tools/build-pass-plugin.sh`, then break the collision in
+[`17-new-pass-manager/examples/pass-plugin/binding-collision.ll`](17-new-pass-manager/examples/pass-plugin/binding-collision.ll)
+and confirm the gate fails.
+
+## Measurement path
+
+Read this before reporting any number, and especially before reporting a
+speedup:
+
+1. [`21-performance-methodology/01-workload-selection.md`](21-performance-methodology/01-workload-selection.md) — what a workload can and cannot answer
+2. [`21-performance-methodology/02-measurement-and-profile-collection.md`](21-performance-methodology/02-measurement-and-profile-collection.md) — clocks, quanta, sampling and instrumentation bias
+3. [`21-performance-methodology/03-repeated-trials-and-noise-control.md`](21-performance-methodology/03-repeated-trials-and-noise-control.md) — trials, run order, warm-up, and the A-against-A self-check
+4. [`21-performance-methodology/04-significance-and-effect-size.md`](21-performance-methodology/04-significance-and-effect-size.md) — the decision ladder, and why five of its eight rungs are refusals
+5. [`21-performance-methodology/05-reporting-and-claim-discipline.md`](21-performance-methodology/05-reporting-and-claim-discipline.md) — measured versus modelled, and how to retract
+6. [`21-performance-methodology/06-hardware-counter-harness.md`](21-performance-methodology/06-hardware-counter-harness.md) — counters, and refusing honestly without a PMU
+
+Practice next: run
+`python3 llvm-training/tools/analyze-benchmark-samples.py` over each fixture in
+[`21-performance-methodology/examples/`](21-performance-methodology/examples)
+and work out, before reading the verdict, which one it should refuse.
+
 ## Path 3: Deep dive (one sitting; pick up the rest as needed)
 
 Read everything in numerical order:
@@ -297,7 +347,14 @@ Read everything in numerical order:
 08-pitfalls/      →  10-grammar/  →  11-concurrency/  →  14-mlir-bridge/  →  bcir-mapping/
         ↓                                                                    ↓
    12-backend-jit/  →  15-binary-analysis/  →  16-exception-handling/  →  reference/
+        ↓                        ↓
+20-clang-frontend/    21-performance-methodology/
 ```
+
+[`20-clang-frontend/`](20-clang-frontend) reads upward from IR into the compiler
+that produced it; [`21-performance-methodology/`](21-performance-methodology)
+reads outward from IR into the evidence used to justify changing it. Both are
+leaves: nothing else depends on them, and either can be read on its own.
 
 Cross-references inside each chapter (`See also:`) let you jump
 forward when curiosity strikes; come back via the index.
@@ -367,7 +424,7 @@ foundations ────────┐
 
 ## Roadmap and self-test
 
-- [`ROADMAP.md`](ROADMAP.md) tracks topics intentionally left out or only covered at an introductory level.
+- [`ROADMAP.md`](ROADMAP.md) records what is covered and checked, what is blocked on a named obstacle, and what is a declared non-goal.
 - [`EVAL.md`](EVAL.md) contains the corpus self-test and path-specific self-test prompts.
 
 ## Advanced integration capstone

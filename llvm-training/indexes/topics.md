@@ -2,7 +2,20 @@
 
 | Topic | File |
 |---|---|
-| Curriculum roadmap and intentionally out-of-scope topics | [`ROADMAP.md`](../ROADMAP.md) |
+| Coverage, closed gaps, blocked items, and declared non-goals | [`ROADMAP.md`](../ROADMAP.md) |
+| `call`, calling conventions, `tail`/`musttail`, `sret`/`byval`, `ret` | [`05-control-flow/05-call-and-ret.md`](../05-control-flow/05-call-and-ret.md) |
+| `icmp`/`fcmp` predicates, ordered vs unordered, vector masks, `select` | [`05-control-flow/06-comparisons-and-select.md`](../05-control-flow/06-comparisons-and-select.md) |
+| Building and testing an out-of-tree LLVM pass plugin | [`17-new-pass-manager/06-building-an-out-of-tree-pass.md`](../17-new-pass-manager/06-building-an-out-of-tree-pass.md) |
+| Clang driver, `-cc1`, `-###`, compilation phases | [`20-clang-frontend/01-driver-and-frontend-pipeline.md`](../20-clang-frontend/01-driver-and-frontend-pipeline.md) |
+| Clang AST, `-ast-dump`, Sema's implicit nodes | [`20-clang-frontend/02-ast-and-sema.md`](../20-clang-frontend/02-ast-and-sema.md) |
+| Struct layout, packing, bit-fields, unions in emitted IR | [`20-clang-frontend/03-c-lowering-rules.md`](../20-clang-frontend/03-c-lowering-rules.md) |
+| Name mangling, vtables, destructor placement, template linkage | [`20-clang-frontend/04-cxx-lowering-rules.md`](../20-clang-frontend/04-cxx-lowering-rules.md) |
+| Argument classification, `byval`/`sret`, `signext`/`zeroext` per target | [`20-clang-frontend/05-abi-and-target-lowering.md`](../20-clang-frontend/05-abi-and-target-lowering.md) |
+| Benchmark workloads, trials, noise control | [`21-performance-methodology/03-repeated-trials-and-noise-control.md`](../21-performance-methodology/03-repeated-trials-and-noise-control.md) |
+| Mann-Whitney U, Cliff's delta, bootstrap intervals, rig resolution | [`21-performance-methodology/04-significance-and-effect-size.md`](../21-performance-methodology/04-significance-and-effect-size.md) |
+| Measured vs modelled, skips, retractions, claim templates | [`21-performance-methodology/05-reporting-and-claim-discipline.md`](../21-performance-methodology/05-reporting-and-claim-discipline.md) |
+| `perf_event_open`, PMU capability, null-not-zero counters | [`21-performance-methodology/06-hardware-counter-harness.md`](../21-performance-methodology/06-hardware-counter-harness.md) |
+| LLVM backend target inventory and porting cost | [`12-backend-jit/08-target-backend-porting-map.md`](../12-backend-jit/08-target-backend-porting-map.md) |
 | Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |
 | What LLVM IR is, big picture | [`00-foundations/01-what-is-llvm-ir.md`](../00-foundations/01-what-is-llvm-ir.md) |
 | SSA form, phi nodes | [`00-foundations/02-ssa.md`](../00-foundations/02-ssa.md) |
@@ -147,3 +160,7 @@
 | Hardware-aware lowering | [`19-hardware-aware/README.md`](../19-hardware-aware/README.md) | GAADMSF, Dragon Egg, pulses, calibration, RISC-V, MachineIR/MIR, regalloc and memory hints |
 | Advanced intrinsic/call-site semantics | [`13-advanced-ir/README.md`](../13-advanced-ir/README.md) | Stackmap/patchpoint, matrix, GC, coroutine, convergence, operand bundles, attributes |
 | Artifact portability and quality gates | [`examples/README.md`](../examples/README.md) | LLVM, MLIR, MIR, Markdown sketch, target-only, JIT-only, analysis-only classifications |
+| Out-of-tree pass implementation | [`17-new-pass-manager/06-building-an-out-of-tree-pass.md`](../17-new-pass-manager/06-building-an-out-of-tree-pass.md) | Analysis keys, invalidation, `PreservedAnalyses`, plugin registration, CMake, `lit`, a buildable plugin |
+| Production MLIR dialect and build integration | [`18-mlir-lowering-to-llvm/08-production-dialect-and-build-integration.md`](../18-mlir-lowering-to-llvm/08-production-dialect-and-build-integration.md) | ODS generators, TableGen targets, the three registrations, `expected-error` fixtures, MLIR 22 to 23 migration |
+| Clang frontend internals | [`20-clang-frontend/README.md`](../20-clang-frontend/README.md) | Driver/`-cc1`, AST/Sema, C and C++ lowering rules, ABI classification, BCIR C-front correspondence |
+| Performance methodology and evidence | [`21-performance-methodology/README.md`](../21-performance-methodology/README.md) | Workloads, clocks, trials, noise, significance, effect size, claim discipline, counter capability |

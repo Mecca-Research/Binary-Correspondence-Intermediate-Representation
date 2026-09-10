@@ -69,6 +69,8 @@ llvm-training/
 ├── 17-new-pass-manager/  modern PassBuilder plugins, callbacks, BCIR pipelines
 ├── 18-mlir-lowering-to-llvm/ dedicated MLIR conversion and BCIR lowering
 ├── 19-hardware-aware/    intrinsics, pulses, governors, RISC-V, MIR, register/memory hints
+├── 20-clang-frontend/    driver/-cc1, AST + Sema, exact C and C++ lowering rules, ABI
+├── 21-performance-methodology/ workloads, trials, noise, significance, counters
 ├── exercises/            runnable prompts, expected observations, solutions
 ├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
@@ -126,6 +128,9 @@ fast pre-edit checklist:
 | Advanced intrinsics/attributes/poison/fast math | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/README.md`](13-advanced-ir/README.md), [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | Operand bundles, GC/coroutine/convergence tokens, and matrix intrinsics | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md), [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md), [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
 | MLIR-to-LLVM bridge review | [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
+| Calls, ABI attributes, and comparisons | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) | [`05-control-flow/05-call-and-ret.md`](05-control-flow/05-call-and-ret.md), [`05-control-flow/06-comparisons-and-select.md`](05-control-flow/06-comparisons-and-select.md) |
+| Reading Clang's output, and which stage owns a decision | — | [`20-clang-frontend/README.md`](20-clang-frontend/README.md) |
+| Making a performance claim that survives review | — | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.
@@ -176,6 +181,11 @@ python3 llvm-training/tools/verify-binary-analysis-evidence.py
 python3 llvm-training/tools/generate-binary-analysis-fixtures.py --check
 ./llvm-training/tools/verify-mlir-examples.sh
 ./llvm-training/tools/verify-bcir-mapping.sh
+python3 llvm-training/tools/verify-frontend-lowering.py
+python3 llvm-training/tools/verify-mlir-rail-references.py
+python3 llvm-training/tools/verify-benchmark-analysis.py
+./llvm-training/tools/build-pass-plugin.sh
+python3 llvm-training/tools/probe-hardware-counters.py
 ```
 
 The same checks are also available as CMake custom targets after configuring the training project. These targets are suitable for minimal CI or local images because
@@ -197,8 +207,17 @@ cmake --build build/llvm-training --target llvm-training-verify-binary-analysis-
 cmake --build build/llvm-training --target llvm-training-check-binary-analysis-fixtures
 cmake --build build/llvm-training --target llvm-training-verify-mlir-examples
 cmake --build build/llvm-training --target llvm-training-verify-bcir-mapping
+cmake --build build/llvm-training --target llvm-training-verify-frontend-lowering
+cmake --build build/llvm-training --target llvm-training-verify-mlir-rail-references
+cmake --build build/llvm-training --target llvm-training-verify-benchmark-analysis
 cmake --build build/llvm-training --target llvm-training-check
 ```
+
+Two further targets are deliberately **outside** `llvm-training-check`, because
+they are not short bash/python processes: `llvm-training-build-pass-plugin`
+compiles a real LLVM pass plugin (and needs LLVM development headers), and
+`llvm-training-probe-hardware-counters` reports host capability rather than
+gating anything. CI runs both as their own steps.
 
 `verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
 with both `llvm-as` and `opt -passes=verify`, skipping `.ll.txt` files and any
@@ -234,7 +253,7 @@ and per-file commands.
 | Stage | Files | Size | Purpose |
 |---|---|---|---|
 | Seed (historical) | ~40 | ~150 KB | Foundations + syntax + pitfalls + grammar |
-| Curated (current) | ~612 | ~3.8 MB | 20 chapters + instruction encyclopedia, metadata, MLIR overview, toolchain, 42 exercises + autograder, dataset schema/splits, EVAL answer key, bcir-mapping |
+| Curated (current) | ~680 | ~4.5 MB | 22 chapters + instruction encyclopedia, metadata, MLIR overview, toolchain, exercises + autograder, dataset schema/splits, EVAL answer key, bcir-mapping, a buildable pass plugin, an MLIR dialect skeleton, and benchmark-analysis tooling |
 | Training corpus (stage 2) | 100k+ | 10-100 GB | Paired (source, IR), (IR, opt-IR), (IR, asm) examples for fine-tuning. Out of scope here — but the exercise/autograder/dataset-schema substrate above is what an export would build on. |
 
 The curated stage stays small (a few MB of dense text, well under the 100-200 MB
@@ -268,6 +287,10 @@ Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
 | Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
 | Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md), [MC and relocations](12-backend-jit/04-mc-and-relocations.md) |
 | Security/performance binary analysis | [microarchitecture side channels](15-binary-analysis/01-microarchitecture-side-channels.md), [dynamic traces/counters](15-binary-analysis/02-dynamic-traces-and-counters.md), [interpretable BCSA features](15-binary-analysis/03-interpretable-bcsa-features.md), [reproducible evidence pipelines](15-binary-analysis/04-reproducible-evidence-pipelines.md) |
+| Writing a real out-of-tree optimizer pass | [building an out-of-tree pass](17-new-pass-manager/06-building-an-out-of-tree-pass.md), [the buildable plugin](17-new-pass-manager/examples/pass-plugin/README.md) |
+| Explaining what Clang did to a C or C++ construct | [C lowering rules](20-clang-frontend/03-c-lowering-rules.md), [C++ lowering rules](20-clang-frontend/04-cxx-lowering-rules.md), [ABI and target lowering](20-clang-frontend/05-abi-and-target-lowering.md) |
+| Implementing a production MLIR dialect or conversion pass | [dialect and build integration](18-mlir-lowering-to-llvm/08-production-dialect-and-build-integration.md), [production conversion pass](18-mlir-lowering-to-llvm/09-production-conversion-pass.md) |
+| Claiming (or refusing to claim) a speedup | [significance and effect size](21-performance-methodology/04-significance-and-effect-size.md), [reporting discipline](21-performance-methodology/05-reporting-and-claim-discipline.md) |
 
 ## Relationship to the BCIR project
 
@@ -298,6 +321,8 @@ material is not mistaken for a portable LLVM IR guarantee.
 | MLIR conversion, Transform dialect, and BCIR-to-LLVM lowering | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) | `.mlir` examples use the optional `mlir-opt` gate; lowered `.ll` files use LLVM verification |
 | Hardware-aware GAADMSF/Dragon Egg lowering, calibration, RISC-V, MachineIR, and MIR | [`19-hardware-aware/README.md`](19-hardware-aware/README.md) | Custom/target-specific `.ll` and MIR-shaped text remain outside portable backend smoke |
 | BCIR stage contracts and normal-form verification | [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) | Mapping fixtures, semantic-only invalid fixtures, and metadata-preservation checks have separate gates |
+| Clang driver, AST/Sema, and exact C/C++ lowering rules | [`20-clang-frontend/README.md`](20-clang-frontend/README.md) | Lowering claims are asserted against real `clang` output by `tools/verify-frontend-lowering.py`; statements about Clang's internal classes are review material |
+| Benchmark methodology, statistics, and hardware-counter capability | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) | Statistics and fixture verdicts are checked; the methodology itself is judgement, and the sample data is synthetic |
 
 The checked artifact inventory is [`examples/README.md`](examples/README.md), and
 the complete gate dispatcher is [`tools/README.md`](tools/README.md). Configure
