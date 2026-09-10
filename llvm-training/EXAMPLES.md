@@ -95,6 +95,53 @@ CSV and similar data artifacts document evidence schemas, not runnable IR.
 - Exclude data artifacts from LLVM assembler, optimizer, and exercise-solution
   verification.
 
+## Buildable source trees
+
+Some `examples/` subdirectories hold a complete, self-contained project rather
+than a single artifact: an out-of-tree pass plugin, an MLIR dialect skeleton.
+
+- Give the directory its own `CMakeLists.txt` and `README.md`, and keep the
+  project **standalone** — do not add it to the corpus's own CMake project,
+  which assumes only `llvm-as` and `opt`.
+- The `README.md` must open with the verification boundary: whether a gate
+  builds it, and if not, why. "Reviewed reference code" is an acceptable and
+  honest answer; leaving the question unanswered is not.
+- If a gate does build it, the gate must skip cleanly — printing the reason —
+  when its toolchain is absent, and must never report a skip as a pass.
+- Every file in the tree is classified in
+  [`examples/README.md`](examples/README.md); `verify-manifest.sh` walks
+  `examples/` recursively.
+
+## Generated compiler-output snapshots
+
+Some `.ll` files are not hand-written: they are normalized snapshots of a
+compiler's output, checked in so a chapter can quote them.
+
+- Name the generator in a header comment, with the exact command.
+- Provide a regeneration path (`--update` on the owning tool), and a gate that
+  checks the *claims* the chapter makes about the output rather than diffing the
+  bytes — exact value names and attribute spellings move between releases while
+  the lowering rule does not.
+- Strip build configuration (attribute groups, module flags, `ident`) so the
+  snapshot stays within the corpus's LLVM-version baseline. Anything stripped
+  must be irrelevant to the lesson; if it is not, the file needs a documented
+  version requirement instead.
+- Snapshots are known-good standalone examples: they assemble and verify like
+  any other manifest entry.
+
+## Benchmark sample data
+
+Timing samples are data artifacts, and their provenance is load-bearing.
+
+- Use the schema in
+  [`21-performance-methodology/examples/README.md`](21-performance-methodology/examples/README.md).
+- Preserve original run order and do not pre-trim: sorting destroys the drift
+  signal, and trimming is a decision that belongs to whoever can explain it.
+- State in the file whether the values are measured or synthetic. A synthetic
+  fixture says so in its own `environment` block.
+- Every fixture needs a pinned expected verdict in the analysis self-test, which
+  fails on any fixture nobody grades.
+
 ## Generated BCIR mapping outputs
 
 BCIR mapping outputs are examples of generated LLVM IR and must be easy to
@@ -198,9 +245,15 @@ expected.
 - **Language-agnostic review** exercises use prompts without requiring a checked
   in `.ll` solution when the answer is a review checklist or written diagnosis.
   Add these before asking learners to implement real passes.
-- **Pass implementation skeletons**, if added later, should live in a clearly
-  named non-verified exercise family with local build instructions. Do not mix
-  C++ skeletons into known-good LLVM IR verification loops.
+- **Pass implementation skeletons** live in a clearly named directory with local
+  build instructions, never mixed into known-good LLVM IR verification loops.
+  Two exist:
+  [`17-new-pass-manager/examples/pass-plugin/`](17-new-pass-manager/examples/pass-plugin)
+  (built and exercised by `tools/build-pass-plugin.sh`) and
+  [`18-mlir-lowering-to-llvm/examples/production-dialect/`](18-mlir-lowering-to-llvm/examples/production-dialect)
+  (reviewed reference code; no corpus gate builds it). Each carries a `README.md`
+  stating its verification boundary, and every file in both is classified in the
+  example manifest.
 
 ## Top-level known-good verification
 

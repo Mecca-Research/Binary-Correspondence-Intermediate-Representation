@@ -68,6 +68,8 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/04-memory/examples/alignment-load-store.ll` | `llvm-as llvm-training/04-memory/examples/alignment-load-store.ll -o /dev/null` |
 | `llvm-training/04-memory/examples/gep-store-before-after.ll` | `llvm-as llvm-training/04-memory/examples/gep-store-before-after.ll -o /dev/null` |
 | `llvm-training/04-memory/examples/memory-cookbook.ll` | `llvm-as llvm-training/04-memory/examples/memory-cookbook.ll -o /dev/null` |
+| `llvm-training/05-control-flow/examples/call-and-ret.ll` | `llvm-as llvm-training/05-control-flow/examples/call-and-ret.ll -o /dev/null` |
+| `llvm-training/05-control-flow/examples/comparisons-and-select.ll` | `llvm-as llvm-training/05-control-flow/examples/comparisons-and-select.ll -o /dev/null` |
 | `llvm-training/05-control-flow/examples/control-flow-cookbook.ll` | `llvm-as llvm-training/05-control-flow/examples/control-flow-cookbook.ll -o /dev/null` |
 | `llvm-training/05-control-flow/examples/indirectbr-table.ll` | `llvm-as llvm-training/05-control-flow/examples/indirectbr-table.ll -o /dev/null` |
 | `llvm-training/05-control-flow/examples/switch-lowering.ll` | `llvm-as llvm-training/05-control-flow/examples/switch-lowering.ll -o /dev/null` |
@@ -98,9 +100,9 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/07-optimization/examples/instcombine-canonical-before.ll` | `llvm-as llvm-training/07-optimization/examples/instcombine-canonical-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-rotate-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-after.ll -o /dev/null` |
-| `llvm-training/07-optimization/examples/loop-rotate-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-rotate-bcir-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-bcir-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-rotate-bcir-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-bcir-before.ll -o /dev/null` |
+| `llvm-training/07-optimization/examples/loop-rotate-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-rotate-while-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-while-after.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-rotate-while-before.ll` | `llvm-as llvm-training/07-optimization/examples/loop-rotate-while-before.ll -o /dev/null` |
 | `llvm-training/07-optimization/examples/loop-unroll-after.ll` | `llvm-as llvm-training/07-optimization/examples/loop-unroll-after.ll -o /dev/null` |
@@ -168,9 +170,9 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/13-advanced-ir/examples/intrinsic-constraints.ll` | `llvm-as llvm-training/13-advanced-ir/examples/intrinsic-constraints.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/matrix-intrinsics-sketch.ll` | `llvm-as llvm-training/13-advanced-ir/examples/matrix-intrinsics-sketch.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/memcpy.ll` | `llvm-as llvm-training/13-advanced-ir/examples/memcpy.ll -o /dev/null` |
-| `llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll` | `llvm-as llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/operand-bundles-deopt.ll` | `llvm-as llvm-training/13-advanced-ir/examples/operand-bundles-deopt.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/operand-bundles-funclet.ll` | `llvm-as llvm-training/13-advanced-ir/examples/operand-bundles-funclet.ll -o /dev/null` |
+| `llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll` | `llvm-as llvm-training/13-advanced-ir/examples/overflow-intrinsic.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/poison-freeze-branch.ll` | `llvm-as llvm-training/13-advanced-ir/examples/poison-freeze-branch.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/poison-undef-freeze.ll` | `llvm-as llvm-training/13-advanced-ir/examples/poison-undef-freeze.ll -o /dev/null` |
 | `llvm-training/13-advanced-ir/examples/token-outline.ll` | `llvm-as llvm-training/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
@@ -186,12 +188,19 @@ scripts may still skip them if the local target support is unavailable.
 | `llvm-training/16-exception-handling/examples/invoke-landingpad.ll` | `llvm-as llvm-training/16-exception-handling/examples/invoke-landingpad.ll -o /dev/null` |
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-after.ll -o /dev/null` |
 | `llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/gaadmsf-pipeline-before.ll -o /dev/null` |
+| `llvm-training/17-new-pass-manager/examples/pass-plugin/binding-collision.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/pass-plugin/binding-collision.ll -o /dev/null` |
+| `llvm-training/17-new-pass-manager/examples/pass-plugin/binding-ok.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/pass-plugin/binding-ok.ll -o /dev/null` |
+| `llvm-training/17-new-pass-manager/examples/pass-plugin/unroll-breaks-binding.ll` | `llvm-as llvm-training/17-new-pass-manager/examples/pass-plugin/unroll-breaks-binding.ll -o /dev/null` |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll` | `llvm-as llvm-training/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints-lowered.ll -o /dev/null` |
 | `llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion-lowered.ll` | `llvm-as llvm-training/18-mlir-lowering-to-llvm/examples/memref-type-conversion-lowered.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/calibration-governor-metadata.ll` | `llvm-as llvm-training/19-hardware-aware/examples/calibration-governor-metadata.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/dragon-egg-flow-execution.ll` | `llvm-as llvm-training/19-hardware-aware/examples/dragon-egg-flow-execution.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/gaadmsf-programming-pulse.ll` | `llvm-as llvm-training/19-hardware-aware/examples/gaadmsf-programming-pulse.ll -o /dev/null` |
 | `llvm-training/19-hardware-aware/examples/riscv-extension-lowering-sketch.ll` | `llvm-as llvm-training/19-hardware-aware/examples/riscv-extension-lowering-sketch.ll -o /dev/null` |
+| `llvm-training/20-clang-frontend/examples/abi-boundary.ll` | `llvm-as llvm-training/20-clang-frontend/examples/abi-boundary.ll -o /dev/null` |
+| `llvm-training/20-clang-frontend/examples/control-flow-lowering.ll` | `llvm-as llvm-training/20-clang-frontend/examples/control-flow-lowering.ll -o /dev/null` |
+| `llvm-training/20-clang-frontend/examples/cxx-object-model.ll` | `llvm-as llvm-training/20-clang-frontend/examples/cxx-object-model.ll -o /dev/null` |
+| `llvm-training/20-clang-frontend/examples/struct-layout.ll` | `llvm-as llvm-training/20-clang-frontend/examples/struct-layout.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll` | `llvm-as llvm-training/bcir-mapping/examples/bcir-op-runtime-wrapper.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/claim-resource-lookup.ll` | `llvm-as llvm-training/bcir-mapping/examples/claim-resource-lookup.ll -o /dev/null` |
 | `llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll` | `llvm-as llvm-training/bcir-mapping/examples/diagnostic-metadata-preservation.ll -o /dev/null` |
@@ -263,3 +272,25 @@ Notes:
 - `llvm-training/15-binary-analysis/examples/*.csv` trace, counter, and feature schema samples are data artifacts, not `.ll` assembly targets.
 - `llvm-training/14-mlir-bridge/examples/*.mlir` files are MLIR fragments; corresponding lowered `.ll` examples are listed in the standalone manifest when present.
 - `llvm-training/examples/broken-example.ll.txt` and `llvm-training/08-pitfalls/examples/*.invalid.ll.txt` are intentionally invalid or text-only fixtures and remain excluded from the known-good manifest.
+| `llvm-training/17-new-pass-manager/examples/pass-plugin/BCIRRegisterBinding.cpp` | Buildable C++ pass plugin | Real out-of-tree New PM plugin source; built and exercised by `tools/build-pass-plugin.sh`, never by `llvm-as`. |
+| `llvm-training/17-new-pass-manager/examples/pass-plugin/CMakeLists.txt` | Standalone CMake project | Out-of-tree build for the pass plugin; needs LLVM development headers and is not part of the corpus CMake project. |
+| `llvm-training/17-new-pass-manager/examples/pass-plugin/README.md` | Chapter-local example manifest | Build, run, and verification-boundary notes for the pass plugin. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/README.md` | Chapter-local example manifest | Build and verification-boundary notes for the standalone MLIR dialect skeleton. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/CMakeLists.txt` | Standalone CMake project | TableGen wiring, dialect library, and tool for the MLIR skeleton; needs an MLIR development install and no corpus gate builds it. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/TrainingOps.td` | TableGen ODS source | Complete ODS dialect definition; reviewed reference code, not TableGen-processed by any corpus gate. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/TrainingDialect.h` | MLIR C++ header | Hand-written header pulling in TableGen-generated `.inc` files; reviewed reference code. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/TrainingDialect.cpp` | MLIR C++ source | Dialect initialization and hand-written verifier; reviewed reference code. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/TrainingToLLVM.cpp` | MLIR C++ source | Partial dialect-conversion pass to the LLVM dialect; reviewed reference code. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/training-opt.cpp` | MLIR C++ source | `mlir-opt`-style driver showing registry and pass registration; reviewed reference code. |
+| `llvm-training/18-mlir-lowering-to-llvm/examples/production-dialect/scale.mlir` | MLIR data/sketch artifact | Tier 1 registered unregistered-dialect sketch; parsed by the optional MLIR verifier with `--allow-unregistered-dialect`. |
+| `llvm-training/20-clang-frontend/examples/struct-layout.c` | C source | Frontend-lowering input for aggregates, packing, bit-fields, and unions; compiled and claim-checked by `tools/verify-frontend-lowering.py`. |
+| `llvm-training/20-clang-frontend/examples/abi-boundary.c` | C source | Frontend-lowering input for argument classification across two target ABIs. |
+| `llvm-training/20-clang-frontend/examples/control-flow-lowering.c` | C source | Frontend-lowering input for short-circuit operators, `switch`, loops, and `volatile`. |
+| `llvm-training/20-clang-frontend/examples/cxx-object-model.cpp` | C++ source | Frontend-lowering input for mangling, virtual dispatch, templates, and temporaries. |
+| `llvm-training/21-performance-methodology/examples/README.md` | Chapter-local example manifest | Benchmark sample schema, fixture inventory, and synthetic-data provenance. |
+| `llvm-training/21-performance-methodology/examples/clean-improvement.json` | Benchmark sample data | Synthetic timing series; graded to `improvement` by `tools/verify-benchmark-analysis.py`. |
+| `llvm-training/21-performance-methodology/examples/noise-only.json` | Benchmark sample data | Synthetic timing series; the harness self-check, graded to `no-detectable-difference`. |
+| `llvm-training/21-performance-methodology/examples/below-resolution.json` | Benchmark sample data | Synthetic timing series; an effect below the rig's resolution, graded to `no-detectable-difference`. |
+| `llvm-training/21-performance-methodology/examples/thermal-drift.json` | Benchmark sample data | Synthetic timing series with a drifting baseline, graded to `inconclusive`. |
+| `llvm-training/21-performance-methodology/examples/significant-but-trivial.json` | Benchmark sample data | Synthetic timing series; significant and immaterial, graded to `detectable-but-immaterial`. |
+| `llvm-training/21-performance-methodology/examples/wall-clock-indicative.json` | Benchmark sample data | Synthetic wall-class timing series; `--gate` must refuse to gate on it. |

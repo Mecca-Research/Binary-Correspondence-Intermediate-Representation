@@ -80,6 +80,26 @@ add_custom_target(llvm-training-verify-mlir-examples
   VERBATIM)
 add_training_script_target(llvm-training-verify-bcir-mapping verify-bcir-mapping.sh)
 
+# These three need no LLVM toolchain at all: they read the repository's own
+# sources and the corpus's checked-in fixtures, so they run on every host.
+add_custom_target(llvm-training-verify-mlir-rail-references
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-mlir-rail-references.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  ${TRAINING_TERMINAL}
+  VERBATIM)
+add_custom_target(llvm-training-verify-benchmark-analysis
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-benchmark-analysis.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  ${TRAINING_TERMINAL}
+  VERBATIM)
+# Reports host capability; exits 0 whether or not counters exist, because
+# "no counters here" is a successful measurement of the host.
+add_custom_target(llvm-training-probe-hardware-counters
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/probe-hardware-counters.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  ${TRAINING_TERMINAL}
+  VERBATIM)
+
 add_optional_training_target(llvm-training-verify-examples "LLVM example verifier" verify-examples.sh llvm-as opt)
 add_optional_training_target(llvm-training-verify-exercises "LLVM exercise verifier" verify-exercises.sh llvm-as opt)
 add_optional_training_target(llvm-training-verify-invalid-fixtures "LLVM invalid-fixture verifier" verify-invalid-fixtures.sh llvm-as opt)
@@ -87,6 +107,19 @@ add_optional_training_target(llvm-training-verify-adversarial-fixtures "LLVM adv
 add_optional_training_target(llvm-training-smoke-llc "portable llc smoke" smoke-llc.sh llc)
 add_optional_training_target(llvm-training-smoke-lli "portable lli smoke" smoke-lli.sh lli)
 add_optional_training_target(llvm-training-verify-opt-diff "LLVM opt-diff verifier" verify-opt-diff.sh opt)
+
+# Clang-dependent: asserts the frontend-lowering claims of chapter 20 against
+# real clang output, and skips cleanly (exit 0, reason printed) without clang.
+add_custom_target(llvm-training-verify-frontend-lowering
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-frontend-lowering.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  ${TRAINING_TERMINAL}
+  VERBATIM)
+
+# Builds the out-of-tree pass plugin. Needs LLVM DEVELOPMENT headers, which the
+# rest of this project does not assume, so the script itself decides whether to
+# run or to skip -- and says which.
+add_training_script_target(llvm-training-build-pass-plugin build-pass-plugin.sh)
 
 # Windows runners can expose Microsoft's unrelated lit.exe.  Accept the generic
 # name only when its version banner identifies LLVM lit.
@@ -109,6 +142,9 @@ add_custom_target(llvm-training-check
     llvm-training-verify-opaque-pointers
     llvm-training-verify-mlir-examples
     llvm-training-verify-bcir-mapping
+    llvm-training-verify-mlir-rail-references
+    llvm-training-verify-benchmark-analysis
+    llvm-training-verify-frontend-lowering
     llvm-training-verify-examples
     llvm-training-verify-exercises
     llvm-training-verify-invalid-fixtures
