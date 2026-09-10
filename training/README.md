@@ -75,6 +75,7 @@ python3 training/tools/embed_chunks.py --chunks build/training/chunks \
 # ask the corpus something
 python3 training/tools/search_chunks.py --query "what does musttail require of a call"
 python3 training/tools/search_chunks.py --query "opaque pointers" --backend both
+python3 training/tools/search_chunks.py --query "opaque pointers" --backend q8
 
 # Tier 3 — gate-backed distillation records
 python3 training/tools/build_distillation.py --out build/training/distill
@@ -85,10 +86,15 @@ python3 training/tools/verify_corpus_records.py
 python3 training/tools/verify_embeddings.py
 ```
 
-`--backend both` runs the pure-Python reference *and* BCIR's own
-`bcir_ai_q15_topk` from `runtime/c`, and requires them to agree exactly. The
-corpus is never a build dependency of BCIR: that import is lazy, and the
-reference backend is always sufficient on its own.
+The arithmetic is BCIR's own. `--backend both` runs the pure-Python reference
+*and* `bcir_ai_q15_topk` from `runtime/c`, and requires them to agree exactly;
+`--backend q8` scores a BCIRQ8 view — built by `bcir_ai_quantize_q8_f64` and
+read by `bcir_ai_q8_rows_dot_f64`, the kernel whose header names embedding
+projections as its purpose — at half the bytes per coordinate.
+
+The corpus is never a build dependency of BCIR: those imports are lazy, reached
+only when a native backend is asked for, and the reference backend is always
+sufficient on its own.
 
 Both builders discover subjects automatically: any directory under `training/`
 that is not `tools/` or `schema/` is a subject, and a new folder joins both
@@ -105,7 +111,7 @@ compares digests, so determinism is checked rather than assumed.
 | [`schema/embedding-set-v1.json`](schema/embedding-set-v1.json) | 2 | vector indexes |
 | [`schema/distill-v1.json`](schema/distill-v1.json) | 3 | supervised fine-tuning |
 
-Both are published contracts. The verifier checks the invariants that would
+All three are published contracts. The verifiers check the invariants that would
 corrupt training data if violated; the schemas are what an external consumer
 validates against.
 

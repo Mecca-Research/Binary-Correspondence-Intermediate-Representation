@@ -68,12 +68,15 @@ CHUNK_BUILDER = "training/tools/build_chunks.py"
 DEFAULT_CHUNKS = Path("build/training/chunks")
 DEFAULT_OUT = Path("build/training/embeddings")
 
-# BCIR's own Q15 convention, reused rather than reinvented: signed int16, and
-# -32768 is forbidden so the code space stays symmetric about zero -- the same
-# discipline runtime/c applies to Q8 (-128 forbidden) and Q4 (-8 forbidden).
-# Reusing it is what lets the corpus's vectors be searched by the very kernel
-# BCIR uses for its own optimization memory, `bcir_ai_q15_topk`, instead of by a
-# second convention this corpus would have to defend on its own.
+# BCIR's own Q15 convention, reused rather than reinvented: signed int16;
+# -32768 forbidden so the code space stays symmetric about zero (the same
+# discipline runtime/c applies to Q8's -128 and Q4's -8); and codes rounded
+# half AWAY FROM ZERO, which is what `bcir.kbcir.quantize` specifies for every
+# BCIR quantization bridge. Reusing all three is what lets the corpus's vectors
+# be searched by the very kernel BCIR uses for its own optimization memory,
+# `bcir_ai_q15_topk`, instead of by a second convention this corpus would have
+# to defend on its own -- and "reused" has to mean the rounding too, or the
+# claim is false in exactly the place nobody looks.
 Q15_SCALE = 32767
 Q15_KERNEL = "bcir_ai_q15_topk"
 
@@ -354,6 +357,23 @@ def pack_float32(vectors: list[list[float]]) -> bytes:
     return flat.tobytes()
 
 
+def round_half_away(value: float) -> int:
+    """Round half away from zero -- BCIR's quantization rule, not Python's.
+
+    `bcir.kbcir.quantize` specifies this explicitly and says why: Python's
+    built-in `round` is banker's rounding (half to even), so `round(0.5) == 0`
+    while `round(2.5) == 2`. Whether a value on the boundary rounds up depends on
+    its *neighbour's parity*, which is not a property of the value being
+    quantized. Away-from-zero depends only on magnitude and sign.
+
+    The two rules agree everywhere except on exact half-integers, which is
+    precisely why using the wrong one here would have gone unnoticed: no
+    coordinate in the present corpus lands on one. The gate probes the
+    half-integers directly rather than trusting corpus data to contain them.
+    """
+    return int(math.floor(value + 0.5)) if value >= 0.0 else -int(math.floor(-value + 0.5))
+
+
 def quantize_q15(vectors: list[list[float]]) -> array:
     """Project unit vectors onto BCIR's symmetric Q15 code space.
 
@@ -368,7 +388,7 @@ def quantize_q15(vectors: list[list[float]]) -> array:
     codes = array("h")
     for vector in vectors:
         for value in vector:
-            code = int(round(value * Q15_SCALE))
+            code = round_half_away(value * Q15_SCALE)
             # Symmetric clamp. -32768 has no positive counterpart, so admitting
             # it would make negation lossy for exactly one code.
             codes.append(max(-Q15_SCALE, min(Q15_SCALE, code)))

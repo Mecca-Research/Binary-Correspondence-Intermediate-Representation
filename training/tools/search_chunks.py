@@ -5,20 +5,30 @@ This is what the vectors are *for*, and it is deliberately a real tool rather
 than an example: a rail that builds vectors nothing ever queries has not been
 shown to work.
 
-Two backends compute the same thing:
+Three backends, and the difference between them matters:
 
   * ``reference`` -- exact Q15 squared-L2 in pure Python. Always available, no
     compiler, no third-party package. This is the definition.
-  * ``native``    -- BCIR's own ``bcir_ai_q15_topk`` from ``runtime/c``, the
-    same exact-integer top-k kernel the oracle uses for its optimization
-    memory, reached through ``bcir.kbcir.native_ai``.
+  * ``native``    -- the same ranking through BCIR's own ``bcir_ai_q15_topk``
+    from ``runtime/c``, the exact-integer top-k kernel the oracle uses for its
+    own optimization memory.
+  * ``q8``        -- a *different arithmetic*: the corpus matrix quantized by
+    ``bcir_ai_quantize_q8_f64`` into BCIRQ8 -- per-group power-of-two exponents
+    and signed 8-bit codes, the format BCIR ships model weights in -- and scored
+    by ``bcir_ai_q8_rows_dot_f64``, the kernel whose header names embedding
+    projections as its purpose. Half the bytes per coordinate, and lossy.
 
-``--backend both`` runs the pair and requires them to agree exactly. That is the
-differential this repository prefers to an assertion: two independent
-implementations of one contract, checked against each other on real data rather
-than on a fixture. Because both work in exact integer arithmetic, "agree" means
-identical indices *and* identical squared distances -- there is no tolerance to
-tune and no floating-point tie-break to excuse a mismatch.
+``--backend both`` runs ``reference`` and ``native`` and requires them to agree
+exactly. That is the differential this repository prefers to an assertion: two
+independent implementations of one contract, checked against each other on real
+data rather than on a fixture. Because both work in exact integer arithmetic,
+"agree" means identical indices *and* identical squared distances -- there is no
+tolerance to tune and no floating-point tie-break to excuse a mismatch.
+
+``q8`` is deliberately NOT in that equality: requiring a lossier view to rank
+identically would be requiring quantization not to quantize. The gate instead
+requires the one thing loss must not break -- a query that is exactly some
+chunk's vector still ranks that chunk first -- and *measures* the rest.
 
 **On the direction of the dependency.** `training/` is never a build dependency
 of BCIR, and that is unchanged here: this tool imports BCIR lazily, only when
@@ -52,8 +62,43 @@ EXIT_USAGE = 2
 EXIT_BACKEND_UNAVAILABLE = 3
 
 
+def _native():
+    """Load the corpus's single door to BCIR's kernels, on demand."""
+    global _NATIVE
+    if _NATIVE is None:
+        _NATIVE = _load_tool("bcir_native")
+    return _NATIVE
+
+
+def _load_tool(name: str):
+    import importlib.util
+
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_NATIVE = None
+_EMBED = None
+
+
 class BackendUnavailable(RuntimeError):
-    """The native rail is not built here. An honest skip, never a silent switch."""
+    """The native rail is not built here. An honest skip, never a silent switch.
+
+    Kept as this module's name for the condition; `bcir_native` raises its own,
+    and `_native_unavailable` is the predicate both are checked through so a
+    caller never has to know which door raised.
+    """
+
+
+def _native_unavailable() -> tuple:
+    """Every exception type that means "the native rail is not reachable"."""
+    return (BackendUnavailable, _native().BackendUnavailable)
 
 
 # --------------------------------------------------------------------------
@@ -105,8 +150,30 @@ class EmbeddingSet:
         # Squared length of each row, once. See topk_reference for why.
         self.row_squares = [sum(map(mul, view, view)) for view in self.row_views]
 
+        self._q8 = None
+
     def row_codes(self, row: int) -> array:
         return self.row_views[row]
+
+    def float_vectors(self) -> array:
+        """The unit vectors themselves, as stored before quantization."""
+        values = array("f")
+        values.frombytes((self.root / self.manifest["vectors"]["path"]).read_bytes())
+        if sys.byteorder == "big":
+            values.byteswap()
+        return values
+
+    def q8_tensor(self):
+        """Quantize the corpus matrix with BCIR's bridge, once per set.
+
+        Built from the f32 vectors rather than re-quantizing the Q15 codes: Q8
+        of a Q15 approximation would compound two roundings, and BCIR's bridge
+        is specified over the real values.
+        """
+        if self._q8 is None:
+            native = _native()
+            self._q8 = native.quantize_q8(list(self.float_vectors()))
+        return self._q8
 
 
 def load_chunk_texts(chunk_dir: Path) -> dict[str, dict]:
@@ -126,18 +193,14 @@ def load_chunk_texts(chunk_dir: Path) -> dict[str, dict]:
 # --------------------------------------------------------------------------
 
 
-def embed_query(text: str, embedding_set: EmbeddingSet) -> array:
-    """Project a query into the same Q15 space, using the set's own model."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("embed_chunks", TOOLS_DIR / "embed_chunks.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault("embed_chunks", module)
-    spec.loader.exec_module(module)
+def embed_query_float(text: str, embedding_set: EmbeddingSet) -> list[float]:
+    """Project a query with the set's own model, as a unit vector."""
+    global _EMBED
+    if _EMBED is None:
+        _EMBED = _load_tool("embed_chunks")
 
     manifest = embedding_set.manifest
-    provider = module.build_provider(
+    provider = _EMBED.build_provider(
         manifest["model"], dim=embedding_set.dim, revision=manifest["revision"]
     )
     if provider.dim != embedding_set.dim:
@@ -145,10 +208,17 @@ def embed_query(text: str, embedding_set: EmbeddingSet) -> array:
             f"search_chunks: {manifest['model']} reports dim {provider.dim}, "
             f"but the set was built at dim {embedding_set.dim}"
         )
-    vectors, _ = module.embed(
+    vectors, _ = _EMBED.embed(
         [{"text": text, "chunk_id": "<query>", "source_path": "<query>"}], provider
     )
-    return module.quantize_q15(vectors)
+    return vectors[0]
+
+
+def embed_query(text: str, embedding_set: EmbeddingSet) -> array:
+    """The same projection, in the Q15 space the top-k kernels work over."""
+    if _EMBED is None:
+        embed_query_float(text, embedding_set)
+    return _EMBED.quantize_q15([embed_query_float(text, embedding_set)])
 
 
 # --------------------------------------------------------------------------
@@ -182,31 +252,33 @@ def topk_reference(query: array, embedding_set: EmbeddingSet, top_k: int) -> lis
 
 def topk_native(query: array, embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, int]]:
     """The same ranking through BCIR's own `bcir_ai_q15_topk`."""
-    if str(REPO_ROOT) not in sys.path:
-        sys.path.insert(0, str(REPO_ROOT))
-    try:
-        from bcir.kbcir.native_ai import NativeAIKernels
-    except ImportError as exc:  # pragma: no cover - exercised by absence
-        raise BackendUnavailable(f"bcir.kbcir.native_ai is not importable: {exc}") from exc
-
-    build_dir = Path("build/training/native")
-    try:
-        kernels = NativeAIKernels.build(build_dir)
-    except RuntimeError as exc:
-        raise BackendUnavailable(f"could not build BCIR's native AI kernels: {exc}") from exc
-
-    # Every row is a candidate. The kernel documents `eligible` as optional, but
-    # an explicit full mask says so in the call rather than relying on how a
-    # zero-length buffer happens to be interpreted.
-    matches = kernels._q15_topk(
-        array("h", query),
+    return _native().q15_topk(
+        query,
         embedding_set.codes,
-        b"\x01" * len(embedding_set.rows),
-        len(embedding_set.rows),
-        embedding_set.dim,
-        top_k,
+        rows=len(embedding_set.rows),
+        dim=embedding_set.dim,
+        top_k=top_k,
     )
-    return [(index, distance) for index, distance in matches]
+
+
+def topk_q8(query: list[float], embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, float]]:
+    """Rank by cosine through BCIRQ8, the format BCIR ships model weights in.
+
+    A different arithmetic from the other two backends, not a third spelling of
+    it: the corpus matrix is quantized by `bcir_ai_quantize_q8_f64` into
+    per-group power-of-two exponents and 8-bit codes, then scored by
+    `bcir_ai_q8_rows_dot_f64` -- the kernel whose header names embedding
+    projections as its purpose. Eight bits per coordinate instead of sixteen.
+
+    It is **lossier by construction**, so its ranking is not required to equal
+    the exact Q15 one and no gate asserts that it does. What is worth knowing is
+    how often it agrees, and that is measured and reported rather than assumed.
+    """
+    native = _native()
+    tensor = embedding_set.q8_tensor()
+    scores = native.q8_rows_dot(list(query), tensor, rows=len(embedding_set.rows))
+    ranked = sorted(((-score, row) for row, score in enumerate(scores)))
+    return [(row, -negated) for negated, row in ranked[:top_k]]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -215,7 +287,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--set", type=Path, default=DEFAULT_SET, dest="embedding_set")
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
     parser.add_argument("--top-k", type=int, default=5)
-    parser.add_argument("--backend", choices=("reference", "native", "both"), default="reference")
+    parser.add_argument(
+        "--backend",
+        choices=("reference", "native", "q8", "both"),
+        default="reference",
+        help="reference = exact Q15 in pure Python (the definition); native = the "
+        "same ranking through bcir_ai_q15_topk; q8 = BCIRQ8 cosine through "
+        "bcir_ai_q8_rows_dot_f64, lossier by construction; both = reference "
+        "and native, required to agree exactly",
+    )
     parser.add_argument(
         "--require-native",
         action="store_true",
@@ -230,15 +310,21 @@ def main(argv: list[str] | None = None) -> int:
 
     embedding_set = EmbeddingSet(args.embedding_set)
     top_k = min(args.top_k, len(embedding_set.rows))
+    unit_query = embed_query_float(args.query, embedding_set)
     query = embed_query(args.query, embedding_set)
 
     reference = native = None
     if args.backend in ("reference", "both"):
         reference = topk_reference(query, embedding_set, top_k)
-    if args.backend in ("native", "both"):
+    if args.backend in ("native", "q8", "both"):
         try:
-            native = topk_native(query, embedding_set, top_k)
-        except BackendUnavailable as exc:
+            if args.backend == "q8":
+                # Scores here are cosines, not squared distances: rank by them
+                # descending. Reported through the same (row, score) shape.
+                native = [(row, score) for row, score in topk_q8(unit_query, embedding_set, top_k)]
+            else:
+                native = topk_native(query, embedding_set, top_k)
+        except _native_unavailable() as exc:
             if args.require_native:
                 print(f"search_chunks: native backend required: {exc}", file=sys.stderr)
                 return EXIT_BACKEND_UNAVAILABLE
@@ -246,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
             if reference is None:
                 return EXIT_OK
 
-    if reference is not None and native is not None:
+    if reference is not None and native is not None and args.backend == "both":
         if reference != native:
             print("search_chunks: reference and native rankings DISAGREE", file=sys.stderr)
             print(f"  reference: {reference}", file=sys.stderr)
@@ -267,7 +353,11 @@ def main(argv: list[str] | None = None) -> int:
         chunk = texts.get(entry["chunk_id"])
         # Squared Q15 distance is exact but unit-free; cosine is what a reader
         # can compare across queries. The identity is exact for unit vectors.
-        cosine = 1.0 - distance / (2.0 * embedding_set.scale * embedding_set.scale)
+        cosine = (
+            distance
+            if args.backend == "q8"
+            else 1.0 - distance / (2.0 * embedding_set.scale * embedding_set.scale)
+        )
         trail = " > ".join(chunk["heading_trail"]) if chunk and chunk["heading_trail"] else ""
         location = (
             f"{entry['source_path']}:{chunk['span']['start_line']}"

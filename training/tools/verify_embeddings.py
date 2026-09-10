@@ -37,6 +37,16 @@ how badly each failure would poison a consumer:
      `bcir_ai_q15_topk` must agree exactly -- same rows, same integer distances.
      Two independent implementations of one contract, checked on the real
      corpus. Absent a C compiler this is an honest skip, and never a pass.
+ 10. **The rounding convention.** Codes must round half AWAY FROM ZERO, the rule
+     `bcir.kbcir.quantize` specifies for every BCIR quantization bridge -- not
+     Python's banker's rounding. Checked against a written table, against BCIR's
+     own function, and for whether the probes can tell the two apart at all: the
+     rules differ only on exact half-integers, no corpus coordinate lands on
+     one, and a probe set drawn from corpus data would pass against either.
+ 11. **The BCIRQ8 view.** BCIR's own quantizer and its embedding-projection
+     kernel, over the same vectors. A different arithmetic rather than a third
+     spelling, so it is not held to the exact ranking; it is held to still
+     retrieving an exact match, and the rest is measured.
 
     python3 training/tools/verify_embeddings.py
     python3 training/tools/verify_embeddings.py --require-native
@@ -130,6 +140,18 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def round_half_away_default(value: float) -> int:
+    """Mirror of the builder's rule, so check_vectors is callable on its own.
+
+    The gate does not trust this copy: check_rounding_convention verifies the
+    builder's function against a written table and against BCIR's own, and
+    check_vectors is handed the builder's function rather than this one.
+    """
+    import math as _math
+
+    return int(_math.floor(value + 0.5)) if value >= 0.0 else -int(_math.floor(-value + 0.5))
+
+
 def read_f32(path: Path) -> array:
     values = array("f")
     values.frombytes(path.read_bytes())
@@ -175,6 +197,83 @@ def check_manifest(manifest: dict, report: Report) -> None:
     )
 
 
+# Half-integers are the ONLY inputs where round-half-away-from-zero and Python's
+# banker's rounding disagree, and no coordinate in the corpus lands on one. A
+# probe set drawn from corpus data would therefore pass against either rule --
+# "a construct absent from the corpus is untested, however many tests run over
+# it". These are written down instead, with the answer BCIR's bridge specifies.
+ROUNDING_PROBES = (
+    (0.5, 1),
+    (-0.5, -1),
+    (1.5, 2),
+    (-1.5, -2),
+    (2.5, 3),
+    (-2.5, -3),
+    (4.5, 5),
+    (-4.5, -5),
+    (0.0, 0),
+    (1.0, 1),
+    (-1.0, -1),
+    (3.7, 4),
+    (-3.7, -4),
+    (3.2, 3),
+    (-3.2, -3),
+    (32766.5, 32767),
+)
+
+
+def check_rounding_convention(embed_module, report: Report) -> None:
+    """The corpus must round codes the way every BCIR quantization bridge does.
+
+    Checked three ways, because each alone would miss something:
+
+      1. Against a written table -- the specification, not a restatement of the
+         implementation.
+      2. Against `bcir.kbcir.quantize._round_half_away` when importable -- proof
+         that "reused BCIR's convention" is true and not merely intended.
+      3. That the probe set can tell the two rules apart at all. A rounding check
+         whose inputs never reach a half-integer passes against the wrong rule,
+         which is how the wrong rule got in here in the first place.
+    """
+    for value, expected in ROUNDING_PROBES:
+        report.require(
+            embed_module.round_half_away(value) == expected,
+            f"rounding: round_half_away({value}) = "
+            f"{embed_module.round_half_away(value)}, expected {expected}",
+        )
+
+    discriminating = sum(1 for value, expected in ROUNDING_PROBES if round(value) != expected)
+    report.require(
+        discriminating > 0,
+        "rounding: no probe distinguishes round-half-away from banker's rounding; "
+        "this check would pass against either rule and therefore checks nothing",
+    )
+
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    try:
+        from bcir.kbcir.quantize import _round_half_away
+    except ImportError as exc:
+        report.skip(f"rounding differential against bcir.kbcir.quantize: {exc}")
+        print(
+            f"[round]   {len(ROUNDING_PROBES)} probe(s) match the table; "
+            f"{discriminating} distinguish it from banker's rounding"
+        )
+        return
+
+    for value, _ in ROUNDING_PROBES:
+        report.require(
+            embed_module.round_half_away(value) == _round_half_away(value),
+            f"rounding: the corpus rounds {value} to "
+            f"{embed_module.round_half_away(value)}, BCIR's bridge to "
+            f"{_round_half_away(value)} -- these are two conventions, not one",
+        )
+    print(
+        f"[round]   {len(ROUNDING_PROBES)} probe(s) == bcir.kbcir.quantize; "
+        f"{discriminating} distinguish it from banker's rounding"
+    )
+
+
 def check_coverage(manifest: dict, rows: list[dict], report: Report) -> None:
     coverage = manifest["coverage"]
     total = manifest["built_from"]["chunks_total"]
@@ -209,7 +308,9 @@ def check_digests(root: Path, manifest: dict, report: Report) -> None:
         )
 
 
-def check_vectors(root: Path, manifest: dict, rows: list[dict], report: Report) -> None:
+def check_vectors(
+    root: Path, manifest: dict, rows: list[dict], report: Report, round_fn=round_half_away_default
+) -> None:
     dim = manifest["dim"]
     values = read_f32(root / manifest["vectors"]["path"])
     expected = len(rows) * dim
@@ -262,7 +363,7 @@ def check_vectors(root: Path, manifest: dict, rows: list[dict], report: Report) 
                 if code == -scale - 1:
                     asymmetric += 1
                     break
-                if abs(round(value * scale) - code) > Q15_TOLERANCE:
+                if abs(round_fn(value * scale) - code) > Q15_TOLERANCE:
                     drifted += 1
                     break
 
@@ -376,6 +477,7 @@ def check_row_alignment(embedding_set, chunks: dict[str, dict], search, report: 
     step = max(1, rows // PROBE_COUNT)
     probes = list(range(0, rows, step))[:PROBE_COUNT]
     queries: list[tuple[int, array]] = []
+    unit_queries: list[tuple[int, list]] = []
 
     for row in probes:
         entry = embedding_set.rows[row]
@@ -383,6 +485,7 @@ def check_row_alignment(embedding_set, chunks: dict[str, dict], search, report: 
         if chunk is None:
             continue
         query = search.embed_query(chunk["text"], embedding_set)
+        unit_queries.append((row, search.embed_query_float(chunk["text"], embedding_set)))
         queries.append((row, query))
         ranked = search.topk_reference(query, embedding_set, 1)
         report.require(
@@ -400,7 +503,7 @@ def check_row_alignment(embedding_set, chunks: dict[str, dict], search, report: 
         f"alignment: only {len(queries)} of {len(probes)} probes ran",
     )
     print(f"[align]   {len(queries)} probe(s) retrieved themselves at distance 0")
-    return queries
+    return queries, unit_queries
 
 
 def check_native_differential(
@@ -419,7 +522,7 @@ def check_native_differential(
                 f"differential: row {row} ranks differently under bcir_ai_q15_topk "
                 f"({native}) than under the reference ({reference})",
             )
-    except search.BackendUnavailable as exc:
+    except search._native_unavailable() as exc:
         if require:
             report.require(
                 False,
@@ -430,6 +533,61 @@ def check_native_differential(
         return False
     print(f"[diff]    bcir_ai_q15_topk == reference on {len(queries)} query/3-result set(s)")
     return True
+
+
+def check_q8_agreement(embedding_set, queries, search, report: Report, *, require: bool) -> None:
+    """The BCIRQ8 view: BCIR's own quantizer, and its embedding-projection kernel.
+
+    This is a *different arithmetic* from the exact Q15 ranking, not a third
+    spelling of it -- eight bits per coordinate with a shared per-group
+    power-of-two exponent, produced by `bcir_ai_quantize_q8_f64` and scored by
+    `bcir_ai_q8_rows_dot_f64`. It is lossier by construction, so requiring it to
+    equal the exact ranking would be requiring quantization not to quantize.
+
+    What IS required is that it still finds the right chunk: a query that is
+    exactly some chunk's own vector must rank that chunk first even at eight
+    bits. If it cannot do that, the view is not usable for retrieval at all, and
+    the loss has stopped being a rounding difference. Everything softer than
+    that is measured and reported, not asserted.
+    """
+    if not queries:
+        report.require(False, "q8: no queries to compare")
+        return
+    try:
+        tensor = embedding_set.q8_tensor()
+    except search._native_unavailable() as exc:
+        if require:
+            report.require(False, f"q8: native rail required but unavailable: {exc}")
+            return
+        report.skip(f"BCIRQ8 view: {exc}")
+        return
+
+    report.require(
+        tensor.bits == 8 and tensor.element_count == len(embedding_set.rows) * embedding_set.dim,
+        f"q8: tensor is bits={tensor.bits} count={tensor.element_count}, expected "
+        f"8 and {len(embedding_set.rows) * embedding_set.dim}",
+    )
+    report.require(
+        b"\x80" not in tensor.codes,
+        "q8: codes contain the forbidden asymmetric value -128",
+    )
+
+    agreed = 0
+    for row, unit_query in queries:
+        ranked = search.topk_q8(unit_query, embedding_set, 1)
+        report.require(
+            bool(ranked) and ranked[0][0] == row,
+            f"q8: row {row} does not retrieve itself under BCIRQ8; an eight-bit "
+            "view that cannot find an exact match is not a retrieval index",
+        )
+        if ranked and ranked[0][0] == row:
+            agreed += 1
+    bytes_q15 = len(embedding_set.rows) * embedding_set.dim * 2
+    print(
+        f"[q8]      bcir_ai_quantize_q8_f64 + rows_dot: {agreed}/{len(queries)} probes "
+        f"rank themselves first; {len(tensor.codes)}B codes + "
+        f"{len(tensor.exponents)} exponents vs {bytes_q15}B at Q15"
+    )
 
 
 def build_once(directory: Path, chunks_module, embed_module) -> tuple[Path, Path]:
@@ -465,6 +623,8 @@ def main(argv: list[str] | None = None) -> int:
         chunks: dict[str, dict] = search.load_chunk_texts(chunk_dir_a)
         report.require(bool(chunks), "no chunks to embed -- the corpus build is empty")
 
+        check_rounding_convention(embed_module, report)
+
         set_roots = sorted(path for path in embed_dir_a.iterdir() if path.is_dir())
         report.require(bool(set_roots), "no embedding set was produced")
 
@@ -480,14 +640,17 @@ def main(argv: list[str] | None = None) -> int:
             check_manifest(manifest, report)
             check_coverage(manifest, rows, report)
             check_digests(root, manifest, report)
-            check_vectors(root, manifest, rows, report)
+            check_vectors(root, manifest, rows, report, embed_module.round_half_away)
             check_binding(manifest, rows, chunks, report)
 
             embedding_set = search.EmbeddingSet(root)
             check_discrimination(embedding_set, report)
-            queries = check_row_alignment(embedding_set, chunks, search, report)
+            queries, unit_queries = check_row_alignment(embedding_set, chunks, search, report)
             check_native_differential(
                 embedding_set, queries, search, report, require=args.require_native
+            )
+            check_q8_agreement(
+                embedding_set, unit_queries, search, report, require=args.require_native
             )
 
             twin = embed_dir_b / root.name

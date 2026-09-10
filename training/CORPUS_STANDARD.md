@@ -133,11 +133,26 @@ on a laptop and is a defect in the job that exists to provide it.
 
 A rail that builds vectors nothing queries has not been shown to work, so
 retrieval is part of the standard, not an example
-([`tools/search_chunks.py`](tools/search_chunks.py)). It runs on BCIR's own
-symmetric **Q15** code space, which lets the corpus be searched by
-`bcir_ai_q15_topk` from `runtime/c` — the same exact-integer top-k kernel BCIR
-uses for its optimization memory — rather than by a second convention this
-corpus would have to defend alone. For unit vectors,
+([`tools/search_chunks.py`](tools/search_chunks.py)).
+
+**The arithmetic is BCIR's, not a lookalike.** `runtime/c/bcir_ai_kernels.c`
+already carries what this needs and BCIR already gates it, so the corpus calls
+it rather than writing a second set:
+
+| Kernel | Used for |
+| --- | --- |
+| `bcir_ai_q15_topk` | exact integer squared-L2 top-k — the search |
+| `bcir_ai_quantize_q8_f64` | the BCIRQ8 view, produced by BCIR's own bridge |
+| `bcir_ai_q8_rows_dot_f64` | scoring that view — its header names embedding projections as its purpose |
+
+Vectors are projected into BCIR's symmetric **Q15** code space: signed int16,
+`-32768` excluded so negation stays lossless, and codes rounded **half away from
+zero** — the rule `bcir.kbcir.quantize` specifies, *not* Python's banker's
+rounding. Reusing a convention has to include its rounding, or the claim is
+false in exactly the place nobody looks; the gate checks that against BCIR's own
+function, on the half-integers where the two rules differ.
+
+For unit vectors,
 
 ```
 ||q - p||²  =  2 - 2·cos(q, p)
@@ -146,11 +161,23 @@ corpus would have to defend alone. For unit vectors,
 so an exact squared-L2 ranking *is* a cosine ranking, computed in integers with
 no floating-point tie-break to disagree about across hosts.
 
-Two backends compute it: a pure-Python `reference` (the definition, always
-available) and `native` (BCIR's kernel). The gate runs both and requires them to
-agree **exactly** — same rows, same integer distances. That is a differential
-between two independent implementations on the real corpus, which this
-repository prefers to an assertion.
+Three backends, and the difference between them is the point:
+
+| Backend | Arithmetic | Held to |
+| --- | --- | --- |
+| `reference` | exact Q15, pure Python | the definition |
+| `native` | exact Q15, `bcir_ai_q15_topk` | **equals** `reference`, exactly |
+| `q8` | BCIRQ8, 8 bits/coordinate | still retrieves an exact match; the rest measured |
+
+`reference` and `native` are one contract with two implementations, so the gate
+requires them to agree **exactly** — same rows, same integer distances. That is
+the differential this repository prefers to an assertion.
+
+`q8` is deliberately outside that equality. Requiring a lossier view to rank
+identically would be requiring quantization not to quantize. It is held to the
+one thing loss must not break — a query that *is* some chunk's vector must still
+rank that chunk first — and its agreement beyond that is measured and reported,
+never asserted.
 
 > The direction of the dependency is unchanged: `training/` is never a build
 > dependency of BCIR. BCIR is imported lazily and only for the native backend,
@@ -236,6 +263,14 @@ tiers twice and enforces:
    unkeepable promise produces flaky red rather than evidence.
 9. **The native differential** — reference ranking versus `bcir_ai_q15_topk`,
    exactly equal.
+10. **The rounding convention** — codes round half away from zero, checked
+    against BCIR's own function *and* for whether the probes can tell that rule
+    from banker's rounding at all. They differ only on exact half-integers, and
+    no corpus coordinate lands on one, so a probe set drawn from corpus data
+    would pass against either rule and check nothing.
+11. **The BCIRQ8 view** — BCIR's quantizer and its embedding-projection kernel
+    over the same vectors, held to retrieving an exact match rather than to the
+    exact ranking.
 
 Each check in both gates was proved able to fail by injecting the defect it
 guards and watching the gate fire.
