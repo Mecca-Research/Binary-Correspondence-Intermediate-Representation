@@ -445,43 +445,43 @@
     },
     "llvm.vp.cttz.elts": {
       "status": "declared",
-      "reason": "counts trailing zero lanes of a boolean vector under a mask and an explicit vector length, i.e. yields the index of the first active lane; the vectorizer emits it for early-exit 'find first' loops. It is a member of the Vector Predication family that 07-optimization/08-deep-optimization-lessons.md:190 already names in writing as a lowering target a predicated BCIR lane mask can become, alongside llvm.masked.*, selects and target masks \u2014 a boundary the corpus drew deliberately rather than a gap."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.llrint": {
       "status": "declared",
-      "reason": "predicated form of C's llrint (round floating-point to a 64-bit integer under the current rounding mode), carrying a mask and an %evl. Its only interesting content is the FP-environment and rounding-mode question, which the corpus places in 13-advanced-ir/06-fast-math-flags.md; the VP spelling adds predication vocabulary the corpus already names as a lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.load.ff": {
       "status": "declared",
-      "reason": "fault-only-first load: reads lanes until the first faulting address and returns both the data and how many lanes actually succeeded, so a loop can read past an unknown terminator (strlen-shaped) without faulting. It is genuinely interesting, but it is an RVV vleff / SVE ldff1 hardware capability with no portable equivalent \u2014 the case 13-advanced-ir/02-target-specific-intrinsics.md exists to bound \u2014 and the corpus already teaches why such a primitive must exist, in 09-vectorization/03-vector-predication.md's Pitfalls: a mask is not a bounds proof for inactive lanes unless the operation is truly masked."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.lrint": {
       "status": "declared",
-      "reason": "predicated form of C's lrint, the narrower sibling of llvm.vp.llrint. Same disposition: the rounding-mode and FP-environment semantics are the teachable part and live in 13-advanced-ir/06-fast-math-flags.md, while the %evl-carrying mirror belongs to the VP family the corpus names as a lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.reduce.fmaximum": {
       "status": "declared",
-      "reason": "predicated NaN-propagating maximum reduction. The distinguishing semantic \u2014 NaN-propagating versus LLVM's non-propagating fmax \u2014 is already taught for the non-VP form at reference/intrinsics-quickref.md:139 ('NaN-propagating minimum/maximum variants'), contrasted against :138. The VP form adds only a mask and %evl, which is the family boundary named at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.reduce.fminimum": {
       "status": "declared",
-      "reason": "predicated NaN-propagating minimum reduction, the mirror of llvm.vp.reduce.fmaximum. Its semantic content is taught at reference/intrinsics-quickref.md:139 for llvm.vector.reduce.fminimum; nothing new is introduced by the %evl-carrying spelling, which belongs to the VP lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.sadd.sat": {
       "status": "declared",
-      "reason": "predicated signed saturating addition. The corpus does not teach the generic llvm.sadd.sat either, and consistently so: its integer chapters teach the wrapping-and-poison model (nsw/nuw and 13-advanced-ir/05-poison-undef-freeze.md) that saturating operations exist to sidestep. Teaching the %evl-carrying mirror of an untaught generic would put the predicated variant before the base operation, and the VP family is already named as a lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.ssub.sat": {
       "status": "declared",
-      "reason": "predicated signed saturating subtraction, same shape as llvm.vp.sadd.sat. The generic llvm.ssub.sat is not taught, so the predicated mirror has no base to attach to; the corpus's integer overflow story is the nsw/nuw poison model in 13-advanced-ir/05-poison-undef-freeze.md, and the VP family is bounded at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.uadd.sat": {
       "status": "declared",
-      "reason": "predicated unsigned saturating addition. Like its signed sibling it mirrors a generic intrinsic (llvm.uadd.sat) the corpus does not teach, and it belongs to the Vector Predication family that 07-optimization/08-deep-optimization-lessons.md:190 explicitly names as a lowering target for BCIR lane masks rather than a construct the corpus enumerates."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.vp.usub.sat": {
       "status": "declared",
-      "reason": "predicated unsigned saturating subtraction, completing the four VP saturating arithmetic arrivals. Same reason as the other three: the generic llvm.usub.sat is untaught, saturation is not part of the corpus's integer-semantics thread (which teaches wrapping and poison in 13-advanced-ir/05-poison-undef-freeze.md), and the VP family is a named lowering boundary at 07-optimization/08-deep-optimization-lessons.md:190."
+      "reason": "new member of the vector-predication family, whose mechanism -- the mask and %evl operands every llvm.vp.* intrinsic carries, and how they differ from llvm.masked.* -- is taught in 09-vectorization/03-vector-predication.md. The family's rule is the lesson; enumerating each member would not add one."
     },
     "llvm.write_volatile_register": {
       "status": "declared",

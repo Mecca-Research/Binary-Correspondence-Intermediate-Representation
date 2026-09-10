@@ -86,7 +86,8 @@
 | Vectorization legality and blockers | [`09-vectorization/04-vectorization-legality.md`](../09-vectorization/04-vectorization-legality.md) |
 | Loop Vectorizer auto-vectorization | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md) |
 | SLP Vectorizer / superword-level parallelism | [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md) |
-| Vector predication, masks, scalable-vector tail handling | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
+| Vector predication: `llvm.vp.*`, `%evl` explicit vector length, `get.vector.length`, RVV `vsetvli` tail handling | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
+| Masks versus lengths: `llvm.masked.*` passthru against VP poison lanes, when each is the right tool | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
 | Vectorization diagnostics (`-Rpass`, `-Rpass-missed`, optimization remarks) | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | Vector IR patterns (`<N x T>`, vector loads/stores, `shufflevector`, reductions) | [`09-vectorization/06-recognizing-vector-ir.md`](../09-vectorization/06-recognizing-vector-ir.md) |
 | Masked stores, predication legality, and interleaved/deinterleaved accesses | [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md), [`09-vectorization/examples/bcir-avx512-mask-sketch.ll`](../09-vectorization/examples/bcir-avx512-mask-sketch.ll), [`09-vectorization/examples/bcir-interleaved-riscv-sketch.ll`](../09-vectorization/examples/bcir-interleaved-riscv-sketch.ll) |

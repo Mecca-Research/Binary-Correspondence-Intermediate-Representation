@@ -353,10 +353,19 @@ def check_dispositions(report: Report) -> None:
 # --------------------------------------------------------------------------
 
 CHAPTER = TRAINING_ROOT / "23-version-movement" / "01-reading-the-delta.md"
-_BLOCK = re.compile(
-    r"(?P<open><!-- generated: langref-delta -->\n)(?P<body>.*?)(?P<close><!-- /generated -->)",
-    re.DOTALL,
-)
+VP_CHAPTER = TRAINING_ROOT / "09-vectorization" / "03-vector-predication.md"
+
+
+def _block_re(name: str) -> re.Pattern[str]:
+    return re.compile(
+        r"(?P<open><!-- generated: " + re.escape(name) + r" -->\n)"
+        r"(?P<body>.*?)(?P<close><!-- /generated -->)",
+        re.DOTALL,
+    )
+
+
+_BLOCK = _block_re("langref-delta")
+_VP_BLOCK = _block_re("vp-family")
 
 
 def render_block() -> str:
@@ -377,6 +386,70 @@ def render_block() -> str:
         f"**{total - taught}** are declared out of scope with a stated reason."
     )
     return "\n".join(rows) + "\n"
+
+
+def render_vp_family() -> str:
+    """How large the vector-predication family is, counted from the current surface.
+
+    09-vectorization/03-vector-predication.md exists because the corpus used LLVM's term
+    of art for this family while teaching a different mechanism. Its size is the argument
+    for taking it seriously, so the number is computed here rather than typed there --
+    this repository does not allow a count to live in prose, and a family that grows every
+    release is exactly the kind that would rot.
+    """
+    surface = json.loads(snapshot_path(CURRENT_MAJOR).read_text(encoding="utf-8"))["intrinsics"]
+    stable = [n for n in surface if n.startswith("llvm.vp.")]
+    staging = [n for n in surface if n.startswith("llvm.experimental.vp.")]
+    length = [n for n in surface if n.endswith(".get.vector.length")]
+    total = len(stable) + len(staging) + len(length)
+    helper = f"`{length[0]}`" if length else "no length helper"
+    sentence = (
+        f"In LLVM {CURRENT_MAJOR} the family is **{len(stable)}** intrinsics spelled "
+        f"`llvm.vp.*`, **{len(staging)}** still staged as `llvm.experimental.vp.*`, and "
+        f"the length helper {helper} — **{total}** names, out of {len(surface)} "
+        f"target-independent intrinsics in the whole language."
+    )
+    # Wrapped to the corpus's prose width so the block reads like the text around it.
+    words, lines, line = sentence.split(" "), [], ""
+    for word in words:
+        if line and len(line) + 1 + len(word) > 88:
+            lines.append(line)
+            line = word
+        else:
+            line = f"{line} {word}" if line else word
+    lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def sync_vp_block(report: Report | None, update: bool) -> None:
+    """The VP chapter's one computed sentence."""
+    if not VP_CHAPTER.is_file():
+        if report:
+            report.require(False, f"{VP_CHAPTER} is missing")
+        return
+    text = VP_CHAPTER.read_text(encoding="utf-8")
+    match = _VP_BLOCK.search(text)
+    if match is None:
+        if report:
+            report.require(
+                False,
+                f"{VP_CHAPTER.name} has no `<!-- generated: vp-family -->` block, so its "
+                f"claim about the family's size is a hand-written count",
+            )
+        return
+    fresh = render_vp_family()
+    if update:
+        if match.group("body") != fresh:
+            VP_CHAPTER.write_text(
+                text[: match.start("body")] + fresh + text[match.end("body") :], encoding="utf-8"
+            )
+            print(f"[update]  {VP_CHAPTER.name}")
+        return
+    if report:
+        report.require(
+            match.group("body") == fresh,
+            f"{VP_CHAPTER.name}: the vp-family block is stale; the surface now produces:\n" + fresh,
+        )
 
 
 def sync_block(report: Report | None, update: bool) -> None:
@@ -499,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.update:
         sync_block(None, update=True)
+        sync_vp_block(None, update=True)
         return 0
 
     report = Report()
@@ -523,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
     check_dispositions(report)
     check_rename_table(report)
     sync_block(report, update=False)
+    sync_vp_block(report, update=False)
     return report.verdict("langref delta gate")
 
 

@@ -304,3 +304,4 @@ Notes:
 | `training/llvm/24-mlir-infrastructure/examples/regions-and-blocks.mlir` | MLIR example (Tier 2) | Op/region/block nesting and block arguments in place of phi nodes; the source for the custom-versus-generic and bytecode round-trip checks. |
 | `training/llvm/24-mlir-infrastructure/examples/interfaces-inlining.mlir` | MLIR example (Tier 2) | `--inline` reaching `func.func` through `CallOpInterface`/`CallableOpInterface` alone. |
 | `training/llvm/24-mlir-infrastructure/examples/unrealized-casts.mlir` | MLIR example (Tier 2) | A cancelling `unrealized_conversion_cast` pair and a lone one; reconciliation folds the first and leaves the second. |
+| `training/llvm/09-vectorization/examples/vector-predication-evl.ll` | Standalone example | The `llvm.vp.*` family: the mask and `%evl` operands, an RVV tail-handling loop built on `llvm.experimental.get.vector.length`, and `llvm.masked.load` alongside for contrast. |

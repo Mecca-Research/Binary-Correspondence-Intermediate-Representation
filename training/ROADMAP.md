@@ -403,6 +403,21 @@ Not repeated in the 23 job: `build-pass-plugin.sh`. A plugin is loadable only by
 of its own major, so building it at 23 is a genuinely different test — but it could not be
 validated before landing here, and an unvalidated CI step is how a red push happens.
 
+**What the surface survey found beyond 1.3.** Measuring the corpus against the whole
+LLVM 23 surface (not only the 18 → 23 delta) turned up one gap worse than absence, and it
+was closed rather than deferred: `09-vectorization/03-vector-predication.md` carried
+LLVM's exact term of art for the `llvm.vp.*` family — 95 names, the largest family in the
+language — while teaching masks and `select`, so a reader finished it believing they knew
+what "vector predication" means in LLVM and then met `%evl` with no anchor. The chapter now
+teaches the family, the two-level mask-and-length model, how it differs from
+`llvm.masked.*`, and shows `%evl` reaching RVV's `vsetvli`. Mis-signposting is worse than
+silence: a reader who knows a chapter is missing goes looking elsewhere.
+
+Other coverage gaps that survey found are real but are ordinary absence, and are left for
+their own slices rather than folded in here: the bare integer `llvm.abs`/`smax`/`umin`
+family that InstCombine canonicalises into at `-O1`, and the attribute vocabulary of
+ordinary `-O2` output (`uwtable`, `nofree`, `norecurse`, `nosync`, `nocallback`).
+
 **Version discipline.** The corpus declares LLVM 18 as its floor and enforces it by
 assembling snapshots with the oldest available assembler at or above it. Raising the
 ceiling to 23 did not raise the floor automatically; 1.7 moved it deliberately.
