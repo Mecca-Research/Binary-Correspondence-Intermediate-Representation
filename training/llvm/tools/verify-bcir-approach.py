@@ -200,7 +200,41 @@ def block_axes() -> str:
     return "\n".join(rows) + "\n"
 
 
+def block_irdl() -> str:
+    """BCIR's ODS dialect against its IRDL projection, counted from the files.
+
+    Deliberately toolchain-free: `tools/irdl/check_inventory.py` reconciles three
+    text sources -- the ODS dialect, the IRDL projection and the manifest of
+    operations declared unprojected -- and needs no mlir-opt, so this table is the
+    same on a host with the MLIR toolchain and one without. The round-trip through
+    stock `mlir-opt` is checked separately, where a toolchain exists.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "bcir_irdl_inventory", REPO / "tools/irdl/check_inventory.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    counts = module.audit(REPO)["counts"]
+    corpus = sorted((REPO / "mlir/test/irdl").glob("*.mlir"))
+    rows = [
+        "| | count |",
+        "| --- | ---: |",
+        f"| operations the ODS dialect defines | {counts.get('ods', 0)} |",
+        f"| operations the IRDL projection declares | {counts.get('irdl', 0)} |",
+        f"| projected under the same name | {counts.get('projected_exact', 0)} |",
+        f"| projected under a renamed spelling (IRDL admits no dots) "
+        f"| {counts.get('projected_renamed', 0)} |",
+        f"| declared unprojected, each with a stated reason "
+        f"| {counts.get('unprojected_declared', 0)} |",
+        f"| generic-syntax corpus files the projection is validated against | {len(corpus)} |",
+    ]
+    return "\n".join(rows) + "\n"
+
+
 BLOCKS = {
+    "irdl-projection": block_irdl,
     "thermal-ladder": block_thermal_ladder,
     "substrates": block_substrates,
     "theta": block_theta,
@@ -279,6 +313,47 @@ def check_law_rails(report: Report, chapters: list[Path]) -> None:
             re.search(rf"\b{law}\b", law_text),
             f"{law} is named by a chapter but the MLIR law rail does not mention it",
         )
+
+
+def check_irdl_roundtrip(report: Report) -> None:
+    """Run BCIR's IRDL corpus through stock mlir-opt, where one exists.
+
+    This is the claim `04-dialect-as-data.md` is built on -- that a dialect defined
+    as data is loadable by a tool that was never built with it -- so the chapter
+    does not get to assert it. `tools/irdl/check_corpus.sh` owns the round-trip;
+    this asks it for a verdict. Where no mlir-opt is installed the corpus job says
+    so by name rather than passing quietly: the MLIR rail job owns that toolchain.
+    """
+    mlir_opt = shutil.which("mlir-opt") or shutil.which("mlir-opt-23")
+    if mlir_opt is None:
+        print(
+            "[skip]    mlir-opt is absent; the IRDL round-trip is the MLIR rail job's",
+            file=sys.stderr,
+        )
+        return
+    try:
+        completed = subprocess.run(
+            ["bash", str(REPO / "tools/irdl/check_corpus.sh")],
+            capture_output=True,
+            text=True,
+            timeout=900,
+            cwd=REPO,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        report.require(False, f"the IRDL corpus check did not run: {exc}")
+        return
+    output = completed.stdout + completed.stderr
+    report.require(
+        completed.returncode == 0,
+        f"stock mlir-opt no longer round-trips BCIR's IRDL corpus: {output.strip()[-400:]}",
+    )
+    # Anti-vacuity: the script exits 0 when it finds no mlir-opt of its own, so a
+    # green exit code alone would not mean any file was parsed.
+    report.require(
+        "all corpus files round-trip" in output,
+        "the IRDL corpus check exited 0 without reporting a round-trip; it resolved "
+        "no mlir-opt of its own and checked nothing",
+    )
 
 
 def check_no_dead_passes(report: Report, chapters: list[Path]) -> None:
@@ -371,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     check_axis_order(report)
     check_law_rails(report, chapters)
     check_no_dead_passes(report, chapters)
+    check_irdl_roundtrip(report)
 
     if report.failures:
         print("bcir-approach gate: FAILED", file=sys.stderr)

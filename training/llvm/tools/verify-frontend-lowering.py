@@ -26,6 +26,7 @@ reported as a pass.
 from __future__ import annotations
 
 import argparse
+import difflib
 import os
 import re
 import shutil
@@ -67,12 +68,31 @@ _METADATA_SUFFIX = re.compile(r",\s*![a-zA-Z.]+ ![0-9]+")
 # This list is a DECLARED SCOPE, not a claim of completeness. An attribute newer
 # than the list is caught by the baseline assembly check in
 # `check_snapshot_baseline`, which asks a real assembler instead of guessing.
+# An attribute's SPELLING is not stable across majors either. `dead_on_return`
+# entered as a bare flag and takes an argument by LLVM 23 -- clang 23.1.1 emits
+# `dead_on_return(4)` on the destructor call in `cxx-object-model.cpp` -- so
+# stripping only the bare name leaves `(4)` behind and the LLVM 15 assembler
+# stops at `expected type`. Both lists are therefore stripped both ways: the
+# parenthesized form first, then the bare one. Which list a name is in records
+# how it was FIRST seen, not a promise about how it will be spelled next.
 _POST_BASELINE_FLAG_ATTRS = ("dead_on_unwind", "dead_on_return", "writable")
 _POST_BASELINE_CALL_ATTRS = ("initializes", "range", "captures", "nofpclass")
+# Not every post-baseline spelling is a parameter attribute. Clang 23.1.1 emits
+# `getelementptr inbounds nuw` on the member access in `cxx-object-model.cpp`;
+# the no-wrap flags on a GEP arrived after the corpus's LLVM 15 floor, and the
+# floor's assembler stops at `expected type` on the flag. They are stripped for
+# the same reason the attributes above are: a refinement on an address
+# computation the snapshot already shows, in a chapter about name mangling and
+# object layout. The order matters -- `nusw` before `nuw`, or the shorter name
+# eats the prefix of the longer one.
+_POST_BASELINE_GEP_FLAGS = ("nusw", "nuw")
+_POST_BASELINE_GEP_RE = re.compile(
+    r"\b(getelementptr(?: inbounds)?) (?:(?:" + "|".join(_POST_BASELINE_GEP_FLAGS) + r") )+"
+)
 _POST_BASELINE_FLAG_RE = re.compile(r"\b(?:" + "|".join(_POST_BASELINE_FLAG_ATTRS) + r")\b[ ]?")
 # Only these carry parameter attributes; restricting the substitution keeps it
 # from touching an identifier or a comment that happens to share a keyword.
-_ATTRIBUTE_BEARING_LINE = re.compile(r"^(?:define|declare)\b|\b(?:call|invoke) ")
+_ATTRIBUTE_BEARING_LINE = re.compile(r"^(?:define|declare)\b|\b(?:call|invoke) |\bgetelementptr\b")
 
 
 @dataclass(frozen=True)
@@ -342,13 +362,21 @@ def strip_post_baseline_attrs(line: str) -> str:
     indent = line[: len(line) - len(line.lstrip(" "))]
     body = line[len(indent) :]
 
-    body = _POST_BASELINE_FLAG_RE.sub("", body)
-    for name in _POST_BASELINE_CALL_ATTRS:
+    # Parenthesized forms first: a flag that has since gained an argument must
+    # lose the argument with it, or the bare-name substitution orphans `(...)`.
+    for name in _POST_BASELINE_CALL_ATTRS + _POST_BASELINE_FLAG_ATTRS:
         body = strip_balanced_call(body, name)
+    body = _POST_BASELINE_FLAG_RE.sub("", body)
+    body = _POST_BASELINE_GEP_RE.sub(r"\1 ", body)
 
-    # A removed attribute can leave `(  ` or a doubled space behind.
+    # A removed attribute can leave `(  `, ` )`, ` ,` or a doubled space behind.
+    # The comma case is not hypothetical: LLVM replaced `nocapture` with
+    # `captures(none)`, so stripping the newer spelling from
+    # `ptr noalias nocapture writeonly, ...` leaves `writeonly ,` -- normalized
+    # text that no assembler minds and no human would write.
     body = re.sub(r"\( +", "(", body)
     body = re.sub(r" +\)", ")", body)
+    body = re.sub(r" +,", ",", body)
     return indent + re.sub(r"  +", " ", body)
 
 
@@ -389,6 +417,38 @@ def find_baseline_assembler() -> tuple[str, int] | None:
     return None
 
 
+_SNAPSHOT_MAJOR_RE = re.compile(r"^; Produced by clang (\d+)\.", re.MULTILINE)
+
+
+def snapshot_major(path: Path) -> int | None:
+    """The clang major a snapshot records, or None for one written before this."""
+    match = _SNAPSHOT_MAJOR_RE.search(path.read_text(encoding="utf-8"))
+    return int(match.group(1)) if match else None
+
+
+def clang_major(clang: str) -> int | None:
+    """The major of the clang actually being run, read from the binary itself."""
+    try:
+        completed = subprocess.run(
+            [clang, "--version"], capture_output=True, text=True, timeout=60, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"clang version (\d+)\.", completed.stdout)
+    return int(match.group(1)) if match else None
+
+
+def body_delta(existing: str, rendered: str) -> int:
+    """Differing line count between two snapshots, headers excluded."""
+    strip = lambda text: text.split("\n\n", 1)[1] if "\n\n" in text else text  # noqa: E731
+    left, right = strip(existing).splitlines(), strip(rendered).splitlines()
+    return sum(
+        1
+        for line in difflib.unified_diff(left, right, lineterm="", n=0)
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+
+
 def check_snapshot_baseline(rendered: str, label: str) -> str | None:
     """Assemble a normalized snapshot at the baseline; return a failure message.
 
@@ -424,7 +484,10 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
         f"{label}: does not assemble at the LLVM {major} baseline: {first}\n"
         f"       If this is a parameter attribute newer than LLVM "
         f"{BASELINE_LLVM_MAJOR}, add it to _POST_BASELINE_FLAG_ATTRS or "
-        f"_POST_BASELINE_CALL_ATTRS and regenerate with --update."
+        f"_POST_BASELINE_CALL_ATTRS; if it is an instruction flag, to "
+        f"_POST_BASELINE_GEP_FLAGS or its equivalent -- the assembler rejects any "
+        f"construct newer than the floor, not only parameter attributes, so read "
+        f"the named line before assuming which. Then regenerate with --update."
     )
 
 
@@ -512,6 +575,7 @@ def main() -> int:
     ).stdout.splitlines()
     banner = version[0].strip() if version else "clang (unknown version)"
     print(f"frontend lowering gate: using {banner}")
+    local_major = clang_major(clang)
 
     failed = 0
     claims_checked = 0
@@ -547,6 +611,9 @@ def main() -> int:
             header = (
                 f"; Normalized `clang {case.opt_level} -S -emit-llvm -target "
                 f"{case.triple}` output for {case.source}.\n"
+                f"; Produced by clang {local_major}. A host on that major must\n"
+                "; reproduce this file byte for byte; a different major reports its\n"
+                "; delta instead, because lowering legitimately moves between releases.\n"
                 "; Regenerate with:\n"
                 ";   python3 training/llvm/tools/verify-frontend-lowering.py --update\n"
                 "; Attribute groups, module flags, the ident string, and parameter\n"
@@ -571,6 +638,42 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 failed += 1
+            else:
+                # Without this, nothing ever compared the checked-in snapshot to what
+                # the toolchain produces: the claims are checked against freshly
+                # compiled IR and the baseline check assembles the fresh rendering, so
+                # a snapshot could rot into fiction while the gate stayed green. It is
+                # enforced only on the major that produced the file -- a different
+                # major reports its delta, because clang 23 spells `nocapture` as
+                # `captures(none)` and materializes a bool load as `icmp ne` where 18
+                # used `trunc`, and neither is drift for anyone to fix.
+                recorded = snapshot_major(snapshot_path)
+                existing = snapshot_path.read_text(encoding="utf-8")
+                if recorded is None:
+                    # An unstamped snapshot is one nothing can enforce: without a
+                    # producer there is no major to match, so the identity check
+                    # below would quietly never apply. Losing the stamp must cost
+                    # something, or dropping one line disables the check.
+                    print(
+                        f"[FAIL] {relpath(snapshot_path)}: records no producing clang; "
+                        "rerun with --update so a host on that major can be held to it",
+                        file=sys.stderr,
+                    )
+                    failed += 1
+                elif recorded == local_major:
+                    if drift := body_delta(existing, rendered):
+                        print(
+                            f"[FAIL] {relpath(snapshot_path)}: clang {local_major} produced "
+                            f"this snapshot, and no longer reproduces it ({drift} line(s) "
+                            "differ); rerun with --update and read what changed",
+                            file=sys.stderr,
+                        )
+                        failed += 1
+                elif drift := body_delta(existing, rendered):
+                    print(
+                        f"[note] {relpath(snapshot_path)}: recorded under clang {recorded}, "
+                        f"read here with clang {local_major}: {drift} line(s) differ"
+                    )
 
     if failed:
         print(

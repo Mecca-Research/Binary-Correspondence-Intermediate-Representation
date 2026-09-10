@@ -18,6 +18,7 @@
 | What a correspondence IR is; claim versus realization; declared versus inferred facts | [`22-bcir-approach/01-correspondence-versus-structure.md`](../22-bcir-approach/01-correspondence-versus-structure.md) |
 | `K_BCIR`'s twelve cost axes, which are produced, and what each policy weights | [`22-bcir-approach/02-what-k-bcir-prices.md`](../22-bcir-approach/02-what-k-bcir-prices.md) |
 | Legality before cost, resource budgets, `Infeasible`, R1–R25 on both rails | [`22-bcir-approach/03-legality-before-cost.md`](../22-bcir-approach/03-legality-before-cost.md) |
+| IRDL, dialect-as-data, ODS versus a runtime projection, `--irdl-file` | [`22-bcir-approach/04-dialect-as-data.md`](../22-bcir-approach/04-dialect-as-data.md) |
 | BCIR as an IR: dispatcher, and the two senses of "legality" this corpus uses | [`22-bcir-approach/README.md`](../22-bcir-approach/README.md) |
 | LLVM backend target inventory and porting cost | [`12-backend-jit/08-target-backend-porting-map.md`](../12-backend-jit/08-target-backend-porting-map.md) |
 | Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |

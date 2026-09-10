@@ -178,9 +178,11 @@ verify_claim_fixture() {
 mapfile -d '' bcir_sources < <(find "$MAPPING_EXAMPLES" -type f -name '*.bcir' -print0 | sort -z)
 mapfile -d '' claim_fixtures < <(find "$MAPPING_EXAMPLES" -type f -name '*.bcir.txt' -print0 | sort -z)
 
+# A gate that examined nothing is not a gate that passed: this rail exists because
+# the mapping fixtures exist, so their absence is a finding rather than a quiet exit.
 if [ "${#bcir_sources[@]}" -eq 0 ] && [ "${#claim_fixtures[@]}" -eq 0 ]; then
-  printf 'No BCIR mapping fixtures found under %s; skipping BCIR mapping check.\n' "$(relpath "$MAPPING_EXAMPLES")"
-  exit 0
+  printf 'error: no BCIR mapping fixtures found under %s; this gate would check nothing.\n' "$(relpath "$MAPPING_EXAMPLES")" >&2
+  exit 1
 fi
 
 for fixture in "${claim_fixtures[@]}"; do
@@ -188,19 +190,25 @@ for fixture in "${claim_fixtures[@]}"; do
   verify_claim_fixture "$fixture" || status=1
 done
 
+# Skipping the .bcir round trips is honest -- they need an assembler this repository
+# does not ship. Exiting here was not: the claim-fixture loop above has already run
+# and may have set `status=1`, and `exit 0` threw that verdict away. Every failure it
+# found was printed as FAILED and then reported to CI as success, for as long as a
+# single .bcir source existed to reach this branch. Skip the loop; keep the verdict.
+skip_sources=0
 if [ "${#bcir_sources[@]}" -gt 0 ]; then
   if [ -z "$BCIR_AS" ] || [ ! -x "$BCIR_AS" ]; then
     printf 'No executable BCIR_AS was provided; skipping real .bcir source round trips.\n'
     printf 'Set BCIR_AS=/path/to/a/current/assembler to require those fixtures.\n'
-    exit 0
-  fi
-  if [ -z "$LLVM_AS" ] || [ -z "$OPT" ]; then
+    skip_sources=1
+  elif [ -z "$LLVM_AS" ] || [ -z "$OPT" ]; then
     printf 'llvm-as/opt not present; skipping real .bcir source round trips.\n'
-    exit 0
+    skip_sources=1
   fi
 fi
 
 for source in "${bcir_sources[@]}"; do
+  [ "$skip_sources" -eq 1 ] && break
   bcir_count=$((bcir_count + 1))
   expected="${source%.bcir}.generated.ll"
 
