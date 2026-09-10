@@ -138,12 +138,46 @@ def _claim_asn1_c_twins_exist() -> tuple[bool, str]:
     )
 
 
+def _claim_learned_provider_unregistrable() -> tuple[bool, str]:
+    """The training corpus still cannot NAME a locally trained embedding provider.
+
+    Pinned because it is the fact the learned-embedding gate's verdict rests on. A run of
+    `evaluate_retrieval.py` projects its queries with the set's own model, resolved through
+    `embed_chunks.build_provider` -- which knows the hermetic lexical baseline and
+    sentence-transformers ids, and refuses everything else. So a set trained inside this
+    repository cannot be evaluated by this repository without a patch that is deliberately
+    not in it. The day someone adds a registry for locally trained providers, that obstacle
+    is gone and `training/LEARNED_EMBEDDING_GATE.md` must be re-read, not inherited.
+    """
+    import importlib.util
+
+    path = os.path.join(ROOT, "training", "tools", "embed_chunks.py")
+    spec = importlib.util.spec_from_file_location("embed_chunks_claim", path)
+    if spec is None or spec.loader is None:
+        return False, f"{path} is not importable"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    baseline = module.build_provider("lexical-hash-v1", dim=64, revision=None)
+    if baseline.name != "lexical-hash-v1" or baseline.semantics != "lexical":
+        return False, f"the hermetic baseline now resolves to {baseline.name!r}"
+    try:
+        resolved = module.build_provider("corpus-local-student", dim=64, revision=None)
+    except SystemExit:
+        return True, "build_provider resolves the lexical baseline and hub ids only"
+    return False, (
+        f"a locally trained name now resolves to {resolved!r}; the gate's second honesty "
+        "note in training/LEARNED_EMBEDDING_GATE.md no longer holds"
+    )
+
+
 _CLAIMS = {
     "ecn-refusal-list-empty": _claim_ecn_refusal_list_empty,
     "ecn-three-parts-built": _claim_ecn_three_parts_built,
     "jer-has-all-three-rails": _claim_jer_has_all_three_rails,
     "r25-covers-parameterization": _claim_r25_covers_parameterization,
     "asn1-c-twins-exist": _claim_asn1_c_twins_exist,
+    "learned-provider-unregistrable": _claim_learned_provider_unregistrable,
 }
 
 

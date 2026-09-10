@@ -48,6 +48,8 @@ from bcir.hosted.training import (
     TrainingPipelineLedger,
     prepare_corpus,
     relational_embedding_targets,
+    relational_gram_loss,
+    relational_reference_loss,
     token_source_from_corpus,
     train_dpo,
     train_embedding_distillation,
@@ -284,6 +286,52 @@ def _alignment_run(seed: int, scratch: Path) -> dict:
         )
     )
     assert embedding.final_loss < embedding.initial_loss
+
+    # ...and a falling loss is not, by itself, evidence of distillation. The
+    # objective is mse_loss(E @ E.T, targets) over an L2-normalized E, so a
+    # student that merely makes its embeddings mutually orthogonal -- the
+    # identity Gram, which encodes nothing about the teacher -- already scores
+    # relational_reference_loss. Bind that pure-Python floor to the torch
+    # expression the stage evaluates, so a change to either convention (sum vs
+    # mean, or averaging the off-diagonal alone) fails here instead of silently
+    # moving every reference a caller compares a run against.
+    floor = relational_reference_loss(targets)
+    stage_floor = float(
+        torch.nn.functional.mse_loss(
+            torch.eye(len(targets), dtype=torch.float32),
+            torch.tensor(targets, dtype=torch.float32),
+        )
+    )
+    assert abs(floor - stage_floor) < 1e-6, (
+        "relational_reference_loss is not the stage's own mse_loss floor",
+        floor,
+        stage_floor,
+    )
+    assert floor > 0.0, "these targets are the identity: there is nothing to distil"
+
+    # The same binding at a NON-identity Gram, because a reduction convention that
+    # moves the loss and not the floor makes the pair silently incomparable: the
+    # run would be scored one way and its reference another.
+    # The probe's diagonal must NOT be 1.0. `relational_embedding_targets` sets the
+    # target diagonal to exactly 1.0, so a probe that also carries 1.0 there has a
+    # zero diagonal residual on both sides and a reduction that skipped the
+    # diagonal entirely would be indistinguishable from one that did not.
+    arbitrary = tuple(
+        tuple(0.90 if i == j else 0.25 * (i - j) for j in range(len(targets)))
+        for i in range(len(targets))
+    )
+    assert (
+        abs(
+            relational_gram_loss(arbitrary, targets)
+            - float(
+                torch.nn.functional.mse_loss(
+                    torch.tensor(arbitrary, dtype=torch.float32),
+                    torch.tensor(targets, dtype=torch.float32),
+                )
+            )
+        )
+        < 1e-6
+    ), "relational_gram_loss is not the stage's own mse_loss"
 
     features = torch.tensor(
         [

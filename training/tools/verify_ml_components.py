@@ -47,6 +47,11 @@ from ml_components import COMPONENTS, DECLARED_ONLY, RUNS_HERE, TORCH_GATED  # n
 
 TOLERANCE = 1e-6
 
+# How many real corpus chunks the embedding-distillation probe draws. Twelve is
+# enough for a 12x12 relational Gram with off-diagonal structure to fit, and
+# small enough that the probe stays bounded on the shared Python pool.
+PROBE_CHUNKS = 12
+
 
 class Report:
     def __init__(self) -> None:
@@ -545,6 +550,114 @@ def exercise_preference_optimization(report: Report) -> str:
     return f"{run.examples} pairs, {run.steps} step(s), loss {run.initial_loss:.4f} -> {run.final_loss:.4f}"
 
 
+def _teacher_probe(report: Report, *, dim: int):
+    """Strided real corpus text and its lexical Gram -- the teacher both halves use.
+
+    The text comes from the tracked corpus rather than from `build/`: a job that
+    runs this gate without having run build_chunks.py first would otherwise skip
+    the only exercise these components have, and a skip inside the job that owns
+    them hides exactly the defect the exercise exists to catch.
+
+    Strided, not the first N: the first N chunks are one subject's front matter,
+    and near-duplicate text makes every teacher cosine alike -- the one input that
+    would leave this probe examining nothing.
+    """
+    from bcir.hosted.training.providers import relational_embedding_targets
+
+    embed = _load_corpus_tool("embed_chunks")
+    builder = _load_corpus_tool("build_chunks")
+    corpus = [
+        chunk
+        for root in builder.subject_roots(None)
+        for chunk in builder.build_subject(
+            root, max_chars=builder.DEFAULT_MAX_CHARS, min_chars=builder.DEFAULT_MIN_CHARS
+        )
+    ]
+    report.require(
+        len(corpus) >= PROBE_CHUNKS,
+        f"the corpus yielded {len(corpus)} chunk(s); the teacher probe needs {PROBE_CHUNKS}",
+    )
+    if len(corpus) < PROBE_CHUNKS:
+        return None, None
+    stride = len(corpus) // PROBE_CHUNKS
+    texts = [corpus[index * stride]["text"] for index in range(PROBE_CHUNKS)]
+    provider = embed.build_provider("lexical-hash-v1", dim=dim, revision=None)
+    vectors, _norms = embed.embed(
+        [{"text": t, "chunk_id": f"c{i}", "source_path": "<probe>"} for i, t in enumerate(texts)],
+        provider,
+    )
+    return texts, relational_embedding_targets([tuple(v) for v in vectors])
+
+
+def exercise_relational_targets(report: Report) -> str:
+    """The teacher side of distillation, and the floor that says whether it taught.
+
+    `train_embedding_distillation` minimizes the mean squared error between the
+    student's Gram matrix and these targets. A normalized student's Gram has a unit
+    diagonal whatever it learned, so the whole objective is the off-diagonal fit --
+    and where those cosines are small, a student that merely makes its embeddings
+    mutually orthogonal (the identity Gram, which carries nothing of the teacher)
+    already scores well. `relational_reference_loss` is that student's loss.
+
+    Distilling this corpus's own lexical provider into a hosted student for 24
+    rounds reported `0.5135 -> 0.0383`, which reads like learning; the reference for
+    those targets was 0.0161, so the run finished worse than never having looked,
+    with an off-diagonal Gram correlation of 0.146 against the teacher. Neither
+    reported number could say so on its own, which is why the floor is computed
+    here, on real corpus text, on every host -- this module needs no torch.
+    """
+    from bcir.hosted.training.providers import (
+        relational_embedding_targets,
+        relational_reference_loss,
+    )
+
+    texts, targets = _teacher_probe(report, dim=512)
+    if targets is None:
+        return "unavailable"
+
+    report.require(
+        all(-1.0 <= value <= 1.0 for row in targets for value in row),
+        "a cosine target fell outside [-1, 1], which the stage refuses outright",
+    )
+    report.require(
+        all(targets[i][i] == 1.0 for i in range(len(targets))),
+        "a vector's cosine with itself is not exactly 1.0",
+    )
+
+    reference = relational_reference_loss(targets)
+    report.require(
+        reference > 1e-3,
+        f"the teacher's Gram is within {reference:.2e} of the identity, so these "
+        "targets carry no relational structure and distilling them is vacuous",
+    )
+    # The floor must be the trivial solution's loss under the stage's own averaging:
+    # over EVERY entry, diagonal included. Restating it here means a change to
+    # off-diagonal-only averaging fails this gate instead of silently halving every
+    # reference a run is read against.
+    size = len(targets)
+    manual = sum(
+        ((1.0 if i == j else 0.0) - targets[i][j]) ** 2 for i in range(size) for j in range(size)
+    ) / float(size * size)
+    report.require(
+        abs(reference - manual) < 1e-12,
+        f"the reference {reference!r} is not the identity-Gram MSE {manual!r}",
+    )
+    # A teacher with nothing to teach must read as exactly zero, not as a small
+    # number that a caller could mistake for structure.
+    orthonormal = relational_embedding_targets(
+        tuple(tuple(1.0 if i == j else 0.0 for j in range(4)) for i in range(4))
+    )
+    report.require(
+        relational_reference_loss(orthonormal) == 0.0,
+        "an orthonormal teacher does not report a zero floor, so a vacuous teacher "
+        "would be indistinguishable from a weak one",
+    )
+    return (
+        f"{len(texts)} real chunks -> {size}x{size} cosine Gram; "
+        f"orthogonal reference {reference:.4f}, vacuous teacher 0.0000"
+    )
+
+
 def exercise_embedding_distillation(report: Report) -> str:
     """The corpus's own lexical provider as the teacher, on real corpus text.
 
@@ -554,31 +667,19 @@ def exercise_embedding_distillation(report: Report) -> str:
     used exactly-representable toy vectors where the rounding cancels, so the
     incompatibility was invisible until real vectors went through.
     """
-    import glob
-    import json
+    import torch
 
     from bcir.hosted.models.model import HostedLlama
     from bcir.hosted.models.spec import DecoderSpec
     from bcir.hosted.training import stages
-    from bcir.hosted.training.providers import relational_embedding_targets
-
-    embed = _load_corpus_tool("embed_chunks")
-    texts = []
-    for path in sorted(glob.glob("build/training/chunks/*.chunks.jsonl")):
-        for line in open(path, encoding="utf-8"):
-            if line.strip():
-                texts.append(json.loads(line)["text"])
-    if len(texts) < 8:
-        report.require(False, "no chunk build to draw teacher text from; run build_chunks.py")
-        return "unavailable"
-    texts = texts[:12]
-
-    provider = embed.build_provider("lexical-hash-v1", dim=512, revision=None)
-    vectors, _norms = embed.embed(
-        [{"text": t, "chunk_id": f"c{i}", "source_path": "<probe>"} for i, t in enumerate(texts)],
-        provider,
+    from bcir.hosted.training.providers import (
+        relational_gram_loss,
+        relational_reference_loss,
     )
-    targets = relational_embedding_targets([tuple(v) for v in vectors])
+
+    texts, targets = _teacher_probe(report, dim=512)
+    if targets is None:
+        return "unavailable"
     outside = [v for row in targets for v in row if not -1.0 <= v <= 1.0]
     report.require(
         not outside,
@@ -590,24 +691,107 @@ def exercise_embedding_distillation(report: Report) -> str:
         "a vector's cosine with itself is not exactly 1.0",
     )
 
-    policy = HostedLlama(
-        DecoderSpec(
-            vocab_size=512, d_model=64, n_heads=2, n_layers=2, d_ff=128, activation="silu_gate"
-        )
+    # What a student reaches by ignoring the teacher entirely. The stage minimizes
+    # mse_loss(E @ E.T, targets) over an L2-normalized E, so mutually orthogonal
+    # embeddings -- the identity Gram, which carries nothing of the teacher -- score
+    # this. Reporting a run's loss without it says nothing: distilling this corpus's
+    # lexical provider for 24 rounds reported 0.5135 -> 0.0383 against a reference of
+    # 0.0161, i.e. finished worse than never having looked.
+    reference = relational_reference_loss(targets)
+    report.require(
+        reference > 1e-3,
+        f"the teacher's Gram is within {reference:.2e} of the identity, so these "
+        "targets carry no relational structure and distilling them is vacuous",
     )
-    student = stages.HostedEmbeddingStudent(policy, 128)
+
     sequences = tuple(tuple(int(b) % 512 for b in t.encode()[:96]) or (1,) for t in texts)
-    run = stages.train_embedding_distillation(
-        student,
-        sequences,
-        targets,
-        stages.StageTrainSpec(stage="embedding", steps=2, learning_rate=1e-3),
+
+    def distil():
+        # Seeded here, not merely in the spec: the student's initial weights come
+        # from the global generator at construction, so two runs of the same spec
+        # would otherwise start from different models and could not be compared.
+        torch.manual_seed(1729)
+        policy = HostedLlama(
+            DecoderSpec(
+                vocab_size=512, d_model=64, n_heads=2, n_layers=2, d_ff=128, activation="silu_gate"
+            )
+        )
+        student = stages.HostedEmbeddingStudent(policy, 128)
+        return student, stages.train_embedding_distillation(
+            student,
+            sequences,
+            targets,
+            stages.StageTrainSpec(stage="embedding", steps=2, learning_rate=1e-3),
+        )
+
+    student, run = distil()
+    _, again = distil()
+    # What a caller can actually check from outside a training run. `run.stage`
+    # is a literal the stage hardcodes and `run.examples` is a shape the stage
+    # already refuses to violate, so neither can fail; these two can.
+    report.require(
+        (run.initial_loss, run.final_loss, run.input_sha256)
+        == (again.initial_loss, again.final_loss, again.input_sha256),
+        "the same input under the same seed produced two different runs: "
+        f"{(run.initial_loss, run.final_loss)} then {(again.initial_loss, again.final_loss)}",
     )
-    report.require(run.stage == "embedding", f"the stage reported itself as {run.stage!r}")
-    report.require(run.examples == len(texts), "the stage did not see every sequence")
+    report.require(
+        run.final_loss != run.initial_loss,
+        f"the stage reported the same loss ({run.initial_loss!r}) before and after "
+        "training, so the optimizer moved nothing",
+    )
+    # The floor only means something if the untrained student starts on the wrong
+    # side of it. A near-duplicate teacher inverts that: its cosines are all near
+    # 1, so the identity Gram is far away and the reference is large, and an
+    # untrained student -- whose pooled embeddings are already highly correlated --
+    # sits below it from the start. A run like that "beats the floor" by collapsing
+    # rather than by learning, and the comparison this exercise reports would be
+    # worse than no comparison. This is the check that says which regime the probe
+    # is in; it is why the probe text is strided across the corpus.
+    report.require(
+        run.initial_loss > reference,
+        f"the untrained student already scores {run.initial_loss!r} against a "
+        f"teacher-ignoring floor of {reference!r}, so on this teacher a falling "
+        "loss could not be mistaken for distillation and this probe checks nothing",
+    )
+    # The loss the stage reports must be the value its own objective takes on the
+    # model it handed back. Recomputed here from the trained student's own
+    # embeddings through `relational_gram_loss` -- the same function the floor is
+    # `relational_gram_loss` at the identity -- so a stage that reported a stale
+    # model's loss, or that averaged its matrix differently from the floor every
+    # run is read against, fails here instead of reading plausibly.
+    student.eval()
+    with torch.no_grad():
+        rows = [
+            [float(value) for value in student(torch.tensor([list(seq)], dtype=torch.long))[0]]
+            for seq in sequences
+        ]
+    gram = [[sum(a * b for a, b in zip(left, right)) for right in rows] for left in rows]
+    recomputed = relational_gram_loss(gram, targets)
+    report.require(
+        abs(recomputed - run.final_loss) < 1e-5,
+        f"the stage reported {run.final_loss!r} but its own objective on the model "
+        f"it returned is {recomputed!r}",
+    )
+    # The other way a run reaches a small loss without learning: collapse. Every
+    # embedding pointing the same way gives a Gram of ones, which scores well
+    # against a teacher whose cosines are high -- the mirror of the orthogonal
+    # floor, and the reason the floor alone is not a verdict. This is collapse
+    # detection, not a quality bar: measured 0.37-0.48 over three seeds of the
+    # 2-step probe, against 1.0 for a student that answers everything alike.
+    off_diagonal = [gram[i][j] for i in range(len(gram)) for j in range(len(gram)) if i != j]
+    collapse = sum(abs(value) for value in off_diagonal) / len(off_diagonal)
+    report.require(
+        collapse < 0.95,
+        f"the trained student's mean off-diagonal cosine is {collapse:.4f}: it answers "
+        "every chunk alike, so its loss says nothing about the teacher either",
+    )
+
+    verdict = "beat it" if run.final_loss < reference else "did NOT beat it"
     return (
         f"{len(texts)} real chunks -> lexical Gram -> {run.steps} step(s), "
-        f"loss {run.initial_loss:.4f} -> {run.final_loss:.4f}"
+        f"loss {run.initial_loss:.4f} -> {run.final_loss:.4f}; "
+        f"orthogonal reference {reference:.4f}, {verdict}"
     )
 
 
@@ -623,6 +807,7 @@ EXERCISES = {
     "automatic-differentiation": exercise_autodiff,
     "optimizers": exercise_optimizers,
     "training-loop": exercise_training_loop,
+    "relational-distillation-targets": exercise_relational_targets,
     "precision-framework": exercise_precision,
     "quantization": exercise_quantization,
     "low-bit-formats": exercise_lowbit,

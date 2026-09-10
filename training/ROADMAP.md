@@ -289,33 +289,42 @@ actually there, with `tools/verify_ml_components.py` resolving every symbol
   embedding distillation is now exercised on real corpus text.
 
 The corpus can now feed supervised, preference and embedding-distillation
-training end to end. What it still does not have is a learned embedding SET that
-the retrieval evaluation would accept in place of the lexical baseline, and the
-obstacle turned out not to be the teacher at all:
+training end to end. Whether the evaluation should then RUN on a learned
+embedding set is a separate decision, and it has its own gate:
+[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md) owns the GO/STOP
+criteria and the measurement behind them. The short version, including one
+retraction:
 
-- The evaluation apparatus is calibrated to a lexical model. `MAX_MEAN_ABS_COSINE`
-  is 0.60 against a measured lexical 0.087, while an untrained pooled decoder
-  sits at 0.47-0.61 before any training; and `CONTROL_RECALL_AT_5` is 0.95 on a
-  control whose entire justification is verbatim lexical overlap. Loosening
-  either to admit a learned model would be tuning the bar to the thing it
-  measures, which this standard exists to refuse.
-- The control's ARGUMENT, not just its threshold, is lexical. "The query text is
-  verbatim in its target, so retrieval must find it" holds for a model that
-  scores near-duplicate text highly. A learned encoder carries no such
-  guarantee, so a control failure would no longer isolate "the harness is
-  broken" -- the control has to be re-argued before its floor is applied to a
-  learned set.
-- Training signal is scarcer than it looks. The document-level judgments mean
-  that clustering chunks by document -- the obvious self-supervised objective --
-  trains the very operation the evaluator performs, and index files are
-  themselves chunk documents, so an objective over raw chunk text can memorize
-  84% of the judged mapping without ever constructing a pair. Contamination of
-  that kind would leave every existing gate GREEN: the shuffle control still
-  collapses, the lift gates still clear, the digests still match. No gate here
-  can detect training-set overlap; only a training-data filter can.
-
-So the remaining work is a corpus-standard question before it is a modelling
-one, and it is recorded here rather than resolved quietly.
+- **Measured (2026-09-10).** A student trained inside BCIR's hosted stack,
+  distilling the corpus's own lexical teacher over all 2013 chunks, reached
+  overall MRR@10 0.221 against the baseline's 0.593. Its ceiling is the
+  baseline: imitation cannot beat its teacher, and the baseline is the only
+  teacher obtainable here.
+- **Retracted.** An earlier version of this section named the evaluation's
+  calibration as the obstacle -- the discrimination cap and the control floor
+  being set around a lexical model. Tripling the training budget cleared the
+  control floor (0.983 against 0.95) while overall MRR@10 moved by 0.014. The
+  bar was not what was holding the learned rail back; the retrieval was.
+  Recorded rather than quietly dropped.
+- **Still true, and now the gate's G3 and G4.** The control's ARGUMENT is
+  lexical -- "the query is its target's own heading wording, verbatim as a word
+  sequence" is a guarantee for a model that ranks on shared wording and nothing
+  for a learned encoder -- so the control has to
+  be re-argued before its floor is applied to a learned set, which is a
+  [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md) decision, not a modelling one. And
+  the document-level judgments mean the obvious self-supervised objective trains
+  the very operation the evaluator performs: index files are themselves chunk
+  documents, so an objective over raw chunk text can memorize 84% of the judged
+  mapping without ever constructing a pair, and contamination of that kind would
+  leave every existing gate GREEN -- the shuffle control still collapses, the
+  lift gates still clear, the digests still match.
+- **What the experiment left in the repository.** `relational_reference_loss` in
+  `bcir/hosted/training/providers.py`: the loss a student reaches by ignoring the
+  teacher entirely, which is the number that says whether a distillation run
+  learned anything. The stage reported `0.5135 -> 0.0383` for a run whose
+  held-out error never beat the 0.0161 a teacher-free model reaches. The
+  ML-component gate now computes both on real corpus text, on every host, and
+  refuses a teacher whose Gram carries no structure to distil.
 
 ## Phase 1 — complete `llvm/`
 

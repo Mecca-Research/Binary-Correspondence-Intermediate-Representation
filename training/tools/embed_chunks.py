@@ -167,11 +167,27 @@ class LexicalHashProvider:
         return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
     @classmethod
+    def word_tokens(cls, text: str) -> list[str]:
+        """The word sequence this provider actually sees, in order.
+
+        Public because a consumer reasoning about what this model can match has to
+        ask the model rather than reimplement its tokenizer. `verify_retrieval.py`
+        checks the harness control's premise -- that a control query is its
+        target's own heading wording, verbatim -- and "verbatim" is true only
+        after this normalization: `_WORD_RE` has no `>` in it, so the `" > "` the
+        chunk joins its trail with and the `"[subject]"` prefix are not words, and
+        the query's word sequence is a contiguous run inside the heading line's.
+        A second definition of this would let the two drift apart silently, which
+        is why `_features` calls it too.
+        """
+        return _WORD_RE.findall(cls._normalize_text(text))
+
+    @classmethod
     def _features(cls, text: str) -> Counter[str]:
         norm = cls._normalize_text(text)
         counts: Counter[str] = Counter()
 
-        tokens = _WORD_RE.findall(norm)
+        tokens = cls.word_tokens(text)
         for token in tokens:
             counts[f"w:{token}"] += 1
         for left, right in zip(tokens, tokens[1:]):

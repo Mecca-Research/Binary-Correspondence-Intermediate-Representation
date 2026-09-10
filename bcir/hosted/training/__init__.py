@@ -33,6 +33,8 @@ from .providers import (
     TeacherRequest,
     TeacherResponse,
     relational_embedding_targets,
+    relational_gram_loss,
+    relational_reference_loss,
 )
 from .pipeline import (
     PipelineStageRecord,
@@ -169,6 +171,8 @@ __all__ = [
     "prepare_corpus",
     "read_pipeline_ledger",
     "relational_embedding_targets",
+    "relational_gram_loss",
+    "relational_reference_loss",
     "self_speculative_generate",
     "token_source_from_corpus",
     "train_adaptive_pretrain",

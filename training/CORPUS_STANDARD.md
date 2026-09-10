@@ -118,6 +118,13 @@ This is `measured` / `modelled` / `estimated` applied one level up: a consumer
 that cannot tell the two apart cannot weight them, and will discover the
 difference in its own retrieval quality instead.
 
+Declaring `learned` does not make a set the one the evaluation runs on. Which
+provider the corpus retrieves with is a decision with its own criteria, measured
+rather than argued, in
+[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md) -- including the one
+change to this document a learned provider would require: re-arguing what the
+harness control means for a model that does not match substrings.
+
 `revision` is required alongside, for the same reason a benchmark pins its
 toolchain: an unpinned model is one whose vectors nobody can reproduce.
 
@@ -202,9 +209,10 @@ what it points at, a section's own heading trail.
 **Every family declares its bias**, because a pooled score hides which part of
 the corpus was easy. Three consequences are enforced rather than hoped for:
 
-- **A control never contributes to a quality score.** `heading` queries are
-  verbatim in their targets, so that family is a **positive control for the
-  harness**. It is reported in its own block and excluded from `overall` — and
+- **A control never contributes to a quality score.** `heading` queries ask with
+  their targets' own heading wording -- verbatim as a word sequence once the
+  provider's tokenizer has seen it, a premise `verify_retrieval.py` checks rather
+  than asserts -- so that family is a **positive control for the harness**. It is reported in its own block and excluded from `overall` — and
   from the lift and shuffle gates that read `overall`, which would otherwise be
   partly measuring a self-match. If it does not score near-perfectly, retrieval
   is broken and every other number in the run is noise.

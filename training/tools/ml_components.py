@@ -340,6 +340,24 @@ COMPONENTS: tuple[Component, ...] = (
         ),
     ),
     Component(
+        topic="relational-distillation-targets",
+        module="bcir.hosted.training.providers",
+        symbols=("relational_embedding_targets", "relational_reference_loss"),
+        reach="runs-here",
+        note=(
+            "The teacher side of embedding distillation, and the floor that says "
+            "whether a run learned anything from it. The targets are a cosine Gram "
+            "matrix -- basis-independent, so nothing about the teacher's coordinate "
+            "space leaks into the student -- and the reference is the loss an "
+            "orthogonal student reaches without consulting the teacher at all. "
+            "Measured on this corpus: 24 rounds of distillation against the lexical "
+            "provider reported 0.5135 -> 0.0383 while the reference sat at 0.0161, so "
+            "the run finished worse than never having looked. A falling loss on this "
+            "objective is not evidence of distillation. This module needs no torch, "
+            "so both facts are checkable on every host the corpus runs on."
+        ),
+    ),
+    Component(
         topic="embedding-distillation",
         module="bcir.hosted.training.stages",
         symbols=("train_embedding_distillation", "HostedEmbeddingStudent"),
@@ -351,7 +369,9 @@ COMPONENTS: tuple[Component, ...] = (
             "the corpus's own lexical provider produces the vectors it is built from. "
             "An earlier note here said this needed 'a teacher model this repository "
             "does not ship' -- measured, that was false, and the code constructs and "
-            "calls no teacher at all."
+            "calls no teacher at all. What it does NOT yet give this corpus is a "
+            "provider good enough to replace the lexical baseline: see the recorded "
+            "verdict in ../ROADMAP.md."
         ),
     ),
     Component(

@@ -12,10 +12,15 @@ this enforces:
      produced queries or carries a stated reason it did not. A family that
      vanishes without a word is how a length filter once deleted an entire
      source of judgments here with no visible trace.
-  3. **The harness works.** The `heading` family's query text appears verbatim
-     in its target by construction, so it must score near-perfectly. If that
-     fails, retrieval is broken and every other number in the run is noise --
-     this is the check that tells a bad model from a bad harness.
+  3. **The harness works.** The `heading` family asks with its target's own
+     heading wording by construction -- verbatim as a word sequence, once the
+     provider's tokenizer has dropped the " > " joins and the "[subject]" prefix
+     -- so it must score near-perfectly. If that fails, retrieval is broken and
+     every other number in the run is noise; this is the check that tells a bad
+     model from a bad harness. The premise is checked too, not assumed: every
+     control query's word sequence must appear as a contiguous run in the heading
+     line of the chunk it was derived from, so a reordered or truncated trail
+     fails here rather than quietly demoting the control.
   4. **The model clears both floors.** Far above a seeded random ranker, and far
      above a constant ranker that ignores the query. A score with nothing under
      it is not a measurement.
@@ -25,7 +30,7 @@ this enforces:
      arithmetic; violating one means the harness is miscounting, whatever the
      model does.
   6. **The headline is quality, not a self-match.** `overall` must pool exactly
-     the non-control queries. A control is verbatim in its target by
+     the non-control queries. A control asks with its target's own wording by
      construction, so pooling it would inflate the score AND the lift and
      shuffle gates that read it.
   7. **The artifacts belong together.** Chunks, vectors and judgments carry the
@@ -66,8 +71,13 @@ TOOLS_DIR = Path(__file__).resolve().parent
 CORPUS_ROOT = TOOLS_DIR.parent
 REPO_ROOT = CORPUS_ROOT.parent
 
-# The control's query text is literally inside its target, so anything below
-# near-perfect means the harness -- not the model -- is broken.
+# The control asks with its target's own heading wording, so anything below
+# near-perfect means the harness -- not the model -- is broken. Verbatim as a
+# WORD SEQUENCE, not as a string: the query joins the trail with a space and the
+# chunk joins it with " > " behind a "[subject] " prefix, so only 4 of the 60
+# control queries are literal substrings of their target while all 60 are
+# contiguous word runs inside its heading line once the provider's own tokenizer
+# has seen them. `check_control_premise` is what keeps that claim true.
 CONTROL_RECALL_AT_5 = 0.95
 # A working model on this corpus clears random by ~70x. Twenty is far below
 # that and far above anything noise produces, so it is a floor rather than a
@@ -165,6 +175,73 @@ def check_query_set(
     )
 
 
+def check_control_premise(
+    queries: list[dict], manifest: dict, chunk_dir: Path, embed_module, report: Report
+) -> None:
+    """The control's premise, checked instead of asserted in six documents.
+
+    The `heading` family is a control only because its query cannot legitimately
+    miss: `build_eval_queries.py` asks with a chunk's own heading trail and
+    `build_chunks.py` prefixes every chunk with that trail. Nothing enforced that
+    the two still agree. They agree as WORD SEQUENCES, not as strings: the builder
+    joins the trail with a space and the chunk with " > " behind a "[subject] "
+    prefix, so the query is a literal substring of only 4 of the 60 targets but a
+    contiguous run of words inside all 60 once the provider's own tokenizer has
+    dropped the joins and the prefix. That is the predicate below, and it is the
+    provider's tokenizer rather than a second copy of it, because what the control
+    asserts is what the retrieval model can match.
+
+    Order matters, which is why this is a subsequence and not a set. Measured over
+    the 60 control queries against a corpus built with the trail REVERSED: a
+    token-set test passes 60/60 while the subsequence test passes 4/60. Two of the
+    provider's three feature classes are word bigrams and character 4-grams, and
+    an anagram of the trail shares neither -- a set test would certify a chunk
+    whose heading the control could no longer find. A join changed on either side,
+    a prefix dropped, a trail reordered or truncated, and the control quietly stops
+    being one: still scoring, still gated at 0.95, no longer a positive control.
+    """
+    controls = {family for family, block in manifest["families"].items() if block["control"]}
+    heads: dict[str, str] = {}
+    for path in sorted(chunk_dir.glob("*.chunks.jsonl")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            chunk = json.loads(line)
+            origin = f"{chunk['source_path']}:{chunk['span']['start_line']}"
+            heads[origin] = chunk["text"].split("\n", 1)[0]
+
+    control_queries = [query for query in queries if query["family"] in controls]
+    report.require(
+        bool(control_queries),
+        "no control query was produced, so the premise below would be checked over "
+        "nothing and the harness control would be a name with no rows behind it",
+    )
+    unresolved = [query["query_id"] for query in control_queries if query["origin"] not in heads]
+    report.require(
+        not unresolved,
+        f"{len(unresolved)} control query/queries name an origin no chunk claims, so "
+        "their premise cannot be checked at all",
+    )
+    provider = embed_module.LexicalHashProvider
+    for query in control_queries:
+        head = heads.get(query["origin"])
+        if head is None:
+            continue
+        asked = provider.word_tokens(query["query"])
+        carried = provider.word_tokens(head)
+        run_found = bool(asked) and any(
+            carried[start : start + len(asked)] == asked
+            for start in range(len(carried) - len(asked) + 1)
+        )
+        report.require(
+            run_found,
+            f"control {query['query_id']}: its query's word sequence {asked[:6]} is not "
+            f"a contiguous run inside the heading line of {query['origin']}; the "
+            "control's premise is that a chunk carries its own heading trail, and this "
+            "one does not, so a miss here would no longer mean the harness is broken",
+        )
+
+
 def check_metrics(report_data: dict, manifest: dict, report: Report) -> None:
     for scope, block in [("overall", report_data["overall"])] + sorted(
         report_data["families"].items()
@@ -196,8 +273,8 @@ def check_metrics(report_data: dict, manifest: dict, report: Report) -> None:
         report.require(
             block["model"]["recall@5"] >= CONTROL_RECALL_AT_5,
             f"harness control {family!r} scored recall@5 "
-            f"{block['model']['recall@5']:.3f} < {CONTROL_RECALL_AT_5}; its query text "
-            "is verbatim in its target, so retrieval itself is broken",
+            f"{block['model']['recall@5']:.3f} < {CONTROL_RECALL_AT_5}; it asks with "
+            "its target's own heading wording, so retrieval itself is broken",
         )
 
     # A control is trivial by construction, so pooling it into the headline
@@ -413,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
         documents = {row["source_path"] for row in embedding_set.rows}
 
         check_query_set(queries, manifest, documents, report)
+        check_control_premise(queries, manifest, chunk_dir, embed_module, report)
         # Refuses a stale chunk/vector/judgment combination outright.
         evaluator.require_matching_corpus(chunk_dir, embedding_set, manifest)
         controls = frozenset(
