@@ -14,17 +14,15 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+TOOLS_DIR = Path(__file__).resolve().parent
+SHARED_TOOLS = TOOLS_DIR.parent.parent / "tools"
+for _path in (str(TOOLS_DIR), str(SHARED_TOOLS)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from llvm_profile import PROFILE  # noqa: E402
+
 TOOL_BASES = ("mlir-opt", "mlir-translate", "llvm-as", "opt")
-
-
-def find_tool(base: str, major: int) -> str | None:
-    suffix = os.environ.get("LLVM_SUFFIX", "")
-    candidates = ([f"{base}{suffix}"] if suffix else []) + [f"{base}-{major}", base]
-    for candidate in candidates:
-        path = shutil.which(candidate)
-        if path:
-            return path
-    return None
 
 
 def expected_major(registry_major: int) -> int:
@@ -149,7 +147,7 @@ def main() -> int:
         return 1
 
     major = expected_major(int(registry["toolchain_major"]))
-    tools = {base: find_tool(base, major) for base in TOOL_BASES}
+    tools = {base: PROFILE.find_tool(base, major=major) for base in TOOL_BASES}
     missing = sorted(base for base, path in tools.items() if path is None)
     if missing:
         message = f"reduced MLIR grading coverage: missing {', '.join(missing)}; only Tier 0 file/rubric checks can run"

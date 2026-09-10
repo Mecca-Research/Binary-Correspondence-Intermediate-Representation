@@ -16,18 +16,18 @@ import statistics
 import sys
 from typing import Any
 
-from safe_process import run_bounded
+TOOLS_DIR = Path(__file__).resolve().parent
+SHARED_TOOLS = TOOLS_DIR.parent.parent / "tools"
+for _path in (str(TOOLS_DIR), str(SHARED_TOOLS)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from llvm_profile import PROFILE  # noqa: E402
+from safe_process import run_bounded  # noqa: E402
 
 RUNNER_SCHEMA_VERSION = "1.0"
 GENERATOR_CONTRACT_VERSION = "1.0"
 MAX_JSON_BYTES = 1024 * 1024
-ANSWER_EXTENSIONS = {
-    "llvm-ir": ".ll",
-    "mlir": ".mlir",
-    "markdown-review": ".md",
-    "pass-output": ".ll",
-    "diagnostic": ".md",
-}
 FIXTURE_NAMES = ("reference", "empty", "partial")
 FORBIDDEN_GENERATED_SUFFIXES = {".sh", ".bash", ".so", ".dylib", ".dll", ".o", ".obj", ".a", ".exe"}
 FORBIDDEN_GENERATED_NAMES = {"Makefile", "CMakeLists.txt", "build.ninja", "meson.build"}
@@ -61,13 +61,6 @@ def git_value(repo_root: Path, *args: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def find_tool(name: str) -> str | None:
-    suffix = os.environ.get("LLVM_SUFFIX", "")
-    candidates = ([name + suffix] if suffix else []) + [name]
-    candidates.extend(f"{name}-{version}" for version in range(30, 9, -1))
-    return next((path for candidate in candidates if (path := shutil.which(candidate))), None)
-
-
 def tool_version(path: str) -> str:
     result = run_bounded([path, "--version"], timeout=5)
     lines = (result.stdout or result.stderr).splitlines()
@@ -75,7 +68,7 @@ def tool_version(path: str) -> str:
 
 
 def answer_path(attempts_dir: Path, entry: dict[str, Any]) -> Path:
-    return attempts_dir / entry["id"] / ("answer" + ANSWER_EXTENSIONS[entry["answer_kind"]])
+    return attempts_dir / entry["id"] / ("answer" + PROFILE.extension_for(entry["answer_kind"]))
 
 
 def repository_path(repo_root: Path, value: str) -> Path:
@@ -85,15 +78,6 @@ def repository_path(repo_root: Path, value: str) -> Path:
     except ValueError as exc:
         raise ValueError(f"repository path escapes the checkout: {value}") from exc
     return path
-
-
-def model_visible_prompt(text: str) -> str:
-    """Remove reference-solution paths while retaining answer-check instructions."""
-    return re.sub(
-        r"(?:training/llvm/exercises/)?[^\s`\"']*\.solution\.(ll|mlir|md)",
-        lambda match: f"answer.{match.group(1)}",
-        text,
-    )
 
 
 def discover_context_paths(repo_root: Path, metadata: dict[str, Any]) -> list[str]:
@@ -196,7 +180,7 @@ def collect_tools(entries: list[dict[str, Any]], grader: Path) -> dict[str, dict
         "grader": {"path": str(grader), "version": "schema 1.0", "sha256": sha256(grader)},
     }
     for name in sorted(names):
-        path = find_tool(name)
+        path = PROFILE.find_tool(name)
         tools[name] = {
             "available": path is not None,
             "path": path,
@@ -255,7 +239,7 @@ def prepare(
         directory.mkdir(parents=True, exist_ok=True)
         prompt_source = repository_path(repo_root, entry["prompt_path"])
         prompt_copy = directory / "prompt.md"
-        prompt_text = model_visible_prompt(prompt_source.read_text(encoding="utf-8"))
+        prompt_text = PROFILE.model_visible(prompt_source.read_text(encoding="utf-8"))
         prompt_copy.write_text(prompt_text, encoding="utf-8")
         bundled_context: list[str] = []
         for relative in entry["context_paths"]:

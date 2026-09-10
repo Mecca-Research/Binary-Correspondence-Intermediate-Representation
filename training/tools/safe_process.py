@@ -1,4 +1,14 @@
-"""Bounded, deterministic subprocess execution for the training grader."""
+"""Bounded, deterministic subprocess execution for the training corpus.
+
+Every external tool a gate or grader runs goes through here, so the bounds are
+stated once instead of per caller: a fresh working directory, a small fixed
+environment with the network proxies cleared, a wall-clock timeout, and output
+captured to files and read back under a byte cap rather than buffered in a pipe
+that a chatty tool can fill.
+
+Nothing in it is subject-specific, which is why it sits in `training/tools/`
+rather than beside one subject's scripts.
+"""
 
 from __future__ import annotations
 
@@ -67,7 +77,7 @@ def run_bounded(
     """Run an argument-array command in a fresh directory with bounded capture."""
     if not command or any(not isinstance(item, str) for item in command):
         raise ValueError("external commands must be non-empty argument arrays of strings")
-    with tempfile.TemporaryDirectory(prefix="training-llvm-tool-") as temp_name:
+    with tempfile.TemporaryDirectory(prefix="training-tool-") as temp_name:
         root = Path(temp_name)
         stdout_path = root / "stdout"
         stderr_path = root / "stderr"

@@ -4,14 +4,39 @@ This directory contains repository-maintenance scripts for the `training/llvm/`
 corpus. They are intentionally small shell scripts so CI and local agents can run
 the same checks without a build-system dependency.
 
+## What is here and what is shared
+
+Grading and dataset export are **not** LLVM-specific, and since Phase 0.7 they
+are not implemented here. They live in [`../../tools/`](../../tools):
+
+| Shared module | Owns |
+| --- | --- |
+| [`grading.py`](../../tools/grading.py) | answer confinement, attempt-tree policy, points, structural and rubric checks, the report shape, the CLI |
+| [`dataset_export.py`](../../tools/dataset_export.py) | split manifests, checksums, prompt redaction, artifact roles, deterministic JSONL |
+| [`subject_profile.py`](../../tools/subject_profile.py) | the vocabulary a subject uses to describe itself to those two |
+| [`safe_process.py`](../../tools/safe_process.py) | bounded, environment-controlled subprocess execution |
+
+What remains LLVM's is [`llvm_profile.py`](llvm_profile.py): five answer kinds,
+the `llvm-as` / `opt` / `mlir-opt` checks, the version-suffix search, the
+solution-path redaction, and the `lli` harness. `grade-exercises.py` and
+`export-exercise-dataset.py` are the two-import entry points that hand that
+profile to a shared kernel.
+
+The boundary is gated, not just described:
+[`verify_grading.py`](../../tools/verify_grading.py) fails if a subject
+identifier appears in the shared rail's code, if any of those predicates gains a
+second definition anywhere under `training/`, or if a synthetic non-LLVM subject
+cannot be graded end to end.
+
 ## Scripts
 
 | Script | Purpose | Required tools |
 | --- | --- | --- |
 | `generate-exercise-variants.py` | Produces a small fixed-seed set of typed prompt/reference pairs, grades every reference through the attempt-grader engine, rejects unsafe/trivial/duplicate IR, and records split lineage plus artifact hashes. | `llvm-as`, `opt`, `lli` |
-| `grade-exercises.py` | Grades stable-ID attempt directories or a single answer with deterministic partial credit; `--self-test` grades registered references. JSON output records every pass/fail/skip, toolchain version, raw score, executed-check score, and confidence. | Python 3; optional LLVM/MLIR tools declared per exercise |
+| `grade-exercises.py` | LLVM entry point to the shared grader: grades stable-ID attempt directories or a single answer with deterministic partial credit; `--self-test` grades registered references. JSON output records every pass/fail/skip, toolchain version, raw score, executed-check score, and confidence. | Python 3; optional LLVM/MLIR tools declared per exercise |
+| `llvm_profile.py` | The subject profile the shared rails consume: answer kinds and extensions, the `llvm-as`/`opt`/`mlir-opt` checks, tool discovery, solution redaction, and the `lli` harness. Not a CLI. | Python 3 |
 | `grade-exercises.sh` | Repository-root shell entry point for `grade-exercises.py`, preserving arguments and exit status. | Bash, Python 3 |
-| `export-exercise-dataset.py` | Exports deterministic JSON Lines for `train`, `validation`, `test`, or `all`; solution content is omitted by default and must remain omitted for model-visible held-out evaluation. | Python 3 |
+| `export-exercise-dataset.py` | LLVM entry point to the shared exporter: deterministic JSON Lines for `train`, `validation`, `test`, or `all`; solution content is omitted by default and must remain omitted for model-visible held-out evaluation. Supplies the LLVM/MLIR version assumptions each record carries. | Python 3 |
 | `verify-dataset-export.py` | Validates split/leakage assignments and schema, regenerates solution-free and trusted solution-bearing exports, checks hashes and paths, and proves byte-for-byte determinism. | Python 3 |
 | `run-eval.py` | Prepares solution-free prompt/context bundles, invokes a provider-neutral local or fixture adapter, grades attempts, and emits aggregate/reproducibility reports. | Python 3; exercise-declared grading tools |
 | `verify-examples.sh` | Builds the known-good standalone `.ll` manifest from chapter-local `examples/` directories, assembles each file with `llvm-as`, and runs `opt -passes=verify`. It also checks the broken `.ll.txt` sentinel so intentionally invalid examples do not drift into the manifest. | `llvm-as`, `opt` |
@@ -256,7 +281,11 @@ When adding a new script:
 3. print the command being demonstrated before executing it;
 4. write demo output either to stdout or to a clearly named file under `${TMPDIR:-/tmp}`;
 5. make it fail closed when a required fixture disappears;
-6. wire it into `.github/workflows/ci.yml` when it guards repository health.
+6. wire it into `.github/workflows/ci.yml` when it guards repository health;
+7. ask whether it is about LLVM at all. If a second subject would want the same
+   script, it belongs in `training/tools/` with the subject-specific part in
+   `llvm_profile.py` — copying it later is how three copies of `find_tool` came
+   to exist, and the gate now refuses the fourth.
 
 ## Advanced chapter integration gates
 

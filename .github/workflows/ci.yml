@@ -587,6 +587,13 @@ jobs:
       - name: Training corpus feeds BCIR's training stack (corpus, tokenizer, examples)
         run: python3 training/tools/verify_training_export.py --require-bcir
 
+      # The grading and dataset machinery is shared by every subject, so what is
+      # gated is that it STAYS shared: no subject identifier in its code, one
+      # definition of each predicate that used to have three, and a synthetic
+      # subject graded end to end through the real kernel.
+      - name: Training corpus shared grading rail (subject-neutral, single-definition)
+        run: python3 training/tools/verify_grading.py
+
       - name: LLVM training llc smoke
         run: |
           if command -v llc >/dev/null; then

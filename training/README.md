@@ -18,6 +18,12 @@ One body of knowledge, delivered in three shapes:
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
 The plan for growing it is [`ROADMAP.md`](ROADMAP.md).
 
+A subject brings its own material and its own gates; it does not bring its own
+grader. Grading, dataset export and bounded tool execution live in
+[`tools/`](tools) and are shared, with each subject declaring only what is
+genuinely its own — see *What a subject owns, and what it inherits* in the
+standard.
+
 ## Subjects
 
 | Folder | Status | Covers |

@@ -60,7 +60,7 @@ the intended pressure.
 
 ## Phase 0 — corpus infrastructure
 
-*Status: the first slice has landed.*
+*Status: complete. Every slice below has landed and is gated.*
 
 | Slice | State |
 | --- | --- |
@@ -70,7 +70,7 @@ the intended pressure.
 | 0.4 Record verifier (anti-vacuity, provenance, leakage, determinism) | landed |
 | 0.5 Embedding step: a named model fills `embedding`, provenance recorded | landed |
 | 0.6 Retrieval evaluation: does a chunk set answer the questions it should? | landed |
-| 0.7 Extract the grader/dataset machinery from `llvm/` to `training/` | open |
+| 0.7 Extract the grader/dataset machinery from `llvm/` to `training/` | landed |
 
 **0.5 closed with** `tools/embed_chunks.py`, `tools/search_chunks.py`,
 `tools/verify_embeddings.py`, and `schema/embedding-set-v1.json`. Vectors are
@@ -179,7 +179,50 @@ putting valid IR on the losing side of a pair is a false label no schema catches
 The corpus records only `data` and `tokenizer` in BCIR's ledger. A first cut
 appended `sft` and the ledger rejected it — correctly, since there `sft` means a
 model was trained. These are training inputs; the corpus runs no training stage,
-and Phase 0.7 is where the shared machinery for one would live.
+and 0.7 below shares the grading and dataset machinery a training stage would
+be evaluated with, without claiming to run one.
+
+**0.7 closed with** `tools/grading.py`, `tools/dataset_export.py`,
+`tools/subject_profile.py`, `tools/safe_process.py` and `tools/verify_grading.py`,
+plus `llvm/tools/llvm_profile.py` — the LLVM half of what used to be one 669-line
+grader and one 280-line exporter under `llvm/tools/`.
+
+The motive was not tidiness. Three tools under `llvm/tools/` each carried their
+own `find_tool`, two more their own `model_visible_prompt`, and two their own
+`normalized_text`. All of the copies agreed and nothing made them agree; a
+fourth `find_tool` turned up in `verify-mlir-lowering.py` when the new gate first
+ran, with a *different* search order behind the same name. That is the shape a
+second subject would have multiplied.
+
+What a subject now declares is small enough to enumerate: its answer kinds and
+extensions, the tools that prove an answer well-formed and their argument
+arrays, how binaries are discovered on a host, how a reference solution is
+hidden from a model, and whether a submission may be run. Everything else —
+confinement, the attempt-tree policy, point allocation, structural and rubric
+matching, skip-versus-fail, the report shape, split manifests, checksums,
+deterministic JSONL — is inherited.
+
+Two things make the extraction checkable rather than declared. `verify_grading.py`
+refuses a subject identifier in the shared rail's code, refuses a second
+definition of any policy predicate anywhere under `training/`, and grades a
+**synthetic non-LLVM subject** end to end through the real kernel — an
+abstraction exercised only by its original caller has not been shown to be one.
+And the extraction was proved behaviour-preserving before it landed: the
+grader's self-test report, its report over the incomplete-attempt fixtures, its
+text rendering, and all three dataset export modes are byte-identical to the
+pre-extraction tool, modulo a random temporary-directory name.
+
+Ten faults were injected, one per new check, and all ten fired. One of them found
+a defect in the gate itself: with the skip check broken the gate raised an
+`IndexError` where a verdict belonged, which is the same fail-open shape the
+rails exist to refuse.
+
+**Still open in this area, deliberately.** `build_distillation.py` sits in the
+shared `tools/` directory and still knows LLVM: its five record extractors read
+`.ll` fixtures, opt goldens and frontend claims by name. That is the same
+boundary problem in the opposite direction, and closing it is a separate slice —
+the extractors belong to the subject, discovered through a profile, the way
+answer kinds now are.
 
 ## Phase 1 — complete `llvm/`
 

@@ -16,6 +16,16 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+TOOLS_DIR = Path(__file__).resolve().parent
+SHARED_TOOLS = TOOLS_DIR.parent.parent / "tools"
+for _path in (str(TOOLS_DIR), str(SHARED_TOOLS)):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
+
+from dataset_export import sha256_text  # noqa: E402
+from llvm_profile import PROFILE  # noqa: E402
+import grading  # noqa: E402
+
 GENERATOR_VERSION = "1.0.0"
 RECORD_SCHEMA_VERSION = "1.0.0"
 DEFAULT_BUDGET = 5
@@ -73,10 +83,6 @@ class Family:
 
 def stable_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def seed_for_family(seed: int, family: str, attempt: int) -> int:
@@ -626,17 +632,6 @@ FAMILIES = (
 )
 
 
-def load_grader(training_root: Path) -> Any:
-    path = training_root / "tools" / "grade-exercises.py"
-    spec = importlib.util.spec_from_file_location("llvm_training_grade_exercises", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load grader from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
 def split_assignments(training_root: Path) -> dict[str, dict[str, str]]:
     data = json.loads((training_root / "dataset" / "splits-v1.json").read_text(encoding="utf-8"))
     result = {}
@@ -760,9 +755,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--max-attempts-per-family must be positive")
 
     training_root = Path(__file__).resolve().parents[1]
-    grader = load_grader(training_root)
     split_by_parent = split_assignments(training_root)
-    tools = {name: grader.find_tool(name) for name in ("llvm-as", "opt", "lli")}
+    tools = {name: PROFILE.find_tool(name) for name in ("llvm-as", "opt", "lli")}
     missing = [name for name, path in tools.items() if not path]
     if missing:
         raise SystemExit("required variant oracle tool(s) not found: " + ", ".join(missing))
@@ -829,7 +823,7 @@ def main(argv: list[str] | None = None) -> int:
                 variant_dir.mkdir(parents=True)
                 answer = variant_dir / "reference.solution.ll"
                 answer.write_text(solution, encoding="utf-8")
-                result = grader.grade_entry(manifest, answer, tools)
+                result = grading.grade_entry(PROFILE, manifest, answer, tools)
                 failed = [check["id"] for check in result["checks"] if check["status"] != "pass"]
                 if failed:
                     reject("grading manifest rejected reference: " + ",".join(failed))
