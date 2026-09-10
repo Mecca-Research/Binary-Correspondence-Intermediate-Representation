@@ -80,9 +80,9 @@ void MyPass::runOnOperation() {
 An analysis is any class constructible from the operation. Ask for it and you get it,
 cached per operation.
 
-**The default is the inverse of LLVM's, and this is the part to remember.** An LLVM pass
-declares what it preserved and everything else is invalidated. An MLIR pass **invalidates
-everything** unless it says otherwise:
+**The policy is the same as LLVM's; only the API differs.** Both invalidate everything a
+pass did not claim to preserve. LLVM says so by *returning* a `PreservedAnalyses`; MLIR
+says so by *calling* a method, and saying nothing means preserving nothing:
 
 ```cpp
 markAllAnalysesPreserved();               // I changed nothing
@@ -90,7 +90,10 @@ markAnalysesPreserved<DominanceInfo>();   // I changed nothing dominance cares a
 ```
 
 A pass that examines IR without modifying it and forgets to say so is not incorrect — it
-is slow, and invisibly so, because every analysis downstream is recomputed.
+is slow, and invisibly so, because every analysis downstream is recomputed. The trap is
+not a reversed default, it is a *silent* one: in LLVM the return type makes you write
+something, while in MLIR doing nothing compiles fine and quietly throws away every cached
+analysis.
 
 ## Passes run in parallel by default
 
@@ -113,7 +116,7 @@ ordering when debugging.
   worse, silently match nothing.
 - Do not debug a pipeline that "does nothing" by studying the pass. Check the anchor
   operation name first.
-- Do not omit `markAllAnalysesPreserved()` from an analysis-only pass.
+- Do not omit `markAllAnalysesPreserved()` from an analysis-only pass. Nothing will fail; everything downstream will just be recomputed.
 - Do not touch IR outside your own operation, however convenient. The pass manager has
   already promised somebody it is safe to run you in parallel.
 - Do not chase a nondeterministic diagnostic order before trying

@@ -23,7 +23,16 @@ Same source, same optimisation level, same semantics. Three changes.
 
 ## `captures(...)` replaces `nocapture`
 
-`nocapture` is gone. Not deprecated — **removed**; LLVM 23's assembler does not accept it.
+`nocapture` is gone from the attribute table LLVM 23 defines. It is **not** gone from what
+`llvm-as` will read: feed it `ptr nocapture %p` and it parses, auto-upgrading the attribute
+to `captures(none)` on the way in. Old IR keeps working; what changed is the spelling LLVM
+*emits* and the one its tables know about.
+
+That distinction matters and is easy to get backwards. Compare it with
+[`ptrtoaddr`](02-ptrtoaddr.md), which older assemblers reject outright with `expected
+instruction opcode` — a genuinely unknown token has no upgrade path, while a renamed
+attribute does. "Removed" can mean either, and only one of them breaks your input.
+
 The replacement says more than the old attribute could:
 
 | Spelling | Means |
@@ -89,8 +98,10 @@ than by the attribute that requests it.
 
 ## Pitfalls checklist
 
-- Do not write `nocapture` in IR intended for LLVM 23; it will not assemble. Do not read
-  its absence from newer output as "the optimiser lost the fact".
+- Do not write `nocapture` in new IR for LLVM 23. It still assembles — the auto-upgrade
+  accepts it — but it is not the spelling the language defines any more, and reading it
+  back shows you `captures(none)`. Equally, do not read its absence from newer output as
+  "the optimiser lost the fact".
 - Do not treat `captures(address)` as equivalent to `captures(none)`. They differ exactly
   where aliasing questions get interesting.
 - Do not read `range(i32 0, 256)` as inclusive at both ends. The high bound is exclusive.

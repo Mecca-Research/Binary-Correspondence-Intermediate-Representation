@@ -36,9 +36,18 @@ func.func @caller(%arg0: i32) -> i32 {
 - `func.call` implements `CallOpInterface` — "I am a call, and here is my callee"
 - `func.func` implements `CallableOpInterface` — "I am callable, and here is my body"
 
-Any dialect implementing those two gets the same inliner with no change to the inliner.
-That is the whole mechanism, and it is why adding a dialect to MLIR does not mean
-reimplementing the pass pipeline.
+Those two describe the call graph, and they are what lets the inliner *find* something to
+inline without knowing any dialect. They are necessary — and on their own they are not
+enough. MLIR also asks the **dialect** whether inlining is legal here, through a
+`DialectInlinerInterface`: may this operation be inlined, may this region, and what
+materialization is needed when types or control flow have to be adapted at the boundary.
+
+The `func` example above works because upstream registers that interface too. A dialect
+that implements only the two op interfaces will watch `--inline` leave every call exactly
+where it was — which is a confusing result if you believed the two-interface recipe was
+the whole story. It is the *shape* of the mechanism that generalises: the pass asks
+questions through interfaces rather than switching on dialect names, and a dialect answers
+as many of them as it wants to participate in.
 
 Runnable: [`examples/interfaces-inlining.mlir`](examples/interfaces-inlining.mlir).
 
@@ -50,13 +59,18 @@ Runnable: [`examples/interfaces-inlining.mlir`](examples/interfaces-inlining.mli
 | **Type interface** | A type | "Is this shaped? What is its element type?" |
 | **Attribute interface** | An attribute | "Is this an integer-like attribute, whatever dialect defined it?" |
 
-Op interfaces are the ones you meet first and author most. The other two matter at
-conversion boundaries: a `TypeConverter` that must handle types from dialects it does not
-know reaches them through type interfaces, which is what makes
-[`../18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md`](../18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md)
-work for a custom type at all.
+Op interfaces are the ones you meet first and author most.
 
-## Interfaces you will meet reading real IR
+Type interfaces are worth one correction, because the obvious guess is wrong: a
+`TypeConverter` does **not** discover conversions by asking types about their interfaces.
+You register callbacks with `addConversion`, one per type you intend to handle, and the
+converter runs them in reverse order of registration —
+[`../18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md`](../18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md)
+does exactly that for each custom type. Type interfaces are for asking a type a *question*
+it can answer generically (`ShapedType`: what is your element type, what is your rank), not
+for dispatching a conversion to it.
+
+## Interfaces and traits you will meet reading real IR
 
 - `MemoryEffectOpInterface` — what an op reads and writes. Canonicalization and
   dead-code elimination consult it before removing anything; an op with unmodelled effects
@@ -67,16 +81,24 @@ work for a custom type at all.
 - `InferTypeOpInterface` — an op that computes its own result types, so a builder does not
   have to be told them.
 - `Symbol` / `SymbolTable` — named things and the scopes holding them, which is how
-  `@callee` resolves at all.
+  `@callee` resolves at all. These two are *traits*, not interfaces; see below.
 
 ## Traits are not interfaces
 
-A **trait** is a compile-time marker with no methods: `Pure`, `Commutative`,
-`SameOperandsAndResultType`, `IsolatedFromAbove`. It tells the framework a fact and often
-buys generic verification for free.
+A **trait** is a statically dispatched mixin: `Pure`, `Commutative`,
+`SameOperandsAndResultType`, `IsolatedFromAbove`, `Symbol`, `SymbolTable`. Attaching one
+states a fact about the operation, and often buys generic verification for free — but a
+trait is not merely a marker. It can carry methods and verification hooks, resolved at
+compile time because the concrete op type is known.
 
-An **interface** has methods and is dynamically dispatched: the pass calls it and gets an
-answer computed by the dialect.
+An **interface** is dynamically dispatched: a pass holding an unknown `Operation *` asks
+whether it implements the interface and, if so, calls through it. The dialect's
+implementation answers.
+
+The practical difference is *who can ask*. A trait is available to code that already knows
+the concrete op type; an interface is available to code that does not — which is why the
+generic passes are written against interfaces. `Symbol` and `SymbolTable` are traits, and
+appear in the list above for what they let you look up, not as counter-examples.
 
 `IsolatedFromAbove` is the trait worth knowing by name, because it is load-bearing for the
 pass manager: it means the op's regions do not reference values defined outside it, which

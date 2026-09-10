@@ -328,7 +328,7 @@ retraction:
 
 ## Phase 1 — complete `llvm/`
 
-*Status: LLVM 15–18 material is complete and gated. The version and MLIR gaps are open.*
+*Status: **complete**. Every slice below has landed and is gated. The corpus is verified against LLVM 18 (its declared baseline) and LLVM 23 (the release it tracks) in separate CI jobs that own different claims, and the MLIR gap is closed by [`llvm/24-mlir-infrastructure/`](llvm/24-mlir-infrastructure).*
 
 | Slice | Work |
 | --- | --- |
@@ -399,9 +399,14 @@ the owner of that skip. The job also refuses to run vacuously: it asserts `llvm-
 resolves and reports major 23 before any gate runs, because a silent fall back to Ubuntu's
 18 would let every step below pass while proving nothing about LLVM 23.
 
-Not repeated in the 23 job: `build-pass-plugin.sh`. A plugin is loadable only by an `opt`
-of its own major, so building it at 23 is a genuinely different test — but it could not be
-validated before landing here, and an unvalidated CI step is how a red push happens.
+Not repeated in the 23 job: `build-pass-plugin.sh` and `run-lto-matrix.sh`. A plugin is
+loadable only by an `opt` of its own major, and the LTO matrix needs a matching `lld`, so
+both are genuinely different tests at 23 — but neither could be validated before landing
+here: the authoring environment's toolchain is an extracted tree whose CMake package is
+incomplete, and that job installs no `lld-23`. An unvalidated CI step is how a red push
+happens. Both still run at 18, and the job's own comment now says "the gates listed"
+rather than "every gate" — a claim that outruns what a job does is exactly what this
+corpus exists to catch, including when the corpus makes it.
 
 **What the surface survey found beyond 1.3.** Measuring the corpus against the whole
 LLVM 23 surface (not only the 18 → 23 delta) turned up one gap worse than absence, and it

@@ -53,11 +53,31 @@ same module — that is checked, not assumed.
 
 **Why this matters in practice:** a dialect MLIR has not registered *cannot* be printed in
 custom form, because the custom form lives in the dialect's own C++. So a tool that meets
-an unregistered dialect falls back to generic syntax, and a file written in generic syntax
-can be parsed by an `mlir-opt` that knows nothing about the dialect at all. That is
-exactly what makes the IRDL projection in
+an unregistered dialect falls back to generic syntax.
+
+Generic syntax is necessary for that, but on its own it is **not sufficient**. Hand
+`mlir-opt` an operation from a dialect it has never heard of and it refuses even in
+generic form:
+
+```console
+$ mlir-opt unregistered.mlir
+error: operation being parsed with an unregistered dialect. If this is intended,
+please use -allow-unregistered-dialect with the MLIR tool used
+```
+
+There are two ways past that, and they are not equivalent:
+
+- `--allow-unregistered-dialect` tells the tool to carry the operation as opaque text. It
+  can round-trip it and nothing more — no verification, no folding, no lowering. This
+  corpus's own registry uses it for exactly that, on its Tier 1 unregistered-dialect
+  sketches.
+- **Registering the dialect** — from an IRDL file with `--irdl-file`, or by linking it in
+  — gives the tool the operation's real definition, so it can verify it.
+
+That second one is what makes the IRDL projection in
 [`../22-bcir-approach/04-dialect-as-data.md`](../22-bcir-approach/04-dialect-as-data.md)
-usable from stock MLIR.
+worth having: stock `mlir-opt` does not merely tolerate BCIR IR, it *checks* it. Generic
+syntax is how the operation is spelled; the IRDL file is what makes it meaningful.
 
 ## Inherent and discardable attributes
 
@@ -67,14 +87,22 @@ Look again at the generic form:
 %0 = "arith.addi"(%arg0, %arg1) <{overflowFlags = #arith.overflow<none>}> : (i32, i32) -> i32
 ```
 
-The `<{ ... }>` is not decoration. Attributes inside it are **inherent**: they are part of
-the operation's definition, the verifier knows about them, and removing one makes the op
-invalid. Attributes printed *outside* that group are **discardable**: any pass may attach
-them, and any pass may drop them without asking.
+The `<{ ... }>` is not decoration. Attributes inside it are **inherent**: they belong to the
+operation's definition, so the registered op knows their names and meanings and the
+verifier can reason about them. Attributes printed *outside* that group are
+**discardable**: any pass may attach them, and any pass may drop them without asking.
+
+Inherent does not mean *mandatory*. An ODS definition may declare an attribute
+`OptionalAttr`, and plenty do; such an operation is perfectly valid without it. The
+distinction is about **who owns the attribute**, not about whether every instance carries
+one: an inherent attribute is part of the op's contract, so dropping one changes what the
+op means and the verifier gets a say. A discardable attribute is a note anyone may leave
+and anyone may erase.
 
 That distinction is the answer to a question the lowering chapters raise repeatedly —
-which attributes survive a rewrite? Inherent ones must, because the op cannot exist
-without them. Discardable ones are advisory, and a pass that drops one is not
+which attributes survive a rewrite? An inherent attribute is part of what the operation
+*is*, so a rewrite that drops one has changed the operation's meaning and owes an
+explanation. A discardable attribute is advisory, and a pass that drops one is not
 misbehaving.
 
 It is also the direct MLIR analogue of the LLVM lesson in

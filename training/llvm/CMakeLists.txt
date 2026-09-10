@@ -80,7 +80,7 @@ add_custom_target(training-llvm-verify-mlir-examples
   VERBATIM)
 add_training_script_target(training-llvm-verify-bcir-mapping verify-bcir-mapping.sh)
 
-# These three need no LLVM toolchain at all: they read the repository's own
+# These need no LLVM toolchain at all: they read the repository's own
 # sources and the corpus's checked-in fixtures, so they run on every host.
 add_custom_target(training-llvm-verify-mlir-rail-references
   COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-mlir-rail-references.py"
@@ -89,6 +89,23 @@ add_custom_target(training-llvm-verify-mlir-rail-references
   VERBATIM)
 add_custom_target(training-llvm-verify-benchmark-analysis
   COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-benchmark-analysis.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  ${TRAINING_TERMINAL}
+  VERBATIM)
+# The LangRef surface delta is pure data on a host with no LLVM headers: it diffs two
+# checked-in snapshots and checks every moved item has a disposition. Where headers ARE
+# installed it also drift-checks that major's snapshot, so a developer with llvm-dev gets
+# the stronger check for free.
+add_custom_target(training-llvm-verify-langref-delta
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-langref-delta.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  ${TRAINING_TERMINAL}
+  VERBATIM)
+# Chapter 24's behaviour claims. Skips with its reason printed where mlir-opt is absent,
+# and runs for real on a developer host that has one -- which is precisely the host where
+# leaving it out of the aggregate would hide a regression.
+add_custom_target(training-llvm-verify-mlir-infrastructure
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-mlir-infrastructure.py"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
   ${TRAINING_TERMINAL}
   VERBATIM)
@@ -143,6 +160,8 @@ add_custom_target(training-llvm-check
     training-llvm-verify-mlir-examples
     training-llvm-verify-bcir-mapping
     training-llvm-verify-mlir-rail-references
+    training-llvm-verify-langref-delta
+    training-llvm-verify-mlir-infrastructure
     training-llvm-verify-benchmark-analysis
     training-llvm-verify-frontend-lowering
     training-llvm-verify-examples

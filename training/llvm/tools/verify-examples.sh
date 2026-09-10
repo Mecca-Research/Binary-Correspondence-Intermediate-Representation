@@ -9,6 +9,21 @@ status=0
 count=0
 KNOWN_INVALID_SENTINEL="$TRAINING_ROOT/examples/broken-example.ll.txt"
 
+# --require-gated makes a version-gated example that SKIPS a failure. It belongs to the
+# job that installs the newest toolchain the corpus tracks, and it exists because the
+# directive alone left a hole: an example declaring a major NOBODY has -- a future release,
+# or a typo like `>= 24` -- skipped on every job and every one of them exited 0. Worse, the
+# note printed on the way out said "the job that installs the newer toolchain verifies
+# them", which was then false. A skip is honest only where some job does the work; this
+# flag is what makes that true rather than asserted.
+require_gated=0
+for arg in "$@"; do
+  case "$arg" in
+    --require-gated) require_gated=1 ;;
+    *) printf 'usage: %s [--require-gated]\n' "$0" >&2; exit 2 ;;
+  esac
+done
+
 find_tool() {
   local base=$1
   local tool
@@ -123,12 +138,15 @@ if [ "$count" -eq 0 ]; then
 fi
 
 # Anti-vacuity for the directive itself. A version requirement is a way to say "check this
-# elsewhere", so it has to be checked SOMEWHERE: if every gated example skipped here, the
-# CI job that installs the newer toolchain is the one that owns them, and a run where they
-# ALL skip must not read as a run that verified them. Nothing is wrong with a local skip;
-# what would be wrong is letting the count disappear.
-if [ "$gated" -gt 0 ] && [ "$skipped" -eq "$gated" ]; then
-  printf 'note: all %d version-gated example(s) skipped on this LLVM %s host; the job that installs the newer toolchain verifies them.\n' \
+# elsewhere", so it has to be checked SOMEWHERE.
+if [ "$require_gated" -eq 1 ] && [ "$skipped" -gt 0 ]; then
+  printf 'error: %d version-gated example(s) skipped on this LLVM %s host, but --require-gated says this job is the one that verifies them.\n' \
+    "$skipped" "$ASSEMBLER_MAJOR" >&2
+  printf '       An example may not declare a major no CI job has: it would be skipped everywhere and assembled nowhere.\n' >&2
+  status=1
+fi
+if [ "$require_gated" -eq 0 ] && [ "$gated" -gt 0 ] && [ "$skipped" -eq "$gated" ]; then
+  printf 'note: all %d version-gated example(s) skipped on this LLVM %s host; the job running with --require-gated is the one that verifies them.\n' \
     "$gated" "$ASSEMBLER_MAJOR"
 fi
 

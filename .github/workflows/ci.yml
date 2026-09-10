@@ -662,11 +662,20 @@ jobs:
   # Phase 1.1: the corpus is verified against the LATEST LLVM release, not only the one
   # Ubuntu ships. `training-llvm` above installs Ubuntu's default (18) and OWNS the floor:
   # the frontend snapshots are stamped `Produced by clang 18`, so that job is where
-  # byte-identity is enforced. This job installs 23 from apt.llvm.org and re-runs every
-  # corpus gate that actually consumes a toolchain -- the 167 standalone examples, the
-  # exercises, the invalid/adversarial fixtures, the opt-diff goldens, llc smoke, the MLIR
-  # examples, and the BCIR chapters -- so a release that changes a documented rule fails
-  # here instead of leaving the corpus quietly wrong about the current LLVM.
+  # byte-identity is enforced. This job installs 23 from apt.llvm.org and re-runs the
+  # corpus gates listed below -- the standalone examples, the exercises, the
+  # invalid/adversarial fixtures, the opt-diff goldens, llc smoke, the MLIR examples, and
+  # the BCIR chapters -- so a release that changes a documented rule fails here instead of
+  # leaving the corpus quietly wrong about the current LLVM.
+  #
+  # "the gates listed", not "every toolchain-consuming gate": TWO are deliberately absent
+  # and naming them is part of the claim. `build-pass-plugin.sh` builds a New PM plugin
+  # against the LLVM development CMake package, and `run-lto-matrix.sh` drives thin/full
+  # LTO and needs a matching `lld`. Both are genuinely different tests at 23, and neither
+  # could be validated before landing -- the authoring environment's extracted toolchain
+  # has an incomplete CMake package, and this job installs no `lld-23`. An unvalidated CI
+  # step is how a red push happens. `training-llvm` runs both at 18; adding them here is a
+  # follow-up for someone who can watch them fail first.
   #
   # Deliberately NOT a matrix cell of `training-llvm`: most of that job (autograder
   # self-tests, dataset export, corpus record tiers, embeddings, retrieval) reads
@@ -727,8 +736,12 @@ jobs:
           echo "LLVM_SUFFIX=$LLVM_SUFFIX resolves to: $(command -v "llvm-as${LLVM_SUFFIX}")"
           clang-23 --version | head -1
 
-      - name: LLVM training examples and invalid-example tripwire (LLVM 23)
-        run: bash training/llvm/tools/verify-examples.sh
+      # --require-gated makes this job the OWNER of every `; REQUIRES: llvm >= N` example:
+      # a gated example that skips here is a failure, because there is no later job to
+      # verify it. Without it a directive naming a major nobody has (a future release, or
+      # a typo) skipped on every job and every one exited 0.
+      - name: LLVM training examples and invalid-example tripwire (LLVM 23, owns gated examples)
+        run: bash training/llvm/tools/verify-examples.sh --require-gated
 
       - name: LLVM training exercise solutions and prompt templates (LLVM 23)
         run: bash training/llvm/tools/verify-exercises.sh

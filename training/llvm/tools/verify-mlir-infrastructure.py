@@ -25,6 +25,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from llvm_toolchain import find_llvm_tool  # noqa: E402
+
 TOOLS = Path(__file__).resolve().parent
 TRAINING_ROOT = TOOLS.parent
 EXAMPLES = TRAINING_ROOT / "24-mlir-infrastructure" / "examples"
@@ -102,6 +105,38 @@ def check_generic_form(report: Report, mlir_opt: str, work: Path) -> None:
         "parses to; the two syntaxes are supposed to be interchangeable",
     )
     print("[syntax]  custom and generic forms round-trip to the same module")
+
+
+def check_unregistered_dialect(report: Report, mlir_opt: str, work: Path) -> None:
+    """Generic syntax is necessary to carry an unknown dialect; it is not sufficient.
+
+    Chapter 01 first said a generic-form file "can be parsed by an mlir-opt that knows
+    nothing about the dialect at all". It cannot: the parser refuses until the caller
+    either passes --allow-unregistered-dialect or registers the dialect. A reader following
+    that sentence would have run a command that rejects the file the chapter said it would
+    read, so the corrected claim is checked here rather than trusted.
+    """
+    source = work / "unregistered.mlir"
+    source.write_text(
+        '"builtin.module"() ({\n  "mydialect.myop"() : () -> ()\n}) : () -> ()\n',
+        encoding="utf-8",
+    )
+
+    code, out = run(mlir_opt, [], source)
+    report.require(
+        code != 0 and "unregistered dialect" in out,
+        "generic syntax alone parsed an operation from a dialect mlir-opt does not know. "
+        "Chapter 01 teaches that it does NOT, and that --allow-unregistered-dialect or a "
+        "registered dialect is required -- if MLIR has changed, rewrite the chapter "
+        f"(got exit {code}: {out[:160]})",
+    )
+
+    code, out = run(mlir_opt, ["--allow-unregistered-dialect"], source)
+    report.require(
+        code == 0,
+        f"--allow-unregistered-dialect did not parse the generic-form module: {out[:200]}",
+    )
+    print("[unreg]   generic syntax needs --allow-unregistered-dialect, as the chapter says")
 
 
 def check_pass_anchoring(report: Report, mlir_opt: str) -> None:
@@ -249,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    mlir_opt = shutil.which("mlir-opt") or shutil.which("mlir-opt-23")
+    mlir_opt = find_llvm_tool("mlir-opt")
     if mlir_opt is None:
         if args.require_tools:
             print(
@@ -269,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         check_generic_form(report, mlir_opt, work)
+        check_unregistered_dialect(report, mlir_opt, work)
         check_pass_anchoring(report, mlir_opt)
         check_interfaces(report, mlir_opt)
         check_unrealized_casts(report, mlir_opt)

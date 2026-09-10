@@ -15,9 +15,13 @@ have a disposition: a chapter that teaches it, or a written reason it is out of 
 Three modes, because no single CI job can see both majors at once:
 
   --emit-surface N     write reference/llvm-surface-N.json from the installed LLVM N
-  --check-surface N    verify that snapshot still matches the installed LLVM N (drift)
+  --require-surface N  fail, rather than skip, when LLVM N's headers are absent; the CI
+                       job that installs them passes this
+  --update             rewrite the generated blocks the chapters display
   (default)            derive the delta from the two checked-in snapshots and check that
-                       every item in it is disposed -- needs no toolchain at all
+                       every item in it is disposed. The drift check against a real
+                       toolchain runs here too for whichever majors are installed, and
+                       says so when one is not -- needs no toolchain to run at all
 
 That split is deliberate. The job that installs LLVM 18 owns the 18 snapshot, the job that
 installs 23 owns the 23 one, and the delta itself is pure data both can be checked against.
