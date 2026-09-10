@@ -571,6 +571,13 @@ jobs:
       - name: Training corpus record tiers (chunks + distillation)
         run: python3 training/tools/verify_corpus_records.py
 
+      # This runner has a C compiler, so the native rail's absence would be a
+      # defect here rather than the expected local condition it is on a host
+      # without one: --require-native turns that skip into a failure, and the
+      # job that provides the toolchain is the one that owns the requirement.
+      - name: Training corpus embedding sets (vectors + native differential)
+        run: python3 training/tools/verify_embeddings.py --require-native
+
       - name: LLVM training llc smoke
         run: |
           if command -v llc >/dev/null; then

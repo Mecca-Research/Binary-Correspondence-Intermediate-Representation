@@ -68,13 +68,22 @@
       ]
     },
     "embedding_spec": {
+      "description": "What produced `embedding`, or nulls while it is unfilled. Vectors normally live in a sidecar embedding set (training/schema/embedding-set-v1.json); these fields carry the same attribution for consumers that want the single-file shape, and are filled by the join in training/tools/embed_chunks.py --inline.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["model", "dim", "normalize"],
+      "required": ["model", "revision", "dim", "normalize", "semantics"],
       "properties": {
         "model": {"type": ["string", "null"]},
+        "revision": {
+          "description": "The pinned version of that model. An unpinned vector is one nobody can reproduce.",
+          "type": ["string", "null"]
+        },
         "dim": {"type": ["integer", "null"], "minimum": 1},
-        "normalize": {"enum": ["l2", "none"]}
+        "normalize": {"enum": ["l2", "none"]},
+        "semantics": {
+          "description": "`lexical` = a specified function of the surface text; `learned` = trained weights. Naming the model is necessary and not sufficient: the two are both named and are not interchangeable, and a consumer that cannot tell them apart cannot weight them.",
+          "enum": ["lexical", "learned", null]
+        }
       }
     },
     "provenance": {

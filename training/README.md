@@ -12,7 +12,7 @@ One body of knowledge, delivered in three shapes:
 | If you are | Start at | You get |
 | --- | --- | --- |
 | a person learning | the subject's `README.md` and curriculum | chapters, worked examples, exercises |
-| an agent doing a task | the subject's index, or a retrieval chunk | a scoped passage that traces to a line |
+| an agent doing a task | `tools/search_chunks.py`, or the subject's index | a scoped passage that traces to a line |
 | training a model | `tools/build_distillation.py` | chat-format records whose answers are gate-checked |
 
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
@@ -40,17 +40,23 @@ the folder says so.
 ```
 Tier 1  prose          hand-written chapters; a factual claim belongs to a gate
 Tier 2  retrieval      deterministic chunks, line-traceable, embedding-ready
+        + vectors      attributed embedding sets, searchable exactly
 Tier 3  distillation   (system, user, assistant) records, each backed by a gate
 ```
 
 Tier 2 and Tier 3 are **derived**, never hand-written — the only way they stay
 in step with the prose.
 
-Two rules do most of the work:
+Three rules do most of the work:
 
 - **A chunk never carries a fabricated embedding.** `embedding` is `null` until
   a named model fills it. A vector with no model behind it is indistinguishable
   downstream from a real one.
+- **An attributed vector says what kind of similarity it has.** Every set
+  declares `semantics`: `lexical` (a specified function of the surface text) or
+  `learned` (trained weights). Naming the model is necessary and not sufficient
+  — the two are not interchangeable, and a consumer that cannot tell them apart
+  discovers the difference in its own retrieval quality.
 - **A distillation record exists only if a gate checks its answer.** No gate, no
   record. Tier 3 therefore grows only as fast as verification does, which is the
   intended pressure.
@@ -62,12 +68,27 @@ Two rules do most of the work:
 python3 training/tools/build_chunks.py --out build/training/chunks
 python3 training/tools/build_chunks.py --subject llvm --stats
 
+# Tier 2 vectors — a named model fills them; nothing else may
+python3 training/tools/embed_chunks.py --chunks build/training/chunks \
+                                       --out build/training/embeddings
+
+# ask the corpus something
+python3 training/tools/search_chunks.py --query "what does musttail require of a call"
+python3 training/tools/search_chunks.py --query "opaque pointers" --backend both
+
 # Tier 3 — gate-backed distillation records
 python3 training/tools/build_distillation.py --out build/training/distill
 
-# The gate: schema, provenance, split leakage, determinism, anti-vacuity
+# The gates: schema, provenance, split leakage, determinism, anti-vacuity;
+# then attribution, row alignment, discrimination, and the native differential
 python3 training/tools/verify_corpus_records.py
+python3 training/tools/verify_embeddings.py
 ```
+
+`--backend both` runs the pure-Python reference *and* BCIR's own
+`bcir_ai_q15_topk` from `runtime/c`, and requires them to agree exactly. The
+corpus is never a build dependency of BCIR: that import is lazy, and the
+reference backend is always sufficient on its own.
 
 Both builders discover subjects automatically: any directory under `training/`
 that is not `tools/` or `schema/` is a subject, and a new folder joins both
@@ -81,6 +102,7 @@ compares digests, so determinism is checked rather than assumed.
 | File | Tier | Consumer |
 | --- | --- | --- |
 | [`schema/chunk-v1.json`](schema/chunk-v1.json) | 2 | retrieval indexes, RAG pipelines |
+| [`schema/embedding-set-v1.json`](schema/embedding-set-v1.json) | 2 | vector indexes |
 | [`schema/distill-v1.json`](schema/distill-v1.json) | 3 | supervised fine-tuning |
 
 Both are published contracts. The verifier checks the invariants that would
@@ -89,13 +111,21 @@ validates against.
 
 ## Verification boundary
 
-- **Checked:** every gate listed in a subject's `tools/`, plus the record gate
-  above. `llvm/` alone carries example assembly, opaque-pointer conformance,
-  exercise solutions, invalid fixtures, optimizer goldens, MLIR registry tiers,
-  Clang lowering claims, benchmark analysis, and a built out-of-tree pass plugin.
+- **Checked:** every gate listed in a subject's `tools/`, plus the record and
+  embedding gates above. `llvm/` alone carries example assembly, opaque-pointer
+  conformance, exercise solutions, invalid fixtures, optimizer goldens, MLIR
+  registry tiers, Clang lowering claims, benchmark analysis, and a built
+  out-of-tree pass plugin.
 - **Reviewed, not checked:** narrative, design argument, and any material whose
   toolchain the corpus does not assume. Each subject's README says which is
   which.
+- **Implemented, not yet exercised:** the `learned` embedding provider. Its
+  refusal path is checked — an unloadable model writes nothing, and
+  `--require-provider` turns that skip into a failure — but no trained model has
+  been run end-to-end through the rail here, so the `deterministic: false`
+  branch of the embedding gate has never been taken. It is named rather than
+  implied, and closing it belongs with the retrieval evaluation in
+  [`ROADMAP.md`](ROADMAP.md) 0.6.
 - **Neither:** nothing. A claim that is neither checked nor declared reviewed is
   a defect.
 

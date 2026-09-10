@@ -52,6 +52,8 @@ CHUNK_SCHEMA = "bcir-training/chunk/v1"
 DISTILL_SCHEMA = "bcir-training/distill/v1"
 
 CHUNK_KINDS = {"prose", "code", "mixed", "table"}
+EMBEDDING_SPEC_REQUIRED = {"model", "revision", "dim", "normalize", "semantics"}
+EMBEDDING_SEMANTICS = {"lexical", "learned"}
 DISTILL_TASKS = {"claim", "exercise", "repair", "prediction", "review"}
 ANSWER_KINDS = {"code", "explanation", "diagnosis"}
 SPLITS = {"train", "validation", "test"}
@@ -163,16 +165,34 @@ def check_chunks(rows: list[dict], report: Report) -> None:
 
         # No fabricated vectors.
         spec = chunk["embedding_spec"]
+        report.require(
+            EMBEDDING_SPEC_REQUIRED == set(spec),
+            f"{label}: embedding_spec keys are {sorted(spec)}, "
+            f"expected {sorted(EMBEDDING_SPEC_REQUIRED)}",
+        )
         if chunk["embedding"] is None:
             report.require(
-                spec["model"] is None,
+                spec.get("model") is None,
                 f"{label}: names an embedding model but carries no vector",
+            )
+            report.require(
+                spec.get("semantics") is None,
+                f"{label}: declares embedding semantics but carries no vector",
             )
         else:
             report.require(
                 isinstance(spec["model"], str) and spec["model"],
                 f"{label}: carries a vector with no model named -- a vector "
                 "nobody can attribute is not evidence",
+            )
+            report.require(
+                isinstance(spec.get("revision"), str) and spec["revision"],
+                f"{label}: carries a vector from an unpinned model revision",
+            )
+            report.require(
+                spec.get("semantics") in EMBEDDING_SEMANTICS,
+                f"{label}: carries a vector that does not declare whether its "
+                "similarity is lexical or learned",
             )
             report.require(
                 spec["dim"] == len(chunk["embedding"]),

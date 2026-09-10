@@ -22,8 +22,10 @@ compiler-infrastructure subject. Everything above the subject folders is shared:
 training/
 ├── CORPUS_STANDARD.md      the three-tier contract every subject must reach
 ├── ROADMAP.md              this file
-├── schema/                 chunk-v1.json, distill-v1.json
-├── tools/                  build_chunks.py, build_distillation.py, verify_corpus_records.py
+├── schema/                 chunk-v1.json, embedding-set-v1.json, distill-v1.json
+├── tools/                  build_chunks.py, embed_chunks.py, search_chunks.py,
+│                           build_distillation.py, verify_corpus_records.py,
+│                           verify_embeddings.py
 ├── llvm/                   Phase 1 — compilers (the existing corpus)
 ├── hardware/               Phase 2 — transistors to instruction sets
 ├── systems/                Phase 3 — C/C++/CUDA, build systems, drivers, kernels
@@ -63,14 +65,39 @@ the intended pressure.
 | 0.2 Chunk schema + deterministic chunker | landed |
 | 0.3 Distillation schema + gate-backed builder | landed |
 | 0.4 Record verifier (anti-vacuity, provenance, leakage, determinism) | landed |
-| 0.5 Embedding step: a named model fills `embedding`, provenance recorded | open |
+| 0.5 Embedding step: a named model fills `embedding`, provenance recorded | landed |
 | 0.6 Retrieval evaluation: does a chunk set answer the questions it should? | open |
 | 0.7 Extract the grader/dataset machinery from `llvm/` to `training/` | open |
 
-**0.5** is the first thing to build next. The chunker deliberately leaves
-`embedding: null`; a separate step must fill it with a named model, record the
-model and dimension in `embedding_spec`, and keep the vectors out of git. Until
-then Tier 2 is embedding-*ready*, not embedded, and the corpus says so.
+**0.5 closed with** `tools/embed_chunks.py`, `tools/search_chunks.py`,
+`tools/verify_embeddings.py`, and `schema/embedding-set-v1.json`. Vectors are
+written only by a named `Provider`, land in a sidecar set rather than inside the
+chunk records, stay out of git, and carry a pinned `revision` and a `semantics`
+declaration — `lexical` or `learned` — because naming a model is necessary and
+not sufficient to say what a vector means. A model that cannot be loaded is a
+skip that writes nothing.
+
+Retrieval came with it, because a rail that builds vectors nothing queries has
+not been shown to work: the vectors are projected into BCIR's own symmetric Q15
+code space and searched by `bcir_ai_q15_topk` from `runtime/c` — the same
+exact-integer top-k kernel BCIR uses for its optimization memory — with a
+pure-Python reference as the definition and an exact differential between the
+two. The corpus is still never a build dependency of BCIR; the import is lazy
+and the reference path always suffices.
+
+**Still open in this area, deliberately:** the corpus ships **no trained model**.
+The hermetic `lexical-hash-v1` baseline exists so the pipeline is gateable on any
+host, and it declares itself lexical precisely so nobody mistakes it for
+semantic retrieval. Running a learned model is implemented and unproven here —
+see 0.6.
+
+**0.6** is now the next thing to build, and 0.5 sharpened what it has to answer.
+Retrieval quality is unmeasured: the gate proves the vectors are attributed,
+aligned, non-degenerate, and searched correctly, which is *not* the same as
+proving they return the right chunk for a real question. That needs a judged
+query set, a metric, and a baseline to beat — and it is what would let a learned
+model be compared against `lexical-hash-v1` on evidence rather than on
+reputation.
 
 **0.7** matters once a second subject exists: the autograder, dataset exporter,
 and eval runner currently live under `llvm/` and are LLVM-shaped in places. They
@@ -166,8 +193,10 @@ These are inherited from the LLVM corpus and apply to every subject:
 
 - **Not a fine-tuning harness.** The corpus emits standard-format records;
   training with them happens elsewhere.
-- **Not an embedding service.** It emits embedding-ready chunks and refuses to
-  invent vectors.
+- **Not an embedding service, and it ships no weights.** It defines how a vector
+  must be attributed, provides a hermetic baseline so the pipeline is gateable
+  anywhere, and refuses to invent a vector or to substitute a model it could not
+  load.
 - **Not a replacement for primary references.** Every subject cites its
   normative sources; the corpus teaches how to read them, and does not
   paraphrase them into a substitute.

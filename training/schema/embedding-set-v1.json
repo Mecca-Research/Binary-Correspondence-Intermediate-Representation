@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcir.dev/schemas/training/embedding-set-v1.json",
+  "title": "BCIR training corpus embedding set (Tier 2, vectors)",
+  "description": "The manifest of one embedding set: the vectors produced for a chunk build by exactly one named model. Vectors live in a sidecar rather than inside the chunk records, because a chunk is a deterministic function of the corpus alone while a vector is a function of the corpus AND a model -- binding them into one file would make a chunk set change every time a model did, and would forbid holding two models' vectors for the same corpus. This manifest is the binding between the two, and it is what makes a vector attributable: the model that produced it, what kind of similarity it supports, which chunk build it covers, and how much of that build it actually covers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "corpus", "model", "revision", "dim", "normalize", "semantics",
+    "deterministic", "builder", "built_from", "coverage", "vectors", "quantized",
+    "index", "license"
+  ],
+  "properties": {
+    "schema": {"const": "bcir-training/embedding-set/v1"},
+    "corpus": {"const": "training"},
+    "model": {
+      "description": "The name of the model that produced every vector in this set. Never null: a set exists only because a named model produced it. For a third-party model this is its published identifier, so a consumer can obtain the same model.",
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "description": "The pinned version of that model -- a weights revision for a published model, or the algorithm version for a built-in one. Two sets with the same model and different revisions are not comparable.",
+      "type": "string",
+      "minLength": 1
+    },
+    "dim": {"type": "integer", "minimum": 1},
+    "normalize": {
+      "description": "l2 = every stored vector has unit length, so a dot product is a cosine. none = raw vectors, and a consumer must normalize before comparing.",
+      "enum": ["l2", "none"]
+    },
+    "semantics": {
+      "description": "What kind of similarity these vectors support. `lexical` = a specified function of the surface text (n-grams, hashing, term counts); near-duplicate text scores high, a paraphrase does not. `learned` = trained weights that place related meanings near each other. Both are legitimate and both are named, but they are NOT interchangeable, and a set that does not declare which cannot have its retrieval quality assessed. This is the same discipline the performance chapters apply to measured/modelled/estimated.",
+      "enum": ["lexical", "learned"]
+    },
+    "deterministic": {
+      "description": "True when this model is contracted to produce bit-identical vectors for the same input on any host. Only a set that claims this is gated on byte-identity across two builds; a learned model on varying hardware honestly claims false and is checked on its invariants instead.",
+      "type": "boolean"
+    },
+    "builder": {"$ref": "#/$defs/repositoryPath"},
+    "built_from": {
+      "description": "The chunk build these vectors cover. corpus_digest changes whenever any covered chunk changes, so a stale set is detectable without re-reading the corpus.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunk_builder", "chunk_schema", "corpus_digest", "chunks_total", "subjects"],
+      "properties": {
+        "chunk_builder": {"$ref": "#/$defs/repositoryPath"},
+        "chunk_schema": {"const": "bcir-training/chunk/v1"},
+        "corpus_digest": {"$ref": "#/$defs/sha256"},
+        "chunks_total": {"type": "integer", "minimum": 1},
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}
+        }
+      }
+    },
+    "coverage": {
+      "description": "Partial coverage is legal; SILENT partial coverage is not. Whenever skipped is above zero, reason states why, so a consumer never has to infer that a missing chunk was deliberate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["embedded", "skipped", "reason"],
+      "properties": {
+        "embedded": {"type": "integer", "minimum": 1},
+        "skipped": {"type": "integer", "minimum": 0},
+        "reason": {"type": ["string", "null"], "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"skipped": {"minimum": 1}}, "required": ["skipped"]},
+          "then": {"properties": {"reason": {"type": "string", "minLength": 1}}}
+        }
+      ]
+    },
+    "vectors": {
+      "description": "Raw little-endian float32, row-major, `dim` floats per row, row order given by index.jsonl. A flat binary rather than JSON floats: it is what a vector index ingests, it is an order of magnitude smaller than the decimal spelling, and it is byte-comparable, which is what makes the determinism check exact.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "dtype", "byte_order", "rows", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "dtype": {"const": "float32"},
+        "byte_order": {"const": "little"},
+        "rows": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "quantized": {
+      "description": "The BCIR-native view of the same vectors: signed int16 in BCIR's symmetric Q15 code space, row-major, little-endian, in the same row order. It exists so corpus retrieval can run on `bcir_ai_q15_topk` -- the exact squared-L2 top-k kernel runtime/c already uses for BCIR's own optimization memory -- rather than on a second convention this corpus would have to defend alone. Exact integer distances also mean the ranking has no floating-point tie-break to disagree about across hosts. Null when `normalize` is `none`, because the projection assumes unit vectors: quantizing unquantifiable magnitudes would saturate rather than approximate.",
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "dtype", "byte_order", "scale", "symmetric", "kernel", "sha256"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "dtype": {"const": "int16"},
+            "byte_order": {"const": "little"},
+            "scale": {
+              "description": "Coordinate v maps to round(v * scale), clamped to [-scale, scale].",
+              "const": 32767
+            },
+            "symmetric": {
+              "description": "Always true: -32768 is excluded so the code space stays symmetric about zero and negation is lossless, the same discipline runtime/c applies to Q8 (-128 forbidden) and Q4 (-8 forbidden).",
+              "const": true
+            },
+            "kernel": {"type": "string", "minLength": 1},
+            "sha256": {"$ref": "#/$defs/sha256"}
+          }
+        }
+      ]
+    },
+    "index": {
+      "description": "One embeddingRow per vector, in row order, mapping each row back to the chunk it came from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "row_schema"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "row_schema": {"$ref": "#/$defs/embeddingRow"}
+      }
+    },
+    "license": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "repositoryPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "embeddingRow": {
+      "description": "A row of index.jsonl. text_sha256 binds the vector to the exact text embedded, so a vector can be shown stale per chunk and not merely per set. raw_norm is the vector's length BEFORE normalization: it is recorded because a raw norm of zero means the model extracted no signal from that chunk, which normalization would otherwise hide behind a division.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chunk_id", "subject", "source_path", "row", "text_sha256", "raw_norm"],
+      "properties": {
+        "chunk_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "subject": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "source_path": {"$ref": "#/$defs/repositoryPath"},
+        "row": {"type": "integer", "minimum": 0},
+        "text_sha256": {"$ref": "#/$defs/sha256"},
+        "raw_norm": {"type": "number", "exclusiveMinimum": 0}
+      }
+    }
+  }
+}

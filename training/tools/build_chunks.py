@@ -244,7 +244,13 @@ def build_chunk(
         "char_count": len(text),
         "token_estimate": max(1, len(text) // CHARS_PER_TOKEN),
         "embedding": None,
-        "embedding_spec": {"model": None, "dim": None, "normalize": "l2"},
+        "embedding_spec": {
+            "model": None,
+            "revision": None,
+            "dim": None,
+            "normalize": "l2",
+            "semantics": None,
+        },
         "provenance": {"license": LICENSE, "builder": BUILDER},
         "verified_by": gates,
     }

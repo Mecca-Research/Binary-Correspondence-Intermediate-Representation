@@ -22,13 +22,21 @@ hand-written — which is the only way they stay in step with the prose.
 
 ```
      Tier 1  prose            Tier 2  retrieval          Tier 3  distillation
-   ┌──────────────────┐     ┌───────────────────┐      ┌────────────────────┐
-   │ chapters, tables │────▶│ chunks + spans    │      │ (system,user,      │
+   ┌──────────────────┐     ┌───────────────────┐      ┌─────────────────────┐
+   │ chapters, tables │────▶│ chunks + spans    │      │ (system,user,       │
    │ examples, gates  │     │ heading trails    │      │  assistant) records │
    │                  │     │ embedding-ready   │      │ each gate-backed    │
-   └──────────────────┘     └───────────────────┘      └────────────────────┘
+   └──────────────────┘     └─────────┬─────────┘      └─────────────────────┘
       hand-written             build_chunks.py          build_distillation.py
       and gated                deterministic            deterministic
+                                      │
+                                      ▼
+                            ┌───────────────────┐
+                            │ vectors, attributed│
+                            │ + exact search     │
+                            └───────────────────┘
+                              embed_chunks.py
+                              search_chunks.py
 ```
 
 ## Tier 1 — prose
@@ -66,7 +74,7 @@ A chunk is one embedding-ready unit of corpus text. Requirements:
 
 ### The embedding rule
 
-**A builder never writes a vector.** `embedding` is `null` and
+**A chunker never writes a vector.** `embedding` is `null` and
 `embedding_spec.model` is `null` until a named model fills both. The verifier
 enforces the pair: a vector with no model named is rejected.
 
@@ -75,11 +83,80 @@ hardware counter — record `null`, never `0`. A fabricated vector is
 indistinguishable downstream from a measured one, and it silently poisons every
 similarity computed against it.
 
-Filling the vectors is a separate, explicitly-named step:
+Filling the vectors is a separate, explicitly-named step —
+[`tools/embed_chunks.py`](tools/embed_chunks.py), with the set manifest in
+[`schema/embedding-set-v1.json`](schema/embedding-set-v1.json):
 
 ```
-chunks.jsonl (embedding: null)  ──[named model, recorded in embedding_spec]──▶  chunks.jsonl (embedding: [...])
+chunks.jsonl            embed_chunks.py            embeddings/<model>/
+(embedding: null)  ──▶  [a named Provider]   ──▶   manifest.json   model, revision, coverage
+                                                   index.jsonl     chunk_id ─ row ─ text digest
+                                                   vectors.f32     float32, row-major
+                                                   vectors.q15     BCIR's Q15 code space
 ```
+
+**Vectors live beside the chunks, not inside them.** A chunk is a deterministic
+function of the corpus alone; a vector is a function of the corpus *and* a
+model. Storing them together would make every chunk record change whenever a
+model did, and would forbid holding two models' vectors for one corpus. The
+manifest is the binding, and `--inline` joins them for consumers that want the
+single-file shape.
+
+### The attribution rule
+
+Naming the model is necessary and **not sufficient**. A hashed-n-gram vector and
+a trained sentence encoder are both "named", and they behave nothing alike: the
+first scores near-duplicate text highly and a paraphrase not at all. So every
+set and every filled `embedding_spec` also declares `semantics`:
+
+| `semantics` | Means | Retrieval behaviour |
+| --- | --- | --- |
+| `lexical` | a specified function of the surface text | matches wording |
+| `learned` | trained weights | matches meaning |
+
+This is `measured` / `modelled` / `estimated` applied one level up: a consumer
+that cannot tell the two apart cannot weight them, and will discover the
+difference in its own retrieval quality instead.
+
+`revision` is required alongside, for the same reason a benchmark pins its
+toolchain: an unpinned model is one whose vectors nobody can reproduce.
+
+### The refusal rule
+
+A model the environment cannot load is a **skip that writes nothing** — never a
+substituted model, and never a set carrying the requested model's name over
+another model's vectors. The CI job that installs a model passes
+`--require-provider`, which turns that skip into a failure: absence is expected
+on a laptop and is a defect in the job that exists to provide it.
+
+### Searching the vectors
+
+A rail that builds vectors nothing queries has not been shown to work, so
+retrieval is part of the standard, not an example
+([`tools/search_chunks.py`](tools/search_chunks.py)). It runs on BCIR's own
+symmetric **Q15** code space, which lets the corpus be searched by
+`bcir_ai_q15_topk` from `runtime/c` — the same exact-integer top-k kernel BCIR
+uses for its optimization memory — rather than by a second convention this
+corpus would have to defend alone. For unit vectors,
+
+```
+||q - p||²  =  2 - 2·cos(q, p)
+```
+
+so an exact squared-L2 ranking *is* a cosine ranking, computed in integers with
+no floating-point tie-break to disagree about across hosts.
+
+Two backends compute it: a pure-Python `reference` (the definition, always
+available) and `native` (BCIR's kernel). The gate runs both and requires them to
+agree **exactly** — same rows, same integer distances. That is a differential
+between two independent implementations on the real corpus, which this
+repository prefers to an assertion.
+
+> The direction of the dependency is unchanged: `training/` is never a build
+> dependency of BCIR. BCIR is imported lazily and only for the native backend,
+> and the reference path is always sufficient on its own. The corpus may call
+> the implementation it teaches; the implementation still knows nothing about
+> the corpus.
 
 ## Tier 3 — distillation
 
@@ -137,8 +214,31 @@ tiers twice and enforces:
 5. **No split leakage** — one source, one split.
 6. **Determinism** — two builds of the same tree are byte-identical.
 
-Each of those was proved able to fail by injecting the defect it guards and
-watching the gate fire.
+[`tools/verify_embeddings.py`](tools/verify_embeddings.py) gates the vectors:
+
+1. **Anti-vacuity** — a set covering nothing fails.
+2. **Attribution** — model, pinned revision, dimension, and `semantics` present.
+3. **No degenerate vector** — finite, right length, non-zero, unit where claimed.
+4. **Row alignment** — a chunk's own text must retrieve *that* chunk at distance
+   exactly 0. This is the check that catches an off-by-one between the index and
+   the vector block: every structural check passes over that defect, and it
+   silently returns the neighbouring chunk for the life of the index.
+5. **Discrimination** — a model that maps every chunk to nearly one direction
+   passes everything above while being useless, so a set whose vectors do not
+   separate fails.
+6. **Binding and staleness** — the digest of the text actually embedded still
+   matches that chunk today.
+7. **Declared coverage** — partial is legal, silent partial is not.
+8. **Determinism, where claimed** — a set declaring `deterministic: true` is
+   gated on byte-identity across two builds. A learned model honestly declaring
+   `false` is gated on its invariants instead: contracting for bit-identity
+   across arbitrary hardware is a promise the rail cannot keep, and gating on an
+   unkeepable promise produces flaky red rather than evidence.
+9. **The native differential** — reference ranking versus `bcir_ai_q15_topk`,
+   exactly equal.
+
+Each check in both gates was proved able to fail by injecting the defect it
+guards and watching the gate fire.
 
 ## What a new subject folder must deliver
 
@@ -149,10 +249,13 @@ are gated. It is **corpus-complete** when:
 - [ ] every factual claim reachable from a gate
 - [ ] `build_chunks.py --subject <name>` produces chunks with no unverified
       claims of verification
+- [ ] `embed_chunks.py --subject <name>` produces an attributed embedding set,
+      and `search_chunks.py` retrieves that subject's material for a question it
+      should answer
 - [ ] `build_distillation.py --subject <name>` produces gate-backed records in
       at least two splits
-- [ ] `verify_corpus_records.py` passes, and each new gate has been broken once
-      on purpose to prove it fires
+- [ ] `verify_corpus_records.py` and `verify_embeddings.py` pass, and each new
+      gate has been broken once on purpose to prove it fires
 - [ ] the subject's `README.md` states its verification boundary — what is
       checked, what is reviewed, and what is neither
 
@@ -162,9 +265,14 @@ both tiers as soon as it has content, with no registration step.
 
 ## What this standard is not
 
-- It is not an embedding pipeline. It produces embedding-*ready* records and
-  refuses to invent vectors; choosing and running a model is a separate step
-  with its own provenance.
+- It is not an embedding *service*, and it ships no weights. It defines how a
+  vector must be attributed, provides a hermetic baseline model so the pipeline
+  is gateable anywhere, and refuses to invent a vector or substitute a model it
+  could not load. Choosing and obtaining a trained model stays the consumer's
+  step, with its own provenance.
+- It is not a vector database. It emits a flat, row-major, digest-bound set that
+  any index can ingest, plus an exact reference search; it does not build an
+  approximate-nearest-neighbour structure or serve queries.
 - It is not a fine-tuning harness. It produces records in a standard chat
   format; training with them is out of scope for this repository.
 - It does not make unverified prose worthless. Tier 1 carries the explanation
