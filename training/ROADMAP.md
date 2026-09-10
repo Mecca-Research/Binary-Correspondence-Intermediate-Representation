@@ -267,7 +267,11 @@ actually there, with `tools/verify_ml_components.py` resolving every symbol
   loss 4.218 → 3.973) and `train_dpo` its own `PreferenceExample`, after
   refusing a reference model whose parameters can still move. The corpus's
   export is therefore not a file nothing reads: it is the input to a stage that
-  demonstrably trains.
+  demonstrably trains. Note that `stages.py` needs torch to **import**, not
+  merely to run — a first draft of the inventory claimed otherwise, having
+  measured only on a host where torch was installed, and CI corrected it within
+  two minutes. A property measured on one host is a property of that host until
+  a second one disagrees.
 - **Three components are declared and not exercised, each saying why** in a
   field the gate checks rather than a sentence it would have to read: PPO needs
   a rollout and a reward source the corpus does not produce; embedding

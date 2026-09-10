@@ -580,6 +580,8 @@ def torch_available() -> bool:
 
 
 def check_resolution(report: Report) -> None:
+    torch_present = torch_available()
+    unresolved: list[str] = []
     report.require(bool(COMPONENTS), "the inventory is empty; this gate would check nothing")
     report.require(
         bool(RUNS_HERE), "no component claims to run here, so nothing would be exercised"
@@ -601,6 +603,19 @@ def check_resolution(report: Report) -> None:
         try:
             module = importlib.import_module(component.module)
         except ImportError as exc:
+            # `bcir.hosted.training.stages` raises at IMPORT time without torch,
+            # not merely at call time. Where torch is absent that is the honest
+            # skip; anywhere else, and for any other cause, it is a failure. The
+            # cause is checked rather than assumed, so a component cannot be
+            # parked in a torch-gated class to hide an unrelated breakage.
+            if component.reach in ("torch-gated", "declared") and not torch_present:
+                report.require(
+                    "torch" in str(exc).lower(),
+                    f"{component.topic}: {component.module} does not import, and the "
+                    f"reason is not torch: {exc}",
+                )
+                unresolved.append(component.topic)
+                continue
             report.require(False, f"{component.topic}: {component.module} does not import: {exc}")
             continue
         missing = [name for name in component.symbols if not hasattr(module, name)]
@@ -609,7 +624,12 @@ def check_resolution(report: Report) -> None:
             f"{component.topic}: {component.module} no longer provides "
             f"{', '.join(missing)}; the inventory has drifted from BCIR",
         )
-    print(f"[resolve] {len(COMPONENTS)} component(s), every declared symbol present")
+    resolved = len(COMPONENTS) - len(unresolved)
+    suffix = f"; {len(unresolved)} need torch to import and it is absent" if unresolved else ""
+    print(
+        f"[resolve] {resolved}/{len(COMPONENTS)} component(s), every declared symbol "
+        f"present{suffix}"
+    )
 
 
 def check_every_runnable_is_exercised(report: Report) -> None:
@@ -658,7 +678,8 @@ def check_torch_classification(report: Report, require_torch: bool) -> None:
             )
             return
         print(
-            f"[skip]    torch absent: {len(TORCH_GATED)} hosted stage(s) resolved but NOT exercised"
+            f"[skip]    torch absent: {len(TORCH_GATED)} hosted stage(s) neither resolvable "
+            "nor exercised here"
         )
         for component in TORCH_GATED:
             print(f"          - {component.topic} ({component.module})")
@@ -693,7 +714,7 @@ def check_declared_only(report: Report) -> None:
         )
     if DECLARED_ONLY:
         print(
-            f"[declared] {len(DECLARED_ONLY)} component(s) resolved but not exercised, "
+            f"[declared] {len(DECLARED_ONLY)} component(s) declared and not exercised, "
             "each with a stated reason"
         )
 

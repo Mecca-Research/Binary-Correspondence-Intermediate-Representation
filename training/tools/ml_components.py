@@ -17,11 +17,14 @@ inventory that only imports proves that names exist, not that anything works.
 `bcir/lower/`: flat Python lists with explicit `rows`/`dim`, no torch, no numpy.
 Exercisable on any host, which is why the corpus can gate it unconditionally.
 
-`torch-gated` is the hosted stack under `bcir/hosted/training/`, which needs
-torch to run. Note that those modules *import* without torch -- the dependency
-is inside the functions -- so an inventory that only imported would report them
-as working and be wrong. They are exercised where torch is present and skipped,
-loudly, where it is not.
+`torch-gated` is the hosted stack under `bcir/hosted/training/stages.py`, which
+needs torch to *import*, not merely to run: the module raises
+`ModuleNotFoundError("hosted alignment stages require PyTorch")` at import time.
+An earlier draft of this file claimed the opposite, having checked on a host
+where torch happened to be installed -- the module imported, so the dependency
+looked deferred. CI, which has no torch on the corpus runner, said otherwise
+within two minutes. These are exercised where torch is present and skipped,
+loudly and by name, where it is not.
 
 `declared` is resolved but not exercised, each with a stated reason. Nothing is
 in this class by omission: the gate requires the reason, and a component cannot
@@ -31,6 +34,10 @@ An earlier note in this corpus said the whole training-time list needed torch
 and was therefore out of reach. Measured, that was wrong twice: the substrate
 needs no torch at all, and where torch IS installed the hosted SFT and DPO
 stages run on the corpus's own example contracts.
+
+The lesson from getting the import boundary wrong is the one this corpus keeps
+relearning: a property measured on one host is a property of that host until a
+second one disagrees.
 """
 
 from __future__ import annotations
