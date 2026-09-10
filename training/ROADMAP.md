@@ -337,11 +337,29 @@ retraction:
 | 1.3 | Study the **LLVM 23 LangRef** and close the delta: new instructions, attributes, and intrinsics the corpus does not yet teach |
 | 1.4 | **Comprehensive MLIR**: dialects, regions, interfaces, the pass infrastructure, bytecode, and the parts `14-` and `18-` only introduce |
 | 1.5 | **IRDL**: dialect definition as data, and what it makes checkable that ODS does not |
-| 1.6 | **BCIR's own approach**: how a correspondence IR relates to LLVM IR and MLIR — the cost model, the verifier laws, and why legality precedes optimization |
+| 1.6 | ~~**BCIR's own approach**~~ — **landed**: [`llvm/22-bcir-approach/`](llvm/22-bcir-approach) teaches the correspondence, the twelve cost axes, and legality before cost, with every table regenerated from `bcir/` |
 | 1.7 | Update `SEMVER.md`: the baseline moves, and the new baseline is enforced by the assembler check already in the frontend gate |
 
-1.1 and 1.2 are prerequisites for the rest: re-deriving chapters against a
-toolchain the corpus does not yet run would produce claims no gate checks.
+1.1 and 1.2 are prerequisites for **1.3–1.5**, which re-derive chapters against a
+specific LLVM release: doing that on a toolchain the corpus does not run would
+produce claims no gate checks. Slice 1.6 is not in that class — its claims are
+about this repository's own rails, so it landed first and no toolchain bump can
+invalidate it.
+
+**A toolchain is reachable here after all.** `apt.llvm.org`, `releases.llvm.org`,
+`github.com/llvm` and the `llvm.org`/`mlir.llvm.org` documentation are refused by
+this environment's proxy, which is why 1.1 read as blocked. `conda.anaconda.org`
+is not refused, and conda-forge ships LLVM/MLIR **23.1.1** — `llvm-as`, `opt`,
+`llc`, `lli`, `clang`, `FileCheck`, `mlir-opt`, `mlir-tblgen` and
+`mlir-irdl-to-cpp`, extractable without installing conda. Measured against that
+toolchain, with nothing changed in the corpus: all 167 standalone examples
+assemble and verify, all 18 invalid fixtures are still rejected, the exercise,
+mapping, adversarial and opaque-pointer gates pass, and the 15 MLIR examples tier-
+grade clean under `LLVM_SUFFIX=-23`. The 15→23 delta, read from the tools rather
+than from a changelog the proxy will not serve: `opt`'s base pass names go
+273 → 318 → 453 and `llc`'s targets 41 → 44 → 48, and **no corpus material names
+any of the 28 pass names that disappeared**. What 1.1 still needs is the CI half —
+the corpus job installs Ubuntu's default LLVM, not 23.
 
 **Version discipline.** The corpus currently declares LLVM 15 as its floor and
 enforces it by assembling snapshots with the oldest available assembler. Raising

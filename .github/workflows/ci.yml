@@ -540,6 +540,14 @@ jobs:
       - name: LLVM training BCIR mapping fixtures
         run: bash training/llvm/tools/verify-bcir-mapping.sh
 
+      # The 22-bcir-approach chapters quote scores, lane widths and policy weights
+      # that BCIR itself produces, so nothing there is quoted by hand: this
+      # regenerates every table from bcir/ and compares byte for byte, holds the
+      # twelve cost axes identical across the oracle, the MLIR attribute and
+      # PARITY.md, and refuses any opt pass name the installed toolchain lacks.
+      - name: LLVM training BCIR-approach chapters (regenerated from bcir/)
+        run: python3 training/llvm/tools/verify-bcir-approach.py
+
       # Chapter 20 states Clang lowering rules as facts (aggregate layout, bit-field
       # erasure, per-target argument classification). This compiles the checked-in
       # sources and asserts those claims structurally, so a Clang release that changes

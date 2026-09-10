@@ -42,6 +42,8 @@ every lookup.
 | Why the IR signature differs from the C signature (ABI lowering) | [`20-clang-frontend/05-abi-and-target-lowering.md`](20-clang-frontend/05-abi-and-target-lowering.md) |
 | Benchmark methodology, statistics, and performance claims | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) |
 | Hardware counters, and refusing honestly without a PMU | [`21-performance-methodology/06-hardware-counter-harness.md`](21-performance-methodology/06-hardware-counter-harness.md) |
+| What BCIR is as an IR: correspondence, K_BCIR, and legality before cost | [`22-bcir-approach/README.md`](22-bcir-approach/README.md) |
+| Why a tighter budget can produce a more expensive plan | [`22-bcir-approach/03-legality-before-cost.md`](22-bcir-approach/03-legality-before-cost.md) |
 | Porting an LLVM backend target: inventory, order, and cost | [`12-backend-jit/08-target-backend-porting-map.md`](12-backend-jit/08-target-backend-porting-map.md) |
 | Type metadata and CFI-style checked dispatch | [`06-metadata/04-type-metadata-cfi.md`](06-metadata/04-type-metadata-cfi.md) |
 | Repair, prediction, BCIR, MLIR, backend/JIT, and advanced-debugging exercises | [`exercises/README.md`](exercises/README.md) |

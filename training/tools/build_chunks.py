@@ -285,6 +285,8 @@ def gates_for(source: Path, subject_root: Path) -> list[str]:
         add("verify-mlir-rail-references.py")
     if rel.startswith("21-performance-methodology/"):
         add("verify-benchmark-analysis.py")
+    if rel.startswith("22-bcir-approach/"):
+        add("verify-bcir-approach.py")
     return sorted(set(gates))
 
 

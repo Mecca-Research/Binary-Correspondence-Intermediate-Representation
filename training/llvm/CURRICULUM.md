@@ -324,6 +324,14 @@ speedup:
 3. [`21-performance-methodology/03-repeated-trials-and-noise-control.md`](21-performance-methodology/03-repeated-trials-and-noise-control.md) — trials, run order, warm-up, and the A-against-A self-check
 4. [`21-performance-methodology/04-significance-and-effect-size.md`](21-performance-methodology/04-significance-and-effect-size.md) — the decision ladder, and why five of its eight rungs are refusals
 5. [`21-performance-methodology/05-reporting-and-claim-discipline.md`](21-performance-methodology/05-reporting-and-claim-discipline.md) — measured versus modelled, and how to retract
+
+### BCIR's own approach
+
+1. [`22-bcir-approach/README.md`](22-bcir-approach/README.md) — what a correspondence IR is, and the two senses of "legality" this corpus uses.
+2. [`22-bcir-approach/01-correspondence-versus-structure.md`](22-bcir-approach/01-correspondence-versus-structure.md) — the same program on four substrates and under two live states; declared versus inferred facts.
+3. [`22-bcir-approach/02-what-k-bcir-prices.md`](22-bcir-approach/02-what-k-bcir-prices.md) — the twelve cost axes, which of them anything produces, and what each policy weights.
+4. [`22-bcir-approach/03-legality-before-cost.md`](22-bcir-approach/03-legality-before-cost.md) — the budget ladder, `Infeasible` as a verdict, and R1–R25 on both rails.
+5. Run `python3 training/llvm/tools/verify-bcir-approach.py` after editing any page here; every table in the subject is regenerated from `bcir/`.
 6. [`21-performance-methodology/06-hardware-counter-harness.md`](21-performance-methodology/06-hardware-counter-harness.md) — counters, and refusing honestly without a PMU
 
 Practice next: run
