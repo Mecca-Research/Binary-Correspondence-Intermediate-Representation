@@ -13,7 +13,7 @@ without extracting surrounding prose or adding missing declarations.
 
 - Standalone examples should live in a chapter-local `examples/` directory.
 - Standalone examples use the `.ll` extension.
-- Every standalone `.ll` example must assemble with LLVM >= 15, where opaque
+- Every standalone `.ll` example must assemble with LLVM >= 18, where opaque
   pointers are the default.
 - Use `ptr` for pointer-typed values instead of typed pointers such as `i32*`.
 - Prefer examples that are small enough to diagnose quickly with `llvm-as` and
@@ -220,7 +220,7 @@ Each exercise should include the following pieces of information:
   `001-add.solution.ll` when the exercise benefits from a reference answer.
 
 Solutions that are checked in as `.ll` files are known-good standalone examples
-and must follow the LLVM >= 15 opaque-pointer convention. Intentionally broken
+and must follow the LLVM >= 18 opaque-pointer convention. Intentionally broken
 exercise inputs must use `.ll.txt` or include `invalid` in the filename, even if
 the prompt asks the learner to run LLVM and observe the diagnostic.
 

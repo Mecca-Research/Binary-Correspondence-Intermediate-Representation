@@ -14,7 +14,7 @@ syntax, semantics, and a catalog of common failure modes.
 
 This is **not** a fine-tuning corpus. It's a context pack: dense, indexed,
 example-first. Standalone files under `*/examples/*.ll` are guaranteed to
-assemble against a modern `llvm-as` (LLVM >= 15, opaque pointers). Embedded
+assemble against a modern `llvm-as` (LLVM >= 18, opaque pointers). Embedded
 chapter snippets may be illustrative fragments unless they are explicitly made
 testable.
 
@@ -149,7 +149,7 @@ Use the conventions in [`EXAMPLES.md`](EXAMPLES.md) consistently so readers
 and CI know what is runnable versus illustrative. In short:
 
 - **Standalone examples** live in `*/examples/*.ll` (for example,
-  `00-foundations/examples/simple-add.ll`) and must assemble with LLVM >= 15
+  `00-foundations/examples/simple-add.ll`) and must assemble with LLVM >= 18
   opaque pointers.
 - **Intentionally invalid examples** should use `.ll.txt` or include `invalid`
   in the filename so broad verification commands can skip them.

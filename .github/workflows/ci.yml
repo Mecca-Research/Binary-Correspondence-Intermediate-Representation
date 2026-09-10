@@ -552,8 +552,13 @@ jobs:
       # erasure, per-target argument classification). This compiles the checked-in
       # sources and asserts those claims structurally, so a Clang release that changes
       # a rule fails here instead of leaving the prose quietly wrong.
-      - name: LLVM training Clang frontend lowering claims
-        run: python3 training/llvm/tools/verify-frontend-lowering.py --require-tools
+      # --require-baseline is what gives SEMVER.md's declared floor an owner. This job
+      # installs Ubuntu's default LLVM, which IS the baseline major, so a missing
+      # llvm-as-18 here is a defect rather than the expected local condition. Without the
+      # flag the baseline check is allowed to find nothing and say nothing, which is how
+      # the corpus came to declare LLVM 15 while no CI job had an llvm-as-15 to test it.
+      - name: LLVM training Clang frontend lowering claims (owns the declared baseline)
+        run: python3 training/llvm/tools/verify-frontend-lowering.py --require-tools --require-baseline
 
       # Chapters 18/08 and 18/09 teach production MLIR by citing mlir/ directly. This
       # re-checks every cited path, CMake idiom, and API -- and that the pre-LLVM-23

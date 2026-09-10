@@ -49,13 +49,13 @@ loop. Optimization-pass reasoning exercises may include `*.input.ll` and
 `*.after-<pass>.ll` teaching snapshots; these snapshots document expected shape,
 not a byte-for-byte contract for every LLVM release.
 
-Solutions that are executable LLVM IR must assemble with LLVM >= 15, where opaque
+Solutions that are executable LLVM IR must assemble with LLVM >= 18, where opaque
 pointers are the default. Use `ptr` for pointer-typed values instead of typed
 pointers such as `i32*`. Markdown solutions are review references and should be
 read with `cat`, not assembled.
 
 If your LLVM tools are installed with a version suffix, replace `llvm-as` and
-`opt` in the commands with the matching binaries, for example `llvm-as-15`,
+`opt` in the commands with the matching binaries, for example `llvm-as-18`,
 `llvm-as-18`, `opt-15`, or `opt-18`.
 
 ## Exercise families

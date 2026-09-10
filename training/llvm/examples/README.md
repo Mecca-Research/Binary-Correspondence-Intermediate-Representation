@@ -1,7 +1,7 @@
 # Standalone LLVM IR example manifest
 
 Every standalone LLVM IR example in this training pack lives under a chapter
-`examples/` directory and must assemble with a modern `llvm-as` (LLVM >= 15,
+`examples/` directory and must assemble with a modern `llvm-as` (LLVM >= 18,
 opaque pointers) -- unless it declares otherwise. An example that teaches a
 construct newer than the baseline carries `; REQUIRES: llvm >= N` on its first
 lines; `tools/verify-examples.sh` skips it, with the reason printed, on an older

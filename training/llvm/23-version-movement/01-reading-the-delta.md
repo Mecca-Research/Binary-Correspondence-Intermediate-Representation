@@ -136,6 +136,27 @@ is pinned to a release**, and will break on upgrade in a way that pinning a stab
 intrinsic never does. If you must use one, isolate the name behind a helper so the
 upgrade is one edit rather than a search.
 
+### What `llvm.stepvector` actually does
+
+Naming an intrinsic in a rename table is not teaching it, and this chapter says as much a
+few paragraphs up. So, for the one graduate a reader cannot route around:
+
+```llvm
+%idx = call <vscale x 4 x i64> @llvm.stepvector.nxv4i64()   ; <0, 1, 2, 3, ...>
+```
+
+It produces a vector whose lane *i* holds the value *i*. On a fixed-width vector you would
+write that as a constant — `<i64 0, i64 1, i64 2, i64 3>` — and never need an intrinsic.
+
+A **scalable** vector has no compile-time lane count: `<vscale x 4 x i64>` is four lanes
+times a factor the hardware chooses at run time. You cannot write its elements out, so
+there is no constant to write, and `llvm.stepvector` is the only way a lane-index vector
+comes into existence at all. Anything built on lane position in SVE or RVV output —
+strided addressing, an induction variable, a mask derived from lane number — starts here.
+
+That is why it graduated: not a new capability, but one that scalable vectors made
+unavoidable.
+
 Two more departures are the same idea in a different shape — a replacement by a core
 construct rather than a renamed intrinsic:
 

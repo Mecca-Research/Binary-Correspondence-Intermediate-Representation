@@ -40,13 +40,25 @@ TRAINING_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TRAINING_ROOT.parent.parent
 EXAMPLES = TRAINING_ROOT / "20-clang-frontend" / "examples"
 
-# SEMVER.md declares LLVM 15 as the corpus baseline. Snapshots are checked
+# SEMVER.md declares LLVM 18 as the corpus baseline. Snapshots are checked
 # against the OLDEST assembler at or above it that the host provides, not the
 # newest -- the newest is the one that cannot catch this class of defect.
-BASELINE_LLVM_MAJOR = 15
+#
+# The baseline was 15 until Phase 1.7. It moved because a declared floor that
+# nothing assembles is not a floor: CI's training job installs Ubuntu's default
+# LLVM (18) and nothing in CI ever had an `llvm-as-15`, so the search below
+# resolved to 18 and the corpus's LLVM 15 claim was checked on no machine that
+# gates anything. 18 is what CI installs and can therefore enforce, it is the
+# current Ubuntu LTS default so it is what a reader most likely has, and it keeps
+# the reason the floor existed at all -- opaque pointers are the default from 15
+# onward, so every release at or above the new floor still satisfies it.
+#
+# --require-baseline turns "no assembler at the declared major" from a silent
+# pass into a failure, and belongs to the job that installs that major.
+BASELINE_LLVM_MAJOR = 18
 
 # Clang emits these but they are version noise, not lowering facts. Removing
-# them also keeps the snapshots assembling on the corpus's LLVM >= 15 baseline,
+# them also keeps the snapshots assembling on the corpus's LLVM >= 18 baseline,
 # since attribute-group spellings (`memory(none)` and friends) are newer than
 # the baseline while the instructions they annotate are not.
 _DROP_LINE = re.compile(r"^(?:; ModuleID|source_filename|attributes #|!|; Function Attrs:)")
@@ -54,7 +66,7 @@ _ATTR_GROUP_REF = re.compile(r"\s#\d+\b")
 _METADATA_SUFFIX = re.compile(r",\s*![a-zA-Z.]+ ![0-9]+")
 
 # Inline parameter/return attributes that postdate the corpus's declared
-# LLVM >= 15 baseline (SEMVER.md). Stripping attribute *groups* is not enough:
+# LLVM >= 18 baseline (SEMVER.md). Stripping attribute *groups* is not enough:
 # these ride on the parameter itself, so they survive that pass and then fail to
 # parse on a baseline assembler. That is not hypothetical -- CI's
 # host-portability job runs an older llvm-as than the training job, so a
@@ -79,7 +91,7 @@ _POST_BASELINE_FLAG_ATTRS = ("dead_on_unwind", "dead_on_return", "writable")
 _POST_BASELINE_CALL_ATTRS = ("initializes", "range", "captures", "nofpclass")
 # Not every post-baseline spelling is a parameter attribute. Clang 23.1.1 emits
 # `getelementptr inbounds nuw` on the member access in `cxx-object-model.cpp`;
-# the no-wrap flags on a GEP arrived after the corpus's LLVM 15 floor, and the
+# the no-wrap flags on a GEP arrived after the corpus's LLVM 18 floor, and the
 # floor's assembler stops at `expected type` on the flag. They are stripped for
 # the same reason the attributes above are: a refinement on an address
 # computation the snapshot already shows, in a chapter about name mangling and
@@ -354,7 +366,7 @@ def strip_balanced_call(line: str, name: str) -> str:
 
 
 def strip_post_baseline_attrs(line: str) -> str:
-    """Drop inline attributes newer than the corpus's LLVM >= 15 baseline."""
+    """Drop inline attributes newer than the corpus's LLVM >= 18 baseline."""
     if not _ATTRIBUTE_BEARING_LINE.search(line):
         return line
     # Instruction lines are indented; the tidy-up below collapses runs of
@@ -460,6 +472,11 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
     if assembler is None:
         return None
     binary, major = assembler
+    # `major` is the oldest assembler at or above the floor, which is not always the floor
+    # itself: on a host carrying only LLVM 23 this check runs at 23. Saying "the LLVM 23
+    # baseline" there would be a lie about which claim was tested, so the declared floor is
+    # named separately whenever the two differ.
+    at_floor = major == BASELINE_LLVM_MAJOR
     with tempfile.NamedTemporaryFile("w", suffix=".ll", delete=False) as handle:
         handle.write(rendered)
         temporary = Path(handle.name)
@@ -481,7 +498,13 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
     detail = completed.stderr.strip().splitlines()
     first = detail[0] if detail else "(no diagnostic)"
     return (
-        f"{label}: does not assemble at the LLVM {major} baseline: {first}\n"
+        f"{label}: does not assemble at LLVM {major}"
+        + (
+            ""
+            if at_floor
+            else f" (the oldest assembler here; the declared baseline is {BASELINE_LLVM_MAJOR})"
+        )
+        + f": {first}\n"
         f"       If this is a parameter attribute newer than LLVM "
         f"{BASELINE_LLVM_MAJOR}, add it to _POST_BASELINE_FLAG_ATTRS or "
         f"_POST_BASELINE_CALL_ATTRS; if it is an instruction flag, to "
@@ -558,7 +581,30 @@ def main() -> int:
         action="store_true",
         help="rewrite the normalized .ll snapshots from the current clang",
     )
+    parser.add_argument(
+        "--require-baseline",
+        action="store_true",
+        help=f"fail unless an llvm-as at the declared baseline major "
+        f"({BASELINE_LLVM_MAJOR}) is present; pass this from the CI job that installs it",
+    )
     args = parser.parse_args()
+
+    # The floor claim needs an owner. Without this flag the baseline check is allowed to
+    # find nothing and say nothing, which is how the corpus came to declare LLVM 15 while
+    # no CI job had an llvm-as-15 to test it with. The job that installs the baseline
+    # toolchain passes --require-baseline, and there absence is a defect, not a skip.
+    if args.require_baseline:
+        found = find_baseline_assembler()
+        if found is None or found[1] != BASELINE_LLVM_MAJOR:
+            got = "nothing at or above it" if found is None else f"only llvm-as-{found[1]}"
+            print(
+                f"frontend lowering gate: FAILED (--require-baseline: SEMVER.md declares "
+                f"LLVM {BASELINE_LLVM_MAJOR} as the corpus baseline, but this host has "
+                f"{got}. The job passing this flag is the one that is supposed to install "
+                f"llvm-as-{BASELINE_LLVM_MAJOR}; a floor nothing assembles is not a floor)",
+                file=sys.stderr,
+            )
+            return 1
 
     clang = find_clang("clang")
     clangxx = find_clang("clang++")
@@ -617,9 +663,9 @@ def main() -> int:
                 "; Regenerate with:\n"
                 ";   python3 training/llvm/tools/verify-frontend-lowering.py --update\n"
                 "; Attribute groups, module flags, the ident string, and parameter\n"
-                "; attributes newer than LLVM 15 are stripped: they are build\n"
+                "; attributes newer than LLVM 18 are stripped: they are build\n"
                 "; configuration rather than lowering, and their spellings move between\n"
-                "; releases faster than the corpus's LLVM >= 15 baseline allows.\n"
+                "; releases faster than the corpus's LLVM >= 18 baseline allows.\n"
                 "\n"
             )
             rendered = header + normalize(ir)

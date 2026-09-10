@@ -23,8 +23,8 @@ import dataset_export  # noqa: E402
 from llvm_profile import PROFILE  # noqa: E402
 
 EXPORTER = "training/llvm/tools/export-exercise-dataset.py"
-LLVM_ASSUMPTION = "LLVM >= 15 with opaque pointers"
-MLIR_ASSUMPTION = "MLIR >= 15"
+LLVM_ASSUMPTION = "LLVM >= 18 with opaque pointers"
+MLIR_ASSUMPTION = "MLIR >= 18"
 
 
 def version_assumptions(manifest: dict[str, Any], paths: list[str]) -> dict[str, Any]:
