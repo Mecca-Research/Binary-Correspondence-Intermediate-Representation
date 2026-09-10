@@ -18,10 +18,19 @@ checks is that the edge is real and honest rather than that a file was written:
   4. **The tokenizer round-trips.** BCIR's byte-fallback contract means any
      corpus text survives encode/decode; if it does not, the vocabulary is
      broken and every token id downstream is wrong.
-  5. **The ledger is BCIR's and it parses.** Re-read through BCIR's own reader,
+  5. **The split is the file, and one source has one split.** Examples are
+     written one file per split, and a record filed under the wrong name fails.
+     BCIR's splitter hashes each document independently, so a source that
+     appears in two splits means the export handed it fragments rather than
+     files -- and nothing in the prepared corpus itself would show that.
+  6. **The provenance digest covers the whole record, and is sensitive to it.**
+     Every emitted digest recomputes from its distillation record, and
+     perturbing each covered field changes it. The first check alone is vacuous:
+     a digest that ignored a field would satisfy it.
+  7. **The ledger is BCIR's and it parses.** Re-read through BCIR's own reader,
      with its DAG rules enforced -- and it records only stages the corpus
      actually produced.
-  6. **Determinism.** Two exports of the same tree agree.
+  8. **Determinism.** Two exports of the same tree agree.
 
     python3 training/tools/verify_training_export.py
     python3 training/tools/verify_training_export.py --require-bcir
@@ -76,22 +85,50 @@ def read_jsonl(path: Path) -> list[dict]:
 
 
 def check_examples(out: Path, contracts, report: Report) -> None:
-    sft = read_jsonl(out / "sft.jsonl")
+    """Every emitted example reconstructs under BCIR's real constructors."""
+    split_files = sorted(out.glob("sft.*.jsonl"))
+    report.require(bool(split_files), "the export produced no supervised examples")
+
+    by_split = {path.name.split(".")[1]: read_jsonl(path) for path in split_files}
     preferences = read_jsonl(out / "preferences.jsonl")
-    report.require(bool(sft), "the export produced no supervised examples")
     report.require(bool(preferences), "the export produced no preference pairs")
 
-    for index, row in enumerate(sft):
-        try:
-            contracts.SFTExample(
-                prompt_ids=tuple(row["prompt_ids"]),
-                response_ids=tuple(row["response_ids"]),
-                provenance_sha256=row["provenance_sha256"],
-                weight=row["weight"],
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            report.require(False, f"sft[{index}] is not a valid SFTExample: {exc}")
-            break
+    # A held-out record must not be reachable by reading the training file. The
+    # split IS the file, so this is a check that no record was filed under the
+    # wrong one rather than a check on a field nobody has to honour.
+    for split, rows in sorted(by_split.items()):
+        for index, row in enumerate(rows):
+            declared = row.get("provenance", {}).get("split")
+            if declared != split:
+                report.require(
+                    False,
+                    f"sft.{split}.jsonl[{index}] declares split {declared!r}; a "
+                    "held-out record inside the training file contaminates every "
+                    "evaluation that trusts the split",
+                )
+                break
+
+    for split, rows in sorted(by_split.items()):
+        for index, row in enumerate(rows):
+            provenance = row.get("provenance") or {}
+            missing = {"record_id", "split", "source_paths", "verified_by"} - set(provenance)
+            if missing:
+                report.require(
+                    False,
+                    f"sft.{split}.jsonl[{index}] drops provenance {sorted(missing)}; a "
+                    "consumer cannot tell which source and gate justified it",
+                )
+                break
+            try:
+                contracts.SFTExample(
+                    prompt_ids=tuple(row["prompt_ids"]),
+                    response_ids=tuple(row["response_ids"]),
+                    provenance_sha256=row["provenance_sha256"],
+                    weight=row["weight"],
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                report.require(False, f"sft.{split}.jsonl[{index}] is not valid: {exc}")
+                break
 
     for index, row in enumerate(preferences):
         try:
@@ -105,6 +142,85 @@ def check_examples(out: Path, contracts, report: Report) -> None:
         except (ValueError, KeyError, TypeError) as exc:
             report.require(False, f"preferences[{index}] is not valid: {exc}")
             break
+    print(
+        "[sft]     "
+        + ", ".join(f"{len(rows)} {split}" for split, rows in sorted(by_split.items()))
+        + " (one file per split)"
+    )
+
+
+def check_provenance_binding(out: Path, distill_dir: Path, exporter, contracts, report: Report):
+    """The digest must cover the WHOLE record, and be sensitive to all of it.
+
+    `provenance_sha256` is the only thing tying an example back to the material
+    that justified it. A digest over the record's identity alone -- subject, task
+    and messages -- stays identical when the gate that verifies the answer
+    changes, and a consumer diffing digests would see no change where the
+    justification moved. Two halves are checked, because the first alone is
+    vacuous: every emitted digest recomputes from its record, AND perturbing each
+    covered field changes it.
+    """
+    records = {}
+    for path in sorted(distill_dir.glob("*.distill.jsonl")):
+        for row in read_jsonl(path):
+            records[row["record_id"]] = row
+    report.require(bool(records), "no distillation record to bind an example to")
+
+    covered = ("verified_by", "source_paths", "split", "difficulty")
+    mismatched: list[str] = []
+    examples = 0
+    for split_file in sorted(out.glob("sft.*.jsonl")):
+        for row in read_jsonl(split_file):
+            record = records.get(row.get("provenance", {}).get("record_id"))
+            if record is None:
+                mismatched.append(f"{split_file.name}: unknown record_id")
+                continue
+            examples += 1
+            if row["provenance_sha256"] != contracts.sha256_text(exporter.canonical_json(record)):
+                mismatched.append(row["provenance"]["record_id"])
+    report.require(examples > 0, "no example was bound back to its record")
+    report.require(
+        not mismatched,
+        f"{len(mismatched)} example digest(s) do not recompute from their record: "
+        f"{', '.join(mismatched[:3])}",
+    )
+
+    # Anti-vacuity: a digest that ignores a field would pass the check above.
+    sample = records[sorted(records)[0]]
+    baseline = contracts.sha256_text(exporter.canonical_json(sample))
+    for field in covered:
+        perturbed = dict(sample)
+        perturbed[field] = [f"<perturbed {field}>"] if isinstance(sample[field], list) else "<x>"
+        report.require(
+            contracts.sha256_text(exporter.canonical_json(perturbed)) != baseline,
+            f"the provenance digest ignores {field!r}; a record whose {field} changed "
+            "would keep the same digest and the change would be invisible downstream",
+        )
+    print(f"[digest]  {examples} example(s) recompute; sensitive to {', '.join(covered)}")
+
+
+def check_source_splits(out: Path, report: Report) -> None:
+    """One source file, one split -- the invariant Tier 3 already keeps.
+
+    BCIR's splitter hashes each document independently, so passing it chunks
+    rather than sources put fragments of the same chapter on both sides: 89 of
+    285 sources, before this was fixed. Checked here because nothing in the
+    prepared corpus itself would reveal it.
+    """
+    prepared = out / "prepared"
+    by_source: dict[str, set[str]] = {}
+    for path in sorted(prepared.rglob("*.jsonl")):
+        for row in read_jsonl(path):
+            if "source" in row and "split" in row:
+                by_source.setdefault(row["source"], set()).add(row["split"])
+    report.require(bool(by_source), "the prepared corpus exposes no source/split rows")
+    straddling = sorted(source for source, splits in by_source.items() if len(splits) > 1)
+    report.require(
+        not straddling,
+        f"{len(straddling)} source file(s) appear in more than one split, so held-out "
+        f"material is also in training: {', '.join(straddling[:3])}",
+    )
+    print(f"[split]   {len(by_source)} source(s), each in exactly one split")
 
 
 def check_preference_truth(out: Path, exporter, report: Report) -> None:
@@ -193,6 +309,21 @@ def main(argv: list[str] | None = None) -> int:
 
         first = run(workspace / "a")
         report.require(first["documents"]["prepared"] > 0, "the export prepared no documents")
+        # Every document offered is either prepared or refused for a named
+        # reason. A corpus that shrank between the two without saying so is the
+        # silent-skip failure this rail exists to refuse.
+        refused = first["documents"]["refused"]
+        report.require(
+            first["documents"]["offered"] == first["documents"]["prepared"] + sum(refused.values()),
+            f"{first['documents']['offered']} document(s) were offered and "
+            f"{first['documents']['prepared']} prepared, but only "
+            f"{sum(refused.values())} are accounted for as refused {refused}",
+        )
+        print(
+            f"[offered] {first['documents']['offered']} offered, "
+            f"{sum(refused.values())} refused by BCIR "
+            + (", ".join(f"{n} {why}" for why, n in sorted(refused.items()) if n) or "(none)")
+        )
         report.require(
             first["documents"]["validation"] > 0,
             "no validation split; an export with nothing held out cannot be evaluated",
@@ -208,6 +339,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         check_examples(workspace / "a", hosted["contracts"], report)
+        check_source_splits(workspace / "a", report)
+        check_provenance_binding(
+            workspace / "a", distill_dir, exporter, hosted["contracts"], report
+        )
         check_preference_truth(workspace / "a", exporter, report)
         check_tokenizer(workspace / "a", hosted["bpe"], report)
         check_ledger(workspace / "a", hosted["pipeline"], report)

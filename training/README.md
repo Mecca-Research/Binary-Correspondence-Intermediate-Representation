@@ -67,11 +67,15 @@ Four rules do most of the work:
 - **A distillation record exists only if a gate checks its answer.** No gate, no
   record. Tier 3 therefore grows only as fast as verification does, which is the
   intended pressure.
-- **The corpus feeds BCIR, it does not shadow it.** Chunks go through BCIR's own
-  corpus preparation, its tokenizer, and its example contracts; preference pairs
-  are decided by a verifier rather than a rater. The corpus records the two
-  artifacts it produces — `data` and `tokenizer` — and claims no training stage,
-  because it runs none.
+- **The corpus feeds BCIR, it does not shadow it.** Source files go through
+  BCIR's own corpus preparation, its tokenizer, and its example contracts;
+  preference pairs are decided by a verifier rather than a rater. The corpus
+  records the two artifacts it produces — `data` and `tokenizer` — and claims no
+  training stage, because it runs none.
+- **Every artifact says what it was built from, and a mismatch is refused.**
+  Chunks, vectors, judgments and the concept memory carry digests binding them
+  to the corpus and to each other. A chapter rewritten in place changes neither
+  a path nor a count, so a stale combination would otherwise score in silence.
 
 ## Building the records
 

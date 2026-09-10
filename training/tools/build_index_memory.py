@@ -98,6 +98,23 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def index_digest() -> str:
+    """One digest over the index tree a memory is derived from.
+
+    A memory persists in a build directory while the indexes it summarizes keep
+    being edited. Nothing in the memory's own files reveals that: the entry
+    count can be unchanged, every vector the right length, and every recall
+    quietly describing a table that no longer exists. Binding to the sources is
+    the same rule the embedding sets follow -- an artifact says what it was
+    built from, and a consumer refuses a combination that never coexisted.
+    """
+    parts = []
+    for index_file in sorted((CORPUS_ROOT / "llvm" / "indexes").glob("*.md")):
+        parts.append(index_file.relative_to(REPO_ROOT).as_posix())
+        parts.append(sha256_text(index_file.read_text(encoding="utf-8")))
+    return sha256_text("\n".join(parts))
+
+
 def clean_cell(cell: str) -> str:
     text = LINK_RE.sub(r"\1", cell).replace("`", "").replace("**", "").replace("*", "")
     return " ".join(text.split()).strip()
@@ -183,10 +200,47 @@ class IndexMemory:
         codes.frombytes((root / "vectors.q15").read_bytes())
         if sys.byteorder == "big":
             codes.byteswap()
+        # A truncated or miscounted vector file still slices cleanly into one
+        # view per entry -- the short ones simply come out short, and every
+        # distance computed from them is quietly wrong. EmbeddingSet already
+        # checks this; the memory must too.
+        expected = len(entries) * manifest["dim"]
+        if len(codes) != expected:
+            raise SystemExit(
+                f"build_index_memory: {root / 'vectors.q15'} holds {len(codes)} codes, "
+                f"expected {expected} ({len(entries)} entries x dim {manifest['dim']}); "
+                "the vectors do not belong to this memory.jsonl"
+            )
+        # The count check above cannot see a swap that preserves the count, and
+        # neither can see an index edited after the memory was built.
+        digest = sha256_text("\n".join(canonical_json(e) for e in entries))
+        if manifest.get("entries_sha256") != digest:
+            raise SystemExit(
+                f"build_index_memory: {root / 'memory.jsonl'} does not match the "
+                f"manifest\n  manifest: {manifest.get('entries_sha256')}\n"
+                f"  entries:  {digest}\n"
+                f"  rebuild the memory: python3 {BUILDER} --out {root}"
+            )
+        sources = index_digest()
+        if manifest.get("sources_sha256") != sources:
+            raise SystemExit(
+                f"build_index_memory: {root} was built from a different index tree\n"
+                f"  memory:  {manifest.get('sources_sha256')}\n"
+                f"  indexes: {sources}\n"
+                f"  rebuild the memory: python3 {BUILDER} --out {root}"
+            )
         return cls(entries, codes, manifest["dim"], manifest)
 
     def recall(self, query_codes: array, *, concepts: int = 5) -> list[dict]:
         """Rank concepts, then the documents they name. Every hit keeps its reason."""
+        if len(query_codes) != self.dim:
+            raise SystemExit(
+                f"build_index_memory: a query of {len(query_codes)} coordinate(s) "
+                f"cannot be scored against a dim-{self.dim} memory. Python's `map` "
+                "would silently truncate to the shorter of the two and rank on the "
+                "overlap; project the query with project_query() instead, which "
+                "puts it in THIS memory's space."
+            )
         query_square = sum(map(mul, query_codes, query_codes))
         scored = []
         for row, view in enumerate(self.views):
@@ -201,6 +255,30 @@ class IndexMemory:
             }
             for distance, row in scored[:concepts]
         ]
+
+
+def project_query(text: str, memory: "IndexMemory") -> array:
+    """Project a query into the memory's OWN vector space.
+
+    A concept memory records the model that built it. Projecting a query with
+    some other model -- the one that happens to own the chunk embedding set, say
+    -- compares coordinates from two unrelated spaces. Equal dimensions do not
+    make them compatible, and unequal ones are worse: `zip` truncates silently
+    and the ranking becomes arithmetic over nothing.
+    """
+    embed = load_tool("embed_chunks")
+    provider = embed.build_provider(
+        memory.manifest["model"], dim=memory.dim, revision=memory.manifest["revision"]
+    )
+    if provider.dim != memory.dim:
+        raise SystemExit(
+            f"build_index_memory: {memory.manifest['model']} reports dim "
+            f"{provider.dim}, but the memory was built at dim {memory.dim}"
+        )
+    vectors, _ = embed.embed(
+        [{"text": text, "chunk_id": "<query>", "source_path": "<query>"}], provider
+    )
+    return embed.quantize_q15(vectors)
 
 
 def documents_from(hits: list[dict], limit: int) -> list[str]:
@@ -249,6 +327,8 @@ def build(out: Path, *, dim: int) -> dict:
         "dim": provider.dim,
         "scale": embed.Q15_SCALE,
         "entries": len(entries),
+        "entries_sha256": sha256_text("\n".join(canonical_json(e) for e in entries)),
+        "sources_sha256": index_digest(),
         "documents": len(documents),
         "indexes": sorted({e["index"] for e in entries}),
         "transparency": (
@@ -284,12 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     if not (args.out / "manifest.json").is_file():
         build(args.out, dim=args.dim)
     memory = IndexMemory.load(args.out)
-    embed = load_tool("embed_chunks")
-    provider = embed.build_provider(memory.manifest["model"], dim=memory.dim, revision=None)
-    vectors, _ = embed.embed(
-        [{"text": args.recall, "chunk_id": "<query>", "source_path": "<query>"}], provider
-    )
-    hits = memory.recall(embed.quantize_q15(vectors), concepts=args.concepts)
+    hits = memory.recall(project_query(args.recall, memory), concepts=args.concepts)
 
     print(f'\nQ: "{args.recall}"\n')
     for hit in hits:

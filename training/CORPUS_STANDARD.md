@@ -200,14 +200,56 @@ row that says which chapters cover a concept, a prose link whose text describes
 what it points at, a section's own heading trail.
 
 **Every family declares its bias**, because a pooled score hides which part of
-the corpus was easy. And one family is *trivial on purpose*: `heading` queries
-are verbatim in their targets, so that family is a **positive control for the
-harness**, never a quality measure. If it does not score near-perfectly,
-retrieval is broken and every other number in the run is noise.
+the corpus was easy. Three consequences are enforced rather than hoped for:
+
+- **A control never contributes to a quality score.** `heading` queries are
+  verbatim in their targets, so that family is a **positive control for the
+  harness**. It is reported in its own block and excluded from `overall` — and
+  from the lift and shuffle gates that read `overall`, which would otherwise be
+  partly measuring a self-match. If it does not score near-perfectly, retrieval
+  is broken and every other number in the run is noise.
+- **Index rows written alongside the evaluation are their own family.**
+  `index-authored` names the rows added by the same change as the evaluator,
+  after gaps and scores had been measured. They can encode knowledge of the
+  retriever, so they are separated rather than pooled — and reporting them apart
+  is what lets a reader see they behave *differently* from inherited rows.
+- **Recall means recall.** A judgment may name many documents, and finding one
+  of fifteen is not full recall. Recall at a cutoff is the fraction of a
+  judgment's targets inside it; `hit@10` reports the weaker "found anything"
+  question beside it, so neither is mistaken for the other.
 
 **A family that produces nothing must say why.** A length filter once deleted an
 entire source of judgments here and the report simply did not mention it; a
 zero-count family now carries a measured reason or the gate fails.
+
+**Artifacts are bound before anything is scored.** Chunks, vectors and judgments
+are three files built at three moments; all three carry the same corpus digest
+and a mismatch is refused. Source paths and counts do not catch a chapter
+rewritten in place, which leaves both unchanged while every judgment in it goes
+stale.
+
+**A memory is compared against its own population.** When circular queries are
+withheld, the baselines are recomputed over exactly the queries the memory was
+allowed to answer. Pooling a baseline over every query while the memory answered
+a subset compares two different populations, and the comparison then moves for
+reasons that have nothing to do with the memory. The gate checks that every
+ranker in that block scored the same number of queries, because a lift is
+otherwise an arithmetic between two different question sets.
+
+**A query is projected into the space it will be scored in.** A concept memory
+records the model, revision and dimension it was built with, and a query reaches
+it through that model — not through whichever embedding set happens to be open.
+Today both are `lexical-hash-v1` at 512 dimensions and the distinction costs
+nothing; the day one adopts a learned model and the other does not, mismatched
+coordinates would rank on nothing and no score would look wrong. So `recall`
+refuses a query of the wrong width outright, and the gate exercises the path
+with a memory built at a dimension the chunk set does not use.
+
+**A memory says what it was built from.** Its manifest carries a digest of its
+own entries and of the index tree they were read from, and loading refuses a
+combination that never coexisted. A memory left in a build directory while its
+indexes keep being edited answers every question about a table that no longer
+exists, and nothing in its own files would show it.
 
 **Absolute scores are reported, never gated.** Freezing today's recall into a
 threshold would tune the bar to today's corpus and then cite it as evidence.
@@ -304,15 +346,38 @@ builds edges rather than a second stack:
 
 | BCIR component | What the corpus feeds it |
 | --- | --- |
-| `hosted.training.data` | chunks as `RawDocument`s — it prepares, splits, and reports |
+| `hosted.training.data` | source files as `RawDocument`s — it prepares, splits, and reports |
 | `hosted.training.bpe` | the prepared corpus — its tokenizer, trained on it |
 | `hosted.training.contracts` | Tier-3 records as `SFTExample`s under its schema |
 | `hosted.training.pipeline` | its append-only, content-addressed ledger |
 
 Nothing here reimplements a tokenizer, a split policy, a provenance digest, or
-an example schema. Every chunk field BCIR's `RawDocument` asks for — identity,
-text, source, licence, source digest — the corpus already carried, which is why
-this is an edge and not an adapter.
+an example schema. Every field BCIR's `RawDocument` asks for — identity, text,
+source, licence, source digest — the corpus already carried, which is why this
+is an edge and not an adapter.
+
+Three rules make the edge safe to consume:
+
+- **One source file, one `RawDocument`.** BCIR's splitter hashes each document
+  independently, so handing it *chunks* puts fragments of one chapter on both
+  sides of the split — measured here, 89 of 285 sources — and a held-out
+  chapter's neighbouring paragraphs end up in training. A document is a file
+  with a licence and a digest; a chunk is a retrieval fragment of one, and the
+  two are not interchangeable because both carry text.
+- **The split is the file.** `SFTExample` has no split field, so examples are
+  written one file per split rather than merged with a field a consumer must
+  remember to honour. A record filed under the wrong name is a gate failure.
+- **The provenance digest covers the whole record.** `provenance_sha256` hashes
+  the entire canonical record, not its identity: the gate that verifies an
+  answer, its sources, split and difficulty are part of what the example *is*.
+  A digest over identity alone stays unchanged when the justification moves, and
+  the gate checks both halves — every digest recomputes from its record, and
+  perturbing any covered field changes it.
+- **Nothing shrinks in silence.** Every document offered is either prepared or
+  refused for a reason BCIR names, the manifest records both, and the gate
+  refuses a run where the two do not reconcile. A stale chunk build naming a
+  source that no longer exists is refused outright rather than exported one
+  chapter short.
 
 ### Preferences decided by a verifier, not by a rater
 
