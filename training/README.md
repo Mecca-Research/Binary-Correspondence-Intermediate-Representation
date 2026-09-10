@@ -13,7 +13,7 @@ One body of knowledge, delivered in three shapes:
 | --- | --- | --- |
 | a person learning | the subject's `README.md` and curriculum | chapters, worked examples, exercises |
 | an agent doing a task | `tools/search_chunks.py`, or the subject's index | a scoped passage that traces to a line |
-| training a model | `tools/build_distillation.py` | chat-format records whose answers are gate-checked |
+| training a model | `tools/export_training_examples.py` | BCIR `SFTExample`s and verifier-decided preference pairs |
 
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
 The plan for growing it is [`ROADMAP.md`](ROADMAP.md).
@@ -67,6 +67,11 @@ Four rules do most of the work:
 - **A distillation record exists only if a gate checks its answer.** No gate, no
   record. Tier 3 therefore grows only as fast as verification does, which is the
   intended pressure.
+- **The corpus feeds BCIR, it does not shadow it.** Chunks go through BCIR's own
+  corpus preparation, its tokenizer, and its example contracts; preference pairs
+  are decided by a verifier rather than a rater. The corpus records the two
+  artifacts it produces — `data` and `tokenizer` — and claims no training stage,
+  because it runs none.
 
 ## Building the records
 
@@ -95,11 +100,15 @@ python3 training/tools/build_index_memory.py --recall "is my speedup real or jus
 # Tier 3 — gate-backed distillation records
 python3 training/tools/build_distillation.py --out build/training/distill
 
+# feed BCIR's own training stack: its corpus prep, tokenizer, example contracts
+python3 training/tools/export_training_examples.py --out build/training/export
+
 # The gates: schema, provenance, split leakage, determinism, anti-vacuity;
 # then attribution, row alignment, discrimination, and the native differential
 python3 training/tools/verify_corpus_records.py
 python3 training/tools/verify_embeddings.py
 python3 training/tools/verify_retrieval.py
+python3 training/tools/verify_training_export.py
 ```
 
 The arithmetic is BCIR's own. `--backend both` runs the pure-Python reference
@@ -135,8 +144,9 @@ validates against.
 ## Verification boundary
 
 - **Checked:** every gate listed in a subject's `tools/`, plus the record,
-  embedding, and retrieval gates above — the last of which also checks that
-  every retrievable teaching document is named by some index. `llvm/` alone carries example assembly, opaque-pointer
+  embedding, retrieval, and training-export gates above — which also check that
+  every retrievable teaching document is named by some index, and that no
+  preference pair puts assembler-valid IR on its rejected side. `llvm/` alone carries example assembly, opaque-pointer
   conformance, exercise solutions, invalid fixtures, optimizer goldens, MLIR
   registry tiers, Clang lowering claims, benchmark analysis, and a built
   out-of-tree pass plugin.

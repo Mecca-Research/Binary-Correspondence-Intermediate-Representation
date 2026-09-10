@@ -295,6 +295,54 @@ derived from one file lands in the same split, so a test record can never be a
 memorised train record. The verifier fails on any source that appears in two
 splits, and on a corpus that landed entirely in one.
 
+## The edge into BCIR's training stack
+
+A corpus that emits records nothing consumes is a database that happens to sit
+next to a training system. BCIR already owns every component the corpus would
+otherwise reimplement, so [`tools/export_training_examples.py`](tools/export_training_examples.py)
+builds edges rather than a second stack:
+
+| BCIR component | What the corpus feeds it |
+| --- | --- |
+| `hosted.training.data` | chunks as `RawDocument`s — it prepares, splits, and reports |
+| `hosted.training.bpe` | the prepared corpus — its tokenizer, trained on it |
+| `hosted.training.contracts` | Tier-3 records as `SFTExample`s under its schema |
+| `hosted.training.pipeline` | its append-only, content-addressed ledger |
+
+Nothing here reimplements a tokenizer, a split policy, a provenance digest, or
+an example schema. Every chunk field BCIR's `RawDocument` asks for — identity,
+text, source, licence, source digest — the corpus already carried, which is why
+this is an edge and not an adapter.
+
+### Preferences decided by a verifier, not by a rater
+
+Preference data normally needs human labels, which this corpus cannot produce
+honestly. It has something better: artifacts whose status a **gate** already
+decided. A checked-in solution is IR the assembler accepts; an invalid fixture
+is IR the assembler is proven to refuse. "Accepted is preferred to rejected" is
+then a legality verdict — the same order this repository applies everywhere,
+where legality precedes cost.
+
+Two rules keep that label true:
+
+- **The prompt asks what both sides answer.** It asks for a module the verifier
+  accepts, and claims no topical relationship between the two responses. A pair
+  whose rejected side does not attempt the prompt's task would be a misleading
+  label dressed as data.
+- **Only genuinely-refused IR may lose.** This corpus declares some fixtures
+  invalid that the assembler nevertheless *accepts* — `semantic-only` and
+  `assemble-valid-semantically-risky`, where the defect is meaning rather than
+  form. Putting those on the losing side would teach the opposite of the
+  intended lesson, so they are excluded by name and the count is reported.
+
+### What the corpus does not claim
+
+BCIR's ledger enforces a real training DAG, and in it `sft` means *a model was
+trained*, not *examples exist*. The corpus records `data` and `tokenizer` —
+the two artifacts it genuinely produces — and no stage downstream of them. It
+still runs no training: these are inputs, and saying otherwise would be the
+overclaim the rest of this standard exists to refuse.
+
 ## The gate
 
 [`tools/verify_corpus_records.py`](tools/verify_corpus_records.py) builds both

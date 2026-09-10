@@ -581,6 +581,12 @@ jobs:
       - name: Training corpus retrieval evaluation (judged queries + concept memory)
         run: python3 training/tools/verify_retrieval.py
 
+      # BCIR's hosted training contracts are tensor-framework free, so this
+      # runner has them by checking out the repository: absence would be a
+      # broken tree, not an expected local condition.
+      - name: Training corpus feeds BCIR's training stack (corpus, tokenizer, examples)
+        run: python3 training/tools/verify_training_export.py --require-bcir
+
       - name: LLVM training llc smoke
         run: |
           if command -v llc >/dev/null; then

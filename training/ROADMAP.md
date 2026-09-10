@@ -132,6 +132,26 @@ and reported as one. And retrieval quality is still measured against a
 **lexical** baseline: `0.5` left the learned rail implemented and unexercised,
 and this phase gives it the metric it was missing rather than the model.
 
+### The edge into BCIR's training stack
+
+Landed alongside 0.6, and the reason the corpus stops being a passive database.
+`tools/export_training_examples.py` feeds BCIR's own `hosted.training` stack —
+its provenance-preserving corpus preparation, its byte-fallback tokenizer, its
+`SFTExample`/`PreferenceExample` contracts, and its content-addressed pipeline
+ledger — instead of emitting JSON nothing in this repository consumes. Those
+modules are deliberately tensor-framework free, so the edge is gated in CI with
+no torch on the runner.
+
+Preference pairs are decided by a **verifier rather than a rater**: a checked-in
+solution assembles, an invalid fixture is proven refused. Fixtures declared
+invalid that nevertheless assemble are excluded by name and counted, because
+putting valid IR on the losing side of a pair is a false label no schema catches.
+
+The corpus records only `data` and `tokenizer` in BCIR's ledger. A first cut
+appended `sft` and the ledger rejected it — correctly, since there `sft` means a
+model was trained. These are training inputs; the corpus runs no training stage,
+and Phase 0.7 is where the shared machinery for one would live.
+
 ## Phase 1 — complete `llvm/`
 
 *Status: LLVM 15–18 material is complete and gated. The version and MLIR gaps are open.*
