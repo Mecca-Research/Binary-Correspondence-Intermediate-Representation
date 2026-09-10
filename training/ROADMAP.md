@@ -22,10 +22,13 @@ compiler-infrastructure subject. Everything above the subject folders is shared:
 training/
 ├── CORPUS_STANDARD.md      the three-tier contract every subject must reach
 ├── ROADMAP.md              this file
-├── schema/                 chunk-v1.json, embedding-set-v1.json, distill-v1.json
+├── schema/                 chunk-v1.json, embedding-set-v1.json, eval-set-v1.json,
+│                           distill-v1.json
 ├── tools/                  build_chunks.py, embed_chunks.py, search_chunks.py,
+│                           bcir_native.py, build_index_memory.py,
+│                           build_eval_queries.py, evaluate_retrieval.py,
 │                           build_distillation.py, verify_corpus_records.py,
-│                           verify_embeddings.py
+│                           verify_embeddings.py, verify_retrieval.py
 ├── llvm/                   Phase 1 — compilers (the existing corpus)
 ├── hardware/               Phase 2 — transistors to instruction sets
 ├── systems/                Phase 3 — C/C++/CUDA, build systems, drivers, kernels
@@ -66,7 +69,7 @@ the intended pressure.
 | 0.3 Distillation schema + gate-backed builder | landed |
 | 0.4 Record verifier (anti-vacuity, provenance, leakage, determinism) | landed |
 | 0.5 Embedding step: a named model fills `embedding`, provenance recorded | landed |
-| 0.6 Retrieval evaluation: does a chunk set answer the questions it should? | open |
+| 0.6 Retrieval evaluation: does a chunk set answer the questions it should? | landed |
 | 0.7 Extract the grader/dataset machinery from `llvm/` to `training/` | open |
 
 **0.5 closed with** `tools/embed_chunks.py`, `tools/search_chunks.py`,
@@ -91,18 +94,43 @@ host, and it declares itself lexical precisely so nobody mistakes it for
 semantic retrieval. Running a learned model is implemented and unproven here —
 see 0.6.
 
-**0.6** is now the next thing to build, and 0.5 sharpened what it has to answer.
-Retrieval quality is unmeasured: the gate proves the vectors are attributed,
-aligned, non-degenerate, and searched correctly, which is *not* the same as
-proving they return the right chunk for a real question. That needs a judged
-query set, a metric, and a baseline to beat — and it is what would let a learned
-model be compared against `lexical-hash-v1` on evidence rather than on
-reputation.
+**0.6 closed with** `tools/build_eval_queries.py`, `tools/evaluate_retrieval.py`,
+`tools/build_index_memory.py`, `tools/verify_retrieval.py`, and
+`schema/eval-set-v1.json`.
 
-**0.7** matters once a second subject exists: the autograder, dataset exporter,
-and eval runner currently live under `llvm/` and are LLVM-shaped in places. They
-become shared machinery when a second subject needs them — not before, because
-extracting them earlier would be a refactor with no second caller to validate it.
+Judgments are **derived, never authored for the evaluation**: an index row
+already says which chapters cover a concept, a prose link already describes what
+it points at. Every family declares its bias, one family is trivial on purpose
+as a harness control, and a family that yields nothing must carry a measured
+reason — a length filter deleted an entire source of judgments on the first run
+and the report did not mention it.
+
+No absolute score is gated. The gate asserts properties instead: the control
+scores near-perfectly, the model clears both a random and a query-ignoring
+baseline by a wide margin, recall is monotonic, the run is deterministic, and a
+**shuffled index must collapse to the noise floor** — an evaluation that cannot
+tell a scrambled index from a working one measures nothing.
+
+**The indexes grew to make this possible**, and the growth is now a checked
+property: every retrievable teaching document must be named by some index, with
+directory `README`s and navigation pages as a declared exclusion. Five index
+files were added covering backend/JIT, performance and evidence, frontends and
+production lowering, concurrency and atomics, and exercises by skill.
+
+**An index-backed concept memory** turns those rows into a second retrieval
+path: `query → concept → documents`, where the concept is human-written and the
+answer carries the index row that produced it. It makes the *memory* auditable —
+not a learned model's internals, and the corpus says so plainly. A memory is
+never scored on queries derived from its own rows; the exclusion is enforced per
+query from the memory's declared sources.
+
+**Still open in this area, deliberately.** The judged set is derived from one
+author's corpus, so it shares vocabulary with what it judges; an independent
+judge would be better and does not exist here. The concept memory is scoreable
+on only the minority of queries that are not circular, which is a small sample
+and reported as one. And retrieval quality is still measured against a
+**lexical** baseline: `0.5` left the learned rail implemented and unexercised,
+and this phase gives it the metric it was missing rather than the model.
 
 ## Phase 1 — complete `llvm/`
 

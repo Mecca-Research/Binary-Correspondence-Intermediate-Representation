@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcir.dev/schemas/training/eval-set-v1.json",
+  "title": "BCIR training corpus retrieval evaluation set (Tier 2, judgments)",
+  "description": "A judged query set and its manifest: (question, correct documents) pairs used to measure whether retrieval returns the right chapter. Judgments are DERIVED from bindings the corpus already made for other purposes -- an index row mapping a concept to its chapters, a prose link describing what it points at -- and never written for the evaluation. A query set authored by whoever also tuned the retriever measures the author's memory of the corpus rather than the retriever, and no schema can detect that after the fact, so the provenance of every query is recorded in the query itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "corpus", "builder", "judged_from", "queries", "documents", "families", "license"],
+  "properties": {
+    "schema": {"const": "bcir-training/eval-set/v1"},
+    "corpus": {"const": "training"},
+    "builder": {"$ref": "#/$defs/repositoryPath"},
+    "judged_from": {
+      "description": "How the judgments were obtained. Free text, but it must describe a derivation rather than an authoring step.",
+      "type": "string",
+      "minLength": 1
+    },
+    "queries": {"type": "integer", "minimum": 1},
+    "documents": {
+      "description": "Size of the retrieval corpus these queries are judged against. A recall figure is meaningless without it: recall@10 over 12 documents and over 12000 are different claims.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "families": {
+      "description": "Every family the builder knows about, including the ones that produced nothing. A family that vanishes silently is indistinguishable from one that never existed, so a zero count must carry a reason.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/family"}
+    },
+    "license": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    },
+    "family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queries", "bias", "control", "excluded"],
+      "properties": {
+        "queries": {"type": "integer", "minimum": 0},
+        "bias": {
+          "description": "Why this family is easier or harder than a real question would be. Required and non-empty: a mixed score hides which part of the corpus was easy, and a consumer who cannot see a family's bias cannot weight it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "control": {
+          "description": "True for a family that is trivial by construction and exists to test the harness, not the model. Its query text appears verbatim in its target, so a low score means retrieval itself is broken and every other number in the run is noise. A control family's score must never be reported as retrieval quality.",
+          "type": "boolean"
+        },
+        "excluded": {
+          "description": "Null when the family produced queries. Otherwise the measured reason it did not, so the exclusion is a declared non-goal rather than a silent gap.",
+          "type": ["string", "null"],
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"queries": {"const": 0}}, "required": ["queries"]},
+          "then": {"properties": {"excluded": {"type": "string", "minLength": 1}}}
+        }
+      ]
+    },
+    "query": {
+      "description": "One row of queries.jsonl.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "query_id", "corpus", "family", "query", "targets", "origin", "note", "bias", "provenance"],
+      "properties": {
+        "schema": {"const": "bcir-training/eval-query/v1"},
+        "query_id": {
+          "description": "sha256 over (family, query, targets). Content-addressed, so the same judgment reached from two index files is one judgment, and editing a query does not renumber its neighbours.",
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "corpus": {"const": "training"},
+        "family": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "query": {"type": "string", "minLength": 1},
+        "targets": {
+          "description": "Documents that answer the query. Judgments are document-level because that is what the source binding asserts -- an index row says which chapters cover a concept, not which chunk.",
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/repositoryPath"}
+        },
+        "origin": {
+          "description": "file:line the judgment was derived from, so any query can be traced back to the binding that justifies it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {"type": "string"},
+        "bias": {"type": "string", "minLength": 1},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["license", "builder"],
+          "properties": {
+            "license": {"type": "string", "minLength": 1},
+            "builder": {"$ref": "#/$defs/repositoryPath"}
+          }
+        }
+      }
+    }
+  }
+}

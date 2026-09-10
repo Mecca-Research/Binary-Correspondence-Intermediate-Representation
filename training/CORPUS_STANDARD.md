@@ -185,6 +185,75 @@ never asserted.
 > the implementation it teaches; the implementation still knows nothing about
 > the corpus.
 
+### Measuring whether retrieval works
+
+Everything above is a statement about the *index*: the vectors are attributed,
+aligned, non-degenerate, and searched correctly. An index can satisfy all of
+that and still rank the wrong chapter first. Measuring the difference needs
+judgments, and where those come from decides whether the number means anything.
+
+**No query is written for the evaluation.** A query set authored by whoever also
+tuned the retriever measures the author's memory of the corpus. Every judgment
+in [`tools/build_eval_queries.py`](tools/build_eval_queries.py) is instead
+derived from a binding the corpus already made for another purpose — an index
+row that says which chapters cover a concept, a prose link whose text describes
+what it points at, a section's own heading trail.
+
+**Every family declares its bias**, because a pooled score hides which part of
+the corpus was easy. And one family is *trivial on purpose*: `heading` queries
+are verbatim in their targets, so that family is a **positive control for the
+harness**, never a quality measure. If it does not score near-perfectly,
+retrieval is broken and every other number in the run is noise.
+
+**A family that produces nothing must say why.** A length filter once deleted an
+entire source of judgments here and the report simply did not mention it; a
+zero-count family now carries a measured reason or the gate fails.
+
+**Absolute scores are reported, never gated.** Freezing today's recall into a
+threshold would tune the bar to today's corpus and then cite it as evidence.
+[`tools/verify_retrieval.py`](tools/verify_retrieval.py) asserts properties
+instead: the control scores near-perfectly, the model clears both a seeded
+random ranker and a query-ignoring constant ranker by a wide margin, recall is
+monotonic in the cutoff, the run is deterministic — and a **shuffled index must
+collapse to the noise floor**, because an evaluation that scores a scrambled
+index as highly as a real one measures nothing.
+
+### The concept memory, and what it makes transparent
+
+Direct vector retrieval answers with chunks and a cosine. It cannot say *why*
+those chunks: the similarity lives in 512 coordinates that mean nothing to a
+reader. [`tools/build_index_memory.py`](tools/build_index_memory.py) adds a
+second path through a named intermediate —
+
+```
+query ──▶ concept ──▶ documents
+          ^^^^^^^ written by a person, in a table, under version control
+```
+
+— so every answer arrives with a legible reason: the concept that matched, the
+index row that defines it, and the chapters that row names. You can read it,
+disagree with it, and fix it by editing a table.
+
+> **What this makes transparent, precisely: the memory, not the model.** Nothing
+> here opens up a learned model's weights or explains what a network computes.
+> It replaces one opaque hop with two hops through an auditable intermediate,
+> which makes *retrieval* reviewable in the way the rest of this repository is
+> reviewable. Claiming more than that would be the kind of overclaim this corpus
+> exists to refuse.
+
+Two rules keep it honest:
+
+- **The indexes must cover what is retrievable.** A document reachable by search
+  but named by no index has no concept leading to it. The gate checks that,
+  with directory `README`s and top-level navigation pages as a declared
+  exclusion — indexing an index is circular.
+- **A memory may not be scored on queries derived from its own rows.** The
+  `index` query family comes from the very table the memory embeds; scoring it
+  there is asking it to find its own keys. The exclusion is enforced **per
+  query** from the memory's declared sources, so a new index file cannot quietly
+  reintroduce the circle, and so a family is never discarded wholesale over a
+  handful of circular members.
+
 ## Tier 3 — distillation
 
 Built by [`tools/build_distillation.py`](tools/build_distillation.py), schema in

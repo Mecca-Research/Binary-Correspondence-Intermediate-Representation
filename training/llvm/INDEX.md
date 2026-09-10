@@ -7,6 +7,11 @@ every lookup.
 | Need | Index |
 | --- | --- |
 | Concept or task area | [`indexes/topics.md`](indexes/topics.md) |
+| Backend codegen, TableGen, ORC/JIT, object emission | [`indexes/backend-and-jit.md`](indexes/backend-and-jit.md) |
+| Benchmarking, statistics, and evidence discipline | [`indexes/performance-and-evidence.md`](indexes/performance-and-evidence.md) |
+| Frontends, dialect lowering, production-shaped code | [`indexes/frontend-and-production-lowering.md`](indexes/frontend-and-production-lowering.md) |
+| Atomics, memory ordering, and thread safety | [`indexes/concurrency-and-atomics.md`](indexes/concurrency-and-atomics.md) |
+| An exercise to practise a specific skill | [`indexes/exercises.md`](indexes/exercises.md) |
 | Common LLVM IR instruction syntax | [`indexes/instructions.md`](indexes/instructions.md) |
 | One-page quick references | [`quickref/`](quickref) |
 | Advanced IR quick reference | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) |
