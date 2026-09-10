@@ -47,13 +47,21 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import dataset_export  # noqa: E402
+import distillation  # noqa: E402
 import grading  # noqa: E402
 import safe_process  # noqa: E402
 from subject_profile import AnswerKind, SubjectProfile, ToolCheck  # noqa: E402
 
 # The modules that must stay subject-neutral. `verify_grading.py` itself is
 # excluded: naming what it forbids is its job.
-SHARED_MODULES = ("grading.py", "dataset_export.py", "subject_profile.py", "safe_process.py")
+SHARED_MODULES = (
+    "grading.py",
+    "dataset_export.py",
+    "subject_profile.py",
+    "safe_process.py",
+    "distillation.py",
+    "build_distillation.py",
+)
 
 # Tokens that would mean a subject leaked into the shared rail. Matched against
 # code with docstrings and comments removed, so the explanation of the boundary
@@ -497,6 +505,155 @@ def check_dataset_kernel(report: Report) -> None:
         print("[dataset] an empty manifest set is refused; redaction is the subject's rule")
 
 
+SYNTHETIC_SOURCES = """
+from distillation import RecordSource
+
+SYSTEM_PROMPT = "You are answering about a synthetic subject."
+
+
+def _two(builder):
+    return [
+        builder.record(
+            task="probe",
+            user=f"question {index}",
+            assistant=f"answer {index}",
+            answer_kind="explanation",
+            source_paths=["training/synthetic/source-38.md"],
+            gate="training/synthetic/tools/gate.sh",
+            claim="the gate pins this answer",
+            difficulty=2,
+        )
+        for index in range(8)
+    ]
+
+
+SOURCES = (RecordSource("probe", _two),)
+"""
+
+
+def write_sources(subject_root: Path, body: str) -> None:
+    tools = subject_root / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / distillation.SOURCES_MODULE).write_text(body, encoding="utf-8")
+
+
+def check_distillation_contract(report: Report) -> None:
+    """A record cannot be built without a gate, and a subject owns its sources."""
+    with tempfile.TemporaryDirectory(prefix="bcir-verify-distill-") as name:
+        root = Path(name) / "training" / "synthetic"
+        root.mkdir(parents=True)
+
+        # A subject that is still a scope statement contributes nothing, and
+        # says so by having no sources module rather than by erroring.
+        records, counts = distillation.build_subject(root)
+        report.require(
+            not records and not counts,
+            "a subject with no record-source module produced records anyway",
+        )
+
+        write_sources(root, SYNTHETIC_SOURCES)
+        records, counts = distillation.build_subject(root)
+        report.require(len(records) == 8, f"the synthetic subject produced {len(records)} records")
+        report.require(counts == {"probe": 8}, f"the task counts are {counts}, expected probe=8")
+        if records:
+            report.require(
+                records[0]["verified_by"]["gate"].endswith("gate.sh"),
+                "a record lost the gate that justifies it",
+            )
+            # The split must be a function of the SOURCE FILE and of nothing
+            # else -- that is the Tier-3 leakage rule. Checking that each record
+            # re-derives its own split from its own source path is exact, where
+            # comparing two records to each other only fails by luck. The probe
+            # source deliberately hashes to the rarest bucket so an assignment
+            # made per record rather than per file cannot coincide with it.
+            mismatched = [
+                record["record_id"]
+                for record in records
+                if record["split"] != distillation.assign_split(record["source_paths"][0])
+            ]
+            report.require(
+                not mismatched,
+                f"{len(mismatched)} record(s) carry a split that is not their source "
+                "file's; two records from one chapter can then straddle the boundary "
+                "and a held-out file is also in training",
+            )
+            report.require(
+                len({record["split"] for record in records}) == 1,
+                "records from one source file landed in more than one split",
+            )
+            report.require(
+                records[0]["messages"][0]["content"] == "You are answering about a "
+                "synthetic subject.",
+                "the system turn did not come from the subject",
+            )
+
+        for label, body, expected in (
+            (
+                "a record with no gate",
+                SYNTHETIC_SOURCES.replace('gate="training/synthetic/tools/gate.sh"', 'gate=""'),
+                "no gate or no claim",
+            ),
+            (
+                "an empty system prompt",
+                SYNTHETIC_SOURCES.replace(
+                    'SYSTEM_PROMPT = "You are answering about a synthetic subject."',
+                    'SYSTEM_PROMPT = "   "',
+                ),
+                "empty SYSTEM_PROMPT",
+            ),
+            (
+                "a duplicated task name",
+                SYNTHETIC_SOURCES.replace(
+                    'SOURCES = (RecordSource("probe", _two),)',
+                    'SOURCES = (RecordSource("probe", _two), RecordSource("probe", _two))',
+                ),
+                "twice",
+            ),
+            (
+                "an empty source tuple",
+                SYNTHETIC_SOURCES.replace(
+                    'SOURCES = (RecordSource("probe", _two),)', "SOURCES = ()"
+                ),
+                "empty SOURCES",
+            ),
+            (
+                "a record with no source path",
+                SYNTHETIC_SOURCES.replace(
+                    'source_paths=["training/synthetic/source-38.md"]', "source_paths=[]"
+                ),
+                "no source path",
+            ),
+        ):
+            # `str.replace` returns the input unchanged when its needle is
+            # absent, so a stale anchor here would quietly turn an injection
+            # into a no-op and report the guard as broken. Refuse that outright.
+            if not report.require(
+                body != SYNTHETIC_SOURCES,
+                f"the perturbation for {label!r} changed nothing; its anchor is stale "
+                "and this case proves nothing",
+            ):
+                continue
+            write_sources(root, body)
+            try:
+                distillation.build_subject(root)
+            except SystemExit as exc:
+                report.require(
+                    expected in str(exc),
+                    f"{label} was refused for the wrong reason: {exc}",
+                )
+            except Exception as exc:  # noqa: BLE001 - the point is that it must not happen
+                # Refused, but by falling over. A traceback where a verdict
+                # belongs loses the finding and misreports the outcome, which is
+                # the same fail-open shape these rails exist to refuse.
+                report.require(
+                    False,
+                    f"{label} raised {type(exc).__name__} instead of a structured refusal: {exc}",
+                )
+            else:
+                report.require(False, f"{label} was accepted")
+        print("[distill] a subject owns its sources; a record without a gate is refused")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
@@ -509,6 +666,7 @@ def main(argv: list[str] | None = None) -> int:
     check_skip_is_not_a_pass(report)
     check_bounds(report)
     check_dataset_kernel(report)
+    check_distillation_contract(report)
 
     if report.failures:
         print("grading rail gate: FAILED", file=sys.stderr)

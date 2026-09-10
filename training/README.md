@@ -119,6 +119,10 @@ python3 training/tools/verify_corpus_records.py
 python3 training/tools/verify_embeddings.py
 python3 training/tools/verify_retrieval.py
 python3 training/tools/verify_training_export.py
+
+# the shared rail stays shared, and the ML inventory stays true
+python3 training/tools/verify_grading.py
+python3 training/tools/verify_ml_components.py
 ```
 
 The arithmetic is BCIR's own. `--backend both` runs the pure-Python reference
