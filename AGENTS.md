@@ -20,7 +20,7 @@ validation scripts (tblgen / IRDL round-trip / build + check `bcir-opt`).
 > are subsumed by the `bcir/` oracle and the compiled `mlir/` dialect. The repo is
 > now a single tree (see `docs/BCIR_Repo_Structure.md`).
 
-## 2. `llvm-training/` — an LLVM/MLIR training corpus (NOT the IR)
+## 2. `training/` — a training corpus (NOT the IR)
 
 Agent-readable teaching material: chaptered lessons, checked `.ll`/`.mlir`
 examples, exercises, and verify scripts. It exists to train agents that work on
@@ -32,7 +32,7 @@ live in `CONTRIBUTING.md`.
 
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/`).
-- Writing/curating training material → `llvm-training/`.
+- Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

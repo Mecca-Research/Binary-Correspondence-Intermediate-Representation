@@ -15,7 +15,8 @@ the line (see [`AGENTS.md`](AGENTS.md) and
   GEM, M5 transduction, ROP/MAP front-ends, lowering (AOT/JIT), telemetry, verifier.
 - **`mlir/`** — the IR law: the TableGen/ODS dialect family, the compiled
   `bcir-opt`, and the IRDL projection. `tools/` holds the validation scripts.
-- **`llvm-training/`** — a separate LLVM/MLIR training corpus for agents. It is
+- **`training/`** — a separate training corpus for humans, agents, and model
+  training; `training/llvm/` holds the LLVM/MLIR/compiler subject. It is
   not part of the IR and the IR does not depend on it. The naming conventions
   below are about this corpus.
 
@@ -32,7 +33,7 @@ assemble, and pass the LLVM verifier under a modern LLVM toolchain using opaque
 pointers.
 
 - Place standalone training modules under a chapter-local `examples/` directory,
-  for example `llvm-training/04-memory/examples/global-counter.ll`.
+  for example `training/llvm/04-memory/examples/global-counter.ll`.
 - Use descriptive topic names such as `loop-metadata.ll`,
   `mixed-stride-byte-offset.ll`, or `register-binding.ll`.
 - For optimization snapshots, make the role obvious in the filename: use
@@ -44,13 +45,13 @@ pointers.
 ### Exercise solutions: `.solution.ll`
 
 Use `.solution.ll` for checked-in LLVM IR reference answers to exercises, for
-example `llvm-training/exercises/001-add.solution.ll`.
+example `training/llvm/exercises/001-add.solution.ll`.
 
 - Pair the solution with a sibling `NNN-topic.prompt.md` file.
 - Keep the numeric exercise prefix stable once published so links and learner
   progress references do not drift.
 - A `.solution.ll` file must be a complete known-good module and is verified by
-  `llvm-training/tools/verify-exercises.sh`.
+  `training/llvm/tools/verify-exercises.sh`.
 - If a written answer is more appropriate than LLVM IR, use `NNN-topic.solution.md`
   instead of forcing a synthetic `.ll` file.
 
@@ -66,7 +67,7 @@ Use `.invalid.ll.txt` for intentionally broken LLVM IR that should be rejected b
   parser error, verifier error, semantic-only hazard, or pass-specific failure.
 - If LLVM accepts the file but the lesson is still intentionally invalid at a
   semantic level, add the marker required by
-  `llvm-training/tools/verify-invalid-fixtures.sh` so the fixture is not mistaken
+  `training/llvm/tools/verify-invalid-fixtures.sh` so the fixture is not mistaken
   for an accidentally valid parser/verifier failure.
 
 ### MLIR examples: `.mlir`
@@ -74,29 +75,29 @@ Use `.invalid.ll.txt` for intentionally broken LLVM IR that should be rejected b
 Use `.mlir` for MLIR dialect sketches, LLVM-dialect examples, and MLIR-to-LLVM
 review fixtures.
 
-- Put standalone bridge examples under `llvm-training/14-mlir-bridge/examples/`
+- Put standalone bridge examples under `training/llvm/14-mlir-bridge/examples/`
   when they are part of the chapter corpus.
 - Name files for the dialect boundary or lowering concept they demonstrate, such
   as `bcir-dialect-sketch.mlir` or `llvm-dialect-lowering.mlir`.
 - `.mlir` files are not LLVM IR modules and should not be listed in the
   standalone LLVM IR manifest.
-- Run `llvm-training/tools/verify-mlir-examples.sh`; it skips cleanly when
+- Run `training/llvm/tools/verify-mlir-examples.sh`; it skips cleanly when
   `mlir-opt` is unavailable and parses examples when the MLIR toolchain exists.
 
 ### Binary-analysis evidence: `.csv`
 
 Use `.csv` for checked-in trace, counter, or BCSA feature samples, especially
-under `llvm-training/15-binary-analysis/examples/`.
+under `training/llvm/15-binary-analysis/examples/`.
 
 - Name files by schema family and scenario, for example
   `dynamic-trace-sample.csv`, `perf-counter-sample.csv`, or
   `bcsa-feature-variant-wide.csv`.
 - Keep headers stable and include at least one representative data row.
 - If you introduce a new CSV schema family, update the schema expectations in
-  `llvm-training/tools/verify-csv-schema.sh` or document why the file is outside
+  `training/llvm/tools/verify-csv-schema.sh` or document why the file is outside
   that fixture-scoped check.
 - CSV artifacts are evidence inputs, not LLVM IR; do not add them to
-  `llvm-training/examples/README.md`.
+  `training/llvm/examples/README.md`.
 
 ### Prompt and solution Markdown files
 
@@ -113,7 +114,7 @@ Use Markdown for learner-facing prompts, written diagnoses, and review answers.
 
 ## Updating the standalone example manifest
 
-`llvm-training/examples/README.md` is the top-level manifest for known-good
+`training/llvm/examples/README.md` is the top-level manifest for known-good
 standalone LLVM IR examples. Add or update entries there whenever a contribution
 adds, removes, or renames a complete `*/examples/*.ll` file that should be part
 of the repository-wide assembly and verifier guarantee.
@@ -127,16 +128,16 @@ Do **not** add these files to the manifest:
 - illustrative fenced snippets that remain embedded in prose.
 
 After changing standalone `.ll` examples, run
-`llvm-training/tools/verify-manifest.sh` to confirm the manifest matches the
+`training/llvm/tools/verify-manifest.sh` to confirm the manifest matches the
 files discovered by the verification policy.
 
 ## BCIR mapping examples
 
-BCIR mapping examples live in `llvm-training/bcir-mapping/` and should connect a
+BCIR mapping examples live in `training/llvm/bcir-mapping/` and should connect a
 BCIR concept to concrete LLVM IR lowering behavior.
 
-- Put runnable lowered LLVM IR in `llvm-training/bcir-mapping/examples/*.ll` and
-  include it in `llvm-training/examples/README.md`.
+- Put runnable lowered LLVM IR in `training/llvm/bcir-mapping/examples/*.ll` and
+  include it in `training/llvm/examples/README.md`.
 - Use nearby Markdown prompts for review tasks that ask contributors or agents
   to explain a lowering rather than assemble a new module.
 - Preserve source-level BCIR concepts in the file name when possible:
@@ -145,7 +146,7 @@ BCIR concept to concrete LLVM IR lowering behavior.
   `mixed-stride-byte-offset.ll`.
 - If you add source-like `.bcir.txt` fragments, keep them non-empty, include the
   required BCIR markers or operation keywords, and provide expected lowered LLVM
-  IR companions as described by `llvm-training/tools/verify-bcir-mapping.sh`.
+  IR companions as described by `training/llvm/tools/verify-bcir-mapping.sh`.
 - If you add real `.bcir` assembler fixtures under `bcir-mapping/examples/`, add
   a sibling `<name>.generated.ll` expected output unless you are intentionally
   refreshing generated outputs with `UPDATE_BCIR_MAPPING=1`.
@@ -207,17 +208,17 @@ pending required check is not ready for handoff.
 
 | Change type | Required checks |
 |---|---|
-| Any known-good `llvm-training/**/examples/*.ll` file | `./llvm-training/tools/verify-examples.sh` and `./llvm-training/tools/verify-manifest.sh` |
-| Exercise `.solution.ll` files | `./llvm-training/tools/verify-exercises.sh` |
-| Invalid fixtures (`.invalid.ll.txt` or other expected failures) | `./llvm-training/tools/verify-invalid-fixtures.sh` |
-| Opaque-pointer migration or typed-pointer teaching material | `./llvm-training/tools/verify-opaque-pointers.sh` |
-| Optimization before/after golden examples | `./llvm-training/tools/verify-opt-diff.sh` |
-| MLIR bridge examples | `./llvm-training/tools/verify-mlir-examples.sh` |
-| CSV binary-analysis fixtures | `./llvm-training/tools/verify-csv-schema.sh` |
-| BCIR mapping examples or fragments | `./llvm-training/tools/verify-bcir-mapping.sh` |
-| Portable backend smoke coverage | `./llvm-training/tools/smoke-llc.sh` |
-| Interpreter smoke coverage | `./llvm-training/tools/smoke-lli.sh` |
-| BOLT fixture changes | `./llvm-training/tools/smoke-bolt.sh` |
+| Any known-good `training/llvm/**/examples/*.ll` file | `./training/llvm/tools/verify-examples.sh` and `./training/llvm/tools/verify-manifest.sh` |
+| Exercise `.solution.ll` files | `./training/llvm/tools/verify-exercises.sh` |
+| Invalid fixtures (`.invalid.ll.txt` or other expected failures) | `./training/llvm/tools/verify-invalid-fixtures.sh` |
+| Opaque-pointer migration or typed-pointer teaching material | `./training/llvm/tools/verify-opaque-pointers.sh` |
+| Optimization before/after golden examples | `./training/llvm/tools/verify-opt-diff.sh` |
+| MLIR bridge examples | `./training/llvm/tools/verify-mlir-examples.sh` |
+| CSV binary-analysis fixtures | `./training/llvm/tools/verify-csv-schema.sh` |
+| BCIR mapping examples or fragments | `./training/llvm/tools/verify-bcir-mapping.sh` |
+| Portable backend smoke coverage | `./training/llvm/tools/smoke-llc.sh` |
+| Interpreter smoke coverage | `./training/llvm/tools/smoke-lli.sh` |
+| BOLT fixture changes | `./training/llvm/tools/smoke-bolt.sh` |
 | Security-assurance rails (`tools/security/**`, `.gitleaks.toml`) | `python tools/security/scan_secrets.py`, `python tools/security/audit_dependencies.py`, `python tools/security/audit_tool_boundaries.py`, `python tools/security/run_decoder_campaign.py`, `python tools/security/run_malformed_differential.py`, `python tools/security/independent_review.py --self-check` |
 
 For IR changes outside the training corpus, run the relevant gate:
@@ -242,15 +243,15 @@ missing required fixtures or manifest drift should fail the contribution.
 
 If generated indexes or manifests grow beyond the current checked-in scripts,
 prefer adding explicit repository-root tools such as
-`llvm-training/tools/generate-example-index.sh` or
-`llvm-training/tools/verify-generated-indexes.sh`. New scripts should be
-executable, documented in `llvm-training/tools/README.md`, fail closed when
+`training/llvm/tools/generate-example-index.sh` or
+`training/llvm/tools/verify-generated-indexes.sh`. New scripts should be
+executable, documented in `training/llvm/tools/README.md`, fail closed when
 required fixtures disappear, and be wired into CI when they protect repository
 health.
 
 ## LLVM training dataset stability
 
-The files under `llvm-training/dataset/` describe a small curated evaluation
+The files under `training/llvm/dataset/` describe a small curated evaluation
 set exported from tracked exercises and grading manifests. Do not describe or
 expand it as a scaled fine-tuning corpus. Generated JSON Lines files are build
 artifacts and stay out of version control unless maintainers intentionally
@@ -274,7 +275,7 @@ Treat the dataset contract as an API:
   repository-relative source and manifest paths, source-lineage/leakage data,
   and an SPDX license identifier backed by the repository license.
 - **Splits are curated, not random.** Assign new exercises in
-  `llvm-training/dataset/splits-v1.json` by concept family and source lineage.
+  `training/llvm/dataset/splits-v1.json` by concept family and source lineage.
   Prompt templates, generated variants, and exercises derived from one seed
   belong to one indivisible leakage group and cannot cross evaluation splits.
 
@@ -282,8 +283,8 @@ After changing any numbered exercise, autograder manifest, split assignment, or
 dataset tool, run:
 
 ```sh
-python3 llvm-training/tools/verify-exercise-manifests.py
-python3 llvm-training/tools/verify-dataset-export.py
+python3 training/llvm/tools/verify-exercise-manifests.py
+python3 training/llvm/tools/verify-dataset-export.py
 ```
 
 ## Grader and dataset contribution requirements
@@ -316,8 +317,8 @@ closed-loop contract:
 Required integration checks for such a change are:
 
 ```bash
-python3 llvm-training/tools/verify-exercise-manifests.py
-python3 -m unittest discover -s llvm-training/autograder/tests -p 'test_*.py'
-python3 llvm-training/tools/grade-exercises.py --self-test --format json
-python3 llvm-training/tools/verify-dataset-export.py
+python3 training/llvm/tools/verify-exercise-manifests.py
+python3 -m unittest discover -s training/llvm/autograder/tests -p 'test_*.py'
+python3 training/llvm/tools/grade-exercises.py --self-test --format json
+python3 training/llvm/tools/verify-dataset-export.py
 ```

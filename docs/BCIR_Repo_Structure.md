@@ -24,7 +24,7 @@ source inclusion. This separation keeps agreement meaningful.
 | `runtime/cpp/` | Narrow C++ orchestration boundary; it does not own legality, planning, or learned policy | `tools/cpp/check_handoff.sh` |
 | `channels/` | Channel/profile inputs and their documentation; modeled channels are labeled as such | oracle and C channel tests |
 | `tools/` | Build, validation, documentation, model-gate, performance, and hardware scripts | called by CI and local runbooks |
-| `llvm-training/` | Standalone LLVM/MLIR teaching and evaluation corpus; never a build dependency of BCIR | its own curriculum/autograder gates |
+| `training/` | Standalone teaching, evaluation, and model-training corpus, one folder per subject (`llvm/` first); never a build dependency of BCIR | per-subject curriculum/autograder gates |
 | `docs/` | Normative references, current state, execution roadmaps, history, and scoped research | generated-status, link, and retired-path checks |
 | `.github/workflows/` | Required host, oracle, C, MLIR, training, and documentation CI jobs | GitHub Actions |
 

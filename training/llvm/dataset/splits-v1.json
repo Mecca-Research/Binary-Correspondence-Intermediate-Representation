@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "manifest_version": "1.0.0",
+  "dataset_schema_version": "1.0.0",
+  "policy": "Splits are curated by concept family and source lineage. Leakage groups are indivisible and no random assignment occurs during export.",
+  "leakage_groups": [
+    {
+      "id": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction",
+      "split": "train",
+      "rationale": "Shared standalone LLVM IR construction lineage and prompt shape.",
+      "exercise_ids": [
+        "training-llvm-exercise-001",
+        "training-llvm-exercise-002",
+        "training-llvm-exercise-003",
+        "training-llvm-exercise-004",
+        "training-llvm-exercise-005",
+        "training-llvm-exercise-006",
+        "training-llvm-exercise-007",
+        "training-llvm-exercise-008",
+        "training-llvm-exercise-009"
+      ]
+    },
+    {
+      "id": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering",
+      "split": "test",
+      "rationale": "BCIR lowering and MLIR bridge concepts share source patterns and lowering idioms.",
+      "exercise_ids": [
+        "training-llvm-exercise-010",
+        "training-llvm-exercise-011",
+        "training-llvm-exercise-012",
+        "training-llvm-exercise-013",
+        "training-llvm-exercise-014",
+        "training-llvm-exercise-015",
+        "training-llvm-exercise-028",
+        "training-llvm-exercise-029",
+        "training-llvm-exercise-030",
+        "training-llvm-exercise-031",
+        "training-llvm-exercise-032",
+        "training-llvm-exercise-033",
+        "training-llvm-exercise-034",
+        "training-llvm-exercise-038",
+        "training-llvm-exercise-039"
+      ]
+    },
+    {
+      "id": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging",
+      "split": "test",
+      "rationale": "Exercises derived from the repair/debugging prompt family remain together.",
+      "exercise_ids": [
+        "training-llvm-exercise-016",
+        "training-llvm-exercise-017",
+        "training-llvm-exercise-018",
+        "training-llvm-exercise-019",
+        "training-llvm-exercise-026",
+        "training-llvm-exercise-040"
+      ]
+    },
+    {
+      "id": "optimizer-prediction-v1",
+      "concept_family": "optimizer-behavior",
+      "split": "train",
+      "rationale": "Pass-prediction exercises share before/after reasoning templates.",
+      "exercise_ids": [
+        "training-llvm-exercise-020",
+        "training-llvm-exercise-021",
+        "training-llvm-exercise-022"
+      ]
+    },
+    {
+      "id": "semantic-review-v1",
+      "concept_family": "semantic-contract-review",
+      "split": "validation",
+      "rationale": "Metadata, attributes, poison, and fast-math review tasks share semantic-contract lineage.",
+      "exercise_ids": [
+        "training-llvm-exercise-023",
+        "training-llvm-exercise-024",
+        "training-llvm-exercise-025",
+        "training-llvm-exercise-027"
+      ]
+    },
+    {
+      "id": "backend-review-v1",
+      "concept_family": "backend-and-jit-review",
+      "split": "validation",
+      "rationale": "Backend, ORC, relocation, and TableGen reviews share backend source lineage.",
+      "exercise_ids": [
+        "training-llvm-exercise-035",
+        "training-llvm-exercise-036",
+        "training-llvm-exercise-037"
+      ]
+    },
+    {
+      "id": "binary-evidence-review-v1",
+      "concept_family": "binary-evidence-review",
+      "split": "validation",
+      "rationale": "Static binary-evidence interpretation and provenance review share evidence vocabulary and source lineage.",
+      "exercise_ids": [
+        "training-llvm-exercise-041",
+        "training-llvm-exercise-042"
+      ]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "training-llvm-exercise-001",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-002",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-003",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-004",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-005",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-006",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-007",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-008",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-009",
+      "split": "train",
+      "leakage_group": "core-llvm-construction-v1",
+      "concept_family": "core-llvm-construction"
+    },
+    {
+      "id": "training-llvm-exercise-010",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-011",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-012",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-013",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-014",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-015",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-016",
+      "split": "test",
+      "leakage_group": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "training-llvm-exercise-017",
+      "split": "test",
+      "leakage_group": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "training-llvm-exercise-018",
+      "split": "test",
+      "leakage_group": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "training-llvm-exercise-019",
+      "split": "test",
+      "leakage_group": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "training-llvm-exercise-020",
+      "split": "train",
+      "leakage_group": "optimizer-prediction-v1",
+      "concept_family": "optimizer-behavior"
+    },
+    {
+      "id": "training-llvm-exercise-021",
+      "split": "train",
+      "leakage_group": "optimizer-prediction-v1",
+      "concept_family": "optimizer-behavior"
+    },
+    {
+      "id": "training-llvm-exercise-022",
+      "split": "train",
+      "leakage_group": "optimizer-prediction-v1",
+      "concept_family": "optimizer-behavior"
+    },
+    {
+      "id": "training-llvm-exercise-023",
+      "split": "validation",
+      "leakage_group": "semantic-review-v1",
+      "concept_family": "semantic-contract-review"
+    },
+    {
+      "id": "training-llvm-exercise-024",
+      "split": "validation",
+      "leakage_group": "semantic-review-v1",
+      "concept_family": "semantic-contract-review"
+    },
+    {
+      "id": "training-llvm-exercise-025",
+      "split": "validation",
+      "leakage_group": "semantic-review-v1",
+      "concept_family": "semantic-contract-review"
+    },
+    {
+      "id": "training-llvm-exercise-026",
+      "split": "test",
+      "leakage_group": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "training-llvm-exercise-027",
+      "split": "validation",
+      "leakage_group": "semantic-review-v1",
+      "concept_family": "semantic-contract-review"
+    },
+    {
+      "id": "training-llvm-exercise-028",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-029",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-030",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-031",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-032",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-033",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-034",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-035",
+      "split": "validation",
+      "leakage_group": "backend-review-v1",
+      "concept_family": "backend-and-jit-review"
+    },
+    {
+      "id": "training-llvm-exercise-036",
+      "split": "validation",
+      "leakage_group": "backend-review-v1",
+      "concept_family": "backend-and-jit-review"
+    },
+    {
+      "id": "training-llvm-exercise-037",
+      "split": "validation",
+      "leakage_group": "backend-review-v1",
+      "concept_family": "backend-and-jit-review"
+    },
+    {
+      "id": "training-llvm-exercise-038",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-039",
+      "split": "test",
+      "leakage_group": "bcir-mlir-lowering-v1",
+      "concept_family": "bcir-and-mlir-lowering"
+    },
+    {
+      "id": "training-llvm-exercise-040",
+      "split": "test",
+      "leakage_group": "repair-debug-template-v1",
+      "concept_family": "repair-and-debugging"
+    },
+    {
+      "id": "training-llvm-exercise-041",
+      "split": "validation",
+      "leakage_group": "binary-evidence-review-v1",
+      "concept_family": "binary-evidence-review"
+    },
+    {
+      "id": "training-llvm-exercise-042",
+      "split": "validation",
+      "leakage_group": "binary-evidence-review-v1",
+      "concept_family": "binary-evidence-review"
+    }
+  ]
+}

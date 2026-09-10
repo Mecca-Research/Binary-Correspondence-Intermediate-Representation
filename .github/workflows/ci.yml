@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   # The former monolithic "oracle + training" job is split into three jobs that run in
-  # PARALLEL (oracle | c-runtime | llvm-training) — the check-runtime / decoder-fuzz / training
+  # PARALLEL (oracle | c-runtime | training-llvm) — the check-runtime / decoder-fuzz / training
   # work no longer sits sequentially behind the ~80s Python suite, so the critical path drops
   # from their sum to their max. Each job restores the same cached toolchain (clang/lld/llvm).
   oracle:
@@ -181,7 +181,7 @@ jobs:
 
   # The C rail's ADVERSARIAL half, split out of c-runtime so it runs on its own runner rather
   # than queueing behind the byte-identity gates. Same reasoning (and same measurement) as the
-  # earlier oracle | c-runtime | llvm-training split above: c-runtime was a ~9-minute serial
+  # earlier oracle | c-runtime | training-llvm split above: c-runtime was a ~9-minute serial
   # chain on a 4-core machine, and its sanitizer/static-analysis/fuzz half is independent of
   # its parity/model half -- neither reads the other's outputs. The two halves are balanced to
   # ~3 minutes each, so the C critical path is now their max instead of their sum.
@@ -329,14 +329,14 @@ jobs:
         # which is why turning it off alone did nothing on Windows. The CMake default stays ON for
         # a developer who wants live streaming output.
         run: |
-          if cmake -S llvm-training -B build/llvm-training -G Ninja -DLLVM_TRAINING_USES_TERMINAL=OFF; then
+          if cmake -S training/llvm -B build/training/llvm -G Ninja -DLLVM_TRAINING_USES_TERMINAL=OFF; then
             echo "generator: Ninja (parallel, -j 4)"
-            cmake --build build/llvm-training --target llvm-training-check -j 4
+            cmake --build build/training/llvm --target training-llvm-check -j 4
           else
             echo "generator: default, SERIAL (CMake could not configure with Ninja)"
-            rm -rf build/llvm-training
-            cmake -S llvm-training -B build/llvm-training
-            cmake --build build/llvm-training --target llvm-training-check
+            rm -rf build/training/llvm
+            cmake -S training/llvm -B build/training/llvm
+            cmake --build build/training/llvm --target training-llvm-check
           fi
 
       - name: Tests leave tracked sources unchanged
@@ -436,7 +436,7 @@ jobs:
       - name: Tests leave tracked sources unchanged
         run: git diff --exit-code
 
-  llvm-training:
+  training-llvm:
     name: LLVM training corpus
     runs-on: ubuntu-latest
     steps:
@@ -458,124 +458,131 @@ jobs:
       - name: LLVM training examples and invalid-example tripwire
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
-            bash llvm-training/tools/verify-examples.sh
+            bash training/llvm/tools/verify-examples.sh
           else
-            echo "llvm-as and opt not both present; skipping llvm-training standalone example validation"
+            echo "llvm-as and opt not both present; skipping training/llvm standalone example validation"
           fi
 
       - name: LLVM training example and artifact manifest drift
-        run: bash llvm-training/tools/verify-manifest.sh
+        run: bash training/llvm/tools/verify-manifest.sh
 
       - name: LLVM training exercise solutions and prompt templates
-        run: llvm-training/tools/run-if-tools.sh "LLVM exercise verifier" llvm-as opt -- bash llvm-training/tools/verify-exercises.sh
+        run: training/llvm/tools/run-if-tools.sh "LLVM exercise verifier" llvm-as opt -- bash training/llvm/tools/verify-exercises.sh
 
       - name: LLVM training declarative exercise manifests
-        run: python3 llvm-training/tools/verify-exercise-manifests.py
+        run: python3 training/llvm/tools/verify-exercise-manifests.py
 
       - name: LLVM training autograder self-tests
         run: |
-          python3 -m unittest discover -s llvm-training/autograder/tests -p 'test_*.py'
-          python3 llvm-training/tools/grade-exercises.py --self-test --format json --output build/llvm-training-reference-scores.json
+          python3 -m unittest discover -s training/llvm/autograder/tests -p 'test_*.py'
+          python3 training/llvm/tools/grade-exercises.py --self-test --format json --output build/training-llvm-reference-scores.json
 
       - name: LLVM training deterministic dataset export
-        run: python3 llvm-training/tools/verify-dataset-export.py
+        run: python3 training/llvm/tools/verify-dataset-export.py
 
       - name: LLVM training controlled variant determinism
-        run: python3 -m unittest llvm-training/autograder/tests/test_generate_exercise_variants.py
+        run: python3 -m unittest training/llvm/autograder/tests/test_generate_exercise_variants.py
 
       - name: LLVM training adversarial fixtures
-        run: llvm-training/tools/run-if-tools.sh "LLVM adversarial verifier" llvm-as opt -- bash llvm-training/tools/verify-adversarial-fixtures.sh
+        run: training/llvm/tools/run-if-tools.sh "LLVM adversarial verifier" llvm-as opt -- bash training/llvm/tools/verify-adversarial-fixtures.sh
 
       - name: LLVM training binary-analysis CSV schemas
-        run: llvm-training/tools/verify-csv-schema.sh
+        run: training/llvm/tools/verify-csv-schema.sh
 
       - name: LLVM training binary-analysis evidence manifest
-        run: python3 llvm-training/tools/verify-binary-analysis-evidence.py
+        run: python3 training/llvm/tools/verify-binary-analysis-evidence.py
 
       - name: LLVM training deterministic binary-analysis evidence drift
-        run: python3 llvm-training/tools/generate-binary-analysis-fixtures.py --check --require-tools
+        run: python3 training/llvm/tools/generate-binary-analysis-fixtures.py --check --require-tools
 
       - name: LLVM training invalid fixtures
         run: |
           if command -v llvm-as >/dev/null && command -v opt >/dev/null; then
-            bash llvm-training/tools/verify-invalid-fixtures.sh
+            bash training/llvm/tools/verify-invalid-fixtures.sh
           else
-            echo "llvm-as and opt not both present; skipping llvm-training invalid fixture validation"
+            echo "llvm-as and opt not both present; skipping training/llvm invalid fixture validation"
           fi
 
       - name: LLVM training opt-diff golden fixtures
         run: |
           if command -v opt >/dev/null; then
-            bash llvm-training/tools/verify-opt-diff.sh
+            bash training/llvm/tools/verify-opt-diff.sh
           else
-            echo "opt not present; skipping llvm-training opt-diff golden validation"
+            echo "opt not present; skipping training/llvm opt-diff golden validation"
           fi
 
       - name: LLVM training opaque pointer syntax
-        run: bash llvm-training/tools/verify-opaque-pointers.sh
+        run: bash training/llvm/tools/verify-opaque-pointers.sh
 
       - name: Configure training-only CMake quality targets
-        run: cmake -S llvm-training -B build/llvm-training -G Ninja
+        run: cmake -S training/llvm -B build/training/llvm -G Ninja
 
       - name: LLVM training lit tests
         run: |
           if command -v llvm-lit >/dev/null; then
-            llvm-lit -sv llvm-training/tests
+            llvm-lit -sv training/llvm/tests
           elif command -v lit >/dev/null; then
-            lit -sv llvm-training/tests
+            lit -sv training/llvm/tests
           else
-            echo "llvm-lit/lit not present; skipping llvm-training lit tests"
+            echo "llvm-lit/lit not present; skipping training/llvm lit tests"
           fi
 
       - name: LLVM training MLIR examples (reduced coverage allowed)
-        run: bash llvm-training/tools/verify-mlir-examples.sh
+        run: bash training/llvm/tools/verify-mlir-examples.sh
 
       - name: LLVM training BCIR mapping fixtures
-        run: bash llvm-training/tools/verify-bcir-mapping.sh
+        run: bash training/llvm/tools/verify-bcir-mapping.sh
 
       # Chapter 20 states Clang lowering rules as facts (aggregate layout, bit-field
       # erasure, per-target argument classification). This compiles the checked-in
       # sources and asserts those claims structurally, so a Clang release that changes
       # a rule fails here instead of leaving the prose quietly wrong.
       - name: LLVM training Clang frontend lowering claims
-        run: python3 llvm-training/tools/verify-frontend-lowering.py --require-tools
+        run: python3 training/llvm/tools/verify-frontend-lowering.py --require-tools
 
       # Chapters 18/08 and 18/09 teach production MLIR by citing mlir/ directly. This
       # re-checks every cited path, CMake idiom, and API -- and that the pre-LLVM-23
       # spellings stay gone. Needs no MLIR toolchain.
       - name: LLVM training MLIR rail citations
-        run: python3 llvm-training/tools/verify-mlir-rail-references.py
+        run: python3 training/llvm/tools/verify-mlir-rail-references.py
 
       # Statistical kernels against hand-computable values, plus each benchmark
       # fixture's pinned verdict -- including the refusals.
       - name: LLVM training benchmark analysis self-test
-        run: python3 llvm-training/tools/verify-benchmark-analysis.py
+        run: python3 training/llvm/tools/verify-benchmark-analysis.py
 
       # Builds the out-of-tree New PM plugin and runs it through opt, including the
       # negative cases. Skips cleanly (exit 0, with the reason printed) when the LLVM
       # development headers are absent, or when opt and llvm-config disagree on the
       # LLVM major -- a plugin is only loadable by an opt from its own major.
       - name: LLVM training out-of-tree pass plugin
-        run: bash llvm-training/tools/build-pass-plugin.sh
+        run: bash training/llvm/tools/build-pass-plugin.sh
 
       # Informational, never a gate: records whether this runner can read hardware
       # counters. Shared runners generally cannot, and the record says so with the
       # errno rather than reporting zeros as measurements.
       - name: LLVM training hardware counter capability record
-        run: python3 llvm-training/tools/probe-hardware-counters.py
+        run: python3 training/llvm/tools/probe-hardware-counters.py
+
+      # Corpus-level, not LLVM-specific: builds Tier-2 retrieval chunks and
+      # Tier-3 distillation records for every subject folder, twice, and checks
+      # anti-vacuity, provenance, gate-backing, split leakage and determinism.
+      # Needs no toolchain -- it reads checked-in artifacts only.
+      - name: Training corpus record tiers (chunks + distillation)
+        run: python3 training/tools/verify_corpus_records.py
 
       - name: LLVM training llc smoke
         run: |
           if command -v llc >/dev/null; then
-            bash llvm-training/tools/smoke-llc.sh
+            bash training/llvm/tools/smoke-llc.sh
           else
-            echo "llc not present; skipping llvm-training llc smoke validation"
+            echo "llc not present; skipping training/llvm llc smoke validation"
           fi
 
       - name: LLVM training deterministic LTO matrix
         run: |
           for lto in none thin full; do
-            bash llvm-training/tools/run-lto-matrix.sh \
+            bash training/llvm/tools/run-lto-matrix.sh \
               --lto "$lto" \
               --output "build/lto-matrix-$lto" \
               --require-supported
@@ -583,7 +590,7 @@ jobs:
           done
 
       - name: Optional BOLT smoke fixture
-        run: bash llvm-training/tools/smoke-bolt.sh
+        run: bash training/llvm/tools/smoke-bolt.sh
 
   # Native aarch64 (ARM) coverage: the first real driver target is a Raspberry Pi 5, so the
   # portable core must be proven on ARM, not only x86. Catches arch regressions the x86 jobs
@@ -763,8 +770,8 @@ jobs:
         env:
           LLVM_SUFFIX: "-${{ matrix.llvm }}"
         run: |
-          bash llvm-training/tools/verify-mlir-examples.sh --require-tools
-          python3 llvm-training/tools/grade-exercises.py --self-test --format json --output build/mlir-rail-training-scores.json
+          bash training/llvm/tools/verify-mlir-examples.sh --require-tools
+          python3 training/llvm/tools/grade-exercises.py --self-test --format json --output build/mlir-rail-training-scores.json
 
   docs-governance:
     name: Docs governance (status drift + links + retired paths)

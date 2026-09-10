@@ -14,7 +14,7 @@ B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 ```
 
 > **Two separate things live in this repo.** `bcir/` + `mlir/` **are** the BCIR
-> IR. `llvm-training/` is an LLVM/MLIR training corpus for agents and is **not**
+> IR. `training/` is a training corpus for humans, agents, and model training, and is **not**
 > part of the IR. See [`AGENTS.md`](AGENTS.md) and
 > [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
@@ -39,7 +39,7 @@ B(H,Θ) = live budgets (thermal cap, power cap, bandwidth)
 │   └── examples/, test/ pretty ODS corpus (bcir-opt) + generic IRDL corpus (mlir-opt)
 ├── tools/               validation scripts (tblgen / IRDL round-trip / build + check bcir-opt)
 ├── docs/                LangRef, Blueprint, PARITY, and the repo-structure decision
-└── llvm-training/       SEPARATE agent-readable LLVM/MLIR curriculum (not the IR)
+└── training/            SEPARATE training corpus (not the IR); `llvm/` is its first subject
 ```
 
 ## Quickstart

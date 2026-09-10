@@ -155,7 +155,7 @@ It is intentionally narrower than the Python oracle.
 
 ## 3.5 Educational rail
 
-`llvm-training/` is an independent educational and evaluation corpus. It teaches and tests LLVM/MLIR concepts but does not define BCIR legality.
+`training/llvm/` is an independent educational and evaluation corpus. It teaches and tests LLVM/MLIR concepts but does not define BCIR legality.
 
 ## 3.6 Research rail
 
@@ -169,7 +169,7 @@ The fresh checkout contains **1,750 tracked files**.
 
 | Tree | Tracked files | Role |
 |---|---:|---|
-| `llvm-training/` | 612 | LLVM/MLIR curriculum, exercises, fixtures, autograder |
+| `training/llvm/` | 612 | LLVM/MLIR curriculum, exercises, fixtures, autograder |
 | `bcir/` | 514 | Python oracle, tests, frontends, optimization, models |
 | `runtime/` | 314 | C and C++ production/runtime rails |
 | `mlir/` | 186 | ODS dialect, verifier, passes, examples, fixtures |
@@ -2891,7 +2891,7 @@ The exact commit’s CI is evidence for those remote gates but is kept distinct 
 
 # 28. LLVM training and education
 
-`llvm-training/` contains twenty numbered topic areas:
+`training/llvm/` contains twenty numbered topic areas:
 
 ```text
 00 foundations

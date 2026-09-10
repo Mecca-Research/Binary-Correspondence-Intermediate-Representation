@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcir.dev/schemas/training/chunk-v1.json",
+  "title": "BCIR training corpus retrieval chunk (Tier 2)",
+  "description": "One embedding-ready unit of corpus text. Deterministic: the same source tree always produces the same chunks with the same identifiers. The embedding vector is NEVER produced by the chunker -- a chunk carries `embedding: null` until a named model fills it, because a fabricated vector is indistinguishable from a real one downstream.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "chunk_id", "corpus", "subject", "source_path", "source_sha256",
+    "span", "heading_trail", "title", "kind", "text", "char_count",
+    "token_estimate", "embedding", "embedding_spec", "provenance", "verified_by"
+  ],
+  "properties": {
+    "schema": {"const": "bcir-training/chunk/v1"},
+    "chunk_id": {
+      "description": "sha256 over the canonical identity tuple (subject, source_path, heading_trail, text). Content-addressed, so reordering a file does not renumber its chunks and editing one does not disturb its neighbours.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "corpus": {"const": "training"},
+    "subject": {
+      "description": "The training/<subject>/ folder this chunk came from.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "source_path": {"$ref": "#/$defs/repositoryPath"},
+    "source_sha256": {
+      "description": "Digest of the whole source file, so a chunk can be shown stale without re-reading the corpus.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "span": {
+      "description": "1-indexed inclusive line range in source_path. Lets a retrieved chunk be traced back to the exact lines a human can open.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_line", "end_line"],
+      "properties": {
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1}
+      }
+    },
+    "heading_trail": {
+      "description": "Markdown heading ancestry, outermost first. Prepended to `text` as retrieval context instead of raw token overlap: deterministic, and it does not duplicate neighbouring content.",
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "title": {"type": "string", "minLength": 1},
+    "kind": {
+      "description": "prose = narrative only; code = a single fenced block; mixed = narrative containing fenced blocks; table = a markdown table.",
+      "enum": ["prose", "code", "mixed", "table"]
+    },
+    "language": {
+      "description": "Fence language for code/mixed chunks; null otherwise.",
+      "type": ["string", "null"]
+    },
+    "text": {"type": "string", "minLength": 1},
+    "char_count": {"type": "integer", "minimum": 1},
+    "token_estimate": {
+      "description": "Model-independent estimate used only for budgeting chunk size. Not a tokenizer output and must not be treated as one.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "embedding": {
+      "description": "null until a named embedding model fills it. A chunker that invented a vector here would produce records no consumer could distinguish from measured ones.",
+      "oneOf": [
+        {"type": "null"},
+        {"type": "array", "items": {"type": "number"}, "minItems": 1}
+      ]
+    },
+    "embedding_spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "dim", "normalize"],
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "dim": {"type": ["integer", "null"], "minimum": 1},
+        "normalize": {"enum": ["l2", "none"]}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["license", "builder"],
+      "properties": {
+        "license": {"type": "string", "minLength": 1},
+        "builder": {"$ref": "#/$defs/repositoryPath"}
+      }
+    },
+    "verified_by": {
+      "description": "Repository-relative gates that check the source file this chunk came from. An empty list is legal and meaningful: it marks unverified prose, which a consumer may weight down or exclude.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/repositoryPath"}
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    }
+  }
+}

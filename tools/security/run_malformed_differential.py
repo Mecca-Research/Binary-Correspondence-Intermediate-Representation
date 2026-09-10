@@ -330,7 +330,7 @@ def _compiled_mlir(text: str, root: Path, opt: str | None = None) -> dict[str, A
 def run_differential(root: Path, require_compiled: bool = False) -> dict[str, Any]:
     opt = find_bcir_opt(root)
     if require_compiled and opt is None:
-        # The llvm-training job builds bcir-opt specifically so the compiled
+        # The training/llvm job builds bcir-opt specifically so the compiled
         # rail can be compared; there, a silently absent binary must fail the
         # job rather than skip every compiled case (mirrors --require-c).
         return {

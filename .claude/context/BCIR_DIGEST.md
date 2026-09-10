@@ -33,7 +33,8 @@ instruction selector by default.
   ASan/UBSan. `runtime/cpp/` is a narrow orchestration seam (plus the J5 SIMD JER
   structural index); single-node dispatch is real and dynamic/distributed backends
   remain explicit stubs.
-- `llvm-training/` is a standalone LLVM/MLIR curriculum and evaluation corpus, never a
+- `training/` is a standalone corpus for human, agent, and model training, one folder per
+  subject; `training/llvm/` is the LLVM/MLIR/compiler subject, never a
   runtime dependency. Its aggregate CMake gate is bounded to two lit workers.
 
 **Contracts and ownership.** `docs/BCIR_LANGREF.md` is normative and owns BCIRQ8 v1 and
@@ -162,7 +163,7 @@ SHA-pinned setup-node in the oracle jobs); the hosted train-to-C jobs audit thei
 closure with `audit_dependencies.py --installed` (exact public pins, engine in its own venv); kafka-python became the declared `telemetry-kafka`
 extra (floor 2.3.2). A first-pass OSV false positive on torch (non-PEP-440 `last_affected`
 values in PYSEC records) is root-caused in `osv_pypi.py`'s docstring. The audit's last two
-dispositions followed: the vendored LLVM IR grammar (`llvm-training/10-grammar/llvm-ir.tm`) is
+dispositions followed: the vendored LLVM IR grammar (`training/llvm/10-grammar/llvm-ir.tm`) is
 `llir/grammar` at its HEAD `05deced` (LLVM 15 syntax), verified against `llvm-as-23` with an
 example that exercises exactly the delta; and clang-format is a measured policy — the hook
 covers the C++ rails only (`mlir/`, `runtime/cpp`, reformatted once under the corrected
@@ -173,7 +174,7 @@ describes and is out of the hook's scope by declaration.
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)
 
-Top-level: ./bcir ./channels ./docs ./llvm-training ./mlir ./runtime ./tools
+Top-level: ./bcir ./channels ./docs ./training ./mlir ./runtime ./tools
 
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |

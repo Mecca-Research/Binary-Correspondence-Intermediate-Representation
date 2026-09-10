@@ -1,0 +1,79 @@
+{
+  "id": "017",
+  "title": "Repair a duplicate symbol",
+  "prompt": "training/llvm/exercises/017-fix-duplicate-symbol.prompt.md",
+  "solution": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+  "answer_kind": "diagnostic",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+      "symbol": "@adjust_up",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.solution.ll",
+      "instruction": "add",
+      "points": 5
+    },
+    {
+      "id": "broken.expected-diagnostic",
+      "type": "expected_diagnostic",
+      "path": "training/llvm/exercises/017-fix-duplicate-symbol.invalid.ll.txt",
+      "tool": "llvm-as",
+      "diagnostic": "error",
+      "points": 10
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "repair",
+    "training-llvm"
+  ],
+  "difficulty": "intermediate",
+  "license": "LicenseRef-BCIR-NC-1.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

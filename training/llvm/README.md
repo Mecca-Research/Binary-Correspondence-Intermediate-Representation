@@ -1,0 +1,368 @@
+# training/llvm — Agent Context Repo for LLVM IR
+
+> **Scope:** this directory is a **training corpus**, not part of the BCIR IR.
+> The IR itself is realized by the executable oracle in [`../bcir/`](../../bcir)
+> and the MLIR law in [`../mlir/`](../../mlir). Nothing here is built into those
+> components, and the IR has no dependency on this corpus. See
+> [`../AGENTS.md`](../../AGENTS.md) and
+> [`../docs/BCIR_Repo_Structure.md`](../../docs/BCIR_Repo_Structure.md).
+
+A curated, agent-readable reference for LLVM IR. Designed to be cloned
+and read by an LLM coding agent (Claude, Codex, etc.) **before** taking on
+LLVM-related tasks, so the agent walks into the work with verified
+syntax, semantics, and a catalog of common failure modes.
+
+This is **not** a fine-tuning corpus. It's a context pack: dense, indexed,
+example-first. Standalone files under `*/examples/*.ll` are guaranteed to
+assemble against a modern `llvm-as` (LLVM >= 15, opaque pointers). Embedded
+chapter snippets may be illustrative fragments unless they are explicitly made
+testable.
+
+## How an agent should consume this repo
+
+1. **Always start with [`INDEX.md`](INDEX.md).** It's the topic -> file lookup. Don't grep
+   the tree blind.
+   For BCIR-specific lowering idioms, jump from there to the dedicated
+   [`BCIR pattern index`](indexes/bcir-patterns.md).
+2. **Follow the path in [`CURRICULUM.md`](CURRICULUM.md)** if learning end-to-end. Skip
+   to a leaf chapter if doing a targeted task.
+3. **Use [`quickref/`](quickref) for one-page cheat sheets** on opaque
+   pointers, BCIR lowering, vectorization, metadata, the new pass manager,
+   advanced IR contracts, and MLIR bridge reviews.
+4. **Treat `08-pitfalls/` as a checklist** before writing or reviewing
+   LLVM IR. Every pitfall is tied to a real bug that shipped — most of
+   them caught in the sibling BCIR project.
+5. **`10-grammar/llvm-ir.tm`** is the formal grammar. Use it as a
+   formal syntax aid; verify against the target LLVM version's `llvm-as`
+   and LangRef.
+
+## Layout
+
+```
+training/llvm/
+├── README.md             you are here
+├── START_HERE.md         fastest orientation path for agents and humans
+├── CURRICULUM.md         reading order (30-min / 2-hr / deep paths)
+├── RECIPES.md            task-oriented lookup paths for common LLVM work
+├── INDEX.md              topic / symbol -> file map
+├── quickref/             one-page cheat sheets for common agent tasks
+├── SEMVER.md             compatibility and versioning policy for this pack
+├── EVAL.md               evaluation checklist for agent-usefulness
+├── NOTICE.md             attribution
+├── 00-foundations/       what IR is, SSA, IR vs asm/other IRs
+├── 01-syntax/            modules, functions, basic blocks, instr format
+├── 02-types/             primitive, composite, opaque, pointer
+├── 03-constants/         integer, float, string, global vs local
+├── 04-memory/            alloca, load/store, globals, address spaces
+├── 05-control-flow/      br, conditional br, switch, indirectbr
+├── 06-metadata/          metadata syntax, debug info, profiling, loop hints
+├── 07-optimization/      opt pass model, analyses, transforms, advanced BCIR pipeline risks, PGO/LTO/BOLT
+├── 08-pitfalls/          real-world bugs (mostly from BCIR review)
+├── 09-vectorization/     Loop/SLP vectorizers, diagnostics, masks, interleaved and target vector IR patterns
+├── 10-grammar/           Textmapper grammar (formal syntax)
+├── 11-concurrency/       atomics, volatile, C++/Rust memory-model mapping
+├── 12-backend-jit/       backend pipeline, TableGen, ORC/LLJIT, MC, relocations
+├── 13-advanced-ir/       intrinsics, attributes, UB/poison, ABI details
+├── 14-mlir-bridge/       MLIR concepts and LLVM dialect lowering paths
+├── 15-binary-analysis/   post-codegen analysis, side channels, traces/counters
+├── 16-exception-handling/ exception-handling IR and funclets
+├── 17-new-pass-manager/  modern PassBuilder plugins, callbacks, BCIR pipelines
+├── 18-mlir-lowering-to-llvm/ dedicated MLIR conversion and BCIR lowering
+├── 19-hardware-aware/    intrinsics, pulses, governors, RISC-V, MIR, register/memory hints
+├── 20-clang-frontend/    driver/-cc1, AST + Sema, exact C and C++ lowering rules, ABI
+├── 21-performance-methodology/ workloads, trials, noise, significance, counters
+├── exercises/            runnable prompts, expected observations, solutions
+├── indexes/              generated or focused lookup indexes
+├── tools/                example verification and smoke-test scripts
+├── **/examples/*.ll      standalone examples that must assemble
+└── reference/            instruction quickref, intrinsics, glossary
+```
+
+Numbered directories follow the reading order. Future chapters may add a
+dedicated instruction encyclopedia or additional toolchain material.
+
+## New examples and advanced examples summary
+
+The expanded corpus now has both beginner examples and advanced artifacts:
+
+- **Beginner runnable IR**: compact `*.ll` modules in foundations, syntax, types,
+  memory, control flow, metadata, concurrency, vectorization, and advanced-IR
+  chapters. These are the first files to read when learning LLVM IR syntax.
+- **Before/after optimization examples**: paired files such as
+  `*-before.ll`, `*-after-mem2reg.ll`, `*-after-simplifycfg.ll`, and
+  `*-after-o2.ll` explain how `opt` rewrites IR and what is stable versus
+  LLVM-version-dependent.
+- **BCIR lowering examples**: checked LLVM IR under `bcir-mapping/examples/`
+  demonstrates graph fragments, claim/resource lookup, HAM hints, runtime-call
+  wrappers, mixed-stride addressing, and diagnostic metadata preservation.
+- **MLIR bridge examples**: `14-mlir-bridge/examples/*.mlir` illustrates dialect
+  and LLVM-dialect shapes; these are MLIR artifacts, not standalone `.ll` files.
+- **Backend/JIT diagnostics examples**: TableGen and LLJIT outline artifacts in
+  `12-backend-jit/examples/` are review aids for target descriptions, ORC layer
+  ownership, MC emission, relocations, and missing-symbol failures.
+- **Binary-analysis evidence artifacts**: CSV trace/counter/BCSA samples in
+  `15-binary-analysis/examples/` document evidence schemas and must be reviewed
+  with chapter prose rather than sent to `llvm-as`.
+- **Modern pass-manager and advanced optimization examples**: `17-new-pass-manager/examples/` includes
+  pass-plugin and adaptive-pipeline C++ sketches plus GAADMSF before/after IR, while
+  `07-optimization/examples/bcir-*.ll` covers MemorySSA pipeline staging and SCCP/`freeze` repair for modern `opt -passes=...` walkthroughs.
+- **Repair, prediction, and advanced review exercises**: `exercises/016`-`027`
+  include invalid fixtures, pass-output prediction tasks, metadata preservation
+  checks, and UB/poison/fast-math review prompts; `exercises/028`-`040` cover
+  BCIR lowering, MLIR bridge review, backend/JIT diagnostics, custom-pass
+  invariants, graph metadata, and GAADMSF debugging.
+
+
+## Quick reference paths
+
+Use these one-page sheets when you already know the lesson family and need a
+fast pre-edit checklist:
+
+| Task | Quickref | Deep context |
+| --- | --- | --- |
+| Opaque pointer migration | [`quickref/opaque-pointers.md`](quickref/opaque-pointers.md) | [`02-types/04-opaque-pointer-migration.md`](02-types/04-opaque-pointer-migration.md) |
+| BCIR lowering | [`quickref/bcir-lowering.md`](quickref/bcir-lowering.md) | [`bcir-mapping/README.md`](bcir-mapping/README.md) |
+| Vectorization | [`quickref/vectorization.md`](quickref/vectorization.md) | [`09-vectorization/README.md`](09-vectorization/README.md), [`09-vectorization/07-masked-and-interleaved-access.md`](09-vectorization/07-masked-and-interleaved-access.md) |
+| Metadata preservation | [`quickref/metadata.md`](quickref/metadata.md) | [`06-metadata/README.md`](06-metadata/README.md), [`bcir-mapping/10-metadata-and-diagnostics.md`](bcir-mapping/10-metadata-and-diagnostics.md) |
+| New pass manager pipelines | [`quickref/new-pass-manager.md`](quickref/new-pass-manager.md) | [`07-optimization/01-pass-model.md`](07-optimization/01-pass-model.md), [`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md), [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) |
+| Advanced intrinsics/attributes/poison/fast math | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/README.md`](13-advanced-ir/README.md), [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
+| Operand bundles, GC/coroutine/convergence tokens, and matrix intrinsics | [`quickref/advanced-ir.md`](quickref/advanced-ir.md) | [`13-advanced-ir/03-special-types-and-tokens.md`](13-advanced-ir/03-special-types-and-tokens.md), [`13-advanced-ir/07-operand-bundles.md`](13-advanced-ir/07-operand-bundles.md), [`reference/intrinsics-quickref.md`](reference/intrinsics-quickref.md) |
+| MLIR-to-LLVM bridge review | [`quickref/mlir-bridge.md`](quickref/mlir-bridge.md) | [`14-mlir-bridge/README.md`](14-mlir-bridge/README.md) |
+| Calls, ABI attributes, and comparisons | [`reference/instruction-quickref.md`](reference/instruction-quickref.md) | [`05-control-flow/05-call-and-ret.md`](05-control-flow/05-call-and-ret.md), [`05-control-flow/06-comparisons-and-select.md`](05-control-flow/06-comparisons-and-select.md) |
+| Reading Clang's output, and which stage owns a decision | — | [`20-clang-frontend/README.md`](20-clang-frontend/README.md) |
+| Making a performance claim that survives review | — | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) |
+
+Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
+new artifacts to any of these families.
+For repository-wide contributor guidance, including BCIR mapping and
+metadata-preservation expectations, see [`../CONTRIBUTING.md`](../../CONTRIBUTING.md).
+
+## Example, exercise, and snippet conventions
+
+Use the conventions in [`EXAMPLES.md`](EXAMPLES.md) consistently so readers
+and CI know what is runnable versus illustrative. In short:
+
+- **Standalone examples** live in `*/examples/*.ll` (for example,
+  `00-foundations/examples/simple-add.ll`) and must assemble with LLVM >= 15
+  opaque pointers.
+- **Intentionally invalid examples** should use `.ll.txt` or include `invalid`
+  in the filename so broad verification commands can skip them.
+- **Pass-output examples** should use clear before/after names such as
+  `foo-before.ll`, `foo-after-mem2reg.ll`, or `foo-after-o2.ll`.
+- **Chapter examples** should have a local `examples/README.md` or a short
+  section listing the commands for that chapter's examples.
+- **Exercises** should document the prompt, expected command, expected
+  observation, and optional solution file.
+- **Fenced `llvm` snippets** in chapter prose may be fragments: single
+  instructions, declarations, partial functions, or before/after excerpts. Do
+  not assume a fenced snippet is independently runnable unless the chapter says
+  so or links to a standalone example.
+
+If an embedded snippet is intended to be part of the assembly guarantee, move it
+into `examples/*.ll` or add a dedicated extraction/test path before documenting
+it as runnable.
+
+## Verifying and smoke-testing standalone examples
+
+Use the checked-in tool scripts from the repository root:
+
+```bash
+./training/llvm/tools/verify-examples.sh
+./training/llvm/tools/smoke-llc.sh
+./training/llvm/tools/smoke-lli.sh
+./training/llvm/tools/verify-exercises.sh
+./training/llvm/tools/grade-exercises.sh --self-test
+./training/llvm/tools/verify-invalid-fixtures.sh
+./training/llvm/tools/verify-opt-diff.sh
+./training/llvm/tools/verify-opaque-pointers.sh
+./training/llvm/tools/verify-manifest.sh
+./training/llvm/tools/verify-csv-schema.sh
+python3 training/llvm/tools/verify-binary-analysis-evidence.py
+python3 training/llvm/tools/generate-binary-analysis-fixtures.py --check
+./training/llvm/tools/verify-mlir-examples.sh
+./training/llvm/tools/verify-bcir-mapping.sh
+python3 training/llvm/tools/verify-frontend-lowering.py
+python3 training/llvm/tools/verify-mlir-rail-references.py
+python3 training/llvm/tools/verify-benchmark-analysis.py
+./training/llvm/tools/build-pass-plugin.sh
+python3 training/llvm/tools/probe-hardware-counters.py
+```
+
+The same checks are also available as CMake custom targets after configuring the training project. These targets are suitable for minimal CI or local images because
+they skip cleanly when their optional LLVM tools are unavailable:
+
+```bash
+cmake -S training/llvm -B build/training/llvm
+cmake --build build/training/llvm --target training-llvm-verify-examples
+cmake --build build/training/llvm --target training-llvm-smoke-llc
+cmake --build build/training/llvm --target training-llvm-smoke-lli
+cmake --build build/training/llvm --target training-llvm-verify-exercises
+cmake --build build/training/llvm --target training-llvm-verify-invalid-fixtures
+cmake --build build/training/llvm --target training-llvm-verify-adversarial-fixtures
+cmake --build build/training/llvm --target training-llvm-verify-opt-diff
+cmake --build build/training/llvm --target training-llvm-verify-opaque-pointers
+cmake --build build/training/llvm --target training-llvm-verify-manifest
+cmake --build build/training/llvm --target training-llvm-verify-csv-schema
+cmake --build build/training/llvm --target training-llvm-verify-binary-analysis-evidence
+cmake --build build/training/llvm --target training-llvm-check-binary-analysis-fixtures
+cmake --build build/training/llvm --target training-llvm-verify-mlir-examples
+cmake --build build/training/llvm --target training-llvm-verify-bcir-mapping
+cmake --build build/training/llvm --target training-llvm-verify-frontend-lowering
+cmake --build build/training/llvm --target training-llvm-verify-mlir-rail-references
+cmake --build build/training/llvm --target training-llvm-verify-benchmark-analysis
+cmake --build build/training/llvm --target training-llvm-check
+```
+
+Two further targets are deliberately **outside** `training-llvm-check`, because
+they are not short bash/python processes: `training-llvm-build-pass-plugin`
+compiles a real LLVM pass plugin (and needs LLVM development headers), and
+`training-llvm-probe-hardware-counters` reports host capability rather than
+gating anything. CI runs both as their own steps.
+
+`verify-examples.sh` checks every known-good standalone `*/examples/*.ll` file
+with both `llvm-as` and `opt -passes=verify`, skipping `.ll.txt` files and any
+`.ll` file with `invalid` in its name. The intentionally invalid tripwire
+fixture `training/llvm/examples/broken-example.ll.txt` proves the skip rule is
+working and should never be renamed to a known-good `.ll` example. Anything else
+in those known-good files that doesn't assemble and verify shouldn't ship.
+
+`verify-exercises.sh` applies the same assembler-and-verifier contract to every
+checked-in `training/llvm/exercises/*.solution.ll` reference answer. The separate
+[`autograder/`](autograder/README.md) subsystem grades untrusted external attempt
+artifacts with declarative structural, rubric, and optional execution checks; it
+does not replace or overload the reference verifier. Use
+`verify-invalid-fixtures.sh` for intentionally broken `.invalid.ll.txt` repair
+fixtures, `verify-opt-diff.sh` for golden optimizer-output pairs,
+`verify-mlir-examples.sh` for MLIR syntax coverage, `verify-bcir-mapping.sh` for
+BCIR source-like fragments and lowered companions, and `verify-csv-schema.sh` plus `verify-binary-analysis-evidence.py` for
+binary-analysis evidence tables and provenance. Deterministic fixture drift is
+checked by `generate-binary-analysis-fixtures.py --check`; timing and hardware
+counters remain optional host-sensitive evidence.
+
+The smoke scripts are intentionally narrower: `smoke-llc.sh` emits assembly for
+a curated portable subset, while `smoke-lli.sh` runs only modules with a safe
+`main` or explicitly documented runnable entrypoint. Most examples are
+assembly-only because they are library-style snippets, optimization
+before/after artifacts, target-lowering examples, or intrinsic/metadata
+demonstrations rather than complete programs. See
+`training/llvm/examples/README.md` for the current standalone example manifest
+and per-file commands.
+
+## How big is this repo, and how big should it get?
+
+| Stage | Files | Size | Purpose |
+|---|---|---|---|
+| Seed (historical) | ~40 | ~150 KB | Foundations + syntax + pitfalls + grammar |
+| Curated (current) | ~680 | ~4.5 MB | 22 chapters + instruction encyclopedia, metadata, MLIR overview, toolchain, exercises + autograder, dataset schema/splits, EVAL answer key, bcir-mapping, a buildable pass plugin, an MLIR dialect skeleton, and benchmark-analysis tooling |
+| Training corpus (stage 2) | 100k+ | 10-100 GB | Paired (source, IR), (IR, opt-IR), (IR, asm) examples for fine-tuning. Out of scope here — but the exercise/autograder/dataset-schema substrate above is what an export would build on. |
+
+The curated stage stays small (a few MB of dense text, well under the 100-200 MB
+ceiling) because quality and indexability matter more than raw volume for an
+agent-context repo.
+
+Recent advanced paths: agents doing non-foundational LLVM work should start
+with [`RECIPES.md`](RECIPES.md) for task-based routes, then jump directly to
+[`15-binary-analysis/README.md`](15-binary-analysis/README.md) for binary
+analysis/security/performance workflows or
+[`07-optimization/08-deep-optimization-lessons.md`](07-optimization/08-deep-optimization-lessons.md) for
+BCIR-specific optimizer legality risks and advanced pass-pipeline components, or
+[`07-optimization/06-pgo-lto-bolt.md`](07-optimization/06-pgo-lto-bolt.md) for
+modern profile-guided, link-time, and post-link optimization context.
+
+## How BCIR Uses This
+
+Use this repo as a BCIR LLVM IR task index, with BCIR-specific lowering notes in
+[`bcir-mapping/README.md`](bcir-mapping/README.md).
+
+| BCIR task | Read first |
+|---|---|
+| Writing or reviewing runtime `.ll` files | Syntax ([modules](01-syntax/01-modules-functions-blocks.md), [instructions](01-syntax/02-instruction-format.md)), [types](02-types/02-composite-types.md), [memory](04-memory/02-load-store.md), [control flow](05-control-flow/02-conditional-br.md), [pitfalls](08-pitfalls/README.md) |
+| Debugging verifier errors | [`08-pitfalls/README.md`](08-pitfalls/README.md) |
+| Changing BCIR runtime ABI structs | [type schema drift](08-pitfalls/05-type-schema-drift.md), [BCIR runtime ABI mapping](bcir-mapping/05-runtime-abi.md) |
+| Adding intrinsics or attributes | [common intrinsics](13-advanced-ir/01-common-intrinsics.md), [attributes](13-advanced-ir/04-attributes.md), [target-specific intrinsics](13-advanced-ir/02-target-specific-intrinsics.md), [immarg pitfall](08-pitfalls/06-immarg-violation.md) |
+| Reviewing undefined-value or poison hazards | [poison, undef, and freeze](13-advanced-ir/05-poison-undef-freeze.md), [attributes](13-advanced-ir/04-attributes.md) |
+| Deciding whether relaxed floating-point math is safe | [fast-math flags](13-advanced-ir/06-fast-math-flags.md), [vectorization](09-vectorization/README.md) |
+| Adding atomic/concurrent behavior | [atomic orderings](11-concurrency/01-atomic-orderings.md), [atomic instructions](11-concurrency/02-atomic-instructions.md), [volatile vs atomic](11-concurrency/03-volatile-vs-atomic.md), [C++/Rust mapping](11-concurrency/04-memory-model-mapping.md) |
+| Optimizing generated IR | [pass model](07-optimization/01-pass-model.md), [analysis passes](07-optimization/02-common-analysis-passes.md), [transform passes](07-optimization/03-common-transform-passes.md), [deep BCIR optimizer lessons](07-optimization/08-deep-optimization-lessons.md), [modern pass infrastructure](17-new-pass-manager/README.md), [debugging passes](07-optimization/05-debugging-passes.md), [PGO/LTO/BOLT](07-optimization/06-pgo-lto-bolt.md), [vectorization](09-vectorization/README.md), [masked/interleaved vector lowering](09-vectorization/07-masked-and-interleaved-access.md) |
+| Planning MLIR lowering | [MLIR overview](14-mlir-bridge/01-what-is-mlir.md), [lowering to LLVM dialect](14-mlir-bridge/03-lowering-to-llvm-dialect.md), [BCIR dialect sketch](14-mlir-bridge/04-bcir-as-custom-dialect.md) |
+| Backend/JIT experiments | [codegen pipeline](12-backend-jit/01-codegen-pipeline.md), [ORC JIT](12-backend-jit/03-orc-jit.md), [MC and relocations](12-backend-jit/04-mc-and-relocations.md) |
+| Security/performance binary analysis | [microarchitecture side channels](15-binary-analysis/01-microarchitecture-side-channels.md), [dynamic traces/counters](15-binary-analysis/02-dynamic-traces-and-counters.md), [interpretable BCSA features](15-binary-analysis/03-interpretable-bcsa-features.md), [reproducible evidence pipelines](15-binary-analysis/04-reproducible-evidence-pipelines.md) |
+| Writing a real out-of-tree optimizer pass | [building an out-of-tree pass](17-new-pass-manager/06-building-an-out-of-tree-pass.md), [the buildable plugin](17-new-pass-manager/examples/pass-plugin/README.md) |
+| Explaining what Clang did to a C or C++ construct | [C lowering rules](20-clang-frontend/03-c-lowering-rules.md), [C++ lowering rules](20-clang-frontend/04-cxx-lowering-rules.md), [ABI and target lowering](20-clang-frontend/05-abi-and-target-lowering.md) |
+| Implementing a production MLIR dialect or conversion pass | [dialect and build integration](18-mlir-lowering-to-llvm/08-production-dialect-and-build-integration.md), [production conversion pass](18-mlir-lowering-to-llvm/09-production-conversion-pass.md) |
+| Claiming (or refusing to claim) a speedup | [significance and effect size](21-performance-methodology/04-significance-and-effect-size.md), [reporting discipline](21-performance-methodology/05-reporting-and-claim-discipline.md) |
+
+## Relationship to the BCIR project
+
+This repo lives inside the BCIR project tree on purpose. BCIR is a
+practical case study for almost every pitfall documented here —
+`08-pitfalls/` cross-references commits (`1f62e86`, `5754354`) where
+real instances were fixed.
+
+## License & attribution
+
+BCIR Non-Commercial License v1.0, `LicenseRef-BCIR-NC-1.0` (matches the BCIR repo —
+see the root [`LICENSE`](../../LICENSE)). Free for noncommercial, open-source, and
+private use; commercial use or distribution requires written permission from
+Mecca-Research. See [`NOTICE.md`](NOTICE.md) for source attribution.
+
+## Advanced chapter navigation
+
+Use this path after the core syntax, type, memory, CFG, metadata, and optimization
+chapters. Each row names the artifact boundary so target- or runtime-dependent
+material is not mistaken for a portable LLVM IR guarantee.
+
+| Area | Start here | Verification boundary |
+|---|---|---|
+| Backend, ORC, JITLink, lazy materialization, hot re-JIT, and remote deployment | [`12-backend-jit/README.md`](12-backend-jit/README.md) | `.ll` modules assemble; C++/deployment `.md` files are review sketches; execution is JIT/runtime-specific |
+| Intrinsics, call-site attributes, operand bundles, GC, coroutines, matrix, and convergence | [`13-advanced-ir/README.md`](13-advanced-ir/README.md) | Advanced `.ll` files assemble and verify; backend/runtime smoke is explicitly gated |
+| Exception handling | [`16-exception-handling/README.md`](16-exception-handling/README.md) | EH examples are verifier fixtures, not portable `llc` smoke inputs |
+| New Pass Manager, plugins, adaptive pipelines, PGO, and MLGO | [`17-new-pass-manager/README.md`](17-new-pass-manager/README.md) | `.ll` snapshots verify; C++ plugin/driver files are documentation sketches |
+| MLIR conversion, Transform dialect, and BCIR-to-LLVM lowering | [`18-mlir-lowering-to-llvm/README.md`](18-mlir-lowering-to-llvm/README.md) | `.mlir` examples use the optional `mlir-opt` gate; lowered `.ll` files use LLVM verification |
+| Hardware-aware GAADMSF/Dragon Egg lowering, calibration, RISC-V, MachineIR, and MIR | [`19-hardware-aware/README.md`](19-hardware-aware/README.md) | Custom/target-specific `.ll` and MIR-shaped text remain outside portable backend smoke |
+| BCIR stage contracts and normal-form verification | [`bcir-mapping/11-normal-forms-and-verification.md`](bcir-mapping/11-normal-forms-and-verification.md) | Mapping fixtures, semantic-only invalid fixtures, and metadata-preservation checks have separate gates |
+| Clang driver, AST/Sema, and exact C/C++ lowering rules | [`20-clang-frontend/README.md`](20-clang-frontend/README.md) | Lowering claims are asserted against real `clang` output by `tools/verify-frontend-lowering.py`; statements about Clang's internal classes are review material |
+| Benchmark methodology, statistics, and hardware-counter capability | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) | Statistics and fixture verdicts are checked; the methodology itself is judgement, and the sample data is synthetic |
+
+The checked artifact inventory is [`examples/README.md`](examples/README.md), and
+the complete gate dispatcher is [`tools/README.md`](tools/README.md). Configure
+training-only CMake targets with `cmake -S training/llvm -B build/training/llvm`.
+
+## Closed-loop grading and dataset export
+
+The executable attempt grader starts at:
+
+```bash
+python3 training/llvm/tools/grade-exercises.py \
+  --attempts /path/to/attempts --format json --output /tmp/grades.json
+```
+
+Attempt directories use stable three-digit IDs (`001/answer.ll`,
+`041/answer.md`, and so on). Use `--self-test` to grade the registered checked-in
+references. This is distinct from `tools/verify-exercises.sh`: the reference
+verifier proves that all checked-in `*.solution.ll` artifacts still assemble
+and verify, while the attempt grader applies per-exercise rubrics, awards partial
+credit, handles malformed/missing submissions, and emits machine-readable score
+records.
+
+The deterministic dataset exporter starts at:
+
+```bash
+python3 training/llvm/tools/export-exercise-dataset.py \
+  --split all --without-solutions --output /tmp/training/llvm.jsonl
+python3 training/llvm/tools/verify-dataset-export.py
+```
+
+Version 1 currently exports **42 curated exercise records**. It is intended for
+held-out evaluation, regression testing, and small-scale analysis of LLVM/MLIR
+agent behavior; it is not sized or licensed as a general-purpose pretraining or
+fine-tuning corpus. `--without-solutions` is the default and is mandatory for
+model-visible held-out bundles. `--include-solutions` is only for trusted oracle
+or reviewer workflows and must not be passed to a model under evaluation.
+
+Every skipped optional check appears as a `status: "skip"` record. Its points
+remain in `points_available` and contribute zero to `points_earned`, so missing
+tools cannot inflate the raw score. Reports mark the exercise and aggregate
+`score_confidence` as `reduced`; compare scores across runs only after checking
+the skip count and recorded toolchain. The MLIR CI rail uses required-tool mode
+to obtain stronger confidence than reduced-coverage developer runs.
