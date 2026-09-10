@@ -337,6 +337,47 @@ derived from one file lands in the same split, so a test record can never be a
 memorised train record. The verifier fails on any source that appears in two
 splits, and on a corpus that landed entirely in one.
 
+## What a subject owns, and what it inherits
+
+A subject folder holds prose, exercises, fixtures and gates. It does **not** hold
+a grader, a dataset exporter, or a bounded-subprocess helper — those are in
+[`tools/`](tools) and every subject uses the same ones.
+
+The split is drawn at *policy*, not at convenience. A subject declares:
+
+| Declared by the subject | Example from `llvm/` |
+| --- | --- |
+| its answer kinds and their file extensions | `llvm-ir` → `.ll`, `mlir` → `.mlir` |
+| the tools that prove an answer well-formed, and their argument arrays | `llvm-as`, `opt -passes=verify`, `opt -S` |
+| how tool binaries are discovered on this host | `LLVM_SUFFIX`, then a newest-first version sweep |
+| how a prompt's reference solution is hidden from a model | the `*.solution.(ll\|mlir\|md)` pattern |
+| whether a submission may be *run*, and how | the `lli` harness, opt-in per exercise |
+
+Everything else is inherited: confinement of an untrusted answer, refusal of an
+attempt tree carrying a build file, allocation of a dimension's points across
+the checks that measure it, structural and rubric matching, the distinction
+between a failed check and one skipped for a missing tool, the report shape,
+split manifests, checksums, and deterministic JSONL.
+
+Two rules keep that real rather than nominal, and both are gated by
+[`tools/verify_grading.py`](tools/verify_grading.py):
+
+- **The shared rail names no subject.** Its docstrings may explain the boundary;
+  its code may not cross it. The check strips comments and docstrings and then
+  refuses any compiler, dialect or extension belonging to one subject.
+- **A policy predicate has one definition.** Before the machinery was shared,
+  three tools carried their own tool-discovery rule and two more their own
+  prompt-redaction and text-normalization rules. The copies agreed; nothing made
+  them agree. A second definition anywhere under `training/` now fails the gate.
+  The scope is declared in the gate itself: this covers predicates that carry
+  policy, not one-line wrappers over the standard library.
+
+The proof that the abstraction is one is that it grades something else. The gate
+builds a synthetic subject — a JSON document, validated by the interpreter
+running the gate — and grades it end to end through the real kernel. An
+abstraction only ever exercised by its original caller has not been shown to be
+an abstraction.
+
 ## The edge into BCIR's training stack
 
 A corpus that emits records nothing consumes is a database that happens to sit

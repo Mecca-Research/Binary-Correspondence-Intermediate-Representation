@@ -12,17 +12,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+SHARED_TOOLS = Path(__file__).resolve().parents[2] / "tools"
+if str(SHARED_TOOLS) not in sys.path:
+    sys.path.insert(0, str(SHARED_TOOLS))
 
-def normalized_text(path: Path) -> str:
-    return path.read_bytes().decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(normalized_text(path))
+# One definition of "read a file as normalized text" and "digest it", shared with
+# the exporter this gate checks -- a second copy here could drift from the thing
+# it is verifying and report agreement that no longer means anything.
+from dataset_export import load_json, normalized_text, sha256_text  # noqa: E402
 
 
 def type_matches(value: Any, expected: str) -> bool:

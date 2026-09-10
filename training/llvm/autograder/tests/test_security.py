@@ -11,7 +11,7 @@ TRAINING_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = TRAINING_ROOT.parent.parent
 GRADER = TRAINING_ROOT / "tools" / "grade-exercises.py"
 RUN_EVAL = TRAINING_ROOT / "tools" / "run-eval.py"
-SAFE_PROCESS = TRAINING_ROOT / "tools" / "safe_process.py"
+SAFE_PROCESS = TRAINING_ROOT.parent / "tools" / "safe_process.py"
 
 spec = importlib.util.spec_from_file_location("safe_process", SAFE_PROCESS)
 safe_process = importlib.util.module_from_spec(spec)
