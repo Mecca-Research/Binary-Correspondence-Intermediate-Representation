@@ -23,7 +23,8 @@ The instinct on a failed counter read is to reach for permissions:
 whether the counter *exists*.
 
 On a virtualized host the PMU is commonly not exposed to the guest at all, and
-the syscall fails with `ENOENT` regardless of privilege. Run
+the syscall fails regardless of privilege — with `ENOENT`, or with `EACCES` when
+the paranoid level rejects the request before the kernel looks. Run
 [`../tools/probe-hardware-counters.py`](../tools/probe-hardware-counters.py) and
 read the answer, rather than inferring capability from permission. Observed on
 the container this chapter was written in:
@@ -56,8 +57,9 @@ whole answer. Raising privilege from that state changes nothing.
 1. **The syscall itself.** `perf_event_open` for each hardware event. This is
    the only authoritative test, and it is the one the probe performs. Everything
    else is context for interpreting its answer.
-2. **`perf_event_paranoid`.** Context: distinguishes "not permitted" (`EACCES`,
-   `EPERM`) from "not present" (`ENOENT`).
+2. **`perf_event_paranoid`.** Context for reading the errno — and note that at
+   level 3 or higher it *masks* the distinction, because permission is checked
+   before availability.
 3. **`/sys/bus/event_source/devices`.** Context: whether a hardware `cpu` PMU is
    exposed at all.
 4. **Virtualization hints.** Context: a hypervisor flag makes `ENOENT` expected
@@ -68,13 +70,33 @@ The errno is the diagnosis:
 | errno | Means | Action |
 | --- | --- | --- |
 | `ENOENT` | the event does not exist on this host | no PMU; do not retry with privilege |
-| `EACCES` / `EPERM` | it exists, you may not open it | lower `perf_event_paranoid`, or grant `CAP_PERFMON` |
+| `EACCES` / `EPERM` | you may not open it — *and see below* | lower `perf_event_paranoid`, or grant `CAP_PERFMON` |
 | `ENOSYS` | no `perf_event_open` at all | not a Linux perf host |
 | `EINVAL` | malformed attribute, or an unsupported combination | fix the request |
 | `EMFILE` / `ENOSPC` | out of descriptors or counter slots | multiplex, or ask for fewer events |
 
-Only the second row is a permissions problem. Treating the first as one is the
-mistake this page is about.
+**`EACCES` does not prove the counter exists.** At `perf_event_paranoid` 3 or
+higher the permission check happens *before* the kernel decides whether the
+event is available, so an absent PMU and a forbidden one answer identically.
+That is why the probe records the PMU device list next to the errno: if there
+is no `cpu` entry there, raising privilege will convert `EACCES` into `ENOENT`
+and nothing more.
+
+Two hosts, same verdict, different reason — both real, and neither one has a
+hardware PMU:
+
+| | this repository's dev container | a GitHub-hosted CI runner |
+| --- | --- | --- |
+| euid | 0 | 1001 |
+| `perf_event_paranoid` | 2 | 4 |
+| PMU devices | breakpoint, msr, power, software, tracepoint, uprobe | breakpoint, kprobe, msr, software, tracepoint, uprobe |
+| errno | `ENOENT` | `EACCES` |
+| `perf` binary | absent | `/usr/bin/perf` |
+| STATUS | `unavailable` | `unavailable` |
+
+The CI runner is the more instructive of the two: it *has* the `perf` binary,
+which is exactly the thing that makes people assume counters are available. The
+binary is not the capability.
 
 ## Counter multiplexing, and why raw counts can be fractional
 
