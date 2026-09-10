@@ -272,16 +272,50 @@ actually there, with `tools/verify_ml_components.py` resolving every symbol
   measured only on a host where torch was installed, and CI corrected it within
   two minutes. A property measured on one host is a property of that host until
   a second one disagrees.
-- **Three components are declared and not exercised, each saying why** in a
-  field the gate checks rather than a sentence it would have to read: PPO needs
-  a rollout and a reward source the corpus does not produce; embedding
-  distillation needs a teacher this repository does not ship; bounded reasoning
+- **Two components are declared and not exercised, each saying why** in a field
+  the gate checks rather than a sentence it would have to read: PPO needs a
+  rollout and a reward source the corpus does not produce; bounded reasoning
   search needs a generator, which is the model the corpus has not trained.
 
-That last line is the honest shape of what remains. The corpus can now feed
-supervised and preference training end to end; what it still cannot do is
-produce the *learned embedding* its own retrieval evaluation keeps reporting a
-lexical baseline for. Phase 0.6 built the metric; the teacher is the gap.
+  A third was listed here as needing "a teacher this repository does not ship".
+  Measured, that was false twice over. The stage constructs and calls no teacher
+  at all: its targets are a cosine Gram matrix, and the corpus's own lexical
+  provider produces the vectors it is built from. And the pairing was blocked by
+  a defect, not by a missing model -- `relational_embedding_targets` returned
+  diagonal entries a few ULP above 1.0, which `train_embedding_distillation`
+  refuses outright, so BCIR's only cosine-target constructor was incompatible
+  with its only consumer for essentially every real input. Both shipped call
+  sites escaped it by using exactly-representable toy vectors. Fixed, and
+  embedding distillation is now exercised on real corpus text.
+
+The corpus can now feed supervised, preference and embedding-distillation
+training end to end. What it still does not have is a learned embedding SET that
+the retrieval evaluation would accept in place of the lexical baseline, and the
+obstacle turned out not to be the teacher at all:
+
+- The evaluation apparatus is calibrated to a lexical model. `MAX_MEAN_ABS_COSINE`
+  is 0.60 against a measured lexical 0.087, while an untrained pooled decoder
+  sits at 0.47-0.61 before any training; and `CONTROL_RECALL_AT_5` is 0.95 on a
+  control whose entire justification is verbatim lexical overlap. Loosening
+  either to admit a learned model would be tuning the bar to the thing it
+  measures, which this standard exists to refuse.
+- The control's ARGUMENT, not just its threshold, is lexical. "The query text is
+  verbatim in its target, so retrieval must find it" holds for a model that
+  scores near-duplicate text highly. A learned encoder carries no such
+  guarantee, so a control failure would no longer isolate "the harness is
+  broken" -- the control has to be re-argued before its floor is applied to a
+  learned set.
+- Training signal is scarcer than it looks. The document-level judgments mean
+  that clustering chunks by document -- the obvious self-supervised objective --
+  trains the very operation the evaluator performs, and index files are
+  themselves chunk documents, so an objective over raw chunk text can memorize
+  84% of the judged mapping without ever constructing a pair. Contamination of
+  that kind would leave every existing gate GREEN: the shuffle control still
+  collapses, the lift gates still clear, the digests still match. No gate here
+  can detect training-set overlap; only a training-data filter can.
+
+So the remaining work is a corpus-standard question before it is a modelling
+one, and it is recorded here rather than resolved quietly.
 
 ## Phase 1 — complete `llvm/`
 

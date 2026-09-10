@@ -256,6 +256,23 @@ def _alignment_run(seed: int, scratch: Path) -> dict:
         (1, token("d"), token("e")),
         (1, token("g"), token("h")),
     )
+    # Toy vectors whose rounding happens to cancel hid a real incompatibility:
+    # the producer emitted diagonal entries a few ULP above 1.0 and the consumer
+    # refuses anything outside [-1, 1]. Build the targets from vectors that are
+    # NOT exactly representable, so this test fails if the clamp is ever removed.
+    rough = [
+        tuple((index + 1) * 0.1 + position * 0.037 for position in range(48)) for index in range(3)
+    ]
+    rough_targets = relational_embedding_targets(rough)
+    assert all(-1.0 <= value <= 1.0 for row in rough_targets for value in row)
+    assert all(rough_targets[i][i] == 1.0 for i in range(len(rough_targets)))
+    train_embedding_distillation(
+        HostedEmbeddingStudent(sft_policy, 4),
+        sequences,
+        rough_targets,
+        StageTrainSpec("embedding", 1, 1e-2, seed=seed + 5),
+    )
+
     targets = relational_embedding_targets(((1.0, 0.0), (0.0, 1.0), (1.0, 1.0)))
     embedding = _run_stage(
         lambda: train_embedding_distillation(

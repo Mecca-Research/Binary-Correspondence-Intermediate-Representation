@@ -343,12 +343,16 @@ COMPONENTS: tuple[Component, ...] = (
         topic="embedding-distillation",
         module="bcir.hosted.training.stages",
         symbols=("train_embedding_distillation", "HostedEmbeddingStudent"),
-        reach="declared",
+        reach="torch-gated",
         note=(
             "The stage that would give this corpus a LEARNED embedding provider, "
-            "replacing the lexical baseline the retrieval evaluation still reports."
+            "replacing the lexical baseline the retrieval evaluation still reports. "
+            "It needs no external teacher: the targets are a cosine Gram matrix, and "
+            "the corpus's own lexical provider produces the vectors it is built from. "
+            "An earlier note here said this needed 'a teacher model this repository "
+            "does not ship' -- measured, that was false, and the code constructs and "
+            "calls no teacher at all."
         ),
-        unexercised_reason="needs a teacher model this repository does not ship",
     ),
     Component(
         topic="bounded-reasoning-search",

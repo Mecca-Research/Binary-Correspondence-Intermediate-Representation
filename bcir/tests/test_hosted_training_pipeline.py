@@ -202,6 +202,57 @@ def test_recorded_teacher_is_content_addressed_and_offline():
         _must_refuse(lambda: RecordedTeacherProvider.from_jsonl(path), "duplicate")
 
 
+def test_relational_targets_are_cosines_at_realistic_width():
+    """Every entry must actually lie in [-1, 1], not merely in exact arithmetic.
+
+    The two shipped call sites use exactly-representable toy vectors -- ((1,0),
+    (0,1), (1,1)) and [[3,0],[0,2],[3,3]] -- where the rounding cancels and the
+    diagonal lands exactly on 1.0. Real vectors do not: summing `dim` products of
+    normalized coordinates accumulates error, and sum(v*v) over a self-normalized
+    vector lands a few ULP ABOVE 1.0. Measured before the fix: 1.0000000000000002
+    at dim 2 and 1.0000000000000087 over 24 real corpus chunks at dim 512.
+
+    That matters because `train_embedding_distillation` refuses any target outside
+    [-1, 1] (bcir/hosted/training/stages.py, "relational target values must be
+    finite cosine similarities"). An unclamped matrix therefore made this
+    repository's only cosine-target constructor incompatible with its only
+    consumer for essentially every real input, invisibly to both call sites.
+
+    The predicate below mirrors that refusal deliberately; the end-to-end binding
+    -- producer output actually fed to the consumer -- lives in
+    tools/models/test_training_pipeline.py, which may import torch.
+    """
+    import math
+    import random
+
+    generator = random.Random(20260910)
+    for width in (2, 64, 512):
+        vectors = [tuple(generator.gauss(0.0, 1.0) for _ in range(width)) for _ in range(12)]
+        matrix = relational_embedding_targets(vectors)
+        assert len(matrix) == len(vectors)
+        for index, row in enumerate(matrix):
+            assert len(row) == len(vectors)
+            # The consumer's refusal, restated: stages.py rejects on exactly this.
+            for value in row:
+                assert math.isfinite(value), (width, value)
+                assert -1.0 <= value <= 1.0, (width, value)
+            # A vector's cosine with itself is 1 by definition, not by arithmetic.
+            assert row[index] == 1.0, (width, row[index])
+        for i in range(len(matrix)):
+            for j in range(len(matrix)):
+                assert matrix[i][j] == matrix[j][i], (i, j)
+
+    # Anti-vacuity: the clamp must not be flattening genuine structure. Distinct
+    # random vectors in high dimensions are near-orthogonal, so off-diagonal
+    # entries must be spread around zero rather than pinned at the bounds.
+    matrix = relational_embedding_targets(
+        [tuple(generator.gauss(0.0, 1.0) for _ in range(512)) for _ in range(12)]
+    )
+    off = [matrix[i][j] for i in range(12) for j in range(12) if i != j]
+    assert max(abs(value) for value in off) < 0.9, "off-diagonal cosines were clamped flat"
+    assert any(value != 0.0 for value in off), "off-diagonal cosines are all zero"
+
+
 def test_remote_compute_bundle_requires_attested_result():
     output = ArtifactFile("model.safetensors", 16, _HASH_B)
     bundle = RemoteTrainingBundle("4a5ae9a", _HASH_A, _HASH_B, _HASH_A, _HASH_B, _HASH_A, 1729)

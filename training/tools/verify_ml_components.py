@@ -545,6 +545,72 @@ def exercise_preference_optimization(report: Report) -> str:
     return f"{run.examples} pairs, {run.steps} step(s), loss {run.initial_loss:.4f} -> {run.final_loss:.4f}"
 
 
+def exercise_embedding_distillation(report: Report) -> str:
+    """The corpus's own lexical provider as the teacher, on real corpus text.
+
+    This is the regression test for a defect the pairing hid: BCIR's only
+    cosine-target constructor returned diagonal entries a few ULP above 1.0, and
+    its only consumer refuses anything outside [-1, 1]. Both shipped call sites
+    used exactly-representable toy vectors where the rounding cancels, so the
+    incompatibility was invisible until real vectors went through.
+    """
+    import glob
+    import json
+
+    from bcir.hosted.models.model import HostedLlama
+    from bcir.hosted.models.spec import DecoderSpec
+    from bcir.hosted.training import stages
+    from bcir.hosted.training.providers import relational_embedding_targets
+
+    embed = _load_corpus_tool("embed_chunks")
+    texts = []
+    for path in sorted(glob.glob("build/training/chunks/*.chunks.jsonl")):
+        for line in open(path, encoding="utf-8"):
+            if line.strip():
+                texts.append(json.loads(line)["text"])
+    if len(texts) < 8:
+        report.require(False, "no chunk build to draw teacher text from; run build_chunks.py")
+        return "unavailable"
+    texts = texts[:12]
+
+    provider = embed.build_provider("lexical-hash-v1", dim=512, revision=None)
+    vectors, _norms = embed.embed(
+        [{"text": t, "chunk_id": f"c{i}", "source_path": "<probe>"} for i, t in enumerate(texts)],
+        provider,
+    )
+    targets = relational_embedding_targets([tuple(v) for v in vectors])
+    outside = [v for row in targets for v in row if not -1.0 <= v <= 1.0]
+    report.require(
+        not outside,
+        f"{len(outside)} cosine target(s) fall outside [-1, 1] (max {max(outside, default=0)!r}); "
+        "the stage refuses those, so the producer and its only consumer disagree",
+    )
+    report.require(
+        all(targets[i][i] == 1.0 for i in range(len(targets))),
+        "a vector's cosine with itself is not exactly 1.0",
+    )
+
+    policy = HostedLlama(
+        DecoderSpec(
+            vocab_size=512, d_model=64, n_heads=2, n_layers=2, d_ff=128, activation="silu_gate"
+        )
+    )
+    student = stages.HostedEmbeddingStudent(policy, 128)
+    sequences = tuple(tuple(int(b) % 512 for b in t.encode()[:96]) or (1,) for t in texts)
+    run = stages.train_embedding_distillation(
+        student,
+        sequences,
+        targets,
+        stages.StageTrainSpec(stage="embedding", steps=2, learning_rate=1e-3),
+    )
+    report.require(run.stage == "embedding", f"the stage reported itself as {run.stage!r}")
+    report.require(run.examples == len(texts), "the stage did not see every sequence")
+    return (
+        f"{len(texts)} real chunks -> lexical Gram -> {run.steps} step(s), "
+        f"loss {run.initial_loss:.4f} -> {run.final_loss:.4f}"
+    )
+
+
 EXERCISES = {
     "tokenization": exercise_tokenization,
     "activation-functions": exercise_activations,
@@ -565,10 +631,25 @@ EXERCISES = {
     "byte-latent-models": exercise_byte_latent,
     "supervised-fine-tuning": exercise_supervised_fine_tuning,
     "preference-optimization": exercise_preference_optimization,
+    "embedding-distillation": exercise_embedding_distillation,
 }
 
 
 # --------------------------------------------------------------------------
+
+
+def _load_corpus_tool(name: str):
+    """Load a sibling corpus tool by path -- they are scripts, not a package."""
+    import importlib.util
+
+    module = sys.modules.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return module
 
 
 def torch_available() -> bool:
