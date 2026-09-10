@@ -1,0 +1,71 @@
+{
+  "id": "007",
+  "title": "Vector reduction intrinsic",
+  "prompt": "training/llvm/exercises/007-vector-reduction.prompt.md",
+  "solution": "training/llvm/exercises/007-vector-reduction.solution.ll",
+  "answer_kind": "llvm_ir",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "training/llvm/exercises/007-vector-reduction.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "training/llvm/exercises/007-vector-reduction.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "training/llvm/exercises/007-vector-reduction.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "training/llvm/exercises/007-vector-reduction.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "training/llvm/exercises/007-vector-reduction.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "training/llvm/exercises/007-vector-reduction.solution.ll",
+      "symbol": "@sum4",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "training/llvm/exercises/007-vector-reduction.solution.ll",
+      "instruction": "call",
+      "points": 15
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "standalone-llvm-ir",
+    "training-llvm"
+  ],
+  "difficulty": "beginner",
+  "license": "LicenseRef-BCIR-NC-1.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

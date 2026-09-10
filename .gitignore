@@ -7,16 +7,16 @@ __pycache__/
 .pytest_cache/
 
 # Reproducible LLVM training dataset exports (release snapshots are intentional exceptions)
-llvm-training/dataset/*.jsonl
+training/llvm/dataset/*.jsonl
 
 # LLVM training grader/evaluation run artifacts
-llvm-training/**/attempts/
-llvm-training/eval-output/
-llvm-training/evaluator-output/
-llvm-training/**/scores*.json
-llvm-training/**/grade-report*.json
-llvm-training/dataset/tmp*/
-llvm-training/dataset/*.tmp
-llvm-training/dataset/*.jsonl.tmp
-llvm-training/tests/Output/
-llvm-training/tests/.lit_test_times.txt
+training/llvm/**/attempts/
+training/llvm/eval-output/
+training/llvm/evaluator-output/
+training/llvm/**/scores*.json
+training/llvm/**/grade-report*.json
+training/llvm/dataset/tmp*/
+training/llvm/dataset/*.tmp
+training/llvm/dataset/*.jsonl.tmp
+training/llvm/tests/Output/
+training/llvm/tests/.lit_test_times.txt

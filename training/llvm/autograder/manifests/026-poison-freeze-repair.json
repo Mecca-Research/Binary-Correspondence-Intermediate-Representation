@@ -1,0 +1,78 @@
+{
+  "id": "026",
+  "title": "Repair poison-prone control flow with freeze",
+  "prompt": "training/llvm/exercises/026-poison-freeze-repair.prompt.md",
+  "solution": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+  "answer_kind": "diagnostic",
+  "required_tools": [
+    "llvm-as",
+    "opt"
+  ],
+  "minimum_tool_versions": {
+    "llvm-as": "15.0",
+    "opt": "15.0"
+  },
+  "tool_absence_policy": "hard_failure",
+  "checks": [
+    {
+      "id": "prompt.exists",
+      "type": "file_exists",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.prompt.md",
+      "points": 5
+    },
+    {
+      "id": "reference.exists",
+      "type": "file_exists",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 5
+    },
+    {
+      "id": "reference.non-empty",
+      "type": "non_empty",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 10
+    },
+    {
+      "id": "llvm.assemble",
+      "type": "llvm_assemble",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "llvm.verify",
+      "type": "llvm_verify",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "points": 25
+    },
+    {
+      "id": "structure.symbol",
+      "type": "contains_symbol",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "symbol": "@select_after_overflow",
+      "points": 15
+    },
+    {
+      "id": "structure.instruction",
+      "type": "contains_instruction",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "instruction": "add",
+      "points": 5
+    },
+    {
+      "id": "repair.freeze",
+      "type": "contains_instruction",
+      "path": "training/llvm/exercises/026-poison-freeze-repair.solution.ll",
+      "instruction": "freeze",
+      "points": 10
+    }
+  ],
+  "score": 100,
+  "tags": [
+    "repair",
+    "training-llvm"
+  ],
+  "difficulty": "intermediate",
+  "license": "LicenseRef-BCIR-NC-1.0",
+  "determinism": "deterministic",
+  "timeout_seconds": 10
+}

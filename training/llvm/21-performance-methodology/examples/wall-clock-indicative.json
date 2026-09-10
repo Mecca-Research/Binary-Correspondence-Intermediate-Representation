@@ -1,0 +1,76 @@
+{
+  "schema": "training/llvm/benchmark-samples/v1",
+  "workload": "end-to-end-build",
+  "unit": "s",
+  "metric_class": "wall",
+  "lower_is_better": true,
+  "note": "An absolute wall-clock row. Informative; never a gate.",
+  "environment": {
+    "host": "synthetic",
+    "cpu": "synthetic (no real hardware was measured)",
+    "governor": "n/a",
+    "generated": "deterministically by a seeded generator; see README.md"
+  },
+  "series": {
+    "baseline": {
+      "build": "main@abcdef0",
+      "samples": [
+        61.1567,
+        60.5515,
+        60.0307,
+        61.3032,
+        59.9088,
+        62.3843,
+        58.1594,
+        59.2654,
+        61.2557,
+        59.3752,
+        59.3843,
+        60.1233,
+        60.0973,
+        59.555,
+        59.5255,
+        60.5494,
+        59.8185,
+        58.6844,
+        58.5295,
+        59.9546,
+        61.8479,
+        57.2018,
+        58.3026,
+        61.7987,
+        59.5384
+      ]
+    },
+    "candidate": {
+      "build": "slice@1234567",
+      "samples": [
+        50.4429,
+        52.6982,
+        51.8992,
+        51.502,
+        53.0858,
+        51.7008,
+        52.8092,
+        52.7334,
+        54.2272,
+        54.0901,
+        51.606,
+        52.2876,
+        50.9779,
+        51.6081,
+        52.982,
+        52.5178,
+        52.0563,
+        50.9377,
+        52.1769,
+        51.2409,
+        50.9031,
+        53.6376,
+        53.1825,
+        50.9393,
+        52.5313
+      ]
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bcir.dev/schemas/training/distill-v1.json",
+  "title": "BCIR training corpus distillation record (Tier 3)",
+  "description": "One supervised training example. The load-bearing rule is `verified_by`: a record may only exist if some gate in this repository checks the assistant turn. A distillation record whose answer nothing verifies is a hallucination with provenance attached, and it is worse than no record at all because it looks sourced.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "record_id", "corpus", "subject", "task", "messages",
+    "answer_kind", "source_paths", "verified_by", "split", "difficulty",
+    "provenance"
+  ],
+  "properties": {
+    "schema": {"const": "bcir-training/distill/v1"},
+    "record_id": {
+      "description": "sha256 over the canonical identity tuple (subject, task, messages). Content-addressed and stable.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "corpus": {"const": "training"},
+    "subject": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "task": {
+      "description": "claim = a machine-checked fact stated as Q/A; exercise = write the artifact; repair = fix a rejected artifact; prediction = state what a transform produces; review = diagnose without editing.",
+      "enum": ["claim", "exercise", "repair", "prediction", "review"]
+    },
+    "messages": {
+      "description": "Chat-format turns. Exactly one system, one user, one assistant, in that order -- a shape every supervised-fine-tuning pipeline accepts without a converter.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "content"],
+        "properties": {
+          "role": {"enum": ["system", "user", "assistant"]},
+          "content": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "answer_kind": {"enum": ["code", "explanation", "diagnosis"]},
+    "source_paths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/repositoryPath"}
+    },
+    "verified_by": {
+      "description": "The gate that checks this record's answer, and the specific claim it checks. Required, never empty: this is what separates a training record from an assertion.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate", "claim"],
+      "properties": {
+        "gate": {"$ref": "#/$defs/repositoryPath"},
+        "claim": {"type": "string", "minLength": 1}
+      }
+    },
+    "split": {"enum": ["train", "validation", "test"]},
+    "difficulty": {"type": "integer", "minimum": 1, "maximum": 5},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["license", "builder"],
+      "properties": {
+        "license": {"type": "string", "minLength": 1},
+        "builder": {"$ref": "#/$defs/repositoryPath"}
+      }
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+    }
+  }
+}

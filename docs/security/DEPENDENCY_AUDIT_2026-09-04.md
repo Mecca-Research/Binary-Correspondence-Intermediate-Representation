@@ -45,12 +45,12 @@
   low). These run only on ephemeral CI runners against the repository's own inputs (§4.3).
 - **The code imports exactly what it declares, plus one thing it did not.** A static scan of all
   552 Python files finds only `torch` and `safetensors` (both declared in `model-lab`), `lit` (LLVM's
-  test runner, provided by the LLVM toolchain, in `llvm-training/tests/lit.cfg.py`), and
+  test runner, provided by the LLVM toolchain, in `training/llvm/tests/lit.cfg.py`), and
   `kafka-python`, imported lazily by `bcir.telemetry.KafkaSink.connect()` and declared nowhere, so no
   advisory scan could ever audit it. It is now the `telemetry-kafka` extra with floor 2.3.2 — the
   first release clear of its four advisories — and the rail audits it (`covered=7/7`).
 - **One vendored third-party file, and it is 6 commits behind a dormant upstream.**
-  `llvm-training/10-grammar/llvm-ir.tm` is `ll.tm` from `llir/grammar` at commit `5a3820b`
+  `training/llvm/10-grammar/llvm-ir.tm` is `ll.tm` from `llir/grammar` at commit `5a3820b`
   (2022-08-02, 0BSD/Unlicense; byte-identical apart from its six-line provenance header). Upstream
   made six more commits the same day (LLVM 15 syntax) and none since. No other vendored code exists:
   no foreign copyright or SPDX lines, no `third_party`/`vendor` trees, no CMake `FetchContent` or
@@ -108,7 +108,7 @@
 | `torch` | 17 | 7 / 25 | `model-lab` |
 | `safetensors` | 4 | 1 / 3 | `model-lab` |
 | `kafka` | 1 (`bcir/telemetry.py`) | 0 / 1 (lazy, in `KafkaSink.connect`) | **nothing** → now `telemetry-kafka` (F1) |
-| `lit` | 1 (`llvm-training/tests/lit.cfg.py`) | 1 / 0 | the LLVM toolchain (lit's own config file, read by lit) |
+| `lit` | 1 (`training/llvm/tests/lit.cfg.py`) | 1 / 0 | the LLVM toolchain (lit's own config file, read by lit) |
 
 Everything else the tree imports is the standard library or the repository's own packages. The
 `import_graph.py --check` quarantine separately proves the hot path imports nothing heavy.
@@ -159,9 +159,9 @@ runner's system clang 18, which is what emits the sanitizer instrumentation.
 
 ### 3.6 Vendored code
 
-One file: `llvm-training/10-grammar/llvm-ir.tm`, the Textmapper grammar `ll.tm` from
+One file: `training/llvm/10-grammar/llvm-ir.tm`, the Textmapper grammar `ll.tm` from
 `llir/grammar` at `5a3820b516f7903e27ad16ebe4add1ec634f1c05` (2022-08-02), under 0BSD/Unlicense,
-attributed in `llvm-training/NOTICE.md`. Byte-identical to that commit apart from the six-line
+attributed in `training/llvm/NOTICE.md`. Byte-identical to that commit apart from the six-line
 provenance header the repository prepends. Upstream HEAD is `05deced` (also 2022-08-02), six commits
 later, all LLVM 15 syntax updates (parameter/function attributes, `AllocKind`, atomic `fmin`/`fmax`,
 `DISubprogram.targetFuncName`, sanitizer globals, removed constant expressions); the vendored copy

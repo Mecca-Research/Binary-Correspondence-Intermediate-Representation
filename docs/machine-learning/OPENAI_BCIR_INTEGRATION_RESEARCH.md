@@ -1,19 +1,19 @@
 # OpenAI + BCIR Integration Research and Proposal Versions
 
-This document records a first-pass integration study for connecting OpenAI developer products to the Binary Correspondence Intermediate Representation (BCIR) as both an LLVM/MLIR agent-training repository and a compiler/ML architecture. It deliberately separates the repository's two roles: `llvm-training/` is a training corpus for agents, while `bcir/` and `mlir/` are the IR oracle/law system.
+This document records a first-pass integration study for connecting OpenAI developer products to the Binary Correspondence Intermediate Representation (BCIR) as both an LLVM/MLIR agent-training repository and a compiler/ML architecture. It deliberately separates the repository's two roles: `training/llvm/` is a training corpus for agents, while `bcir/` and `mlir/` are the IR oracle/law system.
 
 ## 1. Repository capability map
 
-### 1.1 Agent training corpus: `llvm-training/`
+### 1.1 Agent training corpus: `training/llvm/`
 
-`llvm-training/` is best treated as a curated curriculum, not as part of the BCIR runtime. Its value for agents is that it teaches LLVM/MLIR mental models, verifier discipline, target lowering, ORC/JIT runtime patterns, operand bundles, attributes, poison/undef/freeze, and backend concepts in small checked examples. This makes it useful as a retrieval corpus for code-review agents, onboarding agents, and automated lesson-generation workflows, but it must not become a dependency of IR semantics.
+`training/llvm/` is best treated as a curated curriculum, not as part of the BCIR runtime. Its value for agents is that it teaches LLVM/MLIR mental models, verifier discipline, target lowering, ORC/JIT runtime patterns, operand bundles, attributes, poison/undef/freeze, and backend concepts in small checked examples. This makes it useful as a retrieval corpus for code-review agents, onboarding agents, and automated lesson-generation workflows, but it must not become a dependency of IR semantics.
 
 Recommended agent uses:
 
 - **Retrieval and tutoring:** expose chapters and checked examples through an MCP resource server or a vector/file-search index.
 - **Evaluation:** turn chapter exercises and verify commands into regression evals for LLVM-literate agents.
 - **Repair loops:** let an agent propose edits to examples, then gate them with the existing verify commands.
-- **Boundary enforcement:** every agent prompt should state that changes to `llvm-training/` are independent from the canonical IR unless a user explicitly asks to curate the training corpus.
+- **Boundary enforcement:** every agent prompt should state that changes to `training/llvm/` are independent from the canonical IR unless a user explicitly asks to curate the training corpus.
 
 ### 1.2 BCIR executable oracle: `bcir/`
 
@@ -71,7 +71,7 @@ BCIR fit:
 - **Manager agent:** owns a user's high-level goal, delegates to specialized agents.
 - **Oracle agent:** calls `bcir/` tools and explains deterministic plan choices.
 - **Law agent:** calls `bcir-opt`, ODS/IRDL validation, and parity scripts.
-- **Training-corpus agent:** retrieves `llvm-training/` lessons and generates evals.
+- **Training-corpus agent:** retrieves `training/llvm/` lessons and generates evals.
 - **Telemetry agent:** summarizes run traces, regret ledgers, and replan opportunities.
 - **Patch agent:** writes code/docs changes, then runs gates.
 
@@ -161,7 +161,7 @@ This does not make GPT itself more powerful in the weights sense. It makes the *
 |---|---|---|---|
 | Instruction processing | A task-graph compiler plus K_BCIR-style routing over instruction packs, examples, constraints, and gates | Strongly improves reliability, decomposition, and domain discipline for BCIR/LLVM tasks | Does not change GPT's internal policy, tokenizer, or weights |
 | Tool availability | MCP/Responses tools wrapping `bcir/`, `bcir-opt`, telemetry, tests, retrieval, and patch workflows | Makes GPT operationally capable of planning, lowering, validating, benchmarking, and repairing | Tools remain external calls; they need auth, sandboxing, quotas, and user approval for risky actions |
-| Retrieval context | `llvm-training/` lessons, `docs/`, ODS/IRDL, code slices, telemetry records, and provenance manifests | Gives GPT fresh, repo-specific, run-specific context beyond pretraining | Context is bounded and must be selected; retrieved text can still be misused without schema/eval gates |
+| Retrieval context | `training/llvm/` lessons, `docs/`, ODS/IRDL, code slices, telemetry records, and provenance manifests | Gives GPT fresh, repo-specific, run-specific context beyond pretraining | Context is bounded and must be selected; retrieved text can still be misused without schema/eval gates |
 | Structured outputs | BCIR result types, verifier diagnostics, plan manifests, JSON Schema, MLIR snippets, provenance records | Turns GPT output into parseable artifacts that BCIR can validate, replay, diff, and promote | Schema conformance is not semantic truth; BCIR must still verify legality and behavior |
 | Agent routing | Agents SDK manager plus oracle/law/training/telemetry/patch specialists | Enables division of labor and persistent workflows across planning, execution, and repair | Routing is application state, not model cognition; bad routing can amplify errors |
 | Memory/session state | BCIR telemetry, regret ledgers, eval outcomes, patch history, prompt/tool versions, and provenance DAGs | Gives GPT a durable external memory that improves future calls and supports audit/replay | Memory must be curated, scoped, and expired; it must not become an unverifiable authority |
@@ -267,7 +267,7 @@ The novel part is not that GPT is being trained incrementally. The novelty is **
 High-confidence targets:
 
 - BCIR-specific coding/repair agents trained on verified patches and failing traces.
-- Retrieval rankers that select the best `docs/`, `bcir/`, `mlir/`, and `llvm-training/` context packs.
+- Retrieval rankers that select the best `docs/`, `bcir/`, `mlir/`, and `training/llvm/` context packs.
 - Tool routers that choose oracle vs law vs training-corpus vs telemetry specialists.
 - Diagnostic models that classify verifier failures, C-front fallback causes, parity drift, and environment limitations.
 - Cost-prior and policy models that propose candidate K_BCIR search orders while exact search/verifier gates preserve correctness.
@@ -299,7 +299,7 @@ OpenAI Responses API or Agents SDK
         +-- Manager agent
         |     +-- BCIR oracle tools      -> bcir/ CLI + Python APIs
         |     +-- MLIR law tools         -> bcir-opt + ODS/IRDL scripts
-        |     +-- Training corpus tools  -> llvm-training retrieval/evals
+        |     +-- Training corpus tools  -> training/llvm retrieval/evals
         |     +-- Telemetry tools        -> telemetry frames + traces
         |     +-- Patch tools            -> git workspace + tests
         |
@@ -453,7 +453,7 @@ Required gates:
 1. Create a narrow `bcir.tools` Python facade for structured operations already supported by the CLI.
 2. Add JSON-serializable result types that include provenance and artifact hashes.
 3. Build a local MCP server with read-only tools first: `repo_summary`, `plan_program`, `emit_mlir`, `training_lookup`.
-4. Add a small eval set from `llvm-training/` exercises and BCIR parity examples.
+4. Add a small eval set from `training/llvm/` exercises and BCIR parity examples.
 5. Add mutating patch workflows only after read-only tools are stable.
 6. Design the ChatGPT Apps UI around structured artifacts, not free-form logs.
 7. Keep all OpenAI-derived recommendations outside BCIR legality until they are frozen, replayed, and accepted by deterministic gates.

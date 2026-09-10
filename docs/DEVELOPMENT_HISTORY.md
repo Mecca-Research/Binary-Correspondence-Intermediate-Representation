@@ -21,7 +21,7 @@
 BCIR was developed almost entirely by AI coding agents under a single human operator,
 with the recorded arc running from PR #2 through #638 between 2026-04-23 and 2026-07-15. Two agent fleets
 are visible in the branch names: **OpenAI Codex** (`codex/*` branches — the initial
-scaffolding, the `llvm-training/` corpus, and the closing integration-research docs) and
+scaffolding, the `training/llvm/` corpus, and the closing integration-research docs) and
 **Claude Code** (`claude/*` branches — the long engineering arcs, one long-lived session
 branch per arc emitting dozens-to-hundreds of sequential PRs). The recurring process
 patterns:
@@ -88,10 +88,10 @@ deterministic controls and telemetry, golden fixtures + CI. Later retired.
 BCIR re-expressed as hand-authored LLVM `.ll` master-reference modules: a 64-byte claim
 schema, ops, registry lookup, a GEM executor and worklist, StreamPack/batch scheduling
 seeds, and a `bcir-as` assembler, validated by `llvm-as`/`opt` scripts (`runtime/llvm/`,
-also later retired — its teaching value survives in `llvm-training/` as
+also later retired — its teaching value survives in `training/llvm/` as
 explicitly-bannered historical material).
 
-### #32–#152 — the `llvm-training/` corpus (2026-05-28 → 06-06)
+### #32–#152 — the `training/llvm/` corpus (2026-05-28 → 06-06)
 PR #32 (the first Claude Code PR) founded the agent-context LLVM/MLIR curriculum; a
 ~115-PR Codex wave built it out: 20 chaptered modules, the pitfalls catalog, ~42
 exercises, CI example verifiers and tripwires, then the deterministic autograder,
@@ -294,7 +294,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
 (`git log -p -- docs/REPO_CURRENT_STATE_AUDIT.md`). The condensed arc:
 
 - **2026-04-23:** the one-day C++ skeleton (#2–#12).
-- **2026-05-26 → 06-06:** the LLVM-first seed (#13–#31); the `llvm-training/` corpus
+- **2026-05-26 → 06-06:** the LLVM-first seed (#13–#31); the `training/llvm/` corpus
   build-out (#32–#152).
 - **2026-06-07 → 06-08:** the BCIR Stack pivot — oracle + law + PARITY; `bcir-opt`
   real passes; the frozen StreamPack ABI; the freestanding C runtime; per-target

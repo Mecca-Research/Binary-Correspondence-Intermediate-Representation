@@ -83,7 +83,7 @@ register allocation and linking. The normative reference is
 | `runtime/cpp/` | narrow orchestration seam above the C ABI | 11 files; ~1.8k lines |
 | `tools/` | validation scripts, docs governance, perf harness, security rails, model gates | 62 files; ~17.7k lines |
 | `docs/` | LangRef, roadmaps, ABIs, audits, research | 54 Markdown files; ~23.8k lines |
-| `llvm-training/` | agent training corpus, explicitly not the IR | 612 files (199 `.ll`); ~37.8k lines |
+| `training/llvm/` | agent training corpus, explicitly not the IR | 612 files (199 `.ll`); ~37.8k lines |
 | `channels/` | pluggable channel descriptors | 5 JSON files |
 
 Two facts about the shape matter for planning. The documentation corpus is now ~75% of the
@@ -126,7 +126,7 @@ workers throughout; heavy gates serialized, as the repository requires.
 | Perf budgets | `tools/perf/check_budgets.py` | ok; `baremetal=False` so floors waived by design (gather 4.02×, reduction 11.68×, strided 1.73×, dense 1.00×/0.85× on this virtualized host) |
 | Measured-replan runbook | `bash tools/silicon/measure_replan.sh` | `rig-ready: NO` (PMU/RAPL/DVFS unavailable); degraded synthetic verdict, no measured win claimed |
 | Worked-example pins | `python -m bcir.run vector_add --target x86_avx512 --theta cool` / `--budget thermal=700 --overlap` | score **7808** (vec16) / **9472** (vec8), as pinned |
-| `llvm-training` validators | manifest, exercise manifests, autograder self-tests, dataset export, `verify-examples.sh`, opaque pointers, BCIR mapping | all exit 0 (157 examples, 42 exercises, 42 dataset records) |
+| `training/llvm` validators | manifest, exercise manifests, autograder self-tests, dataset export, `verify-examples.sh`, opaque pointers, BCIR mapping | all exit 0 (157 examples, 42 exercises, 42 dataset records) |
 | Whitespace | `git diff --check` | clean; tests left tracked files unchanged |
 
 ### 3.2 The MLIR rail on a coherent LLVM/MLIR 22 toolset
@@ -141,7 +141,7 @@ workers throughout; heavy gates serialized, as the repository requires.
 | `tools/wsl/check_passes.sh` (with `LLVM_BIN=/opt/llvm22/bin` so the assemble-smoke resolver can find `mlir-translate`/`llc`) | **120 PASS, 0 FAIL**, including the assemble-smoke gate: every asm-edge op produces a real `.o` with the expected instruction |
 | `run_malformed_differential.py --require-compiled` | PASS: 6 cases, 0 disagreements, 5 malformed rejected |
 | `tools/wsl/check_bytecode.sh` | all modules round-trip through MLIR bytecode |
-| `llvm-training` MLIR examples with `--require-tools` and the grader self-test (`LLVM_SUFFIX=-22`) | exit 0 |
+| `training/llvm` MLIR examples with `--require-tools` and the grader self-test (`LLVM_SUFFIX=-22`) | exit 0 |
 
 Reading: the rail is sound on LLVM 22, matching CI. The `g++` crash is a toolchain-coherence
 lesson rather than a rail defect: conda-forge's MLIR archives are compiled with GCC 15.3, and
@@ -164,7 +164,7 @@ LLVM/MLIR 23.1.0 is the current release on conda-forge and in the Ubuntu pool. A
 | `tools/wsl/check_passes.sh` (`LLVM_BIN=/opt/llvm23/bin`) | **120 PASS, 0 FAIL**, assemble-smoke included |
 | `run_malformed_differential.py --require-compiled` | PASS: 6 cases, 0 disagreements, 5 malformed rejected |
 | `tools/wsl/check_bytecode.sh` | all modules round-trip |
-| `llvm-training` MLIR examples `--require-tools` and grader self-test (`LLVM_SUFFIX=-23`) | exit 0 |
+| `training/llvm` MLIR examples `--require-tools` and grader self-test (`LLVM_SUFFIX=-23`) | exit 0 |
 
 Reading: the rail is one identifier away from the latest release, and the 102 deprecation
 warnings name the next breakage (LLVM 24 will drop `OpBuilder::create<OpTy>`). The tree
