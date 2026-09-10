@@ -638,6 +638,120 @@ jobs:
       - name: Optional BOLT smoke fixture
         run: bash training/llvm/tools/smoke-bolt.sh
 
+  # Phase 1.1: the corpus is verified against the LATEST LLVM release, not only the one
+  # Ubuntu ships. `training-llvm` above installs Ubuntu's default (18) and OWNS the floor:
+  # the frontend snapshots are stamped `Produced by clang 18`, so that job is where
+  # byte-identity is enforced. This job installs 23 from apt.llvm.org and re-runs every
+  # corpus gate that actually consumes a toolchain -- the 167 standalone examples, the
+  # exercises, the invalid/adversarial fixtures, the opt-diff goldens, llc smoke, the MLIR
+  # examples, and the BCIR chapters -- so a release that changes a documented rule fails
+  # here instead of leaving the corpus quietly wrong about the current LLVM.
+  #
+  # Deliberately NOT a matrix cell of `training-llvm`: most of that job (autograder
+  # self-tests, dataset export, corpus record tiers, embeddings, retrieval) reads
+  # checked-in artifacts and has no LLVM in it at all, so a matrix would double work no
+  # toolchain can change. Only the toolchain-dependent half is repeated here.
+  #
+  # Two gates behave DIFFERENTLY here than at 18, and that is the point:
+  #   - verify-frontend-lowering.py takes its "different major" path: it reports each
+  #     snapshot's delta against clang 23 instead of enforcing byte-identity, which is how
+  #     lowering movement between releases becomes visible without being a failure.
+  #   - verify-bcir-approach.py finds mlir-opt here, so the IRDL corpus round-trip runs
+  #     instead of naming itself skipped -- this job is the owner of that skip.
+  training-llvm-latest:
+    name: LLVM training corpus (LLVM 23)
+    runs-on: ubuntu-latest
+    env:
+      # Every corpus script resolves ${base}${LLVM_SUFFIX} first (tools/verify-examples.sh),
+      # so this is all that is needed to point the whole corpus at the 23 toolchain.
+      LLVM_SUFFIX: "-23"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Add the apt.llvm.org signed repo + harden apt (LLVM 23)
+        # Same pattern as mlir-rail-validate: Ubuntu's default repos top out near 18/19, so
+        # the latest release comes from apt.llvm.org. Harden apt FIRST (retries + per-source
+        # timeout + drop the ESM/Pro and Microsoft/azure sources that hard-fail apt-get
+        # update with 403), then update so the install action can resolve llvm-23 names.
+        run: |
+          . /etc/os-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-23 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+          sudo apt-get update
+
+      - name: Install the LLVM 23 corpus toolchain (cached installed-tree)
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: clang-23 llvm-23 llvm-23-dev llvm-23-tools libmlir-23-dev mlir-23-tools cmake ninja-build
+          version: train23-${{ runner.arch }}-v1
+
+      - name: Confirm the toolchain really is 23
+        # Anti-vacuity, and the whole job depends on it: if the apt.llvm.org install silently
+        # failed or fell back, every gate below would resolve unversioned tools to Ubuntu's
+        # 18 and report a cheerful pass while proving nothing about LLVM 23. A job named for
+        # a release must fail when it is not running that release.
+        run: |
+          set -euo pipefail
+          for tool in llvm-as-23 opt-23 llc-23 clang-23 mlir-opt-23; do
+            command -v "$tool" >/dev/null || { echo "::error::$tool is absent; the LLVM 23 install did not take"; exit 1; }
+          done
+          got=$(llvm-as-23 --version | sed -nE 's/.*LLVM version ([0-9]+)\..*/\1/p' | head -1)
+          [ "$got" = "23" ] || { echo "::error::llvm-as-23 reports LLVM major '$got', not 23"; exit 1; }
+          echo "LLVM_SUFFIX=$LLVM_SUFFIX resolves to: $(command -v "llvm-as${LLVM_SUFFIX}")"
+          clang-23 --version | head -1
+
+      - name: LLVM training examples and invalid-example tripwire (LLVM 23)
+        run: bash training/llvm/tools/verify-examples.sh
+
+      - name: LLVM training exercise solutions and prompt templates (LLVM 23)
+        run: bash training/llvm/tools/verify-exercises.sh
+
+      - name: LLVM training invalid fixtures (LLVM 23)
+        run: bash training/llvm/tools/verify-invalid-fixtures.sh
+
+      - name: LLVM training adversarial fixtures (LLVM 23)
+        run: bash training/llvm/tools/verify-adversarial-fixtures.sh
+
+      - name: LLVM training opt-diff golden fixtures (LLVM 23)
+        run: bash training/llvm/tools/verify-opt-diff.sh
+
+      - name: LLVM training opaque pointer syntax (LLVM 23)
+        run: bash training/llvm/tools/verify-opaque-pointers.sh
+
+      - name: LLVM training llc smoke (LLVM 23)
+        run: bash training/llvm/tools/smoke-llc.sh
+
+      - name: LLVM training MLIR examples (LLVM 23, full coverage required)
+        run: bash training/llvm/tools/verify-mlir-examples.sh --require-tools
+
+      - name: LLVM training BCIR mapping fixtures (LLVM 23)
+        run: bash training/llvm/tools/verify-bcir-mapping.sh
+
+      # mlir-opt is present here, so this takes the path the training job cannot: the IRDL
+      # corpus round-trip runs for real rather than naming itself skipped.
+      - name: LLVM training BCIR-approach chapters + IRDL round-trip (LLVM 23)
+        run: python3 training/llvm/tools/verify-bcir-approach.py
+
+      # The snapshots record clang 18, so at 23 this reports each file's delta rather than
+      # enforcing byte-identity. Enforcement stays in `training-llvm`, which runs clang 18.
+      - name: LLVM training Clang frontend lowering claims (LLVM 23 delta report)
+        run: python3 training/llvm/tools/verify-frontend-lowering.py --require-tools
+
+      # DELIBERATELY NOT REPEATED HERE: build-pass-plugin.sh. It builds a sample New PM
+      # plugin against the LLVM development CMake package, and a plugin is loadable only by
+      # an `opt` of its own major, so the 23 build is a genuinely different thing to test.
+      # It is left out because it could not be validated before landing -- the toolchain
+      # available to this repository's authoring environment is an extracted tree whose CMake
+      # package is incomplete, so a local run fails for a reason CI would not reproduce.
+      # `training-llvm` still builds the plugin at 18. Adding the 23 build is a follow-up
+      # that should be landed by someone who can watch it fail first.
+
   # Native aarch64 (ARM) coverage: the first real driver target is a Raspberry Pi 5, so the
   # portable core must be proven on ARM, not only x86. Catches arch regressions the x86 jobs
   # cannot -- the perf_event_open syscall number (241 on aarch64, not x86's 298), the tile

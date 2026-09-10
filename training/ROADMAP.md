@@ -332,7 +332,7 @@ retraction:
 
 | Slice | Work |
 | --- | --- |
-| 1.1 | Raise the corpus to **LLVM 23**: install the toolchain, re-verify every example, and record where 15→23 changed a documented rule |
+| 1.1 | ~~Raise the corpus to **LLVM 23**~~ — **landed**: verified against 23.1.1 locally, and CI now runs a second `LLVM training corpus (LLVM 23)` job that installs 23 from apt.llvm.org and re-runs every toolchain-consuming corpus gate against it |
 | 1.2 | ~~Re-derive the frontend chapters against the **latest Clang**~~ — **done**: re-derived under clang 23.1.1; the checked claim set survived intact, three normalizer defects the LLVM 15 floor exposed are fixed, and a snapshot now records the clang that produced it |
 | 1.3 | Study the **LLVM 23 LangRef** and close the delta: new instructions, attributes, and intrinsics the corpus does not yet teach |
 | 1.4 | **Comprehensive MLIR**: dialects, regions, interfaces, the pass infrastructure, bytecode, and the parts `14-` and `18-` only introduce |
@@ -379,8 +379,29 @@ mapping, adversarial and opaque-pointer gates pass, and the 15 MLIR examples tie
 grade clean under `LLVM_SUFFIX=-23`. The 15→23 delta, read from the tools rather
 than from a changelog the proxy will not serve: `opt`'s base pass names go
 273 → 318 → 453 and `llc`'s targets 41 → 44 → 48, and **no corpus material names
-any of the 28 pass names that disappeared**. What 1.1 still needs is the CI half —
-the corpus job installs Ubuntu's default LLVM, not 23.
+any of the 28 pass names that disappeared**. The CI half now exists: a second job,
+`LLVM training corpus (LLVM 23)`, installs 23 from apt.llvm.org and re-runs every corpus
+gate that consumes a toolchain, with `LLVM_SUFFIX=-23` pointing the scripts at it.
+
+It is a separate job rather than a matrix cell of the existing one because most of that
+job — the autograder self-tests, the dataset export, the record tiers, embeddings and
+retrieval — reads checked-in artifacts and contains no LLVM at all, so a matrix would
+double work no toolchain can change. The existing job keeps Ubuntu's default and keeps
+owning the floor: the frontend snapshots are stamped `Produced by clang 18`, so that is
+where byte-identity is enforced.
+
+Two gates behave differently in the new job, which is the point of having it. The
+frontend gate takes its *different major* path and reports each snapshot's delta instead
+of enforcing byte-identity, so lowering movement between releases stays visible without
+being a failure. And `verify-bcir-approach.py` finds `mlir-opt` there, so the IRDL corpus
+round-trip runs for real (28 checks) rather than naming itself skipped (26) — that job is
+the owner of that skip. The job also refuses to run vacuously: it asserts `llvm-as-23`
+resolves and reports major 23 before any gate runs, because a silent fall back to Ubuntu's
+18 would let every step below pass while proving nothing about LLVM 23.
+
+Not repeated in the 23 job: `build-pass-plugin.sh`. A plugin is loadable only by an `opt`
+of its own major, so building it at 23 is a genuinely different test — but it could not be
+validated before landing here, and an unvalidated CI step is how a red push happens.
 
 **Version discipline.** The corpus currently declares LLVM 15 as its floor and
 enforces it by assembling snapshots with the oldest available assembler. Raising
