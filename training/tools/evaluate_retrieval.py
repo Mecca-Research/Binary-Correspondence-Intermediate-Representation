@@ -238,7 +238,7 @@ def evaluate(
         report["families"][family] = block
 
     # `overall` is quality, so it excludes the harness controls. Their queries
-    # are verbatim in their targets by construction; pooling them inflates the
+    # ask with their targets' own heading wording by construction; pooling them inflates the
     # headline numbers AND the lift and shuffle gates that read `overall`, so
     # those gates would partly be measuring a self-match. Controls are reported
     # in their own block, where they cannot be mistaken for quality.
@@ -329,7 +329,7 @@ def print_report(report: dict, manifest: dict) -> None:
     if controls:
         print()
         print("harness controls -- NOT retrieval quality; excluded from `overall`.")
-        print("Their query text is verbatim in their targets by construction; a low")
+        print("They ask with their targets' own heading wording by construction; a low")
         print("score here means the harness is broken, not that the model is bad.")
         for family, block in sorted(controls.items()):
             row(family, block)

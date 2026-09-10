@@ -287,6 +287,22 @@ def relational_embedding_targets(vectors) -> tuple[tuple[float, ...], ...]:
 
     The matrix is basis-independent, unlike direct coordinate regression against an
     opaque provider embedding space.  It is a frozen target, not a gradient channel.
+
+    Every entry IS a cosine, so every entry lies in [-1, 1] -- and this function is
+    responsible for returning values that are actually in that interval, not values
+    that would be if the arithmetic were exact.  Summing `dim` products of normalized
+    coordinates accumulates rounding, and the diagonal is the worst case: sum(v*v)
+    over a vector already divided by its own norm lands a few ULP above 1.0 for most
+    real inputs -- measured 1.0000000000000002 at dim 2 and 1.0000000000000020 at
+    dim 512.  `train_embedding_distillation` refuses any target outside [-1, 1]
+    (stages.py), so an unclamped matrix makes the repository's only cosine-target
+    constructor incompatible with its only consumer for essentially any real vector.
+    Both shipped call sites escaped it only by using exactly-representable toy
+    vectors like ((1,0), (0,1), (1,1)), where the rounding happens to cancel.
+
+    The diagonal is set to exactly 1.0 rather than clamped: the cosine of a vector
+    with itself is 1 by definition, so computing it and repairing the result would
+    be arithmetic in place of a fact.
     """
     if not isinstance(vectors, (tuple, list)) or not vectors:
         raise ValueError("vectors must be a nonempty sequence")
@@ -306,4 +322,90 @@ def relational_embedding_targets(vectors) -> tuple[tuple[float, ...], ...]:
         if norm == 0.0:
             raise ValueError("zero embedding cannot define cosine targets")
         rows.append(tuple(value / norm for value in values))
-    return tuple(tuple(sum(a * b for a, b in zip(left, right)) for right in rows) for left in rows)
+    return tuple(
+        tuple(
+            1.0 if i == j else min(1.0, max(-1.0, sum(a * b for a, b in zip(left, right))))
+            for j, right in enumerate(rows)
+        )
+        for i, left in enumerate(rows)
+    )
+
+
+def _require_square_targets(targets) -> int:
+    """Shared totality check: the shape and range both consumers refuse outside of."""
+    if not isinstance(targets, (tuple, list)) or not targets:
+        raise ValueError("relational targets must be a nonempty matrix")
+    size = len(targets)
+    for row in targets:
+        if not isinstance(row, (tuple, list)) or len(row) != size:
+            raise ValueError("relational targets must be a square matrix")
+        for value in row:
+            number = float(value)
+            if not math.isfinite(number) or not -1.0 <= number <= 1.0:
+                raise ValueError("relational target values must be finite cosine similarities")
+    return size
+
+
+def relational_gram_loss(gram, targets) -> float:
+    """The embedding stage's own objective, as arithmetic a torch-free host can run.
+
+    `train_embedding_distillation` minimizes `mse_loss(E @ E.T, targets)` over an
+    L2-normalized `E`, averaging over every entry of the matrix, diagonal included.
+    This is that value for an already-computed Gram, so the loss a run reports and
+    the floor it must be read against are one function at two points: a change to
+    the reduction convention moves both or neither.
+
+    The two arguments are validated differently, deliberately. `targets` restates
+    the consumer's own refusal -- finite cosines in [-1, 1] -- because the stage
+    refuses such a matrix outright. `gram` is only required to be finite: the stage
+    never validates the matrix it computes, and a float32 Gram of normalized rows
+    lands a few ULP outside [-1, 1] for ordinary inputs, so refusing it here would
+    reject the very matrices this exists to score.
+    """
+    size = _require_square_targets(targets)
+    if not isinstance(gram, (tuple, list)) or len(gram) != size:
+        raise ValueError("gram and relational targets must have the same size")
+    total = 0.0
+    for i, row in enumerate(gram):
+        if not isinstance(row, (tuple, list)) or len(row) != size:
+            raise ValueError("gram must be a square matrix")
+        for j, value in enumerate(row):
+            number = float(value)
+            if not math.isfinite(number):
+                raise ValueError("gram values must be finite")
+            residual = number - float(targets[i][j])
+            total += residual * residual
+    return total / float(size * size)
+
+
+def relational_reference_loss(targets) -> float:
+    """The distillation loss a student reaches without consulting the teacher at all.
+
+    `train_embedding_distillation` minimizes the mean squared error between the
+    student's Gram matrix and these targets.  A student that merely makes its
+    embeddings mutually orthogonal produces the identity Gram, which carries no
+    information about the teacher whatsoever -- and on targets whose off-diagonal
+    cosines are small, that trivial solution scores WELL.  This returns its loss,
+    so a reported `final_loss` can be read against the floor reachable by ignoring
+    the teacher entirely.
+
+    This exists because the reported numbers alone could not say which had
+    happened.  Distilling this repository's own lexical provider over its own
+    corpus for 24 rounds reported `0.5135 -> 0.0383`, which reads like learning;
+    the orthogonal reference for those same targets was 0.0161, so the run
+    finished 2.4x WORSE than a model that never looked at the teacher, and the
+    correlation between the student's off-diagonal Gram and the teacher's was
+    0.146.  A falling loss on this objective is not evidence of distillation.
+
+    The mean is over every entry, diagonal included, matching the `mse_loss` the
+    stage computes.  For a normalized student the diagonal contributes zero on
+    both sides, so the value is entirely the off-diagonal structure the targets
+    carry: a reference of zero means the targets ARE the identity and there is
+    nothing in them to distil.
+
+    The identity Gram IS the trivial solution, so this is `relational_gram_loss`
+    evaluated there -- the loss and the floor cannot drift into two conventions.
+    """
+    size = _require_square_targets(targets)
+    identity = tuple(tuple(1.0 if i == j else 0.0 for j in range(size)) for i in range(size))
+    return relational_gram_loss(identity, targets)

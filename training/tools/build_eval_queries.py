@@ -25,10 +25,19 @@ hand that wrote the chapters, so they share vocabulary; that is a real
 limitation and it is recorded in the set rather than discovered later.
 
 `heading` is deliberately trivial: `build_chunks.py` prefixes each chunk with
-its own heading trail, so the query text is verbatim in the target. It is not a
-quality measure and must never be read as one -- it is a *positive control for
-the harness*. If it does not score near-perfectly, retrieval is broken and every
-other number in the run is noise.
+its own heading trail, so the query is the target's own heading wording. It is
+not a quality measure and must never be read as one -- it is a *positive control
+for the harness*. If it does not score near-perfectly, retrieval is broken and
+every other number in the run is noise.
+
+"Verbatim" is true of the WORD SEQUENCE, not of the string. This asks with
+`" ".join(trail)` while `build_chunks.py` writes `"[subject] " + " > ".join(trail)`,
+so only 4 of the 60 control queries are literal substrings of their target -- but
+`>` is not a word to `LexicalHashProvider`, so all 60 are contiguous runs of words
+inside the target's heading line once that tokenizer has seen them. That is the
+claim `verify_retrieval.py` checks, in the provider's own tokenizer rather than a
+copy of it, because a control whose premise nobody checks is a sentence, not a
+control.
 
     python3 training/tools/build_eval_queries.py --out build/training/eval
     python3 training/tools/build_eval_queries.py --stats
@@ -132,8 +141,9 @@ FAMILY_BIAS = {
     ),
     "heading": (
         "TRIVIAL BY CONSTRUCTION: build_chunks.py prefixes every chunk with its "
-        "heading trail, so the query text appears verbatim in the target. This "
-        "is a positive control for the harness, never a quality measure."
+        "heading trail, so the query is the target's own heading wording, verbatim "
+        "as a word sequence. This is a positive control for the harness, never a "
+        "quality measure."
     ),
 }
 

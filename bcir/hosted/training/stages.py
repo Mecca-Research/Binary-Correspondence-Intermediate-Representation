@@ -257,6 +257,19 @@ def train_embedding_distillation(
     spec: StageTrainSpec,
     telemetry_sink=None,
 ) -> StageRunReport:
+    """Fit a student's Gram matrix to a frozen cosine target matrix.
+
+    The reported losses are not, on their own, evidence that the student learned
+    anything from the teacher. A normalized student's Gram has a unit diagonal
+    whatever it learned, and `relational_embedding_targets` sets the target
+    diagonal to exactly 1.0, so the diagonal contributes zero on both sides and
+    the whole objective is the off-diagonal fit -- where the teacher's cosines are
+    small, a student that merely made its embeddings mutually orthogonal already
+    scores well. Read `final_loss` against
+    `providers.relational_reference_loss(relational_targets)`, which is exactly
+    that student's loss under this same averaging; its docstring carries the
+    measurement that made the distinction necessary.
+    """
     if (
         not isinstance(model, HostedEmbeddingStudent)
         or not isinstance(spec, StageTrainSpec)

@@ -112,7 +112,7 @@ reversed course — the floor stands and a policy regression now rejects any low
 dependency audit, bounded fuzz/decoder campaigns, a malformed differential, subprocess
 policy, and fail-closed independent review — hardened over 42 adversarial review rounds
 and 240 graded findings. Its durable output is `docs/security/laws.md`: **22 gate-authoring
-laws (L1–L22)**, each with witness tests and a C/C++ port note, plus the per-finding
+laws (L1–L23)**, each with witness tests and a C/C++ port note, plus the per-finding
 harvest in `docs/security/pr749-harvest.csv` (20 NEW-LAW / 181 INSTANCE / 39 LOCAL). Read
 that registry before writing or reviewing any gate. Side effects that are now repo facts:
 the Python floor is **3.11** (the 3.10 TOML fallback is deleted, and a `python-floor` CI

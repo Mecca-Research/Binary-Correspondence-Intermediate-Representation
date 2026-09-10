@@ -38,6 +38,8 @@ from bcir.hosted.training import (
     bounded_reasoning_search,
     prepare_corpus,
     relational_embedding_targets,
+    relational_gram_loss,
+    relational_reference_loss,
     token_source_from_corpus,
     write_pipeline_ledger,
     write_prepared_corpus,
@@ -200,6 +202,173 @@ def test_recorded_teacher_is_content_addressed_and_offline():
         )
         path.write_text(duplicate + "\n", "utf-8")
         _must_refuse(lambda: RecordedTeacherProvider.from_jsonl(path), "duplicate")
+
+
+def test_relational_targets_are_cosines_at_realistic_width():
+    """Every entry must actually lie in [-1, 1], not merely in exact arithmetic.
+
+    The two shipped call sites use exactly-representable toy vectors -- ((1,0),
+    (0,1), (1,1)) and [[3,0],[0,2],[3,3]] -- where the rounding cancels and the
+    diagonal lands exactly on 1.0. Real vectors do not: summing `dim` products of
+    normalized coordinates accumulates error, and sum(v*v) over a self-normalized
+    vector lands a few ULP ABOVE 1.0. Measured before the fix: 1.0000000000000002
+    at dim 2 and 1.0000000000000087 over 24 real corpus chunks at dim 512.
+
+    That matters because `train_embedding_distillation` refuses any target outside
+    [-1, 1] (bcir/hosted/training/stages.py, "relational target values must be
+    finite cosine similarities"). An unclamped matrix therefore made this
+    repository's only cosine-target constructor incompatible with its only
+    consumer for essentially every real input, invisibly to both call sites.
+
+    The predicate below mirrors that refusal deliberately; the end-to-end binding
+    -- producer output actually fed to the consumer -- lives in
+    tools/models/test_training_pipeline.py, which may import torch.
+    """
+    import math
+    import random
+
+    generator = random.Random(20260910)
+    for width in (2, 64, 512):
+        vectors = [tuple(generator.gauss(0.0, 1.0) for _ in range(width)) for _ in range(12)]
+        matrix = relational_embedding_targets(vectors)
+        assert len(matrix) == len(vectors)
+        for index, row in enumerate(matrix):
+            assert len(row) == len(vectors)
+            # The consumer's refusal, restated: stages.py rejects on exactly this.
+            for value in row:
+                assert math.isfinite(value), (width, value)
+                assert -1.0 <= value <= 1.0, (width, value)
+            # A vector's cosine with itself is 1 by definition, not by arithmetic.
+            assert row[index] == 1.0, (width, row[index])
+        for i in range(len(matrix)):
+            for j in range(len(matrix)):
+                assert matrix[i][j] == matrix[j][i], (i, j)
+
+    # Anti-vacuity: the clamp must not be flattening genuine structure. Distinct
+    # random vectors in high dimensions are near-orthogonal, so off-diagonal
+    # entries must be spread around zero rather than pinned at the bounds.
+    matrix = relational_embedding_targets(
+        [tuple(generator.gauss(0.0, 1.0) for _ in range(512)) for _ in range(12)]
+    )
+    off = [matrix[i][j] for i in range(12) for j in range(12) if i != j]
+    assert max(abs(value) for value in off) < 0.9, "off-diagonal cosines were clamped flat"
+    assert any(value != 0.0 for value in off), "off-diagonal cosines are all zero"
+
+
+def test_relational_reference_loss_is_the_floor_that_ignores_the_teacher():
+    """A falling distillation loss is not, by itself, evidence of distillation.
+
+    `train_embedding_distillation` minimizes the mean squared error between the
+    student's Gram matrix and the teacher's cosine targets. Because a normalized
+    student's Gram has a unit diagonal no matter what it learned, the whole
+    objective is the off-diagonal fit -- and where those cosines are small, a
+    student that simply makes its embeddings mutually orthogonal (the identity
+    Gram, which encodes nothing about the teacher) already scores well.
+
+    Measured on this repository's own corpus: distilling the corpus's lexical
+    provider into a hosted student for 24 rounds reported `0.5135 -> 0.0383`,
+    while `relational_reference_loss` for those same targets was 0.0161. The run
+    ended 2.4x worse than ignoring the teacher, with an off-diagonal Gram
+    correlation of 0.146 against it. The reported losses alone could not say so,
+    which is why the floor is now computable.
+
+    The properties below are the ones a caller relies on, so each is checked
+    against a hand-computed value rather than against another implementation.
+    """
+    import math
+    import random
+
+    # Orthonormal rows ARE the identity Gram: there is nothing in them to distil,
+    # and the floor is exactly zero. This is the vacuous-teacher case.
+    assert (
+        relational_reference_loss(
+            relational_embedding_targets(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)))
+        )
+        == 0.0
+    )
+
+    # Identical rows: every entry is 1.0, so all six off-diagonals miss by one.
+    identical = relational_reference_loss(
+        relational_embedding_targets(((1.0, 1.0), (1.0, 1.0), (1.0, 1.0)))
+    )
+    assert abs(identical - 6.0 / 9.0) < 1e-12, identical
+
+    # The pair used by the shipped call sites: cosines 0, sqrt(1/2), sqrt(1/2).
+    mixed = relational_embedding_targets(((1.0, 0.0), (0.0, 1.0), (1.0, 1.0)))
+    assert abs(relational_reference_loss(mixed) - (4.0 * 0.5) / 9.0) < 1e-12
+
+    # The mean is over EVERY entry, diagonal included, because that is what the
+    # stage's mse_loss averages over. Restating it here means a change to
+    # off-diagonal-only averaging fails this test rather than silently halving
+    # every reference a caller compares against.
+    size = len(mixed)
+    manual = sum(
+        ((1.0 if i == j else 0.0) - mixed[i][j]) ** 2 for i in range(size) for j in range(size)
+    ) / float(size * size)
+    assert abs(relational_reference_loss(mixed) - manual) < 1e-15
+
+    # Real corpus-shaped targets: near-orthogonal in high dimensions, so the floor
+    # is small but never zero -- exactly the regime where a trained student can
+    # report a small loss and still be worse than not having looked.
+    generator = random.Random(20260910)
+    wide = relational_embedding_targets(
+        [tuple(generator.gauss(0.0, 1.0) for _ in range(512)) for _ in range(12)]
+    )
+    reference = relational_reference_loss(wide)
+    assert 0.0 < reference < 0.05, reference
+    assert math.isfinite(reference)
+
+    # The floor is the shared objective evaluated at the trivial solution, so the
+    # loss a run reports and the floor it is read against cannot drift into two
+    # conventions. A perfect student scores zero; the identity student scores the
+    # floor.
+    size = len(mixed)
+    identity = tuple(tuple(1.0 if i == j else 0.0 for j in range(size)) for i in range(size))
+    assert relational_gram_loss(mixed, mixed) == 0.0
+    assert relational_gram_loss(identity, mixed) == relational_reference_loss(mixed)
+
+    # The mean covers the diagonal, and only a probe whose diagonal differs from
+    # the targets' can say so: `relational_embedding_targets` puts exactly 1.0
+    # there, so a probe carrying 1.0 too has a zero diagonal residual on both
+    # sides and a reduction that skipped the diagonal would score identically.
+    probe = tuple(tuple(0.90 if i == j else 0.25 for j in range(size)) for i in range(size))
+    diagonal_residual = sum((0.90 - mixed[i][i]) ** 2 for i in range(size))
+    assert diagonal_residual > 0.0
+    off_diagonal_residual = sum(
+        (0.25 - mixed[i][j]) ** 2 for i in range(size) for j in range(size) if i != j
+    )
+    assert (
+        abs(
+            relational_gram_loss(probe, mixed)
+            - (diagonal_residual + off_diagonal_residual) / float(size * size)
+        )
+        < 1e-15
+    )
+
+    # The asymmetry between the two arguments is deliberate: `targets` restate the
+    # consumer's refusal, but a float32 Gram of normalized rows lands a few ULP
+    # outside [-1, 1] for ordinary inputs, so refusing that would reject exactly
+    # the matrices this exists to score.
+    outside = tuple(
+        tuple(1.0000000000000002 if i == j else 0.0 for j in range(size)) for i in range(size)
+    )
+    assert relational_gram_loss(outside, mixed) > 0.0
+    _must_refuse(lambda: relational_gram_loss(identity, outside), "cosine")
+    _must_refuse(lambda: relational_gram_loss(((1.0, 0.0), (0.0, 1.0)), mixed), "same size")
+    _must_refuse(lambda: relational_gram_loss((1.0, 0.0, 0.0), mixed), "square")
+    _must_refuse(
+        lambda: relational_gram_loss(
+            tuple(tuple(float("inf") if i == j else 0.0 for j in range(size)) for i in range(size)),
+            mixed,
+        ),
+        "finite",
+    )
+
+    # Total on its own inputs: no precondition living in the caller.
+    _must_refuse(lambda: relational_reference_loss(()), "nonempty")
+    _must_refuse(lambda: relational_reference_loss(((1.0, 0.0),)), "square")
+    _must_refuse(lambda: relational_reference_loss(((1.0, 2.0), (2.0, 1.0))), "cosine")
+    _must_refuse(lambda: relational_reference_loss(((1.0, float("nan")), (0.0, 1.0))), "cosine")
 
 
 def test_remote_compute_bundle_requires_attested_result():

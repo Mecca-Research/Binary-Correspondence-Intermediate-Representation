@@ -7,9 +7,10 @@ implementation; the laws are the contract. When BCIR components migrate to
 C++ and C, **the laws port, the code does not** — each entry carries a port
 note saying what the law becomes on the native side.
 
-Witnesses name tests in `bcir/tests/test_security_assurance.py` that prove
-the law can fire. Every law was learned from at least one live finding;
-none is speculative.
+Witnesses name the tests that prove the law can fire -- for the campaign's
+own laws, in `bcir/tests/test_security_assurance.py`; for a law learned on
+another rail, in the gate that owns it. Every law was learned from at least
+one live finding; none is speculative.
 
 ## The harvest protocol
 
@@ -743,6 +744,62 @@ accepted before four corruptions are refused).
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.
+
+### L23 — Every objective is scored against its trivial solution
+A reported optimization number is evidence about the mechanism it was meant
+to train only beside the value reachable by ignoring that mechanism
+entirely. Ask of every objective "what does this score for a model that
+never consulted its input?", compute it, and publish it in the same
+artifact: a descent from a large loss to a small one is a descent and
+nothing more until the floor is beside it. Distilling this repository's own
+lexical provider into a hosted embedding student over its own corpus
+reported `0.5135 -> 0.0383`, which reads like learning; the loss reached by
+any mutually orthogonal embedding — which encodes nothing about the teacher
+at all — was 0.0161 on the same targets, the student's off-diagonal Gram
+correlated with the teacher's at 0.146, and its held-out error (0.0465)
+never reached the floor. Every number that run reported was consistent with
+learning. The objective is `mse_loss(E @ E.T, targets)` over an L2-normalized
+`E`, so the diagonal contributes exactly zero for any model and the whole
+objective is the off-diagonal fit — a regime where the trivial solution
+scores well by construction, and best of all where the teacher is most
+nearly orthogonal (2026-09-10 embedding experiment,
+`training/LEARNED_EMBEDDING_GATE.md` §2).
+A one-sided bound has the same defect from the other end: a discrimination
+cap refuses a collapsed embedding set at ~1.0, and the input that scores
+BEST on it is orthogonal noise, which cannot rank anything either. So the
+floor is not a verdict on its own — the same exercise checks that the
+untrained student starts on the far side of it (else the comparison says
+nothing) and that the trained student has not collapsed.
+The repository had already articulated this law on another rail and not
+carried it across: `training/tools/verify_retrieval.py` scores its model
+against two null strategies — a seeded random ranker and a query-ignoring
+constant ranker — gates a 20x lift over each, and requires a shuffled index
+to collapse to the noise floor. Three nulls on the retrieval rail; none on
+the training rail that feeds it. That is L14 in its usual shape: a mechanism
+landed on one rail out of two.
+Witnesses:
+`test_relational_reference_loss_is_the_floor_that_ignores_the_teacher`
+(bcir/tests/test_hosted_training_pipeline.py: the floor is computable, total,
+exactly zero for a teacher with nothing to teach, and is the shared objective
+evaluated at the trivial solution — with a probe whose diagonal differs from
+the targets', because one that matches cannot see a reduction that skips the
+diagonal); the `mse_loss` binding in `tools/models/test_training_pipeline.py`
+(the pure-Python objective IS the stage's own, at the identity and away from
+it, so a reduction change moves the loss and the floor together or fails);
+and `exercise_relational_targets` / `exercise_embedding_distillation` in
+`training/tools/verify_ml_components.py` (a teacher whose Gram is the
+identity is refused as vacuous; the reported loss must equal the objective
+evaluated on the model the stage returned; the untrained student must start
+above the floor; the trained student must not have collapsed).
+`MIN_LIFT_OVER_RANDOM` / `MIN_LIFT_OVER_CONSTANT` / `MAX_SHUFFLED_FRACTION`
+in `verify_retrieval.py` are the law's origin evidence, predating the finding
+by a rail. This law came from an experiment rather than an adversarial review
+round, so it does not move the staleness counter below.
+**Port note:** every cost model, speedup ratio and calibration is an L23
+site. A plan's price is evidence only against the unfused serial plan; a
+kernel's timing only against the baseline it replaced; a coverage number
+only against what an empty corpus would report. BCIR already prices a
+`ratio` row and re-derives R9's step cost for exactly this reason.
 
 ## Campaign classification summary
 

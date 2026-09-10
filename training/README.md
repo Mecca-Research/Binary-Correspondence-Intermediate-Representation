@@ -16,7 +16,9 @@ One body of knowledge, delivered in three shapes:
 | training a model | `tools/export_training_examples.py` | BCIR `SFTExample`s and verifier-decided preference pairs |
 
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
-The plan for growing it is [`ROADMAP.md`](ROADMAP.md).
+The plan for growing it is [`ROADMAP.md`](ROADMAP.md). Which embedding provider
+the retrieval evaluation runs on is decided in
+[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md).
 
 A subject brings its own material and its own gates; it does not bring its own
 grader. Grading, dataset export and bounded tool execution live in
