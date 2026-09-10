@@ -31,12 +31,18 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
 TRAINING_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TRAINING_ROOT.parent
 EXAMPLES = TRAINING_ROOT / "20-clang-frontend" / "examples"
+
+# SEMVER.md declares LLVM 15 as the corpus baseline. Snapshots are checked
+# against the OLDEST assembler at or above it that the host provides, not the
+# newest -- the newest is the one that cannot catch this class of defect.
+BASELINE_LLVM_MAJOR = 15
 
 # Clang emits these but they are version noise, not lowering facts. Removing
 # them also keeps the snapshots assembling on the corpus's LLVM >= 15 baseline,
@@ -45,6 +51,28 @@ EXAMPLES = TRAINING_ROOT / "20-clang-frontend" / "examples"
 _DROP_LINE = re.compile(r"^(?:; ModuleID|source_filename|attributes #|!|; Function Attrs:)")
 _ATTR_GROUP_REF = re.compile(r"\s#\d+\b")
 _METADATA_SUFFIX = re.compile(r",\s*![a-zA-Z.]+ ![0-9]+")
+
+# Inline parameter/return attributes that postdate the corpus's declared
+# LLVM >= 15 baseline (SEMVER.md). Stripping attribute *groups* is not enough:
+# these ride on the parameter itself, so they survive that pass and then fail to
+# parse on a baseline assembler. That is not hypothetical -- CI's
+# host-portability job runs an older llvm-as than the training job, so a
+# snapshot that has only ever met the newest assembler passes locally and fails
+# there.
+#
+# Dropping them costs the lesson nothing: they are refinements on a call whose
+# sret/byval shape the snapshot already shows, and the chapter discusses them in
+# prose where no assembler has to parse them.
+#
+# This list is a DECLARED SCOPE, not a claim of completeness. An attribute newer
+# than the list is caught by the baseline assembly check in
+# `check_snapshot_baseline`, which asks a real assembler instead of guessing.
+_POST_BASELINE_FLAG_ATTRS = ("dead_on_unwind", "dead_on_return", "writable")
+_POST_BASELINE_CALL_ATTRS = ("initializes", "range", "captures", "nofpclass")
+_POST_BASELINE_FLAG_RE = re.compile(r"\b(?:" + "|".join(_POST_BASELINE_FLAG_ATTRS) + r")\b[ ]?")
+# Only these carry parameter attributes; restricting the substitution keeps it
+# from touching an identifier or a comment that happens to share a keyword.
+_ATTRIBUTE_BEARING_LINE = re.compile(r"^(?:define|declare)\b|\b(?:call|invoke) ")
 
 
 @dataclass(frozen=True)
@@ -285,6 +313,45 @@ def find_clang(name: str) -> str | None:
     return None
 
 
+def strip_balanced_call(line: str, name: str) -> str:
+    """Remove `name(...)` including nested parens, e.g. `initializes((0, 4))`."""
+    while (match := re.search(rf"\b{re.escape(name)}\(", line)) is not None:
+        depth = 0
+        for index in range(match.end() - 1, len(line)):
+            if line[index] == "(":
+                depth += 1
+            elif line[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    tail = index + 1
+                    if tail < len(line) and line[tail] == " ":
+                        tail += 1
+                    line = line[: match.start()] + line[tail:]
+                    break
+        else:  # unbalanced: leave it alone rather than corrupt the line
+            return line
+    return line
+
+
+def strip_post_baseline_attrs(line: str) -> str:
+    """Drop inline attributes newer than the corpus's LLVM >= 15 baseline."""
+    if not _ATTRIBUTE_BEARING_LINE.search(line):
+        return line
+    # Instruction lines are indented; the tidy-up below collapses runs of
+    # spaces, so hold the indent aside rather than letting it be eaten.
+    indent = line[: len(line) - len(line.lstrip(" "))]
+    body = line[len(indent) :]
+
+    body = _POST_BASELINE_FLAG_RE.sub("", body)
+    for name in _POST_BASELINE_CALL_ATTRS:
+        body = strip_balanced_call(body, name)
+
+    # A removed attribute can leave `(  ` or a doubled space behind.
+    body = re.sub(r"\( +", "(", body)
+    body = re.sub(r" +\)", ")", body)
+    return indent + re.sub(r"  +", " ", body)
+
+
 def normalize(text: str) -> str:
     """Strip version noise so a snapshot reads as lowering, not as build config."""
     out: list[str] = []
@@ -293,6 +360,7 @@ def normalize(text: str) -> str:
             continue
         line = _METADATA_SUFFIX.sub("", line)
         line = _ATTR_GROUP_REF.sub("", line)
+        line = strip_post_baseline_attrs(line)
         line = line.rstrip()
         if not line and out and not out[-1]:
             continue
@@ -300,6 +368,64 @@ def normalize(text: str) -> str:
     while out and not out[-1]:
         out.pop()
     return "\n".join(out) + "\n"
+
+
+def find_baseline_assembler() -> tuple[str, int] | None:
+    """The OLDEST `llvm-as` on PATH at or above the corpus baseline.
+
+    A snapshot checked only against the newest assembler is a snapshot nobody
+    has checked: CI runs jobs on different LLVM majors, and the strictest one
+    decides whether the corpus's declared baseline actually holds.
+
+    When the host offers only a recent assembler this check cannot bite, and it
+    says nothing rather than claiming a baseline it did not test. The backstop
+    is CI's host-portability job, which runs `verify-examples.sh` over the same
+    snapshots on an older LLVM than the training job installs -- that is where
+    this defect was caught the first time.
+    """
+    for major in range(BASELINE_LLVM_MAJOR, 31):
+        if found := shutil.which(f"llvm-as-{major}"):
+            return found, major
+    return None
+
+
+def check_snapshot_baseline(rendered: str, label: str) -> str | None:
+    """Assemble a normalized snapshot at the baseline; return a failure message.
+
+    This is the total check behind the declared strip list: an attribute newer
+    than that list fails here, named by a real assembler, instead of reaching a
+    CI job on an older toolchain than the one that produced it.
+    """
+    assembler = find_baseline_assembler()
+    if assembler is None:
+        return None
+    binary, major = assembler
+    with tempfile.NamedTemporaryFile("w", suffix=".ll", delete=False) as handle:
+        handle.write(rendered)
+        temporary = Path(handle.name)
+    try:
+        completed = subprocess.run(
+            [binary, str(temporary), "-o", os.devnull],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"{label}: baseline assembler {binary} could not be run ({exc})"
+    finally:
+        temporary.unlink(missing_ok=True)
+
+    if completed.returncode == 0:
+        return None
+    detail = completed.stderr.strip().splitlines()
+    first = detail[0] if detail else "(no diagnostic)"
+    return (
+        f"{label}: does not assemble at the LLVM {major} baseline: {first}\n"
+        f"       If this is a parameter attribute newer than LLVM "
+        f"{BASELINE_LLVM_MAJOR}, add it to _POST_BASELINE_FLAG_ATTRS or "
+        f"_POST_BASELINE_CALL_ATTRS and regenerate with --update."
+    )
 
 
 def function_body(ir: str, name: str) -> str | None:
@@ -423,13 +549,20 @@ def main() -> int:
                 f"{case.triple}` output for {case.source}.\n"
                 "; Regenerate with:\n"
                 ";   python3 llvm-training/tools/verify-frontend-lowering.py --update\n"
-                "; Attribute groups, module flags, and the ident string are stripped:\n"
-                "; they are build configuration, not lowering, and their spellings move\n"
-                "; between releases faster than the corpus's LLVM >= 15 baseline allows.\n"
+                "; Attribute groups, module flags, the ident string, and parameter\n"
+                "; attributes newer than LLVM 15 are stripped: they are build\n"
+                "; configuration rather than lowering, and their spellings move between\n"
+                "; releases faster than the corpus's LLVM >= 15 baseline allows.\n"
                 "\n"
             )
             rendered = header + normalize(ir)
-            if args.update:
+
+            # Ask the oldest available assembler, not the newest. This is the
+            # check that catches an attribute the strip list does not know about.
+            if baseline_failure := check_snapshot_baseline(rendered, relpath(snapshot_path)):
+                print(f"[FAIL] {baseline_failure}", file=sys.stderr)
+                failed += 1
+            elif args.update:
                 snapshot_path.write_text(rendered)
                 print(f"[write] {relpath(snapshot_path)}")
             elif not snapshot_path.exists():

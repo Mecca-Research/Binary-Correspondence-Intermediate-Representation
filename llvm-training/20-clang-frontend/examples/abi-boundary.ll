@@ -1,9 +1,10 @@
 ; Normalized `clang -O0 -S -emit-llvm -target x86_64-unknown-linux-gnu` output for abi-boundary.c.
 ; Regenerate with:
 ;   python3 llvm-training/tools/verify-frontend-lowering.py --update
-; Attribute groups, module flags, and the ident string are stripped:
-; they are build configuration, not lowering, and their spellings move
-; between releases faster than the corpus's LLVM >= 15 baseline allows.
+; Attribute groups, module flags, the ident string, and parameter
+; attributes newer than LLVM 15 are stripped: they are build
+; configuration rather than lowering, and their spellings move between
+; releases faster than the corpus's LLVM >= 15 baseline allows.
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -65,12 +66,12 @@ define dso_local i64 @return_small() {
 
 declare i64 @make_small(i32 noundef, i32 noundef)
 
-define dso_local void @return_large(ptr dead_on_unwind noalias writable sret(%struct.Large) align 8 %0) {
-  call void @make_large(ptr dead_on_unwind writable sret(%struct.Large) align 8 %0)
+define dso_local void @return_large(ptr noalias sret(%struct.Large) align 8 %0) {
+  call void @make_large(ptr sret(%struct.Large) align 8 %0)
   ret void
 }
 
-declare void @make_large(ptr dead_on_unwind writable sret(%struct.Large) align 8)
+declare void @make_large(ptr sret(%struct.Large) align 8)
 
 define dso_local signext i8 @narrow(i8 noundef signext %0, i16 noundef signext %1, i1 noundef zeroext %2) {
   %4 = alloca i8, align 1

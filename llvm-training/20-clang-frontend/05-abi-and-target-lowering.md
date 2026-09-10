@@ -65,7 +65,14 @@ define dso_local void @return_large(ptr dead_on_unwind noalias writable
 
 The function's IR return type is `void`; the caller allocates the storage and
 passes a pointer. `noalias` says the caller's buffer is not reachable any other
-way; `writable`/`dead_on_unwind` (newer Clang) narrow the contract further.
+way; `writable`/`dead_on_unwind` narrow the contract further.
+
+Those last two are LLVM 19 attributes, so they appear in the block above (which
+is quoted Clang output) but **not** in the checked-in
+[`examples/abi-boundary.ll`](examples/abi-boundary.ll) snapshot: that file has to
+assemble at this corpus's LLVM 15 baseline, and the normalizer strips parameter
+attributes newer than the baseline. The `sret` contract the section is about is
+unaffected.
 
 `sret` must appear on the declaration **and** every call site. This is the most
 common hand-written-IR ABI break: a declaration that agrees with the ABI and a
