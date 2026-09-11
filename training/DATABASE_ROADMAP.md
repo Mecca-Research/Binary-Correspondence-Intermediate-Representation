@@ -233,6 +233,36 @@ quiescent boundaries — to the training rail rather than inventing a second one
 *Gate:* an evaluation pinned to a generation produces identical scores after
 the corpus moves.
 
+## What is verified where
+
+`verify_database.py` runs in the **LLVM training corpus** job, which is
+ubuntu-only — as the whole `training/` rail has always been. The database layer
+inherits that boundary, so it is worth stating rather than leaving a reader to
+assume otherwise: the catalog, the planner, the predicate path, incremental
+rebuilds and generations are exercised on Linux and on no other host.
+
+The one piece that *is* cross-host is `NativeAIKernels`, because
+**Host portability (windows-latest)** runs `bcir/tests/test_native_ai.py`. That
+is how S1's stamp tests found a real defect this repository had carried for as
+long as the class existed: the docstring claimed the object owned the
+dynamic-library handle, and there was no way to give it back. On Windows a loaded
+module keeps its file locked, so a temporary build directory could not be
+removed, `build`'s own `os.replace` could not run over a library the process had
+already loaded, and neither could an unlink. Nothing on POSIX is locked, which is
+why only the other host in the matrix could surface it.
+
+Two consequences worth keeping:
+
+- A rail tested on one host is tested against one operating system's opinions
+  about files. The defect was not in the new code; it was in code the new code
+  used in a way nothing had used it before.
+- The fix — `close()`, plus `kernel32.FreeLibrary` when CPython's private
+  `_ctypes.FreeLibrary` is absent — cannot be run on the development host. It is
+  exercised by substituting both doors and asserting the order and the handle,
+  and confirmed by CI. That is a weaker verification than the rest of this
+  document rests on, and it is labelled as such rather than reported alongside
+  measurements taken here.
+
 ## Why this points inward
 
 `bcir/asn1/selection.py` already chooses an encoding rule by minimizing over
