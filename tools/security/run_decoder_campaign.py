@@ -547,7 +547,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
     surfaces = ",".join(f"{item['surface']}:{item['state']}" for item in report["python"])
     print(f"decoder_campaign: {report['state']} python={surfaces} c={report['c_decoder']['state']}")
     if report.get("error"):

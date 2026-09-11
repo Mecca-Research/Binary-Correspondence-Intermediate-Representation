@@ -688,7 +688,7 @@ def main(argv: list[str] | None = None) -> int:
         summary = f"[microbench] cal_gen={bt.cal_gen} gather_penalty={bt.gather_penalty}"
 
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as f:
             f.write(text + "\n")
         print(f"{summary} -> {args.out}")
     else:

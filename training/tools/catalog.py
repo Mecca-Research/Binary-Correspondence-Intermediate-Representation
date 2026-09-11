@@ -49,19 +49,31 @@ answered exactly -- a path prefix that is not itself a counted directory -- the
 catalog returns a bound and says that it is a bound. Returning the bound as
 though it were exact is how a planner comes to be confidently wrong.
 
-**Staleness is loud, and checked in two levels.** The manifest records every
-chunk file's size, modification time and content digest. A load compares size and
-mtime first and re-hashes only the files whose stat moved; a file whose stat moved
-but whose bytes did not is still fresh. Any file that is missing, added, or whose
-digest changed refuses the load -- answering from stale statistics produces a
-wrong plan silently, which is worse than not answering. `verify_content=True`
-skips the stat level and hashes everything; the gate uses it, because a fast path
-nobody ever checks is a fast path that can be wrong for a year.
+**Staleness is loud, and checked one way.** The manifest records every chunk
+file's name, size and content digest, and a load digests every file. Any file that
+is missing, added, or whose digest changed refuses the load -- answering from stale
+statistics produces a wrong plan silently, which is worse than not answering.
+There is no declared scope to this, because there is nothing it does not see.
 
-Declared scope of the stat level: a chunk file rewritten with its size and
-nanosecond mtime deliberately preserved is not distinguished until something asks
-for the content check. Nothing else is out of scope -- files appearing,
-disappearing, or changing length or content are all caught.
+This used to be two levels: a stat comparison against a recorded size *and*
+nanosecond mtime, then a digest for whatever the stat flagged. That fast path is
+gone, and both halves of why are worth keeping written down.
+
+The mtime had to go because a catalog must be a function of the chunk bytes alone.
+Recording when a checkout happened made `catalog.json` differ between two builds of
+byte-identical input, which quietly denied a generation's `tree_digest` any meaning
+across machines. Keeping the mtime out but the fast path in -- pre-filtering on size
+alone -- was measured and rejected: it widens the scope note above from "size and
+nanosecond mtime deliberately preserved" to *any* same-size edit, which on JSONL is
+every single-character correction anyone will ever make. The fast path's own scope
+note was the thing it could no longer honour (`docs/security/laws.md` L21: a skip is
+where a shipping defect hides).
+
+So one level. The measured price is the whole of it: 0.23 ms -> 3.19 ms per load on
+this corpus (8 files, 3.50 MiB), against a 67 ms cold relational command. Reopening
+condition, so this is a decision and not a habit: if the corpus grows until digesting
+it dominates a command, the answer is a design that stays one path -- not a second
+one. `[wall, indicative]`.
 
 **The direction of dependency is unchanged.** `training/` is never a build
 dependency of BCIR, and nothing here reverses that.
@@ -73,11 +85,19 @@ import bisect
 import hashlib
 import json
 import os
+import shutil
 import struct
 import sys
 from array import array
+from contextlib import contextmanager
 import tempfile
 from pathlib import Path
+
+_TOOLS_DIR = Path(__file__).resolve().parent
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+
+import schema as schema_module  # noqa: E402  (path set above)
 
 #: v2 added the per-part numeric zone map. v3 split parts into bounded blocks and made
 #: a part's content digest cover its own rows rather than its whole file. An older
@@ -85,12 +105,18 @@ from pathlib import Path
 #: rebuild grain change only the *cost* of an answer, so a stale layout produces the
 #: same rows and the same green run, and only one of them is honest
 #: (`docs/security/laws.md` L2).
-SCHEMA = "bcir-training/catalog/v3"
+SCHEMA = "bcir-training/catalog/v4"
 BUILDER = "training/tools/catalog.py"
 LICENSE = "LicenseRef-BCIR-NC-1.0"
 
 DEFAULT_CHUNKS = Path("build/training/chunks")
 DEFAULT_CATALOG = Path("build/training/catalog")
+
+#: Where a published set of artifacts lives, and the one mutable thing in a catalog
+#: root. A publication is a directory under `SETS_DIR` named by the digest of the
+#: artifacts it holds; `CURRENT_FILE` holds the name of the one to read. See `write`.
+SETS_DIR = "sets"
+CURRENT_FILE = "CURRENT"
 
 CATALOG_FILE = "catalog.json"
 POSTINGS_FILE = "postings.json"
@@ -121,18 +147,21 @@ ORDER_FILE = "order.bin"
 #: one source and a file's rows are still a contiguous run of blocks.
 MAX_BLOCK_ROWS = 128
 
-#: Columns indexed by whole value. Low cardinality by construction, so a
-#: distinct-value map over any of them is a handful of entries, not a histogram.
-INDEXED_COLUMNS = ("subject", "kind", "language")
-
-#: The column indexed by every directory prefix rather than by whole value.
-PATH_COLUMN = "source_path"
-
-#: Columns stored as a packed integer column rather than an inverted index. A
-#: distinct-value map over a measurement is as large as the table; what an aggregate
-#: wants instead is the values themselves, contiguous, so MIN/MAX/SUM over a
-#: selection is a gather rather than a scan of the corpus.
-NUMERIC_COLUMNS = ("char_count", "token_estimate")
+#: Which columns play which role, read out of the declared table rather than named
+#: again here. These three tuples used to be the only statement anywhere that
+#: `subject` is indexed and `char_count` is a measurement, and they said nothing about
+#: what either holds -- so an index could be declared for a column the corpus does not
+#: have, and the build would produce a postings list of one entry, all rows, null
+#: (`docs/security/laws.md` L15). `schema.py` declares the table; this reads it.
+#:
+#: Indexed columns are low cardinality by construction, so a distinct-value map over
+#: any of them is a handful of entries rather than a histogram. Numeric columns are
+#: stored as a packed integer column instead: a distinct-value map over a measurement
+#: is as large as the table, and what an aggregate wants is the values themselves,
+#: contiguous, so MIN/MAX/SUM over a selection is a gather and not a scan.
+INDEXED_COLUMNS = schema_module.INDEXED_COLUMNS
+PATH_COLUMN = schema_module.PATH_COLUMN
+NUMERIC_COLUMNS = schema_module.NUMERIC_COLUMNS
 
 #: How a missing value is spelled in an index key. JSON object keys are strings,
 #: so `null` needs a spelling that no real value can collide with.
@@ -221,11 +250,27 @@ def row_sort_key(record: dict) -> tuple:
 
 
 def _file_stat(path: Path) -> dict:
+    """What the manifest records about one chunk file: name, size, content digest.
+
+    **No modification time, and no directory.** Everything in a catalog is a function
+    of the chunk bytes alone, so two checkouts of the same corpus produce the same
+    catalog -- which is what lets `tree_digest` over a generation mean anything across
+    machines. An `mtime_ns` here made `catalog.json` differ between two builds of
+    byte-identical input, and the determinism gate could not see it because it built
+    twice from one directory, where the mtimes are equal by construction.
+
+    The mtime was a cache key for `_check_freshness`'s fast path: a file whose size
+    *and* mtime match the record skips its digest. Size alone still pre-filters, and
+    on this corpus the cost of the mtimes it no longer skips is 0.23 ms -> 2.87 ms per
+    load. That is the whole price of the property, and it is paid here rather than
+    bought back with a rule that excludes one file from a digest -- an exclusion would
+    make the digest silent about the one file most likely to be wrong
+    (`docs/security/laws.md` L21).
+    """
     stat = path.stat()
     return {
         "name": path.name,
         "size": stat.st_size,
-        "mtime_ns": stat.st_mtime_ns,
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 
@@ -263,12 +308,25 @@ def index_key(value) -> str:
     return NULL_KEY if value is None else str(value)
 
 
+def pair_key(left: str, right: str) -> str:
+    """How a column pair is named in the statistics, in one canonical order.
+
+    Sorted, so `(kind, language)` and `(language, kind)` name the same entry and the
+    build cannot store one while a reader looks for the other. The separator is a NUL,
+    which no column name can contain -- column names are declared identifiers in
+    `schema.py`, but a separator chosen from the printable characters is a rule about
+    names rather than a property of them, and the two drift differently.
+    """
+    first, second = sorted((left, right))
+    return f"{first}\0{second}"
+
+
 # --------------------------------------------------------------------------
 # Building
 # --------------------------------------------------------------------------
 
 
-def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
+def _scan_chunk_file(path: Path, file_index: int, table) -> list[dict]:
     """One pass over a chunk file, recording each row's columns and its byte span.
 
     The offset is into the file as bytes, not as decoded text, because that is what
@@ -286,6 +344,13 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
         line = raw[offset:end]
         if line.strip():
             record = json.loads(line.decode("utf-8"))
+            # Every declared column of the row as it came off disk, before the
+            # projection below drops the ones the catalog does not index. Checking the
+            # projection instead would check the six columns copied out and say
+            # nothing about the twelve left behind, which is where a renamed field
+            # hides (`docs/security/laws.md` L15).
+            with _as_catalog_error():
+                table.check_row(record)
             rows.append(
                 {
                     "chunk_id": record.get("chunk_id"),
@@ -294,7 +359,7 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
                     "kind": record.get("kind"),
                     "language": record.get("language"),
                     "span": record.get("span"),
-                    **{name: record.get(name) for name in NUMERIC_COLUMNS},
+                    **{name: record.get(name) for name in table.numeric},
                     "file": file_index,
                     "offset": offset,
                     "length": end - offset,
@@ -341,21 +406,44 @@ def block_digest(rows: list[dict]) -> str:
     return digest.hexdigest()
 
 
-def numeric_cell(row: dict, column: str) -> int | None:
-    """One numeric cell, or None where the row carries no measurement.
+@contextmanager
+def _as_catalog_error():
+    """Turn the schema's refusals into this module's, so a caller catches one type.
 
-    `True` is an `int` in Python and would pack as a length of 1. A boolean in a
-    measurement column is a schema error rather than a measurement, so it reads as
-    absent -- the packed column then says "unknown" where the row said something
-    nonsensical, instead of inventing a number no chunk has.
+    A `SchemaError` escaping a build reaches the CLI as a traceback rather than as a
+    verdict, which is the same exit either way to a human and a different one to a
+    script (`docs/security/laws.md` L1).
     """
-    value = row.get(column)
-    if isinstance(value, bool) or not isinstance(value, int):
-        return None
-    return int(value)
+    try:
+        yield
+    except schema_module.SchemaError as exc:
+        raise CatalogError(f"catalog: {exc}") from exc
 
 
-def numeric_summary(rows: list[dict], column: str) -> dict:
+def numeric_cell(row: dict, column: str, table=None) -> int | None:
+    """One numeric cell, or None where the row carries no measurement. Or a refusal.
+
+    Three cases, and they must stay three. A row carrying no value at all has no
+    measurement: that is `None`, and the packed column records it as absent. An
+    integer inside its declared domain is the measurement. **Anything else is a schema
+    error and is refused**, naming the row and the column.
+
+    Reading a wrong type as absent -- which this used to do -- is the shape
+    `docs/security/laws.md` L1 is about: `char_count` holding `"not-an-int"` built a
+    clean catalog, exited 0, and appeared downstream as one more null among the
+    genuine ones, indistinguishable from a chunk that really has no measurement. The
+    gap and the error must not share a spelling; a build over a malformed row is a
+    failed build, not a build with one more unknown in it.
+
+    The decision itself lives in `schema.cell`, which is also what a projection and a
+    presence test ask, so "absent" cannot come to mean one thing to the packed column
+    and another to a query (`docs/security/laws.md` L14).
+    """
+    with _as_catalog_error():
+        return (table or schema_module.TABLE).cell(row, column)
+
+
+def numeric_summary(rows: list[dict], column: str, table=None) -> dict:
     """MIN/MAX/SUM/COUNT/NULLS over one numeric column of a row range.
 
     The whole-corpus statistics and every part's zone map are produced by this one
@@ -368,7 +456,9 @@ def numeric_summary(rows: list[dict], column: str) -> dict:
     `min` and `max` are over present values only. The null sentinel is a legal int64
     and would otherwise become the minimum of every column that has a gap.
     """
-    present = [value for value in (numeric_cell(row, column) for row in rows) if value is not None]
+    present = [
+        value for value in (numeric_cell(row, column, table) for row in rows) if value is not None
+    ]
     return {
         "count": len(present),
         "nulls": len(rows) - len(present),
@@ -378,7 +468,9 @@ def numeric_summary(rows: list[dict], column: str) -> dict:
     }
 
 
-def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, bytes, bytes]:
+def build(
+    chunk_dir: Path = DEFAULT_CHUNKS, table=None
+) -> tuple[dict, dict, bytes, str, bytes, bytes]:
     """Read the chunk table once and derive every fact a plan can use.
 
     One pass. The locator, the postings, the statistics and the parts all come from
@@ -387,7 +479,14 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
 
     Returns the manifest, the postings, the packed locator, the id list, the packed
     numeric columns and the sorted index over them.
+
+    `table` is the declared column table this corpus is built against, defaulting to
+    the shipped one. It is a parameter because nullability is a property of a table
+    and not of the format: the chunk contract requires every measurement, so the
+    absence a packed column must still be able to spell is only reachable from a
+    corpus whose table admits it (`schema.Table`).
     """
+    table = table or schema_module.TABLE
     files = chunk_files(chunk_dir)
     if not files:
         raise CatalogError(
@@ -401,7 +500,7 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
     stats_files: list[dict] = []
     for index, path in enumerate(files):
         start = len(rows)
-        scanned = _scan_chunk_file(path, index)
+        scanned = _scan_chunk_file(path, index, table)
         # Sorted by the canonical key rather than taken in file order, so the catalog
         # and the embedding set share one definition of row `i` instead of two that
         # happen to agree. A part stays one contiguous run because `subject` leads the
@@ -424,9 +523,10 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
 
     seen: dict[str, int] = {}
     for position, row in enumerate(rows):
+        # Presence, type and emptiness were settled by `schema.check_row` as the row
+        # was read. What is left is the one property no single row can have: being
+        # the only row with this key.
         chunk_id = row["chunk_id"]
-        if not isinstance(chunk_id, str) or not chunk_id:
-            raise CatalogError(f"catalog: row {position} has no chunk_id")
         if chunk_id in seen:
             raise CatalogError(
                 f"catalog: chunk_id {chunk_id} appears at rows {seen[chunk_id]} and "
@@ -435,7 +535,7 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
         seen[chunk_id] = position
 
     postings_columns: dict[str, dict[str, list[int]]] = {}
-    for name in INDEXED_COLUMNS:
+    for name in table.indexed:
         column: dict[str, list[int]] = {}
         for position, row in enumerate(rows):
             column.setdefault(index_key(row.get(name)), []).append(position)
@@ -444,12 +544,46 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
     prefix_postings: dict[str, list[int]] = {}
     path_postings: dict[str, list[int]] = {}
     for position, row in enumerate(rows):
-        source_path = row.get(PATH_COLUMN)
+        source_path = row.get(table.path)
         if not isinstance(source_path, str):
             continue
         path_postings.setdefault(source_path, []).append(position)
         for prefix in path_prefixes(source_path):
             prefix_postings.setdefault(prefix, []).append(position)
+
+    # Exact co-occurrence counts for every pair of indexed columns. The catalog held
+    # only marginals, so a conjunction was priced at the tightest of them -- a bound,
+    # and one that was reported as a count: on this corpus 83% of indexed value pairs
+    # were labelled `[exact]` over a number that was wrong, and `kind=code AND
+    # language=asm` claimed a row where there are none.
+    #
+    # The reason the marginals were all the catalog held is that joint statistics are
+    # expensive in the general case, which is why every planner that estimates them
+    # does so with sketches and independence assumptions. That reasoning does not
+    # transfer here. These columns are low cardinality *by role* -- an indexed column
+    # is one whose distinct-value map is a handful of entries -- so the full joint
+    # distribution over any two of them is bounded by the product of two handfuls, and
+    # the corpus is static, so it is computed once at build. Exactly the case where
+    # the textbook answer is the wrong one.
+    pair_counts: dict[str, dict[str, dict[str, int]]] = {}
+    for first in range(len(table.indexed)):
+        for second in range(first + 1, len(table.indexed)):
+            # Sorted, because `pair_key` sorts: the table's outer key must be the
+            # column whose name `pair_key` put first, or the build stores the
+            # transpose of what every reader looks up. Taking the pair in declaration
+            # order stored two of these three tables transposed, and every lookup into
+            # them returned zero -- an under-estimate, which is the one direction a
+            # bound must never go (`docs/security/laws.md` L12: one condition, one
+            # answer, on both paths).
+            left, right = sorted((table.indexed[first], table.indexed[second]))
+            counted: dict[str, dict[str, int]] = {}
+            for row in rows:
+                inner = counted.setdefault(index_key(row.get(left)), {})
+                key = index_key(row.get(right))
+                inner[key] = inner.get(key, 0) + 1
+            pair_counts[pair_key(left, right)] = {
+                value: dict(sorted(inner.items())) for value, inner in sorted(counted.items())
+            }
 
     postings = {
         "schema": SCHEMA,
@@ -465,11 +599,11 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
 
     numeric = bytearray()
     numeric_stats: dict[str, dict] = {}
-    for name in NUMERIC_COLUMNS:
+    for name in table.numeric:
         for row in rows:
-            value = numeric_cell(row, name)
+            value = numeric_cell(row, name, table)
             numeric += _NUMERIC_STRUCT.pack(NUMERIC_NULL if value is None else value)
-        numeric_stats[name] = numeric_summary(rows, name)
+        numeric_stats[name] = numeric_summary(rows, name, table)
 
     # The zone map: the range of values each part could possibly hold. A range
     # predicate reads this before it reads a row, so a part whose whole span lies
@@ -479,7 +613,7 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
     for part in parts:
         start, end = part["rows"]
         span = rows[start:end]
-        part["numeric"] = {name: numeric_summary(span, name) for name in NUMERIC_COLUMNS}
+        part["numeric"] = {name: numeric_summary(span, name, table) for name in table.numeric}
 
     # The sorted index: each measurement column's rows in ascending order. Two binary
     # searches over it answer a comparison exactly, where the zone map above can only
@@ -495,11 +629,11 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
             "sorted-index entry can name"
         )
     order = bytearray()
-    for name in NUMERIC_COLUMNS:
+    for name in table.numeric:
         measured = []
         absent = []
         for position, row in enumerate(rows):
-            value = numeric_cell(row, name)
+            value = numeric_cell(row, name, table)
             (absent if value is None else measured).append(
                 position if value is None else (value, position)
             )
@@ -516,7 +650,6 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
         "schema": SCHEMA,
         "builder": BUILDER,
         "license": LICENSE,
-        "chunk_dir": str(chunk_dir).replace(os.sep, "/"),
         "fingerprint": fingerprint(chunk_dir),
         "rows_total": len(rows),
         "files": stats_files,
@@ -526,6 +659,7 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
                 name: {value: len(positions) for value, positions in column.items()}
                 for name, column in postings_columns.items()
             },
+            "pairs": pair_counts,
             "path_prefixes": {
                 prefix: len(positions) for prefix, positions in postings["path_prefixes"].items()
             },
@@ -551,13 +685,13 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
             "numeric": {
                 "path": NUMERIC_FILE,
                 "sha256": hashlib.sha256(bytes(numeric)).hexdigest(),
-                "columns": list(NUMERIC_COLUMNS),
+                "columns": list(table.numeric),
                 "cell_bytes": NUMERIC_CELL_BYTES,
             },
             "order": {
                 "path": ORDER_FILE,
                 "sha256": hashlib.sha256(bytes(order)).hexdigest(),
-                "columns": list(NUMERIC_COLUMNS),
+                "columns": list(table.numeric),
                 "entry_bytes": ORDER_ENTRY_BYTES,
             },
         },
@@ -566,12 +700,20 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
 
 
 def _publish(root: Path, name: str, payload: bytes) -> Path:
-    """Write one artifact atomically. No reader ever sees half of one."""
+    """Write one artifact, durably. No reader ever sees half of one.
+
+    The `fsync` is what makes the later pointer swap mean something: a rename that
+    reaches the directory before the file's own bytes reach the disk publishes a name
+    for content that a crash can still lose. Ordering the two is the whole of the D in
+    a publish that has no log to replay.
+    """
     target = root / name
     descriptor, temporary = tempfile.mkstemp(prefix=f".{name}.tmp-", dir=root)
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, target)
     except BaseException:
         try:
@@ -582,28 +724,186 @@ def _publish(root: Path, name: str, payload: bytes) -> Path:
     return target
 
 
-def write(built: tuple[dict, dict, bytes, str, bytes, bytes], root: Path = DEFAULT_CATALOG) -> Path:
-    """Publish every artifact, the manifest last.
+def _sync_directory(path: Path) -> None:
+    """Flush a directory's own entries, where the host has a way to say that.
 
-    Last because the manifest is what vouches for the others' digests: a reader that
-    finds the manifest can rely on the sidecars beside it already being complete.
+    POSIX needs this: a file's contents being durable does not make the *name* that
+    reaches it durable. Windows has no directory handle to sync and its rename is
+    already ordered, so there is nothing to call -- declared here as a per-host
+    property rather than swallowed, because a silent `except` around an I/O call
+    cannot tell "this host does not do that" from "this disk is failing"
+    (`docs/security/laws.md` L1).
+    """
+    if not hasattr(os, "O_DIRECTORY"):
+        return
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def publication_id(payloads: dict[str, bytes]) -> str:
+    """The name of a published set: the digest of everything in it.
+
+    Content-addressed for the same reason a generation is. Publishing the same
+    catalog twice names the same directory, finds it already complete, and moves the
+    pointer -- so a rebuild that changes nothing writes nothing, and two hosts that
+    build the same corpus agree on the name as well as on the bytes.
+    """
+    digest = hashlib.sha256()
+    digest.update(SCHEMA.encode("utf-8"))
+    for name in sorted(payloads):
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(payloads[name]).digest())
+    return digest.hexdigest()[:32]
+
+
+def current_set(root: Path) -> Path:
+    """The directory the pointer names, or a refusal. Where every reader starts."""
+    pointer = root / CURRENT_FILE
+    try:
+        name = pointer.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise CatalogError(
+            f"catalog: none at {root}\n  build one first: python3 {BUILDER} --out {root}"
+        ) from exc
+    except OSError as exc:
+        raise CatalogError(f"catalog: {pointer} is unreadable: {exc}") from exc
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise CatalogError(f"catalog: {pointer} does not name a published set ({name!r})")
+    directory = root / SETS_DIR / name
+    if not directory.is_dir():
+        raise CatalogError(
+            f"catalog: {pointer} names {name}, which is not published under "
+            f"{root / SETS_DIR}\n  rebuild it: python3 {BUILDER} --out {root}"
+        )
+    return directory
+
+
+def write(built: tuple[dict, dict, bytes, str, bytes, bytes], root: Path = DEFAULT_CATALOG) -> Path:
+    """Publish a whole set of artifacts, or publish none of it.
+
+    **One pointer is the whole transaction.** The six artifacts go into a directory
+    named by their own digest, which nothing has ever read from because nothing knew
+    the name; they are made durable there; and then a single `os.replace` of `CURRENT`
+    makes them the catalog. A reader is holding the old name or the new one, and both
+    name a complete set. There is no instant at which it holds half of a rebuild.
+
+    This used to be six `os.replace` calls into one directory, manifest last. Each was
+    atomic on its own, which is a different and much weaker claim: between the second
+    and the third, the directory held four old artifacts and two new ones, and a
+    reader that opened the old manifest and then read a new sidecar found a digest
+    that did not match. That failed *loudly* -- the manifest vouches for every
+    artifact, so the mismatch was a refusal and never a wrong answer -- but a rebuild
+    that makes concurrent readers fail is still a rebuild that cannot be done while
+    anything is reading. Atomicity is what turns "loud" into "invisible".
+
+    Idempotent, because the name is the content: republishing an unchanged catalog
+    finds the set already there, verifies it, and moves the pointer. Immutable, for
+    the same reason -- nothing is ever rewritten inside a published set, so the
+    previous one stays readable for a reader that is still in it.
     """
     manifest, postings, locator, ids, numeric, order = built
-    root.mkdir(parents=True, exist_ok=True)
-    _publish(
-        root,
-        POSTINGS_FILE,
-        json.dumps(postings, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-    )
-    _publish(root, LOCATOR_FILE, locator)
-    _publish(root, IDS_FILE, ids.encode("utf-8"))
-    _publish(root, NUMERIC_FILE, numeric)
-    _publish(root, ORDER_FILE, order)
-    return _publish(
-        root,
-        CATALOG_FILE,
-        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-    )
+    payloads = {
+        POSTINGS_FILE: json.dumps(postings, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        LOCATOR_FILE: bytes(locator),
+        IDS_FILE: ids.encode("utf-8"),
+        NUMERIC_FILE: bytes(numeric),
+        ORDER_FILE: bytes(order),
+        CATALOG_FILE: json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    }
+    name = publication_id(payloads)
+    sets = root / SETS_DIR
+    sets.mkdir(parents=True, exist_ok=True)
+    destination = sets / name
+
+    if not _set_is_complete(destination, payloads):
+        staging = sets / f".staging-{name}"
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir()
+        try:
+            for artifact, payload in sorted(payloads.items()):
+                _publish(staging, artifact, payload)
+            _sync_directory(staging)
+            try:
+                os.replace(staging, destination)
+            except OSError:
+                # Another writer published this same content-addressed set between the
+                # check above and this rename. POSIX and Windows disagree about
+                # renaming onto a directory that now exists, so the outcome is decided
+                # here rather than by the host (`docs/security/laws.md` L12). The name
+                # is the content, so if what is in place is complete this publish
+                # already happened; if it is not, the refusal stands.
+                if not _set_is_complete(destination, payloads):
+                    raise
+                shutil.rmtree(staging, ignore_errors=True)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        _sync_directory(sets)
+
+    previous = None
+    try:
+        previous = current_set(root).name
+    except CatalogError:
+        pass
+    _point_at(root, name)
+    _prune_sets(sets, keep={name} | ({previous} if previous else set()))
+    return destination / CATALOG_FILE
+
+
+def _set_is_complete(directory: Path, payloads: dict[str, bytes]) -> bool:
+    """Whether a published set holds exactly these artifacts, byte for byte.
+
+    Compared against the bytes about to be written rather than against a recorded
+    digest, so a set left behind by an interrupted publish -- or one a filesystem
+    truncated -- is republished instead of pointed at.
+    """
+    if not directory.is_dir():
+        return False
+    try:
+        present = {path.name for path in directory.iterdir() if path.is_file()}
+        if present != set(payloads):
+            return False
+        return all((directory / name).read_bytes() == payload for name, payload in payloads.items())
+    except OSError:
+        return False
+
+
+def _point_at(root: Path, name: str) -> None:
+    """Move `CURRENT` atomically. The pointer is the only mutable thing in a catalog."""
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{CURRENT_FILE}.tmp-", dir=root)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(name + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, root / CURRENT_FILE)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    _sync_directory(root)
+
+
+def _prune_sets(sets: Path, keep: set[str]) -> None:
+    """Drop published sets older than the one the pointer just replaced.
+
+    The previous set is kept because a reader that resolved `CURRENT` a moment before
+    the swap is still reading from it, and nothing here can ask whether it has
+    finished -- there is no server, no lock and no lease, and inventing one to delete
+    a directory sooner would be a much larger mechanism than the directory is worth.
+    Anything older than that has no reader that a single swap could have left behind.
+    """
+    for path in sets.iterdir():
+        if path.name in keep or not path.is_dir():
+            continue
+        shutil.rmtree(path, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------
@@ -618,9 +918,14 @@ class Catalog:
     call that needs it and verified against the digest the manifest recorded.
     """
 
-    def __init__(self, manifest: dict, root: Path, chunk_dir: Path) -> None:
+    def __init__(self, manifest: dict, root: Path, chunk_dir: Path, set_dir: Path) -> None:
         self.manifest = manifest
         self.root = root
+        #: The published set this catalog reads its artifacts from. Fixed at load, so
+        #: a rebuild that lands mid-read moves `CURRENT` without moving this object:
+        #: every artifact it goes on to read comes from the set its manifest vouches
+        #: for, not from whichever set is newest by the time it asks.
+        self.set_dir = set_dir
         self.chunk_dir = chunk_dir
         self.rows_total = int(manifest["rows_total"])
         self.files = [chunk_dir / entry["name"] for entry in manifest["files"]]
@@ -642,8 +947,6 @@ class Catalog:
         cls,
         root: Path = DEFAULT_CATALOG,
         chunk_dir: Path = DEFAULT_CHUNKS,
-        *,
-        verify_content: bool = False,
     ) -> "Catalog":
         """Load the catalog, or refuse. A stale catalog is never answered from.
 
@@ -651,12 +954,14 @@ class Catalog:
         command -- because a caller that cannot tell "absent" from "stale" from
         "malformed" will eventually treat one of them as "fine".
         """
-        target = root / CATALOG_FILE
+        set_dir = current_set(root)
+        target = set_dir / CATALOG_FILE
         try:
             manifest = json.loads(target.read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
             raise CatalogError(
-                f"catalog: none at {target}\n  build one first: python3 {BUILDER} --out {root}"
+                f"catalog: {root / CURRENT_FILE} names a set with no {CATALOG_FILE}\n"
+                f"  rebuild it: python3 {BUILDER} --out {root}"
             ) from exc
         except (OSError, ValueError) as exc:
             raise CatalogError(f"catalog: {target} is unreadable: {exc}") from exc
@@ -669,18 +974,19 @@ class Catalog:
         for required in ("rows_total", "files", "parts", "statistics", "artifacts", "fingerprint"):
             if required not in manifest:
                 raise CatalogError(f"catalog: {target} has no {required!r}")
-        cls._check_freshness(manifest, root, chunk_dir, verify_content=verify_content)
-        return cls(manifest, root, chunk_dir)
+        cls._check_freshness(manifest, root, chunk_dir)
+        return cls(manifest, root, chunk_dir, set_dir)
 
     @staticmethod
-    def _check_freshness(
-        manifest: dict, root: Path, chunk_dir: Path, *, verify_content: bool
-    ) -> None:
-        """Two levels: stat first, content for whatever the stat says may have moved.
+    def _check_freshness(manifest: dict, root: Path, chunk_dir: Path) -> None:
+        """The chunk table this catalog was built from, still byte for byte.
 
-        `verify_content` skips the first level entirely. Both levels end in the same
-        comparison against the recorded digest, so the fast path can only ever skip
-        work that would have agreed with it.
+        One level, digesting every file. The size in the manifest is recorded for the
+        refusal message and for anyone reading it, not consulted as a pre-filter -- a
+        pre-filter is a second path that can disagree with the first, and this one
+        would have disagreed for exactly the same-size edits that are the common case
+        (`docs/security/laws.md` L12). The module docstring carries the measurement
+        that says the pre-filter was not worth its scope.
         """
         recorded = {entry["name"]: entry for entry in manifest["files"]}
         actual = {path.name: path for path in chunk_files(chunk_dir)}
@@ -693,18 +999,9 @@ class Catalog:
                 + (f"  new since:   {', '.join(added)}\n" if added else "")
                 + f"  rebuild it: python3 {BUILDER} --out {root}"
             )
-        suspect = []
-        for name, entry in sorted(recorded.items()):
-            path = actual[name]
-            if verify_content:
-                suspect.append((name, path, entry))
-                continue
-            stat = path.stat()
-            if stat.st_size != entry["size"] or stat.st_mtime_ns != entry["mtime_ns"]:
-                suspect.append((name, path, entry))
         moved = []
-        for name, path, entry in suspect:
-            if hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+        for name, entry in sorted(recorded.items()):
+            if hashlib.sha256(actual[name].read_bytes()).hexdigest() != entry["sha256"]:
                 moved.append(name)
         if moved:
             raise CatalogError(
@@ -735,7 +1032,7 @@ class Catalog:
         entry = self._artifacts.get(name)
         if not isinstance(entry, dict) or "path" not in entry or "sha256" not in entry:
             raise CatalogError(f"catalog: the manifest does not describe the {name!r} artifact")
-        path = self.root / entry["path"]
+        path = self.set_dir / entry["path"]
         try:
             raw = path.read_bytes()
         except OSError as exc:
@@ -1213,6 +1510,29 @@ class Catalog:
         if counts is None:
             return None
         return int(counts.get(index_key(value), 0))
+
+    def has_pairs(self, left: str, right: str) -> bool:
+        """Whether exact co-occurrence counts were stored for these two columns."""
+        return pair_key(left, right) in self._statistics.get("pairs", {})
+
+    def count_pair(self, left: str, left_value, right: str, right_value) -> int:
+        """Exact rows carrying both values, from the stored joint distribution.
+
+        A pair the build never saw is absent from the table and counts zero -- which
+        is the common answer and the one the marginals could never give: most value
+        pairs in a corpus do not co-occur at all, and calling that "at most the
+        smaller marginal" is the estimate that was 100% over on every empty pair.
+        """
+        table = self._statistics.get("pairs", {}).get(pair_key(left, right))
+        if table is None:
+            raise CatalogError(
+                f"catalog: no joint statistic for {left!r} and {right!r}; the catalog "
+                f"pairs {', '.join(sorted(self.indexed_columns()))}"
+            )
+        # `pair_key` sorted the names, so the table's outer key is the lower name.
+        if left > right:
+            left_value, right_value = right_value, left_value
+        return int(table.get(index_key(left_value), {}).get(index_key(right_value), 0))
 
     def count_prefix(self, prefix: str) -> tuple[int, bool]:
         """Rows whose `source_path` starts with `prefix`, and whether that is exact.

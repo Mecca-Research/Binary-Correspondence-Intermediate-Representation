@@ -66,7 +66,9 @@ def _write_byte_tokenizer(path: Path) -> None:
         },
     }
     path.write_text(
-        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+        json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
 
 
@@ -462,7 +464,9 @@ def run_gate(output_dir: os.PathLike | str) -> dict:
         "passed": True,
     }
     (output / "parity-report.json").write_text(
-        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8"
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
     return report
 

@@ -642,7 +642,7 @@ def split_assignments(training_root: Path) -> dict[str, dict[str, str]]:
 
 def normalize_ir_structure(solution: str, opt: str, work: Path) -> tuple[str, str]:
     source = work / "normalize.ll"
-    source.write_text(solution, encoding="utf-8")
+    source.write_text(solution, encoding="utf-8", newline="\n")
     completed = subprocess.run(
         [opt, "-S", str(source), "-o", "-"], text=True, capture_output=True, check=False
     )
@@ -822,7 +822,7 @@ def main(argv: list[str] | None = None) -> int:
                 variant_dir = temp / family.name / str(attempt)
                 variant_dir.mkdir(parents=True)
                 answer = variant_dir / "reference.solution.ll"
-                answer.write_text(solution, encoding="utf-8")
+                answer.write_text(solution, encoding="utf-8", newline="\n")
                 result = grading.grade_entry(PROFILE, manifest, answer, tools)
                 failed = [check["id"] for check in result["checks"] if check["status"] != "pass"]
                 if failed:
@@ -900,13 +900,13 @@ def main(argv: list[str] | None = None) -> int:
     output = "".join(stable_json(record) + "\n" for record in accepted)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(output, encoding="utf-8")
+        args.output.write_text(output, encoding="utf-8", newline="\n")
     else:
         sys.stdout.write(output)
     report_text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(report_text, encoding="utf-8")
+        args.report.write_text(report_text, encoding="utf-8", newline="\n")
     else:
         print(report_text, file=sys.stderr, end="")
     if len(accepted) < min(args.budget, len(selected)):

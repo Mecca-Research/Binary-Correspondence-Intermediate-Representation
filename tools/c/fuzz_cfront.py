@@ -1060,7 +1060,7 @@ def _behaviour_ok(cc: str, prog: Program, emit: str, d: str, label: str) -> tupl
     )
     cpath = os.path.join(d, f"{label}.c")
     epath = os.path.join(d, label)
-    with open(cpath, "w") as fh:
+    with open(cpath, "w", newline="\n") as fh:
         fh.write(harness)
     for std in ("c23", "c2x", "c17"):  # -ffp-contract=off: no FMA, so float is exact
         b = subprocess.run(
@@ -1126,7 +1126,7 @@ def _layout_ok(prog: "Program", cc: str, d: str, label: str) -> tuple[bool, str]
         + "\nint main(void){return 0;}\n"
     )
     cp = os.path.join(d, f"L{label}.c")
-    with open(cp, "w") as fh:
+    with open(cp, "w", newline="\n") as fh:
         fh.write(src)
     b = subprocess.run([cc, "-std=c2x", "-c", cp, "-o", cp + ".o"], capture_output=True, text=True)
     if b.returncode == 0:

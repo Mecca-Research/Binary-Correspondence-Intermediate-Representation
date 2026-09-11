@@ -801,6 +801,45 @@ kernel's timing only against the baseline it replaced; a coverage number
 only against what an empty corpus would report. BCIR already prices a
 `ratio` row and re-derives R9's step cost for exactly this reason.
 
+### L24 — An artifact's bytes do not depend on the host that wrote them
+A generated file is evidence only if two hosts generate the same one. Python's
+text mode translates `"\n"` to the platform's line ending on write, so
+`open(p, "w")` and `Path.write_text` without `newline=` emit LF on Linux and
+CRLF on Windows from identical source and identical logic — and everything
+*derived* from those bytes moves with them while the contents stay logically
+equal. `training/tools/build_chunks.py` wrote the retrieval corpus that way:
+on Windows the corpus fingerprint, every per-file `sha256` the catalog
+manifest records, every part's content digest, and `locator.bin` — whose byte
+offsets shift with the length of every line before them — all differed, so two
+hosts disagreed about the content address of an identical corpus and a
+generation published on one could never verify on the other (2026-09-11,
+`training/DATABASE_ROADMAP.md`, defect 5). Six further generators write
+*tracked* files the same way, and CI already byte-gates two of them with
+`git diff --exit-code` after a fresh emission — a trip-wire that would have
+caught this the first time it ran on a host that chose CRLF, and never did
+because it runs on ubuntu.
+The defect is invisible to the obvious witness. Every drift gate over those
+files compares in *text* mode, where universal newlines translate CRLF back to
+`"\n"` on read, so each one stays green while the file on disk differs (L11).
+What finally surfaced it was pinning a fingerprint into the repository and
+letting the Windows host-portability job read it back — a cross-host
+comparison of the artifact itself, which nothing had ever done.
+A repository that declares this for its tracked tree has not thereby declared
+it for what its tools generate: `.gitattributes` opens `* text=auto eol=lf`
+and cannot reach a file written at run time.
+Witnesses: `test_every_generator_pins_its_line_ending` (no artifact-producing
+module under `bcir/`, `tools/`, `training/` or `.claude/` lets the host
+choose), `test_the_matcher_sees_both_spellings_and_neither_false_positive`
+(the predicate itself, against writes that must and must not be flagged),
+`test_no_tracked_text_file_carries_a_carriage_return` (the index, derived
+rather than curated), and `check_line_endings` in `verify_database.py` (the
+built corpus on disk).
+**Port note:** the C shape is any text-mode `fopen` on Windows, where `"w"`
+performs the same translation `"wb"` does not; the general shape is any
+serializer whose output depends on the platform rather than on its input —
+a locale-dependent number format, a path separator, a hash of a `struct`
+with padding, a directory listing in filesystem order.
+
 ## Campaign classification summary
 
 Every review-thread finding from the campaign (240 threads, rounds 1–42)

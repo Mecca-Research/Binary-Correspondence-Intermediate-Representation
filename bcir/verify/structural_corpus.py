@@ -1770,7 +1770,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     rc = 0
     if args.emit:
-        (_ROOT / FIXTURE).write_text(emit_fixture(), encoding="utf-8")
+        (_ROOT / FIXTURE).write_text(emit_fixture(), encoding="utf-8", newline="\n")
         print(
             f"structural_corpus: wrote {FIXTURE} ({sum(1 for c in CASES if MLIR in c.rails)} law-rail cases)"
         )

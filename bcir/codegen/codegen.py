@@ -56,7 +56,7 @@ def codegen(
     try:
         ll = os.path.join(workdir, "kernel.ll")
         out = os.path.join(workdir, "kernel.out")
-        with open(ll, "w") as f:
+        with open(ll, "w", newline="\n") as f:
             f.write(
                 emit_kernel_ll(module, result, fn_name, elem=tgt.elem, width_override=tgt.width)
             )
@@ -122,7 +122,7 @@ def codegen_c(
     try:
         src = os.path.join(workdir, "kernel.c")
         obj = os.path.join(workdir, "kernel.o")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(emit_c_source(module, result, fn_name))
         r = None
         for std in ("-std=c23", "-std=c2x"):  # C23 (clang) then c2x (gcc 13)
@@ -204,7 +204,7 @@ def codegen_object_c(
     try:
         src = os.path.join(workdir, "kernel.c")
         obj = os.path.join(workdir, "kernel.o")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(emit_kernel_c(module, result, fn_name, elem=spec["elem"]))
         cmd = [cc, f"--target={spec['triple']}", "-O2", "-std=c23", "-c", src, "-o", obj]
         if spec["freestanding"]:

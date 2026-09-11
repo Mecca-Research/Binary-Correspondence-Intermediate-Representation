@@ -470,7 +470,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if dep_rules:  # -M/-MM output (its own artifact stream)
         if dep_file:
-            with open(dep_file, "w", encoding="utf-8") as f:
+            with open(dep_file, "w", encoding="utf-8", newline="\n") as f:
                 f.write("\n".join(dep_rules) + "\n")
         else:
             out.extend(dep_rules)
@@ -492,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
 
     text_out = "\n".join(out) + "\n"
     if out_path:
-        with open(out_path, "w", encoding="utf-8") as f:
+        with open(out_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text_out)
     else:
         sys.stdout.write(text_out)

@@ -370,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.out and chunks:
             args.out.mkdir(parents=True, exist_ok=True)
             destination = args.out / f"{root.name}.chunks.jsonl"
-            with destination.open("w", encoding="utf-8") as handle:
+            with destination.open("w", encoding="utf-8", newline="\n") as handle:
                 for chunk in chunks:
                     handle.write(canonical_json(chunk) + "\n")
             print(f"[write] {destination} ({len(chunks)} chunk(s))")

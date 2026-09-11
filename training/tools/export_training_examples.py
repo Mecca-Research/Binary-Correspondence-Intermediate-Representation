@@ -381,7 +381,7 @@ def export(
     # anything that is not exactly its canonical serialization, so a courtesy
     # newline here would make the file unreadable by the very reader that
     # defines the format.
-    (out / "tokenizer.json").write_text(tokenizer.to_json(), encoding="utf-8")
+    (out / "tokenizer.json").write_text(tokenizer.to_json(), encoding="utf-8", newline="\n")
     # One file per split. A held-out record must not be reachable by reading the
     # training file, and a consumer must not have to trust a field to keep them
     # apart.
@@ -391,6 +391,7 @@ def export(
                 canonical_json({**dataclasses.asdict(e), "provenance": p}) + "\n" for e, p in pairs
             ),
             encoding="utf-8",
+            newline="\n",
         )
     (out / "preferences.jsonl").write_text(
         "".join(
@@ -398,6 +399,7 @@ def export(
             for e, origin in preferences
         ),
         encoding="utf-8",
+        newline="\n",
     )
     pipeline.write_pipeline_ledger(out / "ledger.json", ledger)
 
@@ -455,7 +457,7 @@ def export(
         "license": LICENSE,
     }
     (out / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
     )
     return manifest
 

@@ -50,7 +50,7 @@ def compile_to_wasm(
     try:
         ll = os.path.join(workdir, "kernel.ll")
         wasm = os.path.join(workdir, "kernel.wasm")
-        with open(ll, "w") as f:
+        with open(ll, "w", newline="\n") as f:
             f.write(emit_kernel_ll(module, result, fn_name))
         cmd = [
             clang,
@@ -137,7 +137,7 @@ def run_wasm_node(
         with open(wasm, "wb") as f:
             f.write(data)
         js = os.path.join(workdir, "harness.js")
-        with open(js, "w") as f:
+        with open(js, "w", newline="\n") as f:
             f.write(_HARNESS_JS)
         run = subprocess.run([node, js, wasm, str(n), fn_name], capture_output=True, text=True)
         ok = run.returncode == 0 and "OK" in run.stdout

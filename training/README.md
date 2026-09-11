@@ -121,11 +121,24 @@ python3 training/tools/search_chunks.py --count --stats char_count --where "kind
 python3 training/tools/search_chunks.py --where "kind=code" --order-by "char_count:desc" \
                                         --top-k 5 --select "source_path,char_count"
 
+# a value that contains a comma is quoted, whole. Unquoted, a comma separates a set:
+#   --where 'subject=llvm,data'      is  subject IN (llvm, data)
+#   --where 'kind="code,prose"'      is  kind = the one value "code,prose"
+# Inside quotes \" is a quote and \\ is a backslash, and those are the only escapes.
+# A quote inside an unquoted value, or text after a closing quote, is refused rather
+# than guessed -- and `=` and `!=` read one value grammar, so they stay complements.
+python3 training/tools/search_chunks.py --count --where 'language="c++"'
+
 # rebuild only what changed, and keep the corpus you measured against
 python3 training/tools/embed_chunks.py --chunks build/training/chunks \
                                        --out build/training/embeddings --incremental
 python3 training/tools/generations.py --publish --label "before the rewrite"
 python3 training/tools/generations.py --list
+
+# what the planner decided, pinned, so a change to it cannot be silent. A moved
+# decision is a finding, not a failure: re-record deliberately and read the diff.
+python3 training/tools/plan_baseline.py --compare
+python3 training/tools/plan_baseline.py --record
 
 # how good is that retrieval, really? (judged queries, derived not authored)
 python3 training/tools/build_eval_queries.py --out build/training/eval

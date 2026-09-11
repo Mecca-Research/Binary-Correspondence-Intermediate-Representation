@@ -587,3 +587,546 @@ requests, has never executed under a gate: every test admits more rows than it
 asks for. That is a coverage hole in shipped C, unrelated to any of the nine
 projects, and it belongs in the oracle's test registry rather than in this
 ladder.
+
+---
+
+# Second comparative analysis — six projects, the feature checklist, and S13–S18
+
+The first analysis asked whether to fork or to study, across nine projects, and
+answered *study*. This one asks a narrower and harder question: with S1–S12
+landed, **what is still missing that a proven system already has**, and what
+does this rail do that they do not?
+
+Six projects, chosen for the capabilities they are known for rather than for
+resemblance: Apache Spark, Chroma, Convex, SpacetimeDB, RushDB, Supabase. The
+brief was explicit that licence is not a constraint — we are reading designs,
+not vendoring code — so nothing was dropped on licence grounds. Sixteen agents
+read source, nominated mechanisms, and then adversarially refuted each other's
+nominations; 1.88M tokens, 660 tool uses, 62 minutes. Everything an agent
+claimed that this document repeats has been re-derived by hand against this
+tree, and the two places where the agents and the code disagreed are called out
+below.
+
+## Fit: one partial, five dropped
+
+| Project | Fit | Why |
+| --- | --- | --- |
+| **apache/spark** | **PARTIAL** | Catalyst's *structure* transfers — rule-based rewrite over a typed plan tree, with legality gating each rule. Tungsten does not: whole-stage codegen amortises a JIT over 10^8 rows, and this table holds 2,215. |
+| chroma-core/chroma | DROP | A vector store with a server, a WAL and a compactor. The vector half we already do exactly (Q15, bit-identical); the rest is the distributed-service problem this rail deliberately does not have. |
+| get-convex/convex-backend | DROP | Its value is a reactive transaction log driving subscriptions. There is no subscriber here — no server, no client, no session. |
+| ClockworkLabs/SpacetimeDB | DROP | Same shape: the database *is* the server, and the design is inseparable from the WASM module host. |
+| rush-db/rushdb | DROP | A graph layer over Neo4j. The corpus has no graph; `heading_trail` is a tree, and a tree is already a path prefix, which we index. |
+| supabase/supabase | DROP | A composition of Postgres, PostgREST, GoTrue and Realtime. The composition is the product; there is no mechanism to lift that is not "run Postgres". |
+
+The one mechanism that survived from all of it is in the smallest project on
+the list, and it is not a database mechanism at all: **PostgREST's rule for
+quoting a value that contains the separator**. That is the whole harvest of 22
+nominations, and it turned out to be the fix for a live wrong answer in our own
+predicate grammar — see below.
+
+Two findings from reading Spark are worth recording because they cut against
+the expectation:
+
+- **Spark has no transaction manager either.**
+  `sql/catalyst/.../TransactionUtils.scala` is a 38-line shim. The ACID story
+  in that ecosystem lives in Delta Lake, which is a *separate project* whose
+  mechanism is exactly the one S13 implements: immutable files plus one
+  atomically-swapped pointer. We did not import that from Delta; we arrived at
+  it from BCIR's own generation discipline, which is the same idea and predates
+  this analysis. That is a convergence, not a borrowing, and it is the reason
+  S13 was a small change rather than a new subsystem.
+- **Catalyst independently validates legality-before-cost.**
+  `Expression.deterministic` gates whether a rewrite may fire at all, and
+  `CostBasedJoinReorder` bails out entirely when row counts are unavailable
+  rather than guessing. That is `K_BCIR`'s rule — legality decides, cost
+  ranks, and a missing statistic is a refusal rather than an assumption —
+  reached by a different project for different reasons.
+
+## What this rail does better
+
+Three, and each is checkable rather than asserted:
+
+1. **Every statistic is exact, and a bound says so.** Catalyst estimates
+   selectivity from histograms with an independence assumption; the error is
+   unbounded and unreported. Here a count is a count and a bound is labelled
+   `[bound]` — and S15 below turns almost all of the remaining bounds into
+   counts. The one thing this rail will not do is what every surveyed planner
+   does by default: report a guess in the same shape as a fact.
+2. **Byte-identical artifacts across hosts.** Every surveyed system names
+   artifacts with a timestamp or a UUID. TileDB's `generate_timestamped_name()`
+   is the clearest case: the same array built twice is two different arrays.
+   Here the name *is* the content, so two hosts building the same corpus agree
+   on the bytes and on the names — which is what makes a generation digest mean
+   anything.
+
+   This claim was **false on Windows** until defect 5 below, and it is worth
+   being blunt about that rather than quietly fixing it: the property this
+   ladder puts first, over every system it has been compared against, did not
+   hold on one of the three hosts in its own CI matrix, and no gate could see
+   it. Fixes 2 and 5 are what make it true.
+3. **The gate proves it can fail.** Every claim in this ladder was landed by
+   injecting its own defect and watching its own named check fire. None of the
+   six projects gates its planner's *decisions* at all; S18 does.
+
+## The fourteen-feature checklist, answered
+
+Asked for honestly, including the ones that are "no" and will stay "no".
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| ACID transactions with relational tables | **added (S13)** | A: a publish is one pointer swap. C: S14/S17 constraints. I: a reader is pinned to the set it opened. D: `fsync` before the swap. Single-writer; there is no concurrent-writer isolation because there is no concurrent writer. |
+| Type-safe APIs and table access | **added (S14)** | One declared table; an unknown column is refused with the list of real ones. |
+| Application logic inside the engine | **has** | Not stored procedures — the cost model, legality laws and plan selection *are* engine-resident logic, and `bcir_ai_q15_topk` is a kernel the engine dispatches to. |
+| Deterministic reducers with atomic writes | **has** | Every build is a pure function of the chunk bytes; every publish is atomic (S13). This is SpacetimeDB's property, reached without its runtime. |
+| Interactive performance without extra caches | **has** | 76 ms cold, no daemon, no warm cache, no second tier. There is nothing to cache *into*. |
+| Self-host or managed cloud | **has (self-host)** | It is a directory. Managed cloud is not a goal. |
+| Built-in real-time sync | **no, by design** | Requires a server and a subscriber. Neither exists, and adding them would be the largest change in this tree to serve no caller. |
+| Auto-updating queries | **no, by design** | Same reason: a query that updates needs something to update *to*. |
+| SDKs for real-time apps | **no, by design** | Same. |
+| In-memory with client mirroring | **no, by design** | The whole table is 356 KiB of artifacts; it is already effectively in memory after one read. There is no client to mirror to. |
+| Client cache mirroring | **no, by design** | Same. |
+| Unified runtime (state + logic + sync) | **partial, by design** | State and logic are unified in one process. Sync is the half that is deliberately absent. |
+| Built-in authentication | **no, out of scope** | A single-process reader of a repository directory authenticates through the filesystem. Adding an auth layer over `git`-tracked content would be theatre. |
+| Postgres wire format | **no, out of scope** | The wire protocol's value is existing clients. None of them would understand `--query` ranking over Q15 vectors, which is the reason this rail exists. |
+
+The five "by design" rows all reduce to one fact, and it is worth stating once:
+**this database has no server, and nearly every modern database feature on that
+list is a consequence of having one.** That is not a gap to close later. A
+corpus that ships inside a repository and is read by a build step has no client
+to sync to, and a sync mechanism with no subscriber is cost with no benefit.
+The reopening condition is written down below.
+
+## Four defects the analysis found in our own rail
+
+The survey's most valuable output was not a feature to import. It was four
+defects in code that was already gated, three of which produced *wrong answers
+with exit 0*.
+
+### 1. A value containing the separator asked a different question
+
+PostgREST's rule exists because without it a value containing a comma does not
+fail — it silently becomes two values. On `origin/main`, measured:
+
+```
+language!=llvm,markdown   ->  ne ('llvm,markdown',)   admits 2215 of 2215 rows
+kind="code,prose"         ->  in ('"code', 'prose"')  admits    0 of 2215 rows
+```
+
+The first is the serious one. A caller excluding two languages got **every row
+in the table**, exit 0, no warning — because `=` read the comma as a set
+separator and `!=` read it as an ordinary character, so the complement of a
+value nothing carries was everything. That is two value grammars under one
+operator table, which is exactly the disagreement `docs/security/laws.md` L12
+forbids.
+
+*A correction to an earlier framing of this defect.* It was first reported here
+as affecting the 103 titles and 393 heading trails in this corpus that contain
+commas. That overstates it: `title` and `heading_trail` are `text` columns and
+are **not filterable at all**, so a predicate naming one is refused loudly with
+the list of indexed columns. The live silent failure is the one measured above,
+on an indexed column, and it is worse than the overstated version because it
+returns rows rather than an error.
+
+Fixed by adopting PostgREST's rule exactly: a value is quoted whole or not at
+all, `\"` and `\\` are the only escapes, and everything the grammar cannot read
+back unchanged is refused rather than guessed — a quote inside an unquoted
+value, text after a closing quote, an unknown escape. The arity check now
+happens *after* the split, so `=` and `!=` read one value grammar and stay
+complements for every value. `EXPLAIN` prints through `spell_value`, so a
+printed predicate parses back to the predicate that printed it; that round trip
+is gated over 15 values × 3 operators plus sets.
+
+### 2. A bound was reported as a count, for most of the table
+
+`estimate_exact` asked whether each *term* was counted exactly, where the claim
+being made is about their *intersection*. Measured on `origin/main`:
+
+| conjunction | priced `[exact]` while wrong |
+| --- | --- |
+| one indexed column | 0 of 29 (0%) |
+| two indexed columns | **191 of 236 (80%)** |
+| three indexed columns | **526 of 544 (96%)** |
+
+`kind=code AND language=asm` claimed one row where there are none. A planner
+that is confidently wrong about selectivity is the failure mode the catalog's
+whole "exact statistics, no histograms" design exists to avoid, and the label
+had quietly opted out of it. S15 below does not just fix the label — it makes
+the number exact.
+
+Two smaller instances of the same shape were fixed with it: `subject=llvm,llvm`
+summed the marginal twice and estimated 4,320 rows of a 2,215-row table, still
+labelled exact; and an `IN` list now sums over distinct values.
+
+### 3. `catalog.json` was not reproducible across directories
+
+Built from two directories holding byte-identical chunk files with modification
+times 25 years apart: `postings.json`, `locator.bin`, `numeric.bin`,
+`order.bin` and `ids.txt` were byte-identical, and **`catalog.json` differed**
+— on `mtime_ns` and on `chunk_dir`. The generation *id* was safe (it digests
+names and content only), but `tree_digest` covers `catalog.json`, so a
+generation's verification digest was not reproducible across checkouts.
+
+**The determinism gate could not see this**, because it built twice from *one*
+directory, where the paths and mtimes are equal by construction — a check whose
+two sides cannot differ in the way the artifact actually differed. That is L2,
+and it is the most instructive thing in this whole analysis: the gate was green
+for the entire life of the defect.
+
+Fixed by removing the mtime and the directory from the manifest, and the gate by
+building from two different directories with different stamps and requiring both
+to actually differ before comparing.
+
+Removing the mtime cost more than expected, and the cost was worth paying in
+full rather than working around. The mtime was the cache key for a freshness
+fast path: a file whose size *and* mtime matched its record skipped its digest.
+Keeping the fast path on size alone was measured and rejected — it widens the
+declared scope from "size and nanosecond mtime deliberately preserved" to *any
+same-size edit*, which on JSONL is every single-character correction anyone will
+ever make. So the fast path is gone and every load digests every chunk file:
+**0.24 ms → 3.39 ms**, one path instead of two (L12), and no scope note at all.
+
+### 4. A type error in a measurement was silently a null
+
+`char_count = "not-an-int"` built a clean catalog, exited 0, and appeared
+downstream as one more null among the genuine ones. The gap and the error shared
+a spelling, and nothing afterwards could tell them apart. S17 generalises the
+fix from type to value.
+
+### 5. The corpus had different bytes on Windows
+
+Found by CI, on the first push that pinned a corpus fingerprint into the
+repository. The Windows host-portability job reported:
+
+```
+S18: plan baseline: recorded against a different corpus
+  recorded: e7fe3a4fde6dad9364297425b16671ceac6fec6fe416db263484117fdec1fb10
+  now:      e173870819daa383e263b35ce267fe30f4e7f2e030302c5f32c7f2591adbda3f
+```
+
+`build_chunks.py` wrote chunk files with `open("w", encoding="utf-8")` and no
+`newline=`, so Python's text mode translated every `\n` to the platform's line
+ending. On Windows every chunk file was CRLF. Reproduced exactly — taking the
+Linux corpus and replacing `\n` with `\r\n` reproduces both digests above,
+byte for byte.
+
+Nothing reads those files as text and cares. But everything about them is
+**digested**, and all of it moved:
+
+| | with CRLF |
+| --- | --- |
+| corpus `fingerprint` | differs |
+| every recorded per-file `sha256` | differs |
+| every part's content digest | differs |
+| `locator.bin` | differs — byte offsets shift with every line before them |
+| `generation_id`, `tree_digest` | differ, being functions of the above |
+| `postings.json`, `ids.txt`, `numeric.bin` | identical — they hold logical content, not bytes |
+
+So two hosts disagreed about the content address of an identical corpus, and a
+generation published on one could never be verified on the other. This is the
+property stated above as the thing this rail does better than everything it was
+compared against; it had never been true on Windows, and it took pinning a
+fingerprint into the repo for anything to notice.
+
+The repository had already *declared* the rule — `.gitattributes` opens with
+`* text=auto eol=lf` — for everything it tracks. What it could not reach is
+`build/`, which is generated rather than tracked. The fix extends the same rule
+to the tools that generate it: all 17 text-mode artifact writers under
+`training/tools/` now pin `newline="\n"`, and `check_line_endings` holds it
+there with both halves it needs — a static read of every non-`verify_` module
+for a write that lets the host choose, and a read of the bytes actually on disk
+(L11: a witness must hit the law it exists to test). The RED witness for the
+dynamic half pins CRLF explicitly, which the static half accepts, so neither
+half is redundant.
+
+**And then the rest of the repository.** The first pass fixed `training/tools/`
+and recorded the same shape at 37 sites under `bcir/` and 29 under `tools/` as
+out of scope. That audit is now done, and it was worth doing: the sweep also
+found a subtree the first pass had missed entirely — `training/llvm/tools/`,
+whose generators were never scanned because the first scan walked
+`training/tools/` and not `training/`.
+
+**77 sites pinned across 42 files**, in `bcir/`, `tools/`, `training/` and
+`.claude/`. Sixty-seven were classified for exposure against their actual
+consumers; **fifteen were exposed**, each with a cited consumer:
+
+| exposure | sites | evidence |
+| --- | --- | --- |
+| a generator writing a **tracked** file | 6 | three MLIR corpora from `bcir/kbcir/differential.py`, plus `runtime/c/bcir_q8_tables.h`, `mlir/test/passes/structural_corpus.mlir`, `.claude/context/BCIR_DIGEST.md` |
+| generated source whose **object bytes** enter an artifact bundle | 2 | `bcir/codegen/codegen.py` → `add_codegen_result` → `add_native_object` |
+| bytes read back and **`sha256`'d into a manifest** | 2 | `tools/models/run_hardware_rl_gate.py`, `run_hosted_model_gate.py` |
+| a report that is **committed** | 5 | `docs/security/audit-2026-09-04/*.json` |
+
+The sharpest evidence is in CI itself: `.github/workflows/ci.yml` regenerates
+two of those MLIR corpora and gates them with `git diff --exit-code`. That is
+already a byte gate on a regenerated tracked file — a trip-wire that would have
+caught this the first time it ran on a host that chose CRLF, and never did,
+because it runs on ubuntu.
+
+Fifty-one sites were judged **not exposed** — a throwaway temp source consumed
+by a compiler in the same process, a human-read report, a log, a sysfs write —
+and **pinned anyway**. The rule is total inside its declared scope, with no
+allowlist, because an exemption list of "the sites we judged safe" is a second
+thing to maintain and is wrong the first time somebody digests one of them
+(L15). Pinning costs nothing: no tree here generates a `.bat`, `.cmd` or
+`.ps1`, the only artifacts that would want CRLF. What is excluded is structural
+and decidable — a test or gate module, whose fixtures are written and read in
+one process on one host.
+
+The gate is `bcir/tests/test_line_endings.py`, in the oracle suite so it runs on
+every host in the matrix, with three halves: the source rule over four trees,
+a witness for the matcher itself, and — derived rather than curated — *no
+tracked text file in the repository carries a carriage return*, which is
+`.gitattributes`'s own `* text=auto eol=lf` checked instead of trusted, across
+all 1,998 tracked files. `verify_database.py` kept only the half no other rail
+can do, the built corpus on disk; its copy of the source scan is gone, because
+two scanners for one rule had already begun to differ about what counts as a
+text write (L15).
+
+The finding is registered as **L24 — an artifact's bytes do not depend on the
+host that wrote them** (`docs/security/laws.md`).
+
+## The S-ladder — S13 to S18
+
+### S13 — a publish is one transaction
+
+`write()` was six `os.replace` calls into one live directory, manifest last.
+Each was atomic on its own, which is a much weaker claim than it reads as:
+between the second and the third the directory held four old artifacts and two
+new ones, and a reader holding the old manifest that then read a new sidecar
+found a digest mismatch. That failed *loudly* — the manifest vouches for every
+artifact — so it was never a wrong answer. It was a rebuild that could not be
+done while anything was reading.
+
+Now a catalog root is one mutable file and an immutable tree:
+
+```
+build/training/catalog/
+  CURRENT                                  <- the only thing that ever changes
+  sets/7c68989215e5e4dc5f6bd4b41efc8cf1/   <- named by the digest of its own contents
+      catalog.json  postings.json  locator.bin  ids.txt  numeric.bin  order.bin
+```
+
+Artifacts are written into a staging directory nothing has read from because
+nothing knew the name, `fsync`ed, moved into place under their content-addressed
+name with one rename, and then `CURRENT` is swapped. A reader holds the old name
+or the new one, and both name a complete set. Because the name is the content,
+republishing an unchanged catalog finds the set already there and only moves the
+pointer; nothing inside a published set is ever rewritten. The set the pointer
+replaced is kept, so a reader that resolved `CURRENT` an instant before the swap
+finishes its work; older sets are pruned.
+
+Gated by cutting the publish at **every** `os.replace` it makes and asking what a
+reader resolves to. Across all nine interruption points a reader saw exactly two
+things — the complete old catalog or the complete new one — and never an
+incomplete set, a torn set, or an error. The RED witness is a one-line reorder
+that moves the pointer before the set it names exists.
+
+ACID, stated precisely and without overclaiming: **A** is the pointer swap,
+**C** is S14/S17, **I** is that a `Catalog` binds its set directory at load so a
+rebuild landing mid-read cannot move it, **D** is `fsync` on every artifact and
+on the directories before the swap (on POSIX; Windows has no directory handle to
+sync and its rename is already ordered, which is declared in `_sync_directory`
+rather than swallowed). There is no multi-writer isolation and this does not
+claim any: there is one writer.
+
+### S14 — one declared table, read by two rails
+
+`training/schema/chunk-v1.json` declared eighteen fields and their types.
+`catalog.py` named six of them in three Python tuples and said nothing about
+what they hold. The chunk rows carried whatever the builder put there. **Nothing
+reconciled any pair of the three** (L15), so renaming a field in the JSON while
+the Python kept indexing the old name was a green run that produced a postings
+list of one entry — every row, null.
+
+`training/tools/schema.py` is now the Python rail: one `Column` per field with
+its type, its role (`key`, `indexed`, `path`, `numeric`, `text`, `structural`),
+whether it is required, whether it admits null, and its constraints. The
+catalog's three tuples are derived from it. The JSON Schema stays what an
+external consumer validates against and is **not** generated from it — the two
+are read out of their own sources and reconciled by `check_schema`, which
+refuses any disagreement about which fields exist, which are required, which
+admit null, what type each holds, and what values each admits.
+
+A table is a *parameter* of a build rather than a global, and that is load-bearing
+rather than tidy. The chunk contract requires every row to carry a `char_count`
+of at least 1 — which is true, and enforced — and it therefore means no
+schema-valid corpus can ever leave a measurement absent. The packed column must
+still spell absence and comparisons must still answer for it, so the checks that
+cover that declare a relaxed table that admits it. The alternative was to weaken
+the contract so a fixture could reach a state the contract forbids, which is a
+hole dressed as a test (L2).
+
+### S15 — exact joint statistics, because these columns are small
+
+Every surveyed planner estimates conjunction selectivity with sketches and an
+independence assumption, because the joint distribution is expensive in the
+general case. That reasoning does not transfer here, and noticing why is the
+whole slice: **an indexed column is by role one whose distinct-value map is a
+handful of entries.** `kind` has 4 values, `subject` 8, `language` 17. The full
+joint distribution over any pair is bounded by the product of two handfuls, and
+the corpus is static, so it is computed once at build.
+
+The entire joint distribution over all three pairs is **61 non-empty cells, 978
+bytes — 3.1% of `catalog.json`**, which grew 30.0 → 30.6 KiB. Total artifacts
+355.9 → 356.5 KiB.
+
+Every operator that is a statement about *which values* a column holds folds to
+one shape — a set of index keys — after which there is no polarity left to reason
+about: `!=` is the complement, `IS NULL` is the null key alone, `IS NOT NULL` is
+everything else, `IN` is the set as written. One rule instead of sixteen
+operator-pair formulas (L14). Two columns are then a cross product of pair
+lookups; three or more have no stored statistic, so the answer is the **tightest
+pair**, which assumes nothing — each pair counts a strictly larger set — and is
+far tighter than the tightest marginal.
+
+| conjunction | main | this branch |
+| --- | --- | --- |
+| 1 indexed column (29) | 29 exact | 29 exact |
+| 2 indexed columns (236) | 45 exact, **191 falsely exact** | **236 exact**, 0 wrong |
+| 3 indexed columns (544) | 18 exact, **526 falsely exact** | 511 exact, 33 tight bounds, **0 loose bounds** |
+
+`subject=llvm AND kind=code AND language=llvm` went from a bound of 75 to a
+bound of 27, which is the exact answer. The 511 "exact" at three columns are the
+empty conjunctions: an upper bound of zero is a count of zero whatever the terms
+were, and that is the case a planner acts on.
+
+A cap (`MAX_JOINT_CELLS`) bounds the cross product where the work is committed
+rather than asserting something about the data (L3); above it the estimator
+declines and the bound stands.
+
+### S16 — an operator nothing exercises is an operator nothing checks
+
+The gate ran 1,010 checks, and an eleventh operator could have been added to
+`plan.OPERATORS` and passed every one of them. Nothing reconciled the declared
+language against the tables that exercise it, so coverage was whatever somebody
+remembered to add.
+
+`check_operator_coverage` now reconciles `plan.OPERATORS` against three rails,
+because an operator can pass one and fail another: the grammar table says it can
+be **written**; resolution against the corpus says it can be **answered**, with
+its estimate bounding its own answer; and `plan_baseline.QUERIES` says its
+**decision is pinned**. An operator missing from any of them fails the gate,
+naming which. The grammar table was hoisted to a module constant so the coverage
+check and the grammar check read one source rather than two that agree by habit
+(L15). RED witness: adding `"between"` to the operator tuple.
+
+### S17 — domain and NOT NULL constraints
+
+"This is an integer" was the only thing a build ever checked, and the
+interesting failures are not type failures. A `kind` of `"prose "` with a
+trailing space types fine, indexes fine, and silently creates a fifth kind that
+no query written against the documented four will ever match. A `char_count` of
+`0` types fine and makes every average wrong.
+
+Constraints are declared on the column — required, nullable, enumerated domain,
+minimum — and enforced against the row **as it came off disk**, before the
+catalog projects out the six columns it indexes. Checking the projection would
+check the six copied out and say nothing about the twelve left behind, which is
+where a renamed field hides. Refusing an undeclared field is the other half of
+the same rule: a rename otherwise reads as one field going absent *and* an
+unindexed one appearing — two findings for one cause.
+
+Verified end to end: 17 distinct violations each refuse with exit 1, naming the
+offending chunk and column, writing no catalog; the two legal shapes (`language`
+null, `language` absent) still build. The trial list is *derived from the table*
+and then reconciled against it, so a column that declares a constraint with no
+trial fails the check for lack of coverage.
+
+### S18 — the decision, not just the answer
+
+Every other gate here checks that an answer is *right*. None checked that it was
+reached the same way — and both real estimator defects this tree has had were
+invisible to correctness gates by construction. The zone map calling a
+25%-selective predicate 98% selective, and the conjunction bound reported as a
+count, both produced correct rows the entire time they were wrong.
+
+`training/plans/baseline-v1.json` pins 26 requests: the parsed predicates, the
+admitted rows, the estimate and whether it was a count or a bound, the plan
+chosen under each of the four objectives, how many candidates were illegal, the
+range strategy and how many parts were pruned, the order strategy, and the
+groups kept after `HAVING`. No wall time — that is a property of the runner, not
+the plan — and no scalarized cost, which moves whenever the model is recalibrated
+without the *decision* changing.
+
+A moved decision is a finding, not a failure of the tool: improving an estimate
+moves the file and so does breaking one, and the gate's job is to refuse to let
+either happen without somebody reading the diff. The file carries the corpus
+fingerprint, so comparing against a different corpus is refused rather than
+reported as 26 regressions — which makes adding corpus content a deliberate
+re-record, and that is the point.
+
+## What was scouted and declined
+
+71 mechanisms outside the given checklist were scouted: 14 already present, 12
+worth building (the six above plus the four defects, now all landed), 6 worth
+reopening later, **53 not at this scale**. Two declines are worth recording
+because the measurement is the interesting part:
+
+- **Approximate nearest neighbour (LSH, IVF, HNSW).** Exact all-pairs cosine
+  over this corpus is 2,452,005 pairs in **58.9 s of pure Python**. Every ANN
+  structure trades exactness for time we do not need to save, on a rail whose
+  `accuracy` axis is a legality question first.
+- **Approximate quantiles (t-digest, KLL).** `order.bin` already holds every
+  measurement column sorted. An exact quantile is an O(1) index into it and
+  costs **zero new bytes**. Sketching an answer we can look up would be strictly
+  worse on every axis.
+
+## What this slice cost
+
+Measured on this host, interleaved A/B against `origin/main`, 15 paired runs,
+median. `[wall, indicative]` — these gate nothing.
+
+| | main | this branch | delta |
+| --- | --- | --- | --- |
+| `--count --where kind=code` | 69.8 ms | 76.3 ms | +6.5 ms (+9%) |
+| `--count --stats char_count` | 68.3 ms | 75.7 ms | +7.4 ms (+11%) |
+| `--count --group-by subject` | 73.7 ms | 78.4 ms | +4.6 ms (+6%) |
+| `catalog.build` (2,215 rows) | 58.2 ms | 99.9 ms | +41.7 ms |
+| `Catalog.load` | 0.24 ms | 3.39 ms | +3.15 ms |
+| artifacts on disk | 355.9 KiB | 356.5 KiB | +0.6 KiB |
+| gate checks | 1,010 | 1,812 | +802 |
+
+The command delta decomposes into the freshness digest (+3.15 ms, the price of
+fix 2) and the `schema` import (+1.7 ms by `-X importtime`); the rest is noise
+at this resolution. The build delta is per-row schema validation over 2,215 rows
+× 18 columns, paid once per rebuild and never by a query.
+
+**Every one of those numbers is a cost, and every one buys a property that was
+false before.** The 9% is worth stating plainly rather than hiding: it is what
+reproducible artifacts and a refusal-on-malformed-input cost on a corpus this
+size, and it is the kind of trade this ladder should keep making.
+
+## Reopening conditions
+
+| Verdict | Reopens when |
+| --- | --- |
+| the five sync/client features stay absent | something other than a build step reads this corpus — a second process, a service, an editor — at which point "no subscriber" stops being true and the whole row changes |
+| Postgres wire format stays out of scope | a caller appears that wants relational access *without* ranked retrieval, since that is the half an existing client could use |
+| built-in authentication stays out of scope | the corpus stops being repository content, i.e. when filesystem permissions stop being the access control |
+| joint statistics stay pairwise (S15) | a query shape appears whose three-column bound actually costs something; the tightest-pair bound was exact on every non-empty triple in this corpus |
+| the freshness digest stays unconditional (fix 2) | digesting the corpus dominates a command, at which point the answer is a design that stays *one* path, not a second one |
+| the line-ending rule stays scoped to `training/tools/` (fix 5) | a text artifact under `bcir/` or `tools/` is digested, or compared across hosts; 66 unpinned writes are waiting there, and only the byte-written frozen formats are safe by construction |
+| ANN indexing stays declined | the corpus passes ~50,000 rows, where 58.9 s of exact all-pairs becomes minutes |
+| Spark's Catalyst stays study-only | a rewrite rule appears that is worth expressing as a rule rather than as code, i.e. when there are enough of them to need a driver |
+| the previous published set is kept, no more (S13) | a reader can hold a catalog across more than one republish, which today it cannot: there is one writer and it runs to completion |
+
+## Method, and what would overturn it
+
+Sixteen agents read source in six cloned repositories, nominated mechanisms with
+file-and-line citations, and then adversarially refuted each other's
+nominations; 22 nominations, one survivor. That ratio is a property of the
+refuter instruction as much as of the mechanisms, and it is why the survivor is
+the only agent output this document treats as a finding rather than as a lead.
+
+Everything else here was re-derived by hand: the four defects were reproduced
+against `origin/main` in a separate worktree, every measurement above was taken
+on this host with the comparison interleaved, and every claim is gated. The RED
+sweep is the load-bearing part — eight defects injected, each caught by its own
+named check, listed in the pull request.
+
+Two things would overturn the central verdict. If a second reader of this corpus
+ever appears, five "by design" rows become gaps and the server question reopens
+properly rather than by accretion. And if the corpus outgrows the scale that
+makes exact statistics cheap — the joint distribution is small *because* an
+indexed column is small — S15's argument stops holding, and the honest answer
+then is a bound that says it is a bound, which is where this started.

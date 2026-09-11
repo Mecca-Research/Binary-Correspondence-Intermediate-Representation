@@ -1107,7 +1107,9 @@ def main(argv: list[str] | None = None) -> int:
         report = audit(args.root, args.expected, require_advisory=args.require_advisory)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
     advisory = report["advisory"]
     detail = ""
     if "audited" in advisory:

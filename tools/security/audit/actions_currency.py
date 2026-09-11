@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     print(f"actions_currency: {len(rows)} pins, {unavailable} unavailable")
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as handle:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
             json.dump({"pins": rows}, handle, indent=1)
             handle.write("\n")
     return 1 if unavailable else 0

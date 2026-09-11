@@ -882,7 +882,7 @@ def main(argv: list[str]) -> int:
     rows = compare(measured)
     print(render(rows))
     if args.json:
-        with open(args.json, "w", encoding="utf-8") as handle:
+        with open(args.json, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(
                 {
                     "source": SOURCE,

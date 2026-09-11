@@ -45,7 +45,9 @@ def read_json(path: Path) -> Any:
 
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
 
 
 def sha256(path: Path) -> str:
@@ -240,7 +242,7 @@ def prepare(
         prompt_source = repository_path(repo_root, entry["prompt_path"])
         prompt_copy = directory / "prompt.md"
         prompt_text = PROFILE.model_visible(prompt_source.read_text(encoding="utf-8"))
-        prompt_copy.write_text(prompt_text, encoding="utf-8")
+        prompt_copy.write_text(prompt_text, encoding="utf-8", newline="\n")
         bundled_context: list[str] = []
         for relative in entry["context_paths"]:
             source = repository_path(repo_root, relative)
@@ -326,7 +328,7 @@ def fixture_generate(
             repository_path(repo_root, entry["reference_solution_path"]), primary_artifact
         )
     elif name == "empty":
-        primary_artifact.write_text("", encoding="utf-8")
+        primary_artifact.write_text("", encoding="utf-8", newline="\n")
     elif name == "partial":
         fixture = (
             repo_root
@@ -673,7 +675,7 @@ def report(args: argparse.Namespace, entries: list[dict[str, Any]]) -> int:
     manifest = read_json(manifest_path)
     records = load_grade_records(args.output_dir, entries)
     results_path = args.output_dir / "results.jsonl"
-    with results_path.open("w", encoding="utf-8") as stream:
+    with results_path.open("w", encoding="utf-8", newline="\n") as stream:
         for record in records:
             stream.write(json.dumps(record, sort_keys=True) + "\n")
     summary = build_summary(records, manifest)

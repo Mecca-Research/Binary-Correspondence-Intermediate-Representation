@@ -463,7 +463,7 @@ def _equivalence(source: str, lowered: LoweredUnit) -> str:
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "equiv.c")
         exe = os.path.join(d, "equiv")
-        with open(src, "w", encoding="utf-8") as f:
+        with open(src, "w", encoding="utf-8", newline="\n") as f:
             f.write(harness)
         for std in ("-std=c23", "-std=c2x", "-std=c17"):
             b = subprocess.run(

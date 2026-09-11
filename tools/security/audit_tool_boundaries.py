@@ -341,7 +341,9 @@ def main(argv: list[str] | None = None) -> int:
     report = audit_boundaries(args.root)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
     print(
         f"audit_tool_boundaries: {report['state']} scanned={report['scanned_files']} "
         f"findings={len(report['findings'])}"

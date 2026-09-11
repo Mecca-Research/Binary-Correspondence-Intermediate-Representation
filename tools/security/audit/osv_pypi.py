@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> int:
     if UNEVALUABLE:
         print(f"  unevaluable feed values recorded (never text-compared): {len(UNEVALUABLE)}")
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as handle:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(
                 {
                     "source": EXPORT,

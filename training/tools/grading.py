@@ -269,7 +269,7 @@ def run_semantic(
     if harness.refuse is not None and (reason := harness.refuse(source)):
         return False, reason, [], "", ""
     program = temp / f"semantic-{index}{harness.suffix}"
-    program.write_text(harness.build(source, vector, index), encoding="utf-8")
+    program.write_text(harness.build(source, vector, index), encoding="utf-8", newline="\n")
     command = [tool, str(program)]
     result = run_command(command, timeout)
     return (
@@ -611,7 +611,7 @@ def main(profile: SubjectProfile, description: str, argv: list[str] | None = Non
     )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(output, encoding="utf-8")
+        args.output.write_text(output, encoding="utf-8", newline="\n")
     else:
         sys.stdout.write(output)
 

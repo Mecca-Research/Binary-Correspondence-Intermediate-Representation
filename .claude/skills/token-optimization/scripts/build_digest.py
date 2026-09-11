@@ -95,7 +95,7 @@ def main() -> int:
         print("digest is current." if ok else "digest is STALE — rerun build_digest.py")
         return 0 if ok else 1
     os.makedirs(os.path.dirname(DIGEST), exist_ok=True)
-    open(DIGEST, "w", encoding="utf-8").write(new)
+    open(DIGEST, "w", encoding="utf-8", newline="\n").write(new)
     print(f"wrote {os.path.relpath(DIGEST, ROOT)} ({len(new)} bytes)")
     return 0
 

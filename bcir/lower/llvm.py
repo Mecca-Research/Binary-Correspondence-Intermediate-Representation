@@ -317,9 +317,9 @@ def compile_and_run(
         ll = os.path.join(workdir, "kernel.ll")
         cc = os.path.join(workdir, "harness.c")
         exe = os.path.join(workdir, "prog")
-        with open(ll, "w") as f:
+        with open(ll, "w", newline="\n") as f:
             f.write(emit_kernel_ll(module, result, fn_name))
-        with open(cc, "w") as f:
+        with open(cc, "w", newline="\n") as f:
             f.write(emit_harness_c(module, result, fn_name))
         build = subprocess.run([clang, "-O2", cc, ll, "-o", exe], capture_output=True, text=True)
         if build.returncode != 0:

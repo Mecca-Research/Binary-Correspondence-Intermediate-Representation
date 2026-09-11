@@ -1202,19 +1202,19 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.emit_corpus:
         path = os.path.normpath(_CORPUS_MLIR_PATH)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(emit_corpus_mlir())
         print(f"[differential] wrote {path}")
         return 0
     if args.emit_theta:
         path = os.path.normpath(_THETA_MLIR_PATH)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(emit_theta_test())
         print(f"[differential] wrote {path}")
         return 0
     if args.emit_matrix:
         path = os.path.normpath(_MATRIX_MLIR_PATH)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(emit_target_matrix())
         print(f"[differential] wrote {path}")
         return 0
