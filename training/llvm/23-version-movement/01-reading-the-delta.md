@@ -29,10 +29,10 @@ diffs the snapshots:
 | surface | arrived | departed |
 | --- | ---: | ---: |
 | instructions | 1 | 0 |
-| attributes | 16 | 3 |
+| attributes | 17 | 3 |
 | intrinsics | 102 | 9 |
 
-Of those 131, **7** are taught by a chapter and **124** are declared out of scope with a stated reason.
+Of those 132, **8** are taught by a chapter and **124** are declared out of scope with a stated reason.
 <!-- /generated -->
 
 Every one of those items is disposed of in

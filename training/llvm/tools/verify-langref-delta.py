@@ -87,8 +87,18 @@ _TARGET_INTRINSIC = re.compile(r"^llvm\.(?:" + "|".join(_TARGET_PREFIXES) + r")\
 INTERNAL_OPCODE_SPLITS = {"Br": ("CondBr", "UncondBr")}
 
 _HANDLE_INST = re.compile(r"^HANDLE_[A-Z_]*INST *\( *[0-9]+ *, *([A-Za-z0-9]+) *,", re.MULTILINE)
+# Attributes.td wraps a declaration whose name is long:
+#
+#     def NoCreateUndefOrPoison
+#         : EnumAttr<"nocreateundeforpoison", IntersectAnd, [FnAttr]>;
+#
+# so the pattern cannot require the `def NAME : Kind<...>` to sit on one line. Demanding
+# that cost five attributes on LLVM 23 and four on 18 -- `allocalign`, `allockind`,
+# `disable_sanitizer_instrumentation`, `hot`, and `nocreateundeforpoison` -- and the last
+# of those is a genuine 18->23 arrival that the delta therefore never reported. A
+# whitespace-tolerant pattern is the fix; `\s` spans the newline where `<space>` did not.
 _ATTR_DEF = re.compile(
-    r'def [A-Za-z0-9_]+ : (?:Enum|Int|Type|Str|ConstantRange|ComplexStr)Attr<"([^"]+)"'
+    r'def\s+[A-Za-z0-9_]+\s*:\s*(?:Enum|Int|Type|Str|ConstantRange|ComplexStr)Attr<"([^"]+)"'
 )
 # The enum names are C++ identifiers (`vector_reduce_add`); the dotted LangRef spelling
 # only appears in the trailing comment TableGen writes beside each one, which is why this
@@ -457,6 +467,15 @@ def check_attribute_coverage(report: Report) -> None:
     # to be wrong, so it is pinned here rather than trusted.
     declared = len(entries) - taught
     words = {
+        11: "Eleven",
+        12: "Twelve",
+        13: "Thirteen",
+        14: "Fourteen",
+        15: "Fifteen",
+        16: "Sixteen",
+        17: "Seventeen",
+        18: "Eighteen",
+        19: "Nineteen",
         20: "Twenty",
         21: "Twenty-one",
         22: "Twenty-two",
@@ -474,11 +493,25 @@ def check_attribute_coverage(report: Report) -> None:
         sentence = (
             f"{words.get(declared, str(declared))} further attributes exist in LLVM {CURRENT_MAJOR}"
         )
+        body = chapter.read_text(encoding="utf-8")
         report.require(
-            sentence in chapter.read_text(encoding="utf-8"),
+            sentence in body,
             f"13-advanced-ir/04-attributes.md should say {sentence!r}: {declared} "
             f"attributes are dispositioned as out of scope, and the chapter states that "
             f"count in prose",
+        )
+        # The same sentence carries a SECOND count of live data: how many of those could
+        # not be produced at all. The first version of it said thirteen while the table
+        # held fourteen, which is the argument for pinning it rather than the argument
+        # against -- one pinned number in a sentence does not protect the other.
+        unproduced = sum(
+            1 for e in entries.values() if e.get("emitted_by", "").startswith("not reproduced")
+        )
+        phrase = f"and {words.get(unproduced, str(unproduced)).lower()} that"
+        report.require(
+            phrase in body,
+            f"13-advanced-ir/04-attributes.md should say {phrase!r}: {unproduced} "
+            f"dispositions record that no recipe produced the attribute",
         )
 
     reproduced = sum(

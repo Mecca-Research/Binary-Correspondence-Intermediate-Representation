@@ -1,3 +1,11 @@
+; REQUIRES: llvm >= 23
+; mlir-translate 23 puts `nocreateundeforpoison` on the math intrinsic
+; declarations below. That attribute arrived in LLVM 23, so llvm-as 18 refuses the
+; whole attribute group -- `unterminated attribute group`, which is what an
+; assembler says when it meets a keyword it does not know. The construct is genuinely
+; newer than the corpus baseline, so this file declares its floor rather than being
+; edited to hide it; SEMVER.md and examples/README.md describe the mechanism and name
+; the CI job that owns the skip.
 ; ModuleID = 'LLVMDialectModule'
 source_filename = "LLVMDialectModule"
 

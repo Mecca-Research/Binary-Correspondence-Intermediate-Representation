@@ -7,6 +7,11 @@
    "emitted_by": "not reproduced",
    "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
   },
+  "disable_sanitizer_instrumentation": {
+   "status": "declared",
+   "emitted_by": "not reproduced (-fsanitize=address emitted none)",
+   "reason": "An opt-out marker for sanitizer instrumentation, and not reproducible here: clang 23 emitted none even under -fsanitize=address. Out of scope on the same boundary as the rest of the sanitizer family -- the corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attributes that request or suppress it."
+  },
   "inlinehint": {
    "status": "declared",
    "emitted_by": "not reproduced (C++ `inline`, -O0/-O1/-O2/-fno-inline)",
@@ -36,6 +41,11 @@
    "status": "declared",
    "emitted_by": "not reproduced (-fcf-protection=branch/full)",
    "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "nocreateundeforpoison": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "any optimisation level, on intrinsic declarations -- no flag needed"
   },
   "noduplicate": {
    "status": "declared",

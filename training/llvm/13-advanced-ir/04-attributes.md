@@ -476,6 +476,28 @@ move code across the call without first proving the call cannot observe it. It i
 rather than inferred because for an intrinsic it is part of the definition, and you will
 see it on essentially every `llvm.*` declaration in real output.
 
+### With no flag at all: `nocreateundeforpoison`
+
+A third arrival-by-default, and new in LLVM 23 — it sits beside `nocallback` on the same
+intrinsic declarations:
+
+```llvm
+; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
+declare float @llvm.sqrt.f32(float)
+```
+
+It promises the callee will not manufacture `undef` or `poison` out of defined inputs. That
+is a stronger statement than it first looks: a pass that knows a value came out of such a
+function can rule out the poison-propagation hazard
+[`05-poison-undef-freeze.md`](05-poison-undef-freeze.md) is about, without having to prove
+anything about the function's body.
+
+Measured with clang 23: two occurrences at `-O0` and two at `-O2` on an ordinary C file,
+and **none** under `-ffast-math` — which is consistent with fast-math being exactly the
+mode where an operation may produce poison from finite inputs, though the corpus has not
+traced that connection through the optimiser and does not claim it as more than an
+observation.
+
 ### With an optimisation level: `optsize` and `minsize`
 
 ```llvm
@@ -555,9 +577,9 @@ survive passes you expected to remove them, this is why.
 
 ### The rest
 
-Twenty-four further attributes exist in LLVM 23 that this corpus does not teach, each with
+Twenty-five further attributes exist in LLVM 23 that this corpus does not teach, each with
 a recorded reason: stack-protection and sanitizer markers that relay a build flag,
-codegen-layout directives with no semantics a reader needs, and twelve that
+codegen-layout directives with no semantics a reader needs, and fourteen that
 **could not be produced at all** by any recipe tried against clang 23.1.1. That last group
 is worth its own note — an attribute the language defines but your toolchain never emits is
 one you will not meet by reading output, and the honest disposition says so rather than
