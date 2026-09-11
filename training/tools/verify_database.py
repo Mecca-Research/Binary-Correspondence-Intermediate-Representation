@@ -632,19 +632,50 @@ def check_predicate(
         f"directories and the corpus has {len(truth_prefixes)}; a prefix predicate "
         "over a missing directory would silently fall back to a looser bound",
     )
+    # `^=` is documented "starts with", so the truth is a string test over the
+    # corpus's own paths -- NOT the directory index. Those are different questions
+    # wherever a directory name is also a string prefix of a sibling entry, and
+    # checking the index against itself is how the difference went unnoticed
+    # (`docs/security/laws.md` L11 -- a witness must hit the law it exists to test).
+    truth_paths = [record.get(catalog_module.PATH_COLUMN) for record in ordered]
+
+    def rows_starting_with(prefix: str) -> list[int]:
+        return [row for row, path in enumerate(truth_paths) if str(path).startswith(prefix)]
+
     deepest = sorted(truth_prefixes, key=lambda p: (-p.count("/"), p))[:12]
     report.require(
         len(deepest) >= 4,
         f"S4: only {len(deepest)} prefixes to check, too few to witness the index",
     )
-    for prefix in deepest:
+    # Directory probes, the same string with a separator, and every proper prefix of
+    # a real path -- the last of which is where a partial segment lives.
+    probes = list(deepest)
+    probes += [f"{prefix}/" for prefix in deepest[:4]]
+    for path in truth_paths[:6]:
+        text = str(path)
+        probes += [text, text[: len(text) - 3], text[: text.rfind("/") + 4]]
+    for prefix in dict.fromkeys(probe for probe in probes if probe):
         rows = catalog.rows_with_prefix(prefix)
         count, exact = catalog.count_prefix(prefix)
+        # Not `truth`: that name already holds this function's per-column counts, and
+        # rebinding it here made the column checks below index a list with a string.
+        starting = rows_starting_with(prefix)
         report.require(
-            exact and count == truth_prefixes[prefix] == len(rows),
-            f"S4: prefix {prefix!r} counts {count} (exact={exact}), resolves "
-            f"{len(rows)} rows, and the corpus has {truth_prefixes[prefix]}",
+            rows == starting,
+            f"S4: prefix {prefix!r} resolves {len(rows)} row(s) and the corpus has "
+            f"{len(starting)} whose path starts with it; missing "
+            f"{sorted(set(starting) - set(rows))[:4]}, "
+            f"extra {sorted(set(rows) - set(starting))[:4]}",
         )
+        report.require(
+            count == len(starting) and exact,
+            f"S4: prefix {prefix!r} counts {count} (exact={exact}) against "
+            f"{len(starting)} row(s) that start with it",
+        )
+    report.require(
+        catalog._statistics["path_prefixes"] and truth_prefixes,
+        "anti-vacuity: the corpus has no directory prefixes to witness",
+    )
     report.require(
         truth_rows == catalog.rows_total,
         f"S4: the chunk files hold {truth_rows} rows and the catalog claims {catalog.rows_total}",
@@ -729,7 +760,7 @@ def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
         free = catalog.aggregate(column)
         gathered = catalog.aggregate(column, every_row)
         report.require(
-            free["scanned"] == 0 and gathered["scanned"] == len(values),
+            free["scanned"] == 0 and gathered["scanned"] == len(every_row),
             f"aggregates: {column} reported scanned={free['scanned']} unfiltered and "
             f"{gathered['scanned']} over every row; the two paths are not the two "
             "paths they claim to be",
@@ -942,6 +973,121 @@ def _synthetic_gaps(catalog_module, directory: Path):
     return catalog_module.Catalog.load(directory / "catalog", mirror)
 
 
+def _synthetic_ambiguous_paths(catalog_module, directory: Path):
+    """A corpus where a directory name is also a string prefix of a sibling entry.
+
+    `^=` means "starts with" (`training/TRAINING_LANGREF.md` SS5.2), and the stored
+    path index groups rows by *directory ancestor*, which answers "is under this
+    directory". The two questions give the same answer for every path in the shipped
+    corpus, so a witness that probes only real paths passes whichever question the
+    code is actually answering -- and passed while it answered the wrong one.
+
+    This table makes them differ: `training/data/` is a directory, and
+    `training/database.md` and `training/datastore.md` are siblings whose names
+    continue the same segment. Nothing about the defect requires an exotic corpus;
+    it requires a file named like a directory next to it, which is ordinary.
+    """
+    mirror = directory / "chunks"
+    mirror.mkdir()
+    paths = [
+        "training/data/a.md",
+        "training/data/b.md",
+        "training/database.md",
+        "training/datastore.md",
+        "training/other/c.md",
+    ]
+    lines = []
+    for index, source_path in enumerate(paths):
+        text = f"row {index}"
+        lines.append(
+            json.dumps(
+                {
+                    "chunk_id": f"sha256:{index:064d}",
+                    "subject": "synthetic",
+                    "source_path": source_path,
+                    "kind": "prose",
+                    "language": None,
+                    "span": {"start_line": index + 1, "end_line": index + 1},
+                    "text": text,
+                    "char_count": len(text),
+                    "token_estimate": index + 1,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    (mirror / "synthetic.chunks.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+    )
+    catalog_module.write(catalog_module.build(mirror, synthetic_table()), directory / "catalog")
+    return catalog_module.Catalog.load(directory / "catalog", mirror), paths
+
+
+def check_prefix_semantics(report: Report, plan) -> None:
+    """`^=` is "starts with", on a corpus built so that the other reading differs.
+
+    The shipped corpus cannot witness this: every one of its counted directories
+    happens to agree with a string test, so the check would pass against either
+    meaning (L2, L11). The table below is built to disagree, and the RED sweep that
+    reintroduces the old shortcut is caught here and nowhere else.
+    """
+    catalog_module = load_tool("catalog")
+    with tempfile.TemporaryDirectory() as directory:
+        catalog, paths = _synthetic_ambiguous_paths(catalog_module, Path(directory))
+        ordered = sorted(paths)  # row order, for a table whose sort key is the path
+        report.require(
+            list(catalog.ids) and catalog.rows_total == len(paths),
+            f"anti-vacuity: the ambiguous table built {catalog.rows_total} row(s) of {len(paths)}",
+        )
+
+        def starting(prefix: str) -> list[int]:
+            return [row for row, path in enumerate(ordered) if path.startswith(prefix)]
+
+        probes = [
+            ("training/data", 4),  # the directory AND the two siblings that extend it
+            ("training/data/", 2),  # the directory alone
+            ("training/dat", 4),  # a partial segment
+            ("training/database.md", 1),  # a whole path
+            ("training/database", 1),  # a whole path, one character short
+            ("training/", 5),
+            ("training/nothing", 0),
+        ]
+        for prefix, expected in probes:
+            rows = catalog.rows_with_prefix(prefix)
+            count, exact = catalog.count_prefix(prefix)
+            truth = starting(prefix)
+            report.require(
+                len(truth) == expected,
+                f"anti-vacuity: {prefix!r} matches {len(truth)} synthetic path(s), not "
+                f"the {expected} this probe was written for; the fixture has drifted",
+            )
+            report.require(
+                rows == truth,
+                f"S4: {prefix!r} means 'starts with' and resolved {len(rows)} row(s) "
+                f"where {len(truth)} path(s) start with it -- missing "
+                f"{[ordered[r] for r in sorted(set(truth) - set(rows))][:3]}",
+            )
+            report.require(
+                count == len(truth) and exact,
+                f"S4: {prefix!r} counts {count} (exact={exact}) against {len(truth)} "
+                "row(s) whose path starts with it",
+            )
+
+        # ...and the predicate path agrees with the catalog it is built on.
+        selection = plan.select(catalog, [plan.parse_predicate("source_path^=training/data")])
+        report.require(
+            sorted(selection.rows or ()) == starting("training/data"),
+            f"S4: the predicate admitted {len(selection.rows or ())} row(s) where "
+            f"{len(starting('training/data'))} path(s) start with 'training/data'",
+        )
+        report.require(
+            selection.estimate_exact and selection.estimated == len(selection.rows or ()),
+            f"S4: the prefix estimate is {selection.estimated} "
+            f"(exact={selection.estimate_exact}) against {len(selection.rows or ())} "
+            "admitted rows",
+        )
+
+
 def _check_sorted_index(report: Report, catalog_module, catalog, column: str) -> None:
     """The sorted index is a claim about every row, checkable before any query runs.
 
@@ -954,7 +1100,12 @@ def _check_sorted_index(report: Report, catalog_module, catalog, column: str) ->
     index = list(catalog.order[column])
     split = catalog.measured(column)
     cells = catalog.numeric[column]
-    counted = catalog.aggregate(column)["count"]
+    # Counted from the packed column, NOT from `aggregate(column)`: with no selection
+    # that returns the stored statistic, and `measured()` returns the same stored
+    # field, so comparing the two was one number against itself. The split, the data
+    # and the statistic are three separate claims and this is where they meet.
+    counted = sum(1 for value in cells if value != catalog_module.NUMERIC_NULL)
+    stored = catalog.aggregate(column)["count"]
     report.require(
         sorted(index) == list(range(catalog.rows_total)),
         f"ranges: the sorted index for {column} names {len(set(index))} distinct "
@@ -963,9 +1114,15 @@ def _check_sorted_index(report: Report, catalog_module, catalog, column: str) ->
     )
     report.require(
         split == counted,
-        f"ranges: the sorted index for {column} splits at {split} where the statistics "
-        f"count {counted} measured row(s); the split is the only thing keeping "
+        f"ranges: the sorted index for {column} splits at {split} where the packed "
+        f"column holds {counted} measured row(s); the split is the only thing keeping "
         "unmeasured rows out of every comparison",
+    )
+    report.require(
+        stored == counted,
+        f"ranges: the statistics say {column} has {stored} measured row(s) and the "
+        f"packed column holds {counted}; a query priced from the statistics and "
+        "answered from the column would disagree about how many rows exist",
     )
     keys = [(cells[row], row) for row in index[:split]]
     report.require(
@@ -2817,6 +2974,90 @@ def check_constraints(report: Report, catalog_module, chunk_dir: Path) -> None:
 # --------------------------------------------------------------------------
 
 
+def check_reserved_character(report: Report, plan, catalog_module, catalog) -> None:
+    """The catalog's own sentinel is not a value anybody can ask for.
+
+    `catalog.NULL_KEY` is a NUL followed by `null`, and the postings file lists under
+    it every row carrying no value for an indexed column. That is a sound choice
+    *because* no corpus value contains a NUL -- but soundness on the storage side is
+    not enforcement on the input side, and it was not enforced: `language=\0null`
+    parsed, resolved, and returned exactly the rows `language!=?` returns, while its
+    negation returned exactly `language=?`.
+
+    Nothing was mis-counted, which is what made it survive: the rows were right. What
+    was wrong is that a reserved implementation value had become a member of the
+    domain it exists outside of (`docs/security/laws.md` L20), giving the grammar a
+    second spelling for a question it already spells once -- the shape this tree
+    classifies as Class A and refuses everywhere else.
+
+    Both halves are checked, because a refusal that also refuses legitimate values
+    would be a worse defect than the one it fixed.
+    """
+    reserved = plan.RESERVED_CHARACTER
+    report.require(
+        reserved and reserved in catalog_module.NULL_KEY,
+        f"reserved character: the grammar reserves {reserved!r}, which does not appear "
+        f"in the catalog key it exists to protect ({catalog_module.NULL_KEY!r})",
+    )
+
+    # Every shape that reached a value: bare, negated, quoted, inside a set, embedded
+    # mid-value, and on the path column's prefix operator.
+    null_key = catalog_module.NULL_KEY
+    refused = 0
+    for spelling in (
+        f"language={null_key}",
+        f"language!={null_key}",
+        f'language="{null_key}"',
+        f"language={null_key},llvm",
+        f"subject=llvm{reserved}x",
+        f"subject={reserved}",
+        f"source_path^=a{reserved}b",
+    ):
+        try:
+            plan.parse_predicate(spelling)
+        except plan.PlanError:
+            refused += 1
+            continue
+        report.require(
+            False,
+            "reserved character: the grammar accepted a value containing "
+            f"{reserved!r}, so the catalog's null key is reachable as an ordinary "
+            "value and IS NULL has a second spelling",
+        )
+    report.require(
+        refused == 7,
+        f"anti-vacuity: only {refused} of 7 reserved-character spellings were even "
+        "attempted, so this check did not exercise what it claims",
+    )
+
+    # ...and the question it used to answer is still answerable, exactly once.
+    absent = plan.select(catalog, [plan.parse_predicate("language!=?")])
+    present = plan.select(catalog, [plan.parse_predicate("language=?")])
+    admitted = len(absent.rows or ()) + len(present.rows or ())
+    report.require(
+        admitted == catalog.rows_total,
+        f"reserved character: IS NULL and IS NOT NULL cover {admitted} of "
+        f"{catalog.rows_total} rows, so removing the sentinel spelling removed an "
+        "answer rather than a duplicate",
+    )
+    report.require(
+        len(absent.rows or ()) > 0,
+        "anti-vacuity: no row in this corpus is absent a language, so the spelling "
+        "this check retired could not have been observed to differ from it",
+    )
+
+    # A legitimate value that merely *looks* adjacent must still parse.
+    for spelling in ("language=null", 'language="null"', "subject=llvm", 'subject="a,b"'):
+        try:
+            plan.parse_predicate(spelling)
+        except plan.PlanError as exc:
+            report.require(
+                False,
+                f"reserved character: {spelling!r} is a legitimate predicate and the "
+                f"new refusal rejected it: {exc}",
+            )
+
+
 def check_quoting(report: Report, plan) -> None:
     """A value is read back as it was written, or refused. Never read as another value.
 
@@ -3604,8 +3845,12 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("constraints", check_constraints, report, catalog_module, args.chunks)
     report.run("S7-grammar", check_grammar, report, plan)
     report.run("quoting", check_quoting, report, plan)
+    report.run(
+        "reserved character", check_reserved_character, report, plan, catalog_module, catalog
+    )
     report.run("estimates", check_estimates, report, plan, catalog)
     report.run("coverage", check_operator_coverage, report, plan, catalog)
+    report.run("S4-prefix", check_prefix_semantics, report, plan)
     report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
     report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)

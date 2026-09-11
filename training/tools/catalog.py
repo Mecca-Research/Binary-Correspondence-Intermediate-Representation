@@ -1332,7 +1332,14 @@ class Catalog:
             "max": max(present) if present else None,
             "sum": sum(present),
             "avg": (sum(present) / len(present)) if present else None,
-            "scanned": len(present),
+            # Every admitted cell, not every cell that held a value. The field exists
+            # to separate "answered from the statistics" (0) from "read the rows"
+            # (> 0), and counting only the non-null cells collapsed that distinction
+            # exactly where it matters: a selection whose rows are all unmeasured read
+            # every one of them and reported `scanned: 0` -- the free path's own
+            # signature -- so the claim the gate makes about the two paths could not
+            # tell them apart.
+            "scanned": len(admitted),
         }
 
     def require_numeric(self, column: str) -> None:
@@ -1573,26 +1580,55 @@ class Catalog:
             left_value, right_value = right_value, left_value
         return int(table.get(index_key(left_value), {}).get(index_key(right_value), 0))
 
+    def _paths_starting_with(self, prefix: str):
+        """Every (path, rows) pair whose path starts with `prefix`. The definition.
+
+        Scanned over *distinct paths* rather than over rows -- 310 strings on this
+        corpus, 0.02 ms, against a resolve budget measured in tenths of a
+        millisecond. The index below is an accelerator for one provable case; this
+        is what the operator means.
+        """
+        for path, positions in self.postings["paths"].items():
+            if path.startswith(prefix):
+                yield path, positions
+
+    def _directory_shortcut(self, prefix: str) -> str | None:
+        """The counted directory that answers `prefix` exactly, or None.
+
+        The stored `path_prefixes` index groups rows by *directory ancestor*, so it
+        answers "which rows live under this directory". That is the same set as
+        "which rows start with this string" only when the string ends at a separator:
+        `training/llvm/` cannot also be a prefix of `training/llvmfoo.md`, but
+        `training/llvm` can.
+
+        Treating the two as interchangeable was a silent wrong answer. `^=` is
+        documented "starts with" (`training/TRAINING_LANGREF.md` SS5.2) and, whenever
+        the prefix happened to name a counted directory, the index answered the
+        *other* question and the count was labelled exact: with
+        `training/llvm/data/a.md` and `training/llvm/database.md` in one corpus,
+        `source_path^=training/llvm/data` returned one row, priced it `1 [exact]`,
+        and exited 0 -- with `database.md` missing from both the rows and the number.
+        The whole-path shortcut it also carried had the same shape, since `a/b.md` is
+        a prefix of `a/b.md.bak`.
+        """
+        if not prefix.endswith("/"):
+            return None
+        cleaned = prefix.rstrip("/")
+        return cleaned if cleaned in self.postings["path_prefixes"] else None
+
     def count_prefix(self, prefix: str) -> tuple[int, bool]:
         """Rows whose `source_path` starts with `prefix`, and whether that is exact.
 
-        Exact when the prefix names a counted directory or a whole path. Otherwise
-        the nearest counted ancestor's count is returned as an upper bound, with
-        False -- so the caller prices a bound as a bound.
+        Always exact now: the answer is either the counted directory (when that is
+        provably the same question -- see `_directory_shortcut`) or a scan of the
+        distinct paths, which is the definition and costs less than the estimate it
+        feeds. The old ancestor-bound branch existed to avoid that scan and is gone
+        with it; a bound nobody needs is a bound that can be wrong.
         """
-        prefixes = self._statistics["path_prefixes"]
-        cleaned = prefix.rstrip("/")
-        if cleaned in prefixes:
-            return int(prefixes[cleaned]), True
-        whole = self._statistics["paths"].get(prefix)
-        if whole is not None:
-            return int(whole), True
-        parts = cleaned.split("/")
-        for depth in range(len(parts) - 1, 0, -1):
-            ancestor = "/".join(parts[:depth])
-            if ancestor in prefixes:
-                return int(prefixes[ancestor]), False
-        return self.rows_total, False
+        shortcut = self._directory_shortcut(prefix)
+        if shortcut is not None:
+            return int(self._statistics["path_prefixes"][shortcut]), True
+        return sum(len(rows) for _, rows in self._paths_starting_with(prefix)), True
 
     # -- postings (which rows, not how many) -----------------------------
 
@@ -1608,18 +1644,17 @@ class Catalog:
     def rows_with_prefix(self, prefix: str) -> list[int]:
         """The rows whose `source_path` starts with `prefix`, exactly.
 
-        A counted directory answers from the index. Anything else -- a partial
-        segment, a prefix no row shares -- falls back to scanning the path postings,
-        which is still only over distinct paths rather than over rows.
+        The directory index answers only where it provably asks the same question
+        (`_directory_shortcut`); everything else scans the distinct paths. The two
+        must agree wherever both apply, and `check_predicate` holds them to that
+        against a brute-force reading of the corpus rather than against each other.
         """
-        cleaned = prefix.rstrip("/")
-        by_prefix = self.postings["path_prefixes"]
-        if cleaned in by_prefix:
-            return list(by_prefix[cleaned])
+        shortcut = self._directory_shortcut(prefix)
+        if shortcut is not None:
+            return list(self.postings["path_prefixes"][shortcut])
         matched: list[int] = []
-        for path, positions in self.postings["paths"].items():
-            if path.startswith(prefix):
-                matched.extend(positions)
+        for _, positions in self._paths_starting_with(prefix):
+            matched.extend(positions)
         return sorted(matched)
 
     # -- parts (incremental rebuild) -------------------------------------

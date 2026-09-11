@@ -108,6 +108,20 @@
       "new": "    ns_per_row_derived_stored: int = 31_000",
       "old": "    ns_per_row_derived_stored: int = 90",
       "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "reserved character",
+      "label": "the catalog's null key is a value anybody can ask for",
+      "new": "        if False and RESERVED_CHARACTER in value:",
+      "old": "        if RESERVED_CHARACTER in value:",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S4",
+      "label": "prefix means 'under this directory' again, not 'starts with'",
+      "new": "        if False:\n            return None",
+      "old": "        if not prefix.endswith(\"/\"):\n            return None",
+      "path": "training/tools/catalog.py"
     }
   ],
   "gate": "training/tools/verify_database.py",

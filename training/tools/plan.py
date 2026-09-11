@@ -156,6 +156,27 @@ PRESENCE = "?"
 QUOTE = '"'
 ESCAPE = "\\"
 
+#: The one character a value may never contain, quoted or not.
+#:
+#: The catalog reserves NUL for itself twice over: `catalog.NULL_KEY` is a NUL
+#: followed by `null`, under which the postings list the rows carrying no value for
+#: an indexed column, and `catalog.pair_key` joins two column names with a NUL. Both
+#: choices are sound precisely because no corpus value contains one -- but until this
+#: predicate existed, nothing enforced that on the *input* side, and the sentinel was
+#: reachable by typing it: `language=\0null` resolved to exactly the rows that
+#: `language!=?` resolves to, and its negation to exactly `language=?`.
+#:
+#: That is a second spelling of a question the grammar already spells once, which is
+#: how a reserved implementation value becomes part of the domain it was supposed to
+#: sit outside (`docs/security/laws.md` L20). The grammar already reserves `?` for
+#: presence and says so; this reserves the character the storage layer had quietly
+#: been relying on, and says so in the same place.
+#:
+#: Refusing it is total rather than a heuristic: a NUL cannot appear in a value the
+#: corpus holds -- no chunk record in this corpus contains one, and a column whose
+#: values could would have broken the postings file long before it reached a query.
+RESERVED_CHARACTER = "\0"
+
 #: A measurement is compared against an integer in ASCII digits and nothing else.
 #: `int()` would also accept `1_000`, `+5`, Unicode digits and surrounding
 #: whitespace -- a larger language than the one documented, admitted by the host
@@ -397,6 +418,13 @@ def split_values(raw: str) -> tuple[tuple[str, bool], ...]:
                     )
                 index += 1
             value, quoted = raw[start:index].strip(), False
+        if RESERVED_CHARACTER in value:
+            raise PlanError(
+                f"predicate value {value!r} contains the reserved character "
+                f"{RESERVED_CHARACTER!r}, which the catalog uses for the key that "
+                "marks a row as carrying no value; ask for those rows with "
+                f"{PRESENCE!r} instead ('column!={PRESENCE}' is IS NULL)"
+            )
         pieces.append((value, quoted))
         if index >= length:
             break
