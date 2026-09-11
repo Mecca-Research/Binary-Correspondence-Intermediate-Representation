@@ -104,6 +104,12 @@ add_custom_target(training-llvm-verify-langref-delta
 # Chapter 24's behaviour claims. Skips with its reason printed where mlir-opt is absent,
 # and runs for real on a developer host that has one -- which is precisely the host where
 # leaving it out of the aggregate would hide a regression.
+add_custom_target(training-llvm-verify-mlir-coverage
+  COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-mlir-coverage.py"
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  COMMENT "Checking every MLIR dialect carries a disposition"
+  VERBATIM)
+
 add_custom_target(training-llvm-verify-mlir-infrastructure
   COMMAND "${Python3_EXECUTABLE}" "${TOOLS_DIR}/verify-mlir-infrastructure.py"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
@@ -161,6 +167,7 @@ add_custom_target(training-llvm-check
     training-llvm-verify-bcir-mapping
     training-llvm-verify-mlir-rail-references
     training-llvm-verify-langref-delta
+    training-llvm-verify-mlir-coverage
     training-llvm-verify-mlir-infrastructure
     training-llvm-verify-benchmark-analysis
     training-llvm-verify-frontend-lowering

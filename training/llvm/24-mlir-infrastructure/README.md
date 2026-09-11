@@ -15,6 +15,7 @@ This chapter is that framework.
 | [`02-interfaces.md`](02-interfaces.md) | How a generic pass reaches a dialect it has never heard of; op, type and attribute interfaces; traits, and why `IsolatedFromAbove` is load-bearing |
 | [`03-the-pass-manager.md`](03-the-pass-manager.md) | Pipelines as trees, anchoring, the misspelled anchor that silently runs nothing, analyses and the inverted invalidation default, parallel execution |
 | [`04-bytecode-and-partial-lowering.md`](04-bytecode-and-partial-lowering.md) | `unrealized_conversion_cast` as a diagnosis, `--reconcile-unrealized-casts`, and MLIR bytecode with its versioning story |
+| [`05-the-dialect-landscape.md`](05-the-dialect-landscape.md) | how large the dialect surface is, and the disposition every dialect carries so a decision not to teach one is distinguishable from an oversight |
 
 ## What this chapter refuses to be
 

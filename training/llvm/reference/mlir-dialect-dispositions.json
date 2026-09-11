@@ -1,0 +1,201 @@
+{
+ "_comment": "Every MLIR dialect answers for itself: taught by a chapter, referenced in passing, planned with the slice that closes it, or declared out of scope with a reason. Checked by tools/verify-mlir-coverage.py against reference/mlir-surface-23.json.",
+ "dialects": {
+  "acc": {
+   "status": "declared",
+   "reason": "OpenACC as an offload programming model. The corpus teaches the IR a frontend produces, not the source-level pragma dialects that produce it; the same boundary excludes OpenMP."
+  },
+  "affine": {
+   "status": "referenced",
+   "where": "14-mlir-bridge/03-lowering-to-llvm-dialect.md"
+  },
+  "amdgpu": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "arith": {
+   "status": "taught",
+   "where": "14-mlir-bridge/02-dialects-and-operations.md"
+  },
+  "arm_neon": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "arm_sme": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "arm_sve": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "async": {
+   "status": "declared",
+   "reason": "A task-parallel execution model. The corpus's concurrency material is about atomics and memory ordering at the IR level (04-memory), which is a different subject from a coroutine-shaped task dialect."
+  },
+  "bufferization": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: how tensor becomes memref, the step 18-mlir-lowering-to-llvm currently skips over"
+  },
+  "builtin": {
+   "status": "taught",
+   "where": "24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md"
+  },
+  "cf": {
+   "status": "taught",
+   "where": "24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md"
+  },
+  "complex": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: complex arithmetic as a worked example of a type MLIR models and LLVM IR does not"
+  },
+  "dlti": {
+   "status": "declared",
+   "reason": "Data layout and target information, carried entirely as attributes: this dialect ships zero operations, which is why it appears in the misalignment table below. The layout facts it holds are taught as LLVM data layout in 02-types."
+  },
+  "emitc": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: MLIR emitting C, the mirror image of the C-to-IR direction 20-clang-frontend teaches"
+  },
+  "func": {
+   "status": "taught",
+   "where": "24-mlir-infrastructure/02-interfaces.md"
+  },
+  "gpu": {
+   "status": "planned",
+   "slice": "2.3 ML dialects: the host/device split, and where nvvm and rocdl become reachable through one portable layer"
+  },
+  "index": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: index arithmetic split out from arith, which the lowering chapters currently elide"
+  },
+  "irdl": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: 22-bcir-approach/04-dialect-as-data.md already projects BCIR into IRDL but names none of the dialect's own 17 operations"
+  },
+  "linalg": {
+   "status": "planned",
+   "slice": "2.3 ML dialects: linalg is where tensor algebra becomes loops, and the corpus names exactly one of its 99 operations today"
+  },
+  "llvm": {
+   "status": "taught",
+   "where": "14-mlir-bridge/03-lowering-to-llvm-dialect.md"
+  },
+  "math": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: the transcendental surface behind the libm-vs-intrinsic question 06-intrinsics raises"
+  },
+  "memref": {
+   "status": "referenced",
+   "where": "14-mlir-bridge/02-dialects-and-operations.md"
+  },
+  "ml_program": {
+   "status": "declared",
+   "reason": "A container dialect for whole-program ML state. It has 11 operations and effectively no adoption outside its own tests; teaching it would date faster than anything else in this table."
+  },
+  "mpi": {
+   "status": "declared",
+   "reason": "Message passing between processes, which is a distributed-systems subject rather than a compiler one. BCIR's own distributed backends are honest stubs, so there is nothing here to correspond to either."
+  },
+  "nvgpu": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "nvvm": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "omp": {
+   "status": "declared",
+   "reason": "OpenMP as a source-level programming model, excluded on the same boundary as OpenACC. Where OpenMP reaches IR the corpus does teach it, as the outlining and runtime-call shape in 20-clang-frontend."
+  },
+  "pdl": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: rewrite patterns as data, the same move 22-bcir-approach/04-dialect-as-data.md makes for op definitions"
+  },
+  "pdl_interp": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: the matcher pdl compiles into, worth one section for the same reason a bytecode is worth teaching"
+  },
+  "ptr": {
+   "status": "declared",
+   "reason": "A low-level pointer dialect still being factored out of the LLVM dialect upstream. Teaching it now would teach a migration in progress; the pointer semantics a reader needs are in 02-types and 23-version-movement/02-ptrtoaddr.md."
+  },
+  "quant": {
+   "status": "planned",
+   "slice": "2.3 ML dialects: three operations, and the direct counterpart to BCIRQ8's quantization rule"
+  },
+  "rocdl": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "scf": {
+   "status": "taught",
+   "where": "14-mlir-bridge/01-what-is-mlir.md"
+  },
+  "shape": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: shape as first-class IR, which is the prerequisite for reading linalg and tosa honestly"
+  },
+  "shard": {
+   "status": "declared",
+   "reason": "Tensor sharding for multi-device execution. In scope for a future distributed phase, but not reachable from anything the corpus teaches today, and BCIR's distributed rail is a stub."
+  },
+  "smt": {
+   "status": "declared",
+   "reason": "An SMT-solver interface dialect. Formal verification of IR is a real subject and a legitimate future phase, but it is not compilation, and nothing else in the corpus depends on it."
+  },
+  "sparse_tensor": {
+   "status": "planned",
+   "slice": "2.3 ML dialects: sparsity as a type property rather than a loop structure, which is the idea BCIR's cost model needs to price"
+  },
+  "spirv": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "tensor": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: the value-semantics half of the tensor/memref split the lowering chapters already assume"
+  },
+  "tosa": {
+   "status": "planned",
+   "slice": "2.3 ML dialects: the quantized-inference entry point, and the closest MLIR analogue to what BCIRQ8 already does"
+  },
+  "transform": {
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md"
+  },
+  "ub": {
+   "status": "planned",
+   "slice": "2.2 compiler dialects: two operations, and MLIR's answer to the poison semantics 03-semantics teaches on the LLVM side"
+  },
+  "vcix": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "vector": {
+   "status": "referenced",
+   "where": "23-version-movement/01-reading-the-delta.md"
+  },
+  "wasmssa": {
+   "status": "declared",
+   "reason": "A WebAssembly SSA dialect, new enough that its operation set is still moving. 11-wasm-target teaches the Wasm target through LLVM's backend, which is the path a reader will actually meet."
+  },
+  "x86": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "xegpu": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  },
+  "xevm": {
+   "status": "declared",
+   "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
+  }
+ },
+ "misalignments": {
+  "vcix": "The generated headers ship two vcix operations but this mlir-opt does not register the dialect: it is built for RISC-V vendor co-processor extensions and is not in the default registration set. Headers and registry disagreeing is normal for a vendor dialect and is recorded here so the gate does not report it as an extraction failure.",
+  "dlti": "Registered with zero operations, which is correct rather than broken: DLTI models data layout and target information as attributes and types only. It is the anti-vacuity canary for this gate -- an extraction bug that silently returned no operations would look exactly like DLTI, so DLTI is the one dialect allowed to look like that, by name."
+ }
+}

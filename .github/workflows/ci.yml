@@ -582,6 +582,12 @@ jobs:
       - name: LLVM training MLIR infrastructure claims (skips without mlir-opt)
         run: python3 training/llvm/tools/verify-mlir-infrastructure.py
 
+      # The dispositions half of the dialect registry needs no toolchain at all: it reads
+      # the checked-in snapshot, so a dialect losing its disposition fails HERE rather
+      # than waiting for the one job that installs MLIR. Only the drift check is skipped.
+      - name: LLVM training MLIR dialect dispositions (snapshot only)
+        run: python3 training/llvm/tools/verify-mlir-coverage.py
+
       # Statistical kernels against hand-computable values, plus each benchmark
       # fixture's pinned verdict -- including the refusals.
       - name: LLVM training benchmark analysis self-test
@@ -786,6 +792,11 @@ jobs:
       # --require-tools turns a missing mlir-opt from a skip into a failure here.
       - name: LLVM training MLIR infrastructure claims (owns the mlir-opt checks)
         run: python3 training/llvm/tools/verify-mlir-infrastructure.py --require-tools
+
+      # This job installs the MLIR tools, so it OWNS the half of the dialect registry that
+      # needs them: the snapshot must still describe dialects this build actually has.
+      - name: LLVM training MLIR dialect coverage (owns the drift check)
+        run: python3 training/llvm/tools/verify-mlir-coverage.py --require-tools
 
       # DELIBERATELY NOT REPEATED HERE: build-pass-plugin.sh. It builds a sample New PM
       # plugin against the LLVM development CMake package, and a plugin is loadable only by

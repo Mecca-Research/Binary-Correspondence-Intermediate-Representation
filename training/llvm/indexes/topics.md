@@ -29,6 +29,7 @@
 | MLIR op/type/attribute interfaces, traits, `IsolatedFromAbove` | [`24-mlir-infrastructure/02-interfaces.md`](../24-mlir-infrastructure/02-interfaces.md) |
 | MLIR pass anchoring, `--pass-pipeline` nesting, analyses, parallel pass execution | [`24-mlir-infrastructure/03-the-pass-manager.md`](../24-mlir-infrastructure/03-the-pass-manager.md) |
 | MLIR bytecode, `unrealized_conversion_cast`, `--reconcile-unrealized-casts` | [`24-mlir-infrastructure/04-bytecode-and-partial-lowering.md`](../24-mlir-infrastructure/04-bytecode-and-partial-lowering.md) |
+| MLIR dialect landscape, dialect coverage and dispositions, `mlir-opt --show-dialects` | [`24-mlir-infrastructure/05-the-dialect-landscape.md`](../24-mlir-infrastructure/05-the-dialect-landscape.md) |
 | MLIR infrastructure: dispatcher for the framework beneath the dialects | [`24-mlir-infrastructure/README.md`](../24-mlir-infrastructure/README.md) |
 | LLVM backend target inventory and porting cost | [`12-backend-jit/08-target-backend-porting-map.md`](../12-backend-jit/08-target-backend-porting-map.md) |
 | Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |

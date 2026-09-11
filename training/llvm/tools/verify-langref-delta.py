@@ -43,6 +43,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from corpus_text import code_spans  # noqa: E402
+
 TOOLS = Path(__file__).resolve().parent
 TRAINING_ROOT = TOOLS.parent
 REFERENCE = TRAINING_ROOT / "reference"
@@ -258,21 +261,6 @@ def compute_delta() -> dict[str, dict[str, list[str]]]:
                     arrived.difference_update(parts)
         delta[kind] = {"arrived": sorted(arrived), "departed": sorted(departed)}
     return delta
-
-
-_FENCED = re.compile(r"```.*?```", re.DOTALL)
-_INLINE = re.compile(r"`[^`\n]+`")
-
-
-def code_spans(text: str) -> str:
-    """Everything in a markdown document that is written as code, concatenated.
-
-    Fenced blocks first, then inline spans from what is left, so a backtick inside a
-    fenced block is not mistaken for the start of an inline span.
-    """
-    fenced = _FENCED.findall(text)
-    prose = _FENCED.sub("\n", text)
-    return "\n".join(fenced) + "\n" + "\n".join(_INLINE.findall(prose))
 
 
 # --------------------------------------------------------------------------
