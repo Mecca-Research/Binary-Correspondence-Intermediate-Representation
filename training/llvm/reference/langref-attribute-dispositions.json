@@ -1,0 +1,166 @@
+{
+ "_comment": "Every LLVM 23 function/parameter attribute the corpus does not name gets an answer here: a chapter that teaches it, or a reason it is out of scope. `emitted_by` records the recipe that was actually run against clang 23.1.1 to produce the attribute -- 'not reproduced' means the listed recipes emitted nothing, which is itself the reason. Checked by tools/verify-langref-delta.py.",
+ "measured_with": "clang version 23.1.1 (conda-forge)",
+ "attributes": {
+  "coro_only_destroy_when_complete": {
+   "status": "declared",
+   "emitted_by": "not reproduced",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "inlinehint": {
+   "status": "declared",
+   "emitted_by": "not reproduced (C++ `inline`, -O0/-O1/-O2/-fno-inline)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "minsize": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "-Oz"
+  },
+  "naked": {
+   "status": "declared",
+   "emitted_by": "__attribute__((naked))",
+   "reason": "Suppresses prologue and epilogue entirely, which makes the function's body inline assembly by necessity. 13-advanced-ir teaches inline asm as the mechanism; a function with no ABI is a niche of that niche."
+  },
+  "nobuiltin": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "-fno-builtin"
+  },
+  "nocallback": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "any optimisation level, on intrinsic and libcall declarations"
+  },
+  "nocf_check": {
+   "status": "declared",
+   "emitted_by": "not reproduced (-fcf-protection=branch/full)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "noduplicate": {
+   "status": "declared",
+   "emitted_by": "not reproduced",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "nofpclass": {
+   "status": "declared",
+   "emitted_by": "not reproduced",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "noimplicitfloat": {
+   "status": "declared",
+   "emitted_by": "not reproduced (arm-none-eabi -mfloat-abi=soft)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "nomerge": {
+   "status": "declared",
+   "emitted_by": "__attribute__((nomerge))",
+   "reason": "Blocks identical-code folding for one call. A codegen-layout directive with no semantics a reader of the IR needs."
+  },
+  "nonlazybind": {
+   "status": "declared",
+   "emitted_by": "not reproduced (-fno-plt)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "noprofile": {
+   "status": "declared",
+   "emitted_by": "not reproduced (__attribute__((noprofile)) accepted, nothing emitted)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "noredzone": {
+   "status": "declared",
+   "emitted_by": "-mno-red-zone",
+   "reason": "A target ABI switch. The red zone itself is taught in 19-hardware-aware as a calling-convention fact; the attribute only relays the flag."
+  },
+  "nosanitize_coverage": {
+   "status": "declared",
+   "emitted_by": "not reproduced (-fsanitize-coverage=trace-pc-guard with __attribute__((no_sanitize(\"coverage\"))))",
+   "reason": "An opt-in sanitizer marker: it tells a later pass to instrument the function, and carries no meaning for anyone reading ordinary IR. The corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attribute that requests it -- the same boundary the 18->23 delta table draws for sanitize_type and sanitize_realtime."
+  },
+  "null_pointer_is_valid": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "-fno-delete-null-pointer-checks"
+  },
+  "optdebug": {
+   "status": "declared",
+   "emitted_by": "not reproduced (-g -fdebug-info-for-profiling)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "optforfuzzing": {
+   "status": "declared",
+   "emitted_by": "not reproduced",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "optsize": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "-Os, and -Oz"
+  },
+  "returns_twice": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "any optimisation level, on a call to setjmp -- no flag needed"
+  },
+  "safestack": {
+   "status": "declared",
+   "emitted_by": "-fsanitize=safe-stack",
+   "reason": "An opt-in sanitizer marker: it tells a later pass to instrument the function, and carries no meaning for anyone reading ordinary IR. The corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attribute that requests it -- the same boundary the 18->23 delta table draws for sanitize_type and sanitize_realtime."
+  },
+  "sanitize_memory": {
+   "status": "declared",
+   "emitted_by": "-fsanitize=memory",
+   "reason": "An opt-in sanitizer marker: it tells a later pass to instrument the function, and carries no meaning for anyone reading ordinary IR. The corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attribute that requests it -- the same boundary the 18->23 delta table draws for sanitize_type and sanitize_realtime."
+  },
+  "sanitize_memtag": {
+   "status": "declared",
+   "emitted_by": "aarch64 -march=armv8.5-a+memtag -fsanitize=memtag-stack",
+   "reason": "An opt-in sanitizer marker: it tells a later pass to instrument the function, and carries no meaning for anyone reading ordinary IR. The corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attribute that requests it -- the same boundary the 18->23 delta table draws for sanitize_type and sanitize_realtime."
+  },
+  "sanitize_thread": {
+   "status": "declared",
+   "emitted_by": "-fsanitize=thread",
+   "reason": "An opt-in sanitizer marker: it tells a later pass to instrument the function, and carries no meaning for anyone reading ordinary IR. The corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attribute that requests it -- the same boundary the 18->23 delta table draws for sanitize_type and sanitize_realtime."
+  },
+  "shadowcallstack": {
+   "status": "declared",
+   "emitted_by": "aarch64 -fsanitize=shadow-call-stack -ffixed-x18",
+   "reason": "An opt-in sanitizer marker: it tells a later pass to instrument the function, and carries no meaning for anyone reading ordinary IR. The corpus teaches sanitizers by the shape of the instrumentation they insert, not by the attribute that requests it -- the same boundary the 18->23 delta table draws for sanitize_type and sanitize_realtime."
+  },
+  "skipprofile": {
+   "status": "declared",
+   "emitted_by": "not reproduced",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "speculative_load_hardening": {
+   "status": "declared",
+   "emitted_by": "-mspeculative-load-hardening",
+   "reason": "A Spectre mitigation that rewrites branches into data dependencies. The transformation is worth teaching and the attribute that requests it is not; it belongs with the mitigation, not with the language."
+  },
+  "sspreq": {
+   "status": "declared",
+   "emitted_by": "-fstack-protector-all",
+   "reason": "A stack-protection request, emitted verbatim from the build flag. It changes the prologue a backend writes, not the meaning of the IR; 19-hardware-aware teaches the prologue."
+  },
+  "sspstrong": {
+   "status": "declared",
+   "emitted_by": "-fstack-protector-strong",
+   "reason": "The heuristic sibling of sspreq, and out of scope for the same reason: it selects which functions get a guard, and says nothing about the IR."
+  },
+  "strictfp": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "-ffp-model=strict"
+  },
+  "swiftasync": {
+   "status": "declared",
+   "emitted_by": "not reproduced (no Swift frontend in this toolchain)",
+   "reason": "Not reproduced: clang 23.1.1 emitted nothing for the recipes tried, so the corpus has no verified way to show a reader where it comes from. Teaching it would mean describing IR this toolchain does not produce."
+  },
+  "vscale_range": {
+   "status": "taught",
+   "where": "13-advanced-ir/04-attributes.md",
+   "emitted_by": "aarch64 -march=armv8-a+sve -msve-vector-bits=256, and riscv64 -march=rv64gcv"
+  }
+ }
+}

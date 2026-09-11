@@ -38,15 +38,18 @@ TEACHING_SUFFIXES = frozenset({".md", ".mlir", ".ll", ".json", ".td", ".cpp", ".
 # Files that enumerate a surface by construction. Measuring coverage over them reports
 # every name as covered -- the first run of the LangRef measurement returned 100% on all
 # three surfaces for exactly this reason.
-SELF_LISTING = frozenset(
-    {
-        "llvm-surface-18.json",
-        "llvm-surface-23.json",
-        "langref-delta-dispositions.json",
-        "mlir-surface-23.json",
-        "mlir-dialect-dispositions.json",
-    }
-)
+#
+# This is a RULE rather than a list, and it is a rule because the list failed twice. The
+# names were hand-maintained, so adding `langref-attribute-dispositions.json` -- a file
+# whose entire purpose is to name the attributes the corpus does not name -- silently
+# dropped the measured gap from 32 attributes to 1. A mirror list drifts; a predicate
+# over the naming convention does not, and every surface table here already follows one.
+_SELF_LISTING_SUFFIXES = ("-dispositions.json", "-surface-23.json", "-surface-18.json")
+
+
+def is_self_listing(path: Path) -> bool:
+    """True for a reference table that enumerates the surface it is measured against."""
+    return path.parent.name == "reference" and path.name.endswith(_SELF_LISTING_SUFFIXES)
 
 
 def code_spans(text: str) -> str:
@@ -67,7 +70,7 @@ def teaching_files(root: Path, extra_exclusions: frozenset[str] = frozenset()) -
         for path in sorted(root.rglob("*"))
         if path.is_file()
         and path.suffix in TEACHING_SUFFIXES
-        and path.name not in SELF_LISTING
+        and not is_self_listing(path)
         and path.name not in extra_exclusions
     ]
 

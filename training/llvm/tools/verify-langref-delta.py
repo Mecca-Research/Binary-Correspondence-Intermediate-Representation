@@ -44,12 +44,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from corpus_text import code_spans  # noqa: E402
+from corpus_text import code_spans, teaching_text  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent
 TRAINING_ROOT = TOOLS.parent
 REFERENCE = TRAINING_ROOT / "reference"
 DISPOSITIONS = REFERENCE / "langref-delta-dispositions.json"
+ATTRIBUTE_DISPOSITIONS = REFERENCE / "langref-attribute-dispositions.json"
 
 # The two majors the corpus spans: the baseline it enforces, and the release it tracks.
 BASELINE_MAJOR = 18
@@ -369,6 +370,124 @@ def check_undemonstrated_opcodes(report: Report) -> None:
     print(
         f"[opcodes] {len(UNDEMONSTRATED_OPCODES)} opcodes run in "
         f"{CONVERSIONS_EXAMPLE.name} and nowhere else in the corpus"
+    )
+
+
+def check_attribute_coverage(report: Report) -> None:
+    """Every attribute in the language is either named by the corpus or answered for.
+
+    The delta table above only ever saw the 131 items that MOVED between LLVM 18 and 23.
+    That left the standing surface unexamined: 32 of the 99 attributes LLVM 23 defines
+    were named nowhere in the corpus and nothing noticed, because nothing was looking.
+
+    Each disposition carries `emitted_by`: the recipe actually run against clang to
+    produce the attribute. That field is the difference between "we decided this is build
+    configuration" and "we assumed it was". Twelve of them record "not reproduced", which
+    is a finding rather than a gap -- an attribute the language defines and the toolchain
+    never emits is one a reader will not meet by reading output.
+    """
+    if not report.require(ATTRIBUTE_DISPOSITIONS.is_file(), f"{ATTRIBUTE_DISPOSITIONS} is missing"):
+        return
+    surface = json.loads(snapshot_path(CURRENT_MAJOR).read_text(encoding="utf-8"))
+    attributes = surface["attributes"]
+    entries = json.loads(ATTRIBUTE_DISPOSITIONS.read_text(encoding="utf-8"))["attributes"]
+
+    # Anti-vacuity: an empty surface would make every loop below iterate zero times.
+    if not report.require(
+        len(attributes) >= 50,
+        f"only {len(attributes)} attributes in the LLVM {CURRENT_MAJOR} snapshot; the "
+        f"language defines far more, so the snapshot is broken and this check would pass "
+        f"having examined almost nothing",
+    ):
+        return
+
+    text = teaching_text(TRAINING_ROOT)
+    unnamed = [a for a in attributes if a not in text]
+    for name in unnamed:
+        report.require(
+            name in entries,
+            f"attribute {name!r} is defined by LLVM {CURRENT_MAJOR} and named nowhere in "
+            f"the corpus, and langref-attribute-dispositions.json does not mention it; an "
+            f"attribute nobody teaches and nobody declared out of scope is a gap nobody "
+            f"has found yet",
+        )
+
+    for name, entry in entries.items():
+        if not report.require(
+            name in attributes,
+            f"langref-attribute-dispositions.json disposes of {name!r}, which LLVM "
+            f"{CURRENT_MAJOR} does not define; drop the entry or regenerate the snapshot",
+        ):
+            continue
+        report.require(
+            (entry.get("emitted_by") or "").strip(),
+            f"{name!r} records no `emitted_by`; the recipe that produces an attribute is "
+            f"what separates a checked disposition from a guess",
+        )
+        status = entry.get("status")
+        if not report.require(
+            status in ("taught", "declared"),
+            f"{name!r} has status {status!r}, which is neither 'taught' nor 'declared'",
+        ):
+            continue
+        if status == "declared":
+            report.require(
+                (entry.get("reason") or "").strip(),
+                f"{name!r} is declared out of scope with no reason",
+            )
+            continue
+        where = entry.get("where") or ""
+        chapter = TRAINING_ROOT / where
+        if not report.require(
+            where and chapter.is_file(),
+            f"{name!r} is marked taught by {where!r}, which is not a file under "
+            f"{TRAINING_ROOT.name}/",
+        ):
+            continue
+        report.require(
+            name in code_spans(chapter.read_text(encoding="utf-8")),
+            f"{where} is cited as teaching {name!r} but never writes it in a code block "
+            f"or inline code span",
+        )
+
+    taught = sum(1 for e in entries.values() if e.get("status") == "taught")
+
+    # The chapter states how many attributes it does NOT teach, in words. That is a count
+    # of live data sitting in prose, which is how the bytecode figures in chapter 24 came
+    # to be wrong, so it is pinned here rather than trusted.
+    declared = len(entries) - taught
+    words = {
+        20: "Twenty",
+        21: "Twenty-one",
+        22: "Twenty-two",
+        23: "Twenty-three",
+        24: "Twenty-four",
+        25: "Twenty-five",
+        26: "Twenty-six",
+        27: "Twenty-seven",
+        28: "Twenty-eight",
+        29: "Twenty-nine",
+        30: "Thirty",
+    }
+    chapter = TRAINING_ROOT / "13-advanced-ir" / "04-attributes.md"
+    if chapter.is_file():
+        sentence = (
+            f"{words.get(declared, str(declared))} further attributes exist in LLVM {CURRENT_MAJOR}"
+        )
+        report.require(
+            sentence in chapter.read_text(encoding="utf-8"),
+            f"13-advanced-ir/04-attributes.md should say {sentence!r}: {declared} "
+            f"attributes are dispositioned as out of scope, and the chapter states that "
+            f"count in prose",
+        )
+
+    reproduced = sum(
+        1 for e in entries.values() if not e.get("emitted_by", "").startswith("not reproduced")
+    )
+    print(
+        f"[attrs]   {len(attributes) - len(unnamed)}/{len(attributes)} attributes named; "
+        f"{len(entries)} dispositioned ({taught} taught, {len(entries) - taught} declared), "
+        f"{reproduced} with a reproduced emission recipe"
     )
 
 
@@ -720,6 +839,7 @@ def main(argv: list[str] | None = None) -> int:
     for major in known_majors:
         check_snapshot(major, report, required=major in args.require_surface)
     check_dispositions(report)
+    check_attribute_coverage(report)
     check_undemonstrated_opcodes(report)
     check_rename_table(report)
     sync_block(report, update=False)
