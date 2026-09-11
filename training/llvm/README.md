@@ -74,6 +74,7 @@ training/llvm/
 ├── 22-bcir-approach/      correspondence, K_BCIR's twelve axes, legality before cost
 ├── 23-version-movement/   how LLVM's surface moves between releases, and what 18->23 changed
 ├── 24-mlir-infrastructure/ regions, interfaces, the pass manager, bytecode
+├── 25-ml-dialects/        tosa -> linalg -> loops, and quantization
 ├── exercises/            runnable prompts, expected observations, solutions
 ├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
@@ -137,6 +138,7 @@ fast pre-edit checklist:
 | Understanding what BCIR itself is, and why it refuses plans | — | [`22-bcir-approach/README.md`](22-bcir-approach/README.md) |
 | Tracking what a new LLVM release changed, without being fooled by the diff | — | [`23-version-movement/README.md`](23-version-movement/README.md) |
 | Understanding MLIR's framework rather than any one dialect | — | [`24-mlir-infrastructure/README.md`](24-mlir-infrastructure/README.md) |
+| Reading an ML compiler stack, or porting a quantized model | — | [`25-ml-dialects/README.md`](25-ml-dialects/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.

@@ -661,6 +661,197 @@
      "shape.num_elements"
     ]
    }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/tosa-matmul-to-linalg.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "tosa",
+    "linalg",
+    "tensor"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(func.func(tosa-to-linalg-named))",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "tosa.matmul",
+     "tosa.const"
+    ],
+    "require_lowered": [
+     "linalg.batch_matmul",
+     "linalg.fill",
+     "tensor.empty"
+    ],
+    "forbid_lowered": [
+     "tosa.matmul"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/linalg-to-loops.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "linalg",
+    "tensor",
+    "memref",
+    "scf",
+    "arith"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(func.func(linalg-generalize-named-ops),one-shot-bufferize{bufferize-function-boundaries},func.func(convert-linalg-to-loops))",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "linalg.matmul"
+    ],
+    "require_lowered": [
+     "scf.for",
+     "memref.load",
+     "memref.store",
+     "arith.mulf",
+     "arith.addf"
+    ],
+    "forbid_lowered": [
+     "linalg.matmul",
+     "linalg.generic",
+     "linalg.yield"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/linalg-to-loops-needs-buffers.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "linalg",
+    "tensor"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(func.func(linalg-generalize-named-ops,convert-linalg-to-loops))",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "expected_failure": {
+    "kind": "illegal-ops-remaining",
+    "operations": [
+     "linalg.generic"
+    ]
+   },
+   "checks": {
+    "require_source": [
+     "linalg.matmul"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/quant-cast-arithmetic.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "quant",
+    "tensor",
+    "arith"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(func.func(lower-quant-ops))",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "quant.qcast",
+     "quant.dcast"
+    ],
+    "require_lowered": [
+     "arith.divf",
+     "arith.addf",
+     "arith.fptosi",
+     "arith.sitofp",
+     "arith.subf",
+     "arith.mulf"
+    ],
+    "forbid_lowered": [
+     "quant.qcast",
+     "quant.dcast",
+     "arith.maxsi",
+     "arith.minsi"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/quant-clamp-only-when-narrowed.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "quant",
+    "tensor",
+    "arith"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(func.func(lower-quant-ops))",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "quant.qcast"
+    ],
+    "require_lowered": [
+     "arith.fptosi",
+     "arith.maxsi",
+     "arith.minsi"
+    ],
+    "forbid_lowered": [
+     "quant.qcast"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/quant-round-trip-folds-away.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "quant",
+    "tensor"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(canonicalize)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "quant.qcast",
+     "quant.dcast"
+    ],
+    "require_lowered": [
+     "return %arg0"
+    ],
+    "forbid_lowered": [
+     "quant.qcast",
+     "quant.dcast",
+     "quant.scast",
+     "arith.divf",
+     "arith.addf",
+     "arith.fptosi",
+     "arith.sitofp",
+     "arith.subf",
+     "arith.mulf"
+    ]
+   }
   }
  ]
 }

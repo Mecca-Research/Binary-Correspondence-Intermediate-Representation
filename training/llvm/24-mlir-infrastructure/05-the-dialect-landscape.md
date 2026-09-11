@@ -22,33 +22,36 @@ read out of an installed MLIR rather than from a documentation page:
 <!-- generated: dialect-coverage -->
 | disposition | dialects | operations | operations the corpus names |
 | --- | ---: | ---: | ---: |
-| taught | 19 | 930 | 106 |
+| taught | 22 | 1134 | 124 |
 | referenced | 2 | 55 | 7 |
-| planned | 5 | 309 | 3 |
+| planned | 2 | 105 | 0 |
 | declared | 22 | 1200 | 0 |
-| **all** | **48** | **2494** | **116** |
+| **all** | **48** | **2494** | **131** |
 
 Dialects this corpus teaches, with what it names of each:
 
 | dialect | operations | named here |
 | --- | ---: | ---: |
 | `llvm` | 296 | 15 |
+| `arith` | 54 | 14 |
 | `irdl` | 17 | 13 |
 | `pdl_interp` | 39 | 12 |
 | `shape` | 40 | 11 |
-| `arith` | 54 | 8 |
 | `pdl` | 15 | 8 |
 | `transform` | 234 | 8 |
+| `linalg` | 99 | 5 |
 | `emitc` | 49 | 4 |
 | `tensor` | 21 | 4 |
 | `cf` | 4 | 3 |
 | `func` | 5 | 3 |
 | `index` | 26 | 3 |
+| `math` | 46 | 3 |
+| `memref` | 32 | 3 |
+| `quant` | 3 | 3 |
 | `scf` | 12 | 3 |
 | `bufferization` | 7 | 2 |
 | `builtin` | 2 | 2 |
-| `math` | 46 | 2 |
-| `memref` | 32 | 2 |
+| `tosa` | 102 | 2 |
 | `ub` | 2 | 2 |
 | `complex` | 29 | 1 |
 <!-- /generated -->

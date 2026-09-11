@@ -63,7 +63,7 @@
   },
   "gpu": {
    "status": "planned",
-   "slice": "2.3 ML dialects: the host/device split, and where nvvm and rocdl become reachable through one portable layer"
+   "slice": "1.9 ML dialects: the host/device split, and where nvvm and rocdl become reachable through one portable dialect rather than two vendor ones"
   },
   "index": {
    "status": "taught",
@@ -74,8 +74,8 @@
    "where": "22-bcir-approach/04-dialect-as-data.md"
   },
   "linalg": {
-   "status": "planned",
-   "slice": "2.3 ML dialects: linalg is where tensor algebra becomes loops, and the corpus names exactly one of its 99 operations today"
+   "status": "taught",
+   "where": "25-ml-dialects/01-the-abstraction-ladder.md"
   },
   "llvm": {
    "status": "taught",
@@ -122,8 +122,8 @@
    "reason": "A low-level pointer dialect still being factored out of the LLVM dialect upstream. Teaching it now would teach a migration in progress; the pointer semantics a reader needs are in 02-types and 23-version-movement/02-ptrtoaddr.md."
   },
   "quant": {
-   "status": "planned",
-   "slice": "2.3 ML dialects: three operations, and the direct counterpart to BCIRQ8's quantization rule"
+   "status": "taught",
+   "where": "25-ml-dialects/02-quantization-and-bcir.md"
   },
   "rocdl": {
    "status": "declared",
@@ -147,7 +147,7 @@
   },
   "sparse_tensor": {
    "status": "planned",
-   "slice": "2.3 ML dialects: sparsity as a type property rather than a loop structure, which is the idea BCIR's cost model needs to price"
+   "slice": "1.9 ML dialects: sparsity as a property of the TYPE rather than of the loop structure, which is the idea BCIR's lane typing shares; --sparsification is the gateable pipeline"
   },
   "spirv": {
    "status": "declared",
@@ -158,8 +158,8 @@
    "where": "18-mlir-lowering-to-llvm/10-tensors-buffers-and-the-step-between.md"
   },
   "tosa": {
-   "status": "planned",
-   "slice": "2.3 ML dialects: the quantized-inference entry point, and the closest MLIR analogue to what BCIRQ8 already does"
+   "status": "taught",
+   "where": "25-ml-dialects/01-the-abstraction-ladder.md"
   },
   "transform": {
    "status": "taught",
