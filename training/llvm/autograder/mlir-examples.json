@@ -397,6 +397,33 @@
    }
   },
   {
+   "source": "training/llvm/18-mlir-lowering-to-llvm/examples/pdl-pattern-as-data.mlir",
+   "required_dialects": [
+    "builtin",
+    "pdl",
+    "pdl_interp"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-pdl-to-pdl-interp)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_lowered": [
+     "pdl_interp.func @matcher",
+     "pdl_interp.check_operation_name",
+     "pdl_interp.check_operand_count",
+     "pdl_interp.finalize"
+    ],
+    "forbid_lowered": [
+     "pdl.pattern",
+     "pdl.rewrite",
+     "pdl.replace"
+    ]
+   }
+  },
+  {
    "source": "training/llvm/18-mlir-lowering-to-llvm/examples/production-dialect/scale.mlir",
    "required_dialects": [
     "builtin",

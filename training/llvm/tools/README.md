@@ -229,6 +229,29 @@ LLVM-dialect results, then runs matching-major `llvm-as` and
 `opt -passes=verify`. The MLIR-specific CI rail passes `--require-tools` so a
 missing tool is a failure there.
 
+That flag once proved less than it looked like it proved. It established that
+`mlir-opt` was on `PATH` at a matching major — not that a single claim was
+checked. Emptying every `checks` object in the registry left the gate printing
+`MLIR tier grading passed` with an identical tier census, because a check list
+that is empty, absent or misspelt produces no errors at all and so is
+indistinguishable from one that passed. Two rules close that, and they are
+deliberately at different levels:
+
+- **A tier that claims a conversion must claim something about its output.** A
+  Tier 3 or 4 entry needs at least one of `require_lowered`, `forbid_lowered`,
+  `require_llvm_ir` or `required_runtime_calls` (or an `expected_failure` naming
+  the operations that must remain); otherwise the pipeline's exit status is the
+  whole test, and a pass that emitted an empty module passes it. Tiers 0–2 claim
+  no conversion, so there the tier *is* the claim and an empty `checks` is
+  honest. This is a property of the manifest, so it is checked on every host,
+  toolchain or no toolchain.
+- **`--require-tools` counts assertions that actually ran** against text the run
+  generated, and refuses to report success over zero. The pass line prints the
+  number, so the evidence is in the output rather than in this paragraph.
+
+A key outside the known set is rejected rather than ignored, for the same
+reason: `require_lowerd` in a manifest reads exactly like a check that runs.
+
 `verify-bcir-mapping.sh` validates both source-like `.bcir.txt` claim fragments
 and real `.bcir` assembler fixtures under `bcir-mapping/examples/`. The
 `.bcir.txt` fragments are not assembler inputs, so the checker applies

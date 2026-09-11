@@ -118,6 +118,19 @@ artifacts. The intentionally incomplete conversion fixture must leave
 `bcir.unlowered` behind; observing that expected failure proves the legality
 check is active rather than silently treating pipeline exit status as success.
 
+That argument used to hold for exactly one fixture. It is now the contract for
+every Tier 3 and Tier 4 entry: an entry that declares a conversion must also
+claim something about what the conversion produced — `require_lowered`,
+`forbid_lowered`, `require_llvm_ir`, `required_runtime_calls`, or an
+`expected_failure` naming the operations that must remain. An entry with no such
+claim is rejected by the registry validator on every host, with or without a
+toolchain, because otherwise the pipeline's exit status is the whole test and a
+pass that emitted an empty module passes it. Under `--require-tools` the grader
+additionally counts the assertions it executed against generated output and
+refuses to report success over zero, so the flag proves the rail *ran* rather
+than that its tools were installed. Tiers 0–2 make no conversion claim, so there
+an empty `checks` object stays honest.
+
 ## Grading model
 
 ### LLVM IR

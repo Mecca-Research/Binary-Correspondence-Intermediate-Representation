@@ -110,12 +110,12 @@
    "reason": "OpenMP as a source-level programming model, excluded on the same boundary as OpenACC. Where OpenMP reaches IR the corpus does teach it, as the outlining and runtime-call shape in 20-clang-frontend."
   },
   "pdl": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: rewrite patterns as data, the same move 22-bcir-approach/04-dialect-as-data.md makes for op definitions"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/03-rewritepattern-and-conversiontarget.md"
   },
   "pdl_interp": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: the matcher pdl compiles into, worth one section for the same reason a bytecode is worth teaching"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/03-rewritepattern-and-conversiontarget.md"
   },
   "ptr": {
    "status": "declared",
