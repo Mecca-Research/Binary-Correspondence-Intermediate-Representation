@@ -46,8 +46,8 @@
    "where": "24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md"
   },
   "complex": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: complex arithmetic as a worked example of a type MLIR models and LLVM IR does not"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md"
   },
   "dlti": {
    "status": "declared",
@@ -82,8 +82,8 @@
    "where": "14-mlir-bridge/03-lowering-to-llvm-dialect.md"
   },
   "math": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: the transcendental surface behind the libm-vs-intrinsic question 06-intrinsics raises"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md"
   },
   "memref": {
    "status": "taught",

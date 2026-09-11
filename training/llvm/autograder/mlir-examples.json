@@ -292,6 +292,41 @@
    "classification": "rubric-only-version-dependent-sketch"
   },
   {
+   "source": "training/llvm/18-mlir-lowering-to-llvm/examples/complex-and-math-to-llvm.mlir",
+   "required_dialects": [
+    "builtin",
+    "complex",
+    "func",
+    "llvm",
+    "math"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt",
+    "mlir-translate",
+    "llvm-as",
+    "opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-complex-to-llvm,convert-math-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)",
+   "expected_tier": 4,
+   "expected_lowered_artifact": "training/llvm/18-mlir-lowering-to-llvm/examples/complex-and-math-to-llvm-lowered.ll",
+   "checks": {
+    "forbid_lowered": [
+     "complex.mul",
+     "math.sqrt",
+     "math.exp",
+     "func.func",
+     "builtin.unrealized_conversion_cast"
+    ],
+    "require_llvm_ir": [
+     "define { float, float } @cmul({ float, float }",
+     "extractvalue { float, float }",
+     "insertvalue { float, float } poison",
+     "call float @llvm.sqrt.f32",
+     "call float @llvm.exp.f32"
+    ]
+   }
+  },
+  {
    "source": "training/llvm/18-mlir-lowering-to-llvm/examples/memref-type-conversion.mlir",
    "required_dialects": [
     "arith",

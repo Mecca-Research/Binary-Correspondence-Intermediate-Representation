@@ -66,6 +66,81 @@ to `i64`, the `kind` fact must move somewhere:
 The pitfall is not just dropping attributes; it is dropping them without deciding
 whether they were semantic, diagnostic, or optimization-only.
 
+## A worked pair: a type LLVM lacks, and operations it only has as intrinsics
+
+The sketches above are BCIR's own types. Upstream MLIR has the same problem in two
+different shapes, and [`examples/complex-and-math-to-llvm.mlir`](examples/complex-and-math-to-llvm.mlir)
+runs both down to real LLVM IR so the difference is visible.
+
+**A type the target does not have.** `complex<f32>` is a first-class MLIR type. LLVM IR has
+no complex type at all, so the converter has to choose a representation:
+
+```mlir
+func.func @cmul(%a: complex<f32>, %b: complex<f32>) -> complex<f32> {
+  %r = complex.mul %a, %b : complex<f32>
+  return %r : complex<f32>
+}
+```
+```llvm
+define { float, float } @cmul({ float, float } %0, { float, float } %1)
+```
+
+An anonymous two-element struct, real part first. That choice is the entire content of the
+type conversion, and everything downstream follows from it — including the calling
+convention, since `{ float, float }` is what the ABI now sees.
+
+The operation lowering follows the representation:
+
+```llvm
+  %3 = extractvalue { float, float } %0, 0     ; a.re
+  %4 = extractvalue { float, float } %0, 1     ; a.im
+  %5 = extractvalue { float, float } %1, 0     ; b.re
+  %6 = extractvalue { float, float } %1, 1     ; b.im
+  %7 = fmul float %5, %3
+  %8 = fmul float %6, %4
+  %9 = fmul float %4, %5
+  %10 = fmul float %3, %6
+  %11 = fsub float %7, %8                      ; re = a.re*b.re - a.im*b.im
+  %12 = fadd float %9, %10                     ; im = a.im*b.re + a.re*b.im
+  %13 = insertvalue { float, float } poison, float %11, 0
+  %14 = insertvalue { float, float } %13, float %12, 1
+```
+
+Four multiplies, one subtract, one add: the schoolbook complex product, written out. One
+operation in MLIR became eleven in LLVM IR, and no intrinsic was involved — there was
+nothing to call, so the converter had to *expand*.
+
+**Notice where the result is built from.** The aggregate starts at
+`insertvalue { float, float } poison`, not at zero and not at `undef`. That is the
+idiomatic way to construct an aggregate whose fields are all about to be written: starting
+from poison says "every field here is meaningless until I fill it", and both fields are
+filled immediately. [`../13-advanced-ir/05-poison-undef-freeze.md`](../13-advanced-ir/05-poison-undef-freeze.md)
+treats poison as a hazard, which it is — but this is the other face of it, poison used
+correctly as a base value.
+
+**Operations the target has, under another name.** `math.sqrt` and `math.exp` need no
+representation decision at all, because LLVM IR already has them:
+
+```mlir
+  %s = math.sqrt %x : f32
+  %e = math.exp %s : f32
+```
+
+```llvm
+  %2 = call float @llvm.sqrt.f32(float %0)
+  %3 = call float @llvm.exp.f32(float %2)
+```
+
+A rename, effectively — `math.<op>` to `llvm.<op>.<type>`. Nothing expands, nothing is
+chosen, and the `math` dialect exists mainly so that code above the LLVM dialect can spell
+these without depending on it.
+
+**The contrast is the lesson.** Two dialects, one conversion pipeline, two completely
+different amounts of work: a missing *type* forces a representation choice and an
+open-coded expansion, while a missing *spelling* for an operation the target already has is
+a table lookup. When you write a `TypeConverter`, the first question is which of those two
+situations you are in.
+
 ## Minimal converter sketch
 
 ```c++
