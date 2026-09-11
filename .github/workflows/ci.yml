@@ -301,6 +301,14 @@ jobs:
       - name: Training database layer (catalog, planner, predicate, generations)
         run: python training/tools/verify_database.py --require-native
 
+      # The training LangRef is normative and `training/tools/` is its conformance
+      # oracle, which is only a useful arrangement while something checks that the two
+      # still agree. Nobody does that by reading, and both halves keep working while
+      # they disagree -- the reader is the only thing that breaks (L15). Cheap, no
+      # toolchain, so it runs beside the gate whose vocabulary it reconciles.
+      - name: Training LangRef reconciled against the code it describes
+        run: python training/tools/verify_langref.py
+
       - name: Clang statement-expression/bitfield differential
         run: |
           clang --version

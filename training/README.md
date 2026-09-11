@@ -15,12 +15,20 @@ One body of knowledge, delivered in three shapes:
 | an agent doing a task | `tools/search_chunks.py`, or the subject's index | a scoped passage that traces to a line |
 | training a model | `tools/export_training_examples.py` | BCIR `SFTExample`s and verifier-decided preference pairs |
 
-The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
-The plan for growing it is [`ROADMAP.md`](ROADMAP.md). Which embedding provider
-the retrieval evaluation runs on is decided in
+The reference for all of it — the table, the predicate grammar, the artifact
+formats, the planner, the retrieval backends and the ML rails — is
+[`TRAINING_LANGREF.md`](TRAINING_LANGREF.md), which is *normative*: the tools
+under [`tools/`](tools) are its conformance oracle, and
+`tools/verify_langref.py` reconciles the two on every CI run.
+
+The contract the three audiences share is
+[`CORPUS_STANDARD.md`](CORPUS_STANDARD.md). The plan for growing it is
+[`ROADMAP.md`](ROADMAP.md). Which embedding provider the retrieval evaluation
+runs on is decided in
 [`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md). How the retrieval rail
 became a database — measured against nine proven engines, then built out as the
-S1–S6 ladder — is [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md).
+S1–S19 ladder — and *why* each mechanism is there is
+[`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md).
 
 A subject brings its own material and its own gates; it does not bring its own
 grader. Grading, dataset export and bounded tool execution live in
