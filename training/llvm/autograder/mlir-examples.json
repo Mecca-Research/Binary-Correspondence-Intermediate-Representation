@@ -566,6 +566,101 @@
      "bcir.unlowered"
     ]
    }
+  },
+  {
+   "source": "training/llvm/18-mlir-lowering-to-llvm/examples/shape-broadcast-to-std.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "shape",
+    "tensor",
+    "arith",
+    "scf"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(func.func(shape-to-shape-lowering),convert-shape-to-std)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "shape.shape_of",
+     "shape.broadcast",
+     "shape.num_elements"
+    ],
+    "require_lowered": [
+     "tensor.dim",
+     "tensor.generate",
+     "scf.if",
+     "arith.maxui"
+    ],
+    "forbid_lowered": [
+     "shape.shape_of",
+     "shape.broadcast",
+     "shape.num_elements",
+     "shape.reduce",
+     "shape.mul",
+     "shape.yield"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/18-mlir-lowering-to-llvm/examples/shape-constraints-to-assert.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "shape",
+    "cf"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-shape-constraints,canonicalize)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "shape.cstr_broadcastable",
+     "shape.assuming"
+    ],
+    "require_lowered": [
+     "cf.assert",
+     "shape.is_broadcastable",
+     "required broadcastable shapes"
+    ],
+    "forbid_lowered": [
+     "shape.cstr_broadcastable",
+     "shape.assuming"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/18-mlir-lowering-to-llvm/examples/shape-one-pass-is-not-enough.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "shape",
+    "tensor",
+    "arith"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-shape-to-std)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "expected_failure": {
+    "kind": "illegal-ops-remaining",
+    "operations": [
+     "shape.num_elements"
+    ]
+   },
+   "checks": {
+    "require_source": [
+     "shape.num_elements"
+    ]
+   }
   }
  ]
 }

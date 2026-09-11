@@ -134,8 +134,8 @@
    "where": "14-mlir-bridge/01-what-is-mlir.md"
   },
   "shape": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: shape as first-class IR, which is the prerequisite for reading linalg and tosa honestly"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/11-shapes-as-values.md"
   },
   "shard": {
    "status": "declared",

@@ -22,11 +22,11 @@ read out of an installed MLIR rather than from a documentation page:
 <!-- generated: dialect-coverage -->
 | disposition | dialects | operations | operations the corpus names |
 | --- | ---: | ---: | ---: |
-| taught | 18 | 890 | 89 |
+| taught | 19 | 930 | 106 |
 | referenced | 2 | 55 | 7 |
-| planned | 6 | 349 | 3 |
+| planned | 5 | 309 | 3 |
 | declared | 22 | 1200 | 0 |
-| **all** | **48** | **2494** | **99** |
+| **all** | **48** | **2494** | **116** |
 
 Dialects this corpus teaches, with what it names of each:
 
@@ -35,21 +35,22 @@ Dialects this corpus teaches, with what it names of each:
 | `llvm` | 296 | 15 |
 | `irdl` | 17 | 13 |
 | `pdl_interp` | 39 | 12 |
+| `shape` | 40 | 11 |
+| `arith` | 54 | 8 |
 | `pdl` | 15 | 8 |
 | `transform` | 234 | 8 |
-| `arith` | 54 | 6 |
 | `emitc` | 49 | 4 |
+| `tensor` | 21 | 4 |
+| `cf` | 4 | 3 |
 | `func` | 5 | 3 |
 | `index` | 26 | 3 |
 | `scf` | 12 | 3 |
 | `bufferization` | 7 | 2 |
 | `builtin` | 2 | 2 |
-| `cf` | 4 | 2 |
 | `math` | 46 | 2 |
 | `memref` | 32 | 2 |
 | `ub` | 2 | 2 |
 | `complex` | 29 | 1 |
-| `tensor` | 21 | 1 |
 <!-- /generated -->
 
 ## The four answers a dialect can give
