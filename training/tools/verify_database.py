@@ -146,16 +146,26 @@ def check_kernel_cache(report: Report, *, require_native: bool) -> None:
         return
     from bcir.kbcir.native_ai import NativeAIKernels
 
-    with tempfile.TemporaryDirectory() as directory:
+    def build_and_release(**kwargs) -> None:
+        """Build, then release the handle before anything touches the file again.
+
+        Windows locks a loaded module, so `build`'s own `os.replace` over a library
+        this process still has open would fail, as would removing the directory it
+        lives in. This check rebuilds into one directory on purpose, so each handle
+        goes as soon as the build that produced it has been observed.
+        """
+        NativeAIKernels.build(root, cc=compiler, **kwargs).close()
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
         root = Path(directory)
-        NativeAIKernels.build(root, cc=compiler)
+        build_and_release()
         library = root / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
         report.require(stamp.is_file(), "S1: the first build published no stamp")
         first = library.stat()
         digest = library.read_bytes()
 
-        NativeAIKernels.build(root, cc=compiler)
+        build_and_release()
         second = library.stat()
         report.require(
             (first.st_ino, first.st_mtime_ns) == (second.st_ino, second.st_mtime_ns),
@@ -163,7 +173,7 @@ def check_kernel_cache(report: Report, *, require_native: bool) -> None:
             "compiler ran when the stamp said it need not",
         )
 
-        NativeAIKernels.build(root, cc=compiler, rebuild=True)
+        build_and_release(rebuild=True)
         third = library.stat()
         report.require(
             (first.st_ino, first.st_mtime_ns) != (third.st_ino, third.st_mtime_ns),
@@ -179,7 +189,7 @@ def check_kernel_cache(report: Report, *, require_native: bool) -> None:
         recorded = json.loads(stamp.read_text(encoding="utf-8"))
         recorded["inputs"] = "0" * 64
         stamp.write_text(json.dumps(recorded), encoding="utf-8")
-        NativeAIKernels.build(root, cc=compiler)
+        build_and_release()
         fourth = library.stat()
         report.require(
             (third.st_ino, third.st_mtime_ns) != (fourth.st_ino, fourth.st_mtime_ns),

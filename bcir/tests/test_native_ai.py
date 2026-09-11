@@ -41,7 +41,7 @@ def _native():
     if _CC is None:
         return None
     if _NATIVE is None:
-        _NATIVE_DIRECTORY = tempfile.TemporaryDirectory()
+        _NATIVE_DIRECTORY = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         _NATIVE = NativeAIKernels.build(_NATIVE_DIRECTORY.name, cc=_CC)
         atexit.register(_cleanup_native)
     return _NATIVE
@@ -50,7 +50,12 @@ def _native():
 def _cleanup_native():
     global _NATIVE, _NATIVE_DIRECTORY
     directory = _NATIVE_DIRECTORY
-    _NATIVE = None
+    kernels, _NATIVE = _NATIVE, None
+    if kernels is not None:
+        # Dropping the reference does not unload the library -- ctypes has no
+        # finalizer that does -- so on Windows the directory below would refuse to
+        # go. Releasing the handle first is what makes this cleanup a cleanup.
+        kernels.close()
     gc.collect()
     _NATIVE_DIRECTORY = None
     if directory is not None:
@@ -328,23 +333,79 @@ def _identity(path: Path) -> tuple[int, int]:
     return (stat.st_ino, stat.st_mtime_ns)
 
 
+def _build_and_release(directory, **kwargs) -> None:
+    """Build, then release the handle before anything touches the file again.
+
+    Windows locks a loaded module: `build`'s own `os.replace` over a library this
+    process still has open fails, as does unlinking it or removing the directory it
+    lives in. These tests deliberately rebuild into one directory, so each handle is
+    released as soon as the build that produced it has been observed. On POSIX this
+    changes nothing; it is the difference between running and not running on the
+    other host in the matrix.
+    """
+    NativeAIKernels.build(directory, cc=_CC, **kwargs).close()
+
+
+def _kernel_workspace():
+    """A temp directory for kernel builds, tolerant of a handle the OS still holds.
+
+    `close` releases what this process owns, which is enough for every rebuild
+    below. `ignore_cleanup_errors` covers only the last library standing at the end
+    of a test: the directory is the OS's to reclaim, and failing a stamp test over
+    it would be reporting the platform's file locking as a defect in the stamp.
+    """
+    return tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+
+
+def test_native_kernels_release_the_handle_they_claim_to_own():
+    """The class docstring says it owns the handle; this is the release half.
+
+    Without it a caller cannot delete or replace the library file on Windows, where
+    a loaded module is locked -- so a temporary build directory cannot be cleaned up
+    and `build` cannot `os.replace` over a library it has already loaded. Closing is
+    final on purpose: every entry point reaches the library through `_library`, so a
+    call afterwards raises rather than jumping into an address the loader unmapped.
+    """
+    if _CC is None:
+        return
+    with _kernel_workspace() as directory:
+        kernels = NativeAIKernels.build(directory, cc=_CC)
+        assert kernels.quantize((1.0, -1.0), group_size=2, bits=8) is not None
+        kernels.close()
+        try:
+            kernels.quantize((1.0, -1.0), group_size=2, bits=8)
+        except AttributeError:
+            pass
+        else:
+            raise AssertionError("a closed library still served a call")
+        kernels.close()  # idempotent: a second release is not a second free
+        with NativeAIKernels.build(directory, cc=_CC) as scoped:
+            assert scoped.quantize((1.0, -1.0), group_size=2, bits=8) is not None
+        try:
+            scoped.quantize((1.0, -1.0), group_size=2, bits=8)
+        except AttributeError:
+            pass
+        else:
+            raise AssertionError("leaving the context did not release the handle")
+
+
 def test_native_build_reuses_the_library_when_nothing_changed():
     """The compiler is the cost; the stamp is what stops it running twice for nothing."""
     if _CC is None:
         return
-    with tempfile.TemporaryDirectory() as directory:
-        NativeAIKernels.build(directory, cc=_CC)
+    with _kernel_workspace() as directory:
+        _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
         assert stamp.is_file()
         before = _identity(library)
         digest = hashlib.sha256(library.read_bytes()).hexdigest()
         for _ in range(3):
-            NativeAIKernels.build(directory, cc=_CC)
+            _build_and_release(directory)
             assert _identity(library) == before
             assert hashlib.sha256(library.read_bytes()).hexdigest() == digest
         # Anti-vacuity: the observation above is only evidence if it CAN change.
-        NativeAIKernels.build(directory, cc=_CC, rebuild=True)
+        _build_and_release(directory, rebuild=True)
         assert _identity(library) != before
         # ... and a forced rebuild of unchanged inputs still produces the same bytes.
         assert hashlib.sha256(library.read_bytes()).hexdigest() == digest
@@ -353,15 +414,15 @@ def test_native_build_reuses_the_library_when_nothing_changed():
 def test_native_build_recompiles_when_the_recorded_inputs_do_not_match():
     if _CC is None:
         return
-    with tempfile.TemporaryDirectory() as directory:
-        NativeAIKernels.build(directory, cc=_CC)
+    with _kernel_workspace() as directory:
+        _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
         recorded = json.loads(stamp.read_text(encoding="utf-8"))
         recorded["inputs"] = "0" * 64
         stamp.write_text(json.dumps(recorded), encoding="utf-8")
         before = _identity(library)
-        NativeAIKernels.build(directory, cc=_CC)
+        _build_and_release(directory)
         assert _identity(library) != before
         assert json.loads(stamp.read_text(encoding="utf-8"))["inputs"] != "0" * 64
 
@@ -369,11 +430,15 @@ def test_native_build_recompiles_when_the_recorded_inputs_do_not_match():
 def _replace_bytes(path: Path, payload: bytes) -> None:
     """Swap a file's contents by replacing the inode, never by writing through it.
 
-    A built library is mapped executable by every `ctypes.CDLL` still holding it, and
-    `dlclose` is not guaranteed at garbage-collection time. Writing through the path
-    would mutate code under a live mapping -- which segfaults the interpreter rather
-    than testing anything. `os.replace` leaves every existing mapping on the old inode,
-    which is also how a real concurrent rebuild behaves.
+    A built library is mapped executable by every `ctypes.CDLL` still holding it.
+    Writing through the path would mutate code under a live mapping -- which
+    segfaults the interpreter rather than testing anything. `os.replace` leaves every
+    existing mapping on the old inode, which is also how a real concurrent rebuild
+    behaves.
+
+    The caller must already have released its handle (see `_build_and_release`):
+    POSIX permits the replace either way, but Windows locks a loaded module and
+    would refuse it.
     """
     scratch = path.with_name(f".{path.name}.swap")
     scratch.write_bytes(payload)
@@ -384,13 +449,13 @@ def test_native_build_refuses_a_stamp_that_does_not_match_the_library():
     """A stamp is a claim about bytes on disk. Tampered bytes retire the claim."""
     if _CC is None:
         return
-    with tempfile.TemporaryDirectory() as directory:
-        NativeAIKernels.build(directory, cc=_CC)
+    with _kernel_workspace() as directory:
+        _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         original = library.read_bytes()
         _replace_bytes(library, original + b"\x00tampered")
         before = _identity(library)
-        NativeAIKernels.build(directory, cc=_CC)
+        _build_and_release(directory)
         assert _identity(library) != before
         assert library.read_bytes() == original
 
@@ -399,8 +464,8 @@ def test_native_build_refuses_a_malformed_stamp():
     """Every unreadable stamp is a rebuild, never a silent reuse (L1: fail closed)."""
     if _CC is None:
         return
-    with tempfile.TemporaryDirectory() as directory:
-        NativeAIKernels.build(directory, cc=_CC)
+    with _kernel_workspace() as directory:
+        _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
         digest = hashlib.sha256(library.read_bytes()).hexdigest()
@@ -423,25 +488,25 @@ def test_native_build_refuses_a_malformed_stamp():
         for corruption in corruptions:
             stamp.write_text(corruption, encoding="utf-8")
             before = _identity(library)
-            NativeAIKernels.build(directory, cc=_CC)
+            _build_and_release(directory)
             assert _identity(library) != before, corruption
             assert hashlib.sha256(library.read_bytes()).hexdigest() == digest, corruption
         stamp.unlink()
         before = _identity(library)
-        NativeAIKernels.build(directory, cc=_CC)
+        _build_and_release(directory)
         assert _identity(library) != before
 
 
 def test_native_build_rebuilds_when_the_library_is_gone():
     if _CC is None:
         return
-    with tempfile.TemporaryDirectory() as directory:
-        NativeAIKernels.build(directory, cc=_CC)
+    with _kernel_workspace() as directory:
+        _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
         recorded = stamp.read_text(encoding="utf-8")
         library.unlink()
-        NativeAIKernels.build(directory, cc=_CC)
+        _build_and_release(directory)
         assert library.is_file()
         assert stamp.read_text(encoding="utf-8") == recorded
 

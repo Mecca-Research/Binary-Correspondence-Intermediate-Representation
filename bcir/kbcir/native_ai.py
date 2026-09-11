@@ -111,6 +111,43 @@ class NativeAIKernels:
         except AttributeError as exc:
             raise RuntimeError(f"native AI library has an incompatible ABI: {exc}") from exc
 
+    def close(self) -> None:
+        """Release the dynamic-library handle this object owns.
+
+        The class docstring has always claimed that ownership; this is the other
+        half of it. Without a release, a caller cannot delete or replace the library
+        file on Windows, where a loaded module is locked: a temporary build
+        directory cannot be cleaned up, and `build` cannot `os.replace` over a
+        library it has already loaded. On POSIX nothing is locked and closing is
+        merely tidy -- the platform that needs this is the one that cannot work
+        without it.
+
+        Closing is final and the object is unusable afterwards, which is the point:
+        every entry point reaches the library through `self._library`, so a call
+        after close raises `AttributeError` on None rather than dereferencing an
+        address the loader has unmapped.
+        """
+        library, self._library = self._library, None
+        handle = getattr(library, "_handle", None)
+        if handle is None:
+            return
+        try:
+            import _ctypes
+
+            release = getattr(_ctypes, "FreeLibrary", None) if os.name == "nt" else _ctypes.dlclose
+            if release is not None:
+                release(handle)
+        except (OSError, AttributeError, ValueError):
+            # A handle the platform declines to release is the platform's to keep.
+            # The object is already unusable, which is all `close` promises.
+            pass
+
+    def __enter__(self) -> "NativeAIKernels":
+        return self
+
+    def __exit__(self, *exception_info) -> None:
+        self.close()
+
     @classmethod
     def load(cls, path: os.PathLike | str) -> "NativeAIKernels":
         """Load an explicitly built library; absence or ABI mismatch never falls back."""
