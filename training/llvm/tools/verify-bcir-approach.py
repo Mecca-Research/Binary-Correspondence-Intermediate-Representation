@@ -203,6 +203,76 @@ def block_axes() -> str:
     return "\n".join(rows) + "\n"
 
 
+def check_irdl_quotes(report) -> None:
+    """The IRDL the chapter quotes must still be the IRDL BCIR ships.
+
+    22-bcir-approach/04-dialect-as-data.md now shows real operation definitions lifted
+    from `mlir/irdl/bcir.irdl.mlir` -- the point being that IRDL is readable, which only
+    works if a reader is shown the actual thing. A quotation is a copy, and a copy drifts:
+    if BCIR renames an operation or changes a constraint, the chapter keeps teaching the
+    old one and nothing notices. So every construct the chapter quotes is checked against
+    the file it was quoted from.
+
+    This reads BCIR's rail rather than importing from it. The training corpus is never a
+    build dependency of BCIR, and reading a file to check a quotation does not make it one.
+    """
+    projection = REPO / "mlir/irdl/bcir.irdl.mlir"
+    chapter = CHAPTERS / "04-dialect-as-data.md"
+    if not report.require(
+        projection.is_file(), f"{projection} is missing; the chapter quotes a file that is gone"
+    ):
+        return
+    if not report.require(chapter.is_file(), f"{chapter} is missing"):
+        return
+
+    source = projection.read_text(encoding="utf-8")
+    quoted = chapter.read_text(encoding="utf-8")
+
+    # The constraint and declaration operations the chapter names as IRDL's vocabulary.
+    for op in (
+        "irdl.dialect",
+        "irdl.type",
+        "irdl.operation",
+        "irdl.region",
+        "irdl.regions",
+        "irdl.operands",
+        "irdl.results",
+        "irdl.any",
+        "irdl.is",
+    ):
+        if op in quoted:
+            report.require(
+                op in source,
+                f"04-dialect-as-data.md teaches `{op}` but BCIR's IRDL projection no longer "
+                f"uses it; the chapter is quoting a vocabulary the file has moved past",
+            )
+
+    # The specific operation definitions it reproduces. Matched with a boundary rather
+    # than as a substring: `irdl.operation @loadX` contains `irdl.operation @load`, so a
+    # plain `in` test would call a renamed operation present and report nothing. That is
+    # the same substring trap that credited the `x86` dialect for `llvm.x86.pclmulqdq`,
+    # and it survived into this check until its own RED proof refused to fire.
+    for name in ("@module", "@resource", "@load"):
+        if re.search(rf"irdl\.operation {re.escape(name)}\b", quoted):
+            report.require(
+                re.search(rf"irdl\.operation {re.escape(name)}\b", source),
+                f"04-dialect-as-data.md reproduces `irdl.operation {name}` but the "
+                f"projection no longer declares it; requote or drop the example",
+            )
+
+    # And the claim that the projection uses no compiled-C++ escape hatch, which is the
+    # whole argument for it being loadable by a stock tool.
+    if "irdl.c_pred" in quoted:
+        report.require(
+            "irdl.c_pred" not in source.replace("irdl.c_pred (it requires", "")
+            or source.count("irdl.c_pred") <= 1,
+            "04-dialect-as-data.md says the projection uses no irdl.c_pred, but the "
+            "projection now contains one; a definition with a C++ predicate is not "
+            "loadable by a stock mlir-opt, which is the property the chapter claims",
+        )
+    print("[irdl]    every IRDL construct the chapter quotes is still in BCIR's projection")
+
+
 def block_irdl() -> str:
     """BCIR's ODS dialect against its IRDL projection, counted from the files.
 
@@ -236,7 +306,61 @@ def block_irdl() -> str:
     return "\n".join(rows) + "\n"
 
 
+def block_plan_selection() -> str:
+    """The encoding selector's answer, recomputed from `bcir.asn1.selection`.
+
+    Only EXACT quantities go in this table. `octets` is deterministic arithmetic -- the
+    same value under the same rule is the same length on every host, forever -- and so are
+    legality, canonicality, and the two objectives decided from them. The encode/decode
+    latency objectives are decided by timing on a shared runner, which is `indicative` in
+    the corpus's sense and would make this block drift on every regeneration. A generated
+    table that cannot be reproduced is worse than no table, so the chapter states those two
+    in prose and marks them as measured.
+    """
+    from bcir.asn1 import selection
+    from bcir.asn1.codec import Universal
+    from bcir.asn1.constraints import ValueRange
+    from bcir.asn1.schema import Component, Primitive, Sequence
+
+    integer = Primitive(Universal.INTEGER, "INTEGER")
+    bounded = Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 255))
+    schemas = (
+        ("no constraint", Sequence((Component("v", integer),), "S")),
+        ("`v INTEGER (0..255)`", Sequence((Component("v", bounded),), "S")),
+    )
+    value = {"v": 200}
+    canonical = {c.name: c.canonical for c in selection.ALL_CANDIDATES}
+
+    measured = {label: selection.measure(kind, value, repeats=1) for label, kind in schemas}
+    rows = [
+        "| candidate | canonical | octets, no constraint | octets, `(0..255)` |",
+        "| --- | :---: | ---: | ---: |",
+    ]
+    for candidate in selection.ALL_CANDIDATES:
+        cells = []
+        for label, _ in schemas:
+            hit = next(m for m in measured[label] if m.candidate == candidate.name)
+            cells.append(str(hit.octets) if hit.legal else "refused")
+        mark = "yes" if canonical[candidate.name] else "no"
+        rows.append(f"| `{candidate.name}` | {mark} | {cells[0]} | {cells[1]} |")
+
+    rows.append("")
+    rows.append("| objective | decided by | selects, no constraint | selects, `(0..255)` |")
+    rows.append("| --- | --- | --- | --- |")
+    for objective, how in (
+        (selection.Objective.NONE, "definition"),
+        (selection.Objective.WIRE_SIZE, "arithmetic"),
+    ):
+        picks = []
+        for label, _ in schemas:
+            chosen = selection.select(measured[label], objective=objective)
+            picks.append(f"`{chosen.candidate}`" if chosen else "none")
+        rows.append(f"| `{objective.value}` | {how} | {picks[0]} | {picks[1]} |")
+    return "\n".join(rows) + "\n"
+
+
 BLOCKS = {
+    "plan-selection": block_plan_selection,
     "irdl-projection": block_irdl,
     "thermal-ladder": block_thermal_ladder,
     "substrates": block_substrates,
@@ -450,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
     check_law_rails(report, chapters)
     check_no_dead_passes(report, chapters)
     check_irdl_roundtrip(report)
+    check_irdl_quotes(report)
 
     if report.failures:
         print("bcir-approach gate: FAILED", file=sys.stderr)

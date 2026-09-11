@@ -308,7 +308,31 @@ def main(argv: list[str] | None = None) -> int:
         print("search_chunks: --top-k must be at least 1", file=sys.stderr)
         return EXIT_USAGE
 
+    # --require-native is read only inside the native branch below, and --backend
+    # defaults to `reference`, so the default invocation passed the flag and never
+    # entered a path that could honour it: no import of BCIR, no kernel built, no native
+    # dot product, exit 0. A flag that cannot fail on the configuration it is most likely
+    # to be typed with is not a requirement, so say so rather than accepting it.
+    if args.require_native and args.backend == "reference":
+        print(
+            "search_chunks: --require-native with --backend reference asks for a "
+            "guarantee about a backend this run will not touch; pass --backend native, "
+            "q8 or both",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     embedding_set = EmbeddingSet(args.embedding_set)
+    if args.require_native and not embedding_set.rows:
+        # top_k = min(top_k, len(rows)) becomes 0, every ranking is empty, and the
+        # printing loop iterates zero times while the flag reports success.
+        print(
+            f"search_chunks: --require-native over an embedding set with no rows "
+            f"({args.embedding_set}); ranking nothing exercises no kernel",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     top_k = min(args.top_k, len(embedding_set.rows))
     unit_query = embed_query_float(args.query, embedding_set)
     query = embed_query(args.query, embedding_set)

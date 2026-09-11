@@ -337,6 +337,7 @@ speedup:
 8. [`23-version-movement/03-conversions-and-shifts.md`](23-version-movement/03-conversions-and-shifts.md) — `ashr` versus `lshr`, and the out-of-range float-to-int conversion that is `poison`.
 9. [`23-version-movement/04-attributes-that-arrived.md`](23-version-movement/04-attributes-that-arrived.md) — `captures(...)` replacing `nocapture`, `range(...)` on a return, and `dead_on_return` on C++ by-value parameters.
 10. [`24-mlir-infrastructure/README.md`](24-mlir-infrastructure/README.md) — MLIR's framework: regions and block arguments, interfaces, pass anchoring, bytecode, and the cast a partial lowering leaves behind.
+11. [`25-ml-dialects/README.md`](25-ml-dialects/README.md) — the ML dialects: the ladder from `tosa` to `linalg` to an `scf.for` nest, and what a quantized type is once the type is gone.
 6. Run `python3 training/llvm/tools/verify-bcir-approach.py` after editing any page here; every table in the subject is regenerated from `bcir/` and the IRDL rail.
 6. [`21-performance-methodology/06-hardware-counter-harness.md`](21-performance-methodology/06-hardware-counter-harness.md) — counters, and refusing honestly without a PMU
 

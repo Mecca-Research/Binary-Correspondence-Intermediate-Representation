@@ -29,10 +29,10 @@ diffs the snapshots:
 | surface | arrived | departed |
 | --- | ---: | ---: |
 | instructions | 1 | 0 |
-| attributes | 16 | 3 |
+| attributes | 17 | 3 |
 | intrinsics | 102 | 9 |
 
-Of those 131, **7** are taught by a chapter and **124** are declared out of scope with a stated reason.
+Of those 132, **8** are taught by a chapter and **124** are declared out of scope with a stated reason.
 <!-- /generated -->
 
 Every one of those items is disposed of in
@@ -200,3 +200,73 @@ disposition, and verifies that each chapter cited as teaching an item actually n
 Where the LLVM development headers for a major are installed it also re-reads that
 major's surface from the toolchain and refuses a stale snapshot — the CI job that
 installs `llvm-18-dev` owns the 18 snapshot, and the LLVM 23 job owns the 23 one.
+
+## Where every surface stands
+
+The delta above is the part that *moved*. This is the part that is there — every
+construct LLVM 23 defines, and how the corpus answers for it. Nothing in the table is
+typed; [`../tools/verify-langref-delta.py`](../tools/verify-langref-delta.py) recomputes
+it from the snapshot and the two disposition tables, and refuses the run if a single
+construct is neither named in code nor assigned an answer.
+
+<!-- generated: surface-coverage -->
+| surface | in LLVM 23 | named in code | answered another way | how |
+| --- | ---: | ---: | ---: | --- |
+| instructions | 67 | 67 | 0 | nothing left over: 67 instructions is the language |
+| attributes | 104 | 78 | 36 | one disposition each, with the clang recipe that emits it |
+| intrinsics | 524 | 132 | 392 | 26 classes, each taught, referenced or declared |
+
+| intrinsic class | status | members | held by |
+| --- | --- | ---: | --- |
+| `call-protocol` | taught | 3 | `13-advanced-ir/04-attributes.md` |
+| `cfi-and-type-test` | taught | 5 | `06-metadata/04-type-metadata-cfi.md` |
+| `constrained-fp` | taught | 49 | `13-advanced-ir/04-attributes.md` |
+| `coroutine` | taught | 38 | `13-advanced-ir/03-special-types-and-tokens.md` |
+| `debug-annotation` | taught | 8 | `06-metadata/02-debug-info.md` |
+| `element-atomic-memop` | referenced | 3 | `reference/intrinsics-quickref.md` |
+| `experimental-staging` | taught | 12 | `12-backend-jit/06-custom-bcir-intrinsics.md` |
+| `fixed-point` | declared | 14 | a written reason |
+| `fp-environment` | declared | 10 | a written reason |
+| `gc-hook` | taught | 8 | `13-advanced-ir/03-special-types-and-tokens.md` |
+| `hardware-loop` | declared | 7 | a written reason |
+| `libm-mirror` | declared | 23 | a written reason |
+| `loop-dependence` | declared | 2 | a written reason |
+| `objc-arc` | declared | 22 | a written reason |
+| `optimizer-barrier` | declared | 7 | a written reason |
+| `pointer-provenance` | declared | 11 | a written reason |
+| `profiling-hook` | declared | 12 | a written reason |
+| `ptrauth` | declared | 8 | a written reason |
+| `sanitizer-hook` | declared | 13 | a written reason |
+| `scalar-builtin` | taught | 13 | `13-advanced-ir/01-common-intrinsics.md` |
+| `setjmp-eh` | referenced | 6 | `reference/intrinsics-quickref.md` |
+| `stack-and-frame` | declared | 15 | a written reason |
+| `target-register` | declared | 8 | a written reason |
+| `vector-predication` | taught | 94 | `09-vectorization/03-vector-predication.md` |
+| `vector-shape` | taught | 56 | `23-version-movement/01-reading-the-delta.md` |
+| `windows-eh` | referenced | 10 | `reference/intrinsics-quickref.md` |
+
+Classes: **10 taught**, **3 referenced**, **13 declared**. Every one of the 457 classified intrinsics belongs to exactly one of them.
+<!-- /generated -->
+
+Three surfaces, three different right answers, and the differences are the point.
+
+**Instructions have no disposition table**, because they do not deserve one. Sixty-seven
+opcodes *is* the language; an instruction the corpus never writes down is a hole, not a
+judgement. The check exists only to keep the number where it already is.
+
+**Attributes get one answer each.** A hundred and four is small enough to look at
+individually, and each unnamed one records the clang recipe that emits it — which is the
+difference between deciding something is build configuration and assuming it is.
+
+**Intrinsics get classes, not entries.** Five hundred and twenty-four is too many, and
+more importantly most of them do not deserve an individual answer: `llvm.vp.*` is ninety
+operations that are the same operation ninety times, and
+[`../09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md)
+teaching the mask and `%evl` model while naming two of them is *better* than a list of
+ninety. That is the case the class mechanism exists for.
+
+The assignment is per intrinsic rather than per `llvm.<family>.*` prefix, because LLVM's
+prefixes are not reliably semantic: `llvm.get.*` spans the floating-point environment, the
+stack, and vector shape. A table keyed on prefixes would have had to write one reason
+covering all three, and a reason that covers three unrelated things is how a disposition
+becomes a rubber stamp.

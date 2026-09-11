@@ -57,6 +57,7 @@ and the cost model that sits between them.
 | [`02-what-k-bcir-prices.md`](02-what-k-bcir-prices.md) | The twelve axes, which of them anything actually produces, and what each policy weights |
 | [`03-legality-before-cost.md`](03-legality-before-cost.md) | The budget ladder, `Infeasible` as a verdict, and the laws on both rails |
 | [`04-dialect-as-data.md`](04-dialect-as-data.md) | IRDL: the dialect as a file stock `mlir-opt` can read, and what that makes checkable that ODS cannot |
+| [`05-the-planner-is-a-query-planner.md`](05-the-planner-is-a-query-planner.md) | the same optimiser in three vocabularies, run against BCIR's cost-governed ASN.1 encoding selector; why a schema constraint moves only the candidates that read it, and which half of a planner's inputs is exact |
 
 ## Cross-links
 

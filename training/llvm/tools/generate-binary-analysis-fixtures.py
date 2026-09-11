@@ -414,6 +414,15 @@ def generated_entries(manifest: dict[str, Any], fixture: str | None) -> list[dic
         entries = [entry for entry in entries if entry.get("id") == fixture]
         if not entries:
             raise EvidenceError(f"unknown deterministic fixture id: {fixture}")
+    elif not entries:
+        # Everything below loops over this list, so an empty one makes the whole run
+        # vacuous: no fixture is built, no CSV is compared, `success` stays True and
+        # --check reports a clean golden diff over nothing. A manifest that classifies
+        # nothing as deterministic is a manifest defect, not an empty workload.
+        raise EvidenceError(
+            "the evidence manifest declares no deterministic entry, so there is nothing "
+            "to build or compare; a golden-diff check over zero fixtures is not a check"
+        )
     return entries
 
 
@@ -446,9 +455,11 @@ def main() -> int:
             return 0
 
         success = True
+        built = 0
         with tempfile.TemporaryDirectory(prefix="bcir-binary-evidence-") as temporary:
             temp = Path(temporary)
             for entry in entries:
+                built += 1
                 source = repository_path(entry["source_fixture"])
                 artifact = temp / f"{entry['id']}.o"
                 command = [
@@ -474,6 +485,15 @@ def main() -> int:
                     args.check,
                     provenance=True,
                 )
+        if args.require_tools and built == 0:
+            # The flag claims the rail RAN. find_clang() returning a path is where a run
+            # starts; it says nothing about whether a single object was compiled or a
+            # single checked-in CSV was compared.
+            raise EvidenceError(
+                "--require-tools: clang was found but no fixture was built, so no "
+                "checked-in evidence was compared against anything"
+            )
+        print(f"[evidence] {built} deterministic fixture(s) built and compared")
         return 0 if success else 1
     except (EvidenceError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

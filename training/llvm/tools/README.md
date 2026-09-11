@@ -58,8 +58,9 @@ cannot be graded end to end.
 | `demo-vectorize.sh` | Shows loop-vectorization remarks from `clang` on the C fixture, then forces a visible loop-vectorizer experiment over the checked-in IR and prints the transformed IR. | `opt`, `clang` |
 | `demo-debug-pipeline.sh` | Captures `-debug-pass-manager` output for `default<O2>` into a temporary log, then prints the pass schedule for inspection. | `opt` |
 | `build-pass-plugin.sh` | Builds the out-of-tree New PM plugin in `17-new-pass-manager/examples/pass-plugin/` and runs nine assertions through `opt`, including the negative cases (the checker fires on a violating module, `<strict>` exits nonzero, and a stock `loop-unroll-full` breaks the 1:1 contract). Skips cleanly, printing the reason, when the LLVM development headers are absent or when `opt` and `llvm-config` report different LLVM majors. Honours `PASS_PLUGIN_BUILD_DIR` and `PASS_PLUGIN_JOBS`. | `cmake`, a C++17 compiler, LLVM **development** headers, `opt`, `llvm-config` |
-| `verify-langref-delta.py` | Snapshots each tracked LLVM major's language surface — instructions, attributes and target-independent intrinsics — from that toolchain's own generated definitions (`Instruction.def`, `Attributes.td`, `IntrinsicEnums.inc`), then requires every item that moved between them to be either taught by a chapter or declared out of scope with a reason. Also regenerates the counts chapters 23 and 09 display, and checks the graduation table names intrinsics that really exist. `--emit-surface N` rewrites a snapshot; `--require-surface N` fails rather than skips when LLVM N's headers are absent (each CI job passes it for the major it installs); `--update` rewrites the generated blocks. | none to run; `llvm-N-dev` headers for the drift check |
+| `verify-langref-delta.py` It also holds the WHOLE LLVM 23 surface to account, not just the items that moved, and each of the three surfaces gets the answer its size deserves. **Instructions** get no disposition table, because they do not merit one: 67 opcodes is the language, so the check simply requires every one to be written somewhere in the corpus as code, and it is at 67 of 67. **Attributes** get one disposition each in `reference/langref-attribute-dispositions.json`, recording the clang recipe actually run to produce it (or that none could). **Intrinsics** get classes, in `reference/langref-intrinsic-dispositions.json`: 524 is too many to answer one at a time, and most do not merit an individual answer — `llvm.vp.*` is ninety operations that are the same operation ninety times. The assignment is per intrinsic rather than per `llvm.<family>.*` prefix, because LLVM's prefixes are not reliably semantic (`llvm.get.*` spans the FP environment, the stack and vector shape), and one reason covering three unrelated things is how a disposition becomes a rubber stamp. | Snapshots each tracked LLVM major's language surface — instructions, attributes and target-independent intrinsics — from that toolchain's own generated definitions (`Instruction.def`, `Attributes.td`, `IntrinsicEnums.inc`), then requires every item that moved between them to be either taught by a chapter or declared out of scope with a reason. Also regenerates the counts chapters 23 and 09 display, and checks the graduation table names intrinsics that really exist. `--emit-surface N` rewrites a snapshot; `--require-surface N` fails rather than skips when LLVM N's headers are absent (each CI job passes it for the major it installs); `--update` rewrites the generated blocks. | none to run; `llvm-N-dev` headers for the drift check |
 | `verify-mlir-infrastructure.py` | Runs chapter 24's MLIR framework claims against a real `mlir-opt`: the custom/generic syntax round-trip, that an unregistered dialect needs `--allow-unregistered-dialect`, that a function-scoped pass named at module level fails while a non-existent anchor is silently accepted, that a cancelling `unrealized_conversion_cast` pair folds while a lone one survives, and that bytecode carries its magic and round-trips. `--require-tools` fails instead of skipping. | `mlir-opt` (optional without `--require-tools`) |
+| `verify-mlir-coverage.py` | Reads every MLIR dialect and operation out of the installed MLIR two independent ways (`mlir-tblgen --gen-op-doc` and the `getOperationName()` accessor in the generated headers) and requires the second to contain the first, then requires every dialect to carry a disposition: a chapter that names one of its real operations in code, a slice that will close the gap, or a written reason it is out of scope. `--emit-surface` writes the snapshot, `--update` rewrites the chapter's table, `--require-tools` fails instead of skipping the drift check. The disposition half needs no toolchain. | `mlir-opt`, `mlir-tblgen` (optional without `--require-tools`) |
 | `verify-frontend-lowering.py` | Compiles the checked-in `20-clang-frontend/examples/` sources and asserts the chapter's lowering claims structurally across x86-64 SysV and AArch64 AAPCS: aggregate layout, packed alignment, bit-field erasure, short-circuit branching, `volatile`, mangling, vtable dispatch, template linkage, and per-target argument classification. `--update` refreshes the normalized `.ll` snapshots; `--require-tools` fails instead of skipping. Normalization strips parameter attributes newer than the corpus's **LLVM 18** baseline (SEMVER.md; it moved from 15 in Phase 1.7), and each snapshot is then assembled by the **oldest** `llvm-as` at or above that baseline — suffixed or not, since a name is not a version — because a snapshot checked only against the newest assembler is one nobody has checked. `--require-baseline` turns "no assembler at the declared major" from a silent pass into a failure, and is passed by the CI job that installs that toolchain; without it a host with only a newer assembler says nothing rather than claiming a baseline it did not test. | `clang`, `clang++` (optional without `--require-tools`); an `llvm-as` at the baseline major for `--require-baseline` |
 | `verify-mlir-rail-references.py` | Re-checks every file, CMake idiom, and MLIR API that chapters `18/08` and `18/09` cite in this repository's production law rail, resolves their `../../` links, and enforces that the pre-LLVM-23 spellings (`builder.create<`, `applyPatternsAndFoldGreedily`) stay absent. Reads sources only — no MLIR toolchain required. | Python 3 |
 | `analyze-benchmark-samples.py` | Grades a baseline/candidate sample pair into a verdict or a refusal: measures the rig's resolution by comparing the baseline against itself, reports dispersion/drift/outlier diagnostics, then applies Mann-Whitney U (tie- and continuity-corrected), Cliff's delta, a Hodges-Lehmann shift, and a seeded bootstrap interval on the median ratio. `--gate` exits nonzero on a regression and refuses to gate a `wall`-class row at all. Standard library only, deterministic. | Python 3 |
@@ -227,6 +228,74 @@ illegal-op/type elimination and structural requirements, translates supported
 LLVM-dialect results, then runs matching-major `llvm-as` and
 `opt -passes=verify`. The MLIR-specific CI rail passes `--require-tools` so a
 missing tool is a failure there.
+
+That flag once proved less than it looked like it proved. It established that
+`mlir-opt` was on `PATH` at a matching major — not that a single claim was
+checked. Emptying every `checks` object in the registry left the gate printing
+`MLIR tier grading passed` with an identical tier census, because a check list
+that is empty, absent or misspelt produces no errors at all and so is
+indistinguishable from one that passed. Two rules close that, and they are
+deliberately at different levels:
+
+- **A tier that claims a conversion must claim something about its output.** A
+  Tier 3 or 4 entry needs at least one of `require_lowered`, `forbid_lowered`,
+  `require_llvm_ir` or `required_runtime_calls` (or an `expected_failure` naming
+  the operations that must remain); otherwise the pipeline's exit status is the
+  whole test, and a pass that emitted an empty module passes it. Tiers 0–2 claim
+  no conversion, so there the tier *is* the claim and an empty `checks` is
+  honest. This is a property of the manifest, so it is checked on every host,
+  toolchain or no toolchain.
+- **`--require-tools` counts assertions that actually ran** against text the run
+  generated, and refuses to report success over zero. The pass line prints the
+  number, so the evidence is in the output rather than in this paragraph.
+
+A key outside the known set is rejected rather than ignored, for the same
+reason: `require_lowerd` in a manifest reads exactly like a check that runs.
+
+## Every `--require-X` flag, audited
+
+Finding that one led to auditing all of them, because the flags share a shape: each
+one is passed by a CI job that installed a toolchain, and each is meant to turn
+"the tool is missing" from a local skip into a failure there. What none of them
+automatically does is prove the tool was *used*. Four more had the same hole, and
+all four are now closed the same way — by counting the work and refusing zero:
+
+| Flag | What it proved | What it proves now |
+| --- | --- | --- |
+| `verify-frontend-lowering.py --require-tools` | `clang` was on `PATH` at startup | at least one lowering claim was checked. Every case can take the "target unsupported" branch — that branch is a substring test over clang's stderr, reachable for reasons this gate does not control — and the run would report `PASSED` over zero claims. Its sibling `--require-baseline` already had this floor; the job that passes only `--require-tools` was uncovered |
+| `verify-langref-delta.py --require-surface N` | LLVM N's headers were found, and the stored snapshot equalled a freshly read one | both surfaces contain constructs no LLVM omits. The drift check compares a stored surface against a live one read by **the same extractor**, so an extractor that matched nothing wrote an empty snapshot with `--emit-surface` and then compared `[]` to `[]` and passed. `--emit-surface` now refuses to write such a snapshot, and the stored snapshots are checked on every host, toolchain or not |
+| `generate-binary-analysis-fixtures.py --check --require-tools` | `find_clang()` returned a path | at least one fixture was built and compared. The build loop runs over manifest entries classified `deterministic`; a manifest with none made every loop iterate zero times while `--check` reported a clean golden diff over nothing |
+| `verify-mlir-coverage.py` two-rail check | that `mlir-tblgen`'s operation list was contained in the headers' | that there is a tblgen rail to contain. An empty rail 1 used to stand the check down **and mark it done** — which is the state a broken tblgen extraction produces, so the one check whose job is to catch a broken extraction was disabled by exactly the thing it exists to catch |
+
+Two of these were in gates this corpus had already fixed the other half of, which is
+the useful part of the pattern: when a flag turns out to prove less than its name
+says, its siblings are worth reading before anything else.
+
+Four more flags live in the shared rail at `training/tools/`, and the sweep covered
+them too. `verify_embeddings.py --require-native`, `verify_training_export.py
+--require-bcir` and `probe-hardware-counters.py --require-counters` came back sound —
+the last one because it correctly fails on a host with no PMU rather than recording an
+unreadable counter as zero. The other four did not:
+
+| Flag | What was wrong |
+| --- | --- |
+| `verify_ml_components.py --require-torch` | The loop it gates runs over `TORCH_GATED`, which is `tuple(c for c in COMPONENTS if c.reach == "torch-gated")`. One misspelt `reach` empties it — and puts that component in no class at all, since the other two filters miss it too. With torch present the check then returns having exercised nothing. `RUNS_HERE` had carried an emptiness floor since it was written; its sibling did not. Both are fixed, and the three classes are now checked to partition the inventory |
+| `export_training_examples.py --require-bcir` | A genuine bug rather than a missing floor: `load_tool` re-executed the module on every call, so `main()`'s `native.BackendUnavailable` and the class `export()` raised were **different class objects**. The `except` never matched, the flag's exit path and the unflagged skip beneath it were unreachable for every input, and the failure surfaced as a traceback. `load_tool` now returns the module it already loaded. Separately, an absent distillation directory made the example loop iterate zero times and still write a manifest |
+| `search_chunks.py --require-native` | Read only inside the native branch, while `--backend` defaults to `reference` — so the likeliest invocation passed the flag and never imported BCIR, built a kernel or computed a native dot product |
+| `embed_chunks.py --require-provider` | Unfalsifiable under the default model: `LexicalHashProvider` is hermetic, with no weights to miss and no package to be absent, so it cannot raise the exception the flag exists to catch. And the flag had no owner — `CORPUS_STANDARD.md` stated that "the CI job that installs a model passes `--require-provider`" when no such job exists, and `README.md` said its refusal path "is checked" when nothing checks it. Both now say so |
+
+The last two are a different failure from the rest and worth naming separately: not a
+check that can pass over zero work, but a flag that **cannot fail** on the configuration
+it is most likely to be typed with. In a log the two are indistinguishable. Both tools
+now refuse that combination as a usage error rather than accepting a guarantee that
+could never have been tested.
+
+The canaries deserve a note. They are named constructs (`Ret`, `nounwind`,
+`llvm.memcpy`) rather than expected counts, because a count drifts every release and
+would need maintaining, while `Ret` leaving LLVM would mean something other than a
+broken regex. They were chosen by intersecting the checked-in snapshots rather than
+from memory: `Br` looked like an obvious candidate and is absent from LLVM 23, which
+splits it into `CondBr` and `UncondBr`.
 
 `verify-bcir-mapping.sh` validates both source-like `.bcir.txt` claim fragments
 and real `.bcir` assembler fixtures under `bcir-mapping/examples/`. The

@@ -273,6 +273,24 @@ belong in the target-aware type-lowering layer rather than in a late cleanup pas
 | `inreg` | Prefer/register-class ABI placement for an argument or return where the target ABI supports it. |
 | `zeroext`, `signext` | Caller/callee agree to zero-extend or sign-extend narrow integer values. |
 | `inalloca(<ty>)`, `preallocated(<ty>)` | Specialized argument-allocation protocols used by selected ABIs. |
+| `returned` | This parameter *is* the function's return value, so the caller may reuse the argument it already has. |
+
+`returned` is the one in that table a reader is most likely to meet without
+recognising. It is not a hint about what the function does with the value — it is a
+promise that the value coming back is bit-for-bit the one that went in, which lets a
+caller skip reading the result entirely. Clang emits it wherever the ABI makes a
+parameter and the return the same register:
+
+```llvm
+; clang++ -O1 -S -emit-llvm, from `struct S { int a; S(int v) : a(v) {} };
+;                                  S make(int v) { return S(v); }`
+define dso_local noundef i32 @_Z4makei(i32 noundef returned %0) local_unnamed_addr #0 {
+```
+
+A single-int struct travels in a register, the constructor stores its argument and
+nothing else, and so `make(v)` returns exactly `v`. Strip the attribute and the IR is
+still correct; the caller just loses the right to assume it.
+
 | `swiftself`, `swifterror` | Language ABI hooks; do not invent them outside the matching frontend ABI. |
 
 ### ABI attribute examples
@@ -432,6 +450,158 @@ entry:
 
 This tells optimizers about this call without lying about all possible callers of
 `@consume`.
+
+## Attributes you did not ask for
+
+Everything above is an attribute somebody wrote down. This section is about the ones that
+arrive on their own — because the attributes a reader actually meets in unfamiliar IR are
+mostly not the ones a tutorial puts in a table.
+
+Which flag produces which attribute is recorded, with the recipe that was run to produce
+it, in
+[`../reference/langref-attribute-dispositions.json`](../reference/langref-attribute-dispositions.json).
+Everything below was read out of `clang 23.1.1` output, not recalled.
+
+### With no flag at all: `returns_twice`
+
+```llvm
+; Function Attrs: nounwind returns_twice
+declare i32 @_setjmp(ptr noundef) local_unnamed_addr #2
+```
+
+`setjmp` returns once normally and again every time `longjmp` targets it. `returns_twice`
+is how that reaches the optimiser, and it is load-bearing rather than descriptive: without
+it, every pass is entitled to assume a call returns at most once, and a value live across
+the `setjmp` may be kept in a register that `longjmp` will not restore. This is the
+attribute behind the C rule that non-`volatile` locals modified between `setjmp` and
+`longjmp` have indeterminate values.
+
+It appears at every optimisation level including `-O0`, and no flag requests it.
+
+### With no flag at all: `nocallback`
+
+The other attribute nobody asks for sits on every intrinsic declaration:
+
+```llvm
+; Function Attrs: mustprogress nocallback nofree nosync nounwind willreturn memory(argmem: readwrite)
+declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none),
+                                    ptr noalias readonly captures(none), i64, i1 immarg)
+```
+
+`nocallback` promises the callee will not re-enter the current module — not through a
+function pointer it was handed, not through a global, not at all. That is what lets a pass
+move code across the call without first proving the call cannot observe it. It is stated
+rather than inferred because for an intrinsic it is part of the definition, and you will
+see it on essentially every `llvm.*` declaration in real output.
+
+### With no flag at all: `nocreateundeforpoison`
+
+A third arrival-by-default, and new in LLVM 23 — it sits beside `nocallback` on the same
+intrinsic declarations:
+
+```llvm
+; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
+declare float @llvm.sqrt.f32(float)
+```
+
+It promises the callee will not manufacture `undef` or `poison` out of defined inputs. That
+is a stronger statement than it first looks: a pass that knows a value came out of such a
+function can rule out the poison-propagation hazard
+[`05-poison-undef-freeze.md`](05-poison-undef-freeze.md) is about, without having to prove
+anything about the function's body.
+
+Measured with clang 23: two occurrences at `-O0` and two at `-O2` on an ordinary C file,
+and **none** under `-ffast-math` — which is consistent with fast-math being exactly the
+mode where an operation may produce poison from finite inputs, though the corpus has not
+traced that connection through the optimiser and does not claim it as more than an
+observation.
+
+### With an optimisation level: `optsize` and `minsize`
+
+```llvm
+; -Os
+attributes #0 = { ... nounwind optsize willreturn ... }
+; -Oz
+attributes #0 = { minsize ... nounwind optsize willreturn ... }
+```
+
+`-Oz` sets **both**. They are a size-vs-speed instruction to later passes — inlining,
+unrolling and vectorisation all consult them — and they are per-function, so a translation
+unit can mix them. Seeing `minsize` on a function tells you the loop you are looking at
+was deliberately left rolled.
+
+### With one flag: `nobuiltin`, and what it costs
+
+`nobuiltin` is the clearest demonstration in this chapter that attributes carry
+information, not decoration. The same `memcpy` call, at the same `-O2`:
+
+```llvm
+; default
+define dso_local void @cp(ptr nofree noundef writeonly captures(none) %0,
+                          ptr nofree noundef readonly captures(none) %1, i64 noundef %2) {
+  tail call void @llvm.memcpy.p0.p0.i64(ptr align 1 %0, ptr align 1 %1, i64 %2, i1 false)
+
+; -fno-builtin
+define dso_local void @cp(ptr noundef %0, ptr noundef %1, i64 noundef %2) {
+  %4 = tail call ptr @memcpy(ptr noundef %0, ptr noundef %1, i64 noundef %2)
+```
+
+Two things went away together. The call stopped being `llvm.memcpy` and became an ordinary
+external call — and **every parameter attribute went with it**. Once `memcpy` is an unknown
+function, nothing can claim the pointers are not captured, not freed, or only written. A
+flag that looks like it only affects lowering has removed the aliasing facts the rest of
+the function was optimised against.
+
+### With one flag: `strictfp` and `vscale_range`
+
+`-ffp-model=strict` marks the function `strictfp` and replaces the arithmetic with the
+constrained intrinsic family:
+
+```llvm
+%3 = tail call double @llvm.experimental.constrained.fmul.f64(
+         double %0, double %1, metadata !"round.dynamic", metadata !"fpexcept.strict")
+```
+
+The attribute and the intrinsics are one mechanism: the rounding mode and exception
+behaviour become explicit operands, so no pass may assume the default FP environment. That
+is the exact inverse of the fast-math flags in
+[`06-fast-math-flags.md`](06-fast-math-flags.md) — same dial, opposite end.
+
+`vscale_range` is the scalable-vector width bound. Compile for SVE with a known width and
+it states what `vscale` may be:
+
+```llvm
+; aarch64 -march=armv8-a+sve -msve-vector-bits=256
+vscale_range(2,2)
+```
+
+256 bits at a 128-bit granule is `vscale` of exactly 2, so low and high bounds are equal
+and the vectoriser can treat the width as a constant. Compiled without a width, the range
+stays open and the same loop is vectorised for an unknown length — which is the whole
+point of the scalable model in [`../09-vectorization/`](../09-vectorization).
+
+### With one flag: `null_pointer_is_valid`
+
+```llvm
+; -fno-delete-null-pointer-checks
+attributes #0 = { mustprogress nofree norecurse nosync nounwind null_pointer_is_valid ... }
+```
+
+By default LLVM may delete a null check that dominates a dereference, because the
+dereference would have been undefined if the pointer were null. In a freestanding or kernel
+setting address zero can be a real mapped page, so that reasoning is wrong, and this
+attribute turns it off per function. If you are reading kernel IR and the null checks
+survive passes you expected to remove them, this is why.
+
+### The rest
+
+Twenty-six further attributes exist in LLVM 23 that this corpus does not teach, each with
+a recorded reason: stack-protection and sanitizer markers that relay a build flag,
+codegen-layout directives with no semantics a reader needs, and fourteen that
+**could not be produced at all** by any recipe tried against clang 23.1.1. That last group
+is worth its own note — an attribute the language defines but your toolchain never emits is
+one you will not meet by reading output, and the honest disposition says so rather than
+describing IR nobody here can generate.
 
 ## BCIR checklist
 

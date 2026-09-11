@@ -24,6 +24,28 @@ from llvm_profile import PROFILE  # noqa: E402
 
 TOOL_BASES = ("mlir-opt", "mlir-translate", "llvm-as", "opt")
 
+# Claims about text a tool produced during *this* run: the pipeline's output and the
+# translated LLVM IR. Nothing here can be satisfied without mlir-opt (and, for the last
+# two, mlir-translate) having actually run and emitted something.
+GENERATED_CLAIM_KEYS = (
+    "require_lowered",
+    "forbid_lowered",
+    "require_llvm_ir",
+    "required_runtime_calls",
+)
+# Claims about files already in the tree. Worth checking, but they hold whether or not a
+# single conversion ran, so they cannot stand in for the ones above.
+FILE_CLAIM_KEYS = (
+    "require_source",
+    "required_artifact_metadata",
+    "required_artifact_runtime_calls",
+)
+# The spelling authority for the `checks` object. A key outside this set is an error
+# rather than a no-op: `require_lowerd` in a manifest reads exactly like a check that
+# runs, and a silently ignored check is the same thing as a missing one with a comment
+# claiming otherwise.
+CHECK_KEYS = frozenset(GENERATED_CLAIM_KEYS + FILE_CLAIM_KEYS)
+
 
 def expected_major(registry_major: int) -> int:
     """The toolchain major version to grade against.
@@ -45,16 +67,25 @@ def run(command: list[str], *, output: Path | None = None) -> tuple[bool, str]:
     return completed.returncode == 0, completed.stdout
 
 
-def require_strings(text: str, needles: list[str], label: str, errors: list[str]) -> None:
+def require_strings(text: str, needles: list[str], label: str, errors: list[str]) -> int:
+    """Check each needle, and report how many were checked.
+
+    The count is the point as much as the errors are: a check list that is empty, absent
+    or misspelt produces no errors at all, which is indistinguishable from a check list
+    that passed. Callers accumulate the returns so the gate can refuse to call itself
+    green over zero executed assertions.
+    """
     for needle in needles:
         if needle not in text:
             errors.append(f"{label}: required text is missing: {needle!r}")
+    return len(needles)
 
 
-def forbid_strings(text: str, needles: list[str], label: str, errors: list[str]) -> None:
+def forbid_strings(text: str, needles: list[str], label: str, errors: list[str]) -> int:
     for needle in needles:
         if needle in text:
             errors.append(f"{label}: illegal/unconverted text remains: {needle!r}")
+    return len(needles)
 
 
 def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
@@ -117,6 +148,29 @@ def validate_registry(registry: dict[str, Any], root: Path) -> list[str]:
             errors.append(f"{label}: unsupported required tool/plugin declaration")
         if tier == 4 and not {"mlir-opt", "mlir-translate", "llvm-as", "opt"}.issubset(set(tools)):
             errors.append(f"{label}: Tier 4 requires mlir-opt, mlir-translate, llvm-as, and opt")
+        checks = entry.get("checks", {})
+        if not isinstance(checks, dict):
+            errors.append(f"{label}: checks must be an object")
+            continue
+        unknown = sorted(set(checks) - CHECK_KEYS)
+        if unknown:
+            errors.append(f"{label}: unknown check keys (a misspelt check never runs): {unknown}")
+        if any(not isinstance(checks.get(key, []), list) for key in CHECK_KEYS):
+            errors.append(f"{label}: every check must be a list of strings")
+            continue
+        # A Tier 3 or 4 entry declares a conversion, so it must claim something about what
+        # that conversion produced. Without such a claim the pipeline's exit status is the
+        # entire test, and a pass that emitted an empty module passes it -- while the tier
+        # census on the final line still reads exactly the same. Tiers 0-2 claim no
+        # conversion, so there the tier *is* the claim and an empty `checks` is honest.
+        declared = sum(len(checks.get(key, [])) for key in GENERATED_CLAIM_KEYS)
+        expected_failure = entry.get("expected_failure") or {}
+        declared += len(expected_failure.get("operations", []))
+        if tier >= 3 and declared == 0:
+            errors.append(
+                f"{label}: Tier {tier} declares a conversion but claims nothing about its "
+                f"output; add one of {', '.join(GENERATED_CLAIM_KEYS)}"
+            )
     missing_sources = registered_sources - seen
     extra_sources = seen - registered_sources
     for source in sorted(missing_sources):
@@ -167,6 +221,10 @@ def main() -> int:
 
     counts = {tier: 0 for tier in range(5)}
     expected_failures = 0
+    # Assertions executed against text this run generated. `--require-tools` owns the
+    # rail, so it has to prove the rail RAN: finding mlir-opt on PATH and matching its
+    # major only establishes that a conversion *could* have been graded.
+    generated_assertions = 0
     with tempfile.TemporaryDirectory(prefix="bcir-mlir-grade-") as temp_name:
         temp = Path(temp_name)
         for index, entry in enumerate(registry["examples"]):
@@ -237,13 +295,18 @@ def main() -> int:
                 continue
             lowered_text = lowered.read_text(encoding="utf-8")
             before = len(errors)
-            require_strings(lowered_text, checks.get("require_lowered", []), source_rel, errors)
-            forbid_strings(lowered_text, checks.get("forbid_lowered", []), source_rel, errors)
+            generated_assertions += require_strings(
+                lowered_text, checks.get("require_lowered", []), source_rel, errors
+            )
+            generated_assertions += forbid_strings(
+                lowered_text, checks.get("forbid_lowered", []), source_rel, errors
+            )
 
             expected_failure = entry.get("expected_failure")
             if expected_failure:
                 operations = expected_failure.get("operations", [])
                 observed = [operation for operation in operations if operation in lowered_text]
+                generated_assertions += len(operations)
                 if expected_failure.get("kind") == "illegal-ops-remaining" and observed:
                     del errors[before:]
                     expected_failures += 1
@@ -267,8 +330,12 @@ def main() -> int:
                 errors.append(f"{source_rel}: mlir-translate --mlir-to-llvmir failed\n{output}")
                 continue
             llvm_text = llvm_ir.read_text(encoding="utf-8")
-            require_strings(llvm_text, checks.get("require_llvm_ir", []), source_rel, errors)
-            require_strings(llvm_text, checks.get("required_runtime_calls", []), source_rel, errors)
+            generated_assertions += require_strings(
+                llvm_text, checks.get("require_llvm_ir", []), source_rel, errors
+            )
+            generated_assertions += require_strings(
+                llvm_text, checks.get("required_runtime_calls", []), source_rel, errors
+            )
             bitcode = temp / f"translated-{index}.bc"
             ok, output = run([tools["llvm-as"], str(llvm_ir), "-o", str(bitcode)])
             if not ok:
@@ -280,6 +347,13 @@ def main() -> int:
                         f"{source_rel}: translated LLVM IR failed opt -passes=verify\n{output}"
                     )
 
+    if args.require_tools and generated_assertions == 0:
+        errors.append(
+            "no assertion ran against generated output: every conversion claim in the "
+            "registry is empty, absent or misspelt, so the tier census below would read "
+            "the same over a pipeline that emitted nothing"
+        )
+
     if errors:
         print("MLIR tier grading failed:", file=sys.stderr)
         for error in errors:
@@ -289,6 +363,7 @@ def main() -> int:
         "MLIR tier grading passed: " + ", ".join(f"Tier {tier}={counts[tier]}" for tier in range(5))
     )
     print(f"Expected conversion failures demonstrated: {expected_failures}")
+    print(f"Assertions executed against generated output: {generated_assertions}")
     return 0
 
 

@@ -29,6 +29,7 @@
 | Exact C++ lowering: mangling, vtables, constructors, temporaries, templates, EH | [`04-cxx-lowering-rules.md`](04-cxx-lowering-rules.md) |
 | ABI and target lowering: argument classification, `sret`/`byval`, extension rules | [`05-abi-and-target-lowering.md`](05-abi-and-target-lowering.md) |
 | How this maps onto BCIR's own C front-end twin | [`06-bcir-cfront-correspondence.md`](06-bcir-cfront-correspondence.md) |
+| [`07-emitc-the-other-direction.md`](07-emitc-the-other-direction.md) | MLIR emitting C: why `arith.addi` becomes a `uint32_t` round trip, and what `--mlir-to-cpp` does not give you |
 
 ## Expected prerequisites
 

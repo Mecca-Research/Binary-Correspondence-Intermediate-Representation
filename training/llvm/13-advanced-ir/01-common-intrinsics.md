@@ -99,6 +99,49 @@ convert it as needed. Do not replace checked arithmetic with `add nuw`
 or `add nsw`: those flags assert that overflow cannot occur and produce
 poison if the assertion is false.
 
+## Scalar builtins that replace a branch
+
+Three of the most common intrinsics in optimised output are not written by anyone. They
+appear because the optimiser recognised a *pattern* and replaced it with a name, and
+reading `-O2` output without recognising them is how a reader concludes the compiler
+generated something exotic. This is ordinary C, at `-O2`, under clang 23:
+
+```c
+int my_abs(int x)                        { return x < 0 ? -x : x; }
+int my_max(int a, int b)                 { return a > b ? a : b; }
+unsigned my_umin(unsigned a, unsigned b) { return a < b ? a : b; }
+```
+
+```llvm
+%2 = tail call i32 @llvm.abs.i32(i32 %0, i1 true)
+%3 = tail call i32 @llvm.smax.i32(i32 %0, i32 %1)
+%3 = tail call i32 @llvm.umin.i32(i32 %0, i32 %1)
+```
+
+Every `select` and every branch is gone. The value of the name is that it survives: a
+target that has a single instruction for this selects it directly, and a target that does
+not expands the intrinsic back into a compare and a select in the backend, where the
+cost model can see the whole thing.
+
+Two details a reader should not skim past:
+
+- **`llvm.abs` takes a flag.** That `i1 true` is `is_int_min_poison`, and it is the whole
+  reason `abs` needs an intrinsic rather than a pattern. `abs(INT_MIN)` is not
+  representable, so the operation has to say what it does: `true` means the result is
+  poison there — which C's signed overflow rules permit and which lets the optimiser
+  assume the result is non-negative. Pass `false` and `INT_MIN` maps to itself.
+- **Signedness is in the name, not the type.** `llvm.smax` and `llvm.umin` differ only in
+  how they read the same bits, exactly as `ashr`/`lshr` do in
+  [`../23-version-movement/03-conversions-and-shifts.md`](../23-version-movement/03-conversions-and-shifts.md).
+  The full set is `llvm.smax`, `llvm.smin`, `llvm.umax`, `llvm.umin`, plus the three-way
+  comparisons `llvm.scmp` and `llvm.ucmp` that return -1, 0 or 1.
+
+`llvm.is.constant` belongs to the same group and is stranger: it returns whether its
+argument is a compile-time constant *at the point the optimiser asks*, which means the
+same call can fold to `true` after inlining and `false` before it. It exists for
+`__builtin_constant_p`, and code whose behaviour depends on it is code whose behaviour
+depends on the optimisation level.
+
 ## Lifetime intrinsics
 
 Lifetime intrinsics mark the period during which a stack or temporary
