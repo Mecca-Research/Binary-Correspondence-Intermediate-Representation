@@ -34,8 +34,8 @@
    "reason": "A task-parallel execution model. The corpus's concurrency material is about atomics and memory ordering at the IR level (04-memory), which is a different subject from a coroutine-shaped task dialect."
   },
   "bufferization": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: how tensor becomes memref, the step 18-mlir-lowering-to-llvm currently skips over"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/10-tensors-buffers-and-the-step-between.md"
   },
   "builtin": {
    "status": "taught",
@@ -86,8 +86,8 @@
    "slice": "2.2 compiler dialects: the transcendental surface behind the libm-vs-intrinsic question 06-intrinsics raises"
   },
   "memref": {
-   "status": "referenced",
-   "where": "14-mlir-bridge/02-dialects-and-operations.md"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/10-tensors-buffers-and-the-step-between.md"
   },
   "ml_program": {
    "status": "declared",
@@ -154,8 +154,8 @@
    "reason": "A target backend dialect: its operations are a one-to-one spelling of that vendor's intrinsics. The corpus teaches target-specific code through LLVM's intrinsic surface in 13-advanced-ir/02-target-specific-intrinsics.md and the porting map in 12-backend-jit/, which is the mechanism; enumerating one vendor's operation list would date with that vendor's hardware and duplicate upstream reference material."
   },
   "tensor": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: the value-semantics half of the tensor/memref split the lowering chapters already assume"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/10-tensors-buffers-and-the-step-between.md"
   },
   "tosa": {
    "status": "planned",

@@ -45,6 +45,10 @@ make the lowering boundary explicit, auditable, and friendly to LLVM IR tools.
    a production conversion pass: `adaptor` versus `op`, `TypeConverter`,
    `ConversionTarget`, partial versus full conversion, the greedy-rewriter
    boundary, and the MLIR 22 → 23 API migration.
+10. [`10-tensors-buffers-and-the-step-between.md`](10-tensors-buffers-and-the-step-between.md) —
+   where `memref` comes from: value semantics, buffer semantics, and the
+   bufferization pass that crosses between them. Read this first if the
+   `memref` types in chapters 01-05 arrived without explanation.
 
 ## Lowering pipeline overview
 
