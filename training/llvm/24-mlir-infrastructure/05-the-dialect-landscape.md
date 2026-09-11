@@ -22,11 +22,11 @@ read out of an installed MLIR rather than from a documentation page:
 <!-- generated: dialect-coverage -->
 | disposition | dialects | operations | operations the corpus names |
 | --- | ---: | ---: | ---: |
-| taught | 22 | 1134 | 124 |
+| taught | 24 | 1239 | 134 |
 | referenced | 2 | 55 | 7 |
-| planned | 2 | 105 | 0 |
+| planned | 0 | 0 | 0 |
 | declared | 22 | 1200 | 0 |
-| **all** | **48** | **2494** | **131** |
+| **all** | **48** | **2494** | **141** |
 
 Dialects this corpus teaches, with what it names of each:
 
@@ -39,6 +39,7 @@ Dialects this corpus teaches, with what it names of each:
 | `shape` | 40 | 11 |
 | `pdl` | 15 | 8 |
 | `transform` | 234 | 8 |
+| `gpu` | 68 | 7 |
 | `linalg` | 99 | 5 |
 | `emitc` | 49 | 4 |
 | `tensor` | 21 | 4 |
@@ -49,6 +50,7 @@ Dialects this corpus teaches, with what it names of each:
 | `memref` | 32 | 3 |
 | `quant` | 3 | 3 |
 | `scf` | 12 | 3 |
+| `sparse_tensor` | 37 | 3 |
 | `bufferization` | 7 | 2 |
 | `builtin` | 2 | 2 |
 | `tosa` | 102 | 2 |
@@ -77,10 +79,18 @@ down which one it was. Every dialect therefore carries one of four dispositions 
 | **declared** | out of scope | `reason`, in words |
 
 `planned` is the one that had to be invented. The other three could not express the honest
-state of this corpus: calling `tosa` "out of scope" would be false, because it is squarely
-in scope and simply unwritten, and calling it "taught" would be a lie. A gap the corpus has
-decided to close is a third thing and needs to be visible as one — with the slice attached,
-so an intention cannot quietly become permanent.
+state of this corpus at the time: calling `tosa` "out of scope" would have been false,
+because it was squarely in scope and simply unwritten, and calling it "taught" would have
+been a lie. A gap the corpus has decided to close is a third thing and needs to be visible
+as one — with the slice attached, so an intention cannot quietly become permanent.
+
+**The `planned` row is empty today**, and that is the status doing its job rather than the
+status becoming unnecessary. Eight dialects passed through it — `tosa` among them — and
+each left only when a chapter named one of its operations in code. The row stays in the
+table and the status stays in the vocabulary, because the next MLIR release will add
+dialects and the honest first answer for each of them is this one. A table that dropped
+the row the moment it emptied would have to be re-argued from scratch the next time
+somebody needed it.
 
 ## What counts as teaching a dialect
 

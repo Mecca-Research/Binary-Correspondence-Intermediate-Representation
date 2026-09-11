@@ -22,6 +22,15 @@ than a description.
    deliberately leaves open, what the stock pipeline silently chooses for each, and how
    BCIR's own quantizer decides them differently. Includes the round trip that measures
    exactly zero error.
+3. [`03-sparsity-is-a-property-of-the-type.md`](03-sparsity-is-a-property-of-the-type.md) —
+   the same `linalg.generic` as chapter 01, with one attribute on one type, becoming a
+   completely different loop nest: CSR iteration derived from `#sparse_tensor.encoding`,
+   bounds read out of a positions array, and the indexed load that is what sparse costs.
+4. [`04-host-and-device.md`](04-host-and-device.md) —
+   `gpu.launch` is a region that pretends host and device share a scope.
+   `--gpu-kernel-outlining` charges for it: capture becomes an argument list, the loop
+   IDs become `gpu.thread_id` reads of hardware, and the boundary becomes structural —
+   on any host, with no device and no vendor toolkit.
 
 ## What this subject is not
 
@@ -30,8 +39,13 @@ position on dialect coverage is stated and measured in
 [`../24-mlir-infrastructure/05-the-dialect-landscape.md`](../24-mlir-infrastructure/05-the-dialect-landscape.md):
 naming more operations is not the goal, and every dialect carries a written disposition in
 [`../reference/mlir-dialect-dispositions.json`](../reference/mlir-dialect-dispositions.json)
-saying which answer applies to it. `sparse_tensor` and `gpu` are `planned` there, with the
-slice that will close them, rather than half-covered here.
+saying which answer applies to it — and as of slice 1.9 none of the 48 is `planned`.
+
+`gpu` is here rather than in [`../19-hardware-aware/`](../19-hardware-aware/) for a
+practical reason worth stating: that subject is about what a backend does with silicon,
+and this chapter is about an execution model — the host/device split is a fact about the
+IR before any hardware is named. When `training/hardware/` opens it owns the silicon; this
+owns the boundary.
 
 ## Where this connects
 

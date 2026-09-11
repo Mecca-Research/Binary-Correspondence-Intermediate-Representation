@@ -62,8 +62,8 @@
    "where": "24-mlir-infrastructure/02-interfaces.md"
   },
   "gpu": {
-   "status": "planned",
-   "slice": "1.9 ML dialects: the host/device split, and where nvvm and rocdl become reachable through one portable dialect rather than two vendor ones"
+   "status": "taught",
+   "where": "25-ml-dialects/04-host-and-device.md"
   },
   "index": {
    "status": "taught",
@@ -146,8 +146,8 @@
    "reason": "An SMT-solver interface dialect. Formal verification of IR is a real subject and a legitimate future phase, but it is not compilation, and nothing else in the corpus depends on it."
   },
   "sparse_tensor": {
-   "status": "planned",
-   "slice": "1.9 ML dialects: sparsity as a property of the TYPE rather than of the loop structure, which is the idea BCIR's lane typing shares; --sparsification is the gateable pipeline"
+   "status": "taught",
+   "where": "25-ml-dialects/03-sparsity-is-a-property-of-the-type.md"
   },
   "spirv": {
    "status": "declared",

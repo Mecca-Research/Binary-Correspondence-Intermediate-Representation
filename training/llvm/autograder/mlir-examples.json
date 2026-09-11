@@ -852,6 +852,77 @@
      "arith.mulf"
     ]
    }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/sparse-matvec-to-loops.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "linalg",
+    "sparse_tensor",
+    "tensor",
+    "bufferization",
+    "memref",
+    "scf",
+    "arith"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(sparse-reinterpret-map,sparsification)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "sparse_tensor.encoding",
+     "compressed",
+     "linalg.generic"
+    ],
+    "require_lowered": [
+     "sparse_tensor.positions",
+     "sparse_tensor.coordinates",
+     "sparse_tensor.values",
+     "scf.for",
+     "memref.load"
+    ],
+    "forbid_lowered": [
+     "linalg.yield"
+    ]
+   }
+  },
+  {
+   "source": "training/llvm/25-ml-dialects/examples/gpu-launch-outlining.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "gpu",
+    "memref",
+    "arith"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(gpu-kernel-outlining)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_source": [
+     "gpu.launch blocks",
+     "gpu.terminator"
+    ],
+    "require_lowered": [
+     "gpu.container_module",
+     "gpu.module",
+     "gpu.func",
+     "gpu.launch_func",
+     "gpu.thread_id",
+     "gpu.return"
+    ],
+    "forbid_lowered": [
+     "gpu.launch blocks",
+     "gpu.terminator"
+    ]
+   }
   }
  ]
 }

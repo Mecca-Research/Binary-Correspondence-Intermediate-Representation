@@ -328,7 +328,7 @@ retraction:
 
 ## Phase 1 — complete `llvm/`
 
-*Status: **1.1–1.8 landed**, 1.9 open. The corpus is verified against LLVM 18 (its declared baseline) and LLVM 23 (the release it tracks) in separate CI jobs that own different claims, and the MLIR gap is closed by [`llvm/24-mlir-infrastructure/`](llvm/24-mlir-infrastructure) and measured by [`llvm/24-mlir-infrastructure/05-the-dialect-landscape.md`](llvm/24-mlir-infrastructure/05-the-dialect-landscape.md), which reports what remains rather than leaving it to a reader to notice.*
+*Status: **complete** — 1.1 through 1.9 landed. The corpus is verified against LLVM 18 (its declared baseline) and LLVM 23 (the release it tracks) in separate CI jobs that own different claims, and the MLIR gap is closed by [`llvm/24-mlir-infrastructure/`](llvm/24-mlir-infrastructure) and measured by [`llvm/24-mlir-infrastructure/05-the-dialect-landscape.md`](llvm/24-mlir-infrastructure/05-the-dialect-landscape.md), which reports what remains rather than leaving it to a reader to notice.*
 
 | Slice | Work |
 | --- | --- |
@@ -340,7 +340,7 @@ retraction:
 | 1.6 | ~~**BCIR's own approach**~~ — **landed**: [`llvm/22-bcir-approach/`](llvm/22-bcir-approach) teaches the correspondence, the twelve cost axes, and legality before cost, with every table regenerated from `bcir/` |
 | 1.7 | ~~Update `SEMVER.md`~~ — **landed**: the baseline moves 15 → 18, because nothing in CI ever assembled at 15; `--require-baseline` now makes its absence a failure in the job that installs it |
 | 1.8 | ~~**Cross-reference the MLIR dialect surface and close what is closable**~~ — **landed**: every dialect in the installed MLIR carries a written disposition, and the compiler-side gaps are now taught with gated fixtures — `pdl`/`pdl_interp` ([`llvm/18-mlir-lowering-to-llvm/03-rewritepattern-and-conversiontarget.md`](llvm/18-mlir-lowering-to-llvm/03-rewritepattern-and-conversiontarget.md)), `shape` ([`llvm/18-mlir-lowering-to-llvm/11-shapes-as-values.md`](llvm/18-mlir-lowering-to-llvm/11-shapes-as-values.md)), and the ML ladder plus quantization in [`llvm/25-ml-dialects/`](llvm/25-ml-dialects). Taught dialects went 16 → 22 of 48 and named operations 79 → 130 |
-| 1.9 | **`sparse_tensor` and `gpu`** — the two dialects still `planned`. Sparsity as a property of the *type* rather than of the loop structure, which is the idea BCIR's lane typing shares; and the host/device split, where `nvvm` and `rocdl` become reachable through one portable dialect rather than two vendor ones. Both have gateable stock pipelines (`--sparsification`, the `gpu` lowering chain), so neither is blocked on anything |
+| 1.9 | ~~**`sparse_tensor` and `gpu`**~~ — **landed**: [`llvm/25-ml-dialects/03-sparsity-is-a-property-of-the-type.md`](llvm/25-ml-dialects/03-sparsity-is-a-property-of-the-type.md) derives CSR iteration from one encoding attribute on one type, and [`llvm/25-ml-dialects/04-host-and-device.md`](llvm/25-ml-dialects/04-host-and-device.md) shows `--gpu-kernel-outlining` turning capture into an argument list on a host with no device. **No MLIR dialect is `planned` any more**: all 48 are taught, referenced or declared out of scope with a reason |
 
 1.1 and 1.2 are prerequisites for **1.3–1.5**, which re-derive chapters against a
 specific LLVM release: doing that on a toolchain the corpus does not run would
