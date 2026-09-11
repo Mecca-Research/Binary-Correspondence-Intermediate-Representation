@@ -14,7 +14,7 @@ syntax, semantics, and a catalog of common failure modes.
 
 This is **not** a fine-tuning corpus. It's a context pack: dense, indexed,
 example-first. Standalone files under `*/examples/*.ll` are guaranteed to
-assemble against a modern `llvm-as` (LLVM >= 15, opaque pointers). Embedded
+assemble against a modern `llvm-as` (LLVM >= 18, opaque pointers). Embedded
 chapter snippets may be illustrative fragments unless they are explicitly made
 testable.
 
@@ -72,6 +72,8 @@ training/llvm/
 ├── 20-clang-frontend/    driver/-cc1, AST + Sema, exact C and C++ lowering rules, ABI
 ├── 21-performance-methodology/ workloads, trials, noise, significance, counters
 ├── 22-bcir-approach/      correspondence, K_BCIR's twelve axes, legality before cost
+├── 23-version-movement/   how LLVM's surface moves between releases, and what 18->23 changed
+├── 24-mlir-infrastructure/ regions, interfaces, the pass manager, bytecode
 ├── exercises/            runnable prompts, expected observations, solutions
 ├── indexes/              generated or focused lookup indexes
 ├── tools/                example verification and smoke-test scripts
@@ -133,6 +135,8 @@ fast pre-edit checklist:
 | Reading Clang's output, and which stage owns a decision | — | [`20-clang-frontend/README.md`](20-clang-frontend/README.md) |
 | Making a performance claim that survives review | — | [`21-performance-methodology/README.md`](21-performance-methodology/README.md) |
 | Understanding what BCIR itself is, and why it refuses plans | — | [`22-bcir-approach/README.md`](22-bcir-approach/README.md) |
+| Tracking what a new LLVM release changed, without being fooled by the diff | — | [`23-version-movement/README.md`](23-version-movement/README.md) |
+| Understanding MLIR's framework rather than any one dialect | — | [`24-mlir-infrastructure/README.md`](24-mlir-infrastructure/README.md) |
 
 Use [`EXAMPLES.md`](EXAMPLES.md) for naming and verification rules before adding
 new artifacts to any of these families.
@@ -145,7 +149,7 @@ Use the conventions in [`EXAMPLES.md`](EXAMPLES.md) consistently so readers
 and CI know what is runnable versus illustrative. In short:
 
 - **Standalone examples** live in `*/examples/*.ll` (for example,
-  `00-foundations/examples/simple-add.ll`) and must assemble with LLVM >= 15
+  `00-foundations/examples/simple-add.ll`) and must assemble with LLVM >= 18
   opaque pointers.
 - **Intentionally invalid examples** should use `.ll.txt` or include `invalid`
   in the filename so broad verification commands can skip them.

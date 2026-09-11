@@ -1,8 +1,13 @@
 # Standalone LLVM IR example manifest
 
 Every standalone LLVM IR example in this training pack lives under a chapter
-`examples/` directory and must assemble with a modern `llvm-as` (LLVM >= 15,
-opaque pointers). This includes checked-in pass-output examples: both
+`examples/` directory and must assemble with a modern `llvm-as` (LLVM >= 18,
+opaque pointers) -- unless it declares otherwise. An example that teaches a
+construct newer than the baseline carries `; REQUIRES: llvm >= N` on its first
+lines; `tools/verify-examples.sh` skips it, with the reason printed, on an older
+assembler and verifies it normally once the assembler is new enough. The skip has
+an owner rather than being a hole: CI's `LLVM training corpus (LLVM 23)` job
+installs LLVM 23, so every version-gated example is verified on every run there. This includes checked-in pass-output examples: both
 `*-before.ll` inputs and `*-after*.ll` outputs are assembly-checked. Embedded
 fenced `llvm` snippets in chapter prose are not part of this manifest unless
 they are moved into one of these files.
@@ -294,3 +299,9 @@ Notes:
 | `training/llvm/21-performance-methodology/examples/thermal-drift.json` | Benchmark sample data | Synthetic timing series with a drifting baseline, graded to `inconclusive`. |
 | `training/llvm/21-performance-methodology/examples/significant-but-trivial.json` | Benchmark sample data | Synthetic timing series; significant and immaterial, graded to `detectable-but-immaterial`. |
 | `training/llvm/21-performance-methodology/examples/wall-clock-indicative.json` | Benchmark sample data | Synthetic wall-class timing series; `--gate` must refuse to gate on it. |
+| `training/llvm/23-version-movement/examples/conversions-and-shifts.ll` | Standalone example | The cast and shift opcodes the corpus listed but never ran; every asserted result is LLVM 23's own constant folding. |
+| `training/llvm/23-version-movement/examples/ptrtoaddr-vs-ptrtoint.ll` | Standalone example (`REQUIRES: llvm >= 23`) | `ptrtoaddr` against `ptrtoint` on an address space whose pointers are wider than their addresses. Not parseable before LLVM 23. |
+| `training/llvm/24-mlir-infrastructure/examples/regions-and-blocks.mlir` | MLIR example (Tier 2) | Op/region/block nesting and block arguments in place of phi nodes; the source for the custom-versus-generic and bytecode round-trip checks. |
+| `training/llvm/24-mlir-infrastructure/examples/interfaces-inlining.mlir` | MLIR example (Tier 2) | `--inline` reaching `func.func` through `CallOpInterface`/`CallableOpInterface` alone. |
+| `training/llvm/24-mlir-infrastructure/examples/unrealized-casts.mlir` | MLIR example (Tier 2) | A cancelling `unrealized_conversion_cast` pair and a lone one; reconciliation folds the first and leaves the second. |
+| `training/llvm/09-vectorization/examples/vector-predication-evl.ll` | Standalone example | The `llvm.vp.*` family: the mask and `%evl` operands, an RVV tail-handling loop built on `llvm.experimental.get.vector.length`, and `llvm.masked.load` alongside for contrast. |

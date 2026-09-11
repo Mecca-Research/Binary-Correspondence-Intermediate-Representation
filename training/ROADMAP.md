@@ -328,17 +328,17 @@ retraction:
 
 ## Phase 1 — complete `llvm/`
 
-*Status: LLVM 15–18 material is complete and gated. The version and MLIR gaps are open.*
+*Status: **complete**. Every slice below has landed and is gated. The corpus is verified against LLVM 18 (its declared baseline) and LLVM 23 (the release it tracks) in separate CI jobs that own different claims, and the MLIR gap is closed by [`llvm/24-mlir-infrastructure/`](llvm/24-mlir-infrastructure).*
 
 | Slice | Work |
 | --- | --- |
-| 1.1 | Raise the corpus to **LLVM 23**: install the toolchain, re-verify every example, and record where 15→23 changed a documented rule |
+| 1.1 | ~~Raise the corpus to **LLVM 23**~~ — **landed**: verified against 23.1.1 locally, and CI now runs a second `LLVM training corpus (LLVM 23)` job that installs 23 from apt.llvm.org and re-runs every toolchain-consuming corpus gate against it |
 | 1.2 | ~~Re-derive the frontend chapters against the **latest Clang**~~ — **done**: re-derived under clang 23.1.1; the checked claim set survived intact, three normalizer defects the LLVM 15 floor exposed are fixed, and a snapshot now records the clang that produced it |
-| 1.3 | Study the **LLVM 23 LangRef** and close the delta: new instructions, attributes, and intrinsics the corpus does not yet teach |
-| 1.4 | **Comprehensive MLIR**: dialects, regions, interfaces, the pass infrastructure, bytecode, and the parts `14-` and `18-` only introduce |
+| 1.3 | ~~Study the **LLVM 23 LangRef** and close the delta~~ — **landed**: the surface is snapshotted from each release's own generated definitions, every one of the 131 items that moved between 18 and 23 carries a disposition, and [`llvm/23-version-movement/`](llvm/23-version-movement) teaches what arrived |
+| 1.4 | ~~**Comprehensive MLIR**~~ — **landed**: [`llvm/24-mlir-infrastructure/`](llvm/24-mlir-infrastructure) teaches the framework `14-` and `18-` stand on — regions and block arguments, the two syntaxes, interfaces, pass anchoring, and bytecode — with every behavioural claim run against a real `mlir-opt` |
 | 1.5 | ~~**IRDL**~~ — **landed**: [`llvm/22-bcir-approach/04-dialect-as-data.md`](llvm/22-bcir-approach/04-dialect-as-data.md), with the projection counted from the tree and the stock-`mlir-opt` round-trip exercised where a toolchain exists |
 | 1.6 | ~~**BCIR's own approach**~~ — **landed**: [`llvm/22-bcir-approach/`](llvm/22-bcir-approach) teaches the correspondence, the twelve cost axes, and legality before cost, with every table regenerated from `bcir/` |
-| 1.7 | Update `SEMVER.md`: the baseline moves, and the new baseline is enforced by the assembler check already in the frontend gate |
+| 1.7 | ~~Update `SEMVER.md`~~ — **landed**: the baseline moves 15 → 18, because nothing in CI ever assembled at 15; `--require-baseline` now makes its absence a failure in the job that installs it |
 
 1.1 and 1.2 are prerequisites for **1.3–1.5**, which re-derive chapters against a
 specific LLVM release: doing that on a toolchain the corpus does not run would
@@ -379,14 +379,67 @@ mapping, adversarial and opaque-pointer gates pass, and the 15 MLIR examples tie
 grade clean under `LLVM_SUFFIX=-23`. The 15→23 delta, read from the tools rather
 than from a changelog the proxy will not serve: `opt`'s base pass names go
 273 → 318 → 453 and `llc`'s targets 41 → 44 → 48, and **no corpus material names
-any of the 28 pass names that disappeared**. What 1.1 still needs is the CI half —
-the corpus job installs Ubuntu's default LLVM, not 23.
+any of the 28 pass names that disappeared**. The CI half now exists: a second job,
+`LLVM training corpus (LLVM 23)`, installs 23 from apt.llvm.org and re-runs every corpus
+gate that consumes a toolchain, with `LLVM_SUFFIX=-23` pointing the scripts at it.
 
-**Version discipline.** The corpus currently declares LLVM 15 as its floor and
-enforces it by assembling snapshots with the oldest available assembler. Raising
-the ceiling to 23 does not raise the floor automatically — moving the floor
-invalidates checked-in artifacts, so it is its own slice with its own
-regeneration pass.
+It is a separate job rather than a matrix cell of the existing one because most of that
+job — the autograder self-tests, the dataset export, the record tiers, embeddings and
+retrieval — reads checked-in artifacts and contains no LLVM at all, so a matrix would
+double work no toolchain can change. The existing job keeps Ubuntu's default and keeps
+owning the floor: the frontend snapshots are stamped `Produced by clang 18`, so that is
+where byte-identity is enforced.
+
+Two gates behave differently in the new job, which is the point of having it. The
+frontend gate takes its *different major* path and reports each snapshot's delta instead
+of enforcing byte-identity, so lowering movement between releases stays visible without
+being a failure. And `verify-bcir-approach.py` finds `mlir-opt` there, so the IRDL corpus
+round-trip runs for real (28 checks) rather than naming itself skipped (26) — that job is
+the owner of that skip. The job also refuses to run vacuously: it asserts `llvm-as-23`
+resolves and reports major 23 before any gate runs, because a silent fall back to Ubuntu's
+18 would let every step below pass while proving nothing about LLVM 23.
+
+Not repeated in the 23 job: `build-pass-plugin.sh` and `run-lto-matrix.sh`. A plugin is
+loadable only by an `opt` of its own major, and the LTO matrix needs a matching `lld`, so
+both are genuinely different tests at 23 — but neither could be validated before landing
+here: the authoring environment's toolchain is an extracted tree whose CMake package is
+incomplete, and that job installs no `lld-23`. An unvalidated CI step is how a red push
+happens. Both still run at 18, and the job's own comment now says "the gates listed"
+rather than "every gate" — a claim that outruns what a job does is exactly what this
+corpus exists to catch, including when the corpus makes it.
+
+**What the surface survey found beyond 1.3.** Measuring the corpus against the whole
+LLVM 23 surface (not only the 18 → 23 delta) turned up one gap worse than absence, and it
+was closed rather than deferred: `09-vectorization/03-vector-predication.md` carried
+LLVM's exact term of art for the `llvm.vp.*` family — 95 names, the largest family in the
+language — while teaching masks and `select`, so a reader finished it believing they knew
+what "vector predication" means in LLVM and then met `%evl` with no anchor. The chapter now
+teaches the family, the two-level mask-and-length model, how it differs from
+`llvm.masked.*`, and shows `%evl` reaching RVV's `vsetvli`. Mis-signposting is worse than
+silence: a reader who knows a chapter is missing goes looking elsewhere.
+
+Other coverage gaps that survey found are real but are ordinary absence, and are left for
+their own slices rather than folded in here: the bare integer `llvm.abs`/`smax`/`umin`
+family that InstCombine canonicalises into at `-O1`, and the attribute vocabulary of
+ordinary `-O2` output (`uwtable`, `nofree`, `norecurse`, `nosync`, `nocallback`).
+
+**Version discipline.** The corpus declares LLVM 18 as its floor and enforces it by
+assembling snapshots with the oldest available assembler at or above it. Raising the
+ceiling to 23 did not raise the floor automatically; 1.7 moved it deliberately.
+
+What moving it found is worth recording, because it is the failure mode a version
+policy is most prone to. The floor was declared as 15 and **assembled at 15 nowhere**:
+the check picks the oldest `llvm-as` at or above the declared major, CI's training job
+installs Ubuntu's default 18, and no CI job had an `llvm-as-15`. The number was true in
+the document and untested everywhere else. Moving it to 18 made the declaration match
+what the pipeline can hold, and `--require-baseline` — passed from the job that installs
+that toolchain — turns a missing baseline assembler there from a silent pass into a
+failure. A floor nothing assembles is a number, not a floor.
+
+The move invalidated no artifact: every release at or above the old floor accepts what
+the old floor accepted, so raising it relaxes a constraint rather than breaking one. The
+regeneration pass this row anticipated was not needed, and saying so is better than
+implying work that did not happen.
 
 ## Phases 2–8 — the subject ladder
 

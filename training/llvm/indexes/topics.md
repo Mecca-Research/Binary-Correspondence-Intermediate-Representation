@@ -20,6 +20,16 @@
 | Legality before cost, resource budgets, `Infeasible`, R1–R25 on both rails | [`22-bcir-approach/03-legality-before-cost.md`](../22-bcir-approach/03-legality-before-cost.md) |
 | IRDL, dialect-as-data, ODS versus a runtime projection, `--irdl-file` | [`22-bcir-approach/04-dialect-as-data.md`](../22-bcir-approach/04-dialect-as-data.md) |
 | BCIR as an IR: dispatcher, and the two senses of "legality" this corpus uses | [`22-bcir-approach/README.md`](../22-bcir-approach/README.md) |
+| Reading an LLVM version delta; opcode splits, renames, `llvm.experimental.` graduation | [`23-version-movement/01-reading-the-delta.md`](../23-version-movement/01-reading-the-delta.md) |
+| `ptrtoaddr` versus `ptrtoint`; address width, capability pointers, non-capturing casts | [`23-version-movement/02-ptrtoaddr.md`](../23-version-movement/02-ptrtoaddr.md) |
+| `ashr`/`lshr`, `fptosi`/`fptoui` poison, `sitofp` precision loss, `fneg` versus `fsub` | [`23-version-movement/03-conversions-and-shifts.md`](../23-version-movement/03-conversions-and-shifts.md) |
+| Version movement: dispatcher for what changed between LLVM releases | [`23-version-movement/README.md`](../23-version-movement/README.md) |
+| `captures(...)`, `range(...)`, `dead_on_return`; the attributes LLVM 23 added | [`23-version-movement/04-attributes-that-arrived.md`](../23-version-movement/04-attributes-that-arrived.md) |
+| MLIR regions, blocks, block arguments instead of phi, generic versus custom syntax | [`24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md`](../24-mlir-infrastructure/01-regions-blocks-and-the-two-syntaxes.md) |
+| MLIR op/type/attribute interfaces, traits, `IsolatedFromAbove` | [`24-mlir-infrastructure/02-interfaces.md`](../24-mlir-infrastructure/02-interfaces.md) |
+| MLIR pass anchoring, `--pass-pipeline` nesting, analyses, parallel pass execution | [`24-mlir-infrastructure/03-the-pass-manager.md`](../24-mlir-infrastructure/03-the-pass-manager.md) |
+| MLIR bytecode, `unrealized_conversion_cast`, `--reconcile-unrealized-casts` | [`24-mlir-infrastructure/04-bytecode-and-partial-lowering.md`](../24-mlir-infrastructure/04-bytecode-and-partial-lowering.md) |
+| MLIR infrastructure: dispatcher for the framework beneath the dialects | [`24-mlir-infrastructure/README.md`](../24-mlir-infrastructure/README.md) |
 | LLVM backend target inventory and porting cost | [`12-backend-jit/08-target-backend-porting-map.md`](../12-backend-jit/08-target-backend-porting-map.md) |
 | Corpus self-test and path prompts | [`EVAL.md`](../EVAL.md) |
 | What LLVM IR is, big picture | [`00-foundations/01-what-is-llvm-ir.md`](../00-foundations/01-what-is-llvm-ir.md) |
@@ -76,7 +86,8 @@
 | Vectorization legality and blockers | [`09-vectorization/04-vectorization-legality.md`](../09-vectorization/04-vectorization-legality.md) |
 | Loop Vectorizer auto-vectorization | [`09-vectorization/01-loop-vectorizer.md`](../09-vectorization/01-loop-vectorizer.md) |
 | SLP Vectorizer / superword-level parallelism | [`09-vectorization/02-slp-vectorizer.md`](../09-vectorization/02-slp-vectorizer.md) |
-| Vector predication, masks, scalable-vector tail handling | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
+| Vector predication: `llvm.vp.*`, `%evl` explicit vector length, `get.vector.length`, RVV `vsetvli` tail handling | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
+| Masks versus lengths: `llvm.masked.*` passthru against VP poison lanes, when each is the right tool | [`09-vectorization/03-vector-predication.md`](../09-vectorization/03-vector-predication.md) |
 | Vectorization diagnostics (`-Rpass`, `-Rpass-missed`, optimization remarks) | [`09-vectorization/05-example-walkthroughs.md`](../09-vectorization/05-example-walkthroughs.md) |
 | Vector IR patterns (`<N x T>`, vector loads/stores, `shufflevector`, reductions) | [`09-vectorization/06-recognizing-vector-ir.md`](../09-vectorization/06-recognizing-vector-ir.md) |
 | Masked stores, predication legality, and interleaved/deinterleaved accesses | [`09-vectorization/07-masked-and-interleaved-access.md`](../09-vectorization/07-masked-and-interleaved-access.md), [`09-vectorization/examples/bcir-avx512-mask-sketch.ll`](../09-vectorization/examples/bcir-avx512-mask-sketch.ll), [`09-vectorization/examples/bcir-interleaved-riscv-sketch.ll`](../09-vectorization/examples/bcir-interleaved-riscv-sketch.ll) |

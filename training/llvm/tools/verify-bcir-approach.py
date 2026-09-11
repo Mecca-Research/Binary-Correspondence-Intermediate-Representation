@@ -39,6 +39,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from llvm_toolchain import find_llvm_tool  # noqa: E402
+
 SUBJECT = Path(__file__).resolve().parents[1]
 REPO = SUBJECT.parents[1]
 CHAPTERS = SUBJECT / "22-bcir-approach"
@@ -324,7 +327,7 @@ def check_irdl_roundtrip(report: Report) -> None:
     this asks it for a verdict. Where no mlir-opt is installed the corpus job says
     so by name rather than passing quietly: the MLIR rail job owns that toolchain.
     """
-    mlir_opt = shutil.which("mlir-opt") or shutil.which("mlir-opt-23")
+    mlir_opt = find_llvm_tool("mlir-opt")
     if mlir_opt is None:
         print(
             "[skip]    mlir-opt is absent; the IRDL round-trip is the MLIR rail job's",
@@ -358,7 +361,7 @@ def check_irdl_roundtrip(report: Report) -> None:
 
 def check_no_dead_passes(report: Report, chapters: list[Path]) -> None:
     """No chapter may name an `opt` pass the declared toolchain does not have."""
-    opt = shutil.which("opt") or shutil.which("opt-23")
+    opt = find_llvm_tool("opt")
     if opt is None:
         print(
             "[skip]    opt is absent; the dead-pass check is the toolchain job's", file=sys.stderr

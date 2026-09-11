@@ -13,11 +13,36 @@ without extracting surrounding prose or adding missing declarations.
 
 - Standalone examples should live in a chapter-local `examples/` directory.
 - Standalone examples use the `.ll` extension.
-- Every standalone `.ll` example must assemble with LLVM >= 15, where opaque
-  pointers are the default.
+- Every standalone `.ll` example must assemble with LLVM >= 18, where opaque
+  pointers are the default — unless it declares a newer floor for itself, as
+  below.
 - Use `ptr` for pointer-typed values instead of typed pointers such as `i32*`.
 - Prefer examples that are small enough to diagnose quickly with `llvm-as` and
   `opt -passes=verify`.
+
+### Examples that need a newer LLVM
+
+Some constructs cannot be demonstrated at the baseline at all: `ptrtoaddr` is a
+syntax error before LLVM 23, so an example teaching it cannot also assemble on
+18. Such a file declares its own floor on one of its first lines:
+
+```llvm
+; REQUIRES: llvm >= 23
+```
+
+[`tools/verify-examples.sh`](tools/verify-examples.sh) then skips it on an older
+assembler, printing the reason, and verifies it normally once the assembler is
+new enough. This is the only sanctioned exception to the LLVM >= 18 rule above,
+and it is not a way to avoid supporting the baseline: use it when the *language*
+is newer, not when the example merely happens to have been written on a newer
+host.
+
+**The skip has an owner.** A version-gated example that every host skips is an
+example nothing verifies, which is worse than not having one. CI's `LLVM
+training corpus (LLVM 23)` job passes `--require-gated`, which turns "skipped
+everywhere" into a failure there — so every gated example is verified in at
+least one job. [`SEMVER.md`](SEMVER.md) states the same policy from the
+version-support side.
 
 ## Data artifacts and schemas
 
@@ -220,7 +245,7 @@ Each exercise should include the following pieces of information:
   `001-add.solution.ll` when the exercise benefits from a reference answer.
 
 Solutions that are checked in as `.ll` files are known-good standalone examples
-and must follow the LLVM >= 15 opaque-pointer convention. Intentionally broken
+and must follow the LLVM >= 18 opaque-pointer convention. Intentionally broken
 exercise inputs must use `.ll.txt` or include `invalid` in the filename, even if
 the prompt asks the learner to run LLVM and observe the diagnostic.
 

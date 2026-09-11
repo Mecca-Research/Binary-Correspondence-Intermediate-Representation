@@ -40,13 +40,25 @@ TRAINING_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = TRAINING_ROOT.parent.parent
 EXAMPLES = TRAINING_ROOT / "20-clang-frontend" / "examples"
 
-# SEMVER.md declares LLVM 15 as the corpus baseline. Snapshots are checked
+# SEMVER.md declares LLVM 18 as the corpus baseline. Snapshots are checked
 # against the OLDEST assembler at or above it that the host provides, not the
 # newest -- the newest is the one that cannot catch this class of defect.
-BASELINE_LLVM_MAJOR = 15
+#
+# The baseline was 15 until Phase 1.7. It moved because a declared floor that
+# nothing assembles is not a floor: CI's training job installs Ubuntu's default
+# LLVM (18) and nothing in CI ever had an `llvm-as-15`, so the search below
+# resolved to 18 and the corpus's LLVM 15 claim was checked on no machine that
+# gates anything. 18 is what CI installs and can therefore enforce, it is the
+# current Ubuntu LTS default so it is what a reader most likely has, and it keeps
+# the reason the floor existed at all -- opaque pointers are the default from 15
+# onward, so every release at or above the new floor still satisfies it.
+#
+# --require-baseline turns "no assembler at the declared major" from a silent
+# pass into a failure, and belongs to the job that installs that major.
+BASELINE_LLVM_MAJOR = 18
 
 # Clang emits these but they are version noise, not lowering facts. Removing
-# them also keeps the snapshots assembling on the corpus's LLVM >= 15 baseline,
+# them also keeps the snapshots assembling on the corpus's LLVM >= 18 baseline,
 # since attribute-group spellings (`memory(none)` and friends) are newer than
 # the baseline while the instructions they annotate are not.
 _DROP_LINE = re.compile(r"^(?:; ModuleID|source_filename|attributes #|!|; Function Attrs:)")
@@ -54,7 +66,7 @@ _ATTR_GROUP_REF = re.compile(r"\s#\d+\b")
 _METADATA_SUFFIX = re.compile(r",\s*![a-zA-Z.]+ ![0-9]+")
 
 # Inline parameter/return attributes that postdate the corpus's declared
-# LLVM >= 15 baseline (SEMVER.md). Stripping attribute *groups* is not enough:
+# LLVM >= 18 baseline (SEMVER.md). Stripping attribute *groups* is not enough:
 # these ride on the parameter itself, so they survive that pass and then fail to
 # parse on a baseline assembler. That is not hypothetical -- CI's
 # host-portability job runs an older llvm-as than the training job, so a
@@ -79,7 +91,7 @@ _POST_BASELINE_FLAG_ATTRS = ("dead_on_unwind", "dead_on_return", "writable")
 _POST_BASELINE_CALL_ATTRS = ("initializes", "range", "captures", "nofpclass")
 # Not every post-baseline spelling is a parameter attribute. Clang 23.1.1 emits
 # `getelementptr inbounds nuw` on the member access in `cxx-object-model.cpp`;
-# the no-wrap flags on a GEP arrived after the corpus's LLVM 15 floor, and the
+# the no-wrap flags on a GEP arrived after the corpus's LLVM 18 floor, and the
 # floor's assembler stops at `expected type` on the flag. They are stripped for
 # the same reason the attributes above are: a refinement on an address
 # computation the snapshot already shows, in a chapter about name mangling and
@@ -103,6 +115,12 @@ class Claim:
     pattern: str
     present: bool = True
     scope: str | None = None  # limit the search to one function body
+    # Lowest clang major that emits this. The corpus now spans LLVM 18 to 23, so some
+    # facts are simply not true of the older compiler -- and a claim that fails on the
+    # baseline host is indistinguishable from a claim that is wrong. Skipped claims are
+    # counted separately rather than folded into the checked total, because a run whose
+    # claims all skipped has verified nothing and should not say otherwise.
+    min_major: int | None = None
 
 
 @dataclass(frozen=True)
@@ -309,6 +327,17 @@ CASES: tuple[Case, ...] = (
                 r"@_ZN5GuardD1Ev",
                 scope="_Z7guardedv",
             ),
+            Claim(
+                # 23-version-movement/04-attributes-that-arrived.md teaches
+                # dead_on_return from this exact line. The attribute lands on the
+                # destructor's `this`, not on a by-value parameter of the callee --
+                # which is the part that is easy to get backwards, so it is the part
+                # pinned here. The (4) is the size of the region it declares dead.
+                "clang 23 marks a temporary's storage dead across its destructor call",
+                r"@_ZN5GuardD1Ev\(ptr[^)]*dead_on_return\(4\)",
+                scope="_Z7guardedv",
+                min_major=23,
+            ),
         ),
     ),
 )
@@ -354,7 +383,7 @@ def strip_balanced_call(line: str, name: str) -> str:
 
 
 def strip_post_baseline_attrs(line: str) -> str:
-    """Drop inline attributes newer than the corpus's LLVM >= 15 baseline."""
+    """Drop inline attributes newer than the corpus's LLVM >= 18 baseline."""
     if not _ATTRIBUTE_BEARING_LINE.search(line):
         return line
     # Instruction lines are indented; the tidy-up below collapses runs of
@@ -405,16 +434,45 @@ def find_baseline_assembler() -> tuple[str, int] | None:
     has checked: CI runs jobs on different LLVM majors, and the strictest one
     decides whether the corpus's declared baseline actually holds.
 
+    Both `llvm-as-N` and a bare `llvm-as` are considered -- the latter by asking it
+    its version, because a name is not a version and a host may ship only the
+    unsuffixed binary.
+
     When the host offers only a recent assembler this check cannot bite, and it
     says nothing rather than claiming a baseline it did not test. The backstop
     is CI's host-portability job, which runs `verify-examples.sh` over the same
     snapshots on an older LLVM than the training job installs -- that is where
     this defect was caught the first time.
     """
+    candidates: list[tuple[int, str]] = []
     for major in range(BASELINE_LLVM_MAJOR, 31):
         if found := shutil.which(f"llvm-as-{major}"):
-            return found, major
-    return None
+            candidates.append((major, found))
+
+    # The unsuffixed `llvm-as` counts too, and asking it is not optional. Searching only
+    # for versioned names says "nothing at or above the baseline" on a host whose ONLY
+    # assembler is `llvm-as` at exactly the baseline major -- a perfectly good baseline
+    # host, reported as having no baseline at all. That is a false negative on the plain
+    # skip path and, once --require-baseline exists, a false FAILURE on the job that owns
+    # the floor. A name is not a version; the binary is asked which major it is.
+    if plain := shutil.which("llvm-as"):
+        try:
+            proc = subprocess.run(
+                [plain, "--version"], capture_output=True, text=True, check=False, timeout=60
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            proc = None
+        if proc is not None:
+            match = re.search(r"LLVM version (\d+)\.", proc.stdout)
+            if match and (major := int(match.group(1))) >= BASELINE_LLVM_MAJOR:
+                candidates.append((major, plain))
+
+    if not candidates:
+        return None
+    # Oldest wins; a suffixed name is preferred at the same major because it is the one a
+    # reader can reproduce from the chapter's own commands.
+    major, binary = min(candidates, key=lambda pair: (pair[0], pair[1].endswith("llvm-as")))
+    return binary, major
 
 
 _SNAPSHOT_MAJOR_RE = re.compile(r"^; Produced by clang (\d+)\.", re.MULTILINE)
@@ -449,7 +507,7 @@ def body_delta(existing: str, rendered: str) -> int:
     )
 
 
-def check_snapshot_baseline(rendered: str, label: str) -> str | None:
+def check_snapshot_baseline(rendered: str, label: str) -> tuple[str | None, bool]:
     """Assemble a normalized snapshot at the baseline; return a failure message.
 
     This is the total check behind the declared strip list: an attribute newer
@@ -458,8 +516,13 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
     """
     assembler = find_baseline_assembler()
     if assembler is None:
-        return None
+        return None, False
     binary, major = assembler
+    # `major` is the oldest assembler at or above the floor, which is not always the floor
+    # itself: on a host carrying only LLVM 23 this check runs at 23. Saying "the LLVM 23
+    # baseline" there would be a lie about which claim was tested, so the declared floor is
+    # named separately whenever the two differ.
+    at_floor = major == BASELINE_LLVM_MAJOR
     with tempfile.NamedTemporaryFile("w", suffix=".ll", delete=False) as handle:
         handle.write(rendered)
         temporary = Path(handle.name)
@@ -472,22 +535,29 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
             timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"{label}: baseline assembler {binary} could not be run ({exc})"
+        return f"{label}: baseline assembler {binary} could not be run ({exc})", False
     finally:
         temporary.unlink(missing_ok=True)
 
     if completed.returncode == 0:
-        return None
+        return None, True
     detail = completed.stderr.strip().splitlines()
     first = detail[0] if detail else "(no diagnostic)"
     return (
-        f"{label}: does not assemble at the LLVM {major} baseline: {first}\n"
+        f"{label}: does not assemble at LLVM {major}"
+        + (
+            ""
+            if at_floor
+            else f" (the oldest assembler here; the declared baseline is {BASELINE_LLVM_MAJOR})"
+        )
+        + f": {first}\n"
         f"       If this is a parameter attribute newer than LLVM "
         f"{BASELINE_LLVM_MAJOR}, add it to _POST_BASELINE_FLAG_ATTRS or "
         f"_POST_BASELINE_CALL_ATTRS; if it is an instruction flag, to "
         f"_POST_BASELINE_GEP_FLAGS or its equivalent -- the assembler rejects any "
         f"construct newer than the floor, not only parameter attributes, so read "
-        f"the named line before assuming which. Then regenerate with --update."
+        f"the named line before assuming which. Then regenerate with --update.",
+        True,
     )
 
 
@@ -524,9 +594,16 @@ def compile_case(clang: str, clangxx: str, case: Case) -> tuple[str, str]:
     return completed.stdout, " ".join(cmd)
 
 
-def check_case(ir: str, case: Case) -> list[str]:
+def check_case(ir: str, case: Case, local_major: int | None) -> tuple[list[str], int, int]:
+    """Returns (failures, claims checked, claims skipped as newer than this clang)."""
     failures: list[str] = []
+    checked = 0
+    skipped = 0
     for claim in case.claims:
+        if claim.min_major is not None and (local_major is None or local_major < claim.min_major):
+            skipped += 1
+            continue
+        checked += 1
         haystack = ir
         if claim.scope is not None:
             body = function_body(ir, claim.scope)
@@ -543,7 +620,7 @@ def check_case(ir: str, case: Case) -> list[str]:
                 f"{claim.description}: {expectation} to match /{claim.pattern}/"
                 + (f" in '{claim.scope}'" if claim.scope else "")
             )
-    return failures
+    return failures, checked, skipped
 
 
 def main() -> int:
@@ -558,7 +635,30 @@ def main() -> int:
         action="store_true",
         help="rewrite the normalized .ll snapshots from the current clang",
     )
+    parser.add_argument(
+        "--require-baseline",
+        action="store_true",
+        help=f"fail unless an llvm-as at the declared baseline major "
+        f"({BASELINE_LLVM_MAJOR}) is present; pass this from the CI job that installs it",
+    )
     args = parser.parse_args()
+
+    # The floor claim needs an owner. Without this flag the baseline check is allowed to
+    # find nothing and say nothing, which is how the corpus came to declare LLVM 15 while
+    # no CI job had an llvm-as-15 to test it with. The job that installs the baseline
+    # toolchain passes --require-baseline, and there absence is a defect, not a skip.
+    if args.require_baseline:
+        found = find_baseline_assembler()
+        if found is None or found[1] != BASELINE_LLVM_MAJOR:
+            got = "nothing at or above it" if found is None else f"only llvm-as-{found[1]}"
+            print(
+                f"frontend lowering gate: FAILED (--require-baseline: SEMVER.md declares "
+                f"LLVM {BASELINE_LLVM_MAJOR} as the corpus baseline, but this host has "
+                f"{got}. The job passing this flag is the one that is supposed to install "
+                f"llvm-as-{BASELINE_LLVM_MAJOR}; a floor nothing assembles is not a floor)",
+                file=sys.stderr,
+            )
+            return 1
 
     clang = find_clang("clang")
     clangxx = find_clang("clang++")
@@ -566,6 +666,18 @@ def main() -> int:
         message = "clang/clang++ not on PATH"
         if args.require_tools:
             print(f"frontend lowering gate: FAILED ({message})", file=sys.stderr)
+            return 1
+        if args.require_baseline:
+            # Without clang there is no IR to hand the baseline assembler, so the floor
+            # goes untested. Exiting 0 here would let --require-baseline be satisfied by a
+            # run that assembled nothing -- the flag claims the rail RAN, not that a binary
+            # was on PATH when the run started.
+            print(
+                f"frontend lowering gate: FAILED (--require-baseline: {message}, so no "
+                f"snapshot was rendered and the LLVM {BASELINE_LLVM_MAJOR} floor was "
+                f"never assembled; the job passing this flag owns both halves)",
+                file=sys.stderr,
+            )
             return 1
         print(f"frontend lowering gate: SKIPPED ({message})")
         return 0
@@ -579,6 +691,8 @@ def main() -> int:
 
     failed = 0
     claims_checked = 0
+    claims_skipped = 0
+    baseline_runs = 0
 
     for case in CASES:
         try:
@@ -595,8 +709,9 @@ def main() -> int:
             failed += 1
             continue
 
-        failures = check_case(ir, case)
-        claims_checked += len(case.claims)
+        failures, checked, skipped = check_case(ir, case, local_major)
+        claims_checked += checked
+        claims_skipped += skipped
         if failures:
             failed += 1
             print(f"[FAIL] {case.label}", file=sys.stderr)
@@ -604,7 +719,8 @@ def main() -> int:
             for failure in failures:
                 print(f"       - {failure}", file=sys.stderr)
         else:
-            print(f"[ ok ] {case.label}: {len(case.claims)} claim(s)")
+            note = f" ({skipped} newer than clang {local_major})" if skipped else ""
+            print(f"[ ok ] {case.label}: {checked} claim(s){note}")
 
         if case.snapshot:
             snapshot_path = EXAMPLES / case.snapshot
@@ -617,16 +733,21 @@ def main() -> int:
                 "; Regenerate with:\n"
                 ";   python3 training/llvm/tools/verify-frontend-lowering.py --update\n"
                 "; Attribute groups, module flags, the ident string, and parameter\n"
-                "; attributes newer than LLVM 15 are stripped: they are build\n"
+                "; attributes newer than LLVM 18 are stripped: they are build\n"
                 "; configuration rather than lowering, and their spellings move between\n"
-                "; releases faster than the corpus's LLVM >= 15 baseline allows.\n"
+                "; releases faster than the corpus's LLVM >= 18 baseline allows.\n"
                 "\n"
             )
             rendered = header + normalize(ir)
 
             # Ask the oldest available assembler, not the newest. This is the
             # check that catches an attribute the strip list does not know about.
-            if baseline_failure := check_snapshot_baseline(rendered, relpath(snapshot_path)):
+            baseline_failure, baseline_ran = check_snapshot_baseline(
+                rendered, relpath(snapshot_path)
+            )
+            if baseline_ran:
+                baseline_runs += 1
+            if baseline_failure:
                 print(f"[FAIL] {baseline_failure}", file=sys.stderr)
                 failed += 1
             elif args.update:
@@ -675,6 +796,19 @@ def main() -> int:
                         f"read here with clang {local_major}: {drift} line(s) differ"
                     )
 
+    # The requirement is that the floor was EXERCISED. Discovering an llvm-as at startup
+    # proves only that one is installed: if every snapshot case were removed, or each one
+    # skipped for an unsupported target, this gate would have assembled nothing at the
+    # baseline and still reported the floor as held.
+    if args.require_baseline and baseline_runs == 0:
+        print(
+            f"frontend lowering gate: FAILED (--require-baseline: an llvm-as at LLVM "
+            f"{BASELINE_LLVM_MAJOR} was found, but no snapshot was assembled with it, so "
+            f"nothing tested the declared floor; a floor nothing assembles is not a floor)",
+            file=sys.stderr,
+        )
+        return 1
+
     if failed:
         print(
             f"frontend lowering gate: FAILED ({failed} case(s), {claims_checked} claim(s) checked)",
@@ -682,7 +816,15 @@ def main() -> int:
         )
         return 1
 
-    print(f"frontend lowering gate: PASSED ({len(CASES)} case(s), {claims_checked} claim(s))")
+    skipped_note = (
+        f", {claims_skipped} claim(s) skipped as newer than clang {local_major}"
+        if claims_skipped
+        else ""
+    )
+    print(
+        f"frontend lowering gate: PASSED ({len(CASES)} case(s), {claims_checked} claim(s), "
+        f"{baseline_runs} snapshot(s) assembled at the baseline{skipped_note})"
+    )
     return 0
 
 

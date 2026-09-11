@@ -93,7 +93,7 @@ Components:
 | Calling conv | ABI | `ccc` (default), `fastcc`, `coldcc`, `tailcc`, etc. |
 | Type | Return type | `void`, `i32`, `ptr`, `<4 x float>` |
 | Name | Function name | `@add`, `@"some.name"` |
-| Params | Comma-separated typed params | `(i32 %a, ptr nocapture %p)` |
+| Params | Comma-separated typed params | `(i32 %a, ptr captures(none) %p)` |
 | Function attrs | Apply to function | `nounwind`, `readonly`, `alwaysinline`, `noinline` |
 
 `declare` (no body) uses the same shape, just without the `{ ... }`.
@@ -113,7 +113,7 @@ Common ones:
 | Attribute | Meaning |
 |---|---|
 | `noalias` | Pointer doesn't alias other `noalias` pointers |
-| `nocapture` | The callee doesn't keep the pointer past the call |
+| `captures(none)` | The callee doesn't keep the pointer past the call. **Spelled `nocapture` before LLVM 21**, which LLVM 23 no longer accepts — see [`../23-version-movement/04-attributes-that-arrived.md`](../23-version-movement/04-attributes-that-arrived.md) for the finer `captures(address)` / `captures(provenance)` forms |
 | `readonly` | The callee doesn't write through this pointer |
 | `nonnull` | The pointer is not null |
 | `dereferenceable(N)` | At least N bytes of the pointer are dereferenceable |
