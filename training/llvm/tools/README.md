@@ -252,6 +252,32 @@ deliberately at different levels:
 A key outside the known set is rejected rather than ignored, for the same
 reason: `require_lowerd` in a manifest reads exactly like a check that runs.
 
+## Every `--require-X` flag, audited
+
+Finding that one led to auditing all of them, because the flags share a shape: each
+one is passed by a CI job that installed a toolchain, and each is meant to turn
+"the tool is missing" from a local skip into a failure there. What none of them
+automatically does is prove the tool was *used*. Four more had the same hole, and
+all four are now closed the same way — by counting the work and refusing zero:
+
+| Flag | What it proved | What it proves now |
+| --- | --- | --- |
+| `verify-frontend-lowering.py --require-tools` | `clang` was on `PATH` at startup | at least one lowering claim was checked. Every case can take the "target unsupported" branch — that branch is a substring test over clang's stderr, reachable for reasons this gate does not control — and the run would report `PASSED` over zero claims. Its sibling `--require-baseline` already had this floor; the job that passes only `--require-tools` was uncovered |
+| `verify-langref-delta.py --require-surface N` | LLVM N's headers were found, and the stored snapshot equalled a freshly read one | both surfaces contain constructs no LLVM omits. The drift check compares a stored surface against a live one read by **the same extractor**, so an extractor that matched nothing wrote an empty snapshot with `--emit-surface` and then compared `[]` to `[]` and passed. `--emit-surface` now refuses to write such a snapshot, and the stored snapshots are checked on every host, toolchain or not |
+| `generate-binary-analysis-fixtures.py --check --require-tools` | `find_clang()` returned a path | at least one fixture was built and compared. The build loop runs over manifest entries classified `deterministic`; a manifest with none made every loop iterate zero times while `--check` reported a clean golden diff over nothing |
+| `verify-mlir-coverage.py` two-rail check | that `mlir-tblgen`'s operation list was contained in the headers' | that there is a tblgen rail to contain. An empty rail 1 used to stand the check down **and mark it done** — which is the state a broken tblgen extraction produces, so the one check whose job is to catch a broken extraction was disabled by exactly the thing it exists to catch |
+
+Two of these were in gates this corpus had already fixed the other half of, which is
+the useful part of the pattern: when a flag turns out to prove less than its name
+says, its siblings are worth reading before anything else.
+
+The canaries deserve a note. They are named constructs (`Ret`, `nounwind`,
+`llvm.memcpy`) rather than expected counts, because a count drifts every release and
+would need maintaining, while `Ret` leaving LLVM would mean something other than a
+broken regex. They were chosen by intersecting the checked-in snapshots rather than
+from memory: `Br` looked like an obvious candidate and is absent from LLVM 23, which
+splits it into `CondBr` and `UncondBr`.
+
 `verify-bcir-mapping.sh` validates both source-like `.bcir.txt` claim fragments
 and real `.bcir` assembler fixtures under `bcir-mapping/examples/`. The
 `.bcir.txt` fragments are not assembler inputs, so the checker applies

@@ -278,8 +278,21 @@ def coverage(surface: dict, text: str) -> dict[str, tuple[int, int]]:
 def check_rails(report: Report, surface: dict) -> None:
     """The two derivations must not contradict each other."""
     tblgen_ops = surface.get("tblgen_ops") or {}
-    if not tblgen_ops:
-        print("[rails]   no tblgen rail in this snapshot; the header rail stands alone")
+    # An empty rail 1 used to stand this check down and mark it done. That is the exact
+    # state a broken tblgen extraction produces, so the one check whose job is to catch a
+    # broken extraction was disabled by the thing it exists to catch -- and it reported
+    # the stand-down as a completed check. A snapshot holding thousands of header ops and
+    # no tblgen ops is not a snapshot with one rail; it is a snapshot with one rail
+    # broken. The floor is deliberately loose (the rails legitimately disagree on count:
+    # 44 dialects against 47 here, because a dialect can define ops without a tblgen doc
+    # target) and only refuses collapse.
+    header_dialects = len(surface.get("ops") or {})
+    if not report.require(
+        len(tblgen_ops) >= max(1, header_dialects // 2),
+        f"the tblgen rail covers {len(tblgen_ops)} dialect(s) against the header rail's "
+        f"{header_dialects}; the two rails exist so that one under-reporting is caught by "
+        f"the other, and a rail this far collapsed cannot catch anything",
+    ):
         report.done("rails")
         return
 

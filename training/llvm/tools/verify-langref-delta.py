@@ -162,6 +162,40 @@ def include_dir(major: int) -> Path | None:
     return fallback if (fallback / "llvm/IR/Instruction.def").is_file() else None
 
 
+# Constructs no LLVM this corpus supports can be missing. These are canaries rather than
+# expected counts: a count drifts every release and would need maintaining, while `Ret`
+# leaving LLVM would mean something other than a broken regex. They were chosen by
+# intersecting the checked-in snapshots rather than from memory -- `Br` looked like an
+# obvious candidate and is absent from 23, which splits it into `CondBr`/`UncondBr`.
+#
+# This exists because the drift check below compares a stored surface against a live one
+# read by THE SAME extractor. If an extractor silently matched nothing -- as the attribute
+# regex nearly did, by requiring a declaration to fit on one line -- then `--emit-surface`
+# writes an empty snapshot, and the drift check compares [] against [] and passes. A
+# comparison between a generated file and its own generator says nothing about the
+# generator; only an outside fact does.
+_SURFACE_CANARIES = {
+    "instructions": ("Add", "Alloca", "Call", "Load", "Ret", "Store"),
+    "attributes": ("byval", "noalias", "nounwind", "sret"),
+    "intrinsics": ("llvm.assume", "llvm.memcpy", "llvm.trap"),
+}
+
+
+def surface_defects(surface: dict[str, list[str]], origin: str) -> list[str]:
+    """Every way an extraction can have silently found nothing, or nearly nothing."""
+    problems = []
+    for kind, canaries in _SURFACE_CANARIES.items():
+        found = set(surface.get(kind, ()))
+        missing = [name for name in canaries if name not in found]
+        if missing:
+            problems.append(
+                f"{origin}: the {kind} surface holds {len(found)} item(s) and none of "
+                f"{', '.join(missing)} -- no supported LLVM omits those, so this is a "
+                f"broken extraction rather than a real surface"
+            )
+    return problems
+
+
 def read_surface(include: Path) -> dict[str, list[str]]:
     """The target-independent language surface, as the toolchain itself declares it."""
     ir = include / "llvm/IR"
@@ -199,6 +233,17 @@ def write_snapshot(major: int) -> int:
         )
         return 1
     surface = read_surface(include)
+    defects = surface_defects(surface, f"LLVM {major} headers at {include}")
+    if defects:
+        for defect in defects:
+            print(f"error: {defect}", file=sys.stderr)
+        print(
+            "error: refusing to write a snapshot from an extraction that found nothing; "
+            "fix the extractor before regenerating, or the drift check will compare the "
+            "break against itself and pass",
+            file=sys.stderr,
+        )
+        return 1
     payload = {
         "llvm_major": major,
         "source": "Instruction.def + Attributes.td + IntrinsicEnums.inc, as installed",
@@ -216,6 +261,30 @@ def write_snapshot(major: int) -> int:
         + ", ".join(f"{len(v)} {k}" for k, v in surface.items())
     )
     return 0
+
+
+def check_stored_surfaces(report: Report) -> None:
+    """The checked-in snapshots must look like real LLVM surfaces.
+
+    `check_snapshot` compares a stored surface against a live one read by the same
+    extractor, so it cannot see a break that affected both. This one asks an outside
+    question instead, and it needs no toolchain -- the snapshots are repository content,
+    so a host with no LLVM headers at all still owns this check.
+    """
+    for major in (BASELINE_MAJOR, CURRENT_MAJOR):
+        path = snapshot_path(major)
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        for defect in surface_defects(stored, path.name):
+            report.require(False, defect)
+        # The declared counts are what the chapters and the coverage checks read. A count
+        # that disagrees with the list beside it makes every figure downstream a guess.
+        for kind, count in stored.get("counts", {}).items():
+            report.require(
+                count == len(stored.get(kind, ())),
+                f"{path.name}: counts[{kind}] says {count} but the list holds "
+                f"{len(stored.get(kind, ()))}",
+            )
+    print("[stored]  both surface snapshots carry their canaries and agree with their counts")
 
 
 def check_snapshot(major: int, report: Report, required: bool) -> None:
@@ -239,6 +308,8 @@ def check_snapshot(major: int, report: Report, required: bool) -> None:
 
     stored = json.loads(snapshot_path(major).read_text(encoding="utf-8"))
     live = read_surface(include)
+    for defect in surface_defects(live, f"LLVM {major} headers at {include}"):
+        report.require(False, defect)
     for kind, items in live.items():
         report.require(
             stored[kind] == items,
@@ -869,6 +940,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
+    check_stored_surfaces(report)
     for major in known_majors:
         check_snapshot(major, report, required=major in args.require_surface)
     check_dispositions(report)

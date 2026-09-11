@@ -800,6 +800,22 @@ def main() -> int:
     # proves only that one is installed: if every snapshot case were removed, or each one
     # skipped for an unsupported target, this gate would have assembled nothing at the
     # baseline and still reported the floor as held.
+    # The same requirement, one level up, and it was missing while its sibling below was
+    # not. Every case can take the "target unsupported by this clang" skip -- that branch
+    # is a substring test over clang's stderr, so it is reachable for reasons this gate
+    # does not control -- and the run then reports PASSED over zero claims. --require-tools
+    # claims the rail RAN; finding clang on PATH is where a run starts, not what it did.
+    # (The CI job at ci.yml's MLIR rail passes --require-tools alone, so the floor below
+    # does not cover it.)
+    if args.require_tools and claims_checked == 0:
+        print(
+            f"frontend lowering gate: FAILED (--require-tools: clang was found and "
+            f"{len(CASES)} case(s) ran, but not one lowering claim was checked -- every "
+            f"case skipped, so this run asserts nothing about the frontend)",
+            file=sys.stderr,
+        )
+        return 1
+
     if args.require_baseline and baseline_runs == 0:
         print(
             f"frontend lowering gate: FAILED (--require-baseline: an llvm-as at LLVM "
