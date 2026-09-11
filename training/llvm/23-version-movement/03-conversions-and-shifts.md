@@ -1,10 +1,10 @@
 # The casts and shifts the corpus listed but never ran
 
-Nine instruction opcodes appear in this corpus only as entries in the syntax table in
+Eight instruction opcodes appear in this corpus only as entries in the syntax table in
 [`../01-syntax/02-instruction-format.md`](../01-syntax/02-instruction-format.md): `ashr`,
 `fneg`, `fpext`, `fptrunc`, `fptosi`, `fptoui`, `sitofp`, `uitofp`. Named, never
-demonstrated — and four of them have behaviour that surprises people who assume the
-obvious.
+demonstrated — and every one of them has behaviour that catches somebody out, which is why
+the list is short enough to work through in one sitting.
 
 Everything asserted below was produced by LLVM 23's constant folder (`opt -O2 -S`) over
 [`examples/conversions-and-shifts.ll`](examples/conversions-and-shifts.ll), not written
@@ -103,7 +103,15 @@ recognises.
 
 [`examples/conversions-and-shifts.ll`](examples/conversions-and-shifts.ll) is assembled
 and verified by [`../tools/verify-examples.sh`](../tools/verify-examples.sh) on every
-host, including the corpus baseline — nothing in it is newer than LLVM 15. Its constants
-are chosen to be exactly representable for that reason: LLVM 15 and 18 reject a decimal
-float literal that is not exact in its type, where LLVM 23 accepts it, so `4294967296.0`
-assembles everywhere and `1.0e30` would not.
+host, including the corpus baseline — nothing in it is newer than LLVM 15, one major below
+the declared floor in [`../SEMVER.md`](../SEMVER.md). Its constants are chosen to be
+exactly representable for that reason: LLVM 15 and 18 reject a decimal float literal that
+is not exact in its type, where LLVM 23 accepts it, so `4294967296.0` assembles everywhere
+and `1.0e30` would not.
+
+The opening claim is checked too, by
+[`../tools/verify-langref-delta.py`](../tools/verify-langref-delta.py): each of the eight
+opcodes must appear in this chapter's example, must appear in no other `.ll` in the corpus,
+and the count in the sentence above must match the length of the list beside it. A chapter
+whose premise is "the corpus names these but never runs them" stops being true the moment
+another chapter runs one, and this is how it finds out.

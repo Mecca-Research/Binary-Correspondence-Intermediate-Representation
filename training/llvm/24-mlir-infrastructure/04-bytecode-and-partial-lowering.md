@@ -72,12 +72,63 @@ The magic is `ML\xefR`. Reading it back produces the same module the text does �
 module, not an equivalent one, and the gate checks that by comparing the printed output
 from both paths.
 
-**Bytecode is not automatically smaller.** For the small module used here it is *larger*:
-241 bytes of bytecode against 93 of text. The wins are on real modules and are structural
-rather than byte-shaving — a string table shared across the module, no re-parsing of the
-textual grammar, and lazy loading of nested regions a reader may never look at. Quoting a
-size ratio from a toy module would be exactly the kind of measurement
-[`../21-performance-methodology/`](../21-performance-methodology) exists to refuse.
+**Bytecode is not automatically smaller**, and this chapter's own three examples disagree
+with each other about it — measured rather than asserted, by the gate, on whatever MLIR is
+running it:
+
+<!-- generated: serialization-sizes -->
+| example | text | bytecode | bytecode is |
+| --- | ---: | ---: | --- |
+| [`examples/regions-and-blocks.mlir`](examples/regions-and-blocks.mlir) | 717 | 438 | **smaller** by 279 bytes |
+| [`examples/interfaces-inlining.mlir`](examples/interfaces-inlining.mlir) | 233 | 272 | **larger** by 39 bytes |
+| [`examples/unrealized-casts.mlir`](examples/unrealized-casts.mlir) | 318 | 237 | **smaller** by 81 bytes |
+
+Measured on this chapter's own 3 examples by the gate, with source locations stripped from both sides first: bytecode is smaller on 2 of them and larger on 1.
+<!-- /generated -->
+
+The direction is not a property of the format, it is a property of the module. Bytecode
+pays a fixed cost first — a header, a dialect table, a string table — and earns it back by
+naming each operation, attribute and type once however often it is used. The smallest
+example here has almost nothing to amortise those tables over and comes out larger; the
+other two are big enough that the tables start paying.
+
+So the real wins are structural rather than byte-shaving: shared name tables, no re-parsing
+of the textual grammar, and lazy loading of nested regions a reader may never look at.
+Quoting a size *ratio* from any of these modules would be exactly the kind of measurement
+[`../21-performance-methodology/`](../21-performance-methodology) exists to refuse — which
+is why the table above reports bytes on named files and stops there.
+
+### Why the measurement strips locations first
+
+Both columns are measured with `builtin.module(strip-debuginfo)` applied, and skipping that
+step gets the comparison wrong twice over.
+
+**Text and bytecode disagree about what they remember.** `mlir-opt`'s default textual print
+emits no `loc(...)` at all; the bytecode keeps every location the parser attached. Compare
+them as they come out of the tool and you are comparing a lossy encoding against a faithful
+one — bytecode is carrying information the text column threw away, and being charged bytes
+for it. (Ask for the locations with `--mlir-print-debuginfo` and the text form is the one
+that balloons.)
+
+**A location holds the source file's path**, so the byte count depends on where the file
+lives. Rename the file — same module, same bytes in it — and the bytecode changes size by
+exactly the number of characters you added:
+
+```console
+$ cp m.mlir m<N more characters>.mlir
+$ mlir-opt m.mlir --emit-bytecode -o - | wc -c
+$ mlir-opt m<N more characters>.mlir --emit-bytecode -o - | wc -c
+```
+
+For N of 1, 10, 40, 100 and 200 the second count exceeds the first by exactly N. One byte
+per byte, no more, which is the string table doing its job: 25 locations in that module all
+cite the same path, and it is stored once. The absolute numbers are deliberately not quoted
+here, because they are a measurement of somebody's checkout directory — that is the whole
+point.
+
+Both facts are pinned by the gate rather than left as a note: if bytecode stops embedding
+the path, or starts charging more than its length for it, or the text form starts printing
+locations, the check fails and says this section needs rewriting.
 
 What bytecode has that text does not is a **versioning story**: the format carries a
 version, dialects can implement read and write hooks per version, and a newer reader can
@@ -95,6 +146,8 @@ read back with a different build.
 - Do not expect `--reconcile-unrealized-casts` to remove a lone cast. It removes pairs
   that cancel, and leaving the rest is the feature.
 - Do not assume bytecode is smaller. Measure it on a module the size of yours.
+- Do not compare a default text print against bytecode and call the difference an encoding
+  win. One of them is carrying locations and the other is not.
 - Do not treat textual MLIR as a stable interchange format across versions. That is what
   the bytecode version is for.
 
@@ -104,3 +157,11 @@ read back with a different build.
 reconciliation over the example and requires both halves — the pair in `@g` gone, the lone
 cast in `@f` still present — then emits bytecode, checks the magic, reads it back and
 requires the round-trip to reproduce the text form exactly.
+
+It also measures the size table above rather than trusting it, and fails if the block has
+drifted from what the local `mlir-opt` produces (`--update` rewrites it). Three further
+checks guard the claims around it: that bytecode still embeds the source path (the same
+module under two filenames must produce two sizes), that stripping locations still removes
+that dependence (one size under both names), and that the default text print still emits no
+`loc(...)`. If every example ever serialized the same direction, the gate says so too —
+"not automatically smaller" would then be a sentence with nothing behind it.

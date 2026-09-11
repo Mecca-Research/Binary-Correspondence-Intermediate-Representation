@@ -19,6 +19,7 @@ a failure rather than a quiet pass.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -36,11 +37,35 @@ EXAMPLES = TRAINING_ROOT / "24-mlir-infrastructure" / "examples"
 # chapter tells a reader to recognise a .mlirbc by it.
 BYTECODE_MAGIC = b"ML\xefR"
 
+# The chapter that displays the serialization sizes, and the examples it measures. The
+# sizes are generated into it rather than typed, because a size typed into prose is a
+# number measured once on a module nobody can name afterwards -- which is exactly how this
+# chapter came to quote figures from a scratch file instead of its own example.
+SIZE_CHAPTER = TRAINING_ROOT / "24-mlir-infrastructure" / "04-bytecode-and-partial-lowering.md"
+SIZED_EXAMPLES = (
+    "regions-and-blocks.mlir",
+    "interfaces-inlining.mlir",
+    "unrealized-casts.mlir",
+)
+# Both sides of the size table are measured with locations stripped. That is not tidying:
+# `mlir-opt`'s default TEXT print drops locations while bytecode keeps them, so comparing
+# the two as they come out of the tool compares a lossy encoding against a lossless one --
+# and, because a location holds the source file's path, it also makes the byte count depend
+# on where the repository happens to be checked out. check_location_cost() below pins both
+# halves of that, so this pipeline is a fix with a witness rather than a workaround.
+STRIP_LOCATIONS = "--pass-pipeline=builtin.module(strip-debuginfo)"
+
+_SIZE_BLOCK = re.compile(
+    r"(?P<open><!-- generated: serialization-sizes -->\n)(?P<body>.*?)(?P<close><!-- /generated -->)",
+    re.DOTALL,
+)
+
 
 class Report:
     def __init__(self) -> None:
         self.findings: list[str] = []
         self.checks = 0
+        self.completed: set[str] = set()
 
     def require(self, condition: object, message: str) -> bool:
         self.checks += 1
@@ -48,6 +73,10 @@ class Report:
             self.findings.append(message)
             return False
         return True
+
+    def done(self, name: str) -> None:
+        """Record that a check function reached its end rather than returning early."""
+        self.completed.add(name)
 
     def verdict(self, label: str) -> int:
         if self.findings:
@@ -105,6 +134,7 @@ def check_generic_form(report: Report, mlir_opt: str, work: Path) -> None:
         "parses to; the two syntaxes are supposed to be interchangeable",
     )
     print("[syntax]  custom and generic forms round-trip to the same module")
+    report.done("generic_form")
 
 
 def check_unregistered_dialect(report: Report, mlir_opt: str, work: Path) -> None:
@@ -137,6 +167,7 @@ def check_unregistered_dialect(report: Report, mlir_opt: str, work: Path) -> Non
         f"--allow-unregistered-dialect did not parse the generic-form module: {out[:200]}",
     )
     print("[unreg]   generic syntax needs --allow-unregistered-dialect, as the chapter says")
+    report.done("unregistered_dialect")
 
 
 def check_pass_anchoring(report: Report, mlir_opt: str) -> None:
@@ -171,6 +202,7 @@ def check_pass_anchoring(report: Report, mlir_opt: str) -> None:
         "pipeline is accepted and silently runs nothing -- update the chapter",
     )
     print("[passes]  anchoring is enforced; a non-existent anchor is still accepted silently")
+    report.done("pass_anchoring")
 
 
 def check_interfaces(report: Report, mlir_opt: str) -> None:
@@ -203,6 +235,7 @@ def check_interfaces(report: Report, mlir_opt: str) -> None:
         "--inline removed the call but the callee's body did not appear in the caller",
     )
     print("[iface]   --inline reaches func.func purely through its interfaces")
+    report.done("interfaces")
 
 
 def check_unrealized_casts(report: Report, mlir_opt: str) -> None:
@@ -248,6 +281,7 @@ def check_unrealized_casts(report: Report, mlir_opt: str) -> None:
         "announces itself",
     )
     print("[casts]   a cancelling pair folds; a lone cast survives, as the chapter claims")
+    report.done("unrealized_casts")
 
 
 def check_bytecode(report: Report, mlir_opt: str, work: Path) -> None:
@@ -272,6 +306,214 @@ def check_bytecode(report: Report, mlir_opt: str, work: Path) -> None:
         "bytecode is supposed to be a different encoding of the same IR, not a lossy one",
     )
     print("[bytes]   bytecode carries the magic and round-trips to the same module")
+    report.done("bytecode")
+
+
+# --------------------------------------------------------------------------
+# The one table in chapter 24 that is a measurement, and is therefore generated
+# --------------------------------------------------------------------------
+
+
+def measure_serializations(mlir_opt: str, work: Path) -> dict[str, tuple[int, int]] | None:
+    """Canonical text bytes and bytecode bytes for each example the chapter measures.
+
+    Text is measured after a round trip through mlir-opt rather than from the file on
+    disk: the source carries comments and whatever whitespace its author typed, and
+    comparing that against bytecode would be comparing a comment budget against an
+    encoding. What the chapter is contrasting is two serializations of the same module,
+    so both sides are asked of the same tool -- and, per STRIP_LOCATIONS, of the same
+    module rather than of two modules that differ in what they remember.
+    """
+    sizes: dict[str, tuple[int, int]] = {}
+    for name in SIZED_EXAMPLES:
+        source = EXAMPLES / name
+        if not source.is_file():
+            return None
+        text_out = work / f"{name}.txt"
+        bc_out = work / f"{name}.bc"
+        code_text, _ = run(mlir_opt, [STRIP_LOCATIONS, "-o", str(text_out)], source)
+        code_bc, _ = run(
+            mlir_opt, [STRIP_LOCATIONS, "--emit-bytecode", "-o", str(bc_out)], source
+        )
+        if code_text != 0 or code_bc != 0:
+            return None
+        sizes[name] = (text_out.stat().st_size, bc_out.stat().st_size)
+    return sizes
+
+
+def render_size_block(sizes: dict[str, tuple[int, int]]) -> str:
+    """The size table, built from a live measurement so no byte count is ever typed."""
+    rows = [
+        "| example | text | bytecode | bytecode is |",
+        "| --- | ---: | ---: | --- |",
+    ]
+    for name, (text_bytes, bc_bytes) in sizes.items():
+        if bc_bytes < text_bytes:
+            verdict = f"**smaller** by {text_bytes - bc_bytes} bytes"
+        elif bc_bytes > text_bytes:
+            verdict = f"**larger** by {bc_bytes - text_bytes} bytes"
+        else:
+            verdict = "the same size"
+        rows.append(f"| [`examples/{name}`](examples/{name}) | {text_bytes} | {bc_bytes} | {verdict} |")
+    smaller = sum(1 for t, b in sizes.values() if b < t)
+    larger = sum(1 for t, b in sizes.values() if b > t)
+    rows.append("")
+    rows.append(
+        f"Measured on this chapter's own {len(sizes)} examples by the gate, with source "
+        f"locations stripped from both sides first: bytecode is smaller on {smaller} of "
+        f"them and larger on {larger}."
+    )
+    return "\n".join(rows) + "\n"
+
+
+def sync_size_block(report: Report | None, sizes: dict[str, tuple[int, int]], update: bool) -> None:
+    """The chapter's size table must be what this mlir-opt actually produces."""
+    if not SIZE_CHAPTER.is_file():
+        if report:
+            report.require(False, f"{SIZE_CHAPTER} is missing; the sizes are shown nowhere")
+        return
+    text = SIZE_CHAPTER.read_text(encoding="utf-8")
+    match = _SIZE_BLOCK.search(text)
+    if match is None:
+        if report:
+            report.require(
+                False,
+                f"{SIZE_CHAPTER.name} has no `<!-- generated: serialization-sizes -->` "
+                f"block; the chapter's size claim would then be typed prose, which is how "
+                f"it came to quote a module that is not in this corpus",
+            )
+        return
+    fresh = render_size_block(sizes)
+    if update:
+        if match.group("body") != fresh:
+            SIZE_CHAPTER.write_text(
+                text[: match.start("body")] + fresh + text[match.end("body") :], encoding="utf-8"
+            )
+            print(f"[update]  {SIZE_CHAPTER.name}")
+        return
+    if report:
+        report.require(
+            match.group("body") == fresh,
+            f"{SIZE_CHAPTER.name}: the serialization-sizes block is stale; this mlir-opt "
+            f"measures:\n" + fresh,
+        )
+
+
+def check_location_cost(report: Report, mlir_opt: str, work: Path) -> None:
+    """Why the size table strips locations, pinned rather than asserted in a comment.
+
+    Two facts, and the table above is wrong without both. Bytecode records source
+    locations that the default textual print does not, and a location holds the path of
+    the file it came from -- so the same module emitted from two different paths produces
+    two different byte counts. A size table built on that would be measuring the checkout
+    directory, and would fail on any machine whose path length differs from its author's.
+    """
+    source = EXAMPLES / SIZED_EXAMPLES[0]
+    if not report.require(source.is_file(), f"{source} is missing"):
+        return
+
+    # Same bytes, two names of deliberately different length, in one directory so that the
+    # difference between the two paths is exactly the difference between the two names.
+    NAME_PADDING = 40
+    short = work / "m.mlir"
+    long = work / ("m" + "a" * NAME_PADDING + ".mlir")
+    body = source.read_bytes()
+    short.write_bytes(body)
+    long.write_bytes(body)
+
+    raw: list[int] = []
+    stripped: list[int] = []
+    for index, path in enumerate((short, long)):
+        raw_out = work / f"loc-raw-{index}.bc"
+        strip_out = work / f"loc-strip-{index}.bc"
+        code_raw, _ = run(mlir_opt, ["--emit-bytecode", "-o", str(raw_out)], path)
+        code_strip, _ = run(
+            mlir_opt, [STRIP_LOCATIONS, "--emit-bytecode", "-o", str(strip_out)], path
+        )
+        if not report.require(
+            code_raw == 0 and code_strip == 0, f"could not emit bytecode from {path.name}"
+        ):
+            return
+        raw.append(raw_out.stat().st_size)
+        stripped.append(strip_out.stat().st_size)
+
+    # Not merely "different": one byte of bytecode per byte of path, because the path is
+    # interned in the string table and paid for once however many locations cite it. That
+    # exact equality is the claim the chapter makes, so it is the claim checked here -- an
+    # inequality would also pass if the cost were quadratic in the path, which would mean
+    # something quite different about the format.
+    report.require(
+        raw[1] - raw[0] == NAME_PADDING,
+        f"a {NAME_PADDING}-character longer filename changed the bytecode by "
+        f"{raw[1] - raw[0]} bytes rather than {NAME_PADDING}; the chapter says the source "
+        f"path costs its own length exactly, interned once, and that is no longer true",
+    )
+    report.require(
+        stripped[0] == stripped[1],
+        f"stripping locations does not make the size path-independent ({stripped[0]} vs "
+        f"{stripped[1]} bytes for the same module under two names); the generated size "
+        f"table would then differ per checkout and fail on someone else's machine",
+    )
+
+    # The other half of the asymmetry: text drops what bytecode keeps.
+    code_text, text_out = run(mlir_opt, [], source)
+    if report.require(code_text == 0, "could not print the example textually"):
+        report.require(
+            "loc(" not in text_out,
+            "the default textual print now emits loc(...), so text and bytecode no longer "
+            "disagree about locations; the size table's strip step was justified by that "
+            "disagreement and needs revisiting",
+        )
+    print(
+        f"[loc]     bytecode embeds the source path ({raw[0]} vs {raw[1]} bytes by name "
+        f"alone); stripping makes it {stripped[0]} either way"
+    )
+    report.done("location_cost")
+
+
+def check_serialization_sizes(report: Report, mlir_opt: str, work: Path) -> None:
+    """Both directions of the chapter's claim must be visible in its own examples."""
+    sizes = measure_serializations(mlir_opt, work)
+    if not report.require(
+        sizes is not None,
+        "could not measure text and bytecode sizes for chapter 24's examples",
+    ):
+        return
+    assert sizes is not None
+
+    # The chapter's claim is "bytecode is not automatically smaller". A corpus where every
+    # example pointed the same way would make that claim unillustrated -- true, but taken
+    # on trust. It is worth knowing if that ever happens, because then the chapter needs a
+    # different example rather than a different sentence.
+    report.require(
+        any(bc < txt for txt, bc in sizes.values()) and any(bc > txt for txt, bc in sizes.values()),
+        "every example in chapter 24 now serializes the same direction, so the chapter's "
+        "'bytecode is not automatically smaller' claim is no longer demonstrated by its "
+        "own examples; add one that points the other way rather than softening the text",
+    )
+    sync_size_block(report, sizes, update=False)
+    print(
+        "[sizes]   "
+        + ", ".join(f"{n.split('.')[0]} {t}/{b}" for n, (t, b) in sizes.items())
+        + " (text/bytecode)"
+    )
+    report.done("serialization_sizes")
+
+
+# The check functions main() runs, named so that a run which stops early is detectable as
+# a missing name rather than as a count nobody maintains. A numeric floor alone rots: the
+# one here read `>= 12` while the honest path ran 22, so eight checks could have vanished
+# without the anti-vacuity guard noticing.
+CHECK_NAMES = (
+    "generic_form",
+    "unregistered_dialect",
+    "pass_anchoring",
+    "interfaces",
+    "unrealized_casts",
+    "bytecode",
+    "location_cost",
+    "serialization_sizes",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -282,10 +524,26 @@ def main(argv: list[str] | None = None) -> int:
         help="fail rather than skip when mlir-opt is absent (pass this from the CI job "
         "that installs it)",
     )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="rewrite the chapter's generated serialization-size block from a live "
+        "measurement",
+    )
     args = parser.parse_args(argv)
 
     mlir_opt = find_llvm_tool("mlir-opt")
     if mlir_opt is None:
+        if args.update:
+            # --update without a toolchain would rewrite nothing and exit 0, which reads
+            # as "the block is current". The block IS the measurement; refusing is the
+            # only honest answer.
+            print(
+                "error: --update needs mlir-opt, because the block it writes is a "
+                "measurement rather than a rendering of checked-in data",
+                file=sys.stderr,
+            )
+            return 1
         if args.require_tools:
             print(
                 "error: --require-tools was passed but mlir-opt is absent; the job that "
@@ -300,6 +558,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    if args.update:
+        with tempfile.TemporaryDirectory() as tmp:
+            sizes = measure_serializations(mlir_opt, Path(tmp))
+            if sizes is None:
+                print("error: could not measure chapter 24's examples", file=sys.stderr)
+                return 1
+            sync_size_block(None, sizes, update=True)
+        return 0
+
     report = Report()
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -309,13 +576,18 @@ def main(argv: list[str] | None = None) -> int:
         check_interfaces(report, mlir_opt)
         check_unrealized_casts(report, mlir_opt)
         check_bytecode(report, mlir_opt, work)
+        check_location_cost(report, mlir_opt, work)
+        check_serialization_sizes(report, mlir_opt, work)
 
-    # Anti-vacuity: every check above is guarded by an early return on a tool failure, so a
-    # broken mlir-opt could otherwise produce a green run with almost nothing examined.
+    # Anti-vacuity, as a state rather than a count. Every check above returns early on a
+    # tool failure, so a broken mlir-opt could otherwise produce a green run with almost
+    # nothing examined. Each one records its own name on reaching the end; a name missing
+    # here says exactly which claim went unexamined, which a threshold cannot.
+    missing = sorted(set(CHECK_NAMES) - report.completed)
     report.require(
-        report.checks >= 12,
-        f"only {report.checks} checks ran; chapter 24 has more claims than that, so the "
-        f"run stopped early and this verdict covers less than it appears to",
+        not missing,
+        f"these checks did not run to completion: {', '.join(missing)}; the run stopped "
+        f"early and this verdict covers less than it appears to",
     )
     return report.verdict("mlir infrastructure gate")
 

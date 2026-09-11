@@ -260,6 +260,120 @@ def compute_delta() -> dict[str, dict[str, list[str]]]:
     return delta
 
 
+_FENCED = re.compile(r"```.*?```", re.DOTALL)
+_INLINE = re.compile(r"`[^`\n]+`")
+
+
+def code_spans(text: str) -> str:
+    """Everything in a markdown document that is written as code, concatenated.
+
+    Fenced blocks first, then inline spans from what is left, so a backtick inside a
+    fenced block is not mistaken for the start of an inline span.
+    """
+    fenced = _FENCED.findall(text)
+    prose = _FENCED.sub("\n", text)
+    return "\n".join(fenced) + "\n" + "\n".join(_INLINE.findall(prose))
+
+
+# --------------------------------------------------------------------------
+# The opcodes 23-version-movement/03 exists to run, and the claim that nothing else ran them
+# --------------------------------------------------------------------------
+
+CONVERSIONS_CHAPTER = TRAINING_ROOT / "23-version-movement" / "03-conversions-and-shifts.md"
+CONVERSIONS_EXAMPLE = (
+    TRAINING_ROOT / "23-version-movement" / "examples" / "conversions-and-shifts.ll"
+)
+
+# The opcodes that chapter says the corpus named but never ran. This list is the tool's,
+# not the chapter's: the chapter used to carry a count typed beside a list, and the two
+# disagreed (it said nine over eight names) because nothing compared them.
+UNDEMONSTRATED_OPCODES = (
+    "ashr",
+    "fneg",
+    "fpext",
+    "fptrunc",
+    "fptosi",
+    "fptoui",
+    "sitofp",
+    "uitofp",
+)
+_NUMBER_WORDS = {
+    1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six",
+    7: "Seven", 8: "Eight", 9: "Nine", 10: "Ten", 11: "Eleven", 12: "Twelve",
+}
+
+
+def _opcode_re(opcode: str) -> re.Pattern[str]:
+    """`opcode` used as an instruction: not as part of `llvm.fptosi.sat`, not in a word.
+
+    A type must follow, which is what separates the instruction `fptosi float ...` from
+    the intrinsic family prefix `llvm.fptosi.sat.i32.f32`.
+    """
+    return re.compile(
+        r"(?:^|[^A-Za-z0-9_.])" + re.escape(opcode) + r" +(?:i\d|f(?:loat|p128|16|128)|"
+        r"double|half|bfloat|x86_fp80|ppc_fp128|<|ptr)"
+    )
+
+
+def check_undemonstrated_opcodes(report: Report) -> None:
+    """The premise of 03-conversions-and-shifts.md, checked instead of trusted.
+
+    Its opening sentence is a claim about the whole corpus -- these opcodes are named in
+    the syntax table and run nowhere -- and that claim expires the moment another chapter
+    runs one. Three things have to hold: the chapter lists exactly these opcodes, its own
+    example runs every one of them, and no other example does.
+    """
+    if not report.require(
+        CONVERSIONS_CHAPTER.is_file() and CONVERSIONS_EXAMPLE.is_file(),
+        "23-version-movement/03-conversions-and-shifts.md or its example is missing",
+    ):
+        return
+
+    chapter = CONVERSIONS_CHAPTER.read_text(encoding="utf-8")
+    word = _NUMBER_WORDS.get(len(UNDEMONSTRATED_OPCODES), str(len(UNDEMONSTRATED_OPCODES)))
+    sentence = f"{word} instruction opcodes appear in this corpus only as entries"
+    report.require(
+        sentence in chapter,
+        f"03-conversions-and-shifts.md should open with {sentence!r} -- there are "
+        f"{len(UNDEMONSTRATED_OPCODES)} opcodes in the list this gate holds it to, and a "
+        f"count typed next to a list is a count that drifts away from it",
+    )
+    for opcode in UNDEMONSTRATED_OPCODES:
+        report.require(
+            f"`{opcode}`" in chapter,
+            f"03-conversions-and-shifts.md does not name `{opcode}`, which this gate "
+            f"holds it responsible for teaching",
+        )
+
+    example = CONVERSIONS_EXAMPLE.read_text(encoding="utf-8")
+    for opcode in UNDEMONSTRATED_OPCODES:
+        report.require(
+            _opcode_re(opcode).search(example),
+            f"{CONVERSIONS_EXAMPLE.name} does not run `{opcode}`; the chapter's whole "
+            f"premise is that it demonstrates what the corpus only listed",
+        )
+
+    # And the other half: if some other example started running one of these, the chapter's
+    # "named, never demonstrated" framing is no longer true and needs rewriting, not
+    # quietly leaving in place.
+    for path in sorted(TRAINING_ROOT.rglob("*.ll")):
+        if path == CONVERSIONS_EXAMPLE:
+            continue
+        body = path.read_text(encoding="utf-8", errors="replace")
+        for opcode in UNDEMONSTRATED_OPCODES:
+            report.require(
+                not _opcode_re(opcode).search(body),
+                f"{path.relative_to(TRAINING_ROOT)} runs `{opcode}`, so "
+                f"03-conversions-and-shifts.md's claim that the corpus never demonstrates "
+                f"it is now false; drop the opcode from the chapter's list and from "
+                f"UNDEMONSTRATED_OPCODES, or move the demonstration",
+            )
+    print(
+        f"[opcodes] {len(UNDEMONSTRATED_OPCODES)} opcodes run in "
+        f"{CONVERSIONS_EXAMPLE.name} and nowhere else in the corpus"
+    )
+
+
 def check_dispositions(report: Report) -> None:
     """Every item that moved needs an answer: a chapter that teaches it, or a reason."""
     delta = compute_delta()
@@ -273,14 +387,18 @@ def check_dispositions(report: Report) -> None:
         for name in names
     ]
 
-    # Anti-vacuity: two identical snapshots would make every loop below iterate zero
-    # times and the gate pass having checked nothing.
-    report.require(
-        moved,
-        f"the LLVM {BASELINE_MAJOR} and {CURRENT_MAJOR} snapshots describe the same "
-        f"surface, so this gate compared nothing; either a snapshot is wrong or the two "
-        f"majors no longer differ and this check has lost its subject",
-    )
+    # Anti-vacuity, per surface rather than in total. A single `if moved:` is satisfied by
+    # any one kind moving, so the intrinsic churn alone -- over a hundred names -- would
+    # keep this gate green while the instruction and attribute snapshots had quietly become
+    # identical and were being compared to nothing. Each surface answers for itself.
+    for kind, sides in delta.items():
+        report.require(
+            sides["arrived"] or sides["departed"],
+            f"no {kind} moved between the LLVM {BASELINE_MAJOR} and {CURRENT_MAJOR} "
+            f"snapshots, so this gate compared that surface against nothing; either a "
+            f"snapshot is wrong or {kind} stopped moving and this check has lost its "
+            f"subject there",
+        )
 
     for kind, direction, name in moved:
         entry = entries.get(name)
@@ -317,16 +435,21 @@ def check_dispositions(report: Report) -> None:
         ):
             continue
 
-        # A citation that does not mention the thing is not a citation. The IR spelling is
-        # what a reader searches for, so accept either it or the enum name.
+        # A citation that does not mention the thing is not a citation -- but a bare
+        # substring search is barely better. Several of these names are ordinary English
+        # words (`range`, `flatten`, `noext`), and a chapter that happens to use one in a
+        # sentence would satisfy a substring test while teaching nothing about the
+        # attribute. What a reader searches for is the IR spelling, and a chapter that
+        # teaches an IR construct writes it as code, so only code counts here: fenced
+        # blocks and inline `backticked` spans.
         text = chapter.read_text(encoding="utf-8")
+        code = code_spans(text)
         spellings = {name, name.lower()}
-        if kind == "instructions":
-            spellings.add(name.lower())
         report.require(
-            any(spelling in text for spelling in spellings),
-            f"{where} is cited as teaching {name!r} but does not mention it; a citation "
-            f"that does not name its subject cannot go stale visibly",
+            any(spelling in code for spelling in spellings),
+            f"{where} is cited as teaching {name!r}, but names it nowhere in a code block "
+            f"or inline code span -- only, at best, in prose. An attribute whose spelling "
+            f"a chapter never shows is an attribute that chapter does not teach",
         )
 
     # Stale entries are as bad as missing ones: they claim coverage of a surface that no
@@ -599,6 +722,7 @@ def main(argv: list[str] | None = None) -> int:
     for major in known_majors:
         check_snapshot(major, report, required=major in args.require_surface)
     check_dispositions(report)
+    check_undemonstrated_opcodes(report)
     check_rename_table(report)
     sync_block(report, update=False)
     sync_vp_block(report, update=False)

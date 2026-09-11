@@ -115,6 +115,12 @@ class Claim:
     pattern: str
     present: bool = True
     scope: str | None = None  # limit the search to one function body
+    # Lowest clang major that emits this. The corpus now spans LLVM 18 to 23, so some
+    # facts are simply not true of the older compiler -- and a claim that fails on the
+    # baseline host is indistinguishable from a claim that is wrong. Skipped claims are
+    # counted separately rather than folded into the checked total, because a run whose
+    # claims all skipped has verified nothing and should not say otherwise.
+    min_major: int | None = None
 
 
 @dataclass(frozen=True)
@@ -321,6 +327,17 @@ CASES: tuple[Case, ...] = (
                 r"@_ZN5GuardD1Ev",
                 scope="_Z7guardedv",
             ),
+            Claim(
+                # 23-version-movement/04-attributes-that-arrived.md teaches
+                # dead_on_return from this exact line. The attribute lands on the
+                # destructor's `this`, not on a by-value parameter of the callee --
+                # which is the part that is easy to get backwards, so it is the part
+                # pinned here. The (4) is the size of the region it declares dead.
+                "clang 23 marks a temporary's storage dead across its destructor call",
+                r"@_ZN5GuardD1Ev\(ptr[^)]*dead_on_return\(4\)",
+                scope="_Z7guardedv",
+                min_major=23,
+            ),
         ),
     ),
 )
@@ -490,7 +507,7 @@ def body_delta(existing: str, rendered: str) -> int:
     )
 
 
-def check_snapshot_baseline(rendered: str, label: str) -> str | None:
+def check_snapshot_baseline(rendered: str, label: str) -> tuple[str | None, bool]:
     """Assemble a normalized snapshot at the baseline; return a failure message.
 
     This is the total check behind the declared strip list: an attribute newer
@@ -499,7 +516,7 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
     """
     assembler = find_baseline_assembler()
     if assembler is None:
-        return None
+        return None, False
     binary, major = assembler
     # `major` is the oldest assembler at or above the floor, which is not always the floor
     # itself: on a host carrying only LLVM 23 this check runs at 23. Saying "the LLVM 23
@@ -518,12 +535,12 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
             timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"{label}: baseline assembler {binary} could not be run ({exc})"
+        return f"{label}: baseline assembler {binary} could not be run ({exc})", False
     finally:
         temporary.unlink(missing_ok=True)
 
     if completed.returncode == 0:
-        return None
+        return None, True
     detail = completed.stderr.strip().splitlines()
     first = detail[0] if detail else "(no diagnostic)"
     return (
@@ -539,7 +556,8 @@ def check_snapshot_baseline(rendered: str, label: str) -> str | None:
         f"_POST_BASELINE_CALL_ATTRS; if it is an instruction flag, to "
         f"_POST_BASELINE_GEP_FLAGS or its equivalent -- the assembler rejects any "
         f"construct newer than the floor, not only parameter attributes, so read "
-        f"the named line before assuming which. Then regenerate with --update."
+        f"the named line before assuming which. Then regenerate with --update.",
+        True,
     )
 
 
@@ -576,9 +594,16 @@ def compile_case(clang: str, clangxx: str, case: Case) -> tuple[str, str]:
     return completed.stdout, " ".join(cmd)
 
 
-def check_case(ir: str, case: Case) -> list[str]:
+def check_case(ir: str, case: Case, local_major: int | None) -> tuple[list[str], int, int]:
+    """Returns (failures, claims checked, claims skipped as newer than this clang)."""
     failures: list[str] = []
+    checked = 0
+    skipped = 0
     for claim in case.claims:
+        if claim.min_major is not None and (local_major is None or local_major < claim.min_major):
+            skipped += 1
+            continue
+        checked += 1
         haystack = ir
         if claim.scope is not None:
             body = function_body(ir, claim.scope)
@@ -595,7 +620,7 @@ def check_case(ir: str, case: Case) -> list[str]:
                 f"{claim.description}: {expectation} to match /{claim.pattern}/"
                 + (f" in '{claim.scope}'" if claim.scope else "")
             )
-    return failures
+    return failures, checked, skipped
 
 
 def main() -> int:
@@ -642,6 +667,18 @@ def main() -> int:
         if args.require_tools:
             print(f"frontend lowering gate: FAILED ({message})", file=sys.stderr)
             return 1
+        if args.require_baseline:
+            # Without clang there is no IR to hand the baseline assembler, so the floor
+            # goes untested. Exiting 0 here would let --require-baseline be satisfied by a
+            # run that assembled nothing -- the flag claims the rail RAN, not that a binary
+            # was on PATH when the run started.
+            print(
+                f"frontend lowering gate: FAILED (--require-baseline: {message}, so no "
+                f"snapshot was rendered and the LLVM {BASELINE_LLVM_MAJOR} floor was "
+                f"never assembled; the job passing this flag owns both halves)",
+                file=sys.stderr,
+            )
+            return 1
         print(f"frontend lowering gate: SKIPPED ({message})")
         return 0
 
@@ -654,6 +691,8 @@ def main() -> int:
 
     failed = 0
     claims_checked = 0
+    claims_skipped = 0
+    baseline_runs = 0
 
     for case in CASES:
         try:
@@ -670,8 +709,9 @@ def main() -> int:
             failed += 1
             continue
 
-        failures = check_case(ir, case)
-        claims_checked += len(case.claims)
+        failures, checked, skipped = check_case(ir, case, local_major)
+        claims_checked += checked
+        claims_skipped += skipped
         if failures:
             failed += 1
             print(f"[FAIL] {case.label}", file=sys.stderr)
@@ -679,7 +719,8 @@ def main() -> int:
             for failure in failures:
                 print(f"       - {failure}", file=sys.stderr)
         else:
-            print(f"[ ok ] {case.label}: {len(case.claims)} claim(s)")
+            note = f" ({skipped} newer than clang {local_major})" if skipped else ""
+            print(f"[ ok ] {case.label}: {checked} claim(s){note}")
 
         if case.snapshot:
             snapshot_path = EXAMPLES / case.snapshot
@@ -701,7 +742,12 @@ def main() -> int:
 
             # Ask the oldest available assembler, not the newest. This is the
             # check that catches an attribute the strip list does not know about.
-            if baseline_failure := check_snapshot_baseline(rendered, relpath(snapshot_path)):
+            baseline_failure, baseline_ran = check_snapshot_baseline(
+                rendered, relpath(snapshot_path)
+            )
+            if baseline_ran:
+                baseline_runs += 1
+            if baseline_failure:
                 print(f"[FAIL] {baseline_failure}", file=sys.stderr)
                 failed += 1
             elif args.update:
@@ -750,6 +796,19 @@ def main() -> int:
                         f"read here with clang {local_major}: {drift} line(s) differ"
                     )
 
+    # The requirement is that the floor was EXERCISED. Discovering an llvm-as at startup
+    # proves only that one is installed: if every snapshot case were removed, or each one
+    # skipped for an unsupported target, this gate would have assembled nothing at the
+    # baseline and still reported the floor as held.
+    if args.require_baseline and baseline_runs == 0:
+        print(
+            f"frontend lowering gate: FAILED (--require-baseline: an llvm-as at LLVM "
+            f"{BASELINE_LLVM_MAJOR} was found, but no snapshot was assembled with it, so "
+            f"nothing tested the declared floor; a floor nothing assembles is not a floor)",
+            file=sys.stderr,
+        )
+        return 1
+
     if failed:
         print(
             f"frontend lowering gate: FAILED ({failed} case(s), {claims_checked} claim(s) checked)",
@@ -757,7 +816,15 @@ def main() -> int:
         )
         return 1
 
-    print(f"frontend lowering gate: PASSED ({len(CASES)} case(s), {claims_checked} claim(s))")
+    skipped_note = (
+        f", {claims_skipped} claim(s) skipped as newer than clang {local_major}"
+        if claims_skipped
+        else ""
+    )
+    print(
+        f"frontend lowering gate: PASSED ({len(CASES)} case(s), {claims_checked} claim(s), "
+        f"{baseline_runs} snapshot(s) assembled at the baseline{skipped_note})"
+    )
     return 0
 
 
