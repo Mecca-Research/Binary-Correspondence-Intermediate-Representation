@@ -487,19 +487,34 @@ def check_prose_counts(report: Report, mlir_opt: str, work: Path) -> None:
     listed = out.split("Available Dialects:", 1)[1]
     dialects = [d.strip() for d in listed.replace("\n", ",").split(",") if d.strip()]
 
-    code_v, version = run(mlir_opt, ["--version"])
-    match = re.search(r"LLVM version (\d+)\.", version)
-    if not report.require(code_v == 0 and match, "could not read mlir-opt's version"):
-        return
-    assert match is not None
-    major = match.group(1)
-
+    # The chapter deliberately writes no dialect count, and this is the check that keeps it
+    # that way. The first version of this check pinned an exact number and CI immediately
+    # disproved the premise: a conda-forge build of 23.1.1 registers 47 and Ubuntu's 23.1.2
+    # registers 50, so "MLIR 23 registers N dialects" is false for somebody no matter which
+    # N you pick. The count is a build decision, not a release fact.
+    report.require(
+        len(dialects) >= 24,
+        f"this mlir-opt registers only {len(dialects)} dialects, so the chapter's "
+        f"'several dozen' no longer describes it",
+    )
+    # SCOPE, so this does not grow into a prose linter: the shape rejected is a dialect
+    # count attributed to an LLVM *major* -- "MLIR 23 registers 47 dialects" -- because
+    # that is the claim the two builds disprove. A count attributed to a named build
+    # ("Ubuntu's 23.1.2 registers 50") is true of that build and is left alone.
     if report.require(CHAPTER_README.is_file(), f"{CHAPTER_README} is missing"):
-        sentence = f"MLIR {major} registers {len(dialects)} dialects"
+        readme = CHAPTER_README.read_text(encoding="utf-8")
+        stated = re.search(r"MLIR (\d+) registers (\d+) dialects", readme)
+        # Built conditionally: report.require evaluates its message eagerly, so reaching
+        # into `stated` inline would raise on the path where there is nothing to report --
+        # a traceback in place of a verdict, which is the one thing a gate may never do.
+        quoted = repr(stated.group(0)) if stated else "nothing"
         report.require(
-            sentence in CHAPTER_README.read_text(encoding="utf-8"),
-            f"24-mlir-infrastructure/README.md should say {sentence!r}; it is a count of "
-            f"what this mlir-opt registers, and MLIR gains dialects every release",
+            stated is None,
+            f"24-mlir-infrastructure/README.md says {quoted}; a dialect count belongs to a "
+            f"build, not to a release. This mlir-opt registers {len(dialects)}, and the "
+            f"two builds this corpus runs on disagree by three, so any single number "
+            f"attributed to the major is wrong somewhere. Name the build you counted, or "
+            f"give no count",
         )
 
     # The location count behind "25 locations all cite the same path".
@@ -519,7 +534,10 @@ def check_prose_counts(report: Report, mlir_opt: str, work: Path) -> None:
             f"04-bytecode-and-partial-lowering.md should say {phrase!r}; it is a count of "
             f"what this example carries, and editing the example changes it",
         )
-    print(f"[prose]   {len(dialects)} dialects and {locations} locations, as the chapters say")
+    print(
+        f"[prose]   {len(dialects)} dialects (uncounted in prose, by design) and "
+        f"{locations} locations, as the chapter says"
+    )
     report.done("prose_counts")
 
 

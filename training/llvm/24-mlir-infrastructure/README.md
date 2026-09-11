@@ -18,10 +18,19 @@ This chapter is that framework.
 
 ## What this chapter refuses to be
 
-**Not a dialect tour.** MLIR 23 registers 47 dialects. Teaching them one by one produces a
-worse reference than the upstream documentation and dates faster. The framework does not
-date at the same rate: regions, interfaces and pass anchoring have been stable across
-every release this corpus has tracked, while the dialect list moves every time.
+**Not a dialect tour.** `mlir-opt --show-dialects` lists several dozen, and teaching them
+one by one produces a worse reference than the upstream documentation and dates faster.
+
+How much faster is worth one measurement. The count is not even a property of *MLIR 23*:
+this corpus is developed against a conda-forge build of 23.1.1, which registers 47, and
+verified in CI against Ubuntu's 23.1.2, which registers 50. Two installations of the same
+major, three dialects apart — because which optional dialects a build enables is a build
+decision. Ask your own `mlir-opt`; any number written down here would be wrong on somebody
+else's machine, which is why this page does not write one down.
+
+The framework does not move at that rate at all: regions, interfaces and pass anchoring
+have been stable across every release this corpus has tracked, while the dialect list moves
+between builds of one release.
 
 **Not a substitute for upstream docs.** Where a reader needs the exhaustive list of an
 interface's methods, that is upstream's job. What is here is the part that is hard to get
