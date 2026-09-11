@@ -36,14 +36,27 @@ def order_strategy(catalog, selection, column: str) -> str:
     rows still have to be tested one at a time, and walking 2,215 index entries to
     find the 16 a narrow predicate admits costs more than sorting those 16.
 
+    That last sentence is about *narrow* predicates, and it used to decide every
+    predicate. A wide one -- `subject=llvm` admits 2,160 of 2,215 rows -- was sorted
+    row by row while a filtered read of the index sat unused beside it, which measured
+    3.2x to 4.6x slower ascending. So the width is now asked rather than assumed, at
+    `catalog.ORDERED_INDEX_SHARE`, whose calibration table is beside the constant.
+    Both paths return identical rows, so this reorders nothing: it only picks which
+    of two ways to spend the time.
+
     The choice is returned as a value rather than made inside a branch because both
     paths produce identical rows -- so a gate comparing their output passes whichever
     one ran, and the decision would be the one thing about this slice that nothing
     could observe (`docs/security/laws.md` L2).
     """
-    if selection.rows is None and column in catalog.numeric_columns():
+    if column not in catalog.numeric_columns():
+        return "sort"
+    if selection.rows is None:
         return "index"
-    return "sort"
+    if not catalog.rows_total:
+        return "sort"
+    share = len(selection.rows) / catalog.rows_total
+    return "index" if share >= engine.catalog().ORDERED_INDEX_SHARE else "sort"
 
 
 def ordered_from_index(catalog, column: str, descending: bool) -> list[int]:
@@ -79,7 +92,14 @@ def ordered_rows(catalog, selection, column: str, descending: bool) -> list[int]
     """
     catalog_module = engine.catalog()
     if order_strategy(catalog, selection, column) == "index":
-        return ordered_from_index(catalog, column, descending)
+        ordered = ordered_from_index(catalog, column, descending)
+        if selection.rows is None:
+            return ordered
+        # The index is already in the asked-for order, so keeping the admitted rows
+        # preserves it -- including the tiebreak and the unmeasured tail, which is why
+        # this returns the same list the sort below would have built.
+        admitted = set(selection.rows)
+        return [row for row in ordered if row in admitted]
     rows = list(selection.rows) if selection.rows is not None else list(range(catalog.rows_total))
     if column in catalog.numeric_columns():
         values = catalog.numeric[column]

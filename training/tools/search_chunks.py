@@ -43,6 +43,7 @@ implementation still knows nothing about the corpus.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from array import array
@@ -140,6 +141,7 @@ class EmbeddingSet:
         # actually wants them -- see `row_views` for which backends never do.
         self._row_views: list[array] | None = None
         self._row_squares: list[int] | None = None
+        self._squares_source = "unread"
         self._q8 = None
 
     # ----------------------------------------------------------------------
@@ -169,10 +171,89 @@ class EmbeddingSet:
 
     @property
     def row_squares(self) -> list[int]:
-        """``||p||^2`` per row. See `topk_reference` for why the value is needed."""
+        """``||p||^2`` per row. See `topk_reference` for why the value is needed.
+
+        Read from the set when it stores the column, computed from the codes when it
+        does not. Computing it is 69.5 ms on the current corpus -- 2,215 x 512
+        multiply-accumulates in Python, the largest single cost in a default ranked
+        query after the scan itself -- to rebuild 8,860 bytes that are a pure function
+        of bytes already on disk, in every process, forever. Storing it is what the
+        rest of this tree does with `numeric.bin` and `order.bin`, and this is the same
+        move on the same argument.
+
+        Falling back rather than refusing is deliberate and is the non-disturbance
+        rule: every set built before `squares.u32` existed has no such file, still
+        loads, and still returns the identical ranking. The fallback is not a silent
+        one -- `derived_columns_built` reports which way this went, and the gate asserts
+        both paths agree.
+        """
         if self._row_squares is None:
-            self._row_squares = [sum(map(mul, view, view)) for view in self.row_views]
+            stored = self._stored_row_squares()
+            if stored is None:
+                self._row_squares = [sum(map(mul, view, view)) for view in self.row_views]
+                self._squares_source = "computed"
+            else:
+                self._row_squares = stored
+                self._squares_source = "stored"
         return self._row_squares
+
+    def _stored_row_squares(self) -> list[int] | None:
+        """The stored column, or None when this set does not carry a usable one.
+
+        Three things are checked, and each one is a way the file could be present and
+        wrong rather than present and right:
+
+        * `derived_from` must name the codes this manifest describes. A squares file is
+          only ever the squares *of particular codes*; one left behind by an earlier
+          build has the right length and the right dtype and every value wrong, which
+          is precisely the shape of defect that returns a plausible ranking and exit 0.
+        * its own digest must match, so a truncated or edited file is refused rather
+          than read short.
+        * the row count must match the set's.
+
+        A failure here returns None and the caller computes -- the honest fallback,
+        because the value is derivable. It is never a partial read: a column that
+        disagrees with its source is worse than no column at all, since the ranking it
+        produces is wrong in a way nothing downstream can see.
+        """
+        quantized = self.manifest.get("quantized") or {}
+        spec = quantized.get("row_squares")
+        if not spec:
+            return None
+        if spec.get("derived_from") != quantized.get("sha256"):
+            return None
+        path = self.root / spec["path"]
+        if not path.is_file():
+            return None
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != spec.get("sha256"):
+            return None
+        values = array("I")
+        try:
+            values.frombytes(raw)
+        except ValueError:
+            return None
+        if sys.byteorder == "big":
+            values.byteswap()  # the file is little-endian by contract
+        if len(values) != len(self.rows):
+            return None
+        return list(values)
+
+    def squares_source(self) -> str:
+        """Where `row_squares` came from: "stored", "computed", or "unread"."""
+        return self._squares_source
+
+    def stores_row_squares(self) -> bool:
+        """Whether reading `row_squares` will be a file read rather than a scan.
+
+        Asked by the planner before anything has been read, so it answers from the
+        same checks the read itself makes rather than from the manifest alone -- a
+        plan priced on a column that turns out to be stale would be priced for work
+        the reader then does anyway.
+        """
+        if self._row_squares is not None:
+            return self._squares_source == "stored"
+        return self._stored_row_squares() is not None
 
     def row_codes(self, row: int) -> array:
         """One row's codes, without materializing the column it lives in.
@@ -772,6 +853,7 @@ def main(argv: list[str] | None = None) -> int:
             kernel_cached=True,
             files_touched=1,
             model=plan_module.DEFAULT_MODEL,
+            derived_cached=embedding_set.stores_row_squares(),
         )
         if backend == "auto":
             try:
@@ -786,7 +868,15 @@ def main(argv: list[str] | None = None) -> int:
                 (p for p in plans if p.backend == backend and p.materialize == materialize), None
             )
         if args.explain:
-            print(plan_module.explain(plans, chosen, objective, selection=selection))
+            print(
+                plan_module.explain(
+                    plans,
+                    chosen,
+                    objective,
+                    selection=selection,
+                    requested=args.backend != "auto",
+                )
+            )
 
     rows = selection.rows
     reference = native = None

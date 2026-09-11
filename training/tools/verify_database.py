@@ -1222,14 +1222,47 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
             )
         # ...and that it really took that path. Both paths return identical rows, so
         # the comparison above passes whichever one ran; only the strategy says which.
-        narrow = plan.select(catalog, [plan.parse_predicate(f"{column}>={cells[0]}")])
+        #
+        # The predicate has to be *chosen* to be narrow rather than assumed to be. This
+        # check used to read `{column} >= {cells[0]}` -- row 0's own measurement, which
+        # admits most of the table -- and asserted it took the sort path, which held
+        # only while any predicate at all forced a sort. Once the path depended on the
+        # share instead, that predicate crossed the threshold and the check failed
+        # while nothing was wrong: it had been reading "a predicate" where it meant
+        # "a narrow one" (`docs/security/laws.md` L11 -- a witness must hit the law it
+        # exists to test, and this one was testing the presence of a WHERE clause).
+        measured = sorted(value for value in cells if value != catalog_module.NUMERIC_NULL)
         report.require(
-            relational.order_strategy(catalog, unfiltered, column) == "index"
-            and relational.order_strategy(catalog, narrow, column) == "sort",
-            f"ranges: ORDER BY {column} chose "
-            f"{relational.order_strategy(catalog, unfiltered, column)!r} with no predicate "
-            f"and {relational.order_strategy(catalog, narrow, column)!r} with one; the "
-            "index answers the first and a sort answers the second",
+            len(measured) >= 64,
+            f"anti-vacuity: {column} has {len(measured)} measured row(s), too few to "
+            "build a selection either side of a share threshold",
+        )
+        high = measured[int(len(measured) * 0.97)]
+        narrow = plan.select(catalog, [plan.parse_predicate(f"{column}>={high}")])
+        wide = plan.select(catalog, [plan.parse_predicate(f"{column}>={measured[0]}")])
+        shares = {
+            "narrow": len(narrow.rows) / catalog.rows_total,
+            "wide": len(wide.rows) / catalog.rows_total,
+        }
+        threshold = catalog_module.ORDERED_INDEX_SHARE
+        report.require(
+            shares["narrow"] < threshold <= shares["wide"],
+            f"anti-vacuity: ORDER BY {column}'s two selections are "
+            f"{shares['narrow']:.3f} and {shares['wide']:.3f} of the table, which do "
+            f"not straddle ORDERED_INDEX_SHARE={threshold}, so whichever strategy they "
+            "select was not a decision",
+        )
+        chose = {
+            name: relational.order_strategy(catalog, selection, column)
+            for name, selection in (("narrow", narrow), ("wide", wide), ("none", unfiltered))
+        }
+        report.require(
+            chose == {"narrow": "sort", "wide": "index", "none": "index"},
+            f"ranges: ORDER BY {column} chose {chose} at shares "
+            f"{ {name: round(value, 3) for name, value in shares.items()} } against "
+            f"ORDERED_INDEX_SHARE={threshold}; a selection below the threshold is "
+            "sorted, one at or above it reads the index, and so does no predicate "
+            "at all",
         )
 
     # Nulls satisfy no comparison, in either direction, and the sentinel is not a value.
@@ -1857,6 +1890,133 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
             f"ordering: GROUP BY {indexed} emitted {len(groups)} rows for "
             f"{len(distinct)} distinct value(s)",
         )
+
+
+def check_order_strategy(report: Report, plan, catalog) -> None:
+    """Both ways of ordering a selection return the same rows, and both get used.
+
+    `order_strategy` picks between reading the sorted index and keeping the admitted
+    rows, or sorting the admitted rows directly. The choice is a `wall` judgement --
+    it is about time, and nothing here times anything. What is `exact`, and what this
+    checks, are the two properties that make the choice safe to make at all:
+
+    * the two paths return *identical* lists, so switching between them can never
+      change an answer, only how long it took to get it; and
+    * both paths are actually reached on this corpus, so the threshold is a decision
+      rather than a constant that happens to select one branch forever.
+
+    The second half is the one that was missing. Before `ORDERED_INDEX_SHARE` existed
+    the strategy was structural -- index with no predicate, sort with one -- and the
+    recorded plans straddled *that* rule at 100% and 0.4% of the table. A share
+    threshold put a new boundary between those two, and nothing sat either side of it,
+    so the constant could have been any value from 0.005 to 1.0 without a gate moving
+    (`docs/security/laws.md` L2: a check that cannot fail on the input it is given is
+    not checking that input).
+    """
+    catalog_module = load_tool("catalog")
+    share = catalog_module.ORDERED_INDEX_SHARE
+    report.require(
+        0.0 < share <= 1.0,
+        f"order strategy: ORDERED_INDEX_SHARE is {share}, not a share of a table",
+    )
+
+    # Selections either side of the threshold, by construction rather than by hoping a
+    # predicate lands there: the check is about the boundary, so it builds the boundary.
+    total = catalog.rows_total
+    report.require(total >= 64, f"anti-vacuity: {total} row(s) is too few to straddle a share")
+    cases = []
+    for wanted in (1.0, share + 0.05, share, share - 0.05, 0.05):
+        admitted = max(1, min(total, int(round(total * wanted))))
+        cases.append((wanted, list(range(admitted))))
+
+    seen = set()
+    compared = 0
+    for column in sorted(catalog.numeric_columns()):
+        values = catalog.numeric[column]
+        for descending in (False, True):
+            for wanted, rows in cases:
+                selection = plan.Selection(
+                    predicates=(),
+                    rows=rows,
+                    estimated=len(rows),
+                    estimate_exact=True,
+                )
+                strategy = relational.order_strategy(catalog, selection, column)
+                seen.add(strategy)
+                got = relational.ordered_rows(catalog, selection, column, descending)
+
+                # The definition, spelled here rather than called, so this compares the
+                # implementation against the rule instead of against itself.
+                missing = [r for r in rows if values[r] == catalog_module.NUMERIC_NULL]
+                present = [r for r in rows if values[r] != catalog_module.NUMERIC_NULL]
+                present.sort()
+                present.sort(key=lambda row: values[row], reverse=descending)
+                compared += 1
+                report.require(
+                    got == present + missing,
+                    f"order strategy: {column} desc={descending} at share {wanted:.2f} "
+                    f"returned a different order via {strategy!r} than the definition "
+                    f"({len(got)} row(s); first difference at "
+                    f"{next((i for i, (a, b) in enumerate(zip(got, present + missing)) if a != b), 'the length')})",
+                )
+    report.require(compared >= 20, f"anti-vacuity: only {compared} ordering(s) were compared")
+    report.require(
+        seen == {"index", "sort"},
+        f"anti-vacuity: the share threshold selected only {sorted(seen)} across "
+        f"{compared} selections spanning 5% to 100% of the table, so nothing it "
+        "decides was exercised",
+    )
+
+
+def check_explain_verdict(report: Report, plan, catalog) -> None:
+    """EXPLAIN says whether a plan was chosen or merely asked for.
+
+    `--backend` defaults to `reference`, so almost every EXPLAIN a reader sees is of a
+    forced plan. Marking that plan CHOSEN put the planner's word on a decision the
+    planner did not make, beside a legal plan costing a hundredth as much and labelled
+    only "legal" -- a table whose plain reading is the opposite of what happened. The
+    fix is a different word and a line naming what `choose` would have returned, and
+    what makes it a rail rather than a wording preference is that both spellings are
+    checked here against the same plan set.
+    """
+    selection = plan.select(catalog, [])
+    plans = plan.candidates(
+        catalog,
+        selection,
+        top_k=5,
+        dim=512,
+        want_text=True,
+        require_exact=False,
+        available_backends=frozenset(plan.BACKENDS),
+        kernel_cached=True,
+        files_touched=len(catalog.files),
+    )
+    objective = plan.Objective.LATENCY
+    picked = plan.choose(plans, objective)
+    forced = next(p for p in plans if p.legal and p is not picked)
+
+    chosen_text = plan.explain(plans, picked, objective, selection=selection, requested=False)
+    forced_text = plan.explain(plans, forced, objective, selection=selection, requested=True)
+
+    report.require(
+        "CHOSEN" in chosen_text and "REQUESTED" not in chosen_text,
+        "explain: a plan the planner chose is not marked CHOSEN",
+    )
+    report.require(
+        "REQUESTED" in forced_text and "CHOSEN" not in forced_text,
+        "explain: a plan named by --backend is marked CHOSEN, which reads as the "
+        "planner having preferred it -- it did not",
+    )
+    report.require(
+        picked.label() in forced_text,
+        f"explain: an overridden plan does not name what {objective.name.lower()} "
+        f"would have chosen ({picked.label()}), so the cost of the override is "
+        "invisible to the reader",
+    )
+    report.require(
+        "cheaper on this objective" in forced_text,
+        "explain: an overridden plan does not price the override against the plan it displaced",
+    )
 
 
 def check_planner(report: Report, plan, catalog) -> None:
@@ -3451,6 +3611,8 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)
     report.run("ordering", check_ordering, report, search, plan, catalog)
     report.run("planner", check_planner, report, plan, catalog)
+    report.run("order strategy", check_order_strategy, report, plan, catalog)
+    report.run("explain", check_explain_verdict, report, plan, catalog)
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)
     report.run("S5-incremental", check_incremental, report, args.chunks)
     report.run("S6", check_generations, report, generations, args.chunks)

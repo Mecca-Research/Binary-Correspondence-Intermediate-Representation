@@ -85,6 +85,16 @@ QUERIES: tuple[dict, ...] = (
     {"name": "range-interval", "where": ["char_count>=500", "char_count<=2000"]},
     {"name": "order-unfiltered", "where": [], "order_by": "char_count:desc"},
     {"name": "order-narrow", "where": ["subject=data"], "order_by": "char_count:asc"},
+    # Three that straddle `catalog.ORDERED_INDEX_SHARE`. Without them the recorded
+    # ORDER BY decisions sat at 100% and 0.4% of the table -- one either side of every
+    # threshold, and so on neither side of this one, which left the constant pinned by
+    # nothing. `order-wide` admits 97.5% and must read the index, `order-midrange`
+    # admits 14.5% and must sort, and `order-wide-desc` pins the direction too, because
+    # descending pays for the index differently and that is why the crossing is at 0.70
+    # rather than at the 0.20 ascending alone would justify.
+    {"name": "order-wide", "where": ["subject=llvm"], "order_by": "char_count:asc"},
+    {"name": "order-wide-desc", "where": ["subject=llvm"], "order_by": "char_count:desc"},
+    {"name": "order-midrange", "where": ["language=llvm"], "order_by": "char_count:asc"},
     {"name": "group-subject", "where": [], "group_by": "subject", "stats": "char_count"},
     {
         "name": "group-having",
@@ -98,6 +108,33 @@ QUERIES: tuple[dict, ...] = (
 #: What a recorded plan says, per objective. Objectives are named rather than taken
 #: from the enum's iteration order so that adding one is a visible change to this file.
 OBJECTIVES = ("EXACTNESS", "LATENCY", "FOOTPRINT", "STARTUP")
+
+#: Which backends a host offers. Recording only the first of these is how a cost
+#: constant stayed 37.5x too low without any gate noticing: with every backend
+#: present the native kernel dominates whatever q8 is priced at, so the q8 term
+#: never reached a decision this file could see. It reaches one on a host that
+#: built the q8 kernel and not the q15 one -- a partial build, which is a state
+#: this tree supports and CI produces -- and there the old constant chose a plan
+#: that measures 530 ms over the one it rejected at 190 ms (median of 11).
+#:
+#: So availability is part of the recorded decision. A configuration nobody runs
+#: is still a configuration somebody ships (`docs/security/laws.md` L2: a check
+#: that cannot fail on the input it is given is not checking that input).
+#: ...and whether the set stores its `row_squares` column, which is the second thing
+#: a host varies in. A set built before that column existed makes the reference
+#: backend pay 31,000 ns a row to rebuild it; one that stores it pays 90. That is not
+#: a rounding difference, and it is not hypothetical either: pricing it correctly
+#: moves a narrow selection from the native kernel to the reference scan, because
+#: loading a kernel to score nine rows stops being worth it once the column is free.
+#: Recorded rather than reasoned about -- the argument that it could not matter was
+#: made, and was wrong.
+DERIVED = (("column rebuilt", False), ("column stored", True))
+
+AVAILABILITY = (
+    ("every backend", ("reference", "native", "q8", "both")),
+    ("q8 without q15", ("reference", "q8")),
+    ("no compiled kernel", ("reference",)),
+)
 
 
 class BaselineError(RuntimeError):
@@ -126,20 +163,33 @@ def _facts(catalog, query: dict) -> dict:
 
     chosen: dict[str, str] = {}
     illegal: dict[str, int] = {}
-    for objective in OBJECTIVES:
-        plans = plan.candidates(
-            catalog,
-            selection,
-            top_k=5,
-            dim=512,
-            want_text=True,
-            require_exact=objective == "EXACTNESS",
-            available_backends=frozenset(plan.BACKENDS),
-            kernel_cached=True,
-            files_touched=len(catalog.files),
-        )
-        chosen[objective] = plan.choose(plans, plan.Objective[objective]).label()
-        illegal[objective] = sum(1 for candidate in plans if not candidate.legal)
+    for host, backends in AVAILABILITY:
+        for column, derived_cached in DERIVED:
+            for objective in OBJECTIVES:
+                plans = plan.candidates(
+                    catalog,
+                    selection,
+                    top_k=5,
+                    dim=512,
+                    want_text=True,
+                    require_exact=objective == "EXACTNESS",
+                    available_backends=frozenset(backends),
+                    kernel_cached=True,
+                    files_touched=len(catalog.files),
+                    derived_cached=derived_cached,
+                )
+                try:
+                    label = plan.choose(plans, plan.Objective[objective]).label()
+                except plan.PlanError:
+                    # A host offering nothing legal for this objective is a decision
+                    # too, and a recordable one -- not a crash, not a silent omission.
+                    label = "(no legal plan)"
+                # The first configuration keeps the bare objective name, so the keys
+                # this file has always carried still mean what they meant.
+                default = host == AVAILABILITY[0][0] and column == DERIVED[0][0]
+                key = objective if default else f"{objective}@{host}, {column}"
+                chosen[key] = label
+                illegal[key] = sum(1 for candidate in plans if not candidate.legal)
     recorded["chosen"] = chosen
     recorded["illegal_candidates"] = illegal
 
