@@ -927,6 +927,7 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
     fetched = catalog.fetch(list(range(catalog.rows_total)))
     trials = 0
     pruned_parts = 0
+    strategies: set[str] = set()
 
     for column in columns:
         corpus = _corpus_values(catalog_module, chunk_dir, column)
@@ -1039,14 +1040,20 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 f"{catalog.count_in_range(column, low, high)}, not {len(wanted)}; the "
                 "index answers a count exactly or it should not answer it",
             )
-            estimate, exact = catalog.count_range(column, low, high)
+            # Whichever path the threshold picks, the rows are the same rows. The
+            # choice is a cost decision, so it must be invisible in the answer and
+            # visible in the strategy -- both halves are checked, here and below.
+            strategy = catalog.range_strategy(column, low, high)
             report.require(
-                estimate >= len(wanted) and (estimate == len(wanted) or not exact),
-                f"ranges: count_range({column}, {low}, {high}) estimated {estimate} "
-                f"for {len(wanted)} row(s) and called it exact={exact}; an estimate "
-                "below the truth is not a bound, and a bound reported as exact is a "
-                "plan chosen on a number nobody could check",
+                strategy in ("seek", "scan"),
+                f"ranges: {column} in [{low}, {high}] chose strategy {strategy!r}",
             )
+            report.require(
+                catalog.rows_in_range(column, low, high) == wanted,
+                f"ranges: rows_in_range({column}, {low}, {high}) took the {strategy} "
+                f"path and returned rows the other path does not",
+            )
+            strategies.add(strategy)
             found = set(rows)
             unsound = []
             for part in catalog.parts:
@@ -1089,6 +1096,12 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
     report.require(
         trials >= MIN_RANGE_TRIALS,
         f"anti-vacuity: {trials} interval(s) were checked, below the {MIN_RANGE_TRIALS} floor",
+    )
+    report.require(
+        strategies == {"seek", "scan"},
+        f"anti-vacuity: across {trials} interval(s) the range threshold only ever "
+        f"chose {sorted(strategies)}. Both paths return identical rows, so a threshold "
+        "stuck on one of them is invisible in every answer above; only this notices.",
     )
     report.require(
         pruned_parts >= MIN_PRUNED_PARTS,
@@ -1666,6 +1679,54 @@ def check_planner(report: Report, plan, catalog) -> None:
 
 def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> None:
     report.require(bool(catalog.parts), "S5: the catalog declares no parts")
+
+    # Every row finds its own part, and no other. `part_of` bisects rather than walks,
+    # which is only correct while the parts are sorted and touching -- the property
+    # checked just below. Checked over every row rather than a sample, because an
+    # off-by-one at one boundary is exactly what a sample misses.
+    misplaced = []
+    for part in catalog.parts:
+        start, end = part["rows"]
+        for row in (start, (start + end) // 2, end - 1):
+            try:
+                found = catalog.part_of(row)["part_id"]
+            except IndexError:
+                # A refusal for a row that *is* in the set is a misplacement, not an
+                # accident. Reported here so the finding names the boundary rather
+                # than escaping from somewhere else in this function.
+                found = "(refused)"
+            if found != part["part_id"]:
+                misplaced.append(f"row {row} -> {found}, not {part['part_id']}")
+    report.require(
+        not misplaced,
+        "S5: part_of sent rows to the wrong part: " + "; ".join(misplaced[:4]),
+    )
+    walked = [catalog.part_of(row)["part_id"] for row in range(catalog.rows_total)]
+    report.require(
+        len(walked) == catalog.rows_total and all(walked),
+        "S5: part_of did not answer for every row",
+    )
+    for outside in (-1, catalog.rows_total, catalog.rows_total + 1):
+        try:
+            catalog.part_of(outside)
+        except IndexError:
+            report.require(True, "")
+        else:
+            report.require(False, f"S5: part_of claimed a part for row {outside}")
+
+    sources = {part.get("source") for part in catalog.parts}
+    report.require(
+        all(isinstance(name, str) and name for name in sources),
+        "S5: a part does not name the source it was cut from, so nothing can tell "
+        "which file an incremental rebuild has to re-read",
+    )
+    widest = max(end - start for start, end in (part["rows"] for part in catalog.parts))
+    report.require(
+        widest <= catalog_module.MAX_BLOCK_ROWS,
+        f"S5: the widest part covers {widest} rows, above the "
+        f"{catalog_module.MAX_BLOCK_ROWS}-row block size; a part that grows with its "
+        "file is the subject-shaped part this slice removed",
+    )
     covered = sorted((part["rows"][0], part["rows"][1]) for part in catalog.parts)
     contiguous = covered and covered[0][0] == 0 and covered[-1][1] == catalog.rows_total
     for earlier, later in zip(covered, covered[1:]):
@@ -1692,18 +1753,44 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
             before.changed_parts(catalog) == (),
             "S5: a copy of the same chunk table reports changed parts",
         )
-        victim = sorted(mirror.glob("*.chunks.jsonl"))[0]
+        # The file cut into the *most* blocks, not the first one alphabetically. A
+        # file holding a single block cannot tell "this part's content covers its own
+        # rows" from "it covers its whole file": both move exactly one part. The
+        # alphabetically-first file here held 7 rows, so the whole-file digest passed
+        # this check until the choice was made deliberate (L2).
+        counts: dict[str, int] = {}
+        for part in before.parts:
+            counts[part["source"]] = counts.get(part["source"], 0) + 1
+        crowded = max(counts, key=lambda name: (counts[name], name))
+        report.require(
+            counts[crowded] >= 2,
+            f"anti-vacuity: the busiest chunk file is cut into {counts[crowded]} "
+            "part(s), so the check below cannot tell a per-block digest from a "
+            "per-file one",
+        )
+        victim = mirror / f"{crowded}.chunks.jsonl"
         victim.write_bytes(victim.read_bytes() + b'{"chunk_id":"sha256:zz","subject":"x"}\n')
         after_root = Path(directory) / "catalog2"
         catalog_module.write(catalog_module.build(mirror), after_root)
         after = catalog_module.Catalog.load(after_root, mirror)
         moved = after.changed_parts(before)
-        expected = victim.name[: -len(".chunks.jsonl")]
+        source = victim.name[: -len(".chunks.jsonl")]
+        by_id = {part["part_id"]: part for part in after.parts}
+        strangers = sorted(name for name in moved if by_id.get(name, {}).get("source") != source)
         report.require(
-            moved == (expected,),
-            f"S5: changing {victim.name} reported {moved}, expected exactly "
-            f"({expected!r},) -- a part digest that moves for unrelated files, or "
-            "does not move for its own, cannot drive an incremental rebuild",
+            moved and not strangers,
+            f"S5: appending a row to {victim.name} reported {moved} as changed"
+            + (f"; {strangers} come from another file" if strangers else " -- nothing moved")
+            + ". A part digest that moves for a file it does not belong to, or does "
+            "not move for its own, cannot drive an incremental rebuild.",
+        )
+        # ...and it must move *few* parts, not all of them. A digest covering a whole
+        # file would name every block of it, which is a filter that filters nothing --
+        # and is exactly what `_changed_parts` did until this check was written.
+        report.require(
+            len(moved) <= 2,
+            f"S5: one appended row moved {len(moved)} part(s) of {source}; a part's "
+            "content must cover its own rows, not its whole file",
         )
         # And the stale catalog must refuse rather than answer from old statistics.
         try:

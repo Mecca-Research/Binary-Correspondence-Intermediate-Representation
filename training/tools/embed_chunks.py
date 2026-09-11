@@ -723,31 +723,51 @@ def write_inline(
         print(f"[inline] {path} ({len(lines)} chunk(s) with vectors)")
 
 
-def _parts_of(chunk_dir: Path, subject: str | None) -> list[dict]:
-    """The parts this set covers, taken from the catalog's own part definition.
+def _catalog_parts(chunk_dir: Path) -> list[dict]:
+    """The catalog's parts for this corpus, or none if it cannot be built.
 
-    Read through `catalog.build` rather than recomputed, so an embedding set and a
-    catalog cannot disagree about what a part is or where its rows begin.
+    The single call site. Both the parts a set records and the parts it compares
+    against come through here, so an embedding set cannot be written against one
+    definition of a part and read against another (`docs/security/laws.md` L14).
+
+    That is not hypothetical: this used to be two definitions. `_changed_parts`
+    recomputed the current side itself as `{file stem: digest of the whole file}`,
+    which agreed with the catalog only for as long as a part happened to be a whole
+    file. The moment parts became bounded blocks, a set written seconds earlier
+    reported every part as changed -- old ids missing, new ids added -- and the
+    incremental rebuild's coarse filter stopped filtering.
     """
     catalog = _catalog()
     try:
-        manifest = catalog.build(chunk_dir)[0]
+        return catalog.build(chunk_dir)[0].get("parts") or []
     except catalog.CatalogError:
         return []
-    parts = manifest.get("parts") or []
+
+
+def _parts_of(chunk_dir: Path, subject: str | None) -> list[dict]:
+    """The parts this set covers, taken from the catalog's own part definition."""
+    parts = _catalog_parts(chunk_dir)
     if subject is None:
         return parts
-    return [part for part in parts if part.get("part_id") == subject]
+    # Matched on `source`, the chunk file a part came from, rather than on `part_id`.
+    # A part is now a bounded block of one file, so its id carries a block number and
+    # a subject no longer names a part -- it names all the parts cut from that
+    # subject's file.
+    return [part for part in parts if part.get("source") == subject]
 
 
 def _changed_parts(chunk_dir: Path, destination: Path) -> tuple[str, ...]:
-    """Which chunk files moved since the set at `destination` was written.
+    """Which parts moved since the set at `destination` was written.
 
-    The coarse half of the incremental rule: a part whose bytes are unchanged cannot
+    The coarse half of the incremental rule: a part whose rows are unchanged cannot
     hold a changed row, so nothing in it needs looking at. The fine half is the
     per-row text digest in `embed_incremental`, which is what actually decides reuse
     -- this is reported because it answers a different question, and because a part
     that moved while every one of its rows stayed identical is worth seeing.
+
+    Since parts became bounded blocks this is a far finer filter than "which files
+    moved": editing one row of the corpus's largest file used to mark all 2,160 of
+    its rows suspect, and now marks at most `catalog.MAX_BLOCK_ROWS` of them.
     """
     manifest_path = destination / "manifest.json"
     try:
@@ -757,11 +777,7 @@ def _changed_parts(chunk_dir: Path, destination: Path) -> tuple[str, ...]:
     recorded = {part.get("part_id"): part.get("content") for part in (manifest.get("parts") or [])}
     if not recorded:
         return ()
-    catalog = _catalog()
-    actual = {
-        path.name[: -len(".chunks.jsonl")]: hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in catalog.chunk_files(chunk_dir)
-    }
+    actual = {part.get("part_id"): part.get("content") for part in _catalog_parts(chunk_dir)}
     names = recorded.keys() | actual.keys()
     return tuple(sorted(name for name in names if recorded.get(name) != actual.get(name)))
 
