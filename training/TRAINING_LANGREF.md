@@ -861,6 +861,14 @@ Landed with their fixes, each caught by a named check thereafter:
 | q8 setup mispricing | one cost constant 37.5× low chose a measurably slower plan on a partial build | #782 |
 | ORDER BY threshold | a wide predicate was sorted row by row beside an unused index | #782 |
 | EXPLAIN verdict | a plan forced by a flag was reported as the planner's choice | #782 |
+| reserved character | the catalog's null key was reachable as a domain value, giving `IS NULL` a second spelling (§5.7) | #784 |
+| prefix semantics | `^=` answered "under this directory" where it means "starts with", dropped rows, and called the count exact (§5.6) | #784 |
+| prefix witness | the check for `^=` compared it against counts computed by the implementation's own rule, so it passed on every answer | #784 |
+| sorted-index tautology | `split == counted` read the same statistic on both sides of its comparison | #784 |
+| aggregate `scanned` | an all-null filtered aggregate reported `scanned: 0`, the free path's own signature | #784 |
+| interval pricing | two comparisons on one column were priced at the tighter marginal, 277× loose on a one-value interval (§6) | #784 |
+| LangRef drift | §3.1, §4.5, §5.2, §6 and §16 described a system that never existed; the matrix is now probed, not prose | #784 |
+| a registered test module | thirteen tests were registered, counted, and never run, because `run_all` cannot see a test inside a class | #784 |
 
 ---
 
