@@ -327,6 +327,38 @@
    }
   },
   {
+   "source": "training/llvm/18-mlir-lowering-to-llvm/examples/index-width-to-llvm.mlir",
+   "required_dialects": [
+    "builtin",
+    "func",
+    "index",
+    "llvm"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt",
+    "mlir-translate",
+    "llvm-as",
+    "opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-index-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)",
+   "expected_tier": 4,
+   "expected_lowered_artifact": "training/llvm/18-mlir-lowering-to-llvm/examples/index-width-to-llvm-lowered.ll",
+   "checks": {
+    "forbid_lowered": [
+     "index.constant",
+     "index.mul",
+     "index.add",
+     "func.func",
+     "builtin.unrealized_conversion_cast"
+    ],
+    "require_llvm_ir": [
+     "define i64 @stride(i64 %0, i64 %1)",
+     "mul i64",
+     "add i64"
+    ]
+   }
+  },
+  {
    "source": "training/llvm/18-mlir-lowering-to-llvm/examples/memref-type-conversion.mlir",
    "required_dialects": [
     "arith",

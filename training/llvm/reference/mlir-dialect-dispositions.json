@@ -66,8 +66,8 @@
    "slice": "2.3 ML dialects: the host/device split, and where nvvm and rocdl become reachable through one portable layer"
   },
   "index": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: index arithmetic split out from arith, which the lowering chapters currently elide"
+   "status": "taught",
+   "where": "18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md"
   },
   "irdl": {
    "status": "planned",

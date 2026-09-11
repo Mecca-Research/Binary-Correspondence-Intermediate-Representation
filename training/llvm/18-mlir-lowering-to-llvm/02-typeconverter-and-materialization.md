@@ -135,11 +135,38 @@ A rename, effectively — `math.<op>` to `llvm.<op>.<type>`. Nothing expands, no
 chosen, and the `math` dialect exists mainly so that code above the LLVM dialect can spell
 these without depending on it.
 
-**The contrast is the lesson.** Two dialects, one conversion pipeline, two completely
-different amounts of work: a missing *type* forces a representation choice and an
-open-coded expansion, while a missing *spelling* for an operation the target already has is
-a table lookup. When you write a `TypeConverter`, the first question is which of those two
-situations you are in.
+**A third case: a type whose width the target decides.** `index` is MLIR's target-sized
+integer — C's `size_t`, roughly — and LLVM IR has no such thing, because every integer
+there is a fixed width. So the converter must pick one, and *which* it picks is a lowering
+option rather than anything the IR says.
+[`examples/index-width-to-llvm.mlir`](examples/index-width-to-llvm.mlir) is lowered twice
+to make that concrete:
+
+```mlir
+  %c4 = index.constant 4
+  %m = index.mul %i, %c4
+  %s = index.add %m, %n
+```
+
+```llvm
+; convert-index-to-llvm                        -> define i64 @stride(i64 %0, i64 %1)
+; convert-index-to-llvm{index-bitwidth=32}     -> define i32 @stride(i32 %0, i32 %1)
+```
+
+Identical input, one option apart, and the ABI changes underneath you. That is the whole
+reason `index` exists: a shape or a stride computed in `index` is portable, and the same
+computation written in `i64` is a 64-bit assumption baked into the IR.
+
+**The contrast is the lesson.** Three dialects, one conversion pipeline, three different
+amounts of work:
+
+| Situation | Example | What the converter must do |
+| --- | --- | --- |
+| The target lacks the **type** | `complex<f32>` | choose a representation, then open-code every operation on it |
+| The target has the operation under another **name** | `math.sqrt` | a table lookup |
+| The target has the type but not its **width** | `index` | take a width from an option, and change the ABI with it |
+
+When you write a `TypeConverter`, the first question is which of those three you are in.
 
 ## Minimal converter sketch
 
