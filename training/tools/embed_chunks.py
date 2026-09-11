@@ -676,7 +676,7 @@ def write_set(
         "license": LICENSE,
     }
     (destination / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
     )
     return manifest
 
@@ -701,7 +701,7 @@ def write_inline(
 
     for subject, lines in sorted(by_subject.items()):
         path = destination / f"{subject}.chunks.jsonl"
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
         print(f"[inline] {path} ({len(lines)} chunk(s) with vectors)")
 
 

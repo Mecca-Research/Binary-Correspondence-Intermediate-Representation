@@ -284,7 +284,9 @@ def publish(
         if extra:
             manifest["extra"] = extra
         (staging / MANIFEST_FILE).write_text(
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+            newline="\n",
         )
         try:
             os.replace(staging, destination)

@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.record:
             args.baseline.parent.mkdir(parents=True, exist_ok=True)
             args.baseline.write_text(
-                json.dumps(fresh, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                json.dumps(fresh, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
             )
             print(f"[baseline] {len(fresh['queries'])} plan(s) over {fresh['rows_total']} rows")
             print(f"[write]    {args.baseline}")

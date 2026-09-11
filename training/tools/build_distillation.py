@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.out and records:
             args.out.mkdir(parents=True, exist_ok=True)
             destination = args.out / f"{root.name}.distill.jsonl"
-            with destination.open("w", encoding="utf-8") as handle:
+            with destination.open("w", encoding="utf-8", newline="\n") as handle:
                 for record in records:
                     handle.write(canonical_json(record) + "\n")
             print(f"[write] {destination} ({len(records)} record(s))")

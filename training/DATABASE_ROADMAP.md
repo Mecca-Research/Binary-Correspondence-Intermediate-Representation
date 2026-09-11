@@ -657,7 +657,13 @@ Three, and each is checkable rather than asserted:
    is the clearest case: the same array built twice is two different arrays.
    Here the name *is* the content, so two hosts building the same corpus agree
    on the bytes and on the names — which is what makes a generation digest mean
-   anything. Fix 2 below closed the last place that was not true.
+   anything.
+
+   This claim was **false on Windows** until defect 5 below, and it is worth
+   being blunt about that rather than quietly fixing it: the property this
+   ladder puts first, over every system it has been compared against, did not
+   hold on one of the three hosts in its own CI matrix, and no gate could see
+   it. Fixes 2 and 5 are what make it true.
 3. **The gate proves it can fail.** Every claim in this ladder was landed by
    injecting its own defect and watching its own named check fire. None of the
    six projects gates its planner's *decisions* at all; S18 does.
@@ -785,6 +791,59 @@ ever make. So the fast path is gone and every load digests every chunk file:
 downstream as one more null among the genuine ones. The gap and the error shared
 a spelling, and nothing afterwards could tell them apart. S17 generalises the
 fix from type to value.
+
+### 5. The corpus had different bytes on Windows
+
+Found by CI, on the first push that pinned a corpus fingerprint into the
+repository. The Windows host-portability job reported:
+
+```
+S18: plan baseline: recorded against a different corpus
+  recorded: e7fe3a4fde6dad9364297425b16671ceac6fec6fe416db263484117fdec1fb10
+  now:      e173870819daa383e263b35ce267fe30f4e7f2e030302c5f32c7f2591adbda3f
+```
+
+`build_chunks.py` wrote chunk files with `open("w", encoding="utf-8")` and no
+`newline=`, so Python's text mode translated every `\n` to the platform's line
+ending. On Windows every chunk file was CRLF. Reproduced exactly — taking the
+Linux corpus and replacing `\n` with `\r\n` reproduces both digests above,
+byte for byte.
+
+Nothing reads those files as text and cares. But everything about them is
+**digested**, and all of it moved:
+
+| | with CRLF |
+| --- | --- |
+| corpus `fingerprint` | differs |
+| every recorded per-file `sha256` | differs |
+| every part's content digest | differs |
+| `locator.bin` | differs — byte offsets shift with every line before them |
+| `generation_id`, `tree_digest` | differ, being functions of the above |
+| `postings.json`, `ids.txt`, `numeric.bin` | identical — they hold logical content, not bytes |
+
+So two hosts disagreed about the content address of an identical corpus, and a
+generation published on one could never be verified on the other. This is the
+property stated above as the thing this rail does better than everything it was
+compared against; it had never been true on Windows, and it took pinning a
+fingerprint into the repo for anything to notice.
+
+The repository had already *declared* the rule — `.gitattributes` opens with
+`* text=auto eol=lf` — for everything it tracks. What it could not reach is
+`build/`, which is generated rather than tracked. The fix extends the same rule
+to the tools that generate it: all 17 text-mode artifact writers under
+`training/tools/` now pin `newline="\n"`, and `check_line_endings` holds it
+there with both halves it needs — a static read of every non-`verify_` module
+for a write that lets the host choose, and a read of the bytes actually on disk
+(L11: a witness must hit the law it exists to test). The RED witness for the
+dynamic half pins CRLF explicitly, which the static half accepts, so neither
+half is redundant.
+
+**Out of scope, and recorded rather than fixed:** the same shape exists at 37
+sites under `bcir/` and 29 under `tools/`. Those trees' frozen artifacts —
+StreamPack, BCAB, the ASN.1 encodings — are written as *bytes*, which text mode
+never touches, so the frozen ABIs are unaffected. The exposure is any text
+artifact whose bytes something digests. That audit belongs to those rails, not
+to this one.
 
 ## The S-ladder — S13 to S18
 
@@ -1006,6 +1065,7 @@ size, and it is the kind of trade this ladder should keep making.
 | built-in authentication stays out of scope | the corpus stops being repository content, i.e. when filesystem permissions stop being the access control |
 | joint statistics stay pairwise (S15) | a query shape appears whose three-column bound actually costs something; the tightest-pair bound was exact on every non-empty triple in this corpus |
 | the freshness digest stays unconditional (fix 2) | digesting the corpus dominates a command, at which point the answer is a design that stays *one* path, not a second one |
+| the line-ending rule stays scoped to `training/tools/` (fix 5) | a text artifact under `bcir/` or `tools/` is digested, or compared across hosts; 66 unpinned writes are waiting there, and only the byte-written frozen formats are safe by construction |
 | ANN indexing stays declined | the corpus passes ~50,000 rows, where 58.9 s of exact all-pairs becomes minutes |
 | Spark's Catalyst stays study-only | a rewrite rule appears that is worth expressing as a rule rather than as code, i.e. when there are enough of them to need a driver |
 | the previous published set is kept, no more (S13) | a reader can hold a catalog across more than one republish, which today it cannot: there is one writer and it runs to completion |

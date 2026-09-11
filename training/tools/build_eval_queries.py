@@ -438,10 +438,10 @@ def main(argv: list[str] | None = None) -> int:
         args.out.mkdir(parents=True, exist_ok=True)
         destination = args.out / "queries.jsonl"
         destination.write_text(
-            "\n".join(canonical_json(q) for q in queries) + "\n", encoding="utf-8"
+            "\n".join(canonical_json(q) for q in queries) + "\n", encoding="utf-8", newline="\n"
         )
         (args.out / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
         )
         print(f"[write]   {destination} ({len(queries)} query/queries)")
 

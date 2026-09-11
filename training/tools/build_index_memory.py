@@ -342,7 +342,7 @@ def build(out: Path, *, dim: int) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     (out / "vectors.q15").write_bytes(payload)
     (out / "memory.jsonl").write_text(
-        "\n".join(canonical_json(e) for e in entries) + "\n", encoding="utf-8"
+        "\n".join(canonical_json(e) for e in entries) + "\n", encoding="utf-8", newline="\n"
     )
     documents = sorted({t for e in entries for t in e["targets"]})
     manifest = {
@@ -367,7 +367,7 @@ def build(out: Path, *, dim: int) -> dict:
         "license": LICENSE,
     }
     (out / "manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
     )
     return manifest
 
