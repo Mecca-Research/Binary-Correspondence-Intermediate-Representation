@@ -13,17 +13,33 @@
       "admitted": 0,
       "chosen": {
         "EXACTNESS": "native +where(0) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(0) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(0) /seek",
         "FOOTPRINT": "native +where(0) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(0) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(0) /seek",
         "LATENCY": "native +where(0) /seek",
-        "STARTUP": "reference +where(0) /seek"
+        "LATENCY@no compiled kernel": "reference +where(0) /seek",
+        "LATENCY@q8 without q15": "reference +where(0) /seek",
+        "STARTUP": "reference +where(0) /seek",
+        "STARTUP@no compiled kernel": "reference +where(0) /seek",
+        "STARTUP@q8 without q15": "reference +where(0) /seek"
       },
       "estimate_exact": true,
       "estimated": 0,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = nothing-has-this"
@@ -36,17 +52,33 @@
       "admitted": 2160,
       "chosen": {
         "EXACTNESS": "native +where(2160) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2160) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2160) /seek",
         "FOOTPRINT": "native +where(2160) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2160) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2160) /seek",
         "LATENCY": "native +where(2160) /seek",
-        "STARTUP": "reference +where(2160) /seek"
+        "LATENCY@no compiled kernel": "reference +where(2160) /seek",
+        "LATENCY@q8 without q15": "reference +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2160) /seek",
+        "STARTUP@q8 without q15": "reference +where(2160) /seek"
       },
       "estimate_exact": true,
       "estimated": 2160,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = llvm"
@@ -59,17 +91,33 @@
       "admitted": 9,
       "chosen": {
         "EXACTNESS": "native +where(9) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(9) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(9) /seek",
         "FOOTPRINT": "native +where(9) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(9) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(9) /seek",
         "LATENCY": "native +where(9) /seek",
-        "STARTUP": "reference +where(9) /seek"
+        "LATENCY@no compiled kernel": "reference +where(9) /seek",
+        "LATENCY@q8 without q15": "reference +where(9) /seek",
+        "STARTUP": "reference +where(9) /seek",
+        "STARTUP@no compiled kernel": "reference +where(9) /seek",
+        "STARTUP@q8 without q15": "reference +where(9) /seek"
       },
       "estimate_exact": true,
       "estimated": 9,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = data"
@@ -82,17 +130,33 @@
       "admitted": 1387,
       "chosen": {
         "EXACTNESS": "native +where(1387) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(1387) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(1387) /seek",
         "FOOTPRINT": "native +where(1387) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(1387) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(1387) /seek",
         "LATENCY": "native +where(1387) /seek",
-        "STARTUP": "reference +where(1387) /seek"
+        "LATENCY@no compiled kernel": "reference +where(1387) /seek",
+        "LATENCY@q8 without q15": "reference +where(1387) /seek",
+        "STARTUP": "reference +where(1387) /seek",
+        "STARTUP@no compiled kernel": "reference +where(1387) /seek",
+        "STARTUP@q8 without q15": "reference +where(1387) /seek"
       },
       "estimate_exact": true,
       "estimated": 1387,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "char_count >= 500"
@@ -111,9 +175,17 @@
       "admitted": 2215,
       "chosen": {
         "EXACTNESS": "native /seek",
+        "EXACTNESS@no compiled kernel": "reference /seek",
+        "EXACTNESS@q8 without q15": "reference /seek",
         "FOOTPRINT": "native /seek",
+        "FOOTPRINT@no compiled kernel": "reference /seek",
+        "FOOTPRINT@q8 without q15": "reference /seek",
         "LATENCY": "native /seek",
-        "STARTUP": "reference /seek"
+        "LATENCY@no compiled kernel": "reference /seek",
+        "LATENCY@q8 without q15": "reference /seek",
+        "STARTUP": "reference /seek",
+        "STARTUP@no compiled kernel": "reference /seek",
+        "STARTUP@q8 without q15": "reference /seek"
       },
       "estimate_exact": true,
       "estimated": 2215,
@@ -137,9 +209,17 @@
       },
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [],
       "where": []
@@ -148,9 +228,17 @@
       "admitted": 2215,
       "chosen": {
         "EXACTNESS": "native /seek",
+        "EXACTNESS@no compiled kernel": "reference /seek",
+        "EXACTNESS@q8 without q15": "reference /seek",
         "FOOTPRINT": "native /seek",
+        "FOOTPRINT@no compiled kernel": "reference /seek",
+        "FOOTPRINT@q8 without q15": "reference /seek",
         "LATENCY": "native /seek",
-        "STARTUP": "reference /seek"
+        "LATENCY@no compiled kernel": "reference /seek",
+        "LATENCY@q8 without q15": "reference /seek",
+        "STARTUP": "reference /seek",
+        "STARTUP@no compiled kernel": "reference /seek",
+        "STARTUP@q8 without q15": "reference /seek"
       },
       "estimate_exact": true,
       "estimated": 2215,
@@ -194,9 +282,17 @@
       },
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [],
       "where": []
@@ -205,17 +301,33 @@
       "admitted": 16,
       "chosen": {
         "EXACTNESS": "native +where(16) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(16) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(16) /seek",
         "FOOTPRINT": "native +where(16) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(16) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(16) /seek",
         "LATENCY": "native +where(16) /seek",
-        "STARTUP": "reference +where(16) /seek"
+        "LATENCY@no compiled kernel": "reference +where(16) /seek",
+        "LATENCY@q8 without q15": "reference +where(16) /seek",
+        "STARTUP": "reference +where(16) /seek",
+        "STARTUP@no compiled kernel": "reference +where(16) /seek",
+        "STARTUP@q8 without q15": "reference +where(16) /seek"
       },
       "estimate_exact": true,
       "estimated": 16,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "char_count > 5000"
@@ -234,17 +346,33 @@
       "admitted": 2169,
       "chosen": {
         "EXACTNESS": "native +where(2169) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2169) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2169) /seek",
         "FOOTPRINT": "native +where(2169) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2169) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2169) /seek",
         "LATENCY": "native +where(2169) /seek",
-        "STARTUP": "reference +where(2169) /seek"
+        "LATENCY@no compiled kernel": "reference +where(2169) /seek",
+        "LATENCY@q8 without q15": "reference +where(2169) /seek",
+        "STARTUP": "reference +where(2169) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2169) /seek",
+        "STARTUP@q8 without q15": "reference +where(2169) /seek"
       },
       "estimate_exact": true,
       "estimated": 2169,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject in (llvm, data)"
@@ -257,17 +385,33 @@
       "admitted": 2169,
       "chosen": {
         "EXACTNESS": "native +where(2169) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2169) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2169) /seek",
         "FOOTPRINT": "native +where(2169) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2169) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2169) /seek",
         "LATENCY": "native +where(2169) /seek",
-        "STARTUP": "reference +where(2169) /seek"
+        "LATENCY@no compiled kernel": "reference +where(2169) /seek",
+        "LATENCY@q8 without q15": "reference +where(2169) /seek",
+        "STARTUP": "reference +where(2169) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2169) /seek",
+        "STARTUP@q8 without q15": "reference +where(2169) /seek"
       },
       "estimate_exact": true,
       "estimated": 2169,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject in (llvm, data)"
@@ -280,17 +424,33 @@
       "admitted": 2160,
       "chosen": {
         "EXACTNESS": "native +where(2160) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2160) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2160) /seek",
         "FOOTPRINT": "native +where(2160) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2160) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2160) /seek",
         "LATENCY": "native +where(2160) /seek",
-        "STARTUP": "reference +where(2160) /seek"
+        "LATENCY@no compiled kernel": "reference +where(2160) /seek",
+        "LATENCY@q8 without q15": "reference +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2160) /seek",
+        "STARTUP@q8 without q15": "reference +where(2160) /seek"
       },
       "estimate_exact": false,
       "estimated": 2160,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = llvm",
@@ -305,17 +465,33 @@
       "admitted": 7,
       "chosen": {
         "EXACTNESS": "native +where(7) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(7) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(7) /seek",
         "FOOTPRINT": "native +where(7) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(7) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(7) /seek",
         "LATENCY": "native +where(7) /seek",
-        "STARTUP": "reference +where(7) /seek"
+        "LATENCY@no compiled kernel": "reference +where(7) /seek",
+        "LATENCY@q8 without q15": "reference +where(7) /seek",
+        "STARTUP": "reference +where(7) /seek",
+        "STARTUP@no compiled kernel": "reference +where(7) /seek",
+        "STARTUP@q8 without q15": "reference +where(7) /seek"
       },
       "estimate_exact": false,
       "estimated": 75,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "kind = code",
@@ -336,17 +512,33 @@
       "admitted": 683,
       "chosen": {
         "EXACTNESS": "native +where(683) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(683) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(683) /seek",
         "FOOTPRINT": "native +where(683) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(683) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(683) /seek",
         "LATENCY": "native +where(683) /seek",
-        "STARTUP": "reference +where(683) /seek"
+        "LATENCY@no compiled kernel": "reference +where(683) /seek",
+        "LATENCY@q8 without q15": "reference +where(683) /seek",
+        "STARTUP": "reference +where(683) /seek",
+        "STARTUP@no compiled kernel": "reference +where(683) /seek",
+        "STARTUP@q8 without q15": "reference +where(683) /seek"
       },
       "estimate_exact": true,
       "estimated": 683,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "language IS NOT NULL"
@@ -359,17 +551,33 @@
       "admitted": 831,
       "chosen": {
         "EXACTNESS": "native +where(831) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(831) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(831) /seek",
         "FOOTPRINT": "native +where(831) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(831) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(831) /seek",
         "LATENCY": "native +where(831) /seek",
-        "STARTUP": "reference +where(831) /seek"
+        "LATENCY@no compiled kernel": "reference +where(831) /seek",
+        "LATENCY@q8 without q15": "reference +where(831) /seek",
+        "STARTUP": "reference +where(831) /seek",
+        "STARTUP@no compiled kernel": "reference +where(831) /seek",
+        "STARTUP@q8 without q15": "reference +where(831) /seek"
       },
       "estimate_exact": true,
       "estimated": 831,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "char_count <= 500"
@@ -388,17 +596,33 @@
       "admitted": 0,
       "chosen": {
         "EXACTNESS": "native +where(0) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(0) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(0) /seek",
         "FOOTPRINT": "native +where(0) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(0) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(0) /seek",
         "LATENCY": "native +where(0) /seek",
-        "STARTUP": "reference +where(0) /seek"
+        "LATENCY@no compiled kernel": "reference +where(0) /seek",
+        "LATENCY@q8 without q15": "reference +where(0) /seek",
+        "STARTUP": "reference +where(0) /seek",
+        "STARTUP@no compiled kernel": "reference +where(0) /seek",
+        "STARTUP@q8 without q15": "reference +where(0) /seek"
       },
       "estimate_exact": true,
       "estimated": 0,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "char_count < 80"
@@ -417,17 +641,33 @@
       "admitted": 1894,
       "chosen": {
         "EXACTNESS": "native +where(1894) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(1894) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(1894) /seek",
         "FOOTPRINT": "native +where(1894) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(1894) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(1894) /seek",
         "LATENCY": "native +where(1894) /seek",
-        "STARTUP": "reference +where(1894) /seek"
+        "LATENCY@no compiled kernel": "reference +where(1894) /seek",
+        "LATENCY@q8 without q15": "reference +where(1894) /seek",
+        "STARTUP": "reference +where(1894) /seek",
+        "STARTUP@no compiled kernel": "reference +where(1894) /seek",
+        "STARTUP@q8 without q15": "reference +where(1894) /seek"
       },
       "estimate_exact": true,
       "estimated": 1894,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "language != llvm"
@@ -440,17 +680,33 @@
       "admitted": 1532,
       "chosen": {
         "EXACTNESS": "native +where(1532) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(1532) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(1532) /seek",
         "FOOTPRINT": "native +where(1532) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(1532) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(1532) /seek",
         "LATENCY": "native +where(1532) /seek",
-        "STARTUP": "reference +where(1532) /seek"
+        "LATENCY@no compiled kernel": "reference +where(1532) /seek",
+        "LATENCY@q8 without q15": "reference +where(1532) /seek",
+        "STARTUP": "reference +where(1532) /seek",
+        "STARTUP@no compiled kernel": "reference +where(1532) /seek",
+        "STARTUP@q8 without q15": "reference +where(1532) /seek"
       },
       "estimate_exact": true,
       "estimated": 1532,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "language IS NULL"
@@ -459,21 +715,81 @@
         "language!=?"
       ]
     },
+    "order-midrange": {
+      "admitted": 321,
+      "chosen": {
+        "EXACTNESS": "native +where(321) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(321) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(321) /seek",
+        "FOOTPRINT": "native +where(321) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(321) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(321) /seek",
+        "LATENCY": "native +where(321) /seek",
+        "LATENCY@no compiled kernel": "reference +where(321) /seek",
+        "LATENCY@q8 without q15": "reference +where(321) /seek",
+        "STARTUP": "reference +where(321) /seek",
+        "STARTUP@no compiled kernel": "reference +where(321) /seek",
+        "STARTUP@q8 without q15": "reference +where(321) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 321,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
+        "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
+        "LATENCY": 0,
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
+      },
+      "order": {
+        "column": "char_count",
+        "descending": false,
+        "strategy": "sort"
+      },
+      "predicates": [
+        "language = llvm"
+      ],
+      "where": [
+        "language=llvm"
+      ]
+    },
     "order-narrow": {
       "admitted": 9,
       "chosen": {
         "EXACTNESS": "native +where(9) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(9) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(9) /seek",
         "FOOTPRINT": "native +where(9) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(9) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(9) /seek",
         "LATENCY": "native +where(9) /seek",
-        "STARTUP": "reference +where(9) /seek"
+        "LATENCY@no compiled kernel": "reference +where(9) /seek",
+        "LATENCY@q8 without q15": "reference +where(9) /seek",
+        "STARTUP": "reference +where(9) /seek",
+        "STARTUP@no compiled kernel": "reference +where(9) /seek",
+        "STARTUP@q8 without q15": "reference +where(9) /seek"
       },
       "estimate_exact": true,
       "estimated": 9,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "order": {
         "column": "char_count",
@@ -491,17 +807,33 @@
       "admitted": 2215,
       "chosen": {
         "EXACTNESS": "native /seek",
+        "EXACTNESS@no compiled kernel": "reference /seek",
+        "EXACTNESS@q8 without q15": "reference /seek",
         "FOOTPRINT": "native /seek",
+        "FOOTPRINT@no compiled kernel": "reference /seek",
+        "FOOTPRINT@q8 without q15": "reference /seek",
         "LATENCY": "native /seek",
-        "STARTUP": "reference /seek"
+        "LATENCY@no compiled kernel": "reference /seek",
+        "LATENCY@q8 without q15": "reference /seek",
+        "STARTUP": "reference /seek",
+        "STARTUP@no compiled kernel": "reference /seek",
+        "STARTUP@q8 without q15": "reference /seek"
       },
       "estimate_exact": true,
       "estimated": 2215,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "order": {
         "column": "char_count",
@@ -511,21 +843,125 @@
       "predicates": [],
       "where": []
     },
+    "order-wide": {
+      "admitted": 2160,
+      "chosen": {
+        "EXACTNESS": "native +where(2160) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2160) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2160) /seek",
+        "FOOTPRINT": "native +where(2160) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2160) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2160) /seek",
+        "LATENCY": "native +where(2160) /seek",
+        "LATENCY@no compiled kernel": "reference +where(2160) /seek",
+        "LATENCY@q8 without q15": "reference +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2160) /seek",
+        "STARTUP@q8 without q15": "reference +where(2160) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2160,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
+        "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
+        "LATENCY": 0,
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
+      },
+      "order": {
+        "column": "char_count",
+        "descending": false,
+        "strategy": "index"
+      },
+      "predicates": [
+        "subject = llvm"
+      ],
+      "where": [
+        "subject=llvm"
+      ]
+    },
+    "order-wide-desc": {
+      "admitted": 2160,
+      "chosen": {
+        "EXACTNESS": "native +where(2160) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2160) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2160) /seek",
+        "FOOTPRINT": "native +where(2160) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2160) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2160) /seek",
+        "LATENCY": "native +where(2160) /seek",
+        "LATENCY@no compiled kernel": "reference +where(2160) /seek",
+        "LATENCY@q8 without q15": "reference +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2160) /seek",
+        "STARTUP@q8 without q15": "reference +where(2160) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2160,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
+        "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
+        "LATENCY": 0,
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
+      },
+      "order": {
+        "column": "char_count",
+        "descending": true,
+        "strategy": "index"
+      },
+      "predicates": [
+        "subject = llvm"
+      ],
+      "where": [
+        "subject=llvm"
+      ]
+    },
     "pair-covered": {
       "admitted": 75,
       "chosen": {
         "EXACTNESS": "native +where(75) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(75) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(75) /seek",
         "FOOTPRINT": "native +where(75) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(75) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(75) /seek",
         "LATENCY": "native +where(75) /seek",
-        "STARTUP": "reference +where(75) /seek"
+        "LATENCY@no compiled kernel": "reference +where(75) /seek",
+        "LATENCY@q8 without q15": "reference +where(75) /seek",
+        "STARTUP": "reference +where(75) /seek",
+        "STARTUP@no compiled kernel": "reference +where(75) /seek",
+        "STARTUP@q8 without q15": "reference +where(75) /seek"
       },
       "estimate_exact": true,
       "estimated": 75,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = llvm",
@@ -540,17 +976,33 @@
       "admitted": 0,
       "chosen": {
         "EXACTNESS": "native +where(0) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(0) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(0) /seek",
         "FOOTPRINT": "native +where(0) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(0) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(0) /seek",
         "LATENCY": "native +where(0) /seek",
-        "STARTUP": "reference +where(0) /seek"
+        "LATENCY@no compiled kernel": "reference +where(0) /seek",
+        "LATENCY@q8 without q15": "reference +where(0) /seek",
+        "STARTUP": "reference +where(0) /seek",
+        "STARTUP@no compiled kernel": "reference +where(0) /seek",
+        "STARTUP@q8 without q15": "reference +where(0) /seek"
       },
       "estimate_exact": true,
       "estimated": 0,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = data",
@@ -565,17 +1017,33 @@
       "admitted": 55,
       "chosen": {
         "EXACTNESS": "native +where(55) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(55) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(55) /seek",
         "FOOTPRINT": "native +where(55) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(55) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(55) /seek",
         "LATENCY": "native +where(55) /seek",
-        "STARTUP": "reference +where(55) /seek"
+        "LATENCY@no compiled kernel": "reference +where(55) /seek",
+        "LATENCY@q8 without q15": "reference +where(55) /seek",
+        "STARTUP": "reference +where(55) /seek",
+        "STARTUP@no compiled kernel": "reference +where(55) /seek",
+        "STARTUP@q8 without q15": "reference +where(55) /seek"
       },
       "estimate_exact": true,
       "estimated": 55,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject != llvm",
@@ -590,17 +1058,33 @@
       "admitted": 2160,
       "chosen": {
         "EXACTNESS": "native +where(2160) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(2160) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(2160) /seek",
         "FOOTPRINT": "native +where(2160) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(2160) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(2160) /seek",
         "LATENCY": "native +where(2160) /seek",
-        "STARTUP": "reference +where(2160) /seek"
+        "LATENCY@no compiled kernel": "reference +where(2160) /seek",
+        "LATENCY@q8 without q15": "reference +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek",
+        "STARTUP@no compiled kernel": "reference +where(2160) /seek",
+        "STARTUP@q8 without q15": "reference +where(2160) /seek"
       },
       "estimate_exact": true,
       "estimated": 2160,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "source_path ^= training/llvm"
@@ -613,17 +1097,33 @@
       "admitted": 112,
       "chosen": {
         "EXACTNESS": "native +where(112) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(112) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(112) /seek",
         "FOOTPRINT": "native +where(112) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(112) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(112) /seek",
         "LATENCY": "native +where(112) /seek",
-        "STARTUP": "reference +where(112) /seek"
+        "LATENCY@no compiled kernel": "reference +where(112) /seek",
+        "LATENCY@q8 without q15": "reference +where(112) /seek",
+        "STARTUP": "reference +where(112) /seek",
+        "STARTUP@no compiled kernel": "reference +where(112) /seek",
+        "STARTUP@q8 without q15": "reference +where(112) /seek"
       },
       "estimate_exact": false,
       "estimated": 2160,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "source_path ^= training/llvm/12-backend"
@@ -636,17 +1136,33 @@
       "admitted": 1288,
       "chosen": {
         "EXACTNESS": "native +where(1288) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(1288) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(1288) /seek",
         "FOOTPRINT": "native +where(1288) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(1288) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(1288) /seek",
         "LATENCY": "native +where(1288) /seek",
-        "STARTUP": "reference +where(1288) /seek"
+        "LATENCY@no compiled kernel": "reference +where(1288) /seek",
+        "LATENCY@q8 without q15": "reference +where(1288) /seek",
+        "STARTUP": "reference +where(1288) /seek",
+        "STARTUP@no compiled kernel": "reference +where(1288) /seek",
+        "STARTUP@q8 without q15": "reference +where(1288) /seek"
       },
       "estimate_exact": false,
       "estimated": 1387,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "char_count >= 500",
@@ -667,17 +1183,33 @@
       "admitted": 27,
       "chosen": {
         "EXACTNESS": "native +where(27) /seek",
+        "EXACTNESS@no compiled kernel": "reference +where(27) /seek",
+        "EXACTNESS@q8 without q15": "reference +where(27) /seek",
         "FOOTPRINT": "native +where(27) /seek",
+        "FOOTPRINT@no compiled kernel": "reference +where(27) /seek",
+        "FOOTPRINT@q8 without q15": "reference +where(27) /seek",
         "LATENCY": "native +where(27) /seek",
-        "STARTUP": "reference +where(27) /seek"
+        "LATENCY@no compiled kernel": "reference +where(27) /seek",
+        "LATENCY@q8 without q15": "reference +where(27) /seek",
+        "STARTUP": "reference +where(27) /seek",
+        "STARTUP@no compiled kernel": "reference +where(27) /seek",
+        "STARTUP@q8 without q15": "reference +where(27) /seek"
       },
       "estimate_exact": false,
       "estimated": 27,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [
         "subject = llvm",
@@ -694,17 +1226,33 @@
       "admitted": 2215,
       "chosen": {
         "EXACTNESS": "native /seek",
+        "EXACTNESS@no compiled kernel": "reference /seek",
+        "EXACTNESS@q8 without q15": "reference /seek",
         "FOOTPRINT": "native /seek",
+        "FOOTPRINT@no compiled kernel": "reference /seek",
+        "FOOTPRINT@q8 without q15": "reference /seek",
         "LATENCY": "native /seek",
-        "STARTUP": "reference /seek"
+        "LATENCY@no compiled kernel": "reference /seek",
+        "LATENCY@q8 without q15": "reference /seek",
+        "STARTUP": "reference /seek",
+        "STARTUP@no compiled kernel": "reference /seek",
+        "STARTUP@q8 without q15": "reference /seek"
       },
       "estimate_exact": true,
       "estimated": 2215,
       "illegal_candidates": {
         "EXACTNESS": 2,
+        "EXACTNESS@no compiled kernel": 6,
+        "EXACTNESS@q8 without q15": 6,
         "FOOTPRINT": 0,
+        "FOOTPRINT@no compiled kernel": 6,
+        "FOOTPRINT@q8 without q15": 4,
         "LATENCY": 0,
-        "STARTUP": 0
+        "LATENCY@no compiled kernel": 6,
+        "LATENCY@q8 without q15": 4,
+        "STARTUP": 0,
+        "STARTUP@no compiled kernel": 6,
+        "STARTUP@q8 without q15": 4
       },
       "predicates": [],
       "where": []

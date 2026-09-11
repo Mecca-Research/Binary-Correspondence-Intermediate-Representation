@@ -85,6 +85,16 @@ QUERIES: tuple[dict, ...] = (
     {"name": "range-interval", "where": ["char_count>=500", "char_count<=2000"]},
     {"name": "order-unfiltered", "where": [], "order_by": "char_count:desc"},
     {"name": "order-narrow", "where": ["subject=data"], "order_by": "char_count:asc"},
+    # Three that straddle `catalog.ORDERED_INDEX_SHARE`. Without them the recorded
+    # ORDER BY decisions sat at 100% and 0.4% of the table -- one either side of every
+    # threshold, and so on neither side of this one, which left the constant pinned by
+    # nothing. `order-wide` admits 97.5% and must read the index, `order-midrange`
+    # admits 14.5% and must sort, and `order-wide-desc` pins the direction too, because
+    # descending pays for the index differently and that is why the crossing is at 0.70
+    # rather than at the 0.20 ascending alone would justify.
+    {"name": "order-wide", "where": ["subject=llvm"], "order_by": "char_count:asc"},
+    {"name": "order-wide-desc", "where": ["subject=llvm"], "order_by": "char_count:desc"},
+    {"name": "order-midrange", "where": ["language=llvm"], "order_by": "char_count:asc"},
     {"name": "group-subject", "where": [], "group_by": "subject", "stats": "char_count"},
     {
         "name": "group-having",
@@ -98,6 +108,23 @@ QUERIES: tuple[dict, ...] = (
 #: What a recorded plan says, per objective. Objectives are named rather than taken
 #: from the enum's iteration order so that adding one is a visible change to this file.
 OBJECTIVES = ("EXACTNESS", "LATENCY", "FOOTPRINT", "STARTUP")
+
+#: Which backends a host offers. Recording only the first of these is how a cost
+#: constant stayed 37.5x too low without any gate noticing: with every backend
+#: present the native kernel dominates whatever q8 is priced at, so the q8 term
+#: never reached a decision this file could see. It reaches one on a host that
+#: built the q8 kernel and not the q15 one -- a partial build, which is a state
+#: this tree supports and CI produces -- and there the old constant chose a plan
+#: that measured 833 ms over the one it rejected at 243 ms.
+#:
+#: So availability is part of the recorded decision. A configuration nobody runs
+#: is still a configuration somebody ships (`docs/security/laws.md` L2: a check
+#: that cannot fail on the input it is given is not checking that input).
+AVAILABILITY = (
+    ("every backend", ("reference", "native", "q8", "both")),
+    ("q8 without q15", ("reference", "q8")),
+    ("no compiled kernel", ("reference",)),
+)
 
 
 class BaselineError(RuntimeError):
@@ -126,20 +153,28 @@ def _facts(catalog, query: dict) -> dict:
 
     chosen: dict[str, str] = {}
     illegal: dict[str, int] = {}
-    for objective in OBJECTIVES:
-        plans = plan.candidates(
-            catalog,
-            selection,
-            top_k=5,
-            dim=512,
-            want_text=True,
-            require_exact=objective == "EXACTNESS",
-            available_backends=frozenset(plan.BACKENDS),
-            kernel_cached=True,
-            files_touched=len(catalog.files),
-        )
-        chosen[objective] = plan.choose(plans, plan.Objective[objective]).label()
-        illegal[objective] = sum(1 for candidate in plans if not candidate.legal)
+    for host, backends in AVAILABILITY:
+        for objective in OBJECTIVES:
+            plans = plan.candidates(
+                catalog,
+                selection,
+                top_k=5,
+                dim=512,
+                want_text=True,
+                require_exact=objective == "EXACTNESS",
+                available_backends=frozenset(backends),
+                kernel_cached=True,
+                files_touched=len(catalog.files),
+            )
+            try:
+                label = plan.choose(plans, plan.Objective[objective]).label()
+            except plan.PlanError:
+                # A host offering nothing legal for this objective is a decision too,
+                # and a recordable one -- not a crash and not a silent omission.
+                label = "(no legal plan)"
+            key = objective if host == AVAILABILITY[0][0] else f"{objective}@{host}"
+            chosen[key] = label
+            illegal[key] = sum(1 for candidate in plans if not candidate.legal)
     recorded["chosen"] = chosen
     recorded["illegal_candidates"] = illegal
 

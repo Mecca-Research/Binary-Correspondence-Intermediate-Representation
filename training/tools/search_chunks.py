@@ -786,7 +786,15 @@ def main(argv: list[str] | None = None) -> int:
                 (p for p in plans if p.backend == backend and p.materialize == materialize), None
             )
         if args.explain:
-            print(plan_module.explain(plans, chosen, objective, selection=selection))
+            print(
+                plan_module.explain(
+                    plans,
+                    chosen,
+                    objective,
+                    selection=selection,
+                    requested=args.backend != "auto",
+                )
+            )
 
     rows = selection.rows
     reference = native = None

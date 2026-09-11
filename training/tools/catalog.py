@@ -211,6 +211,45 @@ MAX_INDEXABLE_ROWS = 2**32 - 1
 SORTED_SCAN_SHARE = 0.70
 
 
+#: The share of the table at or above which ORDER BY should read the sorted index and
+#: keep the admitted rows, rather than sort the admitted rows itself.
+#:
+#: Its sibling above chooses between two ways of *finding* rows in a range; this one
+#: chooses between two ways of *ordering* rows already found, and until now it was not
+#: a choice at all. `order_strategy` read the index only when there was no predicate,
+#: on the argument that walking 2,215 index entries to find the 16 a narrow predicate
+#: admits costs more than sorting those 16. That argument is correct and it is only
+#: about narrow predicates; applied to every predicate it sorted 2,160 admitted rows
+#: while a filtered read of the same index sat unused beside it.
+#:
+#: Measured over this corpus, both measurement columns, both directions, median of 21.
+#: The ratio is sort / index+filter, so above 1.00 the index is cheaper:
+#:
+#:     share of table | char_count asc | desc | token_estimate asc | desc
+#:     ---------------+----------------+------+--------------------+-----
+#:               95%  |           4.64 | 1.50 |               4.32 | 1.46
+#:               70%  |           3.24 | 1.06 |               3.32 | 1.14   <- crossing
+#:               50%  |           2.15 | 0.78 |               2.12 | 0.73
+#:               25%  |           1.15 | 0.36 |               1.15 | 0.34
+#:               10%  |           0.38 | 0.13 |               0.37 | 0.12
+#:
+#: Ascending crosses near 20%, but descending does not cross until 70%, because
+#: `ordered_from_index` re-derives the descending order on every call. 0.70 is the
+#: latest of the four crossings, so no column and no direction is pushed past its own
+#: -- the conservative direction here, since a threshold set too low makes a query
+#: slower and buys nothing.
+#:
+#: Both paths return *identical rows*: 168 random selections across both columns, both
+#: directions and seven selectivities agreed exactly, which is what makes this a
+#: choice about time rather than about answers. `verify_database.py` re-proves that
+#: agreement rather than trusting this note.
+#:
+#: Metric class `wall`, for the same reason as its sibling: it orders two plans, it
+#: does not predict a duration, and the gate checks that the choice is made and that
+#: the two paths agree -- never a clock.
+ORDERED_INDEX_SHARE = 0.70
+
+
 class CatalogError(RuntimeError):
     """The catalog is absent, stale, or malformed. Never a silent fallback."""
 

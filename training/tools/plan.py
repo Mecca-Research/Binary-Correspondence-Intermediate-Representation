@@ -781,7 +781,20 @@ class CostModel:
 
     #: Quantizing the corpus matrix into BCIRQ8, per row. No q8 artifact is persisted,
     #: so this is paid per process by any plan that uses that view.
-    ns_per_row_q8_quantize: int = 4_000
+    #:
+    #: This field was 4_000 and is the one constant here that was ever badly wrong.
+    #: Re-measured over 2,215 rows it is 150,152 ns/row -- 37.5x the old value -- split
+    #: 45.21 ms flattening the f32 column into a list and 287.38 ms inside
+    #: `bcir_ai_quantize_q8_f64`, 332.59 ms of setup that the plan was charging 8.9 ms
+    #: for. The error was reachable and it changed a decision: on a host carrying the
+    #: q8 kernel but not the q15 one -- a partial build, which is a supported state --
+    #: `choose(LATENCY)` preferred `q8 /seek` over `reference /seek`, and the plan it
+    #: picked ran 833 ms against the rejected plan's 243 ms. A cost model is allowed to
+    #: be approximate; it is not allowed to be wrong by a factor that reorders the
+    #: plans, because then the planner is choosing confidently in the wrong direction.
+    #: `training/plans/baseline-v1.json` now pins that availability case so the
+    #: ordering cannot drift back without S18 saying so.
+    ns_per_row_q8_quantize: int = 150_000
 
     #: Bytes are counted for the `memory` axis directly; this scales them into the
     #: same integer space as the nanosecond fields so one weight vector spans both.
@@ -800,8 +813,13 @@ DEFAULT_MODEL = CostModel()
 
 #: Where the defaults came from, so a reader can re-derive or challenge them.
 CALIBRATION = {
-    "method": "wall clock, warm, best of 3-5, one query against lexical-hash-v1",
-    "corpus": "2,012 rows x 512 dims",
+    "method": "wall clock, warm, median of 3-25, one query against lexical-hash-v1",
+    "corpus": "2,215 rows x 512 dims (re-measured; first calibrated at 2,012 rows)",
+    "checked": (
+        "every field re-derived from a measurement: kmac_native 0.99x, "
+        "row_derived 1.01x, kmac_reference 0.96x, kmac_q8 0.85x of the stored "
+        "value -- and row_q8_quantize 37.5x, which was corrected"
+    ),
     "class": "wall -- indicative, never gating (docs/PERFORMANCE_AUDIT.md)",
     "note": "these order plans; they do not predict a duration and nothing gates on them",
 }
@@ -1038,8 +1056,21 @@ def choose(plans, objective: Objective) -> Plan:
 # -- explanation ------------------------------------------------------------
 
 
-def explain(plans, chosen: Plan, objective: Objective, *, selection: Selection) -> str:
-    """EXPLAIN: what was considered, what it would cost, and why this one won."""
+def explain(
+    plans, chosen: Plan, objective: Objective, *, selection: Selection, requested: bool = False
+) -> str:
+    """EXPLAIN: what was considered, what it would cost, and why this one won.
+
+    `requested` says the plan was named by a flag rather than picked by `choose`, and
+    it changes the verdict word because the two are different facts. `--backend`
+    defaults to `reference`, so the common case is a forced plan -- and marking it
+    CHOSEN put that word on a plan that won nothing, beside a legal plan costing a
+    hundredth as much and marked merely "legal". The natural reading of that table is
+    that the planner preferred the expensive one, which is the opposite of true.
+    A forced plan is marked REQUESTED, and the plan `choose` would have returned is
+    named underneath, so the cost of overriding the planner is visible rather than
+    inferred.
+    """
     lines = [
         f"EXPLAIN  objective={objective.name.lower()} (minimize {objective.value})",
     ]
@@ -1062,7 +1093,7 @@ def explain(plans, chosen: Plan, objective: Objective, *, selection: Selection) 
         if not plan.legal:
             verdict = "REFUSED " + plan.refusals[0].split(":", 1)[0]
         elif plan is chosen:
-            verdict = "CHOSEN"
+            verdict = "REQUESTED" if requested else "CHOSEN"
         else:
             verdict = "legal"
         lines.append(f"  {plan.label().ljust(widest)}  {scalar:14d}  {axis:14d}  {verdict}")
@@ -1070,9 +1101,26 @@ def explain(plans, chosen: Plan, objective: Objective, *, selection: Selection) 
         if not plan.legal:
             for refusal in plan.refusals:
                 lines.append(f"    {plan.label()}: {refusal}")
+    if requested:
+        # What the override cost, named rather than left for the reader to work out.
+        try:
+            would = choose(plans, objective)
+        except PlanError:
+            would = None
+        if would is not None and would is not chosen:
+            weights = _weights(objective.value)
+            mine, theirs = chosen.cost.dot(weights), would.cost.dot(weights)
+            ratio = f"{mine / theirs:.1f}x" if theirs else "more"
+            lines.append(
+                f"  requested by --backend; {objective.name.lower()} would have chosen "
+                f"{would.label()} ({ratio} cheaper on this objective)"
+            )
+        elif would is not None:
+            lines.append("  requested by --backend, and it is what this objective would choose")
     nonzero = {name: value for name, value in chosen.cost.as_dict().items() if value}
     lines.append(
-        "  chosen cost vector: "
+        ("  requested" if requested else "  chosen")
+        + " cost vector: "
         + ", ".join(f"{name}={value}" for name, value in sorted(nonzero.items()))
     )
     lines.append(f"  ({CALIBRATION['class']}; {CALIBRATION['note']})")

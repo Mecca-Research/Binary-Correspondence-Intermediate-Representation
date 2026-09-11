@@ -1130,3 +1130,164 @@ properly rather than by accretion. And if the corpus outgrows the scale that
 makes exact statistics cheap — the joint distribution is small *because* an
 indexed column is small — S15's argument stops holding, and the honest answer
 then is a bound that says it is a bound, which is where this started.
+
+---
+
+## The performance suite, and what it found
+
+Every measurement above was taken to answer a question somebody had already
+asked. This section is the other direction: a standing harness that measures the
+build without being told where to look, run once, and then read.
+
+`training/tools/perf_suite.py` covers eight families — `startup`, `catalog`,
+`resolve`, `aggregate`, `order`, `fetch`, `build`, `memory` — and classifies
+every row `exact`, `ratio` or `wall` on the rule this tree already uses
+(`docs/PERFORMANCE_AUDIT.md`). The `exact` rows are counts and names: how many
+rows a predicate admitted, which strategy an ORDER BY chose, how many modules an
+import pulled in. Those gate. The `wall` rows are milliseconds on a shared
+virtualized host with no PMU, and they gate nothing, ever — they are here to
+*order* two ways of doing a thing, which is the only claim a clock can support
+here. `--compare` holds `exact` rows to equality and `wall` rows to a 25% band,
+so re-running the suite is a diff rather than a reading exercise.
+
+### What the numbers looked like
+
+Cold, whole-process, median of five:
+
+| command | ms | IQR |
+|---|---|---|
+| bare interpreter, no imports | 14.1 | — |
+| relational `--count` | 103.0 | 2.9 |
+| ranked `--query`, `--backend reference` (the default) | 243.3 | 8.6 |
+| ranked `--query`, `--backend native` | 133.8 | 6.1 |
+| ranked `--query`, `--backend auto` | 137.4 | 7.1 |
+| ranked `--query`, `--backend q8` | 833.2 | 311.8 |
+
+Most of what the rail does is already close to its floor, and saying so is a
+result rather than an absence of one. Resolving a predicate costs 0.02–0.33 ms,
+under 1% of any command that contains it. An aggregate answered from stored
+statistics costs 0.001–0.004 ms and never reads a row. Fetching runs about 16 µs
+a row, 76.7% of it inside `json.loads` and 14.9% in I/O, and the seek path beats
+reading and parsing the corpus (42.5 ms) at every k that was measured. All six
+artifacts together are 1,036,100 bytes resident, 0.282 of the corpus they index.
+Those rows are recorded and then left alone: a proved bound retires a row.
+
+Four things were not at their floor.
+
+### P1 — one cost constant, 37.5x low, choosing the wrong plan
+
+Re-deriving every constant in `CostModel` from a measurement found four of the
+five within 15% of their stored value, and one not:
+
+| constant | stored | measured | ratio |
+|---|---|---|---|
+| `ns_per_kmac_native` | 884 | 874 | 0.99x |
+| `ns_per_row_derived` | 31,000 | 31,371 | 1.01x |
+| `ns_per_kmac_reference` | 53,700 | 51,368 | 0.96x |
+| `ns_per_kmac_q8` | 4,727 | 4,003 | 0.85x |
+| `ns_per_row_q8_quantize` | 4,000 | **150,152** | **37.5x** |
+
+The q8 *scan* is the fastest of the three backends and was priced correctly. Its
+*setup* — 45.21 ms flattening the f32 column into a list, then 287.38 ms inside
+`bcir_ai_quantize_q8_f64` — was charged at 8.9 ms instead of 332.59 ms.
+
+A cost model is allowed to be approximate. This was wrong by a factor that
+reorders the plans, and the reordering was reachable: on a host carrying the q8
+kernel but not the q15 one — a partial build, which this tree supports —
+`choose(LATENCY)` preferred `q8 /seek` over `reference /seek`, and the plan it
+picked measured 833 ms against the 243 ms of the plan it rejected. The planner
+was not uncertain there; it was confident in the wrong direction.
+
+**Why no gate saw it.** S18 records the planner's decisions for 26 requests, and
+recorded every one of them with all four backends available — the single
+configuration where the native kernel dominates whatever q8 is priced at, so the
+q8 term never reached a decision the baseline could observe. The constant could
+have been any value at all. The fix is not only the constant: availability is now
+part of the recorded decision, at three configurations (`every backend`, `q8
+without q15`, `no compiled kernel`), so the term reaches a pinned decision and a
+drift back is a finding (L2 — a check that cannot fail on the input it is given
+is not checking that input).
+
+### P2 — ORDER BY had no threshold where its sibling has a measured one
+
+`order_strategy` chose structurally: read the sorted index when there is no
+predicate, sort the admitted rows when there is one. The argument for it is
+sound and it is about *narrow* predicates — walking 2,215 index entries to find
+the 16 a narrow predicate admits does cost more than sorting those 16. Applied
+to every predicate it sorted 2,160 admitted rows while a filtered read of the
+same index sat unused beside it.
+
+Measured over both measurement columns and both directions, as sort ÷
+index+filter, so above 1.00 the index is cheaper:
+
+| share of table | char_count asc | desc | token_estimate asc | desc |
+|---|---|---|---|---|
+| 95% | 4.64 | 1.50 | 4.32 | 1.46 |
+| 70% | 3.24 | 1.06 | 3.32 | 1.14 |
+| 50% | 2.15 | 0.78 | 2.12 | 0.73 |
+| 25% | 1.15 | 0.36 | 1.15 | 0.34 |
+| 10% | 0.38 | 0.13 | 0.37 | 0.12 |
+
+Ascending crosses near 20%; descending does not cross until 70%, because
+`ordered_from_index` re-derives the descending order on each call. 0.70 is the
+latest of the four crossings, so no column and no direction is pushed past its
+own — and it lands on the same value as `SORTED_SCAN_SHARE`, which answers the
+sibling question about *finding* rows in a range.
+
+Both paths return identical rows: 168 random selections across both columns,
+both directions and seven selectivities agreed exactly, which is what makes this
+a choice about time rather than about answers. The gate re-proves that agreement
+rather than trusting the note.
+
+**A witness that was testing the wrong thing.** The existing check asserted that
+a predicate forces a sort, using `char_count >= <row 0's measurement>` as its
+"narrow" predicate — which admits most of the table. It passed for as long as
+*any* WHERE clause forced a sort, because it was reading "a predicate" where it
+meant "a narrow one". It now builds selections either side of the threshold by
+construction and asserts they straddle it (L11 — a witness must hit the law it
+exists to test).
+
+### P3 — EXPLAIN put the planner's word on a decision the planner did not make
+
+`--backend` defaults to `reference`, so nearly every EXPLAIN a reader sees is of
+a *forced* plan. The table marked it `CHOSEN` — beside `native /seek`, legal, at
+1/124 the modeled compute, marked only `legal`. The plain reading of that table
+is that the planner preferred the expensive plan. It had not been asked.
+
+A forced plan is now `REQUESTED`, and the plan `choose` would have returned is
+named underneath with the ratio, so the cost of overriding the planner is
+visible instead of inferred. This is the same rule the rest of the tree applies
+to verdicts: the word has to name what actually decided.
+
+### P4 — a row in this suite that invited the wrong conclusion
+
+The `fetch` family compared seeking k rows against "reading the whole corpus",
+and measured the latter with `read_bytes`: 0.58 ms, against 8.5 ms to seek 500
+rows. Read literally, S3's whole design loses.
+
+It is not the comparison. A caller wants *records*, and the whole-corpus path
+has to parse every line to produce one — 42.5 ms, against which the seek path
+wins at every k measured. The suite now reports both halves and says on the row
+which one is the alternative. A harness that misleads its own author about the
+thing it exists to measure is the defect this section is least entitled to
+overlook.
+
+### What was measured and left alone
+
+`Catalog.load` costs 10.65 ms, 97.6% of it digesting 3,668,523 bytes across
+eight files to establish freshness. That is not overhead to remove: the cheaper
+answer is `mtime`, which this rail deliberately took *out* of the manifest to
+make `catalog.json` reproducible across directories. Paying 10 ms to keep a
+content address meaningful is the trade this tree exists to make, and the row is
+retired rather than optimized.
+
+Two costs are known and not yet paid down, recorded here so they are not
+rediscovered. `row_squares` is 69.5 ms of arithmetic over the stored codes,
+recomputed in every process that uses the reference backend, and it is a pure
+function of 8,860 bytes that nothing persists — the row squares are *not*
+constant (2,212 distinct values, spread 0.057% around `scale^2`), so the term
+cannot be dropped, only stored. And a relational `--count` imports 123 modules,
+of which the `bcir` package's own eager `from .model import ...` is 13.6 ms —
+laziness that `bcir/kbcir/__init__.py` documents and `bcir/__init__.py` defeats.
+Both are real; neither is in this slice, because both change a rail outside
+`training/` and this one stayed inside it.
