@@ -333,6 +333,25 @@ def _identity(path: Path) -> tuple[int, int]:
     return (stat.st_ino, stat.st_mtime_ns)
 
 
+def _stamp_vouches(library: Path) -> bool:
+    """Does the stamp beside `library` validate the bytes now on disk?
+
+    This is what a rebuild promises, and the only thing it promises on every host.
+    "The rebuilt library has the same bytes as the first one" is a stronger claim
+    that belongs to the *toolchain*: an ELF build is reproducible, a PE carries a
+    `TimeDateStamp`, and asserting the stronger one everywhere reports the object
+    format as a defect in the cache.
+
+    One predicate rather than the same comparison written out at each site, because
+    writing it out per site is how there came to be three of them (L14).
+    """
+    return NativeAIKernels._reusable(
+        library,
+        NativeAIKernels._stamp_path(library),
+        NativeAIKernels._input_digest(_CC),
+    )
+
+
 def _toolchain_is_reproducible(directory) -> bool:
     """Does compiling the same inputs twice produce the same bytes here?
 
@@ -431,11 +450,7 @@ def test_native_build_reuses_the_library_when_nothing_changed():
         assert _identity(library) != before
         # Whatever that rebuild produced, the stamp must now vouch for it -- that is
         # the property the cache rests on, and it holds on every host.
-        assert NativeAIKernels._reusable(
-            library,
-            NativeAIKernels._stamp_path(library),
-            NativeAIKernels._input_digest(_CC),
-        )
+        assert _stamp_vouches(library)
         rebuilt = _identity(library)
         _build_and_release(directory)
         assert _identity(library) == rebuilt
@@ -488,11 +503,17 @@ def test_native_build_refuses_a_stamp_that_does_not_match_the_library():
         _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         original = library.read_bytes()
-        _replace_bytes(library, original + b"\x00tampered")
+        tampered = original + b"\x00tampered"
+        _replace_bytes(library, tampered)
         before = _identity(library)
         _build_and_release(directory)
         assert _identity(library) != before
-        assert library.read_bytes() == original
+        # The tampered bytes are gone and a real build stands in their place. Not
+        # "the bytes are the original ones": that is the toolchain's reproducibility,
+        # not the stamp's promise.
+        assert library.read_bytes() != tampered
+        assert _stamp_vouches(library)
+        NativeAIKernels.load(library).close()
 
 
 def test_native_build_refuses_a_malformed_stamp():
@@ -503,7 +524,6 @@ def test_native_build_refuses_a_malformed_stamp():
         _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
-        digest = hashlib.sha256(library.read_bytes()).hexdigest()
         honest = json.loads(stamp.read_text(encoding="utf-8"))
         corruptions = (
             "",
@@ -525,7 +545,10 @@ def test_native_build_refuses_a_malformed_stamp():
             before = _identity(library)
             _build_and_release(directory)
             assert _identity(library) != before, corruption
-            assert hashlib.sha256(library.read_bytes()).hexdigest() == digest, corruption
+            # A rebuild happened, so the stamp it just wrote must vouch for the file
+            # it just wrote. Whether those bytes equal the first build's is the
+            # toolchain's business, checked once in the reuse test.
+            assert _stamp_vouches(library), corruption
         stamp.unlink()
         before = _identity(library)
         _build_and_release(directory)
@@ -550,7 +573,7 @@ def test_native_build_rebuilds_when_the_library_is_gone():
         # object -- and either way the stamp has to vouch for the file beside it.
         assert rebuilt["inputs"] == recorded["inputs"]
         assert rebuilt["output"] == hashlib.sha256(library.read_bytes()).hexdigest()
-        assert NativeAIKernels._reusable(library, stamp, recorded["inputs"])
+        assert _stamp_vouches(library)
         # The recovered library is usable, not merely present.
         NativeAIKernels.load(library).close()
 
