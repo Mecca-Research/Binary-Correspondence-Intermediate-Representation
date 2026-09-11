@@ -109,9 +109,17 @@ python3 training/tools/search_chunks.py --query "opaque pointers" --backend q8
 # ... and narrow it, project it, count it, or ask how it will be answered
 python3 training/tools/search_chunks.py --query "jit" --where "source_path^=training/llvm/12-backend-jit"
 python3 training/tools/search_chunks.py --query "sparsity" --where "kind=code" --select "source_path,title"
+python3 training/tools/search_chunks.py --query "lowering" --backend auto --objective latency --explain
+
+# aggregates, answered from the index rather than by scanning
 python3 training/tools/search_chunks.py --count --where "subject=llvm" --where "kind=code"
 python3 training/tools/search_chunks.py --count --group-by kind
-python3 training/tools/search_chunks.py --query "lowering" --backend auto --objective latency --explain
+python3 training/tools/search_chunks.py --count --distinct language
+python3 training/tools/search_chunks.py --count --stats char_count --where "kind=code"
+
+# a relational scan: no query, no vectors -- rows by predicate, ordered by a column
+python3 training/tools/search_chunks.py --where "kind=code" --order-by "char_count:desc" \
+                                        --top-k 5 --select "source_path,char_count"
 
 # rebuild only what changed, and keep the corpus you measured against
 python3 training/tools/embed_chunks.py --chunks build/training/chunks \

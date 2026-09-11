@@ -251,6 +251,63 @@ def test_native_q15_index_matches_hard_fact_filtered_python_oracle():
     ) == query_optimization_memory(memory, query, top_k=13, active_facts=(memory.facts[0],))
 
 
+def _narrow_memory(admitted: int) -> OptimizationMemory:
+    """A memory in which exactly `admitted` patterns can satisfy the query's facts."""
+    facts = tuple(
+        sorted((OptimizationFact("host", "isa", "x86_64"), OptimizationFact("gpu", "format", "q8")))
+    )
+    patterns = []
+    for index in range(24):
+        required = (facts[0],) if index < admitted else (facts[1],)
+        embedding = tuple(
+            ((index * 313 + coordinate * 17) % 65536) - 32768 for coordinate in range(9)
+        )
+        patterns.append(
+            OptimizationPattern(
+                _hash(f"narrow-{index:04d}"),
+                embedding,
+                _hash(f"narrow-shard-{index}"),
+                _hash(f"narrow-evidence-{index}"),
+                required,
+            )
+        )
+    return OptimizationMemory(
+        _hash("narrow-model"),
+        _hash("narrow-embedder"),
+        tuple(sorted(patterns, key=lambda row: row.pattern_sha256)),
+        facts,
+    )
+
+
+def test_native_q15_returns_fewer_matches_than_asked_when_fewer_are_admitted():
+    """The short return, on both rails.
+
+    Every other test here admits more patterns than it asks for, so the kernel's
+    `count < top_k` exit -- where it writes a shorter result and stops -- had never
+    executed under a gate, in C or through this binding. A filter's most likely
+    wrong answer is to return the rows it was supposed to remove, and that answer is
+    indistinguishable from the right one unless the mask is actually narrower than
+    the request.
+    """
+    native = _native()
+    if native is None:
+        return
+    facts = _narrow_memory(1).facts
+    for admitted in (0, 1, 2, 7):
+        memory = _narrow_memory(admitted)
+        query = tuple((coordinate * 4409) % 65536 - 32768 for coordinate in range(9))
+        index = NativeOptimizationIndex(native, memory)
+        oracle = query_optimization_memory(memory, query, top_k=13, active_facts=(facts[0],))
+        kernel = index.query(query, top_k=13, active_facts=(facts[0],))
+        assert len(oracle) == admitted, (admitted, len(oracle))
+        assert kernel == oracle, (admitted, kernel, oracle)
+    # ... and asking for fewer than are admitted still returns exactly that many.
+    memory = _narrow_memory(7)
+    query = tuple((coordinate * 4409) % 65536 - 32768 for coordinate in range(9))
+    index = NativeOptimizationIndex(native, memory)
+    assert len(index.query(query, top_k=3, active_facts=(facts[0],))) == 3
+
+
 def test_native_model_microbench_is_bounded_and_emits_typed_intervals():
     if _CC is None:
         return

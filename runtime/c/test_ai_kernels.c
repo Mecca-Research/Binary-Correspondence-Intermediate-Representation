@@ -102,6 +102,31 @@ static int q15_test(void) {
   CHECK(bcir_ai_q15_topk(query, patterns, eligible, 3u, 2u, 2u,
                          matches, 2u, &count) == BCIR_AI_INVALID_ARGUMENT);
   CHECK(count == 0u);
+
+  /* Fewer admitted rows than top_k asks for. Every case above admits at least
+     two of three patterns, so `count < top_k` -- the loop's short return -- had
+     never executed: a shipping branch with no test behind it. The shorter result
+     is the answer, not a truncation, and the entries past it must be left
+     exactly as the caller wrote them rather than filled with a stale match. */
+  eligible[0] = 0u; eligible[1] = 1u; eligible[2] = 0u;
+  matches[0].index = 0xEEEEEEEEu; matches[0].squared_distance = 0xEEEEu;
+  matches[1].index = 0xDEADBEEFu; matches[1].squared_distance = 0xD15EA5Eu;
+  count = 77u;
+  CHECK(bcir_ai_q15_topk(query, patterns, eligible, 3u, 2u, 2u,
+                         matches, 2u, &count) == BCIR_AI_OK);
+  CHECK(count == 1u);
+  CHECK(matches[0].index == 1u && matches[0].squared_distance == 1u);
+  CHECK(matches[1].index == 0xDEADBEEFu && matches[1].squared_distance == 0xD15EA5Eu);
+
+  /* And a mask that admits nothing returns nothing -- not everything, which is
+     what a filter whose empty case was never tested tends to do. */
+  eligible[0] = 0u; eligible[1] = 0u; eligible[2] = 0u;
+  matches[0].index = 0xDEADBEEFu; matches[0].squared_distance = 0xD15EA5Eu;
+  count = 77u;
+  CHECK(bcir_ai_q15_topk(query, patterns, eligible, 3u, 2u, 2u,
+                         matches, 2u, &count) == BCIR_AI_OK);
+  CHECK(count == 0u);
+  CHECK(matches[0].index == 0xDEADBEEFu && matches[0].squared_distance == 0xD15EA5Eu);
   return 0;
 }
 

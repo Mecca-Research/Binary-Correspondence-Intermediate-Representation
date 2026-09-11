@@ -63,6 +63,8 @@ import hashlib
 import json
 import os
 import struct
+import sys
+from array import array
 import tempfile
 from pathlib import Path
 
@@ -77,6 +79,7 @@ CATALOG_FILE = "catalog.json"
 POSTINGS_FILE = "postings.json"
 LOCATOR_FILE = "locator.bin"
 IDS_FILE = "ids.txt"
+NUMERIC_FILE = "numeric.bin"
 
 #: Columns indexed by whole value. Low cardinality by construction, so a
 #: distinct-value map over any of them is a handful of entries, not a histogram.
@@ -84,6 +87,12 @@ INDEXED_COLUMNS = ("subject", "kind", "language")
 
 #: The column indexed by every directory prefix rather than by whole value.
 PATH_COLUMN = "source_path"
+
+#: Columns stored as a packed integer column rather than an inverted index. A
+#: distinct-value map over a measurement is as large as the table; what an aggregate
+#: wants instead is the values themselves, contiguous, so MIN/MAX/SUM over a
+#: selection is a gather rather than a scan of the corpus.
+NUMERIC_COLUMNS = ("char_count", "token_estimate")
 
 #: How a missing value is spelled in an index key. JSON object keys are strings,
 #: so `null` needs a spelling that no real value can collide with.
@@ -94,6 +103,12 @@ NULL_KEY = "\0null"
 #: embedding set's `vectors.q15` follows.
 _LOCATOR_STRUCT = struct.Struct("<HQI")
 LOCATOR_ENTRY_BYTES = _LOCATOR_STRUCT.size
+
+#: One numeric cell: a signed 64-bit value, little-endian. `NUMERIC_NULL` is the
+#: spelling of a missing measurement -- distinct from zero, which is a real length.
+_NUMERIC_STRUCT = struct.Struct("<q")
+NUMERIC_CELL_BYTES = _NUMERIC_STRUCT.size
+NUMERIC_NULL = -(2**63)
 
 
 class CatalogError(RuntimeError):
@@ -208,6 +223,7 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
                     "kind": record.get("kind"),
                     "language": record.get("language"),
                     "span": record.get("span"),
+                    **{name: record.get(name) for name in NUMERIC_COLUMNS},
                     "file": file_index,
                     "offset": offset,
                     "length": end - offset,
@@ -217,14 +233,15 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
     return rows
 
 
-def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str]:
+def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, bytes]:
     """Read the chunk table once and derive every fact a plan can use.
 
     One pass. The locator, the postings, the statistics and the parts all come from
     the rows that scan already produced -- a catalog needing its own second pass
     over the corpus would cost more than the scans it exists to avoid.
 
-    Returns the manifest, the postings, the packed locator, and the id list.
+    Returns the manifest, the postings, the packed locator, the id list and the
+    packed numeric columns.
     """
     files = chunk_files(chunk_dir)
     if not files:
@@ -298,6 +315,25 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str]:
         locator += _LOCATOR_STRUCT.pack(int(row["file"]), int(row["offset"]), int(row["length"]))
     ids = "".join(f"{row['chunk_id']}\n" for row in rows)
 
+    numeric = bytearray()
+    numeric_stats: dict[str, dict] = {}
+    for name in NUMERIC_COLUMNS:
+        present: list[int] = []
+        for row in rows:
+            value = row.get(name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                numeric += _NUMERIC_STRUCT.pack(NUMERIC_NULL)
+                continue
+            numeric += _NUMERIC_STRUCT.pack(int(value))
+            present.append(int(value))
+        numeric_stats[name] = {
+            "count": len(present),
+            "nulls": len(rows) - len(present),
+            "min": min(present) if present else None,
+            "max": max(present) if present else None,
+            "sum": sum(present),
+        }
+
     manifest = {
         "schema": SCHEMA,
         "builder": BUILDER,
@@ -316,6 +352,7 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str]:
                 prefix: len(positions) for prefix, positions in postings["path_prefixes"].items()
             },
             "paths": {path: len(positions) for path, positions in postings["paths"].items()},
+            "numeric": numeric_stats,
         },
         "artifacts": {
             "postings": {
@@ -333,9 +370,15 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str]:
                 "path": IDS_FILE,
                 "sha256": hashlib.sha256(ids.encode("utf-8")).hexdigest(),
             },
+            "numeric": {
+                "path": NUMERIC_FILE,
+                "sha256": hashlib.sha256(bytes(numeric)).hexdigest(),
+                "columns": list(NUMERIC_COLUMNS),
+                "cell_bytes": NUMERIC_CELL_BYTES,
+            },
         },
     }
-    return manifest, postings, bytes(locator), ids
+    return manifest, postings, bytes(locator), ids, bytes(numeric)
 
 
 def _publish(root: Path, name: str, payload: bytes) -> Path:
@@ -355,13 +398,13 @@ def _publish(root: Path, name: str, payload: bytes) -> Path:
     return target
 
 
-def write(built: tuple[dict, dict, bytes, str], root: Path = DEFAULT_CATALOG) -> Path:
+def write(built: tuple[dict, dict, bytes, str, bytes], root: Path = DEFAULT_CATALOG) -> Path:
     """Publish every artifact, the manifest last.
 
     Last because the manifest is what vouches for the others' digests: a reader that
     finds the manifest can rely on the sidecars beside it already being complete.
     """
-    manifest, postings, locator, ids = built
+    manifest, postings, locator, ids, numeric = built
     root.mkdir(parents=True, exist_ok=True)
     _publish(
         root,
@@ -370,6 +413,7 @@ def write(built: tuple[dict, dict, bytes, str], root: Path = DEFAULT_CATALOG) ->
     )
     _publish(root, LOCATOR_FILE, locator)
     _publish(root, IDS_FILE, ids.encode("utf-8"))
+    _publish(root, NUMERIC_FILE, numeric)
     return _publish(
         root,
         CATALOG_FILE,
@@ -401,6 +445,7 @@ class Catalog:
         self._postings: dict | None = None
         self._locator: bytes | None = None
         self._ids: list[str] | None = None
+        self._numeric: dict | None = None
         self._by_chunk_id: dict[str, int] | None = None
 
     # -- loading ---------------------------------------------------------
@@ -615,6 +660,82 @@ class Catalog:
                         )
                     found[row] = record
         return found
+
+    # -- numeric columns (aggregates without a scan) ---------------------
+
+    @property
+    def numeric(self) -> dict[str, array]:
+        """Each numeric column as a packed integer array, read on first use.
+
+        Stored contiguously and per column, which is what makes an aggregate over a
+        selection a gather rather than a walk of the corpus. A missing measurement is
+        `NUMERIC_NULL` rather than zero: zero is a real length, and a format in which
+        the two are the same cannot answer MIN honestly.
+        """
+        if self._numeric is None:
+            raw = self._artifact_bytes("numeric")
+            names = tuple(self._artifacts["numeric"].get("columns") or ())
+            expected = len(names) * self.rows_total * NUMERIC_CELL_BYTES
+            if len(raw) != expected:
+                raise CatalogError(
+                    f"catalog: {NUMERIC_FILE} holds {len(raw)} bytes, expected {expected} "
+                    f"({len(names)} column(s) x {self.rows_total} rows x {NUMERIC_CELL_BYTES})"
+                )
+            values = array("q")
+            values.frombytes(raw)
+            if sys.byteorder == "big":
+                values.byteswap()  # the file is little-endian by contract
+            self._numeric = {
+                name: values[index * self.rows_total : (index + 1) * self.rows_total]
+                for index, name in enumerate(names)
+            }
+        return self._numeric
+
+    def numeric_columns(self) -> tuple[str, ...]:
+        return tuple(self._statistics.get("numeric", {}).keys())
+
+    def aggregate(self, column: str, rows=None) -> dict:
+        """MIN, MAX, SUM, COUNT and AVG over a numeric column.
+
+        With no selection this is answered from the statistics the build already
+        computed -- no artifact is read and no row is touched. With a selection it
+        gathers exactly the admitted cells from the packed column. `scanned` reports
+        which happened, because "answered from statistics" and "answered by reading
+        every admitted row" are different claims and only one of them is free.
+        """
+        stats = self._statistics.get("numeric", {}).get(column)
+        if stats is None:
+            known = ", ".join(self.numeric_columns()) or "(none)"
+            raise KeyError(f"catalog: column {column!r} is not a numeric column; known: {known}")
+        if rows is None:
+            return {
+                "column": column,
+                "count": int(stats["count"]),
+                "nulls": int(stats["nulls"]),
+                "min": stats["min"],
+                "max": stats["max"],
+                "sum": int(stats["sum"]),
+                "avg": (stats["sum"] / stats["count"]) if stats["count"] else None,
+                "scanned": 0,
+            }
+        values = self.numeric[column]
+        admitted = [int(row) for row in rows]
+        for row in admitted:
+            if not 0 <= row < self.rows_total:
+                raise IndexError(
+                    f"catalog: row {row} outside this catalog's {self.rows_total} rows"
+                )
+        present = [values[row] for row in admitted if values[row] != NUMERIC_NULL]
+        return {
+            "column": column,
+            "count": len(present),
+            "nulls": len(admitted) - len(present),
+            "min": min(present) if present else None,
+            "max": max(present) if present else None,
+            "sum": sum(present),
+            "avg": (sum(present) / len(present)) if present else None,
+            "scanned": len(present),
+        }
 
     # -- statistics (selectivity, exactly) -------------------------------
 

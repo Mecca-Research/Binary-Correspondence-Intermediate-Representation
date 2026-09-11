@@ -554,6 +554,280 @@ def check_predicate(
 # --------------------------------------------------------------------------
 
 
+def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
+    """Aggregates answered two ways must agree, and both must match the corpus.
+
+    The statistics path reads nothing and the gather path reads the packed column, so
+    a defect in either is invisible against the other alone. Both are therefore also
+    checked against a direct pass over the chunk files -- the same reason the column
+    index is.
+    """
+    catalog_module = load_tool("catalog")
+    truth: dict[str, list[int]] = {name: [] for name in catalog.numeric_columns()}
+    report.require(
+        bool(truth),
+        "aggregates: the catalog declares no numeric columns, so every check below "
+        "would iterate zero times",
+    )
+    for path in catalog_module.chunk_files(chunk_dir):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            for column in truth:
+                value = record.get(column)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    truth[column].append(int(value))
+
+    every_row = list(range(catalog.rows_total))
+    for column, values in truth.items():
+        free = catalog.aggregate(column)
+        gathered = catalog.aggregate(column, every_row)
+        report.require(
+            free["scanned"] == 0 and gathered["scanned"] == len(values),
+            f"aggregates: {column} reported scanned={free['scanned']} unfiltered and "
+            f"{gathered['scanned']} over every row; the two paths are not the two "
+            "paths they claim to be",
+        )
+        for field in ("count", "nulls", "min", "max", "sum"):
+            report.require(
+                free[field] == gathered[field],
+                f"aggregates: {column}.{field} is {free[field]} from statistics and "
+                f"{gathered[field]} from the packed column",
+            )
+        report.require(
+            free["count"] == len(values)
+            and free["min"] == (min(values) if values else None)
+            and free["max"] == (max(values) if values else None)
+            and free["sum"] == sum(values),
+            f"aggregates: {column} disagrees with a direct pass over the chunk files "
+            f"(count {free['count']} vs {len(values)}, sum {free['sum']} vs {sum(values)})",
+        )
+
+        # A selection aggregates exactly its own rows.
+        narrow = sorted(catalog.rows_equal("kind", "code") or [])
+        if narrow:
+            picked = catalog.aggregate(column, narrow)
+            expected = []
+            for row, record in catalog.fetch(narrow).items():
+                value = record.get(column)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    expected.append(int(value))
+            report.require(
+                picked["count"] == len(expected) and picked["sum"] == sum(expected),
+                f"aggregates: {column} over {len(narrow)} selected row(s) reported "
+                f"count={picked['count']} sum={picked['sum']}, the rows themselves "
+                f"hold count={len(expected)} sum={sum(expected)}",
+            )
+
+        # A row outside the set is refused rather than gathered. `-1` matters more
+        # than `rows_total` here: an out-of-range index raises on its own, but a
+        # negative one indexes from the end and returns the wrong row's measurement
+        # with no sign that anything went wrong.
+        for bad in (catalog.rows_total, catalog.rows_total + 7, -1, -catalog.rows_total):
+            try:
+                catalog.aggregate(column, [bad])
+            except IndexError:
+                report.require(True, "")
+            else:
+                report.require(False, f"aggregates: {column} gathered row {bad}, outside the set")
+
+    # A null cell is absent, not zero -- they are different answers to MIN and to
+    # AVG. This corpus has no missing measurement, so asserting over it would pass
+    # by iterating zero times (L2). The case is therefore constructed: a chunk table
+    # with a row whose `char_count` is absent and another whose value is 0, which a
+    # format that spells "missing" as zero cannot tell apart.
+    with tempfile.TemporaryDirectory() as directory:
+        mirror = Path(directory) / "chunks"
+        mirror.mkdir()
+        rows = []
+        for index in range(4):
+            record = {
+                "chunk_id": f"sha256:{index:064d}",
+                "subject": "synthetic",
+                "source_path": f"synthetic/{index}.md",
+                "kind": "prose",
+                "language": None,
+                "span": {"start_line": index, "end_line": index},
+                "text": f"row {index}",
+                "token_estimate": index,
+            }
+            if index == 1:
+                record["char_count"] = 0  # a real, measured zero
+            elif index != 2:  # row 2 has no char_count at all
+                record["char_count"] = 100 + index
+            rows.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        (mirror / "synthetic.chunks.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        built = catalog_module.build(mirror)
+        catalog_module.write(built, Path(directory) / "catalog")
+        synthetic = catalog_module.Catalog.load(Path(directory) / "catalog", mirror)
+
+        summary = synthetic.aggregate("char_count")
+        report.require(
+            summary["nulls"] == 1 and summary["count"] == 3,
+            f"aggregates: a table with one missing char_count reported "
+            f"nulls={summary['nulls']} count={summary['count']}, expected 1 and 3",
+        )
+        report.require(
+            summary["min"] == 0,
+            f"aggregates: MIN(char_count) is {summary['min']}; the measured zero in "
+            "row 1 is the minimum, and a missing value must not be confused with it",
+        )
+        report.require(
+            summary["sum"] == 0 + 100 + 103,
+            f"aggregates: SUM(char_count) is {summary['sum']}, expected 203",
+        )
+        gathered = synthetic.aggregate("char_count", list(range(4)))
+        for field in ("count", "nulls", "min", "max", "sum"):
+            report.require(
+                gathered[field] == summary[field],
+                f"aggregates: char_count.{field} differs between the statistics "
+                f"({summary[field]}) and the packed column ({gathered[field]}) when a "
+                "value is missing",
+            )
+        only_null = synthetic.aggregate("char_count", [2])
+        report.require(
+            only_null["count"] == 0 and only_null["min"] is None and only_null["sum"] == 0,
+            f"aggregates: a selection holding only the missing cell reported "
+            f"{only_null}; an absent measurement contributes nothing, not zero",
+        )
+
+    for column in truth:
+        values = catalog.numeric[column]
+        nulls = sum(1 for value in values if value == catalog_module.NUMERIC_NULL)
+        report.require(
+            nulls == catalog.aggregate(column)["nulls"],
+            f"aggregates: {column} has {nulls} null cell(s) and reports "
+            f"{catalog.aggregate(column)['nulls']}",
+        )
+
+    # GROUP BY, both paths, totals that add up.
+    search = load_tool("search_chunks")
+    for column in catalog.indexed_columns():
+        groups, scanned = search._group_by(catalog, column, None)
+        report.require(
+            not scanned and sum(count for _, count in groups) == catalog.rows_total,
+            f"aggregates: GROUP BY {column} unfiltered sums to "
+            f"{sum(count for _, count in groups)}, not {catalog.rows_total}",
+        )
+        selection = plan.select(catalog, [plan.Predicate("kind", "eq", ("code",))])
+        grouped, scanned = search._group_by(catalog, column, selection)
+        report.require(
+            scanned and sum(count for _, count in grouped) == selection.admitted,
+            f"aggregates: GROUP BY {column} over {selection.admitted} selected row(s) "
+            f"sums to {sum(count for _, count in grouped)}",
+        )
+        report.require(
+            all(count > 0 for _, count in grouped),
+            f"aggregates: GROUP BY {column} emitted a group holding no rows",
+        )
+
+
+def check_ordering(report: Report, search, plan, catalog) -> None:
+    """ORDER BY must be total, stable, and honest about missing measurements."""
+    catalog_module = load_tool("catalog")
+    selection = plan.select(catalog, [plan.Predicate("kind", "eq", ("code",))])
+    report.require(
+        selection.admitted >= 8,
+        f"ordering: only {selection.admitted} row(s) to order, too few to mean much",
+    )
+
+    for column in catalog.numeric_columns():
+        ascending = search._ordered_rows(catalog, selection, column, False)
+        descending = search._ordered_rows(catalog, selection, column, True)
+        report.require(
+            sorted(ascending) == sorted(descending) == sorted(selection.rows),
+            f"ordering: {column} returned a different row set in the two directions",
+        )
+        report.require(
+            ascending == search._ordered_rows(catalog, selection, column, False),
+            f"ordering: {column} ascending is not stable across two calls",
+        )
+        values = catalog.numeric[column]
+        present_asc = [
+            values[row] for row in ascending if values[row] != catalog_module.NUMERIC_NULL
+        ]
+        present_desc = [
+            values[row] for row in descending if values[row] != catalog_module.NUMERIC_NULL
+        ]
+        report.require(
+            present_asc == sorted(present_asc),
+            f"ordering: {column} ascending is not ascending",
+        )
+        report.require(
+            present_desc == sorted(present_desc, reverse=True),
+            f"ordering: {column} descending is not descending",
+        )
+        report.require(
+            present_asc == list(reversed(present_desc)),
+            f"ordering: {column}'s two directions are not reverses of one another",
+        )
+        # Equal values keep row order in both directions -- the tiebreak is not
+        # reversed along with the key, so a page boundary lands in the same place.
+        ties_asc = [row for row in ascending if values[row] == present_asc[0]]
+        ties_desc = [row for row in descending if values[row] == present_asc[0]]
+        report.require(
+            ties_asc == ties_desc,
+            f"ordering: rows tied on {column} come back in different orders "
+            f"({ties_asc[:4]} vs {ties_desc[:4]}); pagination would repeat or skip rows",
+        )
+
+    # A missing measurement sorts last in BOTH directions: absent is not small.
+    with tempfile.TemporaryDirectory() as directory:
+        mirror = Path(directory) / "chunks"
+        mirror.mkdir()
+        rows = []
+        for index in range(5):
+            record = {
+                "chunk_id": f"sha256:{index:064d}",
+                "subject": "synthetic",
+                "source_path": f"synthetic/{index}.md",
+                "kind": "prose",
+                "language": None,
+                "span": {"start_line": index, "end_line": index},
+                "text": f"row {index}",
+            }
+            if index != 3:
+                record["char_count"] = (5 - index) * 10
+            rows.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        (mirror / "synthetic.chunks.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        catalog_module.write(catalog_module.build(mirror), Path(directory) / "catalog")
+        synthetic = catalog_module.Catalog.load(Path(directory) / "catalog", mirror)
+        whole = plan.Selection(None, synthetic.rows_total, True, ())
+        missing_row = next(
+            row
+            for row in range(synthetic.rows_total)
+            if synthetic.numeric["char_count"][row] == catalog_module.NUMERIC_NULL
+        )
+        for descending in (False, True):
+            order = search._ordered_rows(synthetic, whole, "char_count", descending)
+            report.require(
+                order[-1] == missing_row,
+                f"ordering: the row with no char_count sorted to position "
+                f"{order.index(missing_row)} of {len(order)} with descending="
+                f"{descending}; an absent measurement is not a small one",
+            )
+
+    # OFFSET is a window on the same order, never a different one.
+    column = catalog.numeric_columns()[0]
+    full = search._ordered_rows(catalog, selection, column, True)
+    for offset, limit in ((0, 3), (2, 3), (5, 4), (len(full), 3)):
+        report.require(
+            full[offset : offset + limit] == full[offset:][:limit],
+            f"ordering: OFFSET {offset} LIMIT {limit} is not a window on the order",
+        )
+
+    # DISTINCT and GROUP BY count the same values.
+    for indexed in catalog.indexed_columns():
+        groups, _ = search._group_by(catalog, indexed, selection)
+        distinct = {value for value, _ in groups}
+        report.require(
+            len(distinct) == len(groups),
+            f"ordering: GROUP BY {indexed} emitted {len(groups)} rows for "
+            f"{len(distinct)} distinct value(s)",
+        )
+
+
 def check_planner(report: Report, plan, catalog) -> None:
     selection = plan.Selection(None, catalog.rows_total, True, ())
     every = frozenset(plan.BACKENDS)
@@ -1088,6 +1362,8 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
         args.chunks,
         native_ok=native_ok,
     )
+    report.run("aggregates", check_aggregates, report, plan, catalog, args.chunks)
+    report.run("ordering", check_ordering, report, search, plan, catalog)
     report.run("planner", check_planner, report, plan, catalog)
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)
     report.run("S5-incremental", check_incremental, report, args.chunks)

@@ -366,6 +366,47 @@ def topk_q8(
     return [(row, -negated) for negated, row in ranked[:top_k]]
 
 
+def _ordered_rows(catalog, selection, column: str, descending: bool) -> list[int]:
+    """The admitted rows, ordered by a column rather than by distance.
+
+    A numeric column orders by its packed values, a missing measurement sorting last
+    in either direction -- absent is not small, and sorting it as though it were is
+    how a "shortest chunks" query comes back full of rows that were never measured.
+    An indexed column orders by value, then row, so the result is total and stable.
+    """
+    rows = list(selection.rows) if selection.rows is not None else list(range(catalog.rows_total))
+    catalog_module = _load_tool("catalog")
+    if column in catalog.numeric_columns():
+        values = catalog.numeric[column]
+        missing = [row for row in rows if values[row] == catalog_module.NUMERIC_NULL]
+        present = [row for row in rows if values[row] != catalog_module.NUMERIC_NULL]
+        # Two passes, because Python's sort is stable: rows ascending first, then by
+        # value. A single `(values[row], row)` key with `reverse=True` would reverse
+        # the tiebreak along with the key, so a run of equal values would come back
+        # in a different order than ascending gives -- and a page boundary inside
+        # such a run would then repeat or skip rows.
+        present.sort()
+        present.sort(key=lambda row: values[row], reverse=descending)
+        return present + missing
+    by_row: dict[int, str] = {}
+    for value, positions in catalog.postings["columns"].get(column, {}).items():
+        for row in positions:
+            by_row[row] = value
+    if not by_row:
+        raise KeyError(f"catalog: column {column!r} is neither numeric nor indexed")
+    rows.sort()
+    rows.sort(key=lambda row: by_row.get(row, ""), reverse=descending)
+    return rows
+
+
+def _parse_order(spec: str) -> tuple[str, bool]:
+    column, _, direction = spec.partition(":")
+    direction = direction.strip().lower() or "asc"
+    if direction not in ("asc", "desc"):
+        raise ValueError(f"--order-by direction must be asc or desc, not {direction!r}")
+    return column.strip(), direction == "desc"
+
+
 def _catalog(args) -> tuple[object, str]:
     """The catalog, or a stated reason there is none. Never a silent degradation.
 
@@ -387,10 +428,30 @@ def _resolve_selection(plan_module, catalog, terms):
     return plan_module.select(catalog, predicates)
 
 
-def _group_by(catalog, column: str) -> list[tuple[str, int]]:
-    """GROUP BY over an indexed column, answered from statistics without a scan."""
-    counts = catalog.distinct(column)
-    return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+def _group_by(catalog, column: str, selection=None) -> tuple[list[tuple[str, int]], bool]:
+    """GROUP BY over an indexed column, and whether it cost a scan.
+
+    Unfiltered it is answered from the statistics the build already computed -- no
+    artifact read, no row touched. Filtered it intersects each value's postings list
+    with the admitted rows, which is work proportional to the *index*, not to the
+    corpus. Both are exact; the flag says which happened, because "counted from
+    statistics" and "counted by intersecting postings" are different claims.
+    """
+    if selection is None or selection.rows is None:
+        counts = catalog.distinct(column)
+        return sorted(counts.items(), key=lambda pair: (-int(pair[1]), pair[0])), False
+    admitted = set(selection.rows)
+    postings = catalog.postings["columns"].get(column)
+    if postings is None:
+        raise KeyError(f"catalog: column {column!r} is not indexed")
+    counts = {value: len(admitted.intersection(rows)) for value, rows in postings.items()}
+    return (
+        sorted(
+            ((value, count) for value, count in counts.items() if count),
+            key=lambda pair: (-pair[1], pair[0]),
+        ),
+        True,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -444,6 +505,31 @@ def main(argv: list[str] | None = None) -> int:
         "column, answered from the catalog without scanning",
     )
     parser.add_argument(
+        "--order-by",
+        metavar="COLUMN[:asc|desc]",
+        help="order by a column instead of by distance. Only valid WITHOUT --query: "
+        "with a query the order is the ranking, and a tool that quietly reordered "
+        "a ranked result would be answering a different question than it was asked.",
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="skip this many results before --top-k; pagination over a stable order",
+    )
+    parser.add_argument(
+        "--distinct",
+        metavar="COLUMN",
+        help="with --count, list the distinct values of an indexed column",
+    )
+    parser.add_argument(
+        "--stats",
+        metavar="COLUMN",
+        help="with --count, report MIN/MAX/SUM/AVG over a numeric column. Unfiltered "
+        "this is answered from the catalog's statistics without reading a row; "
+        "with --where it gathers exactly the admitted cells.",
+    )
+    parser.add_argument(
         "--explain",
         action="store_true",
         help="print every plan considered, its cost on the twelve axes, and why the chosen one won",
@@ -473,11 +559,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.top_k < 1:
         print("search_chunks: --top-k must be at least 1", file=sys.stderr)
         return EXIT_USAGE
-    if args.query is None and not args.count:
-        print("search_chunks: --query is required unless --count is given", file=sys.stderr)
+    if args.query is None and not (args.count or args.order_by):
+        print(
+            "search_chunks: --query is required unless --count or --order-by is given",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if args.order_by and args.query is not None:
+        print(
+            "search_chunks: --order-by and --query ask for two different orders. With "
+            "a query the order is the ranking; drop --query for a relational scan, or "
+            "drop --order-by to rank.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if args.offset < 0:
+        print("search_chunks: --offset cannot be negative", file=sys.stderr)
         return EXIT_USAGE
     if args.group_by and not args.count:
         print("search_chunks: --group-by is only defined with --count", file=sys.stderr)
+        return EXIT_USAGE
+    if args.stats and not args.count:
+        print("search_chunks: --stats is only defined with --count", file=sys.stderr)
+        return EXIT_USAGE
+    if args.distinct and not args.count:
+        print("search_chunks: --distinct is only defined with --count", file=sys.stderr)
+        return EXIT_USAGE
+    if args.stats and args.group_by:
+        print(
+            "search_chunks: --stats and --group-by ask for two different aggregates; pass one",
+            file=sys.stderr,
+        )
         return EXIT_USAGE
 
     # --require-native is read only inside the native branch below, and --backend
@@ -508,37 +620,108 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[catalog] unavailable, reading every chunk record: {catalog_reason}")
 
     if args.count:
-        if args.group_by:
-            try:
-                groups = _group_by(catalog, args.group_by)
-            except KeyError as exc:
-                print(f"search_chunks: {exc}", file=sys.stderr)
-                return EXIT_USAGE
-            if args.where:
-                print(
-                    "search_chunks: --group-by with --where is not implemented; the "
-                    "catalog counts whole columns, and intersecting them per group "
-                    "would be a scan this tool does not do",
-                    file=sys.stderr,
-                )
-                return EXIT_USAGE
-            width = max(len(name) for name, _ in groups)
-            print(f"COUNT(*) GROUP BY {args.group_by}")
-            for name, count in groups:
-                shown = "(null)" if name == _load_tool("catalog").NULL_KEY else name
-                print(f"  {shown.ljust(width)}  {count:6d}")
-            print(f"  {'TOTAL'.ljust(width)}  {catalog.rows_total:6d}")
-            return EXIT_OK
         try:
             selection = _resolve_selection(plan_module, catalog, args.where)
         except plan_module.PlanError as exc:
             print(f"search_chunks: {exc}", file=sys.stderr)
             return EXIT_USAGE
         where = " AND ".join(str(p) for p in selection.predicates) or "(none)"
+
+        if args.group_by:
+            try:
+                groups, scanned = _group_by(catalog, args.group_by, selection)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            null_key = _load_tool("catalog").NULL_KEY
+            names = [("(null)" if name == null_key else name) for name, _ in groups] or [""]
+            width = max(len(name) for name in names + ["TOTAL"])
+            source = "postings intersection" if scanned else "statistics, no scan"
+            print(f"COUNT(*) GROUP BY {args.group_by} WHERE {where}   [{source}]")
+            for name, count in groups:
+                shown = "(null)" if name == null_key else name
+                print(f"  {shown.ljust(width)}  {count:6d}")
+            print(f"  {'TOTAL'.ljust(width)}  {selection.admitted:6d}")
+            return EXIT_OK
+
+        if args.distinct:
+            try:
+                groups, scanned = _group_by(catalog, args.distinct, selection)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            null_key = _load_tool("catalog").NULL_KEY
+            source = "postings intersection" if scanned else "statistics, no scan"
+            print(f"DISTINCT {args.distinct} WHERE {where}   [{source}]")
+            for name, _ in groups:
+                print(f"  {'(null)' if name == null_key else name}")
+            print(f"  -- {len(groups)} distinct value(s)")
+            return EXIT_OK
+
+        if args.stats:
+            try:
+                summary = catalog.aggregate(args.stats, selection.rows)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            source = (
+                f"gathered {summary['scanned']} cell(s)"
+                if selection.rows is not None
+                else "statistics, no scan"
+            )
+            print(f"AGGREGATE {args.stats} WHERE {where}   [{source}]")
+            for field in ("count", "nulls", "min", "max", "sum"):
+                print(f"  {field.upper().ljust(6)}  {summary[field]}")
+            average = summary["avg"]
+            print(
+                f"  {'AVG'.ljust(6)}  {average:.2f}" if average is not None else "  AVG     (none)"
+            )
+            return EXIT_OK
+
         print(f"COUNT(*) WHERE {where} = {selection.admitted}")
         if selection.predicates:
             exactness = "exact" if selection.estimate_exact else "bound"
             print(f"  catalog estimate before evaluation: {selection.estimated} [{exactness}]")
+        return EXIT_OK
+
+    if args.order_by:
+        # A pure relational scan: no query, no vectors, no backend. The rows come
+        # from the predicate and the order from a column, which is the one shape of
+        # question this tool could not previously be asked at all.
+        try:
+            selection = _resolve_selection(plan_module, catalog, args.where)
+            column, descending = _parse_order(args.order_by)
+            ordered = _ordered_rows(catalog, selection, column, descending)
+        except (plan_module.PlanError, KeyError, ValueError) as exc:
+            print(f"search_chunks: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        window = ordered[args.offset : args.offset + args.top_k]
+        records = catalog.fetch(window)
+        where = " AND ".join(str(p) for p in selection.predicates) or "(none)"
+        print(
+            f"SELECT * WHERE {where} ORDER BY {column} "
+            f"{'DESC' if descending else 'ASC'} LIMIT {args.top_k} OFFSET {args.offset}"
+            f"   -- {len(ordered)} row(s) matched"
+        )
+        projection = (
+            tuple(part.strip() for part in args.select.split(","))
+            if args.select
+            else (
+                "source_path",
+                column,
+            )
+        )
+        for rank, row in enumerate(window, start=args.offset + 1):
+            record = records.get(row, {})
+            values = []
+            for name in projection:
+                value = record.get(name)
+                if isinstance(value, list):
+                    value = " > ".join(str(part) for part in value)
+                values.append(f"{name}={value}")
+            print(f"  {rank}. " + "  ".join(values))
+        if not window:
+            print("  (no rows)")
         return EXIT_OK
 
     embedding_set = EmbeddingSet(args.embedding_set)
@@ -659,6 +842,8 @@ def main(argv: list[str] | None = None) -> int:
 
     results = reference if reference is not None else native
     assert results is not None
+    if args.offset:
+        results = results[args.offset :]
 
     if materialize == "seek" and catalog is not None:
         chunks = catalog.fetch(row for row, _ in results)

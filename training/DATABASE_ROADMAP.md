@@ -101,7 +101,9 @@ behind it.
 | `WHERE <predicate>` | absent | **built** | four operators, ANDed, resolved through an inverted index and applied inside the kernel scan |
 | `SELECT <columns>` | absent | **built** | `--select` projects named columns; nothing else is materialized |
 | `JOIN` | absent | **built** | the catalog binds the chunk table's columns to the embedding set's row number, so `kind`, `title` and `heading_trail` are one lookup |
-| `GROUP BY` / aggregate | absent | **built** | `--count`, and `--group-by` answered from the statistics without a scan |
+| `GROUP BY` / aggregate | absent | **built** | `--count`, `--group-by`, `--distinct` and `--stats` (MIN/MAX/SUM/AVG over a packed numeric column) — answered from statistics when unfiltered, by intersecting postings when not |
+| `ORDER BY <column>` | absent | **built** | `--order-by col[:desc]` without a query: a relational scan, total and stable, with absent measurements sorting last in both directions |
+| `LIMIT` / `OFFSET` | partial | **built** | `--top-k` and `--offset`, a window on one order rather than two orders |
 | `INSERT` / incremental | absent | **built** | parts as the coarse filter, per-row text digests as the fine one |
 | `AS OF` / time travel | absent | **built** | content-addressed generations; an old one is reopened and reproduces its answer |
 | prepared / cached plan | absent | **built** | the kernel is content-addressed and compiled once |
@@ -134,8 +136,8 @@ class `wall` — indicative, never gating.
 The query layer those slices needed is in `training/tools/plan.py`: legality
 first, then a price on the same twelve axes `bcir/asn1/selection.py` prices an
 encoding rule on. `search_chunks.py` gained `--where`, `--select`, `--count`,
-`--group-by`, `--explain`, `--backend auto` and `--objective`, all vacuous by
-default so the pre-slice invocations produce byte-identical output.
+`--group-by`, `--distinct`, `--stats`, `--order-by`, `--offset`, `--explain`,
+`--backend auto` and `--objective`, all vacuous by default so the pre-slice invocations produce byte-identical output.
 
 ### S1 — content-addressed kernel cache
 
