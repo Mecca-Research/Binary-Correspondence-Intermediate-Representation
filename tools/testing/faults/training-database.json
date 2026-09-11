@@ -55,8 +55,8 @@
     },
     {
       "expects": "line endings",
-      "label": "a writer lets the host choose the line ending",
-      "new": "destination.open(\"w\", encoding=\"utf-8\")",
+      "label": "a writer chooses a line ending the host would not",
+      "new": "destination.open(\"w\", encoding=\"utf-8\", newline=\"\\r\\n\")",
       "old": "destination.open(\"w\", encoding=\"utf-8\", newline=\"\\n\")",
       "path": "training/tools/build_chunks.py"
     },

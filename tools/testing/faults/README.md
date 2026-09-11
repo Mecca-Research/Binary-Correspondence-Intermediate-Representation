@@ -31,7 +31,8 @@ python3 tools/testing/red_sweep.py --faults ... --json-out build/red/database.js
 ## What runs in CI, and what does not
 
 A full sweep runs its gate once per fault plus a control, so the database table
-costs sixteen gate runs — minutes each. That does not belong on every push.
+costs one run more than it has faults — minutes each. That does not belong on
+every push.
 
 What *is* cheap is keeping the tables honest, and that runs in the quick tier:
 `bcir/tests/test_red_sweep.py::test_every_committed_table_loads_and_anchors_exactly_once`
@@ -43,6 +44,34 @@ thing measuring the gates is itself measured.
 
 Run the full sweep when you change a gate, when you change the code a fault
 anchors into, and before claiming in a pull request that a check can fail.
+
+## A fault names the gate that owns the law, not the gate you were looking at
+
+The first sweep of the full database table returned one `NOT CAUGHT`, and the
+gate was right. The fault removed `newline="\n"` from a writer in
+`build_chunks.py`, and it expected `verify_database.py`'s `line endings` check to
+notice. That check inspects the *built bytes*, and on Linux text mode writes LF
+either way — so the defect it was pointed at is invisible on this host by
+construction, and the check's own docstring says so: the rule about **source**
+belongs to `bcir/tests/test_line_endings.py`, which reads the tree statically and
+therefore answers the same on every host.
+
+The fault table was wrong, not the gate. Two things came out of it, and both are
+in the tables now:
+
+- the source-side fault is proved against the rail that owns it —
+  `bcir/tests/test_line_endings.py` fires
+  `these writes let the host choose the line ending … training/tools/build_chunks.py:373`;
+- the database table keeps a line-ending fault that its own gate *can* catch
+  anywhere, by writing `newline="\r\n"` explicitly: the built corpus then
+  carries carriage returns on every host, which is the law `line endings` exists
+  to hold.
+
+So when a fault comes back `NOT CAUGHT`, ask first whether the check you named is
+the one that owns the law — and whether the defect can even be *observed* on the
+host running the sweep (`docs/security/laws.md` L12). A fault that only
+manifests on one platform belongs with a host-independent witness, or it is
+evidence about that platform and nothing else.
 
 ## Adding a fault
 
