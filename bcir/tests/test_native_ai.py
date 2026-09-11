@@ -333,6 +333,28 @@ def _identity(path: Path) -> tuple[int, int]:
     return (stat.st_ino, stat.st_mtime_ns)
 
 
+def _toolchain_is_reproducible(directory) -> bool:
+    """Does compiling the same inputs twice produce the same bytes here?
+
+    On ELF hosts it does, and the stamp's recorded output digest is then a stable
+    fact about the source. A Windows PE carries a `TimeDateStamp` in its header, so
+    two builds of one unchanged translation unit differ in their bytes -- a property
+    of the object format, not of anything BCIR decides.
+
+    S1 does not need reproducibility: the stamp records the digest of whatever that
+    build produced, and reuse requires the file on disk to still be *that*. So this
+    is a probe rather than a requirement -- it lets the reproducible hosts keep
+    asserting the stronger property without the others reporting the object format
+    as a defect in the cache. `/Brepro` would make a PE reproducible and is the
+    follow-up if that is ever wanted; nothing here depends on it.
+    """
+    library = Path(directory) / NativeAIKernels._library_name()
+    NativeAIKernels.build(directory, cc=_CC, rebuild=True).close()
+    first = hashlib.sha256(library.read_bytes()).hexdigest()
+    NativeAIKernels.build(directory, cc=_CC, rebuild=True).close()
+    return hashlib.sha256(library.read_bytes()).hexdigest() == first
+
+
 def _build_and_release(directory, **kwargs) -> None:
     """Build, then release the handle before anything touches the file again.
 
@@ -407,8 +429,21 @@ def test_native_build_reuses_the_library_when_nothing_changed():
         # Anti-vacuity: the observation above is only evidence if it CAN change.
         _build_and_release(directory, rebuild=True)
         assert _identity(library) != before
-        # ... and a forced rebuild of unchanged inputs still produces the same bytes.
-        assert hashlib.sha256(library.read_bytes()).hexdigest() == digest
+        # Whatever that rebuild produced, the stamp must now vouch for it -- that is
+        # the property the cache rests on, and it holds on every host.
+        assert NativeAIKernels._reusable(
+            library,
+            NativeAIKernels._stamp_path(library),
+            NativeAIKernels._input_digest(_CC),
+        )
+        rebuilt = _identity(library)
+        _build_and_release(directory)
+        assert _identity(library) == rebuilt
+        # ... and where the toolchain is reproducible, a forced rebuild of unchanged
+        # inputs also gives back the same bytes. A PE embeds a build timestamp, so
+        # this is asserted where it is true rather than required everywhere.
+        if _toolchain_is_reproducible(directory):
+            assert hashlib.sha256(library.read_bytes()).hexdigest() == digest
 
 
 def test_native_build_recompiles_when_the_recorded_inputs_do_not_match():
@@ -504,11 +539,20 @@ def test_native_build_rebuilds_when_the_library_is_gone():
         _build_and_release(directory)
         library = Path(directory) / NativeAIKernels._library_name()
         stamp = NativeAIKernels._stamp_path(library)
-        recorded = stamp.read_text(encoding="utf-8")
+        recorded = json.loads(stamp.read_text(encoding="utf-8"))
         library.unlink()
         _build_and_release(directory)
         assert library.is_file()
-        assert stamp.read_text(encoding="utf-8") == recorded
+        rebuilt = json.loads(stamp.read_text(encoding="utf-8"))
+        # The inputs did not move, so the recorded inputs must not either. The output
+        # digest is whatever this build produced -- identical to the first on a
+        # reproducible toolchain, different on one that stamps a build time into the
+        # object -- and either way the stamp has to vouch for the file beside it.
+        assert rebuilt["inputs"] == recorded["inputs"]
+        assert rebuilt["output"] == hashlib.sha256(library.read_bytes()).hexdigest()
+        assert NativeAIKernels._reusable(library, stamp, recorded["inputs"])
+        # The recovered library is usable, not merely present.
+        NativeAIKernels.load(library).close()
 
 
 def test_native_build_stamp_covers_every_translation_unit_input():

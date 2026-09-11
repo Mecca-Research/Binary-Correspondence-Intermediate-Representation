@@ -81,6 +81,7 @@ class Report:
         self.failures: list[str] = []
         self.checks = 0
         self.skips: list[str] = []
+        self.notes: list[str] = []
 
     def require(self, condition: bool, message: str) -> bool:
         self.checks += 1
@@ -89,7 +90,19 @@ class Report:
         return bool(condition)
 
     def skip(self, reason: str) -> None:
+        """A rail that could not run here. `--require-native` turns these into failures."""
         self.skips.append(reason)
+
+    def note(self, observation: str) -> None:
+        """A property of this host that is true, reported, and not a missing rail.
+
+        Kept apart from `skip` because `--require-native` means *the rail ran*, and
+        these are cases where it ran and the host simply does not offer a stronger
+        property on top -- an object format that embeds a build time, say. Folding
+        the two together would make a flag about coverage fail on a fact about the
+        platform, which is how a requirement stops meaning anything (L2).
+        """
+        self.notes.append(observation)
 
     def run(self, name: str, check, *args, **kwargs) -> None:
         """Run one check, turning any escape into a verdict.
@@ -180,11 +193,36 @@ def check_kernel_cache(report: Report, *, require_native: bool) -> None:
             "S1: rebuild=True did not replace the library, so the check above could "
             "not have failed either -- the observation is vacuous",
         )
+        # Whatever that rebuild produced, the stamp must now vouch for it. This is
+        # the property the cache rests on, and it holds on every host.
         report.require(
-            library.read_bytes() == digest,
-            "S1: a forced rebuild of unchanged inputs produced different bytes; the "
-            "cached library and the compiled one are not the same artifact",
+            NativeAIKernels._reusable(library, stamp, NativeAIKernels._input_digest(compiler)),
+            "S1: after a forced rebuild the stamp no longer validates the library "
+            "beside it, so the next process would compile again for nothing",
         )
+        # A forced rebuild of unchanged inputs gives back the same bytes *where the
+        # toolchain is reproducible*. A Windows PE carries a build timestamp in its
+        # header, so two builds of one unchanged translation unit differ there --
+        # a property of the object format, not of the cache. S1 does not need
+        # reproducibility (the stamp records whatever that build produced), so this
+        # is asserted where it is true rather than required everywhere, and the
+        # condition is measured rather than guessed from the platform name.
+        NativeAIKernels.build(root, cc=compiler, rebuild=True).close()
+        once = library.read_bytes()
+        NativeAIKernels.build(root, cc=compiler, rebuild=True).close()
+        reproducible = library.read_bytes() == once
+        if reproducible:
+            report.require(
+                library.read_bytes() == digest,
+                "S1: this toolchain builds reproducibly, yet a forced rebuild of "
+                "unchanged inputs produced different bytes from the first build",
+            )
+        else:
+            report.note(
+                "S1 byte-identity: this toolchain does not build reproducibly "
+                "(an object format that embeds a build time); the stamp is still "
+                "required to vouch for whatever each build produced"
+            )
 
         recorded = json.loads(stamp.read_text(encoding="utf-8"))
         recorded["inputs"] = "0" * 64
@@ -1391,11 +1429,13 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
+    for observation in report.notes:
+        print(f"[note]    {observation}")
     for reason in report.skips:
         print(f"[skip]    {reason}")
     print(
         f"database gate: PASSED ({report.checks} checks over {catalog.rows_total} rows, "
-        f"{len(report.skips)} honest skip(s))"
+        f"{len(report.skips)} honest skip(s), {len(report.notes)} host note(s))"
     )
     return 0
 
