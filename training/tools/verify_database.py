@@ -165,8 +165,17 @@ _SYNTHETIC_RELAXATIONS = {
     **{
         name: {"required": False}
         for name in (
-            "schema", "corpus", "source_sha256", "span", "heading_trail", "title",
-            "text", "embedding", "embedding_spec", "provenance", "verified_by",
+            "schema",
+            "corpus",
+            "source_sha256",
+            "span",
+            "heading_trail",
+            "title",
+            "text",
+            "embedding",
+            "embedding_spec",
+            "provenance",
+            "verified_by",
         )
     },
 }
@@ -205,8 +214,11 @@ def valid_record(**overrides) -> dict:
             record[spec.name] = {"start_line": 1, "end_line": 1}
         elif spec.name == "embedding_spec":
             record[spec.name] = {
-                "model": None, "revision": None, "dim": None,
-                "normalize": "none", "semantics": None,
+                "model": None,
+                "revision": None,
+                "dim": None,
+                "normalize": "none",
+                "semantics": None,
             }
         elif spec.name == "provenance":
             record[spec.name] = {"license": "LicenseRef-BCIR-NC-1.0", "builder": BUILDER_PATH}
@@ -1475,7 +1487,12 @@ GRAMMAR_ACCEPTS = (
     ("subject!=llvm", "subject", "ne", ("llvm",)),
     ("subject=llvm,data", "subject", "in", ("llvm", "data")),
     ("subject=" + chr(34) + "llvm,data" + chr(34), "subject", "eq", ("llvm,data",)),
-    ("subject=" + chr(34) + "a" + chr(34) + "," + chr(34) + "b" + chr(34), "subject", "in", ("a", "b")),
+    (
+        "subject=" + chr(34) + "a" + chr(34) + "," + chr(34) + "b" + chr(34),
+        "subject",
+        "in",
+        ("a", "b"),
+    ),
     ("source_path^=training/", "source_path", "prefix", ("training/",)),
     ("char_count>=500", "char_count", "ge", ("500",)),
     ("char_count<=500", "char_count", "le", ("500",)),
@@ -2122,7 +2139,9 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
             sources.append(source)
         left, right = sources
         stamps = {
-            path.stat().st_mtime_ns for source in sources for path in catalog_module.chunk_files(source)
+            path.stat().st_mtime_ns
+            for source in sources
+            for path in catalog_module.chunk_files(source)
         }
         report.require(
             len(stamps) == 2 and str(left) != str(right),
@@ -2394,8 +2413,6 @@ def check_generations(report: Report, generations, chunk_dir: Path) -> None:
             )
 
 
-
-
 # --------------------------------------------------------------------------
 # S14/S17 -- the declared table, and what it refuses
 # --------------------------------------------------------------------------
@@ -2592,8 +2609,7 @@ def check_constraints(report: Report, catalog_module, chunk_dir: Path) -> None:
         except schema_module.SchemaError as exc:
             report.require(
                 column in str(exc) or rule in ("extra field", "empty key"),
-                f"constraints: the {rule} refusal for {column!r} does not name the "
-                f"column: {exc}",
+                f"constraints: the {rule} refusal for {column!r} does not name the column: {exc}",
             )
         else:
             report.require(
@@ -2626,8 +2642,7 @@ def check_constraints(report: Report, catalog_module, chunk_dir: Path) -> None:
         except catalog_module.CatalogError as exc:
             report.require(
                 chunk_id in str(exc) and "char_count" in str(exc),
-                f"constraints: the build refused but named neither the chunk nor the "
-                f"column: {exc}",
+                f"constraints: the build refused but named neither the chunk nor the column: {exc}",
             )
         else:
             report.require(
@@ -2723,7 +2738,10 @@ def check_quoting(report: Report, plan) -> None:
         ("title=" + chr(34) + "unterminated", "a quote that is never closed"),
         ("title=say " + chr(34) + "hi" + chr(34), "a quote inside an unquoted value"),
         ("title=" + chr(34) + "a" + chr(34) + "x", "text after a closing quote"),
-        ("title=" + chr(34) + "a" + chr(92) + "nb" + chr(34), "an escape the grammar does not spell"),
+        (
+            "title=" + chr(34) + "a" + chr(92) + "nb" + chr(34),
+            "an escape the grammar does not spell",
+        ),
         ("title=" + chr(34) + "a" + chr(92), "a dangling escape"),
         ("subject=?,llvm", "the presence sentinel inside a set"),
         ("subject^=?", "a presence test on an operator that cannot spell one"),
@@ -2828,8 +2846,7 @@ def check_estimates(report: Report, plan, catalog) -> None:
     for combination in itertools.combinations(columns, 3):
         for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
             candidate = [
-                plan.Predicate(column, "eq", (value,))
-                for column, value in zip(combination, values)
+                plan.Predicate(column, "eq", (value,)) for column, value in zip(combination, values)
             ]
             if len(plan.select(catalog, candidate).rows) > 0:
                 triple = candidate
@@ -2845,8 +2862,7 @@ def check_estimates(report: Report, plan, catalog) -> None:
         selection = plan.select(catalog, triple)
         marginals = min(plan.estimate(catalog, predicate)[0] for predicate in triple)
         pairs = min(
-            plan.joint(catalog, list(pair))[0]
-            for pair in itertools.combinations(triple, 2)
+            plan.joint(catalog, list(pair))[0] for pair in itertools.combinations(triple, 2)
         )
         report.require(
             not selection.estimate_exact,
@@ -2964,24 +2980,40 @@ def check_atomic_publish(report: Report, catalog_module, chunk_dir: Path) -> Non
             total = manifest["rows_total"]
             for tag, count in rows.items():
                 if count == total:
-                    catalog_module.Catalog.load(root, corpora[tag]).postings
+                    # Load it for real against the corpus it was built from, and read
+                    # one artifact through the manifest, so "complete" means the
+                    # sidecars verify and not merely that six files are present.
+                    loaded = catalog_module.Catalog.load(root, corpora[tag])
+                    if not loaded.postings["columns"]:
+                        return f"the {tag} set, whose postings hold no column", False
                     return tag, True
             return f"a set of {total} rows, which is neither catalog", False
+
+        def cutting_at(step: int):
+            """`os.replace`, with its `step`-th call raising instead of renaming.
+
+            A factory rather than a closure written inside the loop: one defined in
+            the loop body captures the loop variable by reference, so it would answer
+            for whichever step the loop had reached by the time it ran rather than the
+            one it was built for. Correct here only by accident of being called
+            immediately, which is not a property worth relying on.
+            """
+            state = {"n": 0}
+
+            def replace(source, target, *rest, **named):
+                state["n"] += 1
+                if state["n"] == step:
+                    raise Interrupted()
+                return real_replace(source, target, *rest, **named)
+
+            return replace
 
         seen: set[str] = set()
         cut = 1
         while True:
             shutil.rmtree(root, ignore_errors=True)
             catalog_module.write(built["before"], root)
-            counter = {"n": 0}
-
-            def counting(source, target, *rest, **named):
-                counter["n"] += 1
-                if counter["n"] == cut:
-                    raise Interrupted()
-                return real_replace(source, target, *rest, **named)
-
-            os.replace = counting
+            os.replace = cutting_at(cut)
             try:
                 catalog_module.write(built["after"], root)
                 completed = True
@@ -3107,8 +3139,10 @@ def check_operator_coverage(report: Report, plan, catalog) -> None:
     # ...and the operators the *printer* can spell are the operators there are. A new
     # operator with no spelling prints as a KeyError at explain time.
     for operator in sorted(declared):
-        values = () if operator in plan.NULLARY_OPERATORS else (
-            ("500",) if operator in plan.RANGE_OPERATORS else ("x",)
+        values = (
+            ()
+            if operator in plan.NULLARY_OPERATORS
+            else (("500",) if operator in plan.RANGE_OPERATORS else ("x",))
         )
         arity = 2 if operator == "in" else 1
         spelled = plan.Predicate("subject", operator, values * arity if values else values)

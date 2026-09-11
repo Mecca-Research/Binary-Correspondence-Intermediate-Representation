@@ -457,9 +457,7 @@ def numeric_summary(rows: list[dict], column: str, table=None) -> dict:
     and would otherwise become the minimum of every column that has a gap.
     """
     present = [
-        value
-        for value in (numeric_cell(row, column, table) for row in rows)
-        if value is not None
+        value for value in (numeric_cell(row, column, table) for row in rows) if value is not None
     ]
     return {
         "count": len(present),

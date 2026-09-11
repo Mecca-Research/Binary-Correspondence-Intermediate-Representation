@@ -596,9 +596,7 @@ def _count_pairwise(catalog, left, left_keys, right, right_keys) -> int | None:
     if len(left_keys) * len(right_keys) > MAX_JOINT_CELLS:
         return None
     return sum(
-        catalog.count_pair(left, a, right, b)
-        for a in sorted(left_keys)
-        for b in sorted(right_keys)
+        catalog.count_pair(left, a, right, b) for a in sorted(left_keys) for b in sorted(right_keys)
     )
 
 

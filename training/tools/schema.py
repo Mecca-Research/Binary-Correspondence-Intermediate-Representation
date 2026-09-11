@@ -101,23 +101,51 @@ class Column:
 #: The table. Order is the order `chunk-v1.json` declares its properties in, so the
 #: two read side by side.
 COLUMNS: tuple[Column, ...] = (
-    Column("schema", "string", "structural", domain=(ROW_SCHEMA,),
-           note="the row's own contract, checked before anything reads the row"),
-    Column("chunk_id", "string", "key",
-           note="sha256 over the identity tuple; the row's name everywhere else"),
+    Column(
+        "schema",
+        "string",
+        "structural",
+        domain=(ROW_SCHEMA,),
+        note="the row's own contract, checked before anything reads the row",
+    ),
+    Column(
+        "chunk_id",
+        "string",
+        "key",
+        note="sha256 over the identity tuple; the row's name everywhere else",
+    ),
     Column("corpus", "string", "structural", domain=("training",)),
-    Column("subject", "string", "indexed",
-           note="the training/<subject>/ folder; eight values, so a whole-value index"),
-    Column("source_path", "string", "path",
-           note="indexed by every directory prefix rather than by whole value"),
+    Column(
+        "subject",
+        "string",
+        "indexed",
+        note="the training/<subject>/ folder; eight values, so a whole-value index",
+    ),
+    Column(
+        "source_path",
+        "string",
+        "path",
+        note="indexed by every directory prefix rather than by whole value",
+    ),
     Column("source_sha256", "string", "structural"),
     Column("span", "object", "structural"),
     Column("heading_trail", "array", "text"),
     Column("title", "string", "text"),
-    Column("kind", "string", "indexed", domain=("prose", "code", "mixed", "table"),
-           note="four values, enumerated: a fifth would index cleanly and match nothing"),
-    Column("language", "string", "indexed", required=False, nullable=True,
-           note="fence language for code and mixed chunks; absent is the common case"),
+    Column(
+        "kind",
+        "string",
+        "indexed",
+        domain=("prose", "code", "mixed", "table"),
+        note="four values, enumerated: a fifth would index cleanly and match nothing",
+    ),
+    Column(
+        "language",
+        "string",
+        "indexed",
+        required=False,
+        nullable=True,
+        note="fence language for code and mixed chunks; absent is the common case",
+    ),
     Column("text", "string", "text"),
     Column("char_count", "integer", "numeric", minimum=1),
     Column("token_estimate", "integer", "numeric", minimum=1),
@@ -126,6 +154,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("provenance", "object", "structural"),
     Column("verified_by", "array", "structural"),
 )
+
 
 class Table:
     """A declared set of columns, and every question that can be asked of one.
@@ -305,8 +334,7 @@ def check_value(row: dict, spec: Column) -> None:
     if value is None:
         if not (spec.nullable or not spec.required):
             raise SchemaError(
-                f"chunk {_row_name(row)} has {spec.name}=null; the table declares it "
-                f"not nullable"
+                f"chunk {_row_name(row)} has {spec.name}=null; the table declares it not nullable"
             )
         return
     actual = _type_of(value)

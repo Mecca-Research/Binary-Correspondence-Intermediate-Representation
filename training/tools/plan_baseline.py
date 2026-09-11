@@ -86,8 +86,13 @@ QUERIES: tuple[dict, ...] = (
     {"name": "order-unfiltered", "where": [], "order_by": "char_count:desc"},
     {"name": "order-narrow", "where": ["subject=data"], "order_by": "char_count:asc"},
     {"name": "group-subject", "where": [], "group_by": "subject", "stats": "char_count"},
-    {"name": "group-having", "where": [], "group_by": "kind", "stats": "char_count",
-     "having": ["rows>=100"]},
+    {
+        "name": "group-having",
+        "where": [],
+        "group_by": "kind",
+        "stats": "char_count",
+        "having": ["rows>=100"],
+    },
 )
 
 #: What a recorded plan says, per objective. Objectives are named rather than taken
@@ -156,9 +161,7 @@ def _facts(catalog, query: dict) -> dict:
             "strategy": catalog.range_strategy(column, low, high),
             "parts_total": len(catalog.parts),
             "parts_pruned": sum(
-                1
-                for part in catalog.parts
-                if _pruned(catalog.zone(part, column), low, high)
+                1 for part in catalog.parts if _pruned(catalog.zone(part, column), low, high)
             ),
         }
 
