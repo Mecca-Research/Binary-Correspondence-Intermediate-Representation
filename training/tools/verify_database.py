@@ -60,6 +60,7 @@ import importlib.util
 import json
 import random
 import shutil
+import struct
 import sys
 import tempfile
 from pathlib import Path
@@ -70,6 +71,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
+
+from db import analytics, engine, ingest, relational, retrieval  # noqa: E402
 
 DEFAULT_SET = Path("build/training/embeddings/lexical-hash-v1")
 DEFAULT_CHUNKS = Path("build/training/chunks")
@@ -135,22 +138,13 @@ class Report:
 
 
 def load_tool(name: str):
-    """Load a sibling tool once, reusing the module object.
+    """Load a sibling tool once. One implementation, in `db.engine`.
 
-    Executing the file again would return a NEW module with NEW class objects, so an
-    `except module.SomeError` would compare an instance of one module's class against
-    another's, match nothing, and let the exception escape.
+    This used to be the careful copy of three, and the other two were wrong in
+    different ways. It is kept as a name here because the checks below read as prose
+    about tools, not about an engine.
     """
-    cached = sys.modules.get(name)
-    path = TOOLS_DIR / f"{name}.py"
-    if cached is not None and getattr(cached, "__file__", None) == str(path):
-        return cached
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return engine.load(name)
 
 
 # --------------------------------------------------------------------------
@@ -764,14 +758,14 @@ def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
     # GROUP BY, both paths, totals that add up.
     search = load_tool("search_chunks")
     for column in catalog.indexed_columns():
-        groups, scanned = search._group_by(catalog, column, None)
+        groups, scanned = analytics.group_counts(catalog, column, None)
         report.require(
             not scanned and sum(count for _, count in groups) == catalog.rows_total,
             f"aggregates: GROUP BY {column} unfiltered sums to "
             f"{sum(count for _, count in groups)}, not {catalog.rows_total}",
         )
         selection = plan.select(catalog, [plan.Predicate("kind", "eq", ("code",))])
-        grouped, scanned = search._group_by(catalog, column, selection)
+        grouped, scanned = analytics.group_counts(catalog, column, selection)
         report.require(
             scanned and sum(count for _, count in grouped) == selection.admitted,
             f"aggregates: GROUP BY {column} over {selection.admitted} selected row(s) "
@@ -927,6 +921,7 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
     fetched = catalog.fetch(list(range(catalog.rows_total)))
     trials = 0
     pruned_parts = 0
+    strategies: set[str] = set()
 
     for column in columns:
         corpus = _corpus_values(catalog_module, chunk_dir, column)
@@ -1039,14 +1034,20 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 f"{catalog.count_in_range(column, low, high)}, not {len(wanted)}; the "
                 "index answers a count exactly or it should not answer it",
             )
-            estimate, exact = catalog.count_range(column, low, high)
+            # Whichever path the threshold picks, the rows are the same rows. The
+            # choice is a cost decision, so it must be invisible in the answer and
+            # visible in the strategy -- both halves are checked, here and below.
+            strategy = catalog.range_strategy(column, low, high)
             report.require(
-                estimate >= len(wanted) and (estimate == len(wanted) or not exact),
-                f"ranges: count_range({column}, {low}, {high}) estimated {estimate} "
-                f"for {len(wanted)} row(s) and called it exact={exact}; an estimate "
-                "below the truth is not a bound, and a bound reported as exact is a "
-                "plan chosen on a number nobody could check",
+                strategy in ("seek", "scan"),
+                f"ranges: {column} in [{low}, {high}] chose strategy {strategy!r}",
             )
+            report.require(
+                catalog.rows_in_range(column, low, high) == wanted,
+                f"ranges: rows_in_range({column}, {low}, {high}) took the {strategy} "
+                f"path and returned rows the other path does not",
+            )
+            strategies.add(strategy)
             found = set(rows)
             unsound = []
             for part in catalog.parts:
@@ -1091,6 +1092,12 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
         f"anti-vacuity: {trials} interval(s) were checked, below the {MIN_RANGE_TRIALS} floor",
     )
     report.require(
+        strategies == {"seek", "scan"},
+        f"anti-vacuity: across {trials} interval(s) the range threshold only ever "
+        f"chose {sorted(strategies)}. Both paths return identical rows, so a threshold "
+        "stuck on one of them is invisible in every answer above; only this notices.",
+    )
+    report.require(
         pruned_parts >= MIN_PRUNED_PARTS,
         f"anti-vacuity: across {trials} interval(s) the zone map ruled out "
         f"{pruned_parts} part(s). Pruning changes cost and never the answer, so a "
@@ -1106,7 +1113,7 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
     for column in columns:
         cells = catalog.numeric[column]
         for descending in (False, True):
-            from_index = search._ordered_from_index(catalog, column, descending)
+            from_index = relational.ordered_from_index(catalog, column, descending)
             rows = list(range(catalog.rows_total))
             missing = [row for row in rows if cells[row] == catalog_module.NUMERIC_NULL]
             present = [row for row in rows if cells[row] != catalog_module.NUMERIC_NULL]
@@ -1118,7 +1125,7 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 "the index differs from the same order produced by sorting",
             )
             report.require(
-                search._ordered_rows(catalog, unfiltered, column, descending) == from_index,
+                relational.ordered_rows(catalog, unfiltered, column, descending) == from_index,
                 f"ranges: ORDER BY {column}{' DESC' if descending else ''} with no "
                 "predicate returned rows the index path does not",
             )
@@ -1126,11 +1133,11 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
         # the comparison above passes whichever one ran; only the strategy says which.
         narrow = plan.select(catalog, [plan.parse_predicate(f"{column}>={cells[0]}")])
         report.require(
-            search._order_strategy(catalog, unfiltered, column) == "index"
-            and search._order_strategy(catalog, narrow, column) == "sort",
+            relational.order_strategy(catalog, unfiltered, column) == "index"
+            and relational.order_strategy(catalog, narrow, column) == "sort",
             f"ranges: ORDER BY {column} chose "
-            f"{search._order_strategy(catalog, unfiltered, column)!r} with no predicate "
-            f"and {search._order_strategy(catalog, narrow, column)!r} with one; the "
+            f"{relational.order_strategy(catalog, unfiltered, column)!r} with no predicate "
+            f"and {relational.order_strategy(catalog, narrow, column)!r} with one; the "
             "index answers the first and a sort answers the second",
         )
 
@@ -1172,6 +1179,212 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 f"{len(below & above)}; a pivot must split the measured rows and "
                 "leave the unmeasured one out of both",
             )
+
+
+#: The two modules that *are* the engine, and so may reach it without going through
+#: the package. `plan` prices a predicate over the catalog it filters with, and
+#: `generations` publishes the catalog as part of a generation.
+ENGINE_INSIDERS = ("plan.py", "generations.py")
+ENGINE_MODULES = ("catalog", "plan")
+
+
+def check_interface_boundary(report: Report) -> None:
+    """No tool outside the database package opens the engine for itself.
+
+    Declared scope: a static read of `training/tools/*.py` for two shapes -- loading
+    `catalog` or `plan` through `spec_from_file_location`, and importing either at
+    module level. Aliases, `__import__`, and anything assembled at run time are out of
+    scope and belong to a linter rather than to this rail. The boundary is stated here
+    so the answer to the next soundness question is to point at it rather than to grow
+    an interpreter.
+
+    Reaching the engine *through* `db.engine` is not a violation: the package is the
+    door, however a caller knocks on it. What this forbids is a second door.
+
+    It exists because that second door was real. The sibling-module loader was carried
+    in three copies that disagreed -- one returned any cached module that shared the
+    name, one executed a fresh module and then discarded it for whatever `setdefault`
+    had kept, and one checked that the cached module came from the file it meant. Only
+    the last is correct (`docs/security/laws.md` L14).
+    """
+    import ast
+
+    scanned = 0
+    findings = []
+    for path in sorted(TOOLS_DIR.glob("*.py")):
+        if path.name in ENGINE_INSIDERS:
+            continue
+        scanned += 1
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in ENGINE_MODULES:
+                        findings.append(f"{path.name} imports {alias.name} directly")
+            elif isinstance(node, ast.ImportFrom) and node.module in ENGINE_MODULES:
+                findings.append(f"{path.name} imports from {node.module} directly")
+            elif isinstance(node, ast.Call):
+                name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+                if name != "spec_from_file_location" or not node.args:
+                    continue
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and first.value in ENGINE_MODULES:
+                    findings.append(f"{path.name} loads {first.value!r} by path")
+    report.require(
+        not findings,
+        "interfaces: the database engine is reached around its package by " + "; ".join(findings),
+    )
+    report.require(
+        scanned >= 10,
+        f"anti-vacuity: only {scanned} tool(s) were read for the boundary above",
+    )
+    # ...and the boundary is only worth checking if the package is actually the door.
+    report.require(
+        any(
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", getattr(node.func, "id", ""))
+            == "spec_from_file_location"
+            for node in ast.walk(
+                ast.parse((TOOLS_DIR / "db" / "engine.py").read_text(encoding="utf-8"))
+            )
+        ),
+        "interfaces: db/engine.py no longer loads anything by path, so the check "
+        "above forbids a shape nothing in this tree uses",
+    )
+
+
+def check_interfaces(report: Report, catalog) -> None:
+    """The four subsystem interfaces answer, over the corpus this gate built.
+
+    Thin by design, and checked anyway: an interface nothing exercises is a second
+    definition waiting to drift from the engine it wraps.
+    """
+    chunk_dir = catalog.chunk_dir
+    selection = retrieval.eligible(catalog, ["kind=code"])
+    report.require(
+        selection.admitted > 0 and selection.rows is not None,
+        "interfaces: retrieval.eligible admitted no rows for a predicate the corpus satisfies",
+    )
+    fetched = retrieval.records(catalog, list(selection.rows)[:8])
+    report.require(
+        len(fetched) == min(8, selection.admitted)
+        and all(record.get("kind") == "code" for record in fetched.values()),
+        "interfaces: retrieval.records returned rows the predicate did not admit",
+    )
+    columns = retrieval.projectable(catalog)
+    report.require(
+        set(catalog.numeric_columns()) <= set(columns)
+        and set(catalog.indexed_columns()) <= set(columns),
+        f"interfaces: retrieval.projectable named {columns}, which does not cover the "
+        "columns the catalog indexes",
+    )
+    parts = ingest.parts(chunk_dir)
+    report.require(
+        [part["part_id"] for part in parts] == [part["part_id"] for part in catalog.parts],
+        "interfaces: ingest.parts and the loaded catalog disagree about the parts",
+    )
+    report.require(
+        ingest.changed_parts(chunk_dir, parts) == (),
+        "interfaces: ingest.changed_parts calls a corpus changed against its own parts",
+    )
+    report.require(
+        ingest.changed_parts(chunk_dir, None) == (),
+        "interfaces: ingest.changed_parts invented changes from no recorded parts",
+    )
+    sources = {part["source"] for part in parts}
+    report.require(
+        all(
+            {part["source"] for part in ingest.parts_for(chunk_dir, name)} == {name}
+            for name in sources
+        ),
+        "interfaces: ingest.parts_for returned parts from another source",
+    )
+
+
+def check_byte_order(report: Report, catalog_module, catalog) -> None:
+    """The readers agree with an explicitly little-endian decode, on whatever host.
+
+    `array.frombytes` reads in the host's own order and each reader swaps when the host
+    is big-endian. That swap is a branch no host in this repository's matrix executes,
+    and an unexecuted branch is where a defect waits (`docs/security/laws.md` L21). So
+    every packed artifact is decoded a second time here by an explicitly little-endian
+    struct, one cell at a time, and the two readings must agree. On a little-endian
+    host that is a tautology about `array`; on a big-endian one the swap branch is the
+    only thing that can make it hold, which is the point.
+
+    **Declared scope: this checks the readers, not the writer.** Both paths here read
+    the file as little-endian, so a file *written* big-endian is consistent with both
+    and passes. What catches that is the differential against the corpus itself --
+    `check_aggregates` and `check_ranges` recompute from the chunk files, whose JSON
+    has no byte order to get wrong -- and it was confirmed catching it: writing
+    `numeric.bin` or `order.bin` with a `>` struct fails those, by name, before this
+    check reports anything. The two halves are kept apart deliberately, because a
+    check that claimed both would be believed about the half it does not cover.
+
+    Byte order is then shown to be load-bearing rather than incidental: one cell read
+    the other way round must give a different number. Without that, a column of small
+    positive values could be byte-order-agnostic by accident and everything above
+    would hold over a file nothing had pinned.
+    """
+    rows = catalog.rows_total
+    root = catalog.root
+
+    numeric_raw = (root / catalog_module.NUMERIC_FILE).read_bytes()
+    cell = struct.Struct("<q")
+    for index, name in enumerate(catalog.numeric_columns()):
+        base = index * rows * catalog_module.NUMERIC_CELL_BYTES
+        explicit = [cell.unpack_from(numeric_raw, base + row * cell.size)[0] for row in range(rows)]
+        report.require(
+            list(catalog.numeric[name]) == explicit,
+            f"byte order: {catalog_module.NUMERIC_FILE} column {name} reads differently "
+            "through the array fast path than through an explicitly little-endian "
+            "decode; the packed columns are not in the order the format declares",
+        )
+
+    order_raw = (root / catalog_module.ORDER_FILE).read_bytes()
+    entry = struct.Struct("<I")
+    for index, name in enumerate(catalog.numeric_columns()):
+        base = index * rows * catalog_module.ORDER_ENTRY_BYTES
+        explicit = [entry.unpack_from(order_raw, base + row * entry.size)[0] for row in range(rows)]
+        report.require(
+            list(catalog.order[name]) == explicit,
+            f"byte order: {catalog_module.ORDER_FILE} column {name} reads differently "
+            "through the array fast path than through an explicitly little-endian decode",
+        )
+
+    locator_raw = (root / catalog_module.LOCATOR_FILE).read_bytes()
+    span = struct.Struct("<HQI")
+    report.require(
+        len(locator_raw) == rows * catalog_module.LOCATOR_ENTRY_BYTES,
+        f"byte order: {catalog_module.LOCATOR_FILE} holds {len(locator_raw)} bytes for "
+        f"{rows} rows of {catalog_module.LOCATOR_ENTRY_BYTES}",
+    )
+    mismatched = [
+        row
+        for row in range(rows)
+        if span.unpack_from(locator_raw, row * span.size) != catalog.span(row)
+    ]
+    report.require(
+        not mismatched,
+        f"byte order: {len(mismatched)} locator entr(y/ies) decode differently through "
+        "an explicitly little-endian struct than through `span`",
+    )
+
+    # ...and byte order is load-bearing: the same cell read the other way is a
+    # different number. A column that happened to be order-agnostic would make every
+    # check above hold over a file nothing had pinned.
+    swapped = struct.Struct(">q")
+    differing = sum(
+        1
+        for row in range(min(rows, 64))
+        if swapped.unpack_from(numeric_raw, row * cell.size)[0]
+        != cell.unpack_from(numeric_raw, row * cell.size)[0]
+    )
+    report.require(
+        differing > 0,
+        "anti-vacuity: the first 64 measurement cells read the same in both byte "
+        "orders, so the checks above would hold on a file with no byte order at all",
+    )
 
 
 def check_grammar(report: Report, plan) -> None:
@@ -1325,7 +1538,7 @@ def check_presence(report: Report, plan, catalog, chunk_dir: Path) -> None:
 def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
     """GROUP BY must partition, its aggregates must add up, and HAVING must filter exactly."""
     for column in catalog.indexed_columns():
-        groups = search._group_rows(catalog, column, None)
+        groups = analytics.group_rows(catalog, column, None)
         members = [row for _, rows in groups for row in rows]
         report.require(
             sorted(members) == list(range(catalog.rows_total)),
@@ -1338,7 +1551,7 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
             f"groups: GROUP BY {column} puts {len(members) - len(set(members))} row(s) "
             "in more than one group",
         )
-        counted, scanned = search._group_by(catalog, column, None)
+        counted, scanned = analytics.group_counts(catalog, column, None)
         report.require(
             not scanned and dict(counted) == {value: len(rows) for value, rows in groups},
             f"groups: GROUP BY {column} answered from the statistics disagrees with "
@@ -1347,7 +1560,7 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
 
         for measure in catalog.numeric_columns():
             whole = catalog.aggregate(measure, list(range(catalog.rows_total)))
-            summaries = [search._group_summary(catalog, measure, rows) for _, rows in groups]
+            summaries = [analytics.group_summary(catalog, measure, rows) for _, rows in groups]
             lows = [summary["min"] for summary in summaries if summary["min"] is not None]
             highs = [summary["max"] for summary in summaries if summary["max"] is not None]
             report.require(
@@ -1364,11 +1577,9 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         # HAVING keeps exactly the groups the term describes, spelled out here rather
         # than recomputed by the code under test.
         for bound in (1, 2, max(len(rows) for _, rows in groups)):
-            term = search._parse_having(plan, f"rows>={bound}")
+            term = analytics.parse_having(f"rows>={bound}")
             kept = [
-                value
-                for value, rows in groups
-                if search._having_holds(plan, term, {"rows": len(rows)})
+                value for value, rows in groups if analytics.having_holds(term, {"rows": len(rows)})
             ]
             report.require(
                 kept == [value for value, rows in groups if len(rows) >= bound],
@@ -1386,9 +1597,9 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         ("avg=1", False),
         ("avg!=1", True),
     ):
-        term = search._parse_having(plan, spec)
+        term = analytics.parse_having(spec)
         report.require(
-            search._having_holds(plan, term, half) is expected,
+            analytics.having_holds(term, half) is expected,
             f"groups: a group averaging 1.5 answered `{spec}` with "
             f"{not expected}; AVG is SUM/COUNT compared exactly, not a rounded decimal",
         )
@@ -1397,13 +1608,13 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
     # against one -- in both directions, so "always false" is not what is being tested.
     empty = {"rows": 3, "count": 0, "nulls": 3, "min": None, "max": None, "sum": 0, "avg": None}
     for spec in ("avg>=0", "avg<0", "min>=0", "min<0", "max>=0", "max<0", "avg=0"):
-        term = search._parse_having(plan, spec)
+        term = analytics.parse_having(spec)
         report.require(
-            not search._having_holds(plan, term, empty),
+            not analytics.having_holds(term, empty),
             f"groups: a group with no measured row satisfied `{spec}`",
         )
     report.require(
-        search._having_holds(plan, search._parse_having(plan, "rows>=3"), empty),
+        analytics.having_holds(analytics.parse_having("rows>=3"), empty),
         "groups: a group with no measured row still has rows, and HAVING rows>=3 "
         "refused a group of three",
     )
@@ -1418,13 +1629,13 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         ("rows=1,2", "a set, where a comparison takes one bound"),
     ):
         try:
-            search._parse_having(plan, spec)
+            analytics.parse_having(spec)
         except plan.PlanError:
             report.require(True, "")
         else:
             report.require(False, f"groups: HAVING accepted {spec!r}, which names {why}")
     try:
-        search._having_holds(plan, search._parse_having(plan, "count>=1"), {"rows": 3})
+        analytics.having_holds(analytics.parse_having("count>=1"), {"rows": 3})
     except plan.PlanError:
         report.require(True, "")
     else:
@@ -1445,14 +1656,14 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
     )
 
     for column in catalog.numeric_columns():
-        ascending = search._ordered_rows(catalog, selection, column, False)
-        descending = search._ordered_rows(catalog, selection, column, True)
+        ascending = relational.ordered_rows(catalog, selection, column, False)
+        descending = relational.ordered_rows(catalog, selection, column, True)
         report.require(
             sorted(ascending) == sorted(descending) == sorted(selection.rows),
             f"ordering: {column} returned a different row set in the two directions",
         )
         report.require(
-            ascending == search._ordered_rows(catalog, selection, column, False),
+            ascending == relational.ordered_rows(catalog, selection, column, False),
             f"ordering: {column} ascending is not stable across two calls",
         )
         values = catalog.numeric[column]
@@ -1512,7 +1723,7 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
             if synthetic.numeric["char_count"][row] == catalog_module.NUMERIC_NULL
         )
         for descending in (False, True):
-            order = search._ordered_rows(synthetic, whole, "char_count", descending)
+            order = relational.ordered_rows(synthetic, whole, "char_count", descending)
             report.require(
                 order[-1] == missing_row,
                 f"ordering: the row with no char_count sorted to position "
@@ -1522,7 +1733,7 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
 
     # OFFSET is a window on the same order, never a different one.
     column = catalog.numeric_columns()[0]
-    full = search._ordered_rows(catalog, selection, column, True)
+    full = relational.ordered_rows(catalog, selection, column, True)
     for offset, limit in ((0, 3), (2, 3), (5, 4), (len(full), 3)):
         report.require(
             full[offset : offset + limit] == full[offset:][:limit],
@@ -1531,7 +1742,7 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
 
     # DISTINCT and GROUP BY count the same values.
     for indexed in catalog.indexed_columns():
-        groups, _ = search._group_by(catalog, indexed, selection)
+        groups, _ = analytics.group_counts(catalog, indexed, selection)
         distinct = {value for value, _ in groups}
         report.require(
             len(distinct) == len(groups),
@@ -1666,6 +1877,54 @@ def check_planner(report: Report, plan, catalog) -> None:
 
 def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> None:
     report.require(bool(catalog.parts), "S5: the catalog declares no parts")
+
+    # Every row finds its own part, and no other. `part_of` bisects rather than walks,
+    # which is only correct while the parts are sorted and touching -- the property
+    # checked just below. Checked over every row rather than a sample, because an
+    # off-by-one at one boundary is exactly what a sample misses.
+    misplaced = []
+    for part in catalog.parts:
+        start, end = part["rows"]
+        for row in (start, (start + end) // 2, end - 1):
+            try:
+                found = catalog.part_of(row)["part_id"]
+            except IndexError:
+                # A refusal for a row that *is* in the set is a misplacement, not an
+                # accident. Reported here so the finding names the boundary rather
+                # than escaping from somewhere else in this function.
+                found = "(refused)"
+            if found != part["part_id"]:
+                misplaced.append(f"row {row} -> {found}, not {part['part_id']}")
+    report.require(
+        not misplaced,
+        "S5: part_of sent rows to the wrong part: " + "; ".join(misplaced[:4]),
+    )
+    walked = [catalog.part_of(row)["part_id"] for row in range(catalog.rows_total)]
+    report.require(
+        len(walked) == catalog.rows_total and all(walked),
+        "S5: part_of did not answer for every row",
+    )
+    for outside in (-1, catalog.rows_total, catalog.rows_total + 1):
+        try:
+            catalog.part_of(outside)
+        except IndexError:
+            report.require(True, "")
+        else:
+            report.require(False, f"S5: part_of claimed a part for row {outside}")
+
+    sources = {part.get("source") for part in catalog.parts}
+    report.require(
+        all(isinstance(name, str) and name for name in sources),
+        "S5: a part does not name the source it was cut from, so nothing can tell "
+        "which file an incremental rebuild has to re-read",
+    )
+    widest = max(end - start for start, end in (part["rows"] for part in catalog.parts))
+    report.require(
+        widest <= catalog_module.MAX_BLOCK_ROWS,
+        f"S5: the widest part covers {widest} rows, above the "
+        f"{catalog_module.MAX_BLOCK_ROWS}-row block size; a part that grows with its "
+        "file is the subject-shaped part this slice removed",
+    )
     covered = sorted((part["rows"][0], part["rows"][1]) for part in catalog.parts)
     contiguous = covered and covered[0][0] == 0 and covered[-1][1] == catalog.rows_total
     for earlier, later in zip(covered, covered[1:]):
@@ -1692,18 +1951,44 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
             before.changed_parts(catalog) == (),
             "S5: a copy of the same chunk table reports changed parts",
         )
-        victim = sorted(mirror.glob("*.chunks.jsonl"))[0]
+        # The file cut into the *most* blocks, not the first one alphabetically. A
+        # file holding a single block cannot tell "this part's content covers its own
+        # rows" from "it covers its whole file": both move exactly one part. The
+        # alphabetically-first file here held 7 rows, so the whole-file digest passed
+        # this check until the choice was made deliberate (L2).
+        counts: dict[str, int] = {}
+        for part in before.parts:
+            counts[part["source"]] = counts.get(part["source"], 0) + 1
+        crowded = max(counts, key=lambda name: (counts[name], name))
+        report.require(
+            counts[crowded] >= 2,
+            f"anti-vacuity: the busiest chunk file is cut into {counts[crowded]} "
+            "part(s), so the check below cannot tell a per-block digest from a "
+            "per-file one",
+        )
+        victim = mirror / f"{crowded}.chunks.jsonl"
         victim.write_bytes(victim.read_bytes() + b'{"chunk_id":"sha256:zz","subject":"x"}\n')
         after_root = Path(directory) / "catalog2"
         catalog_module.write(catalog_module.build(mirror), after_root)
         after = catalog_module.Catalog.load(after_root, mirror)
         moved = after.changed_parts(before)
-        expected = victim.name[: -len(".chunks.jsonl")]
+        source = victim.name[: -len(".chunks.jsonl")]
+        by_id = {part["part_id"]: part for part in after.parts}
+        strangers = sorted(name for name in moved if by_id.get(name, {}).get("source") != source)
         report.require(
-            moved == (expected,),
-            f"S5: changing {victim.name} reported {moved}, expected exactly "
-            f"({expected!r},) -- a part digest that moves for unrelated files, or "
-            "does not move for its own, cannot drive an incremental rebuild",
+            moved and not strangers,
+            f"S5: appending a row to {victim.name} reported {moved} as changed"
+            + (f"; {strangers} come from another file" if strangers else " -- nothing moved")
+            + ". A part digest that moves for a file it does not belong to, or does "
+            "not move for its own, cannot drive an incremental rebuild.",
+        )
+        # ...and it must move *few* parts, not all of them. A digest covering a whole
+        # file would name every block of it, which is a filter that filters nothing --
+        # and is exactly what `_changed_parts` did until this check was written.
+        report.require(
+            len(moved) <= 2,
+            f"S5: one appended row moved {len(moved)} part(s) of {source}; a part's "
+            "content must cover its own rows, not its whole file",
         )
         # And the stale catalog must refuse rather than answer from old statistics.
         try:
@@ -1810,7 +2095,9 @@ def check_incremental(report: Report, chunk_dir: Path) -> None:
             )
 
         # The coarse half: the part that moved is named, and only that one.
-        moved = embed._changed_parts(mirror, full)
+        moved = ingest.changed_parts(
+            mirror, json.loads((full / "manifest.json").read_text(encoding="utf-8")).get("parts")
+        )
         report.require(
             moved == (),
             f"S5: a set just written from this corpus reports {moved} as changed",
@@ -2079,6 +2366,11 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
         if args.require_native:
             report.require(False, f"--require-native but the kernel is unreachable: {exc}")
 
+    # Before anything reads a packed column, because every check that does would
+    # otherwise report a byte-order defect as whatever it broke downstream.
+    report.run("interfaces-boundary", check_interface_boundary, report)
+    report.run("interfaces", check_interfaces, report, catalog)
+    report.run("host-byte-order", check_byte_order, report, catalog_module, catalog)
     report.run("S1", check_kernel_cache, report, require_native=args.require_native)
     report.run("S2", check_derived_columns, report, search, args.embedding_set, native_ok=native_ok)
     report.run(

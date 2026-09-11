@@ -291,6 +291,16 @@ jobs:
       - name: Native AI C/Python parity and bounded measurement
         run: python -m bcir.tests.test_native_ai
 
+      # The training rail's database layer, on BOTH hosts of this matrix. It used to run
+      # only in the ubuntu-only LLVM training corpus job, so the catalog, the planner,
+      # the predicate path, incremental rebuilds and generations were exercised against
+      # exactly one operating system's opinions about files, paths and byte order. This
+      # is the job whose purpose is host adaptation, so it is where that claim belongs.
+      # `--require-native` because the kernel is already built by the step above: a
+      # requirement flag this job did not dare pass would be a requirement in name only.
+      - name: Training database layer (catalog, planner, predicate, generations)
+        run: python training/tools/verify_database.py --require-native
+
       - name: Clang statement-expression/bitfield differential
         run: |
           clang --version
@@ -870,6 +880,14 @@ jobs:
 
       - name: Python<->MLIR differential parity on ARM (smaller campaign)
         run: python3 -m bcir.kbcir.differential -n 3000 --seed 1
+
+      # The database layer on a second architecture. The packed artifacts declare a
+      # byte order and the readers carry a swap branch for hosts that do not share it;
+      # aarch64 runs little-endian here, so this does not execute that branch, but it
+      # does put the whole layer on different silicon, a different page size and a
+      # different libc than every other run of it.
+      - name: Training database layer on ARM
+        run: python3 training/tools/verify_database.py --require-native
 
   c-runtime-arm64:
     name: BCIR C runtime (aarch64 / ARM)

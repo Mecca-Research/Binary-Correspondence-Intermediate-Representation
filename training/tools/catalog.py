@@ -79,11 +79,13 @@ from array import array
 import tempfile
 from pathlib import Path
 
-#: v2 added the per-part numeric zone map. A v1 catalog is refused rather than read
-#: with pruning switched off: "this catalog has no zone map" and "this zone map pruned
-#: nothing" produce the same answer and the same green run, and only one of them is
-#: honest (`docs/security/laws.md` L2).
-SCHEMA = "bcir-training/catalog/v2"
+#: v2 added the per-part numeric zone map. v3 split parts into bounded blocks and made
+#: a part's content digest cover its own rows rather than its whole file. An older
+#: catalog is refused rather than read with the difference papered over: pruning and
+#: rebuild grain change only the *cost* of an answer, so a stale layout produces the
+#: same rows and the same green run, and only one of them is honest
+#: (`docs/security/laws.md` L2).
+SCHEMA = "bcir-training/catalog/v3"
 BUILDER = "training/tools/catalog.py"
 LICENSE = "LicenseRef-BCIR-NC-1.0"
 
@@ -96,6 +98,28 @@ LOCATOR_FILE = "locator.bin"
 IDS_FILE = "ids.txt"
 NUMERIC_FILE = "numeric.bin"
 ORDER_FILE = "order.bin"
+
+#: The most rows one part may cover. A part is the unit of two different things -- the
+#: grain an incremental rebuild re-embeds at, and the span one zone map summarises --
+#: and a part per chunk file served neither, because this corpus keeps 2,160 of its
+#: 2,215 rows in a single file. Measured over that corpus, splitting each file into
+#: blocks of at most this many rows:
+#:
+#:     block rows | parts | catalog.json | one-row edit | estimate for >= 5000
+#:     per file   |       |              | invalidates  | (truth: 16 rows)
+#:     -----------+-------+--------------+--------------+---------------------
+#:     whole file |     8 |     24.7 KiB |    2160 rows | 2160
+#:            256 |    16 |     27.1 KiB |     256 rows |  880
+#:            128 |    24 |     29.5 KiB |     128 rows |  624
+#:             64 |    41 |     34.4 KiB |      64 rows |  432
+#:             32 |    75 |     44.2 KiB |      32 rows |  240
+#:
+#: 128 is the knee. `catalog.json` is the one artifact read on every load, so its
+#: growth is paid by every caller, while the rebuild grain and the estimate are paid
+#: only by the callers that rebuild or plan. Below 128 the manifest grows faster than
+#: either improves. A block never spans two files, so a part still belongs to exactly
+#: one source and a file's rows are still a contiguous run of blocks.
+MAX_BLOCK_ROWS = 128
 
 #: Columns indexed by whole value. Low cardinality by construction, so a
 #: distinct-value map over any of them is a handful of entries, not a histogram.
@@ -134,6 +158,28 @@ NUMERIC_NULL = -(2**63)
 _ORDER_STRUCT = struct.Struct("<I")
 ORDER_ENTRY_BYTES = _ORDER_STRUCT.size
 MAX_INDEXABLE_ROWS = 2**32 - 1
+
+
+#: The share of the table at or above which scanning the packed column beats seeking
+#: the sorted index and sorting the window it returns. Below it the seek wins by up to
+#: 90x; over the whole table the scan wins by about 6x, because a scan produces rows
+#: in order for free while a seek has to sort what it found.
+#:
+#: Measured over this corpus, both measurement columns, best of 15 (ms):
+#:
+#:     share of table |  seek |  scan
+#:     ---------------+-------+------
+#:               50%  | 0.063 | 0.108
+#:               70%  | 0.106 | 0.109   <- char_count crosses here
+#:               75%  | 0.120 | 0.110
+#:               80%  | 0.119 | 0.110   <- token_estimate crosses here
+#:               90%  | 0.156 | 0.111
+#:
+#: 0.70 is the earlier of the two crossings, so neither column is pushed past its own.
+#: Metric class `wall`: this orders two plans, it does not predict a duration, and a
+#: wrong choice costs time and never rows -- which is why the gate checks that the
+#: choice *is made*, and never checks a clock.
+SORTED_SCAN_SHARE = 0.70
 
 
 class CatalogError(RuntimeError):
@@ -252,10 +298,47 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
                     "file": file_index,
                     "offset": offset,
                     "length": end - offset,
+                    # The row's own bytes, digested while they are already in hand. A
+                    # part's content is derived from these rather than from its file,
+                    # so an edit invalidates the block holding it and not the 2,160
+                    # rows that happen to share a file with it.
+                    "digest": hashlib.sha256(line).hexdigest(),
                 }
             )
         offset = end + 1
     return rows
+
+
+def blocks(start: int, end: int, size: int | None = None) -> list[tuple[int, int]]:
+    """Split a row range into contiguous blocks of at most `size` rows.
+
+    One rule, used at build time to cut the parts and by the gate to predict where
+    they fall, so "how a file is divided" is stated once rather than twice
+    (`docs/security/laws.md` L14). A range shorter than one block yields one block,
+    so a small file is not split and an empty one yields nothing to describe.
+    """
+    # Read at call time, not bound as a default argument: a default is evaluated once
+    # when the module is imported, so `MAX_BLOCK_ROWS` could be changed and have no
+    # effect -- which is exactly what happened to the harness that chose its value.
+    size = MAX_BLOCK_ROWS if size is None else size
+    if size < 1:
+        raise CatalogError(f"catalog: a block must hold at least one row, not {size}")
+    return [(lo, min(end, lo + size)) for lo in range(start, end, size)]
+
+
+def block_digest(rows: list[dict]) -> str:
+    """A part's content: the digest of its own rows, in row order.
+
+    Built from the per-row digests rather than from the file, which is the whole point
+    of splitting: two blocks of one file have different contents, so an edit moves one
+    of them. Digesting the row digests rather than the rows again is the same
+    construction `generations.tree_digest` uses -- each input is already a fixed-width
+    canonical string, so no separator can be forged by a row's own bytes.
+    """
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(row["digest"].encode("ascii"))
+    return digest.hexdigest()
 
 
 def numeric_cell(row: dict, column: str) -> int | None:
@@ -327,14 +410,17 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
         rows.extend(scanned)
         stat = _file_stat(path)
         stats_files.append(stat)
-        parts.append(
-            {
-                "part_id": path.name[: -len(".chunks.jsonl")],
-                "file": path.name,
-                "rows": [start, len(rows)],
-                "content": stat["sha256"],
-            }
-        )
+        source = path.name[: -len(".chunks.jsonl")]
+        for number, (low, high) in enumerate(blocks(start, len(rows))):
+            parts.append(
+                {
+                    "part_id": f"{source}#{number:04d}",
+                    "source": source,
+                    "file": path.name,
+                    "rows": [low, high],
+                    "content": block_digest(rows[low:high]),
+                }
+            )
 
     seen: dict[str, int] = {}
     for position, row in enumerate(rows):
@@ -546,6 +632,7 @@ class Catalog:
         self._ids: list[str] | None = None
         self._numeric: dict | None = None
         self._order: dict | None = None
+        self._part_starts_cache: list[int] | None = None
         self._by_chunk_id: dict[str, int] | None = None
 
     # -- loading ---------------------------------------------------------
@@ -967,30 +1054,6 @@ class Catalog:
             return "all" if zone["nulls"] == 0 else "present"
         return "some"
 
-    def count_range(self, column: str, low: int | None = None, high: int | None = None):
-        """Rows where `low <= column <= high`, and whether that count is exact.
-
-        Bounds are inclusive; either may be None for unbounded. A row with no
-        measurement satisfies no range in either direction -- SQL's rule for NULL, and
-        the one this layout makes easiest to lose, since `NUMERIC_NULL` is an ordinary
-        negative integer to the packed column.
-
-        The contract is `count_prefix`'s: a bound comes back marked as a bound, so a
-        plan chosen on an estimate can be explained as having been chosen on one.
-        """
-        self.require_numeric(column)
-        total = 0
-        exact = True
-        for part in self.parts:
-            zone = self.zone(part, column)
-            verdict = self._zone_verdict(zone, low, high)
-            if verdict == "none":
-                continue
-            total += zone["count"]
-            if verdict == "some":
-                exact = False
-        return total, exact
-
     def range_scan(self, column: str, low: int | None = None, high: int | None = None):
         """The rows in `[low, high]` by scanning the column, zone map first.
 
@@ -1035,8 +1098,35 @@ class Catalog:
                 matched.append(row)
         return matched, read
 
+    def range_strategy(self, column: str, low: int | None, high: int | None) -> str:
+        """`"seek"` or `"scan"`: how an ascending answer to this range will be produced.
+
+        Decided from the *exact* count rather than from the zone map's bound. The bound
+        was tried first and measured unusable for this: over this corpus it calls a
+        25%-selective predicate 98% selective at every block size from 32 rows to a
+        whole file, because an open interval keeps any block holding one large value,
+        however few of that block's rows are in range. Deciding on it sends predicates
+        the seek wins by 20x down the scan.
+
+        The exact count costs the two binary searches the seek would make anyway, and
+        the index they read is cached for the rest of the process -- so the price of
+        choosing well is paid once, and only by a caller that asked about a range.
+
+        Returned as a value rather than branched on inside `rows_in_range`, because
+        both paths return identical rows: a gate comparing their output passes
+        whichever one ran, so the decision would otherwise be the one thing here that
+        nothing could observe (`docs/security/laws.md` L2).
+        """
+        self.require_numeric(column)
+        if not self.rows_total:
+            return "seek"
+        share = self.count_in_range(column, low, high) / self.rows_total
+        return "scan" if share >= SORTED_SCAN_SHARE else "seek"
+
     def rows_in_range(self, column: str, low: int | None = None, high: int | None = None):
-        """The rows in `[low, high]`, ascending. Answered by seeking the sorted index."""
+        """The rows in `[low, high]`, ascending, by whichever path is cheaper here."""
+        if self.range_strategy(column, low, high) == "scan":
+            return self.range_scan(column, low, high)[0]
         return sorted(self.seek_range(column, low, high)[0])
 
     # -- presence (IS NULL / IS NOT NULL) --------------------------------
@@ -1176,11 +1266,25 @@ class Catalog:
     # -- parts (incremental rebuild) -------------------------------------
 
     def part_of(self, row: int) -> dict:
-        for part in self.parts:
-            start, end = part["rows"]
+        """The part holding a row, by bisection rather than by walking every part.
+
+        Parts partition the rows in ascending order, which the gate checks, so the
+        first part starting after `row` is one past the answer. Splitting files into
+        blocks multiplied the part count; a linear walk would have quietly turned this
+        into work proportional to the corpus.
+        """
+        starts = self._part_starts()
+        index = bisect.bisect_right(starts, row) - 1
+        if 0 <= index < len(self.parts):
+            start, end = self.parts[index]["rows"]
             if start <= row < end:
-                return part
+                return self.parts[index]
         raise IndexError(f"catalog: row {row} belongs to no part")
+
+    def _part_starts(self) -> list[int]:
+        if self._part_starts_cache is None:
+            self._part_starts_cache = [int(part["rows"][0]) for part in self.parts]
+        return self._part_starts_cache
 
     def changed_parts(self, other: "Catalog") -> tuple[str, ...]:
         """Part ids whose content differs from `other`'s, or that only one side has."""
