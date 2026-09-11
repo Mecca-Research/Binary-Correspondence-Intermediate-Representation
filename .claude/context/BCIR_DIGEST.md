@@ -111,8 +111,8 @@ reversed course — the floor stands and a policy regression now rejects any low
 #749 (merged): the maintained assurance rails — secret scanning, inventory-first
 dependency audit, bounded fuzz/decoder campaigns, a malformed differential, subprocess
 policy, and fail-closed independent review — hardened over 42 adversarial review rounds
-and 240 graded findings. Its durable output is `docs/security/laws.md`: **22 gate-authoring
-laws (L1–L23)**, each with witness tests and a C/C++ port note, plus the per-finding
+and 240 graded findings. Its durable output is `docs/security/laws.md`: **24 gate-authoring
+laws (L1–L24)**, each with witness tests and a C/C++ port note, plus the per-finding
 harvest in `docs/security/pr749-harvest.csv` (20 NEW-LAW / 181 INSTANCE / 39 LOCAL). Read
 that registry before writing or reviewing any gate. Side effects that are now repo facts:
 the Python floor is **3.11** (the 3.10 TOML fallback is deleted, and a `python-floor` CI
@@ -174,12 +174,12 @@ describes and is out of the hook's scope by declaration.
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)
 
-Top-level: ./bcir ./channels ./docs ./training ./mlir ./runtime ./tools
+Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
 
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **3629** across 258 files |
+| Static Python `test_*` function inventory | **3642** across 259 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **127** files; 386 `expected-error` markers |
@@ -259,4 +259,4 @@ Top-level: ./bcir ./channels ./docs ./training ./mlir ./runtime ./tools
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
 - **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (233L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
 - **docs/security/DEPENDENCY_AUDIT_2026-09-04.md** (289L): 1. Verdict · 2. Scope and method · 3. Inventory · 4. Advisory results · 5. Findings and dispositions · 6. Changes landed with this audit · 7. Reproduction · from the repository root; a scratch venv with pip-audit==2.1
-- **docs/security/laws.md** (983L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
+- **docs/security/laws.md** (1079L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary

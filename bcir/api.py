@@ -60,9 +60,9 @@ class KernelArtifact:
         os.makedirs(dirpath, exist_ok=True)
         cpath = os.path.join(dirpath, f"{self.fn_name}.c")
         hpath = os.path.join(dirpath, f"{self.fn_name}.h")
-        with open(cpath, "w", encoding="utf-8") as f:
+        with open(cpath, "w", encoding="utf-8", newline="\n") as f:
             f.write(self.kernel_c)
-        with open(hpath, "w", encoding="utf-8") as f:
+        with open(hpath, "w", encoding="utf-8", newline="\n") as f:
             f.write(self.header_c)
         return {"kernel": cpath, "header": hpath}
 

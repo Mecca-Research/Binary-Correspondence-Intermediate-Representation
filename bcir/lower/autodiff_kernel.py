@@ -462,7 +462,7 @@ def compile_and_run_grad_c(
     try:
         src = os.path.join(workdir, "grad.c")
         exe = os.path.join(workdir, "grad")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(kernel + main)
         needs_math = any(tape.node(nid).op in _MATH_OPS for nid in _topo_order(tape, output))
         build = None
@@ -543,7 +543,7 @@ def compile_and_run_training_c(
     try:
         src = os.path.join(workdir, "train.c")
         exe = os.path.join(workdir, "train")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(unit + main)
         build = None
         for std in ("-std=c23", "-std=c2x", "-std=c11"):

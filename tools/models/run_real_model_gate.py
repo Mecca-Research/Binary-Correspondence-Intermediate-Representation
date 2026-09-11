@@ -241,7 +241,9 @@ def run_gate(
         "passed": True,
     }
     report_path = output / "parity-report.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
     return report
 
 

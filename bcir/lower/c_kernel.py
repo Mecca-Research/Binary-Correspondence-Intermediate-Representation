@@ -1972,7 +1972,7 @@ def compile_and_run_qfixed_c(
     try:
         src = os.path.join(workdir, "qfixed_check.c")
         exe = os.path.join(workdir, "qprog")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(emit_qfixed_selfcheck_c(module, result, fn_name, lane_bits, frac_bits))
         build = subprocess.run(
             [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
@@ -2222,7 +2222,7 @@ def compile_and_run_compensated_c(
     try:
         src = os.path.join(workdir, "comp_check.c")
         exe = os.path.join(workdir, "cprog")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(emit_compensated_selfcheck_c(fn_name, n))
         build = subprocess.run(
             [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],
@@ -2382,7 +2382,7 @@ def compile_and_run_c(
     try:
         src = os.path.join(workdir, "kernel_check.c")
         exe = os.path.join(workdir, "prog")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(emit_selfcheck_c(module, result, fn_name, elem, hw_width=hw_width))
         build = None
         for std in ("-std=c23", "-std=c2x"):

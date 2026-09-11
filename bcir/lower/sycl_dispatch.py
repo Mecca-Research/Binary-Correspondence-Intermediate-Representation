@@ -69,7 +69,7 @@ def sycl_cxx() -> tuple[str, list[str]] | None:
     probe = "#include <sycl/sycl.hpp>\nint main(){ sycl::queue q; (void)q; return 0; }\n"
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "probe.cpp")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(probe)
         for cxx, extra in candidates:
             exe = os.path.join(d, "probe")
@@ -198,7 +198,7 @@ class SyclDispatcher(ChannelDispatcher):
         wd = self._workdir()
         src = os.path.join(wd, f"{tag}_{mode}.cpp")
         exe = os.path.join(wd, f"{tag}_{mode}")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(kernel + main)
         cmd = [cxx, "-std=c++17", "-O2"]
         if define:

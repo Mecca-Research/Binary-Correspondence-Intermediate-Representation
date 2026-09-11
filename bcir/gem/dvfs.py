@@ -225,7 +225,7 @@ def actuate(targets, cpufreq=None) -> list[ActuationResult]:
             )
             continue
         try:
-            with open(_SETSPEED, "w") as f:
+            with open(_SETSPEED, "w", newline="\n") as f:
                 f.write(str(t.target_khz))
             observed = None
             try:

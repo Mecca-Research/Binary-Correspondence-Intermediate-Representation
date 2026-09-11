@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         f"unresolved binaries: {unresolved or 'none'}"
     )
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as handle:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(
                 {"ecosystem": ecosystem, "unresolved_binaries": unresolved, "packages": out},
                 handle,

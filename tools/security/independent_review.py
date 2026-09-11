@@ -251,25 +251,29 @@ def self_check() -> dict[str, Any]:
             'print(\'{"passed": true, "security_concerns": [], '
             '"logic_errors": [], "summary": "clean"}\')\n',
             encoding="utf-8",
+            newline="\n",
         )
-        bad.write_text("print('not-json')\n", encoding="utf-8")
-        empty.write_text("print('')\n", encoding="utf-8")
+        bad.write_text("print('not-json')\n", encoding="utf-8", newline="\n")
+        empty.write_text("print('')\n", encoding="utf-8", newline="\n")
         dupkeys.write_text(
             'print(\'{"passed": false, "passed": true, "security_concerns": [], '
             '"logic_errors": [], "summary": "clean"}\')\n',
             encoding="utf-8",
+            newline="\n",
         )
         nullsum.write_text(
             'print(\'{"passed": true, "security_concerns": [], '
             '"logic_errors": [], "summary": null}\')\n',
             encoding="utf-8",
+            newline="\n",
         )
         rawbytes.write_text(
             "import sys\nsys.stdout.buffer.write(b'\\xff\\xfe not utf-8')\n",
             encoding="utf-8",
+            newline="\n",
         )
-        sleeper.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
-        deep.write_text("print('[' * 200000)\n", encoding="utf-8")
+        sleeper.write_text("import time\ntime.sleep(30)\n", encoding="utf-8", newline="\n")
+        deep.write_text("print('[' * 200000)\n", encoding="utf-8", newline="\n")
         python = sys.executable
         cases.append(("missing-command", run_reviewer([], Path(tmp))))
         cases.append(
@@ -338,7 +342,9 @@ def main(argv: list[str] | None = None) -> int:
             report = run_reviewer(command, args.root)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
     print(f"independent_review: {report['state']} fail_closed={report.get('fail_closed')}")
     if report.get("reason"):
         print(f"  {report['reason']}")

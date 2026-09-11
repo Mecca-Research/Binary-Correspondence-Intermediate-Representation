@@ -3235,49 +3235,6 @@ def check_plan_baseline(report: Report, catalog) -> None:
 # Artifacts are the same bytes on every host, including their line endings
 # --------------------------------------------------------------------------
 
-#: Modules whose writes are fixtures rather than artifacts. A `verify_*` gate builds
-#: its inputs and reads them back in the same process on the same host, so a
-#: translated newline cannot make two hosts disagree about a content address. The
-#: distinction is by role and is stated here rather than inferred, because "is this an
-#: artifact" is not otherwise decidable from a call site.
-_FIXTURE_MODULES = "verify_"
-
-
-def _unpinned_text_writes(path: Path) -> list[int]:
-    """Lines in one module that write text without saying what a newline is.
-
-    Declared scope: `Path.write_text` and text-mode `open`, with the mode given as a
-    literal. A write assembled at run time, routed through a helper this cannot see,
-    or opened with a computed mode is out of scope and belongs to a linter rather than
-    to this rail. Inside the declared scope this is exact; outside it, it does not
-    grow (`docs/security/laws.md` §3 of the CI/CD skill -- declare the scope, then
-    answer the next soundness question by pointing at it).
-    """
-    import ast
-
-    found = []
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if not isinstance(node, ast.Call):
-            continue
-        name = getattr(node.func, "attr", getattr(node.func, "id", ""))
-        if "newline" in {keyword.arg for keyword in node.keywords}:
-            continue
-        if name == "write_text":
-            found.append(node.lineno)
-            continue
-        if name != "open":
-            continue
-        mode = None
-        index = 0 if getattr(node.func, "attr", "") == "open" else 1
-        if len(node.args) > index and isinstance(node.args[index], ast.Constant):
-            mode = node.args[index].value
-        for keyword in node.keywords:
-            if keyword.arg == "mode" and isinstance(keyword.value, ast.Constant):
-                mode = keyword.value.value
-        if isinstance(mode, str) and "b" not in mode and ({"w", "a"} & set(mode)):
-            found.append(node.lineno)
-    return found
-
 
 def check_line_endings(report: Report, chunk_dir: Path, catalog) -> None:
     """An artifact must be the same bytes on every host, newlines included.
@@ -3298,34 +3255,21 @@ def check_line_endings(report: Report, chunk_dir: Path, catalog) -> None:
 
     The repository already declares the rule for everything it tracks:
     `.gitattributes` opens with `* text=auto eol=lf`. What it could not reach is
-    `build/`, which is generated rather than tracked. This check extends the same rule
-    to the tools that generate it.
+    `build/`, which is generated rather than tracked.
 
-    Both halves are needed. The static half stops the defect returning to any writer,
-    including ones whose artifacts no current check digests. The dynamic half is the
-    one that cannot be satisfied by a tidy source tree: it reads the bytes actually on
-    disk (`docs/security/laws.md` L11 -- a witness must hit the law it exists to test).
+    **What this checks, and what it deliberately leaves to another rail.** The rule
+    about *source* -- that no module lets the host choose a line ending -- is repo-wide
+    and belongs to `bcir/tests/test_line_endings.py`, which reads `bcir/`, `tools/`,
+    `training/` and `.claude/` out of one predicate. This check used to carry a second
+    copy of that scan over `training/tools/` alone, and the two had already begun to
+    differ about what counts as a text write -- one folded the suffix case and
+    reconciled against the git index, the other did neither. Two scanners for one rule
+    is the drift `docs/security/laws.md` L15 names, so there is one now.
+
+    What stays here is the half only this gate can do: the corpus on disk. A tidy
+    source tree satisfies the static rule; it says nothing about the bytes a build
+    actually produced (L11 -- a witness must hit the law it exists to test).
     """
-    modules = [
-        path
-        for path in sorted(TOOLS_DIR.glob("*.py"))
-        if not path.name.startswith(_FIXTURE_MODULES)
-    ]
-    report.require(
-        len(modules) >= 8,
-        f"anti-vacuity: only {len(modules)} artifact-building module(s) were read",
-    )
-    findings = []
-    for path in modules:
-        findings += [f"{path.name}:{line}" for line in _unpinned_text_writes(path)]
-    report.require(
-        not findings,
-        "line endings: these writes let the host choose the line ending, so the "
-        "artifact they produce is not the same bytes everywhere -- pass "
-        'newline="\\n": ' + ", ".join(findings),
-    )
-
-    # ...and the artifact on disk carries no carriage return, whoever wrote it.
     written = sorted(chunk_dir.glob("*.chunks.jsonl"))
     report.require(
         len(written) >= 2,

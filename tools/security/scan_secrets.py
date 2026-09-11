@@ -1668,7 +1668,9 @@ def main(argv: list[str] | None = None) -> int:
             )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
     print(
         f"scan_secrets: {report['state']} tracked={report['tracked_files']} "
         f"text={report['text_files']} binary={report['binary_files']} "

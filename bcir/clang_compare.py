@@ -86,7 +86,7 @@ def _build(src: str, opt: str, d: str, tag: str) -> str | None:
     cc = _cc()
     path = os.path.join(d, f"{tag}.c")
     exe = os.path.join(d, tag)
-    with open(path, "w") as f:
+    with open(path, "w", newline="\n") as f:
         f.write(src)
     for std in ("-std=gnu23", "-std=gnu2x"):
         b = subprocess.run([cc, std, opt, path, "-o", exe], capture_output=True, text=True)

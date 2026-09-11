@@ -40,9 +40,9 @@ def jit_run(
         hc = os.path.join(workdir, "harness.c")
         hll = os.path.join(workdir, "harness.ll")
         linked = os.path.join(workdir, "linked.ll")
-        with open(kll, "w") as f:
+        with open(kll, "w", newline="\n") as f:
             f.write(emit_kernel_ll(module, result, fn_name))
-        with open(hc, "w") as f:
+        with open(hc, "w", newline="\n") as f:
             f.write(emit_harness_c(module, result, fn_name))
 
         steps = [

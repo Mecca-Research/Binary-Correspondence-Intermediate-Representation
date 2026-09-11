@@ -196,7 +196,7 @@ def compile_and_run_layout_c(
     try:
         src = os.path.join(workdir, "layout_check.c")
         exe = os.path.join(workdir, "lprog")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(emit_layout_selfcheck_c(fields, records, elem))
         build = subprocess.run(
             [cc, f"-std={std}", "-O2", "-Wall", "-Wextra", src, "-o", exe],

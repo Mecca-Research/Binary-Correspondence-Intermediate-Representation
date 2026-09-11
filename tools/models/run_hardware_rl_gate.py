@@ -106,7 +106,7 @@ def _write_toy_model(directory: Path):
         stream.write(encoded)
         stream.write(b"\0" * offset)
     (directory / "config.json").write_text(
-        json.dumps(config, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+        json.dumps(config, sort_keys=True, separators=(",", ":")), encoding="utf-8", newline="\n"
     )
     return path, config
 
@@ -119,7 +119,7 @@ def _malformed_report_artifact(source: Path, root: Path) -> Path:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["unknown"] = True
     report_path.write_text(
-        json.dumps(report, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+        json.dumps(report, sort_keys=True, separators=(",", ":")), encoding="utf-8", newline="\n"
     )
     manifest_path = staging / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -455,7 +455,7 @@ def run(output_dir: Path) -> dict:
     }
     report_path = output_dir / "report.json"
     report_path.write_text(
-        json.dumps(result, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+        json.dumps(result, sort_keys=True, separators=(",", ":")), encoding="utf-8", newline="\n"
     )
     return result
 

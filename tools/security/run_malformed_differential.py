@@ -262,7 +262,7 @@ def _compiled_mlir(text: str, root: Path, opt: str | None = None) -> dict[str, A
     try:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "case.mlir"
-            path.write_text(text, encoding="utf-8")
+            path.write_text(text, encoding="utf-8", newline="\n")
             # The shared bounded runner, not a local Popen: BCIR_OPT may name a
             # wrapper, and a helper that inherits the pipes must not outlive the
             # bound. It gives this rail its own session, per-stream byte
@@ -603,7 +603,9 @@ def main(argv: list[str] | None = None) -> int:
     report = run_differential(args.root, require_compiled=args.require_compiled)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        args.json_out.write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n"
+        )
     print(
         f"malformed_differential: {report['state']} cases={len(report['cases'])} "
         f"disagreements={len(report['disagreements'])} "

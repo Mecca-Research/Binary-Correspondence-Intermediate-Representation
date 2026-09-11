@@ -137,7 +137,7 @@ def emit_files() -> tuple[str, str]:
     blob = q8_tiers_blob()
     with open(_BLOB_PATH, "wb") as f:
         f.write(blob)
-    with open(_HEADER_PATH, "w", encoding="utf-8") as f:
+    with open(_HEADER_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write(q8_tables_header(blob))
     return _BLOB_PATH, _HEADER_PATH
 

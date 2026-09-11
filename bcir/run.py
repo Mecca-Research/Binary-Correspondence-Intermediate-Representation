@@ -273,7 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.explain or args.bundle:
             print(explain_text(record))
         if args.explain_json:
-            with open(args.explain_json, "w", encoding="utf-8") as f:
+            with open(args.explain_json, "w", encoding="utf-8", newline="\n") as f:
                 f.write(record.to_json())
             print(f"[explain] wrote {args.explain_json}")
         return 0

@@ -465,7 +465,7 @@ def compile_and_run_inference_c(
     try:
         src = os.path.join(workdir, "infer.c")
         exe = os.path.join(workdir, "infer")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(kernel + main)
         for fname, blob in ctx.blob_files.items():  # the #embed blobs, beside the .c
             with open(os.path.join(workdir, fname), "wb") as f:

@@ -423,7 +423,7 @@ def compile_and_run_optimizer_c(opt: str, params, grads, lr, steps, *, workdir=N
     try:
         src = os.path.join(workdir, "opt.c")
         exe = os.path.join(workdir, "opt")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(step_src + main)
         link = ["-lm"] if spec["libm"] else []
         build = None

@@ -377,7 +377,7 @@ def stable_provenance(text: str) -> dict[str, Any]:
 def compare_or_write(path: Path, generated: str, check: bool, provenance: bool = False) -> bool:
     if not check:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(generated, encoding="utf-8")
+        path.write_text(generated, encoding="utf-8", newline="\n")
         print(f"[write] {path.relative_to(REPO_ROOT)}")
         return True
     try:

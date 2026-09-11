@@ -260,7 +260,7 @@ def main() -> int:
 
     if args.output:
         args.output.write_text(
-            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
         )
 
     if args.require_counters and record["status"] != "available":

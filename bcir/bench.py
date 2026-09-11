@@ -163,7 +163,7 @@ def measure(
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "bench.c")
         exe = os.path.join(d, "bench")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(
                 _emit_timed_c(
                     module, result, "bcir_kernel", elem, n, reps, width_override, hw_width=hw_width
@@ -363,7 +363,7 @@ def compare_gather(
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "gbench.c")
         exe = os.path.join(d, "gbench")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(
                 _emit_gather_bench_c(
                     module, result, elem, n, reps, shuffle, hw_width=h.vector_width
@@ -488,7 +488,7 @@ def compare_reduce(
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "rbench.c")
         exe = os.path.join(d, "rbench")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(_emit_reduce_bench_c(module, result, n, reps))
         build = None
         for std in ("-std=c23", "-std=c2x"):
@@ -577,7 +577,7 @@ def compare_strided(
     with tempfile.TemporaryDirectory() as d:
         src = os.path.join(d, "tbench.c")
         exe = os.path.join(d, "tbench")
-        with open(src, "w") as f:
+        with open(src, "w", newline="\n") as f:
             f.write(_emit_strided_bench_c(module, result, n, reps, k))
         build = None
         for std in ("-std=c23", "-std=c2x"):

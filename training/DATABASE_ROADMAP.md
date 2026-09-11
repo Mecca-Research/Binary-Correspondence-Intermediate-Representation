@@ -838,12 +838,52 @@ for a write that lets the host choose, and a read of the bytes actually on disk
 dynamic half pins CRLF explicitly, which the static half accepts, so neither
 half is redundant.
 
-**Out of scope, and recorded rather than fixed:** the same shape exists at 37
-sites under `bcir/` and 29 under `tools/`. Those trees' frozen artifacts —
-StreamPack, BCAB, the ASN.1 encodings — are written as *bytes*, which text mode
-never touches, so the frozen ABIs are unaffected. The exposure is any text
-artifact whose bytes something digests. That audit belongs to those rails, not
-to this one.
+**And then the rest of the repository.** The first pass fixed `training/tools/`
+and recorded the same shape at 37 sites under `bcir/` and 29 under `tools/` as
+out of scope. That audit is now done, and it was worth doing: the sweep also
+found a subtree the first pass had missed entirely — `training/llvm/tools/`,
+whose generators were never scanned because the first scan walked
+`training/tools/` and not `training/`.
+
+**77 sites pinned across 42 files**, in `bcir/`, `tools/`, `training/` and
+`.claude/`. Sixty-seven were classified for exposure against their actual
+consumers; **fifteen were exposed**, each with a cited consumer:
+
+| exposure | sites | evidence |
+| --- | --- | --- |
+| a generator writing a **tracked** file | 6 | three MLIR corpora from `bcir/kbcir/differential.py`, plus `runtime/c/bcir_q8_tables.h`, `mlir/test/passes/structural_corpus.mlir`, `.claude/context/BCIR_DIGEST.md` |
+| generated source whose **object bytes** enter an artifact bundle | 2 | `bcir/codegen/codegen.py` → `add_codegen_result` → `add_native_object` |
+| bytes read back and **`sha256`'d into a manifest** | 2 | `tools/models/run_hardware_rl_gate.py`, `run_hosted_model_gate.py` |
+| a report that is **committed** | 5 | `docs/security/audit-2026-09-04/*.json` |
+
+The sharpest evidence is in CI itself: `.github/workflows/ci.yml` regenerates
+two of those MLIR corpora and gates them with `git diff --exit-code`. That is
+already a byte gate on a regenerated tracked file — a trip-wire that would have
+caught this the first time it ran on a host that chose CRLF, and never did,
+because it runs on ubuntu.
+
+Fifty-one sites were judged **not exposed** — a throwaway temp source consumed
+by a compiler in the same process, a human-read report, a log, a sysfs write —
+and **pinned anyway**. The rule is total inside its declared scope, with no
+allowlist, because an exemption list of "the sites we judged safe" is a second
+thing to maintain and is wrong the first time somebody digests one of them
+(L15). Pinning costs nothing: no tree here generates a `.bat`, `.cmd` or
+`.ps1`, the only artifacts that would want CRLF. What is excluded is structural
+and decidable — a test or gate module, whose fixtures are written and read in
+one process on one host.
+
+The gate is `bcir/tests/test_line_endings.py`, in the oracle suite so it runs on
+every host in the matrix, with three halves: the source rule over four trees,
+a witness for the matcher itself, and — derived rather than curated — *no
+tracked text file in the repository carries a carriage return*, which is
+`.gitattributes`'s own `* text=auto eol=lf` checked instead of trusted, across
+all 1,998 tracked files. `verify_database.py` kept only the half no other rail
+can do, the built corpus on disk; its copy of the source scan is gone, because
+two scanners for one rule had already begun to differ about what counts as a
+text write (L15).
+
+The finding is registered as **L24 — an artifact's bytes do not depend on the
+host that wrote them** (`docs/security/laws.md`).
 
 ## The S-ladder — S13 to S18
 
