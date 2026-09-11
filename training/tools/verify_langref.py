@@ -304,26 +304,43 @@ def _accepted_by_role(catalog, plan, schema) -> dict[str, set[str]]:
     own refusals into one type precisely so a caller can catch one -- so anything
     else escaping here is itself the finding, and is left to escape.
 
-    The representative column of each role is the *last* one the table declares in
-    that role, which is an arbitrary but stated choice; the rule under test is the
-    role's, and the table declares no column whose role is qualified further.
+    **Every** column is probed, not one representative per role. SS3.1 opens by
+    saying a column's role decides what may be done to it "and is the only thing
+    that decides it", and a one-column-per-role probe cannot tell that claim from
+    its negation: a column that behaved unlike its role would simply never be
+    asked. So each role's answer is the set its columns agree on, and a
+    disagreement is returned as a finding rather than resolved -- the caller
+    reports it, because two columns of one role answering differently is a defect
+    in whichever of the code or the document turns out to be wrong.
     """
     with tempfile.TemporaryDirectory() as directory:
         probe = _probe_catalog(catalog, schema, Path(directory))
-        columns = {column.role: column.name for column in schema.TABLE.columns}
         accepted: dict[str, set[str]] = {}
+        disagreed: list[str] = []
         for role in schema.ROLES:
-            column = columns[role]
-            found = set()
-            for operator in plan.OPERATORS:
-                spelling = _PROBE_SPELLINGS[operator].format(c=column, v=_PROBE_VALUES[role])
-                try:
-                    plan.select(probe, [plan.parse_predicate(spelling)])
-                except plan.PlanError:
+            by_column: dict[str, frozenset[str]] = {}
+            for column in schema.TABLE.columns:
+                if column.role != role:
                     continue
-                found.add(operator)
-            accepted[role] = found
-        return accepted
+                found = set()
+                for operator in plan.OPERATORS:
+                    spelling = _PROBE_SPELLINGS[operator].format(
+                        c=column.name, v=_PROBE_VALUES[role]
+                    )
+                    try:
+                        plan.select(probe, [plan.parse_predicate(spelling)])
+                    except plan.PlanError:
+                        continue
+                    found.add(operator)
+                by_column[column.name] = frozenset(found)
+            answers = set(by_column.values())
+            if len(answers) > 1:
+                disagreed.append(
+                    f"{role}: "
+                    + ", ".join(f"{name}={sorted(ops)}" for name, ops in sorted(by_column.items()))
+                )
+            accepted[role] = set(max(answers, key=len)) if answers else set()
+        return accepted, disagreed
 
 
 def _cell_operators(cell: str, plan) -> set[str]:
@@ -346,7 +363,13 @@ def check_operator_roles(report: Report, blocks: dict[str, str], catalog, plan, 
     as with the code, and a check that only compared each to the code would pass a
     document that contradicted itself in a reader's face.
     """
-    measured = _accepted_by_role(catalog, plan, schema)
+    measured, disagreed = _accepted_by_role(catalog, plan, schema)
+    report.require(
+        not disagreed,
+        "3.1: a column's role is supposed to be the only thing that decides what "
+        "may be done to it, and two columns of one role answered differently: "
+        + "; ".join(disagreed),
+    )
     report.require(
         sum(len(ops) for ops in measured.values()) >= 10,
         "anti-vacuity: the role probe accepted almost nothing, so the comparisons "
