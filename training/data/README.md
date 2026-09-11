@@ -41,6 +41,22 @@ the lessons cite normative sources rather than recollection. For this subject:
   the anomaly, not merely asserted from the standard's table
 - Query-plan lessons show the engine's own plan output
 
+## The one lesson that already exists
+
+"Query planning, and why a plan is a cost decision" is in scope above, and it is
+already taught — in the compiler subject, because that is where it is checkable
+today. [`../llvm/22-bcir-approach/05-the-planner-is-a-query-planner.md`](../llvm/22-bcir-approach/05-the-planner-is-a-query-planner.md)
+runs BCIR's cost-governed ASN.1 encoding selector as a worked planner: legality
+before cost, a property that decides candidacy rather than being priced, and a
+schema constraint that moves only the candidates able to read it — which is the
+index lesson at its smallest. It also separates the exact half of a planner's inputs
+from the estimated half, which is the distinction this subject will spend most of
+its time on.
+
+That chapter is a bridge, not a substitute. It contains no SQL, no engine, and no
+isolation level. When this folder opens it inherits the correspondence and owes the
+rest.
+
 ## Corpus obligations
 
 Like every subject, this folder is complete only at Tier 3: chapters whose

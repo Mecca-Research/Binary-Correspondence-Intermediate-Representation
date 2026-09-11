@@ -306,7 +306,61 @@ def block_irdl() -> str:
     return "\n".join(rows) + "\n"
 
 
+def block_plan_selection() -> str:
+    """The encoding selector's answer, recomputed from `bcir.asn1.selection`.
+
+    Only EXACT quantities go in this table. `octets` is deterministic arithmetic -- the
+    same value under the same rule is the same length on every host, forever -- and so are
+    legality, canonicality, and the two objectives decided from them. The encode/decode
+    latency objectives are decided by timing on a shared runner, which is `indicative` in
+    the corpus's sense and would make this block drift on every regeneration. A generated
+    table that cannot be reproduced is worse than no table, so the chapter states those two
+    in prose and marks them as measured.
+    """
+    from bcir.asn1 import selection
+    from bcir.asn1.codec import Universal
+    from bcir.asn1.constraints import ValueRange
+    from bcir.asn1.schema import Component, Primitive, Sequence
+
+    integer = Primitive(Universal.INTEGER, "INTEGER")
+    bounded = Primitive(Universal.INTEGER, "INTEGER", ValueRange(0, 255))
+    schemas = (
+        ("no constraint", Sequence((Component("v", integer),), "S")),
+        ("`v INTEGER (0..255)`", Sequence((Component("v", bounded),), "S")),
+    )
+    value = {"v": 200}
+    canonical = {c.name: c.canonical for c in selection.ALL_CANDIDATES}
+
+    measured = {label: selection.measure(kind, value, repeats=1) for label, kind in schemas}
+    rows = [
+        "| candidate | canonical | octets, no constraint | octets, `(0..255)` |",
+        "| --- | :---: | ---: | ---: |",
+    ]
+    for candidate in selection.ALL_CANDIDATES:
+        cells = []
+        for label, _ in schemas:
+            hit = next(m for m in measured[label] if m.candidate == candidate.name)
+            cells.append(str(hit.octets) if hit.legal else "refused")
+        mark = "yes" if canonical[candidate.name] else "no"
+        rows.append(f"| `{candidate.name}` | {mark} | {cells[0]} | {cells[1]} |")
+
+    rows.append("")
+    rows.append("| objective | decided by | selects, no constraint | selects, `(0..255)` |")
+    rows.append("| --- | --- | --- | --- |")
+    for objective, how in (
+        (selection.Objective.NONE, "definition"),
+        (selection.Objective.WIRE_SIZE, "arithmetic"),
+    ):
+        picks = []
+        for label, _ in schemas:
+            chosen = selection.select(measured[label], objective=objective)
+            picks.append(f"`{chosen.candidate}`" if chosen else "none")
+        rows.append(f"| `{objective.value}` | {how} | {picks[0]} | {picks[1]} |")
+    return "\n".join(rows) + "\n"
+
+
 BLOCKS = {
+    "plan-selection": block_plan_selection,
     "irdl-projection": block_irdl,
     "thermal-ladder": block_thermal_ladder,
     "substrates": block_substrates,
