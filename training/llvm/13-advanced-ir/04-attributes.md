@@ -273,6 +273,24 @@ belong in the target-aware type-lowering layer rather than in a late cleanup pas
 | `inreg` | Prefer/register-class ABI placement for an argument or return where the target ABI supports it. |
 | `zeroext`, `signext` | Caller/callee agree to zero-extend or sign-extend narrow integer values. |
 | `inalloca(<ty>)`, `preallocated(<ty>)` | Specialized argument-allocation protocols used by selected ABIs. |
+| `returned` | This parameter *is* the function's return value, so the caller may reuse the argument it already has. |
+
+`returned` is the one in that table a reader is most likely to meet without
+recognising. It is not a hint about what the function does with the value — it is a
+promise that the value coming back is bit-for-bit the one that went in, which lets a
+caller skip reading the result entirely. Clang emits it wherever the ABI makes a
+parameter and the return the same register:
+
+```llvm
+; clang++ -O1 -S -emit-llvm, from `struct S { int a; S(int v) : a(v) {} };
+;                                  S make(int v) { return S(v); }`
+define dso_local noundef i32 @_Z4makei(i32 noundef returned %0) local_unnamed_addr #0 {
+```
+
+A single-int struct travels in a register, the constructor stores its argument and
+nothing else, and so `make(v)` returns exactly `v`. Strip the attribute and the IR is
+still correct; the caller just loses the right to assume it.
+
 | `swiftself`, `swifterror` | Language ABI hooks; do not invent them outside the matching frontend ABI. |
 
 ### ABI attribute examples
@@ -577,7 +595,7 @@ survive passes you expected to remove them, this is why.
 
 ### The rest
 
-Twenty-five further attributes exist in LLVM 23 that this corpus does not teach, each with
+Twenty-six further attributes exist in LLVM 23 that this corpus does not teach, each with
 a recorded reason: stack-protection and sanitizer markers that relay a build flag,
 codegen-layout directives with no semantics a reader needs, and fourteen that
 **could not be produced at all** by any recipe tried against clang 23.1.1. That last group

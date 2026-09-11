@@ -36,6 +36,7 @@ a LangRef change would be wrong.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import re
 import shutil
@@ -44,13 +45,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from corpus_text import code_spans, teaching_text  # noqa: E402
+from corpus_text import code_spans, corpus_code, teaching_text  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent
 TRAINING_ROOT = TOOLS.parent
 REFERENCE = TRAINING_ROOT / "reference"
 DISPOSITIONS = REFERENCE / "langref-delta-dispositions.json"
 ATTRIBUTE_DISPOSITIONS = REFERENCE / "langref-attribute-dispositions.json"
+INTRINSIC_DISPOSITIONS = REFERENCE / "langref-intrinsic-dispositions.json"
 
 # The two majors the corpus spans: the baseline it enforces, and the release it tracks.
 BASELINE_MAJOR = 18
@@ -395,6 +397,191 @@ def _opcode_re(opcode: str) -> re.Pattern[str]:
     )
 
 
+# LLVM's `Instruction.def` names opcode CLASSES (`Add`, `CondBr`, `GetElementPtr`); IR
+# spells them as mnemonics. Most are the class name lowercased, and these are not.
+# `Br` split into `CondBr`/`UncondBr` between 18 and 23, which is why both map to `br`.
+_MNEMONICS = {
+    "AddrSpaceCast": "addrspacecast",
+    "AtomicCmpXchg": "cmpxchg",
+    "AtomicRMW": "atomicrmw",
+    "BitCast": "bitcast",
+    "CallBr": "callbr",
+    "CatchPad": "catchpad",
+    "CatchRet": "catchret",
+    "CatchSwitch": "catchswitch",
+    "CleanupPad": "cleanuppad",
+    "CleanupRet": "cleanupret",
+    "CondBr": "br",
+    "ExtractElement": "extractelement",
+    "ExtractValue": "extractvalue",
+    "FCmp": "fcmp",
+    "FNeg": "fneg",
+    "FPExt": "fpext",
+    "FPToSI": "fptosi",
+    "FPToUI": "fptoui",
+    "FPTrunc": "fptrunc",
+    "GetElementPtr": "getelementptr",
+    "ICmp": "icmp",
+    "IndirectBr": "indirectbr",
+    "InsertElement": "insertelement",
+    "InsertValue": "insertvalue",
+    "IntToPtr": "inttoptr",
+    "LandingPad": "landingpad",
+    "PHI": "phi",
+    "PtrToAddr": "ptrtoaddr",
+    "PtrToInt": "ptrtoint",
+    "SExt": "sext",
+    "SIToFP": "sitofp",
+    "ShuffleVector": "shufflevector",
+    "UIToFP": "uitofp",
+    "UncondBr": "br",
+    "VAArg": "va_arg",
+    "ZExt": "zext",
+}
+
+
+def check_instruction_coverage(report: Report) -> None:
+    """Every instruction LangRef defines is named somewhere in the corpus, in code.
+
+    The attribute and intrinsic surfaces earn their disposition tables by being large
+    enough that not naming something can be the right answer. This one is not: 67
+    instructions IS the language, and an instruction the corpus never writes down is a
+    hole rather than a judgement. It is at 67 of 67 -- so the only thing this check can
+    do is keep it there, which is the point, because nothing was keeping it there.
+    """
+    surface = json.loads(snapshot_path(CURRENT_MAJOR).read_text(encoding="utf-8"))
+    opcodes = surface["instructions"]
+    if not report.require(
+        len(opcodes) >= 40,
+        f"only {len(opcodes)} instructions in the LLVM {CURRENT_MAJOR} snapshot; the "
+        f"extraction is broken and this check would examine almost nothing",
+    ):
+        return
+    text = corpus_code(TRAINING_ROOT)
+    for opcode in opcodes:
+        mnemonic = _MNEMONICS.get(opcode, opcode.lower())
+        # Word-bounded: `ret` must not be credited to `returned`, nor `and` to `landingpad`.
+        report.require(
+            re.search(rf"(?<![A-Za-z0-9_.]){re.escape(mnemonic)}(?![A-Za-z0-9_])", text),
+            f"instruction {opcode!r} (spelt {mnemonic!r} in IR) is defined by LLVM "
+            f"{CURRENT_MAJOR} and written nowhere in the corpus as code; unlike an "
+            f"attribute or an intrinsic there is no honest reason not to name one of the "
+            f"{len(opcodes)} instructions the language has",
+        )
+    stale = sorted(k for k in _MNEMONICS if k not in opcodes)
+    report.require(
+        not stale,
+        f"the mnemonic table maps opcode(s) LLVM {CURRENT_MAJOR} no longer defines: "
+        f"{stale}; a mapping nothing uses hides the next rename",
+    )
+    print(f"[opcode]  all {len(opcodes)} instruction opcodes are written in the corpus as code")
+
+
+def check_intrinsic_coverage(report: Report) -> None:
+    """Every intrinsic is either named by the corpus or belongs to a class that answers.
+
+    This is the attribute check one surface over, with one difference forced by the
+    subject: 524 intrinsics is too many to disposition one at a time and, more to the
+    point, most of them do not deserve an individual answer. `llvm.vp.*` is 90 operations
+    that are the same operation ninety times, and the vectorization chapter teaching the
+    mask/`%evl` model and naming two of them is BETTER teaching than a list of ninety --
+    which is the case that made a family-level answer necessary.
+
+    So the unit is a class, and the assignment is per intrinsic. It is per intrinsic
+    because LLVM's `llvm.<family>.*` prefixes are not reliably semantic: `llvm.get.*`
+    spans the floating-point environment, the stack, and vector shape, and a table keyed
+    on prefixes would have had to write one reason covering all three, which is how a
+    disposition becomes a rubber stamp.
+    """
+    if not report.require(INTRINSIC_DISPOSITIONS.is_file(), f"{INTRINSIC_DISPOSITIONS} is missing"):
+        return
+    surface = json.loads(snapshot_path(CURRENT_MAJOR).read_text(encoding="utf-8"))
+    intrinsics = surface["intrinsics"]
+    table = json.loads(INTRINSIC_DISPOSITIONS.read_text(encoding="utf-8"))
+    classes, assignment = table["classes"], table["intrinsics"]
+
+    if not report.require(
+        len(intrinsics) >= 300,
+        f"only {len(intrinsics)} intrinsics in the LLVM {CURRENT_MAJOR} snapshot; the "
+        f"language defines far more, so the extraction is broken and every loop below "
+        f"would iterate over almost nothing",
+    ):
+        return
+
+    text = corpus_code(TRAINING_ROOT)
+    named = {n for n in intrinsics if n in text}
+    for name in intrinsics:
+        if name in named:
+            continue
+        report.require(
+            name in assignment,
+            f"intrinsic {name!r} is defined by LLVM {CURRENT_MAJOR}, named nowhere in the "
+            f"corpus in code, and belongs to no class in "
+            f"langref-intrinsic-dispositions.json; an intrinsic nobody teaches and nobody "
+            f"declared out of scope is a gap nobody has found yet",
+        )
+
+    for name, cls in assignment.items():
+        if not report.require(
+            name in intrinsics,
+            f"langref-intrinsic-dispositions.json assigns {name!r} to a class, but LLVM "
+            f"{CURRENT_MAJOR} does not define it; drop the entry or regenerate the snapshot",
+        ):
+            continue
+        report.require(
+            cls in classes,
+            f"{name!r} is assigned to class {cls!r}, which the table does not define",
+        )
+
+    for cls, entry in classes.items():
+        members = sorted(n for n, c in assignment.items() if c == cls)
+        if not report.require(
+            members, f"class {cls!r} is defined and holds no intrinsic; drop it or assign one"
+        ):
+            continue
+        status = entry.get("status")
+        if not report.require(
+            status in ("taught", "referenced", "declared"),
+            f"class {cls!r} has status {status!r}, which is none of taught/referenced/declared",
+        ):
+            continue
+        if status == "declared":
+            report.require(
+                len((entry.get("reason") or "").split()) >= 12,
+                f"class {cls!r} is declared out of scope with no reason, or with one too "
+                f"short to be one; a class of intrinsics dismissed in a few words reads "
+                f"exactly like a class nobody looked at",
+            )
+            continue
+        # taught and referenced both owe a citation, and the SAME citation rule the
+        # dialect registry uses: the named file must name a member of the class, in code.
+        where = entry.get("where") or ""
+        chapter = TRAINING_ROOT / where
+        if not report.require(
+            where and chapter.is_file(),
+            f"class {cls!r} is {status} but cites {where!r}, which is not a file",
+        ):
+            continue
+        code = code_spans(chapter.read_text(encoding="utf-8"))
+        cited = sorted(n for n in members if n in code)
+        report.require(
+            cited,
+            f"{where} is cited as {status} for the {cls!r} intrinsic class but names none "
+            f"of its {len(members)} members in a code block or inline code span",
+        )
+
+    covered = len(named) + sum(1 for n in assignment if n not in named)
+    report.require(
+        covered == len(intrinsics),
+        f"{covered} of {len(intrinsics)} intrinsics are accounted for; the remainder are "
+        f"neither named nor classified",
+    )
+    print(
+        f"[intrin]  {len(named)}/{len(intrinsics)} intrinsics named in code; the rest are "
+        f"covered by {len(classes)} class(es)"
+    )
+
+
 def check_undemonstrated_opcodes(report: Report) -> None:
     """The premise of 03-conversions-and-shifts.md, checked instead of trusted.
 
@@ -482,7 +669,11 @@ def check_attribute_coverage(report: Report) -> None:
     ):
         return
 
-    text = teaching_text(TRAINING_ROOT)
+    # `corpus_code`, not `teaching_text`: several attribute names are ordinary English
+    # words, and a raw-text search credited `returned` and `ssp` to sentences that merely
+    # used them. Neither was named in code anywhere, and neither was dispositioned -- so
+    # the looser predicate was hiding a real gap behind a better-looking number.
+    text = corpus_code(TRAINING_ROOT)
     unnamed = [a for a in attributes if a not in text]
     for name in unnamed:
         report.require(
@@ -769,6 +960,96 @@ def render_vp_family() -> str:
     return "\n".join(lines) + "\n"
 
 
+def sync_named_block(
+    chapter: Path, name: str, fresh: str, report: Report | None, update: bool
+) -> None:
+    """Hold one `<!-- generated: NAME -->` block to what the surfaces produce.
+
+    `sync_block` and `sync_vp_block` below predate this and say the same thing twice with
+    different nouns; a third copy would have been the defect this repository names L14, so
+    new blocks come through here.
+    """
+    if not chapter.is_file():
+        if report:
+            report.require(False, f"{chapter} is missing; the {name} block has no chapter")
+        return
+    text = chapter.read_text(encoding="utf-8")
+    match = _block_re(name).search(text)
+    if match is None:
+        if report:
+            report.require(
+                False,
+                f"{chapter.name} has no `<!-- generated: {name} -->` block, so the table is "
+                f"computed and shown nowhere; a table nothing displays is a check over nothing",
+            )
+        return
+    if update:
+        if match.group("body") != fresh:
+            chapter.write_text(
+                text[: match.start("body")] + fresh + text[match.end("body") :], encoding="utf-8"
+            )
+            print(f"[update]  {chapter.name} ({name})")
+        return
+    if report:
+        report.require(
+            match.group("body") == fresh,
+            f"{chapter.name}: the {name} block is stale; the surfaces now produce:\n" + fresh,
+        )
+
+
+def render_surface_coverage() -> str:
+    """Where each LangRef surface stands, counted rather than claimed."""
+    surface = json.loads(snapshot_path(CURRENT_MAJOR).read_text(encoding="utf-8"))
+    text = corpus_code(TRAINING_ROOT)
+    attrs = json.loads(ATTRIBUTE_DISPOSITIONS.read_text(encoding="utf-8"))["attributes"]
+    table = json.loads(INTRINSIC_DISPOSITIONS.read_text(encoding="utf-8"))
+
+    rows = [
+        "| surface | in LLVM 23 | named in code | answered another way | how |",
+        "| --- | ---: | ---: | ---: | --- |",
+    ]
+    opcodes = surface["instructions"]
+    named_ops = sum(
+        1
+        for o in opcodes
+        if re.search(
+            rf"(?<![A-Za-z0-9_.]){re.escape(_MNEMONICS.get(o, o.lower()))}(?![A-Za-z0-9_])", text
+        )
+    )
+    rows.append(
+        f"| instructions | {len(opcodes)} | {named_ops} | {len(opcodes) - named_ops} | "
+        f"nothing left over: 67 instructions is the language |"
+    )
+    a_named = sum(1 for a in surface["attributes"] if a in text)
+    rows.append(
+        f"| attributes | {len(surface['attributes'])} | {a_named} | {len(attrs)} | "
+        f"one disposition each, with the clang recipe that emits it |"
+    )
+    i_named = sum(1 for n in surface["intrinsics"] if n in text)
+    classes = table["classes"]
+    rows.append(
+        f"| intrinsics | {len(surface['intrinsics'])} | {i_named} | "
+        f"{len(table['intrinsics']) - sum(1 for n in table['intrinsics'] if n in text)} | "
+        f"{len(classes)} classes, each taught, referenced or declared |"
+    )
+    by_status = collections.Counter(v["status"] for v in classes.values())
+    rows.append("")
+    rows.append("| intrinsic class | status | members | held by |")
+    rows.append("| --- | --- | ---: | --- |")
+    for name, entry in sorted(classes.items()):
+        members = sum(1 for c in table["intrinsics"].values() if c == name)
+        held = f"`{entry['where']}`" if entry["status"] != "declared" else "a written reason"
+        rows.append(f"| `{name}` | {entry['status']} | {members} | {held} |")
+    rows.append("")
+    rows.append(
+        "Classes: **"
+        + "**, **".join(f"{by_status[s]} {s}" for s in ("taught", "referenced", "declared"))
+        + f"**. Every one of the {len(table['intrinsics'])} classified intrinsics belongs "
+        f"to exactly one of them."
+    )
+    return "\n".join(rows) + "\n"
+
+
 def sync_vp_block(report: Report | None, update: bool) -> None:
     """The VP chapter's one computed sentence."""
     if not VP_CHAPTER.is_file():
@@ -921,6 +1202,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.update:
         sync_block(None, update=True)
         sync_vp_block(None, update=True)
+        sync_named_block(CHAPTER, "surface-coverage", render_surface_coverage(), None, True)
         return 0
 
     report = Report()
@@ -944,11 +1226,14 @@ def main(argv: list[str] | None = None) -> int:
     for major in known_majors:
         check_snapshot(major, report, required=major in args.require_surface)
     check_dispositions(report)
+    check_instruction_coverage(report)
     check_attribute_coverage(report)
+    check_intrinsic_coverage(report)
     check_undemonstrated_opcodes(report)
     check_rename_table(report)
     sync_block(report, update=False)
     sync_vp_block(report, update=False)
+    sync_named_block(CHAPTER, "surface-coverage", render_surface_coverage(), report, False)
     return report.verdict("langref delta gate")
 
 

@@ -188,6 +188,14 @@ target ABI. In particular, avoid rewriting `llvm.va_start`, `llvm.va_end`,
 `va_arg`, or target-shaped `va_list` storage during generic IR cleanup unless
 you know the caller/callee ABI contract that code generation will apply.
 
+The family has a third member that is easy to forget and expensive to get wrong.
+`llvm.va_copy(ptr %dst, ptr %src)` duplicates a `va_list` so a second traversal can
+start where the first began — C's `va_copy`, and the only correct way to walk the
+arguments twice. It is not a pointer copy: on targets where `va_list` is a struct of
+registers and a stack pointer, copying the bits by hand and then calling
+`llvm.va_end` on both copies is the classic double-cleanup bug. Every `llvm.va_copy`
+needs its own `llvm.va_end`, exactly as every `llvm.va_start` does.
+
 For related IR syntax, see the `va_arg` entry in
 [`../reference/instruction-quickref.md`](../reference/instruction-quickref.md)
 and the variadic function notes in

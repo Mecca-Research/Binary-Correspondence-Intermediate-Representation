@@ -63,6 +63,28 @@ def code_spans(text: str) -> str:
     return "\n".join(fenced) + "\n" + "\n".join(_INLINE.findall(prose))
 
 
+def corpus_code(root: Path, extra_exclusions: frozenset[str] = frozenset()) -> str:
+    """Everything under `root` a reader would recognise as code, corpus-wide.
+
+    Two rules, because the corpus holds two kinds of file. A markdown chapter contributes
+    only its fenced blocks and inline spans, for the reason this module's header gives: a
+    name like `range`, `shape` or `returned` is an ordinary English word and a prose
+    search credits the sentence rather than the construct. Every other teaching suffix is
+    code in its entirety -- an `.ll` fixture or a `.mlir` example has no backticks in it,
+    so running `code_spans` over the concatenation would discard every artifact the
+    corpus actually assembles and runs.
+
+    Getting this wrong in either direction inflates a coverage figure. Measuring raw text
+    credited ten LLVM attributes -- `returned`, `ssp`, `uwtable` and seven others -- to
+    sentences that merely used the word, and none of them was named in code anywhere.
+    """
+    parts = []
+    for path in teaching_files(root, extra_exclusions):
+        text = path.read_text(errors="replace")
+        parts.append(code_spans(text) if path.suffix == ".md" else text)
+    return "\n".join(parts)
+
+
 def teaching_files(root: Path, extra_exclusions: frozenset[str] = frozenset()) -> list[Path]:
     """Every file under `root` a reader learns from, in a stable order."""
     return [

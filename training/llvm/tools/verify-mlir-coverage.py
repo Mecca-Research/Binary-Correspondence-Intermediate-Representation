@@ -60,7 +60,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from corpus_text import code_spans, teaching_text  # noqa: E402
+from corpus_text import code_spans, corpus_code  # noqa: E402
 from llvm_toolchain import find_llvm_tool  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent
@@ -255,12 +255,16 @@ def write_surface(mlir_opt: str, tblgen: str | None) -> int:
 def corpus_text() -> str:
     """The teaching corpus, minus the files that would answer for themselves.
 
-    `corpus_text.teaching_text` excludes the corpus's own Python, which matters here more
+    `corpus_text.corpus_code` excludes the corpus's own Python, which matters here more
     than anywhere else: Python's `math` module shares five operation names with MLIR's
     `math` dialect, and a benchmark script importing it made that dialect look a sixth
     covered when no chapter mentions it.
+
+    It also takes only code from markdown, which the counts below used not to do. The
+    per-chapter citation check has always required code; the corpus-wide COUNTS did not,
+    and credited `llvm.or` to a sentence. One predicate now answers both.
     """
-    return teaching_text(TRAINING_ROOT)
+    return corpus_code(TRAINING_ROOT)
 
 
 def coverage(surface: dict, text: str) -> dict[str, tuple[int, int]]:
