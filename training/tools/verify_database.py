@@ -58,6 +58,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import random
 import shutil
 import struct
@@ -145,6 +146,84 @@ def load_tool(name: str):
     about tools, not about an engine.
     """
     return engine.load(name)
+
+
+#: What the fixtures below relax, and nothing else. The shipped table requires every
+#: chunk to carry a measurement of at least 1, which is the corpus contract and is
+#: enforced -- and it means no schema-valid corpus can ever leave a measurement
+#: absent. The packed column must still spell absence, `MIN` must still skip it, and a
+#: comparison must still refuse to admit it; none of that is reachable from a corpus
+#: the contract admits, so the checks that cover it declare a table that admits it.
+#:
+#: A relaxation is a declaration, not a loophole: it names the columns it changes, it
+#: cannot introduce one the shipped table has not, and the roles -- which column is
+#: indexed, which is a measurement -- are exactly the shipped ones, because those are
+#: what the format under test is built from.
+_SYNTHETIC_RELAXATIONS = {
+    "char_count": {"required": False, "nullable": True, "minimum": 0},
+    "token_estimate": {"required": False, "nullable": True, "minimum": 0},
+    **{
+        name: {"required": False}
+        for name in (
+            "schema", "corpus", "source_sha256", "span", "heading_trail", "title",
+            "text", "embedding", "embedding_spec", "provenance", "verified_by",
+        )
+    },
+}
+
+
+def synthetic_table():
+    """The table the hand-built fixtures below are checked against."""
+    return load_tool("schema").TABLE.relaxed(**_SYNTHETIC_RELAXATIONS)
+
+
+def valid_record(**overrides) -> dict:
+    """A complete, schema-valid chunk row, for checks that extend a real corpus.
+
+    A check that appends a row to a real chunk file is asking what happens when the
+    *corpus* changes, not what happens when an invalid row arrives -- so the row it
+    appends has to be one the contract admits. Built from the shipped table rather
+    than typed out, so a column added to the table appears here too and the fixture
+    cannot quietly stop covering it (`docs/security/laws.md` L15).
+    """
+    schema_module = load_tool("schema")
+    filler = {
+        "string": "x",
+        "integer": 1,
+        "array": [],
+        "object": {},
+    }
+    record: dict = {}
+    for spec in schema_module.TABLE.columns:
+        if not spec.required:
+            continue
+        if spec.domain:
+            record[spec.name] = spec.domain[0]
+        elif spec.name == "chunk_id":
+            record[spec.name] = "sha256:" + "0" * 64
+        elif spec.name == "span":
+            record[spec.name] = {"start_line": 1, "end_line": 1}
+        elif spec.name == "embedding_spec":
+            record[spec.name] = {
+                "model": None, "revision": None, "dim": None,
+                "normalize": "none", "semantics": None,
+            }
+        elif spec.name == "provenance":
+            record[spec.name] = {"license": "LicenseRef-BCIR-NC-1.0", "builder": BUILDER_PATH}
+        elif spec.name == "source_sha256":
+            record[spec.name] = "0" * 64
+        elif spec.name == "embedding":
+            record[spec.name] = None
+        else:
+            record[spec.name] = filler[spec.type]
+    record.update(overrides)
+    schema_module.TABLE.check_row(record)
+    return record
+
+
+#: How a fixture spells the builder path in `provenance`. Repository-relative, because
+#: that is the only shape the chunk schema's `repositoryPath` admits.
+BUILDER_PATH = "training/tools/build_chunks.py"
 
 
 # --------------------------------------------------------------------------
@@ -379,13 +458,13 @@ def check_late_materialization(
     with tempfile.TemporaryDirectory() as directory:
         mirror = Path(directory) / "catalog"
         shutil.copytree(catalog.root, mirror)
-        locator_path = mirror / catalog_module.LOCATOR_FILE
+        locator_path = catalog_module.current_set(mirror) / catalog_module.LOCATOR_FILE
         raw = bytearray(locator_path.read_bytes())
         width = catalog_module.LOCATOR_ENTRY_BYTES
         # Give row 0 row 1's span: a real staleness shape, not random bytes.
         raw[0:width] = raw[width : 2 * width]
         locator_path.write_bytes(bytes(raw))
-        manifest_path = mirror / catalog_module.CATALOG_FILE
+        manifest_path = catalog_module.current_set(mirror) / catalog_module.CATALOG_FILE
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["artifacts"]["locator"]["sha256"] = hashlib.sha256(bytes(raw)).hexdigest()
         manifest_path.write_text(
@@ -406,7 +485,7 @@ def check_late_materialization(
         # before it is ever read.
         broken = Path(directory) / "catalog2"
         shutil.copytree(catalog.root, broken)
-        (broken / catalog_module.LOCATOR_FILE).write_bytes(bytes(raw))
+        (catalog_module.current_set(broken) / catalog_module.LOCATOR_FILE).write_bytes(bytes(raw))
         try:
             catalog_module.Catalog.load(broken, chunk_dir).span(0)
         except catalog_module.CatalogError:
@@ -712,7 +791,7 @@ def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 record["char_count"] = 100 + index
             rows.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
         (mirror / "synthetic.chunks.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
-        built = catalog_module.build(mirror)
+        built = catalog_module.build(mirror, synthetic_table())
         catalog_module.write(built, Path(directory) / "catalog")
         synthetic = catalog_module.Catalog.load(Path(directory) / "catalog", mirror)
 
@@ -847,7 +926,7 @@ def _synthetic_gaps(catalog_module, directory: Path):
                 record["char_count"] = 0 if index == 1 else 100 * (index + 1)
             lines.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
         (mirror / f"{part}.chunks.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    catalog_module.write(catalog_module.build(mirror), directory / "catalog")
+    catalog_module.write(catalog_module.build(mirror, synthetic_table()), directory / "catalog")
     return catalog_module.Catalog.load(directory / "catalog", mirror)
 
 
@@ -1327,7 +1406,7 @@ def check_byte_order(report: Report, catalog_module, catalog) -> None:
     would hold over a file nothing had pinned.
     """
     rows = catalog.rows_total
-    root = catalog.root
+    root = catalog.set_dir
 
     numeric_raw = (root / catalog_module.NUMERIC_FILE).read_bytes()
     cell = struct.Struct("<q")
@@ -1387,6 +1466,32 @@ def check_byte_order(report: Report, catalog_module, catalog) -> None:
     )
 
 
+#: What `--where` reads, as a table, so `check_grammar` and `check_operator_coverage`
+#: read one source instead of two that agree by habit (`docs/security/laws.md` L15).
+#: Every operator the language declares must appear here; the coverage check enforces
+#: that, so adding an operator without a row is a failure rather than a silence.
+GRAMMAR_ACCEPTS = (
+    ("subject=llvm", "subject", "eq", ("llvm",)),
+    ("subject!=llvm", "subject", "ne", ("llvm",)),
+    ("subject=llvm,data", "subject", "in", ("llvm", "data")),
+    ("subject=" + chr(34) + "llvm,data" + chr(34), "subject", "eq", ("llvm,data",)),
+    ("subject=" + chr(34) + "a" + chr(34) + "," + chr(34) + "b" + chr(34), "subject", "in", ("a", "b")),
+    ("source_path^=training/", "source_path", "prefix", ("training/",)),
+    ("char_count>=500", "char_count", "ge", ("500",)),
+    ("char_count<=500", "char_count", "le", ("500",)),
+    ("char_count>500", "char_count", "gt", ("500",)),
+    ("char_count<500", "char_count", "lt", ("500",)),
+    ("char_count>=-5", "char_count", "ge", ("-5",)),
+    ("char_count>= 5 ", "char_count", "ge", ("5",)),
+    ("language=?", "language", "notnull", ()),
+    ("language!=?", "language", "isnull", ()),
+    ("title=a!=b", "title", "eq", ("a!=b",)),
+    ("title=a>=b", "title", "eq", ("a>=b",)),
+    ("title=a^=b", "title", "eq", ("a^=b",)),
+    ("subject=llvm,", "subject", "eq", ("llvm",)),
+)
+
+
 def check_grammar(report: Report, plan) -> None:
     """What `--where` reads, and what it refuses, spelled out as a table.
 
@@ -1396,23 +1501,7 @@ def check_grammar(report: Report, plan) -> None:
     -- both of which then fail as "unknown column", a long way from the term that
     caused them. One rule settles both, and this table is what holds it in place.
     """
-    for text, column, op, values in (
-        ("subject=llvm", "subject", "eq", ("llvm",)),
-        ("subject!=llvm", "subject", "ne", ("llvm",)),
-        ("subject=llvm,data", "subject", "in", ("llvm", "data")),
-        ("source_path^=training/", "source_path", "prefix", ("training/",)),
-        ("char_count>=500", "char_count", "ge", ("500",)),
-        ("char_count<=500", "char_count", "le", ("500",)),
-        ("char_count>500", "char_count", "gt", ("500",)),
-        ("char_count<500", "char_count", "lt", ("500",)),
-        ("char_count>=-5", "char_count", "ge", ("-5",)),
-        ("char_count>= 5 ", "char_count", "ge", ("5",)),
-        ("language=?", "language", "notnull", ()),
-        ("language!=?", "language", "isnull", ()),
-        ("title=a!=b", "title", "eq", ("a!=b",)),
-        ("title=a>=b", "title", "eq", ("a>=b",)),
-        ("title=a^=b", "title", "eq", ("a^=b",)),
-    ):
+    for text, column, op, values in GRAMMAR_ACCEPTS:
         parsed = plan.parse_predicate(text)
         report.require(
             (parsed.column, parsed.op, parsed.values) == (column, op, values),
@@ -1714,7 +1803,9 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
                 record["char_count"] = (5 - index) * 10
             rows.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
         (mirror / "synthetic.chunks.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
-        catalog_module.write(catalog_module.build(mirror), Path(directory) / "catalog")
+        catalog_module.write(
+            catalog_module.build(mirror, synthetic_table()), Path(directory) / "catalog"
+        )
         synthetic = catalog_module.Catalog.load(Path(directory) / "catalog", mirror)
         whole = plan.Selection(None, synthetic.rows_total, True, ())
         missing_row = next(
@@ -1967,7 +2058,12 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
             "per-file one",
         )
         victim = mirror / f"{crowded}.chunks.jsonl"
-        victim.write_bytes(victim.read_bytes() + b'{"chunk_id":"sha256:zz","subject":"x"}\n')
+        appended = valid_record(chunk_id="sha256:" + "z" * 64, subject="synthetic-appended")
+        victim.write_bytes(
+            victim.read_bytes()
+            + json.dumps(appended, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            + b"\n"
+        )
         after_root = Path(directory) / "catalog2"
         catalog_module.write(catalog_module.build(mirror), after_root)
         after = catalog_module.Catalog.load(after_root, mirror)
@@ -1992,7 +2088,7 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
         )
         # And the stale catalog must refuse rather than answer from old statistics.
         try:
-            catalog_module.Catalog.load(catalog_root, mirror, verify_content=True)
+            catalog_module.Catalog.load(catalog_root, mirror)
         except catalog_module.CatalogError:
             report.require(True, "")
         else:
@@ -2007,21 +2103,58 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
     # different-but-equivalent sort order answers every question the same way -- and
     # then a content-addressed generation would take a new digest for a corpus that
     # had not moved, and `changed_parts` would name parts nothing changed.
+    #
+    # **From two different directories, with different modification times.** This used
+    # to build twice from one directory, where the paths and the mtimes are equal by
+    # construction -- so it compared a build against itself on exactly the two inputs
+    # that were not a function of the chunk bytes, and passed while `catalog.json`
+    # carried both. A determinism check whose two sides cannot differ in the way the
+    # artifact actually differed is a check of nothing (`docs/security/laws.md` L2).
     with tempfile.TemporaryDirectory() as directory:
-        first, second = Path(directory) / "first", Path(directory) / "second"
-        catalog_module.write(catalog_module.build(chunk_dir), first)
-        catalog_module.write(catalog_module.build(chunk_dir), second)
+        here = Path(directory)
+        sources = []
+        for index, (name, stamp) in enumerate((("alpha", 1_000_000_000), ("beta", 1_700_000_000))):
+            source = here / name / "nested" / f"depth{index}"
+            source.mkdir(parents=True)
+            for path in catalog_module.chunk_files(chunk_dir):
+                shutil.copy(path, source / path.name)
+                os.utime(source / path.name, (stamp, stamp))
+            sources.append(source)
+        left, right = sources
+        stamps = {
+            path.stat().st_mtime_ns for source in sources for path in catalog_module.chunk_files(source)
+        }
+        report.require(
+            len(stamps) == 2 and str(left) != str(right),
+            "anti-vacuity: the two builds below were given the same paths or the same "
+            f"modification times ({len(stamps)} distinct stamp(s)), so neither input "
+            "that a catalog must not depend on actually varies",
+        )
+        first, second = here / "first", here / "second"
+        catalog_module.write(catalog_module.build(left), first)
+        catalog_module.write(catalog_module.build(right), second)
         names = sorted(entry["path"] for entry in catalog.manifest["artifacts"].values())
         report.require(
             len(names) >= 4,
             f"S5: the manifest lists {len(names)} artifact(s), so the comparison below "
             "covers almost nothing",
         )
+        left_set = catalog_module.current_set(first)
+        right_set = catalog_module.current_set(second)
         for name in names + [catalog_module.CATALOG_FILE]:
             report.require(
-                (first / name).read_bytes() == (second / name).read_bytes(),
-                f"S5: {name} differs between two builds of the same chunk table",
+                (left_set / name).read_bytes() == (right_set / name).read_bytes(),
+                f"S5: {name} differs between two builds of the same chunk table made "
+                f"from different directories; a catalog must be a function of the "
+                f"chunk bytes and nothing else",
             )
+        # The set name is the content, so two builds of one corpus name one set. That
+        # is what makes a republish idempotent rather than a new directory each time.
+        report.require(
+            left_set.name == right_set.name,
+            f"S5: the same chunk table published as two differently named sets "
+            f"({left_set.name} and {right_set.name})",
+        )
 
 
 def check_incremental(report: Report, chunk_dir: Path) -> None:
@@ -2152,6 +2285,7 @@ def check_incremental(report: Report, chunk_dir: Path) -> None:
 
 
 def check_generations(report: Report, generations, chunk_dir: Path) -> None:
+    catalog_module = load_tool("catalog")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "generations"
         mirror = Path(directory) / "chunks"
@@ -2185,7 +2319,12 @@ def check_generations(report: Report, generations, chunk_dir: Path) -> None:
         )
 
         victim = sorted(mirror.glob("*.chunks.jsonl"))[0]
-        victim.write_bytes(victim.read_bytes() + b'{"chunk_id":"sha256:new","subject":"x"}\n')
+        appended = valid_record(chunk_id="sha256:" + "e" * 64, subject="synthetic-appended")
+        victim.write_bytes(
+            victim.read_bytes()
+            + json.dumps(appended, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            + b"\n"
+        )
         second = generations.publish(root, mirror, label="second")
         report.require(
             second.digest != first.digest,
@@ -2213,7 +2352,10 @@ def check_generations(report: Report, generations, chunk_dir: Path) -> None:
             "S6: the first generation no longer verifies after a second was published",
         )
         # Tampering with a stored generation is caught, not tolerated.
-        stored = root / first.generation_id / "catalog" / "catalog.json"
+        stored = (
+            catalog_module.current_set(root / first.generation_id / "catalog")
+            / catalog_module.CATALOG_FILE
+        )
         if stored.is_file():
             stored.write_text(stored.read_text(encoding="utf-8") + " ", encoding="utf-8")
             report.require(
@@ -2250,6 +2392,809 @@ def check_generations(report: Report, generations, chunk_dir: Path) -> None:
                 f"S6: republishing onto the tampered {first.generation_id} succeeded; "
                 "an immutable generation was modified in place and accepted",
             )
+
+
+
+
+# --------------------------------------------------------------------------
+# S14/S17 -- the declared table, and what it refuses
+# --------------------------------------------------------------------------
+
+#: The sentinel a constraint trial uses to mean "remove this key entirely", which is a
+#: different violation from setting it to null and must not share a spelling with one.
+_REMOVE = object()
+
+
+def _json_schema_facts(declaration: dict) -> tuple[set[str] | None, set[str] | None]:
+    """The types and the enumerated values one JSON Schema property admits.
+
+    Four shapes appear in that file and each says the same thing differently: a
+    `const`, an `enum`, a `$ref` to a string pattern, and a `type` that may be a list
+    or sit inside a `oneOf`. Reading all four here rather than at each call site is
+    what lets the reconciliation below compare a table against a schema instead of
+    against a style.
+    """
+    if "const" in declaration:
+        return {"string"}, {declaration["const"]}
+    if "enum" in declaration:
+        values = [value for value in declaration["enum"] if value is not None]
+        return ({"string"} if all(isinstance(v, str) for v in values) else None), set(values)
+    if "$ref" in declaration:
+        return {"string"}, None
+    if "oneOf" in declaration:
+        types: set[str] = set()
+        for branch in declaration["oneOf"]:
+            found = branch.get("type")
+            types.update([found] if isinstance(found, str) else (found or []))
+        return types or None, None
+    found = declaration.get("type")
+    if found is None:
+        return None, None
+    return ({found} if isinstance(found, str) else set(found)), None
+
+
+def check_schema(report: Report) -> None:
+    """The Python table and the JSON Schema must describe the same table.
+
+    Two rails, read out of their own sources and reconciled here, rather than one
+    generated from the other. `training/schema/chunk-v1.json` is what an external
+    consumer validates against; `training/tools/schema.py` is what the build enforces
+    and what the catalog derives its column roles from. Either can be edited alone,
+    and until this check existed either could be edited alone *and stay green* -- a
+    field renamed in the JSON while the Python kept indexing the old name produces a
+    postings list of one entry, every row, null (`docs/security/laws.md` L15).
+
+    Five properties are reconciled, because a disagreement in any one is a different
+    bug: which fields exist, which are required, which admit null, what type each
+    holds, and what values each admits.
+    """
+    schema_module = load_tool("schema")
+    path = REPO_ROOT / schema_module.JSON_SCHEMA
+    declared = json.loads(path.read_text(encoding="utf-8"))
+    properties = declared["properties"]
+    required = set(declared["required"])
+    table = schema_module.TABLE
+
+    report.require(
+        set(properties) == set(table.by_name),
+        "schema: the JSON Schema and the column table name different fields; "
+        f"only in JSON: {sorted(set(properties) - set(table.by_name))}; "
+        f"only in Python: {sorted(set(table.by_name) - set(properties))}",
+    )
+    report.require(
+        len(properties) >= 12,
+        f"anti-vacuity: the JSON Schema declares {len(properties)} field(s), so the "
+        "reconciliation below covers almost nothing",
+    )
+    report.require(
+        table.column("schema").domain == (schema_module.ROW_SCHEMA,),
+        "schema: the column table does not pin the row contract it is a table for",
+    )
+
+    compared = 0
+    for name, spec in sorted(table.by_name.items()):
+        declaration = properties.get(name)
+        if declaration is None:
+            continue
+        compared += 1
+        report.require(
+            spec.required == (name in required),
+            f"schema: {name} is {'required' if spec.required else 'optional'} in the "
+            f"column table and {'required' if name in required else 'optional'} in "
+            f"{schema_module.JSON_SCHEMA}",
+        )
+        types, values = _json_schema_facts(declaration)
+        if types is not None:
+            report.require(
+                spec.type in types,
+                f"schema: {name} holds {spec.type!r} in the column table and "
+                f"{sorted(types)} in {schema_module.JSON_SCHEMA}",
+            )
+            report.require(
+                spec.nullable == ("null" in types),
+                f"schema: {name} is {'nullable' if spec.nullable else 'not nullable'} "
+                f"in the column table; the JSON Schema says {sorted(types)}",
+            )
+        if values is not None:
+            report.require(
+                spec.domain is not None and set(spec.domain) == values,
+                f"schema: {name} admits {sorted(spec.domain or ())} in the column "
+                f"table and {sorted(values)} in {schema_module.JSON_SCHEMA}",
+            )
+        minimum = declaration.get("minimum")
+        if minimum is not None and spec.type == "integer":
+            report.require(
+                spec.minimum == minimum,
+                f"schema: {name} has minimum {spec.minimum} in the column table and "
+                f"{minimum} in {schema_module.JSON_SCHEMA}",
+            )
+    report.require(
+        compared == len(table.columns),
+        f"anti-vacuity: only {compared} of {len(table.columns)} columns were compared "
+        "against the JSON Schema",
+    )
+
+    # ...and the roles the catalog uses are the ones the table derives.
+    catalog_module = load_tool("catalog")
+    report.require(
+        catalog_module.INDEXED_COLUMNS == table.indexed
+        and catalog_module.NUMERIC_COLUMNS == table.numeric
+        and catalog_module.PATH_COLUMN == table.path,
+        "schema: catalog.py carries column roles that the declared table does not",
+    )
+    report.require(
+        bool(table.indexed) and bool(table.numeric) and bool(table.text),
+        "anti-vacuity: the declared table leaves one of the queryable roles empty",
+    )
+
+
+def check_constraints(report: Report, catalog_module, chunk_dir: Path) -> None:
+    """Every declared constraint refuses a row that violates it, naming the row.
+
+    A build over a malformed row is a failed build, not a build with one more unknown
+    in it. Before this, `char_count` holding the string "not-an-int" produced a clean
+    catalog, exit 0, and one more null in the packed column -- indistinguishable
+    downstream from a chunk that genuinely has no measurement (`docs/security/laws.md`
+    L1).
+
+    The trial list is *derived from the table* rather than hand-kept, and then
+    reconciled against it: every column declaring a domain, a minimum, requiredness or
+    non-nullability must have a trial, or this check fails for lack of coverage. That
+    is what stops a constraint from being added, never exercised, and quietly doing
+    nothing (L2, L15).
+    """
+    schema_module = load_tool("schema")
+    table = schema_module.TABLE
+
+    mutations: list[tuple[str, str, dict]] = []
+    for spec in table.columns:
+        if spec.domain:
+            mutations.append((spec.name, "domain", {spec.name: "not-in-the-domain"}))
+        if spec.minimum is not None:
+            mutations.append((spec.name, "minimum", {spec.name: spec.minimum - 1}))
+        if spec.required:
+            mutations.append((spec.name, "required", {spec.name: _REMOVE}))
+        if not spec.nullable and spec.required:
+            mutations.append((spec.name, "nullable", {spec.name: None}))
+        mutations.append(
+            (spec.name, "type", {spec.name: 1 if spec.type != "integer" else "not-an-integer"})
+        )
+    mutations.append(("<undeclared>", "extra field", {"not_a_column": "x"}))
+    mutations.append((table.key, "empty key", {table.key: ""}))
+
+    covered = {name for name, _, _ in mutations}
+    constrained = {
+        spec.name
+        for spec in table.columns
+        if spec.domain or spec.minimum is not None or spec.required or not spec.nullable
+    }
+    report.require(
+        constrained <= covered,
+        "anti-vacuity: these constrained columns have no trial below, so their "
+        f"constraints are not exercised: {sorted(constrained - covered)}",
+    )
+    report.require(
+        len(mutations) >= 2 * len(table.columns),
+        f"anti-vacuity: {len(mutations)} trial(s) over {len(table.columns)} column(s) "
+        "is fewer than one constraint each",
+    )
+
+    base = valid_record()
+    for column, rule, change in mutations:
+        row = dict(base)
+        for key, value in change.items():
+            if value is _REMOVE:
+                row.pop(key, None)
+            else:
+                row[key] = value
+        try:
+            table.check_row(row)
+        except schema_module.SchemaError as exc:
+            report.require(
+                column in str(exc) or rule in ("extra field", "empty key"),
+                f"constraints: the {rule} refusal for {column!r} does not name the "
+                f"column: {exc}",
+            )
+        else:
+            report.require(
+                False,
+                f"constraints: a row violating the {rule} of {column!r} was accepted",
+            )
+
+    # A value the table does admit stays admitted. Without this the whole list above
+    # is satisfied by a checker that refuses everything.
+    try:
+        table.check_row(base)
+    except schema_module.SchemaError as exc:
+        report.require(False, f"constraints: a valid row was refused: {exc}")
+    else:
+        report.require(True, "")
+
+    # ...and the refusal reaches a build as a verdict, not as a traceback.
+    with tempfile.TemporaryDirectory() as directory:
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        victim = sorted(mirror.glob("*.chunks.jsonl"))[0]
+        lines = victim.read_text(encoding="utf-8").splitlines()
+        broken = json.loads(lines[0])
+        chunk_id = broken["chunk_id"]
+        broken["char_count"] = "not-an-int"
+        lines[0] = json.dumps(broken, sort_keys=True, separators=(",", ":"))
+        victim.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        try:
+            catalog_module.build(mirror)
+        except catalog_module.CatalogError as exc:
+            report.require(
+                chunk_id in str(exc) and "char_count" in str(exc),
+                f"constraints: the build refused but named neither the chunk nor the "
+                f"column: {exc}",
+            )
+        else:
+            report.require(
+                False,
+                "constraints: a chunk whose char_count is a string built a clean "
+                "catalog; a schema error became one more null",
+            )
+
+
+# --------------------------------------------------------------------------
+# Fix 1 -- a value that carries a comma asks about that value
+# --------------------------------------------------------------------------
+
+
+def check_quoting(report: Report, plan) -> None:
+    """A value is read back as it was written, or refused. Never read as another value.
+
+    The defect this pins: `language!=llvm,markdown` used to admit every row in the
+    table and exit 0. `=` read a comma as a set separator and `!=` read it as an
+    ordinary character, so the complement of a value nothing carries was everything --
+    a wrong answer, silently, on an indexed column of this corpus.
+
+    Three properties, and the first two are the ones that matter. A value printed by
+    `EXPLAIN` must parse back to the predicate that printed it (round trip). Every
+    spelling this grammar cannot read back unchanged must be refused rather than
+    guessed. And `=` and `!=` must read one value grammar, so that they stay
+    complements for every value, including the ones with commas in them
+    (`docs/security/laws.md` L12).
+    """
+    values = (
+        "plain",
+        "Hello, World",
+        "code,prose",
+        plan.PRESENCE,
+        "",
+        " leading",
+        "trailing ",
+        'say "hi"',
+        "back" + chr(92) + "slash",
+        "a!=b",
+        "a>=b",
+        '"quoted"',
+        ",",
+        ",,",
+        "a,b,c",
+    )
+    report.require(
+        len(values) >= 12 and any("," in value for value in values),
+        f"anti-vacuity: {len(values)} round-trip value(s), or none carrying a comma",
+    )
+    for value in values:
+        spelled = plan.spell_value(value)
+        for op, spelling in (("eq", "="), ("ne", "!="), ("prefix", "^=")):
+            parsed = plan.parse_predicate(f"title{spelling}{spelled}")
+            report.require(
+                (parsed.column, parsed.op, parsed.values) == ("title", op, (value,)),
+                f"quoting: title{spelling}{spelled} read as {parsed.op} "
+                f"{parsed.values}, expected {op} ({value!r},)",
+            )
+        printed = str(plan.Predicate("title", "eq", (value,)))
+        column, _, right = printed.partition(" = ")
+        back = plan.parse_predicate(f"{column}={right}")
+        report.require(
+            back.values == (value,),
+            f"quoting: EXPLAIN printed {printed!r}, which parses back to {back.values}",
+        )
+
+    # A set of them, spelled as one term, reads back as the same set in the same order.
+    for size in (2, 3, 4):
+        chosen = values[:size]
+        term = "title=" + ",".join(plan.spell_value(value) for value in chosen)
+        parsed = plan.parse_predicate(term)
+        report.require(
+            parsed.op == "in" and parsed.values == chosen,
+            f"quoting: {term!r} read as {parsed.op} {parsed.values}, expected in {chosen}",
+        )
+
+    # One value grammar on every operator: a comma is a separator or a character, and
+    # which one it is may not depend on the operator to its left.
+    for text in ("language!=llvm,markdown", "source_path^=a,b", "char_count>=1,2"):
+        try:
+            parsed = plan.parse_predicate(text)
+        except plan.PlanError:
+            report.require(True, "")
+        else:
+            report.require(
+                False,
+                f"quoting: {text!r} gave {len(parsed.values)} value(s) to {parsed.op}, "
+                "which takes one; a comma means the same thing on every operator",
+            )
+
+    refusals = (
+        ("title=" + chr(34) + "unterminated", "a quote that is never closed"),
+        ("title=say " + chr(34) + "hi" + chr(34), "a quote inside an unquoted value"),
+        ("title=" + chr(34) + "a" + chr(34) + "x", "text after a closing quote"),
+        ("title=" + chr(34) + "a" + chr(92) + "nb" + chr(34), "an escape the grammar does not spell"),
+        ("title=" + chr(34) + "a" + chr(92), "a dangling escape"),
+        ("subject=?,llvm", "the presence sentinel inside a set"),
+        ("subject^=?", "a presence test on an operator that cannot spell one"),
+        ("title=", "no value at all"),
+        ("title=,,", "only empty values"),
+    )
+    for text, why in refusals:
+        try:
+            plan.parse_predicate(text)
+        except plan.PlanError:
+            report.require(True, "")
+        else:
+            report.require(False, f"quoting: accepted {text!r}, which carries {why}")
+
+    # The sentinel and the character it is spelled with are different values.
+    sentinel = plan.parse_predicate(f"language={plan.PRESENCE}")
+    literal = plan.parse_predicate("language=" + chr(34) + plan.PRESENCE + chr(34))
+    report.require(
+        sentinel.op == "notnull" and sentinel.values == (),
+        f"quoting: language={plan.PRESENCE} read as {sentinel.op}, not a presence test",
+    )
+    report.require(
+        literal.op == "eq" and literal.values == (plan.PRESENCE,),
+        f"quoting: a quoted {plan.PRESENCE} read as {literal.op} {literal.values}, "
+        "not as the character itself",
+    )
+
+
+# --------------------------------------------------------------------------
+# S15 -- what the planner knows, and what it claims to know
+# --------------------------------------------------------------------------
+
+
+def check_estimates(report: Report, plan, catalog) -> None:
+    """No estimate may be below the truth, and none may call a bound a count.
+
+    Two separate claims, and the second is the one that was false. Every estimate in
+    `plan.py` is an upper bound, so a number below the admitted rows is a defect that
+    makes a planner choose a cheaper plan than the work requires. And `estimate_exact`
+    is part of the verdict: it used to be `all(exact)` over the *marginals*, which
+    asks whether each term was counted exactly where the claim is about their
+    intersection. On this corpus that reported `[exact]` over a wrong number for 83%
+    of indexed value pairs, `kind=code AND language=asm` claiming a row where there
+    are none (`docs/security/laws.md` L1).
+
+    Exhaustive over every one- and two-column conjunction of equalities the corpus
+    can express, rather than a sample: the catalog stores the joint distribution for
+    exactly these, so this is the set where "exact" has to mean it.
+    """
+    import itertools
+
+    columns = list(catalog.indexed_columns())
+    report.require(
+        len(columns) >= 2,
+        f"anti-vacuity: {len(columns)} indexed column(s), so no pair below is tested",
+    )
+
+    trials = exact_claims = 0
+    for size in (1, 2):
+        for combination in itertools.combinations(columns, size):
+            for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
+                predicates = [
+                    plan.Predicate(column, "eq", (value,))
+                    for column, value in zip(combination, values)
+                ]
+                selection = plan.select(catalog, predicates)
+                admitted = len(selection.rows)
+                trials += 1
+                report.require(
+                    selection.estimated >= admitted,
+                    f"estimates: {' AND '.join(str(p) for p in predicates)} estimated "
+                    f"{selection.estimated} but admits {admitted}; an estimate here is "
+                    "an upper bound and this one is below the truth",
+                )
+                if selection.estimate_exact:
+                    exact_claims += 1
+                    report.require(
+                        selection.estimated == admitted,
+                        f"estimates: {' AND '.join(str(p) for p in predicates)} was "
+                        f"reported exact at {selection.estimated} and admits {admitted}",
+                    )
+    report.require(
+        trials >= 100,
+        f"anti-vacuity: only {trials} conjunction(s) were priced",
+    )
+    report.require(
+        exact_claims == trials,
+        f"estimates: {trials - exact_claims} of {trials} conjunctions over one or two "
+        "indexed columns were priced as a bound; the catalog stores the joint "
+        "distribution for exactly these, so every one of them is a count",
+    )
+
+    # Three columns have no stored statistic. The bound must stay a bound -- except at
+    # zero, where an upper bound of zero is a count of zero whatever the terms were --
+    # and it must be the tightest *pair* rather than the tightest marginal.
+    #
+    # The triple is searched for rather than taken from the first value of each column,
+    # because most triples admit nothing and the zero case is the one where exactness
+    # is sound. A check that happened to pick an empty triple would assert "this is a
+    # bound" about the one answer that is not one.
+    triple = None
+    for combination in itertools.combinations(columns, 3):
+        for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
+            candidate = [
+                plan.Predicate(column, "eq", (value,))
+                for column, value in zip(combination, values)
+            ]
+            if len(plan.select(catalog, candidate).rows) > 0:
+                triple = candidate
+                break
+        if triple:
+            break
+    report.require(
+        len(columns) < 3 or triple is not None,
+        "anti-vacuity: no conjunction of three indexed columns admits a row, so the "
+        "three-way bound below is never exercised on a non-empty answer",
+    )
+    if triple is not None:
+        selection = plan.select(catalog, triple)
+        marginals = min(plan.estimate(catalog, predicate)[0] for predicate in triple)
+        pairs = min(
+            plan.joint(catalog, list(pair))[0]
+            for pair in itertools.combinations(triple, 2)
+        )
+        report.require(
+            not selection.estimate_exact,
+            f"estimates: {' AND '.join(str(p) for p in triple)} admits "
+            f"{len(selection.rows)} rows and was reported exact, but the catalog "
+            "stores no three-way statistic",
+        )
+        report.require(
+            selection.estimated == pairs <= marginals,
+            f"estimates: the three-column bound is {selection.estimated}; the tightest "
+            f"pair is {pairs} and the tightest marginal {marginals}, so the pairwise "
+            "statistics were not used",
+        )
+        report.require(
+            selection.estimated >= len(selection.rows),
+            f"estimates: the three-column bound {selection.estimated} is below the "
+            f"{len(selection.rows)} rows it admits",
+        )
+
+    # A repeated value in a set must not be counted twice. `subject=llvm,llvm` once
+    # estimated 4320 rows of a 2215-row table, and said it was exact.
+    for column in columns:
+        value = max(catalog.distinct(column), key=lambda name: catalog.distinct(column)[name])
+        doubled = plan.select(catalog, [plan.Predicate(column, "in", (value, value))])
+        single = plan.select(catalog, [plan.Predicate(column, "eq", (value,))])
+        report.require(
+            doubled.estimated == single.estimated <= catalog.rows_total,
+            f"estimates: {column} IN ({value}, {value}) estimated {doubled.estimated} "
+            f"where {column} = {value} estimates {single.estimated}",
+        )
+
+    # An operator the fold does not cover must decline rather than answer wrongly.
+    prefix = plan.Predicate(catalog_path_column(), "prefix", ("training/",))
+    folded = plan.value_keys(catalog, prefix)
+    report.require(
+        folded is None,
+        "estimates: the value-set fold claimed to cover a path prefix, which is not "
+        "indexed by whole value and has no pair table",
+    )
+
+
+def catalog_path_column() -> str:
+    """The path column, from the declared table rather than spelled again here."""
+    return load_tool("schema").PATH_COLUMN
+
+
+# --------------------------------------------------------------------------
+# S13 -- a publish is one transaction
+# --------------------------------------------------------------------------
+
+
+def check_atomic_publish(report: Report, catalog_module, chunk_dir: Path) -> None:
+    """A reader resolves to a complete set at every point a publish can be cut.
+
+    The claim is atomicity, and the only honest way to check it without a second
+    process is to cut the publish at every filesystem mutation it makes and ask what a
+    reader would find. Every `os.replace` is an interruption point; after each one the
+    pointer must name a set that holds every artifact, with every artifact matching
+    the digest its own manifest records.
+
+    This used to be six renames into one directory, manifest last. Cut between the
+    second and the third, the directory held four old artifacts and two new ones, and
+    a reader that opened the old manifest and then read a new sidecar found a digest
+    mismatch. That failed loudly rather than answering wrongly -- which is why it was
+    a rebuild that could not be done while anything was reading, rather than a
+    correctness bug (`docs/security/laws.md` L1 was already satisfied; atomicity is
+    the property that was missing).
+    """
+    artifacts = {
+        catalog_module.CATALOG_FILE,
+        catalog_module.POSTINGS_FILE,
+        catalog_module.LOCATOR_FILE,
+        catalog_module.IDS_FILE,
+        catalog_module.NUMERIC_FILE,
+        catalog_module.ORDER_FILE,
+    }
+    with tempfile.TemporaryDirectory() as directory:
+        here = Path(directory)
+        corpora = {}
+        for tag in ("before", "after"):
+            mirror = here / tag
+            shutil.copytree(chunk_dir, mirror)
+            corpora[tag] = mirror
+        victim = sorted(corpora["after"].glob("*.chunks.jsonl"))[0]
+        lines = victim.read_text(encoding="utf-8").splitlines()
+        victim.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+
+        built = {tag: catalog_module.build(mirror) for tag, mirror in corpora.items()}
+        rows = {tag: value[0]["rows_total"] for tag, value in built.items()}
+        report.require(
+            rows["before"] != rows["after"],
+            "anti-vacuity: the two catalogs below hold the same rows, so no "
+            "interruption could be seen to land on either side of the swap",
+        )
+
+        root = here / "catalog"
+        real_replace = os.replace
+
+        class Interrupted(Exception):
+            """Raised in place of one rename, standing in for a process that died."""
+
+        def resolve() -> tuple[str, bool]:
+            """What a reader finds: which set, and whether it is whole."""
+            published = catalog_module.current_set(root)
+            present = {path.name for path in published.iterdir() if path.is_file()}
+            if present != artifacts:
+                return f"an incomplete set ({sorted(present ^ artifacts)})", False
+            manifest = json.loads(
+                (published / catalog_module.CATALOG_FILE).read_text(encoding="utf-8")
+            )
+            for entry in manifest["artifacts"].values():
+                digest = hashlib.sha256((published / entry["path"]).read_bytes()).hexdigest()
+                if digest != entry["sha256"]:
+                    return f"a torn set ({entry['path']} does not match its manifest)", False
+            total = manifest["rows_total"]
+            for tag, count in rows.items():
+                if count == total:
+                    catalog_module.Catalog.load(root, corpora[tag]).postings
+                    return tag, True
+            return f"a set of {total} rows, which is neither catalog", False
+
+        seen: set[str] = set()
+        cut = 1
+        while True:
+            shutil.rmtree(root, ignore_errors=True)
+            catalog_module.write(built["before"], root)
+            counter = {"n": 0}
+
+            def counting(source, target, *rest, **named):
+                counter["n"] += 1
+                if counter["n"] == cut:
+                    raise Interrupted()
+                return real_replace(source, target, *rest, **named)
+
+            os.replace = counting
+            try:
+                catalog_module.write(built["after"], root)
+                completed = True
+            except Interrupted:
+                completed = False
+            finally:
+                os.replace = real_replace
+
+            what, whole = resolve()
+            seen.add(what)
+            report.require(
+                whole,
+                f"S13: cutting the publish at rename {cut} left a reader holding {what}",
+            )
+            if completed:
+                break
+            cut += 1
+            if cut > 64:  # a bound on the loop, not on the property
+                report.require(False, "S13: the publish made more than 64 renames")
+                break
+
+        report.require(
+            cut >= 6,
+            f"anti-vacuity: the publish made only {cut} rename(s), so the sweep above "
+            "cannot have cut it between two artifacts",
+        )
+        report.require(
+            seen == set(rows),
+            f"S13: across {cut} interruption points a reader saw {sorted(seen)}; both "
+            "the old and the new catalog must be reachable, or the sweep never "
+            "crossed the swap",
+        )
+
+    # The pointer is the only mutable thing: a published set is never rewritten.
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory) / "catalog"
+        built = catalog_module.build(chunk_dir)
+        catalog_module.write(built, root)
+        first = catalog_module.current_set(root)
+        stamps = {path.name: path.read_bytes() for path in sorted(first.iterdir())}
+        catalog_module.write(built, root)
+        second = catalog_module.current_set(root)
+        report.require(
+            second == first,
+            f"S13: republishing one catalog named a second set ({second.name}); the "
+            "set name is its content, so an unchanged catalog is an unchanged name",
+        )
+        report.require(
+            {path.name: path.read_bytes() for path in sorted(second.iterdir())} == stamps,
+            "S13: republishing rewrote bytes inside an already-published set",
+        )
+
+
+# --------------------------------------------------------------------------
+# S16 -- an operator nothing exercises is an operator nothing checks
+# --------------------------------------------------------------------------
+
+
+def check_operator_coverage(report: Report, plan, catalog) -> None:
+    """Every operator the language declares is parsed, resolved and pinned.
+
+    This gate runs over a thousand checks and, until this one existed, an eleventh
+    operator could be added to `plan.OPERATORS` and pass every one of them. Nothing
+    reconciled the declared language against the tables that exercise it, so coverage
+    was whatever somebody remembered to add -- which is the definition of a check that
+    degrades silently (`docs/security/laws.md` L15, and L2: the tables below can be
+    satisfied while covering nothing).
+
+    Three rails, because each answers a different question and an operator can pass
+    one while failing another. The grammar table says it can be *written*. Resolution
+    says it can be *answered* over the corpus, and that its estimate bounds its own
+    answer. The plan baseline says its *decision* is pinned, so a change to how it is
+    planned cannot be silent. An operator missing from any of them fails here, naming
+    which.
+    """
+    declared = set(plan.OPERATORS)
+    report.require(
+        len(declared) >= 8,
+        f"anti-vacuity: the language declares {len(declared)} operator(s)",
+    )
+
+    written = {plan.parse_predicate(text).op for text, _, _, _ in GRAMMAR_ACCEPTS}
+    report.require(
+        declared <= written,
+        "coverage: these operators are declared but no row of the grammar table "
+        f"produces one: {sorted(declared - written)}",
+    )
+
+    # Resolution: one predicate per operator, run against the corpus, with the same
+    # two properties every other selection has to have.
+    resolved = set()
+    for predicate in _one_per_operator(plan, catalog):
+        selection = plan.select(catalog, [predicate])
+        resolved.add(predicate.op)
+        admitted = catalog.rows_total if selection.rows is None else len(selection.rows)
+        report.require(
+            selection.estimated >= admitted,
+            f"coverage: {predicate} estimated {selection.estimated} and admits "
+            f"{admitted}; an estimate is an upper bound",
+        )
+        report.require(
+            not selection.estimate_exact or selection.estimated == admitted,
+            f"coverage: {predicate} was reported exact at {selection.estimated} and "
+            f"admits {admitted}",
+        )
+    report.require(
+        declared <= resolved,
+        "coverage: these operators are declared but never resolved against the "
+        f"corpus: {sorted(declared - resolved)}",
+    )
+
+    baseline = load_tool("plan_baseline")
+    pinned = set()
+    for query in baseline.QUERIES:
+        for term in query.get("where", []):
+            pinned.add(plan.parse_predicate(term).op)
+    report.require(
+        declared <= pinned,
+        "coverage: these operators are declared but no recorded plan uses one, so a "
+        f"change to how they are planned would not move the baseline: {sorted(declared - pinned)}",
+    )
+
+    # ...and the operators the *printer* can spell are the operators there are. A new
+    # operator with no spelling prints as a KeyError at explain time.
+    for operator in sorted(declared):
+        values = () if operator in plan.NULLARY_OPERATORS else (
+            ("500",) if operator in plan.RANGE_OPERATORS else ("x",)
+        )
+        arity = 2 if operator == "in" else 1
+        spelled = plan.Predicate("subject", operator, values * arity if values else values)
+        report.require(
+            bool(str(spelled)),
+            f"coverage: operator {operator!r} has no printed form",
+        )
+
+
+def _one_per_operator(plan, catalog) -> list:
+    """One predicate per declared operator, built from values this corpus really has.
+
+    Built from the corpus rather than written down, so the list cannot rot into
+    predicates that admit nothing and check nothing. An operator this cannot build a
+    predicate for is itself the finding, raised by the caller's coverage check rather
+    than skipped here.
+    """
+    column = catalog.indexed_columns()[0]
+    value = max(catalog.distinct(column), key=lambda name: catalog.distinct(column)[name])
+    other = min(catalog.distinct(column))
+    path = load_tool("schema").PATH_COLUMN
+    measurement = catalog.numeric_columns()[0]
+    by_operator = {
+        "eq": plan.Predicate(column, "eq", (value,)),
+        "ne": plan.Predicate(column, "ne", (value,)),
+        "in": plan.Predicate(column, "in", (value, other)),
+        "prefix": plan.Predicate(path, "prefix", ("training/",)),
+        "isnull": plan.Predicate("language", "isnull", ()),
+        "notnull": plan.Predicate("language", "notnull", ()),
+        "ge": plan.Predicate(measurement, "ge", ("500",)),
+        "gt": plan.Predicate(measurement, "gt", ("500",)),
+        "le": plan.Predicate(measurement, "le", ("500",)),
+        "lt": plan.Predicate(measurement, "lt", ("500",)),
+    }
+    return [by_operator[name] for name in plan.OPERATORS if name in by_operator]
+
+
+# --------------------------------------------------------------------------
+# S18 -- the decision, not just the answer
+# --------------------------------------------------------------------------
+
+
+def check_plan_baseline(report: Report, catalog) -> None:
+    """Every recorded plan decision still holds, against the corpus it was recorded on.
+
+    A correctness gate cannot see a planner regression: the rows are the same, in the
+    same order, chosen worse. Both real estimator defects this tree has had were of
+    exactly that shape -- the zone map calling a 25%-selective predicate 98% selective,
+    and a conjunction bound reported as a count -- and both produced right answers the
+    whole time they were wrong.
+
+    A moved decision is a finding, not a failure of the tool: improving an estimate
+    moves the file and so does breaking one, and the gate refuses to let either happen
+    without somebody looking at the diff.
+    """
+    baseline = load_tool("plan_baseline")
+    path = REPO_ROOT / baseline.DEFAULT_BASELINE
+    try:
+        stored = baseline.load(path)
+        fresh = baseline.record(catalog)
+        findings = baseline.compare(stored, fresh)
+    except baseline.BaselineError as exc:
+        report.require(False, f"S18: {exc}")
+        return
+    report.require(
+        not findings,
+        f"S18: {len(findings)} recorded plan decision(s) moved:\n    "
+        + "\n    ".join(findings[:12])
+        + (f"\n    ... and {len(findings) - 12} more" if len(findings) > 12 else "")
+        + f"\n  re-record deliberately: python3 {baseline.BUILDER} --record",
+    )
+    report.require(
+        len(stored.get("queries", {})) >= 20,
+        f"anti-vacuity: the baseline pins {len(stored.get('queries', {}))} plan(s)",
+    )
+    # The comparison has to be able to fail, and the cheapest proof is to move one
+    # recorded field and watch it be named.
+    tampered = json.loads(json.dumps(stored))
+    victim = sorted(tampered["queries"])[0]
+    tampered["queries"][victim]["admitted"] = -1
+    moved = baseline.compare(tampered, fresh)
+    report.require(
+        any(finding.startswith(f"{victim}.admitted") for finding in moved),
+        "S18: a recorded row count was changed and the comparison did not name it; "
+        "the baseline is being compared against itself",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -2343,7 +3288,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run(report: Report, search, catalog_module, plan, generations, args) -> int:
     try:
-        catalog = catalog_module.Catalog.load(args.catalog, args.chunks, verify_content=True)
+        catalog = catalog_module.Catalog.load(args.catalog, args.chunks)
     except catalog_module.CatalogError as exc:
         print(f"database gate: FAILED\n  - {exc}", file=sys.stderr)
         return 1
@@ -2388,7 +3333,12 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
         native_ok=native_ok,
     )
     report.run("aggregates", check_aggregates, report, plan, catalog, args.chunks)
+    report.run("schema", check_schema, report)
+    report.run("constraints", check_constraints, report, catalog_module, args.chunks)
     report.run("S7-grammar", check_grammar, report, plan)
+    report.run("quoting", check_quoting, report, plan)
+    report.run("estimates", check_estimates, report, plan, catalog)
+    report.run("coverage", check_operator_coverage, report, plan, catalog)
     report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
     report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)
@@ -2397,6 +3347,8 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)
     report.run("S5-incremental", check_incremental, report, args.chunks)
     report.run("S6", check_generations, report, generations, args.chunks)
+    report.run("S13", check_atomic_publish, report, catalog_module, args.chunks)
+    report.run("S18", check_plan_baseline, report, catalog)
 
     if args.require_native and report.skips:
         report.require(

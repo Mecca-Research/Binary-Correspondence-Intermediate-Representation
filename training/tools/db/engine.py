@@ -50,11 +50,11 @@ def planner():
     return load("plan")
 
 
-def open_catalog(catalog_dir: Path, chunk_dir: Path, *, verify_content: bool = False):
+def open_catalog(catalog_dir: Path, chunk_dir: Path):
     """Load a catalog, or raise the catalog module's own refusal.
 
     A thin pass-through, and deliberately not a fallback: a caller that cannot tell
     "absent" from "stale" will eventually treat one of them as "fine", which is the
     reason `Catalog.load` refuses in the first place.
     """
-    return catalog().Catalog.load(catalog_dir, chunk_dir, verify_content=verify_content)
+    return catalog().Catalog.load(catalog_dir, chunk_dir)

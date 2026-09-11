@@ -1,0 +1,715 @@
+{
+  "builder": "training/tools/plan_baseline.py",
+  "corpus": "e7fe3a4fde6dad9364297425b16671ceac6fec6fe416db263484117fdec1fb10",
+  "license": "LicenseRef-BCIR-NC-1.0",
+  "objectives": [
+    "EXACTNESS",
+    "LATENCY",
+    "FOOTPRINT",
+    "STARTUP"
+  ],
+  "queries": {
+    "eq-absent-value": {
+      "admitted": 0,
+      "chosen": {
+        "EXACTNESS": "native +where(0) /seek",
+        "FOOTPRINT": "native +where(0) /seek",
+        "LATENCY": "native +where(0) /seek",
+        "STARTUP": "reference +where(0) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 0,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = nothing-has-this"
+      ],
+      "where": [
+        "subject=nothing-has-this"
+      ]
+    },
+    "eq-indexed": {
+      "admitted": 2160,
+      "chosen": {
+        "EXACTNESS": "native +where(2160) /seek",
+        "FOOTPRINT": "native +where(2160) /seek",
+        "LATENCY": "native +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2160,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = llvm"
+      ],
+      "where": [
+        "subject=llvm"
+      ]
+    },
+    "eq-rare": {
+      "admitted": 9,
+      "chosen": {
+        "EXACTNESS": "native +where(9) /seek",
+        "FOOTPRINT": "native +where(9) /seek",
+        "LATENCY": "native +where(9) /seek",
+        "STARTUP": "reference +where(9) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 9,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = data"
+      ],
+      "where": [
+        "subject=data"
+      ]
+    },
+    "ge": {
+      "admitted": 1387,
+      "chosen": {
+        "EXACTNESS": "native +where(1387) /seek",
+        "FOOTPRINT": "native +where(1387) /seek",
+        "LATENCY": "native +where(1387) /seek",
+        "STARTUP": "reference +where(1387) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 1387,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "char_count >= 500"
+      ],
+      "range": {
+        "column": "char_count",
+        "parts_pruned": 3,
+        "parts_total": 24,
+        "strategy": "seek"
+      },
+      "where": [
+        "char_count>=500"
+      ]
+    },
+    "group-having": {
+      "admitted": 2215,
+      "chosen": {
+        "EXACTNESS": "native /seek",
+        "FOOTPRINT": "native /seek",
+        "LATENCY": "native /seek",
+        "STARTUP": "reference /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2215,
+      "group": {
+        "column": "kind",
+        "kept": [
+          [
+            "prose",
+            1279
+          ],
+          [
+            "mixed",
+            643
+          ],
+          [
+            "table",
+            218
+          ]
+        ],
+        "scanned": false
+      },
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [],
+      "where": []
+    },
+    "group-subject": {
+      "admitted": 2215,
+      "chosen": {
+        "EXACTNESS": "native /seek",
+        "FOOTPRINT": "native /seek",
+        "LATENCY": "native /seek",
+        "STARTUP": "reference /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2215,
+      "group": {
+        "column": "subject",
+        "kept": [
+          [
+            "llvm",
+            2160
+          ],
+          [
+            "data",
+            9
+          ],
+          [
+            "hardware",
+            8
+          ],
+          [
+            "languages",
+            8
+          ],
+          [
+            "low-level",
+            8
+          ],
+          [
+            "systems",
+            8
+          ],
+          [
+            "backends",
+            7
+          ],
+          [
+            "formats",
+            7
+          ]
+        ],
+        "scanned": false
+      },
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [],
+      "where": []
+    },
+    "gt": {
+      "admitted": 16,
+      "chosen": {
+        "EXACTNESS": "native +where(16) /seek",
+        "FOOTPRINT": "native +where(16) /seek",
+        "LATENCY": "native +where(16) /seek",
+        "STARTUP": "reference +where(16) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 16,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "char_count > 5000"
+      ],
+      "range": {
+        "column": "char_count",
+        "parts_pruned": 19,
+        "parts_total": 24,
+        "strategy": "seek"
+      },
+      "where": [
+        "char_count>5000"
+      ]
+    },
+    "in-quoted": {
+      "admitted": 2169,
+      "chosen": {
+        "EXACTNESS": "native +where(2169) /seek",
+        "FOOTPRINT": "native +where(2169) /seek",
+        "LATENCY": "native +where(2169) /seek",
+        "STARTUP": "reference +where(2169) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2169,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject in (llvm, data)"
+      ],
+      "where": [
+        "subject=\"llvm\",\"data\""
+      ]
+    },
+    "in-set": {
+      "admitted": 2169,
+      "chosen": {
+        "EXACTNESS": "native +where(2169) /seek",
+        "FOOTPRINT": "native +where(2169) /seek",
+        "LATENCY": "native +where(2169) /seek",
+        "STARTUP": "reference +where(2169) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2169,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject in (llvm, data)"
+      ],
+      "where": [
+        "subject=llvm,data"
+      ]
+    },
+    "indexed-and-prefix": {
+      "admitted": 2160,
+      "chosen": {
+        "EXACTNESS": "native +where(2160) /seek",
+        "FOOTPRINT": "native +where(2160) /seek",
+        "LATENCY": "native +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek"
+      },
+      "estimate_exact": false,
+      "estimated": 2160,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = llvm",
+        "source_path ^= training/llvm"
+      ],
+      "where": [
+        "subject=llvm",
+        "source_path^=training/llvm"
+      ]
+    },
+    "indexed-and-range": {
+      "admitted": 7,
+      "chosen": {
+        "EXACTNESS": "native +where(7) /seek",
+        "FOOTPRINT": "native +where(7) /seek",
+        "LATENCY": "native +where(7) /seek",
+        "STARTUP": "reference +where(7) /seek"
+      },
+      "estimate_exact": false,
+      "estimated": 75,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "kind = code",
+        "char_count >= 500"
+      ],
+      "range": {
+        "column": "char_count",
+        "parts_pruned": 3,
+        "parts_total": 24,
+        "strategy": "seek"
+      },
+      "where": [
+        "kind=code",
+        "char_count>=500"
+      ]
+    },
+    "isnull": {
+      "admitted": 683,
+      "chosen": {
+        "EXACTNESS": "native +where(683) /seek",
+        "FOOTPRINT": "native +where(683) /seek",
+        "LATENCY": "native +where(683) /seek",
+        "STARTUP": "reference +where(683) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 683,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "language IS NOT NULL"
+      ],
+      "where": [
+        "language=?"
+      ]
+    },
+    "le": {
+      "admitted": 831,
+      "chosen": {
+        "EXACTNESS": "native +where(831) /seek",
+        "FOOTPRINT": "native +where(831) /seek",
+        "LATENCY": "native +where(831) /seek",
+        "STARTUP": "reference +where(831) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 831,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "char_count <= 500"
+      ],
+      "range": {
+        "column": "char_count",
+        "parts_pruned": 0,
+        "parts_total": 24,
+        "strategy": "seek"
+      },
+      "where": [
+        "char_count<=500"
+      ]
+    },
+    "lt": {
+      "admitted": 0,
+      "chosen": {
+        "EXACTNESS": "native +where(0) /seek",
+        "FOOTPRINT": "native +where(0) /seek",
+        "LATENCY": "native +where(0) /seek",
+        "STARTUP": "reference +where(0) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 0,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "char_count < 80"
+      ],
+      "range": {
+        "column": "char_count",
+        "parts_pruned": 24,
+        "parts_total": 24,
+        "strategy": "seek"
+      },
+      "where": [
+        "char_count<80"
+      ]
+    },
+    "ne-indexed": {
+      "admitted": 1894,
+      "chosen": {
+        "EXACTNESS": "native +where(1894) /seek",
+        "FOOTPRINT": "native +where(1894) /seek",
+        "LATENCY": "native +where(1894) /seek",
+        "STARTUP": "reference +where(1894) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 1894,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "language != llvm"
+      ],
+      "where": [
+        "language!=llvm"
+      ]
+    },
+    "notnull": {
+      "admitted": 1532,
+      "chosen": {
+        "EXACTNESS": "native +where(1532) /seek",
+        "FOOTPRINT": "native +where(1532) /seek",
+        "LATENCY": "native +where(1532) /seek",
+        "STARTUP": "reference +where(1532) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 1532,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "language IS NULL"
+      ],
+      "where": [
+        "language!=?"
+      ]
+    },
+    "order-narrow": {
+      "admitted": 9,
+      "chosen": {
+        "EXACTNESS": "native +where(9) /seek",
+        "FOOTPRINT": "native +where(9) /seek",
+        "LATENCY": "native +where(9) /seek",
+        "STARTUP": "reference +where(9) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 9,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "order": {
+        "column": "char_count",
+        "descending": false,
+        "strategy": "sort"
+      },
+      "predicates": [
+        "subject = data"
+      ],
+      "where": [
+        "subject=data"
+      ]
+    },
+    "order-unfiltered": {
+      "admitted": 2215,
+      "chosen": {
+        "EXACTNESS": "native /seek",
+        "FOOTPRINT": "native /seek",
+        "LATENCY": "native /seek",
+        "STARTUP": "reference /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2215,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "order": {
+        "column": "char_count",
+        "descending": true,
+        "strategy": "index"
+      },
+      "predicates": [],
+      "where": []
+    },
+    "pair-covered": {
+      "admitted": 75,
+      "chosen": {
+        "EXACTNESS": "native +where(75) /seek",
+        "FOOTPRINT": "native +where(75) /seek",
+        "LATENCY": "native +where(75) /seek",
+        "STARTUP": "reference +where(75) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 75,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = llvm",
+        "kind = code"
+      ],
+      "where": [
+        "subject=llvm",
+        "kind=code"
+      ]
+    },
+    "pair-empty": {
+      "admitted": 0,
+      "chosen": {
+        "EXACTNESS": "native +where(0) /seek",
+        "FOOTPRINT": "native +where(0) /seek",
+        "LATENCY": "native +where(0) /seek",
+        "STARTUP": "reference +where(0) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 0,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = data",
+        "kind = code"
+      ],
+      "where": [
+        "subject=data",
+        "kind=code"
+      ]
+    },
+    "pair-negated": {
+      "admitted": 55,
+      "chosen": {
+        "EXACTNESS": "native +where(55) /seek",
+        "FOOTPRINT": "native +where(55) /seek",
+        "LATENCY": "native +where(55) /seek",
+        "STARTUP": "reference +where(55) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 55,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject != llvm",
+        "kind = prose"
+      ],
+      "where": [
+        "subject!=llvm",
+        "kind=prose"
+      ]
+    },
+    "prefix-counted": {
+      "admitted": 2160,
+      "chosen": {
+        "EXACTNESS": "native +where(2160) /seek",
+        "FOOTPRINT": "native +where(2160) /seek",
+        "LATENCY": "native +where(2160) /seek",
+        "STARTUP": "reference +where(2160) /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2160,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "source_path ^= training/llvm"
+      ],
+      "where": [
+        "source_path^=training/llvm"
+      ]
+    },
+    "prefix-uncounted": {
+      "admitted": 112,
+      "chosen": {
+        "EXACTNESS": "native +where(112) /seek",
+        "FOOTPRINT": "native +where(112) /seek",
+        "LATENCY": "native +where(112) /seek",
+        "STARTUP": "reference +where(112) /seek"
+      },
+      "estimate_exact": false,
+      "estimated": 2160,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "source_path ^= training/llvm/12-backend"
+      ],
+      "where": [
+        "source_path^=training/llvm/12-backend"
+      ]
+    },
+    "range-interval": {
+      "admitted": 1288,
+      "chosen": {
+        "EXACTNESS": "native +where(1288) /seek",
+        "FOOTPRINT": "native +where(1288) /seek",
+        "LATENCY": "native +where(1288) /seek",
+        "STARTUP": "reference +where(1288) /seek"
+      },
+      "estimate_exact": false,
+      "estimated": 1387,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "char_count >= 500",
+        "char_count <= 2000"
+      ],
+      "range": {
+        "column": "char_count",
+        "parts_pruned": 3,
+        "parts_total": 24,
+        "strategy": "seek"
+      },
+      "where": [
+        "char_count>=500",
+        "char_count<=2000"
+      ]
+    },
+    "triple-indexed": {
+      "admitted": 27,
+      "chosen": {
+        "EXACTNESS": "native +where(27) /seek",
+        "FOOTPRINT": "native +where(27) /seek",
+        "LATENCY": "native +where(27) /seek",
+        "STARTUP": "reference +where(27) /seek"
+      },
+      "estimate_exact": false,
+      "estimated": 27,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [
+        "subject = llvm",
+        "kind = code",
+        "language = llvm"
+      ],
+      "where": [
+        "subject=llvm",
+        "kind=code",
+        "language=llvm"
+      ]
+    },
+    "unfiltered": {
+      "admitted": 2215,
+      "chosen": {
+        "EXACTNESS": "native /seek",
+        "FOOTPRINT": "native /seek",
+        "LATENCY": "native /seek",
+        "STARTUP": "reference /seek"
+      },
+      "estimate_exact": true,
+      "estimated": 2215,
+      "illegal_candidates": {
+        "EXACTNESS": 2,
+        "FOOTPRINT": 0,
+        "LATENCY": 0,
+        "STARTUP": 0
+      },
+      "predicates": [],
+      "where": []
+    }
+  },
+  "rows_total": 2215,
+  "schema": "bcir-training/plan-baseline/v1"
+}

@@ -52,6 +52,7 @@ readings are gated in `verify_database.py` so neither can drift into the other.
 
 from __future__ import annotations
 
+import itertools
 import re
 import sys
 from contextlib import contextmanager
@@ -135,6 +136,26 @@ _RANGE_SQL = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}
 #: cannot be matched by equality.
 PRESENCE = "?"
 
+#: A value may be wrapped in double quotes so it can contain characters the grammar
+#: would otherwise read as syntax -- above all the comma that separates a set. Inside
+#: quotes `\"` is a quote and `\\` is a backslash, and those are the only two escapes;
+#: a backslash before anything else is refused rather than silently dropped.
+#:
+#: This is PostgREST's rule, adopted for the reason PostgREST states it: without it a
+#: value containing a comma does not fail, it silently becomes two values. On this
+#: corpus that is not hypothetical -- 103 titles and 393 heading trails contain a
+#: comma, and `title=Hello, World` asked about two titles that do not exist rather
+#: than the one that does.
+#:
+#: A value is quoted *whole* or not at all: a quote is syntax only as the first
+#: character of a value, the matching close quote must be the value's last character,
+#: and a quote anywhere inside an unquoted value is refused. The alternative -- quotes
+#: significant wherever they appear, as a shell reads them -- means `title=say "hi"`
+#: silently asks about `say hi`, which is the same silent misreading the comma rule
+#: exists to remove, just spelled with a different character.
+QUOTE = '"'
+ESCAPE = "\\"
+
 #: A measurement is compared against an integer in ASCII digits and nothing else.
 #: `int()` would also accept `1_000`, `+5`, Unicode digits and surrounding
 #: whitespace -- a larger language than the one documented, admitted by the host
@@ -195,19 +216,21 @@ class Predicate:
         return require_integer(self.column, self.op, self.values[0])
 
     def __str__(self) -> str:
-        if self.op == "eq":
-            return f"{self.column} = {self.values[0]}"
-        if self.op == "ne":
-            return f"{self.column} != {self.values[0]}"
-        if self.op == "prefix":
-            return f"{self.column} ^= {self.values[0]}"
+        """The term as `EXPLAIN` prints it, spelled so it can be pasted back.
+
+        Every value goes through `spell_value`, so a value carrying a comma, a quote
+        or the presence sentinel prints as the term that reads back to this predicate
+        rather than as one that reads back to a different one. An ordinary value is
+        untouched, so the common line is unchanged.
+        """
         if self.op == "isnull":
             return f"{self.column} IS NULL"
         if self.op == "notnull":
             return f"{self.column} IS NOT NULL"
-        if self.op in RANGE_OPERATORS:
-            return f"{self.column} {_RANGE_SQL[self.op]} {self.values[0]}"
-        return f"{self.column} in ({', '.join(self.values)})"
+        if self.op == "in":
+            return f"{self.column} in ({', '.join(spell_value(v) for v in self.values)})"
+        spelling = {"eq": "=", "ne": "!=", "prefix": "^="}.get(self.op) or _RANGE_SQL[self.op]
+        return f"{self.column} {spelling} {spell_value(self.values[0])}"
 
 
 def interval(predicate: Predicate) -> tuple[int | None, int | None]:
@@ -238,11 +261,26 @@ def parse_predicate(text: str) -> Predicate:
     `subject!=llvm`           -> ne
     `source_path^=training/`  -> prefix
     `subject=llvm,data`       -> in, because a comma-separated right side is a set
+    `title="Hello, World"`    -> eq, because a quoted comma is a character
     `char_count>=500`         -> ge, and `<=`, `>`, `<` likewise
     `language=?`              -> IS NOT NULL; `language!=?` is IS NULL
 
     A term with no operator is an error rather than a guess. Guessing here would
     silently widen a query the caller meant to narrow.
+
+    **One value grammar, every operator, and the arity checked after the split.** The
+    right side is read by `split_values` whatever the operator is. Reading a comma as
+    a separator under `=` and as an ordinary character under `!=` -- which is what
+    this function used to do -- makes `title=X` and `title!=X` stop being complements
+    for exactly the values that contain a comma, which is the one thing this module's
+    header promises they are (`docs/security/laws.md` L12). The cost is stated rather
+    than hidden: `title!=Hello, World` is now refused, and spelled
+    `title!="Hello, World"`.
+
+    **The set is decided by the count, not by the comma.** `subject=llvm,` used to
+    read as a one-element IN and `subject=llvm` as an equality, two spellings of one
+    predicate differing in what `EXPLAIN` printed. One value is `=` and several are
+    IN, on every input.
     """
     split = _split_term(text)
     if split is None:
@@ -254,25 +292,134 @@ def parse_predicate(text: str) -> Predicate:
     column, op, raw = split
     if not column:
         raise PlanError(f"predicate {text!r} has no column")
-    if raw == PRESENCE:
+    pieces = split_values(raw)
+    if not pieces:
+        raise PlanError(f"predicate {text!r} has no value")
+    if any(value == PRESENCE and not was_quoted for value, was_quoted in pieces):
+        if len(pieces) != 1:
+            raise PlanError(
+                f"predicate {text!r} puts the reserved value {PRESENCE!r} in a set; "
+                f"{PRESENCE} asks whether a value is present at all and cannot be one "
+                f"of several -- for the character itself write {QUOTE}{PRESENCE}{QUOTE}"
+            )
         if op not in ("eq", "ne"):
             raise PlanError(
                 f"predicate {text!r} asks whether {column!r} carries a value, which only "
                 f"'=' and '!=' spell; write {column}={PRESENCE} or {column}!={PRESENCE}"
             )
         return Predicate(column, "notnull" if op == "eq" else "isnull", ())
-    if op == "eq" and "," in raw:
-        values = tuple(part.strip() for part in raw.split(",") if part.strip())
-        if not values:
-            raise PlanError(f"predicate {text!r} has no value")
-        if PRESENCE in values:
-            raise PlanError(
-                f"predicate {text!r} puts the reserved value {PRESENCE!r} in a set; "
-                f"{PRESENCE} asks whether a value is present at all and cannot be one "
-                "of several"
-            )
-        return Predicate(column, "in", values)
-    return Predicate(column, op, (raw,))
+    values = tuple(value for value, _ in pieces)
+    if len(values) == 1:
+        return Predicate(column, op, values)
+    if op != "eq":
+        raise PlanError(
+            f"predicate {text!r} gives {len(values)} values to an operator that takes "
+            f"one; only '=' spells a set, and a value that itself contains a comma is "
+            f"written {QUOTE}like,this{QUOTE}"
+        )
+    return Predicate(column, "in", values)
+
+
+def _read_quoted(raw: str, index: int) -> tuple[str, int]:
+    """One quoted value starting at `raw[index] == QUOTE`; the text and where it ended.
+
+    Only `\\"` and `\\\\` are escapes. A backslash before any other character is refused
+    rather than read as that character, so a backslash has one spelling inside quotes
+    instead of two (`\\x` and `x` would otherwise both mean `x`).
+    """
+    out: list[str] = []
+    index += 1
+    while index < len(raw):
+        character = raw[index]
+        if character == ESCAPE:
+            if index + 1 >= len(raw):
+                raise PlanError(
+                    f"predicate value {raw!r} ends in a dangling {ESCAPE!r}; inside "
+                    f"quotes a backslash escapes the character after it"
+                )
+            following = raw[index + 1]
+            if following not in (QUOTE, ESCAPE):
+                raise PlanError(
+                    f"predicate value {raw!r} spells {ESCAPE + following!r}, which is "
+                    f"not an escape; inside quotes only {ESCAPE + QUOTE!r} and "
+                    f"{ESCAPE + ESCAPE!r} are"
+                )
+            out.append(following)
+            index += 2
+            continue
+        if character == QUOTE:
+            return "".join(out), index + 1
+        out.append(character)
+        index += 1
+    raise PlanError(
+        f"predicate value {raw!r} opens a quote it never closes; a value that contains "
+        f"a comma must be quoted, and a quote must be closed"
+    )
+
+
+def split_values(raw: str) -> tuple[tuple[str, bool], ...]:
+    """Split a right-hand side into (value, was_quoted) pairs, honouring quotes.
+
+    A comma inside quotes does not separate. Whether a piece was quoted travels with
+    it because the callers need it: an *unquoted* `?` is the presence sentinel and a
+    *quoted* one is the literal character, and an unquoted empty piece is dropped (as
+    `a,,b` always has been) where a quoted one is a deliberate empty value.
+
+    Every way of writing something this function cannot read back unchanged is a
+    refusal, never a guess: an unterminated quote, a quote inside an unquoted value,
+    text after a closing quote, an unknown escape. Guessing turns a typo into a
+    different query that still returns rows, which is the failure mode this whole
+    function exists to remove.
+    """
+    pieces: list[tuple[str, bool]] = []
+    index, length = 0, len(raw)
+    while True:
+        while index < length and raw[index] == " ":
+            index += 1
+        if index < length and raw[index] == QUOTE:
+            value, index = _read_quoted(raw, index)
+            quoted = True
+            while index < length and raw[index] == " ":
+                index += 1
+            if index < length and raw[index] != ",":
+                raise PlanError(
+                    f"predicate value {raw!r} carries text after a closing quote; a "
+                    f"value is quoted whole or not at all"
+                )
+        else:
+            start = index
+            while index < length and raw[index] != ",":
+                if raw[index] == QUOTE:
+                    raise PlanError(
+                        f"predicate value {raw!r} puts a quote inside an unquoted "
+                        f"value; a value is quoted whole or not at all, so write "
+                        f"{spell_value(raw)} to ask about the text itself"
+                    )
+                index += 1
+            value, quoted = raw[start:index].strip(), False
+        pieces.append((value, quoted))
+        if index >= length:
+            break
+        index += 1  # the comma
+    return tuple(piece for piece in pieces if piece[1] or piece[0])
+
+
+def spell_value(value: str) -> str:
+    """How a value is written so that `split_values` reads it back unchanged.
+
+    `EXPLAIN` prints predicates, and a printed predicate a caller cannot paste back is
+    a worse answer than no printed predicate. Quoting is applied only where it is
+    needed, so the ordinary case still reads as plain text.
+
+    A backslash needs no quoting: outside quotes it is an ordinary character, and the
+    escapes exist only inside them.
+    """
+    needs = value == "" or value != value.strip() or value == PRESENCE
+    needs = needs or any(character in value for character in (",", QUOTE))
+    if not needs:
+        return value
+    escaped = value.replace(ESCAPE, ESCAPE + ESCAPE).replace(QUOTE, ESCAPE + QUOTE)
+    return f"{QUOTE}{escaped}{QUOTE}"
 
 
 def _split_term(text: str) -> tuple[str, str, str] | None:
@@ -339,8 +486,14 @@ def estimate(catalog, predicate: Predicate) -> tuple[int, bool]:
             raise PlanError(_unindexed(catalog, predicate.column))
         return count, True
     if predicate.op == "in":
+        # Over the *distinct* values. Each row carries one value per indexed column,
+        # so the postings lists of distinct values are disjoint and their sizes add;
+        # a value written twice would otherwise add its rows twice and report a count
+        # larger than the table (`subject=llvm,llvm` said 4320 of 2215 rows, and said
+        # it was exact). `dict.fromkeys` rather than `set` so the order a caller wrote
+        # is the order the sum walks, and the estimate does not depend on hash order.
         total = 0
-        for value in predicate.values:
+        for value in dict.fromkeys(predicate.values):
             count = catalog.count_equals(predicate.column, value)
             if count is None:
                 raise PlanError(_unindexed(catalog, predicate.column))
@@ -396,6 +549,104 @@ def _unindexed(catalog, column: str) -> str:
     return f"column {column!r} is not indexed; the catalog indexes {indexed}"
 
 
+#: The most pair lookups a joint estimate may make before it declines and lets the
+#: bound stand. An indexed column is low cardinality by role, so the real product here
+#: is 68; the cap is a bound on the *resource*, placed where the work is committed
+#: rather than asserted about the data (`docs/security/laws.md` L3). Without it a
+#: column that grew to a million distinct values would put a million-entry cross
+#: product in the estimator, which exists to be cheaper than the answer.
+MAX_JOINT_CELLS = 4096
+
+
+def value_keys(catalog, predicate: Predicate) -> tuple[str, frozenset[str]] | None:
+    """The index keys one predicate admits on an indexed column, or None.
+
+    Every operator that is a statement about *which values* a column holds folds into
+    the same shape -- a set of keys -- and once folded there is no polarity left to
+    reason about. `!=` is the complement, `IS NULL` is the null key alone, `IS NOT
+    NULL` is everything else, `IN` is the set as written. Writing it this way rather
+    than as an inclusion-exclusion formula per operator pair is the difference between
+    one rule and sixteen (`docs/security/laws.md` L14).
+
+    A key is passed back out as a key, not as a value: `index_key` is the identity on
+    strings, so a key read from the statistics is also the argument that looks it up
+    again. Nothing converts in either direction, so nothing can convert differently.
+    """
+    column = predicate.column
+    if column not in catalog.indexed_columns():
+        return None
+    every = frozenset(catalog.distinct(column))
+    if predicate.op == "eq":
+        return column, every & {catalog_module.index_key(predicate.values[0])}
+    if predicate.op == "in":
+        return column, every & {catalog_module.index_key(v) for v in predicate.values}
+    if predicate.op == "ne":
+        return column, every - {catalog_module.index_key(predicate.values[0])}
+    if predicate.op == "isnull":
+        return column, every & {catalog_module.NULL_KEY}
+    if predicate.op == "notnull":
+        return column, every - {catalog_module.NULL_KEY}
+    return None
+
+
+def _count_pairwise(catalog, left, left_keys, right, right_keys) -> int | None:
+    """Exact rows admitted on two indexed columns at once, or None if unavailable."""
+    if not catalog.has_pairs(left, right):
+        return None
+    if len(left_keys) * len(right_keys) > MAX_JOINT_CELLS:
+        return None
+    return sum(
+        catalog.count_pair(left, a, right, b)
+        for a in sorted(left_keys)
+        for b in sorted(right_keys)
+    )
+
+
+def joint(catalog, predicates) -> tuple[int, bool] | None:
+    """Rows admitted by the value-set terms of a conjunction, and whether that is all of it.
+
+    The catalog stores the full joint distribution over every pair of indexed columns,
+    so a conjunction naming at most two of them is a *count* and not a bound -- and an
+    empty pair, which is most of them, counts zero instead of "at most the smaller
+    marginal". Terms this cannot fold (a path prefix, a comparison on a measurement)
+    are left out, and the second element of the answer says so: what comes back is
+    then still an upper bound on the whole conjunction, just a much tighter one.
+
+    Three or more indexed columns have no stored statistic, and building one from the
+    pairs would mean assuming independence -- the assumption this whole mechanism
+    exists to stop making. What is taken instead is the *tightest pair*, which assumes
+    nothing: each pair counts a strictly larger set than the conjunction does, so the
+    smallest of them is an upper bound on it, and a far tighter one than any marginal.
+
+    Returns None only when no term folds at all.
+    """
+    admitted: dict[str, frozenset[str]] = {}
+    whole = True
+    for predicate in predicates:
+        folded = value_keys(catalog, predicate)
+        if folded is None:
+            whole = False
+            continue
+        column, keys = folded
+        admitted[column] = keys if column not in admitted else admitted[column] & keys
+    if not admitted:
+        return None
+    with _as_plan_error():
+        if len(admitted) == 1:
+            ((column, keys),) = admitted.items()
+            return sum(catalog.count_equals(column, key) for key in sorted(keys)), whole
+        bounds = []
+        for left, right in itertools.combinations(sorted(admitted), 2):
+            counted = _count_pairwise(catalog, left, admitted[left], right, admitted[right])
+            if counted is not None:
+                bounds.append(counted)
+        if not bounds:
+            return None
+        # Two columns and a pair table: the smallest (only) bound is the count itself.
+        # More than two: it is the tightest pair, and the conjunction is not covered.
+        return min(bounds), whole and len(admitted) == 2
+
+
 def select(catalog, predicates) -> Selection:
     """Resolve a conjunction of predicates to the exact rows it admits.
 
@@ -406,6 +657,12 @@ def select(catalog, predicates) -> Selection:
     Evaluation is exact even where the estimate was a bound: a prefix the index did
     not count still resolves by walking distinct paths, which is over paths, not over
     rows. Pricing may use a bound; answering never does.
+
+    What the catalog does *not* hold is a joint statistic, so a conjunction is priced
+    at the tightest marginal and reported as the bound it is. Holding the exact pair
+    counts is a real option -- they are small and the corpus is static -- and it is
+    written up as a candidate rather than assumed here; what is not an option is
+    calling the bound a count.
     """
     predicates = tuple(predicates)
     if not predicates:
@@ -415,8 +672,34 @@ def select(catalog, predicates) -> Selection:
     for predicate in predicates:
         count, exact = estimate(catalog, predicate)
         estimates.append((count, exact, predicate))
+    # Three sources, in order of what each can claim.
+    #
+    # The tightest *marginal* bounds the conjunction from above, because every estimate
+    # in this module is an upper bound. It is not a count of the conjunction, and
+    # `all(exact)` -- which this used to say -- does not make it one: that asks whether
+    # each term was counted exactly, where the claim being made is about their
+    # intersection. Two exactly-counted terms still give a bound, and on this corpus
+    # 83% of indexed value pairs were reported `[exact]` over a number that was wrong,
+    # `kind=code AND language=asm` saying 1 row where there are none
+    # (`docs/security/laws.md` L1: the label is part of the verdict).
+    #
+    # The joint statistics answer exactly for the terms they cover. When they cover
+    # every term, that is the count and the bound is retired. When they cover some, it
+    # is a tighter bound than any marginal.
+    #
+    # And an upper bound of zero is a count of zero whatever the terms were, which is
+    # worth keeping exact because it is the case a planner acts on.
     estimated = min(count for count, _, _ in estimates)
-    estimate_exact = all(exact for _, exact, _ in estimates)
+    estimate_exact = len(estimates) == 1 and estimates[0][1]
+    covered = joint(catalog, predicates)
+    if covered is not None:
+        count, whole = covered
+        if whole:
+            estimated, estimate_exact = count, True
+        elif count < estimated:
+            estimated = count
+    if estimated == 0:
+        estimate_exact = True
 
     order = sorted(range(len(estimates)), key=lambda i: (estimates[i][0], i))
     admitted: set[int] | None = None
