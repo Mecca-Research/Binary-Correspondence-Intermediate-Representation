@@ -1,0 +1,38 @@
+{
+  "command": [
+    "@python",
+    "training/tools/verify_embeddings.py"
+  ],
+  "faults": [
+    {
+      "expects": "row squares",
+      "label": "the stored column is not the squares of anything",
+      "new": "(sum(abs(code) for code in codes[at : at + dim])",
+      "old": "(sum(code * code for code in codes[at : at + dim])",
+      "path": "training/tools/embed_chunks.py"
+    },
+    {
+      "expects": "row squares",
+      "label": "the reader stops checking which codes the column names",
+      "new": "        if False:\n            return None",
+      "old": "        if spec.get(\"derived_from\") != quantized.get(\"sha256\"):\n            return None",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "row squares",
+      "label": "the reader stops checking the column's own digest",
+      "new": "        if False:\n            return None",
+      "old": "        if hashlib.sha256(raw).hexdigest() != spec.get(\"sha256\"):\n            return None",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "row squares",
+      "label": "the reader ignores the stored column and always computes",
+      "new": "        spec = quantized.get(\"row_squares\")\n        if spec or not spec:\n            return None",
+      "old": "        spec = quantized.get(\"row_squares\")\n        if not spec:\n            return None",
+      "path": "training/tools/search_chunks.py"
+    }
+  ],
+  "gate": "training/tools/verify_embeddings.py",
+  "why": "The embedding gate proves the vectors are attributed, aligned and non-degenerate, and that the stored row-squares column is the column it claims to be. A stored derived column is a new way to be wrong in the worst shape -- right length, right dtype, every value wrong -- so each of its fallbacks is injected here rather than assumed."
+}

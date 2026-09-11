@@ -1,0 +1,80 @@
+{
+  "command": [
+    "@python",
+    "training/tools/verify_langref.py"
+  ],
+  "faults": [
+    {
+      "expects": "3.2 columns",
+      "label": "the document loses a column the table has",
+      "new": "",
+      "old": "| `token_estimate` | integer | numeric | yes | no | \u2265 1 |\n",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "3.2 title",
+      "label": "the document gives a column the wrong role",
+      "new": "| `title` | string | indexed | yes | no | \u2014 |",
+      "old": "| `title` | string | text | yes | no | \u2014 |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "3.2 language",
+      "label": "the document gives a column the wrong nullability",
+      "new": "| `language` | string | indexed | **no** | no | \u2014 |",
+      "old": "| `language` | string | indexed | **no** | **yes** | \u2014 |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "3.2 columns",
+      "label": "the code grows a column the document does not have",
+      "new": "    Column(\"shadow_column\", \"string\", \"structural\", required=True, nullable=False),\n    Column(\"verified_by\"",
+      "old": "    Column(\"verified_by\"",
+      "path": "training/tools/schema.py"
+    },
+    {
+      "expects": "5.2 operators",
+      "label": "the document renames an operator",
+      "new": "| `startswith` | `^=` | path | starts with |",
+      "old": "| `prefix` | `^=` | path | starts with |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "7.2 FOOTPRINT",
+      "label": "the document gives an objective the wrong axis",
+      "new": "| `FOOTPRINT` | `compute` | least resident |",
+      "old": "| `FOOTPRINT` | `memory` | least resident |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "8.3 exact backends",
+      "label": "the document calls a lossy backend exact",
+      "new": "| `q8` | BCIRQ8 cosine through `bcir_ai_q8_rows_dot_f64` | yes | yes |",
+      "old": "| `q8` | BCIRQ8 cosine through `bcir_ai_q8_rows_dot_f64` | **no** \u2014 lossier by construction | yes |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "4.2 locator.bin",
+      "label": "the document states the wrong struct for an artifact",
+      "new": "| `locator.bin` | `<HQH` | 14 | file index (u16), byte offset (u64), byte length (u32) |",
+      "old": "| `locator.bin` | `<HQI` | 14 | file index (u16), byte offset (u64), byte length (u32) |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "constants",
+      "label": "a threshold moves in the code and not in the document",
+      "new": "ORDERED_INDEX_SHARE = 0.55",
+      "old": "ORDERED_INDEX_SHARE = 0.70",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "18.4",
+      "label": "the slice ladder loses a rung",
+      "new": "",
+      "old": "| S10 | a measured threshold for the seek/scan choice | #780 |\n",
+      "path": "training/TRAINING_LANGREF.md"
+    }
+  ],
+  "gate": "training/tools/verify_langref.py",
+  "why": "The training LangRef is normative and training/tools/ is its conformance oracle. This table is the evidence that the reconciler between them can actually fail -- both when the document drifts from the code and when the code drifts from the document."
+}

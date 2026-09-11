@@ -1,0 +1,115 @@
+{
+  "command": [
+    "@python",
+    "training/tools/verify_database.py"
+  ],
+  "faults": [
+    {
+      "expects": "quoting",
+      "label": "a comma always separates, whatever the quotes say",
+      "new": "    pieces = tuple((p.strip(), False) for p in raw.split(',') if p.strip())",
+      "old": "    pieces = split_values(raw)",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S5",
+      "label": "the manifest records a modification time again",
+      "new": "        \"size\": stat.st_size,\n        \"mtime_ns\": stat.st_mtime_ns,\n        \"sha256\"",
+      "old": "        \"size\": stat.st_size,\n        \"sha256\"",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "constraints",
+      "label": "a wrong type reads as absent instead of refusing",
+      "new": "    actual = _type_of(value)\n    if False and actual != spec.type:",
+      "old": "    actual = _type_of(value)\n    if actual != spec.type:",
+      "path": "training/tools/schema.py"
+    },
+    {
+      "expects": "S13",
+      "label": "the pointer moves before the set it names is complete",
+      "new": "    _point_at(root, name)\n    if not _set_is_complete(destination, payloads):\n        staging",
+      "old": "    if not _set_is_complete(destination, payloads):\n        staging",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "schema",
+      "label": "the Python domain of kind drifts from the JSON enum",
+      "new": "domain=(\"prose\", \"code\", \"mixed\", \"table\", \"diagram\")",
+      "old": "domain=(\"prose\", \"code\", \"mixed\", \"table\")",
+      "path": "training/tools/schema.py"
+    },
+    {
+      "expects": "estimates",
+      "label": "a conjunction is exact whenever each of its terms was",
+      "new": "    estimate_exact = all(exact for _, exact, _ in estimates)",
+      "old": "    estimate_exact = len(estimates) == 1 and estimates[0][1]",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "coverage",
+      "label": "an eleventh operator that nothing exercises",
+      "new": "OPERATORS = (\"eq\", \"ne\", \"in\", \"prefix\", \"lt\", \"le\", \"gt\", \"ge\", \"isnull\", \"notnull\", \"between\")",
+      "old": "OPERATORS = (\"eq\", \"ne\", \"in\", \"prefix\", \"lt\", \"le\", \"gt\", \"ge\", \"isnull\", \"notnull\")",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "line endings",
+      "label": "a writer lets the host choose the line ending",
+      "new": "destination.open(\"w\", encoding=\"utf-8\")",
+      "old": "destination.open(\"w\", encoding=\"utf-8\", newline=\"\\n\")",
+      "path": "training/tools/build_chunks.py"
+    },
+    {
+      "expects": "S18",
+      "label": "the q8 setup price goes back to 37.5x too low",
+      "new": "    ns_per_row_q8_quantize: int = 4_000",
+      "old": "    ns_per_row_q8_quantize: int = 150_000",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S18",
+      "label": "ORDER BY forgets the share and asks only for a predicate",
+      "new": "    return \"sort\"",
+      "old": "    share = len(selection.rows) / catalog.rows_total\n    return \"index\" if share >= engine.catalog().ORDERED_INDEX_SHARE else \"sort\"",
+      "path": "training/tools/db/relational.py"
+    },
+    {
+      "expects": "anti-vacuity",
+      "label": "the ORDER BY threshold admits everything, so it decides nothing",
+      "new": "ORDERED_INDEX_SHARE = 0.000001",
+      "old": "ORDERED_INDEX_SHARE = 0.70",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "order strategy",
+      "label": "the ORDER BY threshold admits nothing, so it decides nothing",
+      "new": "ORDERED_INDEX_SHARE = 1.5",
+      "old": "ORDERED_INDEX_SHARE = 0.70",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "order strategy",
+      "label": "the index path returns the index, not the admitted rows",
+      "new": "        return ordered",
+      "old": "        admitted = set(selection.rows)\n        return [row for row in ordered if row in admitted]",
+      "path": "training/tools/db/relational.py"
+    },
+    {
+      "expects": "explain",
+      "label": "a forced plan is marked CHOSEN again",
+      "new": "verdict = \"CHOSEN\"",
+      "old": "verdict = \"REQUESTED\" if requested else \"CHOSEN\"",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S18",
+      "label": "a stored derived column is priced as though it were rebuilt",
+      "new": "    ns_per_row_derived_stored: int = 31_000",
+      "old": "    ns_per_row_derived_stored: int = 90",
+      "path": "training/tools/plan.py"
+    }
+  ],
+  "gate": "training/tools/verify_database.py",
+  "why": "The database gate is the rail's main check: the declared table, the predicate grammar, the planner, the artifacts and the publication rules. This table is the evidence that each of its named checks can actually fail -- every entry was injected and observed to fire before the fix it guards was trusted."
+}
