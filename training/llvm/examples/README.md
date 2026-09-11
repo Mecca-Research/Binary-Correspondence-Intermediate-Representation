@@ -261,6 +261,7 @@ targets for `verify-examples.sh`:
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-graph-to-vector.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/memref-type-conversion.mlir` | Tier 4 registered MLIR conversion fixture | The registry lowers memref/func/arith to LLVM dialect, translates it, assembles it, and verifies it. |
+| `training/llvm/18-mlir-lowering-to-llvm/examples/tensor-to-buffer.mlir` | Tier 3 registered MLIR conversion fixture | The registry bufferizes tensors to memrefs across function boundaries and requires both boundary casts to be gone; no LLVM translation, so never `llvm-as`. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-transform-sequence.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-transform-vectorize-then-lower.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
 | `training/llvm/bcir-mapping/examples/bcir-operation.prompt.md` | Mapping prompt | Review-only learner prompt paired with BCIR runtime-boundary examples. |
