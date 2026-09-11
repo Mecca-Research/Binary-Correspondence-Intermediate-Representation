@@ -35,8 +35,8 @@
     {
       "expects": "5.2 operators",
       "label": "the document renames an operator",
-      "new": "| `startswith` | `^=` | path | starts with |",
-      "old": "| `prefix` | `^=` | path | starts with |",
+      "new": "| `startswith` | `^=` | `path` | starts with \u2014 see \u00a75.6 |",
+      "old": "| `prefix` | `^=` | `path` | starts with \u2014 see \u00a75.6 |",
       "path": "training/TRAINING_LANGREF.md"
     },
     {
@@ -73,6 +73,27 @@
       "new": "",
       "old": "| S10 | a measured threshold for the seek/scan choice | #780 |\n",
       "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "5.2 eq",
+      "label": "the document says a measurement has an equality operator",
+      "new": "| `eq` | `=` | `indexed`, `path`, `numeric` | equal |",
+      "old": "| `eq` | `=` | `indexed`, `path` | equal |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "3.1 numeric",
+      "label": "the document says a measurement takes all ten operators",
+      "new": "| `numeric` | a measurement, packed and zone-mapped | `eq`, `ne`, `in`, `prefix`, `lt`, `le`, `gt`, `ge`, `isnull`, `notnull` |",
+      "old": "| `numeric` | a measurement, packed and zone-mapped | `lt`, `le`, `gt`, `ge`, `isnull`, `notnull` |",
+      "path": "training/TRAINING_LANGREF.md"
+    },
+    {
+      "expects": "16 check groups",
+      "label": "the gate registers a check group the document never lists",
+      "new": "    report.run(\"S8-intervals-renamed\", check_interval_folding, report, plan, catalog, args.chunks)",
+      "old": "    report.run(\"S8-intervals\", check_interval_folding, report, plan, catalog, args.chunks)",
+      "path": "training/tools/verify_database.py"
     }
   ],
   "gate": "training/tools/verify_langref.py",

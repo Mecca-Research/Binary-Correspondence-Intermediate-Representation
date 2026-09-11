@@ -26,9 +26,11 @@ the scope means adding a reconciler here, not teaching this one to read English.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -47,7 +49,7 @@ EXIT_USAGE = 2
 #: document. A parser that silently matched nothing would otherwise report a clean
 #: run over a file it never understood, which is the vacuous-pass shape this tree
 #: refuses everywhere else (L2).
-MIN_RECONCILED = 60
+MIN_RECONCILED = 140
 
 
 class Report:
@@ -202,6 +204,187 @@ def check_operators(report: Report, blocks: dict[str, str], plan) -> None:
     text = blocks.get("5.2", "")
     for operator in plan.RANGE_OPERATORS:
         report.require(f"`{operator}`" in text, f"5.2: range operator {operator!r} is not named")
+
+
+#: One value per role that a predicate of that role's operators can legally carry.
+#: A value is needed to build a probe at all, and it must be a value the *grammar*
+#: accepts, so that what the probe measures is the role rule rather than a value
+#: rule -- an integer for a measurement, a path-shaped string for a path.
+_PROBE_VALUES = {
+    "key": "x",
+    "indexed": "llvm",
+    "path": "training/llvm",
+    "numeric": "500",
+    "text": "x",
+    "structural": "training",
+}
+
+#: How each operator is spelled with one probe value substituted for `{v}`. Spelled
+#: here rather than taken from `plan.Predicate` because a predicate built by hand
+#: bypasses the parser, and the question being asked is what the *language* accepts.
+_PROBE_SPELLINGS = {
+    "eq": "{c}={v}",
+    "ne": "{c}!={v}",
+    "in": "{c}={v},{v}",
+    "prefix": "{c}^={v}",
+    "lt": "{c}<{v}",
+    "le": "{c}<={v}",
+    "gt": "{c}>{v}",
+    "ge": "{c}>={v}",
+    "isnull": "{c}!=?",
+    "notnull": "{c}=?",
+}
+
+
+def _probe_record(schema, index: int, path: str) -> dict:
+    """One schema-valid row, built from the declared table rather than typed out.
+
+    Derived from `schema.TABLE.columns` so that a column added to the contract
+    appears here too: a fixture spelled by hand is another mirror list, and the
+    first thing it stops covering is the column somebody just added (L15).
+    """
+    text = f"row {index}"
+    filler = {"string": "x", "integer": 1, "array": [], "object": {}}
+    record: dict = {}
+    for column in schema.TABLE.columns:
+        if not column.required:
+            continue
+        if column.domain:
+            record[column.name] = column.domain[0]
+        elif column.name == "chunk_id":
+            record[column.name] = "sha256:" + f"{index:064d}"
+        elif column.name == "source_path":
+            record[column.name] = path
+        elif column.name == "span":
+            record[column.name] = {"start_line": index + 1, "end_line": index + 1}
+        elif column.name == "text":
+            record[column.name] = text
+        elif column.name == "char_count":
+            record[column.name] = len(text)
+        else:
+            record[column.name] = filler[column.type]
+    return record
+
+
+def _probe_catalog(catalog, schema, directory: Path):
+    """A four-row catalog built here, so this gate needs no prior corpus build.
+
+    The role rule is a joint property of `plan`'s dispatch and the catalog's own
+    refusals, so measuring it needs a real catalog -- a stand-in implementing the
+    methods the dispatch calls would be measuring the stand-in's opinion of roles,
+    which is the mistake that let `^=` test the wrong law for three slices (L11).
+    Four rows is enough: what is being probed is which operators are *admitted*,
+    and admission does not depend on how many rows answer.
+
+    Built rather than loaded because this gate is the cheap one -- CI runs it with
+    no toolchain and no corpus build beside it -- and a checker that quietly needed
+    an artifact somebody else produced would turn into a skip the first time the
+    order changed.
+    """
+    chunks = directory / "chunks"
+    chunks.mkdir()
+    paths = ["a/one.md", "a/two.md", "b/three.md", "b/four.md"]
+    lines = [
+        json.dumps(_probe_record(schema, index, path), sort_keys=True, separators=(",", ":"))
+        for index, path in enumerate(paths)
+    ]
+    (chunks / "probe.chunks.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+    )
+    catalog.write(catalog.build(chunks, schema.TABLE), directory / "catalog")
+    return catalog.Catalog.load(directory / "catalog", chunks)
+
+
+def _accepted_by_role(catalog, plan, schema) -> dict[str, set[str]]:
+    """For each role, the operators the code actually accepts against a column of it.
+
+    Measured rather than mirrored: every cell is one parsed predicate resolved
+    against a real catalog, and the cell is `accepted` exactly when that raises
+    nothing. A refusal is a `PlanError` by contract -- `plan` turns the catalog's
+    own refusals into one type precisely so a caller can catch one -- so anything
+    else escaping here is itself the finding, and is left to escape.
+
+    The representative column of each role is the *last* one the table declares in
+    that role, which is an arbitrary but stated choice; the rule under test is the
+    role's, and the table declares no column whose role is qualified further.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        probe = _probe_catalog(catalog, schema, Path(directory))
+        columns = {column.role: column.name for column in schema.TABLE.columns}
+        accepted: dict[str, set[str]] = {}
+        for role in schema.ROLES:
+            column = columns[role]
+            found = set()
+            for operator in plan.OPERATORS:
+                spelling = _PROBE_SPELLINGS[operator].format(c=column, v=_PROBE_VALUES[role])
+                try:
+                    plan.select(probe, [plan.parse_predicate(spelling)])
+                except plan.PlanError:
+                    continue
+                found.add(operator)
+            accepted[role] = found
+        return accepted
+
+
+def _cell_operators(cell: str, plan) -> set[str]:
+    """The operator names a table cell ticks, or the empty set for a "nothing" cell."""
+    return {name for name in ticked(cell) if name in plan.OPERATORS}
+
+
+def check_operator_roles(report: Report, blocks: dict[str, str], catalog, plan, schema) -> None:
+    """SS3.1 and SS5.2 are two views of one matrix, and the matrix is measured.
+
+    Both tables carried the wrong answer for as long as nobody ran one: SS3.1 said a
+    measurement column was filterable by "all ten operators" and SS5.2 listed `eq`
+    and `ne` as applying to `numeric`, where `char_count=500` is refused -- equality
+    here is a posting-list lookup and a measurement carries no inverted index. The
+    document was not describing a system that had changed; it was describing one
+    that never existed, which is the failure mode a prose table has and a probed
+    one does not (`docs/security/laws.md` L15, L22).
+
+    Three comparisons, because the two tables can disagree with each other as well
+    as with the code, and a check that only compared each to the code would pass a
+    document that contradicted itself in a reader's face.
+    """
+    measured = _accepted_by_role(catalog, plan, schema)
+    report.require(
+        sum(len(ops) for ops in measured.values()) >= 10,
+        "anti-vacuity: the role probe accepted almost nothing, so the comparisons "
+        "below are between two descriptions of an empty matrix",
+    )
+
+    by_role = {
+        first_ticked(row[0]): _cell_operators(row[2], plan)
+        for row in table_rows(blocks.get("3.1", ""))
+        if first_ticked(row[0])
+    }
+    by_operator: dict[str, set[str]] = {}
+    for row in table_rows(blocks.get("5.2", "")):
+        roles = {name for name in ticked(row[2]) if name in schema.ROLES}
+        for operator in _cell_operators(row[0], plan):
+            by_operator[operator] = roles
+
+    report.same("3.1 filterable roles", by_role, measured)
+    for role in sorted(measured):
+        report.require(
+            by_role.get(role, set()) == measured[role],
+            f"3.1 {role}: the document says it is filterable by "
+            f"{sorted(by_role.get(role, set()))} and the code accepts "
+            f"{sorted(measured[role])}",
+        )
+
+    transposed: dict[str, set[str]] = {operator: set() for operator in plan.OPERATORS}
+    for role, operators in measured.items():
+        for operator in operators:
+            transposed[operator].add(role)
+    report.same("5.2 applies-to operators", by_operator, transposed)
+    for operator in sorted(transposed):
+        report.require(
+            by_operator.get(operator, set()) == transposed[operator],
+            f"5.2 {operator}: the document says it applies to "
+            f"{sorted(by_operator.get(operator, set()))} and the code accepts it on "
+            f"{sorted(transposed[operator])}",
+        )
 
 
 def check_objectives(report: Report, blocks: dict[str, str], plan) -> None:
@@ -385,6 +568,38 @@ def check_gates(report: Report, blocks: dict[str, str]) -> None:
     report.same("16 gates", documented, on_disk)
 
 
+def check_check_groups(report: Report, blocks: dict[str, str]) -> None:
+    """The check groups SS16 lists are exactly the ones the database gate registers.
+
+    SS16 used to end its list with "among them", which made it unreconcilable by
+    construction: a partial list is sound under any drift, so the three groups
+    added after it was written -- `reserved character`, `S4-prefix`,
+    `S8-intervals` -- sat outside the document for as long as nobody reread it.
+    The list is now complete and compared **both** ways, which is the only reading
+    under which it is worth having in the document at all (L15).
+
+    The gate's registrations are read out of its own source rather than by
+    importing and running it, because running it costs minutes and this fact is a
+    property of the text. The regex is deliberately narrow -- a literal name as
+    the first argument of `report.run` -- and the anti-vacuity floor below is what
+    stops a regex that stopped matching from reporting a clean run.
+    """
+    source = (TOOLS_DIR / "verify_database.py").read_text(encoding="utf-8")
+    registered = re.findall(r'report\.run\(\s*"([^"]+)"', source)
+    report.require(
+        len(registered) >= 20,
+        f"anti-vacuity: only {len(registered)} check group(s) were read out of "
+        "verify_database.py, so the comparison below is against almost nothing",
+    )
+    documented = set(re.findall(r"`([^`]+)`", blocks.get("16", "").split("###")[0]))
+    # The paragraph also cites the gate scripts and the law registry; the
+    # comparison is over the names that are registrations, plus anything the
+    # document claims is one that is not.
+    documented = {name for name in documented if not name.endswith(".py")}
+    documented -= {"docs/security/laws.md"}
+    report.same("16 check groups", documented, registered)
+
+
 def check_interfaces(report: Report, text: str) -> None:
     """Every subsystem interface module is named somewhere in the document."""
     modules = sorted(
@@ -473,6 +688,7 @@ def main(argv: list[str] | None = None) -> int:
     check_artifact_names(report, blocks, catalog)
     check_binary_formats(report, blocks, catalog)
     check_operators(report, blocks, plan)
+    check_operator_roles(report, blocks, catalog, plan, schema)
     check_legality(report, blocks, plan)
     check_objectives(report, blocks, plan)
     check_backends(report, blocks, plan)
@@ -480,6 +696,7 @@ def main(argv: list[str] | None = None) -> int:
     check_interfaces(report, text)
     check_schema_ids(report, text)
     check_gates(report, blocks)
+    check_check_groups(report, blocks)
     check_provenance(report, blocks)
 
     report.require(

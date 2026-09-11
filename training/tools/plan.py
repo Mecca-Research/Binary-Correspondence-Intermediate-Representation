@@ -673,6 +673,53 @@ def joint(catalog, predicates) -> tuple[int, bool] | None:
         return min(bounds), whole and len(admitted) == 2
 
 
+def ranges(catalog, predicates) -> tuple[int, bool] | None:
+    """Rows admitted by the comparison terms, counted exactly, or None if there are none.
+
+    `interval` already says that two comparisons on one column intersect by taking
+    the tighter end of each -- that is why this language has no `BETWEEN` operator.
+    Resolution always kept that promise, because intersecting the two row sets is
+    the same interval. Pricing did not: it took the tighter *marginal* and reported
+    a bound, so `char_count>=500 AND char_count<=500` was priced at 831 rows over
+    the 3 it admits. The bound was labelled a bound, so nothing was being claimed
+    falsely -- but an exact count was available for the price of the read the range
+    term was about to make anyway, and declining it made the number 277x too loose.
+
+    The fold is per column and the count is per column, because nothing in the
+    catalog relates two measurements. Each column's interval count is an upper
+    bound on the conjunction, so the smallest is the tightest bound; it is the
+    *answer* only when every predicate in the conjunction folded into one column's
+    interval, which is what the second element of the return says.
+
+    An interval whose low end is above its high end admits nothing, and the sorted
+    index is not asked: a half-open search for an empty range is not wrong, but
+    `low > high` is decidable from the two bounds alone and the index read buys
+    nothing (`docs/security/laws.md` L3).
+    """
+    bounds: dict[str, tuple[int | None, int | None]] = {}
+    folded = 0
+    for predicate in predicates:
+        if predicate.op not in RANGE_OPERATORS:
+            continue
+        low, high = interval(predicate)
+        if predicate.column in bounds:
+            was_low, was_high = bounds[predicate.column]
+            low = was_low if low is None else (low if was_low is None else max(low, was_low))
+            high = was_high if high is None else (high if was_high is None else min(high, was_high))
+        bounds[predicate.column] = (low, high)
+        folded += 1
+    if not bounds:
+        return None
+    counts = []
+    with _as_plan_error():
+        for column, (low, high) in bounds.items():
+            if low is not None and high is not None and low > high:
+                counts.append(0)
+                continue
+            counts.append(catalog.count_in_range(column, low, high))
+    return min(counts), folded == len(predicates) and len(bounds) == 1
+
+
 def select(catalog, predicates) -> Selection:
     """Resolve a conjunction of predicates to the exact rows it admits.
 
@@ -684,11 +731,12 @@ def select(catalog, predicates) -> Selection:
     not count still resolves by walking distinct paths, which is over paths, not over
     rows. Pricing may use a bound; answering never does.
 
-    What the catalog does *not* hold is a joint statistic, so a conjunction is priced
-    at the tightest marginal and reported as the bound it is. Holding the exact pair
-    counts is a real option -- they are small and the corpus is static -- and it is
-    written up as a candidate rather than assumed here; what is not an option is
-    calling the bound a count.
+    A conjunction is priced from three sources, each of which can claim more than
+    the one before it: the tightest marginal, which is only ever a bound; the stored
+    joint distribution over indexed column pairs (`joint`); and the per-column
+    interval fold over the comparison terms (`ranges`). The last two are counts
+    where they cover every term and tighter bounds where they do not. What is never
+    an option is calling a bound a count -- the label is part of the verdict.
     """
     predicates = tuple(predicates)
     if not predicates:
@@ -720,6 +768,19 @@ def select(catalog, predicates) -> Selection:
     covered = joint(catalog, predicates)
     if covered is not None:
         count, whole = covered
+        if whole:
+            estimated, estimate_exact = count, True
+        elif count < estimated:
+            estimated = count
+    # And the comparison terms, which fold into one interval per column. The same
+    # two claims as the joint statistics, on the other half of the language: a count
+    # when the intervals are the whole conjunction, a tighter bound when they are
+    # not. Applied after the joint fold because the two are disjoint -- `value_keys`
+    # declines a comparison and this declines everything else -- so neither can
+    # overwrite an exactness the other earned.
+    narrowed = ranges(catalog, predicates)
+    if narrowed is not None:
+        count, whole = narrowed
         if whole:
             estimated, estimate_exact = count, True
         elif count < estimated:

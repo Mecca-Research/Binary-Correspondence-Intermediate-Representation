@@ -3305,6 +3305,131 @@ def check_estimates(report: Report, plan, catalog) -> None:
     )
 
 
+def check_interval_folding(report: Report, plan, catalog, chunk_dir: Path) -> None:
+    """Two comparisons on one column are one interval, and one interval is a count.
+
+    `plan.interval` says in its own docstring that two comparisons on the same
+    column intersect by taking the tighter end of each -- that is how `BETWEEN` is
+    spelled here, and it is why the language has no `BETWEEN` operator. Resolution
+    always kept that promise, because intersecting the two row sets is the same
+    interval. Pricing did not: it took the tighter *marginal* and reported a bound,
+    so `char_count>=500 AND char_count<=500` was priced at 831 rows over the 3 it
+    admits, `[bound]`.
+
+    A bound labelled a bound is honest, so this is not the `[exact]`-over-a-wrong-
+    number defect of `check_estimates`. It is the other half of the same law: an
+    exact count that is available for the price of the read the predicate is about
+    to make anyway, declined in favour of a bound 277x too loose. The sorted index
+    answers a closed interval in two binary searches (§8 of the LangRef), and the
+    range term was going to read it regardless.
+
+    The anti-vacuity requirement is the load-bearing one. Every assertion below
+    passes trivially against a folder that folds nothing *if* every probe happens
+    to be an interval whose marginals are already tight, so the check refuses to
+    report unless it priced at least one interval where the unfolded bound is
+    strictly looser than the truth (`docs/security/laws.md` L2).
+    """
+    catalog_module = load_tool("catalog")
+    columns = catalog.numeric_columns()
+    report.require(
+        bool(columns),
+        "intervals: the catalog declares no numeric column, so every probe below "
+        "would iterate zero times",
+    )
+
+    trials = 0
+    loose = 0
+    for column in columns:
+        corpus = sorted(_corpus_values(catalog_module, chunk_dir, column))
+        report.require(
+            bool(corpus),
+            f"intervals: no record measures {column}, so every interval below is "
+            "checked against the empty set",
+        )
+        if not corpus:
+            continue
+        low_end, high_end = corpus[0], corpus[-1]
+        middle = corpus[len(corpus) // 2]
+        probes = [
+            (middle, middle),  # one value, the `=` a measurement has no operator for
+            (low_end, high_end),  # the whole measured range
+            (middle, middle + 1),  # two adjacent values
+            (low_end, middle),  # the lower half
+            (middle, high_end),  # the upper half
+            (high_end, low_end),  # empty by construction: low above high
+            (high_end + 1, high_end + 10),  # above everything measured
+        ]
+        for low, high in probes:
+            predicates = [
+                plan.Predicate(column, "ge", (str(low),)),
+                plan.Predicate(column, "le", (str(high),)),
+            ]
+            selection = plan.select(catalog, predicates)
+            truth = sum(1 for value in corpus if low <= value <= high)
+            trials += 1
+            report.require(
+                len(selection.rows) == truth,
+                f"intervals: {column} in [{low}, {high}] admitted "
+                f"{len(selection.rows)} row(s) where the chunk files hold {truth}",
+            )
+            report.require(
+                selection.estimate_exact,
+                f"intervals: {column} in [{low}, {high}] was priced as a bound; two "
+                "comparisons on one column are one interval, and the sorted index "
+                "counts a closed interval exactly",
+            )
+            report.require(
+                selection.estimated == truth,
+                f"intervals: {column} in [{low}, {high}] priced {selection.estimated} "
+                f"over the {truth} row(s) it admits",
+            )
+            marginals = min(plan.estimate(catalog, p)[0] for p in predicates)
+            if marginals > truth:
+                loose += 1
+
+    report.require(
+        trials >= 7,
+        f"anti-vacuity: only {trials} interval(s) were priced",
+    )
+    report.require(
+        loose >= 1,
+        f"anti-vacuity: all {trials} interval(s) priced above were ones whose "
+        "tighter marginal already equals the truth, so none of them can tell a "
+        "folded estimate from an unfolded one",
+    )
+
+    # Two columns are two intervals, and nothing in the catalog relates them. The
+    # tightest of the two still bounds the conjunction from above, and it must be
+    # reported as the bound it is -- the fold must not carry its exactness across a
+    # column boundary it cannot see.
+    if len(columns) >= 2:
+        left, right = columns[0], columns[1]
+        left_values = sorted(_corpus_values(catalog_module, chunk_dir, left))
+        right_values = sorted(_corpus_values(catalog_module, chunk_dir, right))
+        predicates = [
+            plan.Predicate(left, "ge", (str(left_values[len(left_values) // 2]),)),
+            plan.Predicate(right, "le", (str(right_values[len(right_values) // 2]),)),
+        ]
+        selection = plan.select(catalog, predicates)
+        admitted = len(selection.rows)
+        report.require(
+            selection.estimated >= admitted,
+            f"intervals: {predicates[0]} AND {predicates[1]} priced "
+            f"{selection.estimated} below the {admitted} row(s) it admits",
+        )
+        report.require(
+            admitted == 0 or not selection.estimate_exact,
+            f"intervals: {predicates[0]} AND {predicates[1]} was reported exact at "
+            f"{selection.estimated}; the catalog holds no statistic relating two "
+            "measurement columns",
+        )
+        report.require(
+            selection.estimated <= min(plan.estimate(catalog, p)[0] for p in predicates),
+            f"intervals: the two-column bound {selection.estimated} is looser than "
+            "the tighter of its two marginals",
+        )
+
+
 def catalog_path_column() -> str:
     """The path column, from the declared table rather than spelled again here."""
     return load_tool("schema").PATH_COLUMN
@@ -3851,6 +3976,7 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("estimates", check_estimates, report, plan, catalog)
     report.run("coverage", check_operator_coverage, report, plan, catalog)
     report.run("S4-prefix", check_prefix_semantics, report, plan)
+    report.run("S8-intervals", check_interval_folding, report, plan, catalog, args.chunks)
     report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
     report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)

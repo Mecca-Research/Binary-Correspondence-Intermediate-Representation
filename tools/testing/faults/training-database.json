@@ -122,6 +122,13 @@
       "new": "        if False:\n            return None",
       "old": "        if not prefix.endswith(\"/\"):\n            return None",
       "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "intervals",
+      "label": "two comparisons on one column are priced as two marginals again",
+      "new": "    narrowed = None if True else ranges(catalog, predicates)",
+      "old": "    narrowed = ranges(catalog, predicates)",
+      "path": "training/tools/plan.py"
     }
   ],
   "gate": "training/tools/verify_database.py",

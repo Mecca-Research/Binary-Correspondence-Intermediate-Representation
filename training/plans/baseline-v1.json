@@ -1784,8 +1784,8 @@
         "STARTUP@q8 without q15, column rebuilt": "reference +where(1288) /seek",
         "STARTUP@q8 without q15, column stored": "reference +where(1288) /seek"
       },
-      "estimate_exact": false,
-      "estimated": 1387,
+      "estimate_exact": true,
+      "estimated": 1288,
       "illegal_candidates": {
         "EXACTNESS": 2,
         "EXACTNESS@every backend, column stored": 2,

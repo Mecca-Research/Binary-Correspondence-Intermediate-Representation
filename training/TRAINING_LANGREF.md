@@ -98,14 +98,18 @@ through it; none may invent a column, a type, or a filterability rule of its own
 A column's **role** decides what may be done to it, and is the only thing that
 decides it:
 
-| Role | Meaning | Filterable | Orderable |
+| Role | Meaning | Filterable by | Orderable |
 |---|---|---|---|
-| `key` | the row's identity | no | no |
-| `indexed` | an inverted index exists | yes | yes (by value, then row) |
-| `path` | a filesystem path, prefix-searchable | yes (`eq`, `prefix`, presence) | no |
-| `numeric` | a measurement, packed and zone-mapped | yes (all ten operators) | yes (sorted index) |
-| `text` | free text carried for display | **no** | no |
-| `structural` | provenance and format fields | no | no |
+| `key` | the row's identity | nothing | no |
+| `indexed` | an inverted index exists | `eq`, `ne`, `in`, `isnull`, `notnull` | yes (by value, then row) |
+| `path` | a filesystem path, prefix-searchable | `eq`, `ne`, `in`, `prefix`, `isnull`, `notnull` | no |
+| `numeric` | a measurement, packed and zone-mapped | `lt`, `le`, `gt`, `ge`, `isnull`, `notnull` | yes (sorted index) |
+| `text` | free text carried for display | **nothing** | no |
+| `structural` | provenance and format fields | nothing | no |
+
+The `Filterable by` column is not prose: `verify_langref.py` reads it and probes
+each operator against a column of each role, so a cell that stops matching what
+the code accepts is a gate failure rather than a paragraph nobody rereads.
 
 A predicate against a `text` column is **refused**, loudly. This is deliberate:
 the alternative — accepting it and scanning — turns a typo into a slow correct
@@ -233,8 +237,14 @@ agreement; it is a coincidence waiting to end.
 Rows are grouped into **parts** of at most `MAX_BLOCK_ROWS = 128` rows. A part is
 the unit of three separate things:
 
-- **zone maps** — per part, per measurement column, a `{count, min, max}` summary
-  that lets a range predicate rule the part out without reading a row;
+- **zone maps** — per part, per measurement column, a `{count, min, max, nulls, sum}`
+  summary that lets a range predicate rule the part out without reading a row. The
+  five fields are produced by `catalog.numeric_summary`, the same function that
+  summarises the whole corpus, so a part cannot summarise its rows by a different
+  rule than the catalog summarises all of them (`docs/security/laws.md` L14).
+  `nulls` is load-bearing rather than informational: a part wholly inside the
+  interval settles as `all` only when it holds no unmeasured row, because a
+  comparison is existential (§5.5);
 - **incremental rebuild** — the unit of "what changed" (§11);
 - **the containment rule** — a part's rows are contiguous in row order.
 
@@ -265,17 +275,31 @@ Ten, and the gate asserts that every one of them is exercised (§15):
 
 | Operator | Spelling | Applies to | Meaning |
 |---|---|---|---|
-| `eq` | `=` | indexed, path, numeric | equal |
-| `ne` | `!=` | indexed, path, numeric | **complement** — see §5.5 |
-| `in` | `=a,b,c` | indexed, path | any of |
-| `prefix` | `^=` | path | starts with |
-| `lt` `le` `gt` `ge` | `<` `<=` `>` `>=` | numeric | existential comparison — see §5.5 |
-| `isnull` | `!=?` | any filterable | carries no value |
-| `notnull` | `=?` | any filterable | carries some value |
+| `eq` | `=` | `indexed`, `path` | equal |
+| `ne` | `!=` | `indexed`, `path` | **complement** — see §5.5 |
+| `in` | `=a,b,c` | `indexed`, `path` | any of |
+| `prefix` | `^=` | `path` | starts with — see §5.6 |
+| `lt` `le` `gt` `ge` | `<` `<=` `>` `>=` | `numeric` | existential comparison — see §5.5 |
+| `isnull` | `!=?` | `indexed`, `path`, `numeric` | carries no value |
+| `notnull` | `=?` | `indexed`, `path`, `numeric` | carries some value |
+
+`Applies to` is the transpose of §3.1's `Filterable by`, and the gate reconciles
+both against the same probe, so the two tables cannot drift apart or away from
+the code.
 
 The parse takes the **leftmost** spelling and, at that position, the **longest**.
 Scanning in table order would read `title=a!=b` as `!=` with the column `title=a`,
 which is a confusing error where `title = "a!=b"` is the answer.
+
+**A measurement has no equality operator.** `char_count=500` is refused, and so is
+`char_count!=500`. Equality here is a posting-list lookup, and a measurement
+column carries no inverted index — it carries a packed column, a zone map and a
+sorted index, none of which answer "which rows hold exactly this value" by lookup.
+Accepting the term and scanning for it would be the `text`-column mistake spelled
+on another role: a typo that returns a slow correct answer today and a wrong one
+after the next layout change. The interval is the spelling that exists:
+`char_count>=500 AND char_count<=500` admits exactly the rows `=` would, and §6
+prices it exactly.
 
 ### 5.3 Values and quoting
 
@@ -321,6 +345,41 @@ complement far more often than it wants three-valued logic, and the surprising
 half of SQL's answer is one term away: `language!=c` with `language=?` is exactly
 `<>`.
 
+### 5.6 Prefix
+
+`^=` means **`str.startswith`**, over the distinct paths the catalog holds. It
+does not mean "is under this directory", and the difference is not academic: in a
+corpus holding `training/llvm/data/a.md` and `training/llvm/database.md`, the
+prefix `training/llvm/data` starts both.
+
+The catalog does keep per-directory postings, and a prefix ending in `/` is
+answered from them — but only then, because that is the one shape where the two
+readings provably agree: every path starting with `dir/` is a path under `dir`,
+and conversely. Any other prefix walks the distinct paths. That walk costs
+0.0218 ms over this corpus's 310 distinct paths, which is why the shortcut that
+used to answer every prefix was removed rather than repaired: it was not buying
+anything worth a wrong answer.
+
+The same rule applies to a prefix that happens to name a whole file. `^=a/b.md`
+admits `a/b.md.bak`, because `a/b.md.bak` starts with `a/b.md`. A caller who
+means one file spells it `source_path=a/b.md`.
+
+### 5.7 The reserved character
+
+The catalog marks a row that carries no value with a key built from a **NUL
+byte**, and it separates the two halves of a joint-statistics pair key with the
+same byte. Both are implementation spellings, and neither is a value anybody may
+ask for: a NUL anywhere in a predicate value is **refused**, bare, quoted, inside
+a set, embedded mid-value, or on `^=`.
+
+Without that refusal the null key is a second spelling of `IS NULL` —
+`language=<null key>` returned exactly the `language!=?` rows and its negation
+exactly the `language=?` rows — which is the shape a canonical grammar exists to
+remove (`docs/security/laws.md` L20: a reserved implementation value is not a
+valid domain value). The refusal names the operator that answers the question
+properly, and it costs nothing reachable: no record in this corpus contains a NUL
+byte in any indexed field.
+
 ---
 
 ## 6. Statistics and estimates
@@ -334,12 +393,32 @@ is a wrong number that no correctness gate can see, because the rows are right.
   pair was counted at build time, and is otherwise a bound. It is exact only when
   one term determines it, or when the estimate is zero (nothing can be admitted by
   a superset of an empty set).
-- **Joint statistics** are stored for indexed column pairs whose cross product
-  does not exceed `MAX_JOINT_CELLS = 4096`. The pair key is the two column names
-  **sorted** and NUL-separated, so the writer and the reader cannot disagree about
-  which way round the table is stored.
-- **A range** is estimated from zone maps: parts ruled out contribute nothing, and
-  parts that survive contribute their count as a bound.
+- **Joint statistics** are stored for **every** pair of indexed columns — the
+  full joint distribution, not a sketch, which a corpus this size can afford
+  because an indexed column is low cardinality by role. The pair key is the two
+  column names **sorted** and NUL-separated, so the writer and the reader cannot
+  disagree about which way round the table is stored.
+- `MAX_JOINT_CELLS = 4096` bounds the **lookup**, not the storage: an estimate
+  that would need more than that many pair lookups declines and lets the bound
+  stand. The cap sits where the work is committed rather than being asserted
+  about the data (`docs/security/laws.md` L3), so a column that grew to a million
+  distinct values cannot put a million-entry cross product inside the estimator
+  that exists to be cheaper than the answer.
+- **A comparison is exact**, counted from the sorted index (§8) rather than
+  bounded from the zone map. Pricing from the zone map was tried first, on the
+  principle that estimating must not cost an artifact read, and measurement
+  retired it: over this corpus the zone map calls a 25%-selective predicate 98%
+  selective at every block size from 32 rows to a whole file, because an open
+  interval keeps any block holding one large value. An estimate 16× over the
+  truth is worse than the read it saves, and the predicate being priced is about
+  to read that index anyway. Zone maps still prune **resolution** — §8 — which is
+  the job they are sound for.
+- **Two comparisons on one column are one interval**, and the interval is counted
+  exactly. This is what makes `BETWEEN` unnecessary as an operator (§5.1) true of
+  the *price* as well as of the rows: `char_count>=500 AND char_count<=500` is
+  priced at the 3 rows it admits, not at the 831 of its tighter marginal.
+  Comparisons on two different columns stay a bound, because the catalog holds no
+  statistic relating two measurements.
 
 ---
 
@@ -670,11 +749,16 @@ This host has no PMU, so there are no cycle or cache-miss rows and none are fake
 | `verify_ml_components.py` | the ML substrate survey against the hosted stages |
 | `verify_langref.py` | **this document** against the code it describes |
 
-`verify_database.py` runs named check groups, among them: `interfaces-boundary`,
-`interfaces`, `host-byte-order`, `S1`, `S2`, `aggregates`, `line endings`,
-`schema`, `constraints`, `S7-grammar`, `quoting`, `estimates`, `coverage`,
-`S7-ranges`, `S7-presence`, `S7-groups`, `ordering`, `planner`, `order strategy`,
-`explain`, `S5`, `S5-incremental`, `S6`, `S13`, `S18`.
+`verify_database.py` runs these named check groups, in this order — the list
+is complete, and `verify_langref.py` reconciles it against the names the gate
+actually registers, in both directions, because a list mirrored by hand drifts
+(`docs/security/laws.md` L15):
+
+`interfaces-boundary`, `interfaces`, `host-byte-order`, `S1`, `S2`, `S3`, `S4`,
+`aggregates`, `line endings`, `schema`, `constraints`, `S7-grammar`, `quoting`,
+`reserved character`, `estimates`, `coverage`, `S4-prefix`, `S8-intervals`,
+`S7-ranges`, `S7-presence`, `S7-groups`, `ordering`, `planner`,
+`order strategy`, `explain`, `S5`, `S5-incremental`, `S6`, `S13`, `S18`.
 
 ### 16.1 What a gate here must do
 
