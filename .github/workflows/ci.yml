@@ -623,6 +623,13 @@ jobs:
       - name: Training corpus retrieval evaluation (judged queries + concept memory)
         run: python3 training/tools/verify_retrieval.py
 
+      # The database layer: the kernel cache, lazy derived columns, the row
+      # locator, the eligibility mask and the planner. This runner has the C
+      # compiler those halves need, so --require-native turns a skip here into a
+      # failure -- the job that provides the toolchain owns the requirement.
+      - name: Training corpus database layer (catalog + planner + predicate)
+        run: python3 training/tools/verify_database.py --require-native
+
       # BCIR's hosted training contracts are tensor-framework free, so this
       # runner has them by checking out the repository: absence would be a
       # broken tree, not an expected local condition.

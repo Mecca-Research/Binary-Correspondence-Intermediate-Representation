@@ -47,6 +47,7 @@ import json
 import sys
 from array import array
 from operator import mul
+from dataclasses import dataclass
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -55,6 +56,7 @@ REPO_ROOT = CORPUS_ROOT.parent
 
 DEFAULT_SET = Path("build/training/embeddings/lexical-hash-v1")
 DEFAULT_CHUNKS = Path("build/training/chunks")
+DEFAULT_CATALOG = Path("build/training/catalog")
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -141,19 +143,71 @@ class EmbeddingSet:
             )
         self.codes = codes
         self.scale = int(quantized["scale"])
-        # Materialize the rows once. `array` slicing copies, and an iterator
-        # like islice cannot seek -- it would re-walk the prefix on every row,
-        # turning a linear scan into a quadratic one.
-        self.row_views = [
-            codes[row * self.dim : (row + 1) * self.dim] for row in range(len(self.rows))
-        ]
-        # Squared length of each row, once. See topk_reference for why.
-        self.row_squares = [sum(map(mul, view, view)) for view in self.row_views]
 
+        # Derived columns are declared here and computed by the first reader that
+        # actually wants them -- see `row_views` for which backends never do.
+        self._row_views: list[array] | None = None
+        self._row_squares: list[int] | None = None
         self._q8 = None
 
+    # ----------------------------------------------------------------------
+    # Derived columns
+    #
+    # Both are a pure function of `codes`, and both used to be built in the
+    # constructor for every caller. Exactly one of the three backends reads them:
+    # `topk_native` hands `codes` to the C kernel whole and `topk_q8` works from
+    # the f32 vectors, so for those two the work was the largest single cost in
+    # the command and bought nothing. Computing a derived column on demand is the
+    # cheapest form of the thing a column store does deliberately.
+    # ----------------------------------------------------------------------
+
+    @property
+    def row_views(self) -> list[array]:
+        """Every row as its own array, materialized together on first use.
+
+        Together, because `array` slicing copies and an iterator like islice cannot
+        seek -- it would re-walk the prefix on every row, turning a linear scan into
+        a quadratic one. A caller that wants *one* row wants `row_codes` instead.
+        """
+        if self._row_views is None:
+            dim = self.dim
+            codes = self.codes
+            self._row_views = [codes[row * dim : (row + 1) * dim] for row in range(len(self.rows))]
+        return self._row_views
+
+    @property
+    def row_squares(self) -> list[int]:
+        """``||p||^2`` per row. See `topk_reference` for why the value is needed."""
+        if self._row_squares is None:
+            self._row_squares = [sum(map(mul, view, view)) for view in self.row_views]
+        return self._row_squares
+
     def row_codes(self, row: int) -> array:
-        return self.row_views[row]
+        """One row's codes, without materializing the column it lives in.
+
+        A point lookup slices `codes` directly; going through `row_views` would build
+        every row to return one. The bounds check is not decoration: `array` slicing
+        is total, so an out-of-range row would otherwise return a short or empty
+        array and rank it, which is the silent-wrong-answer shape this rail refuses
+        everywhere else.
+        """
+        if not 0 <= row < len(self.rows):
+            raise IndexError(f"row {row} is outside this set's {len(self.rows)} rows")
+        if self._row_views is not None:
+            return self._row_views[row]
+        start = row * self.dim
+        return self.codes[start : start + self.dim]
+
+    def derived_columns_built(self) -> tuple[str, ...]:
+        """Which derived columns this set has actually computed, for gates to assert."""
+        built = []
+        if self._row_views is not None:
+            built.append("row_views")
+        if self._row_squares is not None:
+            built.append("row_squares")
+        if self._q8 is not None:
+            built.append("q8")
+        return tuple(built)
 
     def float_vectors(self) -> array:
         """The unit vectors themselves, as stored before quantization."""
@@ -226,7 +280,9 @@ def embed_query(text: str, embedding_set: EmbeddingSet) -> array:
 # --------------------------------------------------------------------------
 
 
-def topk_reference(query: array, embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, int]]:
+def topk_reference(
+    query: array, embedding_set: EmbeddingSet, top_k: int, rows=None
+) -> list[tuple[int, int]]:
     """Exact Q15 squared-L2 top-k. Ties break by row, matching the C contract.
 
     Expanded rather than summed term by term:
@@ -239,29 +295,52 @@ def topk_reference(query: array, embedding_set: EmbeddingSet, top_k: int) -> lis
     a tolerance. The payoff is that the only per-row work is one dot product,
     and ||p||^2 is computed once per set instead of once per query.
     """
-    row_squares = embedding_set.row_squares
     query_square = sum(map(mul, query, query))
-
     scored: list[tuple[int, int]] = []
-    for row, view in enumerate(embedding_set.row_views):
-        dot = sum(map(mul, query, view))
-        scored.append((query_square + row_squares[row] - 2 * dot, row))
+
+    if rows is None:
+        # Every row: build the derived columns once, because each is read once per
+        # row and `array` slicing in a loop would otherwise re-walk the prefix.
+        row_squares = embedding_set.row_squares
+        for row, view in enumerate(embedding_set.row_views):
+            dot = sum(map(mul, query, view))
+            scored.append((query_square + row_squares[row] - 2 * dot, row))
+    else:
+        # A selection: slice only the rows the predicate admitted and recompute
+        # ``||p||^2`` for each. Building the whole column to read a fraction of it is
+        # the materialize-before-you-select mistake -- and the arithmetic is the same
+        # integers either way, so the two paths agree bit for bit.
+        for row in rows:
+            view = embedding_set.row_codes(row)
+            dot = sum(map(mul, query, view))
+            scored.append((query_square + sum(map(mul, view, view)) - 2 * dot, row))
+
     scored.sort()
     return [(row, distance) for distance, row in scored[:top_k]]
 
 
-def topk_native(query: array, embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, int]]:
-    """The same ranking through BCIR's own `bcir_ai_q15_topk`."""
+def topk_native(
+    query: array, embedding_set: EmbeddingSet, top_k: int, rows=None
+) -> list[tuple[int, int]]:
+    """The same ranking through BCIR's own `bcir_ai_q15_topk`.
+
+    A selection becomes the kernel's `eligible` mask, so a rejected row never has its
+    dot product computed. The kernel returns fewer than `top_k` matches when the mask
+    admits fewer -- that shorter result is the honest answer, not a truncation.
+    """
     return _native().q15_topk(
         query,
         embedding_set.codes,
         rows=len(embedding_set.rows),
         dim=embedding_set.dim,
         top_k=top_k,
+        eligible=rows,
     )
 
 
-def topk_q8(query: list[float], embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, float]]:
+def topk_q8(
+    query: list[float], embedding_set: EmbeddingSet, top_k: int, rows=None
+) -> list[tuple[int, float]]:
     """Rank by cosine through BCIRQ8, the format BCIR ships model weights in.
 
     A different arithmetic from the other two backends, not a third spelling of
@@ -277,24 +356,105 @@ def topk_q8(query: list[float], embedding_set: EmbeddingSet, top_k: int) -> list
     native = _native()
     tensor = embedding_set.q8_tensor()
     scores = native.q8_rows_dot(list(query), tensor, rows=len(embedding_set.rows))
-    ranked = sorted(((-score, row) for row, score in enumerate(scores)))
+    # `bcir_ai_q8_rows_dot_f64` takes no eligibility mask -- it is a rows-dot, not a
+    # top-k -- so a selection here filters *after* the scan rather than inside it.
+    # The planner prices that honestly: a q8 plan scans every row whatever the
+    # predicate says, which is one of the reasons a narrow predicate makes the
+    # native backend win.
+    candidates = enumerate(scores) if rows is None else ((row, scores[row]) for row in rows)
+    ranked = sorted((-score, row) for row, score in candidates)
     return [(row, -negated) for negated, row in ranked[:top_k]]
+
+
+def _catalog(args) -> tuple[object, str]:
+    """The catalog, or a stated reason there is none. Never a silent degradation.
+
+    A missing or stale catalog does not make a query wrong -- it makes it read the
+    whole chunk table to render `top_k` rows, and lose `--where` entirely. Both are
+    losses a reader should be told about, so the reason is returned and printed
+    rather than swallowed.
+    """
+    module = _load_tool("catalog")
+    try:
+        return module.Catalog.load(args.catalog, args.chunks), ""
+    except module.CatalogError as exc:
+        return None, str(exc).splitlines()[0]
+
+
+def _resolve_selection(plan_module, catalog, terms):
+    """Parse and resolve `--where`, or refuse."""
+    predicates = [plan_module.parse_predicate(term) for term in terms]
+    return plan_module.select(catalog, predicates)
+
+
+def _group_by(catalog, column: str) -> list[tuple[str, int]]:
+    """GROUP BY over an indexed column, answered from statistics without a scan."""
+    counts = catalog.distinct(column)
+    return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--query", required=True)
+    parser.add_argument("--query")
     parser.add_argument("--set", type=Path, default=DEFAULT_SET, dest="embedding_set")
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
+    parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument(
         "--backend",
-        choices=("reference", "native", "q8", "both"),
+        choices=("reference", "native", "q8", "both", "auto"),
         default="reference",
         help="reference = exact Q15 in pure Python (the definition); native = the "
         "same ranking through bcir_ai_q15_topk; q8 = BCIRQ8 cosine through "
         "bcir_ai_q8_rows_dot_f64, lossier by construction; both = reference "
-        "and native, required to agree exactly",
+        "and native, required to agree exactly; auto = let the planner choose "
+        "the cheapest legal plan for --objective",
+    )
+    parser.add_argument(
+        "--objective",
+        choices=tuple(name.lower() for name in ("EXACTNESS", "LATENCY", "FOOTPRINT", "STARTUP")),
+        default="latency",
+        help="which cost axis --backend auto minimizes; the names are the axes of "
+        "BCIR's own 12-dimensional cost vector",
+    )
+    parser.add_argument(
+        "--where",
+        action="append",
+        default=[],
+        metavar="TERM",
+        help="narrow the scan: column=value, column!=value, column^=prefix, or "
+        "column=one,two for a set. Repeatable, and repeated terms are ANDed. "
+        "A predicate removes rows; it never reorders the rows it keeps.",
+    )
+    parser.add_argument(
+        "--select",
+        metavar="COLUMNS",
+        help="comma-separated columns to print per result instead of the default "
+        "location and heading trail",
+    )
+    parser.add_argument(
+        "--count",
+        action="store_true",
+        help="report how many rows the predicate admits and stop; no ranking, no text",
+    )
+    parser.add_argument(
+        "--group-by",
+        metavar="COLUMN",
+        help="with --count, report the row count per distinct value of an indexed "
+        "column, answered from the catalog without scanning",
+    )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="print every plan considered, its cost on the twelve axes, and why the chosen one won",
+    )
+    parser.add_argument(
+        "--materialize",
+        choices=("auto", "seek", "full"),
+        default="auto",
+        help="how result text is read: seek = the catalog's recorded byte spans for "
+        "the k ranked rows; full = parse every chunk record; auto = seek when a "
+        "fresh catalog is there, full otherwise with a printed reason",
     )
     parser.add_argument(
         "--require-native",
@@ -302,10 +462,22 @@ def main(argv: list[str] | None = None) -> int:
         help="fail instead of skipping when the native rail cannot be built; pass "
         "this from the CI job that provides a C compiler",
     )
+    parser.add_argument(
+        "--require-catalog",
+        action="store_true",
+        help="fail instead of degrading when no fresh catalog is available; pass "
+        "this from the job that builds one",
+    )
     args = parser.parse_args(argv)
 
     if args.top_k < 1:
         print("search_chunks: --top-k must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+    if args.query is None and not args.count:
+        print("search_chunks: --query is required unless --count is given", file=sys.stderr)
+        return EXIT_USAGE
+    if args.group_by and not args.count:
+        print("search_chunks: --group-by is only defined with --count", file=sys.stderr)
         return EXIT_USAGE
 
     # --require-native is read only inside the native branch below, and --backend
@@ -317,10 +489,57 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "search_chunks: --require-native with --backend reference asks for a "
             "guarantee about a backend this run will not touch; pass --backend native, "
-            "q8 or both",
+            "q8, both or auto",
             file=sys.stderr,
         )
         return EXIT_USAGE
+
+    plan_module = _load_tool("plan")
+    catalog, catalog_reason = _catalog(args)
+
+    # A predicate, a projection, a count and a seek all read the catalog. Asking for
+    # any of them without one is a refusal rather than an answer over every row,
+    # because silently ignoring --where would return rows the caller excluded.
+    needs_catalog = bool(args.where) or args.count or args.select or args.materialize == "seek"
+    if catalog is None:
+        if args.require_catalog or needs_catalog:
+            print(f"search_chunks: {catalog_reason}", file=sys.stderr)
+            return EXIT_BACKEND_UNAVAILABLE
+        print(f"[catalog] unavailable, reading every chunk record: {catalog_reason}")
+
+    if args.count:
+        if args.group_by:
+            try:
+                groups = _group_by(catalog, args.group_by)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            if args.where:
+                print(
+                    "search_chunks: --group-by with --where is not implemented; the "
+                    "catalog counts whole columns, and intersecting them per group "
+                    "would be a scan this tool does not do",
+                    file=sys.stderr,
+                )
+                return EXIT_USAGE
+            width = max(len(name) for name, _ in groups)
+            print(f"COUNT(*) GROUP BY {args.group_by}")
+            for name, count in groups:
+                shown = "(null)" if name == _load_tool("catalog").NULL_KEY else name
+                print(f"  {shown.ljust(width)}  {count:6d}")
+            print(f"  {'TOTAL'.ljust(width)}  {catalog.rows_total:6d}")
+            return EXIT_OK
+        try:
+            selection = _resolve_selection(plan_module, catalog, args.where)
+        except plan_module.PlanError as exc:
+            print(f"search_chunks: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        where = " AND ".join(str(p) for p in selection.predicates) or "(none)"
+        print(f"COUNT(*) WHERE {where} = {selection.admitted}")
+        if selection.predicates:
+            exactness = "exact" if selection.estimate_exact else "bound"
+            print(f"  catalog estimate before evaluation: {selection.estimated} [{exactness}]")
+        return EXIT_OK
 
     embedding_set = EmbeddingSet(args.embedding_set)
     if args.require_native and not embedding_set.rows:
@@ -333,21 +552,95 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    top_k = min(args.top_k, len(embedding_set.rows))
-    unit_query = embed_query_float(args.query, embedding_set)
-    query = embed_query(args.query, embedding_set)
-
-    reference = native = None
-    if args.backend in ("reference", "both"):
-        reference = topk_reference(query, embedding_set, top_k)
-    if args.backend in ("native", "q8", "both"):
+    selection = plan_module.Selection(None, len(embedding_set.rows), True, ())
+    if args.where:
         try:
-            if args.backend == "q8":
+            selection = _resolve_selection(plan_module, catalog, args.where)
+        except plan_module.PlanError as exc:
+            print(f"search_chunks: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        if catalog.rows_total != len(embedding_set.rows):
+            print(
+                f"search_chunks: the catalog holds {catalog.rows_total} rows and the "
+                f"embedding set holds {len(embedding_set.rows)}; a predicate resolved "
+                "against one cannot select rows of the other",
+                file=sys.stderr,
+            )
+            return EXIT_FAILED
+
+    top_k = min(
+        args.top_k, selection.admitted if selection.rows is not None else len(embedding_set.rows)
+    )
+    if top_k < 1:
+        where = " AND ".join(str(p) for p in selection.predicates)
+        print(f"\nQ: {args.query!r}   WHERE {where}\n  (no rows admitted)")
+        return EXIT_OK
+
+    materialize = args.materialize
+    if materialize == "auto":
+        materialize = "seek" if catalog is not None else "full"
+
+    backend = args.backend
+    plans = chosen = None
+    if backend == "auto" or args.explain:
+        available = {"reference"}
+        try:
+            _native().load_kernels()
+            available |= {"native", "q8", "both"}
+        except Exception:  # noqa: BLE001 -- any failure here means "not reachable"
+            pass
+        objective = plan_module.Objective[args.objective.upper()]
+        plans = plan_module.candidates(
+            catalog if catalog is not None else _RowsOnly(len(embedding_set.rows)),
+            selection,
+            top_k=top_k,
+            dim=embedding_set.dim,
+            want_text=True,
+            require_exact=objective is plan_module.Objective.EXACTNESS,
+            available_backends=frozenset(available),
+            kernel_cached=True,
+            files_touched=1,
+            model=plan_module.DEFAULT_MODEL,
+        )
+        if backend == "auto":
+            try:
+                chosen = plan_module.choose(plans, objective)
+            except plan_module.PlanError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_BACKEND_UNAVAILABLE
+            backend = chosen.backend
+            materialize = chosen.materialize if args.materialize == "auto" else materialize
+        else:
+            chosen = next(
+                (p for p in plans if p.backend == backend and p.materialize == materialize), None
+            )
+        if args.explain:
+            print(plan_module.explain(plans, chosen, objective, selection=selection))
+
+    rows = selection.rows
+    reference = native = None
+    if backend in ("reference", "both"):
+        reference = topk_reference(
+            query := embed_query(args.query, embedding_set), embedding_set, top_k, rows=rows
+        )
+    else:
+        query = embed_query(args.query, embedding_set)
+    if backend in ("native", "q8", "both"):
+        try:
+            if backend == "q8":
                 # Scores here are cosines, not squared distances: rank by them
                 # descending. Reported through the same (row, score) shape.
-                native = [(row, score) for row, score in topk_q8(unit_query, embedding_set, top_k)]
+                native = [
+                    (row, score)
+                    for row, score in topk_q8(
+                        embed_query_float(args.query, embedding_set),
+                        embedding_set,
+                        top_k,
+                        rows=rows,
+                    )
+                ]
             else:
-                native = topk_native(query, embedding_set, top_k)
+                native = topk_native(query, embedding_set, top_k, rows=rows)
         except _native_unavailable() as exc:
             if args.require_native:
                 print(f"search_chunks: native backend required: {exc}", file=sys.stderr)
@@ -356,7 +649,7 @@ def main(argv: list[str] | None = None) -> int:
             if reference is None:
                 return EXIT_OK
 
-    if reference is not None and native is not None and args.backend == "both":
+    if reference is not None and native is not None and backend == "both":
         if reference != native:
             print("search_chunks: reference and native rankings DISAGREE", file=sys.stderr)
             print(f"  reference: {reference}", file=sys.stderr)
@@ -366,23 +659,49 @@ def main(argv: list[str] | None = None) -> int:
 
     results = reference if reference is not None else native
     assert results is not None
-    texts = load_chunk_texts(args.chunks)
 
-    print(
-        f"\nQ: {args.query!r}   [{embedding_set.manifest['model']}, "
-        f"semantics={embedding_set.manifest['semantics']}]"
-    )
+    if materialize == "seek" and catalog is not None:
+        chunks = catalog.fetch(row for row, _ in results)
+    else:
+        by_id = load_chunk_texts(args.chunks)
+        chunks = {row: by_id.get(embedding_set.rows[row]["chunk_id"]) for row, _ in results}
+
+    where = " AND ".join(str(p) for p in selection.predicates)
+    heading = f"\nQ: {args.query!r}   [{embedding_set.manifest['model']}, semantics={embedding_set.manifest['semantics']}]"
+    if where:
+        heading += f"\n   WHERE {where}  ->  {selection.admitted} of {len(embedding_set.rows)} row(s) scanned"
+    print(heading)
+
+    projection = tuple(part.strip() for part in args.select.split(",")) if args.select else ()
     for rank, (row, distance) in enumerate(results, start=1):
         entry = embedding_set.rows[row]
-        chunk = texts.get(entry["chunk_id"])
+        chunk = chunks.get(row)
         # Squared Q15 distance is exact but unit-free; cosine is what a reader
         # can compare across queries. The identity is exact for unit vectors.
         cosine = (
             distance
-            if args.backend == "q8"
+            if backend == "q8"
             else 1.0 - distance / (2.0 * embedding_set.scale * embedding_set.scale)
         )
-        trail = " > ".join(chunk["heading_trail"]) if chunk and chunk["heading_trail"] else ""
+        if projection:
+            values = []
+            for column in projection:
+                if chunk is not None and column in chunk:
+                    value = chunk[column]
+                elif column in entry:
+                    value = entry[column]
+                else:
+                    print(
+                        f"search_chunks: no column {column!r} on a chunk or index row",
+                        file=sys.stderr,
+                    )
+                    return EXIT_USAGE
+                if isinstance(value, list):
+                    value = " > ".join(str(part) for part in value)
+                values.append(f"{column}={value}")
+            print(f"  {rank}. cos={cosine:+.3f}  " + "  ".join(values))
+            continue
+        trail = " > ".join(chunk["heading_trail"]) if chunk and chunk.get("heading_trail") else ""
         location = (
             f"{entry['source_path']}:{chunk['span']['start_line']}"
             if chunk
@@ -392,6 +711,13 @@ def main(argv: list[str] | None = None) -> int:
         if trail:
             print(f"     {trail}")
     return EXIT_OK
+
+
+@dataclass
+class _RowsOnly:
+    """The one fact the planner needs when there is no catalog: how many rows exist."""
+
+    rows_total: int
 
 
 if __name__ == "__main__":

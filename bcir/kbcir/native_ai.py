@@ -10,6 +10,8 @@ there is no silent fallback to the Python oracle.
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import json
 import math
 import os
 import shutil
@@ -30,6 +32,18 @@ _INCLUDE = _ROOT / "runtime" / "c"
 _MAX_ELEMENTS = 1 << 26
 _BUILD_TIMEOUT_SECONDS = 120
 _ABI_VERSION = 1
+_STAMP_SCHEMA = "bcir-ai-kernels/build-stamp/v1"
+_COMPILE_FLAGS = (
+    "-std=c11",
+    "-O3",
+    "-ffp-contract=off",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+    "-DBCIR_AI_BUILD_SHARED",
+    "-shared",
+)
 
 
 class _CMatch(ctypes.Structure):
@@ -110,9 +124,99 @@ class NativeAIKernels:
             return "libbcir_ai_kernels.dylib"
         return "libbcir_ai_kernels.so"
 
+    @staticmethod
+    def _compile_command(compiler: str, output: Path) -> list[str]:
+        """The exact argv a build would run. One definition, so the stamp cannot drift."""
+        command = [compiler, *_COMPILE_FLAGS]
+        if os.name != "nt":
+            command.append("-fPIC")
+        command.extend(
+            ["-I", str(_INCLUDE), str(_SOURCE), "-o", str(output), *host_link_args(["-lm"])]
+        )
+        return command
+
+    @staticmethod
+    def _input_digest(compiler: str) -> str:
+        """Content address of everything that decides the library's bytes.
+
+        Every translation-unit input is hashed by name and content: the kernel source
+        and *every* header beside it, which over-approximates the include graph on
+        purpose -- an unrelated header change can only force a needless rebuild, never
+        permit a stale reuse. The compiler is identified by its resolved path, size and
+        modification time rather than by running it: a version probe costs ~25 ms
+        against a ~1 ms hash, and the recorded output digest below already refuses any
+        library whose bytes are not the ones this stamp was written for.
+
+        Declared scope: a compiler swapped in place at the same path, size and
+        nanosecond mtime is not distinguished. Nothing else about the build is out of
+        scope -- flags, link arguments, ABI, platform and every input file are in.
+        """
+        digest = hashlib.sha256()
+        digest.update(_STAMP_SCHEMA.encode("utf-8"))
+        digest.update(b"\0")
+        for name, value in (
+            ("abi", str(_ABI_VERSION)),
+            ("platform", sys.platform),
+            ("os.name", os.name),
+            ("flags", "\x1f".join(NativeAIKernels._compile_command(compiler, Path("<out>")))),
+        ):
+            digest.update(f"{name}={value}".encode())
+            digest.update(b"\0")
+        try:
+            resolved = Path(compiler).resolve()
+            stat = resolved.stat()
+            identity = f"{resolved}|{stat.st_size}|{stat.st_mtime_ns}"
+        except OSError:
+            identity = f"{compiler}|unstattable"
+        digest.update(f"cc={identity}".encode())
+        digest.update(b"\0")
+        inputs = sorted(_INCLUDE.glob("*.h")) + [_SOURCE]
+        for path in inputs:
+            digest.update(path.name.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode("ascii"))
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    @staticmethod
+    def _stamp_path(target: Path) -> Path:
+        return target.with_name(target.name + ".stamp")
+
     @classmethod
-    def build(cls, directory: os.PathLike | str, *, cc: str | None = None) -> "NativeAIKernels":
-        """Build and load the checked-in C kernels without writing inside the source tree."""
+    def _reusable(cls, target: Path, stamp_path: Path, inputs: str) -> bool:
+        """True only when the stamp proves this exact library came from these inputs.
+
+        Both halves are required. The input digest says the sources and the toolchain
+        have not moved; the output digest says the file on disk is still the one the
+        build produced. A stamp that is missing, unreadable, malformed, or disagrees
+        with either half is not a verdict of "fresh" -- it falls through to a rebuild.
+        """
+        try:
+            recorded = json.loads(stamp_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if not isinstance(recorded, dict):
+            return False
+        if recorded.get("schema") != _STAMP_SCHEMA:
+            return False
+        if recorded.get("inputs") != inputs:
+            return False
+        try:
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        except OSError:
+            return False
+        return recorded.get("output") == actual
+
+    @classmethod
+    def build(
+        cls, directory: os.PathLike | str, *, cc: str | None = None, rebuild: bool = False
+    ) -> "NativeAIKernels":
+        """Build and load the checked-in C kernels without writing inside the source tree.
+
+        The compiler runs only when the library beside the stamp is not already the one
+        these inputs produce. `rebuild=True` compiles unconditionally, which is what the
+        gate uses to prove the cached path and the compiled path agree byte for byte.
+        """
         target_dir = Path(directory)
         target_dir.mkdir(parents=True, exist_ok=True)
         compiler = (
@@ -125,41 +229,54 @@ class NativeAIKernels:
         if not compiler or not _SOURCE.is_file():
             raise RuntimeError("native AI kernels require a C11 compiler and runtime/c sources")
         target = target_dir / cls._library_name()
+        stamp_path = cls._stamp_path(target)
+        inputs = cls._input_digest(compiler)
+        if not rebuild and cls._reusable(target, stamp_path, inputs):
+            return cls(target)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{target.stem}.tmp-", suffix=target.suffix, dir=target_dir
         )
         os.close(descriptor)
         temporary = Path(temporary_name)
         try:
-            command = [
-                compiler,
-                "-std=c11",
-                "-O3",
-                "-ffp-contract=off",
-                "-Wall",
-                "-Wextra",
-                "-Wpedantic",
-                "-Werror",
-                "-DBCIR_AI_BUILD_SHARED",
-                "-shared",
-            ]
-            if os.name != "nt":
-                command.append("-fPIC")
-            command.extend(
-                ["-I", str(_INCLUDE), str(_SOURCE), "-o", str(temporary), *host_link_args(["-lm"])]
-            )
+            command = cls._compile_command(compiler, temporary)
             result = subprocess.run(
                 command, capture_output=True, text=True, timeout=_BUILD_TIMEOUT_SECONDS
             )
             if result.returncode:
                 raise RuntimeError(f"native AI library build failed:\n{result.stderr}")
+            output = hashlib.sha256(temporary.read_bytes()).hexdigest()
             os.replace(temporary, target)
         finally:
             try:
                 temporary.unlink()
             except FileNotFoundError:
                 pass
+        # The stamp is published after the library it describes, and atomically, so a
+        # reader never sees a stamp vouching for bytes that are not on disk yet.
+        cls._write_stamp(stamp_path, inputs=inputs, output=output)
         return cls(target)
+
+    @staticmethod
+    def _write_stamp(stamp_path: Path, *, inputs: str, output: str) -> None:
+        payload = json.dumps(
+            {"schema": _STAMP_SCHEMA, "inputs": inputs, "output": output},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{stamp_path.name}.tmp-", dir=stamp_path.parent
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+            os.replace(temporary_name, stamp_path)
+        except BaseException:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
 
     def _configure(self) -> None:
         u8p = ctypes.POINTER(ctypes.c_uint8)

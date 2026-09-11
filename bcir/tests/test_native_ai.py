@@ -5,7 +5,9 @@ from __future__ import annotations
 import atexit
 import gc
 import hashlib
+import json
 import math
+import os
 import random
 import shutil
 import struct
@@ -261,6 +263,170 @@ def test_native_model_microbench_is_bounded_and_emits_typed_intervals():
         assert decode.lower_ns <= decode.median_ns <= decode.upper_ns
         assert prefill.operations == 2 * 8 * 8 * 8
         assert decode.operations == 2 * 8 * 8
+
+
+def _identity(path: Path) -> tuple[int, int]:
+    """What changes if and only if the file was replaced by a build."""
+    stat = path.stat()
+    return (stat.st_ino, stat.st_mtime_ns)
+
+
+def test_native_build_reuses_the_library_when_nothing_changed():
+    """The compiler is the cost; the stamp is what stops it running twice for nothing."""
+    if _CC is None:
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        NativeAIKernels.build(directory, cc=_CC)
+        library = Path(directory) / NativeAIKernels._library_name()
+        stamp = NativeAIKernels._stamp_path(library)
+        assert stamp.is_file()
+        before = _identity(library)
+        digest = hashlib.sha256(library.read_bytes()).hexdigest()
+        for _ in range(3):
+            NativeAIKernels.build(directory, cc=_CC)
+            assert _identity(library) == before
+            assert hashlib.sha256(library.read_bytes()).hexdigest() == digest
+        # Anti-vacuity: the observation above is only evidence if it CAN change.
+        NativeAIKernels.build(directory, cc=_CC, rebuild=True)
+        assert _identity(library) != before
+        # ... and a forced rebuild of unchanged inputs still produces the same bytes.
+        assert hashlib.sha256(library.read_bytes()).hexdigest() == digest
+
+
+def test_native_build_recompiles_when_the_recorded_inputs_do_not_match():
+    if _CC is None:
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        NativeAIKernels.build(directory, cc=_CC)
+        library = Path(directory) / NativeAIKernels._library_name()
+        stamp = NativeAIKernels._stamp_path(library)
+        recorded = json.loads(stamp.read_text(encoding="utf-8"))
+        recorded["inputs"] = "0" * 64
+        stamp.write_text(json.dumps(recorded), encoding="utf-8")
+        before = _identity(library)
+        NativeAIKernels.build(directory, cc=_CC)
+        assert _identity(library) != before
+        assert json.loads(stamp.read_text(encoding="utf-8"))["inputs"] != "0" * 64
+
+
+def _replace_bytes(path: Path, payload: bytes) -> None:
+    """Swap a file's contents by replacing the inode, never by writing through it.
+
+    A built library is mapped executable by every `ctypes.CDLL` still holding it, and
+    `dlclose` is not guaranteed at garbage-collection time. Writing through the path
+    would mutate code under a live mapping -- which segfaults the interpreter rather
+    than testing anything. `os.replace` leaves every existing mapping on the old inode,
+    which is also how a real concurrent rebuild behaves.
+    """
+    scratch = path.with_name(f".{path.name}.swap")
+    scratch.write_bytes(payload)
+    os.replace(scratch, path)
+
+
+def test_native_build_refuses_a_stamp_that_does_not_match_the_library():
+    """A stamp is a claim about bytes on disk. Tampered bytes retire the claim."""
+    if _CC is None:
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        NativeAIKernels.build(directory, cc=_CC)
+        library = Path(directory) / NativeAIKernels._library_name()
+        original = library.read_bytes()
+        _replace_bytes(library, original + b"\x00tampered")
+        before = _identity(library)
+        NativeAIKernels.build(directory, cc=_CC)
+        assert _identity(library) != before
+        assert library.read_bytes() == original
+
+
+def test_native_build_refuses_a_malformed_stamp():
+    """Every unreadable stamp is a rebuild, never a silent reuse (L1: fail closed)."""
+    if _CC is None:
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        NativeAIKernels.build(directory, cc=_CC)
+        library = Path(directory) / NativeAIKernels._library_name()
+        stamp = NativeAIKernels._stamp_path(library)
+        digest = hashlib.sha256(library.read_bytes()).hexdigest()
+        honest = json.loads(stamp.read_text(encoding="utf-8"))
+        corruptions = (
+            "",
+            "not json at all",
+            "[]",
+            '"a string"',
+            "{}",
+            '{"schema": "wrong", "inputs": "x", "output": "y"}',
+            '{"schema": "bcir-ai-kernels/build-stamp/v1"}',
+            '{"schema": "bcir-ai-kernels/build-stamp/v1", "inputs": null, "output": null}',
+            # Every other field correct, so ONLY the schema check can reject this one.
+            # Without it a future format would be read under this format's rules.
+            json.dumps({**honest, "schema": "bcir-ai-kernels/build-stamp/v2"}),
+            # Same, isolating the output check: correct schema and inputs, wrong bytes.
+            json.dumps({**honest, "output": "0" * 64}),
+        )
+        for corruption in corruptions:
+            stamp.write_text(corruption, encoding="utf-8")
+            before = _identity(library)
+            NativeAIKernels.build(directory, cc=_CC)
+            assert _identity(library) != before, corruption
+            assert hashlib.sha256(library.read_bytes()).hexdigest() == digest, corruption
+        stamp.unlink()
+        before = _identity(library)
+        NativeAIKernels.build(directory, cc=_CC)
+        assert _identity(library) != before
+
+
+def test_native_build_rebuilds_when_the_library_is_gone():
+    if _CC is None:
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        NativeAIKernels.build(directory, cc=_CC)
+        library = Path(directory) / NativeAIKernels._library_name()
+        stamp = NativeAIKernels._stamp_path(library)
+        recorded = stamp.read_text(encoding="utf-8")
+        library.unlink()
+        NativeAIKernels.build(directory, cc=_CC)
+        assert library.is_file()
+        assert stamp.read_text(encoding="utf-8") == recorded
+
+
+def test_native_build_stamp_covers_every_translation_unit_input():
+    """Anti-vacuity (L2): a digest over an empty input set is stable and worthless.
+
+    The freshness check is only as good as the set of files it hashes, so this asserts
+    the set is non-empty AND that changing any one member -- the source or any header
+    beside it -- moves the digest.
+    """
+    import bcir.kbcir.native_ai as native_ai
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        headers = [root / "bcir_ai_kernels.h", root / "other.h"]
+        source = root / "bcir_ai_kernels.c"
+        for path in headers:
+            path.write_text("/* header */\n", encoding="utf-8")
+        source.write_text("/* source */\n", encoding="utf-8")
+        original_include, original_source = native_ai._INCLUDE, native_ai._SOURCE
+        native_ai._INCLUDE, native_ai._SOURCE = root, source
+        try:
+            baseline = NativeAIKernels._input_digest("cc")
+            assert NativeAIKernels._input_digest("cc") == baseline
+            for path in [*headers, source]:
+                previous = path.read_text(encoding="utf-8")
+                path.write_text(previous + "/* moved */\n", encoding="utf-8")
+                assert NativeAIKernels._input_digest("cc") != baseline, path.name
+                path.write_text(previous, encoding="utf-8")
+                assert NativeAIKernels._input_digest("cc") == baseline, path.name
+            # The compiler is part of the identity too.
+            assert NativeAIKernels._input_digest("cc") != NativeAIKernels._input_digest("other-cc")
+            # And so is the flag vector.
+            saved = native_ai._COMPILE_FLAGS
+            native_ai._COMPILE_FLAGS = saved + ("-DEXTRA",)
+            try:
+                assert NativeAIKernels._input_digest("cc") != baseline
+            finally:
+                native_ai._COMPILE_FLAGS = saved
+        finally:
+            native_ai._INCLUDE, native_ai._SOURCE = original_include, original_source
 
 
 def run():
