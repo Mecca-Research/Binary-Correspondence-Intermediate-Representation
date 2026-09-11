@@ -106,14 +106,32 @@ class CatalogError(RuntimeError):
 
 
 def chunk_files(chunk_dir: Path) -> list[Path]:
-    """Every chunk file, in one order, so two callers cannot disagree about the set.
-
-    This order is load-bearing beyond this module: `embed_chunks.py` walks the same
-    sorted glob, so position `i` here is row `i` of the embedding set. That
-    correspondence is what lets a ranked row be turned into bytes on disk without a
-    lookup, and `verify_database.py` asserts it rather than trusting it.
-    """
+    """Every chunk file, in one order, so two callers cannot disagree about the set."""
     return sorted(chunk_dir.glob("*.chunks.jsonl"))
+
+
+def row_sort_key(record: dict) -> tuple:
+    """**The** row order of the corpus. One definition, imported by both writers.
+
+    Row `i` of an embedding set must be row `i` of this catalog, because that is what
+    lets a ranked row number be turned into bytes on disk with no lookup. Before this
+    function existed the two arrived at the same order by two independent rules --
+    `embed_chunks` sorted records, `catalog` walked files -- and they agreed only
+    because the files happen to be named by subject and written in this order.
+
+    Two rails computing the same thing separately is the defect shape this repository
+    has paid for most often (L12, L14). So the order is defined here and imported,
+    rather than restated; `verify_database.py` still asserts the result, because a
+    shared definition that only one caller actually uses is the same bug wearing a
+    better name.
+    """
+    span = record.get("span") or {}
+    return (
+        str(record.get("subject") or ""),
+        str(record.get("source_path") or ""),
+        int(span.get("start_line") or 0),
+        str(record.get("chunk_id") or ""),
+    )
 
 
 def _file_stat(path: Path) -> dict:
@@ -189,6 +207,7 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
                     "source_path": record.get("source_path"),
                     "kind": record.get("kind"),
                     "language": record.get("language"),
+                    "span": record.get("span"),
                     "file": file_index,
                     "offset": offset,
                     "length": end - offset,
@@ -220,7 +239,13 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str]:
     stats_files: list[dict] = []
     for index, path in enumerate(files):
         start = len(rows)
-        rows.extend(_scan_chunk_file(path, index))
+        scanned = _scan_chunk_file(path, index)
+        # Sorted by the canonical key rather than taken in file order, so the catalog
+        # and the embedding set share one definition of row `i` instead of two that
+        # happen to agree. A part stays one contiguous run because `subject` leads the
+        # key and a chunk file holds one subject.
+        scanned.sort(key=row_sort_key)
+        rows.extend(scanned)
         stat = _file_stat(path)
         stats_files.append(stat)
         parts.append(

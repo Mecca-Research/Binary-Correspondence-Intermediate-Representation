@@ -90,28 +90,52 @@ agents reading that project's source.
 
 ## The prototype evaluated against SQL operations
 
-| Operation | State | What exists |
-| --- | --- | --- |
-| `ORDER BY <distance> LIMIT k` | strong | three backends, two bit-compared on real data |
-| `EXPLAIN` | strong | `--recall` prints the named concept, its cosine and the authoring index row |
-| `BEGIN` / `COMMIT` | strong | single-writer atomic publish; no torn reads |
-| `WHERE <predicate>` | absent | the C kernel takes `eligible`; `bcir_native.py` hard-codes `b"\x01" * rows` |
-| `SELECT <columns>` | absent | every column of every row materialized on every query |
-| `JOIN` | absent | `heading_trail` and `kind` live in the chunk files, not the index |
-| `GROUP BY` / aggregate | absent | no aggregate surface |
-| `INSERT` / incremental | absent | adding one chapter re-embeds every row |
-| `AS OF` / time travel | absent | one set, overwritten in place |
-| prepared / cached plan | absent | the kernel is recompiled per process |
-| cost-based planning | elsewhere | absent here; fully built in `bcir/`, on twelve axes |
+The left column is what the audit found; the right is what the S-ladder left
+behind it.
 
-The pattern: strong wherever an answer must be trustworthy, absent wherever a
-query must be narrowed before it is answered.
+| Operation | Was | Is | How |
+| --- | --- | --- | --- |
+| `ORDER BY <distance> LIMIT k` | strong | strong | three backends, two bit-compared on real data — and the comparison now survives filtering |
+| `EXPLAIN` | strong | strong | `--recall` names the concept that fired; `--explain` prints every candidate plan, its twelve-axis cost, and why one won |
+| `BEGIN` / `COMMIT` | strong | strong | single-writer atomic publish, now for the catalog and every generation too |
+| `WHERE <predicate>` | absent | **built** | four operators, ANDed, resolved through an inverted index and applied inside the kernel scan |
+| `SELECT <columns>` | absent | **built** | `--select` projects named columns; nothing else is materialized |
+| `JOIN` | absent | **built** | the catalog binds the chunk table's columns to the embedding set's row number, so `kind`, `title` and `heading_trail` are one lookup |
+| `GROUP BY` / aggregate | absent | **built** | `--count`, and `--group-by` answered from the statistics without a scan |
+| `INSERT` / incremental | absent | **built** | parts as the coarse filter, per-row text digests as the fine one |
+| `AS OF` / time travel | absent | **built** | content-addressed generations; an old one is reopened and reproduces its answer |
+| prepared / cached plan | absent | **built** | the kernel is content-addressed and compiled once |
+| cost-based planning | elsewhere | **built** | `plan.py`, on the same twelve axes, with legality decided first |
 
-## The S-ladder
+What has *not* changed is the shape of the strengths: the rail is still strong
+wherever an answer must be trustworthy. The predicate narrows without touching
+the ranking's definition, the planner refuses a lossy backend for an exactness
+request at any price, and every new artifact publishes atomically or not at all.
 
-One gateable slice per PR, slice ID in the title, in this order. Each names the
-gate that proves it landed, because a slice without a failable gate cannot be
-shown to have landed (`docs/security/laws.md` L2, L11).
+## The S-ladder — landed
+
+All six landed, gated by `training/tools/verify_database.py` (222 checks). Every
+check was injected and watched to fire before its fix went in, because a slice
+without a failable gate cannot be shown to have landed (`docs/security/laws.md`
+L2, L11).
+
+Measured after the slices, on the 2,215-row corpus, warm, best of 3–5. Metric
+class `wall` — indicative, never gating.
+
+| Slice | Before | After | |
+| --- | ---: | ---: | --- |
+| S1 kernel build, per process | 532.6 ms | 1.90 ms | 280x |
+| S2 `EmbeddingSet(root)` | 77.06 ms | 10.90 ms | 7x |
+| S3 text for `k` results | 45.10 ms | 1.06 ms | 43x |
+| S4 scan at a narrow predicate | 60.4 ms | 0.21 ms | 288x |
+| S5 rebuild after a one-row edit | 4,876 ms | 1,073 ms | 4.5x |
+| S6 reading a past generation | not possible | addressable | — |
+
+The query layer those slices needed is in `training/tools/plan.py`: legality
+first, then a price on the same twelve axes `bcir/asn1/selection.py` prices an
+encoding rule on. `search_chunks.py` gained `--where`, `--select`, `--count`,
+`--group-by`, `--explain`, `--backend auto` and `--objective`, all vacuous by
+default so the pre-slice invocations produce byte-identical output.
 
 ### S1 — content-addressed kernel cache
 
@@ -170,13 +194,31 @@ Adopt ClickHouse's *model*, not its code: an embedding set is a list of parts,
 each named by the row range and content hash it covers; a rebuild re-embeds
 only parts whose inputs changed; a part wholly contained in another is dropped.
 
-Deliberately fifth. Against a 3.30 s local rebuild with the `lexical-hash-v1`
-provider it pays nothing. It becomes urgent the moment the provider is a
-learned model or a metered API — see `LEARNED_EMBEDDING_GATE.md`.
+The reuse is two-level, and the levels answer different questions. A part whose
+bytes are unchanged cannot hold a changed row, so nothing in it needs looking
+at; within the parts that did move, each row's own text digest decides whether
+its vector is reused. `--incremental` reports both, because a chapter reformatted
+without changing a word moves a part and reuses every row in it, and only the
+pair shows that.
 
-*Payoff:* 0 today; unbounded at the first non-local provider.
-*Gate:* change one chapter, assert exactly one part is rebuilt and the merged
-set is byte-identical to a full rebuild.
+Reuse is refused across providers, revisions, dimensions, and any set whose
+`vectors.f32` no longer matches the digest its manifest records: a stored vector
+is sound only when the function that produced it is the function that would
+produce the new one, and nothing in the bytes reveals that on its own.
+
+**This slice was mispredicted, and the correction belongs on the record.** The
+analysis said it would pay nothing today — "0 today; unbounded at the first
+non-local provider" — on the grounds that a local rebuild costs 3.30 s. The
+rebuild actually costs 4,876 ms and the incremental path 1,073 ms: a 4.5x saving
+with the cheapest possible provider. The reasoning was right about the shape and
+wrong about the number, which is the argument for measuring the thing rather
+than the thing it resembles.
+
+*Payoff:* 4,876 ms → 1,073 ms after a one-row edit; unbounded at the first
+non-local provider.
+*Gate:* an unchanged corpus re-embeds zero rows; a one-row edit re-embeds
+exactly one; and the incremental result is byte-identical to a full rebuild in
+`vectors.f32`, `vectors.q15`, `index.jsonl` and `manifest.json`.
 
 ### S6 — generations, and reading an old one
 

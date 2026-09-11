@@ -447,6 +447,7 @@ def check_predicate(
     truth: dict[str, dict[str, int]] = {name: {} for name in catalog.indexed_columns()}
     truth_prefixes: dict[str, int] = {}
     truth_ids: list[str] = []
+    truth_records: list[dict] = []
     truth_rows = 0
     for path in catalog_module.chunk_files(chunk_dir):
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -455,6 +456,7 @@ def check_predicate(
             record = json.loads(line)
             truth_rows += 1
             truth_ids.append(record.get("chunk_id"))
+            truth_records.append(record)
             for column in truth:
                 key = catalog_module.index_key(record.get(column))
                 truth[column][key] = truth[column].get(key, 0) + 1
@@ -463,10 +465,20 @@ def check_predicate(
                 for prefix in catalog_module.path_prefixes(source_path):
                     truth_prefixes[prefix] = truth_prefixes.get(prefix, 0) + 1
 
+    # The row-order contract, computed here from the corpus with the shared key and
+    # compared against what the catalog stored. Two writers agreeing by coincidence
+    # is the failure this replaces, so the check recomputes rather than compares the
+    # two artifacts to each other.
+    ordered = sorted(truth_records, key=catalog_module.row_sort_key)
     report.require(
-        catalog.ids == truth_ids,
-        "S4: the catalog's row -> chunk_id list is not the corpus's row order; every "
+        [record["chunk_id"] for record in ordered] == catalog.ids,
+        "S4: the catalog's row order is not `catalog.row_sort_key`'s order; row `i` "
+        "of the embedding set and row `i` here would be different chunks, and every "
         "fetch would return some other row's text",
+    )
+    report.require(
+        sorted(truth_ids) == sorted(catalog.ids),
+        "S4: the catalog and the corpus hold different chunk_ids, not merely a different order",
     )
     report.require(
         {prefix: int(count) for prefix, count in catalog._statistics["path_prefixes"].items()}
@@ -720,6 +732,131 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
             )
 
 
+def check_incremental(report: Report, chunk_dir: Path) -> None:
+    """An incremental rebuild must produce what a full one does, and skip real work.
+
+    Both halves, because each alone is satisfiable by a defect: a build that reuses
+    nothing is byte-identical and pointless, and a build that reuses everything is
+    fast and wrong.
+    """
+    embed = load_tool("embed_chunks")
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        mirror = root / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+
+        provider = embed.build_provider(embed.LexicalHashProvider.name, dim=512, revision=None)
+        chunks = embed.read_chunks(mirror, None)
+        report.require(
+            len(chunks) >= MIN_ROWS,
+            f"S5: {len(chunks)} chunk(s) to embed, below the {MIN_ROWS} floor",
+        )
+
+        status = embed.main(["--chunks", str(mirror), "--out", str(root / "a"), "--incremental"])
+        report.require(status == 0, f"S5: the first incremental build exited {status}")
+        first = root / "a" / "lexical-hash-v1"
+
+        # Nothing changed: every row reuses, and the model runs on none.
+        previous = embed.load_previous(first, provider)
+        report.require(
+            len(previous) == len(chunks),
+            f"S5: {len(previous)} of {len(chunks)} rows were offered for reuse after "
+            "a build that changed nothing",
+        )
+        _, _, unchanged = embed.embed_incremental(chunks, provider, previous)
+        report.require(
+            unchanged.embedded == 0 and unchanged.reused == len(chunks),
+            f"S5: an unchanged corpus re-embedded {unchanged.embedded} row(s)",
+        )
+
+        # One row's text changes: exactly one row is re-embedded.
+        victim = sorted(mirror.glob("*.chunks.jsonl"))[0]
+        lines = victim.read_text(encoding="utf-8").splitlines()
+        record = json.loads(lines[0])
+        record["text"] = record["text"] + "\n\nAn added sentence."
+        lines[0] = json.dumps(record, sort_keys=True, separators=(",", ":"))
+        victim.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        changed_chunks = embed.read_chunks(mirror, None)
+        _, _, delta = embed.embed_incremental(changed_chunks, provider, previous)
+        report.require(
+            delta.embedded == 1,
+            f"S5: changing one row's text re-embedded {delta.embedded} row(s); the "
+            "reuse key is not the row's own content",
+        )
+        report.require(
+            delta.reused == len(changed_chunks) - 1,
+            f"S5: {delta.reused} of {len(changed_chunks) - 1} unchanged rows reused",
+        )
+
+        # The result is what a full rebuild produces. Byte for byte, every artifact.
+        status = embed.main(["--chunks", str(mirror), "--out", str(root / "a"), "--incremental"])
+        report.require(status == 0, f"S5: the incremental rebuild exited {status}")
+        status = embed.main(["--chunks", str(mirror), "--out", str(root / "b")])
+        report.require(status == 0, f"S5: the full rebuild exited {status}")
+        incremental, full = root / "a" / "lexical-hash-v1", root / "b" / "lexical-hash-v1"
+        for name in ("vectors.f32", "vectors.q15", "index.jsonl", "manifest.json"):
+            report.require(
+                (incremental / name).read_bytes() == (full / name).read_bytes(),
+                f"S5: {name} differs between an incremental rebuild and a full one; "
+                "reuse changed the artifact, which makes every stored vector suspect",
+            )
+
+        # The coarse half: the part that moved is named, and only that one.
+        moved = embed._changed_parts(mirror, full)
+        report.require(
+            moved == (),
+            f"S5: a set just written from this corpus reports {moved} as changed",
+        )
+
+        # Reuse is refused across providers: a stored vector is only sound when the
+        # function that produced it is the function that would produce the new one.
+        #
+        # A different dimension is caught twice over -- the manifest comparison and
+        # the row-count arithmetic both reject it -- so the case that actually
+        # witnesses the *identity* check is a set of the same shape written by a
+        # different model. Nothing about the bytes distinguishes those, which is
+        # exactly why the manifest has to be read.
+        other = embed.build_provider(embed.LexicalHashProvider.name, dim=256, revision=None)
+        report.require(
+            embed.load_previous(full, other) == {},
+            "S5: vectors from a 512-dim set were offered for reuse at dim 256",
+        )
+        impostor = root / "impostor"
+        shutil.copytree(full, impostor)
+        manifest = json.loads((impostor / "manifest.json").read_text(encoding="utf-8"))
+        manifest["model"] = "some-other-model"
+        (impostor / "manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+        )
+        report.require(
+            embed.load_previous(impostor, provider) == {},
+            "S5: vectors written by another model, at the same dimension, were "
+            "offered for reuse; nothing in the bytes would have revealed it",
+        )
+        manifest["model"] = provider.name
+        manifest["revision"] = f"{provider.revision}-not-this-one"
+        (impostor / "manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+        )
+        report.require(
+            embed.load_previous(impostor, provider) == {},
+            "S5: vectors from another revision of the same model were reused",
+        )
+
+        # And a set whose vectors do not match their recorded digest offers nothing.
+        tampered = root / "c"
+        shutil.copytree(full, tampered)
+        (tampered / "vectors.f32").write_bytes(
+            (tampered / "vectors.f32").read_bytes()[:-4] + b"\x00\x00\x00\x00"
+        )
+        report.require(
+            embed.load_previous(tampered, provider) == {},
+            "S5: a set whose vectors.f32 no longer matches its manifest digest was "
+            "still reused from",
+        )
+
+
 def check_generations(report: Report, generations, chunk_dir: Path) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "generations"
@@ -731,6 +868,26 @@ def check_generations(report: Report, generations, chunk_dir: Path) -> None:
         report.require(
             generations.current(root).generation_id == first.generation_id,
             "S6: the newest generation is not the current one",
+        )
+
+        # Publishing the same corpus again is the same generation, not a second one.
+        # This is the property a wall-clock name cannot have, and it has no witness
+        # unless the same corpus is actually published twice.
+        again = generations.publish(root, mirror, label="first again")
+        report.require(
+            again.generation_id == first.generation_id and again.digest == first.digest,
+            f"S6: republishing an unchanged corpus produced {again.generation_id}, not "
+            f"{first.generation_id}; the name is not the content",
+        )
+        report.require(
+            len(generations.listing(root)) == 1,
+            f"S6: republishing an unchanged corpus left "
+            f"{len(generations.listing(root))} generations",
+        )
+        report.require(
+            generations.read(root, first.generation_id).label == "first",
+            "S6: republishing rewrote a published generation's manifest; a generation "
+            "is immutable once written",
         )
 
         victim = sorted(mirror.glob("*.chunks.jsonl"))[0]
@@ -777,6 +934,28 @@ def check_generations(report: Report, generations, chunk_dir: Path) -> None:
             len(generations.listing(root)) == 2,
             f"S6: {len(generations.listing(root))} generation(s) listed, expected 2",
         )
+
+        # Republishing onto a generation whose stored bytes no longer match must
+        # refuse rather than quietly adopt them. Without this the idempotent path
+        # would hand a tampered generation back as though it were the one published,
+        # and nothing downstream would ever look again.
+        #
+        # `mirror` now holds the second corpus, but the first generation was named
+        # from `chunk_dir`, so republishing from there addresses the tampered one.
+        report.require(
+            generations.generation_id_for(chunk_dir) == first.generation_id,
+            "S6: the corpus the first generation was published from no longer reproduces its id",
+        )
+        try:
+            generations.publish(root, chunk_dir, label="replay")
+        except generations.GenerationError:
+            report.require(True, "")
+        else:
+            report.require(
+                False,
+                f"S6: republishing onto the tampered {first.generation_id} succeeded; "
+                "an immutable generation was modified in place and accepted",
+            )
 
 
 # --------------------------------------------------------------------------
@@ -911,6 +1090,7 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     )
     report.run("planner", check_planner, report, plan, catalog)
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)
+    report.run("S5-incremental", check_incremental, report, args.chunks)
     report.run("S6", check_generations, report, generations, args.chunks)
 
     if args.require_native and report.skips:
