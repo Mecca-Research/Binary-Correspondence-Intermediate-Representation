@@ -54,8 +54,8 @@
    "reason": "Data layout and target information, carried entirely as attributes: this dialect ships zero operations, which is why it appears in the misalignment table below. The layout facts it holds are taught as LLVM data layout in 02-types."
   },
   "emitc": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: MLIR emitting C, the mirror image of the C-to-IR direction 20-clang-frontend teaches"
+   "status": "taught",
+   "where": "20-clang-frontend/07-emitc-the-other-direction.md"
   },
   "func": {
    "status": "taught",

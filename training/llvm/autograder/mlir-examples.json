@@ -442,6 +442,31 @@
    }
   },
   {
+   "source": "training/llvm/20-clang-frontend/examples/emitc-mlir-to-c.mlir",
+   "required_dialects": [
+    "arith",
+    "builtin",
+    "emitc",
+    "func"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-arith-to-emitc,convert-func-to-emitc)",
+   "expected_tier": 3,
+   "expected_lowered_artifact": null,
+   "checks": {
+    "require_lowered": [
+     "emitc.func @add",
+     "ui32"
+    ],
+    "forbid_lowered": [
+     "arith.addi",
+     "func.func"
+    ]
+   }
+  },
+  {
    "source": "training/llvm/24-mlir-infrastructure/examples/interfaces-inlining.mlir",
    "required_dialects": [
     "arith",

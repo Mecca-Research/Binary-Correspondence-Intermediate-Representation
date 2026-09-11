@@ -22,11 +22,11 @@ read out of an installed MLIR rather than from a documentation page:
 <!-- generated: dialect-coverage -->
 | disposition | dialects | operations | operations the corpus names |
 | --- | ---: | ---: | ---: |
-| taught | 14 | 770 | 52 |
+| taught | 15 | 819 | 56 |
 | referenced | 2 | 55 | 7 |
-| planned | 10 | 469 | 3 |
+| planned | 9 | 420 | 3 |
 | declared | 22 | 1200 | 0 |
-| **all** | **48** | **2494** | **62** |
+| **all** | **48** | **2494** | **66** |
 
 Dialects this corpus teaches, with what it names of each:
 
@@ -35,6 +35,7 @@ Dialects this corpus teaches, with what it names of each:
 | `llvm` | 296 | 15 |
 | `transform` | 234 | 8 |
 | `arith` | 54 | 6 |
+| `emitc` | 49 | 4 |
 | `func` | 5 | 3 |
 | `index` | 26 | 3 |
 | `scf` | 12 | 3 |
