@@ -72,6 +72,8 @@ if str(REPO_ROOT) not in sys.path:
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from db import analytics, engine, ingest, relational, retrieval  # noqa: E402
+
 DEFAULT_SET = Path("build/training/embeddings/lexical-hash-v1")
 DEFAULT_CHUNKS = Path("build/training/chunks")
 DEFAULT_CATALOG = Path("build/training/catalog")
@@ -136,22 +138,13 @@ class Report:
 
 
 def load_tool(name: str):
-    """Load a sibling tool once, reusing the module object.
+    """Load a sibling tool once. One implementation, in `db.engine`.
 
-    Executing the file again would return a NEW module with NEW class objects, so an
-    `except module.SomeError` would compare an instance of one module's class against
-    another's, match nothing, and let the exception escape.
+    This used to be the careful copy of three, and the other two were wrong in
+    different ways. It is kept as a name here because the checks below read as prose
+    about tools, not about an engine.
     """
-    cached = sys.modules.get(name)
-    path = TOOLS_DIR / f"{name}.py"
-    if cached is not None and getattr(cached, "__file__", None) == str(path):
-        return cached
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return engine.load(name)
 
 
 # --------------------------------------------------------------------------
@@ -765,14 +758,14 @@ def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
     # GROUP BY, both paths, totals that add up.
     search = load_tool("search_chunks")
     for column in catalog.indexed_columns():
-        groups, scanned = search._group_by(catalog, column, None)
+        groups, scanned = analytics.group_counts(catalog, column, None)
         report.require(
             not scanned and sum(count for _, count in groups) == catalog.rows_total,
             f"aggregates: GROUP BY {column} unfiltered sums to "
             f"{sum(count for _, count in groups)}, not {catalog.rows_total}",
         )
         selection = plan.select(catalog, [plan.Predicate("kind", "eq", ("code",))])
-        grouped, scanned = search._group_by(catalog, column, selection)
+        grouped, scanned = analytics.group_counts(catalog, column, selection)
         report.require(
             scanned and sum(count for _, count in grouped) == selection.admitted,
             f"aggregates: GROUP BY {column} over {selection.admitted} selected row(s) "
@@ -1120,7 +1113,7 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
     for column in columns:
         cells = catalog.numeric[column]
         for descending in (False, True):
-            from_index = search._ordered_from_index(catalog, column, descending)
+            from_index = relational.ordered_from_index(catalog, column, descending)
             rows = list(range(catalog.rows_total))
             missing = [row for row in rows if cells[row] == catalog_module.NUMERIC_NULL]
             present = [row for row in rows if cells[row] != catalog_module.NUMERIC_NULL]
@@ -1132,7 +1125,7 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 "the index differs from the same order produced by sorting",
             )
             report.require(
-                search._ordered_rows(catalog, unfiltered, column, descending) == from_index,
+                relational.ordered_rows(catalog, unfiltered, column, descending) == from_index,
                 f"ranges: ORDER BY {column}{' DESC' if descending else ''} with no "
                 "predicate returned rows the index path does not",
             )
@@ -1140,11 +1133,11 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
         # the comparison above passes whichever one ran; only the strategy says which.
         narrow = plan.select(catalog, [plan.parse_predicate(f"{column}>={cells[0]}")])
         report.require(
-            search._order_strategy(catalog, unfiltered, column) == "index"
-            and search._order_strategy(catalog, narrow, column) == "sort",
+            relational.order_strategy(catalog, unfiltered, column) == "index"
+            and relational.order_strategy(catalog, narrow, column) == "sort",
             f"ranges: ORDER BY {column} chose "
-            f"{search._order_strategy(catalog, unfiltered, column)!r} with no predicate "
-            f"and {search._order_strategy(catalog, narrow, column)!r} with one; the "
+            f"{relational.order_strategy(catalog, unfiltered, column)!r} with no predicate "
+            f"and {relational.order_strategy(catalog, narrow, column)!r} with one; the "
             "index answers the first and a sort answers the second",
         )
 
@@ -1186,6 +1179,126 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
                 f"{len(below & above)}; a pivot must split the measured rows and "
                 "leave the unmeasured one out of both",
             )
+
+
+#: The two modules that *are* the engine, and so may reach it without going through
+#: the package. `plan` prices a predicate over the catalog it filters with, and
+#: `generations` publishes the catalog as part of a generation.
+ENGINE_INSIDERS = ("plan.py", "generations.py")
+ENGINE_MODULES = ("catalog", "plan")
+
+
+def check_interface_boundary(report: Report) -> None:
+    """No tool outside the database package opens the engine for itself.
+
+    Declared scope: a static read of `training/tools/*.py` for two shapes -- loading
+    `catalog` or `plan` through `spec_from_file_location`, and importing either at
+    module level. Aliases, `__import__`, and anything assembled at run time are out of
+    scope and belong to a linter rather than to this rail. The boundary is stated here
+    so the answer to the next soundness question is to point at it rather than to grow
+    an interpreter.
+
+    Reaching the engine *through* `db.engine` is not a violation: the package is the
+    door, however a caller knocks on it. What this forbids is a second door.
+
+    It exists because that second door was real. The sibling-module loader was carried
+    in three copies that disagreed -- one returned any cached module that shared the
+    name, one executed a fresh module and then discarded it for whatever `setdefault`
+    had kept, and one checked that the cached module came from the file it meant. Only
+    the last is correct (`docs/security/laws.md` L14).
+    """
+    import ast
+
+    scanned = 0
+    findings = []
+    for path in sorted(TOOLS_DIR.glob("*.py")):
+        if path.name in ENGINE_INSIDERS:
+            continue
+        scanned += 1
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in ENGINE_MODULES:
+                        findings.append(f"{path.name} imports {alias.name} directly")
+            elif isinstance(node, ast.ImportFrom) and node.module in ENGINE_MODULES:
+                findings.append(f"{path.name} imports from {node.module} directly")
+            elif isinstance(node, ast.Call):
+                name = getattr(node.func, "attr", getattr(node.func, "id", ""))
+                if name != "spec_from_file_location" or not node.args:
+                    continue
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and first.value in ENGINE_MODULES:
+                    findings.append(f"{path.name} loads {first.value!r} by path")
+    report.require(
+        not findings,
+        "interfaces: the database engine is reached around its package by " + "; ".join(findings),
+    )
+    report.require(
+        scanned >= 10,
+        f"anti-vacuity: only {scanned} tool(s) were read for the boundary above",
+    )
+    # ...and the boundary is only worth checking if the package is actually the door.
+    report.require(
+        any(
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", getattr(node.func, "id", ""))
+            == "spec_from_file_location"
+            for node in ast.walk(
+                ast.parse((TOOLS_DIR / "db" / "engine.py").read_text(encoding="utf-8"))
+            )
+        ),
+        "interfaces: db/engine.py no longer loads anything by path, so the check "
+        "above forbids a shape nothing in this tree uses",
+    )
+
+
+def check_interfaces(report: Report, catalog) -> None:
+    """The four subsystem interfaces answer, over the corpus this gate built.
+
+    Thin by design, and checked anyway: an interface nothing exercises is a second
+    definition waiting to drift from the engine it wraps.
+    """
+    chunk_dir = catalog.chunk_dir
+    selection = retrieval.eligible(catalog, ["kind=code"])
+    report.require(
+        selection.admitted > 0 and selection.rows is not None,
+        "interfaces: retrieval.eligible admitted no rows for a predicate the corpus satisfies",
+    )
+    fetched = retrieval.records(catalog, list(selection.rows)[:8])
+    report.require(
+        len(fetched) == min(8, selection.admitted)
+        and all(record.get("kind") == "code" for record in fetched.values()),
+        "interfaces: retrieval.records returned rows the predicate did not admit",
+    )
+    columns = retrieval.projectable(catalog)
+    report.require(
+        set(catalog.numeric_columns()) <= set(columns)
+        and set(catalog.indexed_columns()) <= set(columns),
+        f"interfaces: retrieval.projectable named {columns}, which does not cover the "
+        "columns the catalog indexes",
+    )
+    parts = ingest.parts(chunk_dir)
+    report.require(
+        [part["part_id"] for part in parts] == [part["part_id"] for part in catalog.parts],
+        "interfaces: ingest.parts and the loaded catalog disagree about the parts",
+    )
+    report.require(
+        ingest.changed_parts(chunk_dir, parts) == (),
+        "interfaces: ingest.changed_parts calls a corpus changed against its own parts",
+    )
+    report.require(
+        ingest.changed_parts(chunk_dir, None) == (),
+        "interfaces: ingest.changed_parts invented changes from no recorded parts",
+    )
+    sources = {part["source"] for part in parts}
+    report.require(
+        all(
+            {part["source"] for part in ingest.parts_for(chunk_dir, name)} == {name}
+            for name in sources
+        ),
+        "interfaces: ingest.parts_for returned parts from another source",
+    )
 
 
 def check_byte_order(report: Report, catalog_module, catalog) -> None:
@@ -1425,7 +1538,7 @@ def check_presence(report: Report, plan, catalog, chunk_dir: Path) -> None:
 def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
     """GROUP BY must partition, its aggregates must add up, and HAVING must filter exactly."""
     for column in catalog.indexed_columns():
-        groups = search._group_rows(catalog, column, None)
+        groups = analytics.group_rows(catalog, column, None)
         members = [row for _, rows in groups for row in rows]
         report.require(
             sorted(members) == list(range(catalog.rows_total)),
@@ -1438,7 +1551,7 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
             f"groups: GROUP BY {column} puts {len(members) - len(set(members))} row(s) "
             "in more than one group",
         )
-        counted, scanned = search._group_by(catalog, column, None)
+        counted, scanned = analytics.group_counts(catalog, column, None)
         report.require(
             not scanned and dict(counted) == {value: len(rows) for value, rows in groups},
             f"groups: GROUP BY {column} answered from the statistics disagrees with "
@@ -1447,7 +1560,7 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
 
         for measure in catalog.numeric_columns():
             whole = catalog.aggregate(measure, list(range(catalog.rows_total)))
-            summaries = [search._group_summary(catalog, measure, rows) for _, rows in groups]
+            summaries = [analytics.group_summary(catalog, measure, rows) for _, rows in groups]
             lows = [summary["min"] for summary in summaries if summary["min"] is not None]
             highs = [summary["max"] for summary in summaries if summary["max"] is not None]
             report.require(
@@ -1464,11 +1577,9 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         # HAVING keeps exactly the groups the term describes, spelled out here rather
         # than recomputed by the code under test.
         for bound in (1, 2, max(len(rows) for _, rows in groups)):
-            term = search._parse_having(plan, f"rows>={bound}")
+            term = analytics.parse_having(f"rows>={bound}")
             kept = [
-                value
-                for value, rows in groups
-                if search._having_holds(plan, term, {"rows": len(rows)})
+                value for value, rows in groups if analytics.having_holds(term, {"rows": len(rows)})
             ]
             report.require(
                 kept == [value for value, rows in groups if len(rows) >= bound],
@@ -1486,9 +1597,9 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         ("avg=1", False),
         ("avg!=1", True),
     ):
-        term = search._parse_having(plan, spec)
+        term = analytics.parse_having(spec)
         report.require(
-            search._having_holds(plan, term, half) is expected,
+            analytics.having_holds(term, half) is expected,
             f"groups: a group averaging 1.5 answered `{spec}` with "
             f"{not expected}; AVG is SUM/COUNT compared exactly, not a rounded decimal",
         )
@@ -1497,13 +1608,13 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
     # against one -- in both directions, so "always false" is not what is being tested.
     empty = {"rows": 3, "count": 0, "nulls": 3, "min": None, "max": None, "sum": 0, "avg": None}
     for spec in ("avg>=0", "avg<0", "min>=0", "min<0", "max>=0", "max<0", "avg=0"):
-        term = search._parse_having(plan, spec)
+        term = analytics.parse_having(spec)
         report.require(
-            not search._having_holds(plan, term, empty),
+            not analytics.having_holds(term, empty),
             f"groups: a group with no measured row satisfied `{spec}`",
         )
     report.require(
-        search._having_holds(plan, search._parse_having(plan, "rows>=3"), empty),
+        analytics.having_holds(analytics.parse_having("rows>=3"), empty),
         "groups: a group with no measured row still has rows, and HAVING rows>=3 "
         "refused a group of three",
     )
@@ -1518,13 +1629,13 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         ("rows=1,2", "a set, where a comparison takes one bound"),
     ):
         try:
-            search._parse_having(plan, spec)
+            analytics.parse_having(spec)
         except plan.PlanError:
             report.require(True, "")
         else:
             report.require(False, f"groups: HAVING accepted {spec!r}, which names {why}")
     try:
-        search._having_holds(plan, search._parse_having(plan, "count>=1"), {"rows": 3})
+        analytics.having_holds(analytics.parse_having("count>=1"), {"rows": 3})
     except plan.PlanError:
         report.require(True, "")
     else:
@@ -1545,14 +1656,14 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
     )
 
     for column in catalog.numeric_columns():
-        ascending = search._ordered_rows(catalog, selection, column, False)
-        descending = search._ordered_rows(catalog, selection, column, True)
+        ascending = relational.ordered_rows(catalog, selection, column, False)
+        descending = relational.ordered_rows(catalog, selection, column, True)
         report.require(
             sorted(ascending) == sorted(descending) == sorted(selection.rows),
             f"ordering: {column} returned a different row set in the two directions",
         )
         report.require(
-            ascending == search._ordered_rows(catalog, selection, column, False),
+            ascending == relational.ordered_rows(catalog, selection, column, False),
             f"ordering: {column} ascending is not stable across two calls",
         )
         values = catalog.numeric[column]
@@ -1612,7 +1723,7 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
             if synthetic.numeric["char_count"][row] == catalog_module.NUMERIC_NULL
         )
         for descending in (False, True):
-            order = search._ordered_rows(synthetic, whole, "char_count", descending)
+            order = relational.ordered_rows(synthetic, whole, "char_count", descending)
             report.require(
                 order[-1] == missing_row,
                 f"ordering: the row with no char_count sorted to position "
@@ -1622,7 +1733,7 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
 
     # OFFSET is a window on the same order, never a different one.
     column = catalog.numeric_columns()[0]
-    full = search._ordered_rows(catalog, selection, column, True)
+    full = relational.ordered_rows(catalog, selection, column, True)
     for offset, limit in ((0, 3), (2, 3), (5, 4), (len(full), 3)):
         report.require(
             full[offset : offset + limit] == full[offset:][:limit],
@@ -1631,7 +1742,7 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
 
     # DISTINCT and GROUP BY count the same values.
     for indexed in catalog.indexed_columns():
-        groups, _ = search._group_by(catalog, indexed, selection)
+        groups, _ = analytics.group_counts(catalog, indexed, selection)
         distinct = {value for value, _ in groups}
         report.require(
             len(distinct) == len(groups),
@@ -1984,7 +2095,9 @@ def check_incremental(report: Report, chunk_dir: Path) -> None:
             )
 
         # The coarse half: the part that moved is named, and only that one.
-        moved = embed._changed_parts(mirror, full)
+        moved = ingest.changed_parts(
+            mirror, json.loads((full / "manifest.json").read_text(encoding="utf-8")).get("parts")
+        )
         report.require(
             moved == (),
             f"S5: a set just written from this corpus reports {moved} as changed",
@@ -2255,6 +2368,8 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
 
     # Before anything reads a packed column, because every check that does would
     # otherwise report a byte-order defect as whatever it broke downstream.
+    report.run("interfaces-boundary", check_interface_boundary, report)
+    report.run("interfaces", check_interfaces, report, catalog)
     report.run("host-byte-order", check_byte_order, report, catalog_module, catalog)
     report.run("S1", check_kernel_cache, report, require_native=args.require_native)
     report.run("S2", check_derived_columns, report, search, args.embedding_set, native_ok=native_ok)

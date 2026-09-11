@@ -51,6 +51,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from db import analytics, engine, relational  # noqa: E402  (path set above)
+
 CORPUS_ROOT = TOOLS_DIR.parent
 REPO_ROOT = CORPUS_ROOT.parent
 
@@ -68,21 +73,8 @@ def _native():
     """Load the corpus's single door to BCIR's kernels, on demand."""
     global _NATIVE
     if _NATIVE is None:
-        _NATIVE = _load_tool("bcir_native")
+        _NATIVE = engine.load("bcir_native")
     return _NATIVE
-
-
-def _load_tool(name: str):
-    import importlib.util
-
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 _NATIVE = None
@@ -251,7 +243,7 @@ def embed_query_float(text: str, embedding_set: EmbeddingSet) -> list[float]:
     """Project a query with the set's own model, as a unit vector."""
     global _EMBED
     if _EMBED is None:
-        _EMBED = _load_tool("embed_chunks")
+        _EMBED = engine.load("embed_chunks")
 
     manifest = embedding_set.manifest
     provider = _EMBED.build_provider(
@@ -366,90 +358,6 @@ def topk_q8(
     return [(row, -negated) for negated, row in ranked[:top_k]]
 
 
-def _ordered_rows(catalog, selection, column: str, descending: bool) -> list[int]:
-    """The admitted rows, ordered by a column rather than by distance.
-
-    A numeric column orders by its packed values, a missing measurement sorting last
-    in either direction -- absent is not small, and sorting it as though it were is
-    how a "shortest chunks" query comes back full of rows that were never measured.
-    An indexed column orders by value, then row, so the result is total and stable.
-    """
-    catalog_module = _load_tool("catalog")
-    if _order_strategy(catalog, selection, column) == "index":
-        return _ordered_from_index(catalog, column, descending)
-    rows = list(selection.rows) if selection.rows is not None else list(range(catalog.rows_total))
-    if column in catalog.numeric_columns():
-        values = catalog.numeric[column]
-        missing = [row for row in rows if values[row] == catalog_module.NUMERIC_NULL]
-        present = [row for row in rows if values[row] != catalog_module.NUMERIC_NULL]
-        # Two passes, because Python's sort is stable: rows ascending first, then by
-        # value. A single `(values[row], row)` key with `reverse=True` would reverse
-        # the tiebreak along with the key, so a run of equal values would come back
-        # in a different order than ascending gives -- and a page boundary inside
-        # such a run would then repeat or skip rows.
-        present.sort()
-        present.sort(key=lambda row: values[row], reverse=descending)
-        return present + missing
-    by_row: dict[int, str] = {}
-    for value, positions in catalog.postings["columns"].get(column, {}).items():
-        for row in positions:
-            by_row[row] = value
-    if not by_row:
-        raise KeyError(f"catalog: column {column!r} is neither numeric nor indexed")
-    rows.sort()
-    rows.sort(key=lambda row: by_row.get(row, ""), reverse=descending)
-    return rows
-
-
-def _order_strategy(catalog, selection, column: str) -> str:
-    """How ORDER BY will produce its rows: by reading the index, or by sorting.
-
-    With no predicate the sorted index already holds exactly the order asked for, so
-    the answer is a slice of it rather than a sort of every row. With a predicate the
-    rows still have to be tested one at a time, and walking 2,215 index entries to
-    find the 16 a narrow predicate admits costs more than sorting those 16.
-
-    The choice is returned as a value rather than made inside a branch because both
-    paths produce identical rows -- so a gate comparing their output passes whichever
-    one ran, and the decision would be the one thing about this slice that nothing
-    could observe (`docs/security/laws.md` L2).
-    """
-    if selection.rows is None and column in catalog.numeric_columns():
-        return "index"
-    return "sort"
-
-
-def _ordered_from_index(catalog, column: str, descending: bool) -> list[int]:
-    """Every row ordered by a measurement, taken from the sorted index.
-
-    Ascending is the index itself, read and returned. Descending is one stable sort
-    of the measured prefix on the *negated* value, which reverses the values while
-    leaving the rows inside a run of equal ones ascending -- `reverse=True` would
-    reverse the ties along with the values, and a page boundary falling inside such a
-    run has to land in the same place whichever direction was asked for. Walking the
-    prefix to flip it run by run gives the same answer and measured slower here, on a
-    corpus where half the adjacent index entries are ties.
-
-    Rows carrying no measurement live past the index's split point and stay last in
-    both directions -- absent is not small, and it is not large either.
-    """
-    rows = list(catalog.order[column])
-    split = catalog.measured(column)
-    present, missing = rows[:split], rows[split:]
-    if not descending:
-        return present + missing
-    values = catalog.numeric[column]
-    return sorted(present, key=lambda row: -values[row]) + missing
-
-
-def _parse_order(spec: str) -> tuple[str, bool]:
-    column, _, direction = spec.partition(":")
-    direction = direction.strip().lower() or "asc"
-    if direction not in ("asc", "desc"):
-        raise ValueError(f"--order-by direction must be asc or desc, not {direction!r}")
-    return column.strip(), direction == "desc"
-
-
 def _catalog(args) -> tuple[object, str]:
     """The catalog, or a stated reason there is none. Never a silent degradation.
 
@@ -458,135 +366,11 @@ def _catalog(args) -> tuple[object, str]:
     losses a reader should be told about, so the reason is returned and printed
     rather than swallowed.
     """
-    module = _load_tool("catalog")
+    module = engine.catalog()
     try:
         return module.Catalog.load(args.catalog, args.chunks), ""
     except module.CatalogError as exc:
         return None, str(exc).splitlines()[0]
-
-
-def _resolve_selection(plan_module, catalog, terms):
-    """Parse and resolve `--where`, or refuse."""
-    predicates = [plan_module.parse_predicate(term) for term in terms]
-    return plan_module.select(catalog, predicates)
-
-
-def _group_by(catalog, column: str, selection=None) -> tuple[list[tuple[str, int]], bool]:
-    """GROUP BY over an indexed column, and whether it cost a scan.
-
-    Unfiltered it is answered from the statistics the build already computed -- no
-    artifact read, no row touched. Filtered it intersects each value's postings list
-    with the admitted rows, which is work proportional to the *index*, not to the
-    corpus. Both are exact; the flag says which happened, because "counted from
-    statistics" and "counted by intersecting postings" are different claims.
-    """
-    if selection is None or selection.rows is None:
-        counts = catalog.distinct(column)
-        return sorted(counts.items(), key=lambda pair: (-int(pair[1]), pair[0])), False
-    return [(value, len(rows)) for value, rows in _group_rows(catalog, column, selection)], True
-
-
-def _group_rows(catalog, column: str, selection=None) -> list[tuple[str, list[int]]]:
-    """The admitted rows of each distinct value of an indexed column, largest group first.
-
-    One membership rule, used by the count and by every per-group aggregate, so
-    `COUNT(*) GROUP BY kind` and `AVG(char_count) GROUP BY kind` cannot disagree about
-    which rows are in a group (`docs/security/laws.md` L14). Every row carries a key
-    for every indexed column -- `NULL_KEY` where it has no value -- so the groups
-    partition the admitted rows rather than covering some of them.
-    """
-    postings = catalog.postings["columns"].get(column)
-    if postings is None:
-        raise KeyError(f"catalog: column {column!r} is not indexed")
-    admitted = None if selection is None or selection.rows is None else set(selection.rows)
-    groups = []
-    for value, rows in postings.items():
-        kept = list(rows) if admitted is None else [row for row in rows if row in admitted]
-        if kept:
-            groups.append((value, kept))
-    groups.sort(key=lambda pair: (-len(pair[1]), pair[0]))
-    return groups
-
-
-#: What a HAVING term may compare. `rows` is SQL's COUNT(*) -- every row of the group;
-#: `count` is COUNT(<the --stats column>) -- only the rows that carry a measurement.
-#: SQL spells that distinction with an argument; here they are two names, so a term
-#: cannot mean one and be read as the other.
-AGGREGATE_FIELDS = ("rows", "count", "nulls", "min", "max", "sum", "avg")
-
-
-def _parse_having(plan_module, text: str):
-    """One HAVING term, in the same grammar `--where` uses.
-
-    Reusing `parse_predicate` is not a shortcut: it means maximal munch, the
-    ASCII-integer rule and the refusal wording are defined once and apply to both
-    clauses (`docs/security/laws.md` L14). What differs is only what a term may name,
-    so only that is checked here.
-    """
-    predicate = plan_module.parse_predicate(text)
-    if predicate.column not in AGGREGATE_FIELDS:
-        raise plan_module.PlanError(
-            f"HAVING {predicate.column!r} is not an aggregate; the aggregates are "
-            f"{', '.join(AGGREGATE_FIELDS)}"
-        )
-    if predicate.op not in ("eq", "ne", *plan_module.RANGE_OPERATORS):
-        raise plan_module.PlanError(
-            f"HAVING {text!r}: an aggregate is compared against one integer, so the "
-            "operators are =, !=, >=, <=, > and <"
-        )
-    # `parse_predicate` reads the bound for the comparisons only, so `rows=x` would
-    # otherwise reach the group loop and fail there, once per group.
-    plan_module.require_integer(predicate.column, predicate.op, predicate.values[0])
-    return predicate
-
-
-def _having_holds(plan_module, predicate, summary: dict) -> bool:
-    """Whether one group's aggregate satisfies one HAVING term.
-
-    `avg` is compared as the exact rational SUM/COUNT rather than as the printed
-    float: `AVG >= 500` asks a question about the measurements themselves, and
-    rounding them to a decimal first would put a group on the wrong side of its own
-    bound. A group with no measured row has no MIN, MAX or AVG and satisfies no
-    comparison against one -- the rule a row with no value already follows.
-    """
-    field = predicate.column
-    if field not in summary:
-        raise plan_module.PlanError(
-            f"HAVING {field} needs --stats <column>; without one a group knows only "
-            "its row count, spelled 'rows'"
-        )
-    bound = predicate.bound
-    if field == "avg":
-        if not summary["count"]:
-            return False
-        left, right = summary["sum"], bound * summary["count"]
-    else:
-        left = summary[field]
-        if left is None:
-            return False
-        right = bound
-    if predicate.op == "eq":
-        return left == right
-    if predicate.op == "ne":
-        return left != right
-    if predicate.op == "ge":
-        return left >= right
-    if predicate.op == "gt":
-        return left > right
-    if predicate.op == "le":
-        return left <= right
-    if predicate.op == "lt":
-        return left < right
-    raise plan_module.PlanError(f"HAVING has no rule for operator {predicate.op!r}")
-
-
-def _group_summary(catalog, stats_column: str | None, rows: list[int]) -> dict:
-    """One group's aggregates. `rows` is always present; the rest need a --stats column."""
-    if stats_column is None:
-        return {"rows": len(rows)}
-    summary = dict(catalog.aggregate(stats_column, rows))
-    summary["rows"] = len(rows)
-    return summary
 
 
 def _print_grouped_aggregate(plan_module, catalog, args, selection, where: str) -> int:
@@ -597,15 +381,15 @@ def _print_grouped_aggregate(plan_module, catalog, args, selection, where: str) 
     down from the unfiltered table, which would disagree with the rows on screen the
     moment a HAVING term removed one.
     """
-    terms = [_parse_having(plan_module, text) for text in args.having]
-    groups = _group_rows(catalog, args.group_by, selection)
-    null_key = _load_tool("catalog").NULL_KEY
+    terms = [analytics.parse_having(text) for text in args.having]
+    groups = analytics.group_rows(catalog, args.group_by, selection)
+    null_key = engine.catalog().NULL_KEY
 
     kept: list[tuple[str, dict]] = []
     surviving: list[int] = []
     for value, rows in groups:
-        summary = _group_summary(catalog, args.stats, rows)
-        if all(_having_holds(plan_module, term, summary) for term in terms):
+        summary = analytics.group_summary(catalog, args.stats, rows)
+        if all(analytics.having_holds(term, summary) for term in terms):
             kept.append((value, summary))
             surviving.extend(rows)
 
@@ -623,7 +407,7 @@ def _print_grouped_aggregate(plan_module, catalog, args, selection, where: str) 
     for value, summary in kept:
         shown = "(null)" if value == null_key else value
         print("  " + shown.ljust(width) + _aggregate_cells(summary, fields, args.stats))
-    total = _group_summary(catalog, args.stats, sorted(surviving))
+    total = analytics.group_summary(catalog, args.stats, sorted(surviving))
     print("  " + "TOTAL".ljust(width) + _aggregate_cells(total, fields, args.stats))
     return EXIT_OK
 
@@ -718,7 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         metavar="TERM",
         help="with --group-by, keep only the groups whose aggregate satisfies a term: "
-        f"{', '.join(AGGREGATE_FIELDS)} compared against one integer with =, !=, "
+        f"{', '.join(analytics.AGGREGATE_FIELDS)} compared against one integer with =, !=, "
         ">=, <=, > or <. Repeatable and ANDed, like --where. 'rows' is COUNT(*); "
         "the rest need --stats and describe that column.",
     )
@@ -800,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    plan_module = _load_tool("plan")
+    plan_module = engine.planner()
     catalog, catalog_reason = _catalog(args)
 
     # A predicate, a projection, a count and a seek all read the catalog. Asking for
@@ -815,7 +599,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.count:
         try:
-            selection = _resolve_selection(plan_module, catalog, args.where)
+            selection = relational.resolve_selection(catalog, args.where)
         except plan_module.PlanError as exc:
             print(f"search_chunks: {exc}", file=sys.stderr)
             return EXIT_USAGE
@@ -833,11 +617,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.group_by:
             try:
-                groups, scanned = _group_by(catalog, args.group_by, selection)
+                groups, scanned = analytics.group_counts(catalog, args.group_by, selection)
             except KeyError as exc:
                 print(f"search_chunks: {exc}", file=sys.stderr)
                 return EXIT_USAGE
-            null_key = _load_tool("catalog").NULL_KEY
+            null_key = engine.catalog().NULL_KEY
             names = [("(null)" if name == null_key else name) for name, _ in groups] or [""]
             width = max(len(name) for name in names + ["TOTAL"])
             source = "postings intersection" if scanned else "statistics, no scan"
@@ -850,11 +634,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.distinct:
             try:
-                groups, scanned = _group_by(catalog, args.distinct, selection)
+                groups, scanned = analytics.group_counts(catalog, args.distinct, selection)
             except KeyError as exc:
                 print(f"search_chunks: {exc}", file=sys.stderr)
                 return EXIT_USAGE
-            null_key = _load_tool("catalog").NULL_KEY
+            null_key = engine.catalog().NULL_KEY
             source = "postings intersection" if scanned else "statistics, no scan"
             print(f"DISTINCT {args.distinct} WHERE {where}   [{source}]")
             for name, _ in groups:
@@ -893,9 +677,9 @@ def main(argv: list[str] | None = None) -> int:
         # from the predicate and the order from a column, which is the one shape of
         # question this tool could not previously be asked at all.
         try:
-            selection = _resolve_selection(plan_module, catalog, args.where)
-            column, descending = _parse_order(args.order_by)
-            ordered = _ordered_rows(catalog, selection, column, descending)
+            selection = relational.resolve_selection(catalog, args.where)
+            column, descending = relational.parse_order(args.order_by)
+            ordered = relational.ordered_rows(catalog, selection, column, descending)
         except (plan_module.PlanError, KeyError, ValueError) as exc:
             print(f"search_chunks: {exc}", file=sys.stderr)
             return EXIT_USAGE
@@ -942,7 +726,7 @@ def main(argv: list[str] | None = None) -> int:
     selection = plan_module.Selection(None, len(embedding_set.rows), True, ())
     if args.where:
         try:
-            selection = _resolve_selection(plan_module, catalog, args.where)
+            selection = relational.resolve_selection(catalog, args.where)
         except plan_module.PlanError as exc:
             print(f"search_chunks: {exc}", file=sys.stderr)
             return EXIT_USAGE

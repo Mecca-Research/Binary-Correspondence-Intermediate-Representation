@@ -20,7 +20,7 @@ name a file, a line and a number.
 | Fork | none of the nine |
 | Vendor source | none of the seven that permit it |
 | Reimplement | one mechanism, in its cheap half (**S2**) |
-| Build | eight slices, all native, priced against the measurement below |
+| Build | twelve slices, all native, priced against the measurement below |
 
 The constraint is not licence. ClickHouse is Apache-2.0; faiss, DuckDB, TileDB
 and MindsHub are MIT; Dask and webdataset are BSD-3 — every one of those
@@ -119,7 +119,7 @@ request at any price, and every new artifact publishes atomically or not at all.
 
 ## The S-ladder — landed
 
-All eight landed, gated by `training/tools/verify_database.py`, which prints its
+All twelve landed, gated by `training/tools/verify_database.py`, which prints its
 own check count rather than having one written here. Every check was injected and
 watched to fire before its fix went in — twenty-eight defects across S7 and S8
 alone — because a slice without a failable gate cannot be shown to have landed
@@ -142,6 +142,10 @@ class `wall` — indicative, never gating.
 | S7 `WHERE char_count >= n` | not expressible | 0.16 ms | — |
 | S8 the same, through the index | 0.29 ms | 0.004 ms | 80x |
 | S8 `ORDER BY char_count` | 0.755 ms | 0.035 ms | 21x |
+| S9 rows an edit invalidates | 2,160 | 128 | 17x |
+| S9 cells read for a narrow range | 2,160 | 624 | 3.5x |
+| S10 `rows_in_range` over the table | 0.183 ms | 0.022 ms | 8x |
+| S12 `search_chunks.py` | 1,113 lines | 921 lines | — |
 
 The query layer those slices needed is in `training/tools/plan.py`: legality
 first, then a price on the same twelve axes `bcir/asn1/selection.py` prices an
@@ -343,13 +347,161 @@ set. Then seek and scan must agree on every interval: two implementations of one
 lookup, which is the only claim a binary search can make about itself that does
 not come out of the same arithmetic.
 
+### S9 — parts stop being subject-shaped
+
+A part was one chunk file, and this corpus keeps 2,160 of its 2,215 rows in one.
+A part is the unit of two different things — the grain an incremental rebuild
+re-embeds at, and the span one zone map summarises — and a part per file served
+neither.
+
+Each file is now cut into blocks of at most `MAX_BLOCK_ROWS` rows, and a part's
+content digest covers its own rows rather than its whole file. A block never
+spans two files, so a part still belongs to exactly one source and a file's rows
+are still a contiguous run of blocks. The size is 128, picked from a table that
+lives in the constant's own docstring so the trade is re-derivable rather than
+asserted: `catalog.json` is the one artifact read on every load, so its growth is
+paid by every caller, while the rebuild grain and the estimate are paid only by
+callers that rebuild or plan.
+
+*Payoff:* an appended row used to move a 2,160-row part and now moves one
+128-row part, so the coarse filter went from naming most of the corpus to naming
+one block; `range_scan` reads 624 cells where it read 2,160, skipping 19 parts
+of 24. `catalog.json` grew 24.7 → 29.9 KiB and its parse went 0.077 → 0.094 ms.
+*Gate:* parts tile the rows and none is wider than the block size; `part_of`
+finds every row's own part and refuses every row outside the set; and one
+appended row moves at most two parts, checked by mutating the file cut into the
+*most* blocks rather than the first one alphabetically.
+
+**What this did not fix, measured rather than hoped.** Finer blocks do not
+rescue the zone map as a selectivity estimate. Over this corpus the bound calls a
+25%-selective predicate 98% selective at *every* block size from 32 rows to a
+whole file, because an open interval keeps any block that holds one large value
+however few of its rows are in range:
+
+| block rows | parts | truth → bound at 5% | at 25% | at 55% | worst |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| whole file | 8 | 5% → 98% | 25% → 98% | 55% → 98% | 19.3× over |
+| 128 | 24 | 5% → 80% | 25% → 98% | 55% → 98% | 15.9× over |
+| 64 | 41 | 5% → 63% | 25% → 98% | 55% → 98% | 12.4× over |
+| 32 | 75 | 5% → 47% | 25% → 95% | 55% → 98% | 9.3× over |
+
+So `count_range` is gone, and `plan.estimate` prices a comparison from the sorted
+index, exactly. An estimate 16× over the truth is worse than the artifact read it
+saves, and the predicate being priced is about to read that index anyway. The
+zone map keeps the job it is good at — ruling blocks out of the scan — and loses
+the one it was not.
+
+### S10 — a threshold for the seek, because there is one after all
+
+S8 recorded that the sorted index has no crossover and therefore needs no
+threshold. That was wrong, and the reason is in the entry point rather than in
+the measurement: `rows_in_range` *sorts* the window it seeks, which puts
+`k log k` against a linear pass that is already in order. S8's own reopening
+condition named this exactly — "a caller needs the seek window back in row
+order" — and the caller was `rows_in_range` all along.
+
+| share of table | seek + sort | scan | |
+| ---: | ---: | ---: | --- |
+| 1% | 0.005 ms | 0.053 ms | seek |
+| 25% | 0.026 ms | 0.110 ms | seek |
+| 55% | 0.081 ms | 0.120 ms | seek |
+| 70% | — | — | char_count crosses |
+| 80% | — | — | token_estimate crosses |
+| 100% | 0.183 ms | 0.022 ms | scan, by 8× |
+
+`SORTED_SCAN_SHARE` is 0.70, the earlier of the two crossings, so neither column
+is pushed past its own. The share is computed from the *exact* count, not the
+zone map's bound — deciding on the bound sends predicates the seek wins by 20×
+down the scan, which is what the S9 table above measures.
+
+*Payoff:* 4× at 25% selectivity, 8× over the whole table, in both directions
+from a decision that costs two binary searches.
+*Gate:* both strategies must be chosen across the interval sweep, and both must
+return identical rows. The second half is why the first is needed: a threshold
+stuck on one path is invisible in every answer, so only an anti-vacuity floor
+notices.
+
+### S11 — the database layer, on more than one host
+
+The catalog, the planner, the predicate path, incremental rebuilds and
+generations ran in the ubuntu-only LLVM training corpus job. They now also run in
+**Host portability** — the job whose purpose is host adaptation — on
+ubuntu-latest and windows-latest, and in the aarch64 oracle job, all three with
+`--require-native`.
+
+Running somewhere new is not the same as being pinned there, so the two host
+assumptions the layer makes are checks now. `check_byte_order` decodes every
+packed artifact a second time with an explicitly little-endian struct and
+requires it to match the `array` fast path, whose swap branch no host in this
+matrix executes. Its scope is declared and narrower than it looks: both readings
+read the file as little-endian, so a file *written* big-endian passes here and is
+caught instead by the differential against the corpus, whose JSON has no byte
+order to get wrong. That division was confirmed, not assumed.
+
+One real divergence fixed: `generations.publish` renames a staged directory into
+place, and POSIX and Windows disagree about what that does if the destination
+appears in the window between the check and the rename. The outcome is now
+decided in the code rather than by the host.
+
+### S12 — an interface per subsystem
+
+`catalog.py` and `plan.py` are the engine. `training/tools/db/` is what the rest
+of the tree talks to, split by *consumer need* rather than by engine structure,
+because those are different shapes:
+
+| module | the subsystem it serves |
+| --- | --- |
+| `db/engine.py` | opening the engine: one module loader, one way to open a catalog |
+| `db/relational.py` | which rows a predicate admits, in what order, which page |
+| `db/analytics.py` | how many, grouped by what, aggregated how, filtered by HAVING |
+| `db/retrieval.py` | the rows a ranked search may consider, and their text and columns |
+| `db/ingest.py` | the canonical row order, what a part is, and which parts moved |
+
+`generations.py` is the history interface already and is unchanged — it was
+exactly this shape before the package existed.
+
+The functions moved verbatim out of `search_chunks.py`, which lost 192 lines and
+is now a command-line front end over the interfaces. Behaviour is unchanged: 14
+of 16 pre-existing invocations are byte-identical, the two that differ print the
+S9 estimate correction, and the embedding rail produces `vectors.f32`,
+`vectors.q15` and `index.jsonl` byte-for-byte as before.
+
+*Why it exists:* the sibling-module loader was carried in three copies that
+disagreed. One returned any cached module that happened to share the name; one
+executed a fresh module and then discarded it in favour of whatever
+`setdefault` had kept; one checked that the cached module came from the file it
+meant. Only the last is correct, and it is now the only one.
+
+*Gate:* a boundary check reads every tool under `training/tools/` and refuses a
+second door to the engine — importing `catalog` or `plan` directly, or loading
+either by path — with `plan.py` and `generations.py` declared as the engine's own
+insiders. Its scope is stated in its docstring: aliases, `__import__` and
+anything assembled at run time belong to a linter, not to this rail. Reaching the
+engine *through* `db.engine` is not a violation; the package is the door, however
+a caller knocks on it.
+
+**One finding left open rather than folded in.** Ten more tools under
+`training/tools/` each carry their own copy of that loader. None of them loads
+`catalog` or `plan` — they load other sibling tools — so none crosses the
+database boundary this slice is about, and widening the slice to catch them would
+have made it a tools refactor wearing a database slice's name. `db.engine.load`
+is generic, so the migration is mechanical; it is recorded here rather than done
+quietly.
+
 ## What is verified where
 
-`verify_database.py` runs in the **LLVM training corpus** job, which is
-ubuntu-only — as the whole `training/` rail has always been. The database layer
-inherits that boundary, so it is worth stating rather than leaving a reader to
-assume otherwise: the catalog, the planner, the predicate path, incremental
-rebuilds and generations are exercised on Linux and on no other host.
+`verify_database.py` used to run only in the **LLVM training corpus** job, which is
+ubuntu-only, as the whole `training/` rail has always been. Since S11 it also runs
+in **Host portability** on ubuntu-latest and windows-latest, and in the **aarch64
+oracle** job, each with `--require-native`. The catalog, the planner, the predicate
+path, incremental rebuilds and generations are therefore exercised on two operating
+systems and two architectures rather than on one host.
+
+What is still not covered is a big-endian host, and the swap branch in each packed
+reader exists for exactly that. `check_byte_order` is what stands in for it: on a
+little-endian host it confirms the files are what the format declares, and on a
+big-endian one the swap is the only thing that could make it pass. That is a
+narrower claim than "tested there", and it is labelled as one.
 
 Two things do cross that boundary by construction rather than by coverage. Every
 sidecar is packed little-endian explicitly and byteswapped on read, the way the
@@ -421,8 +573,10 @@ in this document was re-measured directly.
 | Ray and Dask stay study-only | a parallel stage acquires a payload large enough to exhaust memory |
 | webdataset stays skipped | training input passes roughly 10^5 samples (today: 1.89 MiB in 10 files) |
 | TileDB time travel stays deferred (S6) | S5 lands |
-| the zone map stays worth 1.29x (S7) | parts stop being subject-shaped — today one holds 2,160 of 2,215 rows, so pruning the other seven still leaves 97% of the cells to read |
-| the sorted index stays threshold-free (S8) | a caller needs the seek window back in row order, which puts `k log k` against `n` and restores a crossover |
+| ~~the zone map stays worth 1.29x (S7)~~ | **reopened and acted on in S9.** Parts are bounded blocks now. The scan reads 3.5x fewer cells; the *estimate* did not improve enough at any block size to be worth pricing on, so it is priced from the index instead |
+| ~~the sorted index stays threshold-free (S8)~~ | **reopened and acted on in S10.** The caller needing row order was `rows_in_range` itself; the crossover is at 70% of the table and is now a named strategy |
+| the block size stays 128 (S9) | `catalog.json` stops being read on every load, which is what makes its growth the binding constraint; or a corpus arrives whose files are already small, where splitting buys nothing |
+| the ten remaining loader copies stay out of scope (S12) | any of them starts loading `catalog` or `plan`, at which point it is a database boundary question rather than a tools one |
 
 ## One finding outside this scope
 

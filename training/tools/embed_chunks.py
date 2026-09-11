@@ -57,6 +57,11 @@ from pathlib import Path
 from typing import Iterable, Protocol
 
 TOOLS_DIR = Path(__file__).resolve().parent
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
+
+from db import ingest  # noqa: E402  (path set above)
+
 CORPUS_ROOT = TOOLS_DIR.parent
 REPO_ROOT = CORPUS_ROOT.parent
 
@@ -324,29 +329,6 @@ def model_slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
 
 
-_CATALOG = None
-
-
-def _catalog():
-    """The catalog module, loaded on demand.
-
-    Imported lazily and by path: `embed_chunks` is run as a script from the
-    repository root, so a plain `import catalog` would depend on how it was invoked.
-    """
-    global _CATALOG
-    if _CATALOG is None:
-        import importlib.util
-
-        path = Path(__file__).resolve().parent / "catalog.py"
-        spec = importlib.util.spec_from_file_location("catalog", path)
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        sys.modules.setdefault("catalog", module)
-        spec.loader.exec_module(module)
-        _CATALOG = sys.modules.get("catalog", module)
-    return _CATALOG
-
-
 def read_chunks(chunk_dir: Path, subject: str | None) -> list[dict]:
     if not chunk_dir.is_dir():
         raise SystemExit(
@@ -374,7 +356,7 @@ def read_chunks(chunk_dir: Path, subject: str | None) -> list[dict]:
     # order the catalog puts its rows in, because row `i` of this set has to be row
     # `i` there for a ranked row to locate its own bytes. The key is imported rather
     # than restated so the two cannot drift.
-    chunks.sort(key=_catalog().row_sort_key)
+    chunks.sort(key=ingest.row_sort_key)
     return chunks
 
 
@@ -723,39 +705,6 @@ def write_inline(
         print(f"[inline] {path} ({len(lines)} chunk(s) with vectors)")
 
 
-def _catalog_parts(chunk_dir: Path) -> list[dict]:
-    """The catalog's parts for this corpus, or none if it cannot be built.
-
-    The single call site. Both the parts a set records and the parts it compares
-    against come through here, so an embedding set cannot be written against one
-    definition of a part and read against another (`docs/security/laws.md` L14).
-
-    That is not hypothetical: this used to be two definitions. `_changed_parts`
-    recomputed the current side itself as `{file stem: digest of the whole file}`,
-    which agreed with the catalog only for as long as a part happened to be a whole
-    file. The moment parts became bounded blocks, a set written seconds earlier
-    reported every part as changed -- old ids missing, new ids added -- and the
-    incremental rebuild's coarse filter stopped filtering.
-    """
-    catalog = _catalog()
-    try:
-        return catalog.build(chunk_dir)[0].get("parts") or []
-    except catalog.CatalogError:
-        return []
-
-
-def _parts_of(chunk_dir: Path, subject: str | None) -> list[dict]:
-    """The parts this set covers, taken from the catalog's own part definition."""
-    parts = _catalog_parts(chunk_dir)
-    if subject is None:
-        return parts
-    # Matched on `source`, the chunk file a part came from, rather than on `part_id`.
-    # A part is now a bounded block of one file, so its id carries a block number and
-    # a subject no longer names a part -- it names all the parts cut from that
-    # subject's file.
-    return [part for part in parts if part.get("source") == subject]
-
-
 def _changed_parts(chunk_dir: Path, destination: Path) -> tuple[str, ...]:
     """Which parts moved since the set at `destination` was written.
 
@@ -774,12 +723,10 @@ def _changed_parts(chunk_dir: Path, destination: Path) -> tuple[str, ...]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return ()
-    recorded = {part.get("part_id"): part.get("content") for part in (manifest.get("parts") or [])}
-    if not recorded:
-        return ()
-    actual = {part.get("part_id"): part.get("content") for part in _catalog_parts(chunk_dir)}
-    names = recorded.keys() | actual.keys()
-    return tuple(sorted(name for name in names if recorded.get(name) != actual.get(name)))
+    # The set's own manifest is read here, because what an embedding set records is
+    # this module's business; the comparison itself belongs to the database layer, so
+    # only the recorded list crosses the boundary.
+    return ingest.changed_parts(chunk_dir, manifest.get("parts"))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -867,7 +814,7 @@ def main(argv: list[str] | None = None) -> int:
         subjects=subjects,
         chunks_total=len(chunks),
         skipped_reason=None,
-        parts=_parts_of(args.chunks, args.subject),
+        parts=ingest.parts_for(args.chunks, args.subject),
     )
 
     if args.inline:
