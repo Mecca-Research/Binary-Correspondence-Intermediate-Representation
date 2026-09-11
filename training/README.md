@@ -18,7 +18,9 @@ One body of knowledge, delivered in three shapes:
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
 The plan for growing it is [`ROADMAP.md`](ROADMAP.md). Which embedding provider
 the retrieval evaluation runs on is decided in
-[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md).
+[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md). What the retrieval
+rail still lacks as a *database*, measured against nine proven engines, and the
+slice ladder that closes it, is [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md).
 
 A subject brings its own material and its own gates; it does not bring its own
 grader. Grading, dataset export and bounded tool execution live in
