@@ -333,9 +333,7 @@ def measure_serializations(mlir_opt: str, work: Path) -> dict[str, tuple[int, in
         text_out = work / f"{name}.txt"
         bc_out = work / f"{name}.bc"
         code_text, _ = run(mlir_opt, [STRIP_LOCATIONS, "-o", str(text_out)], source)
-        code_bc, _ = run(
-            mlir_opt, [STRIP_LOCATIONS, "--emit-bytecode", "-o", str(bc_out)], source
-        )
+        code_bc, _ = run(mlir_opt, [STRIP_LOCATIONS, "--emit-bytecode", "-o", str(bc_out)], source)
         if code_text != 0 or code_bc != 0:
             return None
         sizes[name] = (text_out.stat().st_size, bc_out.stat().st_size)
@@ -355,7 +353,9 @@ def render_size_block(sizes: dict[str, tuple[int, int]]) -> str:
             verdict = f"**larger** by {bc_bytes - text_bytes} bytes"
         else:
             verdict = "the same size"
-        rows.append(f"| [`examples/{name}`](examples/{name}) | {text_bytes} | {bc_bytes} | {verdict} |")
+        rows.append(
+            f"| [`examples/{name}`](examples/{name}) | {text_bytes} | {bc_bytes} | {verdict} |"
+        )
     smaller = sum(1 for t, b in sizes.values() if b < t)
     larger = sum(1 for t, b in sizes.values() if b > t)
     rows.append("")
@@ -580,8 +580,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--update",
         action="store_true",
-        help="rewrite the chapter's generated serialization-size block from a live "
-        "measurement",
+        help="rewrite the chapter's generated serialization-size block from a live measurement",
     )
     args = parser.parse_args(argv)
 
