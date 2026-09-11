@@ -926,6 +926,35 @@ def check_exercises(report: Report) -> None:
         print(f"[run]     {component.topic:26s} {summary}")
 
 
+def check_reach_partition(report: Report) -> None:
+    """The three reach classes must cover every component exactly once.
+
+    RUNS_HERE, TORCH_GATED and DECLARED_ONLY are each a filter over `COMPONENTS` on an
+    exact string. A component whose `reach` is misspelt therefore lands in NONE of them
+    and is checked by nothing -- and `check_resolution`'s reach/reason cross-check passes
+    for it too, because `bool(reason) == (reach == "declared")` is False == False. Three
+    filters are not a partition until something says so.
+    """
+    known = {"runs-here", "torch-gated", "declared"}
+    for component in COMPONENTS:
+        report.require(
+            component.reach in known,
+            f"{component.topic} declares reach {component.reach!r}, which is not one of "
+            f"{sorted(known)}; a reach nothing recognises puts the component in no class "
+            f"and so under no check",
+        )
+    classified = len(RUNS_HERE) + len(TORCH_GATED) + len(DECLARED_ONLY)
+    report.require(
+        classified == len(COMPONENTS),
+        f"the three reach classes hold {classified} component(s) between them but the "
+        f"inventory has {len(COMPONENTS)}; the difference is checked by nothing",
+    )
+    print(
+        f"[reach]   {len(COMPONENTS)} component(s) partitioned: {len(RUNS_HERE)} run here, "
+        f"{len(TORCH_GATED)} torch-gated, {len(DECLARED_ONLY)} declared"
+    )
+
+
 def check_torch_classification(report: Report, require_torch: bool) -> None:
     """Torch-gated components are exercised where torch is, and skipped loudly where not."""
     available = torch_available()
@@ -951,6 +980,7 @@ def check_torch_classification(report: Report, require_torch: bool) -> None:
             print(f"          - {component.topic} ({component.module})")
         return
 
+    exercised = 0
     for component in TORCH_GATED:
         exercise = EXERCISES.get(component.topic)
         if exercise is None:
@@ -962,7 +992,22 @@ def check_torch_classification(report: Report, require_torch: bool) -> None:
                 False, f"{component.topic}: exercising it raised {type(exc).__name__}: {exc}"
             )
             continue
+        exercised += 1
         print(f"[torch]   {component.topic:26s} {summary}")
+
+    # The flag claims the hosted stages RAN. `import torch` succeeding is where that
+    # starts. If TORCH_GATED were empty -- which one misspelt `reach` is enough to do --
+    # this loop would iterate zero times and the function would return having called
+    # nothing, with torch present and the flag satisfied. RUNS_HERE has carried this floor
+    # since it was written; its sibling did not.
+    if require_torch:
+        report.require(
+            exercised > 0,
+            f"--require-torch was passed and torch is present, but none of "
+            f"{len(TORCH_GATED)} torch-gated component(s) was exercised; the flag claims "
+            f"the hosted stages ran, not that torch imported",
+        )
+    print(f"[torch]   {exercised} hosted stage(s) exercised")
 
 
 def check_declared_only(report: Report) -> None:
@@ -998,6 +1043,7 @@ def main(argv: list[str] | None = None) -> int:
     check_resolution(report)
     check_every_runnable_is_exercised(report)
     check_exercises(report)
+    check_reach_partition(report)
     check_torch_classification(report, args.require_torch)
     check_declared_only(report)
 

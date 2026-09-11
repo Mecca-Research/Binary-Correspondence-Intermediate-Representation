@@ -170,10 +170,12 @@ validates against.
   toolchain the corpus does not assume. Each subject's README says which is
   which.
 - **Implemented, not yet exercised:** the `learned` embedding provider. Its
-  refusal path is checked — an unloadable model writes nothing, and
-  `--require-provider` turns that skip into a failure — but no trained model has
-  been run end-to-end through the rail here, so the `deterministic: false`
-  branch of the embedding gate has never been taken. Phase 0.6 built the metric
+  refusal path is *written* — an unloadable model writes nothing, and
+  `--require-provider` turns that skip into a failure — but nothing exercises it:
+  no CI job, script or test passes that flag, and no trained model has been run
+  end-to-end through the rail here, so the `deterministic: false` branch of the
+  embedding gate has never been taken. Written and checked are different words,
+  and this entry used to use the wrong one. Phase 0.6 built the metric
   a learned model would be judged by; it did not obtain the model, and this
   corpus still reports a **lexical** baseline only.
 - **Neither:** nothing. A claim that is neither checked nor declared reviewed is

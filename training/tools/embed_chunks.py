@@ -596,6 +596,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    # LexicalHashProvider is hermetic: it has no weights to miss and no package to be
+    # absent, so it is structurally incapable of raising ProviderUnavailable. Passing
+    # --require-provider with it asks for a guarantee that cannot fail, which reads in a
+    # log exactly like a guarantee that held. Refuse it instead of accepting it.
+    if args.require_provider and args.model == LexicalHashProvider.name:
+        print(
+            f"embed_chunks: --require-provider with the hermetic {LexicalHashProvider.name} "
+            f"provider cannot fail, so it certifies nothing; pass it with a model whose "
+            f"weights can be absent",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
     try:
         provider = build_provider(args.model, dim=args.dim, revision=args.revision)
     except ProviderUnavailable as exc:

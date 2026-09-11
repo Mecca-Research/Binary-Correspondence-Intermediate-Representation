@@ -132,9 +132,17 @@ toolchain: an unpinned model is one whose vectors nobody can reproduce.
 
 A model the environment cannot load is a **skip that writes nothing** — never a
 substituted model, and never a set carrying the requested model's name over
-another model's vectors. The CI job that installs a model passes
-`--require-provider`, which turns that skip into a failure: absence is expected
-on a laptop and is a defect in the job that exists to provide it.
+another model's vectors. `--require-provider` turns that skip into a failure, and
+the rule is that the job installing a model passes it: absence is expected on a
+laptop and is a defect in the job that exists to provide it.
+
+**No such job exists yet**, because no learned model has been obtained for this
+corpus — see `README.md`'s "implemented, not yet exercised" entry. That is worth
+stating rather than leaving the paragraph above to read as a description of
+something running. A flag with no owning job is a rule nobody is being held to,
+and this one is also unfalsifiable with the default hermetic provider, which has
+no weights to be missing; `embed_chunks.py` now refuses that combination rather
+than accepting a guarantee that cannot fail.
 
 ### Searching the vectors
 

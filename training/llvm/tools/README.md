@@ -271,6 +271,25 @@ Two of these were in gates this corpus had already fixed the other half of, whic
 the useful part of the pattern: when a flag turns out to prove less than its name
 says, its siblings are worth reading before anything else.
 
+Four more flags live in the shared rail at `training/tools/`, and the sweep covered
+them too. `verify_embeddings.py --require-native`, `verify_training_export.py
+--require-bcir` and `probe-hardware-counters.py --require-counters` came back sound —
+the last one because it correctly fails on a host with no PMU rather than recording an
+unreadable counter as zero. The other four did not:
+
+| Flag | What was wrong |
+| --- | --- |
+| `verify_ml_components.py --require-torch` | The loop it gates runs over `TORCH_GATED`, which is `tuple(c for c in COMPONENTS if c.reach == "torch-gated")`. One misspelt `reach` empties it — and puts that component in no class at all, since the other two filters miss it too. With torch present the check then returns having exercised nothing. `RUNS_HERE` had carried an emptiness floor since it was written; its sibling did not. Both are fixed, and the three classes are now checked to partition the inventory |
+| `export_training_examples.py --require-bcir` | A genuine bug rather than a missing floor: `load_tool` re-executed the module on every call, so `main()`'s `native.BackendUnavailable` and the class `export()` raised were **different class objects**. The `except` never matched, the flag's exit path and the unflagged skip beneath it were unreachable for every input, and the failure surfaced as a traceback. `load_tool` now returns the module it already loaded. Separately, an absent distillation directory made the example loop iterate zero times and still write a manifest |
+| `search_chunks.py --require-native` | Read only inside the native branch, while `--backend` defaults to `reference` — so the likeliest invocation passed the flag and never imported BCIR, built a kernel or computed a native dot product |
+| `embed_chunks.py --require-provider` | Unfalsifiable under the default model: `LexicalHashProvider` is hermetic, with no weights to miss and no package to be absent, so it cannot raise the exception the flag exists to catch. And the flag had no owner — `CORPUS_STANDARD.md` stated that "the CI job that installs a model passes `--require-provider`" when no such job exists, and `README.md` said its refusal path "is checked" when nothing checks it. Both now say so |
+
+The last two are a different failure from the rest and worth naming separately: not a
+check that can pass over zero work, but a flag that **cannot fail** on the configuration
+it is most likely to be typed with. In a log the two are indistinguishable. Both tools
+now refuse that combination as a usage error rather than accepting a guarantee that
+could never have been tested.
+
 The canaries deserve a note. They are named constructs (`Ret`, `nounwind`,
 `llvm.memcpy`) rather than expected counts, because a count drifts every release and
 would need maintaining, while `Ret` leaving LLVM would mean something other than a

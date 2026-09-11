@@ -83,7 +83,21 @@ LEGALITY_PROMPT = "Produce an LLVM IR module that the assembler and verifier acc
 
 
 def load_tool(name: str):
-    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
+    """Load a sibling tool as a module, once.
+
+    This used to execute the file on every call, which returns a NEW module object with
+    NEW class objects each time. `main()` loaded `bcir_native` to name its exception, and
+    `export()` loaded it again to raise from -- so `except native.BackendUnavailable`
+    compared an instance of the second module's class against the first module's class,
+    matched nothing, and let the exception escape as a traceback. Both the
+    `--require-bcir` exit and the unflagged skip beneath it were unreachable for every
+    input. Returning the module already loaded is what `import` would have done.
+    """
+    path = TOOLS_DIR / f"{name}.py"
+    cached = sys.modules.get(name)
+    if cached is not None and getattr(cached, "__file__", None) == str(path):
+        return cached
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -500,6 +514,20 @@ def main(argv: list[str] | None = None) -> int:
         f"[examples] {manifest['examples']['sft']} SFT ({splits}), "
         f"{manifest['examples']['preference']} verifier-decided preference pair(s)"
     )
+    # `records` comes from globbing the distillation directory, so an absent or empty one
+    # makes the whole example loop iterate zero times. The run then writes a manifest
+    # declaring an export that covers no corpus, and exits 0 -- and the default
+    # --distill path is exactly that state whenever build_distillation.py has not run.
+    # Under --require-bcir, which claims the rail RAN, that is a failure.
+    if manifest["examples"]["sft"] == 0:
+        message = (
+            f"no SFT example was built from {args.distill}; an export covering no corpus "
+            f"passes every downstream check by containing nothing"
+        )
+        if args.require_bcir:
+            print(f"export_training_examples: BCIR required: {message}", file=sys.stderr)
+            return EXIT_BCIR_UNAVAILABLE
+        print(f"[warn]    {message}")
     print(f"[write]   {args.out}")
     return EXIT_OK
 
