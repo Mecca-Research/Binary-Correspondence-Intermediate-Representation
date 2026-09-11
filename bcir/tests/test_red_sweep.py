@@ -12,14 +12,24 @@ the bytecode cache exactly the way a control run does, then injects a replacemen
 of identical length, and asserts the gate subprocess observes the *new* value. That
 is the defect L25 was written for, and without the harness's bytecode discard it
 fails.
+
+**Every test here is a module-level function, and that is load-bearing rather than
+stylistic.** `run_all` discovers tests with `dir(module)` and a `test_` prefix, so a
+`unittest.TestCase` subclass contributes *nothing* to the suite -- the class name
+does not start with `test_`, and its methods are never reached. This file was first
+written with four TestCase classes: it was registered in `run_all._MODULES`,
+`test_registry_complete` passed because the registration existed, the runner
+reported its usual total, and all thirteen tests below ran zero times. Registration
+is a claim about what *runs*, and `test_registry_complete` now checks that claim
+directly.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
-import unittest
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -45,164 +55,183 @@ print("gate: PASSED")
 """
 
 
-def _bench(case: unittest.TestCase) -> tuple[Path, Path, list[str]]:
-    directory = Path(tempfile.mkdtemp(prefix="bcir-red-sweep-"))
-    case.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
-    subject = directory / "subject.py"
-    subject.write_text(_SUBJECT, encoding="utf-8", newline="\n")
-    (directory / "gate.py").write_text(_GATE, encoding="utf-8", newline="\n")
-    return directory, subject, [sys.executable, str(directory / "gate.py")]
+class _Bench:
+    """A throwaway subject-and-gate pair, removed however the test leaves.
+
+    A context manager rather than `addCleanup` because these are plain functions;
+    the directory has to go even when an assertion raises, and a `finally` around
+    every body would be the same thing written thirteen times.
+    """
+
+    def __enter__(self) -> tuple[Path, Path, list[str]]:
+        self.directory = Path(tempfile.mkdtemp(prefix="bcir-red-sweep-"))
+        subject = self.directory / "subject.py"
+        subject.write_text(_SUBJECT, encoding="utf-8", newline="\n")
+        (self.directory / "gate.py").write_text(_GATE, encoding="utf-8", newline="\n")
+        return self.directory, subject, [sys.executable, str(self.directory / "gate.py")]
+
+    def __exit__(self, *_exc) -> bool:
+        shutil.rmtree(self.directory, ignore_errors=True)
+        return False
 
 
 def _sweep(directory: Path, command: list[str], faults: list[Fault]) -> Sweep:
     return Sweep(command=command, faults=faults, cwd=directory, timeout=120)
 
 
-class RedSweepRefusals(unittest.TestCase):
-    """Each way the harness could report something it cannot stand behind."""
+def _refused(call, *args) -> str:
+    """Run `call` expecting a `SweepError`, and hand back its message.
 
-    def test_an_empty_fault_table_is_refused(self):
-        directory, _, command = _bench(self)
-        with self.assertRaises(SweepError) as caught:
-            _sweep(directory, command, []).run()
-        self.assertIn("injects nothing", str(caught.exception))
+    A refusal asserted by `try/except` alone passes when nothing is raised at all,
+    which is the one outcome these tests exist to catch.
+    """
+    try:
+        call(*args)
+    except SweepError as exc:
+        return str(exc)
+    raise AssertionError(f"{call!r} returned instead of refusing")
 
-    def test_an_anchor_that_matches_nothing_is_a_harness_error(self):
-        """Otherwise a gate that passes because nothing changed reads as 'not caught'."""
-        directory, subject, command = _bench(self)
+
+# -- each way the harness could report something it cannot stand behind --------
+
+
+def test_an_empty_fault_table_is_refused():
+    with _Bench() as (directory, _, command):
+        message = _refused(_sweep(directory, command, []).run)
+        assert "injects nothing" in message, message
+
+
+def test_an_anchor_that_matches_nothing_is_a_harness_error():
+    """Otherwise a gate that passes because nothing changed reads as 'not caught'."""
+    with _Bench() as (directory, subject, command):
         fault = Fault("absent anchor", "threshold", subject, "NOT_IN_THE_FILE = 1", "x = 2")
-        with self.assertRaises(SweepError) as caught:
-            _sweep(directory, command, [fault]).run()
-        self.assertIn("occurs 0 time(s)", str(caught.exception))
-        self.assertEqual(subject.read_text(encoding="utf-8"), _SUBJECT)
+        message = _refused(_sweep(directory, command, [fault]).run)
+        assert "occurs 0 time(s)" in message, message
+        assert subject.read_text(encoding="utf-8") == _SUBJECT
 
-    def test_an_anchor_that_matches_twice_is_refused(self):
-        """Two defects attributed to one check is not one experiment."""
-        directory, subject, command = _bench(self)
+
+def test_an_anchor_that_matches_twice_is_refused():
+    """Two defects attributed to one check is not one experiment."""
+    with _Bench() as (directory, subject, command):
         subject.write_text(_SUBJECT + _SUBJECT, encoding="utf-8", newline="\n")
         fault = Fault(
             "doubled anchor", "threshold", subject, "THRESHOLD = 0.70", "THRESHOLD = 0.55"
         )
-        with self.assertRaises(SweepError) as caught:
-            _sweep(directory, command, [fault]).run()
-        self.assertIn("occurs 2 time(s)", str(caught.exception))
+        message = _refused(_sweep(directory, command, [fault]).run)
+        assert "occurs 2 time(s)" in message, message
 
-    def test_a_replacement_identical_to_its_anchor_is_refused(self):
-        """A fault that changes nothing would be reported as a defect nobody caught."""
-        directory, subject, command = _bench(self)
+
+def test_a_replacement_identical_to_its_anchor_is_refused():
+    """A fault that changes nothing would be reported as a defect nobody caught."""
+    with _Bench() as (directory, subject, command):
         fault = Fault("no-op fault", "threshold", subject, "THRESHOLD = 0.70", "THRESHOLD = 0.70")
-        with self.assertRaises(SweepError) as caught:
-            _sweep(directory, command, [fault]).run()
-        self.assertIn("did not change", str(caught.exception))
+        message = _refused(_sweep(directory, command, [fault]).run)
+        assert "did not change" in message, message
 
-    def test_a_control_run_that_is_already_red_invalidates_the_sweep(self):
-        """Every row below a red control is meaningless, so there are no rows."""
-        directory, subject, command = _bench(self)
+
+def test_a_control_run_that_is_already_red_invalidates_the_sweep():
+    """Every row below a red control is meaningless, so there are no rows."""
+    with _Bench() as (directory, subject, command):
         subject.write_text("THRESHOLD = 0.11\n", encoding="utf-8", newline="\n")
         fault = Fault("anything", "threshold", subject, "0.11", "0.22")
-        with self.assertRaises(SweepError) as caught:
-            _sweep(directory, command, [fault]).run()
-        self.assertIn("already FAILING", str(caught.exception))
+        message = _refused(_sweep(directory, command, [fault]).run)
+        assert "already FAILING" in message, message
 
 
-class RedSweepVerdicts(unittest.TestCase):
-    """The harness distinguishes the outcomes that look alike in a bad sweep."""
+# -- the outcomes that look alike in a bad sweep -------------------------------
 
-    def test_a_caught_fault_is_red_and_the_tree_is_restored(self):
-        directory, subject, command = _bench(self)
+
+def test_a_caught_fault_is_red_and_the_tree_is_restored():
+    with _Bench() as (directory, subject, command):
         before = subject.read_bytes()
         fault = Fault("threshold moves", "threshold", subject, "0.70", "0.55")
         sweep = _sweep(directory, command, [fault])
-        self.assertEqual(sweep.run(), 0)
-        self.assertEqual(sweep.results[0].verdict, "RED")
-        self.assertIn("threshold", sweep.results[0].fired)
-        self.assertEqual(subject.read_bytes(), before, "the sweep left the tree modified")
+        assert sweep.run() == 0
+        assert sweep.results[0].verdict == "RED"
+        assert "threshold" in sweep.results[0].fired
+        assert subject.read_bytes() == before, "the sweep left the tree modified"
 
-    def test_a_gate_that_passes_with_the_defect_in_is_not_caught(self):
-        """The honest negative: the check exists, ran, and did not notice."""
-        directory, subject, command = _bench(self)
+
+def test_a_gate_that_passes_with_the_defect_in_is_not_caught():
+    """The honest negative: the check exists, ran, and did not notice."""
+    with _Bench() as (directory, subject, command):
         subject.write_text(_SUBJECT + "UNUSED = 1\n", encoding="utf-8", newline="\n")
         fault = Fault("an ignored constant", "threshold", subject, "UNUSED = 1", "UNUSED = 2")
         sweep = _sweep(directory, command, [fault])
-        self.assertEqual(sweep.run(), 1)
-        self.assertEqual(sweep.results[0].verdict, "NOT CAUGHT")
+        assert sweep.run() == 1
+        assert sweep.results[0].verdict == "NOT CAUGHT"
 
-    def test_the_wrong_check_firing_is_not_a_catch(self):
-        """A gate going red for an unrelated reason has not demonstrated this check."""
-        directory, subject, command = _bench(self)
+
+def test_the_wrong_check_firing_is_not_a_catch():
+    """A gate going red for an unrelated reason has not demonstrated this check."""
+    with _Bench() as (directory, subject, command):
         fault = Fault("threshold moves", "some-other-check", subject, "0.70", "0.55")
         sweep = _sweep(directory, command, [fault])
-        self.assertEqual(sweep.run(), 1)
-        self.assertEqual(sweep.results[0].verdict, "WRONG CHECK")
+        assert sweep.run() == 1
+        assert sweep.results[0].verdict == "WRONG CHECK"
 
-    def test_a_gate_that_cannot_be_launched_is_a_verdict_not_a_catch(self):
-        """L1: a harness error is reported as one, never as evidence."""
-        directory, subject, _ = _bench(self)
+
+def test_a_gate_that_cannot_be_launched_is_a_verdict_not_a_catch():
+    """L1: a harness error is reported as one, never as evidence."""
+    with _Bench() as (directory, subject, _):
         fault = Fault("threshold moves", "threshold", subject, "0.70", "0.55")
         sweep = _sweep(directory, [str(directory / "no-such-binary")], [fault])
-        self.assertRaises(SweepError, sweep.run)
+        _refused(sweep.run)
 
 
-class RedSweepBytecode(unittest.TestCase):
-    """L25's own defect: the fault that never reached the interpreter."""
+# -- L25's own defect: the fault that never reached the interpreter ------------
 
-    def test_a_same_length_fault_is_not_compiled_away(self):
-        """The regression test for the observed defect.
 
-        The control run imports `subject` and leaves a `.pyc` behind. The fault
-        below replaces four characters with four characters, so the cached module
-        can still satisfy CPython's `(mtime, size)` check within the same second.
-        Without the harness's bytecode discard the gate re-imports the *old*
-        constant, passes, and the sweep reports a defect nobody caught.
-        """
-        directory, subject, command = _bench(self)
+def test_a_same_length_fault_is_not_compiled_away():
+    """The regression test for the observed defect.
+
+    The control run imports `subject` and leaves a `.pyc` behind. The fault below
+    replaces four characters with four characters, so the cached module can still
+    satisfy CPython's `(mtime, size)` check within the same second. Without the
+    harness's bytecode discard the gate re-imports the *old* constant, passes, and
+    the sweep reports a defect nobody caught.
+    """
+    with _Bench() as (directory, subject, command):
         fault = Fault("same-length threshold", "threshold", subject, "0.70", "0.55")
-        self.assertEqual(len("0.70"), len("0.55"), "the premise of this test")
+        assert len("0.70") == len("0.55"), "the premise of this test"
 
         sweep = _sweep(directory, command, [fault])
-        self.assertEqual(sweep.run(), 0, "a same-length fault was compiled away")
-        self.assertEqual(sweep.results[0].verdict, "RED")
+        assert sweep.run() == 0, "a same-length fault was compiled away"
+        assert sweep.results[0].verdict == "RED"
 
-    def test_discarding_bytecode_removes_what_a_run_leaves_behind(self):
-        directory, _, command = _bench(self)
+
+def test_discarding_bytecode_removes_what_a_run_leaves_behind():
+    with _Bench() as (directory, _, command):
         sweep = _sweep(directory, command, [])
         sweep.run_gate()
         cached = list(directory.rglob("*.pyc"))
-        self.assertTrue(cached, "the gate did not leave bytecode; the premise is gone")
-        self.assertGreaterEqual(sweep.discard_bytecode(), len(cached))
-        self.assertFalse(list(directory.rglob("*.pyc")))
+        assert cached, "the gate did not leave bytecode; the premise is gone"
+        assert sweep.discard_bytecode() >= len(cached)
+        assert not list(directory.rglob("*.pyc"))
 
 
-class RedSweepTables(unittest.TestCase):
-    """The committed fault tables are loadable, anchored, and about real gates."""
+# -- the committed tables are loadable, anchored, and about real gates ---------
 
-    def _tables(self):
-        return sorted((_REPO_ROOT / "tools" / "testing" / "faults").glob("*.json"))
 
-    def test_every_committed_table_loads_and_anchors_exactly_once(self):
-        tables = self._tables()
-        self.assertGreaterEqual(len(tables), 3, "the standing evidence has gone missing")
-        for table in tables:
-            with self.subTest(table=table.name):
-                command, faults = load_table(table)
-                self.assertTrue(faults, f"{table.name} declares no faults")
-                self.assertTrue(Path(command[-1]).name.endswith(".py"))
-                for fault in faults:
-                    text = fault.path.read_text(encoding="utf-8")
-                    self.assertEqual(
-                        fault.anchor_count(text),
-                        1,
-                        f"{table.name}: {fault.label!r} anchors "
-                        f"{fault.anchor_count(text)} time(s) in {fault.path.name} -- the "
-                        "table has drifted from the code it injects into",
-                    )
-                    self.assertNotEqual(
-                        fault.old, fault.new, f"{table.name}: {fault.label!r} changes nothing"
-                    )
+def test_every_committed_table_loads_and_anchors_exactly_once():
+    tables = sorted((_REPO_ROOT / "tools" / "testing" / "faults").glob("*.json"))
+    assert len(tables) >= 3, "the standing evidence has gone missing"
+    for table in tables:
+        command, faults = load_table(table)
+        assert faults, f"{table.name} declares no faults"
+        assert Path(command[-1]).name.endswith(".py")
+        for fault in faults:
+            text = fault.path.read_text(encoding="utf-8")
+            assert fault.anchor_count(text) == 1, (
+                f"{table.name}: {fault.label!r} anchors {fault.anchor_count(text)} time(s) "
+                f"in {fault.path.name} -- the table has drifted from the code it injects into"
+            )
+            assert fault.old != fault.new, f"{table.name}: {fault.label!r} changes nothing"
 
-    def test_a_malformed_table_is_refused_rather_than_partly_run(self):
-        directory = Path(tempfile.mkdtemp(prefix="bcir-red-table-"))
-        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+
+def test_a_malformed_table_is_refused_rather_than_partly_run():
+    directory = Path(tempfile.mkdtemp(prefix="bcir-red-table-"))
+    try:
         for name, payload in (
             ("not-an-object.json", "[]"),
             ("no-command.json", json.dumps({"faults": []})),
@@ -215,9 +244,6 @@ class RedSweepTables(unittest.TestCase):
         ):
             path = directory / name
             path.write_text(payload, encoding="utf-8", newline="\n")
-            with self.subTest(table=name):
-                self.assertRaises(SweepError, load_table, path)
-
-
-if __name__ == "__main__":
-    unittest.main()
+            _refused(load_table, path)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
