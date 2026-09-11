@@ -286,7 +286,19 @@ def publish(
         (staging / MANIFEST_FILE).write_text(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
         )
-        os.replace(staging, destination)
+        try:
+            os.replace(staging, destination)
+        except OSError:
+            # Another writer published this same content-addressed generation between
+            # the existence check above and this rename. POSIX and Windows disagree
+            # about renaming onto a directory that now exists -- one may succeed, the
+            # other refuses -- so the outcome is decided here rather than by the host
+            # (`docs/security/laws.md` L12). The id is the corpus digest, so if what
+            # is in place verifies, this publish already happened and the staged copy
+            # is redundant; if it does not, the refusal stands.
+            if not (destination.is_dir() and verify(root, generation_id)):
+                raise
+            shutil.rmtree(staging, ignore_errors=True)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise

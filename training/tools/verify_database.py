@@ -60,6 +60,7 @@ import importlib.util
 import json
 import random
 import shutil
+import struct
 import sys
 import tempfile
 from pathlib import Path
@@ -1187,6 +1188,92 @@ def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
             )
 
 
+def check_byte_order(report: Report, catalog_module, catalog) -> None:
+    """The readers agree with an explicitly little-endian decode, on whatever host.
+
+    `array.frombytes` reads in the host's own order and each reader swaps when the host
+    is big-endian. That swap is a branch no host in this repository's matrix executes,
+    and an unexecuted branch is where a defect waits (`docs/security/laws.md` L21). So
+    every packed artifact is decoded a second time here by an explicitly little-endian
+    struct, one cell at a time, and the two readings must agree. On a little-endian
+    host that is a tautology about `array`; on a big-endian one the swap branch is the
+    only thing that can make it hold, which is the point.
+
+    **Declared scope: this checks the readers, not the writer.** Both paths here read
+    the file as little-endian, so a file *written* big-endian is consistent with both
+    and passes. What catches that is the differential against the corpus itself --
+    `check_aggregates` and `check_ranges` recompute from the chunk files, whose JSON
+    has no byte order to get wrong -- and it was confirmed catching it: writing
+    `numeric.bin` or `order.bin` with a `>` struct fails those, by name, before this
+    check reports anything. The two halves are kept apart deliberately, because a
+    check that claimed both would be believed about the half it does not cover.
+
+    Byte order is then shown to be load-bearing rather than incidental: one cell read
+    the other way round must give a different number. Without that, a column of small
+    positive values could be byte-order-agnostic by accident and everything above
+    would hold over a file nothing had pinned.
+    """
+    rows = catalog.rows_total
+    root = catalog.root
+
+    numeric_raw = (root / catalog_module.NUMERIC_FILE).read_bytes()
+    cell = struct.Struct("<q")
+    for index, name in enumerate(catalog.numeric_columns()):
+        base = index * rows * catalog_module.NUMERIC_CELL_BYTES
+        explicit = [cell.unpack_from(numeric_raw, base + row * cell.size)[0] for row in range(rows)]
+        report.require(
+            list(catalog.numeric[name]) == explicit,
+            f"byte order: {catalog_module.NUMERIC_FILE} column {name} reads differently "
+            "through the array fast path than through an explicitly little-endian "
+            "decode; the packed columns are not in the order the format declares",
+        )
+
+    order_raw = (root / catalog_module.ORDER_FILE).read_bytes()
+    entry = struct.Struct("<I")
+    for index, name in enumerate(catalog.numeric_columns()):
+        base = index * rows * catalog_module.ORDER_ENTRY_BYTES
+        explicit = [entry.unpack_from(order_raw, base + row * entry.size)[0] for row in range(rows)]
+        report.require(
+            list(catalog.order[name]) == explicit,
+            f"byte order: {catalog_module.ORDER_FILE} column {name} reads differently "
+            "through the array fast path than through an explicitly little-endian decode",
+        )
+
+    locator_raw = (root / catalog_module.LOCATOR_FILE).read_bytes()
+    span = struct.Struct("<HQI")
+    report.require(
+        len(locator_raw) == rows * catalog_module.LOCATOR_ENTRY_BYTES,
+        f"byte order: {catalog_module.LOCATOR_FILE} holds {len(locator_raw)} bytes for "
+        f"{rows} rows of {catalog_module.LOCATOR_ENTRY_BYTES}",
+    )
+    mismatched = [
+        row
+        for row in range(rows)
+        if span.unpack_from(locator_raw, row * span.size) != catalog.span(row)
+    ]
+    report.require(
+        not mismatched,
+        f"byte order: {len(mismatched)} locator entr(y/ies) decode differently through "
+        "an explicitly little-endian struct than through `span`",
+    )
+
+    # ...and byte order is load-bearing: the same cell read the other way is a
+    # different number. A column that happened to be order-agnostic would make every
+    # check above hold over a file nothing had pinned.
+    swapped = struct.Struct(">q")
+    differing = sum(
+        1
+        for row in range(min(rows, 64))
+        if swapped.unpack_from(numeric_raw, row * cell.size)[0]
+        != cell.unpack_from(numeric_raw, row * cell.size)[0]
+    )
+    report.require(
+        differing > 0,
+        "anti-vacuity: the first 64 measurement cells read the same in both byte "
+        "orders, so the checks above would hold on a file with no byte order at all",
+    )
+
+
 def check_grammar(report: Report, plan) -> None:
     """What `--where` reads, and what it refuses, spelled out as a table.
 
@@ -2166,6 +2253,9 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
         if args.require_native:
             report.require(False, f"--require-native but the kernel is unreachable: {exc}")
 
+    # Before anything reads a packed column, because every check that does would
+    # otherwise report a byte-order defect as whatever it broke downstream.
+    report.run("host-byte-order", check_byte_order, report, catalog_module, catalog)
     report.run("S1", check_kernel_cache, report, require_native=args.require_native)
     report.run("S2", check_derived_columns, report, search, args.embedding_set, native_ok=native_ok)
     report.run(
