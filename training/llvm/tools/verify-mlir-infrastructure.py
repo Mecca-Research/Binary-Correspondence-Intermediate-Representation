@@ -42,6 +42,7 @@ BYTECODE_MAGIC = b"ML\xefR"
 # number measured once on a module nobody can name afterwards -- which is exactly how this
 # chapter came to quote figures from a scratch file instead of its own example.
 SIZE_CHAPTER = TRAINING_ROOT / "24-mlir-infrastructure" / "04-bytecode-and-partial-lowering.md"
+CHAPTER_README = TRAINING_ROOT / "24-mlir-infrastructure" / "README.md"
 SIZED_EXAMPLES = (
     "regions-and-blocks.mlir",
     "interfaces-inlining.mlir",
@@ -471,6 +472,57 @@ def check_location_cost(report: Report, mlir_opt: str, work: Path) -> None:
     report.done("location_cost")
 
 
+def check_prose_counts(report: Report, mlir_opt: str, work: Path) -> None:
+    """Two counts chapter 24 states in prose, held to what the toolchain says.
+
+    Neither belongs in a generated block -- each is one number inside an English sentence
+    that would read badly as a table -- but both are measurements of a live toolchain and
+    both will drift: MLIR gains dialects every release, and the location count changes if
+    anyone edits the example. So the sentence is pinned instead, phrase and all, and the
+    failure names the sentence to write.
+    """
+    code, out = run(mlir_opt, ["--show-dialects"])
+    if not report.require(code == 0 and "Available Dialects:" in out, "--show-dialects failed"):
+        return
+    listed = out.split("Available Dialects:", 1)[1]
+    dialects = [d.strip() for d in listed.replace("\n", ",").split(",") if d.strip()]
+
+    code_v, version = run(mlir_opt, ["--version"])
+    match = re.search(r"LLVM version (\d+)\.", version)
+    if not report.require(code_v == 0 and match, "could not read mlir-opt's version"):
+        return
+    assert match is not None
+    major = match.group(1)
+
+    if report.require(CHAPTER_README.is_file(), f"{CHAPTER_README} is missing"):
+        sentence = f"MLIR {major} registers {len(dialects)} dialects"
+        report.require(
+            sentence in CHAPTER_README.read_text(encoding="utf-8"),
+            f"24-mlir-infrastructure/README.md should say {sentence!r}; it is a count of "
+            f"what this mlir-opt registers, and MLIR gains dialects every release",
+        )
+
+    # The location count behind "25 locations all cite the same path".
+    source = EXAMPLES / SIZED_EXAMPLES[0]
+    bc = work / "prose-count.bc"
+    code_bc, _ = run(mlir_opt, ["--emit-bytecode", "-o", str(bc)], source)
+    if not report.require(code_bc == 0, "could not emit bytecode for the location count"):
+        return
+    code_loc, printed = run(mlir_opt, ["--mlir-print-debuginfo"], bc)
+    if not report.require(code_loc == 0, "could not print the module with debug info"):
+        return
+    locations = len(re.findall(r"^#loc", printed, re.MULTILINE))
+    if report.require(SIZE_CHAPTER.is_file(), f"{SIZE_CHAPTER} is missing"):
+        phrase = f"{locations} locations in that module"
+        report.require(
+            phrase in SIZE_CHAPTER.read_text(encoding="utf-8"),
+            f"04-bytecode-and-partial-lowering.md should say {phrase!r}; it is a count of "
+            f"what this example carries, and editing the example changes it",
+        )
+    print(f"[prose]   {len(dialects)} dialects and {locations} locations, as the chapters say")
+    report.done("prose_counts")
+
+
 def check_serialization_sizes(report: Report, mlir_opt: str, work: Path) -> None:
     """Both directions of the chapter's claim must be visible in its own examples."""
     sizes = measure_serializations(mlir_opt, work)
@@ -513,6 +565,7 @@ CHECK_NAMES = (
     "bytecode",
     "location_cost",
     "serialization_sizes",
+    "prose_counts",
 )
 
 
@@ -578,6 +631,7 @@ def main(argv: list[str] | None = None) -> int:
         check_bytecode(report, mlir_opt, work)
         check_location_cost(report, mlir_opt, work)
         check_serialization_sizes(report, mlir_opt, work)
+        check_prose_counts(report, mlir_opt, work)
 
     # Anti-vacuity, as a state rather than a count. Every check above returns early on a
     # tool failure, so a broken mlir-opt could otherwise produce a green run with almost
