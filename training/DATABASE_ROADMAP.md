@@ -1195,7 +1195,10 @@ A cost model is allowed to be approximate. This was wrong by a factor that
 reorders the plans, and the reordering was reachable: on a host carrying the q8
 kernel but not the q15 one — a partial build, which this tree supports —
 `choose(LATENCY)` preferred `q8 /seek` over `reference /seek`, and the plan it
-picked measured 833 ms against the 243 ms of the plan it rejected. The planner
+picked measures 530 ms against the 190 ms of the plan it rejected — median of 11,
+IQR 44 and 10. An earlier reading put it at 833 ms against 243 ms; that was one
+run with an IQR of 312, and the careful number is the one above. The ratio moved
+from 3.4x to 2.8x and the conclusion did not. The planner
 was not uncertain there; it was confident in the wrong direction.
 
 **Why no gate saw it.** S18 records the planner's decisions for 26 requests, and
@@ -1281,13 +1284,75 @@ make `catalog.json` reproducible across directories. Paying 10 ms to keep a
 content address meaningful is the trade this tree exists to make, and the row is
 retired rather than optimized.
 
-Two costs are known and not yet paid down, recorded here so they are not
-rediscovered. `row_squares` is 69.5 ms of arithmetic over the stored codes,
-recomputed in every process that uses the reference backend, and it is a pure
-function of 8,860 bytes that nothing persists — the row squares are *not*
-constant (2,212 distinct values, spread 0.057% around `scale^2`), so the term
-cannot be dropped, only stored. And a relational `--count` imports 123 modules,
-of which the `bcir` package's own eager `from .model import ...` is 13.6 ms —
-laziness that `bcir/kbcir/__init__.py` documents and `bcir/__init__.py` defeats.
-Both are real; neither is in this slice, because both change a rail outside
-`training/` and this one stayed inside it.
+One cost is known and not paid down here. A relational `--count` imports 123
+modules, of which the `bcir` package's own eager `from .model import ...` is
+13.6 ms — laziness that `bcir/kbcir/__init__.py` documents and `bcir/__init__.py`
+defeats. That one is genuinely on another rail: the fix is in `bcir/`, its blast
+radius is every importer in the tree, and it does not belong in a `training/`
+slice.
+
+The other was `row_squares`, and the first draft of this section deferred it on
+the same sentence — "both change a rail outside `training/`" — which was simply
+false. The embedding set is written by `training/tools/embed_chunks.py` and read
+by `training/tools/search_chunks.py`; nothing outside `training/` knows its
+format. Deferring it was a choice, and the reason given for it was not the real
+one, so the deferral did not survive checking. It is S19 below.
+
+
+---
+
+## S19 — the derived column stops being recomputed
+
+`row_squares` is ``||p||^2`` for every row of the Q15 codes. `topk_reference`
+needs it because it scores with the expanded form ``||q||^2 + ||p||^2 - 2(q.p)``
+rather than the direct one, which is what leaves a single dot product as the only
+per-row work. S2 made it lazy, so the two backends that never read it stopped
+paying for it. It was still rebuilt from scratch by every process that *does*
+read it: 2,215 × 512 multiply-accumulates in Python, **69.5 ms**, to produce
+8,860 bytes that are a pure function of bytes already on disk.
+
+So the set stores it, the way the catalog already stores `numeric.bin` and
+`order.bin`. The same move, on the same argument.
+
+| | before | after |
+|---|---|---|
+| `row_squares` on first use | 69.5 ms | **0.26 ms** |
+| cold `--query`, default backend | 243.3 ms | **189.6 ms** |
+| bytes added to the set | — | 8,860 (0.12% of it) |
+
+The ranking is unchanged, which is the only interesting property: same top-k,
+same distances, elementwise-equal squares.
+
+**It could not be dropped, only stored.** The obvious cheaper move is to notice
+that the codes come from unit vectors, conclude that every row square is
+`Q15_SCALE ** 2`, and delete the term. It is not: quantization moves each one a
+little, and on this corpus 2,212 of 2,215 values are distinct, spread 0.057%
+around `scale²`. Rows closer together than that spread would reorder.
+
+**A stored derived column is a new way to be wrong**, and the shape it takes is
+the bad one — right length, right dtype, every value wrong, a plausible ranking
+and exit 0. The manifest entry therefore carries `derived_from`, the digest of
+the codes the squares were computed over, and the reader falls back to computing
+whenever it cannot confirm all three of: the column names *these* codes, its own
+digest matches, and its row count is the set's. Four fallbacks, each injected and
+each asserted, because this gate builds the sets it verifies — so every set it
+sees carries the column, and left alone the other three branches would be
+unreachable inside a green run.
+
+A set built before this existed has no such file, loads, and returns the
+identical ranking. That is the non-disturbance rule, and it is the branch the
+gate exercises first.
+
+### ...and the cost model had to learn about it
+
+Storing the column made `ns_per_row_derived` wrong in this slice's own signature
+way: 31,000 ns a row against a measured 90, which is 68.5 ms of modeled compute
+for work nobody does. `price()` now asks `derived_cached`, exactly as it already
+asks `kernel_cached`.
+
+The argument that this could not change a decision was made, and it was wrong.
+On a nine-row selection it moves `EXACTNESS` and `FOOTPRINT` from the native
+kernel to the reference scan — correctly, because loading a kernel to score nine
+rows stops being worth it once the column is free. Both configurations are
+recorded in the plan baseline, for the same reason availability is: the one
+lesson of P1 is that a term nothing records is a term nothing watches.

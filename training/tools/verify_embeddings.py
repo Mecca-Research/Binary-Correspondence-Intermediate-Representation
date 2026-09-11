@@ -308,6 +308,154 @@ def check_digests(root: Path, manifest: dict, report: Report) -> None:
         )
 
 
+def check_row_squares(
+    root: Path, manifest: dict, embedding_set, embed_module, report: Report
+) -> None:
+    """The stored derived column is the column, and reading it changes no ranking.
+
+    `squares.u32` is a materialized derived column: values a reader could compute from
+    `vectors.q15`, stored so it does not have to. Everything that makes that a good
+    trade also makes it a new way to be wrong -- a reader that trusts a stale or
+    truncated file gets a plausible ranking, in the right order of magnitude, with the
+    wrong rows in it, and exit 0. So this checks the three properties the fast path
+    depends on, against the slow path's own answer:
+
+    * every stored value equals the computed one, elementwise;
+    * the reader actually took the stored path when the file is there, and the
+      computed path when it is not -- both halves, because a fallback that silently
+      never fires is a fallback nobody has seen work (`docs/security/laws.md` L2);
+    * a file whose `derived_from` does not name these codes is refused rather than
+      read, which is the stale-column case and the only one that produces wrong
+      numbers rather than missing ones.
+
+    An older set carries no such file at all. That is not a finding -- it is the
+    non-disturbance rule, and the second bullet is what proves the reader still
+    handles it.
+    """
+    quantized = manifest.get("quantized")
+    if not quantized:
+        report.skip("row squares: this set has no quantized view, so no derived column")
+        return
+
+    spec = quantized.get("row_squares")
+    computed = [sum(code * code for code in view) for view in embedding_set.row_views]
+    report.require(
+        len(computed) == len(embedding_set.rows),
+        f"row squares: computed {len(computed)} value(s) for {len(embedding_set.rows)} row(s)",
+    )
+    # Anti-vacuity: the values must actually vary, or "the stored column equals the
+    # computed one" would hold for any constant file of the right length.
+    report.require(
+        len(set(computed)) > 1,
+        f"anti-vacuity: all {len(computed)} row squares are equal, so a stored column "
+        "of any single value would pass every check below",
+    )
+
+    if spec is None:
+        report.require(
+            embedding_set.row_squares == computed and embedding_set.squares_source() == "computed",
+            "row squares: a set with no stored column must compute them, and did not "
+            f"({embedding_set.squares_source()!r})",
+        )
+        return
+
+    # It is stored, so the reader must use it -- and it must be right.
+    report.require(
+        embedding_set.squares_source() == "unread",
+        "row squares: this check must read the column itself, not inherit an earlier "
+        f"read ({embedding_set.squares_source()!r})",
+    )
+    stored = embedding_set.row_squares
+    report.require(
+        embedding_set.squares_source() == "stored",
+        f"row squares: {spec['path']} is present and valid but the reader still "
+        f"computed the column ({embedding_set.squares_source()!r}), so storing it "
+        "bought nothing and the stored bytes are never exercised",
+    )
+    report.require(
+        stored == computed,
+        "row squares: the stored column differs from the codes it claims to describe"
+        + (
+            f" (first at row {next(i for i, (a, b) in enumerate(zip(stored, computed)) if a != b)})"
+            if stored != computed and len(stored) == len(computed)
+            else f" ({len(stored)} stored vs {len(computed)} computed)"
+        ),
+    )
+    report.require(
+        spec.get("derived_from") == quantized.get("sha256"),
+        "row squares: derived_from does not name the codes in this manifest",
+    )
+    report.require(
+        (root / spec["path"]).stat().st_size == 4 * len(computed),
+        f"row squares: {spec['path']} is not {4 * len(computed)} bytes",
+    )
+
+    # ...and every way the reader is supposed to fall back actually falls back.
+    #
+    # This gate builds the sets it verifies, so every one of them carries the column:
+    # left alone, the reader's other three branches are unreachable here and the check
+    # above would be the only thing ever run (`docs/security/laws.md` L2 -- a skip is
+    # a state, and a branch no input reaches is not covered by a green gate). Each
+    # case is therefore injected onto a copy, so the set on disk is untouched, and
+    # each asserts the same two things: the values still come out right, and the
+    # reader says it computed them rather than trusting the file.
+    import copy as _copy
+
+    def _variant(mutate):
+        clone = _copy.deepcopy(embedding_set)
+        clone.manifest = _copy.deepcopy(embedding_set.manifest)
+        clone._row_squares = None
+        clone._squares_source = "unread"
+        mutate(clone)
+        return clone
+
+    def _drop(clone):
+        # An older set: built before the column existed, so its manifest never
+        # mentions it. This is the non-disturbance case and the common one.
+        del clone.manifest["quantized"]["row_squares"]
+
+    def _stale(clone):
+        # The dangerous one: right length, right dtype, every value wrong, because the
+        # codes were rebuilt and these squares are the previous build's.
+        clone.manifest["quantized"]["row_squares"]["derived_from"] = "0" * 64
+
+    def _corrupt(clone):
+        # Present and intact-looking, but not the bytes the manifest recorded.
+        clone.manifest["quantized"]["row_squares"]["sha256"] = "0" * 64
+
+    def _missing(clone):
+        # The manifest promises a file the set does not have.
+        clone.manifest["quantized"]["row_squares"]["path"] = "squares.u32.absent"
+
+    for name, mutate, why in (
+        ("absent from the manifest", _drop, "a set built before the column existed"),
+        (
+            "naming different codes",
+            _stale,
+            "a stale column would rank rows against measurements that are not theirs",
+        ),
+        (
+            "with a digest that does not match",
+            _corrupt,
+            "a truncated or edited column would be read as data",
+        ),
+        (
+            "pointing at a file that is not there",
+            _missing,
+            "a missing column would raise rather than fall back",
+        ),
+    ):
+        clone = _variant(mutate)
+        report.require(
+            clone.row_squares == computed and clone.squares_source() == "computed",
+            f"row squares: a column {name} did not fall back to computing -- {why} "
+            f"(source {clone.squares_source()!r}, "
+            f"{'values differ' if clone.row_squares != computed else 'values agree'})",
+        )
+
+    del embed_module  # the definition is exercised through `row_views` above
+
+
 def check_vectors(
     root: Path, manifest: dict, rows: list[dict], report: Report, round_fn=round_half_away_default
 ) -> None:
@@ -644,6 +792,9 @@ def main(argv: list[str] | None = None) -> int:
             check_binding(manifest, rows, chunks, report)
 
             embedding_set = search.EmbeddingSet(root)
+            # First, while nothing has read the derived column yet: the check asserts
+            # which path the reader takes, so it has to see an unread set.
+            check_row_squares(root, manifest, embedding_set, embed_module, report)
             check_discrimination(embedding_set, report)
             queries, unit_queries = check_row_alignment(embedding_set, chunks, search, report)
             check_native_differential(

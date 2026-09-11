@@ -425,6 +425,33 @@ def pack_q15(codes: array) -> bytes:
     return packed.tobytes()
 
 
+def row_squares(codes: array, dim: int) -> array:
+    """``||p||^2`` per row of the Q15 codes. The definition, written once.
+
+    `search_chunks.topk_reference` needs this value for every row, because it scores
+    with the expanded form ``||q||^2 + ||p||^2 - 2(q.p)`` rather than the direct one --
+    which is what leaves one dot product as the only per-row work. The term is not
+    optional and it is not constant: the codes come from unit vectors, so every square
+    is *near* `Q15_SCALE ** 2`, but quantization moves each one a little and on the
+    current corpus 2,212 of 2,215 values are distinct. Dropping it would reorder rows
+    that differ by less than that spread.
+
+    Imported by the reader rather than reimplemented there, so the stored column and
+    the computed one cannot drift into two definitions of the same number
+    (`docs/security/laws.md` L14 -- one predicate per repeated defect).
+    """
+    return array(
+        "I", (sum(code * code for code in codes[at : at + dim]) for at in range(0, len(codes), dim))
+    )
+
+
+def pack_row_squares(squares: array) -> bytes:
+    packed = array("I", squares)
+    if sys.byteorder == "big":
+        packed.byteswap()
+    return packed.tobytes()
+
+
 @dataclass(frozen=True)
 class Reuse:
     """What an incremental build reused, and what it had to compute.
@@ -623,8 +650,17 @@ def write_set(
     # whose coordinates would saturate.
     quantized: dict | None = None
     if provider.normalize == "l2":
-        q15_payload = pack_q15(quantize_q15(vectors))
+        codes = quantize_q15(vectors)
+        q15_payload = pack_q15(codes)
         (destination / "vectors.q15").write_bytes(q15_payload)
+        codes_digest = sha256_bytes(q15_payload)
+        # A materialized derived column, stored beside the codes it derives from and
+        # named by them. `derived_from` is what makes it safe to read without
+        # recomputing: it says *which* codes these are the squares of, so a set whose
+        # codes were rebuilt cannot hand a reader stale squares that would still be
+        # the right length and the right dtype -- the shape a silent wrong answer takes.
+        squares_payload = pack_row_squares(row_squares(codes, provider.dim))
+        (destination / "squares.u32").write_bytes(squares_payload)
         quantized = {
             "path": "vectors.q15",
             "dtype": "int16",
@@ -632,7 +668,15 @@ def write_set(
             "scale": Q15_SCALE,
             "symmetric": True,
             "kernel": Q15_KERNEL,
-            "sha256": sha256_bytes(q15_payload),
+            "sha256": codes_digest,
+            "row_squares": {
+                "path": "squares.u32",
+                "dtype": "uint32",
+                "byte_order": "little",
+                "rows": len(vectors),
+                "derived_from": codes_digest,
+                "sha256": sha256_bytes(squares_payload),
+            },
         }
 
     skipped = chunks_total - len(chunks)

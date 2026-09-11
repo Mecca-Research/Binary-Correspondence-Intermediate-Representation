@@ -772,8 +772,16 @@ class CostModel:
     ns_per_row_seek: int = 8_000
     ns_per_file_open: int = 20_000
 
-    #: Building a derived column over the whole set, per row.
+    #: Building a derived column over the whole set, per row -- what the reference
+    #: backend pays for ``||p||^2`` when the set does not store that column.
     ns_per_row_derived: int = 31_000
+
+    #: ...and per row when it does. Reading `squares.u32` is a digest of 8,860 bytes
+    #: and one `array.frombytes`, measured at 0.20 ms over 2,215 rows. The two
+    #: constants differ by 344x, which is the whole reason the column is stored -- and
+    #: the reason a plan that charged the first for a set that pays the second would be
+    #: mispricing the reference backend by 68.5 ms of work nobody does.
+    ns_per_row_derived_stored: int = 90
 
     #: Producing the kernel: a compiler invocation, or the stamped cache path.
     ns_compile_kernel: int = 281_900_000
@@ -789,7 +797,9 @@ class CostModel:
     #: for. The error was reachable and it changed a decision: on a host carrying the
     #: q8 kernel but not the q15 one -- a partial build, which is a supported state --
     #: `choose(LATENCY)` preferred `q8 /seek` over `reference /seek`, and the plan it
-    #: picked ran 833 ms against the rejected plan's 243 ms. A cost model is allowed to
+    #: picked runs 530 ms against the rejected plan's 190 ms (median of 11, IQR 44 and
+    #: 10; an earlier reading of 833 ms was one noisy run, IQR 312, and is not the
+    #: number). A cost model is allowed to
     #: be approximate; it is not allowed to be wrong by a factor that reorders the
     #: plans, because then the planner is choosing confidently in the wrong direction.
     #: `training/plans/baseline-v1.json` now pins that availability case so the
@@ -914,6 +924,7 @@ def price(
     kernel_cached: bool,
     files_touched: int,
     model: CostModel = DEFAULT_MODEL,
+    derived_cached: bool = False,
 ) -> CostVector:
     """The twelve-axis cost of running this plan once, in modeled units.
 
@@ -939,9 +950,15 @@ def price(
     compute = kmacs * per_kmac
 
     # A pure-Python scan reads its rows through a derived column; the C backends
-    # hand the packed codes to the kernel and build nothing.
+    # hand the packed codes to the kernel and build nothing. Whether that column is
+    # *built* or *read* is the difference between 31,000 ns a row and 90, so it is
+    # asked rather than assumed -- the same shape as `kernel_cached` above, and for
+    # the same reason: a price that ignores an artifact the caller already has is a
+    # price for work that will not happen.
     if backend in ("reference", "both"):
-        compute += rows_total * model.ns_per_row_derived
+        compute += rows_total * (
+            model.ns_per_row_derived_stored if derived_cached else model.ns_per_row_derived
+        )
     if backend == "q8":
         compute += rows_total * model.ns_per_row_q8_quantize
 
@@ -990,6 +1007,7 @@ def candidates(
     kernel_cached: bool,
     files_touched: int,
     model: CostModel = DEFAULT_MODEL,
+    derived_cached: bool = False,
 ) -> list[Plan]:
     """Every plan considered, legal or not, in declaration order.
 
@@ -1029,6 +1047,7 @@ def candidates(
                         kernel_cached=kernel_cached,
                         files_touched=files_touched,
                         model=model,
+                        derived_cached=derived_cached,
                     ),
                 )
             )
