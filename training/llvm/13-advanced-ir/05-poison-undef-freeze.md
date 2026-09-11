@@ -228,6 +228,62 @@ The verifier accepts many patterns because it cannot decide all dynamic facts:
 | Reducing all vector lanes after only some lanes are valid | A poison inactive lane can contaminate the reduction result. |
 | Freezing too late | UB may already have occurred if poison reached a branch, store address, or `noundef` boundary before the freeze. |
 
+## The same value, seen from two IRs
+
+Everything above is LLVM IR. MLIR has to name the same thing, and the way it does so is
+worth one section because it shows the concept surviving a translation.
+
+MLIR's `ub` dialect is **two operations wide** — `ub.poison` and `ub.unreachable` — and it
+exists so that dialects sitting above LLVM can name deferred undefined behaviour without
+taking a dependency on the LLVM dialect. A `tosa` or `linalg` pipeline that needs a poison
+value should not have to know LLVM exists to say so.
+
+Run [`examples/ub-poison-to-llvm.mlir`](examples/ub-poison-to-llvm.mlir) down the stack and
+the value keeps its meaning through two representation changes:
+
+```mlir
+%p = ub.poison : i32          // ub dialect
+%p = llvm.mlir.poison : i32   // after convert-ub-to-llvm
+```
+```llvm
+ret i32 poison                ; after mlir-translate --mlir-to-llvmir
+```
+
+Three spellings, one value. If you have wondered whether MLIR's poison is "really" the same
+poison, this is the answer: the conversion is a rename, not a reinterpretation.
+
+### Watch the second function
+
+The example's other function is the one that pays:
+
+```mlir
+func.func @contaminated(%x: i32) -> i32 {
+  %p = ub.poison : i32
+  %s = arith.addi %x, %p : i32     // an ordinary add, one poison operand
+  return %s : i32
+}
+```
+
+and what comes out the far end is:
+
+```llvm
+define i32 @contaminated(i32 %0) {
+  ret i32 poison
+}
+```
+
+**`%x` is gone.** Not unused — *irrelevant*. The add was folded away before any
+optimisation pass ran, because an `add` with a poison operand is poison whatever the other
+operand holds, and that is true at every level the value passes through. This is the
+propagation rule from earlier in this chapter, demonstrated rather than asserted, and it is
+the concrete reason poison is worth taking seriously: a single poisoned value does not
+produce a locally wrong answer, it deletes the computation that depended on it.
+
+Note also what did **not** happen: nothing froze. There is no `freeze` in the output because
+nothing asked for one. `ub.poison` fed straight into arithmetic is exactly the shape this
+chapter warns about, and MLIR reproduces the hazard faithfully rather than protecting you
+from it.
+
 ## BCIR checklist
 
 1. Emit plain arithmetic unless BCIR has proved the stronger `nsw`, `nuw`, or

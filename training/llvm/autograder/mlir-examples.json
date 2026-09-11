@@ -3,6 +3,38 @@
  "toolchain_major": 18,
  "examples": [
   {
+   "source": "training/llvm/13-advanced-ir/examples/ub-poison-to-llvm.mlir",
+   "required_dialects": [
+    "arith",
+    "builtin",
+    "func",
+    "llvm",
+    "ub"
+   ],
+   "required_plugins_tools": [
+    "mlir-opt",
+    "mlir-translate",
+    "llvm-as",
+    "opt"
+   ],
+   "pass_pipeline": "builtin.module(convert-ub-to-llvm,convert-arith-to-llvm,convert-func-to-llvm,reconcile-unrealized-casts)",
+   "expected_tier": 4,
+   "expected_lowered_artifact": "training/llvm/13-advanced-ir/examples/ub-poison-to-llvm-lowered.ll",
+   "checks": {
+    "forbid_lowered": [
+     "ub.poison",
+     "arith.",
+     "func.func",
+     "builtin.unrealized_conversion_cast"
+    ],
+    "require_llvm_ir": [
+     "define i32 @poisoned()",
+     "ret i32 poison",
+     "define i32 @contaminated(i32 %0)"
+    ]
+   }
+  },
+  {
    "source": "training/llvm/14-mlir-bridge/examples/arith-to-llvm.mlir",
    "required_dialects": [
     "arith",

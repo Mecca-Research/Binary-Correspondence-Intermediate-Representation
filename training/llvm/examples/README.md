@@ -181,6 +181,7 @@ scripts may still skip them if the local target support is unavailable.
 | `training/llvm/13-advanced-ir/examples/poison-freeze-branch.ll` | `llvm-as training/llvm/13-advanced-ir/examples/poison-freeze-branch.ll -o /dev/null` |
 | `training/llvm/13-advanced-ir/examples/poison-undef-freeze.ll` | `llvm-as training/llvm/13-advanced-ir/examples/poison-undef-freeze.ll -o /dev/null` |
 | `training/llvm/13-advanced-ir/examples/token-outline.ll` | `llvm-as training/llvm/13-advanced-ir/examples/token-outline.ll -o /dev/null` |
+| `training/llvm/13-advanced-ir/examples/ub-poison-to-llvm-lowered.ll` | `llvm-as training/llvm/13-advanced-ir/examples/ub-poison-to-llvm-lowered.ll -o /dev/null` |
 | `training/llvm/14-mlir-bridge/examples/arith-to-llvm-lowered.ll` | `llvm-as training/llvm/14-mlir-bridge/examples/arith-to-llvm-lowered.ll -o /dev/null` |
 | `training/llvm/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll` | `llvm-as training/llvm/14-mlir-bridge/examples/bcir-vertex-graph-lowered.ll -o /dev/null` |
 | `training/llvm/14-mlir-bridge/examples/memref-descriptor-lowered.ll` | `llvm-as training/llvm/14-mlir-bridge/examples/memref-descriptor-lowered.ll -o /dev/null` |
@@ -262,6 +263,7 @@ targets for `verify-examples.sh`:
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-register-prelock-ham-hints.mlir` | MLIR data/sketch artifact | Parsed by the optional MLIR verifier, never by `llvm-as` or portable `llc` smoke. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/memref-type-conversion.mlir` | Tier 4 registered MLIR conversion fixture | The registry lowers memref/func/arith to LLVM dialect, translates it, assembles it, and verifies it. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/tensor-to-buffer.mlir` | Tier 3 registered MLIR conversion fixture | The registry bufferizes tensors to memrefs across function boundaries and requires both boundary casts to be gone; no LLVM translation, so never `llvm-as`. |
+| `training/llvm/13-advanced-ir/examples/ub-poison-to-llvm.mlir` | Tier 4 registered MLIR conversion fixture | The registry lowers ub/arith/func to LLVM dialect, translates, assembles and verifies it. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-transform-sequence.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
 | `training/llvm/18-mlir-lowering-to-llvm/examples/bcir-transform-vectorize-then-lower.mlir` | Transform dialect sketch | Optional-MLIR syntax fixture; transform execution depends on registered payload dialects/passes. |
 | `training/llvm/bcir-mapping/examples/bcir-operation.prompt.md` | Mapping prompt | Review-only learner prompt paired with BCIR runtime-boundary examples. |

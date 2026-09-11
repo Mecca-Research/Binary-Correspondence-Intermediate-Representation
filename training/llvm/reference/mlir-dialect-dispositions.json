@@ -166,8 +166,8 @@
    "where": "18-mlir-lowering-to-llvm/06-transform-dialect-for-bcir.md"
   },
   "ub": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: two operations, and MLIR's answer to the poison semantics 03-semantics teaches on the LLVM side"
+   "status": "taught",
+   "where": "13-advanced-ir/05-poison-undef-freeze.md"
   },
   "vcix": {
    "status": "declared",
