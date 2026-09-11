@@ -118,16 +118,58 @@ def q8_rows_dot(query: list[float], tensor, *, rows: int, build_dir=None) -> tup
         raise BackendUnavailable(f"BCIR Q8 rows-dot failed: {exc}") from exc
 
 
-def q15_topk(query: array, codes: array, *, rows: int, dim: int, top_k: int, build_dir=None):
+def eligibility_mask(rows: int, admitted=None) -> bytes:
+    """The kernel's `eligible` buffer: one byte per row, 1 admits and 0 skips.
+
+    `admitted` of None is every row -- spelled as an explicit full mask rather than
+    left to how a zero-length buffer happens to be interpreted.
+
+    The representation is deliberately a dense mask over original row numbers rather
+    than a compacted list of survivors. Compaction would renumber rows, and the
+    reference and native backends are compared for *bit* equality on `(row, distance)`
+    pairs; a renumbering would break that differential to save a few kilobytes at a
+    corpus size where the whole mask is smaller than one vector.
+
+    A row outside the set is a refusal, not a silently dropped entry: admitting a row
+    that does not exist is a question the caller got wrong, and answering it anyway
+    is how a filter comes to return the wrong rows quietly.
+    """
+    if admitted is None:
+        return b"\x01" * rows
+    mask = bytearray(rows)
+    for row in admitted:
+        index = int(row)
+        if not 0 <= index < rows:
+            raise ValueError(f"eligible row {index} is outside the set's {rows} rows")
+        mask[index] = 1
+    return bytes(mask)
+
+
+def q15_topk(
+    query: array,
+    codes: array,
+    *,
+    rows: int,
+    dim: int,
+    top_k: int,
+    eligible=None,
+    build_dir=None,
+):
     """Exact integer squared-L2 top-k, through `bcir_ai_q15_topk`.
 
-    Every row is a candidate. The kernel documents `eligible` as optional, but an
-    explicit full mask says so in the call rather than relying on how a
-    zero-length buffer happens to be interpreted.
+    `eligible` is the mask the kernel has always documented and this door used to
+    discard, hard-coding every row as a candidate. Passing it means a predicate is
+    applied *inside* the scan -- a masked row never has its dot product computed --
+    rather than by ranking everything and discarding afterwards.
+
+    The kernel returns at most `top_k` matches and fewer when the mask admits fewer,
+    so the result length is a fact about the query, not a guarantee. Callers size
+    their output from what comes back.
     """
     kernels = load_kernels(build_dir)
+    mask = eligibility_mask(rows, eligible)
     try:
-        matches = kernels._q15_topk(array("h", query), codes, b"\x01" * rows, rows, dim, top_k)
+        matches = kernels._q15_topk(array("h", query), codes, mask, rows, dim, top_k)
     except (ValueError, RuntimeError) as exc:
         raise BackendUnavailable(f"BCIR Q15 top-k failed: {exc}") from exc
     return [(index, distance) for index, distance in matches]

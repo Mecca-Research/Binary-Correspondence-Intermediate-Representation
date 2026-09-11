@@ -179,8 +179,36 @@ class IndexMemory:
         self.entries = entries
         self.dim = dim
         self.manifest = manifest
-        self.views = [codes[i * dim : (i + 1) * dim] for i in range(len(entries))]
-        self.squares = [sum(map(mul, view, view)) for view in self.views]
+        self.codes = codes
+        # Derived columns, on demand -- the same rule as `search_chunks.EmbeddingSet`,
+        # held in one shape so the two sets cannot drift into two answers about when
+        # a derived column is built.
+        self._views: list[array] | None = None
+        self._squares: list[int] | None = None
+
+    @property
+    def views(self) -> list[array]:
+        """Every concept vector as its own array, materialized on first use."""
+        if self._views is None:
+            dim = self.dim
+            self._views = [self.codes[i * dim : (i + 1) * dim] for i in range(len(self.entries))]
+        return self._views
+
+    @property
+    def squares(self) -> list[int]:
+        """``||p||^2`` per concept. Same integer expansion as the chunk rail."""
+        if self._squares is None:
+            self._squares = [sum(map(mul, view, view)) for view in self.views]
+        return self._squares
+
+    def derived_columns_built(self) -> tuple[str, ...]:
+        """Which derived columns this memory has computed, for gates to assert."""
+        built = []
+        if self._views is not None:
+            built.append("views")
+        if self._squares is not None:
+            built.append("squares")
+        return tuple(built)
 
     @classmethod
     def load(cls, root: Path) -> "IndexMemory":

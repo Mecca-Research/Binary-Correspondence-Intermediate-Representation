@@ -18,7 +18,9 @@ One body of knowledge, delivered in three shapes:
 The contract those three share is [`CORPUS_STANDARD.md`](CORPUS_STANDARD.md).
 The plan for growing it is [`ROADMAP.md`](ROADMAP.md). Which embedding provider
 the retrieval evaluation runs on is decided in
-[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md).
+[`LEARNED_EMBEDDING_GATE.md`](LEARNED_EMBEDDING_GATE.md). How the retrieval rail
+became a database — measured against nine proven engines, then built out as the
+S1–S6 ladder — is [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md).
 
 A subject brings its own material and its own gates; it does not bring its own
 grader. Grading, dataset export and bounded tool execution live in
@@ -96,10 +98,34 @@ python3 training/tools/build_chunks.py --subject llvm --stats
 python3 training/tools/embed_chunks.py --chunks build/training/chunks \
                                        --out build/training/embeddings
 
+# the catalog: where each row's bytes are, and which rows a predicate admits
+python3 training/tools/catalog.py --out build/training/catalog --stats
+
 # ask the corpus something
 python3 training/tools/search_chunks.py --query "what does musttail require of a call"
 python3 training/tools/search_chunks.py --query "opaque pointers" --backend both
 python3 training/tools/search_chunks.py --query "opaque pointers" --backend q8
+
+# ... and narrow it, project it, count it, or ask how it will be answered
+python3 training/tools/search_chunks.py --query "jit" --where "source_path^=training/llvm/12-backend-jit"
+python3 training/tools/search_chunks.py --query "sparsity" --where "kind=code" --select "source_path,title"
+python3 training/tools/search_chunks.py --query "lowering" --backend auto --objective latency --explain
+
+# aggregates, answered from the index rather than by scanning
+python3 training/tools/search_chunks.py --count --where "subject=llvm" --where "kind=code"
+python3 training/tools/search_chunks.py --count --group-by kind
+python3 training/tools/search_chunks.py --count --distinct language
+python3 training/tools/search_chunks.py --count --stats char_count --where "kind=code"
+
+# a relational scan: no query, no vectors -- rows by predicate, ordered by a column
+python3 training/tools/search_chunks.py --where "kind=code" --order-by "char_count:desc" \
+                                        --top-k 5 --select "source_path,char_count"
+
+# rebuild only what changed, and keep the corpus you measured against
+python3 training/tools/embed_chunks.py --chunks build/training/chunks \
+                                       --out build/training/embeddings --incremental
+python3 training/tools/generations.py --publish --label "before the rewrite"
+python3 training/tools/generations.py --list
 
 # how good is that retrieval, really? (judged queries, derived not authored)
 python3 training/tools/build_eval_queries.py --out build/training/eval
@@ -121,6 +147,11 @@ python3 training/tools/verify_corpus_records.py
 python3 training/tools/verify_embeddings.py
 python3 training/tools/verify_retrieval.py
 python3 training/tools/verify_training_export.py
+
+# the database layer: kernel cache, lazy columns, row locator, predicate, planner,
+# parts, generations -- each check asserting both that the cheap path agrees with
+# the expensive one and that it actually skipped the work
+python3 training/tools/verify_database.py
 
 # the shared rail stays shared, and the ML inventory stays true
 python3 training/tools/verify_grading.py

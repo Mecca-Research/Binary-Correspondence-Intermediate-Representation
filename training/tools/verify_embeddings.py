@@ -69,28 +69,28 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 CORPUS_ROOT = TOOLS_DIR.parent
 REPO_ROOT = CORPUS_ROOT.parent
+SCHEMA_DIR = CORPUS_ROOT / "schema"
 
 SET_SCHEMA = "bcir-training/embedding-set/v1"
 SEMANTICS = {"lexical", "learned"}
 NORMALIZE = {"l2", "none"}
 
-MANIFEST_REQUIRED = {
-    "schema",
-    "corpus",
-    "model",
-    "revision",
-    "dim",
-    "normalize",
-    "semantics",
-    "deterministic",
-    "builder",
-    "built_from",
-    "coverage",
-    "vectors",
-    "quantized",
-    "index",
-    "license",
-}
+
+def _manifest_keys() -> tuple[frozenset, frozenset]:
+    """(required, allowed) manifest keys, read from the schema rather than restated.
+
+    This used to be a hand-written set. A mirror list will drift (L15), and this one
+    did: adding an optional `parts` block to the schema and to the writer left the
+    gate failing every honest set, because the third copy of the key list was the
+    only one nobody edited. There are two definitions of this manifest's shape --
+    the schema and the writer -- and the gate now reads the first rather than
+    becoming a third.
+    """
+    schema = json.loads((SCHEMA_DIR / "embedding-set-v1.json").read_text(encoding="utf-8"))
+    return frozenset(schema["required"]), frozenset(schema["properties"])
+
+
+MANIFEST_REQUIRED, MANIFEST_ALLOWED = _manifest_keys()
 
 # Unit-length within a tolerance that admits float32 storage of a float64
 # normalization, and nothing looser.
@@ -169,7 +169,7 @@ def check_manifest(manifest: dict, report: Report) -> None:
     missing = MANIFEST_REQUIRED - set(manifest)
     if not report.require(not missing, f"manifest: missing key(s) {sorted(missing)}"):
         return
-    extra = set(manifest) - MANIFEST_REQUIRED
+    extra = set(manifest) - MANIFEST_ALLOWED
     report.require(not extra, f"manifest: unexpected key(s) {sorted(extra)}")
 
     report.require(manifest["schema"] == SET_SCHEMA, "manifest: wrong schema tag")

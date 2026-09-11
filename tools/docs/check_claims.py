@@ -156,7 +156,19 @@ def _claim_learned_provider_unregistrable() -> tuple[bool, str]:
     if spec is None or spec.loader is None:
         return False, f"{path} is not importable"
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Registering before executing is load-bearing, not tidiness: a module defining a
+    # `@dataclass` is resolved by `dataclasses` through `sys.modules[cls.__module__]`,
+    # so a module executed while absent from that table raises AttributeError inside
+    # the decorator -- a claim check that fails on the shape of the file rather than
+    # on the claim. Every other loader in this repository already does this.
+    import sys as _sys
+
+    _sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        _sys.modules.pop(spec.name, None)
+        raise
 
     baseline = module.build_provider("lexical-hash-v1", dim=64, revision=None)
     if baseline.name != "lexical-hash-v1" or baseline.semantics != "lexical":

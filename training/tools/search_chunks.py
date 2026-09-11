@@ -47,6 +47,7 @@ import json
 import sys
 from array import array
 from operator import mul
+from dataclasses import dataclass
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
@@ -55,6 +56,7 @@ REPO_ROOT = CORPUS_ROOT.parent
 
 DEFAULT_SET = Path("build/training/embeddings/lexical-hash-v1")
 DEFAULT_CHUNKS = Path("build/training/chunks")
+DEFAULT_CATALOG = Path("build/training/catalog")
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -141,19 +143,71 @@ class EmbeddingSet:
             )
         self.codes = codes
         self.scale = int(quantized["scale"])
-        # Materialize the rows once. `array` slicing copies, and an iterator
-        # like islice cannot seek -- it would re-walk the prefix on every row,
-        # turning a linear scan into a quadratic one.
-        self.row_views = [
-            codes[row * self.dim : (row + 1) * self.dim] for row in range(len(self.rows))
-        ]
-        # Squared length of each row, once. See topk_reference for why.
-        self.row_squares = [sum(map(mul, view, view)) for view in self.row_views]
 
+        # Derived columns are declared here and computed by the first reader that
+        # actually wants them -- see `row_views` for which backends never do.
+        self._row_views: list[array] | None = None
+        self._row_squares: list[int] | None = None
         self._q8 = None
 
+    # ----------------------------------------------------------------------
+    # Derived columns
+    #
+    # Both are a pure function of `codes`, and both used to be built in the
+    # constructor for every caller. Exactly one of the three backends reads them:
+    # `topk_native` hands `codes` to the C kernel whole and `topk_q8` works from
+    # the f32 vectors, so for those two the work was the largest single cost in
+    # the command and bought nothing. Computing a derived column on demand is the
+    # cheapest form of the thing a column store does deliberately.
+    # ----------------------------------------------------------------------
+
+    @property
+    def row_views(self) -> list[array]:
+        """Every row as its own array, materialized together on first use.
+
+        Together, because `array` slicing copies and an iterator like islice cannot
+        seek -- it would re-walk the prefix on every row, turning a linear scan into
+        a quadratic one. A caller that wants *one* row wants `row_codes` instead.
+        """
+        if self._row_views is None:
+            dim = self.dim
+            codes = self.codes
+            self._row_views = [codes[row * dim : (row + 1) * dim] for row in range(len(self.rows))]
+        return self._row_views
+
+    @property
+    def row_squares(self) -> list[int]:
+        """``||p||^2`` per row. See `topk_reference` for why the value is needed."""
+        if self._row_squares is None:
+            self._row_squares = [sum(map(mul, view, view)) for view in self.row_views]
+        return self._row_squares
+
     def row_codes(self, row: int) -> array:
-        return self.row_views[row]
+        """One row's codes, without materializing the column it lives in.
+
+        A point lookup slices `codes` directly; going through `row_views` would build
+        every row to return one. The bounds check is not decoration: `array` slicing
+        is total, so an out-of-range row would otherwise return a short or empty
+        array and rank it, which is the silent-wrong-answer shape this rail refuses
+        everywhere else.
+        """
+        if not 0 <= row < len(self.rows):
+            raise IndexError(f"row {row} is outside this set's {len(self.rows)} rows")
+        if self._row_views is not None:
+            return self._row_views[row]
+        start = row * self.dim
+        return self.codes[start : start + self.dim]
+
+    def derived_columns_built(self) -> tuple[str, ...]:
+        """Which derived columns this set has actually computed, for gates to assert."""
+        built = []
+        if self._row_views is not None:
+            built.append("row_views")
+        if self._row_squares is not None:
+            built.append("row_squares")
+        if self._q8 is not None:
+            built.append("q8")
+        return tuple(built)
 
     def float_vectors(self) -> array:
         """The unit vectors themselves, as stored before quantization."""
@@ -226,7 +280,9 @@ def embed_query(text: str, embedding_set: EmbeddingSet) -> array:
 # --------------------------------------------------------------------------
 
 
-def topk_reference(query: array, embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, int]]:
+def topk_reference(
+    query: array, embedding_set: EmbeddingSet, top_k: int, rows=None
+) -> list[tuple[int, int]]:
     """Exact Q15 squared-L2 top-k. Ties break by row, matching the C contract.
 
     Expanded rather than summed term by term:
@@ -239,29 +295,52 @@ def topk_reference(query: array, embedding_set: EmbeddingSet, top_k: int) -> lis
     a tolerance. The payoff is that the only per-row work is one dot product,
     and ||p||^2 is computed once per set instead of once per query.
     """
-    row_squares = embedding_set.row_squares
     query_square = sum(map(mul, query, query))
-
     scored: list[tuple[int, int]] = []
-    for row, view in enumerate(embedding_set.row_views):
-        dot = sum(map(mul, query, view))
-        scored.append((query_square + row_squares[row] - 2 * dot, row))
+
+    if rows is None:
+        # Every row: build the derived columns once, because each is read once per
+        # row and `array` slicing in a loop would otherwise re-walk the prefix.
+        row_squares = embedding_set.row_squares
+        for row, view in enumerate(embedding_set.row_views):
+            dot = sum(map(mul, query, view))
+            scored.append((query_square + row_squares[row] - 2 * dot, row))
+    else:
+        # A selection: slice only the rows the predicate admitted and recompute
+        # ``||p||^2`` for each. Building the whole column to read a fraction of it is
+        # the materialize-before-you-select mistake -- and the arithmetic is the same
+        # integers either way, so the two paths agree bit for bit.
+        for row in rows:
+            view = embedding_set.row_codes(row)
+            dot = sum(map(mul, query, view))
+            scored.append((query_square + sum(map(mul, view, view)) - 2 * dot, row))
+
     scored.sort()
     return [(row, distance) for distance, row in scored[:top_k]]
 
 
-def topk_native(query: array, embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, int]]:
-    """The same ranking through BCIR's own `bcir_ai_q15_topk`."""
+def topk_native(
+    query: array, embedding_set: EmbeddingSet, top_k: int, rows=None
+) -> list[tuple[int, int]]:
+    """The same ranking through BCIR's own `bcir_ai_q15_topk`.
+
+    A selection becomes the kernel's `eligible` mask, so a rejected row never has its
+    dot product computed. The kernel returns fewer than `top_k` matches when the mask
+    admits fewer -- that shorter result is the honest answer, not a truncation.
+    """
     return _native().q15_topk(
         query,
         embedding_set.codes,
         rows=len(embedding_set.rows),
         dim=embedding_set.dim,
         top_k=top_k,
+        eligible=rows,
     )
 
 
-def topk_q8(query: list[float], embedding_set: EmbeddingSet, top_k: int) -> list[tuple[int, float]]:
+def topk_q8(
+    query: list[float], embedding_set: EmbeddingSet, top_k: int, rows=None
+) -> list[tuple[int, float]]:
     """Rank by cosine through BCIRQ8, the format BCIR ships model weights in.
 
     A different arithmetic from the other two backends, not a third spelling of
@@ -277,24 +356,384 @@ def topk_q8(query: list[float], embedding_set: EmbeddingSet, top_k: int) -> list
     native = _native()
     tensor = embedding_set.q8_tensor()
     scores = native.q8_rows_dot(list(query), tensor, rows=len(embedding_set.rows))
-    ranked = sorted(((-score, row) for row, score in enumerate(scores)))
+    # `bcir_ai_q8_rows_dot_f64` takes no eligibility mask -- it is a rows-dot, not a
+    # top-k -- so a selection here filters *after* the scan rather than inside it.
+    # The planner prices that honestly: a q8 plan scans every row whatever the
+    # predicate says, which is one of the reasons a narrow predicate makes the
+    # native backend win.
+    candidates = enumerate(scores) if rows is None else ((row, scores[row]) for row in rows)
+    ranked = sorted((-score, row) for row, score in candidates)
     return [(row, -negated) for negated, row in ranked[:top_k]]
+
+
+def _ordered_rows(catalog, selection, column: str, descending: bool) -> list[int]:
+    """The admitted rows, ordered by a column rather than by distance.
+
+    A numeric column orders by its packed values, a missing measurement sorting last
+    in either direction -- absent is not small, and sorting it as though it were is
+    how a "shortest chunks" query comes back full of rows that were never measured.
+    An indexed column orders by value, then row, so the result is total and stable.
+    """
+    catalog_module = _load_tool("catalog")
+    if _order_strategy(catalog, selection, column) == "index":
+        return _ordered_from_index(catalog, column, descending)
+    rows = list(selection.rows) if selection.rows is not None else list(range(catalog.rows_total))
+    if column in catalog.numeric_columns():
+        values = catalog.numeric[column]
+        missing = [row for row in rows if values[row] == catalog_module.NUMERIC_NULL]
+        present = [row for row in rows if values[row] != catalog_module.NUMERIC_NULL]
+        # Two passes, because Python's sort is stable: rows ascending first, then by
+        # value. A single `(values[row], row)` key with `reverse=True` would reverse
+        # the tiebreak along with the key, so a run of equal values would come back
+        # in a different order than ascending gives -- and a page boundary inside
+        # such a run would then repeat or skip rows.
+        present.sort()
+        present.sort(key=lambda row: values[row], reverse=descending)
+        return present + missing
+    by_row: dict[int, str] = {}
+    for value, positions in catalog.postings["columns"].get(column, {}).items():
+        for row in positions:
+            by_row[row] = value
+    if not by_row:
+        raise KeyError(f"catalog: column {column!r} is neither numeric nor indexed")
+    rows.sort()
+    rows.sort(key=lambda row: by_row.get(row, ""), reverse=descending)
+    return rows
+
+
+def _order_strategy(catalog, selection, column: str) -> str:
+    """How ORDER BY will produce its rows: by reading the index, or by sorting.
+
+    With no predicate the sorted index already holds exactly the order asked for, so
+    the answer is a slice of it rather than a sort of every row. With a predicate the
+    rows still have to be tested one at a time, and walking 2,215 index entries to
+    find the 16 a narrow predicate admits costs more than sorting those 16.
+
+    The choice is returned as a value rather than made inside a branch because both
+    paths produce identical rows -- so a gate comparing their output passes whichever
+    one ran, and the decision would be the one thing about this slice that nothing
+    could observe (`docs/security/laws.md` L2).
+    """
+    if selection.rows is None and column in catalog.numeric_columns():
+        return "index"
+    return "sort"
+
+
+def _ordered_from_index(catalog, column: str, descending: bool) -> list[int]:
+    """Every row ordered by a measurement, taken from the sorted index.
+
+    Ascending is the index itself, read and returned. Descending is one stable sort
+    of the measured prefix on the *negated* value, which reverses the values while
+    leaving the rows inside a run of equal ones ascending -- `reverse=True` would
+    reverse the ties along with the values, and a page boundary falling inside such a
+    run has to land in the same place whichever direction was asked for. Walking the
+    prefix to flip it run by run gives the same answer and measured slower here, on a
+    corpus where half the adjacent index entries are ties.
+
+    Rows carrying no measurement live past the index's split point and stay last in
+    both directions -- absent is not small, and it is not large either.
+    """
+    rows = list(catalog.order[column])
+    split = catalog.measured(column)
+    present, missing = rows[:split], rows[split:]
+    if not descending:
+        return present + missing
+    values = catalog.numeric[column]
+    return sorted(present, key=lambda row: -values[row]) + missing
+
+
+def _parse_order(spec: str) -> tuple[str, bool]:
+    column, _, direction = spec.partition(":")
+    direction = direction.strip().lower() or "asc"
+    if direction not in ("asc", "desc"):
+        raise ValueError(f"--order-by direction must be asc or desc, not {direction!r}")
+    return column.strip(), direction == "desc"
+
+
+def _catalog(args) -> tuple[object, str]:
+    """The catalog, or a stated reason there is none. Never a silent degradation.
+
+    A missing or stale catalog does not make a query wrong -- it makes it read the
+    whole chunk table to render `top_k` rows, and lose `--where` entirely. Both are
+    losses a reader should be told about, so the reason is returned and printed
+    rather than swallowed.
+    """
+    module = _load_tool("catalog")
+    try:
+        return module.Catalog.load(args.catalog, args.chunks), ""
+    except module.CatalogError as exc:
+        return None, str(exc).splitlines()[0]
+
+
+def _resolve_selection(plan_module, catalog, terms):
+    """Parse and resolve `--where`, or refuse."""
+    predicates = [plan_module.parse_predicate(term) for term in terms]
+    return plan_module.select(catalog, predicates)
+
+
+def _group_by(catalog, column: str, selection=None) -> tuple[list[tuple[str, int]], bool]:
+    """GROUP BY over an indexed column, and whether it cost a scan.
+
+    Unfiltered it is answered from the statistics the build already computed -- no
+    artifact read, no row touched. Filtered it intersects each value's postings list
+    with the admitted rows, which is work proportional to the *index*, not to the
+    corpus. Both are exact; the flag says which happened, because "counted from
+    statistics" and "counted by intersecting postings" are different claims.
+    """
+    if selection is None or selection.rows is None:
+        counts = catalog.distinct(column)
+        return sorted(counts.items(), key=lambda pair: (-int(pair[1]), pair[0])), False
+    return [(value, len(rows)) for value, rows in _group_rows(catalog, column, selection)], True
+
+
+def _group_rows(catalog, column: str, selection=None) -> list[tuple[str, list[int]]]:
+    """The admitted rows of each distinct value of an indexed column, largest group first.
+
+    One membership rule, used by the count and by every per-group aggregate, so
+    `COUNT(*) GROUP BY kind` and `AVG(char_count) GROUP BY kind` cannot disagree about
+    which rows are in a group (`docs/security/laws.md` L14). Every row carries a key
+    for every indexed column -- `NULL_KEY` where it has no value -- so the groups
+    partition the admitted rows rather than covering some of them.
+    """
+    postings = catalog.postings["columns"].get(column)
+    if postings is None:
+        raise KeyError(f"catalog: column {column!r} is not indexed")
+    admitted = None if selection is None or selection.rows is None else set(selection.rows)
+    groups = []
+    for value, rows in postings.items():
+        kept = list(rows) if admitted is None else [row for row in rows if row in admitted]
+        if kept:
+            groups.append((value, kept))
+    groups.sort(key=lambda pair: (-len(pair[1]), pair[0]))
+    return groups
+
+
+#: What a HAVING term may compare. `rows` is SQL's COUNT(*) -- every row of the group;
+#: `count` is COUNT(<the --stats column>) -- only the rows that carry a measurement.
+#: SQL spells that distinction with an argument; here they are two names, so a term
+#: cannot mean one and be read as the other.
+AGGREGATE_FIELDS = ("rows", "count", "nulls", "min", "max", "sum", "avg")
+
+
+def _parse_having(plan_module, text: str):
+    """One HAVING term, in the same grammar `--where` uses.
+
+    Reusing `parse_predicate` is not a shortcut: it means maximal munch, the
+    ASCII-integer rule and the refusal wording are defined once and apply to both
+    clauses (`docs/security/laws.md` L14). What differs is only what a term may name,
+    so only that is checked here.
+    """
+    predicate = plan_module.parse_predicate(text)
+    if predicate.column not in AGGREGATE_FIELDS:
+        raise plan_module.PlanError(
+            f"HAVING {predicate.column!r} is not an aggregate; the aggregates are "
+            f"{', '.join(AGGREGATE_FIELDS)}"
+        )
+    if predicate.op not in ("eq", "ne", *plan_module.RANGE_OPERATORS):
+        raise plan_module.PlanError(
+            f"HAVING {text!r}: an aggregate is compared against one integer, so the "
+            "operators are =, !=, >=, <=, > and <"
+        )
+    # `parse_predicate` reads the bound for the comparisons only, so `rows=x` would
+    # otherwise reach the group loop and fail there, once per group.
+    plan_module.require_integer(predicate.column, predicate.op, predicate.values[0])
+    return predicate
+
+
+def _having_holds(plan_module, predicate, summary: dict) -> bool:
+    """Whether one group's aggregate satisfies one HAVING term.
+
+    `avg` is compared as the exact rational SUM/COUNT rather than as the printed
+    float: `AVG >= 500` asks a question about the measurements themselves, and
+    rounding them to a decimal first would put a group on the wrong side of its own
+    bound. A group with no measured row has no MIN, MAX or AVG and satisfies no
+    comparison against one -- the rule a row with no value already follows.
+    """
+    field = predicate.column
+    if field not in summary:
+        raise plan_module.PlanError(
+            f"HAVING {field} needs --stats <column>; without one a group knows only "
+            "its row count, spelled 'rows'"
+        )
+    bound = predicate.bound
+    if field == "avg":
+        if not summary["count"]:
+            return False
+        left, right = summary["sum"], bound * summary["count"]
+    else:
+        left = summary[field]
+        if left is None:
+            return False
+        right = bound
+    if predicate.op == "eq":
+        return left == right
+    if predicate.op == "ne":
+        return left != right
+    if predicate.op == "ge":
+        return left >= right
+    if predicate.op == "gt":
+        return left > right
+    if predicate.op == "le":
+        return left <= right
+    if predicate.op == "lt":
+        return left < right
+    raise plan_module.PlanError(f"HAVING has no rule for operator {predicate.op!r}")
+
+
+def _group_summary(catalog, stats_column: str | None, rows: list[int]) -> dict:
+    """One group's aggregates. `rows` is always present; the rest need a --stats column."""
+    if stats_column is None:
+        return {"rows": len(rows)}
+    summary = dict(catalog.aggregate(stats_column, rows))
+    summary["rows"] = len(rows)
+    return summary
+
+
+def _print_grouped_aggregate(plan_module, catalog, args, selection, where: str) -> int:
+    """GROUP BY with per-group aggregates, and HAVING over them.
+
+    The groups partition the admitted rows, so the printed TOTAL is the aggregate of
+    exactly the groups above it -- recomputed over their union rather than carried
+    down from the unfiltered table, which would disagree with the rows on screen the
+    moment a HAVING term removed one.
+    """
+    terms = [_parse_having(plan_module, text) for text in args.having]
+    groups = _group_rows(catalog, args.group_by, selection)
+    null_key = _load_tool("catalog").NULL_KEY
+
+    kept: list[tuple[str, dict]] = []
+    surviving: list[int] = []
+    for value, rows in groups:
+        summary = _group_summary(catalog, args.stats, rows)
+        if all(_having_holds(plan_module, term, summary) for term in terms):
+            kept.append((value, summary))
+            surviving.extend(rows)
+
+    fields = ("rows",) if args.stats is None else ("rows", "count", "nulls", "min", "max", "sum")
+    names = [("(null)" if value == null_key else value) for value, _ in kept] or [""]
+    width = max(len(name) for name in names + ["TOTAL"])
+    having = " AND ".join(str(term) for term in terms) or "(none)"
+    subject = f"AGGREGATE {args.stats}" if args.stats else "COUNT(*)"
+    print(
+        f"{subject} GROUP BY {args.group_by} WHERE {where} HAVING {having}"
+        f"   [{len(groups)} group(s), {len(kept)} kept]"
+    )
+    header = "  " + "GROUP".ljust(width) + "".join(f"{name.upper():>10s}" for name in fields)
+    print(header + (f"{'AVG':>12s}" if args.stats else ""))
+    for value, summary in kept:
+        shown = "(null)" if value == null_key else value
+        print("  " + shown.ljust(width) + _aggregate_cells(summary, fields, args.stats))
+    total = _group_summary(catalog, args.stats, sorted(surviving))
+    print("  " + "TOTAL".ljust(width) + _aggregate_cells(total, fields, args.stats))
+    return EXIT_OK
+
+
+def _aggregate_cells(summary: dict, fields: tuple[str, ...], stats_column: str | None) -> str:
+    cells = "".join(f"{'-' if summary[name] is None else summary[name]:>10}" for name in fields)
+    if stats_column is None:
+        return cells
+    average = summary["avg"]
+    return cells + (f"{average:>12.2f}" if average is not None else f"{'-':>12}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--query", required=True)
+    parser.add_argument("--query")
     parser.add_argument("--set", type=Path, default=DEFAULT_SET, dest="embedding_set")
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS)
+    parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument(
         "--backend",
-        choices=("reference", "native", "q8", "both"),
+        choices=("reference", "native", "q8", "both", "auto"),
         default="reference",
         help="reference = exact Q15 in pure Python (the definition); native = the "
         "same ranking through bcir_ai_q15_topk; q8 = BCIRQ8 cosine through "
         "bcir_ai_q8_rows_dot_f64, lossier by construction; both = reference "
-        "and native, required to agree exactly",
+        "and native, required to agree exactly; auto = let the planner choose "
+        "the cheapest legal plan for --objective",
+    )
+    parser.add_argument(
+        "--objective",
+        choices=tuple(name.lower() for name in ("EXACTNESS", "LATENCY", "FOOTPRINT", "STARTUP")),
+        default="latency",
+        help="which cost axis --backend auto minimizes; the names are the axes of "
+        "BCIR's own 12-dimensional cost vector",
+    )
+    parser.add_argument(
+        "--where",
+        action="append",
+        default=[],
+        metavar="TERM",
+        help="narrow the scan: column=value, column!=value, column^=prefix, or "
+        "column=one,two for a set. Repeatable, and repeated terms are ANDed. "
+        "A predicate removes rows; it never reorders the rows it keeps.",
+    )
+    parser.add_argument(
+        "--select",
+        metavar="COLUMNS",
+        help="comma-separated columns to print per result instead of the default "
+        "location and heading trail",
+    )
+    parser.add_argument(
+        "--count",
+        action="store_true",
+        help="report how many rows the predicate admits and stop; no ranking, no text",
+    )
+    parser.add_argument(
+        "--group-by",
+        metavar="COLUMN",
+        help="with --count, report the row count per distinct value of an indexed "
+        "column, answered from the catalog without scanning",
+    )
+    parser.add_argument(
+        "--order-by",
+        metavar="COLUMN[:asc|desc]",
+        help="order by a column instead of by distance. Only valid WITHOUT --query: "
+        "with a query the order is the ranking, and a tool that quietly reordered "
+        "a ranked result would be answering a different question than it was asked.",
+    )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help="skip this many results before --top-k; pagination over a stable order",
+    )
+    parser.add_argument(
+        "--distinct",
+        metavar="COLUMN",
+        help="with --count, list the distinct values of an indexed column",
+    )
+    parser.add_argument(
+        "--stats",
+        metavar="COLUMN",
+        help="with --count, report MIN/MAX/SUM/AVG over a numeric column. Unfiltered "
+        "this is answered from the catalog's statistics without reading a row; "
+        "with --where it gathers exactly the admitted cells. Combined with "
+        "--group-by it reports them per group.",
+    )
+    parser.add_argument(
+        "--having",
+        action="append",
+        default=[],
+        metavar="TERM",
+        help="with --group-by, keep only the groups whose aggregate satisfies a term: "
+        f"{', '.join(AGGREGATE_FIELDS)} compared against one integer with =, !=, "
+        ">=, <=, > or <. Repeatable and ANDed, like --where. 'rows' is COUNT(*); "
+        "the rest need --stats and describe that column.",
+    )
+    parser.add_argument(
+        "--explain",
+        action="store_true",
+        help="print every plan considered, its cost on the twelve axes, and why the chosen one won",
+    )
+    parser.add_argument(
+        "--materialize",
+        choices=("auto", "seek", "full"),
+        default="auto",
+        help="how result text is read: seek = the catalog's recorded byte spans for "
+        "the k ranked rows; full = parse every chunk record; auto = seek when a "
+        "fresh catalog is there, full otherwise with a printed reason",
     )
     parser.add_argument(
         "--require-native",
@@ -302,10 +741,49 @@ def main(argv: list[str] | None = None) -> int:
         help="fail instead of skipping when the native rail cannot be built; pass "
         "this from the CI job that provides a C compiler",
     )
+    parser.add_argument(
+        "--require-catalog",
+        action="store_true",
+        help="fail instead of degrading when no fresh catalog is available; pass "
+        "this from the job that builds one",
+    )
     args = parser.parse_args(argv)
 
     if args.top_k < 1:
         print("search_chunks: --top-k must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+    if args.query is None and not (args.count or args.order_by):
+        print(
+            "search_chunks: --query is required unless --count or --order-by is given",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if args.order_by and args.query is not None:
+        print(
+            "search_chunks: --order-by and --query ask for two different orders. With "
+            "a query the order is the ranking; drop --query for a relational scan, or "
+            "drop --order-by to rank.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    if args.offset < 0:
+        print("search_chunks: --offset cannot be negative", file=sys.stderr)
+        return EXIT_USAGE
+    if args.group_by and not args.count:
+        print("search_chunks: --group-by is only defined with --count", file=sys.stderr)
+        return EXIT_USAGE
+    if args.stats and not args.count:
+        print("search_chunks: --stats is only defined with --count", file=sys.stderr)
+        return EXIT_USAGE
+    if args.distinct and not args.count:
+        print("search_chunks: --distinct is only defined with --count", file=sys.stderr)
+        return EXIT_USAGE
+    if args.having and not args.group_by:
+        print(
+            "search_chunks: --having filters groups, so it needs --group-by; to filter "
+            "rows, pass --where",
+            file=sys.stderr,
+        )
         return EXIT_USAGE
 
     # --require-native is read only inside the native branch below, and --backend
@@ -317,10 +795,138 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "search_chunks: --require-native with --backend reference asks for a "
             "guarantee about a backend this run will not touch; pass --backend native, "
-            "q8 or both",
+            "q8, both or auto",
             file=sys.stderr,
         )
         return EXIT_USAGE
+
+    plan_module = _load_tool("plan")
+    catalog, catalog_reason = _catalog(args)
+
+    # A predicate, a projection, a count and a seek all read the catalog. Asking for
+    # any of them without one is a refusal rather than an answer over every row,
+    # because silently ignoring --where would return rows the caller excluded.
+    needs_catalog = bool(args.where) or args.count or args.select or args.materialize == "seek"
+    if catalog is None:
+        if args.require_catalog or needs_catalog:
+            print(f"search_chunks: {catalog_reason}", file=sys.stderr)
+            return EXIT_BACKEND_UNAVAILABLE
+        print(f"[catalog] unavailable, reading every chunk record: {catalog_reason}")
+
+    if args.count:
+        try:
+            selection = _resolve_selection(plan_module, catalog, args.where)
+        except plan_module.PlanError as exc:
+            print(f"search_chunks: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        where = " AND ".join(str(p) for p in selection.predicates) or "(none)"
+
+        if args.group_by and (args.stats or args.having):
+            try:
+                return _print_grouped_aggregate(plan_module, catalog, args, selection, where)
+            except (KeyError, IndexError) as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            except plan_module.PlanError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+
+        if args.group_by:
+            try:
+                groups, scanned = _group_by(catalog, args.group_by, selection)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            null_key = _load_tool("catalog").NULL_KEY
+            names = [("(null)" if name == null_key else name) for name, _ in groups] or [""]
+            width = max(len(name) for name in names + ["TOTAL"])
+            source = "postings intersection" if scanned else "statistics, no scan"
+            print(f"COUNT(*) GROUP BY {args.group_by} WHERE {where}   [{source}]")
+            for name, count in groups:
+                shown = "(null)" if name == null_key else name
+                print(f"  {shown.ljust(width)}  {count:6d}")
+            print(f"  {'TOTAL'.ljust(width)}  {selection.admitted:6d}")
+            return EXIT_OK
+
+        if args.distinct:
+            try:
+                groups, scanned = _group_by(catalog, args.distinct, selection)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            null_key = _load_tool("catalog").NULL_KEY
+            source = "postings intersection" if scanned else "statistics, no scan"
+            print(f"DISTINCT {args.distinct} WHERE {where}   [{source}]")
+            for name, _ in groups:
+                print(f"  {'(null)' if name == null_key else name}")
+            print(f"  -- {len(groups)} distinct value(s)")
+            return EXIT_OK
+
+        if args.stats:
+            try:
+                summary = catalog.aggregate(args.stats, selection.rows)
+            except KeyError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            source = (
+                f"gathered {summary['scanned']} cell(s)"
+                if selection.rows is not None
+                else "statistics, no scan"
+            )
+            print(f"AGGREGATE {args.stats} WHERE {where}   [{source}]")
+            for field in ("count", "nulls", "min", "max", "sum"):
+                print(f"  {field.upper().ljust(6)}  {summary[field]}")
+            average = summary["avg"]
+            print(
+                f"  {'AVG'.ljust(6)}  {average:.2f}" if average is not None else "  AVG     (none)"
+            )
+            return EXIT_OK
+
+        print(f"COUNT(*) WHERE {where} = {selection.admitted}")
+        if selection.predicates:
+            exactness = "exact" if selection.estimate_exact else "bound"
+            print(f"  catalog estimate before evaluation: {selection.estimated} [{exactness}]")
+        return EXIT_OK
+
+    if args.order_by:
+        # A pure relational scan: no query, no vectors, no backend. The rows come
+        # from the predicate and the order from a column, which is the one shape of
+        # question this tool could not previously be asked at all.
+        try:
+            selection = _resolve_selection(plan_module, catalog, args.where)
+            column, descending = _parse_order(args.order_by)
+            ordered = _ordered_rows(catalog, selection, column, descending)
+        except (plan_module.PlanError, KeyError, ValueError) as exc:
+            print(f"search_chunks: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        window = ordered[args.offset : args.offset + args.top_k]
+        records = catalog.fetch(window)
+        where = " AND ".join(str(p) for p in selection.predicates) or "(none)"
+        print(
+            f"SELECT * WHERE {where} ORDER BY {column} "
+            f"{'DESC' if descending else 'ASC'} LIMIT {args.top_k} OFFSET {args.offset}"
+            f"   -- {len(ordered)} row(s) matched"
+        )
+        projection = (
+            tuple(part.strip() for part in args.select.split(","))
+            if args.select
+            else (
+                "source_path",
+                column,
+            )
+        )
+        for rank, row in enumerate(window, start=args.offset + 1):
+            record = records.get(row, {})
+            values = []
+            for name in projection:
+                value = record.get(name)
+                if isinstance(value, list):
+                    value = " > ".join(str(part) for part in value)
+                values.append(f"{name}={value}")
+            print(f"  {rank}. " + "  ".join(values))
+        if not window:
+            print("  (no rows)")
+        return EXIT_OK
 
     embedding_set = EmbeddingSet(args.embedding_set)
     if args.require_native and not embedding_set.rows:
@@ -333,21 +939,95 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_USAGE
 
-    top_k = min(args.top_k, len(embedding_set.rows))
-    unit_query = embed_query_float(args.query, embedding_set)
-    query = embed_query(args.query, embedding_set)
-
-    reference = native = None
-    if args.backend in ("reference", "both"):
-        reference = topk_reference(query, embedding_set, top_k)
-    if args.backend in ("native", "q8", "both"):
+    selection = plan_module.Selection(None, len(embedding_set.rows), True, ())
+    if args.where:
         try:
-            if args.backend == "q8":
+            selection = _resolve_selection(plan_module, catalog, args.where)
+        except plan_module.PlanError as exc:
+            print(f"search_chunks: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        if catalog.rows_total != len(embedding_set.rows):
+            print(
+                f"search_chunks: the catalog holds {catalog.rows_total} rows and the "
+                f"embedding set holds {len(embedding_set.rows)}; a predicate resolved "
+                "against one cannot select rows of the other",
+                file=sys.stderr,
+            )
+            return EXIT_FAILED
+
+    top_k = min(
+        args.top_k, selection.admitted if selection.rows is not None else len(embedding_set.rows)
+    )
+    if top_k < 1:
+        where = " AND ".join(str(p) for p in selection.predicates)
+        print(f"\nQ: {args.query!r}   WHERE {where}\n  (no rows admitted)")
+        return EXIT_OK
+
+    materialize = args.materialize
+    if materialize == "auto":
+        materialize = "seek" if catalog is not None else "full"
+
+    backend = args.backend
+    plans = chosen = None
+    if backend == "auto" or args.explain:
+        available = {"reference"}
+        try:
+            _native().load_kernels()
+            available |= {"native", "q8", "both"}
+        except Exception:  # noqa: BLE001 -- any failure here means "not reachable"
+            pass
+        objective = plan_module.Objective[args.objective.upper()]
+        plans = plan_module.candidates(
+            catalog if catalog is not None else _RowsOnly(len(embedding_set.rows)),
+            selection,
+            top_k=top_k,
+            dim=embedding_set.dim,
+            want_text=True,
+            require_exact=objective is plan_module.Objective.EXACTNESS,
+            available_backends=frozenset(available),
+            kernel_cached=True,
+            files_touched=1,
+            model=plan_module.DEFAULT_MODEL,
+        )
+        if backend == "auto":
+            try:
+                chosen = plan_module.choose(plans, objective)
+            except plan_module.PlanError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_BACKEND_UNAVAILABLE
+            backend = chosen.backend
+            materialize = chosen.materialize if args.materialize == "auto" else materialize
+        else:
+            chosen = next(
+                (p for p in plans if p.backend == backend and p.materialize == materialize), None
+            )
+        if args.explain:
+            print(plan_module.explain(plans, chosen, objective, selection=selection))
+
+    rows = selection.rows
+    reference = native = None
+    if backend in ("reference", "both"):
+        reference = topk_reference(
+            query := embed_query(args.query, embedding_set), embedding_set, top_k, rows=rows
+        )
+    else:
+        query = embed_query(args.query, embedding_set)
+    if backend in ("native", "q8", "both"):
+        try:
+            if backend == "q8":
                 # Scores here are cosines, not squared distances: rank by them
                 # descending. Reported through the same (row, score) shape.
-                native = [(row, score) for row, score in topk_q8(unit_query, embedding_set, top_k)]
+                native = [
+                    (row, score)
+                    for row, score in topk_q8(
+                        embed_query_float(args.query, embedding_set),
+                        embedding_set,
+                        top_k,
+                        rows=rows,
+                    )
+                ]
             else:
-                native = topk_native(query, embedding_set, top_k)
+                native = topk_native(query, embedding_set, top_k, rows=rows)
         except _native_unavailable() as exc:
             if args.require_native:
                 print(f"search_chunks: native backend required: {exc}", file=sys.stderr)
@@ -356,7 +1036,7 @@ def main(argv: list[str] | None = None) -> int:
             if reference is None:
                 return EXIT_OK
 
-    if reference is not None and native is not None and args.backend == "both":
+    if reference is not None and native is not None and backend == "both":
         if reference != native:
             print("search_chunks: reference and native rankings DISAGREE", file=sys.stderr)
             print(f"  reference: {reference}", file=sys.stderr)
@@ -366,23 +1046,51 @@ def main(argv: list[str] | None = None) -> int:
 
     results = reference if reference is not None else native
     assert results is not None
-    texts = load_chunk_texts(args.chunks)
+    if args.offset:
+        results = results[args.offset :]
 
-    print(
-        f"\nQ: {args.query!r}   [{embedding_set.manifest['model']}, "
-        f"semantics={embedding_set.manifest['semantics']}]"
-    )
+    if materialize == "seek" and catalog is not None:
+        chunks = catalog.fetch(row for row, _ in results)
+    else:
+        by_id = load_chunk_texts(args.chunks)
+        chunks = {row: by_id.get(embedding_set.rows[row]["chunk_id"]) for row, _ in results}
+
+    where = " AND ".join(str(p) for p in selection.predicates)
+    heading = f"\nQ: {args.query!r}   [{embedding_set.manifest['model']}, semantics={embedding_set.manifest['semantics']}]"
+    if where:
+        heading += f"\n   WHERE {where}  ->  {selection.admitted} of {len(embedding_set.rows)} row(s) scanned"
+    print(heading)
+
+    projection = tuple(part.strip() for part in args.select.split(",")) if args.select else ()
     for rank, (row, distance) in enumerate(results, start=1):
         entry = embedding_set.rows[row]
-        chunk = texts.get(entry["chunk_id"])
+        chunk = chunks.get(row)
         # Squared Q15 distance is exact but unit-free; cosine is what a reader
         # can compare across queries. The identity is exact for unit vectors.
         cosine = (
             distance
-            if args.backend == "q8"
+            if backend == "q8"
             else 1.0 - distance / (2.0 * embedding_set.scale * embedding_set.scale)
         )
-        trail = " > ".join(chunk["heading_trail"]) if chunk and chunk["heading_trail"] else ""
+        if projection:
+            values = []
+            for column in projection:
+                if chunk is not None and column in chunk:
+                    value = chunk[column]
+                elif column in entry:
+                    value = entry[column]
+                else:
+                    print(
+                        f"search_chunks: no column {column!r} on a chunk or index row",
+                        file=sys.stderr,
+                    )
+                    return EXIT_USAGE
+                if isinstance(value, list):
+                    value = " > ".join(str(part) for part in value)
+                values.append(f"{column}={value}")
+            print(f"  {rank}. cos={cosine:+.3f}  " + "  ".join(values))
+            continue
+        trail = " > ".join(chunk["heading_trail"]) if chunk and chunk.get("heading_trail") else ""
         location = (
             f"{entry['source_path']}:{chunk['span']['start_line']}"
             if chunk
@@ -392,6 +1100,13 @@ def main(argv: list[str] | None = None) -> int:
         if trail:
             print(f"     {trail}")
     return EXIT_OK
+
+
+@dataclass
+class _RowsOnly:
+    """The one fact the planner needs when there is no catalog: how many rows exist."""
+
+    rows_total: int
 
 
 if __name__ == "__main__":

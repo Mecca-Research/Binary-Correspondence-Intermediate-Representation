@@ -52,6 +52,7 @@ import sys
 import unicodedata
 from array import array
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Protocol
 
@@ -323,6 +324,29 @@ def model_slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
 
 
+_CATALOG = None
+
+
+def _catalog():
+    """The catalog module, loaded on demand.
+
+    Imported lazily and by path: `embed_chunks` is run as a script from the
+    repository root, so a plain `import catalog` would depend on how it was invoked.
+    """
+    global _CATALOG
+    if _CATALOG is None:
+        import importlib.util
+
+        path = Path(__file__).resolve().parent / "catalog.py"
+        spec = importlib.util.spec_from_file_location("catalog", path)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault("catalog", module)
+        spec.loader.exec_module(module)
+        _CATALOG = sys.modules.get("catalog", module)
+    return _CATALOG
+
+
 def read_chunks(chunk_dir: Path, subject: str | None) -> list[dict]:
     if not chunk_dir.is_dir():
         raise SystemExit(
@@ -346,10 +370,11 @@ def read_chunks(chunk_dir: Path, subject: str | None) -> list[dict]:
             + " -- embedding nothing would produce a set that passes every check "
             "by covering no corpus"
         )
-    # Stable row order, independent of filesystem enumeration.
-    chunks.sort(
-        key=lambda c: (c["subject"], c["source_path"], c["span"]["start_line"], c["chunk_id"])
-    )
+    # Stable row order, independent of filesystem enumeration -- and the *same*
+    # order the catalog puts its rows in, because row `i` of this set has to be row
+    # `i` there for a ranked row to locate its own bytes. The key is imported rather
+    # than restated so the two cannot drift.
+    chunks.sort(key=_catalog().row_sort_key)
     return chunks
 
 
@@ -418,6 +443,125 @@ def pack_q15(codes: array) -> bytes:
     return packed.tobytes()
 
 
+@dataclass(frozen=True)
+class Reuse:
+    """What an incremental build reused, and what it had to compute.
+
+    `parts_changed` is the coarse answer -- which chunk files moved at all -- and
+    `embedded` is the fine one. They are both reported because they answer different
+    questions: the first says how much of the corpus a change touched, the second how
+    much of it actually needed the model. A rewrite that leaves a chapter's text
+    identical moves a part and reuses every one of its rows, and only the pair shows
+    that.
+    """
+
+    reused: int
+    embedded: int
+    parts_changed: tuple[str, ...]
+    reason: str = ""
+
+    @property
+    def total(self) -> int:
+        return self.reused + self.embedded
+
+
+def load_previous(
+    destination: Path, provider: Provider
+) -> dict[tuple[str, str], tuple[list[float], float]]:
+    """Vectors from a previous set, keyed by the chunk identity that produced them.
+
+    The key is `(chunk_id, text_sha256)`, both halves deliberately. `text_sha256`
+    alone would reuse one chunk's vector for another chunk with identical text, which
+    is *correct* for a deterministic provider but makes the reuse impossible to
+    attribute; `chunk_id` alone would reuse a stale vector for a chunk whose text was
+    rewritten in place, which is simply wrong.
+
+    A previous set built by a different model, revision or dimension contributes
+    nothing. Reuse is only sound when the function that produced the stored vector is
+    the function that would produce the new one, and "same provider" is the cheapest
+    honest statement of that.
+
+    Any failure to read the previous set returns nothing, which costs a full
+    re-embed and never a wrong vector.
+    """
+    manifest_path = destination / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if manifest.get("schema") != SCHEMA:
+        return {}
+    if (
+        manifest.get("model") != provider.name
+        or manifest.get("revision") != provider.revision
+        or int(manifest.get("dim", -1)) != provider.dim
+        or manifest.get("normalize") != provider.normalize
+    ):
+        return {}
+    vectors_meta = manifest.get("vectors") or {}
+    vectors_path = destination / vectors_meta.get("path", "vectors.f32")
+    index_path = destination / (manifest.get("index") or {}).get("path", "index.jsonl")
+    try:
+        payload = vectors_path.read_bytes()
+        index_lines = index_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    if sha256_bytes(payload) != vectors_meta.get("sha256"):
+        return {}
+    values = array("f")
+    values.frombytes(payload)
+    if sys.byteorder == "big":
+        values.byteswap()  # the file is little-endian by contract
+    dim = provider.dim
+    rows = [json.loads(line) for line in index_lines if line.strip()]
+    if len(rows) * dim != len(values):
+        return {}
+    previous: dict[tuple[str, str], tuple[list[float], float]] = {}
+    for row, entry in enumerate(rows):
+        key = (entry.get("chunk_id"), entry.get("text_sha256"))
+        norm = entry.get("raw_norm")
+        if None in key or not isinstance(norm, (int, float)):
+            continue
+        previous[key] = (list(values[row * dim : (row + 1) * dim]), float(norm))
+    return previous
+
+
+def embed_incremental(
+    chunks: list[dict],
+    provider: Provider,
+    previous: dict[tuple[str, str], tuple[list[float], float]],
+) -> tuple[list[list[float]], list[float], Reuse]:
+    """Embed only the chunks whose text the previous set does not already cover.
+
+    The result is required to be what a full rebuild would produce, and `Reuse`
+    reports how much of it came from where so the claim is checkable rather than
+    asserted. `verify_database.py` builds both and compares the bytes.
+    """
+    missing = [
+        chunk for chunk in chunks if (chunk["chunk_id"], sha256_text(chunk["text"])) not in previous
+    ]
+    fresh_vectors, fresh_norms = embed(missing, provider) if missing else ([], [])
+    by_id = {chunk["chunk_id"]: index for index, chunk in enumerate(missing)}
+
+    vectors: list[list[float]] = []
+    raw_norms: list[float] = []
+    for chunk in chunks:
+        key = (chunk["chunk_id"], sha256_text(chunk["text"]))
+        if key in previous:
+            # The stored vector is already normalized, so its raw norm is not
+            # recoverable from it. The index records it per row, and it is read back
+            # from there rather than invented -- a reused row whose `raw_norm` did
+            # not survive is simply not reusable.
+            vector, norm = previous[key]
+            vectors.append(vector)
+            raw_norms.append(norm)
+        else:
+            index = by_id[chunk["chunk_id"]]
+            vectors.append(fresh_vectors[index])
+            raw_norms.append(fresh_norms[index])
+    return vectors, raw_norms, Reuse(len(chunks) - len(missing), len(missing), ())
+
+
 def embed(chunks: list[dict], provider: Provider) -> tuple[list[list[float]], list[float]]:
     """Encode, validate, and normalize. Never emits a vector it cannot defend."""
     raw = provider.encode([chunk["text"] for chunk in chunks])
@@ -469,6 +613,7 @@ def write_set(
     subjects: list[str],
     chunks_total: int,
     skipped_reason: str | None,
+    parts: list[dict] | None = None,
 ) -> dict:
     destination.mkdir(parents=True, exist_ok=True)
 
@@ -509,6 +654,7 @@ def write_set(
         }
 
     skipped = chunks_total - len(chunks)
+    parts = list(parts or [])
     manifest = {
         "schema": SCHEMA,
         "corpus": "training",
@@ -531,6 +677,7 @@ def write_set(
             "skipped": skipped,
             "reason": skipped_reason if skipped else None,
         },
+        "parts": parts,
         "vectors": {
             "path": "vectors.f32",
             "dtype": "float32",
@@ -576,6 +723,49 @@ def write_inline(
         print(f"[inline] {path} ({len(lines)} chunk(s) with vectors)")
 
 
+def _parts_of(chunk_dir: Path, subject: str | None) -> list[dict]:
+    """The parts this set covers, taken from the catalog's own part definition.
+
+    Read through `catalog.build` rather than recomputed, so an embedding set and a
+    catalog cannot disagree about what a part is or where its rows begin.
+    """
+    catalog = _catalog()
+    try:
+        manifest = catalog.build(chunk_dir)[0]
+    except catalog.CatalogError:
+        return []
+    parts = manifest.get("parts") or []
+    if subject is None:
+        return parts
+    return [part for part in parts if part.get("part_id") == subject]
+
+
+def _changed_parts(chunk_dir: Path, destination: Path) -> tuple[str, ...]:
+    """Which chunk files moved since the set at `destination` was written.
+
+    The coarse half of the incremental rule: a part whose bytes are unchanged cannot
+    hold a changed row, so nothing in it needs looking at. The fine half is the
+    per-row text digest in `embed_incremental`, which is what actually decides reuse
+    -- this is reported because it answers a different question, and because a part
+    that moved while every one of its rows stayed identical is worth seeing.
+    """
+    manifest_path = destination / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ()
+    recorded = {part.get("part_id"): part.get("content") for part in (manifest.get("parts") or [])}
+    if not recorded:
+        return ()
+    catalog = _catalog()
+    actual = {
+        path.name[: -len(".chunks.jsonl")]: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in catalog.chunk_files(chunk_dir)
+    }
+    names = recorded.keys() | actual.keys()
+    return tuple(sorted(name for name in names if recorded.get(name) != actual.get(name)))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--chunks", type=Path, default=DEFAULT_CHUNKS, help="chunk build directory")
@@ -586,6 +776,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--subject", help="embed one subject instead of all")
     parser.add_argument(
         "--inline", type=Path, help="also write chunk records with vectors joined in"
+    )
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="reuse vectors from the set already at --out for every chunk whose text "
+        "is unchanged, and run the model only on the rest. The result is required "
+        "to be byte-identical to a full rebuild; verify_database.py builds both "
+        "and compares.",
     )
     parser.add_argument(
         "--require-provider",
@@ -625,13 +823,25 @@ def main(argv: list[str] | None = None) -> int:
     chunks = read_chunks(args.chunks, args.subject)
     subjects = sorted({chunk["subject"] for chunk in chunks})
 
-    vectors, raw_norms = embed(chunks, provider)
-    # A single-subject set gets its own destination. Both manifests are honest
-    # about what they cover, but writing a partial set over a whole-corpus one
-    # would leave two different sets sharing a path, distinguishable only by
-    # opening them.
     slug = model_slug(provider.name) + (f".{args.subject}" if args.subject else "")
     destination = args.out / slug
+
+    reuse = None
+    if args.incremental:
+        parts_changed = _changed_parts(args.chunks, destination)
+        previous = load_previous(destination, provider)
+        if not previous:
+            reuse = Reuse(0, len(chunks), parts_changed, "no reusable set at --out")
+            vectors, raw_norms = embed(chunks, provider)
+        else:
+            vectors, raw_norms, counted = embed_incremental(chunks, provider, previous)
+            reuse = Reuse(counted.reused, counted.embedded, parts_changed)
+    else:
+        vectors, raw_norms = embed(chunks, provider)
+    # A single-subject set gets its own destination (computed above). Both manifests
+    # are honest about what they cover, but writing a partial set over a whole-corpus
+    # one would leave two different sets sharing a path, distinguishable only by
+    # opening them.
     manifest = write_set(
         destination,
         chunks=chunks,
@@ -641,6 +851,7 @@ def main(argv: list[str] | None = None) -> int:
         subjects=subjects,
         chunks_total=len(chunks),
         skipped_reason=None,
+        parts=_parts_of(args.chunks, args.subject),
     )
 
     if args.inline:
@@ -652,6 +863,16 @@ def main(argv: list[str] | None = None) -> int:
         f"deterministic={str(provider.deterministic).lower()}"
     )
     print(f"[write]   {destination} ({manifest['coverage']['embedded']} vector(s))")
+    if reuse is not None:
+        detail = f" ({reuse.reason})" if reuse.reason else ""
+        print(
+            f"[incr]    reused {reuse.reused} of {reuse.total} vector(s), "
+            f"embedded {reuse.embedded}{detail}"
+        )
+        if reuse.parts_changed:
+            print(f"[parts]   changed: {', '.join(reuse.parts_changed)}")
+        else:
+            print("[parts]   changed: none")
     print(f"[cover]   {', '.join(subjects)}")
     return EXIT_OK
 
