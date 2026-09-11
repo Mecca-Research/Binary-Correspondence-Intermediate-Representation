@@ -203,6 +203,76 @@ def block_axes() -> str:
     return "\n".join(rows) + "\n"
 
 
+def check_irdl_quotes(report) -> None:
+    """The IRDL the chapter quotes must still be the IRDL BCIR ships.
+
+    22-bcir-approach/04-dialect-as-data.md now shows real operation definitions lifted
+    from `mlir/irdl/bcir.irdl.mlir` -- the point being that IRDL is readable, which only
+    works if a reader is shown the actual thing. A quotation is a copy, and a copy drifts:
+    if BCIR renames an operation or changes a constraint, the chapter keeps teaching the
+    old one and nothing notices. So every construct the chapter quotes is checked against
+    the file it was quoted from.
+
+    This reads BCIR's rail rather than importing from it. The training corpus is never a
+    build dependency of BCIR, and reading a file to check a quotation does not make it one.
+    """
+    projection = REPO / "mlir/irdl/bcir.irdl.mlir"
+    chapter = CHAPTERS / "04-dialect-as-data.md"
+    if not report.require(
+        projection.is_file(), f"{projection} is missing; the chapter quotes a file that is gone"
+    ):
+        return
+    if not report.require(chapter.is_file(), f"{chapter} is missing"):
+        return
+
+    source = projection.read_text(encoding="utf-8")
+    quoted = chapter.read_text(encoding="utf-8")
+
+    # The constraint and declaration operations the chapter names as IRDL's vocabulary.
+    for op in (
+        "irdl.dialect",
+        "irdl.type",
+        "irdl.operation",
+        "irdl.region",
+        "irdl.regions",
+        "irdl.operands",
+        "irdl.results",
+        "irdl.any",
+        "irdl.is",
+    ):
+        if op in quoted:
+            report.require(
+                op in source,
+                f"04-dialect-as-data.md teaches `{op}` but BCIR's IRDL projection no longer "
+                f"uses it; the chapter is quoting a vocabulary the file has moved past",
+            )
+
+    # The specific operation definitions it reproduces. Matched with a boundary rather
+    # than as a substring: `irdl.operation @loadX` contains `irdl.operation @load`, so a
+    # plain `in` test would call a renamed operation present and report nothing. That is
+    # the same substring trap that credited the `x86` dialect for `llvm.x86.pclmulqdq`,
+    # and it survived into this check until its own RED proof refused to fire.
+    for name in ("@module", "@resource", "@load"):
+        if re.search(rf"irdl\.operation {re.escape(name)}\b", quoted):
+            report.require(
+                re.search(rf"irdl\.operation {re.escape(name)}\b", source),
+                f"04-dialect-as-data.md reproduces `irdl.operation {name}` but the "
+                f"projection no longer declares it; requote or drop the example",
+            )
+
+    # And the claim that the projection uses no compiled-C++ escape hatch, which is the
+    # whole argument for it being loadable by a stock tool.
+    if "irdl.c_pred" in quoted:
+        report.require(
+            "irdl.c_pred" not in source.replace("irdl.c_pred (it requires", "")
+            or source.count("irdl.c_pred") <= 1,
+            "04-dialect-as-data.md says the projection uses no irdl.c_pred, but the "
+            "projection now contains one; a definition with a C++ predicate is not "
+            "loadable by a stock mlir-opt, which is the property the chapter claims",
+        )
+    print("[irdl]    every IRDL construct the chapter quotes is still in BCIR's projection")
+
+
 def block_irdl() -> str:
     """BCIR's ODS dialect against its IRDL projection, counted from the files.
 
@@ -450,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
     check_law_rails(report, chapters)
     check_no_dead_passes(report, chapters)
     check_irdl_roundtrip(report)
+    check_irdl_quotes(report)
 
     if report.failures:
         print("bcir-approach gate: FAILED", file=sys.stderr)

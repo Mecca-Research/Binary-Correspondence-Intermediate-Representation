@@ -70,8 +70,8 @@
    "where": "18-mlir-lowering-to-llvm/02-typeconverter-and-materialization.md"
   },
   "irdl": {
-   "status": "planned",
-   "slice": "2.2 compiler dialects: 22-bcir-approach/04-dialect-as-data.md already projects BCIR into IRDL but names none of the dialect's own 17 operations"
+   "status": "taught",
+   "where": "22-bcir-approach/04-dialect-as-data.md"
   },
   "linalg": {
    "status": "planned",

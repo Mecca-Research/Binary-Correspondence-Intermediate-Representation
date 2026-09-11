@@ -52,6 +52,57 @@ which is the gate this chapter's claim rests on.
 
 ## The projection, counted
 
+## What IRDL actually looks like
+
+The projection is worth reading rather than only counting, because IRDL is a dialect whose
+entire job is describing *other* dialects — and it is small enough to learn in one screen.
+
+A dialect is one operation holding a body:
+
+```mlir
+irdl.dialect @bcir {
+  irdl.type @handle
+
+  irdl.operation @module {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  ...
+}
+```
+
+`irdl.operation` declares an operation; inside it, the SSA values are *constraints* and the
+`irdl.operands` / `irdl.results` / `irdl.regions` operations bind them to names:
+
+```mlir
+  irdl.operation @resource {
+    %h = irdl.any                    // any type at all
+    irdl.results(h: %h)
+  }
+
+  irdl.operation @load {
+    %idx = irdl.is index             // exactly the builtin `index` type
+    %value = irdl.any
+    irdl.operands(idx: %idx)
+    irdl.results(value: %value)
+  }
+```
+
+That is the whole shape. `irdl.any` admits anything, `irdl.is` pins one exact type,
+`irdl.base` matches a type by its dialect and mnemonic, and `irdl.any_of` / `irdl.all_of`
+combine constraints. There is no C++ anywhere: the constraint *is* IR.
+
+**The one escape hatch is deliberately unused here.** `irdl.c_pred` embeds a C++ predicate,
+and the moment a definition uses it the dialect stops being loadable by a stock tool —
+which would defeat the point of the projection. BCIR's file uses none, and says so in its
+own header.
+
+**Why the names are flattened.** MLIR's IRDL rejects dots in an operation name, so the
+projection spells `bcir.target.capability` as `bcir.target_capability`. The dotted taxonomy
+remains the truth on the compiled rail; the underscore form exists so the structural rail
+loads under stock `mlir-opt`. A reader comparing the two files needs to know that before
+concluding they disagree.
+
 <!-- generated: irdl-projection -->
 | | count |
 | --- | ---: |
