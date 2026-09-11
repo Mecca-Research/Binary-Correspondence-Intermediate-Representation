@@ -132,15 +132,37 @@ class NativeAIKernels:
         if handle is None:
             return
         try:
-            import _ctypes
+            if os.name == "nt":
+                self._free_windows_module(handle)
+            else:
+                import _ctypes
 
-            release = getattr(_ctypes, "FreeLibrary", None) if os.name == "nt" else _ctypes.dlclose
-            if release is not None:
-                release(handle)
+                _ctypes.dlclose(handle)
         except (OSError, AttributeError, ValueError):
             # A handle the platform declines to release is the platform's to keep.
             # The object is already unusable, which is all `close` promises.
             pass
+
+    @staticmethod
+    def _free_windows_module(handle: int) -> None:
+        """`FreeLibrary`, through whichever door this interpreter offers.
+
+        `_ctypes.FreeLibrary` is a CPython implementation detail and not promised to
+        exist; `kernel32.FreeLibrary` is the documented API and is what actually has
+        to succeed, because on Windows an unreleased module keeps its file locked and
+        the next `os.replace` over it fails. Trying the private door first and the
+        public one after costs nothing and removes the interpreter-version guess.
+
+        The handle is an HMODULE: passed as `c_void_p` so it is not truncated on a
+        64-bit host, which an implicit int conversion would risk.
+        """
+        import _ctypes
+
+        release = getattr(_ctypes, "FreeLibrary", None)
+        if release is not None:
+            release(handle)
+            return
+        ctypes.WinDLL("kernel32", use_last_error=True).FreeLibrary(ctypes.c_void_p(handle))
 
     def __enter__(self) -> "NativeAIKernels":
         return self
