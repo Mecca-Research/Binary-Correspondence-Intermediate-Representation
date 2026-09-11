@@ -374,8 +374,10 @@ def _ordered_rows(catalog, selection, column: str, descending: bool) -> list[int
     how a "shortest chunks" query comes back full of rows that were never measured.
     An indexed column orders by value, then row, so the result is total and stable.
     """
-    rows = list(selection.rows) if selection.rows is not None else list(range(catalog.rows_total))
     catalog_module = _load_tool("catalog")
+    if _order_strategy(catalog, selection, column) == "index":
+        return _ordered_from_index(catalog, column, descending)
+    rows = list(selection.rows) if selection.rows is not None else list(range(catalog.rows_total))
     if column in catalog.numeric_columns():
         values = catalog.numeric[column]
         missing = [row for row in rows if values[row] == catalog_module.NUMERIC_NULL]
@@ -397,6 +399,47 @@ def _ordered_rows(catalog, selection, column: str, descending: bool) -> list[int
     rows.sort()
     rows.sort(key=lambda row: by_row.get(row, ""), reverse=descending)
     return rows
+
+
+def _order_strategy(catalog, selection, column: str) -> str:
+    """How ORDER BY will produce its rows: by reading the index, or by sorting.
+
+    With no predicate the sorted index already holds exactly the order asked for, so
+    the answer is a slice of it rather than a sort of every row. With a predicate the
+    rows still have to be tested one at a time, and walking 2,215 index entries to
+    find the 16 a narrow predicate admits costs more than sorting those 16.
+
+    The choice is returned as a value rather than made inside a branch because both
+    paths produce identical rows -- so a gate comparing their output passes whichever
+    one ran, and the decision would be the one thing about this slice that nothing
+    could observe (`docs/security/laws.md` L2).
+    """
+    if selection.rows is None and column in catalog.numeric_columns():
+        return "index"
+    return "sort"
+
+
+def _ordered_from_index(catalog, column: str, descending: bool) -> list[int]:
+    """Every row ordered by a measurement, taken from the sorted index.
+
+    Ascending is the index itself, read and returned. Descending is one stable sort
+    of the measured prefix on the *negated* value, which reverses the values while
+    leaving the rows inside a run of equal ones ascending -- `reverse=True` would
+    reverse the ties along with the values, and a page boundary falling inside such a
+    run has to land in the same place whichever direction was asked for. Walking the
+    prefix to flip it run by run gives the same answer and measured slower here, on a
+    corpus where half the adjacent index entries are ties.
+
+    Rows carrying no measurement live past the index's split point and stay last in
+    both directions -- absent is not small, and it is not large either.
+    """
+    rows = list(catalog.order[column])
+    split = catalog.measured(column)
+    present, missing = rows[:split], rows[split:]
+    if not descending:
+        return present + missing
+    values = catalog.numeric[column]
+    return sorted(present, key=lambda row: -values[row]) + missing
 
 
 def _parse_order(spec: str) -> tuple[str, bool]:
@@ -440,18 +483,157 @@ def _group_by(catalog, column: str, selection=None) -> tuple[list[tuple[str, int
     if selection is None or selection.rows is None:
         counts = catalog.distinct(column)
         return sorted(counts.items(), key=lambda pair: (-int(pair[1]), pair[0])), False
-    admitted = set(selection.rows)
+    return [(value, len(rows)) for value, rows in _group_rows(catalog, column, selection)], True
+
+
+def _group_rows(catalog, column: str, selection=None) -> list[tuple[str, list[int]]]:
+    """The admitted rows of each distinct value of an indexed column, largest group first.
+
+    One membership rule, used by the count and by every per-group aggregate, so
+    `COUNT(*) GROUP BY kind` and `AVG(char_count) GROUP BY kind` cannot disagree about
+    which rows are in a group (`docs/security/laws.md` L14). Every row carries a key
+    for every indexed column -- `NULL_KEY` where it has no value -- so the groups
+    partition the admitted rows rather than covering some of them.
+    """
     postings = catalog.postings["columns"].get(column)
     if postings is None:
         raise KeyError(f"catalog: column {column!r} is not indexed")
-    counts = {value: len(admitted.intersection(rows)) for value, rows in postings.items()}
-    return (
-        sorted(
-            ((value, count) for value, count in counts.items() if count),
-            key=lambda pair: (-pair[1], pair[0]),
-        ),
-        True,
+    admitted = None if selection is None or selection.rows is None else set(selection.rows)
+    groups = []
+    for value, rows in postings.items():
+        kept = list(rows) if admitted is None else [row for row in rows if row in admitted]
+        if kept:
+            groups.append((value, kept))
+    groups.sort(key=lambda pair: (-len(pair[1]), pair[0]))
+    return groups
+
+
+#: What a HAVING term may compare. `rows` is SQL's COUNT(*) -- every row of the group;
+#: `count` is COUNT(<the --stats column>) -- only the rows that carry a measurement.
+#: SQL spells that distinction with an argument; here they are two names, so a term
+#: cannot mean one and be read as the other.
+AGGREGATE_FIELDS = ("rows", "count", "nulls", "min", "max", "sum", "avg")
+
+
+def _parse_having(plan_module, text: str):
+    """One HAVING term, in the same grammar `--where` uses.
+
+    Reusing `parse_predicate` is not a shortcut: it means maximal munch, the
+    ASCII-integer rule and the refusal wording are defined once and apply to both
+    clauses (`docs/security/laws.md` L14). What differs is only what a term may name,
+    so only that is checked here.
+    """
+    predicate = plan_module.parse_predicate(text)
+    if predicate.column not in AGGREGATE_FIELDS:
+        raise plan_module.PlanError(
+            f"HAVING {predicate.column!r} is not an aggregate; the aggregates are "
+            f"{', '.join(AGGREGATE_FIELDS)}"
+        )
+    if predicate.op not in ("eq", "ne", *plan_module.RANGE_OPERATORS):
+        raise plan_module.PlanError(
+            f"HAVING {text!r}: an aggregate is compared against one integer, so the "
+            "operators are =, !=, >=, <=, > and <"
+        )
+    # `parse_predicate` reads the bound for the comparisons only, so `rows=x` would
+    # otherwise reach the group loop and fail there, once per group.
+    plan_module.require_integer(predicate.column, predicate.op, predicate.values[0])
+    return predicate
+
+
+def _having_holds(plan_module, predicate, summary: dict) -> bool:
+    """Whether one group's aggregate satisfies one HAVING term.
+
+    `avg` is compared as the exact rational SUM/COUNT rather than as the printed
+    float: `AVG >= 500` asks a question about the measurements themselves, and
+    rounding them to a decimal first would put a group on the wrong side of its own
+    bound. A group with no measured row has no MIN, MAX or AVG and satisfies no
+    comparison against one -- the rule a row with no value already follows.
+    """
+    field = predicate.column
+    if field not in summary:
+        raise plan_module.PlanError(
+            f"HAVING {field} needs --stats <column>; without one a group knows only "
+            "its row count, spelled 'rows'"
+        )
+    bound = predicate.bound
+    if field == "avg":
+        if not summary["count"]:
+            return False
+        left, right = summary["sum"], bound * summary["count"]
+    else:
+        left = summary[field]
+        if left is None:
+            return False
+        right = bound
+    if predicate.op == "eq":
+        return left == right
+    if predicate.op == "ne":
+        return left != right
+    if predicate.op == "ge":
+        return left >= right
+    if predicate.op == "gt":
+        return left > right
+    if predicate.op == "le":
+        return left <= right
+    if predicate.op == "lt":
+        return left < right
+    raise plan_module.PlanError(f"HAVING has no rule for operator {predicate.op!r}")
+
+
+def _group_summary(catalog, stats_column: str | None, rows: list[int]) -> dict:
+    """One group's aggregates. `rows` is always present; the rest need a --stats column."""
+    if stats_column is None:
+        return {"rows": len(rows)}
+    summary = dict(catalog.aggregate(stats_column, rows))
+    summary["rows"] = len(rows)
+    return summary
+
+
+def _print_grouped_aggregate(plan_module, catalog, args, selection, where: str) -> int:
+    """GROUP BY with per-group aggregates, and HAVING over them.
+
+    The groups partition the admitted rows, so the printed TOTAL is the aggregate of
+    exactly the groups above it -- recomputed over their union rather than carried
+    down from the unfiltered table, which would disagree with the rows on screen the
+    moment a HAVING term removed one.
+    """
+    terms = [_parse_having(plan_module, text) for text in args.having]
+    groups = _group_rows(catalog, args.group_by, selection)
+    null_key = _load_tool("catalog").NULL_KEY
+
+    kept: list[tuple[str, dict]] = []
+    surviving: list[int] = []
+    for value, rows in groups:
+        summary = _group_summary(catalog, args.stats, rows)
+        if all(_having_holds(plan_module, term, summary) for term in terms):
+            kept.append((value, summary))
+            surviving.extend(rows)
+
+    fields = ("rows",) if args.stats is None else ("rows", "count", "nulls", "min", "max", "sum")
+    names = [("(null)" if value == null_key else value) for value, _ in kept] or [""]
+    width = max(len(name) for name in names + ["TOTAL"])
+    having = " AND ".join(str(term) for term in terms) or "(none)"
+    subject = f"AGGREGATE {args.stats}" if args.stats else "COUNT(*)"
+    print(
+        f"{subject} GROUP BY {args.group_by} WHERE {where} HAVING {having}"
+        f"   [{len(groups)} group(s), {len(kept)} kept]"
     )
+    header = "  " + "GROUP".ljust(width) + "".join(f"{name.upper():>10s}" for name in fields)
+    print(header + (f"{'AVG':>12s}" if args.stats else ""))
+    for value, summary in kept:
+        shown = "(null)" if value == null_key else value
+        print("  " + shown.ljust(width) + _aggregate_cells(summary, fields, args.stats))
+    total = _group_summary(catalog, args.stats, sorted(surviving))
+    print("  " + "TOTAL".ljust(width) + _aggregate_cells(total, fields, args.stats))
+    return EXIT_OK
+
+
+def _aggregate_cells(summary: dict, fields: tuple[str, ...], stats_column: str | None) -> str:
+    cells = "".join(f"{'-' if summary[name] is None else summary[name]:>10}" for name in fields)
+    if stats_column is None:
+        return cells
+    average = summary["avg"]
+    return cells + (f"{average:>12.2f}" if average is not None else f"{'-':>12}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -527,7 +709,18 @@ def main(argv: list[str] | None = None) -> int:
         metavar="COLUMN",
         help="with --count, report MIN/MAX/SUM/AVG over a numeric column. Unfiltered "
         "this is answered from the catalog's statistics without reading a row; "
-        "with --where it gathers exactly the admitted cells.",
+        "with --where it gathers exactly the admitted cells. Combined with "
+        "--group-by it reports them per group.",
+    )
+    parser.add_argument(
+        "--having",
+        action="append",
+        default=[],
+        metavar="TERM",
+        help="with --group-by, keep only the groups whose aggregate satisfies a term: "
+        f"{', '.join(AGGREGATE_FIELDS)} compared against one integer with =, !=, "
+        ">=, <=, > or <. Repeatable and ANDed, like --where. 'rows' is COUNT(*); "
+        "the rest need --stats and describe that column.",
     )
     parser.add_argument(
         "--explain",
@@ -585,9 +778,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.distinct and not args.count:
         print("search_chunks: --distinct is only defined with --count", file=sys.stderr)
         return EXIT_USAGE
-    if args.stats and args.group_by:
+    if args.having and not args.group_by:
         print(
-            "search_chunks: --stats and --group-by ask for two different aggregates; pass one",
+            "search_chunks: --having filters groups, so it needs --group-by; to filter "
+            "rows, pass --where",
             file=sys.stderr,
         )
         return EXIT_USAGE
@@ -626,6 +820,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"search_chunks: {exc}", file=sys.stderr)
             return EXIT_USAGE
         where = " AND ".join(str(p) for p in selection.predicates) or "(none)"
+
+        if args.group_by and (args.stats or args.having):
+            try:
+                return _print_grouped_aggregate(plan_module, catalog, args, selection, where)
+            except (KeyError, IndexError) as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
+            except plan_module.PlanError as exc:
+                print(f"search_chunks: {exc}", file=sys.stderr)
+                return EXIT_USAGE
 
         if args.group_by:
             try:

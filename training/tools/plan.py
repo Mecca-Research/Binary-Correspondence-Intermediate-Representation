@@ -27,15 +27,34 @@ made from them (TMSAO-4: heuristic, no claim), and a plan's chosen-ness is alway
 explainable as "this axis, this number, these candidates".
 
 Declared scope of the predicate language: a conjunction of `column op value` terms
-with `op` one of `eq`, `ne`, `in`, `prefix`. No disjunction across columns, no
-arithmetic, no user expressions. Answering the next soundness question by adding an
-expression evaluator is how a retrieval tool becomes an interpreter nobody asked
-for; the boundary is stated here so the answer can point at it.
+with `op` one of `eq`, `ne`, `in`, `prefix`, the four comparisons `<`, `<=`, `>`,
+`>=` on a measurement column, and the two presence tests. No disjunction across
+columns, no arithmetic, no user expressions. Answering the next soundness question
+by adding an expression evaluator is how a retrieval tool becomes an interpreter
+nobody asked for; the boundary is stated here so the answer can point at it.
+`BETWEEN` is not an operator because it does not need to be -- two comparisons on
+one column intersect to the same interval.
+
+**Two declared divergences from SQL, both about rows that carry no value.**
+
+A comparison is *existential*: it admits a row that has a value satisfying it. A row
+with no measurement satisfies neither `char_count >= 500` nor `char_count < 500`, so
+the two do not partition the table. That is SQL's rule, and it is the one this
+layout makes easiest to lose, because the null sentinel is an ordinary negative
+integer to the packed column.
+
+`!=` is *complement*, which is not SQL's rule: `language != c` admits a row with no
+language, where SQL would return UNKNOWN and drop it. Retrieval wants the complement
+far more often than it wants three-valued logic, and the surprising half of SQL's
+answer is one term away: `language!=c` with `language=?` is exactly `<>`. Both
+readings are gated in `verify_database.py` so neither can drift into the other.
 """
 
 from __future__ import annotations
 
+import re
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -83,18 +102,70 @@ def _weights(primary: str) -> tuple[int, ...]:
 # Predicates
 # --------------------------------------------------------------------------
 
-OPERATORS = ("eq", "ne", "in", "prefix")
+OPERATORS = ("eq", "ne", "in", "prefix", "lt", "le", "gt", "ge", "isnull", "notnull")
 
-#: How `--where` spells each operator. Longest first, so `!=` is not read as `=`.
-_SPELLINGS = (("!=", "ne"), ("^=", "prefix"), ("=", "eq"))
+#: The operators that compare a measurement against an integer.
+RANGE_OPERATORS = ("lt", "le", "gt", "ge")
+
+#: The operators that take no value at all.
+NULLARY_OPERATORS = ("isnull", "notnull")
+
+#: How `--where` spells each operator. The parse takes the *leftmost* spelling and,
+#: at that position, the longest -- not the first entry of this table that occurs
+#: anywhere in the term. Scanning in table order reads `title=a!=b` as `!=` with the
+#: column `title=a`, which is a confusing error where `title = "a!=b"` is the answer.
+_SPELLINGS = (
+    ("!=", "ne"),
+    (">=", "ge"),
+    ("<=", "le"),
+    ("^=", "prefix"),
+    (">", "gt"),
+    ("<", "lt"),
+    ("=", "eq"),
+)
+
+#: How each range operator prints, so an explained plan reads as the SQL it means.
+_RANGE_SQL = {"lt": "<", "le": "<=", "gt": ">", "ge": ">="}
+
+#: The reserved right-hand side meaning "a value, any value": `column=?` is SQL's
+#: IS NOT NULL and `column!=?` is IS NULL. Reserved on every column rather than only
+#: on the measurement columns where nothing could collide with it, so the grammar
+#: answers the same question the same way everywhere (`docs/security/laws.md` L12).
+#: The cost is stated rather than hidden: a column holding the literal string "?"
+#: cannot be matched by equality.
+PRESENCE = "?"
+
+#: A measurement is compared against an integer in ASCII digits and nothing else.
+#: `int()` would also accept `1_000`, `+5`, Unicode digits and surrounding
+#: whitespace -- a larger language than the one documented, admitted by the host
+#: rather than by this module. Same rule as the wire-format rails: enforce the
+#: grammar before the conversion.
+_INTEGER = re.compile(r"-?[0-9]+", re.ASCII)
+
+
+def require_integer(column: str, op: str, text: str) -> int:
+    """Read a bound, or refuse it. The one place a comparison's right side is decided.
+
+    Construction and evaluation both ask here, so a term cannot be accepted when it
+    is built and rejected when it is read, or the reverse (`docs/security/laws.md`
+    L14). `--having` asks too, for the operators `parse_predicate` does not validate.
+    """
+    if not _INTEGER.fullmatch(text):
+        raise PlanError(
+            f"{column} {_RANGE_SQL.get(op, op)} {text!r}: a measurement is compared "
+            "against an integer, in ASCII digits with an optional leading '-'"
+        )
+    return int(text)
 
 
 @dataclass(frozen=True)
 class Predicate:
     """One `column op value` term. Total, closed, and comparable.
 
-    `values` is always a tuple, even for `eq`, so the four operators share one shape
-    and a caller never has to ask which arity it is holding.
+    `values` is always a tuple, so every operator shares one shape and a caller never
+    has to ask which arity it is holding. A presence test holds the empty tuple: it
+    compares against nothing, and inventing a placeholder value for it would put a
+    string in the one place nothing should read one.
     """
 
     column: str
@@ -104,10 +175,24 @@ class Predicate:
     def __post_init__(self) -> None:
         if self.op not in OPERATORS:
             raise PlanError(f"unknown operator {self.op!r}; the language is {', '.join(OPERATORS)}")
+        if self.op in NULLARY_OPERATORS:
+            if self.values:
+                raise PlanError(f"operator {self.op!r} takes no value, got {len(self.values)}")
+            return
         if not self.values:
             raise PlanError(f"predicate on {self.column!r} has no value")
-        if self.op in ("eq", "ne", "prefix") and len(self.values) != 1:
+        if self.op in ("eq", "ne", "prefix", *RANGE_OPERATORS) and len(self.values) != 1:
             raise PlanError(f"operator {self.op!r} takes one value, got {len(self.values)}")
+        if self.op in RANGE_OPERATORS:
+            # Refuse a malformed bound at the prompt rather than partway through a
+            # scan: the caller can still fix the term they typed, and a plan priced
+            # from a comparison that cannot be made was never a plan.
+            require_integer(self.column, self.op, self.values[0])
+
+    @property
+    def bound(self) -> int:
+        """The integer a comparison compares against, or a refusal."""
+        return require_integer(self.column, self.op, self.values[0])
 
     def __str__(self) -> str:
         if self.op == "eq":
@@ -116,7 +201,34 @@ class Predicate:
             return f"{self.column} != {self.values[0]}"
         if self.op == "prefix":
             return f"{self.column} ^= {self.values[0]}"
+        if self.op == "isnull":
+            return f"{self.column} IS NULL"
+        if self.op == "notnull":
+            return f"{self.column} IS NOT NULL"
+        if self.op in RANGE_OPERATORS:
+            return f"{self.column} {_RANGE_SQL[self.op]} {self.values[0]}"
         return f"{self.column} in ({', '.join(self.values)})"
+
+
+def interval(predicate: Predicate) -> tuple[int | None, int | None]:
+    """A comparison as one closed integer interval `[low, high]`; None is unbounded.
+
+    Four operators collapse to one shape because the column is integral -- `> n` is
+    `>= n + 1` exactly, with nothing between them. So the catalog gets one range
+    entry point instead of four, and two comparisons on the same column intersect by
+    taking the tighter end of each, which is how `BETWEEN` is spelled here
+    (`docs/security/laws.md` L14).
+    """
+    value = predicate.bound
+    if predicate.op == "ge":
+        return value, None
+    if predicate.op == "gt":
+        return value + 1, None
+    if predicate.op == "le":
+        return None, value
+    if predicate.op == "lt":
+        return None, value - 1
+    raise PlanError(f"{predicate.op!r} is not a comparison; the comparisons are {_RANGE_SQL}")
 
 
 def parse_predicate(text: str) -> Predicate:
@@ -126,27 +238,62 @@ def parse_predicate(text: str) -> Predicate:
     `subject!=llvm`           -> ne
     `source_path^=training/`  -> prefix
     `subject=llvm,data`       -> in, because a comma-separated right side is a set
+    `char_count>=500`         -> ge, and `<=`, `>`, `<` likewise
+    `language=?`              -> IS NOT NULL; `language!=?` is IS NULL
 
     A term with no operator is an error rather than a guess. Guessing here would
     silently widen a query the caller meant to narrow.
     """
+    split = _split_term(text)
+    if split is None:
+        raise PlanError(
+            f"predicate {text!r} names no operator; write column=value, column!=value, "
+            f"column^=prefix, column>=500 (or <=, >, <), column={PRESENCE} for "
+            f"'has a value', or column=one,two for a set"
+        )
+    column, op, raw = split
+    if not column:
+        raise PlanError(f"predicate {text!r} has no column")
+    if raw == PRESENCE:
+        if op not in ("eq", "ne"):
+            raise PlanError(
+                f"predicate {text!r} asks whether {column!r} carries a value, which only "
+                f"'=' and '!=' spell; write {column}={PRESENCE} or {column}!={PRESENCE}"
+            )
+        return Predicate(column, "notnull" if op == "eq" else "isnull", ())
+    if op == "eq" and "," in raw:
+        values = tuple(part.strip() for part in raw.split(",") if part.strip())
+        if not values:
+            raise PlanError(f"predicate {text!r} has no value")
+        if PRESENCE in values:
+            raise PlanError(
+                f"predicate {text!r} puts the reserved value {PRESENCE!r} in a set; "
+                f"{PRESENCE} asks whether a value is present at all and cannot be one "
+                "of several"
+            )
+        return Predicate(column, "in", values)
+    return Predicate(column, op, (raw,))
+
+
+def _split_term(text: str) -> tuple[str, str, str] | None:
+    """The leftmost operator in a term, and there the longest spelling of it.
+
+    Maximal munch at the leftmost position, rather than the first table entry found
+    anywhere: `char_count>=500` has to read as `>=` and not as `=` with the column
+    `char_count>`, and `title=a>=b` has to read as `=` on `title` and not as `>=` on
+    the column `title=a`. One rule settles both.
+    """
+    best: tuple[int, str, str] | None = None
     for spelling, op in _SPELLINGS:
         index = text.find(spelling)
-        if index > 0:
-            column = text[:index].strip()
-            raw = text[index + len(spelling) :].strip()
-            if not column:
-                raise PlanError(f"predicate {text!r} has no column")
-            if op == "eq" and "," in raw:
-                values = tuple(part.strip() for part in raw.split(",") if part.strip())
-                if not values:
-                    raise PlanError(f"predicate {text!r} has no value")
-                return Predicate(column, "in", values)
-            return Predicate(column, op, (raw,))
-    raise PlanError(
-        f"predicate {text!r} names no operator; write column=value, column!=value, "
-        "column^=prefix, or column=one,two for a set"
-    )
+        if index <= 0:
+            continue
+        if best is None or index < best[0] or (index == best[0] and len(spelling) > len(best[1])):
+            best = (index, spelling, op)
+    if best is None:
+        return None
+    index, spelling, op = best
+    return text[:index].strip(), op, text[index + len(spelling) :].strip()
 
 
 # --------------------------------------------------------------------------
@@ -199,10 +346,48 @@ def estimate(catalog, predicate: Predicate) -> tuple[int, bool]:
                 raise PlanError(_unindexed(catalog, predicate.column))
             total += count
         return total, True
-    count = catalog.count_equals(predicate.column, predicate.values[0])
-    if count is None:
-        raise PlanError(_unindexed(catalog, predicate.column))
-    return catalog.rows_total - count, True
+    if predicate.op in RANGE_OPERATORS:
+        low, high = interval(predicate)
+        # The zone map, from the manifest, reading no artifact. Pricing a plan must
+        # not cost an artifact read -- that is the whole reason this catalog loads
+        # lazily -- so a comparison is *estimated* from four integers per part and
+        # only *answered* by reading the sorted index below. It is a bound, and comes
+        # back marked as one.
+        with _as_plan_error():
+            return catalog.count_range(predicate.column, low, high)
+    if predicate.op in NULLARY_OPERATORS:
+        with _as_plan_error():
+            return len(_presence_rows(catalog, predicate)), True
+    if predicate.op == "ne":
+        count = catalog.count_equals(predicate.column, predicate.values[0])
+        if count is None:
+            raise PlanError(_unindexed(catalog, predicate.column))
+        # Complement, not SQL's three-valued `<>`: a row carrying no value is not
+        # equal to this one, so it is admitted. Declared in the module docstring and
+        # gated, so the two readings cannot quietly swap.
+        return catalog.rows_total - count, True
+    raise PlanError(f"operator {predicate.op!r} has no selectivity rule")
+
+
+@contextmanager
+def _as_plan_error():
+    """Turn the catalog's refusals into this module's, so a caller catches one type.
+
+    A `KeyError` escaping here reaches `search_chunks` as a traceback rather than as
+    a usage verdict, which is the same exit either way to a human and a different one
+    to a script (`docs/security/laws.md` L1).
+    """
+    try:
+        yield
+    except (KeyError, catalog_module.CatalogError) as exc:
+        raise PlanError(str(exc).strip('"')) from exc
+
+
+def _presence_rows(catalog, predicate: Predicate) -> list[int]:
+    """The rows a presence test admits. One lookup, so `estimate` and `_rows_for` agree."""
+    if predicate.op == "isnull":
+        return catalog.rows_absent(predicate.column)
+    return catalog.rows_present(predicate.column)
 
 
 def _unindexed(catalog, column: str) -> str:
@@ -260,10 +445,22 @@ def _rows_for(catalog, predicate: Predicate) -> set[int]:
                 raise PlanError(_unindexed(catalog, predicate.column))
             found |= set(rows)
         return found
-    rows = catalog.rows_equal(predicate.column, predicate.values[0])
-    if rows is None:
-        raise PlanError(_unindexed(catalog, predicate.column))
-    return set(range(catalog.rows_total)) - set(rows)
+    if predicate.op in RANGE_OPERATORS:
+        low, high = interval(predicate)
+        # Two binary searches over the sorted index, taking the window unsorted: this
+        # goes straight into a set, and `select` sorts the intersection once at the
+        # end, so ordering the window here would be an ordering nobody reads.
+        with _as_plan_error():
+            return set(catalog.seek_range(predicate.column, low, high)[0])
+    if predicate.op in NULLARY_OPERATORS:
+        with _as_plan_error():
+            return set(_presence_rows(catalog, predicate))
+    if predicate.op == "ne":
+        rows = catalog.rows_equal(predicate.column, predicate.values[0])
+        if rows is None:
+            raise PlanError(_unindexed(catalog, predicate.column))
+        return set(range(catalog.rows_total)) - set(rows)
+    raise PlanError(f"operator {predicate.op!r} has no evaluation rule")
 
 
 # --------------------------------------------------------------------------

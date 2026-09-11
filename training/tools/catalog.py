@@ -15,6 +15,10 @@ order to be a choice rather than a constant:
                  plan is chosen
   parts          contiguous row ranges with a content hash each, so a rebuild can
                  re-embed what changed instead of everything
+  zone maps      per part, the MIN/MAX/COUNT/NULLS of each measurement column, so a
+                 range predicate can rule a whole part out on four integers before
+                 reading one of its cells -- a skip index, at the level of the
+                 hierarchy the parts already established
 
 The artifacts are split by how often they are wanted, and each is read on first
 use, never on load:
@@ -23,6 +27,12 @@ use, never on load:
   postings.json  the inverted index -- read when a predicate is evaluated
   locator.bin    14 bytes per row -- read when text is fetched
   ids.txt        row -> chunk_id -- read only for lookups by primary key
+  numeric.bin    8 bytes per row per measurement column, column-major -- read when a
+                 range predicate straddles a part, or an aggregate is gathered over
+                 a selection
+  order.bin      4 bytes per row per measurement column: that column's rows in
+                 ascending order -- read when a comparison is evaluated, which it
+                 then answers by two binary searches instead of a pass
 
 That split is the same rule the embedding set follows for its derived columns: a
 structure nobody asked for should not be built. Loading a catalog costs one small
@@ -59,6 +69,7 @@ dependency of BCIR, and nothing here reverses that.
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import os
@@ -68,7 +79,11 @@ from array import array
 import tempfile
 from pathlib import Path
 
-SCHEMA = "bcir-training/catalog/v1"
+#: v2 added the per-part numeric zone map. A v1 catalog is refused rather than read
+#: with pruning switched off: "this catalog has no zone map" and "this zone map pruned
+#: nothing" produce the same answer and the same green run, and only one of them is
+#: honest (`docs/security/laws.md` L2).
+SCHEMA = "bcir-training/catalog/v2"
 BUILDER = "training/tools/catalog.py"
 LICENSE = "LicenseRef-BCIR-NC-1.0"
 
@@ -80,6 +95,7 @@ POSTINGS_FILE = "postings.json"
 LOCATOR_FILE = "locator.bin"
 IDS_FILE = "ids.txt"
 NUMERIC_FILE = "numeric.bin"
+ORDER_FILE = "order.bin"
 
 #: Columns indexed by whole value. Low cardinality by construction, so a
 #: distinct-value map over any of them is a handful of entries, not a histogram.
@@ -109,6 +125,15 @@ LOCATOR_ENTRY_BYTES = _LOCATOR_STRUCT.size
 _NUMERIC_STRUCT = struct.Struct("<q")
 NUMERIC_CELL_BYTES = _NUMERIC_STRUCT.size
 NUMERIC_NULL = -(2**63)
+
+#: One entry of a sorted index: a row number, little-endian and unsigned. Each
+#: measurement column contributes `rows_total` of them -- the measured rows first, in
+#: ascending (value, row) order, then the unmeasured rows in row order. The split
+#: point is the column's own `count`, so the index needs no length of its own to be
+#: read correctly, and a comparison becomes two binary searches over a slice.
+_ORDER_STRUCT = struct.Struct("<I")
+ORDER_ENTRY_BYTES = _ORDER_STRUCT.size
+MAX_INDEXABLE_ROWS = 2**32 - 1
 
 
 class CatalogError(RuntimeError):
@@ -233,15 +258,52 @@ def _scan_chunk_file(path: Path, file_index: int) -> list[dict]:
     return rows
 
 
-def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, bytes]:
+def numeric_cell(row: dict, column: str) -> int | None:
+    """One numeric cell, or None where the row carries no measurement.
+
+    `True` is an `int` in Python and would pack as a length of 1. A boolean in a
+    measurement column is a schema error rather than a measurement, so it reads as
+    absent -- the packed column then says "unknown" where the row said something
+    nonsensical, instead of inventing a number no chunk has.
+    """
+    value = row.get(column)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return int(value)
+
+
+def numeric_summary(rows: list[dict], column: str) -> dict:
+    """MIN/MAX/SUM/COUNT/NULLS over one numeric column of a row range.
+
+    The whole-corpus statistics and every part's zone map are produced by this one
+    function, so a part cannot summarise its rows by a different rule than the catalog
+    summarises all of them (`docs/security/laws.md` L14). That matters more here than
+    in most shared predicates: a zone map that disagreed with the statistics by even
+    one would prune a part that holds a matching row, and the query would return a
+    wrong answer quickly rather than a right answer slowly.
+
+    `min` and `max` are over present values only. The null sentinel is a legal int64
+    and would otherwise become the minimum of every column that has a gap.
+    """
+    present = [value for value in (numeric_cell(row, column) for row in rows) if value is not None]
+    return {
+        "count": len(present),
+        "nulls": len(rows) - len(present),
+        "min": min(present) if present else None,
+        "max": max(present) if present else None,
+        "sum": sum(present),
+    }
+
+
+def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, bytes, bytes]:
     """Read the chunk table once and derive every fact a plan can use.
 
     One pass. The locator, the postings, the statistics and the parts all come from
     the rows that scan already produced -- a catalog needing its own second pass
     over the corpus would cost more than the scans it exists to avoid.
 
-    Returns the manifest, the postings, the packed locator, the id list and the
-    packed numeric columns.
+    Returns the manifest, the postings, the packed locator, the id list, the packed
+    numeric columns and the sorted index over them.
     """
     files = chunk_files(chunk_dir)
     if not files:
@@ -318,21 +380,51 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
     numeric = bytearray()
     numeric_stats: dict[str, dict] = {}
     for name in NUMERIC_COLUMNS:
-        present: list[int] = []
         for row in rows:
-            value = row.get(name)
-            if isinstance(value, bool) or not isinstance(value, int):
-                numeric += _NUMERIC_STRUCT.pack(NUMERIC_NULL)
-                continue
-            numeric += _NUMERIC_STRUCT.pack(int(value))
-            present.append(int(value))
-        numeric_stats[name] = {
-            "count": len(present),
-            "nulls": len(rows) - len(present),
-            "min": min(present) if present else None,
-            "max": max(present) if present else None,
-            "sum": sum(present),
-        }
+            value = numeric_cell(row, name)
+            numeric += _NUMERIC_STRUCT.pack(NUMERIC_NULL if value is None else value)
+        numeric_stats[name] = numeric_summary(rows, name)
+
+    # The zone map: the range of values each part could possibly hold. A range
+    # predicate reads this before it reads a row, so a part whose whole span lies
+    # outside the range is skipped without touching the packed column -- the pruning a
+    # skip index does, at the level of the hierarchy this catalog already had. It costs
+    # one more pass over rows already in memory, not another pass over the corpus.
+    for part in parts:
+        start, end = part["rows"]
+        span = rows[start:end]
+        part["numeric"] = {name: numeric_summary(span, name) for name in NUMERIC_COLUMNS}
+
+    # The sorted index: each measurement column's rows in ascending order. Two binary
+    # searches over it answer a comparison exactly, where the zone map above can only
+    # rule parts out -- and on this corpus one part holds most of the rows, so ruling
+    # parts out is worth far less than being able to seek.
+    #
+    # Row numbers are stored unsigned 32-bit, which is a bound on what this format can
+    # index. It is checked here, where the rows are counted, rather than discovered as
+    # a wrapped index at query time (`docs/security/laws.md` L3).
+    if len(rows) > MAX_INDEXABLE_ROWS:
+        raise CatalogError(
+            f"catalog: {len(rows)} rows exceeds the {MAX_INDEXABLE_ROWS} a 32-bit "
+            "sorted-index entry can name"
+        )
+    order = bytearray()
+    for name in NUMERIC_COLUMNS:
+        measured = []
+        absent = []
+        for position, row in enumerate(rows):
+            value = numeric_cell(row, name)
+            (absent if value is None else measured).append(
+                position if value is None else (value, position)
+            )
+        # Ties by row, ascending, so the index and a stable sort of the same rows
+        # agree -- and so a page boundary inside a run of equal values falls in the
+        # same place every time.
+        measured.sort()
+        for _, position in measured:
+            order += _ORDER_STRUCT.pack(position)
+        for position in absent:
+            order += _ORDER_STRUCT.pack(position)
 
     manifest = {
         "schema": SCHEMA,
@@ -376,9 +468,15 @@ def build(chunk_dir: Path = DEFAULT_CHUNKS) -> tuple[dict, dict, bytes, str, byt
                 "columns": list(NUMERIC_COLUMNS),
                 "cell_bytes": NUMERIC_CELL_BYTES,
             },
+            "order": {
+                "path": ORDER_FILE,
+                "sha256": hashlib.sha256(bytes(order)).hexdigest(),
+                "columns": list(NUMERIC_COLUMNS),
+                "entry_bytes": ORDER_ENTRY_BYTES,
+            },
         },
     }
-    return manifest, postings, bytes(locator), ids, bytes(numeric)
+    return manifest, postings, bytes(locator), ids, bytes(numeric), bytes(order)
 
 
 def _publish(root: Path, name: str, payload: bytes) -> Path:
@@ -398,13 +496,13 @@ def _publish(root: Path, name: str, payload: bytes) -> Path:
     return target
 
 
-def write(built: tuple[dict, dict, bytes, str, bytes], root: Path = DEFAULT_CATALOG) -> Path:
+def write(built: tuple[dict, dict, bytes, str, bytes, bytes], root: Path = DEFAULT_CATALOG) -> Path:
     """Publish every artifact, the manifest last.
 
     Last because the manifest is what vouches for the others' digests: a reader that
     finds the manifest can rely on the sidecars beside it already being complete.
     """
-    manifest, postings, locator, ids, numeric = built
+    manifest, postings, locator, ids, numeric, order = built
     root.mkdir(parents=True, exist_ok=True)
     _publish(
         root,
@@ -414,6 +512,7 @@ def write(built: tuple[dict, dict, bytes, str, bytes], root: Path = DEFAULT_CATA
     _publish(root, LOCATOR_FILE, locator)
     _publish(root, IDS_FILE, ids.encode("utf-8"))
     _publish(root, NUMERIC_FILE, numeric)
+    _publish(root, ORDER_FILE, order)
     return _publish(
         root,
         CATALOG_FILE,
@@ -446,6 +545,7 @@ class Catalog:
         self._locator: bytes | None = None
         self._ids: list[str] | None = None
         self._numeric: dict | None = None
+        self._order: dict | None = None
         self._by_chunk_id: dict[str, int] | None = None
 
     # -- loading ---------------------------------------------------------
@@ -691,6 +791,83 @@ class Catalog:
             }
         return self._numeric
 
+    @property
+    def order(self) -> dict[str, array]:
+        """Each measurement column's rows in ascending order, read on first use.
+
+        Measured rows first -- ascending by value, ties by row -- then the unmeasured
+        rows in row order. The split point is the column's own `count`, so the index
+        carries no length of its own to disagree with the statistics.
+        """
+        if self._order is None:
+            raw = self._artifact_bytes("order")
+            names = tuple(self._artifacts["order"].get("columns") or ())
+            expected = len(names) * self.rows_total * ORDER_ENTRY_BYTES
+            if len(raw) != expected:
+                raise CatalogError(
+                    f"catalog: {ORDER_FILE} holds {len(raw)} bytes, expected {expected} "
+                    f"({len(names)} column(s) x {self.rows_total} rows x {ORDER_ENTRY_BYTES})"
+                )
+            rows = array("I")
+            rows.frombytes(raw)
+            if sys.byteorder == "big":
+                rows.byteswap()  # the file is little-endian by contract
+            self._order = {
+                name: rows[index * self.rows_total : (index + 1) * self.rows_total]
+                for index, name in enumerate(names)
+            }
+        return self._order
+
+    def measured(self, column: str) -> int:
+        """How many rows carry a measurement -- where the sorted index splits."""
+        self.require_numeric(column)
+        return int(self._statistics["numeric"][column]["count"])
+
+    def seek_bounds(self, column: str, low: int | None, high: int | None) -> tuple[int, int]:
+        """The half-open slice of the sorted index that `[low, high]` names.
+
+        Two binary searches, and the one place a comparison is turned into a window:
+        `count_in_range` and `seek_range` both ask here, so the number of rows a plan
+        is priced on and the rows it returns cannot come from different arithmetic
+        (`docs/security/laws.md` L14).
+
+        Unmeasured rows live past the split and are never inside the window, so a row
+        carrying no value satisfies no comparison without anything testing for the
+        sentinel: the SQL rule is in the layout rather than in a branch that could be
+        forgotten on one path.
+        """
+        self.require_numeric(column)
+        rows = self.order[column]
+        split = self.measured(column)
+        cells = self.numeric[column]
+        start = (
+            0
+            if low is None
+            else bisect.bisect_left(rows, low, 0, split, key=lambda row: cells[row])
+        )
+        stop = (
+            split
+            if high is None
+            else bisect.bisect_right(rows, high, 0, split, key=lambda row: cells[row])
+        )
+        return start, max(start, stop)
+
+    def seek_range(self, column: str, low: int | None = None, high: int | None = None):
+        """The rows in `[low, high]`, in *value* order, plus what the seek cost.
+
+        Value order rather than row order because the caller that needs rows sorted
+        sorts once, and the caller that builds a set from them -- which is how a
+        conjunction is evaluated -- would otherwise pay for an ordering nobody reads.
+        """
+        start, stop = self.seek_bounds(column, low, high)
+        window = list(self.order[column][start:stop])
+        return window, {"probes": 2, "window": len(window), "measured": self.measured(column)}
+
+    def count_in_range(self, column: str, low: int | None = None, high: int | None = None) -> int:
+        """Exactly how many rows are in `[low, high]`, without naming one of them."""
+        start, stop = self.seek_bounds(column, low, high)
+        return stop - start
+
     def numeric_columns(self) -> tuple[str, ...]:
         return tuple(self._statistics.get("numeric", {}).keys())
 
@@ -703,10 +880,8 @@ class Catalog:
         which happened, because "answered from statistics" and "answered by reading
         every admitted row" are different claims and only one of them is free.
         """
-        stats = self._statistics.get("numeric", {}).get(column)
-        if stats is None:
-            known = ", ".join(self.numeric_columns()) or "(none)"
-            raise KeyError(f"catalog: column {column!r} is not a numeric column; known: {known}")
+        self.require_numeric(column)
+        stats = self._statistics["numeric"][column]
         if rows is None:
             return {
                 "column": column,
@@ -736,6 +911,197 @@ class Catalog:
             "avg": (sum(present) / len(present)) if present else None,
             "scanned": len(present),
         }
+
+    def require_numeric(self, column: str) -> None:
+        """Refuse a column that has no order to compare against.
+
+        The aggregate and every range term ask this one question through this one
+        predicate, so `--stats` and `--where` can never disagree about which columns
+        are measurements (`docs/security/laws.md` L14). Comparing `kind` against 500
+        would otherwise succeed somewhere and fail somewhere else.
+        """
+        if column not in self.numeric_columns():
+            known = ", ".join(self.numeric_columns()) or "(none)"
+            raise KeyError(f"catalog: column {column!r} is not a numeric column; known: {known}")
+
+    # -- ranges (the zone map first, then only the parts it could not settle) --
+
+    def zone(self, part: dict, column: str) -> dict:
+        """One part's summary of one numeric column, or a refusal.
+
+        A part with no zone map is a catalog that cannot prune, and it has to say so:
+        pruning changes only the cost of an answer, never the answer, so a silent
+        fallback to reading every row produces an identical result and an identical
+        green run. The absence has to be a verdict or it is invisible
+        (`docs/security/laws.md` L1, L2).
+        """
+        zones = part.get("numeric")
+        if not isinstance(zones, dict) or column not in zones:
+            raise CatalogError(
+                f"catalog: part {part.get('part_id')!r} carries no zone map for {column!r}\n"
+                f"  rebuild it: python3 {BUILDER} --out {self.root}"
+            )
+        return zones[column]
+
+    @staticmethod
+    def _zone_verdict(zone: dict, low: int | None, high: int | None) -> str:
+        """How one part stands to the closed interval `[low, high]`, from four integers.
+
+        `none`    -- no row in this part can match; skip it unread.
+        `all`     -- every row matches; take the whole span unread.
+        `present` -- every *measured* row matches, and the part also holds gaps; the
+                     count is known exactly but naming the rows needs the cells.
+        `some`    -- the part straddles a bound; the cells decide.
+
+        Nulls are excluded before anything else because the sentinel is a legal int64
+        that compares below every real measurement: an interval left open at the
+        bottom would otherwise sweep up every gap in the column.
+        """
+        if zone["count"] == 0:
+            return "none"
+        if low is not None and zone["max"] < low:
+            return "none"
+        if high is not None and zone["min"] > high:
+            return "none"
+        if (low is None or zone["min"] >= low) and (high is None or zone["max"] <= high):
+            return "all" if zone["nulls"] == 0 else "present"
+        return "some"
+
+    def count_range(self, column: str, low: int | None = None, high: int | None = None):
+        """Rows where `low <= column <= high`, and whether that count is exact.
+
+        Bounds are inclusive; either may be None for unbounded. A row with no
+        measurement satisfies no range in either direction -- SQL's rule for NULL, and
+        the one this layout makes easiest to lose, since `NUMERIC_NULL` is an ordinary
+        negative integer to the packed column.
+
+        The contract is `count_prefix`'s: a bound comes back marked as a bound, so a
+        plan chosen on an estimate can be explained as having been chosen on one.
+        """
+        self.require_numeric(column)
+        total = 0
+        exact = True
+        for part in self.parts:
+            zone = self.zone(part, column)
+            verdict = self._zone_verdict(zone, low, high)
+            if verdict == "none":
+                continue
+            total += zone["count"]
+            if verdict == "some":
+                exact = False
+        return total, exact
+
+    def range_scan(self, column: str, low: int | None = None, high: int | None = None):
+        """The rows in `[low, high]` by scanning the column, zone map first.
+
+        The second, slower answer to the question `seek_range` answers -- kept, and
+        kept correct, because a lookup that changes the result has nothing to be
+        checked against. It is this rail's oracle/production-twin pattern applied
+        inside one module: `verify_database.py` runs both over every interval and
+        requires them to agree, which is a claim the sorted index alone could not
+        make about itself.
+
+        The returned counters are the audit trail -- parts ruled out on four integers,
+        parts taken whole, cells actually read. Pruning changes only the cost of an
+        answer, so a zone map that stopped pruning would keep every answer right; the
+        counters are the only thing that notices.
+        """
+        self.require_numeric(column)
+        values = None
+        matched: list[int] = []
+        read = {"parts": len(self.parts), "skipped": 0, "whole": 0, "scanned": 0, "cells": 0}
+        for part in self.parts:
+            start, end = part["rows"]
+            verdict = self._zone_verdict(self.zone(part, column), low, high)
+            if verdict == "none":
+                read["skipped"] += 1
+                continue
+            if verdict == "all":
+                read["whole"] += 1
+                matched.extend(range(start, end))
+                continue
+            read["scanned"] += 1
+            if values is None:
+                values = self.numeric[column]
+            read["cells"] += end - start
+            for row in range(start, end):
+                value = values[row]
+                if value == NUMERIC_NULL:
+                    continue
+                if low is not None and value < low:
+                    continue
+                if high is not None and value > high:
+                    continue
+                matched.append(row)
+        return matched, read
+
+    def rows_in_range(self, column: str, low: int | None = None, high: int | None = None):
+        """The rows in `[low, high]`, ascending. Answered by seeking the sorted index."""
+        return sorted(self.seek_range(column, low, high)[0])
+
+    # -- presence (IS NULL / IS NOT NULL) --------------------------------
+
+    def rows_absent(self, column: str) -> list[int]:
+        """Rows carrying no value for `column`. SQL's IS NULL, over any indexed column."""
+        if column in self.numeric_columns():
+            return self._numeric_presence(column, want_present=False)
+        if column == PATH_COLUMN:
+            seen = self._path_rows()
+            return [row for row in range(self.rows_total) if row not in seen]
+        postings = self.postings["columns"].get(column)
+        if postings is None:
+            raise KeyError(f"catalog: column {column!r} is not indexed")
+        return sorted(postings.get(NULL_KEY, ()))
+
+    def rows_present(self, column: str) -> list[int]:
+        """Rows carrying a value for `column`. SQL's IS NOT NULL.
+
+        Gathered, not derived as the complement of `rows_absent`. Defining either as
+        the negation of the other would make "these two partition the table" true by
+        construction, and a property that cannot fail is not a property a gate can
+        check (`docs/security/laws.md` L2). Held apart, the partition is a differential
+        between two walks, and `check_presence` can watch it break.
+        """
+        if column in self.numeric_columns():
+            return self._numeric_presence(column, want_present=True)
+        if column == PATH_COLUMN:
+            return sorted(self._path_rows())
+        postings = self.postings["columns"].get(column)
+        if postings is None:
+            raise KeyError(f"catalog: column {column!r} is not indexed")
+        gathered: set[int] = set()
+        for key, rows in postings.items():
+            if key != NULL_KEY:
+                gathered.update(rows)
+        return sorted(gathered)
+
+    def _path_rows(self) -> set[int]:
+        gathered: set[int] = set()
+        for rows in self.postings["paths"].values():
+            gathered.update(rows)
+        return gathered
+
+    def _numeric_presence(self, column: str, *, want_present: bool) -> list[int]:
+        """Measured or unmeasured rows of a packed column, skipping parts the zone settles."""
+        values = None
+        found: list[int] = []
+        for part in self.parts:
+            start, end = part["rows"]
+            zone = self.zone(part, column)
+            if zone["nulls"] == 0:
+                if want_present:
+                    found.extend(range(start, end))
+                continue
+            if zone["count"] == 0:
+                if not want_present:
+                    found.extend(range(start, end))
+                continue
+            if values is None:
+                values = self.numeric[column]
+            for row in range(start, end):
+                if (values[row] != NUMERIC_NULL) == want_present:
+                    found.append(row)
+        return found
 
     # -- statistics (selectivity, exactly) -------------------------------
 

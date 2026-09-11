@@ -29,6 +29,13 @@ What it enforces, by slice:
                        file, and `changed_parts` names exactly the ones that moved.
   S6 generations       A generation is immutable once published, its digest covers
                        what it claims, and reading an old one reproduces its answer.
+  S7 comparisons       A range finds what a pass over the corpus finds; the zone map
+                       rules parts out, rules out only parts holding no match, and
+                       is counted doing it; a row carrying no measurement satisfies
+                       no comparison in either direction; IS NULL and IS NOT NULL
+                       partition the table while `!=` deliberately does not; groups
+                       partition, their aggregates add up, and HAVING compares
+                       SUM/COUNT rather than a rounded decimal.
 
   planner              Legality is decided before cost and never from a measurement:
                        a lossy backend stays refused for an exactness request at any
@@ -74,6 +81,11 @@ DEFAULT_CATALOG = Path("build/training/catalog")
 MIN_ROWS = 50
 MIN_PREDICATE_TRIALS = 20
 MIN_FETCH_ROWS = 50
+MIN_RANGE_TRIALS = 24
+#: Pruning changes the cost of a range answer and never the answer, so a zone map
+#: that stopped ruling parts out would leave every correctness check above green.
+#: This floor is the only thing in the gate that would notice.
+MIN_PRUNED_PARTS = 1
 
 
 class Report:
@@ -771,6 +783,658 @@ def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# S7 -- comparisons, the zone map, and the rows that carry no value
+# --------------------------------------------------------------------------
+
+
+def _corpus_values(catalog_module, chunk_dir: Path, column: str) -> list[int]:
+    """Every measured value of one column, read straight from the chunk files.
+
+    Deliberately not in row order and deliberately not through the catalog: what it
+    answers is "how many records in this corpus hold a value at all", which is the
+    half of a range answer the catalog cannot be its own witness for.
+    """
+    values = []
+    for path in catalog_module.chunk_files(chunk_dir):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            value = json.loads(line).get(column)
+            if isinstance(value, int) and not isinstance(value, bool):
+                values.append(int(value))
+    return values
+
+
+def _row_values(records: dict, column: str) -> dict:
+    """row -> its measured value, or None, taken from each row's own fetched record."""
+    values = {}
+    for row, record in records.items():
+        found = record.get(column)
+        measured = isinstance(found, int) and not isinstance(found, bool)
+        values[row] = int(found) if measured else None
+    return values
+
+
+def _in_interval(value, low, high) -> bool:
+    """The interval rule, written once here so every expectation below shares it."""
+    if value is None:
+        return False
+    return (low is None or value >= low) and (high is None or value <= high)
+
+
+def _synthetic_gaps(catalog_module, directory: Path):
+    """A two-part chunk table where one row has no `char_count` and one measures zero.
+
+    The real corpus measures every row, so a claim about missing measurements
+    asserted only over it would iterate zero times and pass (L2). Two files, because
+    a claim about pruning needs more than one part to prune.
+    """
+    mirror = directory / "chunks"
+    mirror.mkdir()
+    for part, span in (("low", range(0, 3)), ("high", range(3, 6))):
+        lines = []
+        for index in span:
+            record = {
+                "chunk_id": f"sha256:{index:064d}",
+                "subject": "synthetic",
+                "source_path": f"synthetic/{part}/{index}.md",
+                "kind": "prose",
+                "language": None,
+                "span": {"start_line": index, "end_line": index},
+                "text": f"row {index}",
+                "token_estimate": index,
+            }
+            # Row 2 carries no measurement at all; row 1 measures a real zero. A
+            # format that spelled "missing" as zero cannot tell those two apart, and
+            # a comparison that treats the sentinel as a number puts row 2 below
+            # every bound.
+            if index != 2:
+                record["char_count"] = 0 if index == 1 else 100 * (index + 1)
+            lines.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        (mirror / f"{part}.chunks.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    catalog_module.write(catalog_module.build(mirror), directory / "catalog")
+    return catalog_module.Catalog.load(directory / "catalog", mirror)
+
+
+def _check_sorted_index(report: Report, catalog_module, catalog, column: str) -> None:
+    """The sorted index is a claim about every row, checkable before any query runs.
+
+    Called for the corpus and again for a table built with a gap in it. Every corpus
+    this gate builds measures every row, so checked only there the split point and the
+    unmeasured tail are claims about the empty set -- and the one fault that puts a
+    row on the wrong side of the split would pass (L2). One function, both tables
+    (L14).
+    """
+    index = list(catalog.order[column])
+    split = catalog.measured(column)
+    cells = catalog.numeric[column]
+    counted = catalog.aggregate(column)["count"]
+    report.require(
+        sorted(index) == list(range(catalog.rows_total)),
+        f"ranges: the sorted index for {column} names {len(set(index))} distinct "
+        f"row(s) of {catalog.rows_total}; it has to be a permutation, or a seek "
+        "returns a row twice or not at all",
+    )
+    report.require(
+        split == counted,
+        f"ranges: the sorted index for {column} splits at {split} where the statistics "
+        f"count {counted} measured row(s); the split is the only thing keeping "
+        "unmeasured rows out of every comparison",
+    )
+    keys = [(cells[row], row) for row in index[:split]]
+    report.require(
+        keys == sorted(keys),
+        f"ranges: the measured prefix of {column}'s index is not ascending by "
+        "(value, row); a binary search over it would return the wrong window, and a "
+        "page boundary inside a run of equal values would move between runs",
+    )
+    report.require(
+        all(cells[row] != catalog_module.NUMERIC_NULL for row in index[:split])
+        and all(cells[row] == catalog_module.NUMERIC_NULL for row in index[split:]),
+        f"ranges: {column}'s index has measured and unmeasured rows on the wrong sides "
+        "of its split",
+    )
+    report.require(
+        index[split:] == sorted(index[split:]),
+        f"ranges: the unmeasured tail of {column}'s index is not in row order",
+    )
+
+
+def check_ranges(report: Report, plan, catalog, chunk_dir: Path) -> None:
+    """A comparison must find what a pass over the corpus finds, and skip parts doing it.
+
+    Three halves, because no two of them fail together:
+
+      *sound*     every row returned holds, in its own fetched record, a value in the
+                  interval -- not re-read from the packed column the index just read;
+      *complete*  exactly as many rows come back as there are records in the corpus
+                  with a value in the interval, counted by a direct pass over files;
+      *pruned*    the zone map ruled parts out, every part it ruled out really holds
+                  no match, and the pruned answer equals the full column scan's.
+
+    Sound and complete together pin the set: two subsets of one finite set, one
+    inside the other and of equal size, are equal. Neither alone does -- an index
+    that returns nothing is sound, and one that returns everything is complete.
+    """
+    catalog_module = load_tool("catalog")
+    columns = catalog.numeric_columns()
+    report.require(
+        bool(columns),
+        "ranges: the catalog declares no numeric column, so every loop below would "
+        "iterate zero times",
+    )
+    fetched = catalog.fetch(list(range(catalog.rows_total)))
+    trials = 0
+    pruned_parts = 0
+
+    for column in columns:
+        corpus = _corpus_values(catalog_module, chunk_dir, column)
+        by_row = _row_values(fetched, column)
+        cells = catalog.numeric[column]
+        measured = sorted(value for value in by_row.values() if value is not None)
+        report.require(
+            measured == sorted(corpus),
+            f"ranges: {column} holds {len(measured)} measured value(s) read row by row "
+            f"and {len(corpus)} read straight from the chunk files; the two oracles "
+            "the checks below rely on do not agree with each other",
+        )
+        report.require(
+            bool(corpus),
+            f"ranges: no record in the corpus measures {column}, so every interval "
+            "below would be checked against the empty set",
+        )
+        if not corpus:
+            continue
+
+        # The zone map is a claim about cells, checkable without any query at all.
+        for part in catalog.parts:
+            start, end = part["rows"]
+            span = [cells[row] for row in range(start, end)]
+            present = [value for value in span if value != catalog_module.NUMERIC_NULL]
+            recomputed = {
+                "count": len(present),
+                "nulls": len(span) - len(present),
+                "min": min(present) if present else None,
+                "max": max(present) if present else None,
+                "sum": sum(present),
+            }
+            zone = catalog.zone(part, column)
+            wrong = [name for name, value in recomputed.items() if zone[name] != value]
+            report.require(
+                not wrong,
+                f"ranges: part {part['part_id']!r} summarises {column} as "
+                f"{ {name: zone[name] for name in wrong} } where its own cells hold "
+                f"{ {name: recomputed[name] for name in wrong} }; a zone map that "
+                "does not describe its cells prunes parts that hold matches",
+            )
+
+        # ...and the parts must add up to the whole-corpus statistics, which is the
+        # witness that both really come from `numeric_summary` (L14).
+        zones = [catalog.zone(part, column) for part in catalog.parts]
+        whole = catalog.aggregate(column)
+        lows = [zone["min"] for zone in zones if zone["min"] is not None]
+        highs = [zone["max"] for zone in zones if zone["max"] is not None]
+        report.require(
+            sum(zone["count"] for zone in zones) == whole["count"]
+            and sum(zone["nulls"] for zone in zones) == whole["nulls"]
+            and sum(zone["sum"] for zone in zones) == whole["sum"]
+            and (min(lows) if lows else None) == whole["min"]
+            and (max(highs) if highs else None) == whole["max"],
+            f"ranges: the {len(zones)} zone map(s) for {column} do not add up to the "
+            "statistics over the same rows; the per-part and whole-corpus summaries "
+            "are not being computed by the same rule",
+        )
+
+        _check_sorted_index(report, catalog_module, catalog, column)
+
+        low_end, high_end = min(corpus), max(corpus)
+        middle = (low_end + high_end) // 2
+        pivots = sorted(
+            {low_end - 1, low_end, low_end + 1, middle, high_end - 1, high_end, high_end + 1, 0, -1}
+        )
+        intervals = [(None, None), (high_end, low_end), (low_end, high_end)]
+        for pivot in pivots:
+            intervals.extend([(pivot, None), (None, pivot), (pivot, pivot)])
+        # The sentinel is a legal int64. Asked for as a bound it must still match
+        # nothing, rather than sweeping up every row that has no measurement.
+        sentinel = catalog_module.NUMERIC_NULL
+        intervals.extend([(sentinel, sentinel), (sentinel, low_end - 1)])
+
+        for low, high in intervals:
+            trials += 1
+            rows, read = catalog.range_scan(column, low, high)
+            pruned_parts += read["skipped"]
+            wanted = [
+                row for row in range(catalog.rows_total) if _in_interval(by_row[row], low, high)
+            ]
+            report.require(
+                rows == wanted,
+                f"ranges: {column} in [{low}, {high}] returned {len(rows)} row(s); the "
+                f"records themselves hold {len(wanted)}",
+            )
+            unpruned = [
+                row
+                for row in range(catalog.rows_total)
+                if cells[row] != catalog_module.NUMERIC_NULL and _in_interval(cells[row], low, high)
+            ]
+            report.require(
+                rows == unpruned,
+                f"ranges: {column} in [{low}, {high}] answered {len(rows)} row(s) with "
+                f"the zone map and {len(unpruned)} by reading every cell",
+            )
+            # The seek is the path a query actually takes; the scan above is the path
+            # it is checked against. Two implementations of one lookup, required to
+            # agree on every interval -- the only claim a binary search can make about
+            # itself that does not come out of the same arithmetic.
+            window, probe = catalog.seek_range(column, low, high)
+            report.require(
+                sorted(window) == wanted and probe["window"] == len(wanted),
+                f"ranges: seeking {column} in [{low}, {high}] returned "
+                f"{len(window)} row(s) where scanning returns {len(wanted)}",
+            )
+            report.require(
+                catalog.count_in_range(column, low, high) == len(wanted),
+                f"ranges: count_in_range({column}, {low}, {high}) is "
+                f"{catalog.count_in_range(column, low, high)}, not {len(wanted)}; the "
+                "index answers a count exactly or it should not answer it",
+            )
+            estimate, exact = catalog.count_range(column, low, high)
+            report.require(
+                estimate >= len(wanted) and (estimate == len(wanted) or not exact),
+                f"ranges: count_range({column}, {low}, {high}) estimated {estimate} "
+                f"for {len(wanted)} row(s) and called it exact={exact}; an estimate "
+                "below the truth is not a bound, and a bound reported as exact is a "
+                "plan chosen on a number nobody could check",
+            )
+            found = set(rows)
+            unsound = []
+            for part in catalog.parts:
+                start, end = part["rows"]
+                verdict = catalog._zone_verdict(catalog.zone(part, column), low, high)
+                inside = sum(1 for row in range(start, end) if row in found)
+                if verdict == "none" and inside:
+                    unsound.append(f"{part['part_id']} ruled out but holds {inside}")
+                if verdict == "all" and inside != end - start:
+                    unsound.append(f"{part['part_id']} taken whole but only {inside} match")
+            report.require(
+                not unsound,
+                f"ranges: {column} in [{low}, {high}] pruned wrongly: " + "; ".join(unsound),
+            )
+
+        # Through the predicate language, not only through the catalog. Every check
+        # above hands `range_scan` an interval directly, so an off-by-one in the rule
+        # that turns `> n` into `>= n + 1` is invisible to all of them.
+        for spelling, low_of, high_of in (
+            (">=", lambda pivot: pivot, lambda pivot: None),
+            (">", lambda pivot: pivot + 1, lambda pivot: None),
+            ("<=", lambda pivot: None, lambda pivot: pivot),
+            ("<", lambda pivot: None, lambda pivot: pivot - 1),
+        ):
+            for pivot in (low_end, middle, high_end):
+                trials += 1
+                chosen = plan.select(catalog, [plan.parse_predicate(f"{column}{spelling}{pivot}")])
+                wanted = [
+                    row
+                    for row in range(catalog.rows_total)
+                    if _in_interval(by_row[row], low_of(pivot), high_of(pivot))
+                ]
+                report.require(
+                    list(chosen.rows or ()) == wanted,
+                    f"ranges: `{column} {spelling} {pivot}` admitted "
+                    f"{len(chosen.rows or ())} row(s) where the records themselves "
+                    f"hold {len(wanted)}",
+                )
+
+    report.require(
+        trials >= MIN_RANGE_TRIALS,
+        f"anti-vacuity: {trials} interval(s) were checked, below the {MIN_RANGE_TRIALS} floor",
+    )
+    report.require(
+        pruned_parts >= MIN_PRUNED_PARTS,
+        f"anti-vacuity: across {trials} interval(s) the zone map ruled out "
+        f"{pruned_parts} part(s). Pruning changes cost and never the answer, so a "
+        "zone map that stopped pruning would keep every check above green; the count "
+        "is the only thing that notices.",
+    )
+
+    # ORDER BY taken from the index must be the order a sort gives, both directions.
+    # Ascending is the index itself, so this is where descending -- which negates the
+    # key rather than reversing the list -- is held to the same tie rule.
+    search = load_tool("search_chunks")
+    unfiltered = plan.select(catalog, [])
+    for column in columns:
+        cells = catalog.numeric[column]
+        for descending in (False, True):
+            from_index = search._ordered_from_index(catalog, column, descending)
+            rows = list(range(catalog.rows_total))
+            missing = [row for row in rows if cells[row] == catalog_module.NUMERIC_NULL]
+            present = [row for row in rows if cells[row] != catalog_module.NUMERIC_NULL]
+            present.sort()
+            present.sort(key=lambda row: cells[row], reverse=descending)
+            report.require(
+                from_index == present + missing,
+                f"ranges: ORDER BY {column}{' DESC' if descending else ''} read from "
+                "the index differs from the same order produced by sorting",
+            )
+            report.require(
+                search._ordered_rows(catalog, unfiltered, column, descending) == from_index,
+                f"ranges: ORDER BY {column}{' DESC' if descending else ''} with no "
+                "predicate returned rows the index path does not",
+            )
+        # ...and that it really took that path. Both paths return identical rows, so
+        # the comparison above passes whichever one ran; only the strategy says which.
+        narrow = plan.select(catalog, [plan.parse_predicate(f"{column}>={cells[0]}")])
+        report.require(
+            search._order_strategy(catalog, unfiltered, column) == "index"
+            and search._order_strategy(catalog, narrow, column) == "sort",
+            f"ranges: ORDER BY {column} chose "
+            f"{search._order_strategy(catalog, unfiltered, column)!r} with no predicate "
+            f"and {search._order_strategy(catalog, narrow, column)!r} with one; the "
+            "index answers the first and a sort answers the second",
+        )
+
+    # Nulls satisfy no comparison, in either direction, and the sentinel is not a value.
+    with tempfile.TemporaryDirectory() as directory:
+        synthetic = _synthetic_gaps(catalog_module, Path(directory))
+        _check_sorted_index(report, catalog_module, synthetic, "char_count")
+        # Looked up by primary key, not assumed: rows are ordered by the canonical
+        # sort key, so the record written third is not the third row. Writing `2`
+        # here would have checked a row that measures 400 and passed while proving
+        # nothing -- which is exactly what it did on the first run of this check.
+        gap = synthetic.row_of(f"sha256:{2:064d}")
+        present = synthetic.rows_present("char_count")
+        report.require(
+            gap not in present and len(present) == 5,
+            f"ranges: the synthetic table reports {len(present)} measured row(s); it "
+            "was built with five measured and one missing",
+        )
+        for low, high in ((None, None), (None, 10**9), (-(10**9), None), (-(10**9), 10**9)):
+            rows = synthetic.rows_in_range("char_count", low, high)
+            report.require(
+                gap not in rows and rows == present,
+                f"ranges: `char_count` in [{low}, {high}] returned row {gap}, which "
+                "measures nothing; the null sentinel is being compared as a number",
+            )
+        sentinel = catalog_module.NUMERIC_NULL
+        report.require(
+            synthetic.rows_in_range("char_count", sentinel, sentinel) == [],
+            "ranges: asking for the null sentinel as a bound returned rows; it spells "
+            "'no measurement', not a measurement of -2^63",
+        )
+        for pivot in (-1, 0, 1, 100, 101, 399, 400, 600, 601, 10**6):
+            below = set(synthetic.rows_in_range("char_count", None, pivot - 1))
+            above = set(synthetic.rows_in_range("char_count", pivot, None))
+            report.require(
+                not (below & above) and below | above == set(present),
+                f"ranges: `< {pivot}` and `>= {pivot}` cover "
+                f"{len(below | above)} of {len(present)} measured row(s) and share "
+                f"{len(below & above)}; a pivot must split the measured rows and "
+                "leave the unmeasured one out of both",
+            )
+
+
+def check_grammar(report: Report, plan) -> None:
+    """What `--where` reads, and what it refuses, spelled out as a table.
+
+    A term is split at the *leftmost* operator and, there, at the longest spelling.
+    Scanning the spelling table in order instead reads `char_count>=500` as `=` on a
+    column named `char_count>`, and `title=a!=b` as `!=` on a column named `title=a`
+    -- both of which then fail as "unknown column", a long way from the term that
+    caused them. One rule settles both, and this table is what holds it in place.
+    """
+    for text, column, op, values in (
+        ("subject=llvm", "subject", "eq", ("llvm",)),
+        ("subject!=llvm", "subject", "ne", ("llvm",)),
+        ("subject=llvm,data", "subject", "in", ("llvm", "data")),
+        ("source_path^=training/", "source_path", "prefix", ("training/",)),
+        ("char_count>=500", "char_count", "ge", ("500",)),
+        ("char_count<=500", "char_count", "le", ("500",)),
+        ("char_count>500", "char_count", "gt", ("500",)),
+        ("char_count<500", "char_count", "lt", ("500",)),
+        ("char_count>=-5", "char_count", "ge", ("-5",)),
+        ("char_count>= 5 ", "char_count", "ge", ("5",)),
+        ("language=?", "language", "notnull", ()),
+        ("language!=?", "language", "isnull", ()),
+        ("title=a!=b", "title", "eq", ("a!=b",)),
+        ("title=a>=b", "title", "eq", ("a>=b",)),
+        ("title=a^=b", "title", "eq", ("a^=b",)),
+    ):
+        parsed = plan.parse_predicate(text)
+        report.require(
+            (parsed.column, parsed.op, parsed.values) == (column, op, values),
+            f"grammar: {text!r} read as {parsed.column!r} {parsed.op} {parsed.values}, "
+            f"expected {column!r} {op} {values}",
+        )
+    for text, why in (
+        ("char_count>=1_000", "a separator Python accepts inside a literal and no format does"),
+        ("char_count>=+5", "a leading plus this grammar does not spell"),
+        ("char_count>=inf", "a float literal that names no integer"),
+        ("char_count>=nan", "a float literal that names no integer"),
+        ("char_count>=٥", "a digit outside ASCII"),
+        ("char_count>=5.0", "a decimal point"),
+        ("char_count>=", "no bound at all"),
+        ("=llvm", "no column"),
+        ("subject", "no operator"),
+        ("subject^=?", "a presence test spelled with an operator that is not = or !="),
+        ("subject=?,llvm", "the reserved presence value inside a set"),
+    ):
+        try:
+            plan.parse_predicate(text)
+        except plan.PlanError:
+            report.require(True, "")
+        else:
+            report.require(False, f"grammar: accepted {text!r}, which carries {why}")
+
+
+def check_presence(report: Report, plan, catalog, chunk_dir: Path) -> None:
+    """IS NULL and IS NOT NULL must partition the table; `!=` deliberately must not.
+
+    `rows_present` and `rows_absent` are gathered by separate walks precisely so that
+    "these two partition the table" is a claim and not an identity. This is where the
+    claim is cashed, against the corpus and against each other.
+    """
+    catalog_module = load_tool("catalog")
+    every = set(range(catalog.rows_total))
+    numeric = set(catalog.numeric_columns())
+    path_column = catalog_module.PATH_COLUMN
+    columns = tuple(catalog.indexed_columns()) + tuple(numeric) + (path_column,)
+    report.require(
+        len(columns) >= 2,
+        f"presence: only {len(columns)} column(s) to check, so the loop below barely runs",
+    )
+
+    absent_total = 0
+    for column in columns:
+        present, absent = catalog.rows_present(column), catalog.rows_absent(column)
+        report.require(
+            present == sorted(present) and absent == sorted(absent),
+            f"presence: {column} returned rows out of order; every other row set here "
+            "is ascending, and an intersection that assumed so would be wrong",
+        )
+        report.require(
+            not (set(present) & set(absent)),
+            f"presence: {column} calls {len(set(present) & set(absent))} row(s) both "
+            "measured and unmeasured",
+        )
+        report.require(
+            set(present) | set(absent) == every,
+            f"presence: {column} accounts for {len(set(present) | set(absent))} of "
+            f"{catalog.rows_total} rows",
+        )
+        absent_total += len(absent)
+
+        # Against the corpus. Each column kind spells "carries a value" the way its
+        # own storage does, and the gate asserts that spelling rather than a fourth.
+        carried = 0
+        for path in catalog_module.chunk_files(chunk_dir):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                value = json.loads(line).get(column)
+                if column in numeric:
+                    carried += isinstance(value, int) and not isinstance(value, bool)
+                elif column == path_column:
+                    carried += isinstance(value, str)
+                else:
+                    carried += value is not None
+        report.require(
+            len(present) == carried,
+            f"presence: the index says {len(present)} row(s) carry a {column}; the "
+            f"chunk files hold {carried}",
+        )
+
+    report.require(
+        absent_total >= 1,
+        "anti-vacuity: no column in this corpus is missing a single value, so every "
+        "partition above held over an empty half and IS NULL was never exercised",
+    )
+
+    # The declared divergence from SQL, stated as a property so it cannot drift into
+    # three-valued logic or out of it without this failing.
+    exercised = 0
+    for column in catalog.indexed_columns():
+        absent = set(catalog.rows_absent(column))
+        values = [key for key in catalog.distinct(column) if key != catalog_module.NULL_KEY]
+        if not absent or not values:
+            continue
+        exercised += 1
+        term = plan.Predicate(column, "ne", (values[0],))
+        complement = set(plan.select(catalog, [term]).rows)
+        narrowed = set(plan.select(catalog, [term, plan.Predicate(column, "notnull", ())]).rows)
+        report.require(
+            absent <= complement,
+            f"presence: `{column} != {values[0]}` dropped "
+            f"{len(absent - complement)} row(s) carrying no {column}; this module "
+            "documents complement semantics, not SQL's three-valued <>",
+        )
+        report.require(
+            complement - absent == narrowed,
+            f"presence: `{column} != {values[0]}` with `{column}=?` admitted "
+            f"{len(narrowed)} row(s) where dropping the unmeasured ones from the "
+            f"complement leaves {len(complement - absent)}; the documented way to ask "
+            "SQL's question no longer answers it",
+        )
+    report.require(
+        exercised >= 1,
+        "anti-vacuity: no indexed column has both a missing value and a present one, "
+        "so the documented `!=` divergence was never exercised",
+    )
+
+
+def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
+    """GROUP BY must partition, its aggregates must add up, and HAVING must filter exactly."""
+    for column in catalog.indexed_columns():
+        groups = search._group_rows(catalog, column, None)
+        members = [row for _, rows in groups for row in rows]
+        report.require(
+            sorted(members) == list(range(catalog.rows_total)),
+            f"groups: GROUP BY {column} covers {len(set(members))} of "
+            f"{catalog.rows_total} rows; an aggregate over groups that do not "
+            "partition the table silently drops or double-counts rows",
+        )
+        report.require(
+            len(members) == len(set(members)),
+            f"groups: GROUP BY {column} puts {len(members) - len(set(members))} row(s) "
+            "in more than one group",
+        )
+        counted, scanned = search._group_by(catalog, column, None)
+        report.require(
+            not scanned and dict(counted) == {value: len(rows) for value, rows in groups},
+            f"groups: GROUP BY {column} answered from the statistics disagrees with "
+            "the same grouping walked through the postings",
+        )
+
+        for measure in catalog.numeric_columns():
+            whole = catalog.aggregate(measure, list(range(catalog.rows_total)))
+            summaries = [search._group_summary(catalog, measure, rows) for _, rows in groups]
+            lows = [summary["min"] for summary in summaries if summary["min"] is not None]
+            highs = [summary["max"] for summary in summaries if summary["max"] is not None]
+            report.require(
+                sum(summary["rows"] for summary in summaries) == catalog.rows_total
+                and sum(summary["count"] for summary in summaries) == whole["count"]
+                and sum(summary["nulls"] for summary in summaries) == whole["nulls"]
+                and sum(summary["sum"] for summary in summaries) == whole["sum"]
+                and (min(lows) if lows else None) == whole["min"]
+                and (max(highs) if highs else None) == whole["max"],
+                f"groups: {measure} aggregated per group of {column} does not add up "
+                "to the same aggregate over every row",
+            )
+
+        # HAVING keeps exactly the groups the term describes, spelled out here rather
+        # than recomputed by the code under test.
+        for bound in (1, 2, max(len(rows) for _, rows in groups)):
+            term = search._parse_having(plan, f"rows>={bound}")
+            kept = [
+                value
+                for value, rows in groups
+                if search._having_holds(plan, term, {"rows": len(rows)})
+            ]
+            report.require(
+                kept == [value for value, rows in groups if len(rows) >= bound],
+                f"groups: HAVING rows>={bound} kept {len(kept)} group(s) of "
+                f"{len(groups)}, not the ones with at least {bound} row(s)",
+            )
+
+    # AVG is compared as SUM/COUNT, not as a rounded decimal: 1.5 is below 2.
+    half = {"rows": 2, "count": 2, "nulls": 0, "min": 1, "max": 2, "sum": 3, "avg": 1.5}
+    for spec, expected in (
+        ("avg>=2", False),
+        ("avg>1", True),
+        ("avg<2", True),
+        ("avg>=1", True),
+        ("avg=1", False),
+        ("avg!=1", True),
+    ):
+        term = search._parse_having(plan, spec)
+        report.require(
+            search._having_holds(plan, term, half) is expected,
+            f"groups: a group averaging 1.5 answered `{spec}` with "
+            f"{not expected}; AVG is SUM/COUNT compared exactly, not a rounded decimal",
+        )
+
+    # A group with no measured row has no MIN, MAX or AVG, and satisfies no comparison
+    # against one -- in both directions, so "always false" is not what is being tested.
+    empty = {"rows": 3, "count": 0, "nulls": 3, "min": None, "max": None, "sum": 0, "avg": None}
+    for spec in ("avg>=0", "avg<0", "min>=0", "min<0", "max>=0", "max<0", "avg=0"):
+        term = search._parse_having(plan, spec)
+        report.require(
+            not search._having_holds(plan, term, empty),
+            f"groups: a group with no measured row satisfied `{spec}`",
+        )
+    report.require(
+        search._having_holds(plan, search._parse_having(plan, "rows>=3"), empty),
+        "groups: a group with no measured row still has rows, and HAVING rows>=3 "
+        "refused a group of three",
+    )
+
+    # What HAVING refuses, and why each would otherwise mean something it does not.
+    for spec, why in (
+        ("nope>=1", "an aggregate no group computes"),
+        ("rows^=1", "an operator with no meaning over a number"),
+        ("rows>=x", "a bound that is not an integer"),
+        ("rows>=1_000", "a bound Python would accept and the grammar does not"),
+        ("rows=?", "a presence test, which a count always passes"),
+        ("rows=1,2", "a set, where a comparison takes one bound"),
+    ):
+        try:
+            search._parse_having(plan, spec)
+        except plan.PlanError:
+            report.require(True, "")
+        else:
+            report.require(False, f"groups: HAVING accepted {spec!r}, which names {why}")
+    try:
+        search._having_holds(plan, search._parse_having(plan, "count>=1"), {"rows": 3})
+    except plan.PlanError:
+        report.require(True, "")
+    else:
+        report.require(
+            False,
+            "groups: HAVING count was answered for a group with no --stats column, "
+            "where COUNT(*) and COUNT(column) are the same number by accident",
+        )
+
+
 def check_ordering(report: Report, search, plan, catalog) -> None:
     """ORDER BY must be total, stable, and honest about missing measurements."""
     catalog_module = load_tool("catalog")
@@ -1051,6 +1715,27 @@ def check_parts(report: Report, catalog_module, catalog, chunk_dir: Path) -> Non
                 False,
                 "S5: a catalog built before the chunk table moved still loaded; "
                 "stale statistics produce a wrong plan silently",
+            )
+
+    # Two builds of one chunk table must produce identical bytes. Nothing a query does
+    # would notice otherwise -- a catalog is read through its own manifest, so a
+    # different-but-equivalent sort order answers every question the same way -- and
+    # then a content-addressed generation would take a new digest for a corpus that
+    # had not moved, and `changed_parts` would name parts nothing changed.
+    with tempfile.TemporaryDirectory() as directory:
+        first, second = Path(directory) / "first", Path(directory) / "second"
+        catalog_module.write(catalog_module.build(chunk_dir), first)
+        catalog_module.write(catalog_module.build(chunk_dir), second)
+        names = sorted(entry["path"] for entry in catalog.manifest["artifacts"].values())
+        report.require(
+            len(names) >= 4,
+            f"S5: the manifest lists {len(names)} artifact(s), so the comparison below "
+            "covers almost nothing",
+        )
+        for name in names + [catalog_module.CATALOG_FILE]:
+            report.require(
+                (first / name).read_bytes() == (second / name).read_bytes(),
+                f"S5: {name} differs between two builds of the same chunk table",
             )
 
 
@@ -1411,6 +2096,10 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
         native_ok=native_ok,
     )
     report.run("aggregates", check_aggregates, report, plan, catalog, args.chunks)
+    report.run("S7-grammar", check_grammar, report, plan)
+    report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
+    report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
+    report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)
     report.run("ordering", check_ordering, report, search, plan, catalog)
     report.run("planner", check_planner, report, plan, catalog)
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)

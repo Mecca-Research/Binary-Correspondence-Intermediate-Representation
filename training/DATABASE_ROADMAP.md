@@ -20,7 +20,7 @@ name a file, a line and a number.
 | Fork | none of the nine |
 | Vendor source | none of the seven that permit it |
 | Reimplement | one mechanism, in its cheap half (**S2**) |
-| Build | six slices, all native, priced against the measurement below |
+| Build | eight slices, all native, priced against the measurement below |
 
 The constraint is not licence. ClickHouse is Apache-2.0; faiss, DuckDB, TileDB
 and MindsHub are MIT; Dask and webdataset are BSD-3 — every one of those
@@ -98,11 +98,14 @@ behind it.
 | `ORDER BY <distance> LIMIT k` | strong | strong | three backends, two bit-compared on real data — and the comparison now survives filtering |
 | `EXPLAIN` | strong | strong | `--recall` names the concept that fired; `--explain` prints every candidate plan, its twelve-axis cost, and why one won |
 | `BEGIN` / `COMMIT` | strong | strong | single-writer atomic publish, now for the catalog and every generation too |
-| `WHERE <predicate>` | absent | **built** | four operators, ANDed, resolved through an inverted index and applied inside the kernel scan |
+| `WHERE <predicate>` | absent | **built** | ten operators, ANDed: equality, set, prefix, the four comparisons, and the two presence tests — resolved through an inverted index or a sorted one and applied inside the kernel scan |
+| `BETWEEN` / range scan | absent | **built** | two comparisons on one column intersect to one interval; answered by two binary searches over `order.bin`, priced beforehand from per-part zone maps without reading it |
+| `IS NULL` / `IS NOT NULL` | absent | **built** | `col!=?` and `col=?` over any indexed or measurement column; a row with no value satisfies no comparison, and `!=` deliberately admits it |
+| `HAVING` | absent | **built** | `--having rows>=10`, `avg<500` and the rest, compared as the exact rational SUM/COUNT rather than a rounded decimal |
 | `SELECT <columns>` | absent | **built** | `--select` projects named columns; nothing else is materialized |
 | `JOIN` | absent | **built** | the catalog binds the chunk table's columns to the embedding set's row number, so `kind`, `title` and `heading_trail` are one lookup |
-| `GROUP BY` / aggregate | absent | **built** | `--count`, `--group-by`, `--distinct` and `--stats` (MIN/MAX/SUM/AVG over a packed numeric column) — answered from statistics when unfiltered, by intersecting postings when not |
-| `ORDER BY <column>` | absent | **built** | `--order-by col[:desc]` without a query: a relational scan, total and stable, with absent measurements sorting last in both directions |
+| `GROUP BY` / aggregate | absent | **built** | `--count`, `--group-by`, `--distinct` and `--stats` (MIN/MAX/SUM/AVG over a packed numeric column), and the two compose: MIN/MAX/SUM/AVG *per group* — answered from statistics when unfiltered, by intersecting postings when not |
+| `ORDER BY <column>` | absent | **built** | `--order-by col[:desc]` without a query: total and stable, absent measurements last in both directions, and with no predicate a slice of the sorted index rather than a sort |
 | `LIMIT` / `OFFSET` | partial | **built** | `--top-k` and `--offset`, a window on one order rather than two orders |
 | `INSERT` / incremental | absent | **built** | parts as the coarse filter, per-row text digests as the fine one |
 | `AS OF` / time travel | absent | **built** | content-addressed generations; an old one is reopened and reproduces its answer |
@@ -116,10 +119,14 @@ request at any price, and every new artifact publishes atomically or not at all.
 
 ## The S-ladder — landed
 
-All six landed, gated by `training/tools/verify_database.py` (222 checks). Every
-check was injected and watched to fire before its fix went in, because a slice
-without a failable gate cannot be shown to have landed (`docs/security/laws.md`
-L2, L11).
+All eight landed, gated by `training/tools/verify_database.py`, which prints its
+own check count rather than having one written here. Every check was injected and
+watched to fire before its fix went in — twenty-eight defects across S7 and S8
+alone — because a slice without a failable gate cannot be shown to have landed
+(`docs/security/laws.md` L2, L11). Two of those twenty-eight matter more than
+the rest: widening a zone map leaves every answer correct and is caught only by
+comparing the map against its own cells, and switching pruning off leaves every
+correctness check green, so only an anti-vacuity floor notices.
 
 Measured after the slices, on the 2,215-row corpus, warm, best of 3–5. Metric
 class `wall` — indicative, never gating.
@@ -132,6 +139,9 @@ class `wall` — indicative, never gating.
 | S4 scan at a narrow predicate | 60.4 ms | 0.21 ms | 288x |
 | S5 rebuild after a one-row edit | 4,876 ms | 1,073 ms | 4.5x |
 | S6 reading a past generation | not possible | addressable | — |
+| S7 `WHERE char_count >= n` | not expressible | 0.16 ms | — |
+| S8 the same, through the index | 0.29 ms | 0.004 ms | 80x |
+| S8 `ORDER BY char_count` | 0.755 ms | 0.035 ms | 21x |
 
 The query layer those slices needed is in `training/tools/plan.py`: legality
 first, then a price on the same twelve axes `bcir/asn1/selection.py` prices an
@@ -233,6 +243,106 @@ quiescent boundaries — to the training rail rather than inventing a second one
 *Gate:* an evaluation pinned to a generation produces identical scores after
 the corpus moves.
 
+### S7 — comparisons, the rows that carry no value, and grouped aggregates
+
+The packed measurement columns could be aggregated but not *filtered*:
+`OPERATORS` held `eq`, `ne`, `in`, `prefix`, so `WHERE char_count >= 500` was
+unexpressible over a column the catalog already stored, summarised and could
+answer MIN/MAX/SUM over. Three smaller gaps sat beside it — `GROUP BY` refused
+to compose with an aggregate, there was no `HAVING`, and `IS NULL` had no
+spelling even though a missing measurement was a state the ordering already had
+to reason about.
+
+Four comparisons (`>=`, `<=`, `>`, `<`) collapse to one closed integer interval,
+because the columns are integral and `> n` is `>= n + 1` exactly. Two presence
+tests spell the rest: `column=?` is `IS NOT NULL` and `column!=?` is `IS NULL`,
+with `?` reserved on every column so the grammar answers the same way everywhere.
+Each part of the catalog gained a **zone map** — the MIN/MAX/COUNT/NULLS of each
+measurement column over its rows — produced by the same function that produces
+the whole-corpus statistics, so a part cannot summarise its rows by a rule the
+catalog does not use on all of them.
+
+Two divergences from SQL are declared rather than discovered, and both are gated:
+
+- A comparison is *existential*. A row with no measurement satisfies neither
+  `char_count >= 500` nor `char_count < 500`, so the two do not partition the
+  table. This is SQL's rule, and the one this layout makes easiest to lose: the
+  null sentinel is an ordinary negative integer to the packed column, so an
+  interval left open at the bottom would otherwise sweep up every gap.
+- `!=` is *complement*, which is **not** SQL's rule. `language != c` admits the
+  1,532 rows carrying no language, where SQL returns UNKNOWN and drops them.
+  Retrieval wants the complement far more often than it wants three-valued
+  logic, and the other reading is one term away: `language!=c` with `language=?`
+  is exactly `<>`. Both are properties in the gate, so neither can drift into
+  the other.
+
+*Payoff:* a comparison at all — 38.5 ms re-reading every chunk record becomes
+0.16 ms. The zone map's own share of that is **1.29×**; see below.
+*Gate:* soundness by fetching each returned row's own bytes, completeness by a
+direct pass over the chunk files, and the pruned answer against a full scan of
+the packed column — with a floor that fails if the zone map never ruled a part
+out, because pruning changes cost and never the answer.
+
+### S8 — a sorted index per measurement column
+
+The zone map fires — it skipped 7 of 8 parts on `char_count >= 5000` — and it
+is still worth only 1.29×, because the parts are subject-shaped: one of them
+holds 2,160 of 2,215 rows, so ruling out the other seven leaves 97% of the cells
+to read. That is a *mis-assignment*, not a bound: the structure is correct and
+the corpus does not give it anything to prune.
+
+So the rows themselves get ordered. `order.bin` holds, per measurement column,
+every row number in ascending order — measured rows first by (value, row), then
+the unmeasured ones in row order, the split being the column's own `count`. Two
+binary searches then answer a comparison exactly, and a row carrying no value is
+excluded by the *layout* rather than by a branch that could be forgotten on one
+path. 4 bytes per row per column: 17.3 KiB for this corpus, read on first use
+like every other sidecar.
+
+| `char_count >=` | rows | share | scan | seek | |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10000 | 7 | 0.3% | 0.296 ms | 0.003 ms | 97x |
+| 5000 | 16 | 0.7% | 0.292 ms | 0.004 ms | 80x |
+| 2000 | 99 | 4.5% | 0.174 ms | 0.004 ms | 46x |
+| 1000 | 454 | 20.5% | 0.192 ms | 0.013 ms | 15x |
+| 500 | 1387 | 62.6% | 0.232 ms | 0.035 ms | 6.6x |
+| 200 | 2122 | 95.8% | 0.266 ms | 0.088 ms | 3.0x |
+| 101 | 2215 | 100.0% | 0.137 ms | 0.082 ms | 1.7x |
+
+There is no threshold in the code because the measurement does not support one:
+the index wins at every selectivity this corpus can reach, narrowing to 1.7× but
+never crossing. The crossover would reappear if the window had to come back
+sorted — `k log k` against `n` — so it deliberately comes back in value order,
+and the one caller that needs row order sorts once.
+
+`ORDER BY <column>` with no predicate becomes a slice of the same index rather
+than a sort of every row: 0.755 ms to 0.035 ms ascending. Descending is one
+stable sort on the negated value — 0.716 ms to 0.261 ms — because reversing the
+list would reverse the ties with it, and a page boundary inside a run of equal
+values has to land in the same place whichever direction was asked for. With a
+predicate it keeps the sort, since walking 2,215 index entries to find the 16 a
+narrow predicate admits costs more than sorting those 16. That choice is
+returned as a value (`_order_strategy`) rather than made inside a branch,
+because both paths return identical rows — so a gate comparing their output
+passes whichever one ran, and the decision would otherwise be the one thing
+about this slice nothing could observe.
+
+The zone map keeps a job the index cannot do: it lives in the manifest, so a
+comparison can be *priced* without reading any artifact at all, which is the
+discipline the whole catalog is built on. Estimation reads four integers per
+part and returns a bound marked as a bound; evaluation reads the index and
+returns the rows.
+
+*Payoff:* 1.7×–97× on a comparison, 21× on `ORDER BY … LIMIT k`, exact range
+counts without listing a row.
+*Gate:* the index is a permutation, its measured prefix is ascending by
+(value, row), its tail is exactly the unmeasured rows — checked on the corpus
+*and* on a table built with a gap, because every corpus this gate builds
+measures every row and the split-point claims would otherwise be about the empty
+set. Then seek and scan must agree on every interval: two implementations of one
+lookup, which is the only claim a binary search can make about itself that does
+not come out of the same arithmetic.
+
 ## What is verified where
 
 `verify_database.py` runs in the **LLVM training corpus** job, which is
@@ -240,6 +350,15 @@ ubuntu-only — as the whole `training/` rail has always been. The database laye
 inherits that boundary, so it is worth stating rather than leaving a reader to
 assume otherwise: the catalog, the planner, the predicate path, incremental
 rebuilds and generations are exercised on Linux and on no other host.
+
+Two things do cross that boundary by construction rather than by coverage. Every
+sidecar is packed little-endian explicitly and byteswapped on read, the way the
+embedding set's `vectors.q15` already was, so `numeric.bin` and `order.bin` do
+not depend on the host's byte order; and the gate requires two builds of one
+chunk table to produce identical bytes, which is what would catch a sort whose
+order depended on anything but the rows. Neither is a substitute for running on a
+second host. Both were also run under the declared Python floor, 3.11, where the
+artifacts came out byte-identical to 3.12's.
 
 The one piece that *is* cross-host is `NativeAIKernels`, because
 **Host portability (windows-latest)** runs `bcir/tests/test_native_ai.py`. That
@@ -302,6 +421,8 @@ in this document was re-measured directly.
 | Ray and Dask stay study-only | a parallel stage acquires a payload large enough to exhaust memory |
 | webdataset stays skipped | training input passes roughly 10^5 samples (today: 1.89 MiB in 10 files) |
 | TileDB time travel stays deferred (S6) | S5 lands |
+| the zone map stays worth 1.29x (S7) | parts stop being subject-shaped — today one holds 2,160 of 2,215 rows, so pruning the other seven still leaves 97% of the cells to read |
+| the sorted index stays threshold-free (S8) | a caller needs the seek window back in row order, which puts `k log k` against `n` and restores a crossover |
 
 ## One finding outside this scope
 
