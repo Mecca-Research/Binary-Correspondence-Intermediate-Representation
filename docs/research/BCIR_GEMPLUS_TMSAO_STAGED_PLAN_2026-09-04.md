@@ -119,7 +119,7 @@ it noted is now machine-checked (`tools/docs/check_law_range.py`, #752).
 |---|---|
 | P−1 correctness closure | Stage 0 below: items 2–17 that remain, plus G7 |
 | P0 scope and evidence schemas | G0 **landed** (scope identity, class ladder, gap arithmetic); the frozen baseline harness exists; the plan's *binary* form is G11 |
-| P1 canonical GEM+ plan | Stage 1: G1 **landed (S1-A)**, G3, G11, G5 |
+| P1 canonical GEM+ plan | Stage 1: G1 **landed (S1-A)**, G3 **landed (S1-B)**, G11, G5 |
 | P2 bounded TMSAO | Stage 2: G2, G4, G12, G6, G13 |
 | P3 physical evidence | Stage 6, hardware-gated; G7 is pulled forward into Stage 0 because it invalidates a number in use |
 | P4 drivers / wire deployment | the driver/kernel roadmap's D-ladder; Stage 3 supplies the planes it needs |
@@ -279,7 +279,7 @@ The normative definitions are in the roadmap; this is the shape and the exit gat
 | Stage | Slices | Exit gate (`exact` rows) |
 |---|---|---|
 | **0 — correctness closure remainder** | S0-1 … S0-10 (§7), G7 | every item has a negative witness on its rail; the two inert fixtures execute; `verify_all` includes EV1–EV3; the native rig refuses the bare-metal claim; no new certificate class yet |
-| **1 — one canonical plan and its ABI** | G1 **(landed, S1-A)**, G3, G11, G5 | `pricing.eft.divergence` = 1.0 **(met: 1.0 exactly; the retired pricer still reproduces 1.9922 as the witness)**; pricing, token execution, static memory and StreamPack lowering read one artifact and produce identical traces **(pricing and both executors: met — `schedule_plan` is the artifact, identical slots in both modes on every corpus program; static memory and StreamPack: G5 / G11)**; `plan.abi.roundtrip` byte-identical Python ↔ C; the two-phase alias fixture rejected |
+| **1 — one canonical plan and its ABI** | G1 **(landed, S1-A)**, G3 **(landed, S1-B)**, G11, G5 | `pricing.eft.divergence` = 1.0 **(met: 1.0 exactly; the retired pricer still reproduces 1.9922 as the witness)**; pricing, token execution, static memory and StreamPack lowering read one artifact and produce identical traces **(pricing and both executors: met — `schedule_plan` is the artifact, identical slots in both modes on every corpus program; static memory and StreamPack: G5 / G11)**; `plan.abi.roundtrip` byte-identical Python ↔ C; the two-phase alias fixture rejected |
 | **2 — best-fit solver portfolio** | G2, G4, G12, G6, G13 | first TMSAO-2 certificate; `solver.exact.coverage` and `solver.gap.p95` reported over the corpus; identical assignment under delta pricing; every region expands conservatively (differential per region); `native.*` no regression |
 | **3 — IPC at every level** | G14, G15, G16 | one artifact generation flows plan → control → data → telemetry → evidence on the loopback/simulator with generation handles end to end; stale generations refused at every boundary; `ring.loss.accounting` exact; `control.record.bytes` bounded |
 | **4 — performance program** | G17, G18 | rows moved with the mechanism named and the plan unchanged (`planner.parity`, `verify.delta.identity` exact) |
@@ -305,7 +305,7 @@ Each is one PR, one gate, one analysis paragraph. Stage 0 first, smallest first.
 | **S0-F** — **landed** | G7 native measurement rig repair: the full-cycle strided walk with a counted census, raw samples with their statistics, and a host attestation from which the rig derives its tenancy — "bare-metal" only with proof; the reader refuses a table whose summary or claim its evidence does not support | — |
 | **S0-G** — **landed** | S0-8 the LLVM kernel's runtime-`n` tail contract: the vector loop over `n & -W` plus a scalar epilogue at the selected width, R12 holding the mask and the epilogue, the self-check harness driving every kernel with a non-divisible count, a sub-width count and zero behind canaries | — |
 | **S1-A** — **landed** | G1 one canonical schedule artifact (`gem.schedule.schedule_plan` ↔ `BCIRSchedule.h`): the plan's step costs placed by the hazard-honoring LPT/EFT dispatch both executors run and both pricers read, the hazard DAG (data hazards and fences) built over every claim before the tail split, the retired wave pricer kept as the §6.2 witness; the CSE identity completed and the exclusions made categorical on both rails, with the negatives; the re-selection sweep places only step-shortening alternatives over a cached hazard DAG (`optimize_scheduled.slowdown.512` 69.2× → 6.3×, identical assignments on every fixture) | S0-D, S0-E |
-| **S1-B** | G3 digest computed once, with the mutation-invalidation witness | — |
+| **S1-B** — **landed** | G3 digest computed once: `provenance.canonical_stream` (one iterative walk, bit-identical to the recursive flattening on both rails), `module_identity` cached per `Module.revision`, the identity-bound `digest_of` that validates by content and recomputes at a trust boundary; `static_memory.digests.2048` 3 → 1, the plan and verify rows under their bounds; the mutation-invalidation, undeclared-edit and cross-module-substitution witnesses | — |
 | **S1-C** | G11 `ExecutionPlanV1` records, C twin, BCAB kind, ASN.1 projection | S1-A, S0-E |
 | **S1-D** | G5 schedule-aware liveness and bounded exact memory | S1-A, S1-C |
 | **S2-A** | G2 incremental delta pricing (identical assignment) | S1-A |

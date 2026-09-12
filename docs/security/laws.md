@@ -190,6 +190,15 @@ harness itself refused the first cut of the canonical pricer: a full
 re-placement per trial made the re-selection sweep 1,100x the serial pass and
 the `ratio` row reported REGRESSION -- a gate that fired on the slice that
 introduced the regression, before the slice claimed credit.
+S1-B instances (2026-09-12): the digest cache the roadmap warned would rebuild
+the Class-B vacuous check if it survived a mutation is held to the negative
+first -- `test_an_undeclared_in_place_edit_cannot_pass_a_verifier` edits a claim
+field with no declaration and requires the verifier to refuse the cached
+identity and report the digest mismatch, `test_cross_module_substitution_is_refused`
+presents module A's identity for module B, and the exact harness row
+`static_memory.digests.2048` counted three full digests per plan-and-verify chain
+on the parent (RED) before reading one. A cache that cannot be shown to be
+refused is a cache that has passed nothing.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -552,6 +561,16 @@ predicates with declared mirrors (`realize.cse_identity` / `cse_eligible` and
 identity comparison on both rails; the oracle additionally refuses the fields
 the IR does not carry (`imm`, `tolerance_ulp`, `quantized_bits`) rather than
 credit a duplicate the law rail could not refuse.
+S1-B instance (2026-09-12): the R13 canonical item sequence of a module is ONE
+walk (`provenance.canonical_stream`) that `hash_module` chains and a
+`ModuleIdentity` is validated against, where before the planner, the verifier and
+the client each re-flattened the module to hash it -- the same sequence produced
+three times, and the digest recomputed three times because no caller could prove
+the module had not moved. One producer of the sequence, one memoized renderer of
+its items (`_fnv_items`, exact ints and strs only, so a bool never takes an int's
+memo and `hash_target` keeps rendering `scalable` as the law rail does), and one
+verifier-side predicate (`digest_of`) that decides whether an identity may be
+reused: by content, never by the revision counter that keys the cache.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
