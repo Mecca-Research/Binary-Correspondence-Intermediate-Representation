@@ -432,6 +432,7 @@ _MODULES = [
     "bcir.tests.test_perf_budget",
     "bcir.tests.test_import_quarantine",
     "bcir.tests.test_docs_claims",
+    "bcir.tests.test_red_sweep",
     "bcir.tests.test_registry_complete",
 ]
 
@@ -515,6 +516,7 @@ _REPO_ONLY_MODULES = frozenset(
         "bcir.tests.test_differential",
         "bcir.tests.test_docs_claims",
         "bcir.tests.test_line_endings",
+        "bcir.tests.test_red_sweep",
         "bcir.tests.test_driver_gpio",
         "bcir.tests.test_etl_binrec",
         "bcir.tests.test_event_phases",

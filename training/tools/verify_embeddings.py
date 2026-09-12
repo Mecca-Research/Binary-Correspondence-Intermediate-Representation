@@ -308,6 +308,102 @@ def check_digests(root: Path, manifest: dict, report: Report) -> None:
         )
 
 
+def check_reader_refuses_torn_artifacts(root: Path, manifest: dict, search, report: Report) -> None:
+    """The *reader* refuses a torn set, not just this gate.
+
+    `check_digests` above digests the four artifacts itself and compares them to the
+    manifest -- which proves the set on disk is whole and says nothing about what
+    `EmbeddingSet` does with one that is not (L11: a witness must hit the law it
+    exists to test). It did very little: the index was read on the manifest's word,
+    the codes on a length check alone, and `float_vectors` on nothing, so three of
+    the four digests this file verifies were never dereferenced by anything that
+    ranks.
+
+    `squares.u32` is the one exception and it is a declared one: that column is
+    derivable, so a disagreeing copy is recomputed rather than fatal. It must still
+    produce the same ranking, which is asserted here rather than assumed -- a
+    fallback that silently changed the answer would be the defect the column's own
+    digest exists to prevent.
+    """
+    import shutil
+    import tempfile
+
+    # Which reader actually touches each artifact. `vectors.f32` is read lazily, by
+    # the Q8 bridge and nothing else, so constructing a set over a torn copy of it
+    # succeeds -- and a check that stopped at the constructor would have reported the
+    # reader as broken for being lazy. Each artifact is exercised by the call that
+    # reads it.
+    readers = {
+        "index": lambda copy: search.EmbeddingSet(copy),
+        "quantized": lambda copy: search.EmbeddingSet(copy),
+        "vectors": lambda copy: search.EmbeddingSet(copy).float_vectors(),
+    }
+    fatal = tuple(readers)
+    torn = 0
+    for section in (*fatal, "row_squares"):
+        block = manifest[section] if section in manifest else None
+        if section == "row_squares":
+            block = (manifest.get("quantized") or {}).get("row_squares")
+        if not block:
+            continue
+        with tempfile.TemporaryDirectory() as directory:
+            copy = Path(directory) / "set"
+            shutil.copytree(root, copy)
+            target = copy / block["path"]
+            raw = bytearray(target.read_bytes())
+            if not report.require(
+                len(raw) > 0,
+                f"anti-vacuity: {block['path']} is empty, so flipping a byte in it is a no-op",
+            ):
+                continue
+            raw[len(raw) // 2] ^= 0xFF
+            target.write_bytes(bytes(raw))
+            torn += 1
+
+            if section in fatal:
+                try:
+                    readers[section](copy)
+                except SystemExit as exc:
+                    report.require(
+                        block["path"] in str(exc),
+                        f"{section}: a torn {block['path']} was refused without naming "
+                        f"the file: {str(exc)[:120]!r}",
+                    )
+                except Exception as exc:  # noqa: BLE001 - a traceback here is the finding
+                    report.require(
+                        False,
+                        f"{section}: a torn {block['path']} raised {type(exc).__name__} "
+                        f"rather than a verdict: {str(exc)[:120]!r}",
+                    )
+                else:
+                    report.require(
+                        False,
+                        f"{section}: {block['path']} was read with bytes that do not "
+                        "match the digest this manifest records for them",
+                    )
+                continue
+
+            whole = search.EmbeddingSet(root)
+            damaged = search.EmbeddingSet(copy)
+            query = search.embed_query("lowering a dialect to llvm", whole)
+            report.require(
+                search.topk_reference(query, damaged, 5) == search.topk_reference(query, whole, 5),
+                "row_squares: a torn derived column changed the ranking instead of "
+                "being recomputed",
+            )
+            report.require(
+                damaged.squares_source() in ("computed", "unread"),
+                f"row_squares: a torn column was reported as "
+                f"{damaged.squares_source()!r}, not recomputed",
+            )
+
+    report.require(
+        torn >= 4,
+        f"anti-vacuity: only {torn} artifact(s) were torn, so this check covers less "
+        "than the manifest declares",
+    )
+
+
 def check_row_squares(
     root: Path, manifest: dict, embedding_set, embed_module, report: Report
 ) -> None:
@@ -788,6 +884,7 @@ def main(argv: list[str] | None = None) -> int:
             check_manifest(manifest, report)
             check_coverage(manifest, rows, report)
             check_digests(root, manifest, report)
+            check_reader_refuses_torn_artifacts(root, manifest, search, report)
             check_vectors(root, manifest, rows, report, embed_module.round_half_away)
             check_binding(manifest, rows, chunks, report)
 

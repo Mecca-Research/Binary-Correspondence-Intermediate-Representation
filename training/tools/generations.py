@@ -157,8 +157,27 @@ def listing(root: Path) -> list[Generation]:
         return []
     found = []
     for entry in sorted(root.iterdir()):
-        if entry.is_dir() and (entry / MANIFEST_FILE).is_file():
-            found.append(read(root, entry.name))
+        # A dot-prefixed directory is staging, not a generation. `publish` writes the
+        # manifest into `.staging-<id>/` and only then renames, so a process killed in
+        # that window -- SIGKILL, OOM, power loss, none of which run the `except`
+        # clause below -- leaves a complete manifest under a name that was never
+        # published. This listed it under the real id, which `read` then could not
+        # open, so the catalogue of generations advertised one that does not exist.
+        if entry.name.startswith(".") or not entry.is_dir():
+            continue
+        if not (entry / MANIFEST_FILE).is_file():
+            continue
+        generation = read(root, entry.name)
+        # And the name must be the id. A generation is content-addressed, so a
+        # directory whose manifest names something else is not a generation under a
+        # different name -- it is a manifest somebody moved (L1: say so rather than
+        # list it as though the two agreed).
+        if generation.generation_id != entry.name:
+            raise GenerationError(
+                f"generations: {entry} holds a manifest naming "
+                f"{generation.generation_id!r}; a generation's directory is its id"
+            )
+        found.append(generation)
     by_id = {generation.generation_id: generation for generation in found}
     ordered: list[Generation] = []
     remaining = dict(by_id)
@@ -261,7 +280,7 @@ def publish(
     try:
         (staging / "chunks").mkdir(parents=True)
         for path in catalog_module.chunk_files(chunk_dir):
-            shutil.copy2(path, staging / "chunks" / path.name)
+            _copy_durably(path, staging / "chunks" / path.name)
         built = catalog_module.build(staging / "chunks")
         catalog_module.write(built, staging / "catalog")
         manifest_rows = built[0]["rows_total"]
@@ -283,11 +302,16 @@ def publish(
         }
         if extra:
             manifest["extra"] = extra
-        (staging / MANIFEST_FILE).write_text(
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
-            encoding="utf-8",
-            newline="\n",
+        _write_durably(
+            staging / MANIFEST_FILE, json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         )
+        # Durability, through `catalog`'s helpers rather than a second copy of them.
+        # The catalog inside this generation was published with fsync at every step;
+        # the chunks beside it and the manifest above them were not, so a crash could
+        # leave a generation whose directory entry exists and whose contents are
+        # whatever the page cache had got to -- the half of the ACID publish that
+        # landed on one rail and not on the one wrapping it (L14).
+        _sync_directories(staging)
         try:
             os.replace(staging, destination)
         except OSError:
@@ -301,6 +325,7 @@ def publish(
             if not (destination.is_dir() and verify(root, generation_id)):
                 raise
             shutil.rmtree(staging, ignore_errors=True)
+        catalog_module._sync_directory(root)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -309,13 +334,65 @@ def publish(
     return read(root, generation_id)
 
 
+def _copy_durably(source: Path, destination: Path) -> None:
+    """Copy one file into staging and write it down, through the handle that wrote it.
+
+    Syncing is done here rather than by walking the staged tree afterwards, and that
+    is the whole point. A post-hoc walk has to *reopen* each file, and `os.fsync` on
+    Windows is `_commit`, which needs a handle opened for writing -- so the walk had
+    to reopen `"r+b"`, which then fails with `PermissionError` for any source chunk
+    that happens to be read-only, because `shutil.copy2` faithfully copies that mode
+    across. A corpus that could be read and published before would stop publishing.
+
+    Writing and syncing through one descriptor needs no second open, so it depends
+    on neither the platform's fsync rules nor the source file's mode. It is also
+    exactly what `catalog._publish` does, which is why that rail never had either
+    problem (`docs/security/laws.md` L12, L14).
+    """
+    payload = source.read_bytes()
+    with destination.open("wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    shutil.copystat(source, destination)
+
+
+def _write_durably(path: Path, text: str) -> None:
+    """Write one text file and fsync it through the handle that wrote it."""
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _sync_directories(directory: Path) -> None:
+    """fsync `directory` and every directory under it, deepest first.
+
+    The files are already durable -- each was synced through the descriptor that
+    wrote it -- so what is left is the entries naming them, which is the half
+    `catalog._sync_directory` owns and which is a declared no-op on Windows.
+    """
+    for path in sorted(directory.rglob("*"), reverse=True):
+        if path.is_dir():
+            catalog_module._sync_directory(path)
+    catalog_module._sync_directory(directory)
+
+
 def _point_at(root: Path, generation_id: str) -> None:
-    """Move `CURRENT` atomically. The pointer is the only mutable thing here."""
+    """Move `CURRENT` atomically. The pointer is the only mutable thing here.
+
+    Flushed and fsynced like `catalog._point_at`, which is the same function: a
+    pointer that survives the crash its atomic rename exists to survive has to
+    reach the disk, not the page cache.
+    """
     descriptor, temporary = tempfile.mkstemp(prefix=f".{CURRENT_FILE}.tmp-", dir=root)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(generation_id + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, root / CURRENT_FILE)
+        catalog_module._sync_directory(root)
     except BaseException:
         try:
             os.unlink(temporary)

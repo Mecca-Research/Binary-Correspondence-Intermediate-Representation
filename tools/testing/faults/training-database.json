@@ -1,0 +1,213 @@
+{
+  "command": [
+    "@python",
+    "training/tools/verify_database.py"
+  ],
+  "faults": [
+    {
+      "expects": "quoting",
+      "label": "a comma always separates, whatever the quotes say",
+      "new": "    pieces = tuple((p.strip(), False) for p in raw.split(',') if p.strip())",
+      "old": "    pieces = split_values(raw)",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S5",
+      "label": "the manifest records a modification time again",
+      "new": "        \"size\": stat.st_size,\n        \"mtime_ns\": stat.st_mtime_ns,\n        \"sha256\"",
+      "old": "        \"size\": stat.st_size,\n        \"sha256\"",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "constraints",
+      "label": "a wrong type reads as absent instead of refusing",
+      "new": "    actual = _type_of(value)\n    if False and actual != spec.type:",
+      "old": "    actual = _type_of(value)\n    if actual != spec.type:",
+      "path": "training/tools/schema.py"
+    },
+    {
+      "expects": "S13",
+      "label": "the pointer moves before the set it names is complete",
+      "new": "    _point_at(root, name)\n    if not _set_is_complete(destination, payloads):\n        staging",
+      "old": "    if not _set_is_complete(destination, payloads):\n        staging",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "schema",
+      "label": "the Python domain of kind drifts from the JSON enum",
+      "new": "domain=(\"prose\", \"code\", \"mixed\", \"table\", \"diagram\")",
+      "old": "domain=(\"prose\", \"code\", \"mixed\", \"table\")",
+      "path": "training/tools/schema.py"
+    },
+    {
+      "expects": "estimates",
+      "label": "a conjunction is exact whenever each of its terms was",
+      "new": "    estimate_exact = all(exact for _, exact, _ in estimates)",
+      "old": "    estimate_exact = len(estimates) == 1 and estimates[0][1]",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "coverage",
+      "label": "an eleventh operator that nothing exercises",
+      "new": "OPERATORS = (\"eq\", \"ne\", \"in\", \"prefix\", \"lt\", \"le\", \"gt\", \"ge\", \"isnull\", \"notnull\", \"between\")",
+      "old": "OPERATORS = (\"eq\", \"ne\", \"in\", \"prefix\", \"lt\", \"le\", \"gt\", \"ge\", \"isnull\", \"notnull\")",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "line endings",
+      "label": "a writer chooses a line ending the host would not",
+      "new": "destination.open(\"w\", encoding=\"utf-8\", newline=\"\\r\\n\")",
+      "old": "destination.open(\"w\", encoding=\"utf-8\", newline=\"\\n\")",
+      "path": "training/tools/build_chunks.py"
+    },
+    {
+      "expects": "S18",
+      "label": "the q8 setup price goes back to 37.5x too low",
+      "new": "    ns_per_row_q8_quantize: int = 4_000",
+      "old": "    ns_per_row_q8_quantize: int = 150_000",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S18",
+      "label": "ORDER BY forgets the share and asks only for a predicate",
+      "new": "    return \"sort\"",
+      "old": "    share = len(selection.rows) / catalog.rows_total\n    return \"index\" if share >= engine.catalog().ORDERED_INDEX_SHARE else \"sort\"",
+      "path": "training/tools/db/relational.py"
+    },
+    {
+      "expects": "anti-vacuity",
+      "label": "the ORDER BY threshold admits everything, so it decides nothing",
+      "new": "ORDERED_INDEX_SHARE = 0.000001",
+      "old": "ORDERED_INDEX_SHARE = 0.70",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "order strategy",
+      "label": "the ORDER BY threshold admits nothing, so it decides nothing",
+      "new": "ORDERED_INDEX_SHARE = 1.5",
+      "old": "ORDERED_INDEX_SHARE = 0.70",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "order strategy",
+      "label": "the index path returns the index, not the admitted rows",
+      "new": "        return ordered",
+      "old": "        admitted = set(selection.rows)\n        return [row for row in ordered if row in admitted]",
+      "path": "training/tools/db/relational.py"
+    },
+    {
+      "expects": "explain",
+      "label": "a forced plan is marked CHOSEN again",
+      "new": "verdict = \"CHOSEN\"",
+      "old": "verdict = \"REQUESTED\" if requested else \"CHOSEN\"",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S18",
+      "label": "a stored derived column is priced as though it were rebuilt",
+      "new": "    ns_per_row_derived_stored: int = 31_000",
+      "old": "    ns_per_row_derived_stored: int = 90",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "reserved character",
+      "label": "the catalog's null key is a value anybody can ask for",
+      "new": "    if False and RESERVED_CHARACTER in value:",
+      "old": "    if RESERVED_CHARACTER in value:",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S4",
+      "label": "prefix means 'under this directory' again, not 'starts with'",
+      "new": "        cleaned = prefix.rstrip(\"/\")",
+      "old": "        if not prefix.endswith(\"/\"):\n            return None\n        cleaned = prefix[:-1]",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "intervals",
+      "label": "two comparisons on one column are priced as two marginals again",
+      "new": "    narrowed = None if True else ranges(catalog, predicates)",
+      "old": "    narrowed = ranges(catalog, predicates)",
+      "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S4",
+      "label": "a repeated separator is stripped onto a counted directory again",
+      "new": "        cleaned = prefix.rstrip(\"/\")",
+      "old": "        cleaned = prefix[:-1]",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "pagination",
+      "label": "a ranked page is truncated instead of shifted",
+      "new": "    top_k = min(args.top_k, admitted)",
+      "old": "    top_k = min(args.top_k + args.offset, admitted)",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "require-native",
+      "label": "--require-native is satisfied by asking, not by running",
+      "new": "    if False and args.require_native and not _runs_the_kernel(backend):",
+      "old": "    if args.require_native and not _runs_the_kernel(backend):",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "set-catalog",
+      "label": "a ranked row number seeks a catalog nothing bound it to",
+      "new": "    if False and materialize == \"seek\" and catalog is not None and not _same_rows(catalog, embedding_set):",
+      "old": "    if materialize == \"seek\" and catalog is not None and not _same_rows(catalog, embedding_set):",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "set-catalog",
+      "label": "--where selects rows of a catalog nothing bound to the set",
+      "new": "        if False and not _same_rows(catalog, embedding_set):",
+      "old": "        if not _same_rows(catalog, embedding_set):",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "ordering",
+      "label": "the relational window forgets its offset",
+      "new": "        window = ordered[: args.top_k]",
+      "old": "        window = ordered[args.offset : args.offset + args.top_k]",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "durability",
+      "label": "a generation's chunk copies stop at the page cache",
+      "new": "    shutil.copy2(source, destination)",
+      "old": "    payload = source.read_bytes()\n    with destination.open(\"wb\") as handle:\n        handle.write(payload)\n        handle.flush()\n        os.fsync(handle.fileno())\n    shutil.copystat(source, destination)",
+      "path": "training/tools/generations.py"
+    },
+    {
+      "expects": "durability",
+      "label": "a generation's manifest stops at the page cache",
+      "new": "    path.write_text(text, encoding=\"utf-8\", newline=\"\\n\")",
+      "old": "    with path.open(\"w\", encoding=\"utf-8\", newline=\"\\n\") as handle:\n        handle.write(text)\n        handle.flush()\n        os.fsync(handle.fileno())",
+      "path": "training/tools/generations.py"
+    },
+    {
+      "expects": "durability",
+      "label": "a generation is renamed into place before its entries are written down",
+      "new": "",
+      "old": "        _sync_directories(staging)\n",
+      "path": "training/tools/generations.py"
+    },
+    {
+      "expects": "S13-repair",
+      "label": "an incomplete set wedges the rebuild that would repair it",
+      "new": "            if False and destination.exists() and not _set_is_complete(destination, payloads):",
+      "old": "            if destination.exists() and not _set_is_complete(destination, payloads):",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "S6-staging",
+      "label": "a killed publish's staging directory is listed as a generation",
+      "new": "        if not entry.is_dir():",
+      "old": "        if entry.name.startswith(\".\") or not entry.is_dir():",
+      "path": "training/tools/generations.py"
+    }
+  ],
+  "gate": "training/tools/verify_database.py",
+  "why": "The database gate is the rail's main check: the declared table, the predicate grammar, the planner, the artifacts and the publication rules. This table is the evidence that each of its named checks can actually fail -- every entry was injected and observed to fire before the fix it guards was trusted."
+}

@@ -867,18 +867,40 @@ def write(built: tuple[dict, dict, bytes, str, bytes, bytes], root: Path = DEFAU
             for artifact, payload in sorted(payloads.items()):
                 _publish(staging, artifact, payload)
             _sync_directory(staging)
+            # An incomplete set already standing at `destination` is the case the
+            # check above just detected, and the rename cannot land on a non-empty
+            # directory -- so the branch meant to *repair* it used to re-raise
+            # `ENOTEMPTY` and wedge every future rebuild with a traceback. The
+            # incomplete one is moved aside first, atomically, so no reader ever
+            # observes a gap where the set was, and the rename then has somewhere
+            # to land. `_set_is_complete` is asked again rather than trusted from
+            # above, because the answer can change between the two (L3: the check
+            # belongs where the work commits).
+            aside = None
+            if destination.exists() and not _set_is_complete(destination, payloads):
+                aside = sets / f".stale-{name}-{os.getpid()}"
+                shutil.rmtree(aside, ignore_errors=True)
+                os.replace(destination, aside)
             try:
                 os.replace(staging, destination)
-            except OSError:
-                # Another writer published this same content-addressed set between the
-                # check above and this rename. POSIX and Windows disagree about
-                # renaming onto a directory that now exists, so the outcome is decided
-                # here rather than by the host (`docs/security/laws.md` L12). The name
-                # is the content, so if what is in place is complete this publish
-                # already happened; if it is not, the refusal stands.
+            except OSError as exc:
+                # Another writer published this same content-addressed set between
+                # the check above and this rename. POSIX and Windows disagree about
+                # renaming onto a directory that now exists, so the outcome is
+                # decided here rather than by the host (`docs/security/laws.md`
+                # L12). The name is the content, so if what is in place is complete
+                # this publish already happened; if it is not, the refusal stands --
+                # as a verdict rather than as a raw `OSError` (L1).
                 if not _set_is_complete(destination, payloads):
-                    raise
+                    raise CatalogError(
+                        f"catalog: could not publish {name} into {destination}: {exc}\n"
+                        f"  what is there is not the set this build produced; remove "
+                        f"{destination} and rebuild"
+                    ) from exc
                 shutil.rmtree(staging, ignore_errors=True)
+            finally:
+                if aside is not None:
+                    shutil.rmtree(aside, ignore_errors=True)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -1332,7 +1354,14 @@ class Catalog:
             "max": max(present) if present else None,
             "sum": sum(present),
             "avg": (sum(present) / len(present)) if present else None,
-            "scanned": len(present),
+            # Every admitted cell, not every cell that held a value. The field exists
+            # to separate "answered from the statistics" (0) from "read the rows"
+            # (> 0), and counting only the non-null cells collapsed that distinction
+            # exactly where it matters: a selection whose rows are all unmeasured read
+            # every one of them and reported `scanned: 0` -- the free path's own
+            # signature -- so the claim the gate makes about the two paths could not
+            # tell them apart.
+            "scanned": len(admitted),
         }
 
     def require_numeric(self, column: str) -> None:
@@ -1573,26 +1602,65 @@ class Catalog:
             left_value, right_value = right_value, left_value
         return int(table.get(index_key(left_value), {}).get(index_key(right_value), 0))
 
+    def _paths_starting_with(self, prefix: str):
+        """Every (path, rows) pair whose path starts with `prefix`. The definition.
+
+        Scanned over *distinct paths* rather than over rows -- 310 strings on this
+        corpus, 0.02 ms, against a resolve budget measured in tenths of a
+        millisecond. The index below is an accelerator for one provable case; this
+        is what the operator means.
+        """
+        for path, positions in self.postings["paths"].items():
+            if path.startswith(prefix):
+                yield path, positions
+
+    def _directory_shortcut(self, prefix: str) -> str | None:
+        """The counted directory that answers `prefix` exactly, or None.
+
+        The stored `path_prefixes` index groups rows by *directory ancestor*, so it
+        answers "which rows live under this directory". That is the same set as
+        "which rows start with this string" only when the string ends at a separator:
+        `training/llvm/` cannot also be a prefix of `training/llvmfoo.md`, but
+        `training/llvm` can.
+
+        Treating the two as interchangeable was a silent wrong answer. `^=` is
+        documented "starts with" (`training/TRAINING_LANGREF.md` SS5.2) and, whenever
+        the prefix happened to name a counted directory, the index answered the
+        *other* question and the count was labelled exact: with
+        `training/llvm/data/a.md` and `training/llvm/database.md` in one corpus,
+        `source_path^=training/llvm/data` returned one row, priced it `1 [exact]`,
+        and exited 0 -- with `database.md` missing from both the rows and the number.
+        The whole-path shortcut it also carried had the same shape, since `a/b.md` is
+        a prefix of `a/b.md.bak`.
+
+        **Exactly one separator comes off.** The argument above holds for the single
+        trailing separator the guard proved is there and for no more: `rstrip("/")`
+        mapped `training/llvm//` onto the counted directory `training/llvm` and
+        answered 2160 rows, `[exact]`, for a string that starts no path in the corpus
+        at all. A doubled separator is ordinary output of joining a directory that
+        already ends in one, so this was the first defect's own shape surviving inside
+        its fix. Taking one character off leaves `training/llvm/`, which is not a key
+        in `path_prefixes`, so the shortcut declines and the walk gives the right
+        answer -- and an interior `training//llvm/` never matched a key to begin with.
+        """
+        if not prefix.endswith("/"):
+            return None
+        cleaned = prefix[:-1]
+        return cleaned if cleaned in self.postings["path_prefixes"] else None
+
     def count_prefix(self, prefix: str) -> tuple[int, bool]:
         """Rows whose `source_path` starts with `prefix`, and whether that is exact.
 
-        Exact when the prefix names a counted directory or a whole path. Otherwise
-        the nearest counted ancestor's count is returned as an upper bound, with
-        False -- so the caller prices a bound as a bound.
+        Always exact now: the answer is either the counted directory (when that is
+        provably the same question -- see `_directory_shortcut`) or a scan of the
+        distinct paths, which is the definition and costs less than the estimate it
+        feeds. The old ancestor-bound branch existed to avoid that scan and is gone
+        with it; a bound nobody needs is a bound that can be wrong.
         """
-        prefixes = self._statistics["path_prefixes"]
-        cleaned = prefix.rstrip("/")
-        if cleaned in prefixes:
-            return int(prefixes[cleaned]), True
-        whole = self._statistics["paths"].get(prefix)
-        if whole is not None:
-            return int(whole), True
-        parts = cleaned.split("/")
-        for depth in range(len(parts) - 1, 0, -1):
-            ancestor = "/".join(parts[:depth])
-            if ancestor in prefixes:
-                return int(prefixes[ancestor]), False
-        return self.rows_total, False
+        shortcut = self._directory_shortcut(prefix)
+        if shortcut is not None:
+            return int(self._statistics["path_prefixes"][shortcut]), True
+        return sum(len(rows) for _, rows in self._paths_starting_with(prefix)), True
 
     # -- postings (which rows, not how many) -----------------------------
 
@@ -1608,18 +1676,17 @@ class Catalog:
     def rows_with_prefix(self, prefix: str) -> list[int]:
         """The rows whose `source_path` starts with `prefix`, exactly.
 
-        A counted directory answers from the index. Anything else -- a partial
-        segment, a prefix no row shares -- falls back to scanning the path postings,
-        which is still only over distinct paths rather than over rows.
+        The directory index answers only where it provably asks the same question
+        (`_directory_shortcut`); everything else scans the distinct paths. The two
+        must agree wherever both apply, and `check_predicate` holds them to that
+        against a brute-force reading of the corpus rather than against each other.
         """
-        cleaned = prefix.rstrip("/")
-        by_prefix = self.postings["path_prefixes"]
-        if cleaned in by_prefix:
-            return list(by_prefix[cleaned])
+        shortcut = self._directory_shortcut(prefix)
+        if shortcut is not None:
+            return list(self.postings["path_prefixes"][shortcut])
         matched: list[int] = []
-        for path, positions in self.postings["paths"].items():
-            if path.startswith(prefix):
-                matched.extend(positions)
+        for _, positions in self._paths_starting_with(prefix):
+            matched.extend(positions)
         return sorted(matched)
 
     # -- parts (incremental rebuild) -------------------------------------

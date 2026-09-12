@@ -156,6 +156,54 @@ PRESENCE = "?"
 QUOTE = '"'
 ESCAPE = "\\"
 
+#: The one character a value may never contain, quoted or not.
+#:
+#: The catalog reserves NUL for itself twice over: `catalog.NULL_KEY` is a NUL
+#: followed by `null`, under which the postings list the rows carrying no value for
+#: an indexed column, and `catalog.pair_key` joins two column names with a NUL. Both
+#: choices are sound precisely because no corpus value contains one -- but until this
+#: predicate existed, nothing enforced that on the *input* side, and the sentinel was
+#: reachable by typing it: `language=\0null` resolved to exactly the rows that
+#: `language!=?` resolves to, and its negation to exactly `language=?`.
+#:
+#: That is a second spelling of a question the grammar already spells once, which is
+#: how a reserved implementation value becomes part of the domain it was supposed to
+#: sit outside (`docs/security/laws.md` L20). The grammar already reserves `?` for
+#: presence and says so; this reserves the character the storage layer had quietly
+#: been relying on, and says so in the same place.
+#:
+#: Refusing it is total rather than a heuristic: a NUL cannot appear in a value the
+#: corpus holds -- no chunk record in this corpus contains one, and a column whose
+#: values could would have broken the postings file long before it reached a query.
+RESERVED_CHARACTER = "\0"
+
+
+def refuse_reserved(column: str, value: str) -> None:
+    """Refuse a value carrying `RESERVED_CHARACTER`, wherever the value came from.
+
+    This check first lived in `split_values`, which reads the *text* grammar -- and
+    the text grammar is one way to build a predicate, not the only one. Every caller
+    that already holds a column and a value builds the term directly, `select()` asks
+    the catalog the same questions either way, and so `Predicate("language", "eq",
+    (catalog.NULL_KEY,))` still resolved to exactly the rows `language!=?` resolves
+    to, with `EXPLAIN` printing it as `language = \x00null`. The reserved value was
+    out of the domain on one path in and inside it on the other.
+
+    So the rule lives on the constructor, which is the one place every predicate
+    passes through however it was built (`docs/security/laws.md` L14: one predicate
+    per repeated defect, and a shared predicate must be total). The column name needs
+    no such rule -- `estimate` refuses any column the catalog does not index, and a
+    NUL cannot occur in one of those four names.
+    """
+    if RESERVED_CHARACTER in value:
+        raise PlanError(
+            f"predicate value {value!r} on {column!r} contains the reserved character "
+            f"{RESERVED_CHARACTER!r}, which the catalog uses for the key that "
+            "marks a row as carrying no value; ask for those rows with "
+            f"{PRESENCE!r} instead ('column!={PRESENCE}' is IS NULL)"
+        )
+
+
 #: A measurement is compared against an integer in ASCII digits and nothing else.
 #: `int()` would also accept `1_000`, `+5`, Unicode digits and surrounding
 #: whitespace -- a larger language than the one documented, admitted by the host
@@ -196,6 +244,8 @@ class Predicate:
     def __post_init__(self) -> None:
         if self.op not in OPERATORS:
             raise PlanError(f"unknown operator {self.op!r}; the language is {', '.join(OPERATORS)}")
+        for value in self.values:
+            refuse_reserved(self.column, value)
         if self.op in NULLARY_OPERATORS:
             if self.values:
                 raise PlanError(f"operator {self.op!r} takes no value, got {len(self.values)}")
@@ -645,6 +695,53 @@ def joint(catalog, predicates) -> tuple[int, bool] | None:
         return min(bounds), whole and len(admitted) == 2
 
 
+def ranges(catalog, predicates) -> tuple[int, bool] | None:
+    """Rows admitted by the comparison terms, counted exactly, or None if there are none.
+
+    `interval` already says that two comparisons on one column intersect by taking
+    the tighter end of each -- that is why this language has no `BETWEEN` operator.
+    Resolution always kept that promise, because intersecting the two row sets is
+    the same interval. Pricing did not: it took the tighter *marginal* and reported
+    a bound, so `char_count>=500 AND char_count<=500` was priced at 831 rows over
+    the 3 it admits. The bound was labelled a bound, so nothing was being claimed
+    falsely -- but an exact count was available for the price of the read the range
+    term was about to make anyway, and declining it made the number 277x too loose.
+
+    The fold is per column and the count is per column, because nothing in the
+    catalog relates two measurements. Each column's interval count is an upper
+    bound on the conjunction, so the smallest is the tightest bound; it is the
+    *answer* only when every predicate in the conjunction folded into one column's
+    interval, which is what the second element of the return says.
+
+    An interval whose low end is above its high end admits nothing, and the sorted
+    index is not asked: a half-open search for an empty range is not wrong, but
+    `low > high` is decidable from the two bounds alone and the index read buys
+    nothing (`docs/security/laws.md` L3).
+    """
+    bounds: dict[str, tuple[int | None, int | None]] = {}
+    folded = 0
+    for predicate in predicates:
+        if predicate.op not in RANGE_OPERATORS:
+            continue
+        low, high = interval(predicate)
+        if predicate.column in bounds:
+            was_low, was_high = bounds[predicate.column]
+            low = was_low if low is None else (low if was_low is None else max(low, was_low))
+            high = was_high if high is None else (high if was_high is None else min(high, was_high))
+        bounds[predicate.column] = (low, high)
+        folded += 1
+    if not bounds:
+        return None
+    counts = []
+    with _as_plan_error():
+        for column, (low, high) in bounds.items():
+            if low is not None and high is not None and low > high:
+                counts.append(0)
+                continue
+            counts.append(catalog.count_in_range(column, low, high))
+    return min(counts), folded == len(predicates) and len(bounds) == 1
+
+
 def select(catalog, predicates) -> Selection:
     """Resolve a conjunction of predicates to the exact rows it admits.
 
@@ -656,11 +753,12 @@ def select(catalog, predicates) -> Selection:
     not count still resolves by walking distinct paths, which is over paths, not over
     rows. Pricing may use a bound; answering never does.
 
-    What the catalog does *not* hold is a joint statistic, so a conjunction is priced
-    at the tightest marginal and reported as the bound it is. Holding the exact pair
-    counts is a real option -- they are small and the corpus is static -- and it is
-    written up as a candidate rather than assumed here; what is not an option is
-    calling the bound a count.
+    A conjunction is priced from three sources, each of which can claim more than
+    the one before it: the tightest marginal, which is only ever a bound; the stored
+    joint distribution over indexed column pairs (`joint`); and the per-column
+    interval fold over the comparison terms (`ranges`). The last two are counts
+    where they cover every term and tighter bounds where they do not. What is never
+    an option is calling a bound a count -- the label is part of the verdict.
     """
     predicates = tuple(predicates)
     if not predicates:
@@ -692,6 +790,19 @@ def select(catalog, predicates) -> Selection:
     covered = joint(catalog, predicates)
     if covered is not None:
         count, whole = covered
+        if whole:
+            estimated, estimate_exact = count, True
+        elif count < estimated:
+            estimated = count
+    # And the comparison terms, which fold into one interval per column. The same
+    # two claims as the joint statistics, on the other half of the language: a count
+    # when the intervals are the whole conjunction, a tighter bound when they are
+    # not. Applied after the joint fold because the two are disjoint -- `value_keys`
+    # declines a comparison and this declines everything else -- so neither can
+    # overwrite an exactness the other earned.
+    narrowed = ranges(catalog, predicates)
+    if narrowed is not None:
+        count, whole = narrowed
         if whole:
             estimated, estimate_exact = count, True
         elif count < estimated:

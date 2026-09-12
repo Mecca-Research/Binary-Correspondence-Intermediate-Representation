@@ -134,6 +134,79 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
     assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
 
 
+def test_no_workflow_step_pipes_a_network_fetch_into_another_command() -> None:
+    """A pipeline's status is its last command's, so a piped fetch cannot fail.
+
+    Both LLVM jobs installed apt.llvm.org's signing key with
+
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+
+    and `tee` succeeds on an empty stream. A failed fetch therefore wrote an empty
+    keyring, the step passed, and `apt-get update` twenty lines later reported
+
+        NO_PUBKEY 15CF4D18AF4F7421
+        E: The repository '...llvm-toolchain-noble-22 InRelease' is not signed.
+
+    which reads as an upstream signing problem and was this workflow's own swallowed
+    error -- the same step had passed fifteen minutes earlier on the previous commit,
+    with the same key. `set -o pipefail` is not available here either: a GitHub `run:`
+    block is `bash -e`, not `bash -eo pipefail`.
+
+    So the shape is refused. Fetch to a file, check the file, then use it -- which is
+    what `tools/ci/add_llvm_apt_repo.sh` does for both jobs (L14: the copies had
+    already begun to matter, because the defect was in both and surfaced in one).
+
+    **Continuations are joined first, and that is the whole point.** The defect this
+    exists to refuse spans two lines -- `wget ... \\` and then `| sudo tee ...` -- so
+    a per-line regex would let the exact original code straight back in. Scanning
+    line by line was this witness's own version of the mistake it was written to
+    catch: a check that passes on the thing it names (L11). Shell continuations are
+    folded into one logical line before matching, and the reported number is where
+    that logical line begins.
+
+    Declared scope: a literal `curl` or `wget` followed by a `|` in the same logical
+    shell line of a workflow file. A fetch assembled at run time, or routed through
+    a variable, is out of scope and belongs to a shell linter; inside the scope this
+    is exact and does not grow.
+    """
+    offender = re.compile(r"\b(?:curl|wget)\b[^|#\n]*\|")
+    workflows = sorted((_ROOT / ".github" / "workflows").glob("*.yml"))
+    assert len(workflows) >= 1, "no workflow files found; this check would pass vacuously"
+    scanned = joined = 0
+    for workflow in workflows:
+        logical: list[tuple[int, str]] = []
+        pending, start = "", 0
+        for number, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            scanned += 1
+            if not pending:
+                start = number
+            if stripped.endswith("\\"):
+                pending += stripped[:-1] + " "
+                continue
+            logical.append((start, pending + stripped))
+            if pending:
+                joined += 1
+            pending = ""
+        if pending:
+            logical.append((start, pending))
+        for number, line in logical:
+            assert not offender.search(line), (
+                f"{workflow.relative_to(_ROOT)}:{number} pipes a network fetch into "
+                "another command, so the fetch's exit status is discarded and a "
+                "failed download becomes a confusing error further down. Fetch to a "
+                "file, check it, then use it.\n  " + line
+            )
+    assert scanned >= 200, f"only {scanned} workflow line(s) scanned; the walk is not covering them"
+    assert joined >= 1, (
+        "no shell continuation was folded, so the two-line shape this check exists "
+        "for is not being formed and the scan is per-line after all"
+    )
+
+
 def test_no_source_hand_declares_a_libc_function() -> None:
     """The #699 bug, refused by shape rather than caught on a phone.
 

@@ -60,6 +60,7 @@ import importlib.util
 import json
 import os
 import random
+import re
 import shutil
 import struct
 import sys
@@ -632,19 +633,50 @@ def check_predicate(
         f"directories and the corpus has {len(truth_prefixes)}; a prefix predicate "
         "over a missing directory would silently fall back to a looser bound",
     )
+    # `^=` is documented "starts with", so the truth is a string test over the
+    # corpus's own paths -- NOT the directory index. Those are different questions
+    # wherever a directory name is also a string prefix of a sibling entry, and
+    # checking the index against itself is how the difference went unnoticed
+    # (`docs/security/laws.md` L11 -- a witness must hit the law it exists to test).
+    truth_paths = [record.get(catalog_module.PATH_COLUMN) for record in ordered]
+
+    def rows_starting_with(prefix: str) -> list[int]:
+        return [row for row, path in enumerate(truth_paths) if str(path).startswith(prefix)]
+
     deepest = sorted(truth_prefixes, key=lambda p: (-p.count("/"), p))[:12]
     report.require(
         len(deepest) >= 4,
         f"S4: only {len(deepest)} prefixes to check, too few to witness the index",
     )
-    for prefix in deepest:
+    # Directory probes, the same string with a separator, and every proper prefix of
+    # a real path -- the last of which is where a partial segment lives.
+    probes = list(deepest)
+    probes += [f"{prefix}/" for prefix in deepest[:4]]
+    for path in truth_paths[:6]:
+        text = str(path)
+        probes += [text, text[: len(text) - 3], text[: text.rfind("/") + 4]]
+    for prefix in dict.fromkeys(probe for probe in probes if probe):
         rows = catalog.rows_with_prefix(prefix)
         count, exact = catalog.count_prefix(prefix)
+        # Not `truth`: that name already holds this function's per-column counts, and
+        # rebinding it here made the column checks below index a list with a string.
+        starting = rows_starting_with(prefix)
         report.require(
-            exact and count == truth_prefixes[prefix] == len(rows),
-            f"S4: prefix {prefix!r} counts {count} (exact={exact}), resolves "
-            f"{len(rows)} rows, and the corpus has {truth_prefixes[prefix]}",
+            rows == starting,
+            f"S4: prefix {prefix!r} resolves {len(rows)} row(s) and the corpus has "
+            f"{len(starting)} whose path starts with it; missing "
+            f"{sorted(set(starting) - set(rows))[:4]}, "
+            f"extra {sorted(set(rows) - set(starting))[:4]}",
         )
+        report.require(
+            count == len(starting) and exact,
+            f"S4: prefix {prefix!r} counts {count} (exact={exact}) against "
+            f"{len(starting)} row(s) that start with it",
+        )
+    report.require(
+        catalog._statistics["path_prefixes"] and truth_prefixes,
+        "anti-vacuity: the corpus has no directory prefixes to witness",
+    )
     report.require(
         truth_rows == catalog.rows_total,
         f"S4: the chunk files hold {truth_rows} rows and the catalog claims {catalog.rows_total}",
@@ -670,10 +702,7 @@ def check_predicate(
             f"catalog holds {catalog.rows_total}; a row is missing from the index",
         )
         for value in list(counts)[:8]:
-            spelled = None if value == load_tool("catalog").NULL_KEY else value
-            selection = plan.select(catalog, [plan.Predicate(column, "eq", (str(spelled),))])
-            if spelled is None:
-                continue
+            selection = plan.select(catalog, [term_for_key(plan, column, value)])
             report.require(
                 selection.admitted == counts[value],
                 f"S4: {column}={value!r} resolved {selection.admitted} rows but the "
@@ -729,7 +758,7 @@ def check_aggregates(report: Report, plan, catalog, chunk_dir: Path) -> None:
         free = catalog.aggregate(column)
         gathered = catalog.aggregate(column, every_row)
         report.require(
-            free["scanned"] == 0 and gathered["scanned"] == len(values),
+            free["scanned"] == 0 and gathered["scanned"] == len(every_row),
             f"aggregates: {column} reported scanned={free['scanned']} unfiltered and "
             f"{gathered['scanned']} over every row; the two paths are not the two "
             "paths they claim to be",
@@ -942,6 +971,129 @@ def _synthetic_gaps(catalog_module, directory: Path):
     return catalog_module.Catalog.load(directory / "catalog", mirror)
 
 
+def _synthetic_ambiguous_paths(catalog_module, directory: Path):
+    """A corpus where a directory name is also a string prefix of a sibling entry.
+
+    `^=` means "starts with" (`training/TRAINING_LANGREF.md` SS5.2), and the stored
+    path index groups rows by *directory ancestor*, which answers "is under this
+    directory". The two questions give the same answer for every path in the shipped
+    corpus, so a witness that probes only real paths passes whichever question the
+    code is actually answering -- and passed while it answered the wrong one.
+
+    This table makes them differ: `training/data/` is a directory, and
+    `training/database.md` and `training/datastore.md` are siblings whose names
+    continue the same segment. Nothing about the defect requires an exotic corpus;
+    it requires a file named like a directory next to it, which is ordinary.
+    """
+    mirror = directory / "chunks"
+    mirror.mkdir()
+    paths = [
+        "training/data/a.md",
+        "training/data/b.md",
+        "training/database.md",
+        "training/datastore.md",
+        "training/other/c.md",
+    ]
+    lines = []
+    for index, source_path in enumerate(paths):
+        text = f"row {index}"
+        lines.append(
+            json.dumps(
+                {
+                    "chunk_id": f"sha256:{index:064d}",
+                    "subject": "synthetic",
+                    "source_path": source_path,
+                    "kind": "prose",
+                    "language": None,
+                    "span": {"start_line": index + 1, "end_line": index + 1},
+                    "text": text,
+                    "char_count": len(text),
+                    "token_estimate": index + 1,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    (mirror / "synthetic.chunks.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+    )
+    catalog_module.write(catalog_module.build(mirror, synthetic_table()), directory / "catalog")
+    return catalog_module.Catalog.load(directory / "catalog", mirror), paths
+
+
+def check_prefix_semantics(report: Report, plan) -> None:
+    """`^=` is "starts with", on a corpus built so that the other reading differs.
+
+    The shipped corpus cannot witness this: every one of its counted directories
+    happens to agree with a string test, so the check would pass against either
+    meaning (L2, L11). The table below is built to disagree, and the RED sweep that
+    reintroduces the old shortcut is caught here and nowhere else.
+    """
+    catalog_module = load_tool("catalog")
+    with tempfile.TemporaryDirectory() as directory:
+        catalog, paths = _synthetic_ambiguous_paths(catalog_module, Path(directory))
+        ordered = sorted(paths)  # row order, for a table whose sort key is the path
+        report.require(
+            list(catalog.ids) and catalog.rows_total == len(paths),
+            f"anti-vacuity: the ambiguous table built {catalog.rows_total} row(s) of {len(paths)}",
+        )
+
+        def starting(prefix: str) -> list[int]:
+            return [row for row, path in enumerate(ordered) if path.startswith(prefix)]
+
+        probes = [
+            ("training/data", 4),  # the directory AND the two siblings that extend it
+            ("training/data/", 2),  # the directory alone
+            ("training/dat", 4),  # a partial segment
+            ("training/database.md", 1),  # a whole path
+            ("training/database", 1),  # a whole path, one character short
+            ("training/", 5),
+            ("training/nothing", 0),
+            # A repeated separator starts no path, and the shortcut used to strip
+            # every one of them: `rstrip("/")` mapped this onto the counted directory
+            # and answered its whole contents, `[exact]`. Ordinary output of joining
+            # a directory that already ends in a separator.
+            ("training/data//", 0),
+            ("training/data///", 0),
+            ("training//data/", 0),
+            ("training//", 0),
+        ]
+        for prefix, expected in probes:
+            rows = catalog.rows_with_prefix(prefix)
+            count, exact = catalog.count_prefix(prefix)
+            truth = starting(prefix)
+            report.require(
+                len(truth) == expected,
+                f"anti-vacuity: {prefix!r} matches {len(truth)} synthetic path(s), not "
+                f"the {expected} this probe was written for; the fixture has drifted",
+            )
+            report.require(
+                rows == truth,
+                f"S4: {prefix!r} means 'starts with' and resolved {len(rows)} row(s) "
+                f"where {len(truth)} path(s) start with it -- missing "
+                f"{[ordered[r] for r in sorted(set(truth) - set(rows))][:3]}",
+            )
+            report.require(
+                count == len(truth) and exact,
+                f"S4: {prefix!r} counts {count} (exact={exact}) against {len(truth)} "
+                "row(s) whose path starts with it",
+            )
+
+        # ...and the predicate path agrees with the catalog it is built on.
+        selection = plan.select(catalog, [plan.parse_predicate("source_path^=training/data")])
+        report.require(
+            sorted(selection.rows or ()) == starting("training/data"),
+            f"S4: the predicate admitted {len(selection.rows or ())} row(s) where "
+            f"{len(starting('training/data'))} path(s) start with 'training/data'",
+        )
+        report.require(
+            selection.estimate_exact and selection.estimated == len(selection.rows or ()),
+            f"S4: the prefix estimate is {selection.estimated} "
+            f"(exact={selection.estimate_exact}) against {len(selection.rows or ())} "
+            "admitted rows",
+        )
+
+
 def _check_sorted_index(report: Report, catalog_module, catalog, column: str) -> None:
     """The sorted index is a claim about every row, checkable before any query runs.
 
@@ -954,7 +1106,12 @@ def _check_sorted_index(report: Report, catalog_module, catalog, column: str) ->
     index = list(catalog.order[column])
     split = catalog.measured(column)
     cells = catalog.numeric[column]
-    counted = catalog.aggregate(column)["count"]
+    # Counted from the packed column, NOT from `aggregate(column)`: with no selection
+    # that returns the stored statistic, and `measured()` returns the same stored
+    # field, so comparing the two was one number against itself. The split, the data
+    # and the statistic are three separate claims and this is where they meet.
+    counted = sum(1 for value in cells if value != catalog_module.NUMERIC_NULL)
+    stored = catalog.aggregate(column)["count"]
     report.require(
         sorted(index) == list(range(catalog.rows_total)),
         f"ranges: the sorted index for {column} names {len(set(index))} distinct "
@@ -963,9 +1120,15 @@ def _check_sorted_index(report: Report, catalog_module, catalog, column: str) ->
     )
     report.require(
         split == counted,
-        f"ranges: the sorted index for {column} splits at {split} where the statistics "
-        f"count {counted} measured row(s); the split is the only thing keeping "
+        f"ranges: the sorted index for {column} splits at {split} where the packed "
+        f"column holds {counted} measured row(s); the split is the only thing keeping "
         "unmeasured rows out of every comparison",
+    )
+    report.require(
+        stored == counted,
+        f"ranges: the statistics say {column} has {stored} measured row(s) and the "
+        f"packed column holds {counted}; a query priced from the statistics and "
+        "answered from the column would disagree about how many rows exist",
     )
     keys = [(cells[row], row) for row in index[:split]]
     report.require(
@@ -1647,7 +1810,7 @@ def check_presence(report: Report, plan, catalog, chunk_dir: Path) -> None:
     exercised = 0
     for column in catalog.indexed_columns():
         absent = set(catalog.rows_absent(column))
-        values = [key for key in catalog.distinct(column) if key != catalog_module.NULL_KEY]
+        values = index_values(catalog, column)
         if not absent or not values:
             continue
         exercised += 1
@@ -1785,7 +1948,15 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         )
 
 
-def check_ordering(report: Report, search, plan, catalog) -> None:
+def check_ordering(
+    report: Report,
+    search,
+    plan,
+    catalog,
+    embedding_root: Path,
+    catalog_dir: Path,
+    chunk_dir: Path,
+) -> None:
     """ORDER BY must be total, stable, and honest about missing measurements."""
     catalog_module = load_tool("catalog")
     selection = plan.select(catalog, [plan.Predicate("kind", "eq", ("code",))])
@@ -1872,13 +2043,64 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
                 f"{descending}; an absent measurement is not a small one",
             )
 
-    # OFFSET is a window on the same order, never a different one.
+    # OFFSET is a window on the same order, never a different one -- and this used to
+    # assert that by comparing `full[offset : offset + limit]` against
+    # `full[offset:][:limit]`, which is an identity of Python slicing for every list
+    # and every non-negative pair. The loop iterated four times and `report.require`
+    # could not be handed False: a tautology rather than a check (Class B). It now
+    # drives the *tool*, so the operands are independent -- the rows the CLI prints
+    # against the window the order itself defines.
     column = catalog.numeric_columns()[0]
     full = relational.ordered_rows(catalog, selection, column, True)
+    report.require(
+        len(full) >= 12,
+        f"anti-vacuity: the order holds {len(full)} row(s), too few for the pages below",
+    )
     for offset, limit in ((0, 3), (2, 3), (5, 4), (len(full), 3)):
+        status, output = _cli(
+            search,
+            [
+                "--order-by",
+                f"{column}:desc",
+                "--top-k",
+                str(limit),
+                "--offset",
+                str(offset),
+                "--select",
+                "source_path",
+                # The same selection `full` was ordered under: a different one is a
+                # different order, and the comparison below would be about two
+                # unrelated lists.
+                "--where",
+                "kind=code",
+                "--set",
+                str(embedding_root),
+                "--chunks",
+                str(chunk_dir),
+                "--catalog",
+                str(catalog_dir),
+            ],
+        )
+        report.require(status == 0, f"ordering: OFFSET {offset} LIMIT {limit} exited {status}")
+        printed = [
+            line.strip()
+            for line in output.splitlines()
+            if re.match(r"^\s+\d+\. source_path=", line)
+        ]
+        window = full[offset : offset + limit]
         report.require(
-            full[offset : offset + limit] == full[offset:][:limit],
-            f"ordering: OFFSET {offset} LIMIT {limit} is not a window on the order",
+            len(printed) == len(window),
+            f"ordering: OFFSET {offset} LIMIT {limit} printed {len(printed)} row(s) "
+            f"where the order holds {len(window)} there",
+        )
+        expected = [
+            f"{rank}. source_path={catalog.fetch([row])[row]['source_path']}"
+            for rank, row in enumerate(window, start=offset + 1)
+        ]
+        report.require(
+            printed == expected,
+            f"ordering: OFFSET {offset} LIMIT {limit} printed {printed[:2]} where the "
+            f"order's window is {expected[:2]}",
         )
 
     # DISTINCT and GROUP BY count the same values.
@@ -2817,6 +3039,157 @@ def check_constraints(report: Report, catalog_module, chunk_dir: Path) -> None:
 # --------------------------------------------------------------------------
 
 
+def check_reserved_character(report: Report, plan, catalog_module, catalog) -> None:
+    """The catalog's own sentinel is not a value anybody can ask for.
+
+    `catalog.NULL_KEY` is a NUL followed by `null`, and the postings file lists under
+    it every row carrying no value for an indexed column. That is a sound choice
+    *because* no corpus value contains a NUL -- but soundness on the storage side is
+    not enforcement on the input side, and it was not enforced: `language=\0null`
+    parsed, resolved, and returned exactly the rows `language!=?` returns, while its
+    negation returned exactly `language=?`.
+
+    Nothing was mis-counted, which is what made it survive: the rows were right. What
+    was wrong is that a reserved implementation value had become a member of the
+    domain it exists outside of (`docs/security/laws.md` L20), giving the grammar a
+    second spelling for a question it already spells once -- the shape this tree
+    classifies as Class A and refuses everywhere else.
+
+    Both halves are checked, because a refusal that also refuses legitimate values
+    would be a worse defect than the one it fixed.
+
+    **And both ways in are checked.** The refusal first lived in `split_values`,
+    which reads the text grammar -- so it held for `parse_predicate` and for nothing
+    else. Every caller holding a column and a value builds the term directly, this
+    file among them, and on that path `Predicate("language", "eq", (NULL_KEY,))` was
+    still exactly `language!=?` under a second spelling. A check that only drove the
+    parser reported the rule as enforced while half its callers were outside it
+    (`docs/security/laws.md` L12: one condition, one answer, on every path), so the
+    constructor is driven here directly and the two are required to agree.
+    """
+    reserved = plan.RESERVED_CHARACTER
+    report.require(
+        reserved and reserved in catalog_module.NULL_KEY,
+        f"reserved character: the grammar reserves {reserved!r}, which does not appear "
+        f"in the catalog key it exists to protect ({catalog_module.NULL_KEY!r})",
+    )
+
+    # Every shape that reached a value: bare, negated, quoted, inside a set, embedded
+    # mid-value, and on the path column's prefix operator.
+    null_key = catalog_module.NULL_KEY
+    refused = 0
+    for spelling in (
+        f"language={null_key}",
+        f"language!={null_key}",
+        f'language="{null_key}"',
+        f"language={null_key},llvm",
+        f"subject=llvm{reserved}x",
+        f"subject={reserved}",
+        f"source_path^=a{reserved}b",
+    ):
+        try:
+            plan.parse_predicate(spelling)
+        except plan.PlanError:
+            refused += 1
+            continue
+        report.require(
+            False,
+            "reserved character: the grammar accepted a value containing "
+            f"{reserved!r}, so the catalog's null key is reachable as an ordinary "
+            "value and IS NULL has a second spelling",
+        )
+    report.require(
+        refused == 7,
+        f"anti-vacuity: only {refused} of 7 reserved-character spellings were even "
+        "attempted, so this check did not exercise what it claims",
+    )
+
+    # The other way in: a term built from a column and a value, which is how every
+    # caller that is not the parser builds one -- including this file, thirty times.
+    #
+    # Every row here must be a term that *only* this rule refuses. A comparison is
+    # not: `char_count >= "500\0"` is already refused by `require_integer`, so it
+    # would go on being refused with this rule removed and would witness nothing
+    # (`docs/security/laws.md` L11). The eight below carry the character in each
+    # position a value has -- alone, leading, embedded, trailing, and inside a set --
+    # on both operators that read a string.
+    built = 0
+    shapes = (
+        ("language", "eq", (null_key,)),
+        ("language", "ne", (null_key,)),
+        ("language", "in", ("c", null_key)),
+        ("subject", "eq", (reserved,)),
+        ("subject", "eq", (f"{reserved}llvm",)),
+        ("subject", "eq", (f"llvm{reserved}",)),
+        ("subject", "eq", (f"llvm{reserved}x",)),
+        (catalog_path_column(), "prefix", (f"a{reserved}b",)),
+    )
+    for column, op, values in shapes:
+        try:
+            plan.Predicate(column, op, values)
+        except plan.PlanError:
+            built += 1
+            continue
+        report.require(
+            False,
+            f"reserved character: Predicate({column!r}, {op!r}, ...) accepted a value "
+            f"containing {reserved!r}, so the catalog's null key is reachable as an "
+            "ordinary value by every caller that does not go through the parser",
+        )
+    report.require(
+        built == len(shapes),
+        f"anti-vacuity: only {built} of {len(shapes)} constructor spellings were even "
+        "attempted, so this check did not exercise the path the parser does not cover",
+    )
+
+    # ...and the two paths in give the same answer, which is the property that was
+    # false: the parser refused and the constructor did not.
+    def refuses(call, *arguments) -> bool:
+        try:
+            call(*arguments)
+        except plan.PlanError:
+            return True
+        return False
+
+    for spelling, op in ((f"language={null_key}", "eq"), (f"language!={null_key}", "ne")):
+        parsed = refuses(plan.parse_predicate, spelling)
+        direct = refuses(plan.Predicate, "language", op, (null_key,))
+        report.require(
+            parsed == direct,
+            f"reserved character: {spelling!r} is "
+            f"{'refused' if parsed else 'accepted'} by the parser and "
+            f"{'refused' if direct else 'accepted'} by the constructor; one rule, "
+            "two answers",
+        )
+
+    # ...and the question it used to answer is still answerable, exactly once.
+    absent = plan.select(catalog, [plan.parse_predicate("language!=?")])
+    present = plan.select(catalog, [plan.parse_predicate("language=?")])
+    admitted = len(absent.rows or ()) + len(present.rows or ())
+    report.require(
+        admitted == catalog.rows_total,
+        f"reserved character: IS NULL and IS NOT NULL cover {admitted} of "
+        f"{catalog.rows_total} rows, so removing the sentinel spelling removed an "
+        "answer rather than a duplicate",
+    )
+    report.require(
+        len(absent.rows or ()) > 0,
+        "anti-vacuity: no row in this corpus is absent a language, so the spelling "
+        "this check retired could not have been observed to differ from it",
+    )
+
+    # A legitimate value that merely *looks* adjacent must still parse.
+    for spelling in ("language=null", 'language="null"', "subject=llvm", 'subject="a,b"'):
+        try:
+            plan.parse_predicate(spelling)
+        except plan.PlanError as exc:
+            report.require(
+                False,
+                f"reserved character: {spelling!r} is a legitimate predicate and the "
+                f"new refusal rejected it: {exc}",
+            )
+
+
 def check_quoting(report: Report, plan) -> None:
     """A value is read back as it was written, or refused. Never read as another value.
 
@@ -2964,8 +3337,7 @@ def check_estimates(report: Report, plan, catalog) -> None:
         for combination in itertools.combinations(columns, size):
             for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
                 predicates = [
-                    plan.Predicate(column, "eq", (value,))
-                    for column, value in zip(combination, values)
+                    term_for_key(plan, column, value) for column, value in zip(combination, values)
                 ]
                 selection = plan.select(catalog, predicates)
                 admitted = len(selection.rows)
@@ -3006,7 +3378,7 @@ def check_estimates(report: Report, plan, catalog) -> None:
     for combination in itertools.combinations(columns, 3):
         for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
             candidate = [
-                plan.Predicate(column, "eq", (value,)) for column, value in zip(combination, values)
+                term_for_key(plan, column, value) for column, value in zip(combination, values)
             ]
             if len(plan.select(catalog, candidate).rows) > 0:
                 triple = candidate
@@ -3045,7 +3417,8 @@ def check_estimates(report: Report, plan, catalog) -> None:
     # A repeated value in a set must not be counted twice. `subject=llvm,llvm` once
     # estimated 4320 rows of a 2215-row table, and said it was exact.
     for column in columns:
-        value = max(catalog.distinct(column), key=lambda name: catalog.distinct(column)[name])
+        counts = catalog.distinct(column)
+        value = max(index_values(catalog, column), key=lambda name: counts[name])
         doubled = plan.select(catalog, [plan.Predicate(column, "in", (value, value))])
         single = plan.select(catalog, [plan.Predicate(column, "eq", (value,))])
         report.require(
@@ -3064,14 +3437,678 @@ def check_estimates(report: Report, plan, catalog) -> None:
     )
 
 
+def check_interval_folding(report: Report, plan, catalog, chunk_dir: Path) -> None:
+    """Two comparisons on one column are one interval, and one interval is a count.
+
+    `plan.interval` says in its own docstring that two comparisons on the same
+    column intersect by taking the tighter end of each -- that is how `BETWEEN` is
+    spelled here, and it is why the language has no `BETWEEN` operator. Resolution
+    always kept that promise, because intersecting the two row sets is the same
+    interval. Pricing did not: it took the tighter *marginal* and reported a bound,
+    so `char_count>=500 AND char_count<=500` was priced at 831 rows over the 3 it
+    admits, `[bound]`.
+
+    A bound labelled a bound is honest, so this is not the `[exact]`-over-a-wrong-
+    number defect of `check_estimates`. It is the other half of the same law: an
+    exact count that is available for the price of the read the predicate is about
+    to make anyway, declined in favour of a bound 277x too loose. The sorted index
+    answers a closed interval in two binary searches (§8 of the LangRef), and the
+    range term was going to read it regardless.
+
+    The anti-vacuity requirement is the load-bearing one. Every assertion below
+    passes trivially against a folder that folds nothing *if* every probe happens
+    to be an interval whose marginals are already tight, so the check refuses to
+    report unless it priced at least one interval where the unfolded bound is
+    strictly looser than the truth (`docs/security/laws.md` L2).
+    """
+    catalog_module = load_tool("catalog")
+    columns = catalog.numeric_columns()
+    report.require(
+        bool(columns),
+        "intervals: the catalog declares no numeric column, so every probe below "
+        "would iterate zero times",
+    )
+
+    trials = 0
+    loose = 0
+    for column in columns:
+        corpus = sorted(_corpus_values(catalog_module, chunk_dir, column))
+        report.require(
+            bool(corpus),
+            f"intervals: no record measures {column}, so every interval below is "
+            "checked against the empty set",
+        )
+        if not corpus:
+            continue
+        low_end, high_end = corpus[0], corpus[-1]
+        middle = corpus[len(corpus) // 2]
+        probes = [
+            (middle, middle),  # one value, the `=` a measurement has no operator for
+            (low_end, high_end),  # the whole measured range
+            (middle, middle + 1),  # two adjacent values
+            (low_end, middle),  # the lower half
+            (middle, high_end),  # the upper half
+            (high_end, low_end),  # empty by construction: low above high
+            (high_end + 1, high_end + 10),  # above everything measured
+        ]
+        for low, high in probes:
+            predicates = [
+                plan.Predicate(column, "ge", (str(low),)),
+                plan.Predicate(column, "le", (str(high),)),
+            ]
+            selection = plan.select(catalog, predicates)
+            truth = sum(1 for value in corpus if low <= value <= high)
+            trials += 1
+            report.require(
+                len(selection.rows) == truth,
+                f"intervals: {column} in [{low}, {high}] admitted "
+                f"{len(selection.rows)} row(s) where the chunk files hold {truth}",
+            )
+            report.require(
+                selection.estimate_exact,
+                f"intervals: {column} in [{low}, {high}] was priced as a bound; two "
+                "comparisons on one column are one interval, and the sorted index "
+                "counts a closed interval exactly",
+            )
+            report.require(
+                selection.estimated == truth,
+                f"intervals: {column} in [{low}, {high}] priced {selection.estimated} "
+                f"over the {truth} row(s) it admits",
+            )
+            marginals = min(plan.estimate(catalog, p)[0] for p in predicates)
+            if marginals > truth:
+                loose += 1
+
+    report.require(
+        trials >= 7,
+        f"anti-vacuity: only {trials} interval(s) were priced",
+    )
+    report.require(
+        loose >= 1,
+        f"anti-vacuity: all {trials} interval(s) priced above were ones whose "
+        "tighter marginal already equals the truth, so none of them can tell a "
+        "folded estimate from an unfolded one",
+    )
+
+    # Two columns are two intervals, and nothing in the catalog relates them. The
+    # tightest of the two still bounds the conjunction from above, and it must be
+    # reported as the bound it is -- the fold must not carry its exactness across a
+    # column boundary it cannot see.
+    if len(columns) >= 2:
+        left, right = columns[0], columns[1]
+        left_values = sorted(_corpus_values(catalog_module, chunk_dir, left))
+        right_values = sorted(_corpus_values(catalog_module, chunk_dir, right))
+        predicates = [
+            plan.Predicate(left, "ge", (str(left_values[len(left_values) // 2]),)),
+            plan.Predicate(right, "le", (str(right_values[len(right_values) // 2]),)),
+        ]
+        selection = plan.select(catalog, predicates)
+        admitted = len(selection.rows)
+        report.require(
+            selection.estimated >= admitted,
+            f"intervals: {predicates[0]} AND {predicates[1]} priced "
+            f"{selection.estimated} below the {admitted} row(s) it admits",
+        )
+        report.require(
+            admitted == 0 or not selection.estimate_exact,
+            f"intervals: {predicates[0]} AND {predicates[1]} was reported exact at "
+            f"{selection.estimated}; the catalog holds no statistic relating two "
+            "measurement columns",
+        )
+        report.require(
+            selection.estimated <= min(plan.estimate(catalog, p)[0] for p in predicates),
+            f"intervals: the two-column bound {selection.estimated} is looser than "
+            "the tighter of its two marginals",
+        )
+
+
+def _cli(search, argv: list[str]) -> tuple[int, str]:
+    """Run the search CLI in-process and return its exit code and everything it printed.
+
+    In-process rather than as a subprocess because the quick tier must stay bounded
+    (L19) and because a traceback escaping `main` would otherwise be laundered into a
+    non-zero exit that looks like an honest refusal. Here it propagates and the gate
+    reports it as what it is.
+    """
+    import contextlib
+    import io
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+        status = search.main(argv)
+    return status, buffer.getvalue()
+
+
+def _ranked_rows(output: str) -> list[str]:
+    """The `N. cos=... path:line` lines of a ranking, in order."""
+    return [line.strip() for line in output.splitlines() if re.match(r"^\s+\d+\. cos=", line)]
+
+
+def check_pagination(report: Report, search, embedding_root: Path, chunk_dir: Path) -> None:
+    """A ranked page is the page asked for, not the first page cut short.
+
+    `--offset` shifts a window; it does not truncate one. The ranked path asked the
+    kernel for `top_k` results and then sliced that list at `offset`, so
+    `--top-k 3 --offset 3` sliced a three-long list at three and printed nothing, exit
+    0 -- page two of every ranked query was silently empty. The relational path five
+    hundred lines above had always windowed `ordered[offset : offset + top_k]`
+    correctly, which is the same idea implemented twice and disagreeing (L14).
+
+    The law is stated as an identity rather than as "page two is non-empty", because
+    a non-emptiness assertion passes against a ranking that returns the *first* page
+    again: page(k, n) must equal the first k+n results with the first n dropped.
+    """
+    common = [
+        "--query",
+        "static single assignment dominance frontier",
+        "--set",
+        str(embedding_root),
+        "--chunks",
+        str(chunk_dir),
+        "--materialize",
+        "full",
+    ]
+    status, whole = _cli(search, [*common, "--top-k", "6"])
+    report.require(status == 0, f"pagination: the unpaged query exited {status}")
+    every = _ranked_rows(whole)
+    report.require(
+        len(every) == 6,
+        f"anti-vacuity: the unpaged ranking returned {len(every)} result(s) of 6, so "
+        "the pages compared below cannot witness an offset",
+    )
+
+    status, first = _cli(search, [*common, "--top-k", "3", "--offset", "0"])
+    report.require(status == 0, f"pagination: page one exited {status}")
+    status, second = _cli(search, [*common, "--top-k", "3", "--offset", "3"])
+    report.require(status == 0, f"pagination: page two exited {status}")
+
+    def bare(lines: list[str]) -> list[str]:
+        return [re.sub(r"^\d+\.\s*", "", line) for line in lines]
+
+    report.require(
+        bare(_ranked_rows(first)) == bare(every[:3]),
+        f"pagination: page one is {bare(_ranked_rows(first))}, not the first three of "
+        f"the whole ranking {bare(every[:3])}",
+    )
+    report.require(
+        bare(_ranked_rows(second)) == bare(every[3:]),
+        f"pagination: OFFSET 3 returned {bare(_ranked_rows(second))} where the whole "
+        f"ranking's results four to six are {bare(every[3:])}",
+    )
+    report.require(
+        _ranked_rows(second) and _ranked_rows(second)[0].startswith("4."),
+        "pagination: page two numbers its first result "
+        f"{(_ranked_rows(second) or ['(nothing)'])[0].split('.')[0]!r}, not 4; the "
+        "relational path numbers from the offset and this must agree with it",
+    )
+
+    # Past the end is a verdict, not silence: the caller has to be able to tell
+    # "this page is empty" from "the tool printed nothing" (L1).
+    status, past = _cli(search, [*common, "--top-k", "3", "--offset", "100000"])
+    report.require(status == 0, f"pagination: an out-of-range page exited {status}")
+    report.require(
+        "no results at OFFSET" in past,
+        f"pagination: an offset past the end printed no verdict at all: {past.strip()[:120]!r}",
+    )
+
+
+def check_require_native(report: Report, search, embedding_root: Path, chunk_dir: Path) -> None:
+    """`--require-native` is a claim that the kernel RAN, not that it was asked for.
+
+    The flag was read at parse time against `args.backend`, which for `--backend auto`
+    names no backend at all -- the planner does. On this corpus `--objective startup`
+    prices the pure-Python `reference` plan cheapest, so the flag passed, the run
+    ranked in Python, and it exited 0 having touched no kernel. That is the shape L2
+    names: a `--require-X` that cannot fail on a configuration somebody will type.
+    """
+    common = [
+        "--query",
+        "ssa",
+        "--top-k",
+        "1",
+        "--set",
+        str(embedding_root),
+        "--chunks",
+        str(chunk_dir),
+        "--materialize",
+        "full",
+        "--require-native",
+    ]
+
+    refused = 0
+    for backend, objective in (("reference", "latency"), ("auto", "startup")):
+        status, output = _cli(search, [*common, "--backend", backend, "--objective", objective])
+        report.require(
+            status != 0,
+            f"require-native: --backend {backend} --objective {objective} exited 0 "
+            "with a flag demanding a kernel this run does not reach",
+        )
+        report.require(
+            "require-native" in output,
+            f"require-native: --backend {backend} refused without saying why: "
+            f"{output.strip()[:120]!r}",
+        )
+        refused += status != 0
+    report.require(
+        refused == 2,
+        f"anti-vacuity: {refused} of 2 kernel-less configurations were refused",
+    )
+
+    # And the flag must still accept a run that does reach the kernel, or it is
+    # refusing everything and proving nothing.
+    status, output = _cli(search, [*common, "--backend", "auto", "--objective", "latency"])
+    report.require(
+        status == 0 or "native backend required" in output,
+        f"require-native: a run whose planner chose a kernel backend exited {status} "
+        f"for a reason other than the kernel being unavailable: {output.strip()[:160]!r}",
+    )
+
+
+#: The two flag sets that make a run join the artifacts by row number, one per
+#: guard. `WHERE_PROBE` pins `--materialize full` deliberately: with `auto` the
+#: planner picks `seek` whenever a catalog is present, so the *seek* guard refused
+#: the run and the `--where` guard was never reached -- a probe answered by the
+#: wrong law proves nothing about its own (`docs/security/laws.md` L11). The RED
+#: sweep is what said so, reporting the `--where` injection NOT CAUGHT over a gate
+#: that was green.
+SEEK_PROBE = ["--materialize", "seek"]
+WHERE_PROBE = ["--where", "kind=code", "--materialize", "full"]
+
+
+def check_set_catalog_binding(
+    report: Report, search, embedding_root: Path, catalog_dir: Path, chunk_dir: Path
+) -> None:
+    """A ranked row number means one chunk, so both artifacts must hold the same rows.
+
+    Row *i* of an embedding set is row *i* of the catalog (LangRef SS4.4), and nothing
+    checked it: the only cross-check compared row *counts*, and it lived inside
+    `if args.where:`. With `--materialize seek` -- the default whenever a catalog is
+    present -- the tool printed the `source_path` of one chunk beside the span and
+    heading trail of another, exit 0.
+
+    The fixture re-sorts the corpus rather than changing its size, because a size
+    change is the one mismatch the old count check already caught.
+
+    **And the refusal is checked for its edges as well as its middle.** The binding is
+    what makes a row number mean one chunk, so it is required exactly where a row
+    number crosses between the two artifacts -- `--where`, which resolves catalog rows
+    and ranks embedding-set rows by them, and `--materialize seek`, which fetches the
+    catalog row a ranking named. `--materialize full` reads chunk records by
+    `chunk_id`, joins nothing by position, and is correct over any catalog; the first
+    spelling of the check sat above all three and refused it, advising the caller to
+    "pass --materialize full", which is what they had passed. A bound enforced away
+    from the place the resource commits is either too weak or too strong
+    (`docs/security/laws.md` L3), and this one was both.
+    """
+    catalog_module = load_tool("catalog")
+    matched = [
+        "--query",
+        "ssa",
+        "--top-k",
+        "1",
+        "--set",
+        str(embedding_root),
+        "--catalog",
+        str(catalog_dir),
+        "--chunks",
+        str(chunk_dir),
+    ]
+    for extra in (SEEK_PROBE, WHERE_PROBE, ["--materialize", "full"]):
+        status, output = _cli(search, matched + extra)
+        report.require(
+            status == 0,
+            f"anti-vacuity: the matched catalog and set were refused with "
+            f"{' '.join(extra) or '(no extra flag)'} (exit {status}): "
+            f"{output.strip()[:160]!r}; the refusals below are not evidence of anything",
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        moved = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, moved)
+
+        # Move one path so it re-sorts *within its own subject*. `row_sort_key` is
+        # (subject, source_path, start_line, chunk_id), so renaming the only path of a
+        # one-file subject changes the bytes and not the order -- the first fixture
+        # written here prefixed `training/backends/README.md`, produced an identical id
+        # order, and reported the tool as broken for accepting it. The reorder is
+        # therefore proved below rather than assumed (L2).
+        paths_by_subject: dict[str, set[str]] = {}
+        for path in sorted(moved.glob("*.chunks.jsonl")):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    record = json.loads(line)
+                    paths_by_subject.setdefault(record["subject"], set()).add(record["source_path"])
+        subject = max(paths_by_subject, key=lambda name: len(paths_by_subject[name]))
+        report.require(
+            len(paths_by_subject[subject]) >= 2,
+            f"anti-vacuity: the largest subject {subject!r} holds "
+            f"{len(paths_by_subject[subject])} distinct path(s), so moving one cannot "
+            "reorder the corpus",
+        )
+        target = min(paths_by_subject[subject])
+        replacement = f"{target.split('/')[0]}/{subject}/zzz-{target.rsplit('/', 1)[-1]}"
+
+        renamed = 0
+        for path in sorted(moved.glob("*.chunks.jsonl")):
+            records = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for record in records:
+                if record.get("source_path") == target:
+                    record["source_path"] = replacement
+                    renamed += 1
+            path.write_text(
+                "\n".join(json.dumps(r, sort_keys=True, separators=(",", ":")) for r in records)
+                + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        report.require(
+            renamed >= 1,
+            f"anti-vacuity: the fixture moved {renamed} chunk(s) of {target!r}",
+        )
+        rebuilt = Path(directory) / "catalog"
+        catalog_module.write(catalog_module.build(moved), rebuilt)
+        report.require(
+            list(catalog_module.Catalog.load(catalog_dir, chunk_dir).ids)
+            != list(catalog_module.Catalog.load(rebuilt, moved).ids),
+            f"anti-vacuity: moving {target!r} to {replacement!r} left the row order "
+            "unchanged, so the refusal asserted below would be about nothing",
+        )
+        mismatched = [
+            "--query",
+            "ssa",
+            "--top-k",
+            "3",
+            "--set",
+            str(embedding_root),
+            "--catalog",
+            str(rebuilt),
+            "--chunks",
+            str(moved),
+        ]
+
+        # The two ways a row number crosses. Both must refuse, and name what they
+        # refused -- a refusal a caller cannot act on is a worse answer than a wrong
+        # one, because it does not say which artifact to rebuild.
+        for extra in (SEEK_PROBE, WHERE_PROBE):
+            status, output = _cli(search, mismatched + extra)
+            report.require(
+                status != 0,
+                f"set-catalog: {' '.join(extra)} over a catalog and an embedding set "
+                "built from differently ordered corpora joined them row by row and "
+                "exited 0",
+            )
+            report.require(
+                "do not describe the same rows" in output,
+                f"set-catalog: {' '.join(extra)} refused the mismatch without naming "
+                f"it: {output.strip()[:160]!r}",
+            )
+
+        # ...and the way it does not. `--materialize full` reads chunk records by id,
+        # so the row order of a catalog it never indexes by is not its business.
+        status, output = _cli(search, mismatched + ["--materialize", "full"])
+        report.require(
+            status == 0,
+            "set-catalog: --materialize full reads chunk records by id and joins no "
+            f"row numbers, but a differently ordered catalog refused it (exit {status}): "
+            f"{output.strip()[:200]!r}",
+        )
+        report.require(
+            "cos=" in output,
+            f"anti-vacuity: --materialize full exited 0 without ranking anything, so "
+            f"the acceptance above is about no work: {output.strip()[:160]!r}",
+        )
+
+
 def catalog_path_column() -> str:
     """The path column, from the declared table rather than spelled again here."""
     return load_tool("schema").PATH_COLUMN
 
 
+def index_values(catalog, column: str) -> list[str]:
+    """The keys of `column`'s index that are values some row actually holds.
+
+    `catalog.distinct` enumerates index *keys*, and exactly one of them is not a
+    value: `catalog.NULL_KEY` is where the postings park the rows that hold none.
+    Six checks in this file turned statistics back into terms, and each was one
+    two-line skip away from the others; this is that skip, written once
+    (`docs/security/laws.md` L14).
+    """
+    null_key = load_tool("catalog").NULL_KEY
+    return [key for key in catalog.distinct(column) if key != null_key]
+
+
+def term_for_key(plan, column: str, key: str):
+    """The legal predicate admitting exactly the rows filed under one index key.
+
+    `IS NULL` for the null key, equality for every other. Spelling the null key back
+    as `column = <key>` is the second spelling of a question the grammar already
+    spells once, which `plan.Predicate` now refuses at construction -- so the checks
+    that enumerated keys were asserting properties of a term the language does not
+    admit, and would now raise instead. `plan.value_keys` folds `IS NULL` to
+    `{NULL_KEY}`, the same one-key set that equality produced, so the counts and the
+    exactness verdicts below are unchanged by the switch.
+    """
+    if key == load_tool("catalog").NULL_KEY:
+        return plan.Predicate(column, "isnull", ())
+    return plan.Predicate(column, "eq", (key,))
+
+
 # --------------------------------------------------------------------------
 # S13 -- a publish is one transaction
 # --------------------------------------------------------------------------
+
+
+def check_staging_is_not_a_generation(report: Report, generations, chunk_dir: Path) -> None:
+    """A publish that never landed is not listed as one that did.
+
+    `publish` writes the manifest into `.staging-<id>/` and only then renames, so a
+    process killed in that window leaves a complete manifest under a name that was
+    never published -- and `SIGKILL`, an OOM kill and a power loss all skip the
+    `except BaseException` that would have cleaned it up. `listing` accepted any
+    directory holding a manifest, and took the id from the manifest's payload rather
+    than from the directory, so the phantom was reported under the real id, which
+    `read` could not then open. The catalogue of generations advertised one that
+    does not exist.
+
+    The fixture stages a real generation and moves it back, rather than killing a
+    process: what is being checked is what `listing` does with the directory a crash
+    leaves, and that is a property of the directory.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory) / "generations"
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        published = generations.publish(root, mirror, label="staging-probe")
+        listed = [g.generation_id for g in generations.listing(root)]
+        report.require(
+            listed == [published.generation_id],
+            f"anti-vacuity: a freshly published generation listed as {listed}, so the "
+            "comparison below is not against a working listing",
+        )
+
+        # Put it back where a killed publish would have left it.
+        staged = root / f".staging-{published.generation_id}"
+        (root / published.generation_id).rename(staged)
+        report.require(
+            (staged / generations.MANIFEST_FILE).is_file(),
+            "anti-vacuity: the staged fixture holds no manifest, so `listing` would "
+            "skip it for a reason other than the one under test",
+        )
+        report.require(
+            generations.listing(root) == [],
+            f"S6-staging: {staged.name} was never published and is listed as a generation",
+        )
+
+
+def check_durability(report: Report, catalog_module, generations, chunk_dir: Path) -> None:
+    """Every file a publish commits reaches the disk, on both rails and both hosts.
+
+    Atomicity and durability are different claims, and only one of them was
+    checked. `catalog.py` fsyncs each artifact, the sets directory, the `CURRENT`
+    temporary and the root; `generations.py` contained no `os.fsync` at all, so a
+    generation's chunk copies (`shutil.copy2`), its manifest (`write_text`) and its
+    `CURRENT` pointer reached the page cache and stopped there. An atomic rename
+    over contents the kernel has not written down survives no crash it was meant to
+    (L14 -- the mechanism landed on the rail it was written for and not on the one
+    wrapping it).
+
+    Checked by recording what is actually synced, because the alternative is
+    grepping for the call and believing it: `os.fsync` is wrapped for the duration
+    of one real publish.
+
+    **Two tiers, and the weaker one is the portable one.** The first version of this
+    check resolved every synced descriptor through `/proc/self/fd` and skipped where
+    that is absent -- so on Windows it reported a skip, and `--require-native` turns
+    a skip into a failure, correctly: the *law* is host-independent and only the
+    instrument was Linux-only, which is a hole wearing a skip's clothes (L2, L12).
+    The count is observable everywhere and is asserted everywhere; the paths are the
+    stronger claim and are asserted where they can be read.
+    """
+    import os as _os
+
+    synced: list[int] = []
+    resolved: list[str] = []
+    real_fsync = _os.fsync
+    can_resolve = Path("/proc/self/fd").is_dir()
+
+    def recording(descriptor):
+        synced.append(descriptor)
+        if can_resolve:
+            try:
+                resolved.append(_os.readlink(f"/proc/self/fd/{descriptor}"))
+            except OSError:
+                resolved.append("<unresolved>")
+        return real_fsync(descriptor)
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory) / "generations"
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        _os.fsync = recording
+        try:
+            published = generations.publish(root, mirror, label="durability")
+        finally:
+            _os.fsync = real_fsync
+        committed = [p for p in (root / published.generation_id).rglob("*") if p.is_file()]
+
+    # The portable half: a publish cannot have written down fewer things than it
+    # committed. Directory syncs and the CURRENT temporary are extra on top, and on
+    # Windows `_sync_directory` is a declared no-op -- so files alone are the floor.
+    report.require(
+        len(committed) >= 10,
+        f"anti-vacuity: the published generation holds {len(committed)} file(s), too "
+        "few for the floor below to mean anything",
+    )
+    report.require(
+        len(synced) >= len(committed),
+        f"durability: one publish synced {len(synced)} descriptor(s) while committing "
+        f"{len(committed)} file(s); a rename over contents the kernel has not written "
+        "down survives no crash",
+    )
+
+    if not can_resolve:
+        # Not a skip: the claim above was made and held. This host simply cannot say
+        # *which* files, so the stronger assertions below are not attempted.
+        report.note(
+            f"durability: {len(synced)} sync(s) counted; this host has no "
+            "/proc/self/fd, so which paths they named was not read"
+        )
+        return
+
+    chunk_syncs = [path for path in resolved if "/chunks/" in path and path.endswith(".jsonl")]
+    report.require(
+        chunk_syncs,
+        "durability: a generation copied its chunk files and synced none of them, so "
+        "the rename that publishes them commits whatever the page cache had",
+    )
+    report.require(
+        any(path.endswith(generations.MANIFEST_FILE) for path in resolved),
+        f"durability: the generation manifest was never synced; {len(resolved)} other "
+        "descriptor(s) were",
+    )
+    report.require(
+        any(f"/.{generations.CURRENT_FILE}.tmp-" in path for path in resolved),
+        "durability: the CURRENT pointer was renamed into place without being written down first",
+    )
+    report.require(
+        any("/catalog/" in path for path in resolved),
+        "anti-vacuity: the catalog inside the generation synced nothing, so the "
+        "recorder is not seeing the rail that was already correct",
+    )
+    # Durability has two halves and the file half is the visible one: a file whose
+    # contents are on the disk is still reachable only through a directory entry that
+    # may not be. `catalog._sync_directory` owns that half on every rail; it is a
+    # declared Windows no-op, which is why the assertion lives down here with the
+    # resolvable ones and not in the portable floor above.
+    report.require(
+        any(path.endswith("/chunks") for path in resolved),
+        "durability: the staged chunks directory was never synced, so the entries "
+        "naming the chunk copies can be lost on a host where the copies themselves "
+        "were written down",
+    )
+
+
+def check_incomplete_set_is_repairable(report: Report, catalog_module, chunk_dir: Path) -> None:
+    """A set left incomplete by an interrupted publish is repaired by a rebuild.
+
+    `_set_is_complete` exists to notice one, and its docstring says such a set "is
+    republished instead of pointed at". It was not: the rename that would have
+    republished it cannot land on a non-empty directory, so the branch re-raised
+    `ENOTEMPTY` and every future rebuild died with a raw `OSError` -- the recovery
+    path wedged by the very condition it was written for, reported as a traceback
+    rather than a verdict (L1).
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        out = Path(directory) / "catalog"
+        catalog_module.write(catalog_module.build(mirror), out)
+        published = catalog_module.current_set(out)
+        artifacts = sorted(path.name for path in published.iterdir())
+        report.require(
+            len(artifacts) >= 5,
+            f"anti-vacuity: the published set holds {len(artifacts)} artifact(s)",
+        )
+
+        truncated = published / catalog_module.NUMERIC_FILE
+        before = truncated.read_bytes()
+        report.require(
+            len(before) > 0,
+            f"anti-vacuity: {truncated.name} is already empty, so truncating it changes nothing",
+        )
+        truncated.write_bytes(b"")
+
+        try:
+            catalog_module.write(catalog_module.build(mirror), out)
+        except Exception as exc:  # noqa: BLE001 - what escapes here is the finding
+            report.require(
+                False,
+                f"S13-repair: rebuilding over an incomplete set raised "
+                f"{type(exc).__name__}: {str(exc)[:140]}",
+            )
+            return
+        repaired = catalog_module.current_set(out)
+        report.require(
+            (repaired / catalog_module.NUMERIC_FILE).read_bytes() == before,
+            "S13-repair: the rebuild left the truncated artifact in place, so the set the "
+            "pointer names is still incomplete",
+        )
+        report.require(
+            sorted(path.name for path in repaired.iterdir()) == artifacts,
+            "S13-repair: the repaired set does not hold the artifacts the first one did",
+        )
+        report.require(
+            not [
+                path
+                for path in (out / catalog_module.SETS_DIR).iterdir()
+                if path.name.startswith(".stale-")
+            ],
+            "S13-repair: the repair left a .stale- directory behind",
+        )
 
 
 def check_atomic_publish(report: Report, catalog_module, chunk_dir: Path) -> None:
@@ -3321,8 +4358,10 @@ def _one_per_operator(plan, catalog) -> list:
     than skipped here.
     """
     column = catalog.indexed_columns()[0]
-    value = max(catalog.distinct(column), key=lambda name: catalog.distinct(column)[name])
-    other = min(catalog.distinct(column))
+    counts = catalog.distinct(column)
+    values = index_values(catalog, column)
+    value = max(values, key=lambda name: counts[name])
+    other = min(values)
     path = load_tool("schema").PATH_COLUMN
     measurement = catalog.numeric_columns()[0]
     by_operator = {
@@ -3604,19 +4643,52 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("constraints", check_constraints, report, catalog_module, args.chunks)
     report.run("S7-grammar", check_grammar, report, plan)
     report.run("quoting", check_quoting, report, plan)
+    report.run(
+        "reserved character", check_reserved_character, report, plan, catalog_module, catalog
+    )
     report.run("estimates", check_estimates, report, plan, catalog)
     report.run("coverage", check_operator_coverage, report, plan, catalog)
+    report.run("S4-prefix", check_prefix_semantics, report, plan)
+    report.run("S8-intervals", check_interval_folding, report, plan, catalog, args.chunks)
+    report.run("pagination", check_pagination, report, search, args.embedding_set, args.chunks)
+    report.run(
+        "require-native", check_require_native, report, search, args.embedding_set, args.chunks
+    )
+    report.run(
+        "set-catalog",
+        check_set_catalog_binding,
+        report,
+        search,
+        args.embedding_set,
+        args.catalog,
+        args.chunks,
+    )
     report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
     report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)
-    report.run("ordering", check_ordering, report, search, plan, catalog)
+    report.run(
+        "ordering",
+        check_ordering,
+        report,
+        search,
+        plan,
+        catalog,
+        args.embedding_set,
+        args.catalog,
+        args.chunks,
+    )
     report.run("planner", check_planner, report, plan, catalog)
     report.run("order strategy", check_order_strategy, report, plan, catalog)
     report.run("explain", check_explain_verdict, report, plan, catalog)
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)
     report.run("S5-incremental", check_incremental, report, args.chunks)
     report.run("S6", check_generations, report, generations, args.chunks)
+    report.run("S6-staging", check_staging_is_not_a_generation, report, generations, args.chunks)
     report.run("S13", check_atomic_publish, report, catalog_module, args.chunks)
+    report.run(
+        "S13-repair", check_incomplete_set_is_repairable, report, catalog_module, args.chunks
+    )
+    report.run("durability", check_durability, report, catalog_module, generations, args.chunks)
     report.run("S18", check_plan_baseline, report, catalog)
 
     if args.require_native and report.skips:

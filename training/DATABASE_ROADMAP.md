@@ -99,7 +99,7 @@ behind it.
 | `EXPLAIN` | strong | strong | `--recall` names the concept that fired; `--explain` prints every candidate plan, its twelve-axis cost, and why one won |
 | `BEGIN` / `COMMIT` | strong | strong | single-writer atomic publish, now for the catalog and every generation too |
 | `WHERE <predicate>` | absent | **built** | ten operators, ANDed: equality, set, prefix, the four comparisons, and the two presence tests — resolved through an inverted index or a sorted one and applied inside the kernel scan |
-| `BETWEEN` / range scan | absent | **built** | two comparisons on one column intersect to one interval; answered by two binary searches over `order.bin`, priced beforehand from per-part zone maps without reading it |
+| `BETWEEN` / range scan | absent | **built** | two comparisons on one column intersect to one interval, in the price as well as in the rows; answered *and counted exactly* by two binary searches over `order.bin` |
 | `IS NULL` / `IS NOT NULL` | absent | **built** | `col!=?` and `col=?` over any indexed or measurement column; a row with no value satisfies no comparison, and `!=` deliberately admits it |
 | `HAVING` | absent | **built** | `--having rows>=10`, `avg<500` and the rest, compared as the exact rational SUM/COUNT rather than a rounded decimal |
 | `SELECT <columns>` | absent | **built** | `--select` projects named columns; nothing else is materialized |
@@ -331,11 +331,16 @@ because both paths return identical rows — so a gate comparing their output
 passes whichever one ran, and the decision would otherwise be the one thing
 about this slice nothing could observe.
 
-The zone map keeps a job the index cannot do: it lives in the manifest, so a
-comparison can be *priced* without reading any artifact at all, which is the
-discipline the whole catalog is built on. Estimation reads four integers per
-part and returns a bound marked as a bound; evaluation reads the index and
-returns the rows.
+The zone map was meant to keep a job the index cannot do: it lives in the
+manifest, so a comparison could be *priced* without reading any artifact at all,
+which is the discipline the whole catalog is built on. **S9 and S10 retired that
+half of the plan, and the retirement is recorded rather than the intention** —
+the measured table under S9 shows the zone-map bound calling a 25%-selective
+predicate 98% selective at every block size, so pricing on it sent predicates the
+seek wins by 20× down the scan. Estimation now counts the interval exactly from
+the sorted index, for the price of the two binary searches the predicate was about
+to make anyway; the zone map keeps the job it is sound for, which is pruning parts
+during *resolution*.
 
 *Payoff:* 1.7×–97× on a comparison, 21× on `ORDER BY … LIMIT k`, exact range
 counts without listing a row.

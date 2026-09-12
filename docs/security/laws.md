@@ -840,6 +840,55 @@ serializer whose output depends on the platform rather than on its input —
 a locale-dependent number format, a path separator, a hash of a `struct`
 with padding, a directory listing in filesystem order.
 
+### L25 — A fault injection must reach the code under test
+A RED sweep is the only evidence that a gate can fail, so the sweep's own
+integrity is load-bearing: a sweep that cannot distinguish *the check did not
+fire* from *the defect never arrived* produces a sentence that reads as evidence
+in both directions and is one in neither. The injection is a claim about the
+process the gate ran in, and until that is established the run has measured
+nothing.
+
+CPython makes this concrete. A cached `.pyc` is revalidated against the source's
+`(mtime, size)`, so restoring a fault whose replacement is the **same length** —
+`ORDERED_INDEX_SHARE = 0.70` becoming `= 0.55`, a digit for a digit — can leave a
+cache the interpreter still believes, and the next subprocess imports bytecode
+compiled from the other version of the file. Observed 2026-09-11: a sweep over
+`verify_langref.py` reported "a threshold moves in the code and not in the
+document — DID NOT FIRE" against a checker that was, in fact, defective in a
+different way; the fault had been compiled away and the run proved nothing about
+either. The same mechanism runs the other way and is worse: faulted bytecode
+surviving a restore makes the *next* fault's red run look like a catch.
+
+Four properties make a sweep's verdict worth reading, and all four are mechanical
+rather than remembered:
+1. **Bytecode is discarded** before the gate runs and again after each restore.
+2. **The injection is confirmed to have landed** — the file is re-read and its
+   digest compared — so an anchor that matched nothing is a harness error, not a
+   fault that went uncaught. An anchor matching twice is equally refused: two
+   defects attributed to one check.
+3. **The restore is confirmed byte-exact** before the next fault, because a sweep
+   that corrupts the tree it audits is worse than no sweep.
+4. **The clean tree is GREEN first.** "It went red with the fault in" means
+   nothing if it was already red; the control run is the experiment, not a
+   formality, and its absence invalidates every row.
+A sweep is also subject to L2 in its own right: an empty fault table, or one whose
+entries all fail to anchor, is a failure and not a clean run.
+The general shape is the *instrumented-subject* error — L9 says the instrument
+must be unswallowable by its subject; this says the instrument must be able to
+show that it touched its subject at all. Any harness that mutates a system it
+also measures owes the same four proofs.
+Witnesses: `tools/testing/red_sweep.py` is the single implementation (L14), and
+`bcir/tests/test_red_sweep.py` drives each refusal — an empty table, an anchor
+matching zero or two sites, a replacement identical to its anchor, a control run
+that is already red, and a restore that does not reproduce the original bytes.
+The committed fault tables under `tools/testing/faults/` are the standing
+evidence that the gates they name can fail.
+**Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
+same-size source edit, and any build system whose staleness test is coarser than
+content — timestamps, sizes, or a hash of the command line rather than of the
+translation unit. The language-independent shape is any experiment that reports a
+negative result without first showing the treatment was applied.
+
 ## Campaign classification summary
 
 Every review-thread finding from the campaign (240 threads, rounds 1–42)
