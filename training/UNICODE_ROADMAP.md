@@ -141,8 +141,11 @@ and it sits at Phase 5 of the subject ladder, after `low-level/`
   `Module.encode` emits DER and `Module.decode` requires DER by default; the X.680
   source ships as package data and is compiled byte-identical against the
   hand-bound model (`bcir/frontends/asn1/lower.compile_module`, the
-  `BCIR-StreamPack.asn1` precedent). Arcs 1 (StreamPack), 2 (ArtifactBundle) and
-  33 (Manifests) are in use under `1.3.6.1.4.1.62596`.
+  `BCIR-StreamPack.asn1` precedent). The arcs in use
+  under `1.3.6.1.4.1.62596` are read from the `Module(...)` declarations under
+  `bcir/asn1/`, never listed by hand (L15): UC-8 adds a module table to the ABI
+  document and a witness that reconciles it against those declarations both
+  ways, and allocates its own arc as the smallest one no module holds.
 - **Provenance pattern for third-party inputs.** `docs/machine-learning/THIRD_PARTY_MODELS.md`
   pins an immutable revision, a SHA-256 and a declared license per source, and
   states that nothing downstream is "redistributed"; the UCD files *are*
@@ -268,7 +271,7 @@ Each row is a rule the tree already enforces and the slice that must satisfy it.
 | Every exit is a verdict | L1 | the builder and every engine report PASS / FAIL / UNAVAILABLE; a traceback is a defect |
 | Anti-vacuity is a state | L2 | every gate carries a floor on rows examined, tests executed, and code points compared |
 | Prove the gate can fail | L2, L11, L25 | every slice lands with fault entries in `tools/testing/faults/training-unicode.json` and a RED sweep in its PR body |
-| One predicate per repeated defect | L14 | one UTF-8 validator in C; one normalization implementation consumed by three call sites; one grammar per file family |
+| One predicate per repeated defect | L14 | one UTF-8 validator in C; one normalization implementation (under `bcir/`, §8) consumed by three files; one grammar per file family |
 | An artifact's bytes do not depend on the host | L24 | every writer pins `newline="\n"`; binaries are little-endian by contract; no timestamps in manifests |
 | Counts live in generated output | `TRAINING_LANGREF.md` §0, `training/ROADMAP.md` governance | this document quotes no character counts; the builder prints them, the gate asserts them against the pins |
 | Legality before cost | `training/tools/plan.py:16` | a Unicode query is refused by a structural rule or priced, never priced into legality |
@@ -294,9 +297,9 @@ canonical forms produced by one deterministic builder from the pinned files:
    a sorted index and zone maps, the predicate grammar, the planner, and the C
    kernel under a predicate mask — all of it already gated.
 2. **Records as DER.** The same records, encoded by a `BCIR-Unicode` ASN.1
-   module (arc `{ 1 3 6 1 4 1 62596 3 }` beneath `BCIR_ARC` in
-   `bcir/asn1/streampack.py`, the next after the two the ABI document states in
-   prose, recorded there in a module list UC-8 adds) as a DER `SEQUENCE OF
+   module (an arc beneath `BCIR_ARC`, allocated by UC-8 as the smallest one
+   no `Module(...)` under `bcir/asn1/` holds — `3` today — and recorded in the
+   module table UC-8 adds to the ABI document, §2.3) as a DER `SEQUENCE OF
    UnicodeCharacterRecord` in code-point order, `records.der`, with its SHA-256
    in the generation manifest. This is the *wire* form: the one consumer that
    serializes character records across the `training/` → `bcir/` boundary
@@ -427,12 +430,16 @@ built over one generation cannot serve another; the check is structural.
 | `training/UNICODE_LANGREF.md` | the normative document (from UC-1 on) | yes |
 | `build/training/unicode/…` | chunks, catalog set, generations, `records.der`, sets | no — generated |
 | `bcir/asn1/BCIR-Unicode.asn1`, `bcir/asn1/unicode_record.py` | the DER module and its hand-bound twin (UC-8) | yes |
+| `bcir/hosted/training/unicode_normalize.py` | the one UAX #15 implementation, dependency-free, reading the generated tables; `training/` imports it, never the reverse (UC-4, §8) | yes |
 | `bcir/hosted/training/unicode_tables.py` (generated, Latin-stage sized) and the Latin record fixture | the package-data tables `bcir/` may use without importing `training/` (UC-7) | yes — generated, digest-recorded |
 | `tools/testing/faults/training-unicode.json` | the RED-sweep fault table | yes |
 
 ## 6. Algorithms — dependency-free, oracle first, gated by the standard's own tests
 
-Every engine below is written once in Python under `training/tools/unicode/`,
+Every engine below is written once in Python — under `training/tools/unicode/` for the engines only
+`training/` consumes, and, for the normalization algorithm that two
+`bcir/hosted` sites need, under `bcir/hosted/training/` with `training/`
+importing it (§8),
 against the pinned tables, with the standard's conformance file as its gate. None
 imports `unicodedata` except the differential gate of §3.2. A C twin is written
 only when a consumer on the C rail exists (`docs/BCIR_MASTER_ROADMAP.md` §8:
@@ -604,11 +611,19 @@ of `docs/BCIR_NATIVE_OBJECT_GATE.md` before any byte of it is read.
 
 ## 8. Replacing the host tables, and putting the version into every digest
 
-The three call sites of §2.1 are replaced in one slice (UC-6), by one
-implementation: `training/tools/unicode/normalize.py` for the two `training/`
-sites, and a *generated* `bcir/hosted/training/unicode_tables.py` (package data,
-built from the same generation, digest-recorded) for the two `bcir/hosted` sites —
-because `bcir/` may not import `training/`. From that slice on:
+The three call sites of §2.1 are replaced in one slice (UC-7), by one
+implementation of the algorithm and one set of generated tables, in the only
+direction the import rule allows. NFC is an algorithm, not a table (UAX #15:
+canonical decomposition, canonical ordering, composition with the exclusions,
+the Hangul arithmetic), so the one implementation lives under `bcir/` —
+`bcir/hosted/training/unicode_normalize.py`, dependency-free, reading the
+*generated* package-data tables `bcir/hosted/training/unicode_tables.py`
+(built from the generation, digest-recorded). The two `bcir/hosted` files
+(`data.py`, `bpe.py`) call it directly, and `training/tools/unicode/normalize.py`
+— the builder of those tables and the owner of the conformance gate — imports
+the same function from `bcir`, because `training/` may import `bcir/` and
+never the reverse (`training/tools/bcir_native.py:13`). One algorithm, one
+table set, three files (L14). From that slice on:
 
 - `bcir.byte_bpe.v1` is superseded by `bcir.byte_bpe.v2`, whose `normalization`
   field names the form *and* the Unicode generation digest (`"NFC+LF@<ucd_version>:<generation digest>"`, the one spelling SLM_ROADMAP §3.1
@@ -669,11 +684,13 @@ the redistributed license, and `verify_unicode.py` with its first check group.
 
 *Payoff:* the repository owns a Unicode 17.0 source of truth whose bytes are
 the claim.
-*Gate:* check group `pins` — every vendored file's SHA-256 and byte count equal
-`PINS.json`; every pinned file exists; every file's header declares the pinned
-version; the tree is LF; the scanner passes over it. *RED:* flip one byte in a
+*Gate:* check group `pins` — the pin set is non-empty and names every file §3.1
+lists for the admitted stage (the floor: a run over zero pins is refused as
+vacuous, L2); every vendored file's SHA-256 and byte count equal `PINS.json`;
+every pinned file exists; every file's header declares the pinned version;
+the tree is LF; the scanner passes over it. *RED:* flip one byte in a
 vendored file — `pins` names the file; add a file to the tree without a pin —
-`pins` names it as unpinned. *Depends on:* nothing.
+`pins` names it as unpinned; empty `PINS.json` — `pins` refuses the run. *Depends on:* nothing.
 
 ### UC-2 — line grammars and the character record
 
@@ -706,7 +723,9 @@ statistics, exactly.
 *Gate:* check group `schema` — declaration == JSON schema; an undeclared field
 is refused; a NOT NULL column absent is refused; check group `build` — two
 builds give one `publication_id` and one generation id; every indexed column's
-postings sum to `rows_total`; the chunk table's existing battery
+postings sum to `rows_total`, and `rows_total` is at least the row count the
+admitted block list implies (zero rows is a refusal, never a pass); the chunk
+table's existing battery
 (`verify_database.py`) is green and a chunk catalog built before and after the
 generalization has the same publication id. *RED:* build with an indexed
 column outside the old hardcoded projection — its postings land under the
@@ -715,8 +734,11 @@ null key; revert `Catalog.load(table=)` — the Unicode catalog reads
 
 ### UC-4 — UAX #15 normalization
 
-`normalize.py` (§6.1), the quick-check fast path verified against the full
-algorithm, the `NormalizationTest.txt` gate, the `unicodedata`
+`bcir/hosted/training/unicode_normalize.py` — the one UAX #15 implementation,
+under `bcir/` because two `bcir/hosted` sites need it and `bcir/` may not
+import `training/` (§8) — with `training/tools/unicode/normalize.py` as the
+table builder and gate owner importing it; the quick-check fast path verified
+against the full algorithm, the `NormalizationTest.txt` gate, the `unicodedata`
 differential for normalization, and case folding — full folding from
 `CaseFolding.txt` and `NFKC_Casefold` from `DerivedNormalizationProps.txt`,
 which UC-6's UTS #46 and UC-7's lexical provider consume.
@@ -759,7 +781,8 @@ the skeleton; accept a leading combining mark. *Depends on:* UC-3, UC-4.
 ### UC-7 — replacing the host tables
 
 `bcir/hosted/training/unicode_tables.py` generated from the generation
-(Latin-stage sized, digest-recorded) and consumed by `data.py` and `bpe.py`;
+(Latin-stage sized, digest-recorded) and consumed through
+`unicode_normalize.py` (UC-4) by `data.py` and `bpe.py`;
 `embed_chunks.LexicalHashProvider` at revision 2 reading `normalize.py`;
 `bcir.byte_bpe.v2`; the import witness that no module under
 `bcir/hosted/training/` or `training/tools/` imports `unicodedata` outside the

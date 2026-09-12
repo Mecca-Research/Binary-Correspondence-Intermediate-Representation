@@ -417,8 +417,9 @@ quantizer or a wrapped `q8_matvec`.
 Because the retrieval-augmented loss (§5, phase 3) must be replayable, every lookup
 the training stack consumes is recorded as a `LookupEnvelope`: a DER-encoded
 record (the `BCIR-Unicode` module UC-8 creates under `BCIR_ARC` — arc
-`{ 1 3 6 1 4 1 62596 3 }`, the next after the two the ABI document states in
-prose, recorded in the module list SLM-4 adds to that document — extended
+`{ 1 3 6 1 4 1 62596 3 }` if no `Module(...)` under `bcir/asn1/` holds it when
+UC-8 lands (the allocation is the witness's, not this sentence's), recorded in
+the module table UC-8 adds to the ABI document — extended
 append-only by SLM-4, never a second module invented here)
 carrying the generation id, the catalog and set digests, the request, every
 candidate with its `legal`/`refusal` verdict and its 12-axis modeled cost, and
@@ -481,7 +482,8 @@ all 256 byte ids and every merge id. They are the fourth v2 field,
 `control_tokens`, with ids allocated after the merges, atomic and never split. The two other layouts the
 tree carries (`ByteVocabularySpec`: bytes `0..255`, `bos 256 …`; the hosted
 gate: `unk 256, <s> 257 …`) are a finding this roadmap records and SLM-11
-resolves with one declared `SpecialLayout` imported by every rail (L14), not
+resolves with one declared `SpecialLayout` registry of the three frozen layouts, imported by
+every rail (L14), not
 by this tokenizer silently adopting a fourth.
 
 ### 3.2 The character record and its serialization
@@ -711,7 +713,12 @@ entry in `tools/testing/faults/training-slm.json` per new check, exact gate
 output in the PR body. Ids are `SLM-n`; Unicode prerequisites are `UC-n`
 from [`UNICODE_ROADMAP.md`](UNICODE_ROADMAP.md) §10. Where a slice extends an
 existing gate, it names it; where it adds one, the gate joins the CI job that
-owns that rail (§10).
+owns that rail (§10). Every check group named below (`legality`, `pricing`,
+`fusion`, `envelope`, `reasoning`, …) is registered in `verify_unicode.py`
+(UNICODE_ROADMAP §10 — the SLM's groups are sections of the same gate), listed
+in the gates section of `UNICODE_LANGREF.md`, and reconciled both ways by
+`verify_unicode_langref.py`; a group the LangRef does not list is a gate
+failure (L15).
 
 ### SLM-1 — the record interface and `bcir.byte_bpe.v2`
 
@@ -737,7 +744,9 @@ fires. *Depends on:* UC-7, UC-8.
 
 `LookupRequest` and `candidates_for / choose / run / explain` in
 `training/tools/unicode/lookup.py`; `plan.LEGALITY_RULES` extended append-only
-with `binding, space, generation, bounds, fanout, engine`; `plan.price`
+with `binding, space, generation, bounds, fanout, engine`, and the rules table
+of `TRAINING_LANGREF.md` §7.1 extended with them in the same PR
+(`verify_langref.check_legality` reconciles the two); `plan.price`
 extended for the second call and per-shard masks; `Θ` coupling through
 `theta_factor(Θ) -> tuple[int, ...]`, a new frozen Q8 factor table (identity
 `256`) that the existing `CostVector.couple` consumes — no such function exists
@@ -803,7 +812,8 @@ imports `torch`.
 path stays free of both models and lookups.
 *Gate:* projection deterministic across two runs and two hosts (byte-equal
 `q_s`); a `T_q` whose row count is not `d_s` is refused by `space`; the grep
-witness over `runtime/c` passes; `import torch` under `training/tools/unicode/`
+witness over `runtime/c` passes, its file set reconciled against
+`git ls-files runtime/c` and an empty set refused (L15); `import torch` under `training/tools/unicode/`
 is refused by the import witness. *RED:* plant a `bcir_lookup_stub` symbol in a
 `runtime/c` fixture — the grep witness fires; add `import torch` to `lookup.py`
 in a fixture copy — the import witness fires. *Depends on:* SLM-2.
@@ -900,12 +910,16 @@ extends append-only: the chained `sft` parent rule (an `sft` whose parent is an
 input-digest staleness check (a stage records its inputs' generation digests
 and is stale when any of them changed — no such notion exists in
 `pipeline.py`); the reconciliation of
-the three special-id layouts into one declared `SpecialLayout` imported by
+the three special-id layouts into one declared `SpecialLayout` registry —
+three named, frozen layouts (`byte_bpe`, `byte_latent`, `hosted_hf`), each
+what its spec already declares, no frozen spec changed in place — imported by
 `bpe.py`, `kbcir/byte_latent.py` and the hosted gate (L14); the laboratory-scale
 end-to-end run in the hosted-model CI job.
 
 *Payoff:* the proposal's four phases are four content-addressed stages that a
-stale input re-runs; the tree stops carrying three spellings of `<pad>`.
+stale input re-runs; the tree stops spelling special ids as literals in three places (the three
+layouts stay what their frozen specs declare; what goes is the literal, not
+the layout).
 *Gate:* a stage whose input generation changed is reported stale and re-runs;
 one layout module, and a witness that no rail spells a special id literally.
 *RED:* hard-code `pad = 0` in one rail — the literal witness fires; drop the
@@ -935,7 +949,14 @@ criteria (no measured advantage; a mechanism that only works at a scale the
 repository cannot run). Only after GO does any mechanism approach
 `DecoderSpec` — and then through the labs' promotion order, not around it.
 
-*Depends on:* SLM-12.
+*Gate:* the document carries a claim marker whose predicate
+`tools/docs/check_claims.py` evaluates (the way `training/LEARNED_EMBEDDING_GATE.md`
+is pinned by `learned-provider-unregistrable`): while the verdict is STOP, no
+module on the stable path (`bcir/kbcir/`, `runtime/c/`) imports or names the
+laboratory model or the lookup, and every GO measurement is cited by digest.
+*RED:* add a laboratory import to a `bcir/kbcir` fixture copy — the claim
+predicate fires; drop the marker — `check_claims` reports the document
+unmarked. *Depends on:* SLM-12.
 
 ## 7. Evaluation
 
@@ -969,7 +990,7 @@ slice. The distinction keeps a learned score from ever becoming a verdict.
 
 ## 8. Placement on the L0–L3 ladder, and what is exact
 
-The two-truth quarantine (`docs/BCIR_LANGREF.md` §13; `bcir/tests/test_hot_cold.py`)
+The two-truth quarantine (`docs/BCIR_LANGREF.md` §14; `bcir/tests/test_hot_cold.py`)
 governs BCIR's own plan execution: no learned inference on L0, decisions
 compiled out. The SLM is not on that path — it is a hosted model, opt-in, in
 the import-quarantined laboratory — but its components still have to be placed,
