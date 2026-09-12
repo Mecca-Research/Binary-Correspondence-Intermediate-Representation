@@ -119,8 +119,8 @@
     {
       "expects": "S4",
       "label": "prefix means 'under this directory' again, not 'starts with'",
-      "new": "        if False:\n            return None",
-      "old": "        if not prefix.endswith(\"/\"):\n            return None",
+      "new": "        cleaned = prefix.rstrip(\"/\")",
+      "old": "        if not prefix.endswith(\"/\"):\n            return None\n        cleaned = prefix[:-1]",
       "path": "training/tools/catalog.py"
     },
     {

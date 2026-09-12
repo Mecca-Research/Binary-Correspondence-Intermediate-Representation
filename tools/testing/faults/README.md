@@ -73,6 +73,42 @@ host running the sweep (`docs/security/laws.md` L12). A fault that only
 manifests on one platform belongs with a host-independent witness, or it is
 evidence about that platform and nothing else.
 
+## An anchor that still matches is not a fault that still bites
+
+The second full sweep returned a `NOT CAUGHT` of a different kind. The fault
+
+    old: if not prefix.endswith("/"):
+             return None
+    new: if False:
+             return None
+
+was written to reintroduce the `^=` defect of PR #784 by removing the
+trailing-separator guard. It did, once. Then the line *below* the guard changed
+from `prefix.rstrip("/")` to `prefix[:-1]` — a fix for a different defect — and
+the injection stopped expressing anything: without the guard, `training/data`
+becomes `training/dat`, which names no counted directory, so the shortcut
+declines and the walk gives the *right* answer. The fault had decayed into a
+no-op while its anchor still matched exactly one site.
+
+That is the gap between the two things that watch this evidence. The cheap
+anchor test in the quick tier asks *does this fault still apply cleanly*, and the
+answer was yes. Only the sweep asks *does it still break what it names*, and only
+the sweep could have noticed. So:
+
+- **re-run the full sweep whenever you change the code a fault anchors into**,
+  not only when you change a gate — the anchor test passing is not the same
+  evidence;
+- **a `NOT CAUGHT` is three questions, not one**: is the named check the one that
+  owns the law (above), can the defect be observed on this host (above), and does
+  the injection still *produce* the defect it is named for. The third is the one
+  that a fix in neighbouring code silently breaks.
+
+The entry now replaces the whole shortcut rather than half of it, and
+reintroducing it reports what it always should have:
+
+    S4: 'training/data' means 'starts with' and resolved 2 row(s) where 4 path(s)
+      start with it -- missing ['training/database.md', 'training/datastore.md']
+
 ## Adding a fault
 
 ```json
