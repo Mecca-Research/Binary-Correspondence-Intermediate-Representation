@@ -564,6 +564,16 @@ def _same_rows(catalog, embedding_set) -> bool:
     can `embed_chunks.corpus_digest`, which digests `{chunk_id, source_sha256}` sorted
     by `chunk_id` and is therefore blind to exactly that re-sort. The ids in order are
     the contract, so the ids in order are what is compared.
+
+    **Asked at the two places a row number crosses between the artifacts, and nowhere
+    else.** `--where` resolves catalog row numbers and then ranks embedding-set rows by
+    them; `--materialize seek` takes a ranked embedding-set row number and fetches that
+    row of the catalog. A run doing neither -- `--materialize full` reads chunk records
+    by `chunk_id` -- never joins the two by position, and refusing it refuses a correct
+    query. The first spelling of this check sat above both, so `--materialize full`
+    over a catalog present for pricing alone was refused, and told to pass the flag it
+    had just been given. A bound must be enforced where the resource commits
+    (`docs/security/laws.md` L3), which here is where the row number is *used*.
     """
     ids = catalog.ids
     rows = embedding_set.rows
@@ -868,11 +878,15 @@ def main(argv: list[str] | None = None) -> int:
         except plan_module.PlanError as exc:
             print(f"search_chunks: {exc}", file=sys.stderr)
             return EXIT_USAGE
-        if catalog.rows_total != len(embedding_set.rows):
+        if not _same_rows(catalog, embedding_set):
+            # Was a comparison of row *counts*, which a re-sort of equal size passes.
             print(
-                f"search_chunks: the catalog holds {catalog.rows_total} rows and the "
-                f"embedding set holds {len(embedding_set.rows)}; a predicate resolved "
-                "against one cannot select rows of the other",
+                f"search_chunks: --where resolves row numbers against the catalog at "
+                f"{args.catalog}, and it and the embedding set at {args.embedding_set} "
+                f"do not describe the same rows in the same order ({catalog.rows_total} "
+                f"and {len(embedding_set.rows)} row(s)), so a selected row number means "
+                "a different chunk in each; rebuild one from the other's corpus, or "
+                "drop --where to rank every row",
                 file=sys.stderr,
             )
             return EXIT_FAILED
@@ -889,16 +903,6 @@ def main(argv: list[str] | None = None) -> int:
     materialize = args.materialize
     if materialize == "auto":
         materialize = "seek" if catalog is not None else "full"
-
-    if catalog is not None and not _same_rows(catalog, embedding_set):
-        print(
-            f"search_chunks: the catalog at {args.catalog} and the embedding set at "
-            f"{args.embedding_set} do not describe the same rows, so a ranked row "
-            "number means a different chunk in each; rebuild one from the other's "
-            "corpus, or pass --materialize full to rank without the catalog",
-            file=sys.stderr,
-        )
-        return EXIT_FAILED
 
     backend = args.backend
     plans = chosen = None
@@ -945,6 +949,26 @@ def main(argv: list[str] | None = None) -> int:
                     requested=args.backend != "auto",
                 )
             )
+
+    if materialize == "seek" and catalog is not None and not _same_rows(catalog, embedding_set):
+        # `materialize` is only final here: under `--materialize auto` the planner
+        # picks it a few lines up, so asking earlier would ask about a provisional
+        # value and refuse runs that were about to choose `full`.
+        print(
+            f"search_chunks: --materialize seek reads each ranked row number out of "
+            f"the catalog at {args.catalog}, and it and the embedding set at "
+            f"{args.embedding_set} do not describe the same rows in the same order, so "
+            "the record printed would be a different chunk from the one ranked; "
+            "rebuild one from the other's corpus, or pass --materialize full to read "
+            "the chunk records by id instead"
+            + (
+                f" (--materialize auto chose seek under --objective {args.objective})"
+                if args.materialize == "auto"
+                else ""
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
 
     if args.require_native and not _runs_the_kernel(backend):
         # Read here rather than at parse time, because `--backend auto` does not name

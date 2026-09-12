@@ -112,8 +112,8 @@
     {
       "expects": "reserved character",
       "label": "the catalog's null key is a value anybody can ask for",
-      "new": "        if False and RESERVED_CHARACTER in value:",
-      "old": "        if RESERVED_CHARACTER in value:",
+      "new": "    if False and RESERVED_CHARACTER in value:",
+      "old": "    if RESERVED_CHARACTER in value:",
       "path": "training/tools/plan.py"
     },
     {
@@ -153,9 +153,16 @@
     },
     {
       "expects": "set-catalog",
-      "label": "a ranked row number indexes two artifacts nothing bound together",
-      "new": "    if False and catalog is not None and not _same_rows(catalog, embedding_set):",
-      "old": "    if catalog is not None and not _same_rows(catalog, embedding_set):",
+      "label": "a ranked row number seeks a catalog nothing bound it to",
+      "new": "    if False and materialize == \"seek\" and catalog is not None and not _same_rows(catalog, embedding_set):",
+      "old": "    if materialize == \"seek\" and catalog is not None and not _same_rows(catalog, embedding_set):",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "set-catalog",
+      "label": "--where selects rows of a catalog nothing bound to the set",
+      "new": "        if False and not _same_rows(catalog, embedding_set):",
+      "old": "        if not _same_rows(catalog, embedding_set):",
       "path": "training/tools/search_chunks.py"
     },
     {
@@ -167,9 +174,23 @@
     },
     {
       "expects": "durability",
-      "label": "a generation is renamed into place before its bytes are written down",
+      "label": "a generation's chunk copies stop at the page cache",
+      "new": "    shutil.copy2(source, destination)",
+      "old": "    payload = source.read_bytes()\n    with destination.open(\"wb\") as handle:\n        handle.write(payload)\n        handle.flush()\n        os.fsync(handle.fileno())\n    shutil.copystat(source, destination)",
+      "path": "training/tools/generations.py"
+    },
+    {
+      "expects": "durability",
+      "label": "a generation's manifest stops at the page cache",
+      "new": "    path.write_text(text, encoding=\"utf-8\", newline=\"\\n\")",
+      "old": "    with path.open(\"w\", encoding=\"utf-8\", newline=\"\\n\") as handle:\n        handle.write(text)\n        handle.flush()\n        os.fsync(handle.fileno())",
+      "path": "training/tools/generations.py"
+    },
+    {
+      "expects": "durability",
+      "label": "a generation is renamed into place before its entries are written down",
       "new": "",
-      "old": "        _sync_tree(staging)\n",
+      "old": "        _sync_directories(staging)\n",
       "path": "training/tools/generations.py"
     },
     {

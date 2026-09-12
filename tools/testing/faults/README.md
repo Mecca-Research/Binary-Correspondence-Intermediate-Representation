@@ -132,6 +132,28 @@ fires `index`, `quantized` *and* `row_squares` -- which is what a shared
 predicate is for. Keeping a second, weaker copy beside it would be the mirror
 list this tree refuses everywhere else (L14, L15).
 
+## ...and when one predicate becomes three, one fault becomes three
+
+The converse happened in the same PR, and it is the same rule read the other way.
+`generations._sync_tree` was a single helper that walked the staged tree and
+fsynced everything in it, so a single fault -- delete the call -- removed every
+durability claim at once and the `durability` check fired.
+
+Then the helper had to go: reopening each staged file `"r+b"` to sync it is what
+Windows needs and what fails on a read-only source chunk, so writing and syncing
+now happen through one descriptor, in `_copy_durably` for the chunk copies and
+`_write_durably` for the manifest, leaving `_sync_directories` only the entries
+that name them. Three mechanisms, three separate assertions in the gate --
+chunk syncs, a manifest sync, a directory sync.
+
+One fault on any one of them would then have gone red and *looked* like evidence
+for all three, while the other two were untested: the sweep would report the law
+proved, and two thirds of it would never have been injected. So the entry became
+three, one per mechanism, each replacing its code with the exact defect it
+replaced (`shutil.copy2`, `write_text`, and no directory sync at all). A witness
+must hit the law it exists to test (L11), and after a refactor the question is
+not "does the old fault still apply" but "how many laws are there now".
+
 ## Adding a fault
 
 ```json

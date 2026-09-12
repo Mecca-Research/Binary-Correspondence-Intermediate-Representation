@@ -280,7 +280,7 @@ def publish(
     try:
         (staging / "chunks").mkdir(parents=True)
         for path in catalog_module.chunk_files(chunk_dir):
-            shutil.copy2(path, staging / "chunks" / path.name)
+            _copy_durably(path, staging / "chunks" / path.name)
         built = catalog_module.build(staging / "chunks")
         catalog_module.write(built, staging / "catalog")
         manifest_rows = built[0]["rows_total"]
@@ -302,10 +302,8 @@ def publish(
         }
         if extra:
             manifest["extra"] = extra
-        (staging / MANIFEST_FILE).write_text(
-            json.dumps(manifest, sort_keys=True, separators=(",", ":")),
-            encoding="utf-8",
-            newline="\n",
+        _write_durably(
+            staging / MANIFEST_FILE, json.dumps(manifest, sort_keys=True, separators=(",", ":"))
         )
         # Durability, through `catalog`'s helpers rather than a second copy of them.
         # The catalog inside this generation was published with fsync at every step;
@@ -313,7 +311,7 @@ def publish(
         # leave a generation whose directory entry exists and whose contents are
         # whatever the page cache had got to -- the half of the ACID publish that
         # landed on one rail and not on the one wrapping it (L14).
-        _sync_tree(staging)
+        _sync_directories(staging)
         try:
             os.replace(staging, destination)
         except OSError:
@@ -336,26 +334,44 @@ def publish(
     return read(root, generation_id)
 
 
-def _sync_tree(directory: Path) -> None:
-    """fsync every file under `directory`, then the directories holding them.
+def _copy_durably(source: Path, destination: Path) -> None:
+    """Copy one file into staging and write it down, through the handle that wrote it.
 
-    `catalog._publish` does this per artifact and `catalog._sync_directory` does the
-    directory half; this is the same discipline over a staged generation, whose
-    chunk copies and manifest were written with `shutil.copy2` and `write_text` and
-    therefore reached the page cache and no further.
+    Syncing is done here rather than by walking the staged tree afterwards, and that
+    is the whole point. A post-hoc walk has to *reopen* each file, and `os.fsync` on
+    Windows is `_commit`, which needs a handle opened for writing -- so the walk had
+    to reopen `"r+b"`, which then fails with `PermissionError` for any source chunk
+    that happens to be read-only, because `shutil.copy2` faithfully copies that mode
+    across. A corpus that could be read and published before would stop publishing.
+
+    Writing and syncing through one descriptor needs no second open, so it depends
+    on neither the platform's fsync rules nor the source file's mode. It is also
+    exactly what `catalog._publish` does, which is why that rail never had either
+    problem (`docs/security/laws.md` L12, L14).
     """
-    for path in sorted(directory.rglob("*")):
-        if not path.is_file():
-            continue
-        # `r+b`, not `rb`: Windows implements `os.fsync` as `_commit`, which needs a
-        # handle opened for *writing* and answers `OSError: [Errno 9] Bad file
-        # descriptor` for a read-only one. POSIX accepts either, so a read-only open
-        # is a rail that works on the host it was written on and on no other
-        # (`docs/security/laws.md` L12). `catalog._publish` never hit this because it
-        # syncs the descriptor it just wrote through.
-        with path.open("r+b") as handle:
-            handle.flush()
-            os.fsync(handle.fileno())
+    payload = source.read_bytes()
+    with destination.open("wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    shutil.copystat(source, destination)
+
+
+def _write_durably(path: Path, text: str) -> None:
+    """Write one text file and fsync it through the handle that wrote it."""
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _sync_directories(directory: Path) -> None:
+    """fsync `directory` and every directory under it, deepest first.
+
+    The files are already durable -- each was synced through the descriptor that
+    wrote it -- so what is left is the entries naming them, which is the half
+    `catalog._sync_directory` owns and which is a declared no-op on Windows.
+    """
     for path in sorted(directory.rglob("*"), reverse=True):
         if path.is_dir():
             catalog_module._sync_directory(path)

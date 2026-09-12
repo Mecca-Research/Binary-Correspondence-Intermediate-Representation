@@ -702,10 +702,7 @@ def check_predicate(
             f"catalog holds {catalog.rows_total}; a row is missing from the index",
         )
         for value in list(counts)[:8]:
-            spelled = None if value == load_tool("catalog").NULL_KEY else value
-            selection = plan.select(catalog, [plan.Predicate(column, "eq", (str(spelled),))])
-            if spelled is None:
-                continue
+            selection = plan.select(catalog, [term_for_key(plan, column, value)])
             report.require(
                 selection.admitted == counts[value],
                 f"S4: {column}={value!r} resolved {selection.admitted} rows but the "
@@ -1813,7 +1810,7 @@ def check_presence(report: Report, plan, catalog, chunk_dir: Path) -> None:
     exercised = 0
     for column in catalog.indexed_columns():
         absent = set(catalog.rows_absent(column))
-        values = [key for key in catalog.distinct(column) if key != catalog_module.NULL_KEY]
+        values = index_values(catalog, column)
         if not absent or not values:
             continue
         exercised += 1
@@ -3060,6 +3057,15 @@ def check_reserved_character(report: Report, plan, catalog_module, catalog) -> N
 
     Both halves are checked, because a refusal that also refuses legitimate values
     would be a worse defect than the one it fixed.
+
+    **And both ways in are checked.** The refusal first lived in `split_values`,
+    which reads the text grammar -- so it held for `parse_predicate` and for nothing
+    else. Every caller holding a column and a value builds the term directly, this
+    file among them, and on that path `Predicate("language", "eq", (NULL_KEY,))` was
+    still exactly `language!=?` under a second spelling. A check that only drove the
+    parser reported the rule as enforced while half its callers were outside it
+    (`docs/security/laws.md` L12: one condition, one answer, on every path), so the
+    constructor is driven here directly and the two are required to agree.
     """
     reserved = plan.RESERVED_CHARACTER
     report.require(
@@ -3097,6 +3103,64 @@ def check_reserved_character(report: Report, plan, catalog_module, catalog) -> N
         f"anti-vacuity: only {refused} of 7 reserved-character spellings were even "
         "attempted, so this check did not exercise what it claims",
     )
+
+    # The other way in: a term built from a column and a value, which is how every
+    # caller that is not the parser builds one -- including this file, thirty times.
+    #
+    # Every row here must be a term that *only* this rule refuses. A comparison is
+    # not: `char_count >= "500\0"` is already refused by `require_integer`, so it
+    # would go on being refused with this rule removed and would witness nothing
+    # (`docs/security/laws.md` L11). The eight below carry the character in each
+    # position a value has -- alone, leading, embedded, trailing, and inside a set --
+    # on both operators that read a string.
+    built = 0
+    shapes = (
+        ("language", "eq", (null_key,)),
+        ("language", "ne", (null_key,)),
+        ("language", "in", ("c", null_key)),
+        ("subject", "eq", (reserved,)),
+        ("subject", "eq", (f"{reserved}llvm",)),
+        ("subject", "eq", (f"llvm{reserved}",)),
+        ("subject", "eq", (f"llvm{reserved}x",)),
+        (catalog_path_column(), "prefix", (f"a{reserved}b",)),
+    )
+    for column, op, values in shapes:
+        try:
+            plan.Predicate(column, op, values)
+        except plan.PlanError:
+            built += 1
+            continue
+        report.require(
+            False,
+            f"reserved character: Predicate({column!r}, {op!r}, ...) accepted a value "
+            f"containing {reserved!r}, so the catalog's null key is reachable as an "
+            "ordinary value by every caller that does not go through the parser",
+        )
+    report.require(
+        built == len(shapes),
+        f"anti-vacuity: only {built} of {len(shapes)} constructor spellings were even "
+        "attempted, so this check did not exercise the path the parser does not cover",
+    )
+
+    # ...and the two paths in give the same answer, which is the property that was
+    # false: the parser refused and the constructor did not.
+    def refuses(call, *arguments) -> bool:
+        try:
+            call(*arguments)
+        except plan.PlanError:
+            return True
+        return False
+
+    for spelling, op in ((f"language={null_key}", "eq"), (f"language!={null_key}", "ne")):
+        parsed = refuses(plan.parse_predicate, spelling)
+        direct = refuses(plan.Predicate, "language", op, (null_key,))
+        report.require(
+            parsed == direct,
+            f"reserved character: {spelling!r} is "
+            f"{'refused' if parsed else 'accepted'} by the parser and "
+            f"{'refused' if direct else 'accepted'} by the constructor; one rule, "
+            "two answers",
+        )
 
     # ...and the question it used to answer is still answerable, exactly once.
     absent = plan.select(catalog, [plan.parse_predicate("language!=?")])
@@ -3273,8 +3337,7 @@ def check_estimates(report: Report, plan, catalog) -> None:
         for combination in itertools.combinations(columns, size):
             for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
                 predicates = [
-                    plan.Predicate(column, "eq", (value,))
-                    for column, value in zip(combination, values)
+                    term_for_key(plan, column, value) for column, value in zip(combination, values)
                 ]
                 selection = plan.select(catalog, predicates)
                 admitted = len(selection.rows)
@@ -3315,7 +3378,7 @@ def check_estimates(report: Report, plan, catalog) -> None:
     for combination in itertools.combinations(columns, 3):
         for values in itertools.product(*[list(catalog.distinct(c)) for c in combination]):
             candidate = [
-                plan.Predicate(column, "eq", (value,)) for column, value in zip(combination, values)
+                term_for_key(plan, column, value) for column, value in zip(combination, values)
             ]
             if len(plan.select(catalog, candidate).rows) > 0:
                 triple = candidate
@@ -3354,7 +3417,8 @@ def check_estimates(report: Report, plan, catalog) -> None:
     # A repeated value in a set must not be counted twice. `subject=llvm,llvm` once
     # estimated 4320 rows of a 2215-row table, and said it was exact.
     for column in columns:
-        value = max(catalog.distinct(column), key=lambda name: catalog.distinct(column)[name])
+        counts = catalog.distinct(column)
+        value = max(index_values(catalog, column), key=lambda name: counts[name])
         doubled = plan.select(catalog, [plan.Predicate(column, "in", (value, value))])
         single = plan.select(catalog, [plan.Predicate(column, "eq", (value,))])
         report.require(
@@ -3640,6 +3704,17 @@ def check_require_native(report: Report, search, embedding_root: Path, chunk_dir
     )
 
 
+#: The two flag sets that make a run join the artifacts by row number, one per
+#: guard. `WHERE_PROBE` pins `--materialize full` deliberately: with `auto` the
+#: planner picks `seek` whenever a catalog is present, so the *seek* guard refused
+#: the run and the `--where` guard was never reached -- a probe answered by the
+#: wrong law proves nothing about its own (`docs/security/laws.md` L11). The RED
+#: sweep is what said so, reporting the `--where` injection NOT CAUGHT over a gate
+#: that was green.
+SEEK_PROBE = ["--materialize", "seek"]
+WHERE_PROBE = ["--where", "kind=code", "--materialize", "full"]
+
+
 def check_set_catalog_binding(
     report: Report, search, embedding_root: Path, catalog_dir: Path, chunk_dir: Path
 ) -> None:
@@ -3653,28 +3728,39 @@ def check_set_catalog_binding(
 
     The fixture re-sorts the corpus rather than changing its size, because a size
     change is the one mismatch the old count check already caught.
+
+    **And the refusal is checked for its edges as well as its middle.** The binding is
+    what makes a row number mean one chunk, so it is required exactly where a row
+    number crosses between the two artifacts -- `--where`, which resolves catalog rows
+    and ranks embedding-set rows by them, and `--materialize seek`, which fetches the
+    catalog row a ranking named. `--materialize full` reads chunk records by
+    `chunk_id`, joins nothing by position, and is correct over any catalog; the first
+    spelling of the check sat above all three and refused it, advising the caller to
+    "pass --materialize full", which is what they had passed. A bound enforced away
+    from the place the resource commits is either too weak or too strong
+    (`docs/security/laws.md` L3), and this one was both.
     """
     catalog_module = load_tool("catalog")
-    status, _ = _cli(
-        search,
-        [
-            "--query",
-            "ssa",
-            "--top-k",
-            "1",
-            "--set",
-            str(embedding_root),
-            "--catalog",
-            str(catalog_dir),
-            "--chunks",
-            str(chunk_dir),
-        ],
-    )
-    report.require(
-        status == 0,
-        f"anti-vacuity: the matched catalog and set were refused (exit {status}), so "
-        "the refusal below is not evidence of anything",
-    )
+    matched = [
+        "--query",
+        "ssa",
+        "--top-k",
+        "1",
+        "--set",
+        str(embedding_root),
+        "--catalog",
+        str(catalog_dir),
+        "--chunks",
+        str(chunk_dir),
+    ]
+    for extra in (SEEK_PROBE, WHERE_PROBE, ["--materialize", "full"]):
+        status, output = _cli(search, matched + extra)
+        report.require(
+            status == 0,
+            f"anti-vacuity: the matched catalog and set were refused with "
+            f"{' '.join(extra) or '(no extra flag)'} (exit {status}): "
+            f"{output.strip()[:160]!r}; the refusals below are not evidence of anything",
+        )
 
     with tempfile.TemporaryDirectory() as directory:
         moved = Path(directory) / "chunks"
@@ -3731,35 +3817,84 @@ def check_set_catalog_binding(
             f"anti-vacuity: moving {target!r} to {replacement!r} left the row order "
             "unchanged, so the refusal asserted below would be about nothing",
         )
-        status, output = _cli(
-            search,
-            [
-                "--query",
-                "ssa",
-                "--top-k",
-                "3",
-                "--set",
-                str(embedding_root),
-                "--catalog",
-                str(rebuilt),
-                "--chunks",
-                str(moved),
-            ],
+        mismatched = [
+            "--query",
+            "ssa",
+            "--top-k",
+            "3",
+            "--set",
+            str(embedding_root),
+            "--catalog",
+            str(rebuilt),
+            "--chunks",
+            str(moved),
+        ]
+
+        # The two ways a row number crosses. Both must refuse, and name what they
+        # refused -- a refusal a caller cannot act on is a worse answer than a wrong
+        # one, because it does not say which artifact to rebuild.
+        for extra in (SEEK_PROBE, WHERE_PROBE):
+            status, output = _cli(search, mismatched + extra)
+            report.require(
+                status != 0,
+                f"set-catalog: {' '.join(extra)} over a catalog and an embedding set "
+                "built from differently ordered corpora joined them row by row and "
+                "exited 0",
+            )
+            report.require(
+                "do not describe the same rows" in output,
+                f"set-catalog: {' '.join(extra)} refused the mismatch without naming "
+                f"it: {output.strip()[:160]!r}",
+            )
+
+        # ...and the way it does not. `--materialize full` reads chunk records by id,
+        # so the row order of a catalog it never indexes by is not its business.
+        status, output = _cli(search, mismatched + ["--materialize", "full"])
+        report.require(
+            status == 0,
+            "set-catalog: --materialize full reads chunk records by id and joins no "
+            f"row numbers, but a differently ordered catalog refused it (exit {status}): "
+            f"{output.strip()[:200]!r}",
         )
         report.require(
-            status != 0,
-            "set-catalog: a catalog and an embedding set built from differently "
-            "ordered corpora were joined row by row and exited 0",
-        )
-        report.require(
-            "do not describe the same rows" in output,
-            f"set-catalog: the mismatch was refused without naming it: {output.strip()[:160]!r}",
+            "cos=" in output,
+            f"anti-vacuity: --materialize full exited 0 without ranking anything, so "
+            f"the acceptance above is about no work: {output.strip()[:160]!r}",
         )
 
 
 def catalog_path_column() -> str:
     """The path column, from the declared table rather than spelled again here."""
     return load_tool("schema").PATH_COLUMN
+
+
+def index_values(catalog, column: str) -> list[str]:
+    """The keys of `column`'s index that are values some row actually holds.
+
+    `catalog.distinct` enumerates index *keys*, and exactly one of them is not a
+    value: `catalog.NULL_KEY` is where the postings park the rows that hold none.
+    Six checks in this file turned statistics back into terms, and each was one
+    two-line skip away from the others; this is that skip, written once
+    (`docs/security/laws.md` L14).
+    """
+    null_key = load_tool("catalog").NULL_KEY
+    return [key for key in catalog.distinct(column) if key != null_key]
+
+
+def term_for_key(plan, column: str, key: str):
+    """The legal predicate admitting exactly the rows filed under one index key.
+
+    `IS NULL` for the null key, equality for every other. Spelling the null key back
+    as `column = <key>` is the second spelling of a question the grammar already
+    spells once, which `plan.Predicate` now refuses at construction -- so the checks
+    that enumerated keys were asserting properties of a term the language does not
+    admit, and would now raise instead. `plan.value_keys` folds `IS NULL` to
+    `{NULL_KEY}`, the same one-key set that equality produced, so the counts and the
+    exactness verdicts below are unchanged by the switch.
+    """
+    if key == load_tool("catalog").NULL_KEY:
+        return plan.Predicate(column, "isnull", ())
+    return plan.Predicate(column, "eq", (key,))
 
 
 # --------------------------------------------------------------------------
@@ -3903,6 +4038,17 @@ def check_durability(report: Report, catalog_module, generations, chunk_dir: Pat
         any("/catalog/" in path for path in resolved),
         "anti-vacuity: the catalog inside the generation synced nothing, so the "
         "recorder is not seeing the rail that was already correct",
+    )
+    # Durability has two halves and the file half is the visible one: a file whose
+    # contents are on the disk is still reachable only through a directory entry that
+    # may not be. `catalog._sync_directory` owns that half on every rail; it is a
+    # declared Windows no-op, which is why the assertion lives down here with the
+    # resolvable ones and not in the portable floor above.
+    report.require(
+        any(path.endswith("/chunks") for path in resolved),
+        "durability: the staged chunks directory was never synced, so the entries "
+        "naming the chunk copies can be lost on a host where the copies themselves "
+        "were written down",
     )
 
 
@@ -4212,8 +4358,10 @@ def _one_per_operator(plan, catalog) -> list:
     than skipped here.
     """
     column = catalog.indexed_columns()[0]
-    value = max(catalog.distinct(column), key=lambda name: catalog.distinct(column)[name])
-    other = min(catalog.distinct(column))
+    counts = catalog.distinct(column)
+    values = index_values(catalog, column)
+    value = max(values, key=lambda name: counts[name])
+    other = min(values)
     path = load_tool("schema").PATH_COLUMN
     measurement = catalog.numeric_columns()[0]
     by_operator = {

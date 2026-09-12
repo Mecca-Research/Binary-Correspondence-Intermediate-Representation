@@ -79,11 +79,19 @@ def test_every_registered_module_actually_yields_tests_to_the_runner():
     # this check reports a hole the runner does not have (L14).
     source = _is_source_checkout()
     directory = os.path.dirname(os.path.abspath(__file__))
-    empty, hidden, examined = [], [], 0
+    # What this environment is supposed to examine, from the registry and the runner's
+    # own skip rule. Everything below is accounted against it, so no module can be
+    # dropped by a `continue` without saying so.
+    runnable = [name for name in _MODULES if source or name not in _REPO_ONLY_MODULES]
+    empty, hidden, absent, unimportable, examined = [], [], [], [], 0
     for modname in _MODULES:
         path = os.path.join(directory, modname.rsplit(".", 1)[-1] + ".py")
         if not os.path.exists(path):
-            continue  # the sibling law above owns this case and reports it better
+            # The sibling law above owns this case and reports it better; counted
+            # here only so the accounting below stays total.
+            if modname in runnable:
+                absent.append(modname)
+            continue
         found = _hidden_tests(path)
         if found:
             hidden.append(f"{modname}: {', '.join(found)}")
@@ -91,7 +99,8 @@ def test_every_registered_module_actually_yields_tests_to_the_runner():
             continue  # installed-package run: the runner skips these, so this does too
         try:
             module = importlib.import_module(modname)
-        except Exception:  # noqa: BLE001 - an import failure is the suite's own report
+        except Exception as exc:  # noqa: BLE001 - an import failure is the suite's own report
+            unimportable.append(f"{modname}: {type(exc).__name__}")
             continue
         examined += 1
         discoverable = [
@@ -109,9 +118,35 @@ def test_every_registered_module_actually_yields_tests_to_the_runner():
     assert not empty, "registered module(s) that contribute no test to the runner: " + "; ".join(
         empty
     )
-    assert examined >= 200, (
-        f"anti-vacuity: only {examined} registered module(s) were imported and "
-        "examined, so the two assertions above are about almost nothing"
+    # Anti-vacuity, in two statements neither of which is a number typed in here.
+    #
+    # This used to be `examined >= 200`, which is a second, weaker description of the
+    # environment the test runs in -- and it described the wrong one. A checkout
+    # imports all 260 registered modules and clears it; the installed-package run the
+    # suite also has to pass skips the 65 in `_REPO_ONLY_MODULES`, leaves 195, and
+    # fails an anti-vacuity guard on a run where nothing is vacuous. A mirror of a
+    # count will drift from the count (`docs/security/laws.md` L15), and this one had
+    # already drifted before it was written.
+    #
+    # First: the accounting is total. Every module the runner would have taken here is
+    # examined, absent (the sibling law's finding), or unimportable -- a `continue`
+    # that quietly loses modules cannot hide inside the loop.
+    assert examined + len(absent) + len(unimportable) == len(runnable), (
+        f"accounting: {len(runnable)} module(s) to examine, but {examined} examined + "
+        f"{len(absent)} absent + {len(unimportable)} unimportable does not add up"
+    )
+    assert not unimportable, (
+        "registered module(s) that do not import, so their tests were never examined: "
+        + "; ".join(unimportable)
+    )
+    # Second: most of the registry really runs here, whichever environment this is.
+    # 260 of 260 on a checkout, 195 of 260 from a wheel. If exclusions ever grew past
+    # half the registry this would fire, which is the finding rather than a nuisance
+    # -- a skip is where a shipping defect hides (L21).
+    assert 2 * examined >= len(_MODULES), (
+        f"anti-vacuity: only {examined} of {len(_MODULES)} registered module(s) were "
+        f"imported and examined here, so the assertions above are about a minority of "
+        "the suite"
     )
 
 

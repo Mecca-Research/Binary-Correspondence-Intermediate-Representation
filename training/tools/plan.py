@@ -177,6 +177,33 @@ ESCAPE = "\\"
 #: values could would have broken the postings file long before it reached a query.
 RESERVED_CHARACTER = "\0"
 
+
+def refuse_reserved(column: str, value: str) -> None:
+    """Refuse a value carrying `RESERVED_CHARACTER`, wherever the value came from.
+
+    This check first lived in `split_values`, which reads the *text* grammar -- and
+    the text grammar is one way to build a predicate, not the only one. Every caller
+    that already holds a column and a value builds the term directly, `select()` asks
+    the catalog the same questions either way, and so `Predicate("language", "eq",
+    (catalog.NULL_KEY,))` still resolved to exactly the rows `language!=?` resolves
+    to, with `EXPLAIN` printing it as `language = \x00null`. The reserved value was
+    out of the domain on one path in and inside it on the other.
+
+    So the rule lives on the constructor, which is the one place every predicate
+    passes through however it was built (`docs/security/laws.md` L14: one predicate
+    per repeated defect, and a shared predicate must be total). The column name needs
+    no such rule -- `estimate` refuses any column the catalog does not index, and a
+    NUL cannot occur in one of those four names.
+    """
+    if RESERVED_CHARACTER in value:
+        raise PlanError(
+            f"predicate value {value!r} on {column!r} contains the reserved character "
+            f"{RESERVED_CHARACTER!r}, which the catalog uses for the key that "
+            "marks a row as carrying no value; ask for those rows with "
+            f"{PRESENCE!r} instead ('column!={PRESENCE}' is IS NULL)"
+        )
+
+
 #: A measurement is compared against an integer in ASCII digits and nothing else.
 #: `int()` would also accept `1_000`, `+5`, Unicode digits and surrounding
 #: whitespace -- a larger language than the one documented, admitted by the host
@@ -217,6 +244,8 @@ class Predicate:
     def __post_init__(self) -> None:
         if self.op not in OPERATORS:
             raise PlanError(f"unknown operator {self.op!r}; the language is {', '.join(OPERATORS)}")
+        for value in self.values:
+            refuse_reserved(self.column, value)
         if self.op in NULLARY_OPERATORS:
             if self.values:
                 raise PlanError(f"operator {self.op!r} takes no value, got {len(self.values)}")
@@ -418,13 +447,6 @@ def split_values(raw: str) -> tuple[tuple[str, bool], ...]:
                     )
                 index += 1
             value, quoted = raw[start:index].strip(), False
-        if RESERVED_CHARACTER in value:
-            raise PlanError(
-                f"predicate value {value!r} contains the reserved character "
-                f"{RESERVED_CHARACTER!r}, which the catalog uses for the key that "
-                "marks a row as carrying no value; ask for those rows with "
-                f"{PRESENCE!r} instead ('column!={PRESENCE}' is IS NULL)"
-            )
         pieces.append((value, quoted))
         if index >= length:
             break

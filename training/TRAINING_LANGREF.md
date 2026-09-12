@@ -232,6 +232,18 @@ of the catalog: that is what lets a ranked row number become bytes on disk with
 no lookup. Two writers arriving at the same order by two independent rules is not
 agreement; it is a coincidence waiting to end.
 
+A reader **checks that binding where a row number crosses between the two
+artifacts, and only there**. Two places do: `--where`, which resolves row numbers
+against the catalog and then ranks the embedding set's rows by them, and
+`--materialize seek`, which takes a ranked row number and fetches that row of the
+catalog. Neither cardinality nor `embed_chunks.corpus_digest` can carry the check
+— a `source_path` re-sort leaves the row count identical and the digest, which
+sorts by `chunk_id`, blind — so the ids in order are compared. A ranking that
+joins nothing by position (`--materialize full`, which reads chunk records by
+`chunk_id`) is correct over any catalog and is **not** refused: a bound belongs
+where the resource commits (L3), and one asserted earlier refuses correct queries
+as readily as it catches wrong ones.
+
 ### 4.5 Parts
 
 Rows are grouped into **parts** of at most `MAX_BLOCK_ROWS = 128` rows. A part is
@@ -385,6 +397,15 @@ remove (`docs/security/laws.md` L20: a reserved implementation value is not a
 valid domain value). The refusal names the operator that answers the question
 properly, and it costs nothing reachable: no record in this corpus contains a NUL
 byte in any indexed field.
+
+The refusal is a property of a **term**, not of the text grammar. It is made when
+a predicate is constructed, so it holds for a term built from a column and a value
+as much as for one parsed from `column=value` — the first spelling lived in the
+value splitter, held for the parser alone, and left every caller that assembles a
+term directly outside it (L14: a shared predicate must be total). A caller may
+therefore enumerate the statistics of an indexed column and get keys back, one of
+which is the null key; the term for that bucket is `column!=?`, and nothing else
+spells it.
 
 ---
 
@@ -886,6 +907,9 @@ Landed with their fixes, each caught by a named check thereafter:
 | generation durability | `generations.py` held no `fsync` at all, so a generation's chunk copies, manifest and `CURRENT` pointer were renamed into place over contents the kernel had not written down (§10.2) | #784 |
 | phantom generation | a publish killed at its final rename left `.staging-<id>/` holding a complete manifest, and `listing` reported it under the real id — which `read` could not then open | #784 |
 | wedged repair | a set left incomplete by an interrupted publish could never be republished: the rename that would repair it cannot land on a non-empty directory, so every later rebuild died with a raw `OSError` | #784 |
+| durability on a read-only input | the first fsync pass reopened each staged file `r+b`, which Windows needs and which fails with `PermissionError` for a read-only source chunk whose mode `copy2` had faithfully carried over; writing and syncing through one descriptor depends on neither (§10.2) | #784 |
+| the reserved character, at the term | the refusal lived in the value splitter, so it held for a parsed predicate and not for one built from a column and a value — and building one was how this file's own gate enumerated index keys (§5.7) | #784 |
+| the binding, above the join | requiring the set/catalog binding above every ranking refused `--materialize full`, which reads chunk records by id and joins no row numbers, and told the caller to pass the flag they had just passed (§4.4) | #784 |
 
 ---
 

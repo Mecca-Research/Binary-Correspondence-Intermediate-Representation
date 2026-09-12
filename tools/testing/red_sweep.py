@@ -230,6 +230,18 @@ class Sweep:
                 if code is None:
                     result.verdict = "UNAVAILABLE"
                     result.detail = output
+                elif code < 0:
+                    # POSIX reports a signal death as a negative return code. A gate
+                    # that printed its finding and was then killed did not *complete*,
+                    # so its output is not evidence that the check fired -- the same
+                    # reason a control run that cannot complete aborts the sweep. Left
+                    # as `code != 0` this scored RED off a process that crashed, which
+                    # is the harness telling itself what it wanted to hear.
+                    result.verdict = "UNAVAILABLE"
+                    result.detail = (
+                        f"the gate was killed by signal {-code} before it could "
+                        f"finish; what it printed is not a verdict\n{output}"
+                    )
                 elif code == 0:
                     result.verdict = "NOT CAUGHT"
                     result.detail = "the gate passed with the defect in place"
@@ -280,11 +292,28 @@ def load_table(path: Path) -> tuple[list[str], list[Fault]]:
         raise SweepError(f"{path}: 'command' must be a list of strings")
     command = [sys.executable if part == "@python" else part for part in command]
 
+    declared = data["faults"]
+    if not isinstance(declared, list):
+        raise SweepError(f"{path}: 'faults' must be a list, not {type(declared).__name__}")
+
     faults = []
-    for index, entry in enumerate(data["faults"]):
+    for index, entry in enumerate(declared):
+        # Shape before content. `set(entry)` over a scalar, and `enumerate` over
+        # `null`, both raise `TypeError` -- and `main` catches `SweepError`, so a
+        # malformed table produced a traceback where the module's own docstring
+        # promises a refusal (`docs/security/laws.md` L1).
+        if not isinstance(entry, dict):
+            raise SweepError(f"{path}: fault {index} is a {type(entry).__name__}, not an object")
         missing = {"label", "expects", "path", "old", "new"} - set(entry)
         if missing:
             raise SweepError(f"{path}: fault {index} is missing {sorted(missing)}")
+        wrong = sorted(
+            name
+            for name in ("label", "expects", "path", "old", "new")
+            if not isinstance(entry[name], str)
+        )
+        if wrong:
+            raise SweepError(f"{path}: fault {index} has non-string {wrong}")
         target = REPO_ROOT / entry["path"]
         if not target.is_file():
             raise SweepError(f"{path}: fault {index} names {entry['path']}, which does not exist")
