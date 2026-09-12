@@ -3,7 +3,10 @@
 The StreamPack is BCIR's WASM-analog: a self-contained, portable, hot executable
 artifact. `streampack_abi` defines a **versioned, frozen wire format** (v1) plus a
 reference encoder/decoder. The same bytes are consumed by the Python oracle, the
-(forthcoming) C runtime (`runtime/c/bcir_streampack.h`), and any embedder.
+C runtime (`runtime/c/bcir_streampack.h`), and any embedder.
+
+`execution_plan_abi` is the plan the pack was derived from, as bytes (ExecutionPlanV1,
+G11): the same conventions, its own magic, a C twin (`runtime/c/bcir_execution_plan.h`).
 """
 
 from .streampack_abi import (
@@ -15,6 +18,14 @@ from .streampack_abi import (
     decode,
     encode,
     inspect_stream_pack,
+)
+from .execution_plan_abi import (
+    PLAN_HEADER_SIZE,
+    PLAN_MAGIC,
+    PLAN_VERSION,
+    decode_plan,
+    encode_plan,
+    validate_plan,
 )
 from .artifact_bundle import (
     ENTRY_SIZE as ARTIFACT_ENTRY_SIZE,
@@ -51,6 +62,12 @@ __all__ = [
     "decode",
     "encode",
     "inspect_stream_pack",
+    "PLAN_HEADER_SIZE",
+    "PLAN_MAGIC",
+    "PLAN_VERSION",
+    "decode_plan",
+    "encode_plan",
+    "validate_plan",
     "ARTIFACT_MAGIC",
     "ARTIFACT_VERSION",
     "ARTIFACT_HEADER_SIZE",

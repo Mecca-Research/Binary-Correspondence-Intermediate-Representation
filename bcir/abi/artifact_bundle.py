@@ -96,6 +96,7 @@ class ArtifactKind(IntEnum):
     MACHO_EXECUTABLE = 22
     MACHO_SHARED = 23
     RAW_BINARY = 24
+    EXECUTION_PLAN = 25  # ExecutionPlanV1: the plan the root StreamPack was derived from (G11)
 
 
 class ArtifactFormat(IntEnum):
@@ -112,6 +113,7 @@ class ArtifactFormat(IntEnum):
     JVM_CLASS = 10
     PE = 11
     RAW = 12
+    EXECUTION_PLAN = 13
 
 
 class Endianness(IntEnum):
@@ -145,6 +147,7 @@ _KIND_FORMATS = {
     ArtifactKind.MACHO_EXECUTABLE: frozenset((ArtifactFormat.MACHO,)),
     ArtifactKind.MACHO_SHARED: frozenset((ArtifactFormat.MACHO,)),
     ArtifactKind.RAW_BINARY: frozenset((ArtifactFormat.RAW,)),
+    ArtifactKind.EXECUTION_PLAN: frozenset((ArtifactFormat.EXECUTION_PLAN,)),
 }
 _NATIVE_FORMATS = frozenset(
     (
@@ -331,6 +334,17 @@ def _validate_payload(variant: "ArtifactVariant") -> None:
         except Exception as exc:
             raise BundleError(
                 f"variant {variant.variant_id!r} is not a valid StreamPack: {exc}"
+            ) from exc
+    elif kind == ArtifactKind.EXECUTION_PLAN:
+        # The plan as bytes (G11): the same complete wire verification the freestanding C
+        # reader applies (bcir_ep_verify) before the variant is admitted.
+        from .execution_plan_abi import decode_plan
+
+        try:
+            decode_plan(payload)
+        except Exception as exc:
+            raise BundleError(
+                f"variant {variant.variant_id!r} is not a valid ExecutionPlan: {exc}"
             ) from exc
     elif variant.format == ArtifactFormat.ELF:
         endian, bits, machine = _elf_identity(payload)

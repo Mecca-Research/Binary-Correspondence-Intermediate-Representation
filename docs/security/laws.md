@@ -199,6 +199,14 @@ presents module A's identity for module B, and the exact harness row
 `static_memory.digests.2048` counted three full digests per plan-and-verify chain
 on the parent (RED) before reading one. A cache that cannot be shown to be
 refused is a cache that has passed nothing.
+S1-C instances (2026-09-12): the plan-as-bytes gates are counted failures over
+fixed corpora and were measured on the parent first -- 26 corpus plans that
+could not round-trip, 27 readers that could not read, 6 stale and 39 malformed
+(variant, rail) pairs that nothing could refuse -- so the rows had somewhere
+to fall from; every malformed variant is minted through a raw writer that
+bypasses the codec's laws (`plan_fixtures.raw_encode`), because an encoder
+that refuses to emit a malformed plan cannot also be the witness that the
+decoder refuses one.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -380,7 +388,15 @@ are swallowable by longjmp-style recovery just as exceptions are.
 Each decoder names the exact error type/code with which it rejects
 malformed input, and only that counts as rejection; an undeclared surface
 has an empty graceful set, so a new decoder must state its contract rather
-than inherit one. A skipped rail needs an owner: the job that installed
+than inherit one. S1-C instance (2026-09-12): the ExecutionPlanV1 decoder
+declares its contract on both rails before its first reader exists --
+`AbiError` on the oracle, and on the C rail the named codes `BCIR_ERR_PLAN`
+(a plan law), `BCIR_ERR_LANE` / `BCIR_ERR_WIDTH` (the range gate),
+`BCIR_ERR_PROVENANCE` (a duplicated claim, a pack that is not the plan's
+lowering), `BCIR_ERR_GENERATION`, `BCIR_ERR_STALE`, `BCIR_ERR_OVERFLOW`,
+`BCIR_ERR_TRAILING`, `BCIR_ERR_RESERVED`, `BCIR_ERR_VERSION` -- and the stale
+witnesses assert the code (`vector=BCIR_ERR_STALE`, `pack=BCIR_ERR_STALE`),
+never merely a nonzero exit. A skipped rail needs an owner: the job that installed
 the tool passes `--require-<rail>`, making absence a failure exactly where
 absence is unexpected.
 Witnesses: `test_decoder_seed_rejection_is_a_finding`,
@@ -571,6 +587,13 @@ its items (`_fnv_items`, exact ints and strs only, so a bool never takes an int'
 memo and `hash_target` keeps rendering `scalable` as the law rail does), and one
 verifier-side predicate (`digest_of`) that decides whether an identity may be
 reused: by content, never by the revision counter that keys the cache.
+S1-C instance (2026-09-12): the plan's wire laws are ONE predicate per rail --
+`validate_plan`, applied by the encoder before publication and by the decoder
+on read, and `ep_walk` in the C twin, the single bounded walk every entry point
+(`bcir_ep_verify`, the four record walks, the R11 check, the plan/pack binding)
+runs -- so the 39 malformed pairs are refused by the same code on every path
+in, and the harness rows and the tests measure one definition of each gate
+(`bcir/tests/plan_fixtures.py`) rather than two that could drift.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

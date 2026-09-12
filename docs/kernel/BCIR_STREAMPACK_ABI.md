@@ -12,6 +12,14 @@ multiple standard target images, it is the `root_variant` payload of a separatel
 [`BCIR Artifact Bundle`](BCIR_ARTIFACT_BUNDLE_ABI.md). BCAB selection does not change any
 StreamPack byte, generation rule, or R10/R11 obligation.
 
+The pack is the executable; **the plan it was derived from has its own byte form**,
+[`ExecutionPlanV1`](BCIR_EXECUTION_PLAN_ABI.md) (GEM+ G11): the realization and the canonical
+placement every reader prices, the static-memory lifetimes, the movement-edge family and the
+same per-resource generation vector. A pack is bound to its plan by bytes on both rails
+(`bcir_ep_check_pack`, `verify_execution_plan(pack=...)`): one segment per plan step with the
+step's claim, phase, lane and width, the same `source_plan`, and a generation vector identical
+entry for entry — a pack whose plan carries an older vector is refused as stale.
+
 ## Conventions
 
 - **Endianness:** little-endian.

@@ -452,7 +452,7 @@ are missing and are worth having on their own.
 | `ratio` `native.*` | must not regress |
 
 
-### G11 — `ExecutionPlanV1`: the plan as bytes
+### G11 — `ExecutionPlanV1`: the plan as bytes — **landed (S1-C, 2026-09-12)**
 
 *New, from the 2026-09-04 review. The canonical plan cannot be Python objects if the C twin,
 the MLIR rail and a resident executor are to read it.*
@@ -464,12 +464,35 @@ StreamPack v4 record by S0-E, which the plan carries forward). A C twin decodes 
 BCAB gains a kind for it; the ASN.1 projection follows the StreamPack precedent. The pack stays
 the executable; the plan is what the pack was derived from and what every reader prices.
 
-| Gate | Target |
-|---|---|
-| `exact` `plan.abi.roundtrip` | Python encode → C decode → Python re-encode is byte-identical |
-| `exact` `plan.readers.agree` | pricing, token execution, static memory and StreamPack lowering read the plan and produce identical traces |
-| `exact` Stale generation vector | a pack whose plan carries an older vector for any resource is refused by both rails |
-| `exact` Malformed plan | truncated, duplicated, out-of-order and unknown-claim records refused before publication |
+| Gate | Target | Outcome (harness row, counted failures over fixed corpora, 0 at the bound) |
+|---|---|---|
+| `exact` `plan.abi.roundtrip` | Python encode → C decode → Python re-encode is byte-identical | **met**: 26/26 corpus plans (12 programs × 2 placements + the audit fixture × 2) — `plan.abi.mismatches` 26 → **0** |
+| `exact` `plan.readers.agree` | pricing, token execution, static memory and StreamPack lowering read the plan and produce identical traces | **met**: the pricer's makespan and slots, both executors' placements, the re-placement from the plan's own step costs, the static-memory lifetimes and the pack hydrated from the plan's bytes are identical on every fixture — `plan.readers.disagreements` 27 → **0** |
+| `exact` Stale generation vector | a pack whose plan carries an older vector for any resource is refused by both rails | **met**: registry moved / resource declared after minting / pack older than its plan, refused on the Python rail (R11) and the C rail (`BCIR_ERR_STALE`) — `plan.stale.accepted` 6 → **0** |
+| `exact` Malformed plan | truncated, duplicated, out-of-order and unknown-claim records refused before publication | **met**: 39 (variant, rail) pairs — truncated, trailing, CRC, magic, version, flags, reserved, mode, knee, duplicated claim, stream, duration, makespan, lane, width, unsorted vector, lifetime alignment, movement kind on both rails; unknown claim, phase order and a missing claim on the rail that holds the module — `plan.malformed.accepted` 39 → **0** |
+
+What landed: `gem.execution_plan` is the abstract value — one `PlanStep` per claim carrying the
+realization (candidate, lane, width, the plan's own cost) and the canonical placement (stream,
+start, duration) G1 made canonical, the static-memory planner's `Lifetime` rows, the G8
+`MovementEdge` family (declared, carried and verified now; empty until G8 produces edges) and
+the registry's generation vector; `plan_from_realization` mints it bound to the module (the
+S1-B identity API) and the target, `schedule_of` / `realization_of` are the readers.
+`abi.execution_plan_abi` is the frozen v1 wire format (`docs/kernel/BCIR_EXECUTION_PLAN_ABI.md`:
+a 64-byte header with the `u64` fields 8-aligned, four length-prefixed record families, a CRC
+trailer, the StreamPack's append-only discipline); `runtime/c/bcir_execution_plan.h` is the
+freestanding C twin — `bcir_ep_verify` applies the same wire laws, `bcir_ep_check_generation_vector`
+the R11 predicate, and `bcir_ep_check_pack` binds a pack to its plan by bytes (one segment per
+step with the step's claim, phase, lane and width; identical vectors); `verify_execution_plan`
+is the oracle's verifier (R9 structure against the module, R13 binding, the placement re-derived
+from the plan's own costs, R11, the pack). BCAB gained kind 25 / format 13 with the full wire
+verification in both readers and the MLIR `bcir.artifact.variant` kind; the `BCIR-ExecutionPlan`
+ASN.1 module (`{ 1 3 6 1 4 1 62596 3 }`) projects it under DER, OER and JER with the native
+octets surviving byte for byte. Indicative wall numbers on this host at the audit's 4,096-claim
+fixture: the plan is 218 KB to the pack's 713 KB, encodes in 17.8 ms and decodes in 27.7 ms
+(the pack: 40.0 / 77.2 ms); minting it — the placement plus the digest binding — costs 82 ms,
+so a reader that holds the bytes reads the placement in a third of the time re-running the
+dispatch takes (37 ms) and never re-derives the digest. Not claimed: a law-rail plan op (the
+MLIR rail links the C decoder) and a C DER → native fast path for the plan.
 
 ### G12 — the dispatch law, work-unit budgets, resumable search
 
@@ -645,7 +668,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
-Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A); G3 <- LANDED (S1-B)
+Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A); G3 <- LANDED (S1-B); G11 <- LANDED (S1-C)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
@@ -692,6 +715,7 @@ no PMU):
 | `pricing.eft.divergence` | G1 | 1.9922 | **1.0** (S1-A, 2026-09-05) | GAIN, at the bound — one artifact; the retired pricer still reads 1.9922 on the fixture as the witness |
 | `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) | GAIN — the mechanism is named under G2; 36% of headroom to the 4× bound remains |
 | `static_memory.digests.2048` | G3 | 3 | **1** (S1-B, 2026-09-12) | GAIN, at the bound — one digest per plan-and-verify chain; the verifier still recomputes at a trust boundary |
+| `plan.abi.mismatches` / `plan.readers.disagreements` / `plan.stale.accepted` / `plan.malformed.accepted` | G11 | 26 / 27 / 6 / 39 | **0 / 0 / 0 / 0** (S1-C, 2026-09-12) | GAIN, at the bound — the plan has bytes: every corpus plan survives the C twin, every reader reproduces its trace from the bytes, every stale and malformed fixture is refused on every rail that can see it |
 | five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 ms A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
 | eleven rows | G0, G4–G6 | — | not measured | need the exact oracles or the native rig |
 

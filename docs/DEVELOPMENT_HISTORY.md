@@ -531,6 +531,32 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   in-place edit is refused by the content check and reported by the static-memory verifier,
   an appended claim is caught by the census, and module A's identity presented for module B
   is refused.
+  S1-C (2026-09-12) landed G11, the plan as bytes (the 2026-09-04 review's binary plan ABI).
+  The canonical plan was Python objects: the C twin, the MLIR rail and a resident executor
+  could not read it, nothing round-tripped it, and a stale or malformed plan had no bytes to
+  be refused by (measured RED: every fixture of every G11 gate failed on the parent -- 26
+  corpus plans, 27 reader fixtures, 6 stale and 39 malformed pairs). `gem.execution_plan` is
+  now the abstract `ExecutionPlanV1` -- one step per claim carrying the realization and the
+  canonical placement G1 made canonical, the static-memory planner's lifetimes, the G8
+  movement-edge family (carried and verified, empty until G8 produces edges) and the
+  registry's generation vector, minted by `plan_from_realization` bound to the module through
+  the S1-B identity API and to the target, read back by `schedule_of` / `realization_of`;
+  `abi.execution_plan_abi` is the frozen v1 wire format (64-byte header with the u64 fields
+  8-aligned, four length-prefixed record families, CRC trailer, exact consumption, the
+  StreamPack's append-only discipline); `runtime/c/bcir_execution_plan.h` is the freestanding
+  C twin -- `bcir_ep_verify` applies the same wire laws, `bcir_ep_check_generation_vector` the
+  R11 predicate and `bcir_ep_check_pack` binds a pack to its plan by bytes (one segment per
+  step with the step's claim, phase, lane and width; identical vectors, an older one is
+  `BCIR_ERR_STALE`); `verify_execution_plan` is the oracle's verifier (R9 structure, R13
+  binding, the placement re-derived from the plan's own costs, R11, the pack). BCAB gained
+  kind 25 / format 13 with the full wire verification in both readers plus the MLIR
+  `bcir.artifact.variant` kind, and the `BCIR-ExecutionPlan` ASN.1 module projects the plan
+  under DER, OER and JER with the native octets surviving byte for byte. The four harness rows
+  read 0 at their bounds (`plan.abi.mismatches`, `plan.readers.disagreements`,
+  `plan.stale.accepted`, `plan.malformed.accepted`); on this host the 4,096-claim audit
+  fixture's plan is 218 KB against the pack's 713 KB, encodes in 17.8 ms and decodes in
+  27.7 ms (the pack: 40.0 / 77.2 ms), and a reader that holds the bytes reads the placement
+  without re-running the 37 ms dispatch or re-deriving the digest.
 
 ---
 

@@ -39,8 +39,11 @@ typedef enum bcir_status {
   BCIR_ERR_TRAILING = 12,   /* CRC-valid bytes remain after all declared body records */
   BCIR_ERR_RESERVED = 13,   /* a reserved header/record field is nonzero */
   BCIR_ERR_UTF8 = 14,       /* a length-prefixed wire string is not valid UTF-8 */
-  BCIR_ERR_GENERATION = 15  /* a v4 generation vector is malformed: RIDs not strictly ascending,
+  BCIR_ERR_GENERATION = 15, /* a v4 generation vector is malformed: RIDs not strictly ascending,
                              * or the header map_gen/data_gen are not the vector's maxima */
+  BCIR_ERR_PLAN = 16        /* an ExecutionPlanV1 record violates a plan law (bcir_execution_plan.h):
+                             * mode, streams/knee, a step's stream/duration/makespan, a lifetime's
+                             * or a movement edge's shape */
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). NULL is valid only with len 0;

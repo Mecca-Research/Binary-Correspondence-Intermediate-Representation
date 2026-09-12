@@ -39,6 +39,7 @@ from tools.perf.gemplus_baseline import (  # noqa: E402
     compare,
     measure_exact,
     measure_legacy_divergence,
+    measure_plan,
 )
 
 
@@ -176,3 +177,24 @@ def test_the_tool_runs_and_lists_its_baseline() -> None:
     assert "frozen metrics" in done.stdout
     for key in ("optimize_scheduled.512", "pricing.eft.divergence", "memory.worst.ratio"):
         assert key in done.stdout, key
+
+
+def test_the_plan_rows_read_the_bytes_on_both_rails() -> None:
+    """G11's gates (S1-C): the plan as bytes. The rows count failures over fixed corpora and
+    are graded exactly; every one is 0 at the bound. `plan.readers.disagreements` is a
+    Python-rail row; the other three need the C twin and are NOT-MEASURED without a compiler
+    rather than estimated."""
+    import shutil
+
+    measured = measure_plan()
+    assert measured.get("plan.readers.disagreements") == 0.0, measured
+    c_rows = ("plan.abi.mismatches", "plan.stale.accepted", "plan.malformed.accepted")
+    if shutil.which("clang") or shutil.which("cc") or shutil.which("gcc"):
+        for key in c_rows:
+            assert measured.get(key) == 0.0, (key, measured)
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+    for key in c_rows:
+        if key not in measured:
+            assert rows[key]["verdict"] == "NOT-MEASURED"

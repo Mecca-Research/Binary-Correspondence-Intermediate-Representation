@@ -211,11 +211,15 @@ def _dispatch(
         raise ValueError("GEM dispatch dependency graph is cyclic")
 
 
-def _streams(target) -> tuple[int, int]:
-    """(affinity domains, bandwidth knee) of a target; one domain and no knee without one."""
+def stream_geometry(target) -> tuple[int, int]:
+    """(affinity domains, bandwidth knee) of a target; one domain and no knee without one.
+    The two header fields of the plan's byte form (`gem.execution_plan`, G11)."""
     domains = max(1, getattr(target, "affinity_domains", 1)) if target is not None else 1
     knee = bandwidth_knee(target) if target is not None else 1
     return domains, knee
+
+
+_streams = stream_geometry
 
 
 def phase_hazards(module: Module) -> dict[int, dict[int, list[int]]]:

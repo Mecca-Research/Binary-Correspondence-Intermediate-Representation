@@ -117,13 +117,14 @@ detection; SHA-256 pins exact bytes. Neither is an authenticity signature.
 | 15–18 | C, C++, SYCL, assembly source | text |
 | 20–21 | PE executable, PE DLL | PE |
 | 24 | explicitly typed device/firmware image | raw |
+| 25 | ExecutionPlanV1 — the plan the root StreamPack was derived from ([`BCIR_EXECUTION_PLAN_ABI.md`](BCIR_EXECUTION_PLAN_ABI.md)); portable, never executable, never the root | execution plan |
 
 Format IDs are `0 none`, `1 StreamPack`, `2 ELF`, `3 COFF`, `4 Mach-O`, `5 archive`,
-`6 WASM`, `7 LLVM bitcode`, `8 text`, `9 SPIR-V`, `10 JVM class`, `11 PE`, and
-`12 raw`.
+`6 WASM`, `7 LLVM bitcode`, `8 text`, `9 SPIR-V`, `10 JVM class`, `11 PE`,
+`12 raw`, and `13 execution plan`.
 
 Readers perform bounded identity checks before admission: complete StreamPack semantic
-verification; ELF class/byte order/machine and applicable `e_type`; COFF machine; Mach-O
+verification; the complete ExecutionPlanV1 wire-law walk (`bcir_ep_verify` / `decode_plan`); ELF class/byte order/machine and applicable `e_type`; COFF machine; Mach-O
 class/byte order/CPU/file type; archive, WASM, bitcode, SPIR-V, JVM, and PE signatures and
 header bounds; valid NUL-free UTF-8 text; and PTX `.version`/`.target`. Raw images have no
 universal internal header, so their exact digest plus explicit architecture/channel is the
