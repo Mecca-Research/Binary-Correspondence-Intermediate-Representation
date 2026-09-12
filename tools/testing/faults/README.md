@@ -109,6 +109,29 @@ reintroducing it reports what it always should have:
     S4: 'training/data' means 'starts with' and resolved 2 row(s) where 4 path(s)
       start with it -- missing ['training/database.md', 'training/datastore.md']
 
+## When N copies become one predicate, N faults become one
+
+The embedding set records four digests, and each reader used to check its own --
+or not. Three did not, which is why they became one predicate,
+`embed_chunks.verified_bytes`. The fault that used to test the row-squares
+reader's *private* digest check went with them: retargeted at the call into the
+shared predicate, it stopped expressing the law and started expressing a crash.
+
+    the derived column is read around the digest predicate   (none)   WRONG CHECK
+        expected 'row_squares'; the gate failed but 'row_squares' did not fire
+
+Bypassing `self._verified(spec, "row_squares")` removes the digest check *and*
+the `OSError` handling behind it, so the gate's own missing-column probe --
+which points the manifest at `squares.u32.absent` on purpose -- died with a
+`FileNotFoundError` before any check could report. Going red is not being
+noticed by the check you named, and the harness says so rather than counting it.
+
+The entry is gone rather than repaired. The law it tested is carried by
+`a declared artifact is read on the manifest's word again`, whose one injection
+fires `index`, `quantized` *and* `row_squares` -- which is what a shared
+predicate is for. Keeping a second, weaker copy beside it would be the mirror
+list this tree refuses everywhere else (L14, L15).
+
 ## Adding a fault
 
 ```json

@@ -19,13 +19,6 @@
       "path": "training/tools/search_chunks.py"
     },
     {
-      "expects": "row_squares",
-      "label": "the derived column is read around the digest predicate",
-      "new": "            raw = (self.root / spec[\"path\"]).read_bytes()",
-      "old": "            raw = self._verified(spec, \"row_squares\")",
-      "path": "training/tools/search_chunks.py"
-    },
-    {
       "expects": "row squares",
       "label": "the reader ignores the stored column and always computes",
       "new": "        spec = quantized.get(\"row_squares\")\n        if spec or not spec:\n            return None",
