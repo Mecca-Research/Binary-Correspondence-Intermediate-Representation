@@ -30,6 +30,14 @@ became a database — measured against nine proven engines, then built out as th
 S1–S19 ladder — and *why* each mechanism is there is
 [`DATABASE_ROADMAP.md`](DATABASE_ROADMAP.md).
 
+Two further programs have roadmaps here. A repository-owned Unicode 17.0
+database — pinned UCD sources, a second declared table, the normalization,
+collation, security and IDNA engines gated by the standard's own conformance
+suites, Latin first and Han last — is [`UNICODE_ROADMAP.md`](UNICODE_ROADMAP.md).
+The small language model that consults that database through the rail's
+hybrid SQL/vector lookup is [`SLM_ROADMAP.md`](SLM_ROADMAP.md); it depends on
+the database and the database does not depend on it.
+
 A subject brings its own material and its own gates; it does not bring its own
 grader. Grading, dataset export and bounded tool execution live in
 [`tools/`](tools) and are shared, with each subject declaring only what is

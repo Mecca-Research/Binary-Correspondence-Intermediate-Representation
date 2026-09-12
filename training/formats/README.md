@@ -4,6 +4,12 @@
 > is teaching material, and nothing in it is gated. See
 > [`../ROADMAP.md`](../ROADMAP.md) Phase 5 for when it opens, and
 > [`../CORPUS_STANDARD.md`](../CORPUS_STANDARD.md) for what it must deliver.
+>
+> The folder's *data* half — a pinned Unicode 17.0 source tree and the database
+> built from it — is scheduled ahead of its lessons in
+> [`../UNICODE_ROADMAP.md`](../UNICODE_ROADMAP.md). Landing it satisfies this
+> folder's first opening condition (references inventoried, versioned, dated)
+> and does not by itself open the folder as a subject.
 
 ## Scope
 
