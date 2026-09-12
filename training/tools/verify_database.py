@@ -1951,7 +1951,15 @@ def check_grouped_aggregates(report: Report, search, plan, catalog) -> None:
         )
 
 
-def check_ordering(report: Report, search, plan, catalog) -> None:
+def check_ordering(
+    report: Report,
+    search,
+    plan,
+    catalog,
+    embedding_root: Path,
+    catalog_dir: Path,
+    chunk_dir: Path,
+) -> None:
     """ORDER BY must be total, stable, and honest about missing measurements."""
     catalog_module = load_tool("catalog")
     selection = plan.select(catalog, [plan.Predicate("kind", "eq", ("code",))])
@@ -2038,13 +2046,64 @@ def check_ordering(report: Report, search, plan, catalog) -> None:
                 f"{descending}; an absent measurement is not a small one",
             )
 
-    # OFFSET is a window on the same order, never a different one.
+    # OFFSET is a window on the same order, never a different one -- and this used to
+    # assert that by comparing `full[offset : offset + limit]` against
+    # `full[offset:][:limit]`, which is an identity of Python slicing for every list
+    # and every non-negative pair. The loop iterated four times and `report.require`
+    # could not be handed False: a tautology rather than a check (Class B). It now
+    # drives the *tool*, so the operands are independent -- the rows the CLI prints
+    # against the window the order itself defines.
     column = catalog.numeric_columns()[0]
     full = relational.ordered_rows(catalog, selection, column, True)
+    report.require(
+        len(full) >= 12,
+        f"anti-vacuity: the order holds {len(full)} row(s), too few for the pages below",
+    )
     for offset, limit in ((0, 3), (2, 3), (5, 4), (len(full), 3)):
+        status, output = _cli(
+            search,
+            [
+                "--order-by",
+                f"{column}:desc",
+                "--top-k",
+                str(limit),
+                "--offset",
+                str(offset),
+                "--select",
+                "source_path",
+                # The same selection `full` was ordered under: a different one is a
+                # different order, and the comparison below would be about two
+                # unrelated lists.
+                "--where",
+                "kind=code",
+                "--set",
+                str(embedding_root),
+                "--chunks",
+                str(chunk_dir),
+                "--catalog",
+                str(catalog_dir),
+            ],
+        )
+        report.require(status == 0, f"ordering: OFFSET {offset} LIMIT {limit} exited {status}")
+        printed = [
+            line.strip()
+            for line in output.splitlines()
+            if re.match(r"^\s+\d+\. source_path=", line)
+        ]
+        window = full[offset : offset + limit]
         report.require(
-            full[offset : offset + limit] == full[offset:][:limit],
-            f"ordering: OFFSET {offset} LIMIT {limit} is not a window on the order",
+            len(printed) == len(window),
+            f"ordering: OFFSET {offset} LIMIT {limit} printed {len(printed)} row(s) "
+            f"where the order holds {len(window)} there",
+        )
+        expected = [
+            f"{rank}. source_path={catalog.fetch([row])[row]['source_path']}"
+            for rank, row in enumerate(window, start=offset + 1)
+        ]
+        report.require(
+            printed == expected,
+            f"ordering: OFFSET {offset} LIMIT {limit} printed {printed[:2]} where the "
+            f"order's window is {expected[:2]}",
         )
 
     # DISTINCT and GROUP BY count the same values.
@@ -4261,7 +4320,17 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
     report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)
-    report.run("ordering", check_ordering, report, search, plan, catalog)
+    report.run(
+        "ordering",
+        check_ordering,
+        report,
+        search,
+        plan,
+        catalog,
+        args.embedding_set,
+        args.catalog,
+        args.chunks,
+    )
     report.run("planner", check_planner, report, plan, catalog)
     report.run("order strategy", check_order_strategy, report, plan, catalog)
     report.run("explain", check_explain_verdict, report, plan, catalog)

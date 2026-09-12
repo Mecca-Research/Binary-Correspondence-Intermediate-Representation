@@ -112,9 +112,16 @@ class EmbeddingSet:
             )
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.dim = int(self.manifest["dim"])
+        # Every declared artifact is read through `embed_chunks.verified_bytes`, which
+        # refuses bytes that are not the ones the manifest records a digest for. The
+        # index used to be read on the manifest's word and the codes on a length check
+        # alone, so a set torn between its five files -- `write_set` does not stage or
+        # replace -- ranked plausibly and exited 0 (L14: one predicate for all four).
         self.rows = [
             json.loads(line)
-            for line in (root / "index.jsonl").read_text(encoding="utf-8").splitlines()
+            for line in self._verified(self.manifest.get("index") or {}, "index")
+            .decode("utf-8")
+            .splitlines()
             if line.strip()
         ]
 
@@ -125,7 +132,7 @@ class EmbeddingSet:
                 "defined over BCIR's Q15 code space"
             )
         codes = array("h")
-        codes.frombytes((root / quantized["path"]).read_bytes())
+        codes.frombytes(self._verified(quantized, "quantized"))
         if sys.byteorder == "big":
             codes.byteswap()  # the file is little-endian by contract
         expected = len(self.rows) * self.dim
@@ -222,11 +229,12 @@ class EmbeddingSet:
             return None
         if spec.get("derived_from") != quantized.get("sha256"):
             return None
-        path = self.root / spec["path"]
-        if not path.is_file():
-            return None
-        raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != spec.get("sha256"):
+        try:
+            raw = self._verified(spec, "row_squares")
+        except SystemExit:
+            # Declared fallback: this column is derivable, so a disagreeing one is
+            # recomputed rather than fatal. The other three artifacts are not
+            # derivable, which is why they refuse instead.
             return None
         values = array("I")
         try:
@@ -282,12 +290,41 @@ class EmbeddingSet:
             built.append("q8")
         return tuple(built)
 
+    def _verified(self, spec: dict, what: str) -> bytes:
+        """One declared artifact's bytes, or a refusal naming which file disagreed.
+
+        The predicate itself lives in `embed_chunks`, which writes the manifest and
+        therefore owns what a recorded digest means; this reaches it through the same
+        door `embed_query_float` uses rather than opening a second one.
+        """
+        global _EMBED
+        if _EMBED is None:
+            _EMBED = engine.load("embed_chunks")
+        try:
+            return _EMBED.verified_bytes(self.root, spec, what=what)
+        except _EMBED.ArtifactMismatch as exc:
+            raise SystemExit(f"search_chunks: {exc}") from exc
+        except OSError as exc:
+            raise SystemExit(f"search_chunks: {self.root} is unreadable: {exc}") from exc
+
     def float_vectors(self) -> array:
-        """The unit vectors themselves, as stored before quantization."""
+        """The unit vectors themselves, as stored before quantization.
+
+        Digested and length-checked like the codes: this feeds the Q8 bridge, and a
+        short read there is a ranking over vectors nobody wrote, reported as a
+        backend that was merely unavailable.
+        """
         values = array("f")
-        values.frombytes((self.root / self.manifest["vectors"]["path"]).read_bytes())
+        values.frombytes(self._verified(self.manifest.get("vectors") or {}, "vectors"))
         if sys.byteorder == "big":
             values.byteswap()
+        expected = len(self.rows) * self.dim
+        if len(values) != expected:
+            raise SystemExit(
+                f"search_chunks: {self.manifest['vectors']['path']} holds "
+                f"{len(values)} float(s), expected {expected} "
+                f"({len(self.rows)} rows x dim {self.dim})"
+            )
         return values
 
     def q8_tensor(self):
@@ -952,6 +989,14 @@ def main(argv: list[str] | None = None) -> int:
                 ]
             else:
                 native = topk_native(query, embedding_set, top_k, rows=rows)
+        except _native().KernelRejected as exc:
+            # A kernel that loaded and then refused its arguments is not a host that
+            # lacks one. This used to print `[skip] native backend unavailable` and
+            # exit 0 -- so `--top-k` above the kernel's own `BCIR_AI_MAX_TOP_K` read
+            # as "no compiler here", and `--backend both` reported no disagreement
+            # because it had run no differential to disagree in.
+            print(f"search_chunks: the native kernel refused this call: {exc}", file=sys.stderr)
+            return EXIT_USAGE
         except _native_unavailable() as exc:
             if args.require_native:
                 print(f"search_chunks: native backend required: {exc}", file=sys.stderr)

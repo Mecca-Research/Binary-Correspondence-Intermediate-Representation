@@ -17,7 +17,10 @@ below are stated once instead of per caller:
   * **Unavailability is a skip that says so.** No compiler, no `bcir` package, a
     build failure: all raise `BackendUnavailable`, and each caller decides
     whether that is expected here (a laptop) or a defect (the CI job that
-    provides the toolchain, via its own `--require-*` flag).
+    provides the toolchain, via its own `--require-*` flag). A kernel that loaded
+    and then refused its arguments is a different thing and raises
+    `KernelRejected`: that is never a skip, because no toolchain would make it
+    go away.
   * **The kernels are never a fallback.** A caller asks for native or asks for
     reference. Silently substituting one for the other would make a differential
     between them meaningless, since it could compare a thing to itself.
@@ -48,6 +51,24 @@ DEFAULT_GROUP_SIZE = 64
 
 class BackendUnavailable(RuntimeError):
     """BCIR's native rail cannot be reached here. Honest skip, never a switch."""
+
+
+class KernelRejected(ValueError):
+    """A kernel that loaded and ran refused its arguments.
+
+    Separate from `BackendUnavailable` because the two mean opposite things to a
+    caller. Unavailability is about the *host* -- no compiler, no `bcir`, a build
+    failure -- and is an honest skip on a laptop. A rejection is about the *call*:
+    the kernels are here, they ran, and they said no, which is a defect in the
+    caller or in the data it passed.
+
+    All three doors used to raise `BackendUnavailable` for both. Asking for a
+    `top_k` above the kernel's own `BCIR_AI_MAX_TOP_K` therefore printed
+    `[skip] native backend unavailable` and exited 0, and `--backend both` reported
+    no disagreement because it had run no differential to disagree in. A skip that
+    can be produced by an argument is not a statement about the host
+    (`docs/security/laws.md` L1: the label is part of the verdict).
+    """
 
 
 _CACHE: dict[Path, object] = {}
@@ -93,7 +114,7 @@ def quantize_q8(values: list[float], *, group_size: int = DEFAULT_GROUP_SIZE, bu
     try:
         return kernels.quantize(values, group_size=group_size, bits=8)
     except (ValueError, RuntimeError) as exc:
-        raise BackendUnavailable(f"BCIR Q8 quantization failed: {exc}") from exc
+        raise KernelRejected(f"BCIR Q8 quantization failed: {exc}") from exc
 
 
 def q8_rows_dot(query: list[float], tensor, *, rows: int, build_dir=None) -> tuple[float, ...]:
@@ -115,7 +136,7 @@ def q8_rows_dot(query: list[float], tensor, *, rows: int, build_dir=None) -> tup
             group_size=tensor.group_size,
         )
     except (ValueError, RuntimeError) as exc:
-        raise BackendUnavailable(f"BCIR Q8 rows-dot failed: {exc}") from exc
+        raise KernelRejected(f"BCIR Q8 rows-dot failed: {exc}") from exc
 
 
 def eligibility_mask(rows: int, admitted=None) -> bytes:
@@ -171,7 +192,7 @@ def q15_topk(
     try:
         matches = kernels._q15_topk(array("h", query), codes, mask, rows, dim, top_k)
     except (ValueError, RuntimeError) as exc:
-        raise BackendUnavailable(f"BCIR Q15 top-k failed: {exc}") from exc
+        raise KernelRejected(f"BCIR Q15 top-k failed: {exc}") from exc
     return [(index, distance) for index, distance in matches]
 
 

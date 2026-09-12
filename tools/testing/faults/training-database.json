@@ -157,6 +157,13 @@
       "new": "    if False and catalog is not None and not _same_rows(catalog, embedding_set):",
       "old": "    if catalog is not None and not _same_rows(catalog, embedding_set):",
       "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "ordering",
+      "label": "the relational window forgets its offset",
+      "new": "        window = ordered[: args.top_k]",
+      "old": "        window = ordered[args.offset : args.offset + args.top_k]",
+      "path": "training/tools/search_chunks.py"
     }
   ],
   "gate": "training/tools/verify_database.py",

@@ -19,10 +19,10 @@
       "path": "training/tools/search_chunks.py"
     },
     {
-      "expects": "row squares",
-      "label": "the reader stops checking the column's own digest",
-      "new": "        if False:\n            return None",
-      "old": "        if hashlib.sha256(raw).hexdigest() != spec.get(\"sha256\"):\n            return None",
+      "expects": "row_squares",
+      "label": "the derived column is read around the digest predicate",
+      "new": "            raw = (self.root / spec[\"path\"]).read_bytes()",
+      "old": "            raw = self._verified(spec, \"row_squares\")",
       "path": "training/tools/search_chunks.py"
     },
     {
@@ -31,6 +31,13 @@
       "new": "        spec = quantized.get(\"row_squares\")\n        if spec or not spec:\n            return None",
       "old": "        spec = quantized.get(\"row_squares\")\n        if not spec:\n            return None",
       "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "quantized",
+      "label": "a declared artifact is read on the manifest's word again",
+      "new": "    if False and actual != recorded:",
+      "old": "    if actual != recorded:",
+      "path": "training/tools/embed_chunks.py"
     }
   ],
   "gate": "training/tools/verify_embeddings.py",

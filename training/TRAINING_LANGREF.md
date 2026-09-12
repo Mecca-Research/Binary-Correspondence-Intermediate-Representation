@@ -880,6 +880,9 @@ Landed with their fixes, each caught by a named check thereafter:
 | ranked OFFSET | a ranked page was truncated rather than shifted, so page two of every ranked query was empty at exit 0 | #784 |
 | `--require-native` | `--backend auto` names no backend, so the flag was read against a request rather than against what ran; `--objective startup` picks the pure-Python plan and exited 0 | #784 |
 | set/catalog binding | nothing bound an embedding set to a catalog, so a ranked row number meant a different chunk in each and the two halves of a line came from different records (§4.4) | #784 |
+| artifact digests | the set records four digests and one reader dereferenced one of them: the index was read on the manifest's word, the codes on a length check, `vectors.f32` on nothing | #784 |
+| kernel rejection | a kernel that loaded and then refused its arguments raised the same class as a missing compiler, so `--top-k 2000` printed "native backend unavailable" and exited 0 | #784 |
+| OFFSET witness | the only check naming OFFSET compared `full[o:o+k]` against `full[o:][:k]` — an identity of Python slicing, so it could not be handed False | #784 |
 
 ---
 

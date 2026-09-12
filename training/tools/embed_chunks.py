@@ -325,6 +325,44 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+class ArtifactMismatch(ValueError):
+    """An artifact's bytes are not the ones its manifest records a digest for."""
+
+
+def verified_bytes(root: Path, spec: dict, *, what: str) -> bytes:
+    """The bytes of one declared artifact, refused unless they match their digest.
+
+    A manifest that records a digest and a reader that never checks it is a content
+    address nobody dereferences. This set records four -- `index.jsonl`,
+    `vectors.f32`, `vectors.q15` and `squares.u32` -- and exactly one of the four
+    was being checked, the one whose reader had been written last and whose
+    docstring spells the reason out. The other three were read on the manifest's
+    word: `EmbeddingSet.__init__` checked the codes' *length*, `float_vectors`
+    checked nothing at all, and `load_previous` digested the vectors and then took
+    its reuse keys, positionally, from an index it had not hashed -- under a
+    docstring promising "never a wrong vector".
+
+    That is the shape `docs/security/laws.md` L14 names: one mechanism landed on
+    one rail out of four. So there is one predicate now, and every reader of a
+    declared artifact goes through it.
+    """
+    recorded = spec.get("sha256")
+    name = spec.get("path")
+    if not recorded or not name:
+        raise ArtifactMismatch(
+            f"{what}: the manifest declares no path and digest to read it by "
+            f"({spec!r}); a set written by an older tool must be rebuilt"
+        )
+    payload = (root / name).read_bytes()
+    actual = sha256_bytes(payload)
+    if actual != recorded:
+        raise ArtifactMismatch(
+            f"{what}: {name} digests {actual[:16]}... where its manifest records "
+            f"{recorded[:16]}...; the set is torn or was edited after it was written"
+        )
+    return payload
+
+
 def model_slug(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-")
 
@@ -507,15 +545,18 @@ def load_previous(
         or manifest.get("normalize") != provider.normalize
     ):
         return {}
-    vectors_meta = manifest.get("vectors") or {}
-    vectors_path = destination / vectors_meta.get("path", "vectors.f32")
-    index_path = destination / (manifest.get("index") or {}).get("path", "index.jsonl")
+    # Both artifacts, through the one predicate: the reuse key comes from the index
+    # and the vector is taken from `vectors.f32` *positionally*, so an index that
+    # does not match its digest binds keys to other rows' vectors -- which is the
+    # one outcome the docstring above promises cannot happen.
     try:
-        payload = vectors_path.read_bytes()
-        index_lines = index_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {}
-    if sha256_bytes(payload) != vectors_meta.get("sha256"):
+        payload = verified_bytes(destination, manifest.get("vectors") or {}, what="vectors")
+        index_lines = (
+            verified_bytes(destination, manifest.get("index") or {}, what="index")
+            .decode("utf-8")
+            .splitlines()
+        )
+    except (OSError, UnicodeDecodeError, ArtifactMismatch):
         return {}
     values = array("f")
     values.frombytes(payload)
