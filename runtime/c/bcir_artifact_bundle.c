@@ -254,10 +254,10 @@ static int contains_bytes(const uint8_t *data, size_t length, const char *needle
 }
 
 static int kind_format(uint16_t kind, uint16_t format) {
-  static const uint8_t formats[25] = {
-    0,1,2,2,3,4,5,6,7,8,8,2,9,10,8,8,8,8,8,2,11,11,4,4,12
+  static const uint8_t formats[26] = {
+    0,1,2,2,3,4,5,6,7,8,8,2,9,10,8,8,8,8,8,2,11,11,4,4,12,13
   };
-  return kind >= 1u && kind <= 24u && formats[kind] == format;
+  return kind >= 1u && kind <= (uint16_t)BCIR_AB_EXECUTION_PLAN && formats[kind] == format;
 }
 
 static bcir_ab_status decode_entry(const bcir_ab_view *view, uint32_t index,
@@ -303,6 +303,8 @@ static bcir_ab_status validate_payload(const bcir_ab_entry *entry) {
   if (!n) return BCIR_AB_ERR_PAYLOAD;
   if (entry->kind==BCIR_AB_STREAM_PACK)
     return bcir_sp_verify_semantic(p,n,UINT32_MAX,UINT32_MAX)==BCIR_OK ? BCIR_AB_OK : BCIR_AB_ERR_PAYLOAD;
+  if (entry->kind==BCIR_AB_EXECUTION_PLAN)   /* the plan as bytes: the full wire-law walk (G11) */
+    return bcir_ep_verify(p,n)==BCIR_OK ? BCIR_AB_OK : BCIR_AB_ERR_PAYLOAD;
   if (entry->format==BCIR_AB_FMT_ELF) {
     if (n<20 || !equal_bytes(p,"\x7f" "ELF",4) || (p[4]!=1 && p[4]!=2) || (p[5]!=1 && p[5]!=2))
       return BCIR_AB_ERR_PAYLOAD;
@@ -463,9 +465,9 @@ static int compatible(const bcir_ab_entry *entry, const bcir_ab_envelope *env) {
 }
 static int valid_envelope(const bcir_ab_envelope *envelope) {
   const uint64_t kind_mask =
-      ((UINT64_C(1) << (BCIR_AB_RAW_BINARY + 1u)) - UINT64_C(2));
+      ((UINT64_C(1) << (BCIR_AB_EXECUTION_PLAN + 1u)) - UINT64_C(2));
   const uint64_t format_mask =
-      ((UINT64_C(1) << (BCIR_AB_FMT_RAW + 1u)) - UINT64_C(1));
+      ((UINT64_C(1) << (BCIR_AB_FMT_EXECUTION_PLAN + 1u)) - UINT64_C(1));
   if (!bounded_caller_string(envelope->triple, BCIR_AB_TRIPLE_MAX) ||
       !bounded_caller_string(envelope->architecture, BCIR_AB_TARGET_NAME_MAX) ||
       !bounded_caller_string(envelope->os_abi, BCIR_AB_TARGET_NAME_MAX) ||

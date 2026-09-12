@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from .._artifact_json import strict_json_loads
 from ..model import Module
 from .allocator import live_intervals
-from .provenance import hash_module
+from .provenance import ModuleIdentity, digest_of, module_identity
 
 _SCHEMA = "bcir.static_memory_plan.v1"
 _MAX_JSON = 16 * 1024 * 1024
@@ -35,8 +35,11 @@ def _sha(value) -> str:
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
-def _module_digest(module: Module) -> str:
-    return hashlib.sha256(str(hash_module(module)).encode("ascii")).hexdigest()
+def _module_digest(module: Module, identity: "ModuleIdentity | None" = None) -> str:
+    """The plan's module digest: SHA-256 over the R13 module hash. The planner reads the
+    module's identity (computed once per revision, G3 / S1-B); a verifier handed that
+    identity validates it against the module's content and otherwise recomputes."""
+    return hashlib.sha256(str(digest_of(module, identity)).encode("ascii")).hexdigest()
 
 
 def _integer(value, field: str, *, minimum: int = 0) -> int:
@@ -404,29 +407,40 @@ def plan_static_memory(module: Module, resource_banks, hardware) -> StaticMemory
             heapq.heappush(active, (hi, rid, offset, row.end))
         summaries.append(BankMemoryPlan(bank_name, extent, naive, bank.allocatable_bytes))
         allocations.extend(placed)
+    identity = module_identity(module)  # the one digest of this module (G3 / S1-B)
     plan = StaticMemoryPlan(
-        _module_digest(module),
+        _module_digest(module, identity),
         hardware.digest,
         tuple(sorted(allocations, key=lambda row: row.rid)),
         tuple(summaries),
     )
-    errors = verify_static_memory_plan(plan, module, resource_banks, hardware)
+    errors = verify_static_memory_plan(plan, module, resource_banks, hardware, identity=identity)
     if errors:
         raise ValueError("static memory plan failed verification: " + "; ".join(errors))
     return plan
 
 
 def verify_static_memory_plan(
-    plan: StaticMemoryPlan, module: Module, resource_banks, hardware
+    plan: StaticMemoryPlan,
+    module: Module,
+    resource_banks,
+    hardware,
+    identity: "ModuleIdentity | None" = None,
 ) -> tuple[str, ...]:
-    """Independently check identity, capacity, alignment, lifetime, and alias safety."""
+    """Independently check identity, capacity, alignment, lifetime, and alias safety.
+
+    `identity` is the identity-bound API (G3 / S1-B): a caller that holds the module's
+    `ModuleIdentity` passes it and the verifier validates it against the module's content
+    (the canonical stream, never the revision) instead of re-hashing; without one, or with
+    one that no longer describes the module, the verifier recomputes -- its right at a
+    trust boundary."""
     errors: list[str] = []
     intervals = live_intervals(module)
     try:
         bindings = _bindings(resource_banks)
     except ValueError as exc:
         return (str(exc),)
-    if plan.module_digest != _module_digest(module):
+    if plan.module_digest != _module_digest(module, identity):
         errors.append("module digest mismatch")
     if plan.hardware_digest != hardware.digest:
         errors.append("hardware digest mismatch")

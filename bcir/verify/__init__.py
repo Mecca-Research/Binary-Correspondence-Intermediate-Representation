@@ -8,6 +8,9 @@ artifacts of the correspondence chain, one entry point per artifact:
                                                 policy, budget: the offer, every step cost and
                                                 the budget are re-derived, never trusted)
     verify_pack(module, pack)            R10-R11 GEM stream laws
+    verify_execution_plan(module, plan)  R9-R13 the plan as bytes (ExecutionPlanV1, G11):
+                                                structure, module/target binding, the
+                                                generation vector, the pack it was lowered to
     verify_lowering(module, result, ll)  R12    lowering-contract law
     verify_provenance(portfolio, ...)    R13    policy/table provenance law
     verify_smart_lowering(module, ...)   R14-16 CIM dispatch / DVFS clock / alloc tier
@@ -1003,6 +1006,253 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     return diags
 
 
+def verify_execution_plan(
+    module: Module,
+    plan,
+    *,
+    target=None,
+    result=None,
+    pack=None,
+    identity=None,
+) -> list[Diagnostic]:
+    """ExecutionPlanV1 laws (G11, staged plan S1-C): the plan as bytes realizes THIS module.
+
+    `plan` is a `gem.execution_plan.ExecutionPlan` (duck-typed), decoded from its bytes or
+    minted in memory. The laws, in the order a reader must be able to refuse them:
+
+    * the wire contract (`abi.execution_plan_abi.validate_plan`: a malformed plan -- bad mode,
+      stream, duration, an unsorted vector, a duplicated claim -- is refused before anything
+      is read from it; the C twin `bcir_ep_verify` refuses the same bytes);
+    * R9 structure: every step names a claim the module declares, in the phase the module
+      declares it, once, in topological phase order, and every claim is stepped (the rule
+      `gem.hydrate` holds the realization to);
+    * R13 binding: `module_hash` is this module's canonical digest (`digest_of`, the S1-B
+      identity API; the cached identity is re-validated by content) and, with `target`,
+      `target_hash` is the target's, the header's stream geometry is the target's, and the
+      placement is what the canonical dispatch produces from the plan's own step costs
+      (`schedule_plan(module, realization_of(plan), target, plan.mode)`);
+    * with `result`, the steps are the realization's (claim, phase, candidate, lane, width,
+      cost), in order;
+    * R11: the carried generation vector is the live registry's, entry for entry, and every
+      declared resource has an entry -- a plan minted under an older vector is stale;
+    * R10, with `pack`: the pack is the lowering of this plan -- its `source_plan`, one
+      segment per step in step order with the step's claim, phase, lane and width -- and its
+      vector is the plan's (a pack whose plan carries an older vector is refused; the C twin
+      `bcir_ep_check_pack` applies the same predicate).
+    """
+    diags: list[Diagnostic] = []
+    from ..abi.execution_plan_abi import AbiError, validate_plan
+
+    try:
+        validate_plan(plan)
+    except AbiError as exc:
+        diags.append(Diagnostic("R9", f"malformed execution plan: {exc}"))
+        return diags
+
+    # R9: structure against the module.
+    claim_phase = {c.id: ph.phase_id for ph in module.phases for c in ph.claims}
+    position = {pid: i for i, pid in enumerate(topological_phase_ids(module))}
+    seen: set[int] = set()
+    last = -1
+    structural = True
+    for index, step in enumerate(plan.steps):
+        if step.claim_id not in claim_phase:
+            diags.append(Diagnostic("R9", f"plan step {index} names unknown claim {step.claim_id}"))
+            structural = False
+            continue
+        if step.claim_id in seen:
+            diags.append(Diagnostic("R9", f"plan step {index} duplicates claim {step.claim_id}"))
+            structural = False
+            continue
+        seen.add(step.claim_id)
+        actual = claim_phase[step.claim_id]
+        if step.phase_id != actual:
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id} plan phase {step.phase_id} != module phase {actual}",
+                )
+            )
+            structural = False
+        pos = position.get(actual, -1)
+        if pos < last:
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"plan step {index} (claim {step.claim_id}) is out of topological phase order",
+                )
+            )
+            structural = False
+        last = max(last, pos)
+    missing = sorted(set(claim_phase) - seen)
+    if missing:
+        diags.append(Diagnostic("R9", f"partial execution plan: claims {missing[:8]} have no step"))
+        structural = False
+
+    # R13: the binding to the module and the target.
+    from ..kbcir.provenance import digest_of, hash_target
+
+    expected = digest_of(module, identity)
+    if plan.module_hash != expected:
+        diags.append(
+            Diagnostic(
+                "R13",
+                f"plan module hash {plan.module_hash} is not this module's canonical digest "
+                f"{expected}",
+            )
+        )
+        structural = False
+    if target is not None:
+        from ..gem.schedule import stream_geometry
+
+        th = hash_target(target)
+        if plan.target_hash != th:
+            diags.append(
+                Diagnostic("R13", f"plan target hash {plan.target_hash} is not the target's {th}")
+            )
+        streams, knee = stream_geometry(target)
+        if (plan.streams, plan.knee) != (streams, knee):
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"plan stream geometry ({plan.streams}, {plan.knee}) is not the target's "
+                    f"({streams}, {knee})",
+                )
+            )
+        elif structural:
+            from ..gem.execution_plan import realization_of
+            from ..gem.schedule import schedule_plan
+
+            sched = schedule_plan(module, realization_of(plan), target, plan.mode)
+            placed = {s.claim_id: (s.domain, s.start, s.finish) for s in sched.slots}
+            if placed != plan.slot_map() or sched.makespan != plan.makespan:
+                diags.append(
+                    Diagnostic(
+                        "R9",
+                        "the plan's placement is not what the canonical dispatch produces "
+                        "from its own step costs",
+                    )
+                )
+
+    # The realization the plan claims to be.
+    if result is not None:
+        rows = list(result.steps)
+        if len(rows) != len(plan.steps):
+            diags.append(
+                Diagnostic(
+                    "R9", f"plan has {len(plan.steps)} steps but the realization {len(rows)}"
+                )
+            )
+        for index, (step, chosen) in enumerate(zip(plan.steps, rows)):
+            cand = chosen.candidate
+            mine = (
+                step.claim_id,
+                step.phase_id,
+                step.candidate,
+                int(step.lane),
+                step.width,
+                step.cost,
+            )
+            theirs = (
+                chosen.claim_id,
+                chosen.phase_id,
+                str(cand.name),
+                int(cand.lane),
+                int(cand.width),
+                int(chosen.cost),
+            )
+            if mine != theirs:
+                diags.append(
+                    Diagnostic(
+                        "R9",
+                        f"plan step {index} {mine} is not the realization's step {theirs}",
+                    )
+                )
+
+    # R11: the generation vector against the live registry.
+    live = {r.rid: (r.map_gen, r.data_gen) for r in module.resources.values()}
+    carried = {g.rid: (g.map_gen, g.data_gen) for g in plan.generations}
+    if not carried and live:
+        diags.append(
+            Diagnostic(
+                "R11",
+                "plan carries no generation vector but the registry declares resources: "
+                "stale, rehydrate (replan)",
+            )
+        )
+    for rid, (mg, dg) in carried.items():
+        if rid not in live:
+            diags.append(Diagnostic("R11", f"plan vector names undeclared RID {rid}: stale"))
+            continue
+        lmg, ldg = live[rid]
+        if mg != lmg:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale plan: RID {rid} map_gen {mg} != live {lmg} (rehydrate: repack)",
+                )
+            )
+        if dg != ldg:
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale plan: RID {rid} data_gen {dg} != live {ldg} (rehydrate: replan)",
+                )
+            )
+    for rid in sorted(set(live) - set(carried)):
+        if carried:
+            diags.append(
+                Diagnostic("R11", f"stale plan: RID {rid} was declared after the plan was minted")
+            )
+
+    # R10: the pack is the lowering of this plan.
+    if pack is not None:
+        if pack.source_plan != plan.source_plan:
+            diags.append(
+                Diagnostic(
+                    "R10",
+                    f"pack source_plan {pack.source_plan!r} is not the plan's {plan.source_plan!r}",
+                )
+            )
+        if len(pack.segments) != len(plan.steps):
+            diags.append(
+                Diagnostic(
+                    "R10",
+                    f"pack has {len(pack.segments)} segments but the plan {len(plan.steps)} steps",
+                )
+            )
+        for index, (seg, step) in enumerate(zip(pack.segments, plan.steps)):
+            if (
+                seg.claim_id != step.claim_id
+                or seg.phase_id != step.phase_id
+                or int(seg.lane) != int(step.lane)
+                or int(seg.width) != step.width
+            ):
+                diags.append(
+                    Diagnostic(
+                        "R10",
+                        f"segment {index} ({seg.name}: claim {seg.claim_id}, phase "
+                        f"{seg.phase_id}, lane {int(seg.lane)}, width {seg.width}) is not the "
+                        f"lowering of plan step {index} (claim {step.claim_id}, phase "
+                        f"{step.phase_id}, lane {int(step.lane)}, width {step.width})",
+                    )
+                )
+        pack_vector = {g.rid: (g.map_gen, g.data_gen) for g in getattr(pack, "generations", ())}
+        if pack_vector != carried:
+            moved = sorted(
+                rid
+                for rid in set(pack_vector) | set(carried)
+                if pack_vector.get(rid) != carried.get(rid)
+            )
+            diags.append(
+                Diagnostic(
+                    "R11",
+                    f"stale: the pack's generation vector is not its plan's (RIDs {moved[:8]})",
+                )
+            )
+    return diags
+
+
 def _verify_generation_vector(module: Module, pack) -> list[Diagnostic]:
     diags: list[Diagnostic] = []
     vector = list(getattr(pack, "generations", ()))
@@ -1467,7 +1717,9 @@ def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> li
     from ..kbcir.weights import PERF
 
     diags: list[Diagnostic] = []
-    fresh = build_manifest(module, h, theta, policy or PERF, artifacts)
+    # A trust boundary: the manifest is an external record, so the module digest is
+    # RECOMPUTED here rather than read from the cached identity (G3 / S1-B).
+    fresh = build_manifest(module, h, theta, policy or PERF, artifacts, fresh=True)
     if fresh.digest != manifest.digest:
         diags.append(
             Diagnostic(

@@ -35,6 +35,7 @@ from bcir.frontends.asn1 import (
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _STREAMPACK_ASN1 = os.path.join(_ROOT, "bcir", "asn1", "BCIR-StreamPack.asn1")
+_EXECUTION_PLAN_ASN1 = os.path.join(_ROOT, "bcir", "asn1", "BCIR-ExecutionPlan.asn1")
 _PKIX_ASN1 = os.path.join(_ROOT, "bcir", "frontends", "asn1", "testdata", "PKIX1Implicit88.asn1")
 _ABI_DOC = os.path.join(_ROOT, "docs", "BCIR_ASN1_X690_ABI.md")
 
@@ -114,7 +115,7 @@ def test_round_trip_law_holds_for_both_bundled_modules():
     disagreeing with the module. ASTs are compared rather than text because layout and
     comments are not semantic.
     """
-    for path in (_STREAMPACK_ASN1, _PKIX_ASN1):
+    for path in (_STREAMPACK_ASN1, _EXECUTION_PLAN_ASN1, _PKIX_ASN1):
         node = parse_module(open(path, encoding="utf-8").read(), path)
         again = parse_module(print_module(node), f"{path}<printed>")
         assert again == node, f"round-trip law failed for {path}"
@@ -137,14 +138,23 @@ def test_round_trip_preserves_the_tag_mode_the_source_stated():
 
 
 def test_the_asn1_source_matches_the_module_published_in_the_abi_doc():
-    """One module, one text. The doc is the human-readable copy of the same file the
-    compiler reads, so the two cannot drift into describing different wire formats."""
+    """One module, one text. The doc is the human-readable copy of the same files the
+    compiler reads, so the two cannot drift into describing different wire formats. Two
+    modules are published verbatim: BCIR-StreamPack (section 3) and, since G11,
+    BCIR-ExecutionPlan (section 3b), each matched to its source by its module name."""
     doc = open(_ABI_DOC, encoding="utf-8").read()
     blocks = re.findall(r"```asn1\n(.*?)```", doc, re.S)
-    assert len(blocks) == 1, f"expected one asn1 block in the ABI doc, found {len(blocks)}"
-    assert blocks[0] == open(_STREAMPACK_ASN1, encoding="utf-8").read(), (
-        "docs/BCIR_ASN1_X690_ABI.md and bcir/asn1/BCIR-StreamPack.asn1 have drifted"
+    sources = {
+        "BCIR-StreamPack": open(_STREAMPACK_ASN1, encoding="utf-8").read(),
+        "BCIR-ExecutionPlan": open(_EXECUTION_PLAN_ASN1, encoding="utf-8").read(),
+    }
+    assert len(blocks) == len(sources), (
+        f"expected {len(sources)} asn1 blocks in the ABI doc, found {len(blocks)}"
     )
+    published = {block.split(" ", 1)[0]: block for block in blocks}
+    assert set(published) == set(sources), sorted(published)
+    for name, text in sources.items():
+        assert published[name] == text, f"docs/BCIR_ASN1_X690_ABI.md and {name}.asn1 have drifted"
 
 
 def test_parsed_streampack_module_encodes_byte_identically_to_the_hand_built_one():

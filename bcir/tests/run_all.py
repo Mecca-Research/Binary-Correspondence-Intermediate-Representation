@@ -228,6 +228,7 @@ _MODULES = [
     "bcir.tests.test_telemetry_export",
     "bcir.tests.test_abi",
     "bcir.tests.test_streampack_tool",
+    "bcir.tests.test_execution_plan",
     "bcir.tests.test_artifact_bundle",
     "bcir.tests.test_registry_tool",
     "bcir.tests.test_stackify",
@@ -342,6 +343,7 @@ _MODULES = [
     "bcir.tests.test_etl_binrec",
     "bcir.tests.test_asn1_x690",
     "bcir.tests.test_asn1_streampack",
+    "bcir.tests.test_asn1_execution_plan",
     "bcir.tests.test_asn1_artifact_bundle",
     "bcir.tests.test_c_asn1",
     "bcir.tests.test_asn1_law_parity",
@@ -482,6 +484,7 @@ _REPO_ONLY_TREES = ("tools",)
 _REPO_ONLY_MODULES = frozenset(
     {
         "bcir.tests.test_artifact_bundle",
+        "bcir.tests.test_execution_plan",
         "bcir.tests.test_asn1_calibration",
         "bcir.tests.test_asn1_dialect",
         "bcir.tests.test_asn1_ecn_law_parity",

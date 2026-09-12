@@ -290,6 +290,22 @@ class ArtifactBundleBuilder:
             )
         )
 
+    def add_execution_plan(self, variant_id: str, payload: bytes, *, priority: int = 0) -> None:
+        """The plan the root StreamPack was derived from, as bytes (ExecutionPlanV1, G11):
+        a portable, non-executable sibling of the pack that every reader prices."""
+        self.add(
+            ArtifactVariant(
+                variant_id,
+                ArtifactKind.EXECUTION_PLAN,
+                ArtifactFormat.EXECUTION_PLAN,
+                payload,
+                channel="host",
+                priority=priority,
+                provenance_digest=self.provenance_digest,
+                portable=True,
+            )
+        )
+
     def add_raw_binary(
         self,
         variant_id: str,

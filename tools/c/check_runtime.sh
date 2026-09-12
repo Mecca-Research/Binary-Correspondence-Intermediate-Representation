@@ -184,6 +184,55 @@ else
   echo "  FAIL: encoder bytes differ from the Python encoding"; exit 1
 fi
 
+echo "[c-runtime] ExecutionPlanV1 (G11): freestanding decode + Python->C->Python byte-identical round trip + plan/pack binding"
+# bcir_execution_plan.h is the C twin of bcir/abi/execution_plan_abi.py -- the plan the pack was
+# derived from, as bytes (its decoder/verifier lives in bcir_runtime.c, freestanding-checked above).
+# Python encodes the audit fixture's plan and pack; the C harness decodes, verifies, binds the pack
+# to the plan (bcir_ep_check_pack) and checks the vector against the live registry; Python rebuilds
+# the plan from the C decode and must re-encode it byte for byte. A registry that moved after the
+# plan was minted must be refused as STALE on the C rail.
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror "${C}/bcir_runtime.c" "${C}/test_execution_plan.c" -I "${C}" \
+  -o "${tmp}/test_execution_plan" || { echo "  FAIL: plan harness build"; exit 1; }
+python3 - "${tmp}" <<'PY' || { echo "  FAIL: python plan encode"; exit 1; }
+import sys
+from dataclasses import replace
+from bcir.abi import encode, encode_plan
+from bcir.gem.execution_plan import plan_from_realization
+from bcir.gem.streampack import generation_vector, hydrate
+from bcir.tests.plan_fixtures import audit_fixture
+tmp = sys.argv[1]
+module, target, theta, result = audit_fixture()
+plan = plan_from_realization(module, result, target, "tokens", plan="plan0")
+open(f"{tmp}/plan.bin", "wb").write(encode_plan(plan))
+open(f"{tmp}/plan_pack.bin", "wb").write(encode(hydrate(module, result, "plan0")))
+open(f"{tmp}/live.txt", "w").write(" ".join(f"{g.rid}:{g.map_gen}:{g.data_gen}" for g in generation_vector(module)))
+rid = min(module.resources)
+module.resources[rid] = replace(module.resources[rid], map_gen=module.resources[rid].map_gen + 1)
+module.touch()
+open(f"{tmp}/moved.txt", "w").write(" ".join(f"{g.rid}:{g.map_gen}:{g.data_gen}" for g in generation_vector(module)))
+PY
+# shellcheck disable=SC2046
+plan_out="$("${tmp}/test_execution_plan" "${tmp}/plan.bin" --dump --pack "${tmp}/plan_pack.bin" --live $(cat "${tmp}/live.txt"))" \
+  || { echo "  FAIL: C plan decode/verify/pack/vector"; echo "${plan_out}" | tail -5; exit 1; }
+printf '%s\n' "${plan_out}" > "${tmp}/plan_dump.txt"
+python3 - "${tmp}" <<'PY' || { echo "  FAIL: Python re-encode of the C decode is not byte-identical"; exit 1; }
+import sys
+from bcir.abi import encode_plan
+from bcir.tests.plan_fixtures import parse_c_dump
+tmp = sys.argv[1]
+original = open(f"{tmp}/plan.bin", "rb").read()
+again = encode_plan(parse_c_dump(open(f"{tmp}/plan_dump.txt").read()))
+sys.exit(0 if again == original else 1)
+PY
+echo "  PASS ExecutionPlanV1 parity (Python encode -> C decode -> Python re-encode, byte-identical; plan/pack bound; vector live)"
+# shellcheck disable=SC2046
+if "${tmp}/test_execution_plan" "${tmp}/plan.bin" --live $(cat "${tmp}/moved.txt") > "${tmp}/plan_stale.txt" 2>&1; then
+  echo "  FAIL: a plan minted under an older generation vector was accepted on the C rail"; exit 1
+fi
+grep -q "^vector=BCIR_ERR_STALE$" "${tmp}/plan_stale.txt" \
+  && echo "  PASS ExecutionPlanV1 stale vector refused on the C rail (BCIR_ERR_STALE)" \
+  || { echo "  FAIL: unexpected stale verdict"; cat "${tmp}/plan_stale.txt"; exit 1; }
+
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
 # bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,
 # resync-able telemetry transport (T2). The producer drains TelemetryRing and frames the 56-byte

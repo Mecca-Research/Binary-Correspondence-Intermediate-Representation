@@ -320,7 +320,23 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G5",
     ),
     # --- §5.2: the digest recomputation the profile found. Three hashes of one immutable
-    # module is pure overhead, and it is the largest single line in the profile.
+    # module is pure overhead, and it is the largest single line in the profile. G3 (S1-B)
+    # owns these: the module identity is computed once per revision from an iterative
+    # canonical stream and shared through `provenance.module_identity` / `digest_of`, and
+    # the count row is the exact gate -- the verifier keeps its right to recompute at a
+    # trust boundary, so the count is one, never zero.
+    Metric(
+        "static_memory.digests.2048",
+        "memory",
+        "full module digests over plan_static_memory + one identity-bound external verify",
+        3.0,
+        "count",
+        "exact",
+        bound=1.0,
+        bound_source="one canonical digest computed once (§5.2): the planner hashes, "
+        "the verifier validates the identity by content, the client reuses it",
+        slice_owner="G3",
+    ),
     Metric(
         "static_memory.plan.2048",
         "memory",
@@ -332,7 +348,7 @@ METRICS: tuple[Metric, ...] = (
         bound_source="the module digest alone at the same size (§5.2) -- "
         "one canonical digest computed once is the floor the "
         "planner cannot go below while it still hashes",
-        slice_owner="G0",
+        slice_owner="G3",
     ),
     Metric(
         "static_memory.digest.2048",
@@ -341,19 +357,76 @@ METRICS: tuple[Metric, ...] = (
         88.05,
         "ms",
         "wall",
-        slice_owner="G0",
+        slice_owner="G3",
     ),
     Metric(
         "static_memory.verify.2048",
         "memory",
-        "external verify at 2,048 resources",
+        "identity-bound external verify at 2,048 resources",
         157.88,
         "ms",
         "wall",
         bound=88.05,
         bound_source="an identity-bound API lets an independent verifier "
         "reuse a proved digest instead of recomputing (§5.2)",
-        slice_owner="G0",
+        slice_owner="G3",
+    ),
+    # --- G11 (S1-C): the plan as bytes. Before the slice the canonical plan was Python objects:
+    # nothing round-tripped, no second rail could read it, a stale or malformed plan had no
+    # bytes to be refused by -- so on the parent tree EVERY fixture of every gate fails, and
+    # the rows count those failures over fixed corpora (26 corpus plans = 12 programs x 2
+    # placements + the audit fixture x 2; 27 reader fixtures = the plans + the static-memory
+    # fixture; 6 stale (fixture, rail) pairs; 39 malformed (variant, rail) pairs). The bound
+    # is zero and each row is graded exactly. The three rows that need the C twin are
+    # NOT-MEASURED without a C compiler, never estimated from the Python rail alone.
+    Metric(
+        "plan.abi.mismatches",
+        "plan",
+        "corpus plans whose Python encode -> C decode -> Python re-encode is NOT byte-identical",
+        26,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every plan of the corpus survives the C twin byte for byte "
+        "(the G11 gate `plan.abi.roundtrip`)",
+        slice_owner="G11",
+    ),
+    Metric(
+        "plan.readers.disagreements",
+        "plan",
+        "reader fixtures on which pricing, both executors, static memory or the StreamPack "
+        "lowering, reading the plan, do NOT reproduce their in-memory traces",
+        27,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one artifact, four readers, identical traces "
+        "(the G11 gate `plan.readers.agree`)",
+        slice_owner="G11",
+    ),
+    Metric(
+        "plan.stale.accepted",
+        "plan",
+        "(stale-vector fixture, rail) pairs where a plan minted under an older vector, or a "
+        "pack older than its plan, is ACCEPTED",
+        6,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="R11 by bytes on the Python and C rails (G11 gate)",
+        slice_owner="G11",
+    ),
+    Metric(
+        "plan.malformed.accepted",
+        "plan",
+        "(malformed-plan variant, rail) pairs -- truncated, duplicated, out-of-order, unknown "
+        "claim, bad mode/stream/duration, unsorted vector, trailing bytes, CRC -- ACCEPTED",
+        39,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every variant refused on every rail that can see it (G11 gate)",
+        slice_owner="G11",
     ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
@@ -707,11 +780,214 @@ def measure_verifier() -> dict[str, float]:
     return out
 
 
+def measure_digest() -> dict[str, float]:
+    """The G3 rows (§5.2): the module digest, the static-memory plan (which verifies), and
+    an external verify, all over the audit's static-memory fixture at scale 4 -- 2,048
+    resources, 3,972 claims, the report's own probe -- plus the exact count of full digests
+    the plan-and-verify chain computes.
+
+    The external verify is the identity-bound one the row's bound names: the client holds
+    the module's `ModuleIdentity` and the verifier validates it against the module's content
+    (the canonical stream) instead of re-hashing. A verifier at a trust boundary still
+    recomputes -- `hash_module` is that primitive, and the count row would read 2 if the
+    identity were ever refused on this immutable fixture.
+    """
+    import statistics
+    import time
+
+    from bcir.kbcir.provenance import digest_stats, hash_module, module_identity
+    from bcir.kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    out: dict[str, float] = {}
+    module = static_memory_module(4)
+    hardware = _AuditHardware()
+    bindings = {rid: "ram" for rid in module.resources}
+
+    def median_ms(fn, repeats=5):
+        samples = []
+        for _ in range(repeats):
+            start = time.perf_counter()
+            fn()
+            samples.append((time.perf_counter() - start) * 1e3)
+        return statistics.median(samples)
+
+    # The exact gate first, on a fresh identity: plan (with its internal verify) and one
+    # identity-bound external verify must compute the digest exactly once.
+    module.touch()
+    before = digest_stats()["hash_module"]
+    plan = plan_static_memory(module, bindings, hardware)
+    identity = module_identity(module)
+    errors = verify_static_memory_plan(plan, module, bindings, hardware, identity=identity)
+    if errors:
+        raise AssertionError(f"the static-memory plan failed its external verify: {errors}")
+    out["static_memory.digests.2048"] = float(digest_stats()["hash_module"] - before)
+
+    out["static_memory.digest.2048"] = median_ms(lambda: hash_module(module))
+    out["static_memory.plan.2048"] = median_ms(
+        lambda: (module.touch(), plan_static_memory(module, bindings, hardware))
+    )
+    out["static_memory.verify.2048"] = median_ms(
+        lambda: verify_static_memory_plan(plan, module, bindings, hardware, identity=identity)
+    )
+    return out
+
+
+def plan_fixtures():
+    """The corpus plans the G11 rows are measured over: every corpus program under the
+    x86_avx512/cool profile and the audit's K_BCIR->StreamPack fixture at scale 1 (matmul_tiled
+    n=32, 64 claims) under x86_avx2/mem_bound, each in both placements."""
+    from bcir.examples import PROGRAMS, matmul_tiled
+    from bcir.gem.execution_plan import plan_from_realization
+    from bcir.kbcir.cost import TargetProfile, Theta
+    from bcir.kbcir.realize import optimize
+
+    rows = [
+        (name, build(), TargetProfile.x86_avx512(), Theta.cool())
+        for name, build in sorted(PROGRAMS.items())
+    ]
+    rows.append(
+        (
+            "audit.kbcir-streampack.1",
+            matmul_tiled(n=32, tile=8),
+            TargetProfile.x86_avx2(),
+            Theta.mem_bound(),
+        )
+    )
+    for name, module, target, theta in rows:
+        result = optimize(module, target, theta)
+        for mode in ("eft", "tokens"):
+            plan = plan_from_realization(module, result, target, mode, plan="plan0")
+            yield f"{name}/{mode}", module, target, theta, result, plan
+
+
+def _plan_harness():
+    """Build the C plan harness (runtime/c/test_execution_plan.c); None without a compiler."""
+    import shutil
+    import subprocess
+    import tempfile
+
+    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return None, None
+    c_dir = os.path.join(ROOT, "runtime", "c")
+    tmp = tempfile.mkdtemp(prefix="bcir-plan-")
+    exe = os.path.join(tmp, "test_execution_plan")
+    build = subprocess.run(
+        [
+            cc,
+            "-std=c11",
+            "-O2",
+            os.path.join(c_dir, "bcir_runtime.c"),
+            os.path.join(c_dir, "test_execution_plan.c"),
+            "-I",
+            c_dir,
+            "-o",
+            exe,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if build.returncode != 0:
+        sys.stderr.write(f"[baseline] plan harness build failed: {build.stderr}\n")
+        return None, tmp
+    return exe, tmp
+
+
+def measure_plan() -> dict[str, float]:
+    """The G11 rows (S1-C): the plan as bytes, counted failures over fixed corpora.
+
+    `plan.abi.mismatches`       corpus plans whose Python encode -> C decode (the harness's
+                                record dump) -> Python re-encode is not byte-identical.
+    `plan.readers.disagreements` reader fixtures where the pricer's makespan and placement,
+                                both executors' placements (and the re-placement from the
+                                plan's own step costs), the static memory plan's lifetimes or
+                                the StreamPack lowering, read from the plan, do not reproduce
+                                their in-memory traces.
+    `plan.stale.accepted`       (stale-vector fixture, rail) pairs accepted.
+    `plan.malformed.accepted`   (malformed variant, rail) pairs accepted.
+    Every row is 0 at the bound; on the parent tree every fixture failed because no plan
+    bytes existed (the baselines).
+    """
+    import shutil
+    import subprocess
+
+    from bcir.abi import decode_plan, encode, encode_plan
+    from bcir.gem.execution_plan import realization_of, schedule_of
+    from bcir.gem.overlap import price_scheduled
+    from bcir.gem.schedule import schedule_plan
+    from bcir.gem.streampack import hydrate
+    from bcir.kbcir.weights import PERF
+    from bcir.tests.plan_fixtures import (
+        c_roundtrip,
+        malformed_variants,
+        parse_c_dump,
+        stale_fixtures,
+        static_memory_lifetimes_agree,
+    )
+    from bcir.verify import verify_execution_plan
+
+    out: dict[str, float] = {}
+    fixtures = list(plan_fixtures())
+
+    # readers agree (Python rail only: the readers are Python organs).
+    agree = 0
+    for _name, module, target, theta, result, plan in fixtures:
+        blob = encode_plan(plan)
+        read = decode_plan(blob)
+        priced = price_scheduled(module, result, target, theta, PERF, plan.mode)
+        ok = priced.makespan == read.makespan
+        ok = (
+            ok
+            and {s.claim_id: (s.domain, s.start, s.finish) for s in priced.schedule.slots}
+            == read.slot_map()
+        )
+        placed = schedule_plan(module, result, target, plan.mode)
+        ok = (
+            ok
+            and {s.claim_id: (s.domain, s.start, s.finish) for s in placed.slots} == read.slot_map()
+        )
+        again = schedule_plan(module, realization_of(read), target, plan.mode)
+        ok = (
+            ok
+            and {s.claim_id: (s.domain, s.start, s.finish) for s in again.slots} == read.slot_map()
+        )
+        ok = ok and schedule_of(read).makespan == placed.makespan
+        ok = ok and encode(hydrate(module, realization_of(read), read.source_plan)) == encode(
+            hydrate(module, result, plan.source_plan)
+        )
+        ok = ok and not verify_execution_plan(module, read, target=target, result=result)
+        agree += bool(ok)
+    total = len(fixtures) + 1
+    agree += bool(static_memory_lifetimes_agree())
+    out["plan.readers.disagreements"] = float(total - agree)
+
+    exe, tmp = _plan_harness()
+    try:
+        if exe is not None:
+            identical = 0
+            for _name, _module, _target, _theta, _result, plan in fixtures:
+                blob = encode_plan(plan)
+                identical += encode_plan(parse_c_dump(c_roundtrip(exe, tmp, blob))) == blob
+            out["plan.abi.mismatches"] = float(len(fixtures) - identical)
+            refused, count = stale_fixtures(exe, tmp)
+            out["plan.stale.accepted"] = float(count - refused)
+            refused, count = malformed_variants(exe, tmp)
+            out["plan.malformed.accepted"] = float(count - refused)
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
+    _ = subprocess  # the harness is driven by the shared fixture module
+    return out
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
     "exact": measure_exact,
     "verifier": measure_verifier,
+    "digest": measure_digest,
+    "plan": measure_plan,
 }
 
 
@@ -869,7 +1145,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, exact, verifier)",
+        help="limit measurement to a group (audit, planner, exact, verifier, digest, plan)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

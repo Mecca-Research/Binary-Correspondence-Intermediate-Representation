@@ -186,7 +186,23 @@ tolerance forces `precision="compensated"`) · **R18 compositional call graph** 
 `kbcir.call` resolves to a `kbcir.func` and the call graph is acyclic — no recursion;
 the law-rail form of `compose.plan_composite`'s undefined-callee + recursion rejections).
 R14–R18 are first-class `-bcir-verify` laws, dual-rail with
-`verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. R13 additionally
+`verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. On the oracle the
+module's R13 digest is computed once per module revision from one iterative canonical
+stream (`provenance.canonical_stream` / `module_identity`, G3) and shared through an
+identity-bound API: a verifier handed a `ModuleIdentity` accepts it only when the
+module's canonical stream is exactly what the identity describes (`digest_of`) and
+recomputes otherwise — `verify_manifest`, `replay` and `reproduces` always recompute,
+and the law rail always recomputes from the IR. Since G11 (S1-C) the plan itself has a
+byte form, `ExecutionPlanV1` ([`kernel/BCIR_EXECUTION_PLAN_ABI.md`](kernel/BCIR_EXECUTION_PLAN_ABI.md)):
+`verify_execution_plan` holds R9 over it (every claim the module declares is stepped once,
+in the declared phase and in topological phase order; the placement is what the canonical
+dispatch produces from the plan's own step costs), R13 (the plan's `module_hash` and
+`target_hash` are this module's and this target's, validated through the identity API),
+R11 (the carried generation vector is the live registry's, entry for entry) and R10/R11
+across artifacts (the pack is the lowering of its plan — one segment per step with the
+step's claim, phase, lane and width — and a pack whose plan carries an older vector is
+stale); the freestanding C twin (`bcir_ep_verify`, `bcir_ep_check_generation_vector`,
+`bcir_ep_check_pack`) refuses the same bytes. R13 additionally
 **recomputes** a manifest's digest from its component hashes (byte-identical to
 `provenance._digest`) and **cross-checks every component hash** — `m_theta` / `m_policy` /
 `m_target` / `m_module` — against the in-IR `kbcir.theta` / `kbcir.policy` (unfolded

@@ -77,6 +77,22 @@ else
 fi
 "${BO}" -verify-diagnostics -split-input-file "${T}/artifact_bundle_verify_neg.mlir" \
   && echo "  PASS artifact_bundle_verify_neg (BCAB metadata refusal)" || { echo "  FAIL artifact_bundle_verify_neg"; fail=1; }
+# G11 (S1-C): the plan the root pack was derived from is a BCAB kind of its own; the kind/format
+# pair is closed (execution_plan requires format execution_plan) -- positive fixture + the refusal.
+if [ -n "${FC}" ]; then
+  "${BO}" "${T}/artifact_bundle_execution_plan.mlir" 2>"${ERR}" | "${FC}" "${T}/artifact_bundle_execution_plan.mlir" \
+    && echo "  PASS artifact_bundle_execution_plan (ExecutionPlanV1 as a BCAB kind)" || { echo "  FAIL artifact_bundle_execution_plan"; cat "${ERR}"; fail=1; }
+else
+  "${BO}" "${T}/artifact_bundle_execution_plan.mlir" >/dev/null 2>"${ERR}" \
+    && echo "  RUN-ONLY artifact_bundle_execution_plan" || { echo "  FAIL artifact_bundle_execution_plan"; cat "${ERR}"; fail=1; }
+fi
+if sed 's/format = "execution_plan"/format = "raw"/' "${T}/artifact_bundle_execution_plan.mlir" | "${BO}" >/dev/null 2>"${ERR}"; then
+  echo "  FAIL artifact_bundle_execution_plan: a plan variant with a foreign format was accepted"; fail=1
+else
+  grep -q "requires format 'execution_plan'" "${ERR}" \
+    && echo "  PASS artifact_bundle_execution_plan refuses a foreign format" \
+    || { echo "  FAIL artifact_bundle_execution_plan: unexpected refusal"; cat "${ERR}"; fail=1; }
+fi
 if [ -n "${FC}" ]; then
   "${BO}" -bcir-verify "${T}/artifact_bundle_asn1.mlir" 2>"${ERR}" \
     | "${FC}" "${T}/artifact_bundle_asn1.mlir" \

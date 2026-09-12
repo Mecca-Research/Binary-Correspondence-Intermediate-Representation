@@ -13,12 +13,12 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       ptx(10), cubin(11), spirv(12), jvmClass(13), cil(14), cSource(15),
       cppSource(16), syclSource(17), assembly(18), elfExecutable(19),
       peExecutable(20), peShared(21), machoExecutable(22), machoShared(23),
-      rawBinary(24) }
+      rawBinary(24), executionPlan(25) }
 
   ArtifactFormat ::= ENUMERATED {
       none(0), streamPack(1), elf(2), coff(3), macho(4), archive(5),
       wasm(6), llvmBitcode(7), text(8), spirv(9), jvmClass(10), pe(11),
-      raw(12) }
+      raw(12), executionPlan(13) }
 
   Endianness ::= ENUMERATED { neutral(0), little(1), big(2) }
   FeatureList ::= SEQUENCE OF UTF8String

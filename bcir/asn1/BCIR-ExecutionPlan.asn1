@@ -1,0 +1,66 @@
+BCIR-ExecutionPlan { iso(1) identified-organization(3) dod(6) internet(1)
+                     private(4) enterprise(1) 62596 3 }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  ExecutionPlan ::= SEQUENCE {
+      version        [0] INTEGER DEFAULT 1,
+      sourcePlan     [1] UTF8String,
+      mode           [2] Mode DEFAULT eft,
+      streams        [3] INTEGER DEFAULT 1,
+      knee           [4] INTEGER DEFAULT 1,
+      makespan       [5] INTEGER DEFAULT 0,
+      moduleHash     [6] INTEGER DEFAULT 0,
+      targetHash     [7] INTEGER DEFAULT 0,
+      steps          [8] SEQUENCE OF PlanStep,
+      lifetimes      [9] SEQUENCE OF Lifetime     DEFAULT {},
+      moves         [10] SEQUENCE OF MovementEdge DEFAULT {},
+      generations   [11] SEQUENCE OF Generation   DEFAULT {} }
+
+  Mode ::= ENUMERATED { eft(0), tokens(1) }
+
+  PlanStep ::= SEQUENCE {
+      claimId        [0] INTEGER,
+      phaseId        [1] INTEGER,
+      candidate      [2] UTF8String,
+      lane           [3] Lane,
+      width          [4] INTEGER,
+      cost           [5] INTEGER DEFAULT 0,
+      stream         [6] INTEGER DEFAULT 0,
+      start          [7] INTEGER DEFAULT 0,
+      duration       [8] INTEGER DEFAULT 0 }
+
+  Lane ::= ENUMERATED { u(0), ux(1), t(2), ggg(3), a(4), h(5) }
+
+  Lifetime ::= SEQUENCE {
+      rid            [0] INTEGER,
+      bank           [1] UTF8String,
+      offset         [2] INTEGER DEFAULT 0,
+      sizeBytes      [3] INTEGER,
+      alignment      [4] INTEGER DEFAULT 1,
+      firstPhase     [5] INTEGER DEFAULT 0,
+      lastPhase      [6] INTEGER DEFAULT 0 }
+
+  MovementEdge ::= SEQUENCE {
+      rid            [0] INTEGER,
+      srcBank        [1] UTF8String,
+      dstBank        [2] UTF8String,
+      offset         [3] INTEGER DEFAULT 0,
+      sizeBytes      [4] INTEGER,
+      route          [5] UTF8String OPTIONAL,
+      kind           [6] MoveKind  DEFAULT direct,
+      coherence      [7] Coherence DEFAULT none,
+      mapGen         [8] INTEGER DEFAULT 0,
+      dataGen        [9] INTEGER DEFAULT 0,
+      afterClaim    [10] INTEGER DEFAULT 0,
+      beforeClaim   [11] INTEGER DEFAULT 0 }
+
+  MoveKind  ::= ENUMERATED { direct(0), peer(1), staged(2), rematerialized(3),
+                             compressed(4), evicted(5) }
+  Coherence ::= ENUMERATED { none(0), flush(1), invalidate(2), writeback(3) }
+
+  Generation ::= SEQUENCE {
+      rid            [0] INTEGER,
+      mapGen         [1] INTEGER DEFAULT 0,
+      dataGen        [2] INTEGER DEFAULT 0 }
+
+END

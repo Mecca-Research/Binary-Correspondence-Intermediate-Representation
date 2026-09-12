@@ -209,6 +209,98 @@ than normalized (normalizing would let a peer choose the digest by choosing a sp
 and every reconstruction is re-validated through `bcir_sp_verify_semantic` before it is
 returned, so a well-formed projection of a nonsense plan cannot mint an unexecutable pack.
 
+## 3b. The BCIR-ExecutionPlan module
+
+The plan a StreamPack was derived from has its own frozen native wire format,
+[`BCIR_EXECUTION_PLAN_ABI.md`](kernel/BCIR_EXECUTION_PLAN_ABI.md) (GEM+ G11, S1-C), and the
+same discipline gives it a second transfer syntax: the `BCIR-ExecutionPlan` module under
+`{ 1 3 6 1 4 1 62596 3 }` projects the abstract `ExecutionPlan` — the realization and the
+canonical placement per step, the static-memory lifetimes, the movement edges and the
+per-resource generation vector — and the native octets survive the round trip byte for byte
+(`bcir/tests/test_asn1_execution_plan.py` gates A1–A3 over every corpus plan in both placements,
+plus the OER and JER realizations over the same type model). The text below is
+[`bcir/asn1/BCIR-ExecutionPlan.asn1`](../bcir/asn1/BCIR-ExecutionPlan.asn1) verbatim; the
+compiled module produces byte-identical DER to the hand-built one in
+[`bcir/asn1/execution_plan.py`](../bcir/asn1/execution_plan.py).
+
+```asn1
+BCIR-ExecutionPlan { iso(1) identified-organization(3) dod(6) internet(1)
+                     private(4) enterprise(1) 62596 3 }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  ExecutionPlan ::= SEQUENCE {
+      version        [0] INTEGER DEFAULT 1,
+      sourcePlan     [1] UTF8String,
+      mode           [2] Mode DEFAULT eft,
+      streams        [3] INTEGER DEFAULT 1,
+      knee           [4] INTEGER DEFAULT 1,
+      makespan       [5] INTEGER DEFAULT 0,
+      moduleHash     [6] INTEGER DEFAULT 0,
+      targetHash     [7] INTEGER DEFAULT 0,
+      steps          [8] SEQUENCE OF PlanStep,
+      lifetimes      [9] SEQUENCE OF Lifetime     DEFAULT {},
+      moves         [10] SEQUENCE OF MovementEdge DEFAULT {},
+      generations   [11] SEQUENCE OF Generation   DEFAULT {} }
+
+  Mode ::= ENUMERATED { eft(0), tokens(1) }
+
+  PlanStep ::= SEQUENCE {
+      claimId        [0] INTEGER,
+      phaseId        [1] INTEGER,
+      candidate      [2] UTF8String,
+      lane           [3] Lane,
+      width          [4] INTEGER,
+      cost           [5] INTEGER DEFAULT 0,
+      stream         [6] INTEGER DEFAULT 0,
+      start          [7] INTEGER DEFAULT 0,
+      duration       [8] INTEGER DEFAULT 0 }
+
+  Lane ::= ENUMERATED { u(0), ux(1), t(2), ggg(3), a(4), h(5) }
+
+  Lifetime ::= SEQUENCE {
+      rid            [0] INTEGER,
+      bank           [1] UTF8String,
+      offset         [2] INTEGER DEFAULT 0,
+      sizeBytes      [3] INTEGER,
+      alignment      [4] INTEGER DEFAULT 1,
+      firstPhase     [5] INTEGER DEFAULT 0,
+      lastPhase      [6] INTEGER DEFAULT 0 }
+
+  MovementEdge ::= SEQUENCE {
+      rid            [0] INTEGER,
+      srcBank        [1] UTF8String,
+      dstBank        [2] UTF8String,
+      offset         [3] INTEGER DEFAULT 0,
+      sizeBytes      [4] INTEGER,
+      route          [5] UTF8String OPTIONAL,
+      kind           [6] MoveKind  DEFAULT direct,
+      coherence      [7] Coherence DEFAULT none,
+      mapGen         [8] INTEGER DEFAULT 0,
+      dataGen        [9] INTEGER DEFAULT 0,
+      afterClaim    [10] INTEGER DEFAULT 0,
+      beforeClaim   [11] INTEGER DEFAULT 0 }
+
+  MoveKind  ::= ENUMERATED { direct(0), peer(1), staged(2), rematerialized(3),
+                             compressed(4), evicted(5) }
+  Coherence ::= ENUMERATED { none(0), flush(1), invalidate(2), writeback(3) }
+
+  Generation ::= SEQUENCE {
+      rid            [0] INTEGER,
+      mapGen         [1] INTEGER DEFAULT 0,
+      dataGen        [2] INTEGER DEFAULT 0 }
+
+END
+```
+
+The choices that are not obvious: a step's `cost` and the tail `stream` (the scheduler's `-1`)
+are signed and stay INTEGER, where the native wire spells them as two's complement and
+`0xFFFFFFFF`; `mode`, `lane`, a movement edge's `kind` and `coherence` are ENUMERATED (closed
+sets a peer's schema can refuse); defaults mirror the native format's implicit ones so §11.5
+omits them; `route` is OPTIONAL, absent for the empty string. The projection is at version 1
+(`PROJECTION_VERSION`), independent of the native version. There is no DER → native fast path in
+C for the plan yet: the freestanding rail reads the native plan (`bcir_ep_verify`), and the
+projection is reconstructed on the Python rail.
+
 ## 4. The BCIR-ArtifactBundle module
 
 [`bcir/asn1/BCIR-ArtifactBundle.asn1`](../bcir/asn1/BCIR-ArtifactBundle.asn1)

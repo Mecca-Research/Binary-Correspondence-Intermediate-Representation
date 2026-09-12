@@ -1091,6 +1091,7 @@ static bool isCanonicalFeatureArray(::mlir::ArrayAttr values) {
       {"macho_executable", "macho"},
       {"macho_shared", "macho"},
       {"raw_binary", "raw"},
+      {"execution_plan", "execution_plan"},
   };
   auto found = kindFormats.find(getKind());
   if (found == kindFormats.end())

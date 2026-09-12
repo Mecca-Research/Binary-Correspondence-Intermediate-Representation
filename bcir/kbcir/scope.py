@@ -195,12 +195,12 @@ def scope_for(
     being replaced by it: the scope is strictly stronger, and the two never disagree about
     the part they share.
     """
-    from .provenance import hash_module, hash_policy, hash_target, hash_theta
+    from .provenance import hash_policy, hash_target, hash_theta, module_identity
 
     program = UNDECLARED
     if module is not None:
         program = {
-            "module_hash": hash_module(module),
+            "module_hash": module_identity(module).digest,  # computed once per revision (G3)
             "name": module.name,
             # DECLARED order. Two claims declared `a, b` and `b, a` plan to different scores;
             # `hash_module` folds the order too since S0-D, and the scope names it as a

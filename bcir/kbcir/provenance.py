@@ -27,7 +27,7 @@ immutable *within its generation*, and the manifest is what pins that identity.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from .._artifact_json import strict_json_loads
 from ..model import Module
@@ -40,15 +40,46 @@ _FNV_PRIME = 1099511628211
 _MASK = (1 << 64) - 1
 _I63 = (1 << 63) - 1  # keep digests within signed-i64 range (MLIR parity)
 
+#: The canonical rendering of an item, memoized for exact ints and strs (the item kinds a
+#: module stream is made of) with the field separator appended, so the chain below runs one
+#: multiply per byte and nothing else. A bool is NOT an int here (`str(True)` is "True", and
+#: the law rail renders `scalable` the same way), so only `type(it) is int` takes the memo.
+_ENCODED: dict = {}
+
+#: Diagnostics: how many FULL module digests this process has computed. The G3 gate
+#: (`static_memory.digests.2048`) and the identity witnesses read it; it is never an input.
+_STATS = {"hash_module": 0}
+
+
+def _fnv_items(items) -> int:
+    """FNV-1a over an already-flat item sequence, byte-identical to the historical
+    per-byte chain: for each item, every UTF-8 byte of `str(item)` then the 0xFF field
+    separator, each step `h = (h ^ byte) * PRIME (mod 2^64)`, the result i63-masked.
+
+    The reduction mod 2^64 is applied once per item rather than per byte: XOR with a
+    byte only touches bits 0..7 and multiplication commutes with reduction, so the low
+    64 bits are the same and the accumulator stays small (an item is a few bytes).
+    """
+    h = _FNV_OFFSET
+    prime = _FNV_PRIME
+    mask = _MASK
+    enc = _ENCODED
+    for it in items:
+        if type(it) is int or type(it) is str:
+            e = enc.get(it)
+            if e is None:
+                e = enc[it] = str(it).encode("utf-8") + b"\xff"
+        else:
+            e = str(it).encode("utf-8") + b"\xff"
+        for byte in e:
+            h = (h ^ byte) * prime
+        h &= mask
+    return h & _I63
+
 
 def _fnv(*items) -> int:
     """Deterministic FNV-1a over a canonical flattened item sequence (i63-masked)."""
-    h = _FNV_OFFSET
-    for it in _flatten(items):
-        for byte in str(it).encode("utf-8"):
-            h = ((h ^ byte) * _FNV_PRIME) & _MASK
-        h = ((h ^ 0xFF) * _FNV_PRIME) & _MASK  # field separator
-    return h & _I63
+    return _fnv_items(_flatten(items))
 
 
 def _flatten(xs):
@@ -62,51 +93,133 @@ def _flatten(xs):
 # --- component hashes (the canonical content of each input) ----------------------
 
 
+def canonical_stream(module: Module) -> tuple:
+    """The canonical item sequence of a module -- exactly the items `hash_module` chains,
+    in order, produced by ONE iterative walk (G3 / S1-B): the module header, the resources
+    by rid (rid, domain, shape extents, layout, align, access, priority, map_gen,
+    data_gen), then every phase in declared order (id, sorted deps, then its claims in
+    DECLARED order: id, opcode, lane, stride class, count, stride_k, reads, writes, hazard,
+    domain, verify, bounds, op, offset, cost_class). It is the R13 canonical content the
+    law rail's `hashModuleFromIR` walks field for field, and it is what a `ModuleIdentity`
+    is validated against: two modules with the same stream have the same digest."""
+    out = [module.name, module.cacheline, module.align]
+    ext = out.extend
+    for r in sorted(module.resources.values(), key=lambda r: r.rid):
+        ext((r.rid, int(r.domain)))
+        ext(r.shape)
+        ext((r.layout, r.align, r.access, r.priority, r.map_gen, r.data_gen))
+    for ph in module.phases:
+        ext((ph.phase_id,))
+        ext(sorted(ph.deps))
+        for c in ph.claims:  # declared order (S0-D); the deps stay a set
+            ext((c.id, int(c.opcode), int(c.lane), int(c.stride_class), c.count, c.stride_k))
+            ext(c.rd)
+            ext(c.wr)
+            ext((c.hazard, int(c.domain), c.verify, c.bounds, c.op, c.offset, c.cost_class))
+    return tuple(out)
+
+
 def hash_module(module: Module) -> int:
     """Hash the goal graph G structure: resources, the phase DAG, and the claims in their
     DECLARED order (S0-1 / staged plan S0-D). Declared order is plan-affecting -- two claims
     declared `a, b` and `b, a` plan to 9,216 and 10,496 on the same target -- and the old
     sort by claim id erased it, so the two plans shared one content address. The law rail's
     `hashModuleFromIR` walks the claims in textual order, which is the order the emitter
-    writes them: declared."""
-    res = [
-        (
-            r.rid,
-            int(r.domain),
-            tuple(r.shape),
-            r.layout,
-            r.align,
-            r.access,
-            r.priority,
-            r.map_gen,
-            r.data_gen,
+    writes them: declared.
+
+    This is the RECOMPUTATION primitive -- what a verifier calls at a trust boundary. A
+    producer that needs the digest of a module it holds calls `module_identity` (computed
+    once per revision); a verifier handed that identity validates it against the module's
+    content with `digest_of` (G3 / S1-B)."""
+    _STATS["hash_module"] += 1
+    return _fnv_items(canonical_stream(module))
+
+
+def digest_stats() -> dict:
+    """A copy of the digest counters (full module digests computed so far)."""
+    return dict(_STATS)
+
+
+class IdentityMismatch(ValueError):
+    """A module identity presented for a module whose content it does not describe."""
+
+
+@dataclass(frozen=True)
+class ModuleIdentity:
+    """A module's R13 digest, computed once, bound to the content it was computed from.
+
+    `matches(module)` compares the module's canonical stream against the one the digest
+    was computed over -- a complete content check at the cost of the walk alone (a few
+    milliseconds at 2,048 resources, against tens for the digest) -- so an identity cannot
+    survive any mutation, declared or not, and cannot be substituted across modules: a
+    different module has a different stream. The `revision` is only the cache key on the
+    module; the census (resource, phase and claim counts) is a cheap first witness the
+    cache re-checks before trusting the revision."""
+
+    digest: int
+    revision: int
+    n_resources: int
+    n_phases: int
+    n_claims: int
+    stream: tuple = field(compare=False, repr=False)
+
+    def census_of(self, module: Module) -> bool:
+        return (
+            self.n_resources == len(module.resources)
+            and self.n_phases == len(module.phases)
+            and self.n_claims == sum(len(ph.claims) for ph in module.phases)
         )
-        for r in sorted(module.resources.values(), key=lambda r: r.rid)
-    ]
-    phases = []
-    for ph in module.phases:
-        claims = [
-            (
-                c.id,
-                int(c.opcode),
-                int(c.lane),
-                int(c.stride_class),
-                c.count,
-                c.stride_k,
-                tuple(c.rd),
-                tuple(c.wr),
-                c.hazard,
-                int(c.domain),
-                c.verify,
-                c.bounds,
-                c.op,
-                c.offset,
-                c.cost_class,
+
+    def matches(self, module: Module) -> bool:
+        """True iff `module`'s canonical content is exactly what this digest describes."""
+        return self.census_of(module) and self.stream == canonical_stream(module)
+
+
+def module_identity(module: Module) -> ModuleIdentity:
+    """The module's identity, computed once per revision and cached on the module.
+
+    The cache is dropped by every declared mutation (`Module.touch`, which `add_resource`
+    and `add_phase` call) and re-checked against the module's census, so an appended claim,
+    phase or resource is never served a stale digest. An in-place edit of a field is
+    declared with `touch()`; a verifier does not depend on that declaration, because it
+    validates the identity by content (`digest_of`) -- a stale identity is refused or
+    recomputed there, never accepted."""
+    cached = module._identity
+    if (
+        isinstance(cached, ModuleIdentity)
+        and cached.revision == module.revision
+        and cached.census_of(module)
+    ):
+        return cached
+    stream = canonical_stream(module)
+    _STATS["hash_module"] += 1
+    identity = ModuleIdentity(
+        digest=_fnv_items(stream),
+        revision=module.revision,
+        n_resources=len(module.resources),
+        n_phases=len(module.phases),
+        n_claims=sum(len(ph.claims) for ph in module.phases),
+        stream=stream,
+    )
+    module._identity = identity
+    return identity
+
+
+def digest_of(module: Module, identity: "ModuleIdentity | None" = None, *, strict: bool = False):
+    """The digest a VERIFIER uses: the identity's digest when the identity describes this
+    module's current content exactly (validated by the stream, never by the revision),
+    otherwise a fresh `hash_module` -- the verifier's right to recompute at a trust
+    boundary. With `strict=True` a non-matching identity is refused (`IdentityMismatch`)
+    instead of recomputed: mutation invalidates, cross-module substitution is refused."""
+    if identity is not None:
+        if identity.matches(module):
+            return identity.digest
+        if strict:
+            raise IdentityMismatch(
+                "module identity does not describe this module's content "
+                "(mutated since it was computed, or minted from a different module)"
             )
-            for c in ph.claims  # declared order (S0-D); the deps stay a set
-        ]
-        phases.append((ph.phase_id, tuple(sorted(ph.deps)), tuple(claims)))
-    return _fnv(module.name, module.cacheline, module.align, tuple(res), tuple(phases))
+    return hash_module(module)
 
 
 def hash_target(h) -> int:
@@ -288,13 +401,23 @@ def _norm_artifacts(artifacts) -> tuple:
 
 
 def _manifest_from_result(
-    module: Module, h, theta: Theta, policy: Policy, artifacts, result: RealizationResult
+    module: Module,
+    h,
+    theta: Theta,
+    policy: Policy,
+    artifacts,
+    result: RealizationResult,
+    *,
+    fresh: bool = False,
 ) -> ProvenanceManifest:
     """Assemble a manifest from an *already-computed* plan -- the digest depends
     only on the inputs/artifacts, the score/shape on the result. Factored out so
-    the planner is run exactly once per manifest (no recursive re-planning)."""
+    the planner is run exactly once per manifest (no recursive re-planning). The
+    module digest is the cached identity's (computed once per module revision) unless
+    `fresh` -- the verifier's recomputation at a trust boundary (R13, replay)."""
     arts = _norm_artifacts(artifacts)
-    mm, mt, mth, mp = (hash_module(module), hash_target(h), hash_theta(theta), hash_policy(policy))
+    mm = hash_module(module) if fresh else module_identity(module).digest
+    mt, mth, mp = (hash_target(h), hash_theta(theta), hash_policy(policy))
     widths = tuple(sorted((cid, c.width) for cid, c in result.by_claim().items()))
     return ProvenanceManifest(
         digest=_digest(mm, mt, mth, mp, arts),
@@ -309,12 +432,14 @@ def _manifest_from_result(
 
 
 def build_manifest(
-    module: Module, h, theta: Theta, policy: Policy = PERF, artifacts=()
+    module: Module, h, theta: Theta, policy: Policy = PERF, artifacts=(), *, fresh: bool = False
 ) -> ProvenanceManifest:
     """Record a plan's provenance: run the optimizer and chain its inputs + the
-    in-force decision-rule generations into a manifest (the flight-recorder entry)."""
+    in-force decision-rule generations into a manifest (the flight-recorder entry).
+    `fresh=True` recomputes the module digest instead of reading the cached identity --
+    what R13's `verify_manifest` and `reproduces` do, since they judge an external record."""
     return _manifest_from_result(
-        module, h, theta, policy, artifacts, optimize(module, h, theta, policy)
+        module, h, theta, policy, artifacts, optimize(module, h, theta, policy), fresh=fresh
     )
 
 
@@ -371,7 +496,7 @@ def replay(
     planner runs exactly once -- the digest check reuses the replayed plan instead
     of re-planning (no recursive optimize)."""
     result = optimize(module, h, theta, policy)
-    fresh = _manifest_from_result(module, h, theta, policy, artifacts, result)
+    fresh = _manifest_from_result(module, h, theta, policy, artifacts, result, fresh=True)
     if fresh.digest != manifest.digest:
         raise ProvenanceMismatch(
             f"inputs hash to {fresh.digest}, manifest records {manifest.digest} "
@@ -400,7 +525,7 @@ def reproduces(
     artifacts=(),
 ) -> bool:
     """True iff the manifest's inputs reproduce its recorded score and plan shape."""
-    fresh = build_manifest(module, h, theta, policy, artifacts)
+    fresh = build_manifest(module, h, theta, policy, artifacts, fresh=True)
     return (
         fresh.digest == manifest.digest
         and fresh.score == manifest.score

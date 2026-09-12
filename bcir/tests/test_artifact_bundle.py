@@ -40,10 +40,12 @@ from bcir.abi import (
     write_bundle,
 )
 from bcir.abi.artifact_tool import _run_tool, format_hexdump, format_listing, main
+from bcir.abi.execution_plan_abi import decode_plan, encode_plan
 from bcir.codegen.artifact_bundle import ArtifactBundleBuilder
 from bcir.codegen.codegen import CodegenResult
 from bcir.examples import vector_add
 from bcir.gem import hydrate
+from bcir.gem.execution_plan import plan_from_realization
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.lower.artifact_bundle import bundle_to_mlir, selection_to_mlir
@@ -778,3 +780,128 @@ def test_resident_compiler_and_linker_products_roundtrip_when_available():
         assert decode_bundle(encode_bundle(bundle)) == bundle
         extracted = decode_bundle(encode_bundle(bundle)).variant("host-linked").payload
         assert extracted == payload
+
+
+# --- ExecutionPlanV1 as a BCAB variant (G11, S1-C) ---------------------------------------------
+
+
+def _plan_bytes() -> bytes:
+    module = vector_add(8)
+    target = TargetProfile.x86_avx512()
+    result = optimize(module, target, Theta.cool())
+    return encode_plan(plan_from_realization(module, result, target, "eft"))
+
+
+def _four_bundle() -> ArtifactBundle:
+    """`_three_bundle` plus the plan its root pack was derived from, as its own kind."""
+    three = _three_bundle()
+    plan = ArtifactVariant(
+        "01-plan",
+        ArtifactKind.EXECUTION_PLAN,
+        ArtifactFormat.EXECUTION_PLAN,
+        _plan_bytes(),
+        channel="host",
+        portable=True,
+    )
+    return ArtifactBundle(
+        (three.variants[0], plan, *three.variants[1:]),
+        "00-root",
+        "portable-c",
+        three.provenance_digest,
+        three.generation,
+    )
+
+
+def _plan_payload_spoof() -> bytes:
+    """A fully re-sealed BCAB whose plan variant carries an illegal mode code (CRC-valid)."""
+    original = bytearray(encode_bundle(_four_bundle()))
+    span = next(
+        span
+        for span in inspect_bundle(bytes(original)).spans
+        if span.kind == "payload" and span.name == "01-plan"
+    )
+    plan = bytearray(original[span.offset : span.end])
+    plan[8] = 7  # mode: 0=eft, 1=tokens; 7 is outside the closed set
+    struct.pack_into("<I", plan, len(plan) - 4, zlib.crc32(plan[:-4]) & 0xFFFFFFFF)
+    original[span.offset : span.end] = plan
+    entry = ARTIFACT_HEADER_SIZE + ARTIFACT_ENTRY_SIZE  # "01-plan" is the second directory entry
+    struct.pack_into("<I", original, entry + 48, zlib.crc32(plan) & 0xFFFFFFFF)
+    original[entry + 56 : entry + 88] = hashlib.sha256(plan).digest()
+    return _reseal(original)
+
+
+def test_an_execution_plan_travels_as_a_bundle_variant_on_both_rails():
+    bundle = _four_bundle()
+    blob = encode_bundle(bundle)
+    again = decode_bundle(blob)
+    assert again == bundle
+    plan = decode_plan(again.variant("01-plan").payload)
+    assert plan.steps and plan.generations
+    assert again.variant("01-plan").kind is ArtifactKind.EXECUTION_PLAN
+    # the root must still be the StreamPack: the plan is a sibling, not the executable
+    try:
+        ArtifactBundle(bundle.variants, "01-plan", "portable-c", 123, 7)
+        raise AssertionError("a plan was accepted as the root variant")
+    except BundleError:
+        pass
+    # a malformed plan is refused at construction, before it can be published
+    bad = bytearray(_plan_bytes())
+    bad[8] = 7
+    struct.pack_into("<I", bad, len(bad) - 4, zlib.crc32(bad[:-4]) & 0xFFFFFFFF)
+    try:
+        ArtifactVariant(
+            "01-plan", ArtifactKind.EXECUTION_PLAN, ArtifactFormat.EXECUTION_PLAN, bytes(bad)
+        )
+        raise AssertionError("a malformed plan payload was accepted")
+    except BundleError as exc:
+        assert "ExecutionPlan" in str(exc)
+    # and the kind/format pair is closed
+    try:
+        ArtifactVariant("01-plan", ArtifactKind.EXECUTION_PLAN, ArtifactFormat.RAW, _plan_bytes())
+        raise AssertionError("EXECUTION_PLAN accepted a foreign format")
+    except BundleError:
+        pass
+    _must_reject(_plan_payload_spoof(), "ExecutionPlan")
+    # the freestanding C reader admits the bundle and refuses the spoof for the same reason
+    compiler = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    if not compiler:
+        return
+    root = Path(__file__).resolve().parents[2]
+    c = root / "runtime" / "c"
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "bundle.bcab"
+        write_bundle(path, bundle)
+        executable = Path(directory) / "test"
+        build = subprocess.run(
+            [
+                compiler,
+                "-std=c11",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                str(c),
+                str(c / "bcir_artifact_bundle.c"),
+                str(c / "bcir_runtime.c"),
+                str(c / "test_artifact_bundle.c"),
+                "-o",
+                str(executable),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run(
+            [str(executable), str(path)], capture_output=True, text=True, timeout=30
+        )
+        assert run.returncode == 0, run.stderr
+        assert run.stdout.startswith("OK entries=4"), run.stdout
+        spoof = Path(directory) / "plan-spoof.bcab"
+        spoof.write_bytes(_plan_payload_spoof())
+        rejected = subprocess.run(
+            [str(executable), str(spoof), "reject"], capture_output=True, text=True, timeout=30
+        )
+        assert rejected.returncode == 0, rejected.stderr
+        assert rejected.stdout.startswith("REJECT payload"), rejected.stdout

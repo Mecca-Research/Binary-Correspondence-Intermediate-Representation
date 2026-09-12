@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bcir_execution_plan.h"
 #include "bcir_streampack.h"
 
 #ifdef __cplusplus
@@ -57,7 +58,8 @@ typedef enum bcir_ab_kind {
   BCIR_AB_CPP_SOURCE = 16, BCIR_AB_SYCL_SOURCE = 17, BCIR_AB_ASSEMBLY = 18,
   BCIR_AB_ELF_EXECUTABLE = 19, BCIR_AB_PE_EXECUTABLE = 20,
   BCIR_AB_PE_SHARED = 21, BCIR_AB_MACHO_EXECUTABLE = 22,
-  BCIR_AB_MACHO_SHARED = 23, BCIR_AB_RAW_BINARY = 24
+  BCIR_AB_MACHO_SHARED = 23, BCIR_AB_RAW_BINARY = 24,
+  BCIR_AB_EXECUTION_PLAN = 25   /* ExecutionPlanV1: the plan the root pack was derived from (G11) */
 } bcir_ab_kind;
 
 typedef enum bcir_ab_format {
@@ -65,7 +67,7 @@ typedef enum bcir_ab_format {
   BCIR_AB_FMT_COFF = 3, BCIR_AB_FMT_MACHO = 4, BCIR_AB_FMT_ARCHIVE = 5,
   BCIR_AB_FMT_WASM = 6, BCIR_AB_FMT_LLVM_BITCODE = 7, BCIR_AB_FMT_TEXT = 8,
   BCIR_AB_FMT_SPIRV = 9, BCIR_AB_FMT_JVM_CLASS = 10, BCIR_AB_FMT_PE = 11,
-  BCIR_AB_FMT_RAW = 12
+  BCIR_AB_FMT_RAW = 12, BCIR_AB_FMT_EXECUTION_PLAN = 13
 } bcir_ab_format;
 
 typedef enum bcir_ab_endianness {

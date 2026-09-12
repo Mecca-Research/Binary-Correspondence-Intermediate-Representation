@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
   if (status != BCIR_AB_OK) {
     fprintf(stderr, "open:%s\n", bcir_ab_status_string(status)); free(data); return 1;
   }
-  if (view.count != 3 || view.root_index == BCIR_AB_NO_INDEX ||
+  if (view.count < 3 || view.root_index == BCIR_AB_NO_INDEX ||  /* >= 3: the fixture may add siblings (a plan) */
       view.default_index == BCIR_AB_NO_INDEX) { free(data); return 1; }
   bcir_ab_entry root, selected;
   if (bcir_ab_get(&view, view.root_index, &root) != BCIR_AB_OK ||

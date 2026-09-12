@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bcir_execution_plan.h"
 #include "bcir_runtime.h"
 
 /* Touch each segment view's bounds-derived pointers so ASan flags any bad range. */
@@ -52,6 +53,17 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     static const bcir_generation_view live[2] = {{10u, 1u, 0u}, {11u, 0u, 0u}};
     (void)bcir_sp_check_generation_vector(data, size, live, 2u);       /* R11 per resource */
   }
+  /* The ExecutionPlanV1 twin (G11) is a second trust boundary over the same untrusted
+   * bytes: its header/CRC validation, the wire-law walk (every record family, the O(n^2)
+   * duplicate-claim re-walk), the R11 registry check and the plan/pack binding must all
+   * return a status, never over-read. */
+  (void)bcir_ep_verify(data, size);
+  (void)bcir_ep_for_each_step(data, size, 0, 0);
+  {
+    static const bcir_generation_view live[2] = {{10u, 1u, 0u}, {11u, 0u, 0u}};
+    (void)bcir_ep_check_generation_vector(data, size, live, 2u);
+  }
+  (void)bcir_ep_check_pack(data, size, data, size);
   /* A standalone CRC over the buffer must also never over-read. */
   if (size)
     (void)bcir_crc32(data, size);

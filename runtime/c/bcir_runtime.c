@@ -4,6 +4,7 @@
  * byte (host-endian-independent). Matches bcir/abi/streampack_abi.py.
  *===----------------------------------------------------------------------===*/
 #include "bcir_runtime.h"
+#include "bcir_execution_plan.h"
 
 /* --- zlib-compatible CRC-32 (bitwise; no table, freestanding) --- */
 uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len) {
@@ -564,6 +565,354 @@ bcir_status bcir_sp_check_generation_vector(const uint8_t *BCIR_RESTRICT data, s
         if (rd32(data + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
       if (i == n_gens) return BCIR_ERR_STALE;
     }
+  }
+  return BCIR_OK;
+}
+
+
+/* --- ExecutionPlanV1 (G11, staged plan S1-C): the plan the pack was derived from -------
+ * The same discipline as the StreamPack rail: byte-wise little-endian reads, a bounded
+ * cursor, every record parsed even after an early callback stop, O(n^2) re-walks of the
+ * validated prefix instead of heap scratch, and exact body consumption. The Python codec
+ * (bcir/abi/execution_plan_abi.py) applies the same laws, so the two rails refuse the same
+ * bytes. */
+
+static void ep_zero_header(bcir_ep_header *h) {
+  int i;
+  for (i = 0; i < 4; i++) h->magic[i] = 0;
+  h->version = 0; h->flags = 0; h->mode = 0;
+  for (i = 0; i < 3; i++) h->reserved0[i] = 0;
+  h->streams = 0; h->knee = 0;
+  h->n_steps = 0; h->n_lifetimes = 0; h->n_moves = 0; h->n_gens = 0;
+  for (i = 0; i < 4; i++) h->reserved1[i] = 0;
+  h->makespan = 0; h->module_hash = 0; h->target_hash = 0;
+}
+
+bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
+                             bcir_ep_header *BCIR_RESTRICT hdr) {
+  if (hdr) ep_zero_header(hdr);
+  if (!data) return BCIR_ERR_TRUNCATED;
+  if (len < (size_t)BCIR_EP_HEADER_SIZE + 4u) return BCIR_ERR_TRUNCATED;
+  if (data[0] != 'B' || data[1] != 'P' || data[2] != 'L' || data[3] != 'N')
+    return BCIR_ERR_MAGIC;
+  {
+    uint16_t version = rd16(data + 4);
+    if (version < BCIR_EP_VERSION || version > BCIR_EP_VERSION_MAX) return BCIR_ERR_VERSION;
+  }
+  if (rd16(data + 6) != 0u) return BCIR_ERR_RESERVED;
+  if (data[9] || data[10] || data[11] || data[36] || data[37] || data[38] || data[39])
+    return BCIR_ERR_RESERVED;
+  if (data[8] > (uint8_t)BCIR_EP_MODE_MAX) return BCIR_ERR_PLAN;
+  if (bcir_crc32(data, len - 4) != rd32(data + len - 4)) return BCIR_ERR_CRC;
+  if (hdr) {
+    int i;
+    for (i = 0; i < 4; i++) hdr->magic[i] = data[i];
+    hdr->version = rd16(data + 4);
+    hdr->flags = rd16(data + 6);
+    hdr->mode = data[8];
+    hdr->streams = rd32(data + 12);
+    hdr->knee = rd32(data + 16);
+    hdr->n_steps = rd32(data + 20);
+    hdr->n_lifetimes = rd32(data + 24);
+    hdr->n_moves = rd32(data + 28);
+    hdr->n_gens = rd32(data + 32);
+    hdr->makespan = rd64(data + 40);
+    hdr->module_hash = rd64(data + 48);
+    hdr->target_hash = rd64(data + 56);
+  }
+  return BCIR_OK;
+}
+
+/* Two's complement i64 from the wire word (well-defined for every bit pattern, pre-C23 too). */
+static int64_t ep_i64(uint64_t raw) {
+  if (raw < (UINT64_C(1) << 63)) return (int64_t)raw;
+  return -(int64_t)(~raw) - 1;
+}
+
+/* Skip one step record (bounded). */
+static void ep_skip_step(cur *c) {
+  c_skip(c, 8 + 4);                     /* claim_id, phase_id */
+  c_skip_str(c);                        /* candidate */
+  c_skip(c, 1 + 4 + 8 + 4 + 8 + 8);     /* lane, width, cost, stream, start, duration */
+}
+
+/* A plan steps each claim at most once. Re-walk only the validated prefix (no heap). */
+static int ep_claim_seen_before(const uint8_t *data, size_t body_len, size_t steps_start,
+                                uint32_t before, uint64_t cid) {
+  cur c; c.d = data; c.len = body_len; c.pos = steps_start; c.err = 0;
+  for (uint32_t i = 0; i < before && !c.err; i++) {
+    size_t start = c.pos;
+    uint64_t prior = c_u64(&c);
+    if (c.err) return 0;
+    if (prior == cid) return 1;
+    c.pos = start;
+    ep_skip_step(&c);
+  }
+  return 0;
+}
+
+typedef struct ep_callbacks {
+  bcir_ep_step_fn step; void *step_ctx;
+  bcir_ep_lifetime_fn lifetime; void *lifetime_ctx;
+  bcir_ep_move_fn move; void *move_ctx;
+  bcir_gen_fn gen; void *gen_ctx;
+} ep_callbacks;
+
+/* The one walk: validate, then every record family under the wire laws, invoking the
+ * callbacks a caller set. Every declared record is parsed even after a callback stops. */
+static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
+                           const ep_callbacks *cb) {
+  bcir_ep_header hdr;
+  bcir_status st = bcir_ep_validate(data, len, &hdr);
+  if (st != BCIR_OK) return st;
+  if (hdr.streams == 0u || hdr.knee == 0u || hdr.knee > hdr.streams) return BCIR_ERR_PLAN;
+  {
+    const size_t body_len = len - 4u;
+    cur c; c.d = data; c.len = body_len; c.pos = (size_t)BCIR_EP_HEADER_SIZE; c.err = 0;
+    int invoke_step = 1, invoke_lt = 1, invoke_mv = 1, invoke_gen = 1;
+    size_t steps_start;
+    uint32_t i;
+    c_skip_str(&c);                     /* source_plan */
+    if (c.err) return c_status(&c);
+    steps_start = c.pos;
+    for (i = 0; i < hdr.n_steps; i++) {
+      bcir_ep_step_view v;
+      uint64_t raw;
+      v.claim_id = c_u64(&c);
+      v.phase_id = c_u32(&c);
+      v.candidate = c_str(&c, &v.candidate_len);
+      v.lane = c_u8(&c);
+      v.width = c_u32(&c);
+      raw = c_u64(&c);
+      v.cost = ep_i64(raw);
+      v.stream = c_u32(&c);
+      v.start = c_u64(&c);
+      v.duration = c_u64(&c);
+      if (c.err) return c_status(&c);
+      if (v.lane > (uint8_t)BCIR_LANE_H) return BCIR_ERR_LANE;
+      if (v.width == 0u || (v.width & (v.width - 1u)) != 0u) return BCIR_ERR_WIDTH;
+      if (v.stream != BCIR_EP_TAIL_STREAM && v.stream >= hdr.streams) return BCIR_ERR_PLAN;
+      {
+        uint64_t want = v.cost > 0 ? (uint64_t)v.cost : 0u;
+        if (v.duration != want) return BCIR_ERR_PLAN;
+      }
+      if (v.start > UINT64_MAX - v.duration) return BCIR_ERR_OVERFLOW;
+      if (v.start + v.duration > hdr.makespan) return BCIR_ERR_PLAN;
+      if (ep_claim_seen_before(data, body_len, steps_start, i, v.claim_id))
+        return BCIR_ERR_PROVENANCE;
+      if (invoke_step && cb && cb->step && cb->step(&v, cb->step_ctx)) invoke_step = 0;
+    }
+    {
+      uint32_t prev = 0; int have_prev = 0;
+      for (i = 0; i < hdr.n_lifetimes; i++) {
+        bcir_ep_lifetime_view v;
+        v.rid = c_u32(&c);
+        v.bank = c_str(&c, &v.bank_len);
+        v.offset = c_u64(&c);
+        v.size = c_u64(&c);
+        v.alignment = c_u32(&c);
+        v.first_phase = c_u32(&c);
+        v.last_phase = c_u32(&c);
+        if (c.err) return c_status(&c);
+        if (have_prev && v.rid <= prev) return BCIR_ERR_PLAN;
+        prev = v.rid; have_prev = 1;
+        if (v.bank_len == 0u || v.size == 0u) return BCIR_ERR_PLAN;
+        if (v.alignment == 0u || (v.alignment & (v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
+        if ((v.offset & ((uint64_t)v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
+        if (v.offset > UINT64_MAX - v.size) return BCIR_ERR_OVERFLOW;
+        if (v.last_phase < v.first_phase) return BCIR_ERR_PLAN;
+        if (invoke_lt && cb && cb->lifetime && cb->lifetime(&v, cb->lifetime_ctx)) invoke_lt = 0;
+      }
+    }
+    for (i = 0; i < hdr.n_moves; i++) {
+      bcir_ep_move_view v;
+      v.rid = c_u32(&c);
+      v.src_bank = c_str(&c, &v.src_len);
+      v.dst_bank = c_str(&c, &v.dst_len);
+      v.offset = c_u64(&c);
+      v.size = c_u64(&c);
+      v.route = c_str(&c, &v.route_len);
+      v.kind = c_u8(&c);
+      v.coherence = c_u8(&c);
+      v.map_gen = c_u32(&c);
+      v.data_gen = c_u32(&c);
+      v.after_claim = c_u64(&c);
+      v.before_claim = c_u64(&c);
+      if (c.err) return c_status(&c);
+      if (v.src_len == 0u || v.dst_len == 0u || v.size == 0u) return BCIR_ERR_PLAN;
+      if (v.offset > UINT64_MAX - v.size) return BCIR_ERR_OVERFLOW;
+      if (v.kind > (uint8_t)BCIR_EP_MOVE_KIND_MAX) return BCIR_ERR_PLAN;
+      if (v.coherence > (uint8_t)BCIR_EP_COHERENCE_MAX) return BCIR_ERR_PLAN;
+      if (invoke_mv && cb && cb->move && cb->move(&v, cb->move_ctx)) invoke_mv = 0;
+    }
+    {
+      uint32_t prev = 0; int have_prev = 0;
+      for (i = 0; i < hdr.n_gens; i++) {
+        bcir_generation_view g;
+        g.rid = c_u32(&c); g.map_gen = c_u32(&c); g.data_gen = c_u32(&c);
+        if (c.err) return c_status(&c);
+        if (have_prev && g.rid <= prev) return BCIR_ERR_GENERATION;
+        prev = g.rid; have_prev = 1;
+        if (invoke_gen && cb && cb->gen && cb->gen(&g, cb->gen_ctx)) invoke_gen = 0;
+      }
+    }
+    if (c.pos != body_len) return BCIR_ERR_TRAILING;
+  }
+  return BCIR_OK;
+}
+
+bcir_status bcir_ep_verify(const uint8_t *BCIR_RESTRICT data, size_t len) {
+  return ep_walk(data, len, 0);
+}
+
+const char *bcir_ep_source_plan(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                uint16_t *BCIR_RESTRICT out_len) {
+  cur c;
+  const char *s;
+  uint16_t n = 0;
+  if (out_len) *out_len = 0;
+  if (bcir_ep_verify(data, len) != BCIR_OK) return 0;
+  c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_EP_HEADER_SIZE; c.err = 0;
+  s = c_str(&c, &n);
+  if (c.err) return 0;
+  if (out_len) *out_len = n;
+  return s;
+}
+
+bcir_status bcir_ep_for_each_step(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                  bcir_ep_step_fn fn, void *ctx) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  cb.step = fn; cb.step_ctx = ctx;
+  return ep_walk(data, len, &cb);
+}
+
+bcir_status bcir_ep_for_each_lifetime(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                      bcir_ep_lifetime_fn fn, void *ctx) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  cb.lifetime = fn; cb.lifetime_ctx = ctx;
+  return ep_walk(data, len, &cb);
+}
+
+bcir_status bcir_ep_for_each_move(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                  bcir_ep_move_fn fn, void *ctx) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  cb.move = fn; cb.move_ctx = ctx;
+  return ep_walk(data, len, &cb);
+}
+
+bcir_status bcir_ep_for_each_generation(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                        bcir_gen_fn fn, void *ctx) {
+  ep_callbacks cb = {0, 0, 0, 0, 0, 0, 0, 0};
+  cb.gen = fn; cb.gen_ctx = ctx;
+  return ep_walk(data, len, &cb);
+}
+
+/* The vector is the body's tail (verified above to end exactly at the CRC), located by
+ * arithmetic after the walk, as the StreamPack's is. */
+static bcir_status ep_locate_generations(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                         bcir_ep_header *hdr, size_t *start) {
+  bcir_status st = bcir_ep_verify(data, len);
+  if (st != BCIR_OK) return st;
+  st = bcir_ep_validate(data, len, hdr);
+  if (st != BCIR_OK) return st;
+  *start = 0;
+  if (hdr->n_gens == 0u) return BCIR_OK;
+  {
+    size_t body_len = len - 4u;
+    size_t room = body_len - (size_t)BCIR_EP_HEADER_SIZE;
+    if ((size_t)hdr->n_gens > room / BCIR_GENERATION_WIRE_SIZE) return BCIR_ERR_TRUNCATED;
+    *start = body_len - (size_t)hdr->n_gens * BCIR_GENERATION_WIRE_SIZE;
+  }
+  return BCIR_OK;
+}
+
+bcir_status bcir_ep_check_generation_vector(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                                            const bcir_generation_view *BCIR_RESTRICT live,
+                                            size_t n_live) {
+  bcir_ep_header hdr;
+  size_t start;
+  bcir_status st = ep_locate_generations(plan, plan_len, &hdr, &start);
+  if (st != BCIR_OK) return st;
+  if (n_live && !live) return BCIR_ERR_NOSPACE;
+  if (hdr.n_gens == 0u) return n_live ? BCIR_ERR_STALE : BCIR_OK;
+  if (n_live == 0) return BCIR_ERR_STALE;
+  {
+    uint32_t i;
+    size_t j;
+    for (i = 0; i < hdr.n_gens; i++) {
+      bcir_generation_view g;
+      read_generation(plan + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE, &g);
+      for (j = 0; j < n_live; j++)
+        if (live[j].rid == g.rid) break;
+      if (j == n_live) return BCIR_ERR_STALE;                    /* an undeclared RID */
+      if (live[j].map_gen != g.map_gen || live[j].data_gen != g.data_gen)
+        return BCIR_ERR_STALE;                                    /* moved: repack/replan */
+    }
+    for (j = 0; j < n_live; j++) {
+      for (i = 0; i < hdr.n_gens; i++)
+        if (rd32(plan + start + (size_t)i * BCIR_GENERATION_WIRE_SIZE) == live[j].rid) break;
+      if (i == hdr.n_gens) return BCIR_ERR_STALE;                /* declared after the plan */
+    }
+  }
+  return BCIR_OK;
+}
+
+bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_len,
+                               const uint8_t *BCIR_RESTRICT pack, size_t pack_len) {
+  bcir_ep_header ph;
+  bcir_streampack_header sh;
+  bcir_status st = bcir_ep_verify(plan, plan_len);
+  if (st != BCIR_OK) return st;
+  st = bcir_sp_verify_semantic(pack, pack_len, 0xFFFFFFFFu, 0xFFFFFFFFu);
+  if (st != BCIR_OK) return st;
+  st = bcir_ep_validate(plan, plan_len, &ph);
+  if (st != BCIR_OK) return st;
+  st = bcir_sp_validate(pack, pack_len, &sh);
+  if (st != BCIR_OK) return st;
+  {
+    cur a; cur b;
+    uint16_t la, lb;
+    const char *sa; const char *sb;
+    uint32_t i;
+    a.d = plan; a.len = plan_len - 4u; a.pos = (size_t)BCIR_EP_HEADER_SIZE; a.err = 0;
+    b.d = pack; b.len = pack_len - 4u; b.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; b.err = 0;
+    sa = c_str(&a, &la);
+    sb = c_str(&b, &lb);
+    if (a.err) return c_status(&a);
+    if (b.err) return c_status(&b);
+    if (!str_eq(sa, la, sb, lb)) return BCIR_ERR_PROVENANCE;      /* another plan's pack */
+    if (ph.n_steps != sh.n_segments) return BCIR_ERR_PROVENANCE;
+    for (i = 0; i < ph.n_steps; i++) {
+      uint64_t pc, sc; uint32_t pp, sp, pw, sw; uint8_t pl, sl;
+      /* plan step head */
+      pc = c_u64(&a); pp = c_u32(&a); c_skip_str(&a); pl = c_u8(&a); pw = c_u32(&a);
+      c_skip(&a, 8 + 4 + 8 + 8);                                   /* cost, stream, start, duration */
+      /* pack segment head (hydrate emits one segment per step, in step order) */
+      c_skip_str(&b);                                              /* name */
+      sc = c_u64(&b); sp = c_u32(&b); sl = c_u8(&b); sw = c_u32(&b);
+      c_skip(&b, 4);                                               /* stride_k */
+      c_skip_str(&b);                                              /* opcode */
+      { uint16_t n; (void)c_u32arr(&b, &n); }                      /* reads */
+      { uint16_t n; (void)c_u32arr(&b, &n); }                      /* writes */
+      c_skip_str(&b);                                              /* prefetch */
+      c_skip_strarr(&b);                                           /* fence_before */
+      c_skip_strarr(&b);                                           /* fence_after */
+      if (sh.version >= 3) { c_skip(&b, 1); c_skip_str(&b); }      /* dispatch, channel */
+      if (a.err) return c_status(&a);
+      if (b.err) return c_status(&b);
+      if (pc != sc || pp != sp || pl != sl || pw != sw) return BCIR_ERR_PROVENANCE;
+    }
+  }
+  {
+    /* R11 across the artifacts: the pack must carry the vector the plan was placed under. */
+    uint32_t pn = ph.n_gens;
+    uint32_t sn = sh.version >= 4 ? sh.n_gens : 0u;
+    size_t ps, ss, k;
+    if (pn != sn) return BCIR_ERR_STALE;
+    ps = (plan_len - 4u) - (size_t)pn * BCIR_GENERATION_WIRE_SIZE;
+    ss = (pack_len - 4u) - (size_t)sn * BCIR_GENERATION_WIRE_SIZE;
+    for (k = 0; k < (size_t)pn * BCIR_GENERATION_WIRE_SIZE; k++)
+      if (plan[ps + k] != pack[ss + k]) return BCIR_ERR_STALE;
   }
   return BCIR_OK;
 }
