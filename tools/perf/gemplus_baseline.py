@@ -320,7 +320,23 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G5",
     ),
     # --- §5.2: the digest recomputation the profile found. Three hashes of one immutable
-    # module is pure overhead, and it is the largest single line in the profile.
+    # module is pure overhead, and it is the largest single line in the profile. G3 (S1-B)
+    # owns these: the module identity is computed once per revision from an iterative
+    # canonical stream and shared through `provenance.module_identity` / `digest_of`, and
+    # the count row is the exact gate -- the verifier keeps its right to recompute at a
+    # trust boundary, so the count is one, never zero.
+    Metric(
+        "static_memory.digests.2048",
+        "memory",
+        "full module digests over plan_static_memory + one identity-bound external verify",
+        3.0,
+        "count",
+        "exact",
+        bound=1.0,
+        bound_source="one canonical digest computed once (§5.2): the planner hashes, "
+        "the verifier validates the identity by content, the client reuses it",
+        slice_owner="G3",
+    ),
     Metric(
         "static_memory.plan.2048",
         "memory",
@@ -332,7 +348,7 @@ METRICS: tuple[Metric, ...] = (
         bound_source="the module digest alone at the same size (§5.2) -- "
         "one canonical digest computed once is the floor the "
         "planner cannot go below while it still hashes",
-        slice_owner="G0",
+        slice_owner="G3",
     ),
     Metric(
         "static_memory.digest.2048",
@@ -341,19 +357,19 @@ METRICS: tuple[Metric, ...] = (
         88.05,
         "ms",
         "wall",
-        slice_owner="G0",
+        slice_owner="G3",
     ),
     Metric(
         "static_memory.verify.2048",
         "memory",
-        "external verify at 2,048 resources",
+        "identity-bound external verify at 2,048 resources",
         157.88,
         "ms",
         "wall",
         bound=88.05,
         bound_source="an identity-bound API lets an independent verifier "
         "reuse a proved digest instead of recomputing (§5.2)",
-        slice_owner="G0",
+        slice_owner="G3",
     ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
@@ -707,11 +723,65 @@ def measure_verifier() -> dict[str, float]:
     return out
 
 
+def measure_digest() -> dict[str, float]:
+    """The G3 rows (§5.2): the module digest, the static-memory plan (which verifies), and
+    an external verify, all over the audit's static-memory fixture at scale 4 -- 2,048
+    resources, 3,972 claims, the report's own probe -- plus the exact count of full digests
+    the plan-and-verify chain computes.
+
+    The external verify is the identity-bound one the row's bound names: the client holds
+    the module's `ModuleIdentity` and the verifier validates it against the module's content
+    (the canonical stream) instead of re-hashing. A verifier at a trust boundary still
+    recomputes -- `hash_module` is that primitive, and the count row would read 2 if the
+    identity were ever refused on this immutable fixture.
+    """
+    import statistics
+    import time
+
+    from bcir.kbcir.provenance import digest_stats, hash_module, module_identity
+    from bcir.kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    out: dict[str, float] = {}
+    module = static_memory_module(4)
+    hardware = _AuditHardware()
+    bindings = {rid: "ram" for rid in module.resources}
+
+    def median_ms(fn, repeats=5):
+        samples = []
+        for _ in range(repeats):
+            start = time.perf_counter()
+            fn()
+            samples.append((time.perf_counter() - start) * 1e3)
+        return statistics.median(samples)
+
+    # The exact gate first, on a fresh identity: plan (with its internal verify) and one
+    # identity-bound external verify must compute the digest exactly once.
+    module.touch()
+    before = digest_stats()["hash_module"]
+    plan = plan_static_memory(module, bindings, hardware)
+    identity = module_identity(module)
+    errors = verify_static_memory_plan(plan, module, bindings, hardware, identity=identity)
+    if errors:
+        raise AssertionError(f"the static-memory plan failed its external verify: {errors}")
+    out["static_memory.digests.2048"] = float(digest_stats()["hash_module"] - before)
+
+    out["static_memory.digest.2048"] = median_ms(lambda: hash_module(module))
+    out["static_memory.plan.2048"] = median_ms(
+        lambda: (module.touch(), plan_static_memory(module, bindings, hardware))
+    )
+    out["static_memory.verify.2048"] = median_ms(
+        lambda: verify_static_memory_plan(plan, module, bindings, hardware, identity=identity)
+    )
+    return out
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
     "exact": measure_exact,
     "verifier": measure_verifier,
+    "digest": measure_digest,
 }
 
 
@@ -869,7 +939,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, exact, verifier)",
+        help="limit measurement to a group (audit, planner, exact, verifier, digest)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)
