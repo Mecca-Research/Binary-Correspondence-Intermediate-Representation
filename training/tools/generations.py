@@ -347,7 +347,14 @@ def _sync_tree(directory: Path) -> None:
     for path in sorted(directory.rglob("*")):
         if not path.is_file():
             continue
-        with path.open("rb") as handle:
+        # `r+b`, not `rb`: Windows implements `os.fsync` as `_commit`, which needs a
+        # handle opened for *writing* and answers `OSError: [Errno 9] Bad file
+        # descriptor` for a read-only one. POSIX accepts either, so a read-only open
+        # is a rail that works on the host it was written on and on no other
+        # (`docs/security/laws.md` L12). `catalog._publish` never hit this because it
+        # syncs the descriptor it just wrote through.
+        with path.open("r+b") as handle:
+            handle.flush()
             os.fsync(handle.fileno())
     for path in sorted(directory.rglob("*"), reverse=True):
         if path.is_dir():

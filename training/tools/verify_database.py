@@ -3810,7 +3810,7 @@ def check_staging_is_not_a_generation(report: Report, generations, chunk_dir: Pa
 
 
 def check_durability(report: Report, catalog_module, generations, chunk_dir: Path) -> None:
-    """Every file a publish commits reaches the disk, on both rails.
+    """Every file a publish commits reaches the disk, on both rails and both hosts.
 
     Atomicity and durability are different claims, and only one of them was
     checked. `catalog.py` fsyncs each artifact, the sets directory, the `CURRENT`
@@ -3823,27 +3823,31 @@ def check_durability(report: Report, catalog_module, generations, chunk_dir: Pat
 
     Checked by recording what is actually synced, because the alternative is
     grepping for the call and believing it: `os.fsync` is wrapped for the duration
-    of one real publish and every descriptor it is handed is resolved back to a
-    path.
+    of one real publish.
+
+    **Two tiers, and the weaker one is the portable one.** The first version of this
+    check resolved every synced descriptor through `/proc/self/fd` and skipped where
+    that is absent -- so on Windows it reported a skip, and `--require-native` turns
+    a skip into a failure, correctly: the *law* is host-independent and only the
+    instrument was Linux-only, which is a hole wearing a skip's clothes (L2, L12).
+    The count is observable everywhere and is asserted everywhere; the paths are the
+    stronger claim and are asserted where they can be read.
     """
     import os as _os
 
-    synced: list[str] = []
+    synced: list[int] = []
+    resolved: list[str] = []
     real_fsync = _os.fsync
+    can_resolve = Path("/proc/self/fd").is_dir()
 
     def recording(descriptor):
-        try:
-            synced.append(_os.readlink(f"/proc/self/fd/{descriptor}"))
-        except OSError:
-            synced.append("<unresolved>")
+        synced.append(descriptor)
+        if can_resolve:
+            try:
+                resolved.append(_os.readlink(f"/proc/self/fd/{descriptor}"))
+            except OSError:
+                resolved.append("<unresolved>")
         return real_fsync(descriptor)
-
-    if not Path("/proc/self/fd").is_dir():
-        report.skip(
-            "durability: this host has no /proc/self/fd, so a synced descriptor cannot "
-            "be resolved back to the path it names"
-        )
-        return
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "generations"
@@ -3851,32 +3855,52 @@ def check_durability(report: Report, catalog_module, generations, chunk_dir: Pat
         shutil.copytree(chunk_dir, mirror)
         _os.fsync = recording
         try:
-            generations.publish(root, mirror, label="durability")
+            published = generations.publish(root, mirror, label="durability")
         finally:
             _os.fsync = real_fsync
+        committed = [p for p in (root / published.generation_id).rglob("*") if p.is_file()]
 
+    # The portable half: a publish cannot have written down fewer things than it
+    # committed. Directory syncs and the CURRENT temporary are extra on top, and on
+    # Windows `_sync_directory` is a declared no-op -- so files alone are the floor.
     report.require(
-        len(synced) >= 10,
-        f"anti-vacuity: one publish synced {len(synced)} descriptor(s), too few for "
-        "the comparisons below to mean anything",
+        len(committed) >= 10,
+        f"anti-vacuity: the published generation holds {len(committed)} file(s), too "
+        "few for the floor below to mean anything",
     )
-    chunk_syncs = [path for path in synced if "/chunks/" in path and path.endswith(".jsonl")]
+    report.require(
+        len(synced) >= len(committed),
+        f"durability: one publish synced {len(synced)} descriptor(s) while committing "
+        f"{len(committed)} file(s); a rename over contents the kernel has not written "
+        "down survives no crash",
+    )
+
+    if not can_resolve:
+        # Not a skip: the claim above was made and held. This host simply cannot say
+        # *which* files, so the stronger assertions below are not attempted.
+        report.note(
+            f"durability: {len(synced)} sync(s) counted; this host has no "
+            "/proc/self/fd, so which paths they named was not read"
+        )
+        return
+
+    chunk_syncs = [path for path in resolved if "/chunks/" in path and path.endswith(".jsonl")]
     report.require(
         chunk_syncs,
         "durability: a generation copied its chunk files and synced none of them, so "
         "the rename that publishes them commits whatever the page cache had",
     )
     report.require(
-        any(path.endswith(generations.MANIFEST_FILE) for path in synced),
-        f"durability: the generation manifest was never synced; {len(synced)} other "
+        any(path.endswith(generations.MANIFEST_FILE) for path in resolved),
+        f"durability: the generation manifest was never synced; {len(resolved)} other "
         "descriptor(s) were",
     )
     report.require(
-        any(f"/.{generations.CURRENT_FILE}.tmp-" in path for path in synced),
+        any(f"/.{generations.CURRENT_FILE}.tmp-" in path for path in resolved),
         "durability: the CURRENT pointer was renamed into place without being written down first",
     )
     report.require(
-        any("/catalog/" in path for path in synced),
+        any("/catalog/" in path for path in resolved),
         "anti-vacuity: the catalog inside the generation synced nothing, so the "
         "recorder is not seeing the rail that was already correct",
     )
