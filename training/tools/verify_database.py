@@ -60,6 +60,7 @@ import importlib.util
 import json
 import os
 import random
+import re
 import shutil
 import struct
 import sys
@@ -1051,6 +1052,14 @@ def check_prefix_semantics(report: Report, plan) -> None:
             ("training/database", 1),  # a whole path, one character short
             ("training/", 5),
             ("training/nothing", 0),
+            # A repeated separator starts no path, and the shortcut used to strip
+            # every one of them: `rstrip("/")` mapped this onto the counted directory
+            # and answered its whole contents, `[exact]`. Ordinary output of joining
+            # a directory that already ends in a separator.
+            ("training/data//", 0),
+            ("training/data///", 0),
+            ("training//data/", 0),
+            ("training//", 0),
         ]
         for prefix, expected in probes:
             rows = catalog.rows_with_prefix(prefix)
@@ -3430,6 +3439,265 @@ def check_interval_folding(report: Report, plan, catalog, chunk_dir: Path) -> No
         )
 
 
+def _cli(search, argv: list[str]) -> tuple[int, str]:
+    """Run the search CLI in-process and return its exit code and everything it printed.
+
+    In-process rather than as a subprocess because the quick tier must stay bounded
+    (L19) and because a traceback escaping `main` would otherwise be laundered into a
+    non-zero exit that looks like an honest refusal. Here it propagates and the gate
+    reports it as what it is.
+    """
+    import contextlib
+    import io
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+        status = search.main(argv)
+    return status, buffer.getvalue()
+
+
+def _ranked_rows(output: str) -> list[str]:
+    """The `N. cos=... path:line` lines of a ranking, in order."""
+    return [line.strip() for line in output.splitlines() if re.match(r"^\s+\d+\. cos=", line)]
+
+
+def check_pagination(report: Report, search, embedding_root: Path, chunk_dir: Path) -> None:
+    """A ranked page is the page asked for, not the first page cut short.
+
+    `--offset` shifts a window; it does not truncate one. The ranked path asked the
+    kernel for `top_k` results and then sliced that list at `offset`, so
+    `--top-k 3 --offset 3` sliced a three-long list at three and printed nothing, exit
+    0 -- page two of every ranked query was silently empty. The relational path five
+    hundred lines above had always windowed `ordered[offset : offset + top_k]`
+    correctly, which is the same idea implemented twice and disagreeing (L14).
+
+    The law is stated as an identity rather than as "page two is non-empty", because
+    a non-emptiness assertion passes against a ranking that returns the *first* page
+    again: page(k, n) must equal the first k+n results with the first n dropped.
+    """
+    common = [
+        "--query",
+        "static single assignment dominance frontier",
+        "--set",
+        str(embedding_root),
+        "--chunks",
+        str(chunk_dir),
+        "--materialize",
+        "full",
+    ]
+    status, whole = _cli(search, [*common, "--top-k", "6"])
+    report.require(status == 0, f"pagination: the unpaged query exited {status}")
+    every = _ranked_rows(whole)
+    report.require(
+        len(every) == 6,
+        f"anti-vacuity: the unpaged ranking returned {len(every)} result(s) of 6, so "
+        "the pages compared below cannot witness an offset",
+    )
+
+    status, first = _cli(search, [*common, "--top-k", "3", "--offset", "0"])
+    report.require(status == 0, f"pagination: page one exited {status}")
+    status, second = _cli(search, [*common, "--top-k", "3", "--offset", "3"])
+    report.require(status == 0, f"pagination: page two exited {status}")
+
+    def bare(lines: list[str]) -> list[str]:
+        return [re.sub(r"^\d+\.\s*", "", line) for line in lines]
+
+    report.require(
+        bare(_ranked_rows(first)) == bare(every[:3]),
+        f"pagination: page one is {bare(_ranked_rows(first))}, not the first three of "
+        f"the whole ranking {bare(every[:3])}",
+    )
+    report.require(
+        bare(_ranked_rows(second)) == bare(every[3:]),
+        f"pagination: OFFSET 3 returned {bare(_ranked_rows(second))} where the whole "
+        f"ranking's results four to six are {bare(every[3:])}",
+    )
+    report.require(
+        _ranked_rows(second) and _ranked_rows(second)[0].startswith("4."),
+        "pagination: page two numbers its first result "
+        f"{(_ranked_rows(second) or ['(nothing)'])[0].split('.')[0]!r}, not 4; the "
+        "relational path numbers from the offset and this must agree with it",
+    )
+
+    # Past the end is a verdict, not silence: the caller has to be able to tell
+    # "this page is empty" from "the tool printed nothing" (L1).
+    status, past = _cli(search, [*common, "--top-k", "3", "--offset", "100000"])
+    report.require(status == 0, f"pagination: an out-of-range page exited {status}")
+    report.require(
+        "no results at OFFSET" in past,
+        f"pagination: an offset past the end printed no verdict at all: {past.strip()[:120]!r}",
+    )
+
+
+def check_require_native(report: Report, search, embedding_root: Path, chunk_dir: Path) -> None:
+    """`--require-native` is a claim that the kernel RAN, not that it was asked for.
+
+    The flag was read at parse time against `args.backend`, which for `--backend auto`
+    names no backend at all -- the planner does. On this corpus `--objective startup`
+    prices the pure-Python `reference` plan cheapest, so the flag passed, the run
+    ranked in Python, and it exited 0 having touched no kernel. That is the shape L2
+    names: a `--require-X` that cannot fail on a configuration somebody will type.
+    """
+    common = [
+        "--query",
+        "ssa",
+        "--top-k",
+        "1",
+        "--set",
+        str(embedding_root),
+        "--chunks",
+        str(chunk_dir),
+        "--materialize",
+        "full",
+        "--require-native",
+    ]
+
+    refused = 0
+    for backend, objective in (("reference", "latency"), ("auto", "startup")):
+        status, output = _cli(search, [*common, "--backend", backend, "--objective", objective])
+        report.require(
+            status != 0,
+            f"require-native: --backend {backend} --objective {objective} exited 0 "
+            "with a flag demanding a kernel this run does not reach",
+        )
+        report.require(
+            "require-native" in output,
+            f"require-native: --backend {backend} refused without saying why: "
+            f"{output.strip()[:120]!r}",
+        )
+        refused += status != 0
+    report.require(
+        refused == 2,
+        f"anti-vacuity: {refused} of 2 kernel-less configurations were refused",
+    )
+
+    # And the flag must still accept a run that does reach the kernel, or it is
+    # refusing everything and proving nothing.
+    status, output = _cli(search, [*common, "--backend", "auto", "--objective", "latency"])
+    report.require(
+        status == 0 or "native backend required" in output,
+        f"require-native: a run whose planner chose a kernel backend exited {status} "
+        f"for a reason other than the kernel being unavailable: {output.strip()[:160]!r}",
+    )
+
+
+def check_set_catalog_binding(
+    report: Report, search, embedding_root: Path, catalog_dir: Path, chunk_dir: Path
+) -> None:
+    """A ranked row number means one chunk, so both artifacts must hold the same rows.
+
+    Row *i* of an embedding set is row *i* of the catalog (LangRef SS4.4), and nothing
+    checked it: the only cross-check compared row *counts*, and it lived inside
+    `if args.where:`. With `--materialize seek` -- the default whenever a catalog is
+    present -- the tool printed the `source_path` of one chunk beside the span and
+    heading trail of another, exit 0.
+
+    The fixture re-sorts the corpus rather than changing its size, because a size
+    change is the one mismatch the old count check already caught.
+    """
+    catalog_module = load_tool("catalog")
+    status, _ = _cli(
+        search,
+        [
+            "--query",
+            "ssa",
+            "--top-k",
+            "1",
+            "--set",
+            str(embedding_root),
+            "--catalog",
+            str(catalog_dir),
+            "--chunks",
+            str(chunk_dir),
+        ],
+    )
+    report.require(
+        status == 0,
+        f"anti-vacuity: the matched catalog and set were refused (exit {status}), so "
+        "the refusal below is not evidence of anything",
+    )
+
+    with tempfile.TemporaryDirectory() as directory:
+        moved = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, moved)
+
+        # Move one path so it re-sorts *within its own subject*. `row_sort_key` is
+        # (subject, source_path, start_line, chunk_id), so renaming the only path of a
+        # one-file subject changes the bytes and not the order -- the first fixture
+        # written here prefixed `training/backends/README.md`, produced an identical id
+        # order, and reported the tool as broken for accepting it. The reorder is
+        # therefore proved below rather than assumed (L2).
+        paths_by_subject: dict[str, set[str]] = {}
+        for path in sorted(moved.glob("*.chunks.jsonl")):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    record = json.loads(line)
+                    paths_by_subject.setdefault(record["subject"], set()).add(record["source_path"])
+        subject = max(paths_by_subject, key=lambda name: len(paths_by_subject[name]))
+        report.require(
+            len(paths_by_subject[subject]) >= 2,
+            f"anti-vacuity: the largest subject {subject!r} holds "
+            f"{len(paths_by_subject[subject])} distinct path(s), so moving one cannot "
+            "reorder the corpus",
+        )
+        target = min(paths_by_subject[subject])
+        replacement = f"{target.split('/')[0]}/{subject}/zzz-{target.rsplit('/', 1)[-1]}"
+
+        renamed = 0
+        for path in sorted(moved.glob("*.chunks.jsonl")):
+            records = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for record in records:
+                if record.get("source_path") == target:
+                    record["source_path"] = replacement
+                    renamed += 1
+            path.write_text(
+                "\n".join(json.dumps(r, sort_keys=True, separators=(",", ":")) for r in records)
+                + "\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+        report.require(
+            renamed >= 1,
+            f"anti-vacuity: the fixture moved {renamed} chunk(s) of {target!r}",
+        )
+        rebuilt = Path(directory) / "catalog"
+        catalog_module.write(catalog_module.build(moved), rebuilt)
+        report.require(
+            list(catalog_module.Catalog.load(catalog_dir, chunk_dir).ids)
+            != list(catalog_module.Catalog.load(rebuilt, moved).ids),
+            f"anti-vacuity: moving {target!r} to {replacement!r} left the row order "
+            "unchanged, so the refusal asserted below would be about nothing",
+        )
+        status, output = _cli(
+            search,
+            [
+                "--query",
+                "ssa",
+                "--top-k",
+                "3",
+                "--set",
+                str(embedding_root),
+                "--catalog",
+                str(rebuilt),
+                "--chunks",
+                str(moved),
+            ],
+        )
+        report.require(
+            status != 0,
+            "set-catalog: a catalog and an embedding set built from differently "
+            "ordered corpora were joined row by row and exited 0",
+        )
+        report.require(
+            "do not describe the same rows" in output,
+            f"set-catalog: the mismatch was refused without naming it: {output.strip()[:160]!r}",
+        )
+
+
 def catalog_path_column() -> str:
     """The path column, from the declared table rather than spelled again here."""
     return load_tool("schema").PATH_COLUMN
@@ -3977,6 +4245,19 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("coverage", check_operator_coverage, report, plan, catalog)
     report.run("S4-prefix", check_prefix_semantics, report, plan)
     report.run("S8-intervals", check_interval_folding, report, plan, catalog, args.chunks)
+    report.run("pagination", check_pagination, report, search, args.embedding_set, args.chunks)
+    report.run(
+        "require-native", check_require_native, report, search, args.embedding_set, args.chunks
+    )
+    report.run(
+        "set-catalog",
+        check_set_catalog_binding,
+        report,
+        search,
+        args.embedding_set,
+        args.catalog,
+        args.chunks,
+    )
     report.run("S7-ranges", check_ranges, report, plan, catalog, args.chunks)
     report.run("S7-presence", check_presence, report, plan, catalog, args.chunks)
     report.run("S7-groups", check_grouped_aggregates, report, search, plan, catalog)

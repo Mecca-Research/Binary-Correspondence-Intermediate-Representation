@@ -1610,10 +1610,20 @@ class Catalog:
         and exited 0 -- with `database.md` missing from both the rows and the number.
         The whole-path shortcut it also carried had the same shape, since `a/b.md` is
         a prefix of `a/b.md.bak`.
+
+        **Exactly one separator comes off.** The argument above holds for the single
+        trailing separator the guard proved is there and for no more: `rstrip("/")`
+        mapped `training/llvm//` onto the counted directory `training/llvm` and
+        answered 2160 rows, `[exact]`, for a string that starts no path in the corpus
+        at all. A doubled separator is ordinary output of joining a directory that
+        already ends in one, so this was the first defect's own shape surviving inside
+        its fix. Taking one character off leaves `training/llvm/`, which is not a key
+        in `path_prefixes`, so the shortcut declines and the walk gives the right
+        answer -- and an interior `training//llvm/` never matched a key to begin with.
         """
         if not prefix.endswith("/"):
             return None
-        cleaned = prefix.rstrip("/")
+        cleaned = prefix[:-1]
         return cleaned if cleaned in self.postings["path_prefixes"] else None
 
     def count_prefix(self, prefix: str) -> tuple[int, bool]:

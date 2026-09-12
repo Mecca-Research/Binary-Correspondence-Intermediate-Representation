@@ -501,6 +501,40 @@ def _aggregate_cells(summary: dict, fields: tuple[str, ...], stats_column: str |
     return cells + (f"{average:>12.2f}" if average is not None else f"{'-':>12}")
 
 
+#: The backends that actually call into the compiled kernel. `reference` is pure
+#: Python and `auto` is not a backend at all -- it is a request for the planner to
+#: name one -- so both are absent by construction.
+_KERNEL_BACKENDS = frozenset({"native", "q8", "both"})
+
+
+def _runs_the_kernel(backend: str) -> bool:
+    """Whether a *resolved* backend name will execute the native rail."""
+    return backend in _KERNEL_BACKENDS
+
+
+def _same_rows(catalog, embedding_set) -> bool:
+    """Whether a catalog and an embedding set describe the same rows, in the same order.
+
+    Row *i* of an embedding set must be row *i* of the catalog; that is what lets a
+    ranked row number become a record with no lookup (`training/TRAINING_LANGREF.md`
+    SS4.4). Nothing enforced it. The only cross-check compared `catalog.rows_total`
+    against `len(embedding_set.rows)`, it lived inside `if args.where:`, and
+    `--materialize seek` -- the default whenever a catalog is present -- then printed
+    the path of one chunk beside the span and heading trail of another, exit 0.
+
+    Cardinality cannot carry this: two corpora of equal size differing only in a
+    `source_path` re-sort produce identical counts and a different row order. Neither
+    can `embed_chunks.corpus_digest`, which digests `{chunk_id, source_sha256}` sorted
+    by `chunk_id` and is therefore blind to exactly that re-sort. The ids in order are
+    the contract, so the ids in order are what is compared.
+    """
+    ids = catalog.ids
+    rows = embedding_set.rows
+    if len(ids) != len(rows):
+        return False
+    return all(ids[i] == row.get("chunk_id") for i, row in enumerate(rows))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--query")
@@ -647,20 +681,6 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "search_chunks: --having filters groups, so it needs --group-by; to filter "
             "rows, pass --where",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
-
-    # --require-native is read only inside the native branch below, and --backend
-    # defaults to `reference`, so the default invocation passed the flag and never
-    # entered a path that could honour it: no import of BCIR, no kernel built, no native
-    # dot product, exit 0. A flag that cannot fail on the configuration it is most likely
-    # to be typed with is not a requirement, so say so rather than accepting it.
-    if args.require_native and args.backend == "reference":
-        print(
-            "search_chunks: --require-native with --backend reference asks for a "
-            "guarantee about a backend this run will not touch; pass --backend native, "
-            "q8, both or auto",
             file=sys.stderr,
         )
         return EXIT_USAGE
@@ -820,9 +840,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return EXIT_FAILED
 
-    top_k = min(
-        args.top_k, selection.admitted if selection.rows is not None else len(embedding_set.rows)
-    )
+    # The ranking has to be deep enough to *contain* the requested page, not just as
+    # long as it: `--top-k 3 --offset 3` needs six results to return three.
+    admitted = selection.admitted if selection.rows is not None else len(embedding_set.rows)
+    top_k = min(args.top_k + args.offset, admitted)
     if top_k < 1:
         where = " AND ".join(str(p) for p in selection.predicates)
         print(f"\nQ: {args.query!r}   WHERE {where}\n  (no rows admitted)")
@@ -831,6 +852,16 @@ def main(argv: list[str] | None = None) -> int:
     materialize = args.materialize
     if materialize == "auto":
         materialize = "seek" if catalog is not None else "full"
+
+    if catalog is not None and not _same_rows(catalog, embedding_set):
+        print(
+            f"search_chunks: the catalog at {args.catalog} and the embedding set at "
+            f"{args.embedding_set} do not describe the same rows, so a ranked row "
+            "number means a different chunk in each; rebuild one from the other's "
+            "corpus, or pass --materialize full to rank without the catalog",
+            file=sys.stderr,
+        )
+        return EXIT_FAILED
 
     backend = args.backend
     plans = chosen = None
@@ -878,6 +909,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
 
+    if args.require_native and not _runs_the_kernel(backend):
+        # Read here rather than at parse time, because `--backend auto` does not name
+        # a backend: the planner does, and on this corpus `--objective startup` picks
+        # `reference`. Asked at parse time the flag passed and the run then ranked in
+        # pure Python and exited 0 -- a `--require-X` flag claims the rail RAN, not
+        # that it was requested (`docs/security/laws.md` L2). One predicate for both
+        # spellings, so the explicit and the chosen answer cannot diverge (L14).
+        print(
+            f"search_chunks: --require-native, but the backend that will run is "
+            f"{backend!r}, which touches no kernel"
+            + (
+                f" (--backend auto chose it under --objective {args.objective})"
+                if args.backend == "auto"
+                else "; pass --backend native, q8, both or auto"
+            ),
+            file=sys.stderr,
+        )
+        return EXIT_USAGE if args.backend != "auto" else EXIT_BACKEND_UNAVAILABLE
+
     rows = selection.rows
     reference = native = None
     if backend in ("reference", "both"):
@@ -920,8 +970,15 @@ def main(argv: list[str] | None = None) -> int:
 
     results = reference if reference is not None else native
     assert results is not None
-    if args.offset:
-        results = results[args.offset :]
+    # The ranking above asked for `top_k` results, which already includes the offset
+    # (see where `top_k` is computed), so the page is the window *after* the offset.
+    # Slicing a `top_k`-long list at `top_k` used to leave nothing: page two of every
+    # ranked query was empty and exit 0, while the relational path one screen up had
+    # always windowed correctly. Two readings of OFFSET in one tool (L14).
+    results = results[args.offset :]
+    if not results:
+        print(f"\n  (no results at OFFSET {args.offset}; the ranking holds fewer)")
+        return EXIT_OK
 
     if materialize == "seek" and catalog is not None:
         chunks = catalog.fetch(row for row, _ in results)
@@ -936,7 +993,9 @@ def main(argv: list[str] | None = None) -> int:
     print(heading)
 
     projection = tuple(part.strip() for part in args.select.split(",")) if args.select else ()
-    for rank, (row, distance) in enumerate(results, start=1):
+    # Numbered from the offset, like the relational path one screen up: page two
+    # of a ranking starts at 4, not at 1 again (L14).
+    for rank, (row, distance) in enumerate(results, start=args.offset + 1):
         entry = embedding_set.rows[row]
         chunk = chunks.get(row)
         # Squared Q15 distance is exact but unit-free; cosine is what a reader

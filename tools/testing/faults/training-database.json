@@ -129,6 +129,34 @@
       "new": "    narrowed = None if True else ranges(catalog, predicates)",
       "old": "    narrowed = ranges(catalog, predicates)",
       "path": "training/tools/plan.py"
+    },
+    {
+      "expects": "S4",
+      "label": "a repeated separator is stripped onto a counted directory again",
+      "new": "        cleaned = prefix.rstrip(\"/\")",
+      "old": "        cleaned = prefix[:-1]",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "pagination",
+      "label": "a ranked page is truncated instead of shifted",
+      "new": "    top_k = min(args.top_k, admitted)",
+      "old": "    top_k = min(args.top_k + args.offset, admitted)",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "require-native",
+      "label": "--require-native is satisfied by asking, not by running",
+      "new": "    if False and args.require_native and not _runs_the_kernel(backend):",
+      "old": "    if args.require_native and not _runs_the_kernel(backend):",
+      "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "set-catalog",
+      "label": "a ranked row number indexes two artifacts nothing bound together",
+      "new": "    if False and catalog is not None and not _same_rows(catalog, embedding_set):",
+      "old": "    if catalog is not None and not _same_rows(catalog, embedding_set):",
+      "path": "training/tools/search_chunks.py"
     }
   ],
   "gate": "training/tools/verify_database.py",

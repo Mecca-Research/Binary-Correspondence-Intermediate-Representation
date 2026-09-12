@@ -364,6 +364,12 @@ The same rule applies to a prefix that happens to name a whole file. `^=a/b.md`
 admits `a/b.md.bak`, because `a/b.md.bak` starts with `a/b.md`. A caller who
 means one file spells it `source_path=a/b.md`.
 
+**Exactly one separator comes off.** The shortcut removes the single trailing
+separator its guard proved is there, and no more. Stripping every one of them
+mapped `training/llvm//` — ordinary output of joining a directory that already
+ends in a separator — onto the counted directory `training/llvm`, and answered
+its whole contents for a string that starts no path at all.
+
 ### 5.7 The reserved character
 
 The catalog marks a row that carries no value with a key built from a **NUL
@@ -757,8 +763,9 @@ actually registers, in both directions, because a list mirrored by hand drifts
 `interfaces-boundary`, `interfaces`, `host-byte-order`, `S1`, `S2`, `S3`, `S4`,
 `aggregates`, `line endings`, `schema`, `constraints`, `S7-grammar`, `quoting`,
 `reserved character`, `estimates`, `coverage`, `S4-prefix`, `S8-intervals`,
-`S7-ranges`, `S7-presence`, `S7-groups`, `ordering`, `planner`,
-`order strategy`, `explain`, `S5`, `S5-incremental`, `S6`, `S13`, `S18`.
+`pagination`, `require-native`, `set-catalog`, `S7-ranges`, `S7-presence`,
+`S7-groups`, `ordering`, `planner`, `order strategy`, `explain`, `S5`,
+`S5-incremental`, `S6`, `S13`, `S18`.
 
 ### 16.1 What a gate here must do
 
@@ -869,6 +876,10 @@ Landed with their fixes, each caught by a named check thereafter:
 | interval pricing | two comparisons on one column were priced at the tighter marginal, 277× loose on a one-value interval (§6) | #784 |
 | LangRef drift | §3.1, §4.5, §5.2, §6 and §16 described a system that never existed; the matrix is now probed, not prose | #784 |
 | a registered test module | thirteen tests were registered, counted, and never run, because `run_all` cannot see a test inside a class | #784 |
+| repeated separator | the prefix shortcut stripped *every* trailing separator, so `^=training/llvm//` answered a directory that no path starts with, `[exact]` (§5.6) | #784 |
+| ranked OFFSET | a ranked page was truncated rather than shifted, so page two of every ranked query was empty at exit 0 | #784 |
+| `--require-native` | `--backend auto` names no backend, so the flag was read against a request rather than against what ran; `--objective startup` picks the pure-Python plan and exited 0 | #784 |
+| set/catalog binding | nothing bound an embedding set to a catalog, so a ranked row number meant a different chunk in each and the two halves of a line came from different records (§4.4) | #784 |
 
 ---
 
