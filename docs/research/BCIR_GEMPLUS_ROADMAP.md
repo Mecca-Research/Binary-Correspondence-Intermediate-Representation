@@ -277,8 +277,8 @@ right to recompute at a trust boundary**, which is the whole reason the third ha
 |---|---|---|---|
 | `exact` `static_memory.digests.2048` (full digests over plan + verify + client) | 3 | 1 | **1** — the planner mints the identity, its verifier and the client validate it by content |
 | `wall` `static_memory.digest.2048` | 88.05 ms | ≤ 30 ms | 64.7 → **37.4 ms** here (projected ~50 ms on the baseline host: the per-byte FNV chain in the interpreter is the residual) |
-| `wall` `static_memory.verify.2048` | 157.88 ms | ≤ 90 ms | 100.3 → **39.3 ms** identity-bound (71 ms recomputing); the bound is met |
-| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 120 ms | 196.1 → **114.1 ms** from a fresh identity (70 ms with it cached); the bound is met |
+| `wall` `static_memory.verify.2048` | 157.88 ms | ≤ 90 ms | 100.3 → **39.3 ms** identity-bound (71 ms recomputing); the bound is met; **15.8 ms** since S1-D's alias sweep |
+| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 120 ms | 196.1 → **114.1 ms** from a fresh identity (70 ms with it cached); the bound is met; **84.3 ms** since S1-D's alias sweep |
 | `exact` A cache cannot survive mutation | — | mutation invalidates; cross-module substitution refused | **witnessed**: a declared mutation drops the cache; an undeclared in-place edit is refused by the verifier's content check; module A's identity presented for module B is refused |
 
 What landed: `provenance.canonical_stream` is the one iterative walk that produces the R13 item
@@ -320,7 +320,7 @@ against the incumbent.
 and merely states how far from optimal it is has still moved BCIR from TMSAO-4 to TMSAO-2, and
 that is a bigger step than any constant factor in this document.
 
-### G5 — schedule-aware liveness and bounded exact memory
+### G5 — schedule-aware liveness and bounded exact memory — **landed (S1-D, 2026-09-12)**
 
 *Report P0.2 + P1.5. Carries a latent-correctness condition.*
 
@@ -330,16 +330,39 @@ into token execution — and established the integration condition instead: *sta
 be computed from the final schedule's intervals, or the verifier must prove the schedule
 refines the phase order the plan used.*
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `exact` The two-phase alias fixture | aliases at offset 0 | rejected, or disjoint storage |
-| `exact` `memory.suboptimal.fraction` | 38.6% of 500 | 0% on the proof rail, or a stated gap |
-| `exact` `memory.worst.ratio` | 1.6154× (21 vs 13 units) | 1.0 on the proof rail |
-| `exact` `memory.real.bytes` | 1,344 B | 832 B on the proof rail |
+| Gate | Baseline | Target | Outcome |
+|---|---|---|---|
+| `exact` The two-phase alias fixture | aliases at offset 0 | rejected, or disjoint storage | **both**: the phase-liveness plan held to the token placement is refused ("does not refine the phase order"); a plan computed from the placement gives the two disjoint storage, and one computed from the barriered placement still shares offset 0 because it is safe there |
+| `exact` `memory.suboptimal.fraction` | 38.6% of 500 | 0% on the proof rail, or a stated gap | **0%** — every fixture of the corpus solved to a proved optimum within the budget (first-fit alone: 40.4% on this corpus, measured RED) |
+| `exact` `memory.worst.ratio` | 1.6154× (21 vs 13 units) | 1.0 on the proof rail | **1.0** (first-fit alone: 1.6× on this corpus) |
+| `exact` `memory.real.bytes` | 1,344 B | 832 B on the proof rail | **832 B** on the witness that reproduces the report's worst case through the real planner (first-fit: 1,344 B, the report's number) |
 
-First-fit stays the predictable fast path. The exact solver runs when the fast layout violates
-capacity, peak pressure crosses a threshold, the artifact is high-value, or a proof is asked
-for. Every result records the concurrent-live lower bound, the achieved extent, and the gap.
+First-fit stays the predictable fast path (byte-identical to the historical layout under phase
+liveness: the audit fixture's offsets did not move), and the verifier's alias law is an exact
+sweep over the ticks with the live rows' addresses in one sorted list — A/B on one host against
+the S1-C commit, `static_memory.verify.2048` 35.0 → 15.8 ms and `static_memory.plan.2048`
+100.7 → 84.3 ms with all 13 audit result digests identical. What landed: `static_memory.schedule_intervals`
+derives every resource's half-open liveness interval from the canonical placement (the first
+touching slot's start to the last one's finish), `plan_static_memory(..., schedule=)` computes
+the plan in that domain and binds it to the placement by digest, and every plan names its
+`liveness` domain; `verify_static_memory_plan(..., schedule=)` refuses a phase-liveness plan the
+placement does not refine and recomputes a schedule-liveness plan's intervals from it.
+`exact_layout` is the bounded exact solver — a complete branch-and-bound over aligned offsets
+below the first-fit incumbent, budgeted in candidate placements (work units, never seconds) —
+and every bank summary records the concurrent-live lower bound, the extent, the gap and the
+stop reason (`first-fit`, `optimal`, `budget`); the verifier re-runs the solver under the plan's
+own budget rather than trust the stop reason or the offsets. The lifetimes travel in
+`ExecutionPlanV1` v2 (the liveness byte and the tick tail, append-only, the lowest carrying
+version emitted), the C twin and the codec refuse two lifetimes of one bank that alias, and
+`verify_execution_plan` refuses a plan whose lifetimes do not cover its schedule. The report's
+corpus is not in the tree; `bcir/tests/memory_fixtures.py` reproduces its shape (500
+seven-resource fixtures) and its worst case exactly (21 vs 13 units, 1,344 vs 832 bytes). The
+integration condition the report set — static memory from the final schedule's intervals, or a
+verifier that proves the schedule refines the phase order — is met on both branches. Not
+claimed: the exact solver at production scale (the 512-resource audit fixture stops on its
+budget and keeps the first-fit incumbent with a stated gap — the interval-graph dynamic
+programming the staged plan names for G4/G5 is the next lever) and any joint placement of
+memory with the schedule (G6/G8).
 
 ### G6 — typed regions and the semiring registry
 
@@ -668,7 +691,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
-Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A); G3 <- LANDED (S1-B); G11 <- LANDED (S1-C)
+Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
@@ -716,7 +739,8 @@ no PMU):
 | `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) | GAIN — the mechanism is named under G2; 36% of headroom to the 4× bound remains |
 | `static_memory.digests.2048` | G3 | 3 | **1** (S1-B, 2026-09-12) | GAIN, at the bound — one digest per plan-and-verify chain; the verifier still recomputes at a trust boundary |
 | `plan.abi.mismatches` / `plan.readers.disagreements` / `plan.stale.accepted` / `plan.malformed.accepted` | G11 | 26 / 27 / 6 / 39 | **0 / 0 / 0 / 0** (S1-C, 2026-09-12) | GAIN, at the bound — the plan has bytes: every corpus plan survives the C twin, every reader reproduces its trace from the bytes, every stale and malformed fixture is refused on every rail that can see it |
-| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 ms A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
-| eleven rows | G0, G4–G6 | — | not measured | need the exact oracles or the native rig |
+| `memory.suboptimal.fraction` / `memory.worst.ratio` / `memory.real.bytes` | G5 | 38.6% / 1.6154× / 1,344 B | **0% / 1.0 / 832 B** (S1-D, 2026-09-12) | GAIN, at the bound — the bounded exact solver proves every corpus fixture and the witness reproduces the report's worst case; the two-phase alias fixture is refused against the token placement and gets disjoint storage when planned from it |
+| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 → 84 ms (S1-D's alias sweep) A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
+| eight rows | G0, G4, G6 | — | not measured | need the exact oracles or the native rig |
 
 Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.

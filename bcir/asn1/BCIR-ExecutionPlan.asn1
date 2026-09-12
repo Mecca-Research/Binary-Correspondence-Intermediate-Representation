@@ -14,9 +14,11 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       steps          [8] SEQUENCE OF PlanStep,
       lifetimes      [9] SEQUENCE OF Lifetime     DEFAULT {},
       moves         [10] SEQUENCE OF MovementEdge DEFAULT {},
-      generations   [11] SEQUENCE OF Generation   DEFAULT {} }
+      generations   [11] SEQUENCE OF Generation   DEFAULT {},
+      liveness      [12] Liveness DEFAULT phase }
 
-  Mode ::= ENUMERATED { eft(0), tokens(1) }
+  Mode     ::= ENUMERATED { eft(0), tokens(1) }
+  Liveness ::= ENUMERATED { phase(0), schedule(1) }
 
   PlanStep ::= SEQUENCE {
       claimId        [0] INTEGER,
@@ -38,7 +40,9 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       sizeBytes      [3] INTEGER,
       alignment      [4] INTEGER DEFAULT 1,
       firstPhase     [5] INTEGER DEFAULT 0,
-      lastPhase      [6] INTEGER DEFAULT 0 }
+      lastPhase      [6] INTEGER DEFAULT 0,
+      firstTick      [7] INTEGER DEFAULT 0,
+      lastTick       [8] INTEGER DEFAULT 0 }
 
   MovementEdge ::= SEQUENCE {
       rid            [0] INTEGER,

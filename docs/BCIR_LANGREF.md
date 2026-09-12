@@ -202,7 +202,16 @@ R11 (the carried generation vector is the live registry's, entry for entry) and 
 across artifacts (the pack is the lowering of its plan — one segment per step with the
 step's claim, phase, lane and width — and a pack whose plan carries an older vector is
 stale); the freestanding C twin (`bcir_ep_verify`, `bcir_ep_check_generation_vector`,
-`bcir_ep_check_pack`) refuses the same bytes. R13 additionally
+`bcir_ep_check_pack`) refuses the same bytes. Since G5 (S1-D) a static memory plan names the
+liveness domain its lifetimes live in — topological phase positions, or the canonical
+placement's own half-open ticks (`kbcir.static_memory.schedule_intervals`) — and is held to
+the placement it is composed with: a phase-liveness plan the placement does not refine is
+refused (the report's two-phase alias fixture under the token placement), a schedule-liveness
+plan's intervals are recomputed from the placement it is bound to by digest, and the plan
+bytes (ExecutionPlanV1 v2) carry the domain and the ticks so the alias law holds by bytes on
+both rails; the bounded exact layout behind first-fit records its concurrent-live lower bound,
+its gap and its stop reason, which the verifier recomputes under the plan's own budget. R13
+additionally
 **recomputes** a manifest's digest from its component hashes (byte-identical to
 `provenance._digest`) and **cross-checks every component hash** — `m_theta` / `m_policy` /
 `m_target` / `m_module` — against the in-IR `kbcir.theta` / `kbcir.policy` (unfolded

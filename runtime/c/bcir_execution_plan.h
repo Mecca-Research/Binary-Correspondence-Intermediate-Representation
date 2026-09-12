@@ -14,6 +14,9 @@
  *                                 cost:i64 stream:u32 start:u64 duration:u64
  *     lifetimes[n_lifetimes]   := rid:u32 bank:str offset:u64 size:u64 alignment:u32
  *                                 first_phase:u32 last_phase:u32      (RIDs strictly ascending)
+ *                                 [v2: first_tick:u64 last_tick:u64]  (half-open liveness in the
+ *                                 header's liveness domain; a v1 record reads
+ *                                 [first_phase, last_phase + 1))
  *     moves[n_moves]           := rid:u32 src_bank:str dst_bank:str offset:u64 size:u64
  *                                 route:str kind:u8 coherence:u8 map_gen:u32 data_gen:u32
  *                                 after_claim:u64 before_claim:u64
@@ -22,15 +25,20 @@
  *   Trailer: u32 CRC-32 of every preceding byte.
  *
  * The format is frozen at v1; fields are append-only across versions and a v1 reader
- * rejects a newer version and refuses nonzero reserved bytes.
+ * rejects a newer version and refuses nonzero reserved bytes. v2 (G5, S1-D) carves the
+ * liveness byte out of the header pad (offset 9: 0 = phase positions, 1 = the placement's
+ * ticks) and appends the tick tail to the lifetime record; encoders emit the lowest carrying
+ * version, so a phase-liveness plan with default ticks is byte-identical v1.
  *
  * The wire laws (bcir_ep_verify; the Python codec applies the same predicate): mode legal;
  * streams >= 1 and 1 <= knee <= streams; per step a legal lane, a nonzero power-of-two
  * width, a stream below `streams` or the tail sentinel, duration == max(0, cost),
  * start + duration <= makespan; claim ids unique; lifetimes with ascending RIDs, a
- * power-of-two alignment the offset honors, size >= 1, first_phase <= last_phase; moves
- * with legal kind/coherence codes and size >= 1; an ascending generation vector; the
- * declared records consume the body exactly (BCIR_ERR_TRAILING otherwise).
+ * power-of-two alignment the offset honors, size >= 1, first_phase <= last_phase,
+ * last_tick > first_tick, and no two lifetimes of one bank live at once at overlapping
+ * addresses (the alias law by bytes, BCIR_ERR_PLAN); moves with legal kind/coherence codes
+ * and size >= 1; an ascending generation vector; the declared records consume the body
+ * exactly (BCIR_ERR_TRAILING otherwise).
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_EXECUTION_PLAN_H
 #define BCIR_EXECUTION_PLAN_H
@@ -43,7 +51,7 @@ extern "C" {
 
 #define BCIR_EP_MAGIC       "BPLN"   /* bytes 0..3 of the header */
 #define BCIR_EP_VERSION     1
-#define BCIR_EP_VERSION_MAX 1
+#define BCIR_EP_VERSION_MAX 2   /* v2: the liveness byte + the lifetime tick tail (G5) */
 #define BCIR_EP_HEADER_SIZE 64
 
 /* The decoupled GGG/random tail's stream on the wire (the scheduler's TAIL_STREAM, -1). */
@@ -55,6 +63,13 @@ typedef enum bcir_ep_mode {
   BCIR_EP_MODE_TOKENS = 1    /* token-pipelined dispatch */
 } bcir_ep_mode;
 #define BCIR_EP_MODE_MAX 1
+
+/* The domain the lifetimes' ticks live in (v2; a v1 plan reads BCIR_EP_LIVENESS_PHASE). */
+typedef enum bcir_ep_liveness {
+  BCIR_EP_LIVENESS_PHASE    = 0,   /* topological phase positions: [first_phase, last_phase + 1) */
+  BCIR_EP_LIVENESS_SCHEDULE = 1    /* the placement's own ticks (schedule-aware liveness, G5) */
+} bcir_ep_liveness;
+#define BCIR_EP_LIVENESS_MAX 1
 
 /* G8 movement-edge kinds and coherence actions (closed sets; a code outside is refused). */
 typedef enum bcir_ep_move_kind {
@@ -74,7 +89,8 @@ typedef struct bcir_ep_header {
   uint16_t version;         /* 1..BCIR_EP_VERSION_MAX */
   uint16_t flags;           /* reserved (0) */
   uint8_t  mode;            /* bcir_ep_mode */
-  uint8_t  reserved0[3];    /* 9..11 (0) */
+  uint8_t  liveness;        /* @9 v2: bcir_ep_liveness (reads PHASE on a v1 plan; reserved there) */
+  uint8_t  reserved0[2];    /* 10..11 (0) */
   uint32_t streams;         /* @12 affinity domains the plan was placed on (the tail is extra) */
   uint32_t knee;            /* @16 the bandwidth knee the dispatch clamped to; 1..streams */
   uint32_t n_steps;         /* @20 record counts in the body */
@@ -111,6 +127,8 @@ typedef struct bcir_ep_lifetime_view {
   uint32_t alignment;
   uint32_t first_phase;
   uint32_t last_phase;
+  uint64_t first_tick;      /* v2: the half-open liveness interval in the header's domain; */
+  uint64_t last_tick;       /*     a v1 record reads [first_phase, last_phase + 1)          */
 } bcir_ep_lifetime_view;
 
 typedef struct bcir_ep_move_view {

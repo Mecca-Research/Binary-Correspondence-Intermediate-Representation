@@ -119,7 +119,7 @@ def test_the_module_has_its_own_arc_and_version():
     module, target, _theta, result = audit_fixture()
     plan = plan_from_realization(module, result, target, "eft")
     value = plan_to_value(plan)
-    assert value["version"] == PROJECTION_VERSION == 1
+    assert value["version"] == PROJECTION_VERSION == 2
     without = dict(value)
     del without["version"]
     assert value_to_plan(without) == plan
@@ -127,6 +127,38 @@ def test_the_module_has_its_own_arc_and_version():
         value_to_plan(MODULE.decode("ExecutionPlan", MODULE.encode("ExecutionPlan", without)))
         == plan
     )
+    # a version-1 document (no liveness, no ticks) still means a phase-liveness plan whose
+    # lifetimes carry the phase default
+    assert value["liveness"] == 0
+    legacy = {k: v for k, v in value.items() if k != "liveness"}
+    assert value_to_plan(legacy) == plan
+
+
+def test_a_schedule_liveness_plan_projects_its_ticks():
+    """v2 (G5): the liveness domain and the half-open ticks survive every transfer syntax,
+    and the native v2 octets survive the projection byte for byte."""
+    from bcir.gem.schedule import schedule_plan
+    from bcir.kbcir.static_memory import plan_static_memory
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    module = static_memory_module(1)
+    target, theta = TargetProfile.x86_avx2(), Theta.cool()
+    result = optimize(module, target, theta)
+    placement = schedule_plan(module, result, target, "tokens")
+    static = plan_static_memory(
+        module, {rid: "ram" for rid in module.resources}, _AuditHardware(), schedule=placement
+    )
+    plan = plan_from_realization(module, result, target, "tokens", static_plan=static)
+    assert plan.liveness == "schedule" and any(not lt.phase_default for lt in plan.lifetimes)
+    value = plan_to_value(plan)
+    assert value["liveness"] == 1
+    assert all("firstTick" in lt and "lastTick" in lt for lt in value["lifetimes"])
+    assert decode_plan_der(encode_plan_der(plan)) == plan
+    assert decode_plan_oer(encode_plan_oer(plan), canonical=True) == plan
+    assert decode_plan_jer(encode_plan_jer(plan)) == plan
+    native = encode_plan(plan)
+    assert native[4] == 2
+    assert encode_plan(decode_plan_der(encode_plan_der(decode_plan(native)))) == native
 
 
 def test_an_unlisted_enumeration_value_is_refused():

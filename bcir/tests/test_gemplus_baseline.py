@@ -39,6 +39,7 @@ from tools.perf.gemplus_baseline import (  # noqa: E402
     compare,
     measure_exact,
     measure_legacy_divergence,
+    measure_memory,
     measure_plan,
 )
 
@@ -198,3 +199,18 @@ def test_the_plan_rows_read_the_bytes_on_both_rails() -> None:
     for key in c_rows:
         if key not in measured:
             assert rows[key]["verdict"] == "NOT-MEASURED"
+
+
+def test_the_memory_rows_sit_on_the_proof_rail() -> None:
+    """G5's gates (S1-D): with the bounded exact solver engaged behind first-fit, every
+    corpus fixture is solved to a proved optimum (0% suboptimal, worst ratio exactly 1.0) and
+    the section 6.4 witness lays out in the 832 bytes the report's exact solver found."""
+    measured = measure_memory()
+    assert measured == {
+        "memory.suboptimal.fraction": 0.0,
+        "memory.worst.ratio": 1.0,
+        "memory.real.bytes": 832.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]

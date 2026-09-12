@@ -1,11 +1,14 @@
-"""ExecutionPlanV1 binary ABI (frozen v1, append-only) -- reference codec.
+"""ExecutionPlanV1 binary ABI (frozen v1) + v2 (append-only) -- reference codec.
 
-The plan as bytes (G11, staged plan S1-C). Layout (little-endian; the normative spec is
-docs/kernel/BCIR_EXECUTION_PLAN_ABI.md and the C view runtime/c/bcir_execution_plan.h):
+The plan as bytes (G11, staged plan S1-C; v2 from G5, S1-D). Layout (little-endian; the
+normative spec is docs/kernel/BCIR_EXECUTION_PLAN_ABI.md and the C view
+runtime/c/bcir_execution_plan.h):
 
     Header (64 bytes, cache-line; every u64 at an 8-aligned offset):
       magic[4]="BPLN"  version:u16  flags:u16
-      mode:u8 @8 (0 = eft phase-barriered, 1 = tokens pipelined)  reserved:u8[3]
+      mode:u8 @8 (0 = eft phase-barriered, 1 = tokens pipelined)
+      [v2] liveness:u8 @9 (0 = phase positions, 1 = the placement's ticks; reserved on v1)
+      reserved:u8[2] @10
       streams:u32 @12  knee:u32 @16
       n_steps:u32 @20  n_lifetimes:u32 @24  n_moves:u32 @28  n_gens:u32 @32
       reserved:u8[4] @36
@@ -17,6 +20,8 @@ docs/kernel/BCIR_EXECUTION_PLAN_ABI.md and the C view runtime/c/bcir_execution_p
                                cost:i64 stream:u32 start:u64 duration:u64
       lifetimes[n_lifetimes]   rid:u32 bank:str offset:u64 size:u64 alignment:u32
                                first_phase:u32 last_phase:u32          (RIDs strictly ascending)
+                               [v2: first_tick:u64 last_tick:u64]    (half-open, in the
+                               liveness domain; a v1 record reads [first_phase, last_phase+1))
       moves[n_moves]           rid:u32 src_bank:str dst_bank:str offset:u64 size:u64 route:str
                                kind:u8 coherence:u8 map_gen:u32 data_gen:u32
                                after_claim:u64 before_claim:u64
@@ -27,15 +32,20 @@ docs/kernel/BCIR_EXECUTION_PLAN_ABI.md and the C view runtime/c/bcir_execution_p
 Strings are u16 length + UTF-8, as in the StreamPack ABI whose conventions this format
 shares (the same writer/reader primitives). `stream` spells the decoupled tail as
 0xFFFFFFFF (the model's `TAIL_STREAM`, -1); `cost` is a two's-complement i64 because a
-plan's step costs are signed. The format is frozen at v1 and evolves append-only; a v1
-reader rejects a newer version and refuses nonzero reserved bytes.
+plan's step costs are signed. The format is frozen at v1 and evolves append-only: v2 carves
+the liveness byte out of the header pad and appends the tick tail to the lifetime record.
+The encoder emits the lowest carrying version (a plan under phase liveness whose lifetimes
+carry the phase default is byte-identical v1); a v1 reader rejects v2 and refuses nonzero
+reserved bytes.
 
 The wire laws (applied by the encoder AND the decoder, and by the C twin identically):
 mode legal; streams >= 1 and 1 <= knee <= streams; every step's lane legal, width a nonzero
 power of two, stream in range or the tail, duration == max(0, cost), start + duration <=
 makespan; claim ids unique; lifetimes with strictly ascending RIDs, a power-of-two alignment
-the offset honors, size >= 1, first_phase <= last_phase; moves with legal kind/coherence
-codes and size >= 1; a generation vector with strictly ascending RIDs; the declared records
+the offset honors, size >= 1, first_phase <= last_phase, last_tick > first_tick, and no two
+lifetimes of one bank live at once at overlapping addresses (the alias law by bytes); moves
+with legal kind/coherence codes and size >= 1; a generation vector with strictly ascending
+RIDs; the declared records
 consume the body exactly (undeclared trailing bytes are refused, never treated as an
 extension point).
 """
@@ -47,6 +57,7 @@ import zlib
 
 from ..gem.execution_plan import (
     COHERENCE_ACTIONS,
+    LIVENESS_DOMAINS,
     MOVE_KINDS,
     PLAN_MODES,
     TAIL_STREAM,
@@ -61,14 +72,18 @@ from .streampack_abi import AbiError, _checked_uint, _Reader, _Writer
 
 PLAN_MAGIC = b"BPLN"
 PLAN_VERSION = 1
-PLAN_VERSION_MAX = 1
+# v2 (G5, S1-D): the liveness byte in the header and the lifetime tick tail -- append-only.
+PLAN_VERSION_MAX = 2
 PLAN_HEADER_SIZE = 64
+_LIVENESS_OFF = 9
 
 #: The tail stream on the wire (the model's TAIL_STREAM, -1).
 TAIL_STREAM_WIRE = 0xFFFFFFFF
 
 _MODE_WIRE = {mode: code for code, mode in enumerate(PLAN_MODES)}
 _MODE_FROM_WIRE = {v: k for k, v in _MODE_WIRE.items()}
+_LIVENESS_WIRE = {domain: code for code, domain in enumerate(LIVENESS_DOMAINS)}
+_LIVENESS_FROM_WIRE = {v: k for k, v in _LIVENESS_WIRE.items()}
 _KIND_WIRE = {kind: code for code, kind in enumerate(MOVE_KINDS)}
 _KIND_FROM_WIRE = {v: k for k, v in _KIND_WIRE.items()}
 _COHERENCE_WIRE = {act: code for code, act in enumerate(COHERENCE_ACTIONS)}
@@ -103,6 +118,10 @@ def validate_plan(plan: ExecutionPlan) -> None:
     and refused again when it is read."""
     if plan.mode not in _MODE_WIRE:
         raise AbiError(f"unknown plan mode {plan.mode!r}; expected one of {PLAN_MODES}")
+    if plan.liveness not in _LIVENESS_WIRE:
+        raise AbiError(
+            f"unknown plan liveness {plan.liveness!r}; expected one of {LIVENESS_DOMAINS}"
+        )
     streams = _checked_uint("streams", plan.streams, 32)
     knee = _checked_uint("knee", plan.knee, 32)
     if streams < 1 or not 1 <= knee <= streams:
@@ -171,6 +190,24 @@ def validate_plan(plan: ExecutionPlan) -> None:
         last = _checked_uint(f"lifetime[{index}].last_phase", lt.last_phase, 32)
         if last < first:
             raise AbiError(f"lifetime[{index}] is reversed ({first} > {last})")
+        first_tick = _checked_uint(f"lifetime[{index}].first_tick", lt.first_tick, 64)
+        last_tick = _checked_uint(f"lifetime[{index}].last_tick", lt.last_tick, 64)
+        if last_tick <= first_tick:
+            raise AbiError(f"lifetime[{index}] liveness interval is empty or reversed")
+    # The alias law by bytes: two lifetimes of one bank that are live at once (half-open
+    # ticks) must not overlap in address. The C twin applies the same pairwise predicate.
+    rows = list(plan.lifetimes)
+    for i in range(len(rows)):
+        for j in range(i):
+            a, b = rows[i], rows[j]
+            if (
+                a.bank == b.bank
+                and a.first_tick < b.last_tick
+                and b.first_tick < a.last_tick
+                and a.offset < b.offset + b.size_bytes
+                and b.offset < a.offset + a.size_bytes
+            ):
+                raise AbiError(f"lifetimes of RIDs {b.rid} and {a.rid} alias in bank {a.bank!r}")
     for index, mv in enumerate(plan.moves):
         _checked_uint(f"move[{index}].rid", mv.rid, 32)
         for name in ("src_bank", "dst_bank"):
@@ -219,7 +256,7 @@ def _write_step(w: _Writer, s: PlanStep) -> None:
     w.u64(s.duration)
 
 
-def _write_lifetime(w: _Writer, lt: Lifetime) -> None:
+def _write_lifetime(w: _Writer, lt: Lifetime, version: int = PLAN_VERSION) -> None:
     w.u32(lt.rid)
     w.s(lt.bank)
     w.u64(lt.offset)
@@ -227,6 +264,17 @@ def _write_lifetime(w: _Writer, lt: Lifetime) -> None:
     w.u32(lt.alignment)
     w.u32(lt.first_phase)
     w.u32(lt.last_phase)
+    if version >= 2:
+        w.u64(lt.first_tick)
+        w.u64(lt.last_tick)
+
+
+def plan_version(plan: ExecutionPlan) -> int:
+    """The lowest wire version that carries `plan`: v2 when the lifetimes live in the
+    schedule domain or any lifetime's ticks are not the phase default, else the frozen v1."""
+    if plan.liveness != "phase" or any(not lt.phase_default for lt in plan.lifetimes):
+        return 2
+    return PLAN_VERSION
 
 
 def _write_move(w: _Writer, mv: MovementEdge) -> None:
@@ -251,29 +299,36 @@ def _write_generation(w: _Writer, g: Generation) -> None:
 
 
 def encode_plan(plan: ExecutionPlan) -> bytes:
-    """Serialize an ExecutionPlan (v1, CRC trailer); refuses a plan the wire laws reject."""
+    """Serialize an ExecutionPlan (the lowest carrying version, CRC trailer); refuses a plan
+    the wire laws reject."""
     validate_plan(plan)
-    header = _HEADER.pack(
-        PLAN_MAGIC,
-        PLAN_VERSION,
-        0,
-        _MODE_WIRE[plan.mode],
-        plan.streams,
-        plan.knee,
-        len(plan.steps),
-        len(plan.lifetimes),
-        len(plan.moves),
-        len(plan.generations),
-        plan.makespan,
-        plan.module_hash,
-        plan.target_hash,
+    version = plan_version(plan)
+    header = bytearray(
+        _HEADER.pack(
+            PLAN_MAGIC,
+            version,
+            0,
+            _MODE_WIRE[plan.mode],
+            plan.streams,
+            plan.knee,
+            len(plan.steps),
+            len(plan.lifetimes),
+            len(plan.moves),
+            len(plan.generations),
+            plan.makespan,
+            plan.module_hash,
+            plan.target_hash,
+        )
     )
+    if version >= 2:
+        header[_LIVENESS_OFF] = _LIVENESS_WIRE[plan.liveness]
+    header = bytes(header)
     w = _Writer()
     w.s(plan.source_plan)
     for s in plan.steps:
         _write_step(w, s)
     for lt in plan.lifetimes:
-        _write_lifetime(w, lt)
+        _write_lifetime(w, lt, version)
     for mv in plan.moves:
         _write_move(w, mv)
     for g in plan.generations:
@@ -311,10 +366,14 @@ def decode_plan(data: bytes) -> ExecutionPlan:
         )
     if flags:
         raise AbiError(f"reserved ExecutionPlan flags must be zero, got 0x{flags:04x}")
-    if any(data[9:12]) or any(data[36:40]):
+    reserved_lo = data[10:12] if version >= 2 else data[9:12]
+    if any(reserved_lo) or any(data[36:40]):
         raise AbiError("reserved ExecutionPlan header bytes must be zero")
     if mode_code not in _MODE_FROM_WIRE:
         raise AbiError(f"unknown plan mode code {mode_code} (0=eft, 1=tokens)")
+    liveness_code = data[_LIVENESS_OFF] if version >= 2 else 0
+    if liveness_code not in _LIVENESS_FROM_WIRE:
+        raise AbiError(f"unknown plan liveness code {liveness_code} (0=phase, 1=schedule)")
     body, crc = data[:-4], struct.unpack("<I", data[-4:])[0]
     if (zlib.crc32(body) & 0xFFFFFFFF) != crc:
         raise AbiError("CRC mismatch (corrupt ExecutionPlan)")
@@ -323,6 +382,7 @@ def decode_plan(data: bytes) -> ExecutionPlan:
     plan = ExecutionPlan(
         source_plan=r.s(),
         mode=_MODE_FROM_WIRE[mode_code],
+        liveness=_LIVENESS_FROM_WIRE[liveness_code],
         streams=streams,
         knee=knee,
         makespan=makespan,
@@ -349,15 +409,24 @@ def decode_plan(data: bytes) -> ExecutionPlan:
             PlanStep(claim_id, phase_id, candidate, lane, width, cost, stream, start, duration)
         )
     for _ in range(n_lifetimes):
+        rid, bank = r.u32(), r.s()
+        offset, size = r.u64(), r.u64()
+        alignment, first_phase, last_phase = r.u32(), r.u32(), r.u32()
+        if version >= 2:
+            first_tick, last_tick = r.u64(), r.u64()
+        else:
+            first_tick, last_tick = first_phase, last_phase + 1
         plan.lifetimes.append(
             Lifetime(
-                rid=r.u32(),
-                bank=r.s(),
-                offset=r.u64(),
-                size_bytes=r.u64(),
-                alignment=r.u32(),
-                first_phase=r.u32(),
-                last_phase=r.u32(),
+                rid=rid,
+                bank=bank,
+                offset=offset,
+                size_bytes=size,
+                alignment=alignment,
+                first_phase=first_phase,
+                last_phase=last_phase,
+                first_tick=first_tick,
+                last_tick=last_tick,
             )
         )
     for index in range(n_moves):
@@ -405,5 +474,6 @@ __all__ = [
     "TAIL_STREAM_WIRE",
     "decode_plan",
     "encode_plan",
+    "plan_version",
     "validate_plan",
 ]

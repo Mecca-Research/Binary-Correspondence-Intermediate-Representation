@@ -285,22 +285,31 @@ METRICS: tuple[Metric, ...] = (
         "disagree about what the plan is",
         slice_owner="G1",
     ),
-    # --- §6.4: first-fit against exact backtracking.
+    # --- §6.4: first-fit against exact backtracking. Measured (G5 / S1-D) over the corpus in
+    # `bcir/tests/memory_fixtures.py`: 500 deterministic seven-resource fixtures of the
+    # report's shape (the report's own corpus is not in the tree; first-fit is suboptimal on
+    # 40.4% of this one against the report's 38.6%, worst ratio 1.6x) and `WORST_FIXTURE`,
+    # which reproduces the report's worst case exactly (21 against 13 units; 1,344 against
+    # 832 bytes at 64-byte alignment through the real planner). The rows measure the ENGAGED
+    # rail: the bounded exact solver behind first-fit, every fixture solved to a proved
+    # optimum within its work-unit budget.
     Metric(
         "memory.suboptimal.fraction",
         "memory",
-        "fraction of 500 seven-resource fixtures where first-fit is suboptimal",
+        "fraction of the 500 seven-resource fixtures where the engaged layout is above the "
+        "proved optimum",
         0.386,
         "fraction",
         "exact",
         bound=0.0,
-        bound_source="exact integer backtracking (§6.4)",
+        bound_source="exact integer backtracking (§6.4); the bounded exact solver "
+        "(`static_memory.exact_layout`) proves every fixture of the corpus",
         slice_owner="G5",
     ),
     Metric(
         "memory.worst.ratio",
         "memory",
-        "worst first-fit extent / proved optimum",
+        "worst engaged extent / proved optimum over the corpus",
         21 / 13,
         "x",
         "exact",
@@ -311,12 +320,12 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "memory.real.bytes",
         "memory",
-        "real planner extent on the §6.4 fixture at 64-byte alignment",
+        "real planner extent on the §6.4 worst-case fixture at 64-byte alignment",
         1344,
         "bytes",
         "exact",
         bound=832,
-        bound_source="exact layout on the same fixture (§6.4)",
+        bound_source="exact layout on the same fixture (§6.4): 13 lines of 64 bytes",
         slice_owner="G5",
     ),
     # --- §5.2: the digest recomputation the profile found. Three hashes of one immutable
@@ -981,6 +990,43 @@ def measure_plan() -> dict[str, float]:
     return out
 
 
+def measure_memory() -> dict[str, float]:
+    """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
+    optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
+    (`kbcir.static_memory.plan_static_memory`, 64-byte lines and alignment) with the bounded
+    exact solver engaged (`layout="exact"`). A fixture the solver cannot prove within its
+    budget counts as suboptimal (a stated gap, never a claimed optimum)."""
+    from bcir.kbcir.static_memory import plan_static_memory
+    from bcir.performance_audit import _AuditHardware
+    from bcir.tests.memory_fixtures import WORST_FIXTURE, corpus, module_of, unit_layouts
+
+    hardware = _AuditHardware()
+    suboptimal = 0
+    worst = 1.0
+    count = 0
+    for seed, rows in corpus():
+        module, bindings = module_of(rows, f"corpus-{seed}")
+        plan = plan_static_memory(module, bindings, hardware, layout="exact")
+        bank = plan.banks[0]
+        _first_fit, proved = unit_layouts(rows)
+        optimum = proved.extent * 64
+        if bank.stop_reason != "optimal" or proved.stop_reason != "optimal":
+            suboptimal += 1
+            worst = max(worst, bank.extent_bytes / max(optimum, 1))
+        else:
+            suboptimal += bank.extent_bytes > optimum
+            worst = max(worst, bank.extent_bytes / optimum)
+        count += 1
+    out = {
+        "memory.suboptimal.fraction": suboptimal / count,
+        "memory.worst.ratio": worst,
+    }
+    module, bindings = module_of(WORST_FIXTURE, "section-6.4-worst")
+    plan = plan_static_memory(module, bindings, hardware, layout="exact")
+    out["memory.real.bytes"] = float(plan.banks[0].extent_bytes)
+    return out
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
@@ -988,6 +1034,7 @@ _MEASURERS = {
     "verifier": measure_verifier,
     "digest": measure_digest,
     "plan": measure_plan,
+    "memory": measure_memory,
 }
 
 
@@ -1145,7 +1192,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, exact, verifier, digest, plan)",
+        help="limit measurement to a group (audit, planner, exact, verifier, digest, plan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

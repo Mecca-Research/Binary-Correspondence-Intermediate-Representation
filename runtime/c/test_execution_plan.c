@@ -67,8 +67,10 @@ static int on_lifetime(const bcir_ep_lifetime_view *v, void *ctx) {
   (void)ctx;
   printf("lifetime rid=%u bank=", v->rid);
   hex(v->bank, v->bank_len);
-  printf(" offset=%" PRIu64 " size=%" PRIu64 " alignment=%u first=%u last=%u\n",
-         v->offset, v->size, v->alignment, v->first_phase, v->last_phase);
+  printf(" offset=%" PRIu64 " size=%" PRIu64 " alignment=%u first=%u last=%u first_tick=%" PRIu64
+         " last_tick=%" PRIu64 "\n",
+         v->offset, v->size, v->alignment, v->first_phase, v->last_phase, v->first_tick,
+         v->last_tick);
   return 0;
 }
 
@@ -148,10 +150,12 @@ int main(int argc, char **argv) {
   if (ok) {
     uint16_t sp_len = 0;
     const char *sp = bcir_ep_source_plan(buf, n, &sp_len);
-    printf("header mode=%u streams=%u knee=%u makespan=%" PRIu64 " module_hash=%" PRIu64
-           " target_hash=%" PRIu64 " n_steps=%u n_lifetimes=%u n_moves=%u n_gens=%u source_plan=",
-           hdr.mode, hdr.streams, hdr.knee, hdr.makespan, hdr.module_hash, hdr.target_hash,
-           hdr.n_steps, hdr.n_lifetimes, hdr.n_moves, hdr.n_gens);
+    printf("header version=%u mode=%u liveness=%u streams=%u knee=%u makespan=%" PRIu64
+           " module_hash=%" PRIu64 " target_hash=%" PRIu64
+           " n_steps=%u n_lifetimes=%u n_moves=%u n_gens=%u source_plan=",
+           hdr.version, hdr.mode, hdr.liveness, hdr.streams, hdr.knee, hdr.makespan,
+           hdr.module_hash, hdr.target_hash, hdr.n_steps, hdr.n_lifetimes, hdr.n_moves,
+           hdr.n_gens);
     hex(sp ? sp : "", sp ? sp_len : 0);
     printf("\n");
     if (dump) {

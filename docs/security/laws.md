@@ -207,6 +207,13 @@ to fall from; every malformed variant is minted through a raw writer that
 bypasses the codec's laws (`plan_fixtures.raw_encode`), because an encoder
 that refuses to emit a malformed plan cannot also be the witness that the
 decoder refuses one.
+S1-D instances (2026-09-12): the alias fixture was composed with the token
+placement and shown to alias before the planner learned schedule liveness, and
+the static-memory verifier is held to forgeries the exact rail invites -- a
+forged stop reason, a forged lower bound, an offset moved to an alias-free but
+non-solver position, a first-fit plan claiming the exact rail's stop reason --
+each refused by recomputation, never by reading the plan's own claim about
+itself (`test_the_verifier_recomputes_an_exact_layout_rather_than_trust_it`).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -594,6 +601,14 @@ on read, and `ep_walk` in the C twin, the single bounded walk every entry point
 runs -- so the 39 malformed pairs are refused by the same code on every path
 in, and the harness rows and the tests measure one definition of each gate
 (`bcir/tests/plan_fixtures.py`) rather than two that could drift.
+S1-D instance (2026-09-12): the alias law is ONE predicate in three places that
+must agree -- `StaticAllocation.overlaps` / `_has_live_alias` on the planner's
+rows, `validate_plan` on the plan's bytes and `ep_lifetime_aliases_before` in the
+C twin -- all judged on the same half-open ticks; and the liveness interval is
+computed by ONE function (`schedule_intervals`) the planner, the verifier and the
+plan-bytes verifier share, so "does the schedule refine the phase order" and
+"do the lifetimes cover the schedule" are the same question asked of the same
+intervals.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

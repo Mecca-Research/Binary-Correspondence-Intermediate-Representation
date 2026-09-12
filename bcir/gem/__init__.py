@@ -27,6 +27,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "execution_plan": (
         "COHERENCE_ACTIONS",
         "ExecutionPlan",
+        "LIVENESS_DOMAINS",
         "Lifetime",
         "MOVE_KINDS",
         "MovementEdge",

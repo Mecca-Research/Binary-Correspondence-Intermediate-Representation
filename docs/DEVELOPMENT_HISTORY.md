@@ -557,6 +557,33 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   fixture's plan is 218 KB against the pack's 713 KB, encodes in 17.8 ms and decodes in
   27.7 ms (the pack: 40.0 / 77.2 ms), and a reader that holds the bytes reads the placement
   without re-running the 37 ms dispatch or re-deriving the digest.
+  S1-D (2026-09-12) landed G5, schedule-aware liveness and bounded exact memory (the report's
+  sections 6.4 and 6.5), closing Stage 1. RED: the two-phase alias fixture -- A used in phase
+  0, B in phase 1 -- planned under phase liveness shares offset 0 and, composed with the token
+  placement that runs the two claims at once on different streams, aliases; on a corpus of 500
+  seven-resource fixtures of the report's shape first-fit is suboptimal on 40.4% (the report:
+  38.6%), worst 1.6x, and the witness that reproduces the report's worst case lays out in 21
+  units against a proved 13 (1,344 against 832 bytes at 64-byte alignment). What landed:
+  `static_memory.schedule_intervals` derives every resource's half-open liveness interval from
+  the canonical placement, `plan_static_memory(schedule=)` computes the plan in that domain and
+  binds it to the placement by digest, every plan names its liveness domain, and
+  `verify_static_memory_plan(schedule=)` refuses a phase-liveness plan the placement does not
+  refine (the alias fixture is REJECTED) while a plan computed from the token placement gives
+  the two DISJOINT storage; `exact_layout` is the bounded exact solver behind first-fit (a
+  complete branch-and-bound over aligned offsets below the incumbent, budgeted in candidate
+  placements), every bank summary records the concurrent-live lower bound, the extent, the
+  gap and the stop reason, and the verifier re-runs the solver under the plan's own budget
+  rather than trust it. ExecutionPlanV1 gained its first append-only version, v2: the
+  liveness byte in the header pad and the tick tail on the lifetime record, the lowest carrying
+  version emitted, the alias law by bytes on both rails, and `verify_execution_plan` refusing a
+  plan whose lifetimes do not cover its schedule. The three `memory.*` rows read at their
+  bounds on the proof rail (0% suboptimal, worst ratio 1.0, 832 bytes on the witness); first-fit
+  under phase liveness is byte-identical to the historical layout. The verifier's alias law is
+  an exact sweep over the ticks with the live rows' addresses in one sorted list (the recursive
+  range-maximum tree it replaces cost 465,000 calls at 2,048 resources): A/B on one host
+  against the S1-C commit, `static_memory.verify.2048` 35.0 -> 15.8 ms, `static_memory.plan.2048`
+  100.7 -> 84.3 ms, the audit's static-lifetime-planner case 174 -> 142 ms, all 13 result
+  digests identical.
 
 ---
 

@@ -229,6 +229,7 @@ _MODULES = [
     "bcir.tests.test_abi",
     "bcir.tests.test_streampack_tool",
     "bcir.tests.test_execution_plan",
+    "bcir.tests.test_static_memory",
     "bcir.tests.test_artifact_bundle",
     "bcir.tests.test_registry_tool",
     "bcir.tests.test_stackify",

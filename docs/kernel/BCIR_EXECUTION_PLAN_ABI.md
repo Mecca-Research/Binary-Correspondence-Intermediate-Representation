@@ -1,4 +1,4 @@
-# BCIR ExecutionPlanV1 binary ABI — v1 (frozen, normative)
+# BCIR ExecutionPlanV1 binary ABI — v1 (frozen, normative) + v2 (append-only)
 
 The ExecutionPlan is **the plan as bytes** (GEM+ roadmap G11, staged plan S1-C): the plan a
 [StreamPack](BCIR_STREAMPACK_ABI.md) was derived from and what every reader prices. The pack
@@ -35,7 +35,8 @@ The StreamPack ABI's, unchanged:
 | 4 | `version` | `u16` | `1` |
 | 6 | `flags` | `u16` | reserved (0) |
 | 8 | `mode` | `u8` | `0` = `eft` (phase-barriered LPT/EFT dispatch), `1` = `tokens` (token-pipelined) |
-| 9 | `reserved` | `u8[3]` | pad (0) |
+| 9 | `liveness` | `u8` | **v2** (append-only): the lifetimes' liveness domain — `0` = phase positions, `1` = the placement's own ticks; reserved (0) on v1 |
+| 10 | `reserved` | `u8[2]` | pad (0) |
 | 12 | `streams` | `u32` | affinity domains the plan was placed on (the tail is extra); ≥ 1 |
 | 16 | `knee` | `u32` | the bandwidth knee the dispatch clamped to; `1..streams` |
 | 20 | `n_steps` | `u32` | body record counts |
@@ -59,8 +60,12 @@ The C `bcir_ep_header` is this layout without padding (a static assertion locks 
    step cost) and the placement (`stream`, `start`, `duration == max(0, cost)`; the slot's
    finish is `start + duration`).
 3. `lifetimes[n_lifetimes]`, each: `rid:u32  bank:str  offset:u64  size:u64  alignment:u32
-   first_phase:u32  last_phase:u32` — `kbcir.static_memory.StaticAllocation`, RIDs strictly
-   ascending (the family G5 makes schedule-aware).
+   first_phase:u32  last_phase:u32  [v2: first_tick:u64  last_tick:u64]` —
+   `kbcir.static_memory.StaticAllocation`, RIDs strictly ascending: the declared phase span
+   (closed) and, since v2, the **half-open liveness interval** in the header's liveness domain
+   (`[first_phase, last_phase + 1)` under phase liveness; the placement's ticks — from the start
+   of the first slot that touches the resource to the finish of the last — under schedule
+   liveness). A v1 record reads the phase default.
 4. `moves[n_moves]`, each: `rid:u32  src_bank:str  dst_bank:str  offset:u64  size:u64
    route:str  kind:u8  coherence:u8  map_gen:u32  data_gen:u32  after_claim:u64
    before_claim:u64` — a G8 movement edge: `kind` ∈ {`0` direct, `1` peer, `2` staged,
@@ -85,7 +90,9 @@ The encoder refuses to emit, and every decoder refuses to read, a plan that viol
   sentinel, `duration == max(0, cost)`, `start + duration ≤ makespan` (no 64-bit overflow);
   claim ids unique;
 - lifetimes: RIDs strictly ascending, a non-empty bank, `size ≥ 1`, a power-of-two alignment
-  the offset honors, `first_phase ≤ last_phase`, no 64-bit overflow of `offset + size`;
+  the offset honors, `first_phase ≤ last_phase`, `last_tick > first_tick`, no 64-bit overflow of
+  `offset + size`, and **no two lifetimes of one bank live at once at overlapping addresses**
+  (the alias law by bytes — `BCIR_ERR_PLAN` / `AbiError`, judged on the half-open ticks);
 - moves: non-empty banks, `size ≥ 1`, legal `kind` and `coherence` codes, no overflow;
 - generations: RIDs strictly ascending;
 - **exact body consumption**: the declared records end exactly at the CRC trailer. CRC-valid
@@ -113,6 +120,13 @@ Three laws need more than the bytes, and both rails hold them:
   have an entry. A plan minted under an older vector is stale ("rehydrate: repack" for
   `map_gen`, "replan" for `data_gen`); a resource declared after minting is stale; a plan with
   no vector is stale against any registry that declares resources.
+- **The lifetimes cover the schedule** (`verify_execution_plan`, R9; G5): under schedule
+  liveness every lifetime's ticks are exactly the plan's own placement's interval for its
+  resource, under phase liveness the declared span covers every phase that touches it, and no
+  two lifetimes of one bank alias. A plan whose lifetimes do not cover its schedule is refused.
+  The static memory planner's own verifier (`verify_static_memory_plan(..., schedule=)`)
+  additionally refuses a phase-liveness plan the placement does not refine — the report's
+  two-phase alias fixture composed with the token placement.
 - **The pack is the lowering of this plan** (`verify_execution_plan(pack=...)`,
   `bcir_ep_check_pack`; R10/R11): the pack's `source_plan` is the plan's; it carries exactly one
   segment per step, in step order, with the step's claim, phase, lane and width
@@ -137,18 +151,38 @@ from the plan's bytes are identical to their in-memory counterparts.
   root StreamPack ([`BCIR_ARTIFACT_BUNDLE_ABI.md`](BCIR_ARTIFACT_BUNDLE_ABI.md) §4). Both readers
   run the complete wire verification before admitting the variant; the root stays a StreamPack.
 - **ASN.1**: the `BCIR-ExecutionPlan` module (OID `{ 1 3 6 1 4 1 62596 3 }`,
-  [`docs/BCIR_ASN1_X690_ABI.md`](../BCIR_ASN1_X690_ABI.md) §3b) projects the abstract value under
-  DER, OER and JER; the native octets survive the round trip byte for byte.
+  [`docs/BCIR_ASN1_X690_ABI.md`](../BCIR_ASN1_X690_ABI.md) §3b; projection version 2 carries
+  `liveness` and the ticks) projects the abstract value under DER, OER and JER; the native
+  octets — v1 or v2 — survive the round trip byte for byte.
 - **MLIR**: `bcir.artifact.variant` accepts `kind = "execution_plan"` with
   `format = "execution_plan"` (the pair is closed). The law rail has no plan op of its own yet;
   the C decoder is the reader every rail can link.
+
+## v2 (append-only): the liveness domain and the lifetime ticks (G5)
+
+v2 is the first worked instance of the append-only evolution, landed with the schedule-aware
+static memory planner (staged plan S1-D). It changes **no** v1 field offset:
+
+- **Header** gains `liveness : u8` at offset **9** (carved from the v1 reserved pad; bytes
+  10–11 and 36–39 stay reserved and must be zero). Decoders read `0` (phase) on v1 buffers,
+  and a v1 buffer with a nonzero byte at 9 is refused as reserved (`BCIR_ERR_RESERVED`).
+- **Lifetime records** append `first_tick:u64 last_tick:u64`, the half-open liveness interval
+  in the header's domain. Step, movement and generation records are **unchanged**.
+- **Encoders emit the lowest carrying version**: a plan under phase liveness whose lifetimes
+  carry the phase default (`[first_phase, last_phase + 1)`) is byte-identical frozen v1; a
+  plan whose lifetimes came from a schedule-liveness static plan (or carry any other ticks)
+  encodes as v2. A v2 header over v1-shaped content is a legal, non-canonical spelling, as it
+  is for the StreamPack.
+- **The alias law by bytes** applies to every version: the C twin (`bcir_ep_verify`) and the
+  Python codec refuse two lifetimes of one bank that are live at once at overlapping addresses.
 
 ## Versioning (the freeze)
 
 - v1 is **frozen**: the field layout above does not change.
 - New fields are **append-only** (the StreamPack's discipline: header pad first, record tails,
-  then trailing record families); a v1 reader of a v1 buffer is exact and lossless.
-- A reader **rejects** a buffer whose `version` exceeds the maximum it supports (v1 today), and
+  then trailing record families — v2 above is the worked instance); a v1 reader of a v1 buffer
+  is exact and lossless.
+- A reader **rejects** a buffer whose `version` exceeds the maximum it supports (v2 today), and
   refuses nonzero reserved bytes: reserved or trailing bytes are not implicit ABI.
 
 Writers reject values that cannot be represented exactly: integer fields never mask or wrap, a
