@@ -331,9 +331,9 @@ never runs an engine.
 
 | Engine | Stored columns (role) | Exact query it enables |
 |---|---|---|
-| UTS #10 | `uca_primary` (numeric): the first non-zero level-1 weight of the character's collation elements, or the implicit weight for Han: `((0xFB40 + (c >> 15)) << 16) \| ((c & 0x7FFF) \| 0x8000)` (base `0xFB80` for extension blocks); `uca_variable` (indexed) | `ORDER BY uca_primary` through `relational.ordered_rows` is UCA level-1 order — the "morphological base form" equivalence, computed; `uca_primary>=X AND uca_primary<=Y` is a range of base letters |
+| UTS #10 | `uca_primary` (numeric), defined once in UNICODE_ROADMAP §5.2 and only cited here: the first non-zero level-1 weight of an explicit DUCET entry, 0 when level-1 ignorable, or the packed implicit pair `(AAAA << 16) \| BBBB` for ideographs (bases per UTS #10 Table 16, UNICODE_ROADMAP §6.2); `uca_variable` (indexed) | `ORDER BY uca_primary` through `relational.ordered_rows` is UCA level-1 order — the "morphological base form" equivalence, computed; `uca_primary>=X AND uca_primary<=Y` is a range of base letters |
 | UTS #39 | `confusable_class` (numeric): the smallest code point whose skeleton equals this character's; `identifier_status`, `identifier_type` (indexed) | `confusable(a, b) ⇔ class(a) = class(b)`, spelled as a closed interval on `confusable_class` — two binary searches |
-| UTS #46 | `idna_status` (indexed, domain `{valid, ignored, mapped, deviation, disallowed, disallowed_STD3_valid, disallowed_STD3_mapped}`); `idna_mapping` (text, materialized, never filtered) | `idna_status=valid` narrows a lookup to characters a label may carry |
+| UTS #46 | `idna_status` (indexed, domain `{valid, ignored, mapped, deviation, disallowed}` — the five statuses since UTS #46 revision 31; `UseSTD3ASCIIRules` is a validity criterion, not a status); `idna_mapping` (text, materialized, never filtered) | `idna_status=valid` narrows a lookup to characters a label may carry |
 
 The *string-level* engines — the full multi-level sort key of a string, the
 skeleton of a string, `ToASCII`/`ToUnicode` of a label — are not columns. They

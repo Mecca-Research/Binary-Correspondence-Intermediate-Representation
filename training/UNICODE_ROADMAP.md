@@ -31,7 +31,7 @@ status). Copying from them would be a manual re-derivation of data that already
 exists as text, with no way to check the copy against the standard's own
 conformance tests. The "existing Unicode backend" is the interpreter's
 `unicodedata` module, and on this repository's Python floor it is **Unicode
-14.0**, not 17.0 (§2.1) — three major versions and roughly six thousand
+14.0**, not 17.0 (§2.1) — three major versions (four releases) of
 characters behind, and a different version on every interpreter the suite runs
 under. The source of truth is the **machine-readable UCD 17.0 text files**,
 vendored into the repository, pinned by SHA-256, and parsed with their own line
@@ -161,8 +161,8 @@ pinned byte counts are what the gate asserts.
 
 | File | Directory | What it carries | Consumed by | Conformance suite | ~Size |
 |---|---|---|---|---|---|
-| `UnicodeData.txt` | `ucd/` | code point; name; general category; canonical combining class; bidi class; decomposition (with `<tag>`); decimal/digit/numeric; bidi mirrored; Unicode 1 name; simple upper/lower/title case | the character table (§5.2) | — | 2.0 MB |
-| `DerivedCoreProperties.txt` | `ucd/` | Alphabetic, Lowercase, Uppercase, Math, ID_Start/ID_Continue, XID_*, Default_Ignorable_Code_Point, Grapheme_Base/Extend, … | boolean property columns; UAX #31 identifiers | — | 1.3 MB |
+| `UnicodeData.txt` | `ucd/` | the 15 fields of UAX #44 Table 9: code point; name; general category; canonical combining class; bidi class; decomposition (with `<tag>`); decimal; digit; numeric; bidi mirrored; Unicode 1 name; ISO comment (empty since 5.2, still a field — the grammar asserts 14 semicolons per line); simple upper/lower/title case | the character table (§5.2) | — | 2.0 MB |
+| `DerivedCoreProperties.txt` | `ucd/` | Alphabetic, Lowercase, Uppercase, Math, ID_Start/ID_Continue, XID_*, Default_Ignorable_Code_Point, Grapheme_Base/Extend, …, and the three-field `Indic_Conjunct_Break` (InCB) lines — an enumerated property (Consonant / Extend / Linker), not a boolean, admitted by the grammar as its own line shape | boolean property columns; UAX #31 identifiers; InCB for UAX #29 rule GB9c | — | 1.3 MB |
 | `PropList.txt` | `ucd/` | White_Space, Dash, Hyphen, Quotation_Mark, Terminal_Punctuation, Pattern_Syntax, Pattern_White_Space, Ideographic, Radical, Unified_Ideograph, … | the "grammar/syntax controls" and "ASCII punctuation/symbols" facets | — | 0.14 MB |
 | `Scripts.txt`, `ScriptExtensions.txt` | `ucd/` | Script and Script_Extensions | `script` column; UTS #39 mixed-script | — | 0.2 MB |
 | `Blocks.txt` | `ucd/` | block ranges and names | `block` column; the Latin→Han staging | — | 10 KB |
@@ -172,11 +172,12 @@ pinned byte counts are what the gate asserts.
 | `CompositionExclusions.txt`, `DerivedNormalizationProps.txt` | `ucd/` | composition exclusions; NFC/NFD/NFKC/NFKD quick-check; Full_Composition_Exclusion; NFKC_Casefold | UAX #15 engine | `NormalizationTest.txt` (2.3 MB) | 0.8 MB |
 | `auxiliary/GraphemeBreakProperty.txt`, `WordBreakProperty.txt`, `SentenceBreakProperty.txt`, `emoji/emoji-data.txt` | `ucd/` | UAX #29 break properties; Extended_Pictographic | grapheme/word segmentation (the SLM's boundary-aware patching) | `auxiliary/*BreakTest.txt` | 0.6 MB |
 | `BidiBrackets.txt`, `BidiMirroring.txt`, `LineBreak.txt`, `EastAsianWidth.txt` | `ucd/` | bracket pairs, mirroring, UAX #14 and UAX #11 classes | punctuation/bracket facets; later stages | `BidiCharacterTest.txt` (later) | 0.6 MB |
-| `allkeys.txt` | `UCA/17.0.0/` | the Default Unicode Collation Element Table (DUCET) | UTS #10 engine | `CollationTest_NON_IGNORABLE_SHORT.txt`, `CollationTest_SHIFTED_SHORT.txt` (~5 MB each) | 2.1 MB |
+| `allkeys.txt` | `UCA/17.0.0/` | the Default Unicode Collation Element Table (DUCET) | UTS #10 engine | `CollationTest_NON_IGNORABLE_SHORT.txt` and `CollationTest_SHIFTED_SHORT.txt` (~5 MB each), published only inside `CollationTest.zip`: the zip is the fetched, digest-pinned artifact and the two extracted members are the committed, separately pinned files — the rule §3.4 states for `Unihan.zip`. The SHORT files omit the test cases for code points with implicit weights (the reason they are a third of the full files' size), so the Han stage (UC-10) pins the full `CollationTest_NON_IGNORABLE.txt` and `CollationTest_SHIFTED.txt` from the same zip and refuses a Han line count of zero | 2.1 MB |
 | `confusables.txt`, `confusablesSummary.txt`, `IdentifierStatus.txt`, `IdentifierType.txt`, `intentional.txt` | `security/17.0.0/` | UTS #39 confusable mappings, identifier status and types, intentional confusables | skeleton engine; identifier restriction levels | `confusablesSummary.txt` is a derived check of `confusables.txt` | 1.0 MB |
-| `IdnaMappingTable.txt` | `idna/17.0.0/` | UTS #46 status (valid / ignored / mapped / deviation / disallowed / disallowed_STD3_*) and mappings | IDNA engine | `IdnaTestV2.txt` (0.3 MB) | 0.55 MB |
-| `CJKRadicals.txt`, `EquivalentUnifiedIdeograph.txt` | `ucd/` | the 214 KangXi radicals → CJK Radicals Supplement + unified ideograph; radical/stroke equivalents | Han stage | — | 25 KB |
-| `Unihan_RadicalStrokeCounts.txt`, `Unihan_DictionaryLikeData.txt`, `Unihan_IRGSources.txt` (unzipped from `Unihan.zip`) | `ucd/` | `kRSUnicode` (radical.residual), `kTotalStrokes`, IRG source references; other fields as later stages need them | Han stage | — | 3 + 5 + 12 MB |
+| `IdnaMappingTable.txt` | `idna/17.0.0/` | UTS #46 status — the five values since revision 31 (Unicode 15.1): valid / ignored / mapped / deviation / disallowed; the STD3 rule became a validity criterion, not a table status — and mappings | IDNA engine | `IdnaTestV2.txt` (0.3 MB) | 0.55 MB |
+| `CJKRadicals.txt`, `EquivalentUnifiedIdeograph.txt` | `ucd/` | the 214 Kangxi radicals (U+2F00..) and their primed variants in the CJK Radicals Supplement → unified ideograph; radical/stroke equivalents | Han stage | — | 25 KB |
+| `Unihan_IRGSources.txt`, `Unihan_DictionaryLikeData.txt` (unzipped from `Unihan.zip`) | `ucd/` | `kRSUnicode` and `kTotalStrokes` — both IRG-Sources fields; `Unihan_RadicalStrokeCounts.txt` has carried only `kRSAdobe_Japan1_6` since 15.1 and is not pinned — and the IRG source references; other fields as later stages need them. `kRSUnicode` is a space-separated list of `radical['\|'']?.residual` values with a possibly negative residual: the grammar admits the list, the numeric columns take the first value, and the full string is kept as text | Han stage | — | 12 + 5 MB |
+| `extracted/DerivedNumericValues.txt` | `ucd/` | `Numeric_Value` for every numeric code point, the Unihan-sourced ideograph values included | `numeric_num`/`numeric_den` at the Han stage; the §3.2 differential over `.numeric` | — | 0.1 MB |
 
 Two files that are *not* in the UCD, stated so nobody looks for them: the
 Ideographic Description Sequences and per-character **stroke sequences** that the
@@ -329,7 +330,12 @@ Why not the alternatives, each with the fact that decides it:
 
 ### 5.2 The row schema — `bcir-training/unicode-character/v1`
 
-One row per assigned code point. Roles follow `TRAINING_LANGREF.md` §3.1 —
+One row per encoded character: every code point whose `General_Category` is
+not `Cn`, `Cs` or `Co` — the set the release announcement counts, so the UC-11
+row-count gate and the release total agree by construction. Surrogates are
+never rows (`UnicodeByteReference` refuses them, §2.3, and `utf8_length` would
+be undefined for one) and private-use code points are declared as ranges in
+the generation manifest, not as rows. Roles follow `TRAINING_LANGREF.md` §3.1 —
 the role decides what may be done to a column and is the only thing that
 decides it — and the declaration lives in one place
 (`training/tools/unicode/schema_unicode.py`, reconciled with
@@ -346,14 +352,14 @@ decides it — and the declaration lives in one place
 | `block` | indexed | block name slug | |
 | `bidi_class`, `decomposition_type`, `age`, `east_asian_width`, `line_break` | indexed | UCD short values | low cardinality by role |
 | `ccc` | numeric | 0..255 | |
-| `numeric_num`, `numeric_den` | numeric | the `Numeric_Value` as a reduced rational, absent for non-numerics | absence is the null the rail already models |
-| `uca_primary`, `uca_secondary`, `uca_tertiary` | numeric | the first collation element's weights, or the implicit weight for Han | SLM_ROADMAP §2.6 |
+| `numeric_num`, `numeric_den` | numeric | the `Numeric_Value` as a reduced rational with a signed numerator (U+0F33 is −1/2) and a positive denominator, absent for non-numerics; for ideographs it comes from `extracted/DerivedNumericValues.txt` (§3.1), because `UnicodeData.txt` leaves their numeric field empty | absence is the null the rail already models |
+| `uca_primary`, `uca_secondary`, `uca_tertiary` | numeric | `uca_primary`: for a character with explicit DUCET elements, the first non-zero level-1 weight, or 0 when every element is level-1 ignorable (combining marks); for a character with implicit weights, the packed pair `(AAAA << 16) \| BBBB` of §6.2, so one column orders every ideograph and every packed value sorts after every explicit primary. `uca_secondary`, `uca_tertiary`: the first element's level-2 and level-3 weights. The column is a coarsening of the level-1 key (expansions tie beyond the first weight), never an inversion of it | the one definition; SLM_ROADMAP §2.6 cites it |
 | `uca_variable` | indexed | `0`/`1` | |
 | `confusable_class` | numeric | the smallest code point with the same UTS #39 skeleton | |
 | `identifier_status` | indexed | `Allowed` / `Restricted` | |
-| `idna_status` | indexed | the seven UTS #46 statuses | |
+| `idna_status` | indexed | the five UTS #46 statuses (§3.1); a status the grammar does not know is refused, never mapped | |
 | `alphabetic`, `math`, `pattern_syntax`, `white_space`, `dash`, `quotation_mark`, `terminal_punctuation`, `ideographic`, `unified_ideograph`, `default_ignorable` | indexed | `0`/`1` | the booleans a predicate needs; every other boolean property stays in `properties` below. UC-3 measures the manifest's growth per indexed boolean and may demote some to text |
-| `han_radical`, `han_residual_strokes`, `han_total_strokes` | numeric | from `kRSUnicode` / `kTotalStrokes`; absent outside Han | |
+| `han_radical`, `han_residual_strokes`, `han_total_strokes` | numeric | from the first `kRSUnicode` value and `kTotalStrokes`; the residual may be negative; absent outside Han | |
 | `utf8_length` | numeric | 1..4 | |
 | `name`, `name_aliases`, `decomposition`, `case_upper`, `case_lower`, `case_title`, `idna_mapping`, `properties`, `identifier_type` | text | materialized only, never filtered | `decomposition` as `"0041 0301"`; `properties` as the sorted list of every true boolean property; `identifier_type` as the UTS #39 set |
 
@@ -435,8 +441,9 @@ and the compatibility variants. The quick-check properties are used as they are
 meant to be — a fast path whose answer is verified against the full algorithm in
 the gate, never a substitute for it.
 
-*Gate:* every line of `NormalizationTest.txt` — five columns, all sixteen implied
-identities (`NFC(c1) == NFC(c2) == NFC(c3) == c2`, …) — plus the file's declared
+*Gate:* every line of `NormalizationTest.txt` — five columns, all twenty implied
+identities (the five NFC, five NFD, five NFKC and five NFKD equalities the
+file's header states) (`NFC(c1) == NFC(c2) == NFC(c3) == c2`, …) — plus the file's declared
 invariant that every code point not listed in Part 1 is its own normalization in
 all four forms, which is the anti-vacuity half (it walks the whole repertoire).
 *RED:* drop the composition-exclusion check; the test's Part 1 fails on the first
@@ -445,7 +452,9 @@ excluded composition.
 ### 6.2 UTS #10 — the Unicode Collation Algorithm over DUCET
 
 Collation elements are read from `allkeys.txt` (contractions by longest match
-over the normalized string, expansions as written); the sort key is the
+over the normalized string, then the discontiguous-contraction steps
+S2.1.1–S2.1.3 that absorb a following non-starter of a different combining
+class — DUCET's Tibetan contractions need them; expansions as written); the sort key is the
 concatenation of level-1 weights, a `0000` separator, level-2 weights, `0000`,
 level-3 weights, and — under the *shifted* variable-weighting option — a fourth
 level; the two options the conformance tests exercise, non-ignorable and shifted,
@@ -453,11 +462,18 @@ are both implemented. Characters with no entry get **implicit weights** computed
 from the code point; for CJK Unified Ideographs the standard's formula is
 
 ```
-AAAA = 0xFB40 + (cp >> 15)          BBBB = (cp & 0x7FFF) | 0x8000
+AAAA = BASE + (cp >> 15)            BBBB = (cp & 0x7FFF) | 0x8000
 ```
 
-with `0xFB80` as the base for the extension blocks and `0xFBC0` for unassigned
-code points, yielding the two-element sequence `[AAAA.0020.0002][BBBB.0000.0000]`.
+with `BASE` per UTS #10 Table 16, every bucket reproduced and gated, not just
+the first: `0xFB40` for core Han (`Unified_Ideograph` and block CJK Unified
+Ideographs or CJK Compatibility Ideographs), `0xFB80` for every other
+`Unified_Ideograph` (Extensions A–J), and `0xFBC0` for everything else that has
+no explicit element, unassigned code points included; plus the three
+script-specific schemes — Tangut (`AAAA = 0xFB00`, `BBBB = (cp - 0x17000) |
+0x8000`), Nushu (`0xFB01`, `cp - 0x1B170`) and Khitan Small Script (`0xFB02`,
+`cp - 0x18B00`) — yielding the two-element sequence
+`[AAAA.0020.0002][BBBB.0000.0000]` in every case.
 This is the deterministic "base form" the SLM text asks for: two strings with
 equal level-1 keys differ only in accents, case, or variable characters, and that
 equivalence is computed, not learned.
@@ -472,8 +488,9 @@ weights in the key; the shifted test fails on the first accented pair.
 `skeleton(s) = NFD(map_confusables(NFD(s)))`; two strings are confusable when
 their skeletons are equal. Identifier status and type come from
 `IdentifierStatus.txt` / `IdentifierType.txt`; mixed-script detection from
-`Scripts.txt` and `ScriptExtensions.txt`; the restriction levels (ASCII-only,
-single script, highly restrictive, moderately restrictive, minimally restrictive)
+`Scripts.txt` and `ScriptExtensions.txt`; the six restriction levels (ASCII-only,
+single script, highly restrictive, moderately restrictive, minimally restrictive,
+unrestricted)
 are computed as the report defines them. For the SLM this is the canonical-form
 map that collapses homoglyph attacks and duplicate token representations onto one
 row.
@@ -487,33 +504,50 @@ two.
 ### 6.4 UTS #46 — IDNA compatibility processing, with RFC 3492
 
 Mapping by `IdnaMappingTable.txt` status, NFC, label splitting on U+002E, per-label
-validity (NFC, hyphen rules, no leading combining mark, the Bidi rule, ContextJ
-and ContextO), Punycode (RFC 3492) decoding of `xn--` labels and encoding for
-ToASCII, with `UseSTD3ASCIIRules` and `Transitional_Processing` as explicit flags
-of the engine, never defaults chosen silently. Punycode is implemented in the
-repository, dependency-free; the transitive `idna 3.19` in the dependency
-inventory is a hosted-only differential oracle at most, never an import in
-`training/tools/`.
+validity as UTS #46 §4.1 lists it (NFC; the hyphen rules under `CheckHyphens`;
+no U+002E; no leading combining mark; every code point valid or deviation; the
+`UseSTD3ASCIIRules` restriction; `CheckJoiners`, which is RFC 5892's ContextJ
+for ZWJ and ZWNJ; `CheckBidi`), Punycode (RFC 3492) decoding of `xn--` labels and
+encoding for ToASCII, with `UseSTD3ASCIIRules`, `CheckHyphens`, `CheckBidi` and
+`CheckJoiners` as explicit flags of the engine, never defaults chosen silently.
+Two things the engine deliberately does not do. Transitional processing: UTS #46
+removed it in revision 31, deviation characters are valid and never mapped, so
+there is one result per label and no transitional/nontransitional pair. RFC
+5892's ContextO rules (middle dot, Greek keraia, Hebrew geresh and gershayim,
+katakana middle dot, digit mixing): they are registry policy outside UTS #46,
+and enforcing them fails the conformance file's lines that expect such labels
+to pass — a caller who wants them gets a separate policy layer that no gate
+here exercises. Punycode is implemented in the repository, dependency-free;
+the transitive `idna 3.19` in the dependency inventory is a hosted-only
+differential oracle at most, never an import in `training/tools/`.
 
-*Gate:* every line of `IdnaTestV2.txt` (source, ToUnicode result and status,
-ToAsciiN and status, ToAsciiT and status). *RED:* accept a leading combining mark
-in a label; the test's `V6` cases pass when they must fail.
+*Gate:* every line of `IdnaTestV2.txt`, with the columns as the pinned 17.0
+file's header declares them (source, ToUnicode result and status, ToASCII
+result and status); the grammar refuses a header whose column list differs
+from the one the engine was written against. *RED:* accept a leading combining
+mark in a label — every line whose expected status is the leading-combining-mark
+validity error passes when it must fail.
 
 ### 6.5 UAX #29 — grapheme and word segmentation
 
 Needed by the SLM's byte-native rail, which today patches on byte indices with no
 boundary awareness (`bcir/hosted/training/byte_latent.py`, the maps' finding), and
 by the lexical provider's word regex, which is ASCII-only. Grapheme cluster and
-word boundaries from the auxiliary property files, with the emoji rules.
+word boundaries from the auxiliary property files, the emoji rules, and — since
+15.1 — rule GB9c over `Indic_Conjunct_Break`, which lives in
+`DerivedCoreProperties.txt` (§3.1), not in the auxiliary files.
 
-*Gate:* `GraphemeBreakTest.txt` and `WordBreakTest.txt`, every line. *RED:* drop
+*Gate:* `GraphemeBreakTest.txt` and `WordBreakTest.txt`, every line, the GB9c
+conjunct cases included. *RED:* drop
 rule GB9 (do not break before extending characters); the first combining-mark
 case fails.
 
 ### 6.6 Line grammars, one per file family
 
 The UCD files are semicolon-separated fields with `#` comments and `..` ranges;
-`allkeys.txt` has its own `[.XXXX.YYYY.ZZZZ]` element grammar; `confusables.txt`
+`allkeys.txt` has its own element grammar — `[`, then `.` or `*`, then
+`XXXX.YYYY.ZZZZ]`, the `*` marking a variable element and being the sole source
+of `uca_variable`; `confusables.txt`
 and `IdnaMappingTable.txt` have their own; Unihan is tab-separated
 `U+XXXX<TAB>kField<TAB>value`. Each family gets one grammar module that admits a
 line or refuses it *by name* (file, line number, the first offending byte) before
@@ -528,8 +562,8 @@ a skipped row: it is a FAIL that names itself.
 | **Latin** | Basic Latin, Latin-1 Supplement, Latin Extended-A/B/Additional, Combining Diacritical Marks, General Punctuation, Currency, Letterlike, Number Forms, Arrows, Mathematical Operators, Box Drawing, Geometric Shapes, Misc. Symbols, Dingbats (blocks named from `Blocks.txt`, not spelled here) | the full table schema; all six engines; all conformance suites restricted to the admitted repertoire; ASCII punctuation, syntax controls (`Pattern_Syntax`, `Pattern_White_Space`), bracket pairs, math operators (`Math` property) | `verify_unicode.py` PASSED with every conformance suite's admitted subset passing and the anti-vacuity floors met |
 | **Greek, Cyrillic, Armenian, Georgian** | those blocks | nothing mechanical: a repertoire test of the same engines; the first non-Latin confusables (`о`/`o`, `а`/`a`) exercise UTS #39 for real | the same gate, larger admitted subset |
 | **Hebrew, Arabic, Syriac, Thaana, NKo** | those blocks | bidi classes and mirroring used in earnest; joining types (`ArabicShaping.txt`, added at this stage) ; the Bidi rule of UTS #46 | `BidiCharacterTest.txt` added; IDNA Bidi cases |
-| **Devanagari and the Brahmic scripts, Thai, Lao, Tibetan** | those blocks | combining classes and reordering that the normalization gate could not reach on Latin; grapheme clusters of many code points | the full `NormalizationTest.txt` and `GraphemeBreakTest.txt` |
-| **Hangul** | Hangul Jamo, Syllables, Compatibility Jamo | algorithmic decomposition/composition; the collation table's contractions and expansions | full collation tests |
+| **Devanagari and the Brahmic scripts, Thai, Lao, Tibetan** | those blocks | what Latin's combining marks did not exercise: long non-starter runs, viramas (ccc 9) and nuktas (ccc 7), the script-specific composition exclusions (U+0958–U+095F), the Part 2 canonical-order lines; DUCET's contractions (Tibetan) and the discontiguous steps of §6.2; GB9c conjunct clusters | the full `NormalizationTest.txt` and `GraphemeBreakTest.txt`; the collation tests' contraction lines |
+| **Hangul** | Hangul Jamo, Syllables, Compatibility Jamo | algorithmic decomposition/composition; collation of syllables through decomposition to conjoining jamo (syllables have no DUCET entries of their own) | full collation tests |
 | **CJK Unified Ideographs (Han)** | the URO, Extensions A–J, Compatibility Ideographs, Kangxi and CJK Radicals, IDCs | Unihan (`kRSUnicode`, `kTotalStrokes`, IRG sources), `CJKRadicals.txt`, `EquivalentUnifiedIdeograph.txt`; implicit collation weights; the radical-stroke columns of the table; Extension J, new in 17.0 | the full repertoire under every suite; the radical-stroke columns gated against Unihan; the implicit-weight formula gated against the collation tests' Han lines |
 | **The rest of 17.0** | every remaining block, including the four scripts new in 17.0 and the emoji additions | a repertoire test | the whole repertoire admitted; the pinned total from the 17.0 release matches the row count |
 
@@ -569,7 +603,8 @@ built from the same generation, digest-recorded) for the two `bcir/hosted` sites
 because `bcir/` may not import `training/`. From that slice on:
 
 - `bcir.byte_bpe.v1` is superseded by `bcir.byte_bpe.v2`, whose `normalization`
-  field names the form *and* the Unicode generation digest (`"NFC@17.0.0:<digest>"`);
+  field names the form *and* the Unicode generation digest (`"NFC+LF@<ucd_version>:<generation digest>"`, the one spelling SLM_ROADMAP §3.1
+  declares — the `+LF` keeps the line-ending fold v1 records);
   `from_json` continues to refuse any other key set, so a v1 tokenizer is read as
   what it is — normalized by an unrecorded table — and never silently promoted.
 - `DataPreparationSpec.policy_sha256` (`bcir/hosted/training/data.py:44-46`)
@@ -672,8 +707,10 @@ null key; revert `Catalog.load(table=)` — the Unicode catalog reads
 ### UC-4 — UAX #15 normalization
 
 `normalize.py` (§6.1), the quick-check fast path verified against the full
-algorithm, the `NormalizationTest.txt` gate, and the `unicodedata`
-differential for normalization.
+algorithm, the `NormalizationTest.txt` gate, the `unicodedata`
+differential for normalization, and case folding — full folding from
+`CaseFolding.txt` and `NFKC_Casefold` from `DerivedNormalizationProps.txt`,
+which UC-6's UTS #46 and UC-7's lexical provider consume.
 
 *Gate:* check group `normalize` — every test line, all four forms, all implied
 identities; the Part-1 invariant walk over the whole admitted repertoire;
@@ -689,10 +726,16 @@ implicit weights, and the `uca_*` columns written into the table by
 `build_unicode.py`.
 
 *Gate:* check group `collate` — both SHORT conformance files, every line;
-`ORDER BY uca_primary` agrees with the level-1 order of the full key on every
-admitted pair; the implicit-weight formula gated on the conformance files'
-Han lines (UC-10 widens the repertoire). *RED:* swap level-2 and level-3
-weights; change the Han base to `0xFB41`. *Depends on:* UC-3, UC-4.
+`ORDER BY uca_primary` never inverts the level-1 order of the full key on any
+admitted pair (a coarsening, §5.2, never a contradiction); a pinned-value
+witness for one ideograph's implicit elements (U+4E00 →
+`[FB40.0020.0002][CE00.0000.0000]`), the only Han fact the Latin stage can
+check — the ordering gate over Han lines is UC-10's. *RED:* swap level-2 and
+level-3 weights — the shifted file fails on the first accented pair; drop the
+`*` variable marker from the grammar — every punctuation line is refused;
+shift the core-Han base to `0xFB41` — the pinned witness fires (the ordering
+test alone cannot see a uniform shift, which is why the witness exists).
+*Depends on:* UC-3, UC-4.
 
 ### UC-6 — UTS #39 and UTS #46, with Punycode
 
@@ -715,13 +758,16 @@ differential gate; the generation digest folded into `policy_sha256`.
 
 *Payoff:* the same corpus normalizes to the same bytes on 3.11 and 3.12, and
 every digest says which tables did it.
-*Gate:* a prepared corpus's content address is identical under two
-interpreters with different `unidata_version`; the import witness; a v1
+*Gate:* a fixture corpus's content address equals a digest pinned in the
+repository, asserted in both the python-floor job (3.11, tables 14.0) and the
+host-portability job (3.12, tables 15.0) — two interpreters with different
+`unidata_version` reaching one pinned digest; the import witness; a v1
 tokenizer JSON still loads as v1 and is reported as unversioned; the
 generated tables' digest matches the generation's. *RED:* put `import
 unicodedata` back in `data.py` — the witness fires; regenerate the tables from
-a different generation — the digest gate fires. *Depends on:* UC-4 (and UC-5
-for casefold).
+a different generation — the digest gate fires. *Depends on:* UC-4, which
+owns casefold and `NFKC_Casefold` alongside normalization (the case files are
+records from UC-2).
 
 ### UC-8 — the DER record, and UAX #29
 
@@ -752,7 +798,7 @@ is the finding (`tools/testing/faults/README.md`). *Depends on:* UC-8.
 
 ### UC-10 — Han
 
-Unihan ingest (three files, unzipped, each under the scanner's caps),
+Unihan ingest (two files, unzipped, each under the scanner's caps),
 `CJKRadicals.txt` and `EquivalentUnifiedIdeograph.txt`, the `han_*` columns,
 implicit collation weights over the whole repertoire, the two deterministic
 providers (`unicode-stroke-v1` over radical/residual/total strokes and their
@@ -761,11 +807,17 @@ unified ideograph relation), the sharding of sets above 65536 rows, and the
 measurement of every catalog ceiling §5.3 names.
 
 *Payoff:* the "final boss" is data, and the data is in.
-*Gate:* the Han lines of both collation conformance files; `han_radical` and
-strokes agree with Unihan for every ideograph; every shard ≤ 65536 rows and
-bound by ids-in-order; the pinned Extension J block is present; the ceilings
-are measured and under. *RED:* offset one shard's base; drop the implicit
-weight for the extension blocks. *Depends on:* UC-9.
+*Gate:* the full `CollationTest_NON_IGNORABLE.txt` and `CollationTest_SHIFTED.txt`
+(§3.1), every line, with an anti-vacuity floor of at least one line per
+implicit-weight bucket of §6.2 (core Han, other Han, Tangut, Nushu, Khitan,
+unassigned); `han_radical` and strokes agree with Unihan for every ideograph;
+`numeric_num`/`numeric_den` agree with `DerivedNumericValues.txt` for every
+numeric ideograph; every shard ≤ 65536 rows and bound by ids-in-order; the
+pinned Extension J block is present; the ceilings are measured and under.
+*RED:* offset one shard's base; set the extension-block base to `0xFB40` —
+Extension A then sorts before the URO and the ordering gate fires at the first
+Extension A line; drop the implicit weight for the extension blocks. *Depends
+on:* UC-9.
 
 ### UC-11 — the rest of 17.0, the LangRef, and the subject question
 
