@@ -294,8 +294,9 @@ canonical forms produced by one deterministic builder from the pinned files:
    a sorted index and zone maps, the predicate grammar, the planner, and the C
    kernel under a predicate mask — all of it already gated.
 2. **Records as DER.** The same records, encoded by a `BCIR-Unicode` ASN.1
-   module (a new arc under `1.3.6.1.4.1.62596`, allocated in
-   `docs/BCIR_ASN1_X690_ABI.md`'s registry) as a DER `SEQUENCE OF
+   module (arc `{ 1 3 6 1 4 1 62596 3 }` beneath `BCIR_ARC` in
+   `bcir/asn1/streampack.py`, the next after the two the ABI document states in
+   prose, recorded there in a module list UC-8 adds) as a DER `SEQUENCE OF
    UnicodeCharacterRecord` in code-point order, `records.der`, with its SHA-256
    in the generation manifest. This is the *wire* form: the one consumer that
    serializes character records across the `training/` → `bcir/` boundary
@@ -303,9 +304,16 @@ canonical forms produced by one deterministic builder from the pinned files:
    with a canonical form that `bcir`'s own DER decoder verifies (laws A1–A5),
    because `bcir/` may not import `training/`.
 
-A gate asserts the two forms agree field for field (DER-decoded record ==
-JSON row for every row), so there is one truth with two readers, and the
-dual-rail law (L12) has a witness from the first slice.
+The record is the source and the row is a declared projection of it,
+`row_of(record)`: every row column is either one record field converted
+(`decomposition` text from the integer sequence, the rational split into
+`numeric_num`/`numeric_den`, `identifier_type` from the bit string) or a
+column derived from the record alone (`record_id`, `source_path`,
+`utf8_length`, the boolean columns from `properties`), and the projection's
+column list is reconciled against the declared schema both ways. A gate
+asserts `row == row_of(decode(records.der)[i])` for every row, so there is
+one truth with two readers, and the dual-rail law (L12) has a witness from
+the first slice.
 
 Why not the alternatives, each with the fact that decides it:
 
@@ -607,8 +615,9 @@ because `bcir/` may not import `training/`. From that slice on:
   declares — the `+LF` keeps the line-ending fold v1 records);
   `from_json` continues to refuse any other key set, so a v1 tokenizer is read as
   what it is — normalized by an unrecorded table — and never silently promoted.
-- `DataPreparationSpec.policy_sha256` (`bcir/hosted/training/data.py:44-46`)
-  folds the generation digest into the policy, so a prepared corpus's content
+- `DataPreparationReport.policy_sha256`, which is `DataPreparationSpec.digest`
+  (`bcir/hosted/training/data.py:90, 215`), folds the generation digest into
+  the policy, so a prepared corpus's content
   address changes when its normalization tables do, which is the point.
 - The embedding-set manifest (`bcir-training/embedding-set/v1`) gains no field: a
   provider whose normalization tables changed is a new provider *revision*, which
@@ -777,7 +786,8 @@ gates and R24 static rules; `segment.py` with the grapheme and word break
 gates.
 
 *Gate:* check group `records-der` — DER re-encodes byte-identically; BER
-decodes; DER-decoded record == JSON row for every row; the X.680 source
+decodes; `row == row_of(decode(records.der)[i])` for every row under the
+declared projection (§5.1); the X.680 source
 compiles byte-identical to the hand-bound module; check group `segment` —
 every `GraphemeBreakTest`/`WordBreakTest` line. *RED:* reorder two
 components; drop rule GB9. *Depends on:* UC-3 (rows), UC-5, UC-6 (fields).

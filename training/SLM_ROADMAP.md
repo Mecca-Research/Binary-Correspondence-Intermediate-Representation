@@ -96,8 +96,9 @@ consumes ids and carries a 32-byte `tokenizer_sha256` it does not verify.
   `forward(input_ids, targets, loss_mask)` with a per-token loss mask. Its
   parameter formula is `decoder_param_count` (`decode.py:229`):
   `vocab·d + n_layers·(2d + 2d² + 2d·kv_dim + 3·d·d_ff) + d [+ vocab·d if untied]`.
-- `train.py` — deterministic AdamW (warmup + cosine), CPU float32 only, exact
-  resume by batch index; `checkpoint.py` — content-addressed generations
+- `train.py` — deterministic AdamW (warmup + cosine); the deterministic CPU
+  rail is float32 only, and a cuda path with float16/bfloat16 exists and is
+  not CI-gated (`train.py:40-52`); exact resume by batch index; `checkpoint.py` — content-addressed generations
   `step-XXXXXXXX-<model12>-<optimizer12>` committed by `latest.json`;
   `export.py` — HF-layout export that must re-ingest strictly through
   `hf_ingest` and refuses a tokenizer whose bytes do not match
@@ -127,7 +128,7 @@ transformer; there is no dependency-free transformer trainer, no KV-cache in
 `HostedLlama.greedy`, no attention mask on the stable model, and no tree,
 dependency-parse or recursive-composition structure anywhere.
 
-### 1.3 The native data plane: seven kernels, one ABI
+### 1.3 The native data plane: six kernels, eight entry points, one ABI
 
 `runtime/c/bcir_ai_kernels.c` exports, under `BCIR_AI_ABI_VERSION 1`:
 `bcir_ai_quantize_q8_f64`, `bcir_ai_quantize_q4_f64`, `bcir_ai_q8_matvec_f64`
@@ -135,8 +136,9 @@ dependency-parse or recursive-composition structure anywhere.
 `bcir_ai_q8_values_validate`, and `bcir_ai_q15_topk` — exact-integer Q15 squared-L2
 top-k over int16 rows with a per-row 0/1 eligibility mask. Every kernel borrows
 its buffers, takes explicit capacities, forbids overlap, allocates nothing,
-validates before writing, and returns 0 / −1 / −2; rounding is half-away-from-zero
-literally as `floor(x + 0.5)` mirroring `bcir.kbcir.quantize._round_half_away`.
+validates before writing, and returns 0 / −1 / −2; rounding is half-away-from-zero,
+`x >= 0 ? floor(x + 0.5) : -floor(-x + 0.5)` (`bcir_ai_kernels.c:57`), mirroring
+`bcir.kbcir.quantize._round_half_away`.
 Memory class `hosted_tool`; header markers "borrowed", "must not overlap",
 "allocate no memory" are enforced by `tools/c/check_memory_discipline.py`;
 Python reaches them through `bcir/kbcir/native_ai.py` (single-TU build,
@@ -165,10 +167,11 @@ operators whose legality is decided by column role alone, a planner
 before pricing on the `bcir.kbcir.cost.CostVector`, and an embedding set
 (`bcir-training/embedding-set/v1`: manifest, `index.jsonl`, `vectors.f32`,
 `vectors.q15`, `squares.u32`, four digests) bound to the catalog by row order.
-**The hybrid path already runs end to end**: `db.retrieval.eligible(catalog,
-terms)` → `Selection.rows` → `bcir_native.q15_topk(query, codes, rows=,
-eligible=rows)` → `catalog.fetch(rows)`, priced and explained by `plan.py`
-(`search_chunks.py:874-1056`). What it lacks for this program — a second table, a
+**The hybrid path already runs end to end**: `relational.resolve_selection(catalog,
+where)` → `Selection.rows` → `bcir_native.q15_topk(query, codes, rows=, dim=,
+top_k=, eligible=rows)` → `catalog.fetch(rows)`, priced and explained by
+`plan.py` (`search_chunks.py:877, 441-448`; `db.retrieval.eligible` wraps the
+same `resolve_selection` for other callers). What it lacks for this program — a second table, a
 second vector space per row, exact fusion of two rankings, a Unicode-versioned
 provider — is exactly what §2 specifies and §6 schedules.
 
@@ -188,7 +191,8 @@ A lookup is a request `Q = (P, q, k, F, Θ)`:
 - **`P`** is a conjunction of `column op value` terms in the grammar of
   `plan.parse_predicate` over the character table `U` — the ten operators of
   `TRAINING_LANGREF.md` §5, unchanged, with legality decided by column *role*
-  alone (`schema.require_filterable`). A measurement has no equality operator,
+  alone (`Table.require_filterable`, the table-aware form UC-3 adds; today's
+  module-level `schema.require_filterable` is bound to the chunk table). A measurement has no equality operator,
   so equality on a code point is spelled as a closed interval,
   `code_point>=N AND code_point<=N`, which `plan.ranges` folds to one interval
   and `Catalog.seek_range` answers exactly.
@@ -332,7 +336,7 @@ never runs an engine.
 | Engine | Stored columns (role) | Exact query it enables |
 |---|---|---|
 | UTS #10 | `uca_primary` (numeric), defined once in UNICODE_ROADMAP §5.2 and only cited here: the first non-zero level-1 weight of an explicit DUCET entry, 0 when level-1 ignorable, or the packed implicit pair `(AAAA << 16) \| BBBB` for ideographs (bases per UTS #10 Table 16, UNICODE_ROADMAP §6.2); `uca_variable` (indexed) | `ORDER BY uca_primary` through `relational.ordered_rows` is UCA level-1 order — the "morphological base form" equivalence, computed; `uca_primary>=X AND uca_primary<=Y` is a range of base letters |
-| UTS #39 | `confusable_class` (numeric): the smallest code point whose skeleton equals this character's; `identifier_status`, `identifier_type` (indexed) | `confusable(a, b) ⇔ class(a) = class(b)`, spelled as a closed interval on `confusable_class` — two binary searches |
+| UTS #39 | `confusable_class` (numeric): the smallest code point whose skeleton equals this character's; `identifier_status` (indexed); `identifier_type` (text, materialized, never filtered — the UTS #39 set) | `confusable(a, b) ⇔ class(a) = class(b)`, spelled as a closed interval on `confusable_class` — two binary searches |
 | UTS #46 | `idna_status` (indexed, domain `{valid, ignored, mapped, deviation, disallowed}` — the five statuses since UTS #46 revision 31; `UseSTD3ASCIIRules` is a validity criterion, not a status); `idna_mapping` (text, materialized, never filtered) | `idna_status=valid` narrows a lookup to characters a label may carry |
 
 The *string-level* engines — the full multi-level sort key of a string, the
@@ -353,13 +357,13 @@ manifests; none reads a measurement or `Θ`.
 | Rule | Refuses |
 |---|---|
 | `exactness` (existing) | a backend outside `EXACT_BACKENDS` under `Objective.EXACTNESS` |
-| `availability` (existing) | a backend whose library did not load — `BackendUnavailable` is a skip, never a candidate |
+| `availability` (existing) | a backend whose library did not load — kept as a candidate and marked illegal with the `availability` refusal so `explain` can show it (`plan.py:1131-1134`); `BackendUnavailable` is the verifier's honest skip, not the planner's |
 | `coverage` (existing) | a selection naming a row outside `[0, rows_total)` |
 | `materialization` (existing) | a text reading that contradicts the request |
 | `binding` | a space whose `ids[i] ≠ catalog.ids[i]` for some `i`, or whose set was built from another corpus digest |
 | `space` | a query vector whose provider `(name, revision, dim)` is not the set's manifest `(model, revision, dim)` |
 | `generation` | a plan whose catalog, sets, projection tensor (§2.9) or engine pins name different generations |
-| `bounds` | a call with `pattern_count > 65536`, `dim > 4096`, `k ∉ [1, min(1024, \|E\|)]`, or a Q8 view over `N·dim > 2^26` — kernel limits as refusals *before* cost, so the same request can never reach C as a `KernelRejected` |
+| `bounds` | a call with `pattern_count > 65536`, `dim > 4096`, `k ∉ [1, min(1024, N_shard)]` (a `k` above `\|E\|` is a clamp — fewer rows come back, as §2.3 states — never a refusal), or a Q8 view over `N·dim > 2^26` — kernel limits as refusals *before* cost, so the same request can never reach C as a `KernelRejected` |
 | `fanout` | `sum` on `native`/`both` when `\|E\| > 1024`; `cascade(b)` when `b·k > 1024` |
 | `engine` | a predicate on an engine column that the generation did not store, or any plan that would compute an engine value at query time |
 
@@ -380,7 +384,7 @@ extended for the second call and the shards:
 | `accuracy` | `0` for exact backends; `k · accuracy_penalty_per_result` for the Q8 view | modeled |
 | `verification` | `\|E\| · verification_units_per_row` for `both` | modeled |
 | `fabric`, `sync`, `reliability`, `security` | zero, left zero rather than invented | — |
-| `thermal`, `power`, `contention` | zero from `price`; `Θ` enters only through `CostVector.couple(theta_factor(Θ))` with a frozen Q8 factor table (`256 = ×1.0`) — coupling scales an axis, it cannot create a price on a zero one | modeled |
+| `thermal`, `power`, `contention` | zero from `price`; `Θ` enters only through `CostVector.couple(theta_factor(Θ))`, where `theta_factor(Θ) -> tuple[int, ...]` is an SLM-2 deliverable (a frozen Q8 factor table, identity `256 = ×1.0`, with its own RED) and not an existing function — coupling scales an axis, it cannot create a price on a zero one | modeled |
 
 `plan.choose(plans, Objective)` minimizes the objective's axis; `plan.explain`
 prints every candidate's per-axis and scalarized cost. The chosen plan is the
@@ -410,10 +414,12 @@ quantizer or a wrapped `q8_matvec`.
 
 ### 2.10 The certificate: a DER lookup envelope
 
-Because the retrieval-augmented loss of §5 must be replayable, every lookup
+Because the retrieval-augmented loss (§5, phase 3) must be replayable, every lookup
 the training stack consumes is recorded as a `LookupEnvelope`: a DER-encoded
-record (a new `bcir/asn1` module under the BCIR arc, with its own arc number
-allocated in `docs/BCIR_ASN1_X690_ABI.md`'s registry, not invented here)
+record (the `BCIR-Unicode` module UC-8 creates under `BCIR_ARC` — arc
+`{ 1 3 6 1 4 1 62596 3 }`, the next after the two the ABI document states in
+prose, recorded in the module list SLM-4 adds to that document — extended
+append-only by SLM-4, never a second module invented here)
 carrying the generation id, the catalog and set digests, the request, every
 candidate with its `legal`/`refusal` verdict and its 12-axis modeled cost, and
 the selected plan — content-addressed over inputs only, so it replays
@@ -449,12 +455,13 @@ schema `bcir.byte_bpe.v2`, and **beside** every token travels a row of exact
 character features read from the Unicode generation. The tokenizer stays a
 tokenizer; the substrate is a side channel bound to it by content address. This
 is the design that keeps the whole existing provenance chain —
-`BytePairTokenizer.digest` → `token_source_from_corpus` →
-`CorpusManifest.tokenizer_sha256` → checkpoint → `export_hf_checkpoint` → the
+the tokenizer file's bytes (`sha256(to_json() + "\n")`, `bpe.py:189` — not
+`BytePairTokenizer.digest`, which hashes the JSON without the newline) →
+`token_source_from_corpus` → `CorpusManifest.tokenizer_sha256` → checkpoint → `export_hf_checkpoint` → the
 BCIRQ8 header — intact, and it is the one member of the F1 portfolio that this
 roadmap adds; it does not declare itself the base of every model.
 
-`bcir.byte_bpe.v2` differs from v1 in exactly three declared ways, and
+`bcir.byte_bpe.v2` differs from v1 in exactly four declared ways, and
 `from_json` keeps refusing any other key set:
 
 | Field | v1 | v2 |
@@ -462,12 +469,16 @@ roadmap adds; it does not declare itself the base of every model.
 | `normalization` | `"NFC+LF"` (tables unrecorded) | `"NFC+LF@<ucd_version>:<generation digest>"` — normalization by the generation's tables (UNICODE_ROADMAP §8), never the host's |
 | `alignment` | absent (merges may split a scalar) | `"scalar"`: no merge crosses a code-point boundary, admitted by `canonical_substring_candidate` at training time and gated at load |
 | `records` | absent | the SHA-256 of the generation's `records.der` (§3.2) |
+| `control_tokens` | absent | the curriculum's control tokens (§5), ids allocated *after* the merges (`260 + len(merges) + i`), so v1's byte and merge ids are untouched |
 
 The special-id layout is v1's — `<pad>=0, <bos>=1, <eos>=2, <unk>=3`, bytes at
 `4..259`, merges from `260` — because that layout is the one the
 checkpoint/export/BCIRQ8 chain already carries; `<unk>` is never emitted. The
-curriculum's control tokens (`[REGISTER: …]`, `[CADENCE: …]`, §5) are ordinary
-specials appended to `special_tokens`, never split. The two other layouts the
+curriculum's control tokens (`[REGISTER: …]`, `[CADENCE: …]`, §5) are *not*
+appended to `special_tokens`: v1 derives every byte id as
+`byte + len(special_tokens)` (`bpe.py:22, 95`), so one more special would shift
+all 256 byte ids and every merge id. They are the fourth v2 field,
+`control_tokens`, with ids allocated after the merges, atomic and never split. The two other layouts the
 tree carries (`ByteVocabularySpec`: bytes `0..255`, `bos 256 …`; the hosted
 gate: `unk 256, <s> 257 …`) are a finding this roadmap records and SLM-11
 resolves with one declared `SpecialLayout` imported by every rail (L14), not
@@ -504,8 +515,16 @@ is UC-8's deliverable; the sketch above fixes the *fields*. It is encoded with
 `Module.encode` (DER, canonical), decoded by `Module.decode` (DER by default,
 BER accepted), and the generation's `records.der` is a DER `SEQUENCE OF` in
 code-point order whose SHA-256 is `records_sha256` in the generation manifest.
-The catalog's JSONL rows carry the same fields as canonical JSON, and a gate
-asserts DER-decoded record == JSON row, field for field (two rails, one truth).
+The record is the source; the catalog's JSONL row is `row_of(record)`, a
+declared projection (UNICODE_ROADMAP §5.1): every row column is either the
+conversion of one record field (`decomposition` as `"0041 0301"` from the
+`SEQUENCE OF INTEGER`, `numeric_num`/`numeric_den` from the nested rational,
+`identifier_type` as the sorted names of the set bits) or a derived index
+column computed from the record alone (`record_id`, `source_path`,
+`utf8_length`, the boolean columns from `properties`). The gate asserts
+`row == row_of(decode(records.der)[i])` for every row (two rails, one truth),
+and the projection's column list is reconciled against the declared schema
+both ways.
 
 Why DER for the pipeline and JSONL for the catalog: the tokenizer lives in
 `bcir/` (`bcir.kbcir.sequence_interfaces`, `bcir.hosted.training.bpe`) and
@@ -523,7 +542,8 @@ the installed wheel (L21) without the full table.
 ### 3.3 From bytes to tokens with features
 
 ```
-bytes  --strict UTF-8 (encode_raw_sequence; invalid bytes refused)-->  scalars with spans
+bytes  --strict UTF-8 (decode_raw_bytes(errors="strict"), then encode_raw_sequence(str);
+        encode_raw_sequence copies bytes input unvalidated, so the decode is SLM-1's)-->  scalars with spans
        --NFC by the generation's tables (UC-7)-->                      normalized scalars
        --record lookup by code point in records.der-->                 records (unassigned: refused,
                                                                         or a declared 'unassigned' record kind
@@ -562,7 +582,7 @@ trip, fertility, fragment rate) rather than a single "best tokenizer" score.
 | generation id `g-<digest16>` | `generations.publish` manifest | the vendored pins, the row set, `records.der`, every engine column |
 | `records_sha256` | generation manifest; `bcir.byte_bpe.v2` `records` field | the DER record table the tokenizer reads |
 | `tokenizer_sha256` | `CorpusManifest`; BCIRQ8 header bytes 184..216 | the v2 JSON, which now names the generation and the record table |
-| `policy_sha256` | `DataPreparationSpec` | the corpus cleaning policy, now including the generation digest |
+| `policy_sha256` | `DataPreparationReport` (= `DataPreparationSpec.digest`, `data.py:90, 215`) | the corpus cleaning policy, now including the generation digest |
 | stage digests | `TrainingPipelineLedger` (`data`, `tokenizer`, and the new `prealign` stage) | every curriculum input |
 
 A model whose tokenizer names generation `g₁` cannot be evaluated over
@@ -664,14 +684,19 @@ fills them begins with a GO/STOP note on a source.
 
 The proposal's four phases become four ledger stages of the existing
 `TrainingPipelineLedger` DAG, each a `StageTrainSpec` with its own content
-address, and none of them a new kind of thing:
+address. Two of them need the ledger extended, and SLM-7 and SLM-11 declare
+that extension as a deliverable: `_PIPELINE_STAGES` is a closed set with
+hard-coded parent rules (`pipeline.py:14-27, 88-119` — `sft` is valid only
+with `parents == ["pretrain"]`), so the `prealign` kind, a chained `sft` whose
+parent is an `sft`, and an input-digest staleness check are append-only
+additions to the DAG, each with its own RED:
 
 | Proposal phase | Objective | Data it consumes (all content-addressed) | Stage kind and where it plugs in |
 |---|---|---|---|
 | 1 — Orthographic and radical grounding | character composition, stroke logic, symbol mechanics | the Unicode character table (UC-2..UC-5), the record stream of §3, operator truth tables generated from `PropList`/`Math` properties | a **pre-alignment stage** (new kind in the ledger DAG) training the tabular router of §4.1 against exact targets; loss = cross-entropy over record columns, plus a **collation-distance loss** whose target is the exact level-1/2/3 key difference (UNICODE_ROADMAP §6.2) |
-| 2 — Morphological tree induction | affixes, dependency structure, root families | lemmatized text with dependency trees (an admitted external corpus, provenance-pinned, cache-only), the lexical-graph tables of §2.3 | `train_sft` over the adaptive laboratory model with the **tree mask** of §4.2 and an auxiliary **root-prediction head** on `hidden_states()` |
-| 3 — Relational graph traversals | semantic radiation, doublets, analogies | graph-walk tuples generated from the lexical-graph tables by a deterministic query generator (like `build_eval_queries.py` builds the retrieval evaluation) | `train_sft` with the **retrieval-augmented loss** of §4.4 and `relational_gram_loss` over frozen graph-edge targets |
-| 4 — Compositional styling and rhetoric | cadence, register, argument | stratified multi-register text (admitted, pinned) | `train_sft` / `train_dpo` with prefix control tokens (`[REGISTER: …]`, `[CADENCE: …]`) that are ordinary specials of the tokenizer of §3 |
+| 2 — Morphological tree induction | affixes, dependency structure, root families | lemmatized text with dependency trees (an admitted external corpus, provenance-pinned, cache-only), the lexical-graph tables of §4.4 | `train_sft` over the adaptive laboratory model with the **tree mask** of §4.2 and an auxiliary **root-prediction head** on `hidden_states()` |
+| 3 — Relational graph traversals | semantic radiation, doublets, analogies | graph-walk tuples generated from the lexical-graph tables by a deterministic query generator (like `build_eval_queries.py` builds the retrieval evaluation) | `train_sft` with the **retrieval-augmented loss** — next-token cross-entropy given the prompt plus the rows the §2 lookup returns under the phase's predicate, every lookup recorded as a `LookupEnvelope` (§2.10) so the loss is replayable — and `relational_gram_loss` over frozen graph-edge targets |
+| 4 — Compositional styling and rhetoric | cadence, register, argument | stratified multi-register text (admitted, pinned) | `train_sft` / `train_dpo` with prefix control tokens (`[REGISTER: …]`, `[CADENCE: …]`) that are the `control_tokens` of the tokenizer of §3, ids after the merges |
 
 The order is a dependency, not a preference: phase 2 needs the table phase 1
 grounds, phase 3 needs the graph phase 2's root head learned to name, phase 4
@@ -713,8 +738,10 @@ fires. *Depends on:* UC-7, UC-8.
 `LookupRequest` and `candidates_for / choose / run / explain` in
 `training/tools/unicode/lookup.py`; `plan.LEGALITY_RULES` extended append-only
 with `binding, space, generation, bounds, fanout, engine`; `plan.price`
-extended for the second call and per-shard masks; `Θ` coupling through a
-frozen factor table; every `(Q, Objective, availability)` decision pinned in
+extended for the second call and per-shard masks; `Θ` coupling through
+`theta_factor(Θ) -> tuple[int, ...]`, a new frozen Q8 factor table (identity
+`256`) that the existing `CostVector.couple` consumes — no such function exists
+today; every `(Q, Objective, availability)` decision pinned in
 the plan baseline.
 
 *Payoff:* the lookup is a planned query with a legality verdict and a priced
@@ -726,12 +753,17 @@ zero on every candidate, the Q8 view charges `rows_total`, a sharded plan's
 compute is the sum of its shards' exact counts; `plan_baseline --compare` is
 clean. *RED:* run each fixture against the unextended `legality()` — all are
 reported legal; halve `ns_per_kmac_q8` in a copy of `CostModel` — a
-`LATENCY` decision moves and `--compare` fires. *Depends on:* UC-3, UC-5, UC-6.
+`LATENCY` decision moves and `--compare` fires; change one entry of the factor
+table — a decision under `Theta.hot()` moves and the cool/hot identity gate
+fires. *Depends on:* UC-3, UC-5, UC-6.
 
 ### SLM-3 — exact fusion: shards, cascade, sum
 
-Sharding above `BCIR_AI_MAX_PATTERNS`, the exact merge, `cascade(b)` and
-`sum`, on both backends, with `b` registered in `verify_langref.check_constants`.
+The exact merge across the shards UC-10 stores (UC-10 owns the sharding of
+sets above `BCIR_AI_MAX_PATTERNS`, their ids-in-order binding and the
+storage-side offset RED; this slice owns the merge and its parity), `cascade(b)`
+and `sum`, on both backends, with `b` registered in
+`verify_langref.check_constants`.
 
 *Payoff:* a whole-repertoire ranking through a kernel bounded at 65536 rows,
 bit-identical to an unbounded one; two spaces composed without a learned
@@ -795,7 +827,9 @@ UC-5, UC-6.
 `FeatureEmbedding` in the laboratory model (learned tables per categorical
 column; the frozen ±1 code for `uca_primary`); the tabular router as
 `HostedSmallModel(mlp)` over feature rows; a new ledger stage kind `prealign`
-in `TrainingPipelineLedger`'s DAG; the collation-distance loss against exact
+appended to `_PIPELINE_STAGES` and to the parent rules of
+`TrainingPipelineLedger` (`pipeline.py:14-27, 88-119`), the first extension of
+that closed set; the collation-distance loss against exact
 level-1/2/3 differences.
 
 *Payoff:* curriculum phase 1 exists as a stage with a content address.
@@ -804,7 +838,9 @@ router's labels are derived from the tables by a deterministic function (two
 builds equal); the stage refuses a feature tensor whose generation differs
 from the tokenizer's; the existing `--require-torch` gate in the hosted-model
 job runs it. *RED:* seed the router's labels from the model's own predictions —
-the determinism gate fires. *Depends on:* SLM-1.
+the determinism gate fires; drop the parent rule for `prealign` — a `prealign`
+record with a `pretrain` parent is admitted and the DAG gate fires. *Depends
+on:* SLM-1.
 
 ### SLM-7b — grapheme-aware patching for the byte-native rail (optional)
 
@@ -858,7 +894,12 @@ SLM-4, and the GO decision.
 
 ### SLM-11 — the curriculum as ledger stages, and one special layout
 
-Phases 1–4 as `StageTrainSpec` stages in the ledger DAG; the reconciliation of
+Phases 1–4 as `StageTrainSpec` stages in the ledger DAG, which this slice
+extends append-only: the chained `sft` parent rule (an `sft` whose parent is an
+`sft`, which today's rule `parents == ["pretrain"]` refuses) and the
+input-digest staleness check (a stage records its inputs' generation digests
+and is stale when any of them changed — no such notion exists in
+`pipeline.py`); the reconciliation of
 the three special-id layouts into one declared `SpecialLayout` imported by
 `bpe.py`, `kbcir/byte_latent.py` and the hosted gate (L14); the laboratory-scale
 end-to-end run in the hosted-model CI job.
@@ -867,8 +908,9 @@ end-to-end run in the hosted-model CI job.
 stale input re-runs; the tree stops carrying three spellings of `<pad>`.
 *Gate:* a stage whose input generation changed is reported stale and re-runs;
 one layout module, and a witness that no rail spells a special id literally.
-*RED:* hard-code `pad = 0` in one rail — the literal witness fires. *Depends
-on:* SLM-7, SLM-8, SLM-9.
+*RED:* hard-code `pad = 0` in one rail — the literal witness fires; drop the
+input-digest comparison — a stage whose input generation changed is reported
+current and the staleness gate fires. *Depends on:* SLM-7, SLM-8, SLM-9.
 
 ### SLM-12 — the evaluation harness
 
@@ -938,7 +980,7 @@ actuates?) decide what a gate can promise.
 |---|---|---|---|
 | Relational selection (predicates over the character and lexeme tables) | data, exact | row sets, counts, joint statistics, sort keys, skeletons, IDNA status | nothing |
 | Vector ranking (Q15 top-k under the mask) | L1 — frozen tables | the ranking over the given codes (integer arithmetic, declared tie-break) | the embeddings: produced by a provider, quantized to Q15 with the repository's rounding rule, published as a set with four digests, never recomputed at inference |
-| Plan choice (which backend, which materialization) | plan time, priced | legality (four structural rules + the new ones of §2.2) | the cost constants (modeled, indicative, never gating) |
+| Plan choice (which backend, which materialization) | plan time, priced | legality (four structural rules + the new ones of §2.7) | the cost constants (modeled, indicative, never gating) |
 | The model's forward pass | hosted laboratory | shapes, dtypes, the mask's admitted set | the weights |
 | Test-time search (`bounded_reasoning_search`) | L2 — bounded, replayable | the `verify` callbacks (engines) | the `propose` callback (the model) |
 | Curriculum and evaluation | L3 — human-actuated | the ledger, the digests | which generation is promoted |
