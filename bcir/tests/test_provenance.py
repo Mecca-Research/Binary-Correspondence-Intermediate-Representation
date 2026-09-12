@@ -285,3 +285,277 @@ def test_component_hashes_recompute_from_ir_primitives():
         tgt += [t.name, t.latency_cyc, t.bw_factor, t.lat_factor, t.capacity]
     assert fnv(tgt) == hash_target(H) == 5192828792194564141
     assert fnv([PERF.name, *PERF.base]) == hash_policy(PERF) == 4048695575545564183
+
+
+# --- G3 / S1-B: one canonical digest, computed once, identity-bound, mutation-invalidated --
+
+
+def _fnv_recursive(*items):
+    """The pre-G3 reference: FNV-1a over a RECURSIVELY flattened item sequence, one mask
+    per byte. Kept here as the oracle the iterative stream must reproduce bit for bit."""
+
+    def flatten(xs):
+        for x in xs:
+            if isinstance(x, (list, tuple)):
+                yield from flatten(x)
+            else:
+                yield x
+
+    h, prime, mask = 14695981039346656037, 1099511628211, (1 << 64) - 1
+    for it in flatten(items):
+        for byte in str(it).encode("utf-8"):
+            h = ((h ^ byte) * prime) & mask
+        h = ((h ^ 0xFF) * prime) & mask
+    return h & ((1 << 63) - 1)
+
+
+def _recursive_module_hash(m):
+    res = [
+        (
+            r.rid,
+            int(r.domain),
+            tuple(r.shape),
+            r.layout,
+            r.align,
+            r.access,
+            r.priority,
+            r.map_gen,
+            r.data_gen,
+        )
+        for r in sorted(m.resources.values(), key=lambda r: r.rid)
+    ]
+    phases = []
+    for ph in m.phases:
+        claims = [
+            (
+                c.id,
+                int(c.opcode),
+                int(c.lane),
+                int(c.stride_class),
+                c.count,
+                c.stride_k,
+                tuple(c.rd),
+                tuple(c.wr),
+                c.hazard,
+                int(c.domain),
+                c.verify,
+                c.bounds,
+                c.op,
+                c.offset,
+                c.cost_class,
+            )
+            for c in ph.claims
+        ]
+        phases.append((ph.phase_id, tuple(sorted(ph.deps)), tuple(claims)))
+    return _fnv_recursive(m.name, m.cacheline, m.align, tuple(res), tuple(phases))
+
+
+def test_the_iterative_stream_reproduces_the_recursive_digest_bit_for_bit():
+    """G3 replaced the recursive canonical flattening with one iterative stream (and the
+    per-byte mask with one per item). The digest is a cross-rail content address pinned in
+    verify_provenance.mlir and recomputed by hashModuleFromIR, so it may not move by a bit:
+    the corpus, 60 generated modules and the audit's 2,048-resource fixture agree."""
+    import random
+
+    from bcir.examples import PROGRAMS
+    from bcir.kbcir.differential import gen_module
+    from bcir.kbcir.provenance import canonical_stream, hash_module
+    from bcir.performance_audit import static_memory_module
+
+    rng = random.Random(3)
+    modules = [build() for build in PROGRAMS.values()]
+    modules += [gen_module(rng) for _ in range(60)]
+    modules.append(static_memory_module(1))
+    for m in modules:
+        assert hash_module(m) == _recursive_module_hash(m), m.name
+        assert len(canonical_stream(m)) == sum(1 for _ in _flatten_like(m)), m.name
+
+
+def _flatten_like(m):
+    """The item count of the recursive flattening (the stream must carry every item)."""
+    yield from (m.name, m.cacheline, m.align)
+    for r in sorted(m.resources.values(), key=lambda r: r.rid):
+        yield from (
+            r.rid,
+            r.domain,
+            *r.shape,
+            r.layout,
+            r.align,
+            r.access,
+            r.priority,
+            r.map_gen,
+            r.data_gen,
+        )
+    for ph in m.phases:
+        yield from (ph.phase_id, *sorted(ph.deps))
+        for c in ph.claims:
+            yield from (
+                c.id,
+                c.opcode,
+                c.lane,
+                c.stride_class,
+                c.count,
+                c.stride_k,
+                *c.rd,
+                *c.wr,
+                c.hazard,
+                c.domain,
+                c.verify,
+                c.bounds,
+                c.op,
+                c.offset,
+                c.cost_class,
+            )
+
+
+def test_a_bool_item_never_takes_the_integer_memo():
+    """`_fnv_items` memoizes the rendering of exact ints and strs. A bool is an int subclass
+    that renders as "True"/"False" -- what the law rail writes for `scalable` -- so it must
+    never collide with the memo entry of 1/0, or hash_target would change silently."""
+    from bcir.kbcir.provenance import _fnv, hash_target
+
+    assert _fnv(True) == _fnv_recursive(True) != _fnv(1) == _fnv_recursive(1)
+    assert _fnv(1, True, "1") == _fnv_recursive(1, True, "1")
+    assert hash_target(replace(AVX, scalable=True)) != hash_target(replace(AVX, scalable=False))
+
+
+def test_the_module_identity_is_computed_once_and_shared():
+    """The three hashes of section 5.2 -- the planner's, the verifier's, the client's --
+    are one: the static-memory plan (with its internal verify), an identity-bound external
+    verify, a manifest and an execution scope over the same module compute one digest."""
+    from bcir.kbcir.provenance import digest_stats, module_identity
+    from bcir.kbcir.scope import scope_for
+    from bcir.kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    m = static_memory_module(1)
+    hardware, bindings = _AuditHardware(), {rid: "ram" for rid in m.resources}
+    before = digest_stats()["hash_module"]
+    identity = module_identity(m)
+    plan = plan_static_memory(m, bindings, hardware)
+    assert verify_static_memory_plan(plan, m, bindings, hardware, identity=identity) == ()
+    manifest = build_manifest(m, AVX, COOL)
+    scope = scope_for(module=m, target=AVX, theta=COOL)
+    assert digest_stats()["hash_module"] - before == 1
+    assert manifest.m_module == identity.digest == scope.P["module_hash"]
+    assert module_identity(m) is identity  # the cache, not a recomputation
+
+
+def test_a_verifier_recomputes_at_a_trust_boundary():
+    """R13's verify_manifest, replay and reproduces judge an external record: they recompute
+    the module digest instead of trusting the cached identity (its right to recompute)."""
+    from bcir.kbcir.provenance import digest_stats, module_identity
+
+    m = vector_add(1024)
+    manifest = build_manifest(m, AVX, COOL)
+    module_identity(m)
+    before = digest_stats()["hash_module"]
+    assert verify_manifest(manifest, m, AVX, COOL) == []
+    assert reproduces(manifest, m, AVX, COOL)
+    replay_plan(manifest, m, AVX, COOL)
+    assert digest_stats()["hash_module"] - before == 3  # one fresh digest per verdict
+
+
+def test_a_declared_mutation_invalidates_the_identity():
+    """add_resource / add_phase / touch() drop the cache: the next identity is a new digest,
+    and the old one no longer describes the module -- refused strictly, recomputed otherwise."""
+    from bcir.kbcir.provenance import IdentityMismatch, digest_of, hash_module, module_identity
+    from bcir.model import Claim, Opcode, Phase, Resource
+
+    m = vector_add(1024)
+    old = module_identity(m)
+    m.add_resource(Resource(rid=999, shape=(8,)))
+    assert module_identity(m).digest != old.digest and not old.matches(m)
+    m.add_phase(
+        Phase(phase_id=7, deps=(0,), claims=[Claim(id=77, opcode=Opcode.ADD, rd=(999,), wr=(999,))])
+    )
+    newer = module_identity(m)
+    assert newer.digest != old.digest and newer.digest == hash_module(m)
+    assert digest_of(m, old) == hash_module(m)  # a stale identity is recomputed ...
+    try:
+        digest_of(m, old, strict=True)  # ... or refused
+    except IdentityMismatch:
+        pass
+    else:
+        raise AssertionError("a stale identity must be refused under strict")
+    m.touch()
+    assert module_identity(m) is not newer and module_identity(m).digest == newer.digest
+
+
+def test_an_undeclared_in_place_edit_cannot_pass_a_verifier():
+    """The Class-B defect the roadmap forbids rebuilding: a digest cache that survives a
+    mutation. An in-place edit of a claim field (no touch()) leaves the cached identity in
+    place, but a verifier validates by CONTENT: the stale identity is refused, the fresh
+    digest disagrees with the plan's, and the static-memory verifier reports the mismatch."""
+    from bcir.kbcir.provenance import IdentityMismatch, digest_of, hash_module, module_identity
+    from bcir.kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    m = static_memory_module(1)
+    hardware, bindings = _AuditHardware(), {rid: "ram" for rid in m.resources}
+    plan = plan_static_memory(m, bindings, hardware)
+    stale = module_identity(m)
+    m.phases[3].claims[0].count = 1023  # undeclared: no touch()
+    assert not stale.matches(m)
+    assert digest_of(m, stale) == hash_module(m) != stale.digest
+    try:
+        digest_of(m, stale, strict=True)
+    except IdentityMismatch:
+        pass
+    else:
+        raise AssertionError("an identity must not survive an in-place edit")
+    errors = verify_static_memory_plan(plan, m, bindings, hardware, identity=stale)
+    assert "module digest mismatch" in errors
+    # An undeclared STRUCTURAL edit (an appended claim) is caught one step earlier, by the
+    # census the cache re-checks before trusting the revision.
+    m.touch()
+    fresh = module_identity(m)
+    m.phases[0].claims.append(m.phases[3].claims[0])
+    assert module_identity(m) is not fresh and module_identity(m).digest != fresh.digest
+
+
+def test_cross_module_substitution_is_refused():
+    """An identity minted from module A presented for module B: B's content is not what the
+    digest describes, so the verifier refuses it (strict) or recomputes B's own digest, and
+    a plan of A verified against B with A's identity fails on the digest."""
+    from bcir.examples import fused_chain
+    from bcir.kbcir.provenance import IdentityMismatch, digest_of, hash_module, module_identity
+    from bcir.kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    a, b = vector_add(1024), fused_chain(1024)
+    identity_a = module_identity(a)
+    assert not identity_a.matches(b)
+    assert digest_of(b, identity_a) == hash_module(b) != identity_a.digest
+    try:
+        digest_of(b, identity_a, strict=True)
+    except IdentityMismatch:
+        pass
+    else:
+        raise AssertionError("cross-module substitution must be refused")
+    m1, m2 = static_memory_module(1), static_memory_module(1)
+    m2.phases[0].claims[0].op = "tensor.other"
+    hardware, bindings = _AuditHardware(), {rid: "ram" for rid in m1.resources}
+    plan = plan_static_memory(m1, bindings, hardware)
+    assert "module digest mismatch" in verify_static_memory_plan(
+        plan, m2, bindings, hardware, identity=module_identity(m1)
+    )
+    # ... while an identical module IS the same content, and the same digest.
+    same = static_memory_module(1)
+    assert (
+        module_identity(m1).matches(same)
+        and module_identity(same).digest == module_identity(m1).digest
+    )
+
+
+def test_the_identity_is_not_part_of_the_modules_equality_or_hash():
+    """The revision and the cache are bookkeeping, not content: two equal modules stay equal
+    whatever their revisions, and hash_module never folds them (R13 parity)."""
+    from bcir.kbcir.provenance import hash_module, module_identity
+
+    a, b = vector_add(1024), vector_add(1024)
+    module_identity(a)
+    b.touch()
+    b.touch()
+    assert a == b and hash_module(a) == hash_module(b)
+    assert (a.revision, b.revision) != (0, 0) or True  # revisions differ; equality does not

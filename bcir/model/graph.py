@@ -153,16 +153,33 @@ class Module:
     target: str = "registry-first"
     resources: dict[int, Resource] = field(default_factory=dict)
     phases: list[Phase] = field(default_factory=list)
+    # The mutation revision (G3 / S1-B): every declared mutation -- `add_resource`,
+    # `add_phase`, `touch()` -- bumps it, and the cached module identity
+    # (`kbcir.provenance.module_identity`) is keyed on it. Neither field is part of the
+    # module's equality or repr, and neither is a hashed R13 field: the revision is a
+    # cache key, not content.
+    revision: int = field(default=0, compare=False, repr=False)
+    _identity: Optional[object] = field(default=None, init=False, compare=False, repr=False)
 
     def add_resource(self, resource: Resource) -> Resource:
         if resource.rid in self.resources:
             raise ValueError(f"duplicate RID {resource.rid} (LangRef R1)")
         self.resources[resource.rid] = resource
+        self.touch()
         return resource
 
     def add_phase(self, phase: Phase) -> Phase:
         self.phases.append(phase)
+        self.touch()
         return phase
+
+    def touch(self) -> None:
+        """Declare a mutation: bump the revision and drop the cached identity. The
+        sanctioned mutators call it; a caller that edits a resource, phase or claim in
+        place calls it itself. A verifier never needs it -- it validates an identity
+        against the module's content (`kbcir.provenance.digest_of`), not its revision."""
+        self.revision += 1
+        self._identity = None
 
     def resource(self, rid: Optional[int]) -> Optional[Resource]:
         if rid is None:

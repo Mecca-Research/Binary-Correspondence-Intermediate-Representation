@@ -508,6 +508,29 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   1,148 -> 83 ms A/B on one host, identical assignments to the exhaustive sweep everywhere
   measured). The corpus plans, the matmul 253952 / 761856 overlap, the six-target matrix and
   all 13 performance-audit result digests are unchanged.
+  S1-B (2026-09-12) landed G3, the canonical module digest computed once (the report's
+  P1.6 and section 5.2). The planner hashed the module, its verifier hashed it again and an
+  independent client a third time -- three full FNV chains over a recursively flattened
+  item sequence, 65 ms each on this host at 2,048 resources (measured RED: three digests per
+  plan-and-verify chain). `provenance.canonical_stream` is now the one iterative walk that
+  produces the R13 item sequence and `hash_module` chains it with one reduction per item
+  (bit-identical to the recursive flattening on the corpus, 60 generated modules and the
+  audit fixture, so no pinned digest moved on either rail); `module_identity` computes the
+  digest once per `Module.revision` (bumped by `add_resource`, `add_phase` and the new
+  `touch()`) and caches it on the module; `digest_of(module, identity)` is the verifier's
+  identity-bound API -- it accepts the identity only when the module's canonical stream is
+  exactly what the identity describes (a 3 ms walk against a 37 ms digest) and recomputes
+  otherwise, refusing under `strict`. `plan_static_memory` mints the identity once and its
+  internal verify validates it; `verify_static_memory_plan` takes an identity from an
+  external client; `build_manifest` and `scope_for` read it; R13's `verify_manifest`,
+  `replay` and `reproduces` recompute at the trust boundary. The harness gained the exact
+  row `static_memory.digests.2048` (3 -> 1) and now measures the three section-5.2 wall
+  rows over the audit's own fixture: digest 64.7 -> 37.4 ms, plan 196.1 -> 114.1 ms and
+  external verify 100.3 -> 39.3 ms identity-bound on this host, with the audit's 13 result
+  digests unchanged. The witnesses: a declared mutation drops the cache, an undeclared
+  in-place edit is refused by the content check and reported by the static-memory verifier,
+  an appended claim is caught by the census, and module A's identity presented for module B
+  is refused.
 
 ---
 

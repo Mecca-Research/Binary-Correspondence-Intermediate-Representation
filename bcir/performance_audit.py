@@ -248,8 +248,11 @@ class _AuditHardware:
         return self._bank
 
 
-def _case_static_memory(scale: int) -> dict:
-    from .kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+def static_memory_module(scale: int):
+    """The static-memory fixture at `scale`: 512 x scale resources touched by ~2 x scale
+    claims each across 128 x scale chained phases (the 2026-08-12 report's section 5.2 probe
+    at scale 4: 2,048 resources, 3,972 claims). Shared by the audit case and the GEM+
+    baseline harness (`static_memory.*.2048`), so both measure one fixture."""
     from .model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 
     resources = 512 * scale
@@ -286,6 +289,15 @@ def _case_static_memory(scale: int) -> dict:
             )
             claim_id += 1
     module.phases.extend(reversed(phases))
+    module.touch()  # the phases were appended directly: declare the mutation (G3)
+    return module
+
+
+def _case_static_memory(scale: int) -> dict:
+    from .kbcir.static_memory import plan_static_memory, verify_static_memory_plan
+
+    module = static_memory_module(scale)
+    resources, phase_count = len(module.resources), len(module.phases)
     hardware = _AuditHardware()
     bindings = {rid: "ram" for rid in module.resources}
     plan = plan_static_memory(module, bindings, hardware)

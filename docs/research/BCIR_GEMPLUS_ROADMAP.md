@@ -263,7 +263,7 @@ optimum, because under the coupled cost model a wider lane is never longer for i
 the successor coupling does not distinguish vector widths. What remains for G2 is the general
 case — many step-shortening trials — where each trial still re-places the whole module.
 
-### G3 — canonical digest computed once
+### G3 — canonical digest computed once — **landed (S1-B, 2026-09-12)**
 
 *Report P1.6. Cheap, and it unblocks measurement everywhere else.*
 
@@ -273,15 +273,32 @@ hashes a third time. Replace recursive canonical flattening with an iterative st
 immutable module identity, and expose an identity-bound API — **while keeping the verifier's
 right to recompute at a trust boundary**, which is the whole reason the third hash exists.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `wall` `static_memory.digest.2048` | 88.05 ms | ≤ 30 ms |
-| `wall` `static_memory.verify.2048` | 157.88 ms | ≤ 90 ms |
-| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 120 ms |
-| `exact` A cache cannot survive mutation | — | mutation invalidates; cross-module substitution refused |
+| Gate | Baseline | Target | Outcome (A/B on one host; the baseline host is ~1.4× slower) |
+|---|---|---|---|
+| `exact` `static_memory.digests.2048` (full digests over plan + verify + client) | 3 | 1 | **1** — the planner mints the identity, its verifier and the client validate it by content |
+| `wall` `static_memory.digest.2048` | 88.05 ms | ≤ 30 ms | 64.7 → **37.4 ms** here (projected ~50 ms on the baseline host: the per-byte FNV chain in the interpreter is the residual) |
+| `wall` `static_memory.verify.2048` | 157.88 ms | ≤ 90 ms | 100.3 → **39.3 ms** identity-bound (71 ms recomputing); the bound is met |
+| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 120 ms | 196.1 → **114.1 ms** from a fresh identity (70 ms with it cached); the bound is met |
+| `exact` A cache cannot survive mutation | — | mutation invalidates; cross-module substitution refused | **witnessed**: a declared mutation drops the cache; an undeclared in-place edit is refused by the verifier's content check; module A's identity presented for module B is refused |
+
+What landed: `provenance.canonical_stream` is the one iterative walk that produces the R13 item
+sequence; `hash_module` chains it (bit-identical to the recursive flattening on the corpus,
+60 generated modules and the 2,048-resource fixture, so no pinned digest moved on either rail);
+`module_identity(module)` computes the digest once per module revision and caches it on the
+module (`Module.revision`, bumped by `add_resource`, `add_phase` and `touch()`), and
+`digest_of(module, identity)` is the verifier's side of the identity-bound API: it validates the
+identity against the module's canonical stream — a complete content check at the cost of the walk
+(3 ms at 2,048 resources against 37 ms for the digest) — and recomputes otherwise, refusing
+under `strict`. `plan_static_memory` mints the identity once and hands it to its internal
+verify; an external `verify_static_memory_plan(..., identity=...)` validates it; `build_manifest`
+and `scope_for` read it; R13's `verify_manifest`, `replay` and `reproduces` recompute (`fresh`),
+which is the trust boundary the third hash exists for. The law rail is unchanged: `-bcir-verify`
+recomputes `hashModuleFromIR` from the IR by design.
 
 The security half of that last row is not optional: a digest cache that survives a mutation is
-the Class-B "vacuous check" defect from the audit, rebuilt.
+the Class-B "vacuous check" defect from the audit, rebuilt. The cache here is keyed on the
+revision and re-checked against the module's census, and no verifier trusts the revision: an
+identity is accepted only when the module's content is exactly what it describes.
 
 ### G4 — bounded exact solvers and the lower-bound stack
 
@@ -628,7 +645,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
-Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A)
+Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A); G3 <- LANDED (S1-B)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
@@ -674,7 +691,8 @@ no PMU):
 |---|---|---:|---:|---|
 | `pricing.eft.divergence` | G1 | 1.9922 | **1.0** (S1-A, 2026-09-05) | GAIN, at the bound — one artifact; the retired pricer still reads 1.9922 on the fixture as the witness |
 | `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) | GAIN — the mechanism is named under G2; 36% of headroom to the 4× bound remains |
-| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
-| fourteen rows | G0, G4–G6 | — | not measured | need the exact oracles, the digest fixtures or the native rig |
+| `static_memory.digests.2048` | G3 | 3 | **1** (S1-B, 2026-09-12) | GAIN, at the bound — one digest per plan-and-verify chain; the verifier still recomputes at a trust boundary |
+| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 ms A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
+| eleven rows | G0, G4–G6 | — | not measured | need the exact oracles or the native rig |
 
 Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.

@@ -186,7 +186,13 @@ tolerance forces `precision="compensated"`) · **R18 compositional call graph** 
 `kbcir.call` resolves to a `kbcir.func` and the call graph is acyclic — no recursion;
 the law-rail form of `compose.plan_composite`'s undefined-callee + recursion rejections).
 R14–R18 are first-class `-bcir-verify` laws, dual-rail with
-`verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. R13 additionally
+`verify.{verify_cim,verify_dvfs,verify_allocator,verify_accuracy}`. On the oracle the
+module's R13 digest is computed once per module revision from one iterative canonical
+stream (`provenance.canonical_stream` / `module_identity`, G3) and shared through an
+identity-bound API: a verifier handed a `ModuleIdentity` accepts it only when the
+module's canonical stream is exactly what the identity describes (`digest_of`) and
+recomputes otherwise — `verify_manifest`, `replay` and `reproduces` always recompute,
+and the law rail always recomputes from the IR. R13 additionally
 **recomputes** a manifest's digest from its component hashes (byte-identical to
 `provenance._digest`) and **cross-checks every component hash** — `m_theta` / `m_policy` /
 `m_target` / `m_module` — against the in-IR `kbcir.theta` / `kbcir.policy` (unfolded

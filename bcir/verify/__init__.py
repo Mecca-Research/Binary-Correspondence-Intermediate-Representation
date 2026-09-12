@@ -1467,7 +1467,9 @@ def verify_manifest(manifest, module, h, theta, policy=None, artifacts=()) -> li
     from ..kbcir.weights import PERF
 
     diags: list[Diagnostic] = []
-    fresh = build_manifest(module, h, theta, policy or PERF, artifacts)
+    # A trust boundary: the manifest is an external record, so the module digest is
+    # RECOMPUTED here rather than read from the cached identity (G3 / S1-B).
+    fresh = build_manifest(module, h, theta, policy or PERF, artifacts, fresh=True)
     if fresh.digest != manifest.digest:
         diags.append(
             Diagnostic(
