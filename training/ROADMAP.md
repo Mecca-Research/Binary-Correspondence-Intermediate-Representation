@@ -463,6 +463,15 @@ allow.
 | 7 | `data/` | 6, 4 | SQL, NoSQL, storage engines, query planning |
 | 8 | `backends/` | 6, 7 | Node.js, React, service composition |
 
+Two programs sit beside the ladder with roadmaps of their own. The *data*
+half of `formats/` — a repository-owned Unicode 17.0 database, built from the
+pinned UCD files Latin-first and Han-last — is scheduled in
+[`UNICODE_ROADMAP.md`](UNICODE_ROADMAP.md); it advances Phase 5's first opening
+condition (references inventoried and pinned) without opening the folder's
+lesson half. The small-language-model program that consumes that database is
+scheduled in [`SLM_ROADMAP.md`](SLM_ROADMAP.md) and depends on it, never the
+reverse.
+
 ### The gate on opening a folder
 
 A subject folder moves from PLANNED to open only when:

@@ -920,6 +920,11 @@ Landed with their fixes, each caught by a named check thereafter:
 - `training/DATABASE_ROADMAP.md` — why each database mechanism exists, the
   comparative analyses against existing systems, and the measurements.
 - `training/ROADMAP.md` — what is planned next.
+- `training/UNICODE_ROADMAP.md` — the repository-owned Unicode 17.0 database:
+  its source of truth, on-disk form, engines, staging and slices.
+- `training/SLM_ROADMAP.md` — the small-language-model program built on that
+  database: the hybrid SQL/vector lookup schema, the token-level record
+  pipeline, and its slices.
 - `docs/BCIR_LANGREF.md` — the IR this rail indexes, and the cost vector it prices
   with.
 - `docs/security/laws.md` — the gate-authoring laws §15.1 summarizes.

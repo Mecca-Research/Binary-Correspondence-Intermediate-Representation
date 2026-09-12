@@ -749,7 +749,13 @@ them (thermal/power/clock optimization, adaptive unrolling, best-ISA selection).
   tokenizer is declared the base of every model. A future FreeType/Unicode visual interface must pin
   the font, renderer, Unicode database, raster/PCA configuration, corpus, and probe evidence before
   its frozen table can enter a model artifact. Content-addressed operad identities remain useful,
-  but visual similarity never becomes semantic truth or BCIR legality.
+  but visual similarity never becomes semantic truth or BCIR legality. The
+  Unicode-substrate small-language-model program that extends F1 — a
+  repository-owned Unicode 17.0 database consulted through the training rail's
+  hybrid SQL/vector lookup — is planned in
+  [`training/SLM_ROADMAP.md`](../../training/SLM_ROADMAP.md) on
+  [`training/UNICODE_ROADMAP.md`](../../training/UNICODE_ROADMAP.md); it stays
+  in the laboratory and changes no frozen ABI.
 - **F2 — The file-creation backbone.** Keep object/file production on the resident
   ELF/DWARF/BFD/LLVM ecosystem behind
   [`BCIR_NATIVE_OBJECT_GATE.md`](../BCIR_NATIVE_OBJECT_GATE.md). BCIR may plan section
