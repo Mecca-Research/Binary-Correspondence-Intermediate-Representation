@@ -232,6 +232,48 @@ METRICS: tuple[Metric, ...] = (
         bound_source="exhaustive enumeration of the same fixture (§6.3)",
         slice_owner="G4",
     ),
+    # --- G2, the general case (S2-A): many step-shortening trials. The report's fixture has
+    # none (the serial optimum is already the shortest step everywhere), so the sweep's cost
+    # there is its fixed overhead; `bcir/tests/sweep_fixtures.general_fixture(16, 16)` has one
+    # trial per pair of claims (512 claims, 256 trials) under ENERGY on x86_avx2. The baselines
+    # are the parent tree (S1-D, 2026-09-12) on the harness host, every trial re-placing the
+    # whole module; they are not the report's, which never measured this case.
+    Metric(
+        "optimize_scheduled.general.512",
+        "planner",
+        "optimize_scheduled at 512 claims, 256 step-shortening trials (16 phases)",
+        605.5,
+        "ms",
+        "wall",
+        bound=109.0,
+        bound_source="8x the serial pass on the same fixture and host (13.6 ms): the G2 "
+        "target ratio applied to the general case",
+        slice_owner="G2",
+    ),
+    Metric(
+        "optimize_scheduled.general.slowdown.512",
+        "planner",
+        "optimize_scheduled / serial optimize, the general case at 512 claims",
+        44.5,
+        "x",
+        "ratio",
+        bound=8.0,
+        bound_source="the G2 target: a sweep of step-shortening trials priced at a small "
+        "multiple of the serial pass (roadmap G2)",
+        slice_owner="G2",
+    ),
+    Metric(
+        "sweep.replacement.fraction",
+        "planner",
+        "claims re-placed per trial / claims, the general case at 512 claims",
+        1.0,
+        "x",
+        "exact",
+        bound=0.0625,
+        bound_source="the affected phase and nothing else: 1/16 of the module on the "
+        "16-phase fixture (a checkpointed replay can re-place less)",
+        slice_owner="G2",
+    ),
     # --- §6.1: HEFT-lite against an exact branch-and-bound scheduler.
     Metric(
         "eft.suboptimal.2domains",
@@ -620,6 +662,27 @@ def measure_planner() -> dict[str, float]:
                 out[f"_serial.{count}"] = elapsed
     if "optimize_scheduled.512" in out and out.get("_serial.512"):
         out["optimize_scheduled.slowdown.512"] = out["optimize_scheduled.512"] / out["_serial.512"]
+
+    # The general case (G2 / S2-A): one step-shortening trial per pair under ENERGY on
+    # x86_avx2 (the widths the fixture is built for), 16 phases x 16 pairs = 512 claims.
+    from bcir.kbcir.weights import ENERGY
+    from bcir.tests.sweep_fixtures import general_fixture
+
+    general = general_fixture(16, 16)
+    target = TARGETS["x86_avx2"]
+    stats: dict = {}
+    start = time.perf_counter()
+    optimize_scheduled(general, target, Theta.cool(), ENERGY, stats=stats)
+    out["optimize_scheduled.general.512"] = (time.perf_counter() - start) * 1e3
+    start = time.perf_counter()
+    optimize(general, target, Theta.cool(), ENERGY)
+    serial = (time.perf_counter() - start) * 1e3
+    if serial:
+        out["optimize_scheduled.general.slowdown.512"] = (
+            out["optimize_scheduled.general.512"] / serial
+        )
+    if stats.get("trials"):
+        out["sweep.replacement.fraction"] = stats["pops"] / (stats["trials"] * stats["claims"])
     return {k: v for k, v in out.items() if not k.startswith("_")}
 
 

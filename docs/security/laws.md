@@ -214,6 +214,14 @@ forged stop reason, a forged lower bound, an offset moved to an alias-free but
 non-solver position, a first-fit plan claiming the exact rail's stop reason --
 each refused by recomputation, never by reading the plan's own claim about
 itself (`test_the_verifier_recomputes_an_exact_layout_rather_than_trust_it`).
+S2-A instance (2026-09-13): the general case was made reachable and measured
+RED before it was priced incrementally (`sweep_fixtures.general_fixture`: one
+step-shortening trial per pair, every trial a full re-placement), and the delta
+search is held to the full re-placement it replaces, kept alive as
+`optimize_scheduled(delta=False)`: the same assignment claim by claim, the same
+step costs, price and artifact on 1,344 cases, and the placer to `schedule_eft`
+on 6,840 random trials and 1,690 adoptions -- a faster sweep that picked a
+different plan would not have been made faster; it would have been changed.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -609,6 +617,12 @@ computed by ONE function (`schedule_intervals`) the planner, the verifier and th
 plan-bytes verifier share, so "does the schedule refine the phase order" and
 "do the lifetimes cover the schedule" are the same question asked of the same
 intervals.
+S2-A instance (2026-09-13): the dispatch is ONE loop -- `_PhaseDispatch.run`,
+of which `_dispatch` is the one-shot form -- run by `schedule_eft`,
+`execute_tokens` and the placer's checkpointed replay alike, so the incremental
+price cannot drift from the placement it prices; `EftPlacer.schedule()` is
+`schedule_eft`'s artifact by construction and by test on every fixture, trial
+and adoption.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

@@ -584,6 +584,30 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   against the S1-C commit, `static_memory.verify.2048` 35.0 -> 15.8 ms, `static_memory.plan.2048`
   100.7 -> 84.3 ms, the audit's static-lifetime-planner case 174 -> 142 ms, all 13 result
   digests identical.
+  S2-A (2026-09-13) landed G2, incremental delta pricing with identical assignment, the first
+  Stage 2 slice. RED: on every corpus program and both harness fixtures the re-selection sweep
+  places nothing (no step-shortening alternative exists under any target, Theta or policy), so
+  its 6.4x over the serial pass at 512 claims was fixed overhead -- a second placement of the
+  artifact it already held and a second fusion pass; and in the general case, reachable with
+  the real cost model under ENERGY (a small claim realized vec8 for its large successor's
+  locality discount, whose scalar alternative shortens its own step), every trial re-placed the
+  whole module: 256 trials x 512 claims, 44.5x the serial pass. What landed:
+  `gem.schedule.EftPlacer` records the base placement once per phase (span, entry/exit
+  residency, pop order) and prices a trial as the cached prefix, the changed phase replayed
+  from the last checkpoint at or before the first pop the change can move, and every later
+  phase skipped with its cached span unless it touches a rid the replay moved between streams;
+  `_dispatch` became the one-shot form of `_PhaseDispatch.run`, the one dispatch loop the
+  executors and the replay share (1,520 placements byte-identical to the parent); the sweep
+  reads the candidate map `optimize` built and the artifact the placer holds, and keeps the
+  full re-placement as the reference (`delta=False`) the tests hold it to. Outcomes:
+  `optimize_scheduled.slowdown.512` 6.4x -> 3.5x (A/B on one idle host: under the 4x bound),
+  the general case 44.5x -> 4.7x (605 -> 67 ms), `sweep.replacement.fraction` 1.0 -> 0.0625
+  (one phase of sixteen, at the bound); identical assignment, step costs, price and artifact on 1,344
+  (fixture, target, Theta, policy) cases; the placer equals `schedule_eft` on 6,840 random
+  trials and 1,690 adoptions. Not claimed: a sub-linear replay inside one phase of independent
+  claims (the single-phase general fixture goes 44x -> 27x); the `-bcir-overlap-optimize`
+  port re-places per trial and still matches the oracle's (makespan, serial) -- the results are
+  what parity holds, not the cost.
 
 ---
 

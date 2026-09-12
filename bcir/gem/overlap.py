@@ -41,7 +41,7 @@ from ..kbcir.realize import (
 )
 from ..kbcir.weights import PERF, Policy, weights
 from .concurrency import _is_sparse, _topo_phase_ids, _wave_indices
-from .schedule import GemSchedule, phase_hazards, schedule_eft, schedule_plan
+from .schedule import EftPlacer, GemSchedule, phase_hazards, schedule_eft, schedule_plan
 
 
 @dataclass(frozen=True)
@@ -183,7 +183,13 @@ def price_waves_legacy(
 
 
 def optimize_scheduled(
-    module: Module, h, theta, policy: Policy = PERF
+    module: Module,
+    h,
+    theta,
+    policy: Policy = PERF,
+    *,
+    delta: bool = True,
+    stats: dict | None = None,
 ) -> tuple[RealizationResult, ScheduledPrice]:
     """Select -> schedule -> re-price, iterated once.
 
@@ -194,9 +200,20 @@ def optimize_scheduled(
     SHORTENS a step it touches -- its own, or its textual successor's through the
     context coupling -- is placed and compared: a step that only lengthens cannot
     lower the makespan except through a list-scheduling anomaly, which is not a
-    property of the plan. The hazard DAG is built once; each trial re-prices two
-    steps and re-places. Returns the plan (serial-repriced, so verify_plan R9 holds)
+    property of the plan. Returns the plan (serial-repriced, so verify_plan R9 holds)
     and its scheduled price -- the same artifact `price_scheduled` reads.
+
+    The search is priced incrementally (G2 / S2-A): the base placement is recorded once
+    by `schedule.EftPlacer`, and a trial re-places only what its two changed steps can
+    reach -- the affected phase from the checkpoint before the first changed claim
+    entered the ready heap, and the later phases only when they touch a rid the replay
+    moved between streams. `delta=False` is the reference: every trial re-places the
+    whole module with `schedule_eft`, and the tests hold the two to the same assignment
+    claim by claim and the same price. The candidate map is the one `optimize` built
+    (no second fusion pass), and the price at the end is read from the placer's records
+    (no re-placement of an artifact already placed). `stats`, when given, receives the
+    sweep's census: `claims`, `trials` (alternatives placed), `adopted`, and `pops` (claims
+    re-placed by those trials -- every trial re-places all `claims` without delta pricing).
     """
     from ..kbcir.realize import fused_candidates, optimize
 
@@ -207,7 +224,9 @@ def optimize_scheduled(
     if len(flat) != len(result.steps):
         raise ValueError("the serial optimum does not cover the module (R9 coverage)")
 
-    cand_map = fused_candidates(module, h)  # fusion-aware alternatives (consistent costs)
+    cand_map = result.cand_map  # fusion-aware alternatives (consistent costs), built once
+    if cand_map is None:
+        cand_map = fused_candidates(module, h)
     w_of = {pid: weights(h, theta, pid, policy) for pid, _claim in flat}
     assignment = dict(result.by_claim())
     cands = [assignment[claim.id] for _pid, claim in flat]
@@ -220,8 +239,26 @@ def optimize_scheduled(
     costs = [step_cost(i, cands[i], cands[i - 1] if i else None) for i in range(n)]
     durations = {ids[i]: max(0, costs[i]) for i in range(n)}
     hazards = phase_hazards(module)
-    best_m = schedule_eft(module, durations, h, hazards=hazards).makespan
+    placer = EftPlacer(module, durations, h, hazards=hazards) if delta else None
+
+    def price(changes: dict[int, int]) -> int:
+        """The makespan with `changes` applied to the current durations (not adopted)."""
+        if placer is not None:
+            return placer.trial(changes)
+        saved = {cid: durations[cid] for cid in changes}
+        durations.update(changes)
+        try:
+            return schedule_eft(module, durations, h, hazards=hazards).makespan
+        finally:
+            durations.update(saved)
+
+    best_m = (
+        placer.makespan
+        if placer is not None
+        else schedule_eft(module, durations, h, hazards=hazards).makespan
+    )
     changed = False
+    trials = adopted = pops = 0
     for i in range(n):
         current = cands[i]
         best_cand, best_trial, best_costs = current, best_m, (costs[i], None)
@@ -234,27 +271,42 @@ def optimize_scheduled(
             shorter = cost_i < costs[i] or (cost_next is not None and cost_next < costs[i + 1])
             if not shorter:
                 continue
-            saved = (durations[ids[i]], durations[ids[i + 1]] if cost_next is not None else None)
-            durations[ids[i]] = max(0, cost_i)
+            changes = {ids[i]: max(0, cost_i)}
             if cost_next is not None:
-                durations[ids[i + 1]] = max(0, cost_next)
-            m = schedule_eft(module, durations, h, hazards=hazards).makespan
-            durations[ids[i]] = saved[0]
-            if cost_next is not None:
-                durations[ids[i + 1]] = saved[1]
+                changes[ids[i + 1]] = max(0, cost_next)
+            m = price(changes)
+            trials += 1
+            if placer is None:
+                pops += n
             if m < best_trial:  # strict: the first alternative reaching the new minimum wins
                 best_cand, best_trial, best_costs = alt, m, (cost_i, cost_next)
         if best_cand is not current:  # commit (carry the adoption into later claims' sweeps)
             cands[i] = best_cand
             assignment[ids[i]] = best_cand
             costs[i] = best_costs[0]
-            durations[ids[i]] = max(0, costs[i])
+            changes = {ids[i]: max(0, costs[i])}
             if best_costs[1] is not None:
                 costs[i + 1] = best_costs[1]
-                durations[ids[i + 1]] = max(0, costs[i + 1])
+                changes[ids[i + 1]] = max(0, costs[i + 1])
+            durations.update(changes)
+            if placer is not None:
+                placer.adopt(changes)
+            else:
+                pops += n
             best_m = best_trial
             changed = True
+            adopted += 1
 
+    if stats is not None:
+        stats.update(
+            claims=n,
+            trials=trials,
+            adopted=adopted,
+            pops=placer.pops if placer is not None else pops,
+        )
     if changed:
         result = _serial_result(module, assignment, h, theta, policy)
-    return result, price_scheduled(module, result, h, theta, policy)
+    if placer is None:
+        return result, price_scheduled(module, result, h, theta, policy)
+    sched = placer.schedule()  # the artifact of the final durations, from the records
+    return result, ScheduledPrice(makespan=sched.makespan, serial=result.score, schedule=sched)

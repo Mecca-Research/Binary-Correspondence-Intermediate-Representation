@@ -214,3 +214,16 @@ def test_the_memory_rows_sit_on_the_proof_rail() -> None:
     rows = {r["key"]: r for r in compare(measured, same_host=False)}
     for key in measured:
         assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+
+
+def test_the_general_case_rows_are_measured_through_the_sweep():
+    """G2 / S2-A: the general-case rows come from the real sweep over the shared fixture --
+    the replacement fraction is exact (one phase of sixteen per trial, at the bound) and the
+    two timing rows are the same measurement's numbers."""
+    from tools.perf.gemplus_baseline import measure_planner
+
+    out = measure_planner()
+    assert out["sweep.replacement.fraction"] <= 1 / 16 + 1e-12
+    assert out["optimize_scheduled.general.512"] > 0
+    assert out["optimize_scheduled.general.slowdown.512"] > 0
+    assert out["optimize_scheduled.slowdown.512"] > 0

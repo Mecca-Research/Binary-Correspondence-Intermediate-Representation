@@ -47,6 +47,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     ),
     "overlap": ("ScheduledPrice", "optimize_scheduled", "price_scheduled", "price_waves_legacy"),
     "schedule": (
+        "EftPlacer",
         "GemSchedule",
         "SCHEDULE_MODES",
         "Slot",

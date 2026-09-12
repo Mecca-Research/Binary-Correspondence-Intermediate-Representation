@@ -233,7 +233,7 @@ costs, the sum of the durations is the serial bound, and R9 holds by constructio
 This is a **correctness** metric wearing a performance costume. Any value but 1.0 means
 `M(π,Θ)` denotes two things, and no certificate above TMSAO-4 is possible while it does.
 
-### G2 — incremental delta pricing
+### G2 — incremental delta pricing — **landed (S2-A, 2026-09-13)**
 
 *Report P1.4. The largest visible win in the baseline.*
 
@@ -242,10 +242,12 @@ contributions and reprice only the affected chain.
 
 | Gate | Baseline | Target | Headroom today |
 |---|---|---|---|
-| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A** (36.2% to the harness bound of 4×) |
-| `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | **83 ms after S1-A** (1,148 ms on the same host before it; indicative) |
-| `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | **29 ms after S1-A** (287 ms before; indicative) |
-| `exact` The plan chosen is unchanged | — | **identical assignment** |
+| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A**; **3.5× after S2-A** (A/B on one idle host, 6.4× → 3.5×: the price read from the placer's records instead of a second placement, the candidate map built once) — under the harness bound of 4×; the last of the fixed overhead is the serial chain's O(n²) hazard edges |
+| `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | **83 ms after S1-A**, **60 ms after S2-A** (98 → 60 ms A/B on one host; 1,148 ms on the same host before S1-A; indicative) |
+| `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | **29 ms after S1-A**, **23 ms after S2-A** (35 → 23 ms A/B; 287 ms before S1-A; indicative) |
+| `exact` The plan chosen is unchanged | — | **identical assignment** | **met**: the delta search returns the reference sweep's assignment claim by claim, with the same step costs, price and artifact, on 1,344 (fixture, target, Θ, policy) cases — 12 corpus programs, the harness fixtures, the general-case and adoption fixtures and 40 generated hazard-bearing modules |
+| `ratio` `optimize_scheduled.general.slowdown.512` (the general case: 256 step-shortening trials, 16 phases) | 44.5× (S1-D, this host) | ≤ 8× | **4.7×** (605 → 67 ms A/B on one host) |
+| `exact` `sweep.replacement.fraction` (claims re-placed per trial / claims) | 1.0 | the affected phase (1/16) | **0.0625**, at the bound |
 
 The last row is the one that matters. A faster sweep that picks a *different* plan has not
 been made faster; it has been changed. Delta pricing must be an exact refactor of the same
@@ -260,8 +262,32 @@ which is not a property of the plan). The assignment is identical to the exhaust
 the 11 corpus programs, the 256- and 512-claim harness fixtures and 150 generated modules under
 cool and hot Θ and two policies — and in every one of those cases both sweeps return the serial
 optimum, because under the coupled cost model a wider lane is never longer for its own step and
-the successor coupling does not distinguish vector widths. What remains for G2 is the general
-case — many step-shortening trials — where each trial still re-places the whole module.
+the successor coupling does not distinguish vector widths. What remained for G2 was the general
+case — many step-shortening trials — where each trial still re-placed the whole module.
+
+S2-A closed it with the report's own mechanism, made exact. The general case is reachable with
+the real cost model: under the ENERGY policy a 64-element claim's scalar realization is cheaper
+for its own step than vec8, but the serial optimum picks vec8 when a large vector successor
+shares a read operand (the locality discount on the successor outweighs the claim's own extra
+cost), so the scalar alternative shortens its own step and the sweep must place it —
+`bcir/tests/sweep_fixtures.general_fixture` has one such trial per pair of claims, 256 trials at
+512 claims, and measured RED at 44.5× the serial pass with every trial re-placing all 512
+claims. `gem.schedule.EftPlacer` records the base placement once — per phase: the span, the
+residency at entry and exit, the pop order — and prices a trial as the cached prefix, the
+changed phase replayed from the last checkpoint at or before the first pop the change can move
+(the pop order is a function of the hazard edges and the durations alone: a shortened claim is
+popped no earlier than before, a lengthened one at the first base pop whose key its new key
+beats), and every later phase skipped with its cached span unless it touches a rid the replay
+moved between streams. The dispatch itself is one predicate (`_PhaseDispatch.run`, of which
+`_dispatch` is the one-shot form) so `schedule_eft`, `execute_tokens` and the replay cannot
+drift, and the placer's `schedule()` is `schedule_eft`'s artifact on every fixture, trial and
+adoption (6,840 random trials, 1,690 adoptions). The sweep also stopped paying for what it
+already had: the candidate map `optimize` built and the final artifact the placer holds. Not
+claimed: a sub-linear replay inside one phase of independent claims — there the LPT order puts
+a lengthened successor first and the placement is inherently sequential (the single-phase
+general fixture goes 44× → 27×); the phase-level mechanism is what the report named, and the
+harness fixture's residual is the serial chain's O(n²) hazard edges, which the dispatch reads
+once per placement.
 
 ### G3 — canonical digest computed once — **landed (S1-B, 2026-09-12)**
 
@@ -692,7 +718,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
-Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); next G4 (S2-B)
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
@@ -736,7 +762,8 @@ no PMU):
 | Row | Slice | Baseline | Today | Verdict |
 |---|---|---:|---:|---|
 | `pricing.eft.divergence` | G1 | 1.9922 | **1.0** (S1-A, 2026-09-05) | GAIN, at the bound — one artifact; the retired pricer still reads 1.9922 on the fixture as the witness |
-| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) | GAIN — the mechanism is named under G2; 36% of headroom to the 4× bound remains |
+| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) → **3.5×** (S2-A, 2026-09-13) | GAIN — under the 4× bound (A/B on one idle host); the residual is the serial chain's O(n²) hazard edges |
+| `optimize_scheduled.general.slowdown.512` / `sweep.replacement.fraction` | G2 | 44.5× / 1.0 (S1-D, this host) | **4.7× / 0.0625** (S2-A, 2026-09-13) | GAIN, the fraction at the bound — 256 step-shortening trials each re-place one phase of sixteen; the assignment is the reference sweep's claim by claim |
 | `static_memory.digests.2048` | G3 | 3 | **1** (S1-B, 2026-09-12) | GAIN, at the bound — one digest per plan-and-verify chain; the verifier still recomputes at a trust boundary |
 | `plan.abi.mismatches` / `plan.readers.disagreements` / `plan.stale.accepted` / `plan.malformed.accepted` | G11 | 26 / 27 / 6 / 39 | **0 / 0 / 0 / 0** (S1-C, 2026-09-12) | GAIN, at the bound — the plan has bytes: every corpus plan survives the C twin, every reader reproduces its trace from the bytes, every stale and malformed fixture is refused on every rail that can see it |
 | `memory.suboptimal.fraction` / `memory.worst.ratio` / `memory.real.bytes` | G5 | 38.6% / 1.6154× / 1,344 B | **0% / 1.0 / 832 B** (S1-D, 2026-09-12) | GAIN, at the bound — the bounded exact solver proves every corpus fixture and the witness reproduces the report's worst case; the two-phase alias fixture is refused against the token placement and gets disjoint storage when planned from it |
