@@ -3767,6 +3767,180 @@ def catalog_path_column() -> str:
 # --------------------------------------------------------------------------
 
 
+def check_staging_is_not_a_generation(report: Report, generations, chunk_dir: Path) -> None:
+    """A publish that never landed is not listed as one that did.
+
+    `publish` writes the manifest into `.staging-<id>/` and only then renames, so a
+    process killed in that window leaves a complete manifest under a name that was
+    never published -- and `SIGKILL`, an OOM kill and a power loss all skip the
+    `except BaseException` that would have cleaned it up. `listing` accepted any
+    directory holding a manifest, and took the id from the manifest's payload rather
+    than from the directory, so the phantom was reported under the real id, which
+    `read` could not then open. The catalogue of generations advertised one that
+    does not exist.
+
+    The fixture stages a real generation and moves it back, rather than killing a
+    process: what is being checked is what `listing` does with the directory a crash
+    leaves, and that is a property of the directory.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory) / "generations"
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        published = generations.publish(root, mirror, label="staging-probe")
+        listed = [g.generation_id for g in generations.listing(root)]
+        report.require(
+            listed == [published.generation_id],
+            f"anti-vacuity: a freshly published generation listed as {listed}, so the "
+            "comparison below is not against a working listing",
+        )
+
+        # Put it back where a killed publish would have left it.
+        staged = root / f".staging-{published.generation_id}"
+        (root / published.generation_id).rename(staged)
+        report.require(
+            (staged / generations.MANIFEST_FILE).is_file(),
+            "anti-vacuity: the staged fixture holds no manifest, so `listing` would "
+            "skip it for a reason other than the one under test",
+        )
+        report.require(
+            generations.listing(root) == [],
+            f"S6-staging: {staged.name} was never published and is listed as a generation",
+        )
+
+
+def check_durability(report: Report, catalog_module, generations, chunk_dir: Path) -> None:
+    """Every file a publish commits reaches the disk, on both rails.
+
+    Atomicity and durability are different claims, and only one of them was
+    checked. `catalog.py` fsyncs each artifact, the sets directory, the `CURRENT`
+    temporary and the root; `generations.py` contained no `os.fsync` at all, so a
+    generation's chunk copies (`shutil.copy2`), its manifest (`write_text`) and its
+    `CURRENT` pointer reached the page cache and stopped there. An atomic rename
+    over contents the kernel has not written down survives no crash it was meant to
+    (L14 -- the mechanism landed on the rail it was written for and not on the one
+    wrapping it).
+
+    Checked by recording what is actually synced, because the alternative is
+    grepping for the call and believing it: `os.fsync` is wrapped for the duration
+    of one real publish and every descriptor it is handed is resolved back to a
+    path.
+    """
+    import os as _os
+
+    synced: list[str] = []
+    real_fsync = _os.fsync
+
+    def recording(descriptor):
+        try:
+            synced.append(_os.readlink(f"/proc/self/fd/{descriptor}"))
+        except OSError:
+            synced.append("<unresolved>")
+        return real_fsync(descriptor)
+
+    if not Path("/proc/self/fd").is_dir():
+        report.skip(
+            "durability: this host has no /proc/self/fd, so a synced descriptor cannot "
+            "be resolved back to the path it names"
+        )
+        return
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory) / "generations"
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        _os.fsync = recording
+        try:
+            generations.publish(root, mirror, label="durability")
+        finally:
+            _os.fsync = real_fsync
+
+    report.require(
+        len(synced) >= 10,
+        f"anti-vacuity: one publish synced {len(synced)} descriptor(s), too few for "
+        "the comparisons below to mean anything",
+    )
+    chunk_syncs = [path for path in synced if "/chunks/" in path and path.endswith(".jsonl")]
+    report.require(
+        chunk_syncs,
+        "durability: a generation copied its chunk files and synced none of them, so "
+        "the rename that publishes them commits whatever the page cache had",
+    )
+    report.require(
+        any(path.endswith(generations.MANIFEST_FILE) for path in synced),
+        f"durability: the generation manifest was never synced; {len(synced)} other "
+        "descriptor(s) were",
+    )
+    report.require(
+        any(f"/.{generations.CURRENT_FILE}.tmp-" in path for path in synced),
+        "durability: the CURRENT pointer was renamed into place without being written down first",
+    )
+    report.require(
+        any("/catalog/" in path for path in synced),
+        "anti-vacuity: the catalog inside the generation synced nothing, so the "
+        "recorder is not seeing the rail that was already correct",
+    )
+
+
+def check_incomplete_set_is_repairable(report: Report, catalog_module, chunk_dir: Path) -> None:
+    """A set left incomplete by an interrupted publish is repaired by a rebuild.
+
+    `_set_is_complete` exists to notice one, and its docstring says such a set "is
+    republished instead of pointed at". It was not: the rename that would have
+    republished it cannot land on a non-empty directory, so the branch re-raised
+    `ENOTEMPTY` and every future rebuild died with a raw `OSError` -- the recovery
+    path wedged by the very condition it was written for, reported as a traceback
+    rather than a verdict (L1).
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        mirror = Path(directory) / "chunks"
+        shutil.copytree(chunk_dir, mirror)
+        out = Path(directory) / "catalog"
+        catalog_module.write(catalog_module.build(mirror), out)
+        published = catalog_module.current_set(out)
+        artifacts = sorted(path.name for path in published.iterdir())
+        report.require(
+            len(artifacts) >= 5,
+            f"anti-vacuity: the published set holds {len(artifacts)} artifact(s)",
+        )
+
+        truncated = published / catalog_module.NUMERIC_FILE
+        before = truncated.read_bytes()
+        report.require(
+            len(before) > 0,
+            f"anti-vacuity: {truncated.name} is already empty, so truncating it changes nothing",
+        )
+        truncated.write_bytes(b"")
+
+        try:
+            catalog_module.write(catalog_module.build(mirror), out)
+        except Exception as exc:  # noqa: BLE001 - what escapes here is the finding
+            report.require(
+                False,
+                f"S13-repair: rebuilding over an incomplete set raised "
+                f"{type(exc).__name__}: {str(exc)[:140]}",
+            )
+            return
+        repaired = catalog_module.current_set(out)
+        report.require(
+            (repaired / catalog_module.NUMERIC_FILE).read_bytes() == before,
+            "S13-repair: the rebuild left the truncated artifact in place, so the set the "
+            "pointer names is still incomplete",
+        )
+        report.require(
+            sorted(path.name for path in repaired.iterdir()) == artifacts,
+            "S13-repair: the repaired set does not hold the artifacts the first one did",
+        )
+        report.require(
+            not [
+                path
+                for path in (out / catalog_module.SETS_DIR).iterdir()
+                if path.name.startswith(".stale-")
+            ],
+            "S13-repair: the repair left a .stale- directory behind",
+        )
+
+
 def check_atomic_publish(report: Report, catalog_module, chunk_dir: Path) -> None:
     """A reader resolves to a complete set at every point a publish can be cut.
 
@@ -4337,7 +4511,12 @@ def _run(report: Report, search, catalog_module, plan, generations, args) -> int
     report.run("S5", check_parts, report, catalog_module, catalog, args.chunks)
     report.run("S5-incremental", check_incremental, report, args.chunks)
     report.run("S6", check_generations, report, generations, args.chunks)
+    report.run("S6-staging", check_staging_is_not_a_generation, report, generations, args.chunks)
     report.run("S13", check_atomic_publish, report, catalog_module, args.chunks)
+    report.run(
+        "S13-repair", check_incomplete_set_is_repairable, report, catalog_module, args.chunks
+    )
+    report.run("durability", check_durability, report, catalog_module, generations, args.chunks)
     report.run("S18", check_plan_baseline, report, catalog)
 
     if args.require_native and report.skips:

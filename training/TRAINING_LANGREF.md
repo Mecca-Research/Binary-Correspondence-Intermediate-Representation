@@ -765,7 +765,7 @@ actually registers, in both directions, because a list mirrored by hand drifts
 `reserved character`, `estimates`, `coverage`, `S4-prefix`, `S8-intervals`,
 `pagination`, `require-native`, `set-catalog`, `S7-ranges`, `S7-presence`,
 `S7-groups`, `ordering`, `planner`, `order strategy`, `explain`, `S5`,
-`S5-incremental`, `S6`, `S13`, `S18`.
+`S5-incremental`, `S6`, `S6-staging`, `S13`, `S13-repair`, `durability`, `S18`.
 
 ### 16.1 What a gate here must do
 
@@ -883,6 +883,9 @@ Landed with their fixes, each caught by a named check thereafter:
 | artifact digests | the set records four digests and one reader dereferenced one of them: the index was read on the manifest's word, the codes on a length check, `vectors.f32` on nothing | #784 |
 | kernel rejection | a kernel that loaded and then refused its arguments raised the same class as a missing compiler, so `--top-k 2000` printed "native backend unavailable" and exited 0 | #784 |
 | OFFSET witness | the only check naming OFFSET compared `full[o:o+k]` against `full[o:][:k]` — an identity of Python slicing, so it could not be handed False | #784 |
+| generation durability | `generations.py` held no `fsync` at all, so a generation's chunk copies, manifest and `CURRENT` pointer were renamed into place over contents the kernel had not written down (§10.2) | #784 |
+| phantom generation | a publish killed at its final rename left `.staging-<id>/` holding a complete manifest, and `listing` reported it under the real id — which `read` could not then open | #784 |
+| wedged repair | a set left incomplete by an interrupted publish could never be republished: the rename that would repair it cannot land on a non-empty directory, so every later rebuild died with a raw `OSError` | #784 |
 
 ---
 

@@ -164,6 +164,27 @@
       "new": "        window = ordered[: args.top_k]",
       "old": "        window = ordered[args.offset : args.offset + args.top_k]",
       "path": "training/tools/search_chunks.py"
+    },
+    {
+      "expects": "durability",
+      "label": "a generation is renamed into place before its bytes are written down",
+      "new": "",
+      "old": "        _sync_tree(staging)\n",
+      "path": "training/tools/generations.py"
+    },
+    {
+      "expects": "S13-repair",
+      "label": "an incomplete set wedges the rebuild that would repair it",
+      "new": "            if False and destination.exists() and not _set_is_complete(destination, payloads):",
+      "old": "            if destination.exists() and not _set_is_complete(destination, payloads):",
+      "path": "training/tools/catalog.py"
+    },
+    {
+      "expects": "S6-staging",
+      "label": "a killed publish's staging directory is listed as a generation",
+      "new": "        if not entry.is_dir():",
+      "old": "        if entry.name.startswith(\".\") or not entry.is_dir():",
+      "path": "training/tools/generations.py"
     }
   ],
   "gate": "training/tools/verify_database.py",

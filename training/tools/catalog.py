@@ -867,18 +867,40 @@ def write(built: tuple[dict, dict, bytes, str, bytes, bytes], root: Path = DEFAU
             for artifact, payload in sorted(payloads.items()):
                 _publish(staging, artifact, payload)
             _sync_directory(staging)
+            # An incomplete set already standing at `destination` is the case the
+            # check above just detected, and the rename cannot land on a non-empty
+            # directory -- so the branch meant to *repair* it used to re-raise
+            # `ENOTEMPTY` and wedge every future rebuild with a traceback. The
+            # incomplete one is moved aside first, atomically, so no reader ever
+            # observes a gap where the set was, and the rename then has somewhere
+            # to land. `_set_is_complete` is asked again rather than trusted from
+            # above, because the answer can change between the two (L3: the check
+            # belongs where the work commits).
+            aside = None
+            if destination.exists() and not _set_is_complete(destination, payloads):
+                aside = sets / f".stale-{name}-{os.getpid()}"
+                shutil.rmtree(aside, ignore_errors=True)
+                os.replace(destination, aside)
             try:
                 os.replace(staging, destination)
-            except OSError:
-                # Another writer published this same content-addressed set between the
-                # check above and this rename. POSIX and Windows disagree about
-                # renaming onto a directory that now exists, so the outcome is decided
-                # here rather than by the host (`docs/security/laws.md` L12). The name
-                # is the content, so if what is in place is complete this publish
-                # already happened; if it is not, the refusal stands.
+            except OSError as exc:
+                # Another writer published this same content-addressed set between
+                # the check above and this rename. POSIX and Windows disagree about
+                # renaming onto a directory that now exists, so the outcome is
+                # decided here rather than by the host (`docs/security/laws.md`
+                # L12). The name is the content, so if what is in place is complete
+                # this publish already happened; if it is not, the refusal stands --
+                # as a verdict rather than as a raw `OSError` (L1).
                 if not _set_is_complete(destination, payloads):
-                    raise
+                    raise CatalogError(
+                        f"catalog: could not publish {name} into {destination}: {exc}\n"
+                        f"  what is there is not the set this build produced; remove "
+                        f"{destination} and rebuild"
+                    ) from exc
                 shutil.rmtree(staging, ignore_errors=True)
+            finally:
+                if aside is not None:
+                    shutil.rmtree(aside, ignore_errors=True)
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)
             raise

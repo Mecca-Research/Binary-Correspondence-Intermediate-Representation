@@ -157,8 +157,27 @@ def listing(root: Path) -> list[Generation]:
         return []
     found = []
     for entry in sorted(root.iterdir()):
-        if entry.is_dir() and (entry / MANIFEST_FILE).is_file():
-            found.append(read(root, entry.name))
+        # A dot-prefixed directory is staging, not a generation. `publish` writes the
+        # manifest into `.staging-<id>/` and only then renames, so a process killed in
+        # that window -- SIGKILL, OOM, power loss, none of which run the `except`
+        # clause below -- leaves a complete manifest under a name that was never
+        # published. This listed it under the real id, which `read` then could not
+        # open, so the catalogue of generations advertised one that does not exist.
+        if entry.name.startswith(".") or not entry.is_dir():
+            continue
+        if not (entry / MANIFEST_FILE).is_file():
+            continue
+        generation = read(root, entry.name)
+        # And the name must be the id. A generation is content-addressed, so a
+        # directory whose manifest names something else is not a generation under a
+        # different name -- it is a manifest somebody moved (L1: say so rather than
+        # list it as though the two agreed).
+        if generation.generation_id != entry.name:
+            raise GenerationError(
+                f"generations: {entry} holds a manifest naming "
+                f"{generation.generation_id!r}; a generation's directory is its id"
+            )
+        found.append(generation)
     by_id = {generation.generation_id: generation for generation in found}
     ordered: list[Generation] = []
     remaining = dict(by_id)
@@ -288,6 +307,13 @@ def publish(
             encoding="utf-8",
             newline="\n",
         )
+        # Durability, through `catalog`'s helpers rather than a second copy of them.
+        # The catalog inside this generation was published with fsync at every step;
+        # the chunks beside it and the manifest above them were not, so a crash could
+        # leave a generation whose directory entry exists and whose contents are
+        # whatever the page cache had got to -- the half of the ACID publish that
+        # landed on one rail and not on the one wrapping it (L14).
+        _sync_tree(staging)
         try:
             os.replace(staging, destination)
         except OSError:
@@ -301,6 +327,7 @@ def publish(
             if not (destination.is_dir() and verify(root, generation_id)):
                 raise
             shutil.rmtree(staging, ignore_errors=True)
+        catalog_module._sync_directory(root)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -309,13 +336,40 @@ def publish(
     return read(root, generation_id)
 
 
+def _sync_tree(directory: Path) -> None:
+    """fsync every file under `directory`, then the directories holding them.
+
+    `catalog._publish` does this per artifact and `catalog._sync_directory` does the
+    directory half; this is the same discipline over a staged generation, whose
+    chunk copies and manifest were written with `shutil.copy2` and `write_text` and
+    therefore reached the page cache and no further.
+    """
+    for path in sorted(directory.rglob("*")):
+        if not path.is_file():
+            continue
+        with path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    for path in sorted(directory.rglob("*"), reverse=True):
+        if path.is_dir():
+            catalog_module._sync_directory(path)
+    catalog_module._sync_directory(directory)
+
+
 def _point_at(root: Path, generation_id: str) -> None:
-    """Move `CURRENT` atomically. The pointer is the only mutable thing here."""
+    """Move `CURRENT` atomically. The pointer is the only mutable thing here.
+
+    Flushed and fsynced like `catalog._point_at`, which is the same function: a
+    pointer that survives the crash its atomic rename exists to survive has to
+    reach the disk, not the page cache.
+    """
     descriptor, temporary = tempfile.mkstemp(prefix=f".{CURRENT_FILE}.tmp-", dir=root)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(generation_id + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, root / CURRENT_FILE)
+        catalog_module._sync_directory(root)
     except BaseException:
         try:
             os.unlink(temporary)
