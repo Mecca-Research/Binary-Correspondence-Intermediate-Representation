@@ -610,9 +610,11 @@ or `training/tools/` imports it anywhere else — the same shape as
 One gateable slice per PR, id in the title, RED before GREEN, a fault entry in
 `tools/testing/faults/training-unicode.json` per new check, exact gate output
 in the PR body. Every check group named below is registered in
-`verify_unicode.py`, listed in `UNICODE_LANGREF.md` §16, and reconciled both
-ways by `verify_unicode_langref.py` — the `check_check_groups` discipline
-`verify_langref.py` already enforces for the chunk table.
+`verify_unicode.py`, listed in the gates section of `UNICODE_LANGREF.md` (the
+normative document UC-1 opens, §5.5; its §16 mirrors `TRAINING_LANGREF.md`
+§16), and reconciled both ways by `verify_unicode_langref.py` — the
+`check_check_groups` discipline `verify_langref.py` already enforces for the
+chunk table.
 
 ### UC-1 — the pins, the fetch tool, and the source tree
 
