@@ -134,6 +134,53 @@ def test_no_gate_pipes_a_writer_into_an_early_exiting_reader_under_pipefail() ->
     assert seen >= 2, f"expected the two SIMD gates to disassemble; found {seen}"
 
 
+def test_no_workflow_step_pipes_a_network_fetch_into_another_command() -> None:
+    """A pipeline's status is its last command's, so a piped fetch cannot fail.
+
+    Both LLVM jobs installed apt.llvm.org's signing key with
+
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+          | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+
+    and `tee` succeeds on an empty stream. A failed fetch therefore wrote an empty
+    keyring, the step passed, and `apt-get update` twenty lines later reported
+
+        NO_PUBKEY 15CF4D18AF4F7421
+        E: The repository '...llvm-toolchain-noble-22 InRelease' is not signed.
+
+    which reads as an upstream signing problem and was this workflow's own swallowed
+    error -- the same step had passed fifteen minutes earlier on the previous commit,
+    with the same key. `set -o pipefail` is not available here either: a GitHub `run:`
+    block is `bash -e`, not `bash -eo pipefail`.
+
+    So the shape is refused. Fetch to a file, check the file, then use it -- which is
+    what `tools/ci/add_llvm_apt_repo.sh` does for both jobs (L14: the copies had
+    already begun to matter, because the defect was in both and surfaced in one).
+
+    Declared scope: a literal `curl` or `wget` followed by a `|` on the same line of a
+    workflow file. A fetch assembled at run time, or split across a continuation so
+    the pipe lands on the next line, is out of scope and belongs to a shell linter;
+    inside the scope this is exact and does not grow.
+    """
+    offender = re.compile(r"\b(?:curl|wget)\b[^|#\n]*\|")
+    workflows = sorted((_ROOT / ".github" / "workflows").glob("*.yml"))
+    assert len(workflows) >= 1, "no workflow files found; this check would pass vacuously"
+    scanned = 0
+    for workflow in workflows:
+        for number, line in enumerate(workflow.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            scanned += 1
+            assert not offender.search(line), (
+                f"{workflow.relative_to(_ROOT)}:{number} pipes a network fetch into "
+                "another command, so the fetch's exit status is discarded and a "
+                "failed download becomes a confusing error further down. Fetch to a "
+                "file, check it, then use it.\n  " + stripped
+            )
+    assert scanned >= 200, f"only {scanned} workflow line(s) scanned; the walk is not covering them"
+
+
 def test_no_source_hand_declares_a_libc_function() -> None:
     """The #699 bug, refused by shape rather than caught on a phone.
 

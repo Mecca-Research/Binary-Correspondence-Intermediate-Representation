@@ -731,20 +731,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Add the apt.llvm.org signed repo + harden apt (LLVM 23)
-        # Same pattern as mlir-rail-validate: Ubuntu's default repos top out near 18/19, so
-        # the latest release comes from apt.llvm.org. Harden apt FIRST (retries + per-source
-        # timeout + drop the ESM/Pro and Microsoft/azure sources that hard-fail apt-get
-        # update with 403), then update so the install action can resolve llvm-23 names.
-        run: |
-          . /etc/os-release
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-23 main" \
-            | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
-          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
-          sudo apt-get update
+        # One script for both jobs (`tools/ci/add_llvm_apt_repo.sh`): fetch and *verify*
+        # apt.llvm.org's signing key, add the repo, drop the ESM/Pro and Microsoft/azure
+        # sources that hard-fail apt-get update with 403, then update so the install
+        # action can resolve llvm-23 names. The copies this replaced discarded the key
+        # fetch's exit status through a pipe -- see the script's header.
+        run: bash tools/ci/add_llvm_apt_repo.sh 23
 
       - name: Install the LLVM 23 corpus toolchain (cached installed-tree)
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
@@ -951,23 +943,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Add the apt.llvm.org signed repo + harden apt (LLVM ${{ matrix.llvm }})
-        # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries it (the repo
-        # llvm.sh would add). Harden apt against mirror hangs FIRST (retries + a 20s per-source
-        # timeout + no translation indexes; drop the slow ESM/Pro sources AND the pre-installed
-        # Microsoft/azure runner repos, which began returning 403 "no longer signed" and hard-fail
-        # `apt-get update` (exit 100) -- BCIR needs neither), then `apt-get update`
-        # so the install action -- whose package-name resolution runs against the CURRENT lists,
-        # before any update of its own -- can find the llvm-${{ matrix.llvm }}/mlir packages.
-        run: |
-          . /etc/os-release                                       # VERSION_CODENAME (e.g. noble)
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
-          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-${{ matrix.llvm }} main" \
-            | sudo tee /etc/apt/sources.list.d/llvm.list >/dev/null
-          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
-          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
-          sudo apt-get update   # the install action resolves names against existing lists -- needed
+        # The latest LLVM/MLIR is not in Ubuntu's default repos; apt.llvm.org carries it.
+        # Shared with the LLVM 23 corpus job -- see `tools/ci/add_llvm_apt_repo.sh`, which
+        # also explains why the key fetch is checked rather than piped.
+        run: bash tools/ci/add_llvm_apt_repo.sh ${{ matrix.llvm }}
 
       - name: Install MLIR ${{ matrix.llvm }} toolchain + dev libs (cached installed-tree)
         # Install ONLY what the rail needs -- the MLIR/LLVM dev libs + tools (mlir-opt / mlir-tblgen
