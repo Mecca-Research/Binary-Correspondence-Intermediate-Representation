@@ -240,9 +240,11 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       steps          [8] SEQUENCE OF PlanStep,
       lifetimes      [9] SEQUENCE OF Lifetime     DEFAULT {},
       moves         [10] SEQUENCE OF MovementEdge DEFAULT {},
-      generations   [11] SEQUENCE OF Generation   DEFAULT {} }
+      generations   [11] SEQUENCE OF Generation   DEFAULT {},
+      liveness      [12] Liveness DEFAULT phase }
 
-  Mode ::= ENUMERATED { eft(0), tokens(1) }
+  Mode     ::= ENUMERATED { eft(0), tokens(1) }
+  Liveness ::= ENUMERATED { phase(0), schedule(1) }
 
   PlanStep ::= SEQUENCE {
       claimId        [0] INTEGER,
@@ -264,7 +266,9 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       sizeBytes      [3] INTEGER,
       alignment      [4] INTEGER DEFAULT 1,
       firstPhase     [5] INTEGER DEFAULT 0,
-      lastPhase      [6] INTEGER DEFAULT 0 }
+      lastPhase      [6] INTEGER DEFAULT 0,
+      firstTick      [7] INTEGER DEFAULT 0,
+      lastTick       [8] INTEGER DEFAULT 0 }
 
   MovementEdge ::= SEQUENCE {
       rid            [0] INTEGER,
@@ -296,8 +300,11 @@ The choices that are not obvious: a step's `cost` and the tail `stream` (the sch
 are signed and stay INTEGER, where the native wire spells them as two's complement and
 `0xFFFFFFFF`; `mode`, `lane`, a movement edge's `kind` and `coherence` are ENUMERATED (closed
 sets a peer's schema can refuse); defaults mirror the native format's implicit ones so §11.5
-omits them; `route` is OPTIONAL, absent for the empty string. The projection is at version 1
-(`PROJECTION_VERSION`), independent of the native version. There is no DER → native fast path in
+omits them; `route` is OPTIONAL, absent for the empty string. The projection is at version 2
+(`PROJECTION_VERSION`), independent of the native version: version 2 (G5, S1-D) added the
+`liveness` component and the lifetimes' half-open `firstTick`/`lastTick` (native v2), so a
+document without them still means a phase-liveness plan whose lifetimes carry the phase
+default. There is no DER → native fast path in
 C for the plan yet: the freestanding rail reads the native plan (`bcir_ep_verify`), and the
 projection is reconstructed on the Python rail.
 

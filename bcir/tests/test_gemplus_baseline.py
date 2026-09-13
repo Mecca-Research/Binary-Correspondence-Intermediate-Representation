@@ -39,6 +39,7 @@ from tools.perf.gemplus_baseline import (  # noqa: E402
     compare,
     measure_exact,
     measure_legacy_divergence,
+    measure_memory,
     measure_plan,
 )
 
@@ -198,3 +199,102 @@ def test_the_plan_rows_read_the_bytes_on_both_rails() -> None:
     for key in c_rows:
         if key not in measured:
             assert rows[key]["verdict"] == "NOT-MEASURED"
+
+
+def test_the_memory_rows_sit_on_the_proof_rail() -> None:
+    """G5's gates (S1-D): with the bounded exact solver engaged behind first-fit, every
+    corpus fixture is solved to a proved optimum (0% suboptimal, worst ratio exactly 1.0) and
+    the section 6.4 witness lays out in the 832 bytes the report's exact solver found."""
+    measured = measure_memory()
+    assert measured == {
+        "memory.suboptimal.fraction": 0.0,
+        "memory.worst.ratio": 1.0,
+        "memory.real.bytes": 832.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+
+
+def test_the_general_case_rows_are_measured_through_the_sweep():
+    """G2 / S2-A: the general-case rows come from the real sweep over the shared fixture --
+    the replacement fraction is exact (one phase of sixteen per trial, at the bound) and the
+    two timing rows are the same measurement's numbers."""
+    from tools.perf.gemplus_baseline import measure_planner
+
+    out = measure_planner()
+    assert out["sweep.replacement.fraction"] <= 1 / 16 + 1e-12
+    assert out["optimize_scheduled.general.512"] > 0
+    assert out["optimize_scheduled.general.slowdown.512"] > 0
+    assert out["optimize_scheduled.slowdown.512"] > 0
+
+
+def test_the_exact_rail_rows_are_measured_through_the_solver():
+    """G4 / S2-B: the scheduler group proves the section 6.1 corpus instance by instance --
+    the proof-rail rows at their bounds, the heuristic's own numbers kept as the report's
+    witness, the Stage 2 exit rows at zero, the section 6.3 sweep held to the enumeration."""
+    from tools.perf.gemplus_baseline import measure_scheduler
+
+    out = measure_scheduler()
+    assert out["eft.suboptimal.2domains"] == 0.0 and out["eft.suboptimal.3domains"] == 0.0
+    assert out["eft.worst.2domains"] == 1.0 and out["eft.worst.3domains"] == 1.0
+    assert out["eft.mean.2domains"] == 1.0 and out["eft.mean.3domains"] == 1.0
+    assert abs(out["eft.heuristic.suboptimal.2domains"] - 190 / 1716) < 1e-12
+    assert abs(out["eft.heuristic.worst.2domains"] - 17 / 15) < 1e-12
+    assert abs(out["eft.heuristic.mean.2domains"] - 1.0078) < 5e-4
+    assert abs(out["eft.heuristic.suboptimal.3domains"] - 18 / 1716) < 1e-12
+    assert abs(out["eft.heuristic.worst.3domains"] - 7 / 6) < 1e-12
+    assert out["solver.unproved.fraction"] == 0.0 and out["solver.gap.p95"] == 0.0
+    assert out["optimize_scheduled.quality"] == 1.0
+
+
+def test_the_dispatch_rows_are_counted_over_the_interruption_corpus():
+    """G12 / S2-C: every interruption point resumes to the uninterrupted run, has an
+    incumbent, and every certificate records its dispatch."""
+    from tools.perf.gemplus_baseline import measure_dispatch
+
+    out = measure_dispatch()
+    assert out == {
+        "search.resume.unavailable": 0.0,
+        "dispatch.incumbent.missing": 0.0,
+        "dispatch.unrecorded": 0.0,
+    }
+
+
+def test_the_region_rows_are_exact_over_the_corpus():
+    """G6 / S2-D: every corpus claim is covered by a verified region whose expansion is the
+    module, and every registry entry proved its laws."""
+    from tools.perf.gemplus_baseline import measure_regions
+
+    assert measure_regions() == {"regions.unexpanded.claims": 0.0, "objectives.unverified": 0.0}
+
+
+def test_the_native_guardrails_measure_through_the_bench_rail_when_a_compiler_exists():
+    """The §4.4 rows come from compiled, timed kernels on this host -- or not at all."""
+    from bcir.bench import bench_available
+    from tools.perf.gemplus_baseline import measure_native
+
+    out = measure_native()
+    if not bench_available():
+        assert out == {}
+        return
+    assert set(out) <= {
+        "native.gather-avoidance",
+        "native.blocked-reduction",
+        "native.direct-stride",
+        "native.dense-parity",
+    }
+    assert all(value > 0 for value in out.values())
+
+
+def test_the_workload_rows_are_exact_over_the_corpus():
+    """G13 / S2-E: W separates every pair of workloads on every corpus program, the portfolio
+    refuses a certificate over a subset of the corpus's log, and a TMSAO-3 request with a
+    declared workload and evidence runs the measured rail."""
+    from tools.perf.gemplus_baseline import measure_workload
+
+    assert measure_workload() == {
+        "scope.workload.collisions": 0.0,
+        "replay.subset.admitted": 0.0,
+        "dispatch.measured.unavailable": 0.0,
+    }

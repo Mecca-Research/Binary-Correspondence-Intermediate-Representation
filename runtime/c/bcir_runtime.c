@@ -580,8 +580,8 @@ bcir_status bcir_sp_check_generation_vector(const uint8_t *BCIR_RESTRICT data, s
 static void ep_zero_header(bcir_ep_header *h) {
   int i;
   for (i = 0; i < 4; i++) h->magic[i] = 0;
-  h->version = 0; h->flags = 0; h->mode = 0;
-  for (i = 0; i < 3; i++) h->reserved0[i] = 0;
+  h->version = 0; h->flags = 0; h->mode = 0; h->liveness = 0;
+  for (i = 0; i < 2; i++) h->reserved0[i] = 0;
   h->streams = 0; h->knee = 0;
   h->n_steps = 0; h->n_lifetimes = 0; h->n_moves = 0; h->n_gens = 0;
   for (i = 0; i < 4; i++) h->reserved1[i] = 0;
@@ -600,9 +600,12 @@ bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     if (version < BCIR_EP_VERSION || version > BCIR_EP_VERSION_MAX) return BCIR_ERR_VERSION;
   }
   if (rd16(data + 6) != 0u) return BCIR_ERR_RESERVED;
-  if (data[9] || data[10] || data[11] || data[36] || data[37] || data[38] || data[39])
+  /* v2 carved the liveness byte out of offset 9; on a v1 plan it is reserved (0). */
+  if ((rd16(data + 4) < 2u && data[9]) || data[10] || data[11] ||
+      data[36] || data[37] || data[38] || data[39])
     return BCIR_ERR_RESERVED;
   if (data[8] > (uint8_t)BCIR_EP_MODE_MAX) return BCIR_ERR_PLAN;
+  if (rd16(data + 4) >= 2u && data[9] > (uint8_t)BCIR_EP_LIVENESS_MAX) return BCIR_ERR_PLAN;
   if (bcir_crc32(data, len - 4) != rd32(data + len - 4)) return BCIR_ERR_CRC;
   if (hdr) {
     int i;
@@ -610,6 +613,7 @@ bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     hdr->version = rd16(data + 4);
     hdr->flags = rd16(data + 6);
     hdr->mode = data[8];
+    hdr->liveness = hdr->version >= 2u ? data[9] : (uint8_t)BCIR_EP_LIVENESS_PHASE;
     hdr->streams = rd32(data + 12);
     hdr->knee = rd32(data + 16);
     hdr->n_steps = rd32(data + 20);
@@ -647,6 +651,41 @@ static int ep_claim_seen_before(const uint8_t *data, size_t body_len, size_t ste
     if (prior == cid) return 1;
     c.pos = start;
     ep_skip_step(&c);
+  }
+  return 0;
+}
+
+/* Read one lifetime record (all versions) into a view; a v1 record takes the phase default. */
+static void ep_read_lifetime(cur *c, uint16_t version, bcir_ep_lifetime_view *v) {
+  v->rid = c_u32(c);
+  v->bank = c_str(c, &v->bank_len);
+  v->offset = c_u64(c);
+  v->size = c_u64(c);
+  v->alignment = c_u32(c);
+  v->first_phase = c_u32(c);
+  v->last_phase = c_u32(c);
+  if (version >= 2u) {
+    v->first_tick = c_u64(c);
+    v->last_tick = c_u64(c);
+  } else {
+    v->first_tick = (uint64_t)v->first_phase;
+    v->last_tick = (uint64_t)v->last_phase + 1u;
+  }
+}
+
+/* The alias law by bytes: does any lifetime before `before` share `v`'s bank, live at the
+ * same time (half-open ticks) and overlap it in address? Re-walks the validated prefix. */
+static int ep_lifetime_aliases_before(const uint8_t *data, size_t body_len, size_t start,
+                                      uint32_t before, uint16_t version,
+                                      const bcir_ep_lifetime_view *v) {
+  cur c; c.d = data; c.len = body_len; c.pos = start; c.err = 0;
+  for (uint32_t i = 0; i < before && !c.err; i++) {
+    bcir_ep_lifetime_view prior;
+    ep_read_lifetime(&c, version, &prior);
+    if (c.err) return 0;
+    if (!str_eq(prior.bank, prior.bank_len, v->bank, v->bank_len)) continue;
+    if (!(prior.first_tick < v->last_tick && v->first_tick < prior.last_tick)) continue;
+    if (prior.offset < v->offset + v->size && v->offset < prior.offset + prior.size) return 1;
   }
   return 0;
 }
@@ -704,15 +743,10 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
     }
     {
       uint32_t prev = 0; int have_prev = 0;
+      size_t lifetimes_start = c.pos;
       for (i = 0; i < hdr.n_lifetimes; i++) {
         bcir_ep_lifetime_view v;
-        v.rid = c_u32(&c);
-        v.bank = c_str(&c, &v.bank_len);
-        v.offset = c_u64(&c);
-        v.size = c_u64(&c);
-        v.alignment = c_u32(&c);
-        v.first_phase = c_u32(&c);
-        v.last_phase = c_u32(&c);
+        ep_read_lifetime(&c, hdr.version, &v);
         if (c.err) return c_status(&c);
         if (have_prev && v.rid <= prev) return BCIR_ERR_PLAN;
         prev = v.rid; have_prev = 1;
@@ -721,6 +755,10 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
         if ((v.offset & ((uint64_t)v.alignment - 1u)) != 0u) return BCIR_ERR_PLAN;
         if (v.offset > UINT64_MAX - v.size) return BCIR_ERR_OVERFLOW;
         if (v.last_phase < v.first_phase) return BCIR_ERR_PLAN;
+        if (v.last_tick <= v.first_tick) return BCIR_ERR_PLAN;
+        /* no two lifetimes of one bank live at once at overlapping addresses */
+        if (ep_lifetime_aliases_before(data, body_len, lifetimes_start, i, hdr.version, &v))
+          return BCIR_ERR_PLAN;
         if (invoke_lt && cb && cb->lifetime && cb->lifetime(&v, cb->lifetime_ctx)) invoke_lt = 0;
       }
     }

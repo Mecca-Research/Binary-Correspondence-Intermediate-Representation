@@ -116,6 +116,35 @@ def test_submodule_name_collisions_resolve_to_the_function_not_the_module():
         assert callable(value) and not isinstance(value, types.ModuleType)
 
 
+def test_the_export_table_has_no_duplicate_names():
+    """Two modules claiming one name is a SILENT rebinding, not an error.
+
+    `_NAME_TO_MOD` is a dict comprehension over `_EXPORTS`, so a name listed by two modules
+    resolves to whichever is flattened LAST, and the earlier module's object becomes
+    unreachable through the package while still being advertised in `__all__`. Nothing else
+    here catches it: `test_full_public_api_is_reachable_lazily` only asks whether each name
+    resolves to something, and the loser's name still does -- to the wrong object.
+
+    S2-D shipped exactly this: `kbcir.regions` listed `Region`, `kbcir.compose` already did,
+    and `bcir.kbcir.Region` changed from the composite-plan alias to the region dataclass
+    with no import error anywhere. A name is owned by one module or it is a collision.
+    """
+    import bcir.gem as g
+    import bcir.kbcir as k
+    import bcir.lower as low
+
+    for pkg in (k, low, g):
+        owners: dict[str, list[str]] = {}
+        for module, names in pkg._EXPORTS.items():
+            for name in names:
+                owners.setdefault(name, []).append(module)
+        collisions = {name: mods for name, mods in owners.items() if len(mods) > 1}
+        assert not collisions, (
+            f"{pkg.__name__}: name(s) claimed by two modules, so the later one silently wins "
+            f"the lazy lookup and the earlier is unreachable: {collisions}"
+        )
+
+
 def test_submodules_remain_directly_importable():
     for m in ("bcir.kbcir.egraph", "bcir.kbcir.microbench", "bcir.lower.wasm", "bcir.gem.execute"):
         assert importlib.import_module(m) is not None

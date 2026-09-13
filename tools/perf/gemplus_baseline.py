@@ -88,6 +88,7 @@ class Metric:
         "lower_is_better",
         "slice_owner",
         "noise",
+        "host_dependent",
     )
 
     def __init__(
@@ -104,6 +105,7 @@ class Metric:
         lower_is_better=True,
         slice_owner="",
         noise=None,
+        host_dependent=False,
     ):
         self.key = key
         self.group = group
@@ -123,6 +125,13 @@ class Metric:
         self.lower_is_better = lower_is_better
         self.slice_owner = slice_owner  # the GEM+ slice that must move this
         self.noise = noise if noise is not None else _DEFAULT_NOISE[kind]
+        # A ratio is host-portable only when BOTH sides are timed in the same process on the
+        # same machine, so the machine cancels (see `verdict`). A ratio between two separately
+        # COMPILED kernels does not cancel it: it measures a microarchitectural property --
+        # this host's gather penalty, its store-forwarding, its prefetchers -- and reading it
+        # against another host's number manufactures verdicts in both directions. Such a row
+        # is measured and reported everywhere, and graded only on the baseline host.
+        self.host_dependent = host_dependent
 
     def headroom(self, value: float) -> float | None:
         """How much of the theoretical win is still unclaimed, as a fraction.
@@ -156,10 +165,19 @@ class Metric:
         millisecond does not, and comparing one across hosts manufactures verdicts in both
         directions. So a wall row off the baseline host is reported INDICATIVE and never
         blocks a slice, while ratio and count rows are graded everywhere.
+
+        `host_dependent` extends that rule to the ratios the argument above does NOT cover.
+        It holds for a ratio of two operations timed in ONE process, where the machine
+        divides out. It fails for a ratio of two separately compiled kernels: `native.*`
+        divides a gather realization by a blocked one, which is a measurement OF the host's
+        gather penalty, not a measurement that cancels it. The §4.4 band was taken on the
+        report's machine and this one reproducibly sits below it, so grading the row across
+        hosts made `--group native --compare` exit nonzero on roughly one run in thirty --
+        a gate firing on the machine rather than on the code (S2-D shipped it that way).
         """
         if value is None:
             return "NOT-MEASURED"
-        if self.kind == "wall" and not same_host:
+        if not same_host and (self.kind == "wall" or self.host_dependent):
             return "INDICATIVE"
         change = self.improvement(value)
         if change > self.noise:
@@ -232,6 +250,48 @@ METRICS: tuple[Metric, ...] = (
         bound_source="exhaustive enumeration of the same fixture (§6.3)",
         slice_owner="G4",
     ),
+    # --- G2, the general case (S2-A): many step-shortening trials. The report's fixture has
+    # none (the serial optimum is already the shortest step everywhere), so the sweep's cost
+    # there is its fixed overhead; `bcir/tests/sweep_fixtures.general_fixture(16, 16)` has one
+    # trial per pair of claims (512 claims, 256 trials) under ENERGY on x86_avx2. The baselines
+    # are the parent tree (S1-D, 2026-09-12) on the harness host, every trial re-placing the
+    # whole module; they are not the report's, which never measured this case.
+    Metric(
+        "optimize_scheduled.general.512",
+        "planner",
+        "optimize_scheduled at 512 claims, 256 step-shortening trials (16 phases)",
+        605.5,
+        "ms",
+        "wall",
+        bound=109.0,
+        bound_source="8x the serial pass on the same fixture and host (13.6 ms): the G2 "
+        "target ratio applied to the general case",
+        slice_owner="G2",
+    ),
+    Metric(
+        "optimize_scheduled.general.slowdown.512",
+        "planner",
+        "optimize_scheduled / serial optimize, the general case at 512 claims",
+        44.5,
+        "x",
+        "ratio",
+        bound=8.0,
+        bound_source="the G2 target: a sweep of step-shortening trials priced at a small "
+        "multiple of the serial pass (roadmap G2)",
+        slice_owner="G2",
+    ),
+    Metric(
+        "sweep.replacement.fraction",
+        "planner",
+        "claims re-placed per trial / claims, the general case at 512 claims",
+        1.0,
+        "x",
+        "exact",
+        bound=0.0625,
+        bound_source="the affected phase and nothing else: 1/16 of the module on the "
+        "16-phase fixture (a checkpointed replay can re-place less)",
+        slice_owner="G2",
+    ),
     # --- §6.1: HEFT-lite against an exact branch-and-bound scheduler.
     Metric(
         "eft.suboptimal.2domains",
@@ -266,6 +326,171 @@ METRICS: tuple[Metric, ...] = (
         bound_source="exact branch-and-bound (§6.1)",
         slice_owner="G4",
     ),
+    # The report's three-domain row (§6.1), frozen at its numbers; and the exact rail (G4 /
+    # S2-B): the corpus proved instance by instance, so `solver.unproved.fraction` is the share
+    # the bounded search could not close within its budget and `solver.gap.p95` the 95th
+    # percentile of the certified gap `(U - L) / U` over the corpus -- the Stage 2 exit rows.
+    # Baselines are the parent tree: no exact rail, so nothing was proved (1.0) and the only
+    # gap anyone could state was the heuristic's own against the section 6.1 oracle.
+    Metric(
+        "eft.suboptimal.3domains",
+        "scheduler",
+        "fraction of 1,716 six-job instances where EFT is suboptimal, 3 domains",
+        18 / 1716,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="exact branch-and-bound over the same corpus (§6.1)",
+        slice_owner="G4",
+    ),
+    Metric(
+        "eft.worst.3domains",
+        "scheduler",
+        "worst EFT/optimal makespan ratio, 3 domains",
+        7 / 6,
+        "x",
+        "exact",
+        bound=1.0,
+        bound_source="exact branch-and-bound (§6.1)",
+        slice_owner="G4",
+    ),
+    Metric(
+        "solver.unproved.fraction",
+        "scheduler",
+        "six-job instances (2 and 3 domains) the exact rail did not prove within its budget",
+        1.0,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="every instance of the corpus closed (stop reason optimal); the "
+        "parent tree had no exact rail, so nothing was proved",
+        slice_owner="G4",
+    ),
+    Metric(
+        "solver.gap.p95",
+        "scheduler",
+        "95th percentile of the certified relative gap (U - L) / U over the six-job corpus",
+        0.0625,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the incumbent proved optimal on every instance; the baseline is the "
+        "heuristic's own p95 gap against the §6.1 oracle over the pooled 2- and 3-domain "
+        "corpus on the parent tree (1/16: two domains, 190 of 1,716 instances off)",
+        slice_owner="G4",
+    ),
+    # --- G12 (S2-C): the dispatch law and resumable search. Counted over a fixed corpus of
+    # interruption points (solver x fixture x budget split); the baselines are the parent
+    # tree, where no solver had a resume parameter (every point unavailable), the exact layout
+    # refused a zero budget (no incumbent at that point) and no certificate recorded a dispatch.
+    Metric(
+        "search.resume.unavailable",
+        "dispatch",
+        "interruption points whose resumed run is unavailable or differs from the uninterrupted run",
+        393,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="every proof-rail solver returns a content-addressed state whose continuation "
+        "equals the uninterrupted run (G12); the parent tree had none",
+        slice_owner="G12",
+    ),
+    Metric(
+        "dispatch.incumbent.missing",
+        "dispatch",
+        "interruption points (budget 0 included) without a legal incumbent, every solver",
+        26,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="an incumbent first: the fast rail's answer stands at every interruption point; "
+        "the parent tree's exact layout refused a zero budget on each memory fixture",
+        slice_owner="G12",
+    ),
+    Metric(
+        "dispatch.unrecorded",
+        "dispatch",
+        "corpus certificates without a dispatch record (rail, solver, units, budget, stop reason, bound source)",
+        12,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="every certificate names the rail that ran (G12); the parent tree's twelve carried none",
+        slice_owner="G12",
+    ),
+    # --- G6 (S2-D): typed regions and the objective registry. Counted over a fixed corpus
+    # (the 12 programs, the 2x3 general fixture, 20 generated and 20 random modules: 542
+    # claims); the baselines are the parent tree, where no claim was covered by a region with
+    # a verified expansion and the two objective names the law rail shares existed without
+    # verified laws.
+    Metric(
+        "regions.unexpanded.claims",
+        "regions",
+        "corpus claims not covered by a verified region whose expansion is the module claim for claim",
+        542,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="every claim sits in exactly one recognized, verified region and the region graph "
+        "expands to the module (G6); the parent tree had no region layer",
+        slice_owner="G6",
+    ),
+    Metric(
+        "objectives.unverified",
+        "regions",
+        "objective registry entries admitted without their laws proved (closure, identities, order)",
+        2,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="the registry admits an objective only when verify_objective passes (G6); the "
+        "parent tree named min_plus and max_plus with no laws attached",
+        slice_owner="G6",
+    ),
+    # --- G13 (S2-E): the workload component W, the measured-candidate corpus and the replay
+    # gate. Counted over the 12 corpus programs; the baselines are the parent tree, where no
+    # certificate could declare a workload (every scope collided), the portfolio admitted any
+    # certificate with one clean episode whatever the log held, and a TMSAO-3 request went to
+    # the fast rail whatever evidence existed.
+    Metric(
+        "scope.workload.collisions",
+        "workload",
+        "pairs of distinct workloads on one corpus program whose certificate scopes share a digest "
+        "(12 programs x 3 workloads: 36 pairs)",
+        36,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="W is a component of the scope: two workloads on one program never share a "
+        "digest (G13); the parent tree could not declare one",
+        slice_owner="G13",
+    ),
+    Metric(
+        "replay.subset.admitted",
+        "workload",
+        "promotions the portfolio admits on a certificate covering fewer episodes than the corpus "
+        "logs (12 programs x 2 candidates, 3 logged episodes, a one-episode certificate)",
+        24,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="a corpus certificate must replay every logged episode (G13); the parent "
+        "tree's certificate carried no corpus and admitted any clean subset",
+        slice_owner="G13",
+    ),
+    Metric(
+        "dispatch.measured.unavailable",
+        "workload",
+        "TMSAO-3 requests with a declared workload and corpus evidence that the law sends to the "
+        "fast rail (12 programs)",
+        12,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="the measured rail is dispatched over a declared W and existing evidence "
+        "(G13); the parent tree's law sent every TMSAO-3 request to the fast rail",
+        slice_owner="G13",
+    ),
     # --- §6.2: two implementations that do not describe the same schedule. This one is a
     # CORRECTNESS metric wearing a performance costume: the target is agreement, not speed.
     # G1 (S1-A) landed the one artifact: `price_scheduled` reads `schedule_plan`, which is the
@@ -285,22 +510,31 @@ METRICS: tuple[Metric, ...] = (
         "disagree about what the plan is",
         slice_owner="G1",
     ),
-    # --- §6.4: first-fit against exact backtracking.
+    # --- §6.4: first-fit against exact backtracking. Measured (G5 / S1-D) over the corpus in
+    # `bcir/tests/memory_fixtures.py`: 500 deterministic seven-resource fixtures of the
+    # report's shape (the report's own corpus is not in the tree; first-fit is suboptimal on
+    # 40.4% of this one against the report's 38.6%, worst ratio 1.6x) and `WORST_FIXTURE`,
+    # which reproduces the report's worst case exactly (21 against 13 units; 1,344 against
+    # 832 bytes at 64-byte alignment through the real planner). The rows measure the ENGAGED
+    # rail: the bounded exact solver behind first-fit, every fixture solved to a proved
+    # optimum within its work-unit budget.
     Metric(
         "memory.suboptimal.fraction",
         "memory",
-        "fraction of 500 seven-resource fixtures where first-fit is suboptimal",
+        "fraction of the 500 seven-resource fixtures where the engaged layout is above the "
+        "proved optimum",
         0.386,
         "fraction",
         "exact",
         bound=0.0,
-        bound_source="exact integer backtracking (§6.4)",
+        bound_source="exact integer backtracking (§6.4); the bounded exact solver "
+        "(`static_memory.exact_layout`) proves every fixture of the corpus",
         slice_owner="G5",
     ),
     Metric(
         "memory.worst.ratio",
         "memory",
-        "worst first-fit extent / proved optimum",
+        "worst engaged extent / proved optimum over the corpus",
         21 / 13,
         "x",
         "exact",
@@ -311,12 +545,12 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "memory.real.bytes",
         "memory",
-        "real planner extent on the §6.4 fixture at 64-byte alignment",
+        "real planner extent on the §6.4 worst-case fixture at 64-byte alignment",
         1344,
         "bytes",
         "exact",
         bound=832,
-        bound_source="exact layout on the same fixture (§6.4)",
+        bound_source="exact layout on the same fixture (§6.4): 13 lines of 64 bytes",
         slice_owner="G5",
     ),
     # --- §5.2: the digest recomputation the profile found. Three hashes of one immutable
@@ -479,6 +713,7 @@ METRICS: tuple[Metric, ...] = (
         bound=6.05,
         bound_source="the upper end of the observed 5.58-6.05x band (§4.4)",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "native.blocked-reduction",
@@ -491,6 +726,7 @@ METRICS: tuple[Metric, ...] = (
         bound=11.72,
         bound_source="the upper end of the observed band (§4.4)",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "native.direct-stride",
@@ -503,6 +739,7 @@ METRICS: tuple[Metric, ...] = (
         bound=1.33,
         bound_source="the upper end of the observed band (§4.4)",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "native.dense-parity",
@@ -519,6 +756,7 @@ METRICS: tuple[Metric, ...] = (
         "and a claimed win above this band needs a structural "
         "reason before it is believed",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     # --- S0-A (2026-09-04): rows a slice added. These two are NOT quoted from the report: the
     # report's K_BCIR->StreamPack case verified its plan with no scope at all
@@ -611,6 +849,27 @@ def measure_planner() -> dict[str, float]:
                 out[f"_serial.{count}"] = elapsed
     if "optimize_scheduled.512" in out and out.get("_serial.512"):
         out["optimize_scheduled.slowdown.512"] = out["optimize_scheduled.512"] / out["_serial.512"]
+
+    # The general case (G2 / S2-A): one step-shortening trial per pair under ENERGY on
+    # x86_avx2 (the widths the fixture is built for), 16 phases x 16 pairs = 512 claims.
+    from bcir.kbcir.weights import ENERGY
+    from bcir.tests.sweep_fixtures import general_fixture
+
+    general = general_fixture(16, 16)
+    target = TARGETS["x86_avx2"]
+    stats: dict = {}
+    start = time.perf_counter()
+    optimize_scheduled(general, target, Theta.cool(), ENERGY, stats=stats)
+    out["optimize_scheduled.general.512"] = (time.perf_counter() - start) * 1e3
+    start = time.perf_counter()
+    optimize(general, target, Theta.cool(), ENERGY)
+    serial = (time.perf_counter() - start) * 1e3
+    if serial:
+        out["optimize_scheduled.general.slowdown.512"] = (
+            out["optimize_scheduled.general.512"] / serial
+        )
+    if stats.get("trials"):
+        out["sweep.replacement.fraction"] = stats["pops"] / (stats["trials"] * stats["claims"])
     return {k: v for k, v in out.items() if not k.startswith("_")}
 
 
@@ -714,6 +973,354 @@ def measure_exact() -> dict[str, float]:
     except Exception as exc:  # pragma: no cover - shape probe
         sys.stderr.write(f"[baseline] pricing/EFT divergence unavailable: {exc}\n")
 
+    return out
+
+
+def measure_scheduler() -> dict[str, float]:
+    """The exact rail (G4 / S2-B) over the report's §6.1 corpus and the §6.3 shape.
+
+    The `eft.*` rows read the PROOF RAIL: for every instance the bounded exact search starts
+    from the heuristic's placement and reports its incumbent, so the rows are the incumbent
+    against the independent partition oracle (`exact_fixtures.partition_optimum`) -- zero
+    suboptimal, ratio 1.0 -- while `eft.heuristic.*` keeps the heuristic's own numbers as the
+    witness that the corpus still exhibits what the report measured. `solver.unproved.fraction`
+    and `solver.gap.p95` are the Stage 2 exit rows; `optimize_scheduled.quality` is the
+    one-sweep re-selection against the exhaustive enumeration over `exact_fixtures.quality_corpus`
+    (worst ratio).
+    """
+    from bcir.gem.exact import exact_schedule, exact_selection
+    from bcir.kbcir import TARGETS
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.weights import ENERGY, PERF
+    from bcir.tests.exact_fixtures import (
+        partition_optimum,
+        quality_corpus,
+        six_job_corpus,
+        six_job_module,
+        six_job_target,
+    )
+
+    out: dict[str, float] = {}
+    module = six_job_module()
+    corpus = six_job_corpus()
+    unproved = 0
+    gaps: list[float] = []
+    for domains in (2, 3):
+        target = six_job_target(domains)
+        suboptimal = heuristic_suboptimal = 0
+        worst = heuristic_worst = 1.0
+        mean = heuristic_mean = 0.0
+        for durs in corpus:
+            durations = {index + 1: d for index, d in enumerate(durs)}
+            certified = exact_schedule(module, durations, target)
+            optimum = partition_optimum(durs, domains)
+            ratio = certified.incumbent / optimum
+            heuristic = certified.heuristic / optimum
+            suboptimal += ratio > 1
+            heuristic_suboptimal += heuristic > 1
+            worst, heuristic_worst = max(worst, ratio), max(heuristic_worst, heuristic)
+            mean += ratio
+            heuristic_mean += heuristic
+            unproved += certified.stop_reason != "optimal"
+            gaps.append(certified.incumbent_gap["relative"])
+        out[f"eft.suboptimal.{domains}domains"] = suboptimal / len(corpus)
+        out[f"eft.worst.{domains}domains"] = worst
+        out[f"eft.mean.{domains}domains"] = mean / len(corpus)
+        out[f"eft.heuristic.suboptimal.{domains}domains"] = heuristic_suboptimal / len(corpus)
+        out[f"eft.heuristic.worst.{domains}domains"] = heuristic_worst
+        out[f"eft.heuristic.mean.{domains}domains"] = heuristic_mean / len(corpus)
+    out["solver.unproved.fraction"] = unproved / (2 * len(corpus))
+    gaps.sort()
+    out["solver.gap.p95"] = gaps[min(len(gaps) - 1, int(round(0.95 * (len(gaps) - 1))))]
+
+    worst_quality = 1.0
+    for _name, small in quality_corpus():
+        for policy in (PERF, ENERGY):
+            selection = exact_selection(small, TARGETS["x86_avx512"], Theta.cool(), policy)
+            worst_quality = max(worst_quality, selection.ratio)
+    out["optimize_scheduled.quality"] = worst_quality
+    return out
+
+
+def measure_dispatch() -> dict[str, float]:
+    """The G12 rows (S2-C) over a fixed corpus of interruption points: the six-job schedule
+    corpus (every 20th instance, 3 splits), the memory corpus (every 20th fixture and the
+    witness, 3 splits) and the section 6.3 selection corpus (10 modules, 3 splits)."""
+    from bcir.examples import PROGRAMS
+    from bcir.gem.dispatch import DispatchRequest, solve_memory, solve_schedule, solve_selection
+    from bcir.gem.exact import certify_schedule, exact_schedule, exact_selection
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.static_memory import exact_layout
+    from bcir.kbcir.weights import PERF
+    from bcir.tests.exact_fixtures import (
+        quality_corpus,
+        six_job_corpus,
+        six_job_module,
+        six_job_target,
+    )
+    from bcir.tests.memory_fixtures import WORST_FIXTURE, corpus, items_of
+
+    unavailable = missing = 0
+
+    def same_schedule(a, b):
+        return (
+            a.incumbent,
+            a.lower_bound,
+            a.stop_reason,
+            a.expansions,
+            [(s.claim_id, s.domain, s.start, s.finish) for s in a.schedule.slots],
+        ) == (
+            b.incumbent,
+            b.lower_bound,
+            b.stop_reason,
+            b.expansions,
+            [(s.claim_id, s.domain, s.start, s.finish) for s in b.schedule.slots],
+        )
+
+    module, target = six_job_module(), six_job_target(2)
+    for durs in six_job_corpus()[::20]:
+        durations = {i + 1: d for i, d in enumerate(durs)}
+        full = exact_schedule(module, durations, target, budget=5000)
+        total = max(1, full.expansions)
+        for b1 in (0, 1, total // 2):
+            try:
+                first = exact_schedule(module, durations, target, budget=b1)
+                second = exact_schedule(
+                    module, durations, target, budget=total - b1, resume=first.state
+                )
+                if not same_schedule(
+                    second, exact_schedule(module, durations, target, budget=total)
+                ):
+                    unavailable += 1
+            except Exception:
+                unavailable += 1
+            try:
+                result, _record = solve_schedule(
+                    DispatchRequest("schedule", 6, "TMSAO-1", b1), module, durations, target
+                )
+                if not getattr(result, "slots", None) and not getattr(
+                    getattr(result, "schedule", None), "slots", None
+                ):
+                    missing += 1
+            except Exception:
+                missing += 1
+    for rows in [items_of(f) for _seed, f in list(corpus())[::20]] + [items_of(WORST_FIXTURE)]:
+        full = exact_layout(rows, 200_000)
+        total = max(1, full.expansions)
+        for b1 in (0, 1, total // 2):
+            try:
+                if b1 == 0:
+                    solve_memory(DispatchRequest("memory", len(rows), "TMSAO-1", 0), rows)
+                    unavailable += 0
+                else:
+                    first = exact_layout(rows, b1)
+                    second = exact_layout(rows, max(1, total - b1), resume=first.state)
+                    both = exact_layout(rows, b1 + max(1, total - b1))
+                    if (second.offsets, second.extent, second.stop_reason, second.expansions) != (
+                        both.offsets,
+                        both.extent,
+                        both.stop_reason,
+                        both.expansions,
+                    ):
+                        unavailable += 1
+            except Exception:
+                unavailable += 1
+            try:
+                layout, _record = solve_memory(
+                    DispatchRequest("memory", len(rows), "TMSAO-1", b1), rows
+                )
+                if set(layout.offsets) != {row.rid for row in rows}:
+                    missing += 1
+            except Exception:
+                missing += 1
+    for _name, small in quality_corpus(seeds=0)[:10]:
+        h = TARGETS["x86_avx512"]
+        full = exact_selection(small, h, Theta.cool(), PERF)
+        total = max(1, full.assignments)
+        for b1 in (0, 1, total // 2):
+            try:
+                if b1 == 0:
+                    solve_selection(
+                        DispatchRequest("selection", 4, "TMSAO-1", 0), small, h, Theta.cool(), PERF
+                    )
+                else:
+                    first = exact_selection(small, h, Theta.cool(), PERF, limit=b1)
+                    second = exact_selection(
+                        small, h, Theta.cool(), PERF, limit=total - b1, resume=first.state
+                    )
+                    if (second.optimum, second.widths, second.assignments, second.stop_reason) != (
+                        full.optimum,
+                        full.widths,
+                        full.assignments,
+                        full.stop_reason,
+                    ):
+                        unavailable += 1
+            except Exception:
+                unavailable += 1
+            try:
+                solve_selection(
+                    DispatchRequest("selection", 4, "TMSAO-1", b1), small, h, Theta.cool(), PERF
+                )
+            except Exception:
+                missing += 1
+    unrecorded = 0
+    for _name, build in sorted(PROGRAMS.items()):
+        program = build()
+        certificate = certify_schedule(
+            program,
+            optimize(program, TARGETS["x86_avx512"], Theta.cool(), PERF),
+            TARGETS["x86_avx512"],
+            Theta.cool(),
+            PERF,
+        )
+        if certificate.to_dict().get("dispatch") is None:
+            unrecorded += 1
+    return {
+        "search.resume.unavailable": float(unavailable),
+        "dispatch.incumbent.missing": float(missing),
+        "dispatch.unrecorded": float(unrecorded),
+    }
+
+
+def measure_regions() -> dict[str, float]:
+    """The G6 exact rows (S2-D) over the region corpus."""
+    import random
+
+    from bcir.examples import PROGRAMS
+    from bcir.kbcir.differential import gen_module
+    from bcir.kbcir.objectives import registry, verify_objective
+    from bcir.kbcir.realize import _flatten
+    from bcir.kbcir.regions import expand, region_graph, verify_region
+    from bcir.tests.sweep_fixtures import general_fixture, random_module
+
+    modules = [build() for _name, build in sorted(PROGRAMS.items())]
+    modules.append(general_fixture(2, 3))
+    modules += [gen_module(random.Random(seed)) for seed in range(20)]
+    modules += [random_module(seed) for seed in range(20)]
+    unexpanded = 0
+    for module in modules:
+        claims = [(pid, claim.id) for pid, claim in _flatten(module)]
+        try:
+            graph = region_graph(module)
+            if any(verify_region(region, module) for region in graph.regions):
+                raise ValueError("a region failed its verifier")
+            expanded = [(pid, claim.id) for pid, claim in expand(graph, module)]
+        except Exception:
+            unexpanded += len(claims)
+            continue
+        covered = set(graph.by_claim())
+        unexpanded += sum(1 for pid, cid in claims if cid not in covered)
+        if expanded != claims:
+            unexpanded += len(claims)
+    unverified = 0
+    try:
+        for entry in registry().values():
+            unverified += bool(verify_objective(entry))
+    except Exception:
+        unverified += 6
+    return {
+        "regions.unexpanded.claims": float(unexpanded),
+        "objectives.unverified": float(unverified),
+    }
+
+
+def _bounded_work(result) -> int:
+    """A bounded body whose cost follows the plan's widths: what the harness executes as the
+    plan, so the corpus holds real samples of a real body on this host."""
+    return sum(max(1, step.candidate.width) for step in result.steps)
+
+
+def measure_workload() -> dict[str, float]:
+    """The G13 exact rows (S2-E) over the 12 corpus programs."""
+    from bcir.examples import PROGRAMS
+    from bcir.gem.dispatch import DispatchRequest, dispatch
+    from bcir.gem.exact import certify_schedule
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.measured import MeasuredCorpus, measure_plans, scope_key
+    from bcir.kbcir.portfolio import PolicyPortfolio, ReplayCertificate
+    from bcir.kbcir.weights import ENERGY, PERF, THROUGHPUT
+    from bcir.kbcir.workload import workload_for
+
+    h = TARGETS["x86_avx2"]
+    theta = Theta.cool()
+    collisions = subset = unavailable = 0
+    for _name, build in sorted(PROGRAMS.items()):
+        module = build()
+        workloads = (
+            workload_for(module, service_level="latency", latency_ns=1_000_000),
+            workload_for(module, batch=8, service_level="throughput", throughput_per_s=1_000),
+            workload_for(module),
+        )
+        result = optimize(module, h, theta, PERF)
+        scopes = [
+            certify_schedule(module, result, h, theta, PERF, requested="TMSAO-4", workload=w).scope
+            for w in workloads
+        ]
+        collisions += sum(scopes[i] == scopes[j] for i in range(3) for j in range(i + 1, 3))
+        # the corpus: three logged episodes, every policy measured on a bounded body
+        corpus = MeasuredCorpus()
+        for episode in (Theta.cool(), Theta.hot(), Theta.mem_bound()):
+            for entry in measure_plans(
+                module,
+                h,
+                episode,
+                (PERF, ENERGY, THROUGHPUT),
+                _bounded_work,
+                workload=workloads[0],
+                source_commit="5b45fdca",
+                repeats=2,
+            ):
+                corpus.append(entry)
+        program, target, digest = scope_key(module, h, workloads[0])
+        logged = len(corpus.episodes(program, target, digest))
+        for candidate in (ENERGY, THROUGHPUT):
+            portfolio = PolicyPortfolio.default()
+            partial = ReplayCertificate(
+                candidate.name, PERF.name, 1, 0, corpus=corpus.head, logged=logged
+            )
+            try:
+                portfolio.promote(PERF.name, candidate, partial)
+                subset += 1
+            except ValueError:
+                pass
+        evidence = len(corpus.lookup(program, target, digest))
+        size = sum(len(phase.claims) for phase in module.phases)
+        decision = dispatch(
+            DispatchRequest("selection", size, "TMSAO-3", 1, workload=digest, evidence=evidence)
+        )
+        unavailable += decision.rail != "measured"
+    return {
+        "scope.workload.collisions": float(collisions),
+        "replay.subset.admitted": float(subset),
+        "dispatch.measured.unavailable": float(unavailable),
+    }
+
+
+def measure_native() -> dict[str, float]:
+    """The §4.4 native structural wins through the measured-evidence rail (`bcir.bench`),
+    compiled and timed on this host -- guardrails, not targets (G6). A ratio here is a
+    same-host number: the report's baselines were measured on other silicon, and this host's
+    tenancy is what `kbcir.microbench.host_attestation` says it is. Empty when no C
+    toolchain is available."""
+    from bcir.bench import bench_available, compare, compare_gather, compare_reduce, compare_strided
+
+    if not bench_available():
+        return {}
+    out: dict[str, float] = {}
+    gather = compare_gather("vector_add", opt="-O2", n=1 << 16, reps=30)
+    if gather.speedup_milli:
+        out["native.gather-avoidance"] = gather.speedup_milli / 1000
+    reduce = compare_reduce("gather_reduce", opt="-O2", n=1 << 20, reps=30)
+    if reduce.speedup_milli:
+        out["native.blocked-reduction"] = reduce.speedup_milli / 1000
+    strided = compare_strided("saxpy_strided", opt="-O2", n=1 << 22, reps=30)
+    if strided.speedup_milli:
+        out["native.direct-stride"] = strided.speedup_milli / 1000
+    dense = compare("vector_add", opt="-O3", n=1 << 20, reps=100)
+    if dense.speedup_milli:
+        out["native.dense-parity"] = dense.speedup_milli / 1000
     return out
 
 
@@ -981,13 +1588,56 @@ def measure_plan() -> dict[str, float]:
     return out
 
 
+def measure_memory() -> dict[str, float]:
+    """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
+    optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
+    (`kbcir.static_memory.plan_static_memory`, 64-byte lines and alignment) with the bounded
+    exact solver engaged (`layout="exact"`). A fixture the solver cannot prove within its
+    budget counts as suboptimal (a stated gap, never a claimed optimum)."""
+    from bcir.kbcir.static_memory import plan_static_memory
+    from bcir.performance_audit import _AuditHardware
+    from bcir.tests.memory_fixtures import WORST_FIXTURE, corpus, module_of, unit_layouts
+
+    hardware = _AuditHardware()
+    suboptimal = 0
+    worst = 1.0
+    count = 0
+    for seed, rows in corpus():
+        module, bindings = module_of(rows, f"corpus-{seed}")
+        plan = plan_static_memory(module, bindings, hardware, layout="exact")
+        bank = plan.banks[0]
+        _first_fit, proved = unit_layouts(rows)
+        optimum = proved.extent * 64
+        if bank.stop_reason != "optimal" or proved.stop_reason != "optimal":
+            suboptimal += 1
+            worst = max(worst, bank.extent_bytes / max(optimum, 1))
+        else:
+            suboptimal += bank.extent_bytes > optimum
+            worst = max(worst, bank.extent_bytes / optimum)
+        count += 1
+    out = {
+        "memory.suboptimal.fraction": suboptimal / count,
+        "memory.worst.ratio": worst,
+    }
+    module, bindings = module_of(WORST_FIXTURE, "section-6.4-worst")
+    plan = plan_static_memory(module, bindings, hardware, layout="exact")
+    out["memory.real.bytes"] = float(plan.banks[0].extent_bytes)
+    return out
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
+    "scheduler": measure_scheduler,
+    "dispatch": measure_dispatch,
+    "regions": measure_regions,
+    "workload": measure_workload,
+    "native": measure_native,
     "exact": measure_exact,
     "verifier": measure_verifier,
     "digest": measure_digest,
     "plan": measure_plan,
+    "memory": measure_memory,
 }
 
 
@@ -1086,8 +1736,9 @@ def render(rows: list[dict]) -> str:
     if indicative:
         lines += [
             "",
-            "INDICATIVE rows are wall-clock measured off the baseline host, so they "
-            "are reported and not graded.",
+            "INDICATIVE rows are measured off the baseline host and are reported, not "
+            "graded: wall-clock rows, and the host-dependent ratios whose two sides are "
+            "separately compiled kernels rather than one process (the native.* band).",
             "Re-run with BCIR_BASELINE_HOST=1 on the report's environment to grade "
             "them; the ratio rows above are host-portable and gate everywhere.",
         ]
@@ -1145,7 +1796,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, exact, verifier, digest, plan)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

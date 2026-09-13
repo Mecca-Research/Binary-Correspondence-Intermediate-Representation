@@ -38,6 +38,12 @@ def classify(theta: Theta) -> str:
 
 _CLASS_POLICY = {"constrained": "energy", "saturated": "throughput", "nominal": "latency"}
 
+#: The workload dimension of the table (G13): under a `nominal` runtime the declared workload
+#: class decides -- an interactive latency budget wants the latency schedule, a batch or a
+#: throughput target the throughput one. A runtime constraint outranks the workload: a hot
+#: or saturated machine is one whatever the workload declares.
+_WORKLOAD_POLICY = {"interactive": "latency", "batch": "throughput", "nominal": "latency"}
+
 
 @dataclass(frozen=True)
 class PortfolioEntry:
@@ -50,16 +56,30 @@ class PortfolioEntry:
 
 @dataclass(frozen=True)
 class ReplayCertificate:
-    """The gate's verdict: counterfactual replay of candidate vs incumbent."""
+    """The gate's verdict: counterfactual replay of candidate vs incumbent.
+
+    When the episodes came from the measured corpus (`kbcir.measured`, G13), `corpus` names
+    the corpus head the replay ran over and `logged` how many episodes the corpus logs for
+    the key. A certificate over fewer episodes than the corpus logs is NOT admitting: the
+    corpus decides which episodes are replayed, never the promoter, so a candidate cannot be
+    promoted on the episodes it happens to win.
+    """
 
     candidate: str
     incumbent: str
     episodes: int
     regressions: int
+    corpus: str = ""
+    logged: int = 0
+
+    @property
+    def covered(self) -> bool:
+        """Every logged episode replayed (vacuously so for an analytic replay)."""
+        return self.episodes == self.logged if self.corpus else True
 
     @property
     def admitted(self) -> bool:
-        return self.episodes >= 1 and self.regressions == 0
+        return self.episodes >= 1 and self.regressions == 0 and self.covered
 
 
 @dataclass
@@ -80,9 +100,15 @@ class PolicyPortfolio:
             }
         )
 
-    def select(self, theta: Theta) -> Policy:
-        """Deterministic plan-time selection: workload class -> certified entry."""
-        name = _CLASS_POLICY[classify(theta)]
+    def select(self, theta: Theta, workload=None) -> Policy:
+        """Deterministic plan-time selection: (runtime class, workload class) -> certified
+        entry. Without a declared workload the table is the runtime class alone (the
+        historical rule); with one (`kbcir.workload.Workload`, G13) the workload class decides
+        under a `nominal` runtime and a runtime constraint outranks it."""
+        runtime = classify(theta)
+        name = _CLASS_POLICY[runtime]
+        if workload is not None and runtime == "nominal":
+            name = _WORKLOAD_POLICY[workload.classify()]
         entry = self.entries.get(name)
         if entry is not None and entry.certified:
             return entry.policy

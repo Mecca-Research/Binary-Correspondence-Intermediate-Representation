@@ -557,6 +557,160 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   fixture's plan is 218 KB against the pack's 713 KB, encodes in 17.8 ms and decodes in
   27.7 ms (the pack: 40.0 / 77.2 ms), and a reader that holds the bytes reads the placement
   without re-running the 37 ms dispatch or re-deriving the digest.
+  S1-D (2026-09-12) landed G5, schedule-aware liveness and bounded exact memory (the report's
+  sections 6.4 and 6.5), closing Stage 1. RED: the two-phase alias fixture -- A used in phase
+  0, B in phase 1 -- planned under phase liveness shares offset 0 and, composed with the token
+  placement that runs the two claims at once on different streams, aliases; on a corpus of 500
+  seven-resource fixtures of the report's shape first-fit is suboptimal on 40.4% (the report:
+  38.6%), worst 1.6x, and the witness that reproduces the report's worst case lays out in 21
+  units against a proved 13 (1,344 against 832 bytes at 64-byte alignment). What landed:
+  `static_memory.schedule_intervals` derives every resource's half-open liveness interval from
+  the canonical placement, `plan_static_memory(schedule=)` computes the plan in that domain and
+  binds it to the placement by digest, every plan names its liveness domain, and
+  `verify_static_memory_plan(schedule=)` refuses a phase-liveness plan the placement does not
+  refine (the alias fixture is REJECTED) while a plan computed from the token placement gives
+  the two DISJOINT storage; `exact_layout` is the bounded exact solver behind first-fit (a
+  complete branch-and-bound over aligned offsets below the incumbent, budgeted in candidate
+  placements), every bank summary records the concurrent-live lower bound, the extent, the
+  gap and the stop reason, and the verifier re-runs the solver under the plan's own budget
+  rather than trust it. ExecutionPlanV1 gained its first append-only version, v2: the
+  liveness byte in the header pad and the tick tail on the lifetime record, the lowest carrying
+  version emitted, the alias law by bytes on both rails, and `verify_execution_plan` refusing a
+  plan whose lifetimes do not cover its schedule. The three `memory.*` rows read at their
+  bounds on the proof rail (0% suboptimal, worst ratio 1.0, 832 bytes on the witness); first-fit
+  under phase liveness is byte-identical to the historical layout. The verifier's alias law is
+  an exact sweep over the ticks with the live rows' addresses in one sorted list (the recursive
+  range-maximum tree it replaces cost 465,000 calls at 2,048 resources): A/B on one host
+  against the S1-C commit, `static_memory.verify.2048` 35.0 -> 15.8 ms, `static_memory.plan.2048`
+  100.7 -> 84.3 ms, the audit's static-lifetime-planner case 174 -> 142 ms, all 13 result
+  digests identical.
+  S2-A (2026-09-13) landed G2, incremental delta pricing with identical assignment, the first
+  Stage 2 slice. RED: on every corpus program and both harness fixtures the re-selection sweep
+  places nothing (no step-shortening alternative exists under any target, Theta or policy), so
+  its 6.4x over the serial pass at 512 claims was fixed overhead -- a second placement of the
+  artifact it already held and a second fusion pass; and in the general case, reachable with
+  the real cost model under ENERGY (a small claim realized vec8 for its large successor's
+  locality discount, whose scalar alternative shortens its own step), every trial re-placed the
+  whole module: 256 trials x 512 claims, 44.5x the serial pass. What landed:
+  `gem.schedule.EftPlacer` records the base placement once per phase (span, entry/exit
+  residency, pop order) and prices a trial as the cached prefix, the changed phase replayed
+  from the last checkpoint at or before the first pop the change can move, and every later
+  phase skipped with its cached span unless it touches a rid the replay moved between streams;
+  `_dispatch` became the one-shot form of `_PhaseDispatch.run`, the one dispatch loop the
+  executors and the replay share (1,520 placements byte-identical to the parent); the sweep
+  reads the candidate map `optimize` built and the artifact the placer holds, and keeps the
+  full re-placement as the reference (`delta=False`) the tests hold it to. Outcomes:
+  `optimize_scheduled.slowdown.512` 6.4x -> 3.5x (A/B on one idle host: under the 4x bound),
+  the general case 44.5x -> 4.7x (605 -> 67 ms), `sweep.replacement.fraction` 1.0 -> 0.0625
+  (one phase of sixteen, at the bound); identical assignment, step costs, price and artifact on 1,344
+  (fixture, target, Theta, policy) cases; the placer equals `schedule_eft` on 6,840 random
+  trials and 1,690 adoptions. Not claimed: a sub-linear replay inside one phase of independent
+  claims (the single-phase general fixture goes 44x -> 27x); the `-bcir-overlap-optimize`
+  port re-places per trial and still matches the oracle's (makespan, serial) -- the results are
+  what parity holds, not the cost.
+  S2-B (2026-09-13) landed G4, the bounded exact solvers and the lower-bound stack -- the first
+  TMSAO-2 (and TMSAO-1) certificates. RED: the report's section 6.1 corpus was pinned and
+  reproduced exactly (all 1,716 nondecreasing six-job multisets with values 1..8; `schedule_eft`
+  gives 190 / 1.0078 / 17:15 on two domains and 18 / 1.0013 / 7:6 on three) and nothing in the
+  tree could state that distance for a plan -- the four G4 rows were frozen but unmeasured and
+  every result was TMSAO-4 by construction. What landed: `gem.exact.exact_schedule`, a
+  dependency-free branch-and-bound over one phase's active schedules under the artifact's own
+  eligibility rules (the tail stream, the knee), seeded by the heuristic's placement, with
+  symmetry breaking on interchangeable streams and identical claims, a budget in node
+  expansions and a valid `L` on a budget stop (the least bound over the subtrees never
+  entered); the named bound stack (critical path, work over the streams' frontier, bandwidth
+  work over the knee, the tail's serial work); `exact_selection` for the section 6.3 sweep;
+  and `certify_schedule`, which binds L, U, both gaps, the stop reason, the budget and the
+  stack to the `ExecutionScopeV1` digest and lets `certificate_class_allowed` grant TMSAO-1
+  when the search closed, TMSAO-2 on a budget stop and TMSAO-4 with the reason when the scope
+  is undeclared. The solver is held to oracles that share no code with it: the partition
+  optimum on the corpus (1,716 / 1,716 proved on each domain count, at most 3,076 and 6,169
+  expansions) and the enumeration of every active schedule on 108 hazard-bearing tiny modules.
+  The artifact is never replaced: the placement the executors and the twins read stays
+  `schedule_eft`'s. Outcomes: `eft.suboptimal/worst/mean.{2,3}domains` 0 / 1.0 / 1.0 on the
+  proof rail (the heuristic's own numbers kept as witness rows), `optimize_scheduled.quality`
+  1.0 (the one-sweep selection equals the exhaustive enumeration on 112 corpus cases; the
+  report's 55,552 / 55,168 fixture was the retired pricer's), `solver.unproved.fraction` 0,
+  `solver.gap.p95` 0. Not claimed: proofs at production scale, the report's remaining bound
+  members (roofline, communication cut, queue calculus, occupancy, energy), the memory DP.
+  S2-C (2026-09-13) landed G12, the dispatch law, work-unit budgets, resumable search state
+  and the plan diff. RED: no solver could resume (every interruption point unavailable: 393
+  over the six-job, memory and selection corpora), the exact layout refused a zero budget
+  (26 interruption points without an incumbent) and no certificate named the rail that ran
+  (12). What landed: `gem.dispatch` -- the law as a table over (region kind, instance size,
+  requested class, work budget) to a rail and solver, one runner per region kind, and the
+  `DispatchRecord` every `certify_schedule` certificate now carries (rail, solver, units,
+  budget, stop reason, bound source, class granted); `exact_schedule`'s budget became the
+  module's, consumed phase by phase in topological order, with a content-addressed
+  `SearchState` (per-phase frontier: incumbent, placement, open nodes with bounds, expansions)
+  so that run(b1) then resume(b2) equals run(b1 + b2) exactly -- 1,118 splits of the six-job
+  corpus, multi-phase random modules through three legs; `exact_layout` and `exact_selection`
+  gained the same (`LayoutSearchState`, `SelectionSearchState`), the enumeration seeded with
+  the sweep's assignment so a budget stop never returns worse than the fast rail; a state
+  refuses inputs it was not taken from; `ranked` holds any ranker to a permutation of the
+  census and `policy_ranking` orders the portfolio by the L2 gate with every entry kept;
+  `gem.diff.plan_diff` names moves, re-selections, re-pricings, re-layouts, the makespans, the
+  regret and the bounds. Outcomes: `search.resume.unavailable` 393 -> 0,
+  `dispatch.incumbent.missing` 26 -> 0, `dispatch.unrecorded` 12 -> 0; two equal runs are
+  identical, states included.
+  S2-D (2026-09-13) landed G6, typed regions and the objective registry, affine first (report
+  P2, sections 8 and 9). RED: no region concept in the tree -- over the 542-claim region corpus
+  no claim was covered by a verified region -- and "semiring" was two attribute names without
+  laws. What landed: `kbcir.regions` -- affine regions (maximal runs of consecutive claims of
+  one phase whose accesses are 1-D affine maps with static trip counts; the local model is the
+  access maps and the dependence distances) and opaque regions (the fallback, with the named
+  refusal), each supplying `verify_region`, `expand` (the identity on the carrier: the region
+  graph expands to the module claim for claim and the plan selected over the expansion is the
+  plan over the module), `region_floor` (the cheapest deforested candidate under the most
+  favourable coupling the access maps allow -- never above the plan's score, tighter by exactly
+  the discount where no read is shared) and refusal conditions; `kbcir.objectives` -- the typed
+  registry (min_plus, max_plus, min_max, boolean, lexicographic, pareto) admitted only through
+  `verify_objective` (closure under a declared overflow policy, identities, associativity, the
+  commutativity and idempotence of select, distributivity where claimed, the realized strict
+  order), with `dag_best_path` reproducing the planner's min-plus path on 200 DAGs and the exact
+  scheduler's max-plus critical path on 33 phases; `gem.exact.certify_selection` and the
+  dispatch law's `path` kind (the min-plus rail is exact: L == U == the optimum, TMSAO-1 under a
+  declared scope, the structural floor and the coupling's price reported). Outcomes:
+  `regions.unexpanded.claims` 542 -> 0, `objectives.unverified` 2 -> 0; the native guardrails
+  A/B on this host (virtualized) 4.53 -> 4.44x, 15.00 -> 15.56x, 1.315 -> 1.314x, 1.003 ->
+  1.004x -- no regression. Not claimed: the other region kinds (opaque today), a polyhedral
+  depth above one, a law-rail registry attribute, a silicon certificate.
+  S2-E (2026-09-13) landed G13, the workload component W, the measured-candidate corpus and
+  the replay-gate integration. RED: no certificate could declare a workload (three workloads
+  on one program shared one scope digest on all 36 pairs), the portfolio admitted a
+  certificate with one clean episode whatever the log held (24/24 subset promotions), and a
+  TMSAO-3 request went to the fast rail whatever evidence existed (12/12). What landed:
+  `kbcir.workload` (`Workload`: shapes, batch, concurrency, service level, horizon, the
+  expected counts of dynamic claims; validated, digested, held to the module, classed for the
+  L2 table; carried as W by `scope_for` and the certifiers), `kbcir.measured` (`MeasuredPlan`
+  with raw samples, counters and the host attestation; the append-only chained
+  `MeasuredCorpus`, refusing altered, removed, reordered or forged evidence on read;
+  `measure_plans`; B1's artifacts adapted; `replay_measured` over every logged episode with a
+  corpus-bound `ReplayCertificate`), `PolicyPortfolio.select` over (runtime, workload), the
+  dispatch law's measured rail and `solve_measured` (the plan re-derived from the planner,
+  stale evidence unused), `gem.exact.certify_measured`, and the ladder's
+  `MEASURED_COMPONENTS` and two-target rule. Outcomes: `scope.workload.collisions` 36 -> 0,
+  `replay.subset.admitted` 24 -> 0, `dispatch.measured.unavailable` 12 -> 0; every measured
+  certificate on this virtualized host is TMSAO-4 with the reason. Not claimed: a silicon
+  certificate, W in the cross-rail manifest, a distribution beyond dynamic claims' expected
+  counts. Stage 2 is complete.
+  S2-D/S2-E follow-up (2026-09-13) closed three findings an adversarial audit of the two landed
+  slices raised against itself. (1) The S2-D entry above claimed `dag_best_path` was checked on
+  "300 DAGs" and "194 phases"; instrumenting the landed test counts 200 DAGs and 33 phases, so
+  the two figures are corrected here (the law held -- an independent sweep reproduced min-plus
+  against `semiring.dag_shortest_path` on 2,800 DAGs with no mismatch -- only the counts were
+  overstated; commit 5b45fdca's message carries the old numbers and cannot be rewritten).
+  (2) `kbcir.regions` listed `Region` in the package export table, which `kbcir.compose` already
+  owned: the flattened `_NAME_TO_MOD` kept the later entry, so `bcir.kbcir.Region` silently
+  changed from the composite-plan alias to the region dataclass and `compose.Region` became
+  unreachable through the package while still advertised in `__all__`. The region dataclass is
+  no longer exported at package level, and `test_perf.test_the_export_table_has_no_duplicate_names`
+  now refuses any name claimed by two modules across all three lazy packages -- the collision
+  class, not the instance (L14). (3) The four `native.*` rows were graded against the report's
+  host though they are ratios of two separately COMPILED kernels, which measure the host's gather
+  penalty rather than cancelling it; on this machine that tripped a REGRESSION verdict on roughly
+  one run in thirty. `Metric.host_dependent` marks them, so they are reported INDICATIVE off the
+  baseline host and read as the same-host A/B, which is what the S2-D outcome table always stated.
 
 ---
 

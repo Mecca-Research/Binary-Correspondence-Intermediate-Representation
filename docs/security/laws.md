@@ -207,6 +207,62 @@ to fall from; every malformed variant is minted through a raw writer that
 bypasses the codec's laws (`plan_fixtures.raw_encode`), because an encoder
 that refuses to emit a malformed plan cannot also be the witness that the
 decoder refuses one.
+S1-D instances (2026-09-12): the alias fixture was composed with the token
+placement and shown to alias before the planner learned schedule liveness, and
+the static-memory verifier is held to forgeries the exact rail invites -- a
+forged stop reason, a forged lower bound, an offset moved to an alias-free but
+non-solver position, a first-fit plan claiming the exact rail's stop reason --
+each refused by recomputation, never by reading the plan's own claim about
+itself (`test_the_verifier_recomputes_an_exact_layout_rather_than_trust_it`).
+S2-A instance (2026-09-13): the general case was made reachable and measured
+RED before it was priced incrementally (`sweep_fixtures.general_fixture`: one
+step-shortening trial per pair, every trial a full re-placement), and the delta
+search is held to the full re-placement it replaces, kept alive as
+`optimize_scheduled(delta=False)`: the same assignment claim by claim, the same
+step costs, price and artifact on 1,344 cases, and the placer to `schedule_eft`
+on 6,840 random trials and 1,690 adoptions -- a faster sweep that picked a
+different plan would not have been made faster; it would have been changed.
+S2-B instance (2026-09-13): the exact rail is held to oracles that share no
+code with it -- the partition optimum on the section 6.1 corpus
+(`exact_fixtures.partition_optimum`, a symmetry-broken search over loads) and
+the enumeration of every active schedule of a tiny module
+(`active_schedule_optimum`, no bound, no symmetry breaking) -- and a
+certificate is refused its optimality rung when the scope is undeclared
+(`certify_schedule` without a policy: TMSAO-4 with the reason), so the solver
+cannot certify itself and a certificate cannot over-claim.
+S2-C instance (2026-09-13): a resumed search is held to the uninterrupted run
+it claims to equal -- run(b1) then resume(b2) against run(b1 + b2), plans,
+bounds, stop reasons, expansions and state digests alike -- and a ranker is
+held to the census it claims to order (`dispatch.ranked` refuses a removed,
+added or duplicated member), so neither "anytime" nor "learned" can quietly
+change what a certificate ranges over.
+S2-D instance (2026-09-13): a region is recognized, then RE-VERIFIED against
+the module before it is returned, and the verifier is held to forgeries --
+non-consecutive claims, a foreign claim, wrong access maps, a local model on
+an opaque region, an empty region, a graph of another module -- each refused;
+an objective is admitted to the registry only after `verify_objective` proves
+its laws on samples, and a lawless operator (a non-associative combine, an
+order `select` does not realize) is refused by name, so "semiring" cannot
+become a label that admits arbitrary operators.
+S2-E instance (2026-09-13): the measured replay gate replays EVERY logged
+episode of a scope or refuses -- a candidate without evidence on one episode
+is not judged on the rest -- and a `ReplayCertificate` that names a corpus is
+admitting only when it covers the log, so the portfolio refuses a
+one-episode certificate over a three-episode corpus
+(`replay.subset.admitted` 24 -> 0); the corpus reader re-derives the digest
+chain and refuses an altered, removed or reordered entry and a forged head;
+the class ladder refuses TMSAO-3 without W and M declared and without a
+prediction interval from attested silicon on two targets, naming the tenancy
+the samples came from.
+S2-D/S2-E follow-up instance (2026-09-13): the law has a DUAL a gate can fail
+just as badly -- a gate that fires on the machine instead of on the code. The
+four `native.*` rows were graded against the baseline host's band although they
+divide one compiled kernel by another, so they measure this host's gather
+penalty; on this machine that produced a REGRESSION verdict on about one run in
+thirty, which is noise wearing a verdict's clothes. `Metric.host_dependent`
+reports them INDICATIVE off the baseline host. Ask of every new row both
+questions: what input makes it fire when it should not, and what input makes it
+stay green when it should not.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -594,6 +650,50 @@ on read, and `ep_walk` in the C twin, the single bounded walk every entry point
 runs -- so the 39 malformed pairs are refused by the same code on every path
 in, and the harness rows and the tests measure one definition of each gate
 (`bcir/tests/plan_fixtures.py`) rather than two that could drift.
+S1-D instance (2026-09-12): the alias law is ONE predicate in three places that
+must agree -- `StaticAllocation.overlaps` / `_has_live_alias` on the planner's
+rows, `validate_plan` on the plan's bytes and `ep_lifetime_aliases_before` in the
+C twin -- all judged on the same half-open ticks; and the liveness interval is
+computed by ONE function (`schedule_intervals`) the planner, the verifier and the
+plan-bytes verifier share, so "does the schedule refine the phase order" and
+"do the lifetimes cover the schedule" are the same question asked of the same
+intervals.
+S2-A instance (2026-09-13): the dispatch is ONE loop -- `_PhaseDispatch.run`,
+of which `_dispatch` is the one-shot form -- run by `schedule_eft`,
+`execute_tokens` and the placer's checkpointed replay alike, so the incremental
+price cannot drift from the placement it prices; `EftPlacer.schedule()` is
+`schedule_eft`'s artifact by construction and by test on every fixture, trial
+and adoption.
+S2-B instance (2026-09-13): the exact scheduler's eligibility -- which stream
+may run a sparse, a bandwidth or a compute claim -- is `_PhaseDispatch.eligible`,
+the artifact's own rule, read rather than restated, so a certificate proves a
+bound over exactly the placements the executor could make.
+S2-C instance (2026-09-13): the choice of solver is ONE function
+(`gem.dispatch.dispatch`, a table over region kind, size, requested class and
+budget) that every runner and every certificate go through, so "which rail
+ran" is read from the record, never inferred from the result.
+S2-D instance (2026-09-13): a region's expansion is ONE thing -- exactly the
+claims it was recognized from, in declared order (the identity on the
+carrier) -- so a stronger local model can never change what the planner
+selects over; and the region floor prices candidates through the planner's own
+edge predicate (`realize.edge_cost`'s coupling, `fused_candidates`' costs),
+not a second cost model, so a floor and a score cannot disagree about what a
+step costs.
+S2-E instance (2026-09-13): the plan a measured entry names is ONE digest
+(`measured.assignment_digest` over the planner's own steps), computed by the
+producer when it measures and by the consumer when it re-derives, so stale
+evidence is recognized by the predicate that filed it; the host attestation
+is the S0-F rig's `host_attestation`, not a second reading of the same
+files; and the workload's class is one function (`Workload.classify`) the
+portfolio's table reads rather than a second rule over the same fields.
+S2-D/S2-E follow-up instance (2026-09-13): a package name is owned by ONE
+module. `kbcir.regions` and `kbcir.compose` both listed `Region`, and because
+`_NAME_TO_MOD` is a flattening comprehension the later entry silently won:
+`bcir.kbcir.Region` changed meaning with no import error, and the loser stayed
+in `__all__`. Reachability tests do not catch this -- the name still resolves,
+to the wrong object. The predicate is now one test over all three lazy packages
+(`test_perf.test_the_export_table_has_no_duplicate_names`), so the next
+collision is a failure rather than a rebinding.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

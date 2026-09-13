@@ -379,3 +379,135 @@ def test_a_decoded_plan_is_the_same_value_the_c_dump_describes():
     with tempfile.TemporaryDirectory() as tmp:
         exe = build_harness(tmp)
         assert parse_c_dump(c_roundtrip(exe, tmp, blob)) == decode_plan(blob)
+
+
+# --- v2 (G5): the liveness domain and the lifetime ticks -----------------------------------
+
+
+def _schedule_liveness_plan():
+    from bcir.gem.schedule import schedule_plan as _schedule
+    from bcir.kbcir.static_memory import plan_static_memory
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    module = static_memory_module(1)
+    target = TargetProfile.x86_avx2()
+    result = optimize(module, target, COOL)
+    placement = _schedule(module, result, target, "tokens")
+    static = plan_static_memory(
+        module, {rid: "ram" for rid in module.resources}, _AuditHardware(), schedule=placement
+    )
+    return (
+        module,
+        target,
+        result,
+        plan_from_realization(module, result, target, "tokens", static_plan=static),
+    )
+
+
+def test_a_v1_plan_stays_v1_and_a_schedule_liveness_plan_is_v2():
+    from bcir.abi.execution_plan_abi import plan_version
+
+    module, target, result, plan = _schedule_liveness_plan()
+    assert plan.liveness == "schedule" and plan_version(plan) == 2
+    blob = encode_plan(plan)
+    assert blob[4] == 2 and blob[9] == 1
+    again = decode_plan(blob)
+    assert again == plan and encode_plan(again) == blob
+    assert all(lt.last_tick > lt.first_tick for lt in again.lifetimes)
+    assert any(not lt.phase_default for lt in again.lifetimes)
+    # the same realization without lifetimes, or with phase-default lifetimes, is v1 bytes
+    bare = plan_from_realization(module, result, target, "tokens")
+    assert plan_version(bare) == 1 and encode_plan(bare)[4] == 1 and encode_plan(bare)[9] == 0
+    phase = replace(
+        plan,
+        liveness="phase",
+        lifetimes=[
+            replace(lt, first_tick=lt.first_phase, last_tick=lt.last_phase + 1)
+            for lt in plan.lifetimes
+        ],
+    )
+    assert plan_version(phase) == 1
+    # a lifetime default-constructs its ticks from its phases
+    assert Lifetime(1, "ram", 0, 64, 64, 2, 5).phase_default
+    assert (
+        Lifetime(1, "ram", 0, 64, 64, 2, 5).first_tick,
+        Lifetime(1, "ram", 0, 64, 64, 2, 5).last_tick,
+    ) == (2, 6)
+    # a v2 plan is refused by the version gate of a v1-only reader: the header says so
+    assert struct.unpack_from("<H", blob, 4)[0] == 2
+
+
+def test_the_verifier_refuses_lifetimes_that_do_not_cover_the_schedule():
+    module, target, result, plan = _schedule_liveness_plan()
+    assert verify_execution_plan(module, plan, target=target, result=result) == []
+    lt0 = plan.lifetimes[0]
+    shrunk = replace(
+        plan, lifetimes=[replace(lt0, last_tick=lt0.last_tick - 1), *plan.lifetimes[1:]]
+    )
+    messages = [d.message for d in verify_execution_plan(module, shrunk) if d.law == "R9"]
+    assert any("does not cover the schedule" in m for m in messages), messages
+    # two lifetimes of one bank live at once at one address: refused by the codec and the verifier
+    a, b = plan.lifetimes[0], plan.lifetimes[1]
+    overlapping = replace(
+        plan,
+        lifetimes=[
+            a,
+            replace(b, offset=a.offset, first_tick=a.first_tick, last_tick=a.last_tick),
+            *plan.lifetimes[2:],
+        ],
+    )
+    try:
+        encode_plan(overlapping)
+        raise AssertionError("aliasing lifetimes were published")
+    except AbiError as exc:
+        assert "alias" in str(exc)
+    messages = [d.message for d in verify_execution_plan(module, overlapping) if d.law == "R9"]
+    assert any("alias" in m for m in messages), messages
+    # a lifetime for a resource nothing touches
+    stray = replace(plan, lifetimes=[*plan.lifetimes, replace(lt0, rid=999_999, offset=1 << 40)])
+    messages = [d.message for d in verify_execution_plan(module, stray) if d.law == "R9"]
+    assert any("no claim touches" in m for m in messages), messages
+
+
+def test_the_c_twin_reads_a_v2_plan_and_refuses_an_aliasing_one():
+    if compiler() is None:
+        return
+    module, target, result, plan = _schedule_liveness_plan()
+    blob = encode_plan(plan)
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+        dump = c_roundtrip(exe, tmp, blob)
+        assert "header version=2 mode=1 liveness=1" in dump
+        assert encode_plan(parse_c_dump(dump)) == blob
+        assert parse_c_dump(dump) == plan
+        # a v1 plan dumps the phase default for its lifetimes' ticks
+        bare = plan_from_realization(module, result, target, "eft")
+        assert "liveness=0" in c_roundtrip(exe, tmp, encode_plan(bare))
+        # the alias law and the empty-interval law on the C rail (raw bytes the codec refuses)
+        from bcir.tests.plan_fixtures import raw_encode
+
+        a, b = plan.lifetimes[0], plan.lifetimes[1]
+        aliasing = replace(
+            plan,
+            lifetimes=[
+                a,
+                replace(b, offset=a.offset, first_tick=a.first_tick, last_tick=a.last_tick),
+                *plan.lifetimes[2:],
+            ],
+        )
+        assert c_refuses(exe, tmp, raw_encode(aliasing))
+        late = next(lt for lt in plan.lifetimes if lt.first_tick > 0)  # (0, 0) is the phase default
+        empty = replace(
+            plan,
+            lifetimes=[
+                replace(lt, last_tick=lt.first_tick) if lt is late else lt for lt in plan.lifetimes
+            ],
+        )
+        assert not empty.lifetimes[plan.lifetimes.index(late)].phase_default
+        assert c_refuses(exe, tmp, raw_encode(empty))
+        assert python_refuses(module, raw_encode(empty))
+        # a v1 plan with a nonzero liveness byte is refused as reserved
+        v1 = bytearray(encode_plan(bare))
+        v1[9] = 1
+        assert c_refuses(exe, tmp, reseal(bytes(v1)))
+        assert python_refuses(module, reseal(bytes(v1)))

@@ -238,6 +238,9 @@ def scope_for(
             "admitted": admitted if admitted is not None else UNDECLARED,
         }
 
+    if workload is not None and callable(getattr(workload, "component", None)):
+        workload = workload.component()  # a `kbcir.workload.Workload` (G13): its W component
+
     return ExecutionScope(
         P=program,
         H=hardware,
@@ -283,6 +286,13 @@ CLASS_REQUIREMENTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 #: be optimal over a model that declares no workload, and TMSAO-3 checks its own evidence.
 OPTIMALITY_COMPONENTS = ("P", "H", "A", "O")
 
+#: Components whose absence makes a MEASURED-best claim (TMSAO-3) meaningless: `W` because a
+#: measurement is of a program under a workload -- a scope that omits it cannot say what was
+#: measured, which is the availability question the module docstring names; `M` because the
+#: protocol (warm-up, sampling, outliers, environment) is what makes samples evidence; `P`
+#: and `H` because they are what ran and where. (G13 / S2-E.)
+MEASURED_COMPONENTS = ("P", "H", "W", "M")
+
 
 def certificate_class_allowed(scope: ExecutionScope, evidence: dict) -> tuple[str, str]:
     """The strongest class this scope and evidence support, and why not a stronger one.
@@ -292,6 +302,7 @@ def certificate_class_allowed(scope: ExecutionScope, evidence: dict) -> tuple[st
     answering it is what turns the ladder into a work list.
     """
     missing_scope = [name for name in OPTIMALITY_COMPONENTS if scope.component(name) == UNDECLARED]
+    missing_measured = [name for name in MEASURED_COMPONENTS if scope.component(name) == UNDECLARED]
 
     for name, statement, required in CLASS_REQUIREMENTS:
         if name == "TMSAO-4":
@@ -299,6 +310,8 @@ def certificate_class_allowed(scope: ExecutionScope, evidence: dict) -> tuple[st
         if any(not evidence.get(key) for key in required):
             continue
         if name in ("TMSAO-1", "TMSAO-2") and missing_scope:
+            continue
+        if name == "TMSAO-3" and missing_measured:
             continue
         if name == "TMSAO-1" and not evidence.get("census_complete"):
             continue
@@ -310,6 +323,35 @@ def certificate_class_allowed(scope: ExecutionScope, evidence: dict) -> tuple[st
     # optimality claim no matter how much evidence is gathered, so it outranks a missing bound.
     if not evidence.get("incumbent"):
         return "TMSAO-4", ("no incumbent was recorded, so there is nothing to certify")
+    if evidence.get("search_coverage") is not None and not evidence.get("lower_bound"):
+        # A measured-best claim was attempted (its coverage is the census it measured):
+        # diagnose it as one. The two-target rule (staged plan section 4, item 12) is what
+        # separates a prediction interval from a set of samples: no TMSAO-3 without two
+        # materially different physical targets with counters.
+        if missing_measured:
+            return "TMSAO-4", (
+                f"a measured-best claim needs a declared {', '.join(missing_measured)}; "
+                f"without it the samples are of a model nobody wrote down"
+            )
+        if not evidence.get("search_coverage"):
+            stale = evidence.get("stale") or 0
+            if stale:
+                return "TMSAO-4", (
+                    f"the corpus's evidence for this scope is stale ({stale} candidates "
+                    "measured on plans the planner no longer selects): nothing live to "
+                    "rank, so the fast rail's incumbent stands"
+                )
+            return "TMSAO-4", (
+                "no admitted candidate has measured evidence for this scope: there is "
+                "nothing to rank, so the fast rail's incumbent stands"
+            )
+        if not evidence.get("prediction_interval"):
+            tenancy = evidence.get("tenancy", "unattested")
+            return "TMSAO-4", (
+                "a measured-best claim needs a prediction interval from attested silicon -- "
+                "two materially different physical targets with counters (the two-target "
+                f"rule); the samples here come from a {tenancy} host"
+            )
     if missing_scope:
         return "TMSAO-4", (
             f"an optimality claim needs a declared {', '.join(missing_scope)}; without it "
@@ -352,6 +394,7 @@ __all__ = [
     "CLASS_REQUIREMENTS",
     "COMPONENTS",
     "ExecutionScope",
+    "MEASURED_COMPONENTS",
     "OPTIMALITY_COMPONENTS",
     "SCOPE_VERSION",
     "UNDECLARED",

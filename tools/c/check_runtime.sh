@@ -199,12 +199,24 @@ from dataclasses import replace
 from bcir.abi import encode, encode_plan
 from bcir.gem.execution_plan import plan_from_realization
 from bcir.gem.streampack import generation_vector, hydrate
+from bcir.kbcir.realize import optimize
 from bcir.tests.plan_fixtures import audit_fixture
 tmp = sys.argv[1]
 module, target, theta, result = audit_fixture()
 plan = plan_from_realization(module, result, target, "tokens", plan="plan0")
 open(f"{tmp}/plan.bin", "wb").write(encode_plan(plan))
 open(f"{tmp}/plan_pack.bin", "wb").write(encode(hydrate(module, result, "plan0")))
+# v2 (G5): the same plan carrying schedule-liveness lifetimes from the static memory planner
+from bcir.gem.schedule import schedule_plan
+from bcir.kbcir.static_memory import plan_static_memory
+from bcir.performance_audit import _AuditHardware, static_memory_module
+sm = static_memory_module(1)
+sm_result = optimize(sm, target, theta)
+placement = schedule_plan(sm, sm_result, target, "tokens")
+static = plan_static_memory(sm, {rid: "ram" for rid in sm.resources}, _AuditHardware(), schedule=placement)
+v2 = plan_from_realization(sm, sm_result, target, "tokens", static_plan=static)
+assert encode_plan(v2)[4] == 2
+open(f"{tmp}/plan_v2.bin", "wb").write(encode_plan(v2))
 open(f"{tmp}/live.txt", "w").write(" ".join(f"{g.rid}:{g.map_gen}:{g.data_gen}" for g in generation_vector(module)))
 rid = min(module.resources)
 module.resources[rid] = replace(module.resources[rid], map_gen=module.resources[rid].map_gen + 1)
@@ -225,6 +237,20 @@ again = encode_plan(parse_c_dump(open(f"{tmp}/plan_dump.txt").read()))
 sys.exit(0 if again == original else 1)
 PY
 echo "  PASS ExecutionPlanV1 parity (Python encode -> C decode -> Python re-encode, byte-identical; plan/pack bound; vector live)"
+v2_out="$("${tmp}/test_execution_plan" "${tmp}/plan_v2.bin" --dump)" \
+  || { echo "  FAIL: C v2 plan decode/verify"; echo "${v2_out}" | tail -5; exit 1; }
+printf '%s\n' "${v2_out}" > "${tmp}/plan_v2_dump.txt"
+python3 - "${tmp}" <<'PY' || { echo "  FAIL: Python re-encode of the C v2 decode is not byte-identical"; exit 1; }
+import sys
+from bcir.abi import encode_plan
+from bcir.tests.plan_fixtures import parse_c_dump
+tmp = sys.argv[1]
+original = open(f"{tmp}/plan_v2.bin", "rb").read()
+dump = open(f"{tmp}/plan_v2_dump.txt").read()
+assert "header version=2 mode=1 liveness=1" in dump, dump[:200]
+sys.exit(0 if encode_plan(parse_c_dump(dump)) == original else 1)
+PY
+echo "  PASS ExecutionPlanV1 v2 parity (schedule-liveness lifetimes: Python encode -> C decode -> Python re-encode, byte-identical)"
 # shellcheck disable=SC2046
 if "${tmp}/test_execution_plan" "${tmp}/plan.bin" --live $(cat "${tmp}/moved.txt") > "${tmp}/plan_stale.txt" 2>&1; then
   echo "  FAIL: a plan minted under an older generation vector was accepted on the C rail"; exit 1

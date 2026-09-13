@@ -122,7 +122,7 @@ factors by 32 moves a plan's score from **51,200 to 1,574,912 with the digest un
 |---|---|---|
 | `P` | program, input contract, R-laws, semantics, precision, admitted approximation | `hash_module` (claims in declared order since S0-D; the scope names the order as a component) |
 | `H` | topology, ISA/capabilities, banks, links, capacities | `hash_target` (the memory hierarchy folded since S0-D, from `target.capability` `mem_tier_names` / `mem_tier_values` on the law rail) |
-| `W` | workload shapes, input distribution, concurrency, SLOs, horizon | not modelled |
+| `W` | workload shapes, input distribution, concurrency, SLOs, horizon | `kbcir.workload.Workload` (S2-E): shapes, batch, concurrency, service level, horizon, the expected counts of dynamic claims — declared, digested with the scope, held to the module |
 | `Θ` | firmware, microcode, driver, OS, clocks, thermal, contention, wear | `hash_theta`, partial |
 | `A` | admitted transformations, libraries, kernels, schedules, search boundary | implicit in `candidates_for` |
 | `B` | capacity, security, reliability, temperature, power, policy caps | `Budget`, partial |
@@ -233,7 +233,7 @@ costs, the sum of the durations is the serial bound, and R9 holds by constructio
 This is a **correctness** metric wearing a performance costume. Any value but 1.0 means
 `M(π,Θ)` denotes two things, and no certificate above TMSAO-4 is possible while it does.
 
-### G2 — incremental delta pricing
+### G2 — incremental delta pricing — **landed (S2-A, 2026-09-13)**
 
 *Report P1.4. The largest visible win in the baseline.*
 
@@ -242,10 +242,12 @@ contributions and reprice only the affected chain.
 
 | Gate | Baseline | Target | Headroom today |
 |---|---|---|---|
-| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A** (36.2% to the harness bound of 4×) |
-| `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | **83 ms after S1-A** (1,148 ms on the same host before it; indicative) |
-| `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | **29 ms after S1-A** (287 ms before; indicative) |
-| `exact` The plan chosen is unchanged | — | **identical assignment** |
+| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A**; **3.5× after S2-A** (A/B on one idle host, 6.4× → 3.5×: the price read from the placer's records instead of a second placement, the candidate map built once) — under the harness bound of 4×; the last of the fixed overhead is the serial chain's O(n²) hazard edges |
+| `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | **83 ms after S1-A**, **60 ms after S2-A** (98 → 60 ms A/B on one host; 1,148 ms on the same host before S1-A; indicative) |
+| `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | **29 ms after S1-A**, **23 ms after S2-A** (35 → 23 ms A/B; 287 ms before S1-A; indicative) |
+| `exact` The plan chosen is unchanged | — | **identical assignment** | **met**: the delta search returns the reference sweep's assignment claim by claim, with the same step costs, price and artifact, on 1,344 (fixture, target, Θ, policy) cases — 12 corpus programs, the harness fixtures, the general-case and adoption fixtures and 40 generated hazard-bearing modules |
+| `ratio` `optimize_scheduled.general.slowdown.512` (the general case: 256 step-shortening trials, 16 phases) | 44.5× (S1-D, this host) | ≤ 8× | **4.7×** (605 → 67 ms A/B on one host) |
+| `exact` `sweep.replacement.fraction` (claims re-placed per trial / claims) | 1.0 | the affected phase (1/16) | **0.0625**, at the bound |
 
 The last row is the one that matters. A faster sweep that picks a *different* plan has not
 been made faster; it has been changed. Delta pricing must be an exact refactor of the same
@@ -260,8 +262,32 @@ which is not a property of the plan). The assignment is identical to the exhaust
 the 11 corpus programs, the 256- and 512-claim harness fixtures and 150 generated modules under
 cool and hot Θ and two policies — and in every one of those cases both sweeps return the serial
 optimum, because under the coupled cost model a wider lane is never longer for its own step and
-the successor coupling does not distinguish vector widths. What remains for G2 is the general
-case — many step-shortening trials — where each trial still re-places the whole module.
+the successor coupling does not distinguish vector widths. What remained for G2 was the general
+case — many step-shortening trials — where each trial still re-placed the whole module.
+
+S2-A closed it with the report's own mechanism, made exact. The general case is reachable with
+the real cost model: under the ENERGY policy a 64-element claim's scalar realization is cheaper
+for its own step than vec8, but the serial optimum picks vec8 when a large vector successor
+shares a read operand (the locality discount on the successor outweighs the claim's own extra
+cost), so the scalar alternative shortens its own step and the sweep must place it —
+`bcir/tests/sweep_fixtures.general_fixture` has one such trial per pair of claims, 256 trials at
+512 claims, and measured RED at 44.5× the serial pass with every trial re-placing all 512
+claims. `gem.schedule.EftPlacer` records the base placement once — per phase: the span, the
+residency at entry and exit, the pop order — and prices a trial as the cached prefix, the
+changed phase replayed from the last checkpoint at or before the first pop the change can move
+(the pop order is a function of the hazard edges and the durations alone: a shortened claim is
+popped no earlier than before, a lengthened one at the first base pop whose key its new key
+beats), and every later phase skipped with its cached span unless it touches a rid the replay
+moved between streams. The dispatch itself is one predicate (`_PhaseDispatch.run`, of which
+`_dispatch` is the one-shot form) so `schedule_eft`, `execute_tokens` and the replay cannot
+drift, and the placer's `schedule()` is `schedule_eft`'s artifact on every fixture, trial and
+adoption (6,840 random trials, 1,690 adoptions). The sweep also stopped paying for what it
+already had: the candidate map `optimize` built and the final artifact the placer holds. Not
+claimed: a sub-linear replay inside one phase of independent claims — there the LPT order puts
+a lengthened successor first and the placement is inherently sequential (the single-phase
+general fixture goes 44× → 27×); the phase-level mechanism is what the report named, and the
+harness fixture's residual is the serial chain's O(n²) hazard edges, which the dispatch reads
+once per placement.
 
 ### G3 — canonical digest computed once — **landed (S1-B, 2026-09-12)**
 
@@ -277,8 +303,8 @@ right to recompute at a trust boundary**, which is the whole reason the third ha
 |---|---|---|---|
 | `exact` `static_memory.digests.2048` (full digests over plan + verify + client) | 3 | 1 | **1** — the planner mints the identity, its verifier and the client validate it by content |
 | `wall` `static_memory.digest.2048` | 88.05 ms | ≤ 30 ms | 64.7 → **37.4 ms** here (projected ~50 ms on the baseline host: the per-byte FNV chain in the interpreter is the residual) |
-| `wall` `static_memory.verify.2048` | 157.88 ms | ≤ 90 ms | 100.3 → **39.3 ms** identity-bound (71 ms recomputing); the bound is met |
-| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 120 ms | 196.1 → **114.1 ms** from a fresh identity (70 ms with it cached); the bound is met |
+| `wall` `static_memory.verify.2048` | 157.88 ms | ≤ 90 ms | 100.3 → **39.3 ms** identity-bound (71 ms recomputing); the bound is met; **15.8 ms** since S1-D's alias sweep |
+| `wall` `static_memory.plan.2048` | 301.02 ms | ≤ 120 ms | 196.1 → **114.1 ms** from a fresh identity (70 ms with it cached); the bound is met; **84.3 ms** since S1-D's alias sweep |
 | `exact` A cache cannot survive mutation | — | mutation invalidates; cross-module substitution refused | **witnessed**: a declared mutation drops the cache; an undeclared in-place edit is refused by the verifier's content check; module A's identity presented for module B is refused |
 
 What landed: `provenance.canonical_stream` is the one iterative walk that produces the R13 item
@@ -300,7 +326,7 @@ the Class-B "vacuous check" defect from the audit, rebuilt. The cache here is ke
 revision and re-checked against the module's census, and no verifier trusts the revision: an
 identity is accepted only when the module's content is exactly what it describes.
 
-### G4 — bounded exact solvers and the lower-bound stack
+### G4 — bounded exact solvers and the lower-bound stack — **landed (S2-B, 2026-09-13)**
 
 *Report P1.5. **The first slice that can emit TMSAO-2.***
 
@@ -309,18 +335,39 @@ path, work/capacity, hierarchical Roofline, communication cut, queue/network-cal
 allocation peak/clique, occupancy, energy-at-minimum-work. Report the **maximum valid** bound
 against the incumbent.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `exact` `eft.suboptimal.2domains` | 11.07% of 1,716 | 0% on the proof rail, or a stated gap on every instance |
-| `exact` `eft.worst.2domains` | 1.1333× | 1.0 on the proof rail |
-| `exact` `optimize_scheduled.quality` | 1.00696× | 1.0 on the proof rail |
-| `exact` Every certificate carries `L`, `U`, and both gaps | absent | present |
+| Gate | Baseline | Target | Outcome |
+|---|---|---|---|
+| `exact` `eft.suboptimal.2domains` | 11.07% of 1,716 | 0% on the proof rail, or a stated gap on every instance | **0%** — every instance proved (stop reason `optimal`, at most 3,076 expansions); the heuristic alone still reads 190 / 1,716, kept as the witness row `eft.heuristic.suboptimal.2domains` |
+| `exact` `eft.worst.2domains` | 1.1333× | 1.0 on the proof rail | **1.0** (the heuristic's 17/15 kept as the witness); the report's three-domain row added and closed the same way (18 / 1,716, 7/6 → 0 / 1.0) |
+| `exact` `optimize_scheduled.quality` | 1.00696× | 1.0 on the proof rail | **1.0** — the one-sweep re-selection equals the exhaustive candidate enumeration on every module of `exact_fixtures.quality_corpus` (56 shaped and seeded four-claim modules × two policies); the report's 55,552 / 55,168 fixture was the retired wave pricer's and is not reconstructible under the canonical artifact |
+| `exact` Every certificate carries `L`, `U`, and both gaps | absent | present | **present**: `gem.exact.certify_schedule` binds `L`, `U`, the heuristic's and the incumbent's gap, the stop reason, the budget and the bound stack to the `ExecutionScopeV1` digest; TMSAO-1 when the search closes, TMSAO-2 on a budget stop, TMSAO-4 with the reason when the scope is undeclared |
+| `exact` `solver.unproved.fraction` / `solver.gap.p95` (Stage 2 exit) | 1.0 / 0.0625 (the heuristic's own p95 gap) | 0 / 0 | **0 / 0** over the pooled 2- and 3-domain corpus |
 
 **The gap is the product, not the speed.** A slice that leaves the heuristic exactly as fast
 and merely states how far from optimal it is has still moved BCIR from TMSAO-4 to TMSAO-2, and
 that is a bigger step than any constant factor in this document.
 
-### G5 — schedule-aware liveness and bounded exact memory
+What landed (S2-B): `gem.exact.exact_schedule`, a dependency-free branch-and-bound over one
+phase's active schedules (phase barriers compose serially, so the module's optimum is the sum
+of its phases' optima) under the artifact's own eligibility rules — the tail stream for sparse
+claims, the knee for bandwidth claims — with the incumbent seeded by the heuristic's placement,
+symmetry breaking on interchangeable empty streams and identical claims, a budget in node
+expansions and, on a budget stop, the least bound over the subtrees never entered as `L`. The
+bound stack at every node is the strongest of critical path, work over the streams' frontier,
+bandwidth work over the knee and the tail's serial work, each named in the certificate. The
+corpus of section 6.1 is pinned and reproduced exactly (`bcir/tests/exact_fixtures.py`: all
+1,716 nondecreasing six-job multisets with values 1–8; `schedule_eft` gives the report's 190 /
+1.0078 / 17:15 and 18 / 1.0013 / 7:6), and the solver is held to oracles that share no code with
+it — the partition optimum on that corpus, the enumeration of every active schedule on 108
+hazard-bearing tiny modules. `exact_selection` is the same discipline for the schedule-aware
+candidate selection. The artifact is never replaced — the placement every rail reads and the
+twins reproduce stays `schedule_eft`'s; the exact rail certifies it. Not claimed: proofs at
+production scale (a budget stop states its gap), the remaining members of the stack the report
+lists (hierarchical roofline, communication cut, queue calculus, occupancy, energy at minimum
+work — bounds on quantities the schedule does not yet model), and the interval-graph memory DP
+(still with G5's residual).
+
+### G5 — schedule-aware liveness and bounded exact memory — **landed (S1-D, 2026-09-12)**
 
 *Report P0.2 + P1.5. Carries a latent-correctness condition.*
 
@@ -330,18 +377,41 @@ into token execution — and established the integration condition instead: *sta
 be computed from the final schedule's intervals, or the verifier must prove the schedule
 refines the phase order the plan used.*
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `exact` The two-phase alias fixture | aliases at offset 0 | rejected, or disjoint storage |
-| `exact` `memory.suboptimal.fraction` | 38.6% of 500 | 0% on the proof rail, or a stated gap |
-| `exact` `memory.worst.ratio` | 1.6154× (21 vs 13 units) | 1.0 on the proof rail |
-| `exact` `memory.real.bytes` | 1,344 B | 832 B on the proof rail |
+| Gate | Baseline | Target | Outcome |
+|---|---|---|---|
+| `exact` The two-phase alias fixture | aliases at offset 0 | rejected, or disjoint storage | **both**: the phase-liveness plan held to the token placement is refused ("does not refine the phase order"); a plan computed from the placement gives the two disjoint storage, and one computed from the barriered placement still shares offset 0 because it is safe there |
+| `exact` `memory.suboptimal.fraction` | 38.6% of 500 | 0% on the proof rail, or a stated gap | **0%** — every fixture of the corpus solved to a proved optimum within the budget (first-fit alone: 40.4% on this corpus, measured RED) |
+| `exact` `memory.worst.ratio` | 1.6154× (21 vs 13 units) | 1.0 on the proof rail | **1.0** (first-fit alone: 1.6× on this corpus) |
+| `exact` `memory.real.bytes` | 1,344 B | 832 B on the proof rail | **832 B** on the witness that reproduces the report's worst case through the real planner (first-fit: 1,344 B, the report's number) |
 
-First-fit stays the predictable fast path. The exact solver runs when the fast layout violates
-capacity, peak pressure crosses a threshold, the artifact is high-value, or a proof is asked
-for. Every result records the concurrent-live lower bound, the achieved extent, and the gap.
+First-fit stays the predictable fast path (byte-identical to the historical layout under phase
+liveness: the audit fixture's offsets did not move), and the verifier's alias law is an exact
+sweep over the ticks with the live rows' addresses in one sorted list — A/B on one host against
+the S1-C commit, `static_memory.verify.2048` 35.0 → 15.8 ms and `static_memory.plan.2048`
+100.7 → 84.3 ms with all 13 audit result digests identical. What landed: `static_memory.schedule_intervals`
+derives every resource's half-open liveness interval from the canonical placement (the first
+touching slot's start to the last one's finish), `plan_static_memory(..., schedule=)` computes
+the plan in that domain and binds it to the placement by digest, and every plan names its
+`liveness` domain; `verify_static_memory_plan(..., schedule=)` refuses a phase-liveness plan the
+placement does not refine and recomputes a schedule-liveness plan's intervals from it.
+`exact_layout` is the bounded exact solver — a complete branch-and-bound over aligned offsets
+below the first-fit incumbent, budgeted in candidate placements (work units, never seconds) —
+and every bank summary records the concurrent-live lower bound, the extent, the gap and the
+stop reason (`first-fit`, `optimal`, `budget`); the verifier re-runs the solver under the plan's
+own budget rather than trust the stop reason or the offsets. The lifetimes travel in
+`ExecutionPlanV1` v2 (the liveness byte and the tick tail, append-only, the lowest carrying
+version emitted), the C twin and the codec refuse two lifetimes of one bank that alias, and
+`verify_execution_plan` refuses a plan whose lifetimes do not cover its schedule. The report's
+corpus is not in the tree; `bcir/tests/memory_fixtures.py` reproduces its shape (500
+seven-resource fixtures) and its worst case exactly (21 vs 13 units, 1,344 vs 832 bytes). The
+integration condition the report set — static memory from the final schedule's intervals, or a
+verifier that proves the schedule refines the phase order — is met on both branches. Not
+claimed: the exact solver at production scale (the 512-resource audit fixture stops on its
+budget and keeps the first-fit incumbent with a stated gap — the interval-graph dynamic
+programming the staged plan names for G4/G5 is the next lever) and any joint placement of
+memory with the schedule (G6/G8).
 
-### G6 — typed regions and the semiring registry
+### G6 — typed regions and the semiring registry — **landed (S2-D, 2026-09-13), affine first**
 
 *Report P2. The architectural slice.*
 
@@ -354,13 +424,47 @@ each verifying closure, identities, comparison semantics and overflow policy.
 Every region must supply: a verifier, a conservative claim expansion, a cost/lower-bound
 interface, and refusal conditions.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `ratio` `native.gather-avoidance` | 5.58× | **no regression** |
-| `ratio` `native.blocked-reduction` | 11.68× | **no regression** |
-| `ratio` `native.direct-stride` | 1.27× | **no regression** |
-| `ratio` `native.dense-parity` | 0.98–1.01× | stays in band |
-| `exact` Every region expands conservatively to claims | — | differential test per region |
+| Gate | Baseline | Target | Outcome (S2-D) |
+|---|---|---|---|
+| `ratio` `native.gather-avoidance` | 5.58× | **no regression** | 4.53× → 4.44× A/B on this host (medians of 3; the samples overlap) — no regression; the slice touches neither selection nor lowering |
+| `ratio` `native.blocked-reduction` | 11.68× | **no regression** | 15.00× → 15.56× A/B — no regression |
+| `ratio` `native.direct-stride` | 1.27× | **no regression** | 1.315× → 1.314× A/B — no regression |
+| `ratio` `native.dense-parity` | 0.98–1.01× | stays in band | 1.003× → 1.004× A/B — in band |
+
+The four `native.*` rows are **host-dependent ratios** and are graded only on the baseline host
+(`Metric.host_dependent`; INDICATIVE elsewhere, reported and never blocking). A ratio cancels the
+machine out only when both sides are timed in one process; these divide one compiled kernel by
+another, so they measure this host's gather penalty rather than the code. S2-D first shipped them
+graded against the report's host, where this machine's lower band tripped a REGRESSION verdict on
+about one run in thirty — a gate firing on the machine. The same-host A/B above is how they are
+read.
+| `exact` Every region expands conservatively to claims | — | differential test per region | **met**: `regions.unexpanded.claims` 542 → 0 — `expand(region_graph(module))` is the module claim for claim on the 53-module corpus and the plan `optimize` selects over the expansion is the plan over the module; forged regions (non-consecutive claims, wrong maps, a model on an opaque region) are refused by the verifier |
+| `exact` Every objective carries its laws | 2 names, no laws | verified before admission | **met**: `objectives.unverified` 2 → 0 — six entries admitted only through `verify_objective`; a lawless operator is refused |
+
+What landed (S2-D): `kbcir.regions` — typed regions with a verifier, a conservative expansion,
+a cost interface and refusal conditions, two kinds: **affine** (a maximal run of consecutive
+claims of one phase whose accesses are 1-D affine maps with static trip counts, the local model
+being the access maps and the dependence distances) and **opaque** (the universal fallback,
+carrying the named refusal: `dynamic-trip-count`, `volatile`, `fence`, `atomic`, `sparse`,
+`cacheline-indexed`, `tile`, `lane`, `stride`, `extent`, `count`); `region_graph` partitions
+every phase, recognizes and re-verifies (on the corpus of 53 modules: 105 affine and 140 opaque regions), and
+`region_floor` is the cost interface — for every claim the cheapest of its deforested candidates
+under the most favourable coupling the access maps allow, a floor no realization of the region
+can go below (never above the plan's score on the corpus × 2 targets × 2 Θ × 4 policies; tighter
+by exactly the discount where no read is shared). `kbcir.objectives` — the typed objective
+registry: `min_plus`, `max_plus`, `min_max`, `boolean`, `lexicographic`, `pareto`, each with its
+combine/select/identities/order, the laws it claims and a declared overflow policy (`checked`
+refuses outside i64, `saturate` clamps), proved by `verify_objective` before admission; one
+layered relaxation `dag_best_path` reproduces the planner's min-plus path and the exact
+scheduler's max-plus critical path to the digit. `gem.exact.certify_selection` and the dispatch
+law's `path` kind (the report's §11.3 first row: the min-plus rail is exact) certify a plan's
+selection — `L == U == optimum`, TMSAO-1 under a declared scope — and report the region graph's
+structural floor with the coupling's price stated. Not claimed: the other region kinds the
+report lists (SDF/CSDF, timed-event max-plus, tensor index maps, state machines, equivalence
+graphs — opaque today, the conservative answer), a polyhedral depth above one (a tile claim is
+opaque), a registry attribute on the law rail (`BCIR_Semiring` keeps the two shared names; a
+wider attribute is a cross-rail change taken deliberately), and any silicon certificate from
+the native rows on this host (its tenancy is `virtualized`).
 
 The native rows are **guardrails, not targets**. They are what BCIR is for — the audit's §4.4
 shows the wins come from preserving enough structure to avoid a gather or pick a blocked
@@ -494,7 +598,7 @@ so a reader that holds the bytes reads the placement in a third of the time re-r
 dispatch takes (37 ms) and never re-derives the digest. Not claimed: a law-rail plan op (the
 MLIR rail links the C decoder) and a C DER → native fast path for the plan.
 
-### G12 — the dispatch law, work-unit budgets, resumable search
+### G12 — the dispatch law, work-unit budgets, resumable search — **landed (S2-C, 2026-09-13)**
 
 *New. Turns "a solver portfolio" into a deterministic choice the certificate can name.*
 
@@ -506,26 +610,82 @@ never seconds, so a certificate class means the same thing on every host. Search
 reproduces the same continuation. A plan diff (which claims moved, which bins changed, which
 bound tightened) is the structured answer to "what is the residual gap made of".
 
-| Gate | Target |
-|---|---|
-| `exact` `dispatch.incumbent.first` | a legal incumbent exists at every interruption point of every solver |
-| `exact` `solver.budget.units` | two runs with equal budgets and inputs produce identical plans and stop reasons |
-| `exact` Resume reproduces | continuing from a checkpoint equals the uninterrupted run |
-| `exact` The learned ranker cannot remove a candidate | the census is identical with and without it |
+| Gate | Target | Outcome |
+|---|---|---|
+| `exact` `dispatch.incumbent.first` | a legal incumbent exists at every interruption point of every solver | **met** — `dispatch.incumbent.missing` 26 → 0 over the interruption corpus (budget 0 included: the fast rail's answer stands, the exact layout no longer refuses a zero budget, the exhaustive selection is seeded with the sweep's assignment) |
+| `exact` `solver.budget.units` | two runs with equal budgets and inputs produce identical plans and stop reasons | **met** — identical plans, stop reasons, expansions and state digests on the six-job corpus and the memory witness |
+| `exact` Resume reproduces | continuing from a checkpoint equals the uninterrupted run | **met** — `search.resume.unavailable` 393 → 0: `exact_schedule`, `exact_layout` and `exact_selection` return content-addressed states (`SearchState`, `LayoutSearchState`, `SelectionSearchState`) and run(b₁) then resume(b₂) equals run(b₁+b₂), three legs included, on 1,118 splits of the six-job corpus, multi-phase random modules, the memory corpus and the selection corpus; a state refuses inputs it was not taken from |
+| `exact` The learned ranker cannot remove a candidate | the census is identical with and without it | **met** — `dispatch.ranked` holds any ranker to a permutation of the census (`CensusError` otherwise) and `policy_ranking` orders the portfolio by the L2 gate's weights with every entry kept |
+| `exact` Every certificate records its dispatch | absent | **met** — `dispatch.unrecorded` 12 → 0: `certify_schedule` dispatches through the law and records rail, solver, units, budget, stop reason, bound source and the class granted |
 
-### G13 — the workload component `W` and the measured-candidate corpus
+What landed (S2-C): `gem.dispatch` — the law as a table over (region kind, instance size,
+requested class, work budget): a `TMSAO-4` request or a zero budget dispatches the fast rail
+(`schedule_eft`, `first_fit_layout`, the one-sweep `optimize_scheduled`), a `TMSAO-3` request
+the fast rail too because a measured-best claim needs `W` and the measured corpus (G13), and a
+`TMSAO-1`/`TMSAO-2` request the proof rail (`exact_schedule`, `exact_layout`,
+`exact_selection`) with the budget, expected to close up to the bounded size and to stop on its
+budget above it; one runner per region kind returns the result with its `DispatchRecord`. The
+exact scheduler's budget became the module's, consumed phase by phase in topological order (a
+phase that closes hands the remainder on; one that exhausts it leaves the later phases pending
+with the heuristic as their incumbent and the root stack as their bound), which is what makes
+a checkpoint resume exactly; the memory and selection solvers keep their own units. `gem.diff`
+is the plan and certificate diff — moves (stream, start, duration), re-selections (candidate,
+width), re-pricings (the same candidate at another cost: the context coupling moved),
+re-layouts (bank, offset), the makespans and the regret, the bounds when certificates are
+given — the regret ledger generalized. Not claimed: a native solver owning a certificate
+(G17), the measured rail (G13), and content-addressed *storage* of states (they are artifacts
+with digests; the append-only store is G13's).
 
-*New. The scope table marks `W` "not modelled"; best-fit dispatch cannot fit work it cannot see.*
+### G13 — the workload component `W` and the measured-candidate corpus — LANDED (S2-E, 2026-09-13)
+
+*New. The scope table marked `W` "not modelled"; best-fit dispatch cannot fit work it cannot see.*
 
 A declared workload descriptor — shapes, batch, concurrency, service-level requirement,
 horizon — becomes the `W` component of `ExecutionScopeV1`, and the B1 measured schedule
 artifacts (`schedule_artifact.py`) become the replay corpus and candidate database that
 *informs* dispatch through the L2 replay gate (`portfolio.py`) and never decides legality.
 
-| Gate | Target |
-|---|---|
-| `exact` A scope digest separates two workloads | plans for `W₁` and `W₂` on one program carry distinct digests |
-| `exact` Replay-gate no-regression | a policy promoted by the corpus never loses to the incumbent on the logged episodes |
+| Gate | Target | Outcome (S2-E) |
+|---|---|---|
+| `exact` A scope digest separates two workloads | plans for `W₁` and `W₂` on one program carry distinct digests | **met** — `scope.workload.collisions` 36 → 0: `certify_schedule`, `certify_selection` and `certify_measured` take the declared workload, `W` is digested with the scope and `diff` names it; the same workload twice is the same scope |
+| `exact` Replay-gate no-regression | a policy promoted by the corpus never loses to the incumbent on the logged episodes | **met** — `replay.subset.admitted` 24 → 0: the measured replay gate replays every logged episode of the scope or refuses, its certificate names the corpus head and the logged count, and the portfolio refuses a certificate over a subset; on the random corpus an admitted certificate is exactly "the candidate's pooled median never above the incumbent's on any logged episode" |
+| `exact` The measured rail is dispatched over evidence | a TMSAO-3 request with a declared `W` and corpus evidence runs the measured rail | **met** — `dispatch.measured.unavailable` 12 → 0; without `W`, without evidence, or for a schedule or memory region the fast rail runs and the decision says which is missing |
+
+What landed (S2-E): `kbcir.workload.Workload` — the declaration (shapes from the module's
+resources, batch, concurrency, a `best-effort` / `latency` / `throughput` service level with its
+budget or rate, horizon, a `static` or `dynamic` input distribution with the expected counts of
+dynamic claims), integers and names only so the scope can digest it, validated on construction,
+held to the module by `verify_workload`, and classed (`interactive` / `batch` / `nominal`) for
+the L2 table; `scope_for(workload=)` and the three certifiers carry it as `W`. `kbcir.measured`
+— the measured-candidate corpus: `MeasuredPlan` (the plan a policy selected for (program,
+target, workload, Θ) as an assignment digest, the raw samples one per repeat, the PMU counters,
+the host's attestation by the S0-F rig's rule, the source commit), `MeasuredCorpus`
+(append-only: digests chained, the head the identity of the whole history, a corpus read back
+refused when an entry was altered, removed or reordered or the chain forged, `extends` the only
+relation two versions may have, duplicate evidence refused), `measure_plans` (B1's discipline
+for whole plans: warm-up excluded, one lap per repeat under the OS counters, the PMU when
+exposed), `from_schedule_artifact` (B1's matmul artifacts enter the same corpus with the
+tenancy `unproven`, since B1 recorded none) and `replay_measured` — the L2 replay gate over
+measured evidence: every logged episode of the scope, judged by the pooled median wall time, a
+candidate without evidence on one episode refused rather than judged on the rest;
+`ReplayCertificate` carries the corpus head and the logged count and is admitting only when it
+covers the log. `PolicyPortfolio.select(theta, workload)` is now the table over (runtime class,
+workload class): a runtime constraint outranks the workload; under a nominal runtime an
+interactive workload takes the latency schedule and a batch one the throughput schedule.
+`gem.dispatch`: the `measured` rail — a TMSAO-3 request with a declared `W`, a whole-plan
+region (`path`, `selection`) and evidence in the corpus dispatches `measured_best` (units:
+samples); `solve_measured` ranks the census by the corpus's pooled medians and returns the
+measured-best policy's plan **re-derived from the planner** (evidence whose assignment digest
+the planner no longer reproduces is stale and unused); `gem.exact.certify_measured` binds the
+class to the scope with `W` and `M` inside it. The ladder now holds a measured claim to its
+scope (`MEASURED_COMPONENTS` = P, H, W, M) and to the **two-target rule**: TMSAO-3 only when
+the prediction interval comes from attested silicon on two materially different targets with
+counters; on this host (`virtualized`) every measured certificate is TMSAO-4 and says so. Not
+claimed: a silicon certificate (Stage 6); `W` in the cross-rail manifest digest
+(`build_manifest` is recomputed by the MLIR verifier field for field — a manifest `W` is an
+S0-D-pattern change on both rails); an input distribution beyond the expected counts of dynamic
+claims; the append-only store as a service (it is a file with a chain, read and extended by a
+library).
 
 ### G14 — control-plane record ABI
 
@@ -668,8 +828,8 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-9 ODS→IRDL inventory gate                  <- LANDED (S0-B)
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
-Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               G1 <- LANDED (S1-A); G3 <- LANDED (S1-B); G11 <- LANDED (S1-C)
-Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13
+Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
@@ -713,10 +873,20 @@ no PMU):
 | Row | Slice | Baseline | Today | Verdict |
 |---|---|---:|---:|---|
 | `pricing.eft.divergence` | G1 | 1.9922 | **1.0** (S1-A, 2026-09-05) | GAIN, at the bound — one artifact; the retired pricer still reads 1.9922 on the fixture as the witness |
-| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) | GAIN — the mechanism is named under G2; 36% of headroom to the 4× bound remains |
+| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) → **3.5×** (S2-A, 2026-09-13) | GAIN — under the 4× bound (A/B on one idle host); the residual is the serial chain's O(n²) hazard edges |
+| `optimize_scheduled.general.slowdown.512` / `sweep.replacement.fraction` | G2 | 44.5× / 1.0 (S1-D, this host) | **4.7× / 0.0625** (S2-A, 2026-09-13) | GAIN, the fraction at the bound — 256 step-shortening trials each re-place one phase of sixteen; the assignment is the reference sweep's claim by claim |
 | `static_memory.digests.2048` | G3 | 3 | **1** (S1-B, 2026-09-12) | GAIN, at the bound — one digest per plan-and-verify chain; the verifier still recomputes at a trust boundary |
 | `plan.abi.mismatches` / `plan.readers.disagreements` / `plan.stale.accepted` / `plan.malformed.accepted` | G11 | 26 / 27 / 6 / 39 | **0 / 0 / 0 / 0** (S1-C, 2026-09-12) | GAIN, at the bound — the plan has bytes: every corpus plan survives the C twin, every reader reproduces its trace from the bytes, every stale and malformed fixture is refused on every rail that can see it |
-| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 ms A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
-| eleven rows | G0, G4–G6 | — | not measured | need the exact oracles or the native rig |
+| `memory.suboptimal.fraction` / `memory.worst.ratio` / `memory.real.bytes` | G5 | 38.6% / 1.6154× / 1,344 B | **0% / 1.0 / 832 B** (S1-D, 2026-09-12) | GAIN, at the bound — the bounded exact solver proves every corpus fixture and the witness reproduces the report's worst case; the two-phase alias fixture is refused against the token placement and gets disjoint storage when planned from it |
+| five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 → 84 ms (S1-D's alias sweep) A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
+| `eft.suboptimal.2domains` / `eft.worst.2domains` / `eft.mean.2domains` (+ the 3-domain rows) | G4 | 11.07% / 1.1333× / 1.0078 | **0 / 1.0 / 1.0** (S2-B, 2026-09-13) | GAIN, at the bound — the proof rail proves every instance; the heuristic's numbers are kept as witness rows |
+| `optimize_scheduled.quality` / `solver.unproved.fraction` / `solver.gap.p95` | G4 | 1.00696× / 1.0 / 0.0625 | **1.0 / 0 / 0** (S2-B, 2026-09-13) | GAIN, at the bound — every certificate carries L, U and both gaps |
+| `search.resume.unavailable` / `dispatch.incumbent.missing` / `dispatch.unrecorded` | G12 | 393 / 26 / 12 (the parent tree) | **0 / 0 / 0** (S2-C, 2026-09-13) | GAIN, at the bound — every proof-rail solver resumes exactly, has an incumbent at every interruption point, and every certificate names its dispatch |
+| `regions.unexpanded.claims` / `objectives.unverified` | G6 | 542 / 2 (the parent tree) | **0 / 0** (S2-D, 2026-09-13) | GAIN, at the bound — every claim in a verified region whose expansion is the module; every objective admitted with its laws |
+| `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate. Host-dependent, so INDICATIVE off the baseline host and read as the same-host A/B |
+| `scope.workload.collisions` / `replay.subset.admitted` / `dispatch.measured.unavailable` | G13 | 36 / 24 / 12 (the parent tree) | **0 / 0 / 0** (S2-E, 2026-09-13) | GAIN, at the bound — `W` in every certificate's scope, a corpus certificate covers the log or is refused, the measured rail runs over evidence; every measured certificate on this `virtualized` host is TMSAO-4 by the two-target rule |
+| `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
 
-Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.
+Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail; since S2-E the
+measured rail exists and grants TMSAO-3 to nothing on this host — the two-target rule keeps
+it hardware-gated (Stage 6).

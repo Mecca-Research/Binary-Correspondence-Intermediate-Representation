@@ -9,7 +9,8 @@ format (`bcir/abi/execution_plan_abi.py`, `docs/kernel/BCIR_EXECUTION_PLAN_ABI.m
   lane, width, cost) and the one placement both executors run and both pricers read
   (stream, start, duration), one record per claim in the realization's own order;
 * **lifetimes** -- the static-memory planner's addresses (bank, offset, size, alignment,
-  first/last phase), the family G5 makes schedule-aware;
+  first/last phase) and, since v2 (G5), the half-open liveness interval in the plan's
+  liveness domain (`liveness`: phase positions, or the placement's own ticks);
 * **moves** -- the movement edges G8 will produce (source and destination bank, byte range,
   route, coherence action, generation, overlap window, kind); declared, carried and verified
   for well-formedness now so G8 lands as content, not as a wire change;
@@ -41,6 +42,10 @@ PLAN_MODES = ("eft", "tokens")
 #: wire spells it 0xFFFFFFFF; the model keeps the scheduler's -1).
 TAIL_STREAM = -1
 
+#: The liveness domains a plan's lifetimes live in (`kbcir.static_memory.LIVENESS_DOMAINS`):
+#: topological phase positions, or the placement's own ticks (G5). A v2 header byte.
+LIVENESS_DOMAINS = ("phase", "schedule")
+
 #: The G8 movement-edge kinds (the roadmap's "direct, peer, staged, rematerialized,
 #: compressed or evicted") and coherence actions, closed sets on the wire (u8 codes).
 MOVE_KINDS = ("direct", "peer", "staged", "rematerialized", "compressed", "evicted")
@@ -64,7 +69,10 @@ class PlanStep:
 
 @dataclass(frozen=True)
 class Lifetime:
-    """A resource's static address and live range (`kbcir.static_memory.StaticAllocation`)."""
+    """A resource's static address and live range (`kbcir.static_memory.StaticAllocation`):
+    the declared phase span (closed) and, since v2 (G5), the HALF-OPEN liveness interval in
+    the plan's liveness domain -- `[first_phase, last_phase + 1)` under phase liveness, the
+    placement's ticks under schedule liveness. A v1 record decodes with the phase default."""
 
     rid: int
     bank: str
@@ -73,6 +81,22 @@ class Lifetime:
     alignment: int
     first_phase: int
     last_phase: int
+    first_tick: int = 0
+    last_tick: int = 0
+
+    def __post_init__(self) -> None:
+        if self.last_tick == 0 and self.first_tick == 0:
+            object.__setattr__(self, "first_tick", self.first_phase)
+            object.__setattr__(self, "last_tick", self.last_phase + 1)
+
+    @property
+    def phase_default(self) -> bool:
+        """Whether the ticks are exactly the phase-liveness default (the v1 wire carries them)."""
+        return (self.first_tick, self.last_tick) == (self.first_phase, self.last_phase + 1)
+
+    @property
+    def end(self) -> int:
+        return self.offset + self.size_bytes
 
 
 @dataclass(frozen=True)
@@ -100,6 +124,7 @@ class MovementEdge:
 class ExecutionPlan:
     source_plan: str = "plan0"
     mode: str = "eft"
+    liveness: str = "phase"  # the lifetimes' domain (v2 header byte; "phase" on a v1 plan)
     streams: int = 1  # affinity domains the plan was placed on (the tail is extra)
     knee: int = 1  # the bandwidth knee the dispatch clamped to
     makespan: int = 0
@@ -179,7 +204,11 @@ def plan_from_realization(
     if len(steps) != len(sched.slots):
         raise ValueError("the schedule artifact placed claims the realization does not step")
     lifetimes: list[Lifetime] = []
+    liveness = "phase"
     if static_plan is not None:
+        liveness = str(getattr(static_plan, "liveness", "phase"))
+        if liveness not in LIVENESS_DOMAINS:
+            raise ValueError(f"unknown static plan liveness {liveness!r}")
         for row in sorted(static_plan.allocations, key=lambda a: a.rid):
             lifetimes.append(
                 Lifetime(
@@ -190,11 +219,14 @@ def plan_from_realization(
                     alignment=row.alignment,
                     first_phase=row.first_phase,
                     last_phase=row.last_phase,
+                    first_tick=row.first_tick,
+                    last_tick=row.last_tick,
                 )
             )
     return ExecutionPlan(
         source_plan=plan,
         mode=mode,
+        liveness=liveness,
         streams=streams,
         knee=knee,
         makespan=int(sched.makespan),
@@ -248,6 +280,7 @@ def realization_of(plan: ExecutionPlan):
 __all__ = [
     "COHERENCE_ACTIONS",
     "ExecutionPlan",
+    "LIVENESS_DOMAINS",
     "Lifetime",
     "MOVE_KINDS",
     "MovementEdge",
