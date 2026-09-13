@@ -227,3 +227,22 @@ def test_the_general_case_rows_are_measured_through_the_sweep():
     assert out["optimize_scheduled.general.512"] > 0
     assert out["optimize_scheduled.general.slowdown.512"] > 0
     assert out["optimize_scheduled.slowdown.512"] > 0
+
+
+def test_the_exact_rail_rows_are_measured_through_the_solver():
+    """G4 / S2-B: the scheduler group proves the section 6.1 corpus instance by instance --
+    the proof-rail rows at their bounds, the heuristic's own numbers kept as the report's
+    witness, the Stage 2 exit rows at zero, the section 6.3 sweep held to the enumeration."""
+    from tools.perf.gemplus_baseline import measure_scheduler
+
+    out = measure_scheduler()
+    assert out["eft.suboptimal.2domains"] == 0.0 and out["eft.suboptimal.3domains"] == 0.0
+    assert out["eft.worst.2domains"] == 1.0 and out["eft.worst.3domains"] == 1.0
+    assert out["eft.mean.2domains"] == 1.0 and out["eft.mean.3domains"] == 1.0
+    assert abs(out["eft.heuristic.suboptimal.2domains"] - 190 / 1716) < 1e-12
+    assert abs(out["eft.heuristic.worst.2domains"] - 17 / 15) < 1e-12
+    assert abs(out["eft.heuristic.mean.2domains"] - 1.0078) < 5e-4
+    assert abs(out["eft.heuristic.suboptimal.3domains"] - 18 / 1716) < 1e-12
+    assert abs(out["eft.heuristic.worst.3domains"] - 7 / 6) < 1e-12
+    assert out["solver.unproved.fraction"] == 0.0 and out["solver.gap.p95"] == 0.0
+    assert out["optimize_scheduled.quality"] == 1.0

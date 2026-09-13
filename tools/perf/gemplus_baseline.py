@@ -308,6 +308,59 @@ METRICS: tuple[Metric, ...] = (
         bound_source="exact branch-and-bound (§6.1)",
         slice_owner="G4",
     ),
+    # The report's three-domain row (§6.1), frozen at its numbers; and the exact rail (G4 /
+    # S2-B): the corpus proved instance by instance, so `solver.unproved.fraction` is the share
+    # the bounded search could not close within its budget and `solver.gap.p95` the 95th
+    # percentile of the certified gap `(U - L) / U` over the corpus -- the Stage 2 exit rows.
+    # Baselines are the parent tree: no exact rail, so nothing was proved (1.0) and the only
+    # gap anyone could state was the heuristic's own against the section 6.1 oracle.
+    Metric(
+        "eft.suboptimal.3domains",
+        "scheduler",
+        "fraction of 1,716 six-job instances where EFT is suboptimal, 3 domains",
+        18 / 1716,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="exact branch-and-bound over the same corpus (§6.1)",
+        slice_owner="G4",
+    ),
+    Metric(
+        "eft.worst.3domains",
+        "scheduler",
+        "worst EFT/optimal makespan ratio, 3 domains",
+        7 / 6,
+        "x",
+        "exact",
+        bound=1.0,
+        bound_source="exact branch-and-bound (§6.1)",
+        slice_owner="G4",
+    ),
+    Metric(
+        "solver.unproved.fraction",
+        "scheduler",
+        "six-job instances (2 and 3 domains) the exact rail did not prove within its budget",
+        1.0,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="every instance of the corpus closed (stop reason optimal); the "
+        "parent tree had no exact rail, so nothing was proved",
+        slice_owner="G4",
+    ),
+    Metric(
+        "solver.gap.p95",
+        "scheduler",
+        "95th percentile of the certified relative gap (U - L) / U over the six-job corpus",
+        0.0625,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the incumbent proved optimal on every instance; the baseline is the "
+        "heuristic's own p95 gap against the §6.1 oracle over the pooled 2- and 3-domain "
+        "corpus on the parent tree (1/16: two domains, 190 of 1,716 instances off)",
+        slice_owner="G4",
+    ),
     # --- §6.2: two implementations that do not describe the same schedule. This one is a
     # CORRECTNESS metric wearing a performance costume: the target is agreement, not speed.
     # G1 (S1-A) landed the one artifact: `price_scheduled` reads `schedule_plan`, which is the
@@ -789,6 +842,72 @@ def measure_exact() -> dict[str, float]:
     return out
 
 
+def measure_scheduler() -> dict[str, float]:
+    """The exact rail (G4 / S2-B) over the report's §6.1 corpus and the §6.3 shape.
+
+    The `eft.*` rows read the PROOF RAIL: for every instance the bounded exact search starts
+    from the heuristic's placement and reports its incumbent, so the rows are the incumbent
+    against the independent partition oracle (`exact_fixtures.partition_optimum`) -- zero
+    suboptimal, ratio 1.0 -- while `eft.heuristic.*` keeps the heuristic's own numbers as the
+    witness that the corpus still exhibits what the report measured. `solver.unproved.fraction`
+    and `solver.gap.p95` are the Stage 2 exit rows; `optimize_scheduled.quality` is the
+    one-sweep re-selection against the exhaustive enumeration over `exact_fixtures.quality_corpus`
+    (worst ratio).
+    """
+    from bcir.gem.exact import exact_schedule, exact_selection
+    from bcir.kbcir import TARGETS
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.weights import ENERGY, PERF
+    from bcir.tests.exact_fixtures import (
+        partition_optimum,
+        quality_corpus,
+        six_job_corpus,
+        six_job_module,
+        six_job_target,
+    )
+
+    out: dict[str, float] = {}
+    module = six_job_module()
+    corpus = six_job_corpus()
+    unproved = 0
+    gaps: list[float] = []
+    for domains in (2, 3):
+        target = six_job_target(domains)
+        suboptimal = heuristic_suboptimal = 0
+        worst = heuristic_worst = 1.0
+        mean = heuristic_mean = 0.0
+        for durs in corpus:
+            durations = {index + 1: d for index, d in enumerate(durs)}
+            certified = exact_schedule(module, durations, target)
+            optimum = partition_optimum(durs, domains)
+            ratio = certified.incumbent / optimum
+            heuristic = certified.heuristic / optimum
+            suboptimal += ratio > 1
+            heuristic_suboptimal += heuristic > 1
+            worst, heuristic_worst = max(worst, ratio), max(heuristic_worst, heuristic)
+            mean += ratio
+            heuristic_mean += heuristic
+            unproved += certified.stop_reason != "optimal"
+            gaps.append(certified.incumbent_gap["relative"])
+        out[f"eft.suboptimal.{domains}domains"] = suboptimal / len(corpus)
+        out[f"eft.worst.{domains}domains"] = worst
+        out[f"eft.mean.{domains}domains"] = mean / len(corpus)
+        out[f"eft.heuristic.suboptimal.{domains}domains"] = heuristic_suboptimal / len(corpus)
+        out[f"eft.heuristic.worst.{domains}domains"] = heuristic_worst
+        out[f"eft.heuristic.mean.{domains}domains"] = heuristic_mean / len(corpus)
+    out["solver.unproved.fraction"] = unproved / (2 * len(corpus))
+    gaps.sort()
+    out["solver.gap.p95"] = gaps[min(len(gaps) - 1, int(round(0.95 * (len(gaps) - 1))))]
+
+    worst_quality = 1.0
+    for _name, small in quality_corpus():
+        for policy in (PERF, ENERGY):
+            selection = exact_selection(small, TARGETS["x86_avx512"], Theta.cool(), policy)
+            worst_quality = max(worst_quality, selection.ratio)
+    out["optimize_scheduled.quality"] = worst_quality
+    return out
+
+
 def measure_verifier() -> dict[str, float]:
     """The S0-A rows: can R9 fire on the planner's own plan, and what does firing cost.
 
@@ -1093,6 +1212,7 @@ def measure_memory() -> dict[str, float]:
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
+    "scheduler": measure_scheduler,
     "exact": measure_exact,
     "verifier": measure_verifier,
     "digest": measure_digest,
@@ -1255,7 +1375,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, exact, verifier, digest, plan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, exact, verifier, digest, plan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

@@ -222,6 +222,14 @@ search is held to the full re-placement it replaces, kept alive as
 step costs, price and artifact on 1,344 cases, and the placer to `schedule_eft`
 on 6,840 random trials and 1,690 adoptions -- a faster sweep that picked a
 different plan would not have been made faster; it would have been changed.
+S2-B instance (2026-09-13): the exact rail is held to oracles that share no
+code with it -- the partition optimum on the section 6.1 corpus
+(`exact_fixtures.partition_optimum`, a symmetry-broken search over loads) and
+the enumeration of every active schedule of a tiny module
+(`active_schedule_optimum`, no bound, no symmetry breaking) -- and a
+certificate is refused its optimality rung when the scope is undeclared
+(`certify_schedule` without a policy: TMSAO-4 with the reason), so the solver
+cannot certify itself and a certificate cannot over-claim.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -623,6 +631,10 @@ of which `_dispatch` is the one-shot form -- run by `schedule_eft`,
 price cannot drift from the placement it prices; `EftPlacer.schedule()` is
 `schedule_eft`'s artifact by construction and by test on every fixture, trial
 and adoption.
+S2-B instance (2026-09-13): the exact scheduler's eligibility -- which stream
+may run a sparse, a bandwidth or a compute claim -- is `_PhaseDispatch.eligible`,
+the artifact's own rule, read rather than restated, so a certificate proves a
+bound over exactly the placements the executor could make.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

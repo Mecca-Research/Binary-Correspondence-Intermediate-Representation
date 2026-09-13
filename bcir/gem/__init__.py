@@ -64,6 +64,17 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "schedule_power_rail",
     ),
     "async_tokens": ("AsyncPlan", "async_plan"),
+    "exact": (
+        "DEFAULT_EXACT_BUDGET",
+        "Bound",
+        "ExactSchedule",
+        "ExactSelection",
+        "PhaseSolution",
+        "ScheduleCertificate",
+        "certify_schedule",
+        "exact_schedule",
+        "exact_selection",
+    ),
     "cim": ("CIMDecision", "annotate_cim", "cim_decision"),
     "dvfs": (
         "DVFSDecision",

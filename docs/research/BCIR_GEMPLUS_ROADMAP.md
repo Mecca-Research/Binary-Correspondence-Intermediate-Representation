@@ -326,7 +326,7 @@ the Class-B "vacuous check" defect from the audit, rebuilt. The cache here is ke
 revision and re-checked against the module's census, and no verifier trusts the revision: an
 identity is accepted only when the module's content is exactly what it describes.
 
-### G4 — bounded exact solvers and the lower-bound stack
+### G4 — bounded exact solvers and the lower-bound stack — **landed (S2-B, 2026-09-13)**
 
 *Report P1.5. **The first slice that can emit TMSAO-2.***
 
@@ -335,16 +335,37 @@ path, work/capacity, hierarchical Roofline, communication cut, queue/network-cal
 allocation peak/clique, occupancy, energy-at-minimum-work. Report the **maximum valid** bound
 against the incumbent.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `exact` `eft.suboptimal.2domains` | 11.07% of 1,716 | 0% on the proof rail, or a stated gap on every instance |
-| `exact` `eft.worst.2domains` | 1.1333× | 1.0 on the proof rail |
-| `exact` `optimize_scheduled.quality` | 1.00696× | 1.0 on the proof rail |
-| `exact` Every certificate carries `L`, `U`, and both gaps | absent | present |
+| Gate | Baseline | Target | Outcome |
+|---|---|---|---|
+| `exact` `eft.suboptimal.2domains` | 11.07% of 1,716 | 0% on the proof rail, or a stated gap on every instance | **0%** — every instance proved (stop reason `optimal`, at most 3,076 expansions); the heuristic alone still reads 190 / 1,716, kept as the witness row `eft.heuristic.suboptimal.2domains` |
+| `exact` `eft.worst.2domains` | 1.1333× | 1.0 on the proof rail | **1.0** (the heuristic's 17/15 kept as the witness); the report's three-domain row added and closed the same way (18 / 1,716, 7/6 → 0 / 1.0) |
+| `exact` `optimize_scheduled.quality` | 1.00696× | 1.0 on the proof rail | **1.0** — the one-sweep re-selection equals the exhaustive candidate enumeration on every module of `exact_fixtures.quality_corpus` (56 shaped and seeded four-claim modules × two policies); the report's 55,552 / 55,168 fixture was the retired wave pricer's and is not reconstructible under the canonical artifact |
+| `exact` Every certificate carries `L`, `U`, and both gaps | absent | present | **present**: `gem.exact.certify_schedule` binds `L`, `U`, the heuristic's and the incumbent's gap, the stop reason, the budget and the bound stack to the `ExecutionScopeV1` digest; TMSAO-1 when the search closes, TMSAO-2 on a budget stop, TMSAO-4 with the reason when the scope is undeclared |
+| `exact` `solver.unproved.fraction` / `solver.gap.p95` (Stage 2 exit) | 1.0 / 0.0625 (the heuristic's own p95 gap) | 0 / 0 | **0 / 0** over the pooled 2- and 3-domain corpus |
 
 **The gap is the product, not the speed.** A slice that leaves the heuristic exactly as fast
 and merely states how far from optimal it is has still moved BCIR from TMSAO-4 to TMSAO-2, and
 that is a bigger step than any constant factor in this document.
+
+What landed (S2-B): `gem.exact.exact_schedule`, a dependency-free branch-and-bound over one
+phase's active schedules (phase barriers compose serially, so the module's optimum is the sum
+of its phases' optima) under the artifact's own eligibility rules — the tail stream for sparse
+claims, the knee for bandwidth claims — with the incumbent seeded by the heuristic's placement,
+symmetry breaking on interchangeable empty streams and identical claims, a budget in node
+expansions and, on a budget stop, the least bound over the subtrees never entered as `L`. The
+bound stack at every node is the strongest of critical path, work over the streams' frontier,
+bandwidth work over the knee and the tail's serial work, each named in the certificate. The
+corpus of section 6.1 is pinned and reproduced exactly (`bcir/tests/exact_fixtures.py`: all
+1,716 nondecreasing six-job multisets with values 1–8; `schedule_eft` gives the report's 190 /
+1.0078 / 17:15 and 18 / 1.0013 / 7:6), and the solver is held to oracles that share no code with
+it — the partition optimum on that corpus, the enumeration of every active schedule on 108
+hazard-bearing tiny modules. `exact_selection` is the same discipline for the schedule-aware
+candidate selection. The artifact is never replaced — the placement every rail reads and the
+twins reproduce stays `schedule_eft`'s; the exact rail certifies it. Not claimed: proofs at
+production scale (a budget stop states its gap), the remaining members of the stack the report
+lists (hierarchical roofline, communication cut, queue calculus, occupancy, energy at minimum
+work — bounds on quantities the schedule does not yet model), and the interval-graph memory DP
+(still with G5's residual).
 
 ### G5 — schedule-aware liveness and bounded exact memory — **landed (S1-D, 2026-09-12)**
 
@@ -718,7 +739,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
-Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); next G4 (S2-B)
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); G4 (S2-B); next G12 (S2-C)
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
@@ -768,6 +789,8 @@ no PMU):
 | `plan.abi.mismatches` / `plan.readers.disagreements` / `plan.stale.accepted` / `plan.malformed.accepted` | G11 | 26 / 27 / 6 / 39 | **0 / 0 / 0 / 0** (S1-C, 2026-09-12) | GAIN, at the bound — the plan has bytes: every corpus plan survives the C twin, every reader reproduces its trace from the bytes, every stale and malformed fixture is refused on every rail that can see it |
 | `memory.suboptimal.fraction` / `memory.worst.ratio` / `memory.real.bytes` | G5 | 38.6% / 1.6154× / 1,344 B | **0% / 1.0 / 832 B** (S1-D, 2026-09-12) | GAIN, at the bound — the bounded exact solver proves every corpus fixture and the witness reproduces the report's worst case; the two-phase alias fixture is refused against the token placement and gets disjoint storage when planned from it |
 | five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 → 84 ms (S1-D's alias sweep) A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
-| eight rows | G0, G4, G6 | — | not measured | need the exact oracles or the native rig |
+| `eft.suboptimal.2domains` / `eft.worst.2domains` / `eft.mean.2domains` (+ the 3-domain rows) | G4 | 11.07% / 1.1333× / 1.0078 | **0 / 1.0 / 1.0** (S2-B, 2026-09-13) | GAIN, at the bound — the proof rail proves every instance; the heuristic's numbers are kept as witness rows |
+| `optimize_scheduled.quality` / `solver.unproved.fraction` / `solver.gap.p95` | G4 | 1.00696× / 1.0 / 0.0625 | **1.0 / 0 / 0** (S2-B, 2026-09-13) | GAIN, at the bound — every certificate carries L, U and both gaps |
+| four rows | G0, G6 | — | not measured | need the native rig or the typed regions |
 
 Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.

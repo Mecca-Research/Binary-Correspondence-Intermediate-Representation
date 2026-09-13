@@ -608,6 +608,31 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   claims (the single-phase general fixture goes 44x -> 27x); the `-bcir-overlap-optimize`
   port re-places per trial and still matches the oracle's (makespan, serial) -- the results are
   what parity holds, not the cost.
+  S2-B (2026-09-13) landed G4, the bounded exact solvers and the lower-bound stack -- the first
+  TMSAO-2 (and TMSAO-1) certificates. RED: the report's section 6.1 corpus was pinned and
+  reproduced exactly (all 1,716 nondecreasing six-job multisets with values 1..8; `schedule_eft`
+  gives 190 / 1.0078 / 17:15 on two domains and 18 / 1.0013 / 7:6 on three) and nothing in the
+  tree could state that distance for a plan -- the four G4 rows were frozen but unmeasured and
+  every result was TMSAO-4 by construction. What landed: `gem.exact.exact_schedule`, a
+  dependency-free branch-and-bound over one phase's active schedules under the artifact's own
+  eligibility rules (the tail stream, the knee), seeded by the heuristic's placement, with
+  symmetry breaking on interchangeable streams and identical claims, a budget in node
+  expansions and a valid `L` on a budget stop (the least bound over the subtrees never
+  entered); the named bound stack (critical path, work over the streams' frontier, bandwidth
+  work over the knee, the tail's serial work); `exact_selection` for the section 6.3 sweep;
+  and `certify_schedule`, which binds L, U, both gaps, the stop reason, the budget and the
+  stack to the `ExecutionScopeV1` digest and lets `certificate_class_allowed` grant TMSAO-1
+  when the search closed, TMSAO-2 on a budget stop and TMSAO-4 with the reason when the scope
+  is undeclared. The solver is held to oracles that share no code with it: the partition
+  optimum on the corpus (1,716 / 1,716 proved on each domain count, at most 3,076 and 6,169
+  expansions) and the enumeration of every active schedule on 108 hazard-bearing tiny modules.
+  The artifact is never replaced: the placement the executors and the twins read stays
+  `schedule_eft`'s. Outcomes: `eft.suboptimal/worst/mean.{2,3}domains` 0 / 1.0 / 1.0 on the
+  proof rail (the heuristic's own numbers kept as witness rows), `optimize_scheduled.quality`
+  1.0 (the one-sweep selection equals the exhaustive enumeration on 112 corpus cases; the
+  report's 55,552 / 55,168 fixture was the retired pricer's), `solver.unproved.fraction` 0,
+  `solver.gap.p95` 0. Not claimed: proofs at production scale, the report's remaining bound
+  members (roofline, communication cut, queue calculus, occupancy, energy), the memory DP.
 
 ---
 
