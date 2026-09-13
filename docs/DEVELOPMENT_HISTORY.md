@@ -675,6 +675,25 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   A/B on this host (virtualized) 4.53 -> 4.44x, 15.00 -> 15.56x, 1.315 -> 1.314x, 1.003 ->
   1.004x -- no regression. Not claimed: the other region kinds (opaque today), a polyhedral
   depth above one, a law-rail registry attribute, a silicon certificate.
+  S2-E (2026-09-13) landed G13, the workload component W, the measured-candidate corpus and
+  the replay-gate integration. RED: no certificate could declare a workload (three workloads
+  on one program shared one scope digest on all 36 pairs), the portfolio admitted a
+  certificate with one clean episode whatever the log held (24/24 subset promotions), and a
+  TMSAO-3 request went to the fast rail whatever evidence existed (12/12). What landed:
+  `kbcir.workload` (`Workload`: shapes, batch, concurrency, service level, horizon, the
+  expected counts of dynamic claims; validated, digested, held to the module, classed for the
+  L2 table; carried as W by `scope_for` and the certifiers), `kbcir.measured` (`MeasuredPlan`
+  with raw samples, counters and the host attestation; the append-only chained
+  `MeasuredCorpus`, refusing altered, removed, reordered or forged evidence on read;
+  `measure_plans`; B1's artifacts adapted; `replay_measured` over every logged episode with a
+  corpus-bound `ReplayCertificate`), `PolicyPortfolio.select` over (runtime, workload), the
+  dispatch law's measured rail and `solve_measured` (the plan re-derived from the planner,
+  stale evidence unused), `gem.exact.certify_measured`, and the ladder's
+  `MEASURED_COMPONENTS` and two-target rule. Outcomes: `scope.workload.collisions` 36 -> 0,
+  `replay.subset.admitted` 24 -> 0, `dispatch.measured.unavailable` 12 -> 0; every measured
+  certificate on this virtualized host is TMSAO-4 with the reason. Not claimed: a silicon
+  certificate, W in the cross-rail manifest, a distribution beyond dynamic claims' expected
+  counts. Stage 2 is complete.
 
 ---
 

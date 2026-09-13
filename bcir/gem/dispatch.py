@@ -32,20 +32,25 @@ from ..model import Module
 
 REGION_KINDS = ("path", "schedule", "memory", "selection")
 CERTIFICATE_CLASSES = ("TMSAO-1", "TMSAO-2", "TMSAO-3", "TMSAO-4")
-RAILS = ("fast", "proof")
+RAILS = ("fast", "proof", "measured")
 
 #: (region kind, rail) -> (solver, its work unit). The fast rail's unit is what it places once.
+#: The measured rail (G13) ranks whole plans by the corpus's evidence, so it exists for the
+#: two region kinds whose result IS a whole plan; a schedule or memory region has no measured
+#: solver and a measured request for one falls to the fast rail with the reason.
 SOLVERS: dict[tuple[str, str], tuple[str, str]] = {
     # additive layered candidates: the min-plus path is exact, so the fast rail IS the proof
     # rail (the report's section 11.3, first row)
     ("path", "fast"): ("optimize", "relaxations"),
     ("path", "proof"): ("optimize", "relaxations"),
+    ("path", "measured"): ("measured_best", "samples"),
     ("schedule", "fast"): ("schedule_eft", "placements"),
     ("schedule", "proof"): ("exact_schedule", "expansions"),
     ("memory", "fast"): ("first_fit_layout", "placements"),
     ("memory", "proof"): ("exact_layout", "candidate placements"),
     ("selection", "fast"): ("optimize_scheduled", "trials"),
     ("selection", "proof"): ("exact_selection", "assignments"),
+    ("selection", "measured"): ("measured_best", "samples"),
 }
 
 #: The instance size (claims, items, claims) up to which the proof rail is expected to close
@@ -58,7 +63,7 @@ BOUNDED_SIZE = {
     "selection": 12,
 }  # a DP closes at any size
 
-STOP_REASONS = ("optimal", "budget", "heuristic")
+STOP_REASONS = ("optimal", "budget", "heuristic", "measured")
 
 
 @dataclass(frozen=True)
@@ -69,6 +74,12 @@ class DispatchRequest:
     size: int
     requested: str = "TMSAO-2"
     budget: int = 200_000
+    #: The declared workload's digest (`kbcir.workload.Workload.digest()`, G13), or None when
+    #: no workload was declared -- a measured-best claim ranges over W, so the law needs it.
+    workload: str | None = None
+    #: How many measured plans the corpus holds for (program, target, workload): the law
+    #: dispatches the measured rail only over evidence that exists.
+    evidence: int = 0
 
     def __post_init__(self) -> None:
         if self.kind not in REGION_KINDS:
@@ -79,6 +90,14 @@ class DispatchRequest:
             raise ValueError("instance size must be a non-negative integer")
         if not isinstance(self.budget, int) or isinstance(self.budget, bool) or self.budget < 0:
             raise ValueError("work budget must be a non-negative integer (work units)")
+        if self.workload is not None and (not isinstance(self.workload, str) or not self.workload):
+            raise ValueError("workload must be the declared workload's digest, or None")
+        if (
+            not isinstance(self.evidence, int)
+            or isinstance(self.evidence, bool)
+            or self.evidence < 0
+        ):
+            raise ValueError("evidence must be a non-negative count of measured plans")
 
 
 @dataclass(frozen=True)
@@ -115,8 +134,12 @@ def dispatch(request: DispatchRequest) -> DispatchDecision:
 
     * TMSAO-4 requested, or a zero budget: the fast rail (a heuristic incumbent, legality
       and reproducibility only);
-    * TMSAO-3 requested: the fast rail, because a measured-best claim needs the workload
-      component `W` and the measured-candidate corpus (G13), which no rail here has;
+    * TMSAO-3 requested: the measured rail (G13) when the request declares a workload, the
+      region kind has a measured solver (a whole plan: `path` or `selection`) and the corpus
+      holds evidence for the scope; otherwise the fast rail, with the reason naming which of
+      the three is missing. The rail ranks the census by evidence; the class it can grant is
+      still the ladder's (`kbcir.scope.certificate_class_allowed`), which holds a measured
+      claim to the two-target rule;
     * TMSAO-1 or TMSAO-2 requested with a budget: the proof rail, expected to close
       (TMSAO-1) up to the bounded size and to stop on its budget with a stated gap
       (TMSAO-2) above it.
@@ -148,6 +171,37 @@ def dispatch(request: DispatchRequest) -> DispatchDecision:
             "no work budget was granted: the fast rail places once and no bound is searched",
         )
     if request.requested == "TMSAO-3":
+        measured = SOLVERS.get((request.kind, "measured"))
+        if request.workload is None:
+            why = (
+                "a measured-best claim ranges over the workload component W (G13) and none "
+                "was declared: the fast rail places once"
+            )
+        elif measured is None:
+            why = (
+                f"the measured rail ranks whole plans and a {request.kind} region is not one "
+                "(no measured solver): the fast rail places once"
+            )
+        elif request.evidence == 0:
+            why = (
+                "the corpus holds no measured plan for this (program, target, workload): "
+                "the fast rail places once"
+            )
+        else:
+            return DispatchDecision(
+                request.kind,
+                request.size,
+                request.requested,
+                request.budget,
+                "measured",
+                measured[0],
+                measured[1],
+                "TMSAO-3",
+                f"the measured rail ranks the census by the corpus's {request.evidence} "
+                "measured plans for this scope; TMSAO-3 is granted only under the "
+                "two-target rule (attested silicon on two materially different targets "
+                "with counters), TMSAO-4 with the reason otherwise",
+            )
         return DispatchDecision(
             request.kind,
             request.size,
@@ -157,8 +211,7 @@ def dispatch(request: DispatchRequest) -> DispatchDecision:
             fast_solver,
             fast_units,
             "TMSAO-4",
-            "a measured-best claim needs the workload component W and the measured-candidate "
-            "corpus (G13); neither rail here can grant it, so the fast rail places once",
+            why,
         )
     if request.size <= BOUNDED_SIZE[request.kind]:
         expected, why = (
@@ -305,6 +358,60 @@ def solve_selection(request: DispatchRequest, module: Module, h, theta, policy, 
     )
 
 
+def solve_measured(
+    request: DispatchRequest, corpus, module: Module, h, theta, census, *, workload, incumbent=None
+):
+    """Dispatch a measured request over whole plans (G13): the measured rail ranks the census
+    (policies) by the corpus's pooled median wall time for (program, target, workload, Theta)
+    and returns the measured-best policy's plan RE-DERIVED from the planner -- evidence whose
+    plan digest the planner no longer reproduces is stale and is not used, and the corpus
+    never decides legality (the plan is `optimize`'s, verified like any other). Falls to the
+    fast rail (the incumbent policy's plan, placed once) when the law does or when every
+    evidence row is stale. Returns `((policy, result), record)`; the record's `granted` is
+    the rail's own claim under the two-target rule (attested silicon on two targets), the
+    certificate re-judges it against the declared scope."""
+    from ..kbcir.measured import assignment_digest, pooled_median, scope_key, theta_key
+    from ..kbcir.realize import optimize
+    from ..kbcir.weights import PERF
+
+    decision = dispatch(request)
+    members = list(census)
+    fallback = incumbent if incumbent is not None else (members[0] if members else PERF)
+
+    def once():
+        result = optimize(module, h, theta, fallback)
+        record = DispatchRecord(decision, "heuristic", len(result.steps), "none", "TMSAO-4")
+        return (fallback, result), record
+
+    if decision.rail != "measured":
+        return once()
+    program, target, workload_digest = scope_key(module, h, workload)
+    episode = theta_key(theta)
+    best = None
+    spent = 0
+    for policy in members:
+        rows = corpus.lookup(program, target, workload_digest, theta=episode, policy=policy.name)
+        if not rows:
+            continue
+        result = optimize(module, h, theta, policy)
+        digest = assignment_digest(result)
+        live = [row for row in rows if row.plan == digest]  # stale evidence is not used
+        if not live:
+            continue
+        spent += sum(len(row.samples) for row in live)
+        key = (pooled_median(live), policy.name)
+        if best is None or key < best[0]:
+            best = (key, policy, result, live)
+    if best is None:
+        return once()
+    _, policy, result, live = best
+    silicon = all(row.silicon for row in live) and corpus.physical_targets() >= 2
+    record = DispatchRecord(
+        decision, "measured", spent, "corpus median", "TMSAO-3" if silicon else "TMSAO-4"
+    )
+    return (policy, result), record
+
+
 # --- the census and the ranker ----------------------------------------------------------------
 
 
@@ -365,6 +472,7 @@ __all__ = [
     "dispatch",
     "policy_ranking",
     "ranked",
+    "solve_measured",
     "solve_memory",
     "solve_path",
     "solve_schedule",

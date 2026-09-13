@@ -244,6 +244,16 @@ an objective is admitted to the registry only after `verify_objective` proves
 its laws on samples, and a lawless operator (a non-associative combine, an
 order `select` does not realize) is refused by name, so "semiring" cannot
 become a label that admits arbitrary operators.
+S2-E instance (2026-09-13): the measured replay gate replays EVERY logged
+episode of a scope or refuses -- a candidate without evidence on one episode
+is not judged on the rest -- and a `ReplayCertificate` that names a corpus is
+admitting only when it covers the log, so the portfolio refuses a
+one-episode certificate over a three-episode corpus
+(`replay.subset.admitted` 24 -> 0); the corpus reader re-derives the digest
+chain and refuses an altered, removed or reordered entry and a forged head;
+the class ladder refuses TMSAO-3 without W and M declared and without a
+prediction interval from attested silicon on two targets, naming the tenancy
+the samples came from.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -660,6 +670,13 @@ selects over; and the region floor prices candidates through the planner's own
 edge predicate (`realize.edge_cost`'s coupling, `fused_candidates`' costs),
 not a second cost model, so a floor and a score cannot disagree about what a
 step costs.
+S2-E instance (2026-09-13): the plan a measured entry names is ONE digest
+(`measured.assignment_digest` over the planner's own steps), computed by the
+producer when it measures and by the consumer when it re-derives, so stale
+evidence is recognized by the predicate that filed it; the host attestation
+is the S0-F rig's `host_attestation`, not a second reading of the same
+files; and the workload's class is one function (`Workload.classify`) the
+portfolio's table reads rather than a second rule over the same fields.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

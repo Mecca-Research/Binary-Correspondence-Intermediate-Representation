@@ -122,7 +122,7 @@ factors by 32 moves a plan's score from **51,200 to 1,574,912 with the digest un
 |---|---|---|
 | `P` | program, input contract, R-laws, semantics, precision, admitted approximation | `hash_module` (claims in declared order since S0-D; the scope names the order as a component) |
 | `H` | topology, ISA/capabilities, banks, links, capacities | `hash_target` (the memory hierarchy folded since S0-D, from `target.capability` `mem_tier_names` / `mem_tier_values` on the law rail) |
-| `W` | workload shapes, input distribution, concurrency, SLOs, horizon | not modelled |
+| `W` | workload shapes, input distribution, concurrency, SLOs, horizon | `kbcir.workload.Workload` (S2-E): shapes, batch, concurrency, service level, horizon, the expected counts of dynamic claims — declared, digested with the scope, held to the module |
 | `Θ` | firmware, microcode, driver, OS, clocks, thermal, contention, wear | `hash_theta`, partial |
 | `A` | admitted transformations, libraries, kernels, schedules, search boundary | implicit in `candidates_for` |
 | `B` | capacity, security, reliability, temperature, power, policy caps | `Budget`, partial |
@@ -628,19 +628,56 @@ given — the regret ledger generalized. Not claimed: a native solver owning a c
 (G17), the measured rail (G13), and content-addressed *storage* of states (they are artifacts
 with digests; the append-only store is G13's).
 
-### G13 — the workload component `W` and the measured-candidate corpus
+### G13 — the workload component `W` and the measured-candidate corpus — LANDED (S2-E, 2026-09-13)
 
-*New. The scope table marks `W` "not modelled"; best-fit dispatch cannot fit work it cannot see.*
+*New. The scope table marked `W` "not modelled"; best-fit dispatch cannot fit work it cannot see.*
 
 A declared workload descriptor — shapes, batch, concurrency, service-level requirement,
 horizon — becomes the `W` component of `ExecutionScopeV1`, and the B1 measured schedule
 artifacts (`schedule_artifact.py`) become the replay corpus and candidate database that
 *informs* dispatch through the L2 replay gate (`portfolio.py`) and never decides legality.
 
-| Gate | Target |
-|---|---|
-| `exact` A scope digest separates two workloads | plans for `W₁` and `W₂` on one program carry distinct digests |
-| `exact` Replay-gate no-regression | a policy promoted by the corpus never loses to the incumbent on the logged episodes |
+| Gate | Target | Outcome (S2-E) |
+|---|---|---|
+| `exact` A scope digest separates two workloads | plans for `W₁` and `W₂` on one program carry distinct digests | **met** — `scope.workload.collisions` 36 → 0: `certify_schedule`, `certify_selection` and `certify_measured` take the declared workload, `W` is digested with the scope and `diff` names it; the same workload twice is the same scope |
+| `exact` Replay-gate no-regression | a policy promoted by the corpus never loses to the incumbent on the logged episodes | **met** — `replay.subset.admitted` 24 → 0: the measured replay gate replays every logged episode of the scope or refuses, its certificate names the corpus head and the logged count, and the portfolio refuses a certificate over a subset; on the random corpus an admitted certificate is exactly "the candidate's pooled median never above the incumbent's on any logged episode" |
+| `exact` The measured rail is dispatched over evidence | a TMSAO-3 request with a declared `W` and corpus evidence runs the measured rail | **met** — `dispatch.measured.unavailable` 12 → 0; without `W`, without evidence, or for a schedule or memory region the fast rail runs and the decision says which is missing |
+
+What landed (S2-E): `kbcir.workload.Workload` — the declaration (shapes from the module's
+resources, batch, concurrency, a `best-effort` / `latency` / `throughput` service level with its
+budget or rate, horizon, a `static` or `dynamic` input distribution with the expected counts of
+dynamic claims), integers and names only so the scope can digest it, validated on construction,
+held to the module by `verify_workload`, and classed (`interactive` / `batch` / `nominal`) for
+the L2 table; `scope_for(workload=)` and the three certifiers carry it as `W`. `kbcir.measured`
+— the measured-candidate corpus: `MeasuredPlan` (the plan a policy selected for (program,
+target, workload, Θ) as an assignment digest, the raw samples one per repeat, the PMU counters,
+the host's attestation by the S0-F rig's rule, the source commit), `MeasuredCorpus`
+(append-only: digests chained, the head the identity of the whole history, a corpus read back
+refused when an entry was altered, removed or reordered or the chain forged, `extends` the only
+relation two versions may have, duplicate evidence refused), `measure_plans` (B1's discipline
+for whole plans: warm-up excluded, one lap per repeat under the OS counters, the PMU when
+exposed), `from_schedule_artifact` (B1's matmul artifacts enter the same corpus with the
+tenancy `unproven`, since B1 recorded none) and `replay_measured` — the L2 replay gate over
+measured evidence: every logged episode of the scope, judged by the pooled median wall time, a
+candidate without evidence on one episode refused rather than judged on the rest;
+`ReplayCertificate` carries the corpus head and the logged count and is admitting only when it
+covers the log. `PolicyPortfolio.select(theta, workload)` is now the table over (runtime class,
+workload class): a runtime constraint outranks the workload; under a nominal runtime an
+interactive workload takes the latency schedule and a batch one the throughput schedule.
+`gem.dispatch`: the `measured` rail — a TMSAO-3 request with a declared `W`, a whole-plan
+region (`path`, `selection`) and evidence in the corpus dispatches `measured_best` (units:
+samples); `solve_measured` ranks the census by the corpus's pooled medians and returns the
+measured-best policy's plan **re-derived from the planner** (evidence whose assignment digest
+the planner no longer reproduces is stale and unused); `gem.exact.certify_measured` binds the
+class to the scope with `W` and `M` inside it. The ladder now holds a measured claim to its
+scope (`MEASURED_COMPONENTS` = P, H, W, M) and to the **two-target rule**: TMSAO-3 only when
+the prediction interval comes from attested silicon on two materially different targets with
+counters; on this host (`virtualized`) every measured certificate is TMSAO-4 and says so. Not
+claimed: a silicon certificate (Stage 6); `W` in the cross-rail manifest digest
+(`build_manifest` is recomputed by the MLIR verifier field for field — a manifest `W` is an
+S0-D-pattern change on both rails); an input distribution beyond the expected counts of dynamic
+claims; the append-only store as a service (it is a file with a chain, read and extended by a
+library).
 
 ### G14 — control-plane record ABI
 
@@ -784,7 +821,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
-Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); next G13 (S2-E)
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
@@ -839,6 +876,9 @@ no PMU):
 | `search.resume.unavailable` / `dispatch.incumbent.missing` / `dispatch.unrecorded` | G12 | 393 / 26 / 12 (the parent tree) | **0 / 0 / 0** (S2-C, 2026-09-13) | GAIN, at the bound — every proof-rail solver resumes exactly, has an incumbent at every interruption point, and every certificate names its dispatch |
 | `regions.unexpanded.claims` / `objectives.unverified` | G6 | 542 / 2 (the parent tree) | **0 / 0** (S2-D, 2026-09-13) | GAIN, at the bound — every claim in a verified region whose expansion is the module; every objective admitted with its laws |
 | `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate |
+| `scope.workload.collisions` / `replay.subset.admitted` / `dispatch.measured.unavailable` | G13 | 36 / 24 / 12 (the parent tree) | **0 / 0 / 0** (S2-E, 2026-09-13) | GAIN, at the bound — `W` in every certificate's scope, a corpus certificate covers the log or is refused, the measured rail runs over evidence; every measured certificate on this `virtualized` host is TMSAO-4 by the two-target rule |
 | `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
 
-Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.
+Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail; since S2-E the
+measured rail exists and grants TMSAO-3 to nothing on this host — the two-target rule keeps
+it hardware-gated (Stage 6).

@@ -709,12 +709,15 @@ def certify_schedule(
     hazards: dict[int, dict[int, list[int]]] | None = None,
     requested: str = "TMSAO-2",
     resume: SearchState | None = None,
+    workload=None,
 ) -> ScheduleCertificate:
     """Certify the canonical placement of a selected plan (`schedule.schedule_plan`): dispatch
     the rail the law names for (`schedule`, the plan's size, `requested`, `budget`), run it
     over the plan's own step costs and bind `L`, `U`, the gaps, the stop reason, the budget
     and the dispatch record to the scope they range over. The fast rail (a `TMSAO-4` request
-    or a zero budget) certifies the heuristic with the root stack as its bound."""
+    or a zero budget) certifies the heuristic with the root stack as its bound. A declared
+    `workload` (`kbcir.workload.Workload`, G13) enters the scope as `W`, so the certificate
+    cannot be carried to another workload of the same program."""
     from ..kbcir.scope import certificate_class_allowed, scope_for
     from .dispatch import DispatchRecord, DispatchRequest, dispatch
     from .schedule import durations_from
@@ -732,6 +735,7 @@ def certify_schedule(
         target,
         theta,
         policy,
+        workload=workload,
         budget={"exact_search_expansions": budget},
         objective={"name": "makespan", "artifact": "schedule_plan(mode=eft)"},
     )
@@ -805,10 +809,11 @@ class SelectionCertificate:
 
 
 def certify_selection(
-    module: Module, result, target, theta=None, policy=None
+    module: Module, result, target, theta=None, policy=None, *, workload=None
 ) -> SelectionCertificate:
     """Certify a plan's selection: re-run the exact min-plus path through the dispatch law's
-    path rail, hold the plan's score to it, and report the region graph's structural floor."""
+    path rail, hold the plan's score to it, and report the region graph's structural floor.
+    A declared `workload` (G13) enters the scope as `W`."""
     from ..kbcir.regions import module_floor, region_graph
     from ..kbcir.scope import certificate_class_allowed, scope_for
     from ..kbcir.weights import PERF
@@ -837,6 +842,7 @@ def certify_selection(
         target,
         theta,
         policy,
+        workload=workload,
         objective={"name": "min_plus", "artifact": "realize.optimize"},
         budget={"path_relaxations": record.spent},
     )
@@ -1035,16 +1041,174 @@ def exact_selection(
     return selection
 
 
+@dataclass
+class MeasuredCertificate:
+    """What a plan may say about being the MEASURED best (G13 / S2-E), and over what.
+
+    `scope` is the `ExecutionScopeV1` digest with `W` (the declared workload) and `M` (the
+    corpus's protocol) inside it; `klass` the ladder's verdict: TMSAO-3 only when the scope
+    declares `P`, `H`, `W`, `M`, the census was measured and the prediction interval comes
+    from attested silicon on two materially different targets with counters (the two-target
+    rule); TMSAO-4 with the reason otherwise. `policy` and `plan` name the measured-best
+    candidate and the assignment it re-derived to; `interval` is (min, median, max, MAD) of
+    the pooled raw samples; `coverage` the measured share of the admitted census."""
+
+    scope: str
+    klass: str
+    statement: str
+    policy: str
+    plan: str
+    median_ns: int
+    interval: tuple[int, int, int, int]
+    coverage: dict
+    episodes: int
+    samples: int
+    tenancy: str
+    physical_targets: int
+    corpus: str
+    dispatch: object = None
+
+    def to_dict(self) -> dict:
+        return {
+            "scope": self.scope,
+            "class": self.klass,
+            "statement": self.statement,
+            "objective": "wall_ns",
+            "policy": self.policy,
+            "plan": self.plan,
+            "median_ns": self.median_ns,
+            "interval": list(self.interval),
+            "coverage": dict(self.coverage),
+            "episodes": self.episodes,
+            "samples": self.samples,
+            "tenancy": self.tenancy,
+            "physical_targets": self.physical_targets,
+            "corpus": self.corpus,
+            "dispatch": None if self.dispatch is None else self.dispatch.to_dict(),
+        }
+
+
+def certify_measured(
+    module: Module,
+    target,
+    theta,
+    workload,
+    corpus,
+    policies,
+    *,
+    measurement: dict | None = None,
+    requested: str = "TMSAO-3",
+    incumbent=None,
+) -> MeasuredCertificate:
+    """Certify the measured-best plan among `policies` for (module, target, workload, Theta)
+    from the corpus's evidence: dispatch through the law (the measured rail iff `W` is
+    declared and the corpus holds evidence for the scope), re-derive the plan the evidence
+    names, and bind the class to the scope with `W` and `M` inside it. The corpus informs
+    the choice among admitted policies and never decides legality: the plan is `optimize`'s."""
+    from ..kbcir.measured import assignment_digest, pooled_median, scope_key, theta_key
+    from ..kbcir.realize import optimize
+    from ..kbcir.scope import certificate_class_allowed, scope_for
+    from .dispatch import DispatchRecord, DispatchRequest, solve_measured
+
+    census = list(policies)
+    program, target_key, workload_digest = scope_key(module, target, workload)
+    episode = theta_key(theta)
+    rows = corpus.lookup(program, target_key, workload_digest, theta=episode)
+    size = sum(len(phase.claims) for phase in module.phases)
+    request = DispatchRequest(
+        "selection", size, requested, 1, workload=workload.digest(), evidence=len(rows)
+    )
+    (policy, result), record = solve_measured(
+        request, corpus, module, target, theta, census, workload=workload, incumbent=incumbent
+    )
+    plan = assignment_digest(result)
+    live = [row for row in rows if row.policy == policy.name and row.plan == plan]
+    # Coverage counts LIVE evidence: a candidate whose every row names a plan the planner no
+    # longer selects under it is stale, not measured -- the corpus says what a plan cost, and
+    # that plan is gone.
+    digests = {
+        member.name: assignment_digest(optimize(module, target, theta, member)) for member in census
+    }
+    by_policy: dict[str, list] = {}
+    for row in rows:
+        if row.policy in digests:
+            by_policy.setdefault(row.policy, []).append(row)
+    measured = {
+        name for name, held in by_policy.items() if any(row.plan == digests[name] for row in held)
+    }
+    stale = set(by_policy) - measured
+    coverage = {"measured": len(measured), "stale": len(stale), "census": len(census)}
+    walls = sorted(sample.wall_ns for row in live for sample in row.samples)
+    if walls:
+        median = pooled_median(live)
+        interval = (
+            walls[0],
+            median,
+            walls[-1],
+            int(sorted(abs(w - median) for w in walls)[len(walls) // 2]),
+        )
+    else:
+        median, interval = 0, (0, 0, 0, 0)
+    tenancy = live[0].tenancy if live else "unattested"
+    silicon = bool(live) and all(row.silicon for row in live) and corpus.physical_targets() >= 2
+    if measurement is None:
+        repeats = sorted(len(row.samples) for row in rows) or [0]
+        measurement = {
+            "protocol": "warm-up excluded; one lap per repeat under OS counters; PMU when exposed",
+            "repeats": [repeats[0], repeats[-1]],
+            "outliers": "none discarded",
+            "judge": "pooled median wall_ns",
+        }
+    scope = scope_for(
+        module,
+        target,
+        theta,
+        policy,
+        workload=workload,
+        measurement=measurement,
+        objective={"name": "wall_ns", "artifact": "measured corpus"},
+        budget={"samples": record.spent},
+    )
+    evidence = {
+        "incumbent": True,
+        "search_coverage": (len(measured) / len(census)) if census else 0.0,
+        "stale": len(stale),
+        "prediction_interval": interval if (walls and silicon) else None,
+        "tenancy": tenancy,
+    }
+    klass, statement = certificate_class_allowed(scope, evidence)
+    return MeasuredCertificate(
+        scope.digest(),
+        klass,
+        statement,
+        policy.name,
+        plan,
+        median,
+        interval,
+        coverage,
+        len(corpus.episodes(program, target_key, workload_digest)),
+        len(walls),
+        tenancy,
+        corpus.physical_targets(),
+        corpus.head,
+        DispatchRecord(
+            record.decision, record.stop_reason, record.spent, record.bound_source, klass
+        ),
+    )
+
+
 __all__ = [
     "DEFAULT_EXACT_BUDGET",
     "STOP_REASONS",
     "Bound",
     "ExactSchedule",
     "ExactSelection",
+    "MeasuredCertificate",
     "PhaseSolution",
     "ScheduleCertificate",
     "SearchState",
     "SelectionCertificate",
+    "certify_measured",
     "certify_selection",
     "SelectionSearchState",
     "certify_schedule",

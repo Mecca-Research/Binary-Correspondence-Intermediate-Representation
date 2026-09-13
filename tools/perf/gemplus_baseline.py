@@ -429,6 +429,50 @@ METRICS: tuple[Metric, ...] = (
         "parent tree named min_plus and max_plus with no laws attached",
         slice_owner="G6",
     ),
+    # --- G13 (S2-E): the workload component W, the measured-candidate corpus and the replay
+    # gate. Counted over the 12 corpus programs; the baselines are the parent tree, where no
+    # certificate could declare a workload (every scope collided), the portfolio admitted any
+    # certificate with one clean episode whatever the log held, and a TMSAO-3 request went to
+    # the fast rail whatever evidence existed.
+    Metric(
+        "scope.workload.collisions",
+        "workload",
+        "pairs of distinct workloads on one corpus program whose certificate scopes share a digest "
+        "(12 programs x 3 workloads: 36 pairs)",
+        36,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="W is a component of the scope: two workloads on one program never share a "
+        "digest (G13); the parent tree could not declare one",
+        slice_owner="G13",
+    ),
+    Metric(
+        "replay.subset.admitted",
+        "workload",
+        "promotions the portfolio admits on a certificate covering fewer episodes than the corpus "
+        "logs (12 programs x 2 candidates, 3 logged episodes, a one-episode certificate)",
+        24,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="a corpus certificate must replay every logged episode (G13); the parent "
+        "tree's certificate carried no corpus and admitted any clean subset",
+        slice_owner="G13",
+    ),
+    Metric(
+        "dispatch.measured.unavailable",
+        "workload",
+        "TMSAO-3 requests with a declared workload and corpus evidence that the law sends to the "
+        "fast rail (12 programs)",
+        12,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="the measured rail is dispatched over a declared W and existing evidence "
+        "(G13); the parent tree's law sent every TMSAO-3 request to the fast rail",
+        slice_owner="G13",
+    ),
     # --- §6.2: two implementations that do not describe the same schedule. This one is a
     # CORRECTNESS metric wearing a performance costume: the target is agreement, not speed.
     # G1 (S1-A) landed the one artifact: `price_scheduled` reads `schedule_plan`, which is the
@@ -1159,6 +1203,79 @@ def measure_regions() -> dict[str, float]:
     }
 
 
+def _bounded_work(result) -> int:
+    """A bounded body whose cost follows the plan's widths: what the harness executes as the
+    plan, so the corpus holds real samples of a real body on this host."""
+    return sum(max(1, step.candidate.width) for step in result.steps)
+
+
+def measure_workload() -> dict[str, float]:
+    """The G13 exact rows (S2-E) over the 12 corpus programs."""
+    from bcir.examples import PROGRAMS
+    from bcir.gem.dispatch import DispatchRequest, dispatch
+    from bcir.gem.exact import certify_schedule
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.measured import MeasuredCorpus, measure_plans, scope_key
+    from bcir.kbcir.portfolio import PolicyPortfolio, ReplayCertificate
+    from bcir.kbcir.weights import ENERGY, PERF, THROUGHPUT
+    from bcir.kbcir.workload import workload_for
+
+    h = TARGETS["x86_avx2"]
+    theta = Theta.cool()
+    collisions = subset = unavailable = 0
+    for _name, build in sorted(PROGRAMS.items()):
+        module = build()
+        workloads = (
+            workload_for(module, service_level="latency", latency_ns=1_000_000),
+            workload_for(module, batch=8, service_level="throughput", throughput_per_s=1_000),
+            workload_for(module),
+        )
+        result = optimize(module, h, theta, PERF)
+        scopes = [
+            certify_schedule(module, result, h, theta, PERF, requested="TMSAO-4", workload=w).scope
+            for w in workloads
+        ]
+        collisions += sum(scopes[i] == scopes[j] for i in range(3) for j in range(i + 1, 3))
+        # the corpus: three logged episodes, every policy measured on a bounded body
+        corpus = MeasuredCorpus()
+        for episode in (Theta.cool(), Theta.hot(), Theta.mem_bound()):
+            for entry in measure_plans(
+                module,
+                h,
+                episode,
+                (PERF, ENERGY, THROUGHPUT),
+                _bounded_work,
+                workload=workloads[0],
+                source_commit="5b45fdca",
+                repeats=2,
+            ):
+                corpus.append(entry)
+        program, target, digest = scope_key(module, h, workloads[0])
+        logged = len(corpus.episodes(program, target, digest))
+        for candidate in (ENERGY, THROUGHPUT):
+            portfolio = PolicyPortfolio.default()
+            partial = ReplayCertificate(
+                candidate.name, PERF.name, 1, 0, corpus=corpus.head, logged=logged
+            )
+            try:
+                portfolio.promote(PERF.name, candidate, partial)
+                subset += 1
+            except ValueError:
+                pass
+        evidence = len(corpus.lookup(program, target, digest))
+        size = sum(len(phase.claims) for phase in module.phases)
+        decision = dispatch(
+            DispatchRequest("selection", size, "TMSAO-3", 1, workload=digest, evidence=evidence)
+        )
+        unavailable += decision.rail != "measured"
+    return {
+        "scope.workload.collisions": float(collisions),
+        "replay.subset.admitted": float(subset),
+        "dispatch.measured.unavailable": float(unavailable),
+    }
+
+
 def measure_native() -> dict[str, float]:
     """The §4.4 native structural wins through the measured-evidence rail (`bcir.bench`),
     compiled and timed on this host -- guardrails, not targets (G6). A ratio here is a
@@ -1492,6 +1609,7 @@ _MEASURERS = {
     "scheduler": measure_scheduler,
     "dispatch": measure_dispatch,
     "regions": measure_regions,
+    "workload": measure_workload,
     "native": measure_native,
     "exact": measure_exact,
     "verifier": measure_verifier,
@@ -1655,7 +1773,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, native, exact, verifier, digest, plan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

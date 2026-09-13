@@ -285,3 +285,16 @@ def test_the_native_guardrails_measure_through_the_bench_rail_when_a_compiler_ex
         "native.dense-parity",
     }
     assert all(value > 0 for value in out.values())
+
+
+def test_the_workload_rows_are_exact_over_the_corpus():
+    """G13 / S2-E: W separates every pair of workloads on every corpus program, the portfolio
+    refuses a certificate over a subset of the corpus's log, and a TMSAO-3 request with a
+    declared workload and evidence runs the measured rail."""
+    from tools.perf.gemplus_baseline import measure_workload
+
+    assert measure_workload() == {
+        "scope.workload.collisions": 0.0,
+        "replay.subset.admitted": 0.0,
+        "dispatch.measured.unavailable": 0.0,
+    }
