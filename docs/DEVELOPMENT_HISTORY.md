@@ -633,6 +633,26 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   report's 55,552 / 55,168 fixture was the retired pricer's), `solver.unproved.fraction` 0,
   `solver.gap.p95` 0. Not claimed: proofs at production scale, the report's remaining bound
   members (roofline, communication cut, queue calculus, occupancy, energy), the memory DP.
+  S2-C (2026-09-13) landed G12, the dispatch law, work-unit budgets, resumable search state
+  and the plan diff. RED: no solver could resume (every interruption point unavailable: 393
+  over the six-job, memory and selection corpora), the exact layout refused a zero budget
+  (26 interruption points without an incumbent) and no certificate named the rail that ran
+  (12). What landed: `gem.dispatch` -- the law as a table over (region kind, instance size,
+  requested class, work budget) to a rail and solver, one runner per region kind, and the
+  `DispatchRecord` every `certify_schedule` certificate now carries (rail, solver, units,
+  budget, stop reason, bound source, class granted); `exact_schedule`'s budget became the
+  module's, consumed phase by phase in topological order, with a content-addressed
+  `SearchState` (per-phase frontier: incumbent, placement, open nodes with bounds, expansions)
+  so that run(b1) then resume(b2) equals run(b1 + b2) exactly -- 1,118 splits of the six-job
+  corpus, multi-phase random modules through three legs; `exact_layout` and `exact_selection`
+  gained the same (`LayoutSearchState`, `SelectionSearchState`), the enumeration seeded with
+  the sweep's assignment so a budget stop never returns worse than the fast rail; a state
+  refuses inputs it was not taken from; `ranked` holds any ranker to a permutation of the
+  census and `policy_ranking` orders the portfolio by the L2 gate with every entry kept;
+  `gem.diff.plan_diff` names moves, re-selections, re-pricings, re-layouts, the makespans, the
+  regret and the bounds. Outcomes: `search.resume.unavailable` 393 -> 0,
+  `dispatch.incumbent.missing` 26 -> 0, `dispatch.unrecorded` 12 -> 0; two equal runs are
+  identical, states included.
 
 ---
 

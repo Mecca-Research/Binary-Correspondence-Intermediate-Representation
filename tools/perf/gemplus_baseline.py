@@ -361,6 +361,45 @@ METRICS: tuple[Metric, ...] = (
         "corpus on the parent tree (1/16: two domains, 190 of 1,716 instances off)",
         slice_owner="G4",
     ),
+    # --- G12 (S2-C): the dispatch law and resumable search. Counted over a fixed corpus of
+    # interruption points (solver x fixture x budget split); the baselines are the parent
+    # tree, where no solver had a resume parameter (every point unavailable), the exact layout
+    # refused a zero budget (no incumbent at that point) and no certificate recorded a dispatch.
+    Metric(
+        "search.resume.unavailable",
+        "dispatch",
+        "interruption points whose resumed run is unavailable or differs from the uninterrupted run",
+        393,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="every proof-rail solver returns a content-addressed state whose continuation "
+        "equals the uninterrupted run (G12); the parent tree had none",
+        slice_owner="G12",
+    ),
+    Metric(
+        "dispatch.incumbent.missing",
+        "dispatch",
+        "interruption points (budget 0 included) without a legal incumbent, every solver",
+        26,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="an incumbent first: the fast rail's answer stands at every interruption point; "
+        "the parent tree's exact layout refused a zero budget on each memory fixture",
+        slice_owner="G12",
+    ),
+    Metric(
+        "dispatch.unrecorded",
+        "dispatch",
+        "corpus certificates without a dispatch record (rail, solver, units, budget, stop reason, bound source)",
+        12,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="every certificate names the rail that ran (G12); the parent tree's twelve carried none",
+        slice_owner="G12",
+    ),
     # --- §6.2: two implementations that do not describe the same schedule. This one is a
     # CORRECTNESS metric wearing a performance costume: the target is agreement, not speed.
     # G1 (S1-A) landed the one artifact: `price_scheduled` reads `schedule_plan`, which is the
@@ -908,6 +947,147 @@ def measure_scheduler() -> dict[str, float]:
     return out
 
 
+def measure_dispatch() -> dict[str, float]:
+    """The G12 rows (S2-C) over a fixed corpus of interruption points: the six-job schedule
+    corpus (every 20th instance, 3 splits), the memory corpus (every 20th fixture and the
+    witness, 3 splits) and the section 6.3 selection corpus (10 modules, 3 splits)."""
+    from bcir.examples import PROGRAMS
+    from bcir.gem.dispatch import DispatchRequest, solve_memory, solve_schedule, solve_selection
+    from bcir.gem.exact import certify_schedule, exact_schedule, exact_selection
+    from bcir.kbcir import TARGETS, optimize
+    from bcir.kbcir.cost import Theta
+    from bcir.kbcir.static_memory import exact_layout
+    from bcir.kbcir.weights import PERF
+    from bcir.tests.exact_fixtures import (
+        quality_corpus,
+        six_job_corpus,
+        six_job_module,
+        six_job_target,
+    )
+    from bcir.tests.memory_fixtures import WORST_FIXTURE, corpus, items_of
+
+    unavailable = missing = 0
+
+    def same_schedule(a, b):
+        return (
+            a.incumbent,
+            a.lower_bound,
+            a.stop_reason,
+            a.expansions,
+            [(s.claim_id, s.domain, s.start, s.finish) for s in a.schedule.slots],
+        ) == (
+            b.incumbent,
+            b.lower_bound,
+            b.stop_reason,
+            b.expansions,
+            [(s.claim_id, s.domain, s.start, s.finish) for s in b.schedule.slots],
+        )
+
+    module, target = six_job_module(), six_job_target(2)
+    for durs in six_job_corpus()[::20]:
+        durations = {i + 1: d for i, d in enumerate(durs)}
+        full = exact_schedule(module, durations, target, budget=5000)
+        total = max(1, full.expansions)
+        for b1 in (0, 1, total // 2):
+            try:
+                first = exact_schedule(module, durations, target, budget=b1)
+                second = exact_schedule(
+                    module, durations, target, budget=total - b1, resume=first.state
+                )
+                if not same_schedule(
+                    second, exact_schedule(module, durations, target, budget=total)
+                ):
+                    unavailable += 1
+            except Exception:
+                unavailable += 1
+            try:
+                result, _record = solve_schedule(
+                    DispatchRequest("schedule", 6, "TMSAO-1", b1), module, durations, target
+                )
+                if not getattr(result, "slots", None) and not getattr(
+                    getattr(result, "schedule", None), "slots", None
+                ):
+                    missing += 1
+            except Exception:
+                missing += 1
+    for rows in [items_of(f) for _seed, f in list(corpus())[::20]] + [items_of(WORST_FIXTURE)]:
+        full = exact_layout(rows, 200_000)
+        total = max(1, full.expansions)
+        for b1 in (0, 1, total // 2):
+            try:
+                if b1 == 0:
+                    solve_memory(DispatchRequest("memory", len(rows), "TMSAO-1", 0), rows)
+                    unavailable += 0
+                else:
+                    first = exact_layout(rows, b1)
+                    second = exact_layout(rows, max(1, total - b1), resume=first.state)
+                    both = exact_layout(rows, b1 + max(1, total - b1))
+                    if (second.offsets, second.extent, second.stop_reason, second.expansions) != (
+                        both.offsets,
+                        both.extent,
+                        both.stop_reason,
+                        both.expansions,
+                    ):
+                        unavailable += 1
+            except Exception:
+                unavailable += 1
+            try:
+                layout, _record = solve_memory(
+                    DispatchRequest("memory", len(rows), "TMSAO-1", b1), rows
+                )
+                if set(layout.offsets) != {row.rid for row in rows}:
+                    missing += 1
+            except Exception:
+                missing += 1
+    for _name, small in quality_corpus(seeds=0)[:10]:
+        h = TARGETS["x86_avx512"]
+        full = exact_selection(small, h, Theta.cool(), PERF)
+        total = max(1, full.assignments)
+        for b1 in (0, 1, total // 2):
+            try:
+                if b1 == 0:
+                    solve_selection(
+                        DispatchRequest("selection", 4, "TMSAO-1", 0), small, h, Theta.cool(), PERF
+                    )
+                else:
+                    first = exact_selection(small, h, Theta.cool(), PERF, limit=b1)
+                    second = exact_selection(
+                        small, h, Theta.cool(), PERF, limit=total - b1, resume=first.state
+                    )
+                    if (second.optimum, second.widths, second.assignments, second.stop_reason) != (
+                        full.optimum,
+                        full.widths,
+                        full.assignments,
+                        full.stop_reason,
+                    ):
+                        unavailable += 1
+            except Exception:
+                unavailable += 1
+            try:
+                solve_selection(
+                    DispatchRequest("selection", 4, "TMSAO-1", b1), small, h, Theta.cool(), PERF
+                )
+            except Exception:
+                missing += 1
+    unrecorded = 0
+    for _name, build in sorted(PROGRAMS.items()):
+        program = build()
+        certificate = certify_schedule(
+            program,
+            optimize(program, TARGETS["x86_avx512"], Theta.cool(), PERF),
+            TARGETS["x86_avx512"],
+            Theta.cool(),
+            PERF,
+        )
+        if certificate.to_dict().get("dispatch") is None:
+            unrecorded += 1
+    return {
+        "search.resume.unavailable": float(unavailable),
+        "dispatch.incumbent.missing": float(missing),
+        "dispatch.unrecorded": float(unrecorded),
+    }
+
+
 def measure_verifier() -> dict[str, float]:
     """The S0-A rows: can R9 fire on the planner's own plan, and what does firing cost.
 
@@ -1213,6 +1393,7 @@ _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
     "scheduler": measure_scheduler,
+    "dispatch": measure_dispatch,
     "exact": measure_exact,
     "verifier": measure_verifier,
     "digest": measure_digest,
@@ -1375,7 +1556,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, exact, verifier, digest, plan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, exact, verifier, digest, plan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

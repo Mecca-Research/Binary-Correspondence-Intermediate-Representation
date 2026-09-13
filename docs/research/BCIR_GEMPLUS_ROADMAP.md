@@ -564,7 +564,7 @@ so a reader that holds the bytes reads the placement in a third of the time re-r
 dispatch takes (37 ms) and never re-derives the digest. Not claimed: a law-rail plan op (the
 MLIR rail links the C decoder) and a C DER → native fast path for the plan.
 
-### G12 — the dispatch law, work-unit budgets, resumable search
+### G12 — the dispatch law, work-unit budgets, resumable search — **landed (S2-C, 2026-09-13)**
 
 *New. Turns "a solver portfolio" into a deterministic choice the certificate can name.*
 
@@ -576,12 +576,31 @@ never seconds, so a certificate class means the same thing on every host. Search
 reproduces the same continuation. A plan diff (which claims moved, which bins changed, which
 bound tightened) is the structured answer to "what is the residual gap made of".
 
-| Gate | Target |
-|---|---|
-| `exact` `dispatch.incumbent.first` | a legal incumbent exists at every interruption point of every solver |
-| `exact` `solver.budget.units` | two runs with equal budgets and inputs produce identical plans and stop reasons |
-| `exact` Resume reproduces | continuing from a checkpoint equals the uninterrupted run |
-| `exact` The learned ranker cannot remove a candidate | the census is identical with and without it |
+| Gate | Target | Outcome |
+|---|---|---|
+| `exact` `dispatch.incumbent.first` | a legal incumbent exists at every interruption point of every solver | **met** — `dispatch.incumbent.missing` 26 → 0 over the interruption corpus (budget 0 included: the fast rail's answer stands, the exact layout no longer refuses a zero budget, the exhaustive selection is seeded with the sweep's assignment) |
+| `exact` `solver.budget.units` | two runs with equal budgets and inputs produce identical plans and stop reasons | **met** — identical plans, stop reasons, expansions and state digests on the six-job corpus and the memory witness |
+| `exact` Resume reproduces | continuing from a checkpoint equals the uninterrupted run | **met** — `search.resume.unavailable` 393 → 0: `exact_schedule`, `exact_layout` and `exact_selection` return content-addressed states (`SearchState`, `LayoutSearchState`, `SelectionSearchState`) and run(b₁) then resume(b₂) equals run(b₁+b₂), three legs included, on 1,118 splits of the six-job corpus, multi-phase random modules, the memory corpus and the selection corpus; a state refuses inputs it was not taken from |
+| `exact` The learned ranker cannot remove a candidate | the census is identical with and without it | **met** — `dispatch.ranked` holds any ranker to a permutation of the census (`CensusError` otherwise) and `policy_ranking` orders the portfolio by the L2 gate's weights with every entry kept |
+| `exact` Every certificate records its dispatch | absent | **met** — `dispatch.unrecorded` 12 → 0: `certify_schedule` dispatches through the law and records rail, solver, units, budget, stop reason, bound source and the class granted |
+
+What landed (S2-C): `gem.dispatch` — the law as a table over (region kind, instance size,
+requested class, work budget): a `TMSAO-4` request or a zero budget dispatches the fast rail
+(`schedule_eft`, `first_fit_layout`, the one-sweep `optimize_scheduled`), a `TMSAO-3` request
+the fast rail too because a measured-best claim needs `W` and the measured corpus (G13), and a
+`TMSAO-1`/`TMSAO-2` request the proof rail (`exact_schedule`, `exact_layout`,
+`exact_selection`) with the budget, expected to close up to the bounded size and to stop on its
+budget above it; one runner per region kind returns the result with its `DispatchRecord`. The
+exact scheduler's budget became the module's, consumed phase by phase in topological order (a
+phase that closes hands the remainder on; one that exhausts it leaves the later phases pending
+with the heuristic as their incumbent and the root stack as their bound), which is what makes
+a checkpoint resume exactly; the memory and selection solvers keep their own units. `gem.diff`
+is the plan and certificate diff — moves (stream, start, duration), re-selections (candidate,
+width), re-pricings (the same candidate at another cost: the context coupling moved),
+re-layouts (bank, offset), the makespans and the regret, the bounds when certificates are
+given — the regret ledger generalized. Not claimed: a native solver owning a certificate
+(G17), the measured rail (G13), and content-addressed *storage* of states (they are artifacts
+with digests; the append-only store is G13's).
 
 ### G13 — the workload component `W` and the measured-candidate corpus
 
@@ -739,7 +758,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
-Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); G4 (S2-B); next G12 (S2-C)
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); next G6 (S2-D)
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
@@ -791,6 +810,7 @@ no PMU):
 | five `wall` rows | G0–G3 | — | 1.5–3× faster; `optimize_scheduled.512` 1,148 → 83 ms and `static_memory.plan.2048` 196 → 114 → 84 ms (S1-D's alias sweep) A/B on one host | INDICATIVE — a faster host and interpreter, not evidence; the A/B is the same host |
 | `eft.suboptimal.2domains` / `eft.worst.2domains` / `eft.mean.2domains` (+ the 3-domain rows) | G4 | 11.07% / 1.1333× / 1.0078 | **0 / 1.0 / 1.0** (S2-B, 2026-09-13) | GAIN, at the bound — the proof rail proves every instance; the heuristic's numbers are kept as witness rows |
 | `optimize_scheduled.quality` / `solver.unproved.fraction` / `solver.gap.p95` | G4 | 1.00696× / 1.0 / 0.0625 | **1.0 / 0 / 0** (S2-B, 2026-09-13) | GAIN, at the bound — every certificate carries L, U and both gaps |
+| `search.resume.unavailable` / `dispatch.incumbent.missing` / `dispatch.unrecorded` | G12 | 393 / 26 / 12 (the parent tree) | **0 / 0 / 0** (S2-C, 2026-09-13) | GAIN, at the bound — every proof-rail solver resumes exactly, has an incumbent at every interruption point, and every certificate names its dispatch |
 | four rows | G0, G6 | — | not measured | need the native rig or the typed regions |
 
 Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.

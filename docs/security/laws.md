@@ -230,6 +230,12 @@ the enumeration of every active schedule of a tiny module
 certificate is refused its optimality rung when the scope is undeclared
 (`certify_schedule` without a policy: TMSAO-4 with the reason), so the solver
 cannot certify itself and a certificate cannot over-claim.
+S2-C instance (2026-09-13): a resumed search is held to the uninterrupted run
+it claims to equal -- run(b1) then resume(b2) against run(b1 + b2), plans,
+bounds, stop reasons, expansions and state digests alike -- and a ranker is
+held to the census it claims to order (`dispatch.ranked` refuses a removed,
+added or duplicated member), so neither "anytime" nor "learned" can quietly
+change what a certificate ranges over.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -635,6 +641,10 @@ S2-B instance (2026-09-13): the exact scheduler's eligibility -- which stream
 may run a sparse, a bandwidth or a compute claim -- is `_PhaseDispatch.eligible`,
 the artifact's own rule, read rather than restated, so a certificate proves a
 bound over exactly the placements the executor could make.
+S2-C instance (2026-09-13): the choice of solver is ONE function
+(`gem.dispatch.dispatch`, a table over region kind, size, requested class and
+budget) that every runner and every certificate go through, so "which rail
+ran" is read from the record, never inferred from the result.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

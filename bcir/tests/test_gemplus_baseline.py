@@ -246,3 +246,16 @@ def test_the_exact_rail_rows_are_measured_through_the_solver():
     assert abs(out["eft.heuristic.worst.3domains"] - 7 / 6) < 1e-12
     assert out["solver.unproved.fraction"] == 0.0 and out["solver.gap.p95"] == 0.0
     assert out["optimize_scheduled.quality"] == 1.0
+
+
+def test_the_dispatch_rows_are_counted_over_the_interruption_corpus():
+    """G12 / S2-C: every interruption point resumes to the uninterrupted run, has an
+    incumbent, and every certificate records its dispatch."""
+    from tools.perf.gemplus_baseline import measure_dispatch
+
+    out = measure_dispatch()
+    assert out == {
+        "search.resume.unavailable": 0.0,
+        "dispatch.incumbent.missing": 0.0,
+        "dispatch.unrecorded": 0.0,
+    }

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from .._artifact_json import strict_json_loads
 from ..model import Module
@@ -182,7 +182,7 @@ class StaticAllocation:
     def __post_init__(self) -> None:
         _integer(self.rid, "allocation rid", minimum=1)
         _name(self.bank, "allocation bank")
-        for field in (
+        for name in (
             "offset",
             "size_bytes",
             "alignment",
@@ -192,9 +192,9 @@ class StaticAllocation:
             "last_tick",
         ):
             _integer(
-                getattr(self, field),
-                f"allocation {field}",
-                minimum=1 if field in ("size_bytes", "alignment") else 0,
+                getattr(self, name),
+                f"allocation {name}",
+                minimum=1 if name in ("size_bytes", "alignment") else 0,
             )
         if self.alignment & (self.alignment - 1):
             raise ValueError("allocation alignment must be a power of two")
@@ -236,8 +236,8 @@ class BankMemoryPlan:
 
     def __post_init__(self) -> None:
         _name(self.bank, "bank plan name")
-        for field in ("extent_bytes", "naive_bytes", "capacity_bytes", "lower_bound_bytes"):
-            _integer(getattr(self, field), f"bank plan {field}")
+        for name in ("extent_bytes", "naive_bytes", "capacity_bytes", "lower_bound_bytes"):
+            _integer(getattr(self, name), f"bank plan {name}")
         if self.extent_bytes > self.capacity_bytes:
             raise ValueError(f"static address extent exceeds bank {self.bank!r} capacity")
         if self.extent_bytes > self.naive_bytes:
@@ -508,16 +508,19 @@ class LayoutItem:
         return self.first_tick < other.last_tick and other.first_tick < self.last_tick
 
 
-@dataclass(frozen=True)
+@dataclass
 class LayoutResult:
     """A bank's layout: offsets, the achieved extent, the proved lower bound, why the solver
-    stopped (`first-fit`, `optimal`, `budget`) and the work it spent (candidate placements)."""
+    stopped (`first-fit`, `optimal`, `budget`) and the work it spent (candidate placements).
+    `state` is the search's resumable state (G12), when the exact solver produced it."""
 
     offsets: dict[int, int]
     extent: int
     lower_bound: int
     stop_reason: str
     expansions: int
+
+    state: "LayoutSearchState | None" = field(default=None, compare=False, repr=False)
 
     @property
     def gap(self) -> int:
@@ -588,7 +591,76 @@ def first_fit_layout(items) -> LayoutResult:
     return LayoutResult(offsets, extent, layout_lower_bound(rows), "first-fit", 0)
 
 
-def exact_layout(items, budget: int = DEFAULT_EXACT_BUDGET) -> LayoutResult:
+def _layout_inputs_digest(rows: list[LayoutItem]) -> str:
+    import hashlib
+    import json
+
+    body = [[r.rid, r.size, r.alignment, r.first_tick, r.last_tick] for r in rows]
+    return hashlib.sha256(json.dumps(body, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+@dataclass
+class LayoutSearchState:
+    """The content-addressed state of an `exact_layout` search (G12 / S2-C): the items it is
+    a search of (`inputs`), the incumbent extent and offsets, the placements so far, the open
+    frames and the expansions spent. `exact_layout(items, budget, resume=state)` continues it
+    with a fresh budget and returns what the uninterrupted run with the summed budget returns."""
+
+    inputs: str
+    closed: bool
+    best_extent: int
+    best_offsets: list[list[int]]
+    placed: list[int]
+    stack: list[list[int]]
+    expansions: int
+    lower_bound: int
+
+    def to_dict(self) -> dict:
+        return {
+            "version": "ExactLayoutStateV1",
+            "inputs": self.inputs,
+            "closed": self.closed,
+            "best_extent": self.best_extent,
+            "best_offsets": self.best_offsets,
+            "placed": self.placed,
+            "stack": self.stack,
+            "expansions": self.expansions,
+            "lower_bound": self.lower_bound,
+        }
+
+    def to_json(self) -> str:
+        import json
+
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def from_json(cls, text: str) -> "LayoutSearchState":
+        import json
+
+        body = json.loads(text)
+        if body.get("version") != "ExactLayoutStateV1":
+            raise ValueError("not an ExactLayoutStateV1 document")
+        return cls(
+            str(body["inputs"]),
+            bool(body["closed"]),
+            int(body["best_extent"]),
+            [[int(a), int(b)] for a, b in body["best_offsets"]],
+            [int(v) for v in body["placed"]],
+            [[int(a), int(b), int(c)] for a, b, c in body["stack"]],
+            int(body["expansions"]),
+            int(body["lower_bound"]),
+        )
+
+    @property
+    def digest(self) -> str:
+        import hashlib
+
+        return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+
+
+def exact_layout(
+    items, budget: int = DEFAULT_EXACT_BUDGET, resume: "LayoutSearchState | None" = None
+) -> LayoutResult:
     """The bounded exact layout: a complete branch-and-bound over every aligned offset below
     the incumbent extent, in (first tick, size descending, rid) order, pruned by the incumbent
     and stopped the moment the concurrent-live bound is met. The first-fit layout is the
@@ -597,20 +669,50 @@ def exact_layout(items, budget: int = DEFAULT_EXACT_BUDGET) -> LayoutResult:
     exhausted budget returns the incumbent with `stop_reason="budget"`: a stated gap, not a
     claimed optimum. Deterministic: equal inputs and budgets give identical layouts. The
     search keeps its own stack (one frame per item), so a bank of thousands of resources
-    stops on its budget rather than on the interpreter's recursion limit."""
+    stops on its budget rather than on the interpreter's recursion limit. `resume` continues
+    a search from its `LayoutSearchState` with a fresh budget (G12 / S2-C); the result
+    carries its `state` either way."""
     rows = sorted(items, key=lambda item: (item.first_tick, -item.size, item.rid))
     if not rows:
         return LayoutResult({}, 0, 0, "optimal", 0)
     _integer(budget, "exact layout budget", minimum=1)
-    incumbent = first_fit_layout(rows)
-    lower_bound = incumbent.lower_bound
-    if incumbent.extent == lower_bound:
-        return LayoutResult(dict(incumbent.offsets), incumbent.extent, lower_bound, "optimal", 0)
+    inputs = _layout_inputs_digest(rows)
+    if resume is not None and resume.inputs != inputs:
+        raise ValueError("the layout search state was taken from other items")
     n = len(rows)
     conflicts = _conflict_lists(rows)
-    best_extent = incumbent.extent
-    best_offsets = dict(incumbent.offsets)
-    placed = [0] * n
+    if resume is None:
+        incumbent = first_fit_layout(rows)
+        lower_bound = incumbent.lower_bound
+        if incumbent.extent == lower_bound:
+            result = LayoutResult(
+                dict(incumbent.offsets), incumbent.extent, lower_bound, "optimal", 0
+            )
+            result.state = LayoutSearchState(
+                inputs,
+                True,
+                incumbent.extent,
+                sorted(incumbent.offsets.items()),
+                [0] * n,
+                [],
+                0,
+                lower_bound,
+            )
+            return result
+        best_extent = incumbent.extent
+        best_offsets = dict(incumbent.offsets)
+        placed = [0] * n
+        spent_before = 0
+        stack: list[list[int]] = []
+        closed = False
+    else:
+        lower_bound = resume.lower_bound
+        best_extent = resume.best_extent
+        best_offsets = {int(rid): int(off) for rid, off in resume.best_offsets}
+        placed = list(resume.placed)
+        spent_before = resume.expansions
+        stack = [list(frame) for frame in resume.stack]
+        closed = resume.closed
     expansions = 0
     exhausted = False
 
@@ -630,9 +732,9 @@ def exact_layout(items, budget: int = DEFAULT_EXACT_BUDGET) -> LayoutResult:
                 offset = max(offset, placed[k])
         return _align(offset, item.alignment)
 
-    # frame: [index, next candidate offset, extent before this item]
-    stack: list[list[int]] = [[0, first_offset(0), 0]]
-    while stack and not exhausted and best_extent != lower_bound:
+    if resume is None:
+        stack = [[0, first_offset(0), 0]]  # frame: [index, next candidate offset, extent before]
+    while stack and not closed and not exhausted and best_extent != lower_bound:
         frame = stack[-1]
         index, offset, extent = frame
         if index == n:
@@ -656,10 +758,10 @@ def exact_layout(items, budget: int = DEFAULT_EXACT_BUDGET) -> LayoutResult:
         if found < 0:
             stack.pop()
             continue
-        expansions += 1
-        if expansions > budget:
-            exhausted = True
+        if expansions >= budget:
+            exhausted = True  # this frame stays open: resumable
             break
+        expansions += 1
         placed[index] = found
         frame[1] = _align(found + item.alignment, item.alignment)  # this frame's next candidate
         stack.append(
@@ -669,8 +771,22 @@ def exact_layout(items, budget: int = DEFAULT_EXACT_BUDGET) -> LayoutResult:
                 max(extent, found + item.size),
             ]
         )
+    if not exhausted:
+        closed = True
+        stack = []
     reason = "budget" if exhausted else "optimal"
-    return LayoutResult(best_offsets, best_extent, lower_bound, reason, expansions)
+    result = LayoutResult(best_offsets, best_extent, lower_bound, reason, spent_before + expansions)
+    result.state = LayoutSearchState(
+        inputs,
+        closed,
+        best_extent,
+        sorted(best_offsets.items()),
+        list(placed),
+        [list(frame) for frame in stack],
+        spent_before + expansions,
+        lower_bound,
+    )
+    return result
 
 
 def plan_static_memory(
@@ -931,6 +1047,7 @@ __all__ = [
     "BankMemoryPlan",
     "LayoutItem",
     "LayoutResult",
+    "LayoutSearchState",
     "ResourceBankBinding",
     "StaticAllocation",
     "StaticMemoryPlan",

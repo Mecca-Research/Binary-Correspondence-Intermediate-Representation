@@ -242,6 +242,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "BankMemoryPlan",
         "LayoutItem",
         "LayoutResult",
+        "LayoutSearchState",
         "ResourceBankBinding",
         "StaticAllocation",
         "StaticMemoryPlan",

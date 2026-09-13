@@ -45,8 +45,10 @@ can be held to the enumeration's.
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import itertools
+import json
 from dataclasses import dataclass, field
 
 from ..model import Claim, Module
@@ -106,6 +108,7 @@ class ExactSchedule:
     budget: int
     phases: list[PhaseSolution]
     schedule: GemSchedule
+    state: "SearchState | None" = field(default=None, compare=False, repr=False)
 
     @property
     def optimal(self) -> bool:
@@ -273,46 +276,55 @@ class _PhaseSearch:
         )
         return max(finish_of.values(), default=0), sched.slots
 
-    def solve(self, budget: int) -> tuple[int, int, str, int, list[Slot], tuple[Bound, ...]]:
-        """(incumbent, lower bound, stop reason, expansions, incumbent slots, root bounds)."""
+    def solve(
+        self, budget: int, frontier: "_Frontier | None" = None
+    ) -> tuple[int, int, str, int, list[Slot], tuple[Bound, ...], "_Frontier | None"]:
+        """(incumbent, lower bound, stop reason, expansions spent HERE, incumbent slots, root
+        bounds, the frontier to resume from -- None when the search closed).
+
+        `budget` is the number of expansions this call may spend; a `frontier` from an
+        earlier call continues that search exactly where it stopped (the DFS is
+        deterministic, so a resumed run is the uninterrupted run)."""
         bounds = self.root_bounds()
         root = max(bound.value for bound in bounds)
-        upper, best_slots = self.heuristic()
-        if upper <= root or not self.ids:
-            return upper, upper, "optimal", 0, best_slots, bounds
+        if frontier is None:
+            upper, best_slots = self.heuristic()
+            if upper <= root or not self.ids:
+                return upper, upper, "optimal", 0, best_slots, bounds, None
+            n = len(self.ids)
+            remaining_work_all = sum(self.dur[cid] for cid in self.ids if not self.on_tail[cid])
+            remaining_tail = sum(self.dur[cid] for cid in self.ids if self.on_tail[cid])
+            indegree0 = {cid: len(self.preds[cid]) for cid in self.ids}
+            root_node: _Node = (
+                tuple([0] * (self.domains + 1)),
+                {},
+                0,
+                remaining_work_all,
+                remaining_tail,
+                dict(indegree0),
+                (),
+            )
+            stack: list[tuple[int, _Node]] = [(root, root_node)]
+            spent_before = 0
+        else:
+            upper, best_slots, stack, spent_before = (
+                frontier.upper,
+                list(frontier.best_slots),
+                list(frontier.stack),
+                frontier.expansions,
+            )
         n = len(self.ids)
         dur, preds, succs, eligible = self.dur, self.preds, self.succs, self.eligible
         tail_path, twin_before = self.tail_path, self.twin_before
-        streams = self.domains + 1
-        remaining_work_all = sum(dur[cid] for cid in self.ids if not self.on_tail[cid])
-        remaining_tail = sum(dur[cid] for cid in self.ids if self.on_tail[cid])
-
-        # A node: (free per stream, finish_of, placed count, remaining wave work, remaining tail
-        # work, indegree, slots so far). The DFS stack holds child descriptors; each child is
-        # materialized only when popped.
-        indegree0 = {cid: len(preds[cid]) for cid in self.ids}
-        Node = tuple
-        root_node: Node = (
-            tuple([0] * streams),
-            {},
-            0,
-            remaining_work_all,
-            remaining_tail,
-            dict(indegree0),
-            (),
-        )
-        stack: list[tuple[int, Node]] = [(root, root_node)]
-        open_min = None  # the least bound among nodes cut by the budget, for L
         expansions = 0
-        stop = "optimal"
         while stack:
-            bound, node = stack.pop()
+            bound, node = stack[-1]
             if bound >= upper:
+                stack.pop()
                 continue
             if expansions >= budget:
-                stop = "budget"
-                open_min = bound if open_min is None else min(open_min, bound)
-                continue
+                break  # the frontier stays on the stack: resumable
+            stack.pop()
             expansions += 1
             free, finish_of, placed, work_left, tail_left, indegree, slots = node
             if placed == n:
@@ -323,7 +335,7 @@ class _PhaseSearch:
                 continue
             # the ready claims, twins in id order
             ready = [cid for cid in self.ids if indegree[cid] == 0 and cid not in finish_of]
-            children: list[tuple[int, int, Node]] = []
+            children: list[tuple[int, int, _Node]] = []
             for cid in ready:
                 twin = twin_before[cid]
                 if twin is not None and twin not in finish_of:
@@ -333,44 +345,43 @@ class _PhaseSearch:
                     if finish_of[p] > release:
                         release = finish_of[p]
                 seen_free: set[int] = set()
-                for s in eligible[cid]:
-                    if free[s] <= release and release in seen_free:
+                for s_ in eligible[cid]:
+                    if free[s_] <= release and release in seen_free:
                         continue  # an interchangeable stream: same start, empty until then
-                    if free[s] <= release:
+                    if free[s_] <= release:
                         seen_free.add(release)
-                    start = max(free[s], release)
+                    start = max(free[s_], release)
                     finish = start + dur[cid]
                     new_free = list(free)
-                    new_free[s] = finish
+                    new_free[s_] = finish
                     new_finish = dict(finish_of)
                     new_finish[cid] = finish
                     new_indegree = dict(indegree)
                     for succ in succs[cid]:
                         new_indegree[succ] -= 1
-                    on_tail = s == self.tail
+                    on_tail = s_ == self.tail
                     new_work = work_left - (0 if on_tail else dur[cid])
                     new_tail = tail_left - (dur[cid] if on_tail else 0)
                     # the node bound: the stack, at this node
-                    frontier = max(new_free)
+                    frontier_t = max(new_free)
                     wave_free = new_free[: self.domains]
                     cap = _ceil_div(sum(wave_free) + new_work, max(1, self.domains))
                     tail_bound = new_free[self.tail] + new_tail
-                    path = frontier
+                    path = frontier_t
                     for other in self.ids:
                         if other in new_finish:
                             continue
                         est = 0
                         for p in preds[other]:
-                            if p in new_finish:
-                                if new_finish[p] > est:
-                                    est = new_finish[p]
+                            if p in new_finish and new_finish[p] > est:
+                                est = new_finish[p]
                         if est + tail_path[other] > path:
                             path = est + tail_path[other]
-                    child_bound = max(frontier, cap, tail_bound, path, root)
+                    child_bound = max(frontier_t, cap, tail_bound, path, root)
                     if child_bound >= upper:
                         continue
-                    stream = -1 if on_tail else s
-                    child: Node = (
+                    stream = -1 if on_tail else s_
+                    child: _Node = (
                         tuple(new_free),
                         new_finish,
                         placed + 1,
@@ -384,12 +395,135 @@ class _PhaseSearch:
             children.sort(key=lambda item: (item[0], item[1]), reverse=True)
             for _finish, child_bound, child in children:
                 stack.append((child_bound, child))
-        lower = (
-            upper
-            if stop == "optimal"
-            else max(root, min(upper, open_min if open_min is not None else upper))
+        live = [bound for bound, _node in stack if bound < upper]
+        if not live:
+            return upper, upper, "optimal", expansions, best_slots, bounds, None
+        lower = max(root, min(upper, min(live)))
+        return (
+            upper,
+            lower,
+            "budget",
+            expansions,
+            best_slots,
+            bounds,
+            _Frontier(
+                upper,
+                best_slots,
+                [(b, nd) for b, nd in stack if b < upper],
+                spent_before + expansions,
+            ),
         )
-        return upper, lower, stop, expansions, best_slots, bounds
+
+
+_Node = (
+    tuple  # (free per stream, finish_of, placed, wave work left, tail work left, indegree, slots)
+)
+
+
+@dataclass
+class _Frontier:
+    """Where one phase's search stopped: the incumbent, its placement, the open nodes (each
+    with its bound) and the expansions spent on the phase so far."""
+
+    upper: int
+    best_slots: list[Slot]
+    stack: list[tuple[int, _Node]]
+    expansions: int
+
+
+# --- the resumable state -------------------------------------------------------------------
+
+
+def _inputs_digest(module: Module, durations: dict[int, int], domains: int, knee: int) -> str:
+    """What a search is a search OF: the module's identity, the duration vector and the
+    stream geometry -- a state resumes only against the inputs it was taken from."""
+    from ..kbcir.provenance import module_identity
+
+    body = {
+        "module": module_identity(module).digest,
+        "durations": sorted((int(cid), int(dur)) for cid, dur in durations.items()),
+        "domains": domains,
+        "knee": knee,
+    }
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _slot_rows(slots) -> list[list[int]]:
+    return [[slot.claim_id, slot.domain, slot.start, slot.finish] for slot in slots]
+
+
+def _slots_of(rows) -> list[Slot]:
+    return [Slot(int(a), int(b), int(c), int(d)) for a, b, c, d in rows]
+
+
+@dataclass
+class SearchState:
+    """The content-addressed state of an `exact_schedule` search (G12 / S2-C).
+
+    Per phase, in topological order: `closed` (its solution is final), `open` (the frontier
+    the search stopped at: the incumbent, its placement, every open node with its bound, the
+    expansions spent) or `pending` (not started). `inputs` binds the state to the module, the
+    duration vector and the stream geometry it was taken from; `budget_spent` is the module's
+    total. `digest` is SHA-256 over the canonical JSON, so a state is an artifact: resuming
+    from it -- `exact_schedule(..., resume=state)` -- reproduces the uninterrupted run."""
+
+    inputs: str
+    budget_spent: int
+    phases: list[dict]
+
+    def to_dict(self) -> dict:
+        return {
+            "version": "ExactSearchStateV1",
+            "inputs": self.inputs,
+            "budget_spent": self.budget_spent,
+            "phases": self.phases,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def from_json(cls, text: str) -> "SearchState":
+        body = json.loads(text)
+        if body.get("version") != "ExactSearchStateV1":
+            raise ValueError("not an ExactSearchStateV1 document")
+        return cls(str(body["inputs"]), int(body["budget_spent"]), list(body["phases"]))
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+
+    @property
+    def closed(self) -> bool:
+        return all(phase["status"] == "closed" for phase in self.phases)
+
+
+def _node_rows(node: _Node) -> list:
+    free, finish_of, placed, work_left, tail_left, indegree, slots = node
+    return [
+        list(free),
+        [[int(cid), int(fin)] for cid, fin in sorted(finish_of.items())],
+        placed,
+        work_left,
+        tail_left,
+        [[int(cid), int(deg)] for cid, deg in sorted(indegree.items())],
+        _slot_rows(slots),
+    ]
+
+
+def _node_of(rows) -> _Node:
+    free, finish_rows, placed, work_left, tail_left, indegree_rows, slot_rows = rows
+    return (
+        tuple(int(v) for v in free),
+        {int(cid): int(fin) for cid, fin in finish_rows},
+        int(placed),
+        int(work_left),
+        int(tail_left),
+        {int(cid): int(deg) for cid, deg in indegree_rows},
+        tuple(_slots_of(slot_rows)),
+    )
 
 
 def exact_schedule(
@@ -399,30 +533,104 @@ def exact_schedule(
     *,
     budget: int = DEFAULT_EXACT_BUDGET,
     hazards: dict[int, dict[int, list[int]]] | None = None,
+    resume: SearchState | None = None,
 ) -> ExactSchedule:
     """Certify the phase-barriered placement of `durations`: the heuristic's makespan, the
-    best makespan found, the strongest valid lower bound and the incumbent's placement. Each
-    phase gets the whole `budget` (phases compose serially, so a proof is a proof per phase)."""
+    best makespan found, the strongest valid lower bound and the incumbent's placement.
+
+    `budget` is the module's, in node expansions, consumed phase by phase in topological
+    order: a phase that closes hands the remainder to the next, a phase that exhausts it
+    leaves the later phases pending (their incumbent is the heuristic's placement, their
+    bound the root stack -- still a legal plan with a valid gap). `resume` continues a
+    search from its `SearchState` with a fresh `budget`, and the result is what the
+    uninterrupted run with the summed budget returns; the state must have been taken from
+    these inputs. The returned `state` is the search's state after this call."""
     if budget < 0:
         raise ValueError("the exact search budget must be non-negative")
     domains, knee = _streams(target)
     if hazards is None:
         hazards = phase_hazards(module)
+    inputs = _inputs_digest(module, durations, domains, knee)
+    if resume is not None and resume.inputs != inputs:
+        raise ValueError(
+            "the search state was taken from other inputs (module, durations or target)"
+        )
     pmap = module.phase_map()
+    order = _topo_phase_ids(module)
+    if resume is not None and [p["phase_id"] for p in resume.phases] != list(order):
+        raise ValueError("the search state does not describe this module's phases")
     solutions: list[PhaseSolution] = []
+    states: list[dict] = []
     sched = GemSchedule(mode="eft", knee=knee)
     t0 = 0
-    heuristic_total = incumbent_total = lower_total = expansions = 0
+    heuristic_total = incumbent_total = lower_total = 0
+    spent = 0
+    left = budget
     stop = "optimal"
-    for pid in _topo_phase_ids(module):
+    for index, pid in enumerate(order):
         claims = sorted(pmap[pid].claims, key=lambda c: c.id)
         dispatch = _PhaseDispatch(claims, hazards[pid], domains, knee, True)
         search = _PhaseSearch(dispatch, durations, knee)
-        heuristic, _slots = search.heuristic()
-        upper, lower, reason, spent, slots, bounds = search.solve(budget)
+        heuristic, heuristic_slots = search.heuristic()
+        prior = resume.phases[index] if resume is not None else None
+        if prior is not None and prior["status"] == "closed":
+            bounds = tuple(Bound(name, int(value)) for name, value in prior["bounds"])
+            upper = lower = int(prior["upper"])
+            reason, phase_spent, slots, frontier = (
+                "optimal",
+                int(prior["expansions"]),
+                _slots_of(prior["best_slots"]),
+                None,
+            )
+            here = 0
+        else:
+            frontier_in = None
+            if prior is not None and prior["status"] == "open":
+                frontier_in = _Frontier(
+                    int(prior["upper"]),
+                    _slots_of(prior["best_slots"]),
+                    [(int(b), _node_of(rows)) for b, rows in prior["stack"]],
+                    int(prior["expansions"]),
+                )
+            if stop == "budget" and frontier_in is None:
+                # an earlier phase exhausted the budget: this one is pending -- the heuristic
+                # stands and the root stack is its bound (0 expansions)
+                bounds = search.root_bounds()
+                upper, lower = heuristic, min(heuristic, max(b.value for b in bounds))
+                reason, here, slots, frontier = "budget", 0, heuristic_slots, None
+                phase_spent = 0
+                if upper == lower:
+                    reason = "optimal"
+                status = "pending" if reason == "budget" else "closed"
+            else:
+                upper, lower, reason, here, slots, bounds, frontier = search.solve(
+                    left, frontier_in
+                )
+                phase_spent = here + (frontier_in.expansions if frontier_in is not None else 0)
+                left -= here
+                status = "closed" if reason == "optimal" else "open"
         if lower > upper or upper > heuristic:  # pragma: no cover - the solver's own invariants
             raise AssertionError("exact search produced an inconsistent bound")
-        solutions.append(PhaseSolution(pid, heuristic, upper, lower, bounds, reason, spent, slots))
+        if prior is not None and prior["status"] == "closed":
+            status = "closed"
+        states.append(
+            {
+                "phase_id": pid,
+                "status": status,
+                "heuristic": heuristic,
+                "upper": upper,
+                "lower": lower,
+                "expansions": phase_spent,
+                "bounds": [[b.name, b.value] for b in bounds],
+                "best_slots": _slot_rows(slots),
+                "stack": [[b, _node_rows(nd)] for b, nd in frontier.stack]
+                if frontier is not None
+                else [],
+            }
+        )
+        solutions.append(
+            PhaseSolution(pid, heuristic, upper, lower, bounds, reason, phase_spent, slots)
+        )
         for slot in slots:
             sched.slots.append(Slot(slot.claim_id, slot.domain, slot.start + t0, slot.finish + t0))
             sched.affinity[slot.claim_id] = slot.domain
@@ -430,13 +638,16 @@ def exact_schedule(
         heuristic_total += heuristic
         incumbent_total += upper
         lower_total += lower
-        expansions += spent
+        spent += here
         if reason != "optimal":
             stop = "budget"
     sched.makespan = t0
-    return ExactSchedule(
-        heuristic_total, incumbent_total, lower_total, stop, expansions, budget, solutions, sched
+    total_spent = spent + (resume.budget_spent if resume is not None else 0)
+    result = ExactSchedule(
+        heuristic_total, incumbent_total, lower_total, stop, total_spent, budget, solutions, sched
     )
+    result.state = SearchState(inputs, total_spent, states)
+    return result
 
 
 # --- the certificate -----------------------------------------------------------------------
@@ -466,6 +677,7 @@ class ScheduleCertificate:
     expansions: int
     budget: int
     bounds: tuple[Bound, ...]
+    dispatch: object = None  # the DispatchRecord (G12): which rail ran, how it stopped, why
 
     def to_dict(self) -> dict:
         return {
@@ -482,6 +694,7 @@ class ScheduleCertificate:
             "expansions": self.expansions,
             "budget": self.budget,
             "bounds": [[bound.name, bound.value] for bound in self.bounds],
+            "dispatch": None if self.dispatch is None else self.dispatch.to_dict(),
         }
 
 
@@ -494,14 +707,26 @@ def certify_schedule(
     *,
     budget: int = DEFAULT_EXACT_BUDGET,
     hazards: dict[int, dict[int, list[int]]] | None = None,
+    requested: str = "TMSAO-2",
+    resume: SearchState | None = None,
 ) -> ScheduleCertificate:
-    """Certify the canonical placement of a selected plan (`schedule.schedule_plan`): run the
-    bounded exact search over the plan's own step costs and bind `L`, `U`, the gaps, the stop
-    reason and the budget to the scope they range over."""
+    """Certify the canonical placement of a selected plan (`schedule.schedule_plan`): dispatch
+    the rail the law names for (`schedule`, the plan's size, `requested`, `budget`), run it
+    over the plan's own step costs and bind `L`, `U`, the gaps, the stop reason, the budget
+    and the dispatch record to the scope they range over. The fast rail (a `TMSAO-4` request
+    or a zero budget) certifies the heuristic with the root stack as its bound."""
     from ..kbcir.scope import certificate_class_allowed, scope_for
+    from .dispatch import DispatchRecord, DispatchRequest, dispatch
     from .schedule import durations_from
 
-    exact = exact_schedule(module, durations_from(result), target, budget=budget, hazards=hazards)
+    durations = durations_from(result)
+    decision = dispatch(DispatchRequest("schedule", len(result.steps), requested, budget))
+    if decision.rail == "fast":
+        exact = exact_schedule(module, durations, target, budget=0, hazards=hazards)
+    else:
+        exact = exact_schedule(
+            module, durations, target, budget=decision.budget, hazards=hazards, resume=resume
+        )
     scope = scope_for(
         module,
         target,
@@ -510,14 +735,23 @@ def certify_schedule(
         budget={"exact_search_expansions": budget},
         objective={"name": "makespan", "artifact": "schedule_plan(mode=eft)"},
     )
+    searched = decision.rail == "proof"
     evidence = {
         "incumbent": True,
-        "lower_bound": True,
-        "proof": exact.optimal,
-        "candidate_census": exact.optimal,  # the census of active schedules, complete iff closed
-        "census_complete": exact.optimal,
+        "lower_bound": searched,  # the fast rail places once: no search, no bound of its own
+        "proof": searched and exact.optimal,
+        "candidate_census": searched and exact.optimal,  # complete iff the search closed
+        "census_complete": searched and exact.optimal,
     }
     klass, statement = certificate_class_allowed(scope, evidence)
+    strongest = max(exact.bounds, key=lambda bound: bound.value).name if exact.bounds else "none"
+    record = DispatchRecord(
+        decision,
+        "heuristic" if not searched else exact.stop_reason,
+        exact.expansions,
+        strongest if searched else "none",
+        klass,
+    )
     return ScheduleCertificate(
         scope.digest(),
         klass,
@@ -527,14 +761,61 @@ def certify_schedule(
         exact.lower_bound,
         exact.heuristic_gap,
         exact.incumbent_gap,
-        exact.stop_reason,
+        exact.stop_reason if searched else "heuristic",
         exact.expansions,
-        budget,
+        decision.budget,
         exact.bounds,
+        record,
     )
 
 
 # --- exact candidate selection (section 6.3) -----------------------------------------------
+
+
+@dataclass
+class SelectionSearchState:
+    """The content-addressed state of an `exact_selection` enumeration (G12 / S2-C): the
+    inputs it ranges over, the next assignment index, the best seen and the count priced."""
+
+    inputs: str
+    closed: bool
+    next_index: int
+    best_makespan: int | None
+    best_widths: list[list[int]]
+    assignments: int
+
+    def to_dict(self) -> dict:
+        return {
+            "version": "ExactSelectionStateV1",
+            "inputs": self.inputs,
+            "closed": self.closed,
+            "next_index": self.next_index,
+            "best_makespan": self.best_makespan,
+            "best_widths": self.best_widths,
+            "assignments": self.assignments,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+
+    @classmethod
+    def from_json(cls, text: str) -> "SelectionSearchState":
+        body = json.loads(text)
+        if body.get("version") != "ExactSelectionStateV1":
+            raise ValueError("not an ExactSelectionStateV1 document")
+        best = body["best_makespan"]
+        return cls(
+            str(body["inputs"]),
+            bool(body["closed"]),
+            int(body["next_index"]),
+            None if best is None else int(best),
+            [[int(a), int(b)] for a, b in body["best_widths"]],
+            int(body["assignments"]),
+        )
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -548,6 +829,7 @@ class ExactSelection:
     sweep: int
     assignments: int
     stop_reason: str
+    state: "SelectionSearchState | None" = field(default=None, compare=False, repr=False)
 
     @property
     def ratio(self) -> float:
@@ -555,11 +837,21 @@ class ExactSelection:
 
 
 def exact_selection(
-    module: Module, h, theta, policy=None, *, limit: int = 20_000
+    module: Module,
+    h,
+    theta,
+    policy=None,
+    *,
+    limit: int = 20_000,
+    resume: SelectionSearchState | None = None,
 ) -> ExactSelection:
-    """Enumerate every candidate assignment of `module` (at most `limit`, then stop on the
-    budget with the best seen), pricing each through the one-sweep search's own re-pricing
-    and artifact, and hold the sweep's makespan to the best."""
+    """Enumerate every candidate assignment of `module` (at most `limit` per call, then stop
+    on the budget with the best seen), pricing each through the one-sweep search's own
+    re-pricing and artifact, and hold the sweep's makespan to the best. The sweep's own
+    assignment is the incumbent the enumeration starts from, so a budget stop never returns
+    worse than the fast rail; `resume` continues an enumeration from its state with a fresh
+    `limit` (G12 / S2-C)."""
+    from ..kbcir.provenance import hash_policy, hash_target, hash_theta, module_identity
     from ..kbcir.realize import fused_candidates
     from ..kbcir.weights import PERF
     from .overlap import _serial_result, optimize_scheduled
@@ -567,29 +859,87 @@ def exact_selection(
 
     if policy is None:
         policy = PERF
-    _result, price = optimize_scheduled(module, h, theta, policy)
+    if limit < 0:
+        raise ValueError("the enumeration limit must be non-negative")
+    inputs = hashlib.sha256(
+        json.dumps(
+            {
+                "module": module_identity(module).digest,
+                "target": hash_target(h),
+                "theta": hash_theta(theta),
+                "policy": hash_policy(policy),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if resume is not None and resume.inputs != inputs:
+        raise ValueError("the selection state was taken from other inputs")
+    swept, price = optimize_scheduled(module, h, theta, policy)
     cand_map = fused_candidates(module, h)
     ids = [
         claim.id
         for pid in _topo_phase_ids(module)
         for claim in sorted(module.phase_map()[pid].claims, key=lambda c: c.id)
     ]
-    best: tuple[int, dict[int, int]] | None = None
+    # an incumbent first (G12): the sweep's assignment seeds the enumeration, so a budget stop
+    # never returns worse than the fast rail
+    best: tuple[int, dict[int, int]] | None = (
+        price.makespan,
+        {step.claim_id: step.candidate.width for step in swept.steps},
+    )
+    start = 0
     count = 0
+    if resume is not None:
+        if resume.best_makespan is not None:
+            best = (resume.best_makespan, {int(c): int(w) for c, w in resume.best_widths})
+        start = resume.next_index
+        count = resume.assignments
+        if resume.closed:
+            stop = "optimal"
+            selection = ExactSelection(
+                best[0] if best else price.makespan,
+                best[1] if best else {},
+                price.makespan,
+                count,
+                stop,
+            )
+            selection.state = resume
+            return selection
     stop = "optimal"
+    index = 0
+    priced = 0
+    closed = True
     for choice in itertools.product(*[cand_map[cid] for cid in ids]):
-        if count >= limit:
+        if index < start:
+            index += 1
+            continue
+        if priced >= limit:
             stop = "budget"
+            closed = False
             break
-        count += 1
+        index += 1
+        priced += 1
         assignment = dict(zip(ids, choice))
         result = _serial_result(module, assignment, h, theta, policy)
         makespan = schedule_plan(module, result, h, "eft").makespan
         if best is None or makespan < best[0]:
             best = (makespan, {cid: cand.width for cid, cand in assignment.items()})
+    count += priced
+    state = SelectionSearchState(
+        inputs,
+        closed,
+        index,
+        best[0] if best else None,
+        sorted(best[1].items()) if best else [],
+        count,
+    )
     if best is None:
-        return ExactSelection(price.makespan, {}, price.makespan, 0, stop)
-    return ExactSelection(best[0], best[1], price.makespan, count, stop)
+        selection = ExactSelection(price.makespan, {}, price.makespan, 0, stop)
+    else:
+        selection = ExactSelection(best[0], best[1], price.makespan, count, stop)
+    selection.state = state
+    return selection
 
 
 __all__ = [
@@ -600,6 +950,8 @@ __all__ = [
     "ExactSelection",
     "PhaseSolution",
     "ScheduleCertificate",
+    "SearchState",
+    "SelectionSearchState",
     "certify_schedule",
     "exact_schedule",
     "exact_selection",
