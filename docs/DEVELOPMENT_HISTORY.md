@@ -653,6 +653,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   regret and the bounds. Outcomes: `search.resume.unavailable` 393 -> 0,
   `dispatch.incumbent.missing` 26 -> 0, `dispatch.unrecorded` 12 -> 0; two equal runs are
   identical, states included.
+  S2-D (2026-09-13) landed G6, typed regions and the objective registry, affine first (report
+  P2, sections 8 and 9). RED: no region concept in the tree -- over the 542-claim region corpus
+  no claim was covered by a verified region -- and "semiring" was two attribute names without
+  laws. What landed: `kbcir.regions` -- affine regions (maximal runs of consecutive claims of
+  one phase whose accesses are 1-D affine maps with static trip counts; the local model is the
+  access maps and the dependence distances) and opaque regions (the fallback, with the named
+  refusal), each supplying `verify_region`, `expand` (the identity on the carrier: the region
+  graph expands to the module claim for claim and the plan selected over the expansion is the
+  plan over the module), `region_floor` (the cheapest deforested candidate under the most
+  favourable coupling the access maps allow -- never above the plan's score, tighter by exactly
+  the discount where no read is shared) and refusal conditions; `kbcir.objectives` -- the typed
+  registry (min_plus, max_plus, min_max, boolean, lexicographic, pareto) admitted only through
+  `verify_objective` (closure under a declared overflow policy, identities, associativity, the
+  commutativity and idempotence of select, distributivity where claimed, the realized strict
+  order), with `dag_best_path` reproducing the planner's min-plus path on 300 DAGs and the exact
+  scheduler's max-plus critical path on 194 phases; `gem.exact.certify_selection` and the
+  dispatch law's `path` kind (the min-plus rail is exact: L == U == the optimum, TMSAO-1 under a
+  declared scope, the structural floor and the coupling's price reported). Outcomes:
+  `regions.unexpanded.claims` 542 -> 0, `objectives.unverified` 2 -> 0; the native guardrails
+  A/B on this host (virtualized) 4.53 -> 4.44x, 15.00 -> 15.56x, 1.315 -> 1.314x, 1.003 ->
+  1.004x -- no regression. Not claimed: the other region kinds (opaque today), a polyhedral
+  depth above one, a law-rail registry attribute, a silicon certificate.
 
 ---
 

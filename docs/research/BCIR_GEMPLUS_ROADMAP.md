@@ -411,7 +411,7 @@ budget and keeps the first-fit incumbent with a stated gap — the interval-grap
 programming the staged plan names for G4/G5 is the next lever) and any joint placement of
 memory with the schedule (G6/G8).
 
-### G6 — typed regions and the semiring registry
+### G6 — typed regions and the semiring registry — **landed (S2-D, 2026-09-13), affine first**
 
 *Report P2. The architectural slice.*
 
@@ -424,13 +424,39 @@ each verifying closure, identities, comparison semantics and overflow policy.
 Every region must supply: a verifier, a conservative claim expansion, a cost/lower-bound
 interface, and refusal conditions.
 
-| Gate | Baseline | Target |
-|---|---|---|
-| `ratio` `native.gather-avoidance` | 5.58× | **no regression** |
-| `ratio` `native.blocked-reduction` | 11.68× | **no regression** |
-| `ratio` `native.direct-stride` | 1.27× | **no regression** |
-| `ratio` `native.dense-parity` | 0.98–1.01× | stays in band |
-| `exact` Every region expands conservatively to claims | — | differential test per region |
+| Gate | Baseline | Target | Outcome (S2-D) |
+|---|---|---|---|
+| `ratio` `native.gather-avoidance` | 5.58× | **no regression** | 4.53× → 4.44× A/B on this host (medians of 3; the samples overlap) — no regression; the slice touches neither selection nor lowering |
+| `ratio` `native.blocked-reduction` | 11.68× | **no regression** | 15.00× → 15.56× A/B — no regression |
+| `ratio` `native.direct-stride` | 1.27× | **no regression** | 1.315× → 1.314× A/B — no regression |
+| `ratio` `native.dense-parity` | 0.98–1.01× | stays in band | 1.003× → 1.004× A/B — in band |
+| `exact` Every region expands conservatively to claims | — | differential test per region | **met**: `regions.unexpanded.claims` 542 → 0 — `expand(region_graph(module))` is the module claim for claim on the 53-module corpus and the plan `optimize` selects over the expansion is the plan over the module; forged regions (non-consecutive claims, wrong maps, a model on an opaque region) are refused by the verifier |
+| `exact` Every objective carries its laws | 2 names, no laws | verified before admission | **met**: `objectives.unverified` 2 → 0 — six entries admitted only through `verify_objective`; a lawless operator is refused |
+
+What landed (S2-D): `kbcir.regions` — typed regions with a verifier, a conservative expansion,
+a cost interface and refusal conditions, two kinds: **affine** (a maximal run of consecutive
+claims of one phase whose accesses are 1-D affine maps with static trip counts, the local model
+being the access maps and the dependence distances) and **opaque** (the universal fallback,
+carrying the named refusal: `dynamic-trip-count`, `volatile`, `fence`, `atomic`, `sparse`,
+`cacheline-indexed`, `tile`, `lane`, `stride`, `extent`, `count`); `region_graph` partitions
+every phase, recognizes and re-verifies (on the corpus of 53 modules: 105 affine and 140 opaque regions), and
+`region_floor` is the cost interface — for every claim the cheapest of its deforested candidates
+under the most favourable coupling the access maps allow, a floor no realization of the region
+can go below (never above the plan's score on the corpus × 2 targets × 2 Θ × 4 policies; tighter
+by exactly the discount where no read is shared). `kbcir.objectives` — the typed objective
+registry: `min_plus`, `max_plus`, `min_max`, `boolean`, `lexicographic`, `pareto`, each with its
+combine/select/identities/order, the laws it claims and a declared overflow policy (`checked`
+refuses outside i64, `saturate` clamps), proved by `verify_objective` before admission; one
+layered relaxation `dag_best_path` reproduces the planner's min-plus path and the exact
+scheduler's max-plus critical path to the digit. `gem.exact.certify_selection` and the dispatch
+law's `path` kind (the report's §11.3 first row: the min-plus rail is exact) certify a plan's
+selection — `L == U == optimum`, TMSAO-1 under a declared scope — and report the region graph's
+structural floor with the coupling's price stated. Not claimed: the other region kinds the
+report lists (SDF/CSDF, timed-event max-plus, tensor index maps, state machines, equivalence
+graphs — opaque today, the conservative answer), a polyhedral depth above one (a tile claim is
+opaque), a registry attribute on the law rail (`BCIR_Semiring` keeps the two shared names; a
+wider attribute is a cross-rail change taken deliberately), and any silicon certificate from
+the native rows on this host (its tenancy is `virtualized`).
 
 The native rows are **guardrails, not targets**. They are what BCIR is for — the audit's §4.4
 shows the wins come from preserving enough structure to avoid a gather or pick a blocked
@@ -758,7 +784,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            S0-10 bcir-performance-audit rename + wording sweep  <- LANDED (S0-A)
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
-Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); next G6 (S2-D)
+Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); next G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
@@ -811,6 +837,8 @@ no PMU):
 | `eft.suboptimal.2domains` / `eft.worst.2domains` / `eft.mean.2domains` (+ the 3-domain rows) | G4 | 11.07% / 1.1333× / 1.0078 | **0 / 1.0 / 1.0** (S2-B, 2026-09-13) | GAIN, at the bound — the proof rail proves every instance; the heuristic's numbers are kept as witness rows |
 | `optimize_scheduled.quality` / `solver.unproved.fraction` / `solver.gap.p95` | G4 | 1.00696× / 1.0 / 0.0625 | **1.0 / 0 / 0** (S2-B, 2026-09-13) | GAIN, at the bound — every certificate carries L, U and both gaps |
 | `search.resume.unavailable` / `dispatch.incumbent.missing` / `dispatch.unrecorded` | G12 | 393 / 26 / 12 (the parent tree) | **0 / 0 / 0** (S2-C, 2026-09-13) | GAIN, at the bound — every proof-rail solver resumes exactly, has an incumbent at every interruption point, and every certificate names its dispatch |
-| four rows | G0, G6 | — | not measured | need the native rig or the typed regions |
+| `regions.unexpanded.claims` / `objectives.unverified` | G6 | 542 / 2 (the parent tree) | **0 / 0** (S2-D, 2026-09-13) | GAIN, at the bound — every claim in a verified region whose expansion is the module; every objective admitted with its laws |
+| `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate |
+| `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
 
 Everything BCIR emits is still TMSAO-4. G4 remains the first slice that can change that.

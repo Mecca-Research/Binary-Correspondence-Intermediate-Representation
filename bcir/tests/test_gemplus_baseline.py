@@ -259,3 +259,29 @@ def test_the_dispatch_rows_are_counted_over_the_interruption_corpus():
         "dispatch.incumbent.missing": 0.0,
         "dispatch.unrecorded": 0.0,
     }
+
+
+def test_the_region_rows_are_exact_over_the_corpus():
+    """G6 / S2-D: every corpus claim is covered by a verified region whose expansion is the
+    module, and every registry entry proved its laws."""
+    from tools.perf.gemplus_baseline import measure_regions
+
+    assert measure_regions() == {"regions.unexpanded.claims": 0.0, "objectives.unverified": 0.0}
+
+
+def test_the_native_guardrails_measure_through_the_bench_rail_when_a_compiler_exists():
+    """The §4.4 rows come from compiled, timed kernels on this host -- or not at all."""
+    from bcir.bench import bench_available
+    from tools.perf.gemplus_baseline import measure_native
+
+    out = measure_native()
+    if not bench_available():
+        assert out == {}
+        return
+    assert set(out) <= {
+        "native.gather-avoidance",
+        "native.blocked-reduction",
+        "native.direct-stride",
+        "native.dense-parity",
+    }
+    assert all(value > 0 for value in out.values())

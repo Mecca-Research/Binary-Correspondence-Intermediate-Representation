@@ -400,6 +400,35 @@ METRICS: tuple[Metric, ...] = (
         bound_source="every certificate names the rail that ran (G12); the parent tree's twelve carried none",
         slice_owner="G12",
     ),
+    # --- G6 (S2-D): typed regions and the objective registry. Counted over a fixed corpus
+    # (the 12 programs, the 2x3 general fixture, 20 generated and 20 random modules: 542
+    # claims); the baselines are the parent tree, where no claim was covered by a region with
+    # a verified expansion and the two objective names the law rail shares existed without
+    # verified laws.
+    Metric(
+        "regions.unexpanded.claims",
+        "regions",
+        "corpus claims not covered by a verified region whose expansion is the module claim for claim",
+        542,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="every claim sits in exactly one recognized, verified region and the region graph "
+        "expands to the module (G6); the parent tree had no region layer",
+        slice_owner="G6",
+    ),
+    Metric(
+        "objectives.unverified",
+        "regions",
+        "objective registry entries admitted without their laws proved (closure, identities, order)",
+        2,
+        "count",
+        "exact",
+        bound=0.0,
+        bound_source="the registry admits an objective only when verify_objective passes (G6); the "
+        "parent tree named min_plus and max_plus with no laws attached",
+        slice_owner="G6",
+    ),
     # --- §6.2: two implementations that do not describe the same schedule. This one is a
     # CORRECTNESS metric wearing a performance costume: the target is agreement, not speed.
     # G1 (S1-A) landed the one artifact: `price_scheduled` reads `schedule_plan`, which is the
@@ -1088,6 +1117,74 @@ def measure_dispatch() -> dict[str, float]:
     }
 
 
+def measure_regions() -> dict[str, float]:
+    """The G6 exact rows (S2-D) over the region corpus."""
+    import random
+
+    from bcir.examples import PROGRAMS
+    from bcir.kbcir.differential import gen_module
+    from bcir.kbcir.objectives import registry, verify_objective
+    from bcir.kbcir.realize import _flatten
+    from bcir.kbcir.regions import expand, region_graph, verify_region
+    from bcir.tests.sweep_fixtures import general_fixture, random_module
+
+    modules = [build() for _name, build in sorted(PROGRAMS.items())]
+    modules.append(general_fixture(2, 3))
+    modules += [gen_module(random.Random(seed)) for seed in range(20)]
+    modules += [random_module(seed) for seed in range(20)]
+    unexpanded = 0
+    for module in modules:
+        claims = [(pid, claim.id) for pid, claim in _flatten(module)]
+        try:
+            graph = region_graph(module)
+            if any(verify_region(region, module) for region in graph.regions):
+                raise ValueError("a region failed its verifier")
+            expanded = [(pid, claim.id) for pid, claim in expand(graph, module)]
+        except Exception:
+            unexpanded += len(claims)
+            continue
+        covered = set(graph.by_claim())
+        unexpanded += sum(1 for pid, cid in claims if cid not in covered)
+        if expanded != claims:
+            unexpanded += len(claims)
+    unverified = 0
+    try:
+        for entry in registry().values():
+            unverified += bool(verify_objective(entry))
+    except Exception:
+        unverified += 6
+    return {
+        "regions.unexpanded.claims": float(unexpanded),
+        "objectives.unverified": float(unverified),
+    }
+
+
+def measure_native() -> dict[str, float]:
+    """The §4.4 native structural wins through the measured-evidence rail (`bcir.bench`),
+    compiled and timed on this host -- guardrails, not targets (G6). A ratio here is a
+    same-host number: the report's baselines were measured on other silicon, and this host's
+    tenancy is what `kbcir.microbench.host_attestation` says it is. Empty when no C
+    toolchain is available."""
+    from bcir.bench import bench_available, compare, compare_gather, compare_reduce, compare_strided
+
+    if not bench_available():
+        return {}
+    out: dict[str, float] = {}
+    gather = compare_gather("vector_add", opt="-O2", n=1 << 16, reps=30)
+    if gather.speedup_milli:
+        out["native.gather-avoidance"] = gather.speedup_milli / 1000
+    reduce = compare_reduce("gather_reduce", opt="-O2", n=1 << 20, reps=30)
+    if reduce.speedup_milli:
+        out["native.blocked-reduction"] = reduce.speedup_milli / 1000
+    strided = compare_strided("saxpy_strided", opt="-O2", n=1 << 22, reps=30)
+    if strided.speedup_milli:
+        out["native.direct-stride"] = strided.speedup_milli / 1000
+    dense = compare("vector_add", opt="-O3", n=1 << 20, reps=100)
+    if dense.speedup_milli:
+        out["native.dense-parity"] = dense.speedup_milli / 1000
+    return out
+
+
 def measure_verifier() -> dict[str, float]:
     """The S0-A rows: can R9 fire on the planner's own plan, and what does firing cost.
 
@@ -1394,6 +1491,8 @@ _MEASURERS = {
     "planner": measure_planner,
     "scheduler": measure_scheduler,
     "dispatch": measure_dispatch,
+    "regions": measure_regions,
+    "native": measure_native,
     "exact": measure_exact,
     "verifier": measure_verifier,
     "digest": measure_digest,
@@ -1556,7 +1655,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, exact, verifier, digest, plan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, native, exact, verifier, digest, plan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

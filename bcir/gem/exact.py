@@ -769,6 +769,99 @@ def certify_schedule(
     )
 
 
+@dataclass
+class SelectionCertificate:
+    """What a selected plan may say about its SELECTION (G6 / S2-D): the min-plus path over
+    the declared candidate census is exact, so the plan's score is the optimum of that model
+    (`L == U`), and the region graph's structural floor -- what the claims could cost under
+    the most favourable coupling -- says how much of the score the context coupling itself
+    accounts for. Bound to the scope digest with the dispatch record of the path rail."""
+
+    scope: str
+    klass: str
+    statement: str
+    score: int
+    optimum: int
+    lower_bound: int
+    structural_floor: int
+    coupling_cost: int
+    regions: dict
+    dispatch: object
+
+    def to_dict(self) -> dict:
+        return {
+            "scope": self.scope,
+            "class": self.klass,
+            "statement": self.statement,
+            "objective": "min_plus",
+            "score": self.score,
+            "optimum": self.optimum,
+            "lower_bound": self.lower_bound,
+            "structural_floor": self.structural_floor,
+            "coupling_cost": self.coupling_cost,
+            "regions": dict(self.regions),
+            "dispatch": None if self.dispatch is None else self.dispatch.to_dict(),
+        }
+
+
+def certify_selection(
+    module: Module, result, target, theta=None, policy=None
+) -> SelectionCertificate:
+    """Certify a plan's selection: re-run the exact min-plus path through the dispatch law's
+    path rail, hold the plan's score to it, and report the region graph's structural floor."""
+    from ..kbcir.regions import module_floor, region_graph
+    from ..kbcir.scope import certificate_class_allowed, scope_for
+    from ..kbcir.weights import PERF
+    from .dispatch import DispatchRequest, solve_path
+
+    used_policy = policy if policy is not None else PERF
+    used_theta = (
+        theta
+        if theta is not None
+        else __import__("bcir.kbcir.cost", fromlist=["Theta"]).Theta.cool()
+    )
+    again, record = solve_path(
+        DispatchRequest("path", len(result.steps), "TMSAO-1", 1),
+        module,
+        target,
+        used_theta,
+        used_policy,
+    )
+    optimum = again.score
+    if result.score < optimum:  # pragma: no cover - the DP is exact
+        raise AssertionError("a plan scored below the exact path optimum")
+    graph = region_graph(module)
+    floor = module_floor(module, target, used_theta, used_policy)
+    scope = scope_for(
+        module,
+        target,
+        theta,
+        policy,
+        objective={"name": "min_plus", "artifact": "realize.optimize"},
+        budget={"path_relaxations": record.spent},
+    )
+    evidence = {
+        "incumbent": True,
+        "lower_bound": True,
+        "proof": True,  # the layered min-plus path is exact over the census
+        "candidate_census": True,
+        "census_complete": True,
+    }
+    klass, statement = certificate_class_allowed(scope, evidence)
+    return SelectionCertificate(
+        scope.digest(),
+        klass,
+        statement,
+        result.score,
+        optimum,
+        optimum,
+        floor,
+        result.score - floor,
+        graph.kinds(),
+        record,
+    )
+
+
 # --- exact candidate selection (section 6.3) -----------------------------------------------
 
 
@@ -951,6 +1044,8 @@ __all__ = [
     "PhaseSolution",
     "ScheduleCertificate",
     "SearchState",
+    "SelectionCertificate",
+    "certify_selection",
     "SelectionSearchState",
     "certify_schedule",
     "exact_schedule",

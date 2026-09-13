@@ -233,6 +233,7 @@ _MODULES = [
     "bcir.tests.test_delta_pricing",
     "bcir.tests.test_exact_schedule",
     "bcir.tests.test_dispatch_law",
+    "bcir.tests.test_regions",
     "bcir.tests.test_artifact_bundle",
     "bcir.tests.test_registry_tool",
     "bcir.tests.test_stackify",

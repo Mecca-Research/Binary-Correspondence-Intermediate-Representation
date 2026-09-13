@@ -30,12 +30,16 @@ from dataclasses import dataclass
 
 from ..model import Module
 
-REGION_KINDS = ("schedule", "memory", "selection")
+REGION_KINDS = ("path", "schedule", "memory", "selection")
 CERTIFICATE_CLASSES = ("TMSAO-1", "TMSAO-2", "TMSAO-3", "TMSAO-4")
 RAILS = ("fast", "proof")
 
 #: (region kind, rail) -> (solver, its work unit). The fast rail's unit is what it places once.
 SOLVERS: dict[tuple[str, str], tuple[str, str]] = {
+    # additive layered candidates: the min-plus path is exact, so the fast rail IS the proof
+    # rail (the report's section 11.3, first row)
+    ("path", "fast"): ("optimize", "relaxations"),
+    ("path", "proof"): ("optimize", "relaxations"),
     ("schedule", "fast"): ("schedule_eft", "placements"),
     ("schedule", "proof"): ("exact_schedule", "expansions"),
     ("memory", "fast"): ("first_fit_layout", "placements"),
@@ -47,7 +51,12 @@ SOLVERS: dict[tuple[str, str], tuple[str, str]] = {
 #: The instance size (claims, items, claims) up to which the proof rail is expected to close
 #: within a default budget. Above it the proof rail is still dispatched -- the budget bounds
 #: the work -- but the decision says a budget stop (TMSAO-2) is what to expect.
-BOUNDED_SIZE = {"schedule": 64, "memory": 512, "selection": 12}
+BOUNDED_SIZE = {
+    "path": 1 << 62,
+    "schedule": 64,
+    "memory": 512,
+    "selection": 12,
+}  # a DP closes at any size
 
 STOP_REASONS = ("optimal", "budget", "heuristic")
 
@@ -214,6 +223,30 @@ def _strongest(bounds) -> str:
 # --- the runners: one per region kind --------------------------------------------------------
 
 
+def solve_path(request: DispatchRequest, module: Module, h, theta, policy):
+    """Dispatch a path region (additive layered candidates): the min-plus dynamic program is
+    exact over the candidate census whatever the rail asked for, so the record grants
+    TMSAO-1 when a proof was asked and TMSAO-4 when only a heuristic incumbent was."""
+    from ..kbcir.realize import optimize
+
+    decision = dispatch(request)
+    result = optimize(module, h, theta, policy)
+    relaxations = (
+        sum(len(result.cand_map.get(step.claim_id, ())) for step in result.steps)
+        if result.cand_map
+        else len(result.steps)
+    )
+    granted = "TMSAO-4" if decision.rail == "fast" else "TMSAO-1"
+    record = DispatchRecord(
+        decision,
+        "heuristic" if decision.rail == "fast" else "optimal",
+        relaxations,
+        "min-plus path",
+        granted,
+    )
+    return result, record
+
+
 def solve_schedule(
     request: DispatchRequest, module: Module, durations: dict[int, int], target=None, *, resume=None
 ):
@@ -333,6 +366,7 @@ __all__ = [
     "policy_ranking",
     "ranked",
     "solve_memory",
+    "solve_path",
     "solve_schedule",
     "solve_selection",
 ]

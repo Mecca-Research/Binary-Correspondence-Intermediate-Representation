@@ -236,6 +236,14 @@ bounds, stop reasons, expansions and state digests alike -- and a ranker is
 held to the census it claims to order (`dispatch.ranked` refuses a removed,
 added or duplicated member), so neither "anytime" nor "learned" can quietly
 change what a certificate ranges over.
+S2-D instance (2026-09-13): a region is recognized, then RE-VERIFIED against
+the module before it is returned, and the verifier is held to forgeries --
+non-consecutive claims, a foreign claim, wrong access maps, a local model on
+an opaque region, an empty region, a graph of another module -- each refused;
+an objective is admitted to the registry only after `verify_objective` proves
+its laws on samples, and a lawless operator (a non-associative combine, an
+order `select` does not realize) is refused by name, so "semiring" cannot
+become a label that admits arbitrary operators.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -645,6 +653,13 @@ S2-C instance (2026-09-13): the choice of solver is ONE function
 (`gem.dispatch.dispatch`, a table over region kind, size, requested class and
 budget) that every runner and every certificate go through, so "which rail
 ran" is read from the record, never inferred from the result.
+S2-D instance (2026-09-13): a region's expansion is ONE thing -- exactly the
+claims it was recognized from, in declared order (the identity on the
+carrier) -- so a stronger local model can never change what the planner
+selects over; and the region floor prices candidates through the planner's own
+edge predicate (`realize.edge_cost`'s coupling, `fused_candidates`' costs),
+not a second cost model, so a floor and a score cannot disagree about what a
+step costs.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
