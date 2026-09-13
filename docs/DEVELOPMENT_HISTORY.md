@@ -667,8 +667,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   registry (min_plus, max_plus, min_max, boolean, lexicographic, pareto) admitted only through
   `verify_objective` (closure under a declared overflow policy, identities, associativity, the
   commutativity and idempotence of select, distributivity where claimed, the realized strict
-  order), with `dag_best_path` reproducing the planner's min-plus path on 300 DAGs and the exact
-  scheduler's max-plus critical path on 194 phases; `gem.exact.certify_selection` and the
+  order), with `dag_best_path` reproducing the planner's min-plus path on 200 DAGs and the exact
+  scheduler's max-plus critical path on 33 phases; `gem.exact.certify_selection` and the
   dispatch law's `path` kind (the min-plus rail is exact: L == U == the optimum, TMSAO-1 under a
   declared scope, the structural floor and the coupling's price reported). Outcomes:
   `regions.unexpanded.claims` 542 -> 0, `objectives.unverified` 2 -> 0; the native guardrails
@@ -694,6 +694,23 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   certificate on this virtualized host is TMSAO-4 with the reason. Not claimed: a silicon
   certificate, W in the cross-rail manifest, a distribution beyond dynamic claims' expected
   counts. Stage 2 is complete.
+  S2-D/S2-E follow-up (2026-09-13) closed three findings an adversarial audit of the two landed
+  slices raised against itself. (1) The S2-D entry above claimed `dag_best_path` was checked on
+  "300 DAGs" and "194 phases"; instrumenting the landed test counts 200 DAGs and 33 phases, so
+  the two figures are corrected here (the law held -- an independent sweep reproduced min-plus
+  against `semiring.dag_shortest_path` on 2,800 DAGs with no mismatch -- only the counts were
+  overstated; commit 5b45fdca's message carries the old numbers and cannot be rewritten).
+  (2) `kbcir.regions` listed `Region` in the package export table, which `kbcir.compose` already
+  owned: the flattened `_NAME_TO_MOD` kept the later entry, so `bcir.kbcir.Region` silently
+  changed from the composite-plan alias to the region dataclass and `compose.Region` became
+  unreachable through the package while still advertised in `__all__`. The region dataclass is
+  no longer exported at package level, and `test_perf.test_the_export_table_has_no_duplicate_names`
+  now refuses any name claimed by two modules across all three lazy packages -- the collision
+  class, not the instance (L14). (3) The four `native.*` rows were graded against the report's
+  host though they are ratios of two separately COMPILED kernels, which measure the host's gather
+  penalty rather than cancelling it; on this machine that tripped a REGRESSION verdict on roughly
+  one run in thirty. `Metric.host_dependent` marks them, so they are reported INDICATIVE off the
+  baseline host and read as the same-host A/B, which is what the S2-D outcome table always stated.
 
 ---
 

@@ -254,6 +254,15 @@ chain and refuses an altered, removed or reordered entry and a forged head;
 the class ladder refuses TMSAO-3 without W and M declared and without a
 prediction interval from attested silicon on two targets, naming the tenancy
 the samples came from.
+S2-D/S2-E follow-up instance (2026-09-13): the law has a DUAL a gate can fail
+just as badly -- a gate that fires on the machine instead of on the code. The
+four `native.*` rows were graded against the baseline host's band although they
+divide one compiled kernel by another, so they measure this host's gather
+penalty; on this machine that produced a REGRESSION verdict on about one run in
+thirty, which is noise wearing a verdict's clothes. `Metric.host_dependent`
+reports them INDICATIVE off the baseline host. Ask of every new row both
+questions: what input makes it fire when it should not, and what input makes it
+stay green when it should not.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -677,6 +686,14 @@ evidence is recognized by the predicate that filed it; the host attestation
 is the S0-F rig's `host_attestation`, not a second reading of the same
 files; and the workload's class is one function (`Workload.classify`) the
 portfolio's table reads rather than a second rule over the same fields.
+S2-D/S2-E follow-up instance (2026-09-13): a package name is owned by ONE
+module. `kbcir.regions` and `kbcir.compose` both listed `Region`, and because
+`_NAME_TO_MOD` is a flattening comprehension the later entry silently won:
+`bcir.kbcir.Region` changed meaning with no import error, and the loser stayed
+in `__all__`. Reachability tests do not catch this -- the name still resolves,
+to the wrong object. The predicate is now one test over all three lazy packages
+(`test_perf.test_the_export_table_has_no_duplicate_names`), so the next
+collision is a failure rather than a rebinding.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

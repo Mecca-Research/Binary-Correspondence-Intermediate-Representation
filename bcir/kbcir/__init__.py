@@ -267,11 +267,16 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "verify_objective",
     ),
     "regions": (
+        # `Region` is deliberately NOT exported here: `compose.Region` already owns that name
+        # at package level (the composite-plan alias), and a second entry would silently win
+        # the flattened `_NAME_TO_MOD` and change what `bcir.kbcir.Region` means. The region
+        # dataclass is reached as `bcir.kbcir.regions.Region`, which is how its own tests and
+        # every caller spell it. `test_perf.test_the_export_table_has_no_duplicate_names`
+        # holds the rule.
         "REFUSALS",
         "REGION_KINDS",
         "AccessMap",
         "Dependence",
-        "Region",
         "RegionGraph",
         "affine_refusal",
         "claim_floor",

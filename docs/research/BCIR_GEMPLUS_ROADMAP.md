@@ -430,6 +430,14 @@ interface, and refusal conditions.
 | `ratio` `native.blocked-reduction` | 11.68× | **no regression** | 15.00× → 15.56× A/B — no regression |
 | `ratio` `native.direct-stride` | 1.27× | **no regression** | 1.315× → 1.314× A/B — no regression |
 | `ratio` `native.dense-parity` | 0.98–1.01× | stays in band | 1.003× → 1.004× A/B — in band |
+
+The four `native.*` rows are **host-dependent ratios** and are graded only on the baseline host
+(`Metric.host_dependent`; INDICATIVE elsewhere, reported and never blocking). A ratio cancels the
+machine out only when both sides are timed in one process; these divide one compiled kernel by
+another, so they measure this host's gather penalty rather than the code. S2-D first shipped them
+graded against the report's host, where this machine's lower band tripped a REGRESSION verdict on
+about one run in thirty — a gate firing on the machine. The same-host A/B above is how they are
+read.
 | `exact` Every region expands conservatively to claims | — | differential test per region | **met**: `regions.unexpanded.claims` 542 → 0 — `expand(region_graph(module))` is the module claim for claim on the 53-module corpus and the plan `optimize` selects over the expansion is the plan over the module; forged regions (non-consecutive claims, wrong maps, a model on an opaque region) are refused by the verifier |
 | `exact` Every objective carries its laws | 2 names, no laws | verified before admission | **met**: `objectives.unverified` 2 → 0 — six entries admitted only through `verify_objective`; a lawless operator is refused |
 
@@ -875,7 +883,7 @@ no PMU):
 | `optimize_scheduled.quality` / `solver.unproved.fraction` / `solver.gap.p95` | G4 | 1.00696× / 1.0 / 0.0625 | **1.0 / 0 / 0** (S2-B, 2026-09-13) | GAIN, at the bound — every certificate carries L, U and both gaps |
 | `search.resume.unavailable` / `dispatch.incumbent.missing` / `dispatch.unrecorded` | G12 | 393 / 26 / 12 (the parent tree) | **0 / 0 / 0** (S2-C, 2026-09-13) | GAIN, at the bound — every proof-rail solver resumes exactly, has an incumbent at every interruption point, and every certificate names its dispatch |
 | `regions.unexpanded.claims` / `objectives.unverified` | G6 | 542 / 2 (the parent tree) | **0 / 0** (S2-D, 2026-09-13) | GAIN, at the bound — every claim in a verified region whose expansion is the module; every objective admitted with its laws |
-| `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate |
+| `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate. Host-dependent, so INDICATIVE off the baseline host and read as the same-host A/B |
 | `scope.workload.collisions` / `replay.subset.admitted` / `dispatch.measured.unavailable` | G13 | 36 / 24 / 12 (the parent tree) | **0 / 0 / 0** (S2-E, 2026-09-13) | GAIN, at the bound — `W` in every certificate's scope, a corpus certificate covers the log or is refused, the measured rail runs over evidence; every measured certificate on this `virtualized` host is TMSAO-4 by the two-target rule |
 | `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
 

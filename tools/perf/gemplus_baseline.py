@@ -88,6 +88,7 @@ class Metric:
         "lower_is_better",
         "slice_owner",
         "noise",
+        "host_dependent",
     )
 
     def __init__(
@@ -104,6 +105,7 @@ class Metric:
         lower_is_better=True,
         slice_owner="",
         noise=None,
+        host_dependent=False,
     ):
         self.key = key
         self.group = group
@@ -123,6 +125,13 @@ class Metric:
         self.lower_is_better = lower_is_better
         self.slice_owner = slice_owner  # the GEM+ slice that must move this
         self.noise = noise if noise is not None else _DEFAULT_NOISE[kind]
+        # A ratio is host-portable only when BOTH sides are timed in the same process on the
+        # same machine, so the machine cancels (see `verdict`). A ratio between two separately
+        # COMPILED kernels does not cancel it: it measures a microarchitectural property --
+        # this host's gather penalty, its store-forwarding, its prefetchers -- and reading it
+        # against another host's number manufactures verdicts in both directions. Such a row
+        # is measured and reported everywhere, and graded only on the baseline host.
+        self.host_dependent = host_dependent
 
     def headroom(self, value: float) -> float | None:
         """How much of the theoretical win is still unclaimed, as a fraction.
@@ -156,10 +165,19 @@ class Metric:
         millisecond does not, and comparing one across hosts manufactures verdicts in both
         directions. So a wall row off the baseline host is reported INDICATIVE and never
         blocks a slice, while ratio and count rows are graded everywhere.
+
+        `host_dependent` extends that rule to the ratios the argument above does NOT cover.
+        It holds for a ratio of two operations timed in ONE process, where the machine
+        divides out. It fails for a ratio of two separately compiled kernels: `native.*`
+        divides a gather realization by a blocked one, which is a measurement OF the host's
+        gather penalty, not a measurement that cancels it. The §4.4 band was taken on the
+        report's machine and this one reproducibly sits below it, so grading the row across
+        hosts made `--group native --compare` exit nonzero on roughly one run in thirty --
+        a gate firing on the machine rather than on the code (S2-D shipped it that way).
         """
         if value is None:
             return "NOT-MEASURED"
-        if self.kind == "wall" and not same_host:
+        if not same_host and (self.kind == "wall" or self.host_dependent):
             return "INDICATIVE"
         change = self.improvement(value)
         if change > self.noise:
@@ -695,6 +713,7 @@ METRICS: tuple[Metric, ...] = (
         bound=6.05,
         bound_source="the upper end of the observed 5.58-6.05x band (§4.4)",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "native.blocked-reduction",
@@ -707,6 +726,7 @@ METRICS: tuple[Metric, ...] = (
         bound=11.72,
         bound_source="the upper end of the observed band (§4.4)",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "native.direct-stride",
@@ -719,6 +739,7 @@ METRICS: tuple[Metric, ...] = (
         bound=1.33,
         bound_source="the upper end of the observed band (§4.4)",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     Metric(
         "native.dense-parity",
@@ -735,6 +756,7 @@ METRICS: tuple[Metric, ...] = (
         "and a claimed win above this band needs a structural "
         "reason before it is believed",
         slice_owner="G6",
+        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code
     ),
     # --- S0-A (2026-09-04): rows a slice added. These two are NOT quoted from the report: the
     # report's K_BCIR->StreamPack case verified its plan with no scope at all
@@ -1714,8 +1736,9 @@ def render(rows: list[dict]) -> str:
     if indicative:
         lines += [
             "",
-            "INDICATIVE rows are wall-clock measured off the baseline host, so they "
-            "are reported and not graded.",
+            "INDICATIVE rows are measured off the baseline host and are reported, not "
+            "graded: wall-clock rows, and the host-dependent ratios whose two sides are "
+            "separately compiled kernels rather than one process (the native.* band).",
             "Re-run with BCIR_BASELINE_HOST=1 on the report's environment to grade "
             "them; the ratio rows above are host-portable and gate everywhere.",
         ]
