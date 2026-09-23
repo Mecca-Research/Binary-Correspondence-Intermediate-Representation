@@ -1441,6 +1441,56 @@ _WIDTH_RE = re.compile(r"\bwidth=(\d+)\b")
 _EPILOGUE_RE = re.compile(r"\bepilogue=(\w+)\b")
 
 
+def verify_control_record(module: Module, record) -> list[Diagnostic]:
+    """ControlRecordV1 against THIS module (G14, staged plan S3-A): R11 for a generation record.
+
+    `record` is a record's bytes or a decoded `gem.control.ControlRecord`. A generation switch
+    announces a registry state, and R11 holds it to the module's: its `registry_digest` must be
+    the digest of the module's per-resource generation vector (`gem.streampack.
+    generation_vector`) and its `map_gen` / `data_gen` the vector's maxima. A record announcing
+    an older vector -- or another module's -- is stale here, before any plane installs it and
+    admits packs against it. The other kinds carry nothing the module can judge; the resident
+    plane decides them. A record that does not decode cannot be held to the registry, so R11
+    fails on it. The record carries no verdict of its own: the diagnostics are the verifier's
+    output (the plane invariant, staged plan section 5.2)."""
+    from ..abi.control_abi import ControlError, decode_control, validate_control
+    from ..gem.control import ControlRecord, registry_digest
+    from ..gem.streampack import generation_vector
+
+    try:
+        if isinstance(record, ControlRecord):
+            validate_control(record)
+            rec = record
+        else:
+            rec = decode_control(record)
+    except ControlError as exc:
+        return [Diagnostic("R11", f"malformed control record ({exc.status}): {exc}")]
+    if rec.kind != "generation":
+        return []
+    diags: list[Diagnostic] = []
+    vector = generation_vector(module)
+    body = rec.body
+    if body.registry_digest != registry_digest(vector):
+        diags.append(
+            Diagnostic(
+                "R11",
+                "stale control record: the generation switch announces a registry vector that "
+                "is not this module's (reissue it from the live registry)",
+            )
+        )
+    reg_map = max((g.map_gen for g in vector), default=0)
+    reg_data = max((g.data_gen for g in vector), default=0)
+    if (body.map_gen, body.data_gen) != (reg_map, reg_data):
+        diags.append(
+            Diagnostic(
+                "R11",
+                f"stale control record: announced maxima ({body.map_gen}, {body.data_gen}) != "
+                f"the registry's ({reg_map}, {reg_data})",
+            )
+        )
+    return diags
+
+
 def verify_support_preservation(source, target, mapping=None) -> list[Diagnostic]:
     """Objective-support law R12 (refinement): a mapping function must preserve
     where the objective matters -- `f(Supp(J)) ⊆ Supp(J')`. A lowering may

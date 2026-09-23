@@ -711,6 +711,37 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   penalty rather than cancelling it; on this machine that tripped a REGRESSION verdict on roughly
   one run in thirty. `Metric.host_dependent` marks them, so they are reported INDICATIVE off the
   baseline host and read as the same-host A/B, which is what the S2-D outcome table always stated.
+  S3-A0 (2026-09-17) moved the one freestanding SHA-256 in runtime/c out of the BCAB reader
+  into `bcir_sha256.{h,c}` verbatim and added HMAC-SHA256 over it, with FIPS 180-4 and RFC 4231
+  vectors (one-shot and byte-at-a-time) as its gate; the BCAB section, the C++ hand-off and the
+  thorough tier stayed byte-identically green. It was split out so the control plane's slice
+  carries no refactor.
+  S3-A (2026-09-23) landed G14, the control-plane record ABI -- the first Stage 3 slice. RED
+  (measured on the parent, 544619e2): no codec, no plane, no C twin and no verifier entry point
+  existed, so every G14 fixture failed by absence -- 29 corpus records, 82 (malformed variant,
+  rail) pairs, 24 stale (fixture, rail) pairs plus the verifier's missing boundary (the trusted
+  loader's and context-shard activation's own checks held, run against the parent's modules),
+  16 mid-phase pairs, 64 decision pairs, 52 traces. What landed: `ControlRecordV1` (a 64-byte
+  header with the `expect` compare-and-swap witness, one fixed body per kind, a lease-scoped
+  HMAC-SHA256 and a CRC; eleven wire laws in one order, the encoder refusing what the decoder
+  refuses; `docs/kernel/BCIR_CONTROL_PLANE_ABI.md`), `bcir.gem.control` (the values, the shared
+  `is_stale` the loader and context-shard activation now express, `registry_digest` over the
+  generation vector's own bytes, and `ControlPlane`: a resident state that decides each record
+  applied, deferred or refused -- a refusal inert, one pending switch applied exactly once at a
+  boundary, eight leases whose ids never recur -- and admits packs and plans against the
+  installed registry), `verify_control_record` (R11), the freestanding C twin
+  `bcir_control_plane.{h,c}` (statuses 17 and 18, append-only) with a `--api` harness for the
+  fail-closed laws no record reaches and a structure-aware libFuzzer target that seals records
+  under the plane's key and asserts the plane's invariants, the Python decoder campaign's
+  `control` surface (CRC-repaired mutants, so it reaches the field laws), and the
+  `BCIR-ControlPlane` ASN.1 module (OID 62596.4; the body a CHOICE whose alternative is the
+  kind; DER and canonical OER byte-identical between the compiled source and the hand-built
+  model). Outcomes: `control.abi.mismatches` 29 -> 0, `control.malformed.accepted` 82 -> 0,
+  `control.stale.accepted` 25 -> 0, `control.deferred.lost` 16 -> 0,
+  `control.decisions.nonconforming` 64 -> 0, `control.traces.divergent` 52 -> 0; the C gate
+  proves it fires (the deferral law removed turns three rows red). Not claimed: the BCIR UAPI,
+  a transport (G15), a signature scheme, capability enforcement beyond the record, replay
+  protection beyond sequences, the witness and never-recurring lease ids.
 
 ---
 

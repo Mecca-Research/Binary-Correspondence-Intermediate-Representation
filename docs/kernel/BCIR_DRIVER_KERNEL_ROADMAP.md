@@ -295,6 +295,15 @@ Every device uses the same promotion transaction:
 9. **Observe/rollback:** compare the new generation with its admission envelope and roll back
    atomically on correctness, health, or performance-policy failure.
 
+Steps 7–9 have a byte form: [`ControlRecordV1`](BCIR_CONTROL_PLANE_ABI.md) (GEM+ G14) carries
+lease, generation, quiesce, activate, rollback and cancel as bounded, versioned records with an
+`expect` compare-and-swap witness and a lease-scoped HMAC, and a resident plane — the oracle's
+`bcir.gem.control.ControlPlane` and the freestanding `bcir_ctl_state` — decides each by its bytes:
+a switch requested mid-phase is deferred and applied once at the next quiescent boundary, a stale
+generation is refused, and packs and plans are admitted only against the installed registry.
+Invalidating live handles, mappings and peer views at the switch is the data-plane hand-off's
+(G16) work; the plane supplies the generation they read.
+
 The minimum edge corpus for each driver covers zero/minimum/maximum sizes, misalignment, ring
 wraparound, queue saturation, stale generations, duplicate and missing events, cancellation races,
 peer/device death, reset, hotplug, suspend/resume, malformed firmware responses, topology extremes,
@@ -577,6 +586,9 @@ migration, rollback, or teardown safety.
 
 UAPI v1 freezes only after UART and virtio-blk demonstrate MMIO/event and queue/DMA lifecycles.
 Before that point, experimental structures carry version zero and make no compatibility promise.
+[`ControlRecordV1`](BCIR_CONTROL_PLANE_ABI.md) is **not** a UAPI structure: it is a frozen BCIR
+artifact format (as `ExecutionPlanV1` is), and a future `ioctl` or IPC adapter marshals its
+values rather than exposing it.
 The version-zero signal table, telemetry envelope, and live SPSC ring land **before** the first D2
 driver so implementation traces exercise an explicit ABI; their field set is revised from UART and
 virtio evidence before the v1 freeze.
@@ -635,7 +647,10 @@ preselected Linux structure size. Its first version uses:
 
 Native IPC v1 freezes only after direct, Linux-adapter, and native traces agree for UART and
 virtio-blk. No fixed 64-byte submission record or general MPMC queue is committed before those
-measurements.
+measurements. The control *messages* above now exist as a BCIR artifact format —
+[`ControlRecordV1`](BCIR_CONTROL_PLANE_ABI.md): type, length, flags, sequence, generation,
+capability and integrity metadata, 192 bytes at most — and the live SPSC ring (GEM+ G15) will
+carry them second, after telemetry; neither commits the IPC transport or its record sizes.
 
 ### 7.5 JIT microkernel and Linux-instance generation
 

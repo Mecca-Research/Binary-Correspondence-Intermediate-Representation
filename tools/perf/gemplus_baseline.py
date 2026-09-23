@@ -662,6 +662,97 @@ METRICS: tuple[Metric, ...] = (
         bound_source="every variant refused on every rail that can see it (G11 gate)",
         slice_owner="G11",
     ),
+    # --- G14 (S3-A): the control plane as bytes. Before the slice lease, generation, quiesce,
+    # activate, rollback and cancel were prose, an `admit(map_gen, data_gen)` argument and two
+    # methods that raise: no record had bytes, no rail could refuse one, a mid-phase switch was
+    # refused rather than deferred. So on the parent tree every fixture fails by absence, and
+    # the rows count those failures over fixed corpora (bcir/tests/control_fixtures.py): 29
+    # corpus records; 41 malformed variants x 2 rails; 12 stale fixtures x 2 rails + the three
+    # Python-only boundaries -- the trusted loader and context-shard activation held on the
+    # parent (measured: the fixture's own checks, run against its modules) and the verifier's
+    # had no entry point; 8 mid-phase fixtures x 2 rails; 32 transition/authority/witness
+    # scenarios x 2 rails; 52 two-rail traces. Every row is exact and bounded at zero; all six
+    # need the C twin and are NOT-MEASURED without a C compiler, never estimated from the
+    # Python rail alone.
+    Metric(
+        "control.abi.mismatches",
+        "control",
+        "corpus records whose Python encode -> C decode -> Python re-encode is NOT byte-identical, "
+        "or whose honest MAC either rail's keyed check refuses",
+        29,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every record of every kind, scope and reason survives the C twin byte for "
+        "byte (the G14 gate `control.record.bytes`)",
+        slice_owner="G14",
+    ),
+    Metric(
+        "control.malformed.accepted",
+        "control",
+        "(malformed variant, rail) pairs -- one per wire law: truncated, trailing, magic, "
+        "version, reserved, kind, body length, CRC, scope, reason, capability, sequence, lease, "
+        "the generation witness, every body law, a zero MAC -- NOT refused with the declared status",
+        82,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="an unknown version, a reserved or trailing byte and every other wire law "
+        "refused on both rails with the same status (G14 gate)",
+        slice_owner="G14",
+    ),
+    Metric(
+        "control.stale.accepted",
+        "control",
+        "(stale fixture, rail) pairs where a record, pack or plan minted against a generation the "
+        "plane has left is NOT refused, plus Python-only boundaries (loader, context shard, "
+        "verifier) that do not hold",
+        25,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a stale generation is refused by bytes at every boundary (G14 gate)",
+        slice_owner="G14",
+    ),
+    Metric(
+        "control.deferred.lost",
+        "control",
+        "(mid-phase fixture, rail) pairs where a switch requested mid-phase or before its "
+        "boundary is NOT deferred and then decided exactly once at the boundary",
+        16,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a mid-phase switch is deferred, never applied early, never applied twice, "
+        "never lost (G14 gate `quiescent switch`)",
+        slice_owner="G14",
+    ),
+    Metric(
+        "control.decisions.nonconforming",
+        "control",
+        "(transition, authority or refusal-witness scenario, rail) pairs whose plane decisions "
+        "are NOT the specification's -- every kind's transition, every forgery, every refusal code",
+        64,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every record decided by its bytes as docs/kernel/BCIR_CONTROL_PLANE_ABI.md "
+        "orders it, and every refusal the plane can name witnessed (L22)",
+        slice_owner="G14",
+    ),
+    Metric(
+        "control.traces.divergent",
+        "control",
+        "scenarios whose two rails disagree in any verdict, refusal, status or resident state "
+        "digest after any operation",
+        52,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one plane, two realizations, identical traces (the C twin decides every "
+        "record as the oracle does)",
+        slice_owner="G14",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -1588,6 +1679,24 @@ def measure_plan() -> dict[str, float]:
     return out
 
 
+def measure_control() -> dict[str, float]:
+    """The G14 rows (S3-A): the control plane as bytes, counted failures over fixed corpora on
+    both rails (bcir/tests/control_fixtures.py::measure, which the tests and
+    tools/c/check_runtime.sh grade the same way). Every row needs the C twin: without a C
+    compiler the group is NOT-MEASURED rather than estimated from one rail."""
+    import shutil
+    import tempfile
+
+    from bcir.tests.control_fixtures import build_harness, measure
+
+    tmp = tempfile.mkdtemp(prefix="bcir-control-")
+    try:
+        exe = build_harness(tmp)
+        return measure(exe, tmp) if exe is not None else {}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -1637,6 +1746,7 @@ _MEASURERS = {
     "verifier": measure_verifier,
     "digest": measure_digest,
     "plan": measure_plan,
+    "control": measure_control,
     "memory": measure_memory,
 }
 

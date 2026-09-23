@@ -263,6 +263,18 @@ thirty, which is noise wearing a verdict's clothes. `Metric.host_dependent`
 reports them INDICATIVE off the baseline host. Ask of every new row both
 questions: what input makes it fire when it should not, and what input makes it
 stay green when it should not.
+S3-A instance (2026-09-23): the obvious quiescent-switch row -- "a switch
+requested mid-phase was applied" -- read 0 on the parent tree, because the
+loader and context-shard activation REFUSED a mid-phase switch; a refusal is
+not a deferral, so the G14 gate counts deferrals LOST (16 on the parent, 0 at
+the bound). The C section of `tools/c/check_runtime.sh` proves it can fire: it
+rebuilds the plane with the deferral law removed and requires a row to go red,
+and refuses to grade the mutant if the law's line changed and the edit did not
+apply. Eight injected C faults were each caught by at least one row, and the
+state-digest comparison caught the one no verdict saw (a digest that dropped
+the drain flag: 52 divergent traces, every decision still conforming). The C
+tests fail closed in a checkout: a missing harness source is a failure, never
+a skip.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -694,6 +706,17 @@ in `__all__`. Reachability tests do not catch this -- the name still resolves,
 to the wrong object. The predicate is now one test over all three lazy packages
 (`test_perf.test_the_export_table_has_no_duplicate_names`), so the next
 collision is a failure rather than a rebinding.
+S3-A instance (2026-09-23): staleness is ONE predicate (`gem.control.is_stale`,
+mirrored by the C plane): the trusted loader and context-shard activation stopped
+spelling `generation <= live` twice and express the witness it names. The wire
+laws are one ordered predicate per rail -- the encoder and the decoder share
+`validate_control`, and the ASN.1 projection re-runs it on decode instead of
+restating the laws -- and the two rails name the same first violation. runtime/c
+has one SHA-256 (S3-A0), linked by the BCAB reader and the control plane alike;
+the registry digest hashes the generation vector's own wire bytes, so the
+StreamPack and plan readers feed one walk; and the closed sets (kinds, scopes,
+refusals, capabilities, the record bound) are read out of the C header by the
+tests, not mirrored into a third list.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

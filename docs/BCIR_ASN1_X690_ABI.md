@@ -308,6 +308,114 @@ default. There is no DER → native fast path in
 C for the plan yet: the freestanding rail reads the native plan (`bcir_ep_verify`), and the
 projection is reconstructed on the Python rail.
 
+## 3c. The BCIR-ControlPlane module
+
+The control plane as bytes has its own frozen native record,
+[`BCIR_CONTROL_PLANE_ABI.md`](kernel/BCIR_CONTROL_PLANE_ABI.md) (GEM+ G14, S3-A): lease,
+generation, quiesce, activate, rollback and cancel, each a fixed-width `ControlRecordV1`
+carrying an HMAC-SHA256 and a CRC. The same discipline gives it a second transfer syntax: the
+`BCIR-ControlPlane` module under `{ 1 3 6 1 4 1 62596 4 }` projects the abstract
+`ControlRecord`, and the native octets — MAC and CRC included — survive the round trip byte
+for byte (`bcir/tests/test_asn1_control_plane.py` gates A1–A3 over every record of the corpus,
+every kind, scope and reason, plus the canonical-OER and JER realizations over the same type
+model). The text below is [`bcir/asn1/BCIR-ControlPlane.asn1`](../bcir/asn1/BCIR-ControlPlane.asn1)
+verbatim; the compiled module produces byte-identical DER **and** canonical OER to the
+hand-built one in [`bcir/asn1/control_plane.py`](../bcir/asn1/control_plane.py).
+
+```asn1
+BCIR-ControlPlane { iso(1) identified-organization(3) dod(6) internet(1)
+                    private(4) enterprise(1) 62596 4 }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  -- One ControlRecordV1 (docs/kernel/BCIR_CONTROL_PLANE_ABI.md): the control plane as a
+  -- record. The native format's derived fields (magic, flags, body_len, the capability,
+  -- which is the kind's bit, and the CRC) are not carried; the MAC is, so the native octets
+  -- survive the projection byte for byte. The body's alternative IS the record's kind, and
+  -- its tag number is the native kind code.
+  ControlRecord ::= SEQUENCE {
+      version      [0] INTEGER (1..65535) DEFAULT 1,
+      scope        [1] Scope DEFAULT module,
+      reason       [2] INTEGER (0..255) DEFAULT 0,
+      subject      [3] Uint64 DEFAULT 0,
+      generation   [4] Uint32 DEFAULT 0,
+      expect       [5] Uint32 DEFAULT 0,
+      boundary     [6] Uint64 DEFAULT 0,
+      sequence     [7] Uint64,
+      lease        [8] Uint64 DEFAULT 0,
+      body         [9] Body,
+      mac         [10] Digest }
+
+  Scope ::= ENUMERATED { module(0), resource(1), mapping(2), session(3), channel(4) }
+
+  Body ::= CHOICE {
+      lease        [1] LeaseGrant,
+      generation   [2] GenerationSwitch,
+      quiesce      [3] Quiesce,
+      activate     [4] Activate,
+      rollback     [5] Rollback,
+      cancel       [6] Cancel }
+
+  LeaseGrant ::= SEQUENCE {
+      leaseId      [0] Uint64,
+      granted      [1] Uint64,
+      issuedEpoch  [2] Uint64 DEFAULT 0,
+      expiryEpoch  [3] Uint64,
+      holder       [4] Uint64 }
+
+  GenerationSwitch ::= SEQUENCE {
+      mapGen          [0] Uint32 DEFAULT 0,
+      dataGen         [1] Uint32 DEFAULT 0,
+      topoGen         [2] Uint32 DEFAULT 0,
+      registryDigest  [3] Digest }
+
+  Quiesce ::= SEQUENCE {
+      drainDeadline   [0] Uint64 DEFAULT 0 }
+
+  Activate ::= SEQUENCE {
+      artifactSha256  [0] Digest,
+      previousSha256  [1] Digest DEFAULT
+          '0000000000000000000000000000000000000000000000000000000000000000'H }
+
+  Rollback ::= SEQUENCE {
+      restoreSha256   [0] Digest,
+      rollbackToken   [1] Digest }
+
+  Cancel ::= SEQUENCE {
+      firstSequence   [0] Uint64,
+      lastSequence    [1] Uint64 }
+
+  Uint32 ::= INTEGER (0..4294967295)
+  Uint64 ::= INTEGER (0..18446744073709551615)
+  Digest ::= OCTET STRING (SIZE (32))
+
+END
+```
+
+The choices that are not obvious:
+
+- **The body is a CHOICE, and its alternative is the kind.** The native header names the kind
+  beside a body whose layout it selects; carrying both would be a second spelling of one fact
+  that a decoder would then have to reconcile. The alternatives' tag numbers are the native
+  kind codes, and the `[9]` tag on the CHOICE is EXPLICIT, as X.680 §31.2.7 requires under an
+  IMPLICIT module default.
+- **Derived fields are not carried**: magic, flags, `body_len` and the capability follow from
+  the kind, the CRC from the octets. The MAC is carried — it is authority, not framing.
+- **The widths are constraints** (`Uint32`, `Uint64`, `Digest ::= OCTET STRING (SIZE (32))`):
+  invisible to DER, and canonical OER encodes them fixed-width, so the OER form is close to the
+  native layout rather than length-prefixed.
+- **Defaults mirror the native zeros**, including an all-zero `previousSha256` (nothing live):
+  DER omits a default and refuses one spelled out, so every record has one DER spelling.
+- **The laws are the codec's.** Decoding holds every value to `validate_control`, so a
+  document that is valid ASN.1 and breaks a wire law (a sequence of 0, a switch whose
+  generation is not `expect + 1`, an all-zero MAC, a reason outside the kind's set) is refused
+  with the status the native decoder would name.
+
+The projection is at version 1 (`PROJECTION_VERSION`), independent of the native version, and a
+document naming another version is refused. As for the plan, there is no DER → native fast
+path in C: the freestanding rail reads the native record (`bcir_ctl_decode`), and the
+projection is reconstructed on the Python rail. The record never enters a BCAB bundle (the
+ABI document says why: a bundle is immutable, a control record is a decision with a lifetime).
+
 ## 4. The BCIR-ArtifactBundle module
 
 [`bcir/asn1/BCIR-ArtifactBundle.asn1`](../bcir/asn1/BCIR-ArtifactBundle.asn1)

@@ -118,6 +118,7 @@ The kernels have a C ABI usable from C++; this does not expand `runtime/cpp/` ow
 | Oracle ↔ law/twin agreement | [`PARITY.md`](PARITY.md) | differential tests and C-front parity gates |
 | StreamPack v1–v4 | [`BCIR_STREAMPACK_ABI.md`](kernel/BCIR_STREAMPACK_ABI.md) | `bcir/abi/streampack_abi.py`, `runtime/c/bcir_streampack.h` |
 | ExecutionPlanV1 (the plan as bytes) | [`BCIR_EXECUTION_PLAN_ABI.md`](kernel/BCIR_EXECUTION_PLAN_ABI.md) | `bcir/gem/execution_plan.py`, `bcir/abi/execution_plan_abi.py`, `runtime/c/bcir_execution_plan.h`, `bcir/asn1/execution_plan.py`, BCAB kind 25 |
+| ControlRecordV1 (the control plane as bytes) | [`BCIR_CONTROL_PLANE_ABI.md`](kernel/BCIR_CONTROL_PLANE_ABI.md) | `bcir/gem/control.py`, `bcir/abi/control_abi.py`, `runtime/c/bcir_control_plane.h` (+ `bcir_sha256.h`), `bcir/asn1/control_plane.py`; no BCAB kind |
 | Artifact Bundle v1 | [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) | Python codec/tool/builder, additive ASN.1 DER/COER projection, allocation-free C reader, C++ view, and MLIR metadata ops |
 | BCIRQ8 v1 | [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) §16 | Python artifact reader/writer and portable C loader |
 | Telemetry frame and registry | [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md), [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md) | Python codec/registry and fixed C frame codec |

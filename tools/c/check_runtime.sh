@@ -268,6 +268,55 @@ grep -q "^vector=BCIR_ERR_STALE$" "${tmp}/plan_stale.txt" \
   && echo "  PASS ExecutionPlanV1 stale vector refused on the C rail (BCIR_ERR_STALE)" \
   || { echo "  FAIL: unexpected stale verdict"; cat "${tmp}/plan_stale.txt"; exit 1; }
 
+echo "[c-runtime] ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces"
+# bcir_control_plane.h is the C twin of bcir/abi/control_abi.py (the wire laws, in the same order)
+# and bcir/gem/control.py (the resident plane): lease, generation, quiesce, activate, rollback and
+# cancel, decided by their bytes. It links the shared SHA-256 / HMAC-SHA256 (bcir_sha256.c) and the
+# StreamPack / plan verifiers (bcir_runtime.c). The grading is bcir/tests/control_fixtures.py::
+# measure -- the function the tests and the G14 harness rows use: every corpus record round-trips
+# byte for byte with its MAC accepted, every malformed variant is refused with its declared status
+# on both rails, every scenario decides as specified on both rails, and the two rails' traces
+# (verdicts, refusals, statuses and the resident state digest after every operation) are identical.
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+    -c "${C}/bcir_control_plane.c" -o /dev/null \
+    || { echo "  FAIL: control plane not freestanding-clean under -std=${std}"; exit 1; }
+done
+ctl_sources=("${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/test_control_plane.c")
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${C}/bcir_control_plane.c" "${ctl_sources[@]}" \
+  -o "${tmp}/test_control_plane" || { echo "  FAIL: control harness build"; exit 1; }
+ctl_api="$("${tmp}/test_control_plane" --api)" || { echo "  FAIL: control API laws"; echo "${ctl_api}"; exit 1; }
+[ "${ctl_api}" = "OK" ] || { echo "  FAIL: unexpected control API output"; echo "${ctl_api}"; exit 1; }
+ctl_measure() {  # <harness> -> prints the six rows; exit 0 only when every row is zero
+  python3 - "$1" "${tmp}" <<'PY'
+import sys
+from bcir.tests.control_fixtures import ROWS, measure
+rows = measure(sys.argv[1], sys.argv[2])
+if set(rows) != set(ROWS):
+    print(f"rows {sorted(rows)} != {sorted(ROWS)}")
+    sys.exit(2)
+print(" ".join(f"{key.removeprefix('control.')}={int(value)}" for key, value in rows.items()))
+sys.exit(1 if any(rows.values()) else 0)
+PY
+}
+ctl_rows="$(ctl_measure "${tmp}/test_control_plane")" \
+  || { echo "  FAIL: a G14 row is not zero: ${ctl_rows}"; exit 1; }
+echo "  PASS ControlRecordV1 (freestanding C11 + C23; API fail-closed laws; ${ctl_rows})"
+# The gate must be able to fail (L2): a plane that applies a switch mid-phase -- the deferral law
+# removed -- must turn a row red. The mutant is built from the real source; if the law's line
+# ever changes, the injection fails loudly instead of grading an unmutated copy.
+sed 's/s->in_flight != 0u || s->boundary < r\.hdr\.boundary/s->boundary < r.hdr.boundary/' \
+  "${C}/bcir_control_plane.c" > "${tmp}/bcir_control_plane_mutant.c"
+if cmp -s "${C}/bcir_control_plane.c" "${tmp}/bcir_control_plane_mutant.c"; then
+  echo "  FAIL: the deferral-law fault injection did not apply (the law's line changed)"; exit 1
+fi
+"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/bcir_control_plane_mutant.c" "${ctl_sources[@]}" \
+  -o "${tmp}/test_control_plane_mutant" || { echo "  FAIL: mutant harness build"; exit 1; }
+if mutant_rows="$(ctl_measure "${tmp}/test_control_plane_mutant")"; then
+  echo "  FAIL: a plane that applies a switch mid-phase passed the G14 gate: ${mutant_rows}"; exit 1
+fi
+echo "  PASS ControlRecordV1 gate fires on an injected fault (deferral law removed: ${mutant_rows})"
+
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
 # bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,
 # resync-able telemetry transport (T2). The producer drains TelemetryRing and frames the 56-byte

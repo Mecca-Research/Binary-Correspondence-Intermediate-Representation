@@ -298,3 +298,26 @@ def test_the_workload_rows_are_exact_over_the_corpus():
         "replay.subset.admitted": 0.0,
         "dispatch.measured.unavailable": 0.0,
     }
+
+
+def test_the_control_rows_are_exact_on_both_rails_or_not_measured():
+    """G14 / S3-A: the control plane as bytes. Every row has a C half, so with a compiler all
+    six are measured and at the bound, and without one the whole group is NOT-MEASURED rather
+    than estimated from the Python rail."""
+    import shutil
+
+    from bcir.tests.control_fixtures import ROWS
+    from tools.perf.gemplus_baseline import METRICS, measure_control
+
+    declared = [m.key for m in METRICS if m.group == "control"]
+    assert declared == list(ROWS)
+    assert all(m.kind == "exact" and m.bound == 0 for m in METRICS if m.group == "control")
+    measured = measure_control()
+    if shutil.which("clang") or shutil.which("cc") or shutil.which("gcc"):
+        assert measured == {key: 0.0 for key in ROWS}, measured
+    else:
+        assert measured == {}
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in ROWS:
+        expected = "GAIN" if key in measured else "NOT-MEASURED"
+        assert rows[key]["verdict"] == expected, rows[key]

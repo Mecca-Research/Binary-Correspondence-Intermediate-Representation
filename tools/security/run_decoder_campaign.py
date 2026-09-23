@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded malformed-input campaign over StreamPack, BCAB, BCIRQ8, and C decoders.
+"""Bounded malformed-input campaign over StreamPack, BCAB, BCIRQ8, ControlRecordV1 and C decoders.
 
 Python surfaces always run. The C sanitizer/libFuzzer rail is invoked when clang
 and compiler-rt are available; otherwise it is recorded as UNAVAILABLE/SKIPPED.
@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from proc_bounds import put_down_group
 
 ROOT = Path(__file__).resolve().parents[2]
-REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8")
+REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8", "control")
 DECODE_TIMEOUT = 10.0
 # Each surface's DELIBERATE rejection type, and only that. A blanket tuple
 # (IndexError, KeyError, struct.error, OverflowError, zlib.error...) counted
@@ -46,6 +46,8 @@ _DECLARED_REJECTIONS = {
     # is re-raised as RuntimeError by _decode_q8_bytes so an environmental
     # failure can never pass as a decode verdict.
     "bcirq8": ("builtins", "ValueError"),
+    # a control record (G14) is refused with ControlError, carrying the C twin's status name
+    "control": ("bcir.abi.control_abi", "ControlError"),
 }
 
 
@@ -232,6 +234,25 @@ def _q8_seed() -> bytes:
         return path.read_bytes()
 
 
+def _control_seed() -> bytes:
+    """The largest v1 record (an activation, 164 bytes): the kind with the most body laws."""
+    from bcir.tests.control_fixtures import record_corpus
+
+    return dict(record_corpus())["activate/promotion"]
+
+
+def _decode_control_sealed(data: bytes) -> Any:
+    """Decode a control record with its CRC repaired first. A random mutation dies at the CRC
+    long before it reaches a field law (the BCIRQ8 C harness's lesson), so the campaign seals
+    every mutant and explores the header, body and MAC laws behind it; the CRC law itself is
+    pinned by the malformed corpus (bcir/tests/control_fixtures.py)."""
+    from bcir.abi.control_abi import decode_control
+
+    if len(data) >= 4:
+        data = data[:-4] + struct.pack("<I", zlib.crc32(data[:-4]) & 0xFFFFFFFF)
+    return decode_control(data)
+
+
 def _decode_q8_bytes(data: bytes) -> Any:
     from bcir.frontends.models.weights_io import read_q8_decoder
 
@@ -311,6 +332,12 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
         results.append(_seed_failure("bcirq8", exc))
     else:
         results.append(_probe("bcirq8", _decode_q8_bytes, q8, rng, mutations))
+    try:
+        control = _control_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("control", exc))
+    else:
+        results.append(_probe("control", _decode_control_sealed, control, rng, mutations))
     return results
 
 
@@ -369,7 +396,7 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
             "FUZZ_JOBS": "2",
         }
     )
-    # ~15 targets on 2 workers can each reach the per-target time bound, plus
+    # 16 targets on 2 workers can each reach the per-target time bound, plus
     # compile time — a timeout sized to one target aborts healthy campaigns.
     timeout = 180 + seconds * 8
     # Its own session: the wrapper backgrounds per-target subshells, and

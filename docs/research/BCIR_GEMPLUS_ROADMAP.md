@@ -687,21 +687,51 @@ S0-D-pattern change on both rails); an input distribution beyond the expected co
 claims; the append-only store as a service (it is a file with a chain, read and extended by a
 library).
 
-### G14 — control-plane record ABI
+### G14 — control-plane record ABI — LANDED (S3-A, 2026-09-23)
 
-*New, Stage 3. Lease, generation, quiescence, activation, rollback and cancellation are prose
-and an `admit(map_gen, data_gen)` argument today.*
+*New, Stage 3. Lease, generation, quiescence, activation, rollback and cancellation were prose
+and an `admit(map_gen, data_gen)` argument.*
 
 Small, fixed, versioned records with a C twin and a DER/COER projection, carried across every
 boundary (L2–L5 of the review's level table), so a stale generation is refused by bytes rather
 than by convention. Capability-scoped handles and signatures are part of the first record, not
 a later hardening.
 
-| Gate | Target |
-|---|---|
-| `exact` `control.record.bytes` | every record is bounded and versioned; an unknown version or a trailing byte is refused on both rails |
-| `exact` Stale generation refused | activation with an older generation than the resident one fails at every boundary |
-| `exact` Quiescent switch | a generation switches only at a phase/event boundary; a switch requested mid-phase is deferred, never applied |
+| Gate | Target | Outcome (S3-A) |
+|---|---|---|
+| `exact` `control.record.bytes` | every record is bounded and versioned; an unknown version or a trailing byte is refused on both rails | **met** — `control.abi.mismatches` 29 → 0 (every kind, scope and reason survives the C twin byte for byte, its MAC accepted on both rails) and `control.malformed.accepted` 82 → 0 (one variant per wire law, refused on both rails with the same status) |
+| `exact` Stale generation refused | activation with an older generation than the resident one fails at every boundary | **met** — `control.stale.accepted` 25 → 0: a record of every kind minted against a generation the plane has left, a pack or plan from an older registry (including a resource moved under unchanged maxima, and one with no vector) refused on both rails; the trusted loader and context-shard activation express the one `is_stale` predicate and `verify_control_record` holds a generation record to the module's registry (R11) |
+| `exact` Quiescent switch | a generation switches only at a phase/event boundary; a switch requested mid-phase is deferred, never applied | **met** — `control.deferred.lost` 16 → 0: deferred (the resident generation unmoved, its bytes held in one pending slot), then applied exactly once at the boundary or refused there and reported; never applied early, twice, or lost. The naive row — "a mid-phase switch applied" — was already 0 on the parent (it *refused*), which is why the gate counts deferrals lost |
+
+What landed (S3-A): `ControlRecordV1`
+([`BCIR_CONTROL_PLANE_ABI.md`](../kernel/BCIR_CONTROL_PLANE_ABI.md)) — a 64-byte header (the
+`expect` compare-and-swap witness, the capability, the boundary, the issuer's sequence, the
+lease, the subject), one fixed body per kind (100 + 8..64 bytes, 192 declared), an HMAC-SHA256
+MAC (the root key on a grant, `lease_key(root, id)` otherwise) and a CRC — the CRC a keyless
+reader's corruption gate, the MAC authority. `bcir.abi.control_abi` is the codec (eleven wire
+laws in one order, the encoder refusing what the decoder refuses); `bcir.gem.control` holds the
+values, `registry_digest` (the generation vector's own bytes), `rollback_token`, `lease_key`,
+the shared `is_stale` and **`ControlPlane`** — the resident state (generation, live artifact
+and rollback target, registry, boundary counter, in-flight count, drain, an eight-lease table,
+one pending switch) deciding each record applied, deferred or refused in the specification's
+order (a refused record changes nothing), crossing phase and event boundaries, and admitting
+packs and plans by the installed registry. `runtime/c/bcir_control_plane.{h,c}` is the
+freestanding twin, decision for decision: two new statuses (`BCIR_ERR_CONTROL` 17,
+`BCIR_ERR_MAC` 18, append-only), the shared SHA-256/HMAC from S3-A0, a `--api` harness for
+the fail-closed laws no record reaches (a plane without a key verifies nothing), and a
+structure-aware libFuzzer target that seals records under the plane's key and asserts the
+plane's invariants after every operation. `bcir/asn1/BCIR-ControlPlane.asn1`
+(`{ 1 3 6 1 4 1 62596 4 }`) projects the record under DER, canonical OER and JER — the body a
+CHOICE whose alternative is the kind — and holds decoded values to the codec's laws.
+`tools/perf/gemplus_baseline.py --group control` measures six exact rows over one fixture
+module both rails and `tools/c/check_runtime.sh` grade; the parity traces compare every
+verdict, refusal, status and resident state digest after every operation of 52 scenarios
+(`control.decisions.nonconforming` 64 → 0, `control.traces.divergent` 52 → 0). No BCAB kind (a
+bundle is immutable; a control record is a decision with a lifetime) and no MLIR source. Not
+claimed: the BCIR UAPI (still unfrozen until UART and virtio-blk demonstrate their lifecycles);
+a transport (G15 carries these records; a boundary here is a function call); a signature scheme
+(HMAC under a shared root key proves possession of the key); capability enforcement beyond the
+record; replay protection beyond sequences, the `expect` witness and lease ids that never recur.
 
 ### G15 — the live shared ring
 
@@ -830,7 +860,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
-Stage 3  IPC at every level                G14 → G15 → G16
+Stage 3  IPC at every level                G14 → G15 → G16                  LANDED: G14 (S3-A); next G15 (S3-B)
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
@@ -885,6 +915,7 @@ no PMU):
 | `regions.unexpanded.claims` / `objectives.unverified` | G6 | 542 / 2 (the parent tree) | **0 / 0** (S2-D, 2026-09-13) | GAIN, at the bound — every claim in a verified region whose expansion is the module; every objective admitted with its laws |
 | `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate. Host-dependent, so INDICATIVE off the baseline host and read as the same-host A/B |
 | `scope.workload.collisions` / `replay.subset.admitted` / `dispatch.measured.unavailable` | G13 | 36 / 24 / 12 (the parent tree) | **0 / 0 / 0** (S2-E, 2026-09-13) | GAIN, at the bound — `W` in every certificate's scope, a corpus certificate covers the log or is refused, the measured rail runs over evidence; every measured certificate on this `virtualized` host is TMSAO-4 by the two-target rule |
+| `control.abi.mismatches` / `control.malformed.accepted` / `control.stale.accepted` / `control.deferred.lost` / `control.decisions.nonconforming` / `control.traces.divergent` | G14 | 29 / 82 / 25 / 16 / 64 / 52 (the parent tree) | **0 / 0 / 0 / 0 / 0 / 0** (S3-A, 2026-09-23) | GAIN, at the bound — the control plane has bytes: every record survives the C twin, every wire law refuses on both rails with one status, stale generations are refused at every boundary, a mid-phase switch is deferred and decided exactly once, and the two rails' traces are identical to the state digest |
 | `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
 
 Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail; since S2-E the
