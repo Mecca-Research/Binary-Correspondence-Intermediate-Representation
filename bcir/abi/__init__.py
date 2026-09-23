@@ -7,6 +7,8 @@ C runtime (`runtime/c/bcir_streampack.h`), and any embedder.
 
 `execution_plan_abi` is the plan the pack was derived from, as bytes (ExecutionPlanV1,
 G11): the same conventions, its own magic, a C twin (`runtime/c/bcir_execution_plan.h`).
+`control_abi` is the control plane as bytes (ControlRecordV1, G14): fixed-width records a
+resident plane decides by their bytes, with a C twin (`runtime/c/bcir_control_plane.h`).
 """
 
 from .streampack_abi import (
@@ -26,6 +28,17 @@ from .execution_plan_abi import (
     decode_plan,
     encode_plan,
     validate_plan,
+)
+from .control_abi import (
+    CONTROL_MAGIC,
+    CONTROL_VERSION,
+    ControlError,
+    check_control_mac,
+    decode_control,
+    encode_control,
+    issue_control,
+    sign_control,
+    validate_control,
 )
 from .artifact_bundle import (
     ENTRY_SIZE as ARTIFACT_ENTRY_SIZE,
@@ -68,6 +81,15 @@ __all__ = [
     "decode_plan",
     "encode_plan",
     "validate_plan",
+    "CONTROL_MAGIC",
+    "CONTROL_VERSION",
+    "ControlError",
+    "check_control_mac",
+    "decode_control",
+    "encode_control",
+    "issue_control",
+    "sign_control",
+    "validate_control",
     "ARTIFACT_MAGIC",
     "ARTIFACT_VERSION",
     "ARTIFACT_HEADER_SIZE",

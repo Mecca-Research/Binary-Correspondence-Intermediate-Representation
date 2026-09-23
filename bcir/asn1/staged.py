@@ -51,6 +51,7 @@ import hashlib
 import hmac
 from dataclasses import dataclass, field
 
+from ..gem.control import is_stale
 from .tags import Asn1Error
 
 
@@ -218,7 +219,10 @@ class TrustedLoader:
                 f"a matching SHA-256 would prove the octets are intact and says nothing "
                 f"about who admitted them"
             )
-        if artifact.generation <= self.generation:
+        # An artifact is admitted against the live generation and minted one past it, so its
+        # witness is `generation - 1`: the one staleness predicate the control plane's records
+        # (G14, gem.control) and context-shard activation also express.
+        if is_stale(artifact.generation - 1, self.generation):
             raise Asn1Error(
                 f"generation {artifact.generation} is not newer than the live generation "
                 f"{self.generation}; a replayed artifact is a rollback nobody asked for"

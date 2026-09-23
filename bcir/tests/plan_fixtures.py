@@ -21,6 +21,7 @@ from bcir.abi.execution_plan_abi import (
     PLAN_HEADER_SIZE,
     PLAN_MAGIC,
     PLAN_VERSION,
+    PLAN_VERSION_MAX,
     TAIL_STREAM_WIRE,
     _write_generation,
     _write_lifetime,
@@ -126,7 +127,7 @@ def _text(hexed: str) -> str:
 
 def parse_c_dump(text: str) -> ExecutionPlan:
     """Rebuild the ExecutionPlan from the C harness's dump -- the C decode, as a value."""
-    from bcir.gem.execution_plan import COHERENCE_ACTIONS, MOVE_KINDS, PLAN_MODES
+    from bcir.gem.execution_plan import COHERENCE_ACTIONS, LIVENESS_DOMAINS, MOVE_KINDS, PLAN_MODES
 
     plan = ExecutionPlan()
     for line in text.splitlines():
@@ -135,6 +136,7 @@ def parse_c_dump(text: str) -> ExecutionPlan:
             f = _fields(line)
             plan.source_plan = _text(f["source_plan"])
             plan.mode = PLAN_MODES[int(f["mode"])]
+            plan.liveness = LIVENESS_DOMAINS[int(f["liveness"])]
             plan.streams = int(f["streams"])
             plan.knee = int(f["knee"])
             plan.makespan = int(f["makespan"])
@@ -167,6 +169,8 @@ def parse_c_dump(text: str) -> ExecutionPlan:
                     alignment=int(f["alignment"]),
                     first_phase=int(f["first"]),
                     last_phase=int(f["last"]),
+                    first_tick=int(f["first_tick"]),
+                    last_tick=int(f["last_tick"]),
                 )
             )
         elif kind == "move":
@@ -206,9 +210,12 @@ def reseal(blob: bytes) -> bytes:
 def raw_encode(plan: ExecutionPlan) -> bytes:
     """The wire bytes of `plan` WITHOUT the wire laws -- the only way to mint the malformed
     variants both rails must refuse (the public encoder refuses to emit them)."""
+    from bcir.abi.execution_plan_abi import _LIVENESS_OFF, _LIVENESS_WIRE, plan_version
+
+    version = plan_version(plan)
     header = _HEADER.pack(
         PLAN_MAGIC,
-        PLAN_VERSION,
+        version,
         0,
         _MODE_WIRE[plan.mode],
         plan.streams,
@@ -221,12 +228,16 @@ def raw_encode(plan: ExecutionPlan) -> bytes:
         plan.module_hash,
         plan.target_hash,
     )
+    if version >= 2:
+        header = bytearray(header)
+        header[_LIVENESS_OFF] = _LIVENESS_WIRE[plan.liveness]
+        header = bytes(header)
     w = _Writer()
     w.s(plan.source_plan)
     for s in plan.steps:
         _write_step(w, s)
     for lt in plan.lifetimes:
-        _write_lifetime(w, lt)
+        _write_lifetime(w, lt, version)
     for mv in plan.moves:
         _write_move(w, mv)
     for g in plan.generations:
@@ -265,7 +276,7 @@ def malformed_plan_bytes(module, plan: ExecutionPlan) -> list[tuple[str, bytes, 
     b[0:4] = b"BPLM"
     add("magic", reseal(b))
     b = bytearray(good)
-    struct.pack_into("<H", b, 4, 2)
+    struct.pack_into("<H", b, 4, PLAN_VERSION_MAX + 1)  # a newer version than the reader's
     add("version", reseal(b))
     b = bytearray(good)
     struct.pack_into("<H", b, 6, 1)
@@ -323,6 +334,22 @@ def malformed_plan_bytes(module, plan: ExecutionPlan) -> list[tuple[str, bytes, 
     add(
         "lifetime.alignment",
         raw_encode(replace(plan, lifetimes=[Lifetime(1, "ram", 0, 64, 3, 0, 0)])),
+    )
+    add(
+        "lifetime.ticks",
+        raw_encode(replace(plan, lifetimes=[Lifetime(1, "ram", 0, 64, 64, 0, 0, 5, 5)])),
+    )
+    add(
+        "lifetime.alias",
+        raw_encode(
+            replace(
+                plan,
+                lifetimes=[
+                    Lifetime(1, "ram", 0, 128, 64, 0, 1),
+                    Lifetime(2, "ram", 64, 64, 64, 1, 1),
+                ],
+            )
+        ),
     )
     add("move.kind", _bad_move_kind(plan))
     # the two the module alone can refuse (the third, phase order, needs two phases:

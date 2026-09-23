@@ -1,0 +1,66 @@
+BCIR-ControlPlane { iso(1) identified-organization(3) dod(6) internet(1)
+                    private(4) enterprise(1) 62596 4 }
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+  -- One ControlRecordV1 (docs/kernel/BCIR_CONTROL_PLANE_ABI.md): the control plane as a
+  -- record. The native format's derived fields (magic, flags, body_len, the capability,
+  -- which is the kind's bit, and the CRC) are not carried; the MAC is, so the native octets
+  -- survive the projection byte for byte. The body's alternative IS the record's kind, and
+  -- its tag number is the native kind code.
+  ControlRecord ::= SEQUENCE {
+      version      [0] INTEGER (1..65535) DEFAULT 1,
+      scope        [1] Scope DEFAULT module,
+      reason       [2] INTEGER (0..255) DEFAULT 0,
+      subject      [3] Uint64 DEFAULT 0,
+      generation   [4] Uint32 DEFAULT 0,
+      expect       [5] Uint32 DEFAULT 0,
+      boundary     [6] Uint64 DEFAULT 0,
+      sequence     [7] Uint64,
+      lease        [8] Uint64 DEFAULT 0,
+      body         [9] Body,
+      mac         [10] Digest }
+
+  Scope ::= ENUMERATED { module(0), resource(1), mapping(2), session(3), channel(4) }
+
+  Body ::= CHOICE {
+      lease        [1] LeaseGrant,
+      generation   [2] GenerationSwitch,
+      quiesce      [3] Quiesce,
+      activate     [4] Activate,
+      rollback     [5] Rollback,
+      cancel       [6] Cancel }
+
+  LeaseGrant ::= SEQUENCE {
+      leaseId      [0] Uint64,
+      granted      [1] Uint64,
+      issuedEpoch  [2] Uint64 DEFAULT 0,
+      expiryEpoch  [3] Uint64,
+      holder       [4] Uint64 }
+
+  GenerationSwitch ::= SEQUENCE {
+      mapGen          [0] Uint32 DEFAULT 0,
+      dataGen         [1] Uint32 DEFAULT 0,
+      topoGen         [2] Uint32 DEFAULT 0,
+      registryDigest  [3] Digest }
+
+  Quiesce ::= SEQUENCE {
+      drainDeadline   [0] Uint64 DEFAULT 0 }
+
+  Activate ::= SEQUENCE {
+      artifactSha256  [0] Digest,
+      previousSha256  [1] Digest DEFAULT
+          '0000000000000000000000000000000000000000000000000000000000000000'H }
+
+  Rollback ::= SEQUENCE {
+      restoreSha256   [0] Digest,
+      rollbackToken   [1] Digest }
+
+  Cancel ::= SEQUENCE {
+      firstSequence   [0] Uint64,
+      lastSequence    [1] Uint64 }
+
+  Uint32 ::= INTEGER (0..4294967295)
+  Uint64 ::= INTEGER (0..18446744073709551615)
+  Digest ::= OCTET STRING (SIZE (32))
+
+END

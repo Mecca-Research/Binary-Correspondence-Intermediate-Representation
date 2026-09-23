@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .._artifact_json import read_bounded_text, strict_json_loads
+from ..gem.control import is_stale
 from .ham import HAMResource
 
 _MAX_JSON = 16 * 1024 * 1024
@@ -344,7 +345,9 @@ def certify_context_activation(
         raise ValueError("context-shard activation requires a quiescent generation boundary")
     _digest(current_shard_sha256, "current context shard", empty=True)
     _integer(activation_generation, "activation generation", minimum=1)
-    if activation_generation <= catalog.generation:
+    # An activation minted against the catalog's generation witnesses `activation_generation
+    # - 1`: the one staleness predicate the control plane (G14) and the trusted loader express.
+    if is_stale(activation_generation - 1, catalog.generation):
         raise ValueError("activation generation must advance beyond the catalog generation")
     if (
         manifest.base_model_sha256 != catalog.base_model_sha256

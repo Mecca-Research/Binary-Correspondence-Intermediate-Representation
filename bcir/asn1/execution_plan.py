@@ -32,12 +32,14 @@ BCIR_ARC: tuple[int, ...] = (1, 3, 6, 1, 4, 1, 62596)
 EXECUTION_PLAN_MODULE_OID: tuple[int, ...] = (*BCIR_ARC, 3)
 
 #: Bumped only when the ASN.1 module changes shape; independent of the native version.
-PROJECTION_VERSION = 1
+#: 2 since G5 (S1-D): the `liveness` component and the lifetime ticks (native v2).
+PROJECTION_VERSION = 2
 
 _INTEGER = Primitive(Universal.INTEGER, "INTEGER")
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
 
 MODE = Primitive(Universal.ENUMERATED, "Mode", enumeration=(("eft", 0), ("tokens", 1)))
+LIVENESS = Primitive(Universal.ENUMERATED, "Liveness", enumeration=(("phase", 0), ("schedule", 1)))
 LANE = Primitive(
     Universal.ENUMERATED,
     "Lane",
@@ -64,6 +66,8 @@ COHERENCE = Primitive(
 #: The wire codes, mirrored from the native format so the two rails agree on each name.
 MODE_VALUES = {"eft": 0, "tokens": 1}
 MODE_NAMES = {v: k for k, v in MODE_VALUES.items()}
+LIVENESS_VALUES = {"phase": 0, "schedule": 1}
+LIVENESS_NAMES = {v: k for k, v in LIVENESS_VALUES.items()}
 MOVE_KIND_VALUES = {name: code for name, code in MOVE_KIND.enumeration}
 MOVE_KIND_NAMES = {v: k for k, v in MOVE_KIND_VALUES.items()}
 COHERENCE_VALUES = {name: code for name, code in COHERENCE.enumeration}
@@ -93,6 +97,8 @@ LIFETIME = Sequence(
         Component("alignment", _INTEGER, tag=4, default=1),
         Component("firstPhase", _INTEGER, tag=5, default=0),
         Component("lastPhase", _INTEGER, tag=6, default=0),
+        Component("firstTick", _INTEGER, tag=7, default=0),
+        Component("lastTick", _INTEGER, tag=8, default=0),
     ),
     name="Lifetime",
 )
@@ -142,6 +148,7 @@ EXECUTION_PLAN = Sequence(
         Component(
             "generations", SequenceOf(GENERATION, "SEQUENCE OF Generation"), tag=11, default=[]
         ),
+        Component("liveness", LIVENESS, tag=12, default=0),
     ),
     name="ExecutionPlan",
 )
@@ -213,6 +220,8 @@ def plan_to_value(plan) -> dict:
                 "alignment": lt.alignment,
                 "firstPhase": lt.first_phase,
                 "lastPhase": lt.last_phase,
+                "firstTick": lt.first_tick,
+                "lastTick": lt.last_tick,
             }
             for lt in plan.lifetimes
         ],
@@ -236,6 +245,7 @@ def plan_to_value(plan) -> dict:
         "generations": [
             {"rid": g.rid, "mapGen": g.map_gen, "dataGen": g.data_gen} for g in plan.generations
         ],
+        "liveness": _code(LIVENESS_VALUES, plan.liveness, "liveness"),
     }
 
 
@@ -247,6 +257,7 @@ def value_to_plan(value: dict):
     return ExecutionPlan(
         source_plan=value["sourcePlan"],
         mode=_name(MODE_NAMES, value.get("mode", 0), "Mode"),
+        liveness=_name(LIVENESS_NAMES, value.get("liveness", 0), "Liveness"),
         streams=value.get("streams", 1),
         knee=value.get("knee", 1),
         makespan=value.get("makespan", 0),
@@ -275,6 +286,8 @@ def value_to_plan(value: dict):
                 alignment=lt.get("alignment", 1),
                 first_phase=lt.get("firstPhase", 0),
                 last_phase=lt.get("lastPhase", 0),
+                first_tick=lt.get("firstTick", 0),
+                last_tick=lt.get("lastTick", 0),
             )
             for lt in value.get("lifetimes", [])
         ],
@@ -353,6 +366,9 @@ __all__ = [
     "GENERATION",
     "LANE",
     "LIFETIME",
+    "LIVENESS",
+    "LIVENESS_NAMES",
+    "LIVENESS_VALUES",
     "MODE",
     "MODE_NAMES",
     "MODE_VALUES",

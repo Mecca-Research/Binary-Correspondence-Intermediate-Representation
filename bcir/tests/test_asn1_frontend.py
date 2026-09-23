@@ -36,6 +36,7 @@ from bcir.frontends.asn1 import (
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _STREAMPACK_ASN1 = os.path.join(_ROOT, "bcir", "asn1", "BCIR-StreamPack.asn1")
 _EXECUTION_PLAN_ASN1 = os.path.join(_ROOT, "bcir", "asn1", "BCIR-ExecutionPlan.asn1")
+_CONTROL_PLANE_ASN1 = os.path.join(_ROOT, "bcir", "asn1", "BCIR-ControlPlane.asn1")
 _PKIX_ASN1 = os.path.join(_ROOT, "bcir", "frontends", "asn1", "testdata", "PKIX1Implicit88.asn1")
 _ABI_DOC = os.path.join(_ROOT, "docs", "BCIR_ASN1_X690_ABI.md")
 
@@ -139,14 +140,16 @@ def test_round_trip_preserves_the_tag_mode_the_source_stated():
 
 def test_the_asn1_source_matches_the_module_published_in_the_abi_doc():
     """One module, one text. The doc is the human-readable copy of the same files the
-    compiler reads, so the two cannot drift into describing different wire formats. Two
-    modules are published verbatim: BCIR-StreamPack (section 3) and, since G11,
-    BCIR-ExecutionPlan (section 3b), each matched to its source by its module name."""
+    compiler reads, so the two cannot drift into describing different wire formats. Three
+    modules are published verbatim: BCIR-StreamPack (section 3), BCIR-ExecutionPlan
+    (section 3b, since G11) and BCIR-ControlPlane (section 3c, since G14), each matched to
+    its source by its module name."""
     doc = open(_ABI_DOC, encoding="utf-8").read()
     blocks = re.findall(r"```asn1\n(.*?)```", doc, re.S)
     sources = {
         "BCIR-StreamPack": open(_STREAMPACK_ASN1, encoding="utf-8").read(),
         "BCIR-ExecutionPlan": open(_EXECUTION_PLAN_ASN1, encoding="utf-8").read(),
+        "BCIR-ControlPlane": open(_CONTROL_PLANE_ASN1, encoding="utf-8").read(),
     }
     assert len(blocks) == len(sources), (
         f"expected {len(sources)} asn1 blocks in the ABI doc, found {len(blocks)}"

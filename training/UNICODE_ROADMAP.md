@@ -117,7 +117,7 @@ and it sits at Phase 5 of the subject ladder, after `low-level/`
 - **Strict UTF-8 in C, twice.** `bcir_jer_utf8_next` / `bcir_jer_validate_utf8`
   (`runtime/c/bcir_jer.c:109-171`) refuse overlongs, surrogates, values above
   U+10FFFF and the C0/C1/F5..FF lead bytes; `valid_utf8_text`
-  (`runtime/c/bcir_artifact_bundle.c:229`) is a second, static validator that
+  (`runtime/c/bcir_artifact_bundle.c:149`) is a second, static validator that
   also rejects NUL. Two predicates for one law is the shape
   `docs/security/laws.md` L14 exists to remove; the first Unicode slice that
   needs C UTF-8 unifies them rather than adding a third.

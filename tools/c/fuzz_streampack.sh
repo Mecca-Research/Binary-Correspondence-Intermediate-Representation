@@ -3,7 +3,7 @@
 # ASan/UBSan smoke on a real Python-encoded pack + byte mutations. Needs clang with
 # compiler-rt (libclang-rt-NN-dev). FUZZ_RUNS controls the fuzz iteration count.
 #
-# The nine harnesses, and whose bytes each one distrusts:
+# Among the harnesses (the table below has every one), and whose bytes each distrusts:
 #   StreamPack decoder / executor / encoder  -- an artifact handed to the runtime
 #   ETL binary-record decoder                -- device/driver packet fields
 #   telemetry-frame decoder                  -- frames a device emits over UART
@@ -11,6 +11,7 @@
 #   BCAB artifact-bundle reader              -- a multi-backend artifact from a peer
 #   X.690 BER/DER decoder                    -- an ASN.1 artifact from a foreign peer
 #   DER -> native StreamPack fast path       -- a projection a peer hands a driver
+#   ControlRecordV1 decoder + resident plane -- a control record from any issuer (G14)
 #
 # Each seeds from real Python-rail output so the campaign starts inside the format rather
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
@@ -175,6 +176,15 @@ add_target perplan "X.691 plan-driven PER decoder" "-max_len=4096" \
 add_target emit "plan-driven ASN.1 encoder" "-max_len=4096" \
   "${C}/fuzz_emit.c" "${C}/bcir_emit.c"
 
+# The control plane (G14): the keyless ControlRecordV1 decoder over raw bytes, and the resident
+# plane driven by the input as a script. Its "sealed" operations re-frame and MAC each record
+# under the plane's key -- the BCIRQ8 checksum repair, applied to authority -- so the fuzzer
+# reaches the lease table and the pending slot instead of dying at the MAC wall, and the
+# plane's invariants (a refusal changes nothing, a deferral never moves the generation, no
+# switch mid-phase, a well-formed table and slot) are asserted after every operation.
+add_target control "control plane" "-max_len=4096" \
+  "${C}/fuzz_control_plane.c" "${C}/bcir_control_plane.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
@@ -182,7 +192,7 @@ add_target decoder "decoder" "" \
 # BCAB is a multi-backend artifact handed to the runtime. Its checksum and digest
 # layers are deliberately exercised from a canonical seed as well as arbitrary bytes.
 add_target artifact "BCAB artifact bundle" "-max_len=16384" \
-  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c"
+  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).
@@ -281,6 +291,16 @@ PY
 then
   echo "  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded"
 fi
+
+python3 - "${tmp}/corpus_control" <<'PY' || { echo "  FAIL: control-plane seed corpus"; exit 1; }
+import os, sys
+from bcir.tests.control_fixtures import malformed_variants, record_corpus
+d = sys.argv[1]
+for name, blob in record_corpus():                    # every kind, scope and reason
+    open(os.path.join(d, name.replace("/", "_") + ".bin"), "wb").write(blob)
+for name, blob, _status in malformed_variants():      # one per wire law
+    open(os.path.join(d, "malformed_" + name + ".bin"), "wb").write(blob)
+PY
 
 # The fast path takes the same projections as the X.690 harness -- seed both.
 python3 - "${tmp}/corpus_asn1" <<'ASN1SEED' || { echo "  FAIL: X.690 seed"; exit 1; }

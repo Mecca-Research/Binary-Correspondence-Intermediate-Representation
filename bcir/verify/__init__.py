@@ -1033,6 +1033,9 @@ def verify_execution_plan(
       (`schedule_plan(module, realization_of(plan), target, plan.mode)`);
     * with `result`, the steps are the realization's (claim, phase, candidate, lane, width,
       cost), in order;
+    * the lifetimes cover the schedule (G5): under schedule liveness each lifetime's ticks
+      are the plan's own placement's interval for its resource, under phase liveness the
+      declared span covers every touching phase, and no two lifetimes of one bank alias;
     * R11: the carried generation vector is the live registry's, entry for entry, and every
       declared resource has an entry -- a plan minted under an older vector is stale;
     * R10, with `pack`: the pack is the lowering of this plan -- its `source_plan`, one
@@ -1168,6 +1171,73 @@ def verify_execution_plan(
                         f"plan step {index} {mine} is not the realization's step {theirs}",
                     )
                 )
+
+    # The lifetimes cover the schedule (G5 / S1-D): under schedule liveness every lifetime's
+    # half-open ticks are exactly the plan's own placement's interval for that resource
+    # (from the first touching slot's start to the last one's finish), and under phase
+    # liveness every touching claim's phase lies inside the declared span. Two lifetimes of
+    # one bank live at once never share addresses (the codec's wire law; repeated here for a
+    # plan built in memory). A plan whose lifetimes do not cover its schedule is refused.
+    lifetimes = list(getattr(plan, "lifetimes", ()))
+    if lifetimes and structural:
+        touching: dict[int, list] = {}
+        for ph in module.phases:
+            for c in ph.claims:
+                for rid in c.io_rids():
+                    touching.setdefault(rid, []).append(c)
+        slot = {s.claim_id: (s.start, max(s.start + s.duration, s.start + 1)) for s in plan.steps}
+        liveness = getattr(plan, "liveness", "phase")
+        for lt in lifetimes:
+            claims = touching.get(lt.rid)
+            if not claims:
+                diags.append(
+                    Diagnostic("R9", f"lifetime of RID {lt.rid} names a resource no claim touches")
+                )
+                continue
+            if liveness == "schedule":
+                first = min(slot[c.id][0] for c in claims)
+                last = max(slot[c.id][1] for c in claims)
+                if (lt.first_tick, lt.last_tick) != (first, last):
+                    diags.append(
+                        Diagnostic(
+                            "R9",
+                            f"lifetime of RID {lt.rid} [{lt.first_tick}, {lt.last_tick}) is not "
+                            f"the plan's own liveness [{first}, {last}): it does not cover the "
+                            f"schedule",
+                        )
+                    )
+            else:
+                phases = {claim_phase[c.id] for c in claims}
+                if not all(lt.first_phase <= p <= lt.last_phase for p in phases):
+                    diags.append(
+                        Diagnostic(
+                            "R9",
+                            f"lifetime of RID {lt.rid} [{lt.first_phase}, {lt.last_phase}] does "
+                            f"not cover every phase that touches it",
+                        )
+                    )
+                if (lt.first_tick, lt.last_tick) != (lt.first_phase, lt.last_phase + 1):
+                    diags.append(
+                        Diagnostic(
+                            "R9",
+                            f"lifetime of RID {lt.rid} carries schedule ticks under phase liveness",
+                        )
+                    )
+        for i in range(len(lifetimes)):
+            for j in range(i):
+                a, b = lifetimes[i], lifetimes[j]
+                if (
+                    a.bank == b.bank
+                    and a.first_tick < b.last_tick
+                    and b.first_tick < a.last_tick
+                    and a.offset < b.offset + b.size_bytes
+                    and b.offset < a.offset + a.size_bytes
+                ):
+                    diags.append(
+                        Diagnostic(
+                            "R9", f"lifetimes of RIDs {b.rid} and {a.rid} alias in bank {a.bank!r}"
+                        )
+                    )
 
     # R11: the generation vector against the live registry.
     live = {r.rid: (r.map_gen, r.data_gen) for r in module.resources.values()}
@@ -1369,6 +1439,56 @@ _RESULT_RE = re.compile(r"^%[\w.]+\s*=\s*(\w+)")
 _GUARD_RE = re.compile(r"icmp\s+\w+\s+i64\s+%\w+,\s*%n\b")
 _WIDTH_RE = re.compile(r"\bwidth=(\d+)\b")
 _EPILOGUE_RE = re.compile(r"\bepilogue=(\w+)\b")
+
+
+def verify_control_record(module: Module, record) -> list[Diagnostic]:
+    """ControlRecordV1 against THIS module (G14, staged plan S3-A): R11 for a generation record.
+
+    `record` is a record's bytes or a decoded `gem.control.ControlRecord`. A generation switch
+    announces a registry state, and R11 holds it to the module's: its `registry_digest` must be
+    the digest of the module's per-resource generation vector (`gem.streampack.
+    generation_vector`) and its `map_gen` / `data_gen` the vector's maxima. A record announcing
+    an older vector -- or another module's -- is stale here, before any plane installs it and
+    admits packs against it. The other kinds carry nothing the module can judge; the resident
+    plane decides them. A record that does not decode cannot be held to the registry, so R11
+    fails on it. The record carries no verdict of its own: the diagnostics are the verifier's
+    output (the plane invariant, staged plan section 5.2)."""
+    from ..abi.control_abi import ControlError, decode_control, validate_control
+    from ..gem.control import ControlRecord, registry_digest
+    from ..gem.streampack import generation_vector
+
+    try:
+        if isinstance(record, ControlRecord):
+            validate_control(record)
+            rec = record
+        else:
+            rec = decode_control(record)
+    except ControlError as exc:
+        return [Diagnostic("R11", f"malformed control record ({exc.status}): {exc}")]
+    if rec.kind != "generation":
+        return []
+    diags: list[Diagnostic] = []
+    vector = generation_vector(module)
+    body = rec.body
+    if body.registry_digest != registry_digest(vector):
+        diags.append(
+            Diagnostic(
+                "R11",
+                "stale control record: the generation switch announces a registry vector that "
+                "is not this module's (reissue it from the live registry)",
+            )
+        )
+    reg_map = max((g.map_gen for g in vector), default=0)
+    reg_data = max((g.data_gen for g in vector), default=0)
+    if (body.map_gen, body.data_gen) != (reg_map, reg_data):
+        diags.append(
+            Diagnostic(
+                "R11",
+                f"stale control record: announced maxima ({body.map_gen}, {body.data_gen}) != "
+                f"the registry's ({reg_map}, {reg_data})",
+            )
+        )
+    return diags
 
 
 def verify_support_preservation(source, target, mapping=None) -> list[Diagnostic]:

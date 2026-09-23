@@ -41,9 +41,15 @@ typedef enum bcir_status {
   BCIR_ERR_UTF8 = 14,       /* a length-prefixed wire string is not valid UTF-8 */
   BCIR_ERR_GENERATION = 15, /* a v4 generation vector is malformed: RIDs not strictly ascending,
                              * or the header map_gen/data_gen are not the vector's maxima */
-  BCIR_ERR_PLAN = 16        /* an ExecutionPlanV1 record violates a plan law (bcir_execution_plan.h):
+  BCIR_ERR_PLAN = 16,       /* an ExecutionPlanV1 record violates a plan law (bcir_execution_plan.h):
                              * mode, streams/knee, a step's stream/duration/makespan, a lifetime's
                              * or a movement edge's shape */
+  BCIR_ERR_CONTROL = 17,    /* a ControlRecordV1 violates a wire law (bcir_control_plane.h): kind,
+                             * body length, scope, reason, capability, sequence, lease, the
+                             * generation/expect witness, or a body law */
+  BCIR_ERR_MAC = 18         /* a ControlRecordV1 MAC is all zero, or is not the one the key makes */
+  /* Append-only: the codes are the rails' shared names for a refusal (the Python codecs'
+   * `status`), so a code is never renumbered or reused -- a new status takes the next one. */
 } bcir_status;
 
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). NULL is valid only with len 0;

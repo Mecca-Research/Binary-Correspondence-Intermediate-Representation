@@ -80,10 +80,19 @@ echo "${out}" | grep -q "^OK$" && echo "  PASS parity (Python encode -> C decode
 
 echo "[c-runtime] BCAB artifact bundle: freestanding reader + Python/C selection parity"
 for std in c11 c23; do
-  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
-    -c "${C}/bcir_artifact_bundle.c" -o /dev/null \
-    || { echo "  FAIL: BCAB reader not freestanding-clean under -std=${std}"; exit 1; }
+  for unit in bcir_artifact_bundle.c bcir_sha256.c; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+      -c "${C}/${unit}" -o /dev/null \
+      || { echo "  FAIL: BCAB reader (${unit}) not freestanding-clean under -std=${std}"; exit 1; }
+  done
 done
+# The shared SHA-256 / HMAC-SHA256 (bcir_sha256.c) holds the standards' own worked examples:
+# FIPS 180-4 and RFC 4231 (cases 6-7 take the hash-the-key-first path), one-shot and incremental.
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${C}/bcir_sha256.c" "${C}/test_sha256.c" \
+  -o "${tmp}/test_sha256" || { echo "  FAIL: SHA-256/HMAC vector harness build"; exit 1; }
+sha_out="$("${tmp}/test_sha256")" || { echo "  FAIL: SHA-256/HMAC vectors"; echo "${sha_out}"; exit 1; }
+[ "${sha_out}" = "OK" ] && echo "  PASS shared SHA-256 / HMAC-SHA256 == FIPS 180-4 + RFC 4231 vectors" \
+  || { echo "  FAIL: unexpected SHA-256/HMAC harness output"; echo "${sha_out}"; exit 1; }
 python3 - "${tmp}/bundle.bcab" "${tmp}/bundle.der" "${tmp}/bundle.from-der.bcab" <<'PY' \
   || { echo "  FAIL: Python BCAB/ASN.1 fixture"; exit 1; }
 import struct, sys
@@ -116,7 +125,7 @@ open(sys.argv[2], "wb").write(projection)
 open(sys.argv[3], "wb").write(der_to_native(projection))
 PY
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
-  "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c" \
+  "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" \
   "${C}/test_artifact_bundle.c" -o "${tmp}/test_artifact_bundle" \
   || { echo "  FAIL: BCAB C parity harness build"; exit 1; }
 about="$("${tmp}/test_artifact_bundle" "${tmp}/bundle.bcab")" \
@@ -199,12 +208,24 @@ from dataclasses import replace
 from bcir.abi import encode, encode_plan
 from bcir.gem.execution_plan import plan_from_realization
 from bcir.gem.streampack import generation_vector, hydrate
+from bcir.kbcir.realize import optimize
 from bcir.tests.plan_fixtures import audit_fixture
 tmp = sys.argv[1]
 module, target, theta, result = audit_fixture()
 plan = plan_from_realization(module, result, target, "tokens", plan="plan0")
 open(f"{tmp}/plan.bin", "wb").write(encode_plan(plan))
 open(f"{tmp}/plan_pack.bin", "wb").write(encode(hydrate(module, result, "plan0")))
+# v2 (G5): the same plan carrying schedule-liveness lifetimes from the static memory planner
+from bcir.gem.schedule import schedule_plan
+from bcir.kbcir.static_memory import plan_static_memory
+from bcir.performance_audit import _AuditHardware, static_memory_module
+sm = static_memory_module(1)
+sm_result = optimize(sm, target, theta)
+placement = schedule_plan(sm, sm_result, target, "tokens")
+static = plan_static_memory(sm, {rid: "ram" for rid in sm.resources}, _AuditHardware(), schedule=placement)
+v2 = plan_from_realization(sm, sm_result, target, "tokens", static_plan=static)
+assert encode_plan(v2)[4] == 2
+open(f"{tmp}/plan_v2.bin", "wb").write(encode_plan(v2))
 open(f"{tmp}/live.txt", "w").write(" ".join(f"{g.rid}:{g.map_gen}:{g.data_gen}" for g in generation_vector(module)))
 rid = min(module.resources)
 module.resources[rid] = replace(module.resources[rid], map_gen=module.resources[rid].map_gen + 1)
@@ -225,6 +246,20 @@ again = encode_plan(parse_c_dump(open(f"{tmp}/plan_dump.txt").read()))
 sys.exit(0 if again == original else 1)
 PY
 echo "  PASS ExecutionPlanV1 parity (Python encode -> C decode -> Python re-encode, byte-identical; plan/pack bound; vector live)"
+v2_out="$("${tmp}/test_execution_plan" "${tmp}/plan_v2.bin" --dump)" \
+  || { echo "  FAIL: C v2 plan decode/verify"; echo "${v2_out}" | tail -5; exit 1; }
+printf '%s\n' "${v2_out}" > "${tmp}/plan_v2_dump.txt"
+python3 - "${tmp}" <<'PY' || { echo "  FAIL: Python re-encode of the C v2 decode is not byte-identical"; exit 1; }
+import sys
+from bcir.abi import encode_plan
+from bcir.tests.plan_fixtures import parse_c_dump
+tmp = sys.argv[1]
+original = open(f"{tmp}/plan_v2.bin", "rb").read()
+dump = open(f"{tmp}/plan_v2_dump.txt").read()
+assert "header version=2 mode=1 liveness=1" in dump, dump[:200]
+sys.exit(0 if encode_plan(parse_c_dump(dump)) == original else 1)
+PY
+echo "  PASS ExecutionPlanV1 v2 parity (schedule-liveness lifetimes: Python encode -> C decode -> Python re-encode, byte-identical)"
 # shellcheck disable=SC2046
 if "${tmp}/test_execution_plan" "${tmp}/plan.bin" --live $(cat "${tmp}/moved.txt") > "${tmp}/plan_stale.txt" 2>&1; then
   echo "  FAIL: a plan minted under an older generation vector was accepted on the C rail"; exit 1
@@ -232,6 +267,55 @@ fi
 grep -q "^vector=BCIR_ERR_STALE$" "${tmp}/plan_stale.txt" \
   && echo "  PASS ExecutionPlanV1 stale vector refused on the C rail (BCIR_ERR_STALE)" \
   || { echo "  FAIL: unexpected stale verdict"; cat "${tmp}/plan_stale.txt"; exit 1; }
+
+echo "[c-runtime] ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces"
+# bcir_control_plane.h is the C twin of bcir/abi/control_abi.py (the wire laws, in the same order)
+# and bcir/gem/control.py (the resident plane): lease, generation, quiesce, activate, rollback and
+# cancel, decided by their bytes. It links the shared SHA-256 / HMAC-SHA256 (bcir_sha256.c) and the
+# StreamPack / plan verifiers (bcir_runtime.c). The grading is bcir/tests/control_fixtures.py::
+# measure -- the function the tests and the G14 harness rows use: every corpus record round-trips
+# byte for byte with its MAC accepted, every malformed variant is refused with its declared status
+# on both rails, every scenario decides as specified on both rails, and the two rails' traces
+# (verdicts, refusals, statuses and the resident state digest after every operation) are identical.
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+    -c "${C}/bcir_control_plane.c" -o /dev/null \
+    || { echo "  FAIL: control plane not freestanding-clean under -std=${std}"; exit 1; }
+done
+ctl_sources=("${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/test_control_plane.c")
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${C}/bcir_control_plane.c" "${ctl_sources[@]}" \
+  -o "${tmp}/test_control_plane" || { echo "  FAIL: control harness build"; exit 1; }
+ctl_api="$("${tmp}/test_control_plane" --api)" || { echo "  FAIL: control API laws"; echo "${ctl_api}"; exit 1; }
+[ "${ctl_api}" = "OK" ] || { echo "  FAIL: unexpected control API output"; echo "${ctl_api}"; exit 1; }
+ctl_measure() {  # <harness> -> prints the six rows; exit 0 only when every row is zero
+  python3 - "$1" "${tmp}" <<'PY'
+import sys
+from bcir.tests.control_fixtures import ROWS, measure
+rows = measure(sys.argv[1], sys.argv[2])
+if set(rows) != set(ROWS):
+    print(f"rows {sorted(rows)} != {sorted(ROWS)}")
+    sys.exit(2)
+print(" ".join(f"{key.removeprefix('control.')}={int(value)}" for key, value in rows.items()))
+sys.exit(1 if any(rows.values()) else 0)
+PY
+}
+ctl_rows="$(ctl_measure "${tmp}/test_control_plane")" \
+  || { echo "  FAIL: a G14 row is not zero: ${ctl_rows}"; exit 1; }
+echo "  PASS ControlRecordV1 (freestanding C11 + C23; API fail-closed laws; ${ctl_rows})"
+# The gate must be able to fail (L2): a plane that applies a switch mid-phase -- the deferral law
+# removed -- must turn a row red. The mutant is built from the real source; if the law's line
+# ever changes, the injection fails loudly instead of grading an unmutated copy.
+sed 's/s->in_flight != 0u || s->boundary < r\.hdr\.boundary/s->boundary < r.hdr.boundary/' \
+  "${C}/bcir_control_plane.c" > "${tmp}/bcir_control_plane_mutant.c"
+if cmp -s "${C}/bcir_control_plane.c" "${tmp}/bcir_control_plane_mutant.c"; then
+  echo "  FAIL: the deferral-law fault injection did not apply (the law's line changed)"; exit 1
+fi
+"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/bcir_control_plane_mutant.c" "${ctl_sources[@]}" \
+  -o "${tmp}/test_control_plane_mutant" || { echo "  FAIL: mutant harness build"; exit 1; }
+if mutant_rows="$(ctl_measure "${tmp}/test_control_plane_mutant")"; then
+  echo "  FAIL: a plane that applies a switch mid-phase passed the G14 gate: ${mutant_rows}"; exit 1
+fi
+echo "  PASS ControlRecordV1 gate fires on an injected fault (deferral law removed: ${mutant_rows})"
 
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
 # bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,

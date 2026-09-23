@@ -140,7 +140,7 @@ variants = (
 write_bundle(sys.argv[1], ArtifactBundle(variants, "00-root", "portable-c", 123, 7))
 PY
 "${CXX}" -std=c++17 -O2 -Wall -Wextra -Werror -I "${C}" -I "${CPP}" \
-  "${CPP}/test_artifact_bundle.cpp" "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c" \
+  "${CPP}/test_artifact_bundle.cpp" "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" \
   -o "${tmp}/test_artifact_bundle_cpp" \
   || { echo "  FAIL: BCAB C++ wrapper build"; exit 1; }
 cppout="$("${tmp}/test_artifact_bundle_cpp" "${tmp}/bundle.bcab")" \
