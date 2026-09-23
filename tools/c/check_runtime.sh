@@ -80,10 +80,19 @@ echo "${out}" | grep -q "^OK$" && echo "  PASS parity (Python encode -> C decode
 
 echo "[c-runtime] BCAB artifact bundle: freestanding reader + Python/C selection parity"
 for std in c11 c23; do
-  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
-    -c "${C}/bcir_artifact_bundle.c" -o /dev/null \
-    || { echo "  FAIL: BCAB reader not freestanding-clean under -std=${std}"; exit 1; }
+  for unit in bcir_artifact_bundle.c bcir_sha256.c; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
+      -c "${C}/${unit}" -o /dev/null \
+      || { echo "  FAIL: BCAB reader (${unit}) not freestanding-clean under -std=${std}"; exit 1; }
+  done
 done
+# The shared SHA-256 / HMAC-SHA256 (bcir_sha256.c) holds the standards' own worked examples:
+# FIPS 180-4 and RFC 4231 (cases 6-7 take the hash-the-key-first path), one-shot and incremental.
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${C}/bcir_sha256.c" "${C}/test_sha256.c" \
+  -o "${tmp}/test_sha256" || { echo "  FAIL: SHA-256/HMAC vector harness build"; exit 1; }
+sha_out="$("${tmp}/test_sha256")" || { echo "  FAIL: SHA-256/HMAC vectors"; echo "${sha_out}"; exit 1; }
+[ "${sha_out}" = "OK" ] && echo "  PASS shared SHA-256 / HMAC-SHA256 == FIPS 180-4 + RFC 4231 vectors" \
+  || { echo "  FAIL: unexpected SHA-256/HMAC harness output"; echo "${sha_out}"; exit 1; }
 python3 - "${tmp}/bundle.bcab" "${tmp}/bundle.der" "${tmp}/bundle.from-der.bcab" <<'PY' \
   || { echo "  FAIL: Python BCAB/ASN.1 fixture"; exit 1; }
 import struct, sys
@@ -116,7 +125,7 @@ open(sys.argv[2], "wb").write(projection)
 open(sys.argv[3], "wb").write(der_to_native(projection))
 PY
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
-  "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c" \
+  "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" \
   "${C}/test_artifact_bundle.c" -o "${tmp}/test_artifact_bundle" \
   || { echo "  FAIL: BCAB C parity harness build"; exit 1; }
 about="$("${tmp}/test_artifact_bundle" "${tmp}/bundle.bcab")" \

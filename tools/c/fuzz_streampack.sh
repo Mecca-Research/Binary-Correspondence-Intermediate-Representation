@@ -182,7 +182,7 @@ add_target decoder "decoder" "" \
 # BCAB is a multi-backend artifact handed to the runtime. Its checksum and digest
 # layers are deliberately exercised from a canonical seed as well as arbitrary bytes.
 add_target artifact "BCAB artifact bundle" "-max_len=16384" \
-  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_runtime.c"
+  "${C}/fuzz_artifact_bundle.c" "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
 # bcir_exec.c runs an untrusted pack end to end with fixed caller buffers; a malformed
 # pack must return a status and never read/write out of bounds (incl. the NOSPACE path).

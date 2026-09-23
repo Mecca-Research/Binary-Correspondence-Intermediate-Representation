@@ -17,6 +17,7 @@ freestanding_core bcir_emit.c
 freestanding_core bcir_plan.c
 freestanding_core bcir_provenance.c
 freestanding_core bcir_runtime.c
+freestanding_core bcir_sha256.c
 freestanding_core bcir_telemetry_frame.c
 freestanding_core bcir_train.c
 
