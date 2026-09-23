@@ -146,7 +146,9 @@ jobs:
         # campaign ran twice in this job -- and the nested call additionally ran the ~20x Valgrind
         # stage the dedicated step deliberately drops. Valgrind coverage lives in
         # .github/workflows/c-memory-deep-sweep.yml (SANITIZE_VG_SUBSET=30), not on the PR path.
-        run: BCIR_SKIP_CFRONT_SANITIZE=1 bash tools/c/check_runtime.sh
+        # This job installs libclang-rt (the TSan runtime), so the live ring's ThreadSanitizer leg is
+        # required here: an unavailable TSan is a failure, not the skip it is on the aarch64 job (L2).
+        run: BCIR_SKIP_CFRONT_SANITIZE=1 BCIR_REQUIRE_TSAN=1 bash tools/c/check_runtime.sh
 
       - name: Cache the immutable TinyLlama source checkpoint
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

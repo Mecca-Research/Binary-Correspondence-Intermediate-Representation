@@ -219,6 +219,7 @@ pending required check is not ready for handoff.
 | Portable backend smoke coverage | `./training/llvm/tools/smoke-llc.sh` |
 | Interpreter smoke coverage | `./training/llvm/tools/smoke-lli.sh` |
 | BOLT fixture changes | `./training/llvm/tools/smoke-bolt.sh` |
+| The live ring and the telemetry envelope (`bcir/gem/ring.py`, `bcir/abi/telemetry_envelope.py`, `bcir/telemetry_intake.py`, `bcir/signal_table.py`, `runtime/c/bcir_ring.*`, `runtime/c/bcir_telemetry_envelope.*`) | `python tools/c/check_ring.py`, `bash tools/c/check_runtime.sh`; after changing a law or code a fault anchors into, `python tools/testing/red_sweep.py --faults tools/testing/faults/ring.json`; after changing a built-in signal definition, `python -m bcir.signal_table --emit` |
 | Security-assurance rails (`tools/security/**`, `.gitleaks.toml`) | `python tools/security/scan_secrets.py`, `python tools/security/audit_dependencies.py`, `python tools/security/audit_tool_boundaries.py`, `python tools/security/run_decoder_campaign.py`, `python tools/security/run_malformed_differential.py`, `python tools/security/independent_review.py --self-check` |
 
 For IR changes outside the training corpus, run the relevant gate:

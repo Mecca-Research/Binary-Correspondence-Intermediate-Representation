@@ -753,6 +753,149 @@ METRICS: tuple[Metric, ...] = (
         "record as the oracle does)",
         slice_owner="G14",
     ),
+    # --- G15 (S3-B): the live SPSC ring and the version-zero triple (the generated signal table,
+    # TelemetryEnvelopeV0, the ring itself). Before the slice the only shared telemetry ring was a
+    # quiescent snapshot (a head and slots, no tail, no publication protocol, no loss count, no
+    # epoch): measured on the parent, a reader behind by a lap received the survivors and no count,
+    # and a slot read mid-rewrite came back with the fields of two records and no error. There was
+    # no oracle, no C twin, no envelope and no generated table, so every fixture fails by absence and
+    # the rows count those failures over fixed corpora (bcir/tests/ring_fixtures.py): 15 table rows
+    # + the generated header + 13 envelopes; 23 malformed envelopes x 2 rails + 33 malformed
+    # scenarios x 2 rails; 70 scripted scenarios x 2 rails (loss, torn); 11 continuity fixtures x 2;
+    # 5 stale fixtures x 2; 70 two-rail traces; the 52 G14 scenarios through a live control ring x 2
+    # rails; 6 concurrent C runs. Every row is exact and bounded at zero and needs the C twin: without
+    # a C compiler the group is NOT-MEASURED, and without POSIX threads/processes the concurrent row is.
+    Metric(
+        "ring.abi.mismatches",
+        "ring",
+        "generated signal-table rows whose C bytes differ from Python's, the generated header's "
+        "drift, and corpus envelopes whose Python encode -> C decode -> re-encode is not identical",
+        29,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the taxonomy and the envelope are the same bytes on both rails",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.malformed.accepted",
+        "ring",
+        "(malformed variant, rail) pairs NOT refused with the declared status: every envelope wire "
+        "law, every geometry law, owner and slot corruption, the unknown-required-signal law",
+        112,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own variant on both rails",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.loss.unaccounted",
+        "ring",
+        "(scenario, rail) pairs whose committed accounting is not exactly what the rail's verdicts "
+        "reported (published == delivered + lost + stale; refused counted) or not the declared numbers",
+        140,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="records lost to overwrite are counted exactly; a consumer that falls behind "
+        "sees the count (the G15 gate `ring.loss.accounting`)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.torn.delivered",
+        "ring",
+        "(scenario, rail) pairs that delivered a record not byte-identical to what was published "
+        "at its position",
+        140,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a consumer never sees a torn record (the G15 gate)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.sequence.misreported",
+        "ring",
+        "(continuity fixture, rail) pairs whose (missing, reordered, duplicated) is not the declared "
+        "triple",
+        22,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="gaps, reorders and duplicates reported as the frame ABI reports them (the "
+        "G15 sequence-continuity gate; one predicate, SequenceTracker)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.stale.accepted",
+        "ring",
+        "(stale fixture, rail) pairs not refused as declared: a deposed producer or consumer, a "
+        "record stamped with a deposed epoch, telemetry of a generation the plane has left",
+        10,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="stale generations refused at every boundary (the Stage 3 exit)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.traces.divergent",
+        "ring",
+        "scenarios whose two rails' traces differ in any line (verdict, status, position, count, "
+        "epoch, payload, or the region's CRC after the operation)",
+        70,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one ring, two realizations, the same bytes after every step",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.control.divergent",
+        "ring",
+        "(G14 control scenario, rail) pairs whose plane trace through a live control ring differs "
+        "from the direct trace, plus scenarios whose two rails' ring traces differ",
+        104,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the ring is a transport, never a decision (control records second)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.concurrent.violations",
+        "ring",
+        "concurrent C runs (threads; processes with a peer SIGKILLed and taken over) that tore, "
+        "failed to account, or broke continuity",
+        6,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the same laws with the peers truly concurrent and dying",
+        slice_owner="G15",
+    ),
+    # The G15 ratio: two threads streaming DataDNA envelopes (124 bytes) through a backpressure
+    # ring against one thread memcpy-ing the same bytes. Not measurable on the parent (no ring), so
+    # the baseline is the slice's first measurement on the reference host of this program (4 vCPU
+    # virtualized, clang 18; medians of 5): 26.0x -- the ring pays a cross-core cache-line transfer
+    # per slot that memcpy never pays. A minimal unchecked Lamport queue moving the same 148 slot
+    # bytes measured ~15x on the same host, which is the floor for any two-thread handoff there.
+    # host_dependent: the ratio measures the host's coherence latency, not only the code.
+    Metric(
+        "ring.throughput",
+        "ring",
+        "ring time per record / memcpy time per record, the same 124-byte envelopes (two threads "
+        "vs one)",
+        26.0,
+        "x",
+        "ratio",
+        bound=1.0,
+        bound_source="the memcpy floor of the same bytes (a two-thread handoff cannot reach it; "
+        "the unchecked-queue floor on the reference host is ~15x)",
+        slice_owner="G15",
+        host_dependent=True,
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -1697,6 +1840,28 @@ def measure_control() -> dict[str, float]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def measure_ring() -> dict[str, float]:
+    """The G15 rows (S3-B): the live ring, the envelope and the generated table, counted failures
+    over fixed corpora on both rails (bcir/tests/ring_fixtures.py::measure, which the tests and
+    tools/c/check_runtime.sh grade the same way), and the throughput ratio. Every row needs the C
+    twin: without a C compiler the group is NOT-MEASURED rather than estimated from one rail."""
+    import shutil
+    import tempfile
+
+    from bcir.tests.ring_fixtures import build_harness, measure, measure_throughput
+
+    tmp = tempfile.mkdtemp(prefix="bcir-ring-")
+    try:
+        exe = build_harness(tmp)
+        if exe is None:
+            return {}
+        out = measure(exe, tmp)
+        out.update(measure_throughput(exe))
+        return out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -1747,6 +1912,7 @@ _MEASURERS = {
     "digest": measure_digest,
     "plan": measure_plan,
     "control": measure_control,
+    "ring": measure_ring,
     "memory": measure_memory,
 }
 
@@ -1906,7 +2072,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

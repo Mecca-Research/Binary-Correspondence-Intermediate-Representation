@@ -33,7 +33,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 #: The six kinds, in wire-code order (1..6).
 CONTROL_KINDS = ("lease", "generation", "quiesce", "activate", "rollback", "cancel")
@@ -260,6 +260,10 @@ class _Lease:
     expiry: int
     holder: int
     last_sequence: int = 0
+    # lease_key(root, lease_id), derived once when the grant is applied (G15/S3-B): a leased
+    # record's MAC is checked against it instead of re-deriving it per record. Not state -- the
+    # state digest does not cover it -- and it leaves with the lease.
+    key: bytes = field(default=b"", compare=False, repr=False)
 
     def valid_at(self, boundary: int) -> bool:
         return self.issued <= boundary < self.expiry
@@ -394,7 +398,7 @@ class ControlPlane:
             entry = self.lease(rec.lease)
             if entry is None:
                 return self._outcome("refused", "lease", rec)
-            key = lease_key(self._key, rec.lease)
+            key = entry.key
         else:
             key = self._key
         if not check_control_mac(data, key):
@@ -490,6 +494,7 @@ class ControlPlane:
                     body.issued_epoch,
                     body.expiry_epoch,
                     body.holder,
+                    key=lease_key(self._key, body.lease_id),
                 )
             )
             self.last_lease_id = body.lease_id

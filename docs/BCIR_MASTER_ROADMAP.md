@@ -70,7 +70,7 @@ The normative semantics and artifact contract are in
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1 | No out-of-process transport or resident hardware binding |
 | ML/reference | Tensor claims, closed-set AD, planned/streamed training, optional hosted Llama/AdamW micro training, safe resume/export, model ingest/tokenizer/decode, BCIRQ8, standalone-C parity, native Q8/Q4 conversion and Q8 projection kernels, exact native Q15 retrieval, payload-free placement, exact static tensor addresses, verified HAM residency/routes, strict context shards, dual-memory oracle, a bounded GNN/Transformer hardware-policy gate, adaptive and raw-byte BLT/MambaByte experiments, exact sequence-interface adaptation, causal FSQ series coding, and active-budget growth | The 32M, byte-native, and progressive models are untrained at useful scale; hardware-RL evidence is simulated; HAM has no physical adapter; no whole-model Q4, distributed trainer, GPU byte/model backend, live promotion corpus, or production serving engine |
-| Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization | No live HTTP/OTLP/BMC/UART transport; driver envelope/live concurrent ring remain version-zero design work |
+| Telemetry | Stable signal registry, BTLM codec, continuity/ring witnesses, metrics, deterministic Prometheus/OTLP/Redfish-shaped serialization; the version-zero driver envelope, generated C signal table and live concurrent ring with Python/C parity | No live HTTP/OTLP/BMC/UART transport; no driver emits through the version-zero contracts yet |
 | Machine edge | Typed MMIO/port/fence/control-register/MSR operations, ordinary x86 long-mode entry and interrupt trampoline, real object/disassembly gates | Reset transition, paranoid NMI/IST entry, feature-specific entry policy, native CPU backend remain open |
 | Artifact compatibility | BCAB v1 deterministic multi-image envelope, standard payload preservation, Python/C/C++ selection, MLIR metadata projection, listing/hex/extraction and delegated disassembly | No signature/trust directory, pack symbol relocation, OS loader, or claim of cross-ISA binary compatibility |
 | Drivers/kernel | Device-manifest/event/DMA substrates, direct hook ABI, generic HAM compiler/simulator contract, driver package and BCIR-Linux plans | No resident device driver, GDS/P2PDMA/CXL/NVMe adapter, Linux module/fork, stable UAPI, native kernel, or native IPC is present |
@@ -149,7 +149,8 @@ authorize a new general-purpose linker or debugger. See
 
 The canonical order is evidence-first:
 
-1. Finish the version-zero driver telemetry envelope and generated signal table.
+1. Emit through the version-zero driver telemetry envelope, signal table and live ring from
+   the first driver, and revise them from its traces.
 2. Implement the 16550/16750 UART schema, assembler/verifier/simulator, polled direct driver,
    event-driven direct driver, and deterministic replay corpus.
 3. Add the Linux-hosted UART adapter and prove direct/adapter parity.

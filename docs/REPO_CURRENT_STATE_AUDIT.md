@@ -266,9 +266,13 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    IRQ service, and U0–U9 program remain planned. Telemetry has a registry, codecs, metrics,
    and deterministic serialization, but no UART egress, HTTP/Prometheus host, OTLP transport,
    Redfish/BMC client, or live provider transport. BTLM v1 lacks source/session/generation/
-   clock identity, and shared-ring v1 is only a quiescent snapshot (no tail, per-slot publish,
-   loss/backpressure, or peer-death protocol). Stable signal definitions are Python-only until
-   one fixed-width C table is generated.
+   clock identity and shared-ring v1 is only a quiescent snapshot; the pre-driver telemetry
+   ABI that replaces both for drivers exists at **version zero** with Python/C parity — the
+   generated fixed-width signal table and ID ranges, TelemetryEnvelopeV0 and its host intake
+   ([`TELEMETRY_ENVELOPE_ABI.md`](kernel/TELEMETRY_ENVELOPE_ABI.md)), and the live SPSC ring
+   with per-slot publication, exact loss accounting, backpressure and peer-death takeover
+   ([`BCIR_LIVE_RING_ABI.md`](kernel/BCIR_LIVE_RING_ABI.md)) — but no driver emits through it
+   yet, and it carries no compatibility promise until the UART and virtio-blk traces.
 8. **The x86 asm edge is not a reset/exception subsystem.** `bcir.entry` assumes long
    mode. The ordinary trampoline exposes a fixed 176-byte C frame and refuses #DB, NMI,
    #DF, #MC, and AMD #VC; reset-mode transition, paranoid/IST nesting, SMAP/CET/IBT,
@@ -300,11 +304,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
 
 ## Recommended next milestones
 
-1. **Pre-driver telemetry ABI v0**
-   ([`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) §4.3/§7.1) — generate
-   the fixed-width Python/C signal table and ID-range policy, then differentially gate a
-   source/session/generation/clock-aware envelope and live SPSC ring. Revise these
-   experimental contracts from traces; do not alter frozen BTLM/ring v1 bytes.
+1. **Pre-driver telemetry ABI v0 — in use**
+   ([`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) §4.3/§7.1) — the
+   signal table, envelope and live SPSC ring exist at version zero with Python/C parity; make
+   the first driver emit through them and revise them from its traces. Do not alter frozen
+   BTLM/ring v1 bytes.
 2. **UART D0–D3** — turn the compiler fixture into the first direct RuntimeChannel
    resident driver, prove simulator/direct lifecycle and telemetry behavior, then add the
    Linux-hosted adapter. This is the first evidence source for the future UAPI.

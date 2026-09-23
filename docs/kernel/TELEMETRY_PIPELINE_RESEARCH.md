@@ -123,10 +123,12 @@ util saturation + counter-multiplex scaling).
   `sampling_model`, `metric_kind`, delta/cumulative temporality, monotonicity, and a
   `min_interval_ns` hint now live on `MetricDefinition`; exporters consume those fields
   rather than infer counter behavior from names.
-- **Still missing before resident drivers:** a generated fixed-width C definition table;
-  BCIR/vendor/device-local ID-range policy; a source/session/generation/clock-aware driver
-  envelope; and a concurrent SPSC ring with head/tail, per-slot publication, loss and
-  backpressure semantics.
+- **Landed before resident drivers (version zero, S3-B):** the generated fixed-width C
+  definition table and the BCIR/vendor/device-local ID-range policy; the
+  source/session/generation/clock-aware envelope
+  ([`TELEMETRY_ENVELOPE_ABI.md`](TELEMETRY_ENVELOPE_ABI.md)); and the concurrent SPSC ring with
+  head/tail, per-slot publication, loss and backpressure semantics
+  ([`BCIR_LIVE_RING_ABI.md`](BCIR_LIVE_RING_ABI.md)).
 - **Correction**: drop **Intel ISS** from the design — it is a motion/ambient sensor-*hub* driver,
   not CPU power/thermal/PMU telemetry. Intel's real telemetry is RAPL + PMU (PCM/perf/VTune).
 
@@ -272,12 +274,14 @@ The implemented contracts are deliberately separated by purpose:
 |---|---|---|
 | Executable plan | StreamPack BSPK v1–v3 | Immutable plan artifact; not telemetry or IPC |
 | Direct execution | RuntimeChannel v1 hook table | Loopback proven; real device lifecycle absent |
-| Metric taxonomy | Python `MetricDefinition` IDs/units/semantics | Generate one fixed-width C table and reserve ID ranges |
+| Metric taxonomy | Python `MetricDefinition` IDs/units/semantics; the generated v0 C table and ID ranges | Revise the v0 row from UART/virtio evidence |
 | UART record batch | BTLM v1 | Single producer/session only; preserve frozen bytes |
 | Shared snapshot | ring v1 header + `<7q>` slots | Quiescent reads only; not a live concurrent queue |
+| Driver telemetry | TelemetryEnvelopeV0 + the host intake; the live SPSC ring v0 | Version zero: revised from UART and virtio-blk traces before any freeze |
 | Hosted export | Prometheus text, OTLP JSON shape, Redfish JSON shape | No HTTP/gRPC/protobuf/BMC transport |
 
-Before the UART package may enter D2, land and differentially test:
+Before the UART package may enter D2, land and differentially test (all four landed at
+version zero in S3-B, with Python/C parity):
 
 1. a version-zero driver telemetry envelope with fixed-width source, session, generation,
    clock-ID/unit, record-kind/schema/size, stable signal ID, sequence, and producer loss fields;

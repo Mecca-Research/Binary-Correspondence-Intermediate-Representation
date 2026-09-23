@@ -27,6 +27,7 @@ python3 tools/testing/red_sweep.py --faults ... --json-out build/red/database.js
 | `training-langref.json` | `training/tools/verify_langref.py` | the document drifting from the code, and the code from the document |
 | `training-database.json` | `training/tools/verify_database.py` | the table, the grammar, the planner, publication, and the thresholds |
 | `training-embeddings.json` | `training/tools/verify_embeddings.py` | the stored derived column, and each of its fallbacks |
+| `ring.json` | `tools/c/check_ring.py` (the G15 rows, both rails; needs a C compiler) | the live ring's seqlock, loss count, backpressure, epoch and takeover laws and its geometry laws on both rails; the envelope's wire laws, continuity, the stale-generation and unknown-required-signal laws; the generated signal table's bytes; the control ring as a transport |
 
 ## What runs in CI, and what does not
 

@@ -2801,7 +2801,7 @@ def test_seed_construction_failure_is_a_structured_campaign_verdict() -> None:
     finally:
         campaign._q8_seed = original
     by_name = {item["surface"]: item for item in results}
-    assert set(by_name) == {"streampack", "bcab", "bcirq8", "control"}
+    assert set(by_name) == {"streampack", "bcab", "bcirq8", "control", "envelope"}
     assert by_name["bcirq8"]["state"] == "FAIL"
     assert [f["kind"] for f in by_name["bcirq8"]["findings"]] == ["seed-construction-failed"]
     assert by_name["streampack"]["state"] == "PASS"

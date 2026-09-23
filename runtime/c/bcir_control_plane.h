@@ -255,6 +255,10 @@ typedef struct bcir_ctl_lease_entry {
   uint64_t expiry;
   uint64_t holder;
   uint64_t last_sequence;  /* the last accepted record's sequence under this lease */
+  uint8_t  key[32];        /* bcir_ctl_lease_key(root, lease_id), derived once when the grant is
+                            * applied (G15/S3-B: a leased record's MAC is checked against it
+                            * instead of re-deriving it per record). Not state: the state digest
+                            * does not cover it, and it is wiped when the lease leaves the table. */
 } bcir_ctl_lease_entry;
 
 /* One handle's resident control state: the mirror of bcir/gem/control.py::ControlPlane.

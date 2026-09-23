@@ -17,9 +17,11 @@ freestanding_core bcir_per_plan.c
 freestanding_core bcir_emit.c
 freestanding_core bcir_plan.c
 freestanding_core bcir_provenance.c
+freestanding_core bcir_ring.c
 freestanding_core bcir_runtime.c
 freestanding_core bcir_sha256.c
 freestanding_core bcir_telemetry_frame.c
+freestanding_core bcir_telemetry_envelope.c
 freestanding_core bcir_train.c
 
 hosted_tool bcir_cc.c

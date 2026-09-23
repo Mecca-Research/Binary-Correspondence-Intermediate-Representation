@@ -1,0 +1,162 @@
+{
+  "command": [
+    "@python",
+    "tools/c/check_ring.py"
+  ],
+  "faults": [
+    {
+      "expects": "ring.torn.delivered",
+      "label": "C ring: the seqlock re-check is gone, so a record a writer rewrote mid-copy is delivered",
+      "new": "  (void)seq;\n",
+      "old": "  if (seq != c->cur_seq) return overwrite ? lose(c, q, 1) : refused(BCIR_ERR_RING, q);\n",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.loss.unaccounted",
+      "label": "C ring: a lapped consumer is told it lost one record more than it did",
+      "new": "return lose(c, q, depth - g->slot_count + 1u);",
+      "old": "return lose(c, q, depth - g->slot_count);",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.loss.unaccounted",
+      "label": "C ring: a full backpressure ring overwrites instead of refusing",
+      "new": "    if (0) {",
+      "old": "    if (depth == g->slot_count) {",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.stale.accepted",
+      "label": "C ring: a record stamped with a deposed epoch is delivered",
+      "new": "  if (0) {",
+      "old": "  if ((after_origin && epoch != current) || (!after_origin && epoch < c->last_epoch)) {",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "C ring: the geometry line's CRC is not checked",
+      "new": "",
+      "old": "  if (rd32(region + 60) != bcir_crc32(region, 60)) return BCIR_ERR_CRC;\n",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "C ring: a control ring whose slot cannot carry the control record bound is formatted",
+      "new": "",
+      "old": "  if (g->payload == BCIR_RING_CONTROL && g->slot_size < BCIR_RING_CONTROL_SLOT_MIN) return BCIR_ERR_RING;\n",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.loss.unaccounted",
+      "label": "C ring: a takeover leaves the dead producer's half-written slot odd",
+      "new": "    if (0) {",
+      "old": "    if (seq & 1u) { /* the dead producer's half-written slot: retire it */",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.loss.unaccounted",
+      "label": "C ring: the consumer commits but never publishes its progress to the producer",
+      "new": "  st_rel(r, BCIR_RING_OFF_C_COMMIT, next);\n  st_rlx(r, BCIR_RING_OFF_C_BEAT, ld_rlx(r, BCIR_RING_OFF_C_BEAT) + 1u);",
+      "old": "  st_rel(r, BCIR_RING_OFF_C_COMMIT, next);\n  st_rlx(r, BCIR_RING_OFF_C_BEAT, ld_rlx(r, BCIR_RING_OFF_C_BEAT) + 1u);\n  st_rel(r, BCIR_RING_OFF_TAIL, tail);",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.torn.delivered",
+      "label": "C ring: payload words are packed in the wrong byte order",
+      "new": "w |= (uint64_t)data[i + b] << (8u * (7u - b));",
+      "old": "w |= (uint64_t)data[i + b] << (8u * b);",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.stale.accepted",
+      "label": "C ring: a deposed producer does not refuse itself",
+      "new": "  return p->epoch != 0u;",
+      "old": "  return p->epoch != 0u &&\n         ld_acq(p->region, BCIR_RING_OFF_P_OWNER) == owner_word(p->epoch, BCIR_RING_ATTACHED);",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "ring.sequence.misreported",
+      "label": "C intake: a gap is counted one record too many",
+      "new": "    t->missing += (uint64_t)delta;",
+      "old": "    t->missing += (uint64_t)delta - 1u;",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "ring.stale.accepted",
+      "label": "C intake: telemetry of a generation the plane has left is accepted",
+      "new": "    if (0) {",
+      "old": "    if (e.generation < in->live_generation) {",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "C intake: an unknown REQUIRED signal is skipped instead of refused",
+      "new": "    if (0) {",
+      "old": "    if (e.required) {",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "C envelope: the CRC is not checked",
+      "new": "",
+      "old": "  if (rd32(data + size - BCIR_TEV_CRC) != bcir_crc32(data, size - BCIR_TEV_CRC)) return BCIR_ERR_CRC;\n",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "C envelope: session 0 is accepted",
+      "new": "  if (e->source == 0u) return BCIR_ERR_TELEMETRY;",
+      "old": "  if (e->source == 0u || e->session == 0u) return BCIR_ERR_TELEMETRY;",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "ring.abi.mismatches",
+      "label": "C signal table: a row carries the provenance code where the cost dimension belongs",
+      "new": "  out[10] = def->provenance;",
+      "old": "  out[10] = def->cost_dim;",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "ring.torn.delivered",
+      "label": "oracle ring: the seqlock re-check is gone",
+      "new": "",
+      "old": "        if _load(region, base + SLOT_SEQ) != seq:\n            return self._lose(q, 1) if overwrite else _refused(\"BCIR_ERR_RING\", q)\n",
+      "path": "bcir/gem/ring.py"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "oracle ring: a control ring whose slot cannot carry the control record bound is formatted",
+      "new": "",
+      "old": "    if g.payload == \"control\" and g.slot_size < CONTROL_SLOT_MIN:\n        raise fail(\n            f\"a control ring carries every legal control record: slot_size >= {CONTROL_SLOT_MIN}\"\n        )\n",
+      "path": "bcir/gem/ring.py"
+    },
+    {
+      "expects": "ring.sequence.misreported",
+      "label": "oracle continuity: a gap is counted one record too many",
+      "new": "            self.missing += delta\n",
+      "old": "            self.missing += delta - 1\n",
+      "path": "bcir/telemetry.py"
+    },
+    {
+      "expects": "ring.stale.accepted",
+      "label": "oracle intake: telemetry of a generation the plane has left is accepted",
+      "new": "            if False:",
+      "old": "            if is_stale(env.generation, self.live_generation):",
+      "path": "bcir/telemetry_intake.py"
+    },
+    {
+      "expects": "ring.malformed.accepted",
+      "label": "oracle envelope: the CRC is not checked",
+      "new": "    if False:",
+      "old": "    if zlib.crc32(data[: size - ENVELOPE_CRC_SIZE]) & 0xFFFFFFFF != crc:",
+      "path": "bcir/abi/telemetry_envelope.py"
+    },
+    {
+      "expects": "ring.control.divergent",
+      "label": "the control transport flips a byte of every record it carries",
+      "new": "        return read.payload[:-1] + bytes([read.payload[-1] ^ 1])\n",
+      "old": "        return read.payload\n",
+      "path": "bcir/tests/ring_fixtures.py"
+    }
+  ]
+}

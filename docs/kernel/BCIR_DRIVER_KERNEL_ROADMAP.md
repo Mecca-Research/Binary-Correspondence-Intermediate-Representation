@@ -64,7 +64,7 @@ designed elsewhere but must not be described as operational.
 | Raw-byte model ingest selection | **Landed planning contract** | `ByteIngestProfile` selects host/device only from measured launch/per-byte costs, chunk/pool capacity, and exact round-trip evidence. No CUDA Unicode/byte provider, pinned pool, asynchronous transfer, DMA bypass, or kernel binding exists |
 | Event and DMA IR substrate | **Landed** | EV1–EV3 event phases on both rails and descriptor generation from `StridedView` pairs |
 | Shared learned-optimization mechanism | **Landed** | Frozen Q8 tile/channel priors and certificates proving guided selection agrees with exhaustive selection |
-| Telemetry registry, codecs, and calibration | **Partially landed** | Stable Python signal IDs/units/metric semantics, strict BTLM framing, quiescent ring snapshots, integrity witnesses, metrics, serialization, calibration, replay, and portfolio gates exist. The driver envelope, live concurrent ring, generated C signal table, and transports do not |
+| Telemetry registry, codecs, and calibration | **Partially landed** | Stable Python signal IDs/units/metric semantics, strict BTLM framing, quiescent ring snapshots, integrity witnesses, metrics, serialization, calibration, replay, and portfolio gates exist; the version-zero triple — the generated C signal table, TelemetryEnvelopeV0 with its host intake, and the live SPSC ring — landed with Python/C parity in S3-B. Transports (UART, HTTP, OTLP, Redfish) do not exist |
 | RuntimeChannel v1 direct ABI | **Landed baseline** | Allocation-free append-only hook table plus resident loopback reference; no real hardware binding yet |
 | Pre-driver hardening H1–H5 | **H1–H4 landed; H5 split** | CI sanitizer/fuzz wiring, Area-B red-team, asm/port-I/O malformed-input tests, and convergence gates exist. JVM/CIL honesty is execution-tested; the direct WASM byte encoder remains deliberately gated |
 | x86 boot/interrupt asm edge | **Partial foundation landed** | Typed long-mode entry, `lgdt`/`lidt`/`ltr`, segment reload, and an ordinary interrupt trampoline with a fixed 176-byte C frame lower to real object code. Reset-mode switching and paranoid NMI/IST entry remain absent |
@@ -319,16 +319,18 @@ The existing surfaces have separate scopes:
 | Surface | Current contract | Boundary |
 |---|---|---|
 | StreamPack BSPK | Immutable executable plan | Never telemetry or IPC |
-| Signal registry | Python taxonomy with unique built-in IDs 1–15 and explicit unit/kind/temporality | Generate the fixed-width C table and ID-range policy before D2 |
+| Signal registry | Python taxonomy with unique built-in IDs 1–15 and explicit unit/kind/temporality; the generated v0 C table and ID-range policy ([`TELEMETRY_ENVELOPE_ABI.md`](TELEMETRY_ENVELOPE_ABI.md)) | Revise the v0 row from UART/virtio evidence |
 | BTLM v1 | Frozen, strict DataDNA UART frame for one externally separated producer stream, with frame-continuity evidence | No source/session/generation/clock identity; do not retrofit reserved bytes |
 | Shared ring v1 | Bounds-checked quiescent snapshot; long monotonic heads are valid | Not live-safe: no tail/generation/per-slot publish/loss/backpressure contract |
+| TelemetryEnvelopeV0 + live ring v0 | Source/session/generation/clock/loss identity; SPSC head/tail, per-slot sequence, backpressure or overwrite, exact loss accounting, takeover ([`BCIR_LIVE_RING_ABI.md`](BCIR_LIVE_RING_ABI.md)) | Version zero until UART and virtio-blk traces |
 | Hosted exporters | Prometheus text and OTLP/Redfish JSON shapes | No HTTP, protobuf, gRPC, UART, or BMC transport |
 
 Before any real driver enters D2, land version-zero Python/C parity for (1) the generated signal
 definition table, (2) a source/session/generation/clock-aware driver telemetry envelope, and (3) a
 live SPSC ring with explicit head/tail, acquire/release publication, per-slot sequence/generation,
-full/drop/overwrite policy, peer-death behavior, and loss counters. These structures remain
-experimental until UART and virtio-blk traces prove both device classes. New fields are append-only
+full/drop/overwrite policy, peer-death behavior, and loss counters. **All three landed in S3-B**
+([`TELEMETRY_ENVELOPE_ABI.md`](TELEMETRY_ENVELOPE_ABI.md), [`BCIR_LIVE_RING_ABI.md`](BCIR_LIVE_RING_ABI.md)).
+These structures remain experimental until UART and virtio-blk traces prove both device classes. New fields are append-only
 or versioned; unknown required fields fail closed.
 
 Training corpora and promotion reports must retain raw episode hashes and transformations. A model
@@ -590,8 +592,8 @@ Before that point, experimental structures carry version zero and make no compat
 artifact format (as `ExecutionPlanV1` is), and a future `ioctl` or IPC adapter marshals its
 values rather than exposing it.
 The version-zero signal table, telemetry envelope, and live SPSC ring land **before** the first D2
-driver so implementation traces exercise an explicit ABI; their field set is revised from UART and
-virtio evidence before the v1 freeze.
+driver so implementation traces exercise an explicit ABI — they did, in S3-B — and their field set
+is revised from UART and virtio evidence before the v1 freeze.
 Once v1 is published, incompatible semantics require a new version; structure growth alone uses
 the append-only `struct_size` convention.
 
@@ -649,8 +651,10 @@ Native IPC v1 freezes only after direct, Linux-adapter, and native traces agree 
 virtio-blk. No fixed 64-byte submission record or general MPMC queue is committed before those
 measurements. The control *messages* above now exist as a BCIR artifact format —
 [`ControlRecordV1`](BCIR_CONTROL_PLANE_ABI.md): type, length, flags, sequence, generation,
-capability and integrity metadata, 192 bytes at most — and the live SPSC ring (GEM+ G15) will
-carry them second, after telemetry; neither commits the IPC transport or its record sizes.
+capability and integrity metadata, 192 bytes at most — and the live SPSC ring (GEM+ G15,
+[`BCIR_LIVE_RING_ABI.md`](BCIR_LIVE_RING_ABI.md)) carries them second, after telemetry, on a
+BACKPRESSURE ring whose 256-byte slots hold any legal record; neither commits the native IPC
+transport or its record sizes.
 
 ### 7.5 JIT microkernel and Linux-instance generation
 

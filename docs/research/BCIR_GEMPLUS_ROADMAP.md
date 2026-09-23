@@ -733,9 +733,9 @@ a transport (G15 carries these records; a boundary here is a function call); a s
 (HMAC under a shared root key proves possession of the key); capability enforcement beyond the
 record; replay protection beyond sequences, the `expect` witness and lease ids that never recur.
 
-### G15 — the live shared ring
+### G15 — the live shared ring — LANDED (S3-B, 2026-09-23)
 
-*New, Stage 3. The telemetry frame is frozen and byte-identical; the transport under it is not
+*New, Stage 3. The telemetry frame was frozen and byte-identical; the transport under it was not
 built.*
 
 A single-producer/single-consumer shared ring with head/tail, acquire/release publication,
@@ -744,11 +744,42 @@ accounting — the "version-zero triple" of the 2026-09-03 analysis — carrying
 first and G14 control records second, with restart, stale-generation, wrap, saturation and
 peer-death tests on both rails.
 
-| Gate | Target |
-|---|---|
-| `exact` `ring.loss.accounting` | records lost to overwrite are counted exactly; a consumer that falls behind sees the count, never a torn record |
-| `exact` Sequence continuity | gaps, reorders and duplicates are reported as the frame ABI already does for frames |
-| `ratio` `ring.throughput` | records per second against a `memcpy` floor of the same bytes, indicative on shared hosts |
+| Gate | Target | Outcome (S3-B) |
+|---|---|---|
+| `exact` `ring.loss.accounting` | records lost to overwrite are counted exactly; a consumer that falls behind sees the count, never a torn record | **met** — `ring.loss.unaccounted` 140 → 0 and `ring.torn.delivered` 140 → 0 over 70 scripted scenarios on both rails; on the parent a reader a lap behind received the survivors and no count, and a slot read mid-rewrite came back with the fields of two records and no error. The concurrent runs (threads; processes with a peer SIGKILLed and taken over) end with nothing torn or unaccounted (`ring.concurrent.violations` 6 → 0), race-free under ThreadSanitizer |
+| `exact` Sequence continuity | gaps, reorders and duplicates are reported as the frame ABI already does for frames | **met** — `ring.sequence.misreported` 22 → 0: the intake and the BTLM decoder express one predicate (`SequenceTracker`; the frame decoder's counts unchanged over 20,000 random streams) |
+| `ratio` `ring.throughput` | records per second against a `memcpy` floor of the same bytes, indicative on shared hosts | **measured** — 26× on the reference host (the baseline, the slice's first measurement; 26–31× across runs), against ~15× for a minimal unchecked Lamport queue moving the same bytes there: the ring pays one cross-core line transfer per record that `memcpy` never pays. INDICATIVE (host-dependent) |
+
+What landed (S3-B): the version-zero triple. **TelemetryEnvelopeV0**
+([`TELEMETRY_ENVELOPE_ABI.md`](../kernel/TELEMETRY_ENVELOPE_ABI.md)) — a 64-byte header carrying
+source, session, generation, signal, sequence, the producer's own loss count and a clock with its
+unit, a fixed payload per kind (a sample, or the frozen DataDNA record) and a CRC; wire laws in one
+order on both rails, one spelling per record. **The generated signal table** — every built-in
+registry definition as a 64-byte row, `runtime/c/bcir_signal_table.h` generated and drift-checked,
+the BCIR/vendor/device ID ranges and the unknown-required-signal law. **The host intake** — the
+wire laws, a bounded stream table, continuity classified before any refusal, unknown signals and
+stale generations refused (`is_stale`, G14's predicate). **The live ring**
+([`BCIR_LIVE_RING_ABI.md`](../kernel/BCIR_LIVE_RING_ABI.md)) — a region of seven one-writer
+cache lines and `slot_count` slots: a per-slot seqlock under acquire/release publication,
+BACKPRESSURE (refuse and count) or OVERWRITE (lose and count, exactly), double-buffered
+accounting, and epochs with takeover of a peer proved dead; CONTROL rings are BACKPRESSURE with
+slots that carry the control record's declared bound, and the 52 G14 scenarios decide identically
+through one (`ring.control.divergent` 104 → 0). `bcir/gem/ring.py` is the oracle,
+`runtime/c/bcir_ring.{h,c}` the freestanding C11 twin; four statuses appended
+(`BCIR_ERR_TELEMETRY` 19, `_RING` 20, `_FULL` 21, `_BUSY` 22). Every scripted scenario decides
+identically on both rails down to the region's bytes after every operation
+(`ring.traces.divergent` 70 → 0), every malformed region and envelope is refused with its
+declared status (`ring.malformed.accepted` 112 → 0), stale epochs and generations are refused
+(`ring.stale.accepted` 10 → 0), and the table and corpus are byte-identical on both rails
+(`ring.abi.mismatches` 29 → 0). The C gate adds ThreadSanitizer (and the race it must report
+when the atomics are made plain), the seqlock-removed mutant it must fail, -O0 == -O3 == the
+oracle, and a libFuzzer target over hostile and honest regions; a committed fault table injects
+22 defects across both rails and every one is caught by its own row. The lease-key cache G14 deferred
+landed with it (a lease's key derived once at the grant; leased records now verify as fast as
+root-key ones). No MLIR source, no ASN.1 module and no BCAB kind: version zero carries no
+compatibility promise. Not claimed: MPSC; death detection (a takeover needs the embedding's
+proof); blocking or wake-up; authentication of what the ring carries; a transport beyond one host;
+any v1 freeze before the UART and virtio-blk traces.
 
 ### G16 — data-plane hand-off
 
@@ -860,7 +891,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
                                            G7   native measurement repair          <- LANDED (S0-F)
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
-Stage 3  IPC at every level                G14 → G15 → G16                  LANDED: G14 (S3-A); next G15 (S3-B)
+Stage 3  IPC at every level                G14 → G15 → G16                  LANDED: G14 (S3-A); G15 (S3-B); next G16 (S3-C)
 Stage 4  performance program               G17, G18
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
@@ -888,8 +919,9 @@ declared fact, not to reimplement the pass.
 - **No optimality claim on a row with no lower bound.** Five rows are in that state today and
   they are listed in §0.3 rather than quietly graded.
 - **No sublinear claim on an Ω(n) operation** without naming the admitted work that changed.
-- **No IPC claim beyond the loopback/simulator** until a device or a second process runs the
-  contract; the node level stays a declared stub until a cluster exists.
+- **No IPC claim beyond one host.** Since G15 a second process runs the ring's contract over a
+  shared mapping (and is SIGKILLed and taken over); a device has not, and the node level stays
+  a declared stub until a cluster exists.
 - **No cached or incremental result above TMSAO-4** unless its invalidation predicate is in the
   scope and the incremental verifier has been proved equal to the full one.
 
@@ -916,6 +948,8 @@ no PMU):
 | `native.*` (four rows) | G6 | 5.58× / 11.68× / 1.27× / 0.98–1.01× (the report's host) | 4.44× / 15.56× / 1.314× / 1.004× on this host (S2-D), A/B against the parent 4.53× / 15.00× / 1.315× / 1.003× | no regression — measured through `bcir.bench` on a `virtualized` host: a guardrail, not a silicon certificate. Host-dependent, so INDICATIVE off the baseline host and read as the same-host A/B |
 | `scope.workload.collisions` / `replay.subset.admitted` / `dispatch.measured.unavailable` | G13 | 36 / 24 / 12 (the parent tree) | **0 / 0 / 0** (S2-E, 2026-09-13) | GAIN, at the bound — `W` in every certificate's scope, a corpus certificate covers the log or is refused, the measured rail runs over evidence; every measured certificate on this `virtualized` host is TMSAO-4 by the two-target rule |
 | `control.abi.mismatches` / `control.malformed.accepted` / `control.stale.accepted` / `control.deferred.lost` / `control.decisions.nonconforming` / `control.traces.divergent` | G14 | 29 / 82 / 25 / 16 / 64 / 52 (the parent tree) | **0 / 0 / 0 / 0 / 0 / 0** (S3-A, 2026-09-23) | GAIN, at the bound — the control plane has bytes: every record survives the C twin, every wire law refuses on both rails with one status, stale generations are refused at every boundary, a mid-phase switch is deferred and decided exactly once, and the two rails' traces are identical to the state digest |
+| `ring.abi.mismatches` / `ring.malformed.accepted` / `ring.loss.unaccounted` / `ring.torn.delivered` / `ring.sequence.misreported` / `ring.stale.accepted` / `ring.traces.divergent` / `ring.control.divergent` / `ring.concurrent.violations` | G15 | 29 / 112 / 140 / 140 / 22 / 10 / 70 / 104 / 6 (the parent tree) | **0 / 0 / 0 / 0 / 0 / 0 / 0 / 0 / 0** (S3-B, 2026-09-23) | GAIN, at the bound — the transport has bytes and laws: nothing torn, nothing unaccounted, continuity as the frame ABI reports it, stale epochs and generations refused, the two rails identical to the region's bytes, and the same with the peers truly concurrent and dying |
+| `ring.throughput` | G15 | 26× (the slice's first measurement, the reference host) | 26–31× across runs on that host | INDICATIVE — host-dependent: two threads hand a 124-byte envelope across cores against one thread's `memcpy`; a minimal unchecked queue measures ~15× there |
 | `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
 
 Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail; since S2-E the

@@ -397,9 +397,12 @@ static void consume(bcir_ctl_state *s, const bcir_ctl_record *r, bcir_ctl_lease_
 static void apply(bcir_ctl_state *s, const bcir_ctl_record *r, const uint8_t *data, size_t len) {
   switch (r->hdr.kind) {
     case BCIR_CTL_LEASE: {
-      uint32_t kept = 0;
-      for (uint32_t i = 0; i < s->n_leases && i < BCIR_CTL_LEASE_CAPACITY; ++i)
+      uint32_t kept = 0, before = s->n_leases < BCIR_CTL_LEASE_CAPACITY ? s->n_leases
+                                                                         : BCIR_CTL_LEASE_CAPACITY;
+      for (uint32_t i = 0; i < before; ++i)
         if (s->leases[i].expiry > s->boundary) s->leases[kept++] = s->leases[i];
+      for (uint32_t i = kept; i < before; ++i) /* a lease that left takes its key with it */
+        wipe((uint8_t *)&s->leases[i], sizeof(s->leases[i]));
       s->n_leases = kept;
       if (kept < BCIR_CTL_LEASE_CAPACITY) {  /* held by the `full` law; checked totally */
         bcir_ctl_lease_entry *e = &s->leases[kept];
@@ -409,6 +412,10 @@ static void apply(bcir_ctl_state *s, const bcir_ctl_record *r, const uint8_t *da
         e->expiry = r->body.lease.expiry_epoch;
         e->holder = r->body.lease.holder;
         e->last_sequence = 0u;
+        /* the key the holder MACs with, derived once; a failure leaves it zero, which no MAC
+         * matches (fail closed) */
+        if (bcir_ctl_lease_key(s->key, s->key_len, e->lease_id, e->key) != BCIR_OK)
+          wipe(e->key, sizeof(e->key));
         s->n_leases = kept + 1u;
       }
       s->last_lease_id = r->body.lease.lease_id;
@@ -457,12 +464,9 @@ bcir_ctl_outcome bcir_ctl_submit(bcir_ctl_state *BCIR_RESTRICT state,
   if (s->key_len < BCIR_CTL_KEY_MIN || s->key_len > BCIR_CTL_KEY_MAX)
     return outcome(s, BCIR_CTL_REFUSED, BCIR_CTL_REFUSAL_MAC, &r, BCIR_ERR_MAC);
   if (r.hdr.lease != 0u) {
-    uint8_t key[32];
     entry = find_lease(s, r.hdr.lease);
     if (!entry) return outcome(s, BCIR_CTL_REFUSED, BCIR_CTL_REFUSAL_LEASE, &r, BCIR_OK);
-    authentic = bcir_ctl_lease_key(s->key, s->key_len, r.hdr.lease, key) == BCIR_OK &&
-                mac_matches(data, len, key, sizeof(key));
-    wipe(key, sizeof(key));
+    authentic = mac_matches(data, len, entry->key, sizeof(entry->key));
   } else {
     authentic = mac_matches(data, len, s->key, s->key_len);
   }

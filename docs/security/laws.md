@@ -74,6 +74,13 @@ Review instance (#761, 2026-09-05):
 (`[]` and `null` are valid JSON; the ODS→IRDL inventory gate dereferenced
 the decoded root and raised `AttributeError` in place of its verdict, with
 no `--json-out` report and no exit code).
+S3-B instance (2026-09-23): the G15 grading function (`ring_fixtures.measure`)
+raised `FileNotFoundError` when the harness it was handed did not exist, and let
+any exception but the codec's own escape -- a traceback where nine rows belonged.
+Every rail call is now a count (a rail that raises, or prints what cannot be
+parsed, fails every fixture it was handed), and `tools/c/check_ring.py` exits 0,
+1 or 2 (UNAVAILABLE, never a pass); the C gate refuses to score a mutant it could
+not grade as a catch.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -275,6 +282,20 @@ state-digest comparison caught the one no verdict saw (a digest that dropped
 the drain flag: 52 divergent traces, every decision still conforming). The C
 tests fail closed in a checkout: a missing harness source is a failure, never
 a skip.
+S3-B instance (2026-09-23): the G15 rows' evidence that they can fire is
+committed, not narrated: `tools/testing/faults/ring.json` injects 22 defects,
+each one law on one rail -- the seqlock re-check, the lap count, the full ring,
+the epoch law, a deposed producer, the takeover repair, the progress
+publication, the geometry CRC and the control-slot law; the envelope's CRC and
+session law, the gap count, the stale generation and the unknown REQUIRED
+signal; the table's bytes; the control transport -- and `red_sweep.py` saw all
+22 fire their own row (a green control first; every injection and restore
+proved by digest). ThreadSanitizer is held to the same standard: the C gate
+makes the relaxed atomic stores plain and requires a race REPORT, not merely a
+failure. Its absence has an owner: the x86 C runtime job installs the TSan
+runtime and sets `BCIR_REQUIRE_TSAN=1`, so there an unavailable TSan fails,
+while a runner without it (the aarch64 job) prints an explicit skip -- all three
+branches (available, absent, absent-but-required) driven before landing.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -717,6 +738,17 @@ the registry digest hashes the generation vector's own wire bytes, so the
 StreamPack and plan readers feed one walk; and the closed sets (kinds, scopes,
 refusals, capabilities, the record bound) are read out of the C header by the
 tests, not mirrored into a third list.
+S3-B instance (2026-09-23): telemetry continuity is ONE predicate,
+`telemetry.SequenceTracker` (C: `bcir_seq_observe`), which the BTLM stream
+decoder and the envelope intake both express -- and the refactor is
+behaviour-identical to the decoder's own copy over 20,000 random streams across
+the 2**31 boundary. The intake's stale-generation law is G14's `is_stale`, not a
+third spelling. The G15 rows are graded by one function behind one entry point,
+`tools/c/check_ring.py`, which the C gate and the fault table both call where the
+gate had carried a copy of its own. The ring's shared constants are read out of
+`bcir_ring.h` by the tests, and the control slot is derived from the record ABI's
+bound and held to it on both rails (a test, and a `_Static_assert` where the two
+headers meet).
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -906,6 +938,17 @@ rail), the corpus's `addr.i32_under_arm64_32` and `addr.i32_under_riscv32`
 (a legal address per tabulated width class),
 `verify_plan_annotations.mlir` `@plan_ok` (the plan the planner emits is
 accepted before four corruptions are refused).
+S3-B instance (2026-09-23): S3-A declared the control record bound, 192 bytes, as
+"the slot stride G15's ring may adopt" -- but a ring slot spends 24 bytes on its
+header, so a 192-byte slot carries 168: a record of the bound was a legal case no
+such ring could admit (every v1 kind fits, which is why nothing failed). The
+geometry law now refuses a CONTROL ring below 256 bytes, and both halves have
+witnesses: `geometry-control-slot` (a 192-byte control ring refused on both rails)
+and `test_a_control_ring_carries_every_legal_control_record` (a record of the
+bound delivered). The slice's naming rule has its witness in one program:
+`test_the_live_ring_and_the_v1_ring_emitter_coexist_in_one_program` compiles,
+links and runs the v1 emitter's output beside the live ring, whose C API had
+claimed three of the names that emitter emits.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.
@@ -1048,6 +1091,16 @@ matching zero or two sites, a replacement identical to its anchor, a control run
 that is already red, and a restore that does not reproduce the original bytes.
 The committed fault tables under `tools/testing/faults/` are the standing
 evidence that the gates they name can fail.
+S3-B instance (2026-09-23): the RED simulation replaced each G15 entry point with
+one that raises, and its first version replaced `encode_envelope` in the module
+whose corpus builders also call it -- the "absent codec" fault broke the fixtures
+before any rail saw them, and the rows would have counted a harness error as a
+rail's failure. The corpora are now built before anything is patched, and the
+rows the fixture set did not touch reproduce exactly (29 / 22 / 10 / 104 / 6):
+that is the control. The slice's own mutation campaign first ran from a scratch
+script with no bytecode discipline; it is committed as
+`tools/testing/faults/ring.json` and run by the one harness that proves each
+injection landed.
 **Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
 same-size source edit, and any build system whose staleness test is coarser than
 content — timestamps, sizes, or a hash of the command line rather than of the

@@ -742,6 +742,37 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   proves it fires (the deferral law removed turns three rows red). Not claimed: the BCIR UAPI,
   a transport (G15), a signature scheme, capability enforcement beyond the record, replay
   protection beyond sequences, the witness and never-recurring lease ids.
+  S3-B (2026-09-23) landed G15, the live SPSC ring and the version-zero triple the driver
+  roadmap requires before any D2 driver. RED (measured on the parent, 83c6c015): the only shared
+  telemetry ring was the v1 snapshot -- eight records published into four slots handed a reader
+  a lap behind the four survivors and no loss count, and a slot read three fields into a rewrite
+  came back with the fields of two records and no error -- and no ring, envelope, generated
+  table or intake existed on either rail, so every fixture failed by absence (29 / 112 / 140 /
+  140 / 22 / 10 / 70 / 104 / 6 across the nine rows). What landed: `TelemetryEnvelopeV0` (source,
+  session, generation, signal, sequence, the producer's own loss count and a clock with its
+  unit; wire laws in one order on both rails, one spelling per record;
+  `docs/kernel/TELEMETRY_ENVELOPE_ABI.md`), the generated 64-byte-row signal table with the
+  BCIR/vendor/device ID ranges and the unknown-required-signal law, the host intake (a bounded
+  stream table; continuity classified before any refusal by `SequenceTracker`, which the BTLM
+  decoder now expresses too; stale generations refused by G14's `is_stale`), and the ring
+  (`bcir.gem.ring` and the freestanding C11 twin `bcir_ring.{h,c}`; seven one-writer cache
+  lines, a per-slot seqlock under acquire/release publication, BACKPRESSURE or OVERWRITE with
+  exact loss accounting, double-buffered accounting, epochs with takeover of a peer proved dead;
+  `docs/kernel/BCIR_LIVE_RING_ABI.md`), statuses 19-22 appended. Control records ride a
+  BACKPRESSURE control ring, identically on both rails for all 52 G14 scenarios. Outcomes: the
+  nine exact `ring.*` rows 0; `ring.throughput` 26x a `memcpy` of the same bytes on the
+  reference host (INDICATIVE; a minimal unchecked queue measures ~15x there), after the
+  one-writer-per-line layout moved a record from ~190-217 ns to ~127-153 ns. The C gate adds
+  ThreadSanitizer (and the race it must report once the atomics are made plain), the
+  seqlock-removed mutant it must fail, and -O0 == -O3 == the oracle; `tools/c/check_ring.py` is
+  the one grading entry point and `tools/testing/faults/ring.json` the committed fault table.
+  Found and fixed in the slice: the live ring's C API claimed three names the v1 emitter emits
+  (renamed while still version zero, with a one-program witness), and a 192-byte control slot
+  could not carry the control ABI's declared 192-byte bound (a CONTROL ring now needs 256-byte
+  slots). The lease-key cache G14 deferred landed with it: a lease's key is derived once at the
+  grant, and leased records verify as fast as root-key ones (C ~3.7 -> ~2.3 us). Not claimed:
+  MPSC, death detection, blocking or wake-up, authentication of what the ring carries, a
+  transport beyond one host, any freeze before the UART and virtio-blk traces.
 
 ---
 

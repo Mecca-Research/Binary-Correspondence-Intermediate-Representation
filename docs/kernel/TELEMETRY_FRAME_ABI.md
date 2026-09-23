@@ -87,7 +87,9 @@ scanning forward to the next `BTLM` magic:
 
 `FrameStream` also classifies recovered `seq` values as missing, reordered, or duplicate.
 The comparison is modulo 2³², so `0xffffffff → 0` is continuous. A reordered frame does
-not move the forward watermark backwards. Resynchronization is deliberately best effort:
+not move the forward watermark backwards. The predicate is `bcir.telemetry.SequenceTracker`
+— the one the [TelemetryEnvelopeV0](TELEMETRY_ENVELOPE_ABI.md) intake also expresses (S3-B;
+the frame decoder's counts are unchanged by it). Resynchronization is deliberately best effort:
 `BTLM` is only a four-byte anchor and may occur in corrupt payload bytes; every candidate
 still has to pass flags, bounds, version, and CRC before it is accepted, and false anchors
 may make the reject count larger than the number of originating frames.
@@ -127,12 +129,20 @@ record schema/kind, or producer loss counters. Consequently:
 - the reused shared-ring v1 is a quiescent-snapshot baseline, not a concurrent driver IPC
   ring (it has no tail, generation, per-slot publish sequence, or backpressure contract).
 
-The bytes above remain frozen. Before D2 resident drivers, the roadmap requires a new
-versioned **driver telemetry envelope**—not an in-place reinterpretation of BTLM v1—with
-source/session/generation, clock ID and unit, record kind/schema/size, stable numeric
-signal IDs, producer loss accounting, and explicit backpressure. The live shared ring
-must separately define SPSC head/tail, acquire/release publication, per-slot generation
-or sequence, peer-death/restart behavior, and concurrent wrap tests.
+The bytes above remain frozen. The pre-D2 extension the roadmap required has landed at
+**version zero** (GEM+ G15, staged plan S3-B) as new formats beside BTLM, not as an
+in-place reinterpretation of it:
+
+- [**TelemetryEnvelopeV0**](TELEMETRY_ENVELOPE_ABI.md) (`BTEV`) — source, session,
+  generation, clock ID and unit, record kind/schema/size, a stable numeric signal ID from the
+  **generated** C signal table, a sequence and the producer's own loss count; the host intake
+  refuses unknown required signals and stale generations;
+- the [**live SPSC ring**](BCIR_LIVE_RING_ABI.md) (`BRNG`) — head/tail, acquire/release
+  publication, a per-slot sequence, a declared backpressure or overwrite policy, exact loss
+  accounting, epochs with takeover on peer death, and concurrent wrap, saturation and
+  process-kill tests on both rails.
+
+Both carry no compatibility promise until the UART and virtio-blk traces revise them.
 
 ## Egress over UART (documented adapter, not built here)
 
