@@ -761,8 +761,10 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   `docs/kernel/BCIR_LIVE_RING_ABI.md`), statuses 19-22 appended. Control records ride a
   BACKPRESSURE control ring, identically on both rails for all 52 G14 scenarios. Outcomes: the
   nine exact `ring.*` rows 0; `ring.throughput` 26x a `memcpy` of the same bytes on the
-  reference host (INDICATIVE; a minimal unchecked queue measures ~15x there), after the
-  one-writer-per-line layout moved a record from ~190-217 ns to ~127-153 ns. The C gate adds
+  reference host (INDICATIVE, and dominated there by thread placement: ~13-49x pinned per vCPU
+  pair within one hour, a minimal unchecked queue ~1.1-6x -- so no ring change, including the
+  one-writer-per-line layout's early ~190-217 -> ~127-153 ns A/B, is attributable on that
+  host). The C gate adds
   ThreadSanitizer (and the race it must report once the atomics are made plain), the
   seqlock-removed mutant it must fail, and -O0 == -O3 == the oracle; `tools/c/check_ring.py` is
   the one grading entry point and `tools/testing/faults/ring.json` the committed fault table.

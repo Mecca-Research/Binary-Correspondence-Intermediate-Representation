@@ -1003,6 +1003,17 @@ above the floor; the trained student must not have collapsed).
 in `verify_retrieval.py` are the law's origin evidence, predating the finding
 by a rail. This law came from an experiment rather than an adversarial review
 round, so it does not move the staleness counter below.
+S3-B instance (2026-09-23): the live ring's throughput row was first published
+beside "a minimal unchecked queue measures ~15x -- the floor for any two-thread
+handoff here", a floor measured with the threads wherever the scheduler put them.
+Pinned to each vCPU pair of the same host within one hour, that floor read
+~1.1-6x and the ring ~13-49x (82-313 ns per record, `memcpy` steady at ~6.4 ns):
+the comparison had measured placement on both sides, and the "floor" was an
+artifact of it. A trivial solution is a floor only under the conditions of the
+number it bounds -- same placement, same host state -- and on a host that cannot
+hold those fixed (a virtualized 4-vCPU runner) the honest report is the range and
+the refusal to attribute, which is what the row, the ABI spec and the roadmap now
+say. The claim was retracted before the PR opened.
 **Port note:** every cost model, speedup ratio and calibration is an L23
 site. A plan's price is evidence only against the unfused serial plan; a
 kernel's timing only against the baseline it replaced; a coverage number

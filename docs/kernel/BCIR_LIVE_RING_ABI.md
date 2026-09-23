@@ -277,13 +277,17 @@ ring`).
 
 **Throughput.** `ring.throughput` is ring time per record over `memcpy` time per record, the same
 124-byte envelopes, two threads against one (`test_ring --bench`). On the reference host of this
-program (4 vCPU, virtualized, clang 18) the first measurement was **26×** (the baseline), and
-S3-B measures 26–31× there; a minimal unchecked Lamport queue moving the same 148 slot bytes
-measures ~15× on the same host — the floor for any two-thread handoff there, since each record
-pays a cross-core cache-line transfer that `memcpy` never pays. The layout's one-writer-per-line
-rule is what moved the ring from ~190–217 ns to ~127–153 ns per record; the remaining checks
-(heartbeats, the held test, the owner snapshot, the accounting commit) were each measured and none
-is separable from the host's noise. The row is host-dependent and INDICATIVE off the baseline host.
+program (4 vCPU, virtualized, clang 18) the first measurement was **26×** (the baseline). On that
+host the ratio is dominated by where the two threads land and when: unpinned runs read 24–44×,
+and runs pinned to each vCPU pair read ~13–49× within one hour (82–313 ns per record, `memcpy`
+steady at ~6.4 ns), while a minimal unchecked Lamport queue moving the same bytes read ~1.1–6×
+under the same pinning. The ring does cost more than an unchecked queue — the seqlock's two
+sequence writes and reads, the per-record accounting commit, the ownership checks — but this host
+cannot attribute that cost: back-to-back unpinned A/Bs early in the slice favoured the
+one-writer-per-line layout (~127–153 against ~190–217 ns per record), and every stripped variant
+since (no heartbeat, no held test, no owner snapshot, no accounting commit, whole-word payload
+copies) stayed inside the placement noise. The row is host-dependent and INDICATIVE; a faithful
+A/B needs pinned threads on isolated cores of an attested host (the G7 discipline).
 
 ## Relation to the other surfaces
 

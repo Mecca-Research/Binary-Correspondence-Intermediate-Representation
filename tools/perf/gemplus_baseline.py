@@ -878,10 +878,12 @@ METRICS: tuple[Metric, ...] = (
     # The G15 ratio: two threads streaming DataDNA envelopes (124 bytes) through a backpressure
     # ring against one thread memcpy-ing the same bytes. Not measurable on the parent (no ring), so
     # the baseline is the slice's first measurement on the reference host of this program (4 vCPU
-    # virtualized, clang 18; medians of 5): 26.0x -- the ring pays a cross-core cache-line transfer
-    # per slot that memcpy never pays. A minimal unchecked Lamport queue moving the same 148 slot
-    # bytes measured ~15x on the same host, which is the floor for any two-thread handoff there.
-    # host_dependent: the ratio measures the host's coherence latency, not only the code.
+    # virtualized, clang 18; medians of 5): 26.0x -- the ring pays cross-core cache-line transfers
+    # that memcpy never pays. On that host the ratio is dominated by where the two threads land:
+    # pinned per vCPU pair it ranged ~13-49x within the hour (a minimal unchecked Lamport queue
+    # moving the same bytes, ~1.1-6x), so the row is reported, never graded, and no code change is
+    # attributable to it there. host_dependent: it measures the host's placement and coherence
+    # latency, not only the code.
     Metric(
         "ring.throughput",
         "ring",
@@ -891,8 +893,7 @@ METRICS: tuple[Metric, ...] = (
         "x",
         "ratio",
         bound=1.0,
-        bound_source="the memcpy floor of the same bytes (a two-thread handoff cannot reach it; "
-        "the unchecked-queue floor on the reference host is ~15x)",
+        bound_source="the memcpy floor of the same bytes (a two-thread handoff cannot reach it)",
         slice_owner="G15",
         host_dependent=True,
     ),
