@@ -122,8 +122,9 @@ fresh one. v4 carries the generation of **every** declared resource:
   vector's maxima. A pack whose header and vector disagree, whose RIDs repeat or are out
   of order, or whose `n_gens` promises records the body does not carry is malformed
   (`AbiError` / `BCIR_ERR_GENERATION`, `BCIR_ERR_TRUNCATED`) on both rails before any
-  registry is consulted. `topo_gen` stays the constant `1`: topology identity is bound
-  through the plan's provenance manifest (`m_module`, R13), not through a pack tag.
+  registry is consulted. `gem.hydrate` writes `topo_gen` as the constant `1`: topology
+  identity is bound through the plan's provenance manifest (`m_module`, R13), not through a
+  pack tag. A frozen step (below) carries the live registry's value instead.
 - **Encoders emit the lowest carrying version**: a pack with an empty vector is
   byte-identical v1/v2/v3; `gem.hydrate` always emits the vector (`generation_vector`),
   so every hydrated pack is v4, and a hand-built pack without one stays v1–v3.
@@ -142,6 +143,24 @@ fresh one. v4 carries the generation of **every** declared resource:
 - Projected by the ASN.1 module as `generations [10] SEQUENCE OF Generation`
   ([`BCIR_ASN1_X690_ABI.md`](../BCIR_ASN1_X690_ABI.md) §3, projection version 2); the
   DER → native fast path re-derives v4 from the component's presence.
+- **Frozen steps (G16, S3-C).** The dynamic-graph builder's per-step freeze emits a v4 pack
+  bound to the live registry. The C side is `bcir_hydrate_generations`, and the oracle is
+  `handoff.freeze_claims`, byte-identical to it. The pack carries:
+  - the vector the builder is handed (RIDs strictly ascending, at least one);
+  - its maxima as the header tags;
+  - `topo_gen` set to the registry's, the value G14's generation record installs, so a pack
+    frozen under one topology is refused under the next;
+  - pipeline depth 1, and the v3 segment defaults.
+
+  A claim that touches a RID the vector does not declare is refused at the freeze
+  (`BCIR_ERR_PROVENANCE`). `bcir_hydrate` itself is unchanged, and its v1 bytes stay
+  byte-identical.
+- **The hydrated layout.** Every BCIR hydrator emits one trace record per segment in segment
+  order, and names each prefetch record once, in segment order. That layout is what lets a pack
+  shard into runnable sub-packs and a frame that reassemble to its bytes
+  ([`BCIR_SHARD_MANIFEST_ABI.md`](BCIR_SHARD_MANIFEST_ABI.md)). It is a property of the
+  hydrators, not a new wire law: a pack outside it is still a valid StreamPack, and it simply
+  does not shard.
 
 ## Semantic trust boundary (R10/R11 in C)
 

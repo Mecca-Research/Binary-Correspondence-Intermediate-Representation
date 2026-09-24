@@ -225,6 +225,12 @@ against a number a caller passed. The artifact's own verification runs first and
 passes through (`bcir_sp_verify_semantic`, `bcir_ep_verify`; on the oracle the StreamPack and plan
 decoders).
 
+The pack's vector digest is one predicate, `bcir_ctl_pack_registry_digest(data, len, out)`,
+added by S3-C. `bcir_ctl_admit_pack` uses it, and so do the shard manifest's encoder and
+reassembly ([`BCIR_SHARD_MANIFEST_ABI.md`](BCIR_SHARD_MANIFEST_ABI.md)). A manifest's
+`registry_digest` is therefore the same bytes that an admission compares, and it is not a second
+spelling (L14).
+
 ### The resident state digest
 
 `state_digest` / `bcir_ctl_state_digest` is SHA-256 over the canonical serialization of every
@@ -280,9 +286,20 @@ six rows are measured by one function the harness, the gate and the tests share
   ([`BCIR_LIVE_RING_ABI.md`](BCIR_LIVE_RING_ABI.md)): a CONTROL ring is BACKPRESSURE (a control
   record is never overwritten) with 256-byte slots (never unsendable), and all 52 scenarios
   decide identically through a live control ring as submitted directly, on both rails
-  (`ring.control.divergent`; `test_control_plane --via-ring`). **The data-plane hand-off (G16)** owns generation gating at the C++ `admit()` seam and
-  the invalidation of channel handles at a switch; this format supplies the resident state they
-  will read.
+  (`ring.control.divergent`; `test_control_plane --via-ring`).
+- **The data-plane hand-off (G16, landed S3-C)** reads the resident state
+  ([`BCIR_DATA_PLANE_HANDOFF.md`](BCIR_DATA_PLANE_HANDOFF.md)):
+  - the pack table admits through `bcir_ctl_admit_pack`, and records the resident generation
+    *and* registry digest;
+  - it dispatches only while both still hold, as a phase of the plane
+    (`bcir_ctl_enter`/`bcir_ctl_leave`), so a switch requested mid-dispatch lands at the
+    boundary;
+  - a shard manifest is gated against the installed registry before any shard is fetched.
+
+  The Stage 3 exit flow carries these records through a live control ring into a plane that
+  gates plan, pack, manifest and telemetry. After the switch, it offers the old generation at
+  every boundary and each refuses it. Invalidating RuntimeChannel handles and device mappings at
+  a switch stays open: the channel verbs do not yet read the plane.
 
 ## Versioning (the freeze)
 

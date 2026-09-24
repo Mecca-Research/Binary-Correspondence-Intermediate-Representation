@@ -195,6 +195,12 @@ BCIR_NODISCARD bcir_status bcir_ctl_lease_key(const uint8_t *BCIR_RESTRICT root,
 BCIR_NODISCARD bcir_status bcir_ctl_registry_digest(const bcir_generation_view *BCIR_RESTRICT vector,
                                                     size_t n, uint8_t out[32]);
 
+/* The same digest of a StreamPack's OWN vector, hashed in place (the pack's semantic laws are
+ * checked first; their status passes through, `out` untouched). The one computation the
+ * plane's pack admission and the shard manifest's registry binding (G16) both express. */
+BCIR_NODISCARD bcir_status bcir_ctl_pack_registry_digest(const uint8_t *BCIR_RESTRICT data,
+                                                         size_t len, uint8_t out[32]);
+
 /* The token an activation mints: SHA-256("BCTL/token/v1" || 0x00 || header || body) of a
  * verified activate record (its status passes through; BCIR_ERR_CONTROL for another kind).
  * Public by construction -- a binding of which activation a rollback undoes, not a secret. */

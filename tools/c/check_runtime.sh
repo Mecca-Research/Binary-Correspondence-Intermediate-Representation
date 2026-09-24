@@ -445,6 +445,73 @@ else
   echo "  SKIP live ring under ThreadSanitizer: UNAVAILABLE on this host (no TSan runtime); CI's x86 C runtime job requires it"
 fi
 
+echo "[c-runtime] data-plane hand-off (G16): freestanding pack table + shard manifest + per-step freeze + oracle/C traces"
+# bcir_handoff.h is the C twin of bcir/gem/handoff.py (a pack table whose handles carry an epoch:
+# a view that outlives its owner is refused; admission is the live control plane's predicate and
+# dispatch runs only what was admitted at the resident generation, as a phase of the plane),
+# bcir_shard_manifest.h of bcir/abi/shard_manifest.py (BSHM version zero: runnable shards and a
+# frame named by digest, reassembling to the whole pack's bytes) and bcir_hydrate_generations of
+# handoff.freeze_claims (the dynamic-graph builder's per-step freeze, bound to the live registry).
+# The same harness runs the Stage 3 exit flow (test_stage3.h): one generation through the control
+# ring, the plane, the pack table, the telemetry ring and the intake, and the old generation offered
+# at every boundary after the switch -- which is why the rings and the envelope codec link here.
+# The grading is tools/c/check_handoff.py -> bcir/tests/handoff_fixtures.py::measure, the function
+# the tests, the G16 harness rows, the C++ gate (tools/cpp/check_handoff.sh) and the fault table
+# (tools/testing/faults/handoff.json) use; this section grades the oracle and the C twin.
+for std in c11 c23; do
+  for unit in bcir_handoff.c bcir_shard_manifest.c bcir_hydrate.c; do
+    "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Wconversion -Wpedantic -Werror \
+      -I "${C}" -c "${C}/${unit}" -o /dev/null \
+      || { echo "  FAIL: ${unit} not freestanding-clean under -std=${std}"; exit 1; }
+  done
+done
+handoff_sources=("${C}/bcir_handoff.c" "${C}/bcir_shard_manifest.c" "${C}/bcir_hydrate.c" "${C}/bcir_plan.c" "${C}/bcir_control_plane.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/bcir_ring.c" "${C}/bcir_telemetry_envelope.c" "${C}/test_handoff.c")
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${handoff_sources[@]}" -o "${tmp}/test_handoff" \
+  || { echo "  FAIL: hand-off harness build"; exit 1; }
+handoff_api="$("${tmp}/test_handoff" --api)" \
+  || { echo "  FAIL: hand-off API laws"; echo "${handoff_api}"; exit 1; }
+case "${handoff_api}" in
+  OK\ *) ;;
+  *) echo "  FAIL: unexpected hand-off API output"; echo "${handoff_api}"; exit 1 ;;
+esac
+handoff_measure() {  # <C harness> -> prints the row summary; exits as tools/c/check_handoff.py does
+  python3 "${ROOT}/tools/c/check_handoff.py" --exe "$1" --no-cpp --tmp "${tmp}" \
+    > "${tmp}/handoff_rows.txt" 2>&1
+  local status=$?
+  tail -n 1 "${tmp}/handoff_rows.txt"
+  return "${status}"
+}
+handoff_rows="$(handoff_measure "${tmp}/test_handoff")" \
+  || { echo "  FAIL: a G16 row is not zero: ${handoff_rows}"; cat "${tmp}/handoff_rows.txt"; exit 1; }
+echo "  PASS data-plane hand-off (freestanding C11 + C23; API fail-closed laws, ${handoff_api#OK } checks; ${handoff_rows#rows })"
+# -O0 == -O3 == the oracle: the twin's traces, freeze bytes, split bytes and refusals do not depend
+# on the optimizer (a fast path that reads an uninitialized byte would diverge here first).
+"${CC}" -std=c23 -O0 -Wall -Wextra -Werror -I "${C}" "${handoff_sources[@]}" -o "${tmp}/test_handoff_o0" \
+  || { echo "  FAIL: -O0 hand-off harness build"; exit 1; }
+"${CC}" -std=c23 -O3 -Wall -Wextra -Werror -I "${C}" "${handoff_sources[@]}" -o "${tmp}/test_handoff_o3" \
+  || { echo "  FAIL: -O3 hand-off harness build"; exit 1; }
+for opt in o0 o3; do
+  opt_rows="$(handoff_measure "${tmp}/test_handoff_${opt}")" \
+    || { echo "  FAIL: the -${opt^^} hand-off harness diverges from the oracle: ${opt_rows}"; exit 1; }
+done
+echo "  PASS data-plane hand-off optimisation parity (-O0 == -O3 == the oracle)"
+# The gate must be able to fail (L2): a table that dispatches a pack admitted in a generation the
+# plane has left -- the admission's generation no longer re-checked at dispatch -- must turn a row
+# red. Built from the real source; if the law's line changes, the injection fails loudly.
+sed 's/if (s->admitted_generation != gen ||/if (0 \&\& (s->admitted_generation != gen) ||/' \
+  "${C}/bcir_handoff.c" > "${tmp}/bcir_handoff_mutant.c"
+if cmp -s "${C}/bcir_handoff.c" "${tmp}/bcir_handoff_mutant.c"; then
+  echo "  FAIL: the dispatch-generation fault injection did not apply (the law's line changed)"; exit 1
+fi
+mutant_handoff=("${tmp}/bcir_handoff_mutant.c" "${handoff_sources[@]:1}")
+"${CC}" -std=c23 -O2 -I "${C}" "${mutant_handoff[@]}" -o "${tmp}/test_handoff_mutant" \
+  || { echo "  FAIL: hand-off mutant harness build"; exit 1; }
+mutant_rows="$(handoff_measure "${tmp}/test_handoff_mutant")"; mutant_status=$?
+if [ "${mutant_status}" -ne 1 ]; then
+  echo "  FAIL: a table that dispatches across a generation switch passed the G16 gate (exit ${mutant_status}): ${mutant_rows}"; exit 1
+fi
+echo "  PASS hand-off gate fires on an injected fault (dispatch-generation law removed: ${mutant_rows#rows })"
+
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
 # bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,
 # resync-able telemetry transport (T2). The producer drains TelemetryRing and frames the 56-byte

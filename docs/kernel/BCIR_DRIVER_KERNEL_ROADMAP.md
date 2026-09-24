@@ -301,8 +301,17 @@ lease, generation, quiesce, activate, rollback and cancel as bounded, versioned 
 `bcir.gem.control.ControlPlane` and the freestanding `bcir_ctl_state` — decides each by its bytes:
 a switch requested mid-phase is deferred and applied once at the next quiescent boundary, a stale
 generation is refused, and packs and plans are admitted only against the installed registry.
-Invalidating live handles, mappings and peer views at the switch is the data-plane hand-off's
-(G16) work; the plane supplies the generation they read.
+
+Since the data-plane hand-off (G16, S3-C;
+[`BCIR_DATA_PLANE_HANDOFF.md`](BCIR_DATA_PLANE_HANDOFF.md)), an artifact crosses to its consumers
+through a freestanding pack table, in the driver memory class: handles plus offsets into the
+caller's storage, with no heap.
+- Its handles carry an epoch. A released artifact's handles and views are refused, and a slot is
+  never reused under a reader.
+- An admission is bound to the resident generation and the registry digest, so a switch makes
+  every admitted pack stale at its next dispatch.
+Invalidating RuntimeChannel handles and device mappings at the switch remains open: the channel
+verbs do not yet read the plane, and that wiring belongs with the first D2 driver.
 
 The minimum edge corpus for each driver covers zero/minimum/maximum sizes, misalignment, ring
 wraparound, queue saturation, stale generations, duplicate and missing events, cancellation races,

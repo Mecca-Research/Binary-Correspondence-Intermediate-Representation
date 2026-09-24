@@ -83,6 +83,8 @@ static const char *status_name(bcir_status s) {
     case BCIR_ERR_RING: return "BCIR_ERR_RING";
     case BCIR_ERR_FULL: return "BCIR_ERR_FULL";
     case BCIR_ERR_BUSY: return "BCIR_ERR_BUSY";
+    case BCIR_ERR_LIFETIME: return "BCIR_ERR_LIFETIME";
+    case BCIR_ERR_SHARD: return "BCIR_ERR_SHARD";
   }
   return "BCIR_ERR_UNKNOWN";
 }

@@ -143,7 +143,13 @@ implementation claim.
   SFT/preference/PPO/reasoning records, RM/DPO/PPO/reasoning/embedding objectives, three
   bounded non-LLM model families, and an append-only pipeline ledger. Recorded teacher and
   offline remote-compute adapters prove the provider-neutral boundary without a live API.
-- The C++ handoff has a small compiled single-node seam and explicit ownership rules.
+- The C++ handoff seam holds its contract at run time (G16, S3-C):
+  - artifacts are written once into a freestanding C pack table and read in place through
+    borrowed views, and a dead view is refused;
+  - admission is the live control plane's predicate;
+  - the dynamic-graph builder freezes each step through the C/IR rail;
+  - a graph too large for one pack travels as a BSHM manifest-of-shards that reassembles to its
+    bytes.
 
 ### Still open
 
@@ -153,8 +159,9 @@ implementation claim.
   long-context/device kernels, robust serving/evaluation, and physical accelerator qualification.
 - A freestanding whole-decoder profile with caller-owned memory if bare-metal deployment
   is required; the present standalone C decoder is hosted.
-- Real dynamic-graph and distributed MPI/NCCL orchestration. Current C++ backends beyond
-  the bounded seam are honest stubs and need suitable multi-node/device evidence.
+- Real distributed MPI/NCCL orchestration: cross-node dispatch and reduction are an honest
+  stub and need suitable multi-node evidence. The partition, shards, manifest and per-rank
+  admission are real, and the dynamic-graph backend is real.
 
 ## 7. Driver, kernel, telemetry, and IPC alignment
 

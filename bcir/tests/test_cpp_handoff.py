@@ -1,144 +1,86 @@
-"""The C<->C++ hand-off seam scaffold (`runtime/cpp/`): compile + round-trip identity.
+"""The C<->C++ hand-off seam (`runtime/cpp/`): the contract on real artifacts.
 
-The seam is the boundary between BCIR's deterministic single-node C/IR rail and the C++
-layer ABOVE it (dynamic graph topology + distributed MPI/NCCL orchestration); the contract
-is `docs/languages/CPP_HANDOFF_BOUNDARY.md`. This test exercises the REAL part of the scaffold: the
-`SingleNodeOrchestrator` consumes a StreamPack the existing C/IR path produces, re-enters
-the existing freestanding C decoder, and its dispatch order must equal the DIRECT C/IR
-decode of the same artifact (round-trip identity). The dynamic-graph + distributed backends
-are documented stubs (no real MPI/NCCL) and are not exercised here beyond their sharding.
+The seam is the boundary between BCIR's deterministic single-node C/IR rail and the C++ layer
+ABOVE it (dynamic graph topology, distributed orchestration); the contract is
+`docs/languages/CPP_HANDOFF_BOUNDARY.md`. Since G16 (S3-C) the artifact crosses as a borrowed
+view over the freestanding C pack table, admitted against the LIVE control plane. This module
+runs the seam's own harness (`runtime/cpp/test_orchestrator.cpp`) over artifacts the C/IR path
+produces and plane records the Python issuer mints (`handoff_fixtures.seam_artifacts`, the one
+minter `tools/cpp/check_handoff.sh` shares): the single-node dispatch equals the direct C walk,
+shards run by themselves and reassemble, a builder step freezes and runs, a switch makes the
+pack stale, a dead view is refused -- and a corrupted artifact is refused at admission while the
+same probe admits the clean one. The G16 rows proper are `test_handoff.py`.
 
-Toolchain-gated like the other C-runtime parity tests: the quick tier still checks the
-artifact the seam consumes is producible + decodable on the Python rail; the C++ compile +
-round-trip runs under c-runtime/thorough (where a C++ compiler is visible).
+The build is `handoff_fixtures.build_cpp_program`, the source list every C++ harness shares, so
+this module cannot drift from the gates (it did once: it kept the pre-G16 list and API). The
+quick tier still checks the artifact the seam consumes is producible and decodable; the C++
+build runs where both compilers are visible (c-runtime / thorough).
 """
 
 import os
-import shutil
-import subprocess
 import tempfile
 
-from bcir.abi import decode, encode
-from bcir.examples import multi_histogram, vector_add
-from bcir.gem import hydrate
-from bcir.kbcir import optimize
-from bcir.kbcir.cost import TargetProfile, Theta
+from bcir.abi import decode
+from bcir.tests import handoff_fixtures as hf
 
-_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_C = os.path.join(_ROOT, "runtime", "c")
-_CPP = os.path.join(_ROOT, "runtime", "cpp")
-_CXX = shutil.which("g++") or shutil.which("clang++") or shutil.which("c++")
-
-
-def _pack(module_fn) -> bytes:
-    m = module_fn()
-    r = optimize(m, TargetProfile.x86_avx512(), Theta.cool())
-    return encode(hydrate(m, r))
-
-
-def _build(d: str) -> str:
-    exe = os.path.join(d, "test_orch")
-    for std in ("c++17", "c++14"):
-        b = subprocess.run(
-            [
-                _CXX,
-                f"-std={std}",
-                "-O2",
-                "-Wall",
-                "-Wextra",
-                "-I",
-                _C,
-                os.path.join(_CPP, "bcir_orchestrator.cpp"),
-                os.path.join(_CPP, "test_orchestrator.cpp"),
-                os.path.join(_C, "bcir_runtime.c"),
-                "-o",
-                exe,
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if b.returncode == 0:
-            return exe
-    raise AssertionError(f"C++ hand-off scaffold build failed:\n{b.stderr}")
+_EXAMPLES = ("multi_histogram", "vector_add")
 
 
 def test_artifact_the_seam_consumes_is_producible_and_decodable():
-    """Quick-tier coverage (no compiler needed): the StreamPack the C++ seam consumes is
-    produced by the existing C/IR path and decodes on the Python rail -- the seam input
-    contract is well-formed independent of the C++ build."""
-    for fn in (multi_histogram, vector_add):
-        data = _pack(fn)
-        assert data[:4] == b"BSPK", "the hand-off artifact must be a StreamPack"
-        pack = decode(data)  # the Python rail decodes it (round-trippable artifact)
-        assert pack.segments, "a non-trivial artifact has segments to dispatch"
+    """Quick-tier coverage (no compiler needed): the StreamPack the C++ seam consumes is produced
+    by the existing C/IR path and decodes on the Python rail, and its plane records are the
+    three the harness boots from."""
+    for example in _EXAMPLES:
+        pack, plane = hf.seam_artifacts(example)
+        assert pack[:4] == b"BSPK", "the hand-off artifact must be a StreamPack"
+        assert decode(pack).segments, "a non-trivial artifact has segments to dispatch"
+        n, count = 0, 0
+        while n < len(plane):
+            n += 4 + int.from_bytes(plane[n : n + 4], "little")
+            count += 1
+        assert n == len(plane) and count == 3, "a grant and two generation switches"
 
 
-def test_single_node_orchestrator_round_trip_identity():
-    """The REAL seam: the C++ single-node Orchestrator's dispatch order == the direct C/IR
-    decode of the same artifact (round-trip identity), on two fixtures."""
-    if not _CXX:  # quick tier: deferred to where a C++ compiler is visible.
-        return
-    with tempfile.TemporaryDirectory() as d:
-        exe = _build(d)
-        for fn in (multi_histogram, vector_add):
-            pack_path = os.path.join(d, "pack.bin")
-            open(pack_path, "wb").write(_pack(fn))
-            r = subprocess.run([exe, pack_path], capture_output=True, text=True)
-            assert r.returncode == 0, f"seam round-trip failed: {r.stdout}{r.stderr}"
-            assert r.stdout.startswith("OK "), f"unexpected seam output: {r.stdout!r}"
+def _orchestrator(tmp: str) -> str | None:
+    return hf.build_cpp_program(
+        tmp, os.path.join(hf.CPP_DIR, "test_orchestrator.cpp"), "test_orchestrator"
+    )
 
 
-def test_corrupted_artifact_rejected_at_the_boundary():
-    """The two-truth quarantine across the seam: admit() carries the C/IR verifier's verdict
-    (it does not re-derive legality), so a corrupted artifact is rejected at the boundary."""
-    if not _CXX:
-        return
-    with tempfile.TemporaryDirectory() as d:
-        drv = os.path.join(d, "reject.cpp")
-        open(drv, "w").write(
-            "#include <cstdio>\n#include <cstdint>\n#include <vector>\n"
-            '#include "bcir_orchestrator.hpp"\n'
-            "int main(int c, char** v){ if(c<2) return 2;\n"
-            '  std::FILE* f=std::fopen(v[1],"rb"); if(!f) return 2;\n'
-            "  std::fseek(f,0,SEEK_END); long n=std::ftell(f); std::fseek(f,0,SEEK_SET);\n"
-            "  std::vector<std::uint8_t> b(n>0?(size_t)n:0);\n"
-            "  if(n>0 && std::fread(b.data(),1,b.size(),f)!=b.size()){std::fclose(f);return 2;}\n"
-            "  std::fclose(f);\n"
-            "  bcir::SingleNodeOrchestrator s;\n"
-            "  bcir_status st=s.admit(b.data(), b.size());\n"
-            "  return st==BCIR_OK ? 1 : 0; }\n"
-        )
-        exe = os.path.join(d, "reject")
-        built = False
-        for std in ("c++17", "c++14"):
-            b = subprocess.run(
-                [
-                    _CXX,
-                    f"-std={std}",
-                    "-O2",
-                    "-I",
-                    _C,
-                    "-I",
-                    _CPP,
-                    drv,
-                    os.path.join(_CPP, "bcir_orchestrator.cpp"),
-                    os.path.join(_C, "bcir_runtime.c"),
-                    "-o",
-                    exe,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if b.returncode == 0:
-                built = True
-                break
-        assert built, f"reject harness build failed:\n{b.stderr}"
-        # a clean pack admits (rc 1 from the probe == ADMITTED); a corrupted one is rejected (rc 0).
-        clean = os.path.join(d, "clean.bin")
-        open(clean, "wb").write(_pack(multi_histogram))
-        assert subprocess.run([exe, clean]).returncode == 1, "clean pack should admit"
-        bad = bytearray(open(clean, "rb").read())
-        bad[20] ^= 0xFF  # corrupt n_segments -> breaks the CRC
-        badp = os.path.join(d, "bad.bin")
-        open(badp, "wb").write(bad)
-        assert subprocess.run([exe, badp]).returncode == 0, "corrupted pack must be rejected"
+def _write(tmp: str, name: str, data: bytes) -> str:
+    path = os.path.join(tmp, name)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return path
+
+
+def test_the_seam_round_trips_and_holds_the_g16_contract():
+    """The REAL seam on two artifacts: admitted by the live plane, dispatch == the direct C walk,
+    shards by themselves, a frozen builder step, a switch, a dead view."""
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _orchestrator(tmp)
+        if exe is None:  # quick tier: deferred to where both compilers are visible
+            return
+        for example in _EXAMPLES:
+            pack, plane = hf.seam_artifacts(example)
+            run = hf._run([exe, _write(tmp, "pack.bin", pack), _write(tmp, "plane.bin", plane)])
+            assert run.returncode == 0, f"{example}: {run.stdout}{run.stderr}"
+            assert run.stdout.startswith("OK "), f"unexpected seam output: {run.stdout!r}"
+
+
+def test_a_corrupted_artifact_is_refused_at_admission_and_the_clean_one_admitted():
+    """The two-truth quarantine across the seam: admission carries the plane's verdict (it does
+    not re-derive legality), so a corrupted artifact is refused as malformed and never runs --
+    and the same probe admits the clean pack, or its refusal would prove nothing (L2)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = _orchestrator(tmp)
+        if exe is None:
+            return
+        pack, plane = hf.seam_artifacts("multi_histogram")
+        plane_path = _write(tmp, "plane.bin", plane)
+        clean = hf._run([exe, "--reject", _write(tmp, "clean.bin", pack), plane_path])
+        assert (clean.returncode, clean.stdout.strip()) == (1, "ADMITTED"), clean.stdout
+        bad = bytearray(pack)
+        bad[20] ^= 0xFF  # n_segments: the CRC no longer holds
+        rejected = hf._run([exe, "--reject", _write(tmp, "bad.bin", bytes(bad)), plane_path])
+        assert (rejected.returncode, rejected.stdout.strip()) == (0, "REJECTED"), rejected.stdout

@@ -86,9 +86,20 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
   libFuzzer+ASan/UBSan on every trust boundary. The model data plane includes the
   fully validating BCIRQ8 loader, standalone GQA decoder, native Q8 projections,
   byte-identical Q8/Q4 conversion, exact Q15 top-k, and the bounded C measurement twin.
-  `runtime/cpp/` is the small C↔C++
-  hand-off seam (single-node orchestrator real; dynamic/distributed backends honest
-  stubs — [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md)).
+  `runtime/cpp/` is the small C↔C++ hand-off seam, realized by G16 (S3-C):
+  - artifacts cross as borrowed views with an explicit lifetime over the freestanding C pack
+    table (`bcir_handoff.h`);
+  - admission is the live control plane's predicate, and dispatch runs in place, as a plane
+    phase;
+  - the single-node and dynamic-graph backends are real (`GraphBuilder` freezes each step
+    through `bcir_hydrate_generations` straight into a slot);
+  - the distributed backend's partition and BSHM manifest-of-shards are real, and only its
+    cross-node dispatch is an honest stub.
+
+  See [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md) and
+  [`BCIR_DATA_PLANE_HANDOFF.md`](kernel/BCIR_DATA_PLANE_HANDOFF.md). Stage 3's exit flow
+  carries one generation through the control ring, the plane, the pack table, the telemetry
+  ring and the intake, identically on the oracle, the C twin and the C++ seam.
 
 ## Confirmed strengths
 
@@ -248,8 +259,11 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
 5. The C compiler rail is a **subset** compiler: unsupported constructs route honestly
    to `--fallback` (LLVM); the road to a hosted C23 replacement is the ordinary
    hard-compiler work ([`BCIR_MASTER_ROADMAP.md`](BCIR_MASTER_ROADMAP.md) §4.1). `_Decimal*` is blocked on a
-   reference compiler that can compile it. `runtime/cpp/` dynamic-graph and
-   distributed orchestration are stubs pending multi-node hardware.
+   reference compiler that can compile it. `runtime/cpp/` distributed orchestration is
+   a stub pending multi-node hardware: its partition, shards and manifest are real, and its
+   cross-node dispatch and reduction are not. The dynamic-graph backend is real since G16.
+   The pack table lives in one address space, and a table shared across processes has not
+   been built.
 6. **Hosted model execution, HAM, and hardware RL are bounded references, not production stacks.**
    Distributed/data-parallel execution, the frozen 16K tokenizer, the canonical 32M run,
    byte-native or progressive scale training/export, large UniTok/Thunder construction,

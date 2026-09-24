@@ -269,6 +269,18 @@ bcir_status bcir_ctl_registry_digest(const bcir_generation_view *BCIR_RESTRICT v
   return BCIR_OK;
 }
 
+bcir_status bcir_ctl_pack_registry_digest(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                          uint8_t out[32]) {
+  bcir_sha256 h;
+  bcir_status st;
+  bcir_sha256_init(&h);
+  bcir_sha256_update(&h, REGISTRY_TAG, sizeof(REGISTRY_TAG));
+  st = bcir_sp_for_each_generation(data, len, feed_generation, &h);
+  if (st != BCIR_OK) return st;
+  bcir_sha256_final(&h, out);
+  return BCIR_OK;
+}
+
 static void token_of(const uint8_t *data, size_t len, uint8_t out[32]) {
   bcir_sha256 h;
   bcir_sha256_init(&h);
@@ -569,7 +581,6 @@ bcir_ctl_outcome bcir_ctl_advance(bcir_ctl_state *state) {
 bcir_ctl_outcome bcir_ctl_admit_pack(bcir_ctl_state *BCIR_RESTRICT state,
                                      const uint8_t *BCIR_RESTRICT data, size_t len) {
   bcir_streampack_header hdr;
-  bcir_sha256 h;
   uint8_t digest[32];
   bcir_status st;
   if (!state->has_registry)  /* nothing to prove the pack current against */
@@ -580,11 +591,8 @@ bcir_ctl_outcome bcir_ctl_admit_pack(bcir_ctl_state *BCIR_RESTRICT state,
   if (hdr.map_gen != state->reg_map_gen || hdr.data_gen != state->reg_data_gen ||
       hdr.topo_gen != state->reg_topo_gen)
     return outcome(state, BCIR_CTL_REFUSED, BCIR_CTL_REFUSAL_STALE, 0, BCIR_ERR_STALE);
-  bcir_sha256_init(&h);
-  bcir_sha256_update(&h, REGISTRY_TAG, sizeof(REGISTRY_TAG));
-  st = bcir_sp_for_each_generation(data, len, feed_generation, &h);
+  st = bcir_ctl_pack_registry_digest(data, len, digest);
   if (st != BCIR_OK) return outcome(state, BCIR_CTL_REFUSED, BCIR_CTL_REFUSAL_MALFORMED, 0, st);
-  bcir_sha256_final(&h, digest);
   if (!eq32(digest, state->reg_digest))  /* a resource moved under unchanged maxima, or no vector */
     return outcome(state, BCIR_CTL_REFUSED, BCIR_CTL_REFUSAL_STALE, 0, BCIR_ERR_STALE);
   return outcome(state, BCIR_CTL_APPLIED, BCIR_CTL_REFUSAL_NONE, 0, BCIR_OK);

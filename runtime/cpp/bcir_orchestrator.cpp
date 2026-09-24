@@ -1,160 +1,147 @@
-//===- bcir_orchestrator.cpp - the C<->C++ hand-off seam (scaffold) -------===//
+//===- bcir_orchestrator.cpp - the C<->C++ hand-off seam -------------------===//
 //
-// Implementation of the seam declared in bcir_orchestrator.hpp. See that header
-// and docs/languages/CPP_HANDOFF_BOUNDARY.md for the contract. The single-node backend is
-// REAL (it re-enters the existing freestanding C kernels); the dynamic-graph and
-// distributed backends are STUBS that document a real implementation but throw.
+// Implementation of the seam declared in bcir_orchestrator.hpp; the contract is
+// docs/languages/CPP_HANDOFF_BOUNDARY.md. Admission and dispatch go through the pack table
+// (bcir_handoff.hpp), so the lifetime and generation laws are the C twin's, not re-derived here.
 //===----------------------------------------------------------------------===//
 #include "bcir_orchestrator.hpp"
 
 namespace bcir {
 
-// ---------------------------------------------------------------------------
-// admit(): delegate legality to the C/IR rail's own verifier. The C++ side does
-// NOT re-derive an R-law verdict (the two-truth quarantine forbids it) -- it asks
-// the authority (bcir_sp_verify_semantic) and carries the verdict through.
-// ---------------------------------------------------------------------------
-bcir_status Orchestrator::admit(const std::uint8_t *data, std::size_t len,
-                                std::uint32_t expected_map_gen,
-                                std::uint32_t expected_data_gen) const {
-  if (data == nullptr)
-    return BCIR_ERR_TRUNCATED;
-  return bcir_sp_verify_semantic(data, len, expected_map_gen, expected_data_gen);
-}
-
-// ---------------------------------------------------------------------------
-// The re-entry: walk the artifact's segments through the EXISTING C decoder
-// (bcir_sp_for_each_segment in bcir_runtime.c) and collect claim_ids in dispatch
-// order. This is the single, shared "run it through the C kernels" primitive that
-// the single-node backend uses -- it is exactly the direct C/IR path, so its
-// output is identical to calling the C kernels directly (the round-trip identity).
-// ---------------------------------------------------------------------------
 namespace {
 
 // The per-segment callback handed to the C decoder. ctx is the order vector.
 extern "C" int collect_claim(const bcir_segment_view *seg, void *ctx) {
-  auto *order = static_cast<std::vector<std::uint64_t> *>(ctx);
-  order->push_back(seg->claim_id);
+  static_cast<std::vector<std::uint64_t> *>(ctx)->push_back(seg->claim_id);
   return 0; // 0 == keep walking
+}
+
+// The segment count of a live, well-formed artifact (0 for a dead view or a malformed pack: the
+// placement of nothing).
+std::uint32_t segments_of(const PackView &pack) {
+  Borrow b = pack.borrow();
+  bcir_streampack_header hdr{};
+  if (!b.ok() || bcir_sp_validate(b.data(), b.size(), &hdr) != BCIR_OK)
+    return 0;
+  return hdr.n_segments;
+}
+
+// The single-node re-entry: dispatch the admitted artifact through the table (which checks the
+// view, the admission and the plane) into the existing C walk.
+DispatchResult run_single(const PackView &pack, bcir_ctl_state &plane, unsigned max_retries) {
+  DispatchResult r;
+  r.nodes_used = 1;
+  r.shards = 1;
+  for (unsigned attempt = 0; attempt <= max_retries; ++attempt) {
+    r.claim_order.clear();
+    r.handoff = dispatch_view(pack, plane, &collect_claim, &r.claim_order);
+    // A refusal is a verdict about immutable bytes and a plane state: re-dispatching the same
+    // artifact cannot change it, so only a walk failure (none on a single node) would be retried.
+    if (r.handoff.ok() || r.handoff.refusal() != BCIR_HO_REFUSAL_WALK)
+      break;
+  }
+  r.status = r.handoff.status();
+  if (!r.handoff.ok())
+    r.claim_order.clear(); // a refused run yields no order
+  return r;
 }
 
 } // namespace
 
+HandoffResult Orchestrator::admit(const PackView &pack, bcir_ctl_state &plane) const {
+  return admit_view(pack, plane);
+}
+
 // --- SingleNodeOrchestrator (REAL) -----------------------------------------
 
-std::vector<Shard> SingleNodeOrchestrator::shard(const std::uint8_t *data, std::size_t len) const {
-  // Single node: one shard covering the whole pack. We read n_segments from the
-  // validated header so the shard range is real, not assumed.
-  bcir_streampack_header hdr{};
+std::vector<Shard> SingleNodeOrchestrator::shard(const PackView &pack) const {
   Shard s;
-  s.index = 0;
-  s.node = 0;
-  s.seg_begin = 0;
-  s.seg_end = (bcir_sp_validate(data, len, &hdr) == BCIR_OK) ? hdr.n_segments : 0;
+  s.seg_end = segments_of(pack);
   return {s};
 }
 
-DispatchResult SingleNodeOrchestrator::dispatch(const std::uint8_t *data, std::size_t len,
+DispatchResult SingleNodeOrchestrator::dispatch(const PackView &pack, bcir_ctl_state &plane,
                                                 unsigned max_retries) const {
-  DispatchResult r;
-  r.nodes_used = 1;
-  r.shards = 1;
+  return run_single(pack, plane, max_retries);
+}
 
-  // The single-node placement (one shard on node 0). We compute it so the contract
-  // surface is exercised even though the whole pack runs as one unit.
-  const std::vector<Shard> shards = shard(data, len);
-  r.shards = shards.size();
+// --- DynamicGraphOrchestrator (REAL) ---------------------------------------
 
-  // Re-enter the existing C kernels. Idempotence: the artifact bytes are immutable
-  // and the C walk is deterministic, so a retry recomputes the SAME order -- we may
-  // safely re-attempt on a (transient) failure without accumulating state. The
-  // single-node decoder has no transient faults, so this loop converges immediately;
-  // it demonstrates the retry contract the distributed backend would actually use.
-  bcir_status st = BCIR_OK;
-  for (unsigned attempt = 0; attempt <= max_retries; ++attempt) {
-    r.claim_order.clear();
-    st = bcir_sp_for_each_segment(data, len, &collect_claim, &r.claim_order);
-    if (st == BCIR_OK)
-      break; // success: stop retrying
-    // A real distributed retry would re-place the shard on a healthy node here.
-  }
-  r.status = st;
-  if (st != BCIR_OK)
-    r.claim_order.clear(); // a failed run yields no order
+std::vector<Shard> DynamicGraphOrchestrator::shard(const PackView &pack) const {
+  Shard s;
+  s.seg_end = segments_of(pack);
+  return {s};
+}
+
+DispatchResult DynamicGraphOrchestrator::dispatch(const PackView &pack, bcir_ctl_state &plane,
+                                                  unsigned max_retries) const {
+  return run_single(pack, plane, max_retries); // a frozen artifact is a frozen artifact
+}
+
+StepResult DynamicGraphOrchestrator::step(const GraphBuilder &graph, PackArena &arena,
+                                          const std::vector<bcir_generation_view> &registry,
+                                          std::uint32_t topo_gen, bcir_ctl_state &plane) const {
+  StepResult r;
+  PackOwner owner;
+  r.freeze = graph.freeze(arena, registry, topo_gen, owner);
+  if (!r.freeze.ok())
+    return r;
+  r.admission = admit(owner.view(), plane);
+  if (r.admission.ok())
+    r.dispatch = run_single(owner.view(), plane, 0);
+  r.release = owner.release(); // the step's artifact dies with the step
   return r;
 }
 
-// --- DynamicGraphOrchestrator (STUB) ---------------------------------------
+// --- DistributedOrchestrator (REAL partition and shards; STUB dispatch) -----
 
-std::vector<Shard> DynamicGraphOrchestrator::shard(const std::uint8_t *data,
-                                                   std::size_t len) const {
-  // A real dynamic-graph backend re-freezes a fresh claim-graph each step and hands
-  // the resulting StreamPack down. With no graph-builder built, sharding is the
-  // single-node placement of whatever frozen artifact it was given.
-  bcir_streampack_header hdr{};
-  Shard s;
-  s.seg_end = (bcir_sp_validate(data, len, &hdr) == BCIR_OK) ? hdr.n_segments : 0;
-  return {s};
-}
-
-DispatchResult DynamicGraphOrchestrator::dispatch(const std::uint8_t * /*data*/,
-                                                  std::size_t /*len*/,
-                                                  unsigned /*max_retries*/) const {
-  // NOT BUILT. A real implementation owns a mutable C++ graph-builder ABOVE the
-  // rail (RL node spawning / mixed-length token graphs), materializes a fresh
-  // claim-graph each step, FREEZES it to a StreamPack via the C/IR rail, then hands
-  // that immutable artifact through the single-node backend. We fail loudly rather
-  // than pretend, so the boundary stays honest.
-  throw HandoffError(
-      "DynamicGraphOrchestrator is a documented STUB: runtime graph topology lives "
-      "in C++ above the rail and freezes to a StreamPack; that builder is not built "
-      "(see docs/languages/CPP_HANDOFF_BOUNDARY.md). Use SingleNodeOrchestrator on a frozen "
-      "artifact.");
-}
-
-// --- DistributedOrchestrator (STUB; real sharding, stubbed dispatch) -------
-
-std::vector<Shard> DistributedOrchestrator::shard(const std::uint8_t *data, std::size_t len) const {
-  // The sharding LOGIC is real and testable with no cluster: partition the segment
-  // stream into `world_size` contiguous, balanced ranges -- exactly the placement a
-  // real MPI/NCCL run would hand to each rank. Only the cross-node DISPATCH needs
-  // hardware; the partition does not.
-  bcir_streampack_header hdr{};
-  std::uint32_t n = (bcir_sp_validate(data, len, &hdr) == BCIR_OK) ? hdr.n_segments : 0;
-  std::size_t world = world_size_ == 0 ? 1 : world_size_;
+std::vector<Shard> DistributedOrchestrator::shard(const PackView &pack) const {
+  const std::uint32_t n = segments_of(pack);
+  const std::uint32_t world =
+      world_size_ == 0
+          ? 1u
+          : (world_size_ > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<std::uint32_t>(world_size_));
+  std::vector<std::uint32_t> begins(BCIR_SHM_SHARDS_MAX), ends(BCIR_SHM_SHARDS_MAX);
+  std::uint32_t count = 0;
   std::vector<Shard> shards;
-  std::uint32_t per = (world > 0) ? static_cast<std::uint32_t>((n + world - 1) / world) : n;
-  std::uint32_t begin = 0;
-  for (std::size_t node = 0; node < world && begin < n; ++node) {
+  if (bcir_shm_partition(n, world, begins.data(), ends.data(), BCIR_SHM_SHARDS_MAX, &count) !=
+      BCIR_OK)
+    return shards; // past the manifest's shard bound: no placement
+  for (std::uint32_t i = 0; i < count; ++i) {
     Shard s;
-    s.index = node;
-    s.node = node;
-    s.seg_begin = begin;
-    s.seg_end = (begin + per < n) ? (begin + per) : n;
-    shards.push_back(s);
-    begin = s.seg_end;
-  }
-  if (shards.empty()) { // an empty/zero-segment pack still yields one (empty) shard
-    Shard s;
-    s.seg_begin = 0;
-    s.seg_end = 0;
+    s.index = i;
+    s.node = i;
+    s.seg_begin = begins[i];
+    s.seg_end = ends[i];
     shards.push_back(s);
   }
   return shards;
 }
 
-DispatchResult DistributedOrchestrator::dispatch(const std::uint8_t * /*data*/, std::size_t /*len*/,
+ShardSet DistributedOrchestrator::cut(const PackView &pack, PackArena &arena) const {
+  std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
+  for (const Shard &s : shard(pack))
+    ranges.emplace_back(s.seg_begin, s.seg_end);
+  if (ranges.empty()) {
+    ShardSet out;
+    out.result = HandoffResult::refused(BCIR_HO_REFUSAL_MALFORMED, BCIR_ERR_SHARD);
+    return out;
+  }
+  return cut_shards(pack, arena, ranges);
+}
+
+DispatchResult DistributedOrchestrator::dispatch(const PackView & /*pack*/,
+                                                 bcir_ctl_state & /*plane*/,
                                                  unsigned /*max_retries*/) const {
-  // NOT BUILT. A real implementation places each shard on a node (MPI rank / NCCL
-  // communicator), dispatches it into that node's local SingleNodeOrchestrator (the
-  // re-entry), reduces the per-shard results, and retries/replicates on a node
-  // failure. That requires a REAL MPI/NCCL dependency + multi-node hardware we
-  // deliberately do not add (it would be untested debt). We fail loudly.
+  // NOT BUILT. A real implementation ships the manifest and each shard to its rank (cut()),
+  // where the rank's SingleNodeOrchestrator admits and runs it, and reduces the per-shard
+  // results, retrying/replicating on a node failure. That needs a REAL MPI/NCCL dependency and
+  // multi-node hardware we deliberately do not add (untested debt). We fail loudly.
   throw HandoffError(
-      "DistributedOrchestrator is a documented STUB: cross-node dispatch needs "
+      "DistributedOrchestrator dispatch is a documented STUB: cross-node transport needs "
       "MPI/NCCL + a multi-node cluster, deliberately not added (see "
-      "docs/languages/CPP_HANDOFF_BOUNDARY.md). shard() is real; per-node re-entry runs the "
-      "existing SingleNodeOrchestrator on each rank.");
+      "docs/languages/CPP_HANDOFF_BOUNDARY.md). shard() and cut() are real; each rank runs "
+      "its shard through SingleNodeOrchestrator.");
 }
 
 // --- factory ---------------------------------------------------------------

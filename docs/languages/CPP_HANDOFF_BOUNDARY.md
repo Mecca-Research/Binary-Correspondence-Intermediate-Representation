@@ -1,243 +1,215 @@
-# The C ↔ C++ hand-off boundary (the contract) + a compilable seam scaffold
+# The C ↔ C++ hand-off boundary (the contract) and the seam that holds it
 
-> **Status: design-first contract + a minimal, compilable, tested seam scaffold.**
-> This document defines the boundary precisely; the seam is exercised by a real,
-> standalone C++17 scaffold under [`runtime/cpp/`](../../runtime/cpp) with a round-trip
-> smoke test gated by [`tools/cpp/check_handoff.sh`](../../tools/cpp/check_handoff.sh)
-> (wired into [`tools/c/check_runtime.sh`](../../tools/c/check_runtime.sh)). It addresses
-> Pillar 5d of [`VISION_ALIGNMENT_AUDIT.md`](../VISION_ALIGNMENT_AUDIT.md) and frames the
-> boundary in the L0–L3 / two-truth placement law of
-> [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) §13 and the invariants in
-> [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md) §1.
+> **Status: the contract, realized (G16, staged plan S3-C).** This document defines the
+> boundary. The seam under [`runtime/cpp/`](../../runtime/cpp) holds it at run time over the
+> freestanding C pack table ([`BCIR_DATA_PLANE_HANDOFF.md`](../kernel/BCIR_DATA_PLANE_HANDOFF.md)),
+> and [`tools/cpp/check_handoff.sh`](../../tools/cpp/check_handoff.sh) gates it (wired into
+> [`tools/c/check_runtime.sh`](../../tools/c/check_runtime.sh)). It addresses Pillar 5d of
+> [`VISION_ALIGNMENT_AUDIT.md`](../VISION_ALIGNMENT_AUDIT.md), and it frames the boundary in the
+> L0–L3 / two-truth placement law of [`BCIR_LANGREF.md`](../BCIR_LANGREF.md) §13 and the
+> invariants in [`BCIR_MASTER_ROADMAP.md`](../BCIR_MASTER_ROADMAP.md) §1.
 
 ## Honest depth (read this first)
 
-> **The deliverable is the *designed contract* + a *compilable seam with a single-node
-> reference implementation and a round-trip smoke test* — NOT a real MPI/NCCL cluster
-> integration.** A real distributed/dynamic backend needs multi-node hardware we do not
-> have and would be untested debt. So:
+> **Real, and gated:**
 >
-> - **REAL (compiles + runs + is gated):** the `Orchestrator` interface, the
->   `SingleNodeOrchestrator` reference (it consumes the artifact and re-enters the
->   existing freestanding C kernels), the round-trip identity smoke test, and the
->   *sharding logic* of the distributed backend (a pure segment-stream partition that
->   needs no cluster).
-> - **STUB (documented, marked, fails loudly):** the `DynamicGraphOrchestrator` and
->   `DistributedOrchestrator` *dispatch* paths. They describe exactly what a real
->   implementation would do but are not built; dispatching them throws a `HandoffError`,
->   so dead code can never silently masquerade as working. There is **no real MPI/NCCL
->   dependency** and **no dynamic/distributed logic on the deterministic legality path**.
+> - the artifact crossing as a **borrowed view with an explicit lifetime** (`PackArena`,
+>   `Reservation`, `PackOwner`, `PackView`, `Borrow` over the C pack table);
+> - **admission against the live control plane** (`admit()` is not virtual);
+> - **dispatch** of what was admitted at the resident generation, as a plane phase;
+> - the `SingleNodeOrchestrator`;
+> - the **dynamic-graph backend**: `GraphBuilder` freezes a fresh StreamPack per step through the
+>   C/IR rail, straight into an arena slot;
+> - the distributed backend's **partition and manifest-of-shards**: every shard is a pack a node
+>   admits and runs by itself, and the set reassembles to the whole by digest.
+>
+> **Stub (documented, marked, fails loudly):** the distributed backend's **cross-node
+> dispatch**. It needs MPI/NCCL and a cluster we deliberately do not add; dispatching it throws
+> `HandoffError`, so dead code never masquerades as working. There is **no MPI/NCCL dependency**,
+> and **no dynamic or distributed logic on the deterministic legality path**.
 
 ---
 
 ## Why a boundary at all
 
-BCIR's deterministic rail is **single-node by design**. Its whole value proposition —
-the R1–R25 laws, the provenance digest, the byte-identical Python↔C parity, the
-two-truth quarantine — rests on a *statically known, bounded, deterministic* graph that
-freezes to a self-contained artifact (the StreamPack, BCIR's "WASM analog"; see
-[`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md)). Two whole classes of real ML work
-break that premise:
+BCIR's deterministic rail is **single-node by design**. Its whole value proposition rests on a
+*statically known, bounded, deterministic* graph that freezes to a self-contained artifact: the
+R1–R25 laws, the provenance digest, the byte-identical Python↔C parity and the two-truth
+quarantine. The artifact is the StreamPack, BCIR's "WASM analog" (see
+[`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md)). Two classes of real ML work break
+that premise:
 
-1. **Dynamic graph topology** — nodes/edges created *at runtime*: an RL agent spawning
-   network nodes as it explores; a transformer allocating mixed-length token graphs on
-   the fly. The graph shape is not known when the rail is built.
-2. **Distributed multi-node orchestration** — the work is too big for one node: MPI/NCCL
-   collectives, networking, failure recovery, job queuing, thread pooling. This is a
-   *software stack above* the kernels, not a kernel.
+1. **Dynamic graph topology**: nodes and edges created *at runtime*. Examples are an RL agent
+   spawning network nodes as it explores, and a transformer allocating mixed-length token graphs
+   on the fly.
+2. **Distributed multi-node orchestration**: MPI/NCCL collectives, networking, failure recovery,
+   job queuing — a *software stack above* the kernels.
 
-Neither belongs on the deterministic rail. Both are exactly the **"high-level software
-abstraction that consumes frozen artifacts"** the L0–L3 placement law (§3 of the master
-roadmap, the *one-line rule*) puts in **C++ ABOVE** the rail. This document defines that
-above-the-rail boundary so the single-node limit is **explicit, contracted, and seamed**
-rather than an undocumented hole.
+Neither belongs on the deterministic rail. Both are the **"high-level software abstraction that
+consumes frozen artifacts"** that the L0–L3 placement law puts in **C++ above** the rail. This
+document defines that boundary, so the single-node limit is explicit, contracted and seamed.
 
----
+## What stays on the C/IR rail (below the boundary)
 
-## What STAYS on the C/IR rail (below the boundary)
+- **Single-node, statically bounded graphs**, deterministic inference and the bounded training
+  slice.
+- **All R-laws and provenance.** R1–R25, the R13 provenance digest, R10/R11 StreamPack semantics:
+  the path that bears the verdict.
+- **The frozen artifact's production.** The C/IR rail emits the StreamPack: `bcir_encode.c` /
+  `bcir/abi`, and, per dynamic step, `bcir_hydrate_generations`.
+- **The data plane's decisions.** The pack table (`bcir_handoff.h`) decides every reservation,
+  borrow, release, admission and dispatch, and the control plane (`bcir_control_plane.h`) decides
+  every admission's legality. Both are freestanding C twins of the Python oracles, byte for byte.
 
-Everything the rail is already good at — unchanged:
+## What crosses to C++ (above the boundary)
 
-- **Single-node, statically-bounded / known-shape graphs.** A claim graph whose nodes,
-  edges, and shapes are fixed at build time.
-- **Deterministic inference (G5)** and the **bounded training slice (G6)** — the forward
-  pass and the bounded backward pass that lower to the freestanding C kernels.
-- **All R-laws + provenance.** R1–R25 verification, the R13 provenance digest, R10/R11
-  StreamPack semantics, the R17 Q8↔f32↔Q8 bridge — the verdict-bearing legality path.
-- **The frozen artifact production.** The C/IR rail *emits* the StreamPack (via
-  `bcir_encode.c` / `bcir/abi`) — the serialized, CRC-sealed, self-contained executable.
+- **Dynamic graph topology.** The `GraphBuilder` is a mutable, RAII-managed C++ object. Each step
+  it freezes a **fresh** claim graph into a StreamPack through the C/IR rail. What crosses down is
+  always an immutable artifact.
+- **Distributed orchestration.** Partition, cut, placement, retry and replication decisions
+  across nodes; each node runs the single-node C/IR rail.
+- **Lifetime as types.** The rules the table enforces at run time (write once, borrow, release,
+  refuse the dead) are also the *shape of the C++ code*: move-only owners, weak views, RAII pins.
 
-This is the **L0/L1 deterministic core** in two-truth terms: integer/Q-fixed, on the
-decision/execution path, in C (`runtime/c/`) or MLIR/C++ law.
-
-## What CROSSES to C++ (above the boundary)
-
-- **Dynamic graph topology** — runtime node/edge creation (RL node spawning,
-  dynamic/mixed-length token graphs). The *graph builder* is a mutable, OO, RAII-managed
-  C++ object; each step it materializes a **fresh** claim graph and **freezes it to a
-  StreamPack** via the C/IR rail. What crosses *down* is always an immutable artifact.
-- **Distributed multi-node orchestration** — MPI/NCCL, networking, failure recovery, job
-  queue, thread pool. The C++ orchestrator decides placement/topology across nodes and
-  dispatches shards; each node runs the existing single-node C/IR rail.
-
-This is the **L2/L3 high-level layer**: it *schedules, shards, retries, replicates* — it
-never computes a verdict and never alters a frozen artifact.
+This is the **L2/L3 layer**. It schedules, shards, retries and replicates. It never computes a
+verdict and never alters a frozen artifact.
 
 ---
 
 ## The seam
 
-### The artifact
+### The artifact, and how it crosses
 
-The unit that crosses the boundary is the **frozen StreamPack** (or, equivalently, a
-serialized claim-graph manifest — the same shape the
-[`channel.json`](../../bcir/channel_plugin.py) plugin seam uses to describe a backend). It
-is the natural hand-off because it is already **self-contained, serialized, CRC-sealed,
-and semantically verifiable** ([`BCIR_STREAMPACK_ABI.md`](../kernel/BCIR_STREAMPACK_ABI.md)). The
-C/IR rail produces it; the C++ orchestrator consumes it.
+The unit that crosses is the **frozen StreamPack**. It is self-contained, CRC-sealed and
+semantically verifiable. It crosses as bytes **written once into an arena slot and read in place
+by every consumer**:
 
-The C++ orchestrator is the **multi-node generalization of the existing
-[heterogeneous-channel](../kernel/HETEROGENEOUS_CHANNELS.md) routing seam**: where `route_claim`
-routes a claim to a *backend* on one node, the orchestrator routes/shards work across
-*nodes*, each node running the existing single-node C/IR rail.
+| Type | Role |
+|---|---|
+| `PackArena` | Owns the table's slots and arena; a `shared_ptr`, so views hold it weakly. One mutex serializes every table operation, so an arena may be shared across threads. A borrowed view is read outside the mutex. |
+| `Reservation` | A producer's slot. It is written **once** through `data()`/`write()`, then `commit()` produces a `PackOwner`, or `abort()` drops it. Destroyed uncommitted, it aborts, so nothing half-built is ever published. |
+| `PackOwner` | Move-only owner of one frozen artifact. `release()`, or the destructor, ends the incarnation: every view of it is refused from then on with `BCIR_ERR_LIFETIME`. |
+| `PackView` | Copyable and non-owning. It may outlive its owner or its arena; then every borrow is **refused**. It never reads freed or reused bytes. |
+| `Borrow` | A move-only RAII pin. `data()`/`size()` stay valid for its lifetime, even if the owner releases meanwhile (the slot retires, and its last borrow frees it). It is returned exactly once, by `give_back()` or the destructor. |
 
-### The data contract — what C++ MAY and MAY NOT do
+A C++ handle cannot be forged, and a borrow cannot be copied. So the C harness's four
+C-only operations have no C++ spelling: a forged handle, a poked epoch or pin count, and a copied
+borrow. Those laws are graded on the Python and C rails. The C++ seam gets its own witnesses
+instead: a view after release, after its owner's scope, or after its arena; a reused slot's old
+view; a borrow that outlives the release; a reservation that aborts; a moved owner; a double
+return; a foreign arena; and bytes moved exactly once.
 
-> The C++ side receives the artifact as an **immutable byte view** (read access, never
-> write access).
+### The data contract: what C++ MAY and MAY NOT do
 
-It **MAY**: schedule, shard (partition the segment stream), place shards on nodes, retry
-a failed shard, replicate a shard for fault tolerance, reduce per-shard results.
+It **MAY**: schedule, partition the segment stream, cut shards, place shards on nodes, retry a
+transient fault, replicate a shard, and reduce per-shard results.
 
 It **MAY NEVER**:
 
-- **alter a frozen artifact's bytes or semantics** — the StreamPack is CRC-sealed; a
-  mutation breaks the CRC and is rejected by the C decoder at the boundary;
-- **become an R-law verdict.** Legality is the C/IR rail's verdict. The orchestrator
-  *asks* the authority (`admit()` delegates to `bcir_sp_verify_semantic`) and *carries*
-  the verdict across — it does **not** re-derive legality. An orchestration failure (a
-  node died, a retry exhausted, a backend unbuilt) is an **operational fault** surfaced
-  as a C++ exception (`HandoffError`), never a legality verdict.
+- **alter a frozen artifact's bytes or semantics**. No API writes a committed slot. A pack is
+  immutable until it is released, and after release it is unreachable;
+- **become an R-law verdict**. `Orchestrator::admit()` is *not virtual*. It is the live plane's
+  one predicate: `bcir_ctl_admit_pack` against the installed registry, through the table. No
+  backend can override legality, and **no caller-supplied generation numbers** exist anywhere in
+  the seam. A refusal (stale, malformed, lifetime, unadmitted, draining) is a `bcir_status` in a
+  `HandoffResult`, carried up. An orchestration failure (an unbuilt transport, exhausted retries)
+  is a `HandoffError` exception, never a verdict.
 
-**The two-truth quarantine extends across the boundary.** Below the line: the
-deterministic L0/L1 verdict (a `bcir_status` from the C verifier). Above the line: the
-graded L2/L3 placement/retry decisions. They never mix — a placement decision can no more
-become an R-law verdict than a learned organ can write the legality path. The artifact is
-the airlock: a verdict travels *up* inside the artifact's status; an orchestration
-decision never travels *down* into the artifact's bytes.
+**The two-truth quarantine extends across the boundary.** Below the line is the deterministic
+verdict. Above it are graded placement and retry decisions, and the two never mix. The artifact is
+the airlock: a verdict travels *up* inside a result, and an orchestration decision never travels
+*down* into the artifact's bytes.
+
+### Generation gating
+
+The resident plane holds the admission, not the caller. `admit()` records the resident
+generation **and the registry digest** it admitted at. `dispatch()` runs the artifact only if both
+still hold, and it runs it as a phase of the plane, so a switch requested mid-dispatch lands at
+the phase boundary. A switch between admit and dispatch makes the artifact stale; re-admission
+refuses it, and that refusal revokes the admission. A plane that restarts and reaches the same
+generation number under another registry is caught by the registry binding.
 
 ### Re-entry
 
-After the C++ orchestrator decides placement, it **calls back into the C/IR single-node
-kernels per shard / per node** — the *re-entry*. In the scaffold this is
-`bcir_sp_for_each_segment` (the existing freestanding C decoder in
-[`bcir_runtime.c`](../../runtime/c/bcir_runtime.c)); in a real distributed run each node
-runs its own `SingleNodeOrchestrator` over its shard. The rail stays the authority; C++ is
-only the dispatcher.
+After placement, the orchestrator calls back into the C/IR single-node kernels: that call is the
+*re-entry*. `dispatch()` walks the admitted slot's segments **in place**
+(`bcir_sp_for_each_segment` over the borrowed bytes; the gate counts the segment views that point
+outside the slot, and the count is 0). In a distributed run, each rank admits its own shard and
+runs its own `SingleNodeOrchestrator`. The rail stays the authority, and C++ only dispatches.
 
 ### Diagram
 
 ```
                          ABOVE THE LINE  —  C++  (L2/L3, graded: schedule/shard/retry)
    ┌───────────────────────────────────────────────────────────────────────────────┐
-   │   Orchestrator (abstract)                                                       │
-   │     • admit(artifact)  ── delegates legality to the C/IR verifier (no re-derive)│
-   │     • shard(artifact)  ── placement/topology decision (read-only artifact)      │
-   │     • dispatch(...)    ── re-enter the C kernels per shard; retry/replicate      │
-   │                                                                                 │
-   │   SingleNodeOrchestrator (REAL)   DynamicGraph (STUB)   Distributed (STUB)      │
-   │        one shard, node 0          re-freeze each step    shard across ranks      │
-   │             │                      → StreamPack          (sharding REAL,         │
-   │             │                      → single-node          dispatch needs         │
-   │             │                                              MPI/NCCL: stub)       │
-   └─────────────┼───────────────────────────────────────────────────────────────────┘
-                 │                ▲                              ▲
-   frozen        │  re-entry      │ verdict (bcir_status)        │ frozen artifact
-   StreamPack    │  (per shard)   │ carried UP, never re-derived │ produced by the rail
-   (immutable)   ▼                │                              │
-   ┌─────────────────────────────┴──────────────────────────────┴──────────────────┐
-   │           BELOW THE LINE  —  C / IR  (L0/L1, deterministic: the authority)      │
-   │   bcir_sp_verify_semantic (R10/R11 + range)   bcir_sp_for_each_segment (kernels)│
-   │   single-node, known-shape, R1–R25 + provenance, byte-identical Python↔C parity │
-   └────────────────────────────────────────────────────────────────────────────────┘
+   │ Orchestrator: admit(view, plane) [not virtual] · shard(view) · dispatch(view)  │
+   │   SingleNode (REAL)   DynamicGraph (REAL: step = freeze→admit→run→release)     │
+   │   Distributed (REAL partition + cut() manifest-of-shards; dispatch STUB)        │
+   │ PackArena ─ Reservation ─▶ PackOwner ─▶ PackView ─▶ Borrow   (RAII lifetimes)   │
+   └──────────────┬───────────────────────▲───────────────────────▲─────────────────┘
+      written     │  re-entry in place     │ verdict (bcir_status) │ frozen artifact:
+      ONCE into   │  (borrowed bytes)      │ carried UP            │ rail-produced,
+      a slot      ▼                        │                       │ per step or whole
+   ┌──────────────────────────────────────┴───────────────────────┴─────────────────┐
+   │        BELOW THE LINE  —  C / IR  (L0/L1, deterministic: the authority)           │
+   │  bcir_ho_* pack table (epochs, pins, admission record)  bcir_ctl_* live plane     │
+   │  bcir_hydrate_generations (per-step freeze)  bcir_shm_* manifest-of-shards        │
+   │  bcir_sp_for_each_segment (kernels)   byte-identical to the Python oracles        │
+   └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The airlock is the horizontal line: only a **frozen artifact** goes down and only a
-**status verdict** comes up. Nothing graded crosses down into the bytes.
+### Failure, retry and idempotence
 
-### Failure / retry / idempotence semantics
-
-- **Idempotence.** The artifact bytes are immutable and the C walk is deterministic, so a
-  re-dispatch recomputes the **identical** result. A retry never accumulates state. The
-  smoke test asserts this directly (`dispatch(..., max_retries=3)` == the first run).
-- **Retry.** `dispatch(data, len, max_retries)` re-attempts a failed shard up to
-  `max_retries` times. The single-node reference has no transient faults, so it converges
-  immediately; the loop demonstrates the contract a real distributed backend uses (re-place
-  the shard on a healthy node, then re-dispatch the *same immutable artifact*).
-- **Failure is operational, not legal.** A C-rail legality failure arrives as a non-OK
-  `bcir_status` inside the result (carried up). An *orchestration* failure (unbuilt
-  backend, exhausted retries, dead node) is a `HandoffError` exception — handled by the
-  C++ layer (retry/replicate/abort), never reaching back to rewrite the artifact.
-- **Replication** (a real distributed concern) is a placement decision: dispatch the same
-  immutable shard to N nodes and take the first success — safe precisely because the
-  artifact is immutable and the result is deterministic.
+- **Idempotence.** The bytes are immutable and the walk is deterministic, so a re-dispatch
+  recomputes the identical result.
+- **Refusals are not retried.** A dead view, a missing admission at the resident generation or a
+  draining plane is a *verdict*. Retrying the same immutable bytes cannot change it.
+- **Retry is for transient faults.** The contract a real distributed backend uses is to re-place
+  the shard on a healthy node, then re-dispatch the same immutable artifact.
+- **Replication** is a placement decision: dispatch the same shard to N nodes and take the first
+  success. That is safe because the artifact is immutable and the result deterministic.
 
 ---
 
 ## Why C++ (and not C / IR)
 
-Dynamic topology and distributed software stacks need exactly the abstractions the **flat,
-registry-oriented C rail deliberately lacks**:
+Dynamic topology and distributed stacks need what the flat, freestanding C rail deliberately
+lacks:
 
-- **OO + virtual dispatch** — a backend hierarchy (`Orchestrator` → single-node /
-  dynamic / distributed) selected at runtime by workload shape. The C rail is a flat
-  registry of structs, not a class hierarchy.
-- **The STL** — `std::vector` of shards, `std::unique_ptr` ownership, dynamic containers
-  for a graph that grows at runtime. The freestanding C rail has no allocator and no
-  containers by design (it links with `-ffreestanding -nostdlib`).
-- **Exceptions + RAII** — failure recovery, resource cleanup across node failures, and the
-  operational-fault channel (`HandoffError`) that is explicitly *not* a verdict. The C
-  rail has no exceptions and fails by `bcir_status` return codes.
+- OO and virtual dispatch: a backend hierarchy selected at runtime;
+- the STL and ownership types: a graph that grows at runtime, and shard sets;
+- exceptions and RAII: failure recovery, and a lifetime that the type system enforces.
 
-These are the "high-level software abstraction" half of the placement law: deterministic
-integer kernels stay in C; the dynamic, allocating, exception-handling orchestration stack
-goes to C++ above them. The boundary keeps the rail freestanding and verdict-bearing while
-the complexity lives where it belongs.
+The integer kernels and every decision stay in C. The allocating, exception-handling
+orchestration stack goes to C++ above them.
 
 ---
 
-## The scaffold (what is built)
+## What is built
 
 | File | Role |
 |---|---|
-| [`runtime/cpp/bcir_orchestrator.hpp`](../../runtime/cpp/bcir_orchestrator.hpp) | The seam: the `Orchestrator` abstract base, the `Shard`/`DispatchResult`/`HandoffError` data contract, the single-node REAL backend + the two STUB backends, and the factory. |
-| [`runtime/cpp/bcir_orchestrator.cpp`](../../runtime/cpp/bcir_orchestrator.cpp) | Implementation. `SingleNodeOrchestrator` re-enters the existing C decoder; the stubs document a real impl and throw. |
-| [`runtime/cpp/test_orchestrator.cpp`](../../runtime/cpp/test_orchestrator.cpp) | The round-trip smoke driver: asserts the seam's dispatch order == the **direct** C/IR decode of the same artifact (round-trip identity), plus the admit/shard/stub contract surfaces. |
-| [`tools/cpp/check_handoff.sh`](../../tools/cpp/check_handoff.sh) | Standalone build+run gate: compiles the C++17 scaffold (linked only against the freestanding C runtime), produces a real StreamPack via the existing C/IR path, round-trips it, and checks a corrupted artifact is rejected at the boundary. Wired into [`tools/c/check_runtime.sh`](../../tools/c/check_runtime.sh). |
+| [`runtime/c/bcir_handoff.h`](../../runtime/c/bcir_handoff.h) / `.c` | The freestanding pack table: epochs, pins, retirement, the admission record (generation and registry), dispatch as a plane phase, the manifest gate, the state digest. |
+| [`runtime/c/bcir_shard_manifest.h`](../../runtime/c/bcir_shard_manifest.h) / `.c` | The manifest-of-shards ([`BCIR_SHARD_MANIFEST_ABI.md`](../kernel/BCIR_SHARD_MANIFEST_ABI.md)). |
+| `bcir_hydrate_generations` in [`runtime/c/bcir_hydrate.h`](../../runtime/c/bcir_hydrate.h) | The per-step freeze: a v4 pack bound to the live registry. |
+| [`runtime/cpp/bcir_handoff.hpp`](../../runtime/cpp/bcir_handoff.hpp) / `.cpp` | The RAII types, `admit_view`/`dispatch_view`, `GraphBuilder`, `cut_shards`/`reassemble_shards`. |
+| [`runtime/cpp/bcir_orchestrator.hpp`](../../runtime/cpp/bcir_orchestrator.hpp) / `.cpp` | `Orchestrator` (non-virtual `admit`), the single-node and dynamic-graph backends, the distributed partition and `cut()`, the factory. |
+| [`runtime/cpp/test_orchestrator.cpp`](../../runtime/cpp/test_orchestrator.cpp) | The contract on real artifacts from the C/IR path and the plane's records, minted by `handoff_fixtures.seam_artifacts`, the one minter the gate and `test_cpp_handoff.py` share. It checks that dispatch equals the direct C walk, shards run by themselves and reassemble, a builder step freezes and runs, a switch makes the artifact stale, and a dead view is refused. `--reject` refuses a corrupted artifact at admission, and the same probe admits the clean one. |
+| [`runtime/cpp/test_handoff.cpp`](../../runtime/cpp/test_handoff.cpp) | The C++ rail of the G16 rows: every scenario it can spell, traced line for line against the oracle; shard runs and re-entry; the lifetime witnesses; the Stage 3 exit flow through the seam (`--stage3`); the overhead benchmark. |
+| [`tools/cpp/check_handoff.sh`](../../tools/cpp/check_handoff.sh) | The gate: the standalone C++17 build under `-Wpedantic -Werror`; the contract on real artifacts; a corrupted artifact refused at admission; every row at zero; a double-return mutant that must fire; everything again under ASan and UBSan; the BCAB wrapper. |
 
-The scaffold is **plain C++17, standalone**: it links only against
-[`runtime/c/bcir_runtime.c`](../../runtime/c/bcir_runtime.c) (the existing freestanding
-decoder) and is **not** part of the MLIR/LLVM cmake. The MLIR/C++ law rail under
-[`mlir/`](../../mlir) is untouched.
+The seam is **plain C++17, standalone**. It links only the freestanding C units and is **not**
+part of the MLIR/LLVM cmake.
 
 ---
 
-## Risks / follow-ups (what a real distributed/dynamic implementation would add)
+## Risks and follow-ups (what remains, deliberately)
 
-- **A real dynamic-graph builder** — a mutable C++ claim-graph object (RL node spawning /
-  mixed-length token graphs) that materializes and **freezes** a fresh StreamPack each
-  step via the C/IR rail. The seam already specifies the contract; the builder is the work.
-- **A real MPI/NCCL backend** — collectives, a communicator/rank model, a job queue, a
-  thread pool, networking. This needs a multi-node cluster + an MPI/NCCL dependency
-  (deliberately not added here). The `shard()` partition logic is already real and tested;
-  only the cross-node dispatch + reduce is owed.
-- **Failure recovery + replication policy** — heartbeats, node-death detection,
-  shard re-placement, replication factor. The retry/idempotence contract is specified and
-  smoke-tested single-node; a real impl wires it to a cluster membership service.
-- **Generation gating at the boundary** — `admit()` already accepts an expected
-  `map_gen`/`data_gen`; a real deployment must pass the live registry generation so a
-  **stale** artifact (R11) is rejected before placement.
-- **A manifest variant of the artifact** — for graphs too large to ship as one StreamPack,
-  a serialized claim-graph *manifest* (the same schema the `channel.json` plugin uses) that
-  references shard packs by digest. The seam is artifact-shaped already; this is a format
-  addition, not a contract change.
+- **A real MPI/NCCL backend.** Collectives, a communicator and rank model, a job queue, a thread
+  pool. The partition, the shards, the manifest, per-rank admission and re-entry are real and
+  gated. Only the transport and the cross-rank reduction are owed, and they need a cluster and a
+  dependency not added here.
+- **Failure recovery and replication policy.** Heartbeats, node-death detection, re-placement.
+  The idempotence contract is specified; a real implementation wires it to cluster membership.
+- **A shared-memory pack table.** The table lives in one address space. A table shared across
+  processes (the live ring's model) needs its own ordering argument, and is a later slice.

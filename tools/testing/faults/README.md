@@ -28,6 +28,7 @@ python3 tools/testing/red_sweep.py --faults ... --json-out build/red/database.js
 | `training-database.json` | `training/tools/verify_database.py` | the table, the grammar, the planner, publication, and the thresholds |
 | `training-embeddings.json` | `training/tools/verify_embeddings.py` | the stored derived column, and each of its fallbacks |
 | `ring.json` | `tools/c/check_ring.py` (the G15 rows, both rails; needs a C compiler) | the live ring's seqlock, loss count, backpressure, epoch and takeover laws and its geometry laws on both rails; the envelope's wire laws, continuity, the stale-generation and unknown-required-signal laws; the generated signal table's bytes; the control ring as a transport |
+| `handoff.json` | `tools/c/check_handoff.py` (the G16 rows on the oracle, the C twin and the C++ seam; needs a C and a C++ compiler) | the pack table's admission, its registry binding across a restarted plane, its epoch and pin laws and its state digest; the C++ owner's move; dispatch in place; the per-step freeze's header and claim laws; the shard manifest's wire laws, the partition, the sub-pack and frame spellings and the one reassembly predicate; and, through the Stage 3 exit flow, the other boundaries one generation crosses -- the plane's compare-and-swap, the intake's stale law, the telemetry ring's loss count against the intake's gaps |
 
 ## What runs in CI, and what does not
 
@@ -154,6 +155,32 @@ three, one per mechanism, each replacing its code with the exact defect it
 replaced (`shutil.copy2`, `write_text`, and no directory sync at all). A witness
 must hit the law it exists to test (L11), and after a refactor the question is
 not "does the old fault still apply" but "how many laws are there now".
+
+## A public spelling nobody measures, and a corpus that cannot be built
+
+The first sweep of `handoff.json` caught 29 of 31, and both misses were the
+gate's, not the table's.
+
+    Python frame: the blocks are dropped                        (none)   NOT CAUGHT
+    Python sub-pack: a shard carries no generation vector ...   (none)   WRONG CHECK
+
+The first was injected into `frame_of`, the public spelling of a shard set's
+frame, and nothing noticed, because the oracle spelled the frame three times:
+`frame_of`, and again inline in `split` and in `reassemble`. The grader compared
+the C twin only against `split`, so the public function could drift from the
+split, and from `bcir_shm_frame`, and no row would move. Now one private
+`_frame` is the only spelling, and the grader compares the C harness's frame
+and shards through `frame_of` and `sub_pack`, the twins of the C calls the
+harness prints. Every public entry point is on a measured path (L14).
+
+The second went red with no row named. The shards had lost their vector, so the
+manifest encoder refused its own output (the self-check did its job), and it
+did so while `measure()` was still *building* the hostile corpus it grades
+against, outside every fail-closed wrapper. The grader died with a traceback, a
+lost finding (L1). The corpora are the oracle's own splits and freezes, so a
+defect in the oracle can first surface as a corpus that cannot be built. Now
+every corpus is built through one guard that fails each row the corpus feeds,
+and the entry fires `handoff.reentry.divergent` as it was written to.
 
 ## Adding a fault
 

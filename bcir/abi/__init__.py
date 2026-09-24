@@ -12,6 +12,8 @@ resident plane decides by their bytes, with a C twin (`runtime/c/bcir_control_pl
 `telemetry_envelope` is the identity-carrying telemetry record (TelemetryEnvelopeV0, G15) the
 live ring carries, with a C twin (`runtime/c/bcir_telemetry_envelope.h`). It is VERSION ZERO:
 experimental, with no compatibility promise until the driver roadmap's traces freeze it.
+`shard_manifest` is the manifest-of-shards (BSHM, G16): a pack too large to ship as one travels as
+runnable shards and a frame named by digest, reassembling to the whole's bytes. Version zero too.
 """
 
 from .streampack_abi import (
@@ -53,6 +55,17 @@ from .telemetry_envelope import (
     decode_envelope,
     encode_envelope,
     validate_envelope,
+)
+from .shard_manifest import (
+    MANIFEST_MAGIC,
+    MANIFEST_VERSION,
+    ShardError,
+    ShardManifest,
+    Split,
+    decode_manifest,
+    encode_manifest,
+    reassemble,
+    split,
 )
 from .artifact_bundle import (
     ENTRY_SIZE as ARTIFACT_ENTRY_SIZE,
@@ -113,6 +126,15 @@ __all__ = [
     "decode_envelope",
     "encode_envelope",
     "validate_envelope",
+    "MANIFEST_MAGIC",
+    "MANIFEST_VERSION",
+    "ShardError",
+    "ShardManifest",
+    "Split",
+    "decode_manifest",
+    "encode_manifest",
+    "reassemble",
+    "split",
     "ARTIFACT_MAGIC",
     "ARTIFACT_VERSION",
     "ARTIFACT_HEADER_SIZE",

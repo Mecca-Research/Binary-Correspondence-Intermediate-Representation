@@ -233,6 +233,7 @@ _MODULES = [
     "bcir.tests.test_execution_plan",
     "bcir.tests.test_control_plane",
     "bcir.tests.test_live_ring",
+    "bcir.tests.test_handoff",
     "bcir.tests.test_static_memory",
     "bcir.tests.test_delta_pricing",
     "bcir.tests.test_exact_schedule",

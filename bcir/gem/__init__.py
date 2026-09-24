@@ -66,6 +66,17 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "ring_state",
         "validate_geometry",
     ),
+    "handoff": (
+        "FreezeError",
+        "GraphClaim",
+        "GraphGeneration",
+        "Handle",
+        "HandoffOutcome",
+        "PackTable",
+        "View",
+        "admit_manifest",
+        "freeze_claims",
+    ),
     "execute": ("ExecResult", "PhaseStat", "execute"),
     "concurrency": (
         "ConcurrentSchedule",

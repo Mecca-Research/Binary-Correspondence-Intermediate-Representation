@@ -55,7 +55,12 @@ typedef enum bcir_status {
                              * (bcir_ring.h): a corrupt region, a protocol violation, misuse */
   BCIR_ERR_FULL = 21,       /* a backpressure ring has no free slot: the record is refused and
                              * counted, never written over an unconsumed one */
-  BCIR_ERR_BUSY = 22        /* a ring endpoint is held by a peer (attach without a takeover) */
+  BCIR_ERR_BUSY = 22,       /* a ring endpoint is held by a peer (attach without a takeover) */
+  BCIR_ERR_LIFETIME = 23,   /* a pack-table handle or view names no live slot at its epoch: the
+                             * owner released it (a view outlived its owner), the slot was
+                             * reused, or the handle was never issued (bcir_handoff.h) */
+  BCIR_ERR_SHARD = 24       /* a shard manifest violates a manifest law, or a shard set does not
+                             * reassemble to the whole it declares (bcir_shard_manifest.h) */
   /* Append-only: the codes are the rails' shared names for a refusal (the Python codecs'
    * `status`), so a code is never renumbered or reused -- a new status takes the next one. */
 } bcir_status;
