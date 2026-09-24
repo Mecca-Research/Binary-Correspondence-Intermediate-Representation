@@ -29,7 +29,16 @@ except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from proc_bounds import put_down_group
 
 ROOT = Path(__file__).resolve().parents[2]
-REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8", "control", "envelope", "manifest")
+REQUIRED_PYTHON = (
+    "streampack",
+    "bcab",
+    "bcirq8",
+    "control",
+    "envelope",
+    "manifest",
+    "planner",
+    "realization",
+)
 DECODE_TIMEOUT = 10.0
 # Each surface's DELIBERATE rejection type, and only that. A blanket tuple
 # (IndexError, KeyError, struct.error, OverflowError, zlib.error...) counted
@@ -52,6 +61,9 @@ _DECLARED_REJECTIONS = {
     "envelope": ("bcir.abi.telemetry_envelope", "TelemetryError"),
     # a shard manifest (G16) a node receives is refused with ShardError, likewise
     "manifest": ("bcir.abi.shard_manifest", "ShardError"),
+    # the native planner's input and realization records (G17) with PlannerAbiError, likewise
+    "planner": ("bcir.abi.planner_abi", "PlannerAbiError"),
+    "realization": ("bcir.abi.planner_abi", "PlannerAbiError"),
 }
 
 
@@ -286,6 +298,46 @@ def _manifest_seed() -> bytes:
     return split(synthetic_pack(12), partition(12, 3)).manifest
 
 
+def _planner_seed() -> bytes:
+    """A version-zero planner input (BKPI) with two phases, two ops, operands and a primary
+    resource: every section law has a field to break."""
+    from bcir.tests.planner_fixtures import _seed_input
+
+    return _seed_input()[0]
+
+
+def _decode_planner_sealed(data: bytes) -> Any:
+    """Decode a planner input with its CRC repaired, then apply the laws the planner applies
+    before it plans (`check_input`) -- the manifest surface's lesson, for the same reason."""
+    from bcir.abi.planner_abi import check_input, decode_input
+
+    if len(data) >= 4:
+        data = data[:-4] + struct.pack("<I", zlib.crc32(data[:-4]) & 0xFFFFFFFF)
+    value = decode_input(data)
+    check_input(value)
+    return value
+
+
+def _realization_seed() -> bytes:
+    """A version-zero realization (BKPR): the planner's plan of the input seed."""
+    from bcir.abi.planner_abi import encode_realization
+    from bcir.kbcir.cost import TargetProfile, Theta
+    from bcir.kbcir.realize import optimize
+    from bcir.tests.planner_fixtures import coverage_modules
+
+    module = coverage_modules()[0][1]
+    return encode_realization(optimize(module, TargetProfile.x86_avx512(), Theta.cool()))
+
+
+def _decode_realization_sealed(data: bytes) -> Any:
+    """Decode a realization with its CRC repaired first (the malformed corpus pins the CRC)."""
+    from bcir.abi.planner_abi import decode_realization
+
+    if len(data) >= 4:
+        data = data[:-4] + struct.pack("<I", zlib.crc32(data[:-4]) & 0xFFFFFFFF)
+    return decode_realization(data)
+
+
 def _decode_manifest_sealed(data: bytes) -> Any:
     """Decode a shard manifest with its CRC repaired first -- the control surface's lesson: a
     random mutation dies at the CRC long before a range or length law, so every mutant is sealed
@@ -395,6 +447,20 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
         results.append(_seed_failure("manifest", exc))
     else:
         results.append(_probe("manifest", _decode_manifest_sealed, manifest, rng, mutations))
+    try:
+        planner = _planner_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("planner", exc))
+    else:
+        results.append(_probe("planner", _decode_planner_sealed, planner, rng, mutations))
+    try:
+        realization = _realization_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("realization", exc))
+    else:
+        results.append(
+            _probe("realization", _decode_realization_sealed, realization, rng, mutations)
+        )
     return results
 
 

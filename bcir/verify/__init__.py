@@ -670,8 +670,16 @@ def cfront_unit_claim_ids_unique(lowered) -> list[Diagnostic]:
     return diags
 
 
-def _same_realization(chosen, offered) -> bool:
-    """Two candidates denote the same realization.
+def _lane_name(lane) -> str:
+    """A step's lane as a diagnostic spells it -- total over a forged plan, whose lane may be any
+    object (a plain int is exactly the forgery R9's `is` comparison exists to refuse, and a
+    diagnostic that raised on it would turn the refusal into a traceback, L1)."""
+    return lane.name if isinstance(lane, Lane) else repr(lane)
+
+
+def _same_realization_row(chosen, row) -> bool:
+    """A chosen candidate denotes the realization a row of the planner's compact offer
+    (`kbcir.realize.Offer`: `(lane, width, name, base, rw)`) describes.
 
     Compared field by field rather than by dataclass equality because `optimize` legally
     rewrites a candidate's *coupled* cost (fusion discounts, thermal derating) while
@@ -679,28 +687,42 @@ def _same_realization(chosen, offered) -> bool:
     checked separately by R8.
     """
     return (
-        chosen.lane is offered.lane
-        and chosen.width == offered.width
-        and chosen.name == offered.name
-        and chosen.base.v == offered.base.v
+        chosen.lane is row[0]
+        and chosen.width == row[1]
+        and chosen.name == row[2]
+        and chosen.base.v == row[3]
     )
 
 
-def _admissible_candidates(module: Module, h) -> dict[int, tuple]:
-    """Re-derive, for each claim, the candidate set the planner may choose from.
+def _admissible_offer(module: Module, h, steps):
+    """Re-derive, for each realization the plan names, whether the planner could have offered
+    it: the planner's own offer (`fused_offer`), priced only at the realizations the plan chose
+    -- the single-candidate re-derivation of GEM+ G17 -- with every claim's data-flow discount
+    still derived from the whole module. Returns the offer and claim id -> its offer entry.
 
     Imported lazily: the verifier is kept free of a hard dependency on the planner so it
     can be read as an independent statement of the laws, and only this one law needs to
     reconstruct what the planner would have offered.
     """
-    from ..kbcir.realize import fused_candidates
+    from ..kbcir.realize import fused_offer
 
-    # The planner draws from `fused_candidates`, not from the per-claim `candidates_for`:
-    # the deforestation and CSE discounts are baked into a consumer's BASE cost there.
+    # The planner draws from the fused offer, not from the per-claim `candidates_for`: the
+    # deforestation and CSE discounts are baked into a consumer's BASE cost there.
     # Re-deriving from `candidates_for` rejected the planner's own plan on every fused
     # consumer -- 3,840 of the 4,096 claims of the audit's matmul fixture -- a false
     # positive that had kept every real caller from passing `h` at all.
-    return {cid: tuple(cands) for cid, cands in fused_candidates(module, h).items()}
+    wanted: dict = {}
+    for step in steps:
+        cand = step.candidate
+        try:
+            wanted.setdefault(step.claim_id, set()).add((cand.lane, cand.width, cand.name))
+        except TypeError:  # an unhashable forged field names no realization; refused below
+            pass
+    offer = fused_offer(module, h, only=wanted)
+    entry = {}
+    for j, claim in enumerate(offer.claims):
+        entry[claim.id] = j  # the last occurrence: the id-keyed offer the planner planned with
+    return offer, entry
 
 
 def verify_plan(
@@ -730,18 +752,33 @@ def verify_plan(
     """
     diags: list[Diagnostic] = []
     claims = {c.id: c for ph in module.phases for c in ph.claims}
-    admissible = _admissible_candidates(module, h) if h is not None else None
+    declared_in = {c.id: ph.phase_id for ph in module.phases for c in ph.claims}
+    offer = entry = None
+    if h is not None:
+        offer, entry = _admissible_offer(module, h, result.steps)
 
     seen: set[int] = set()
     total = 0
     for step in result.steps:
-        claim = claims.get(step.claim_id)
+        claim = claims[step.claim_id] if step.claim_id in claims else None
         if claim is None:
             diags.append(Diagnostic("R9", f"plan realizes unknown claim {step.claim_id}"))
             continue
         if step.claim_id in seen:
             diags.append(Diagnostic("R9", f"claim {step.claim_id} realized more than once"))
         seen.add(step.claim_id)
+        # R9: a step realizes its claim in the phase that declares it. The step carries the
+        # phase redundantly (the law rail's plan cannot misplace one: a claim's phase is its
+        # enclosing op), so the oracle holds the copy to the module -- the phase-order walk
+        # below only compares steps with each other, and passed a first step in any phase.
+        if step.phase_id != declared_in[step.claim_id]:
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: realized in phase {step.phase_id!r}; the module "
+                    f"declares it in phase {declared_in[step.claim_id]}",
+                )
+            )
 
         cand = step.candidate
         # R8: every realized step carries a complete, non-negative scalarized cost.
@@ -757,16 +794,22 @@ def verify_plan(
 
         # R9: the realization has to be one the planner could actually have generated
         # for this claim on this target -- name, lane, width and base cost together.
-        if admissible is not None:
-            offered = admissible.get(step.claim_id, ())
-            if not any(_same_realization(cand, c) for c in offered):
+        if offer is not None:
+            j = entry[step.claim_id] if step.claim_id in entry else None
+            admitted = False
+            for row in offer.rows[j] if j is not None else ():
+                if _same_realization_row(cand, row):
+                    admitted = True
+                    break
+            if not admitted:
+                offered = offer.full_rows(j) if j is not None else []
                 diags.append(
                     Diagnostic(
                         "R9",
                         f"claim {step.claim_id}: realization "
-                        f"{cand.name!r}({cand.lane.name}, width {cand.width}) is not among "
+                        f"{cand.name!r}({_lane_name(cand.lane)}, width {cand.width}) is not among "
                         f"the {len(offered)} candidate(s) this target admits: "
-                        f"{sorted(c.name for c in offered)}",
+                        f"{sorted(row[2] for row in offered)}",
                     )
                 )
 
@@ -780,7 +823,7 @@ def verify_plan(
                 Diagnostic(
                     "R9",
                     f"claim {step.claim_id}: atomic opcode {claim.opcode.name} realized as "
-                    f"{cand.lane.name} width {cand.width}; an atomic read-modify-write has "
+                    f"{_lane_name(cand.lane)} width {cand.width}; an atomic read-modify-write has "
                     f"one realization, A lane width 1",
                 )
             )
@@ -795,11 +838,13 @@ def verify_plan(
                         f"non-control claim",
                     )
                 )
-        elif cand.lane not in _LEGAL_LANES.get(claim.stride_class, set()):
+        elif cand.lane not in (
+            _LEGAL_LANES[claim.stride_class] if claim.stride_class in _LEGAL_LANES else ()
+        ):
             diags.append(
                 Diagnostic(
                     "R9",
-                    f"claim {step.claim_id}: chosen lane {cand.lane.name} illegal for "
+                    f"claim {step.claim_id}: chosen lane {_lane_name(cand.lane)} illegal for "
                     f"stride_class {claim.stride_class.name}",
                 )
             )
@@ -807,15 +852,23 @@ def verify_plan(
     # R9 (scope): every realized cost re-derives from (h, theta, policy) -- the same
     # predicate the planner prices its DAG edges with (`realize.edge_cost`).
     if theta is not None and h is not None:
-        from ..kbcir.realize import step_cost
-        from ..kbcir.weights import PERF
+        from ..kbcir.realize import edge_cost
+        from ..kbcir.weights import PERF, weights
 
         pol = policy if policy is not None else PERF
+        w_by_phase: dict = {}  # `step_cost`'s weights, derived once per phase
         prev = None
         for step in result.steps:
             if step.claim_id not in claims:
                 continue
-            expected = step_cost(prev, step.candidate, h, theta, step.phase_id, pol)
+            try:
+                if step.phase_id in w_by_phase:
+                    w = w_by_phase[step.phase_id]
+                else:
+                    w = w_by_phase[step.phase_id] = weights(h, theta, step.phase_id, pol)
+            except TypeError:  # a forged, unhashable phase id: derive without the cache
+                w = weights(h, theta, step.phase_id, pol)
+            expected = edge_cost(prev, step.candidate, theta, w)
             if expected != step.cost:
                 diags.append(
                     Diagnostic(
@@ -852,11 +905,14 @@ def verify_plan(
     pos = {pid: i for i, pid in enumerate(_topo_phase_ids(module))}
     last = -1
     for step in result.steps:
-        p = pos.get(step.phase_id, -1)
+        try:
+            p = pos[step.phase_id] if step.phase_id in pos else -1
+        except TypeError:  # a forged, unhashable phase id names no phase (L1)
+            p = -1
         if p < last:
             diags.append(Diagnostic("R9", f"claim {step.claim_id}: realized out of phase order"))
             break
-        last = max(last, p)
+        last = p
 
     return diags
 

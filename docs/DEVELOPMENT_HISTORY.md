@@ -817,6 +817,51 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - the grader tracebacked when the oracle could not build its own corpus.
   - Not claimed: a cross-node transport, a pack table shared across processes, and reduction
     across ranks.
+  S4-A (2026-09-24) landed G17, the compact planner and its native twin, and opened Stage 4.
+  - RED, measured on the parent (731373df):
+    - planning the audit's 32,768-claim fixture made 3,419,172 calls (CPython 3.11): a
+      `Candidate` and a `CostVector` built twice per claim, twelve coupling calls per edge, and the
+      weights re-derived per claim;
+    - R9 re-derived the planner's whole offer, and `verify_plan` cost as much as planning (1.07x);
+    - with the rails absent, the parity rows read 8,430 and 148;
+    - R9, graded over every field a step carries, misjudged 232 verdicts. It raised on a plain-int
+      lane and on an unhashable phase, and never bound a step to its claim's phase.
+  - What landed:
+    - `realize.fused_offer`, the offer as compact rows: one enumeration (`_offer_rows`) over one
+      arithmetic (`_base_cost`), the discounts in the same pass, and no candidate objects.
+      `fused_candidates` and `result.cand_map` (a lazy `OfferMap`) are views of it.
+    - `optimize`: the weights derived once per phase, each realization priced once for both path
+      contexts (`_edge_cost_pair`, which `edge_cost` delegates to), and each column relaxed
+      against the previous column's cheapest narrow and wide predecessor, over two flat arrays.
+    - The pre-G17 planner, kept verbatim as `realize_reference`, is the "before" the parity gate
+      holds the compact planner to.
+    - R9's single-candidate re-derivation, the phase-binding law, and diagnostics that are total
+      over forgeries.
+    - The native planner (`bcir_kplan.{h,c}`, freestanding) over the version-zero BKPI and BKPR
+      records (`bcir.abi.planner_abi`; `docs/kernel/BCIR_PLANNER_ABI.md`). It is exact in 128
+      bits over the declared domain and refuses only a value the record cannot carry, exactly
+      when the Python encoder does. `BCIR_ERR_PLANNER` (25) is appended, and
+      `bcir_utf8_valid` is now the runtime's one UTF-8 validator.
+  - Outcomes:
+    - All three exact rows are 0. `planner.calls` is 589,858 (5.80x fewer), and
+      `verify.plan.scope.overhead` is ~0.73.
+    - The whole K_BCIR->StreamPack chain at scale 8 went from 9.20 M calls to 3.51 M. The
+      `audit.kbcir-streampack.scale4` wall row, measured A/B against the parent, went from
+      201-219 ms to 117-137 ms, with the same result digest. That is indicative only; the
+      chain's unchanged stages (`verify`, hydration, `verify_pack`) now dominate it.
+    - The native planner plans the 4,096-claim fixture in ~3.4 ms, against ~33 ms for the
+      compact planner and ~73 ms for the reference.
+    - The C gate carries a mutant it must fail (the 128-bit carry dropped), and a libFuzzer target
+      and two decoder-campaign surfaces landed.
+    - `tools/testing/faults/planner.json` injects 29 defects, each caught by its own row.
+  - Found and fixed in the slice:
+    - The wide-path fixture looked like a witness to the 128-bit arithmetic, but no path in it
+      depended on the addition's carry. `carry_case` does.
+    - The first sweep missed three faults, and each time the witness was wrong, not the code: a
+      corpus that rewrote an operand only once, R9 graded only with the scope that masks its base
+      law, and a malformed variant that a later law refused with the same status.
+  - Not claimed: the MLIR `-bcir-plan` pass (unchanged), the CXX3 joint solvers (Python only),
+    and a certificate produced natively.
 
 ---
 

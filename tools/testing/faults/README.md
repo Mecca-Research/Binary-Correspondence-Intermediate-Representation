@@ -29,6 +29,7 @@ python3 tools/testing/red_sweep.py --faults ... --json-out build/red/database.js
 | `training-embeddings.json` | `training/tools/verify_embeddings.py` | the stored derived column, and each of its fallbacks |
 | `ring.json` | `tools/c/check_ring.py` (the G15 rows, both rails; needs a C compiler) | the live ring's seqlock, loss count, backpressure, epoch and takeover laws and its geometry laws on both rails; the envelope's wire laws, continuity, the stale-generation and unknown-required-signal laws; the generated signal table's bytes; the control ring as a transport |
 | `handoff.json` | `tools/c/check_handoff.py` (the G16 rows on the oracle, the C twin and the C++ seam; needs a C and a C++ compiler) | the pack table's admission, its registry binding across a restarted plane, its epoch and pin laws and its state digest; the C++ owner's move; dispatch in place; the per-step freeze's header and claim laws; the shard manifest's wire laws, the partition, the sub-pack and frame spellings and the one reassembly predicate; and, through the Stage 3 exit flow, the other boundaries one generation crosses -- the plane's compare-and-swap, the intake's stale law, the telemetry ring's loss count against the intake's gaps |
+| `planner.json` | `tools/c/check_planner.py` (the G17 rows on the compact planner, the pre-G17 reference and the native twin; needs a C compiler) | the compact planner's tie-break, fusion, thermal coupling, discounts, fence, value numbering, CSE exclusions and sink; R9's lane identity, phase binding, total diagnostics and base comparison; the native planner's tie-break, coupling, discounts, exclusions, fence, phase order, weights and 128-bit carry; both codecs' laws |
 
 ## What runs in CI, and what does not
 
@@ -181,6 +182,37 @@ lost finding (L1). The corpora are the oracle's own splits and freezes, so a
 defect in the oracle can first surface as a corpus that cannot be built. Now
 every corpus is built through one guard that fails each row the corpus feeds,
 and the entry fires `handoff.reentry.divergent` as it was written to.
+
+## A witness that cannot see its law
+
+The first sweep of `planner.json` caught 26 of 29. In all three misses the code was right, and
+the witness could not see the law it was named for (L11).
+
+    Python offer: a write does not bump its operand's version   (none)   NOT CAUGHT
+    R9: the chosen realization's base cost is not compared      (none)   NOT CAUGHT
+    Python decoder: an undeclared resource may carry a domain   (none)   NOT CAUGHT
+
+- **The version counter.** The corpus rewrote an operand once. A first write yields version 1
+  whether the counter increments or not, so only a second rewrite, with a duplicate reading after
+  it, tells a counter from a flag. `coverage.cse` now has one.
+- **R9's base comparison.** Every forgery was graded with the scope. There, R9 re-derives each
+  step's cost from its base, so a forged base is refused by the cost law whether or not the offer
+  compares it. `verify_plan(module, plan, h)` without Theta is a supported call, and there the
+  offer is the only guard. `planner.r9.misjudged` now grades each forgery both ways.
+- **The undeclared resource.** The variant broke a resource that was also a primary. A later law
+  refused the record with the same status, and a status-only comparison cannot tell two laws
+  apart. The seed now has a resource that only this law reads.
+
+The fourth lesson came before the sweep. `tools/c/check_runtime.sh` injects a planner whose
+128-bit addition drops its carry, and the gate passed it. The fixture written for the 128-bit
+path, `wide_path_case`, has losing paths heavier than 2⁶⁴, but their high words come from the
+multiply, which carries correctly, so no decision depended on the addition. `carry_case` does:
+its one edge crosses 2⁶⁴ only by adding terms that each fit a u64. A fixture that exercises
+large numbers is not a fixture that exercises the carry.
+
+A witness has to be the only thing standing between the defect and a pass. When a law shares a
+status with a later one, the variant must stop at it; when a law is shadowed by a stricter call
+shape, the gate must also grade the call shape where it stands alone.
 
 ## Adding a fault
 

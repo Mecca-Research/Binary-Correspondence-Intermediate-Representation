@@ -233,19 +233,26 @@ def test_an_adopted_trial_is_the_same_adoption_in_both_searches():
 
 
 def test_the_sweep_builds_the_candidate_map_once():
+    # Since G17 the planner derives its offer once, as compact arrays (`fused_offer`), and
+    # `result.cand_map` is a view of it; the object map (`fused_candidates`) is never built.
     import bcir.kbcir.realize as realize
 
-    calls = {"n": 0}
-    original = realize.fused_candidates
+    calls = {"offer": 0, "objects": 0}
+    offer, objects = realize.fused_offer, realize.fused_candidates
 
-    def counting(module, h):
-        calls["n"] += 1
-        return original(module, h)
+    def counting_offer(module, h, only=None):
+        calls["offer"] += 1
+        return offer(module, h, only)
 
-    realize.fused_candidates = counting
+    def counting_objects(module, h):
+        calls["objects"] += 1
+        return objects(module, h)
+
+    realize.fused_offer, realize.fused_candidates = counting_offer, counting_objects
     try:
         module, h = sweep_fixture(32), TARGETS["x86_avx512"]
         optimize_scheduled(module, h, Theta.cool(), PERF)
     finally:
-        realize.fused_candidates = original
-    assert calls["n"] == 1  # inside optimize(); the sweep reads result.cand_map
+        realize.fused_offer, realize.fused_candidates = offer, objects
+    # Once, inside optimize(); the sweep reads result.cand_map.
+    assert calls == {"offer": 1, "objects": 0}

@@ -65,7 +65,7 @@ The normative semantics and artifact contract are in
 
 | Area | Landed baseline | Boundary that remains |
 |---|---|---|
-| Law and optimizer | R1–R25, twelve-axis cost vectors, exact planning, RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
+| Law and optimizer | R1–R25, twelve-axis cost vectors, exact planning (a compact offer table and indexed min-plus pass, with a freestanding C twin that writes the same plan bytes), RCSP/Pareto, overlap pricing, replay/provenance, frozen learned priors | Additional laws require a demonstrated semantic gap and dual-rail negative coverage |
 | GEM and StreamPack | Hydration, scheduling, execution, strict v1–v4 codecs, C/Python byte parity, operator disassembly/hexdump | Hardware command packets and per-device execution are not implied |
 | C compiler | Broad driver-oriented C23 subset, twin lowering, Clang differentials, target ABI matrix, project/link/fallback modes | Not complete ISO C23; unsupported constructs route to the resident compiler |
 | C memory/runtime | Freestanding/hosted/driver classes, allocator injection, failure tests, direct RuntimeChannel v1; the freestanding data-plane pack table (write once, read in place through epoch-bearing handles, admitted by the live control plane), the per-step freeze and the BSHM manifest-of-shards, with the C++ RAII seam over them and the Stage 3 exit flow identical on three rails | No out-of-process transport or resident hardware binding; no pack table shared across processes; no cross-node shard transport |

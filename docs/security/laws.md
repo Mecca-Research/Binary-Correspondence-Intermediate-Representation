@@ -91,6 +91,18 @@ a corpus that cannot be built. Every corpus is now built through one guard that
 fails each row the corpus feeds (`handoff_fixtures._built`), and so is the Stage
 3 exit flow. The witness patches `split` to raise and asserts named rows, not an
 exception.
+S4-A instance (2026-09-24): R9 raised on two forgeries where it owed a verdict. A
+realization whose lane was a plain int reached the diagnostic's `.name`
+(`AttributeError`), and an unhashable phase id reached the phase-order lookup
+(`TypeError`). On the parent that was 176 of the 232 misjudgments
+`planner.r9.misjudged` counts, 88 each. The compact admissibility would have added a
+third: it builds a set of the (lane, width, name) triples it must re-derive, so an
+unhashable name raised while the set was built. All three now answer with an R9
+diagnostic: `_lane_name` is total, and each lookup is guarded. Witnesses:
+`test_r9_is_total_over_an_unhashable_forgery`, and the `int-lane@`,
+`unhashable-name@` and `unhashable-phase@` forgeries in
+`planner_fixtures.r9_forgeries`, each held scoped and unscoped. The row counts a
+verdict that raised as misjudged.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -317,6 +329,25 @@ stale law, and the telemetry ring's loss count. The first sweep caught 29, and
 both misses were defects in the gate, not the table. One was a public frame
 spelling that no row measured (L14); the other was a corpus-build traceback
 (L1). After the fixes, all 34 fire their own row.
+S4-A instances (2026-09-24): R9 had no rule for one field a step carries. It checked
+each step's realization against its claim's offer, and the order of the steps'
+phases, but never that a step's phase is the phase that declares its claim. So a
+step moved to a phase the module never declares was accepted: 56 of the RED row's
+232, scoped and unscoped. The corpus that found it forges each field a step carries
+once, at the first and at the last step (`planner_fixtures.r9_forgeries`). That asks
+one question of a verifier: which field of the record it verifies does no rule read?
+R9 now binds the phase (`claim X: realized in phase P; the module declares it in
+phase Q`), and the forgery counts in the row. `tools/testing/faults/planner.json`
+injects 29 defects, each one law on one rail:
+- the Python planner's tie-breaks, couplings and sink;
+- the offer's CSE and deforestation state;
+- R9's lane identity, phase binding, lane diagnostic and base-cost compare;
+- the C planner's twins of these, its phase roots, its Θ weighting and its 128-bit
+  carry;
+- both decoders' wire laws, and the encoder's primary-resource rule.
+
+The first sweep caught 26. Each miss was a witness that could not see its law
+(L11). After the fixes, all 29 fire their own row.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -562,6 +593,34 @@ could not see them. Each has both twins and its case now
 (`m5.grammar.no_tokens`, `m5.format.duplicate_record_name`,
 `m5.field.end_overflow`): a construct absent from the corpus is untested,
 however many tests run over it.
+S4-A instances (2026-09-24): the native planner computes in 128 bits, and every
+operation was observable except one. A mutant that drops the carry out of the low
+word (`r.hi = a.hi + b.hi`) passed the whole parity corpus, including the wide-path
+fixture built to carry a losing path heavier than 2**64. That fixture's large
+terms come from multiplication, and the multiply's high word was correct.
+`carry_case` makes the carry the only route to the verdict: each term fits a u64,
+and only their sum passes 2**63 - 1, so the planner must refuse it. The mutant is
+a committed step of `tools/c/check_runtime.sh`, and the step requires the grader to
+exit 1. The planner fault table's first sweep missed three faults, and each miss
+was a witness that could not see its law:
+- A CSE fault that stops bumping an operand's version is visible only when an
+  operand is rewritten twice before a duplicate reads it. No corpus module did
+  that. The CSE coverage module now does (claims 520-523).
+- A dropped base-cost compare in R9's admissibility was masked. With Θ in scope,
+  R9 re-derives each step's cost, and that alone refuses a forged base, so the
+  witness never reached the law it was named for. R9 is now graded without Θ as
+  well, where the offer is the only guard of a realization's base.
+- The variant for `an undeclared resource carries a domain or addressing model`
+  undeclared the seed's HBM resource, which is also a claim's primary resource. On
+  the clean tree its law fired first. With that law removed, the next one (`an
+  undeclared primary resource`) refused the record with the same status. The
+  variant now undeclares a resource that one claim only writes, so no other law
+  reads its declaration. Reaching the law is not enough: a malformed witness must
+  break that law and no other, and only a sweep that removes the law can show it.
+  `test_every_law_has_a_malformed_witness` covers the half a clean tree can show:
+  every `_refuse` message in the BKPI decoder and `check_input` must be reached by
+  some variant. When it was written, two laws had none: this one, and `the claims
+  reference more operands than the record carries`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -790,6 +849,19 @@ two link failures against the pre-G16 API. The test now builds through
 `handoff_fixtures.build_cpp_program`, the one C++ build every harness uses. It
 shares one artifact minter with the gate (`seam_artifacts`), and one committed
 probe (`test_orchestrator --reject`, which must also admit the clean pack, L2).
+S4-A instance (2026-09-24): a fast path is where a second spelling is born. The
+compact planner added three code paths: a flat offer table, an indexed DP, and a
+single-candidate re-derivation for R9, which needs only the realization a step
+names. Each was a natural place to write a new cost function. Instead, there is one
+base cost (`_base_cost`, which `candidates_for` also uses), one enumeration
+(`_offer_rows`, whose `only=` restricts it to the triples a plan names, for R9) and
+one edge pair (`_edge_cost_pair`, which `edge_cost` wraps). The pre-G17 planner
+survives verbatim only as `realize_reference`, which only the parity gate reads,
+and that gate holds the two to identical plans. The native planner shares one
+source list between the gate and the harness (`kplan_sources` /
+`planner_fixtures.C_UNITS`, read out of both files by
+`test_the_gate_and_the_harness_link_the_same_sources`), and one UTF-8 predicate
+with the runtime (`bcir_utf8_valid`, made public for the op table).
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

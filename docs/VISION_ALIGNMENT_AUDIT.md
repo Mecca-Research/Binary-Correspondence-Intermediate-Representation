@@ -108,6 +108,11 @@ not promoted to driver, transport, or hardware evidence.
   selected-schedule MLIR. B3 includes six transcendental VJPs, rematerialization, bounded
   loop/call handling, and explicit quarantine. B5 has workload-scoped measured provider
   selection over the existing library families.
+- The exact planner is compact and has a native twin (G17, S4-A). It builds one flat
+  offer table and runs an indexed min-plus pass that makes 5.8x fewer calls than the planner
+  it replaced, and it produces that planner's plans byte for byte. R9 re-derives the chosen
+  realization from the same offer. The freestanding C planner writes the same plan bytes, or
+  refuses for the same reason, over a version-zero input record.
 
 ### Still open
 

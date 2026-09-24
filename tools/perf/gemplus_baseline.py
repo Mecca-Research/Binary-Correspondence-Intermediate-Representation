@@ -1073,6 +1073,67 @@ METRICS: tuple[Metric, ...] = (
         bound_source="the direct C walk of the same bytes: every per-dispatch check is O(1)",
         slice_owner="G16",
     ),
+    # --- G17 (S4-A): the compact planner and its native twin. The planner's offer became compact
+    # indexed arrays behind the same API (`realize.fused_offer`), held to the pre-G17 planner kept
+    # verbatim as `realize_reference`, and the native planner (`runtime/c/bcir_kplan.c`) is held
+    # to both byte for byte (bcir/tests/planner_fixtures.py::measure, which the tests and
+    # tools/c/check_runtime.sh grade the same way). RED is the parent (731373df) with every new
+    # entry point made to raise over the final corpora, built first (L25).
+    Metric(
+        "planner.parity",
+        "kplan",
+        "(case, comparison) pairs where the compact planner differs from the pre-G17 planner -- the plan, its BKPR bytes, and on the fixed corpus the ExecutionPlanV1 bytes -- or the native planner from the compact one (its BKPR bytes, or the same refusal), over the fixed corpus under every target, Theta and policy and 240 generated modules under every target",
+        8430,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="identical plan bytes before and after, and Python versus native (roadmap G17)",
+        slice_owner="G17",
+    ),
+    Metric(
+        "planner.malformed.accepted",
+        "kplan",
+        "(malformed record, rail) pairs not refused with the declared status: one BKPI variant per wire and planning law, one BKPR variant per wire law (54 + 20), on the Python codec and the C twin",
+        148,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own violation with one status on both rails",
+        slice_owner="G17",
+    ),
+    Metric(
+        "planner.r9.misjudged",
+        "kplan",
+        "(plan, call) pairs R9 misjudges through the planner's offer: the planner's own plan of a legal module refused, or a forgery of a field a step carries (name, width, base, lane -- including a plain int -- cost, phase, an unhashable name or phase) accepted or answered with a traceback; 14 legal modules x 2 scopes, 396 forgeries, each graded with the scope and (all but a forged cost) without it",
+        232,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every forgery refused with a diagnostic and every honest plan accepted; the parent raised on 176 forgery verdicts (a plain-int lane, an unhashable phase) and accepted 56 (a first step's phase was never bound to its claim)",
+        slice_owner="G17",
+    ),
+    # The 2026-09-04 profile's 6.06 M was the whole K_BCIR->StreamPack chain at scale 8 before
+    # S0-A made R9 re-derive the planner's offer; this row is the planner alone, the thing G17
+    # rewrites, on the parent under CPython 3.11.15 (call counts differ between interpreters: the
+    # tests compare two planners in one process instead, and state the factor).
+    Metric(
+        "planner.calls",
+        "kplan",
+        "calls (cProfile total, builtins included) planning the audit's K_BCIR->StreamPack fixture at scale 8 (32,768 claims), CPython 3.11",
+        3419172,
+        "calls",
+        "exact",
+        slice_owner="G17",
+    ),
+    Metric(
+        "planner.native.scale4",
+        "kplan",
+        "native planner (bcir_kplan.c, -O2) median time per plan of the audit fixture at scale 4 (4,096 claims), BKPI decoded once",
+        3.41,
+        "ms",
+        "wall",
+        slice_owner="G17",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -2066,6 +2127,30 @@ def measure_handoff() -> dict[str, float]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def measure_kplan() -> dict[str, float]:
+    """The G17 rows (S4-A): the compact planner against the pre-G17 planner and the native planner
+    against both (bcir/tests/planner_fixtures.py::measure, which the tests and
+    tools/c/check_runtime.sh grade the same way), the planner's call count and the native plan's
+    time. The exact parity rows need the C twin: without a C compiler they are NOT-MEASURED, never
+    estimated from one rail; the call count needs nothing but the interpreter."""
+    import shutil
+    import tempfile
+
+    from bcir.kbcir import realize
+    from bcir.tests.planner_fixtures import build_harness, call_count, measure, native_ms
+
+    out = {"planner.calls": float(call_count(realize.optimize))}
+    tmp = tempfile.mkdtemp(prefix="bcir-kplan-")
+    try:
+        exe = build_harness(tmp)
+        if exe is not None:
+            out.update(measure(exe, tmp))
+            out["planner.native.scale4"] = native_ms(exe, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2118,6 +2203,7 @@ _MEASURERS = {
     "control": measure_control,
     "ring": measure_ring,
     "handoff": measure_handoff,
+    "kplan": measure_kplan,
     "memory": measure_memory,
 }
 
@@ -2277,7 +2363,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

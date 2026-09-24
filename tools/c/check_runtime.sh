@@ -512,6 +512,69 @@ if [ "${mutant_status}" -ne 1 ]; then
 fi
 echo "  PASS hand-off gate fires on an injected fault (dispatch-generation law removed: ${mutant_rows#rows })"
 
+echo "[c-runtime] native K_BCIR planner (G17): freestanding compile (C11 + C23) + byte parity with the oracle"
+# bcir_kplan.c is the C twin of bcir/kbcir/realize.py's planner (the compact offer and the min-plus
+# path) and of bcir/abi/planner_abi.py (the BKPI input and BKPR realization records, version zero).
+# The grading is tools/c/check_planner.py -> bcir/tests/planner_fixtures.py::measure, the function the
+# tests, the G17 harness rows and the fault table (tools/testing/faults/planner.json) use: the compact
+# planner held to the pre-G17 reference (bcir/kbcir/realize_reference.py) and this planner held to
+# both, byte for byte, over the fixed corpus under every target, Theta and policy and a seeded
+# generated corpus; one malformed record per wire and planning law refused with its declared status on
+# both rails.
+for std in c11 c23; do
+  "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Wconversion -Wpedantic -Werror \
+    -I "${C}" -c "${C}/bcir_kplan.c" -o /dev/null \
+    || { echo "  FAIL: bcir_kplan.c not freestanding-clean under -std=${std}"; exit 1; }
+done
+kplan_sources=("${C}/bcir_kplan.c" "${C}/bcir_runtime.c" "${C}/test_kplan.c")
+"${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${kplan_sources[@]}" -o "${tmp}/test_kplan" \
+  || { echo "  FAIL: planner harness build"; exit 1; }
+python3 - "${ROOT}" "${tmp}/kplan_seed.bkpi" <<'PY' || { echo "  FAIL: the planner's seed record"; exit 1; }
+import sys
+sys.path.insert(0, sys.argv[1])
+from bcir.tests.planner_fixtures import _seed_input
+with open(sys.argv[2], "wb") as f:
+    f.write(_seed_input()[0])
+PY
+kplan_api="$("${tmp}/test_kplan" --api "${tmp}/kplan_seed.bkpi")" \
+  || { echo "  FAIL: planner API laws"; echo "${kplan_api}"; exit 1; }
+case "${kplan_api}" in
+  API\ OK\ *) ;;
+  *) echo "  FAIL: unexpected planner API output"; echo "${kplan_api}"; exit 1 ;;
+esac
+kplan_measure() {  # <C harness> -> prints the row summary; exits as tools/c/check_planner.py does
+  python3 "${ROOT}/tools/c/check_planner.py" --exe "$1" --tmp "${tmp}" > "${tmp}/kplan_rows.txt" 2>&1
+  local status=$?
+  tail -n 1 "${tmp}/kplan_rows.txt"
+  return "${status}"
+}
+kplan_rows="$(kplan_measure "${tmp}/test_kplan")" \
+  || { echo "  FAIL: a G17 row is not zero: ${kplan_rows}"; cat "${tmp}/kplan_rows.txt"; exit 1; }
+echo "  PASS native planner (freestanding C11 + C23; API fail-closed laws, ${kplan_api#API OK } checks; ${kplan_rows#rows })"
+# -O0 == -O3 == the oracle: the plans and refusals do not depend on the optimizer.
+for opt in O0 O3; do
+  "${CC}" -std=c23 -${opt} -Wall -Wextra -Werror -I "${C}" "${kplan_sources[@]}" -o "${tmp}/test_kplan_${opt}" \
+    || { echo "  FAIL: -${opt} planner harness build"; exit 1; }
+  opt_rows="$(kplan_measure "${tmp}/test_kplan_${opt}")" \
+    || { echo "  FAIL: the -${opt} planner diverges from the oracle: ${opt_rows}"; exit 1; }
+done
+echo "  PASS native planner optimisation parity (-O0 == -O3 == the oracle)"
+# The gate must be able to fail (L2): a planner whose 128-bit addition drops its carry wraps a path
+# weight past 2**64 (bcir/tests/planner_fixtures.py::wide_path_case) and must turn a row red. Built
+# from the real source; if the line changes, the injection fails loudly.
+sed 's/r.hi = a.hi + b.hi + (r.lo < a.lo ? 1u : 0u);/r.hi = a.hi + b.hi;/' \
+  "${C}/bcir_kplan.c" > "${tmp}/bcir_kplan_mutant.c"
+if cmp -s "${C}/bcir_kplan.c" "${tmp}/bcir_kplan_mutant.c"; then
+  echo "  FAIL: the carry fault injection did not apply (the line changed)"; exit 1
+fi
+"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/bcir_kplan_mutant.c" "${C}/bcir_runtime.c" "${C}/test_kplan.c" \
+  -o "${tmp}/test_kplan_mutant" || { echo "  FAIL: planner mutant harness build"; exit 1; }
+mutant_rows="$(kplan_measure "${tmp}/test_kplan_mutant")"; mutant_status=$?
+if [ "${mutant_status}" -ne 1 ]; then
+  echo "  FAIL: a planner that wraps a path weight passed the G17 gate (exit ${mutant_status}): ${mutant_rows}"; exit 1
+fi
+echo "  PASS planner gate fires on an injected fault (the 128-bit carry dropped: ${mutant_rows#rows })"
+
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
 # bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,
 # resync-able telemetry transport (T2). The producer drains TelemetryRing and frames the 56-byte

@@ -175,6 +175,7 @@ def _apply_tier(tier: str) -> None:
 
 _MODULES = [
     "bcir.tests.test_kbcir",
+    "bcir.tests.test_planner_compact",
     "bcir.tests.test_rcsp",
     "bcir.tests.test_overlap",
     "bcir.tests.test_fusion",

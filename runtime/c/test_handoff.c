@@ -67,6 +67,7 @@ static const char *status_name(bcir_status s) {
     case BCIR_ERR_BUSY:        return "BCIR_ERR_BUSY";
     case BCIR_ERR_LIFETIME:    return "BCIR_ERR_LIFETIME";
     case BCIR_ERR_SHARD:       return "BCIR_ERR_SHARD";
+    case BCIR_ERR_PLANNER:     return "BCIR_ERR_PLANNER";
   }
   return "BCIR_ERR_UNKNOWN";
 }

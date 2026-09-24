@@ -836,7 +836,7 @@ What landed (S3-C):
 Not claimed: a cross-node transport, a pack table shared across processes, and reduction
 across ranks.
 
-### G17 — compact indexed planner, then native parity
+### G17 — compact indexed planner, then native parity — LANDED (S4-A, 2026-09-24)
 
 *New, Stage 4. The profile's hot spot: Python objects per claim, immutable values rebuilt.*
 
@@ -850,6 +850,61 @@ corpus — the same way the C twins earn their rails.
 | `exact` `planner.parity` | identical plan bytes before and after, and Python versus native |
 | `exact` `planner.calls` | Python call count at scale 8 (6.06 M in the profile) reduced by a stated factor |
 | `wall` `audit.kbcir-streampack.scale4` | indicative only |
+
+What landed (S4-A):
+
+- **The compact planner** (`bcir/kbcir/realize.py`), behind the same API.
+  - The offer is one derivation, `fused_offer`: per claim, row tuples `(lane, width, name,
+    base, rw)` from one enumeration (`_offer_rows`) over one arithmetic (`_base_cost`), with the
+    CSE and deforestation discounts applied in the same pass, and no `Candidate` or `CostVector`
+    built. `fused_candidates` and `result.cand_map` (a lazy `OfferMap`) are views of it.
+  - `optimize` derives the weights once per phase and prices each realization once for both
+    path contexts (`_edge_cost_pair`, which `edge_cost` now delegates to). It relaxes each column
+    against the previous column's cheapest narrow and wide predecessor, first on a tie, exactly
+    as `dag_shortest_path` does, over two flat arrays.
+  - The pre-G17 planner is kept verbatim as `realize_reference`, read only by the parity gate.
+- **R9's single-candidate re-derivation.** `verify_plan` prices only the realizations the plan
+  names, from the same offer (`fused_offer(module, h, only=...)`), and derives the weights once
+  per phase.
+- **The native planner** (`runtime/c/bcir_kplan.{h,c}`, freestanding;
+  [`BCIR_PLANNER_ABI.md`](../kernel/BCIR_PLANNER_ABI.md)).
+  - It reads the planner's whole input as one version-zero record (BKPI) and writes the plan as
+    another (BKPR).
+  - Its arithmetic is 128-bit and exact over the declared domain. It refuses only a value the
+    record cannot carry, exactly when the Python encoder does. `BCIR_ERR_PLANNER` 25 is
+    appended.
+- **Measured.**
+  - `planner.calls` fell from 3,419,172 to 589,858 at scale 8 (5.80×; 5.76× at scale 4). That is
+    CPython 3.11 on the parent; the tests compare the two planners in one process, because counts
+    differ between interpreters.
+  - `verify.plan.scope.overhead` fell from 1.07 to about 0.73.
+  - The native planner plans the 4,096-claim audit fixture in about 3.4 ms, against about 33 ms
+    for the compact planner and 73 ms for the reference on this host. At scale 8 it takes 29 ms,
+    against 421 and 754.
+  - The review's 6.06 M was the whole K_BCIR→StreamPack chain at scale 8 before S0-A made R9
+    re-derive the offer; that chain now reads 3.51 M, down from 9.20 M.
+  - `audit.kbcir-streampack.scale4` (`wall`, indicative) was measured A/B against the parent
+    on one host, over three alternating rounds with the median of five runs each: 201–219 ms
+    before, 117–137 ms after, with the same result digest. The chain still runs `verify`
+    (1.65 M calls at scale 8, untouched), `hydrate_pipelined` and `verify_pack`, so the
+    planner's 5.8× shows up as about 1.6× on the whole chain.
+- **The gates.**
+  - The exact rows, each at 0: `planner.parity` 8,430 → 0, `planner.malformed.accepted` 148 → 0
+    and `planner.r9.misjudged` 232 → 0.
+  - The C gate section, with its carry mutant.
+  - A libFuzzer target.
+  - The decoder campaign's `planner` and `realization` surfaces.
+  - A committed fault table of 29 defects, each caught by its own row. Its first sweep missed
+    three, and in each case the witness, not the code, was wrong (L11).
+
+Found and fixed inside the slice:
+
+- R9 never bound a step to the phase that declares its claim. A forged phase on a first step
+  passed.
+- R9 answered two forgeries with a traceback: a plain-int lane, and an unhashable phase.
+
+Not claimed: the MLIR `-bcir-plan` pass (unchanged); the CXX3 joint solvers (Python only); a
+certificate produced natively.
 
 ### G18 — incremental re-verification and delta StreamPack
 
@@ -932,7 +987,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16                  ALL LANDED: G14 (S3-A); G15 (S3-B); G16 (S3-C) — exit gate met
-Stage 4  performance program               G17, G18
+Stage 4  performance program               G17, G18                         G17 LANDED (S4-A)
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```

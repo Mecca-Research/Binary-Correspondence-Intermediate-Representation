@@ -44,7 +44,7 @@ typedef struct {
   int err;      /* 0 clean, 1 truncated, 2 invalid UTF-8 */
 } cur;
 
-static int utf8_ok(const uint8_t *s, size_t n) {
+int bcir_utf8_valid(const uint8_t *BCIR_RESTRICT s, size_t n) {
   size_t i = 0;
   while (i < n) {
     uint8_t b0 = s[i++];
@@ -104,7 +104,7 @@ static const char *c_str(cur *c, uint16_t *out_len) {
   uint16_t n = c_u16(c);
   if (!c_has(c, n)) { c->err = 1; *out_len = 0; return 0; }
   const char *p = (const char *)(c->d + c->pos);
-  if (!utf8_ok(c->d + c->pos, n)) { c->err = 2; *out_len = 0; return 0; }
+  if (!bcir_utf8_valid(c->d + c->pos, n)) { c->err = 2; *out_len = 0; return 0; }
   c->pos += n; *out_len = n; return p;
 }
 static const uint8_t *c_u32arr(cur *c, uint16_t *out_cnt) {

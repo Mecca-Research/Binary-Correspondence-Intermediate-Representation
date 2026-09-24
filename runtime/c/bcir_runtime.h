@@ -59,8 +59,10 @@ typedef enum bcir_status {
   BCIR_ERR_LIFETIME = 23,   /* a pack-table handle or view names no live slot at its epoch: the
                              * owner released it (a view outlived its owner), the slot was
                              * reused, or the handle was never issued (bcir_handoff.h) */
-  BCIR_ERR_SHARD = 24       /* a shard manifest violates a manifest law, or a shard set does not
+  BCIR_ERR_SHARD = 24,      /* a shard manifest violates a manifest law, or a shard set does not
                              * reassemble to the whole it declares (bcir_shard_manifest.h) */
+  BCIR_ERR_PLANNER = 25     /* a K_BCIR planner input or realization record violates a planner
+                             * law (bcir_kplan.h): a count, the scope, a claim, the op table */
   /* Append-only: the codes are the rails' shared names for a refusal (the Python codecs'
    * `status`), so a code is never renumbered or reused -- a new status takes the next one. */
 } bcir_status;
@@ -68,6 +70,10 @@ typedef enum bcir_status {
 /* zlib-compatible CRC-32 (reflected, poly 0xEDB88320). NULL is valid only with len 0;
  * an invalid NULL/nonzero pair returns 0 instead of dereferencing it. */
 BCIR_NODISCARD uint32_t bcir_crc32(const uint8_t *BCIR_RESTRICT data, size_t len);
+
+/* 1 when `s[0..n)` is well-formed UTF-8 (RFC 3629: no overlong form, no surrogate, nothing
+ * above U+10FFFF) -- the one validator every wire string in the runtime is held to. */
+BCIR_NODISCARD int bcir_utf8_valid(const uint8_t *BCIR_RESTRICT s, size_t n);
 
 /* Validate magic + version + CRC and copy the header out. A trust boundary: every
  * field is bounds-checked, so any malformed/hostile buffer returns an error status
