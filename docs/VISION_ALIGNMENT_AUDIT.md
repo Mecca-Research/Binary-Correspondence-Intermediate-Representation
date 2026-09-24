@@ -113,6 +113,11 @@ not promoted to driver, transport, or hardware evidence.
   it replaced, and it produces that planner's plans byte for byte. R9 re-derives the chosen
   realization from the same offer. The freestanding C planner writes the same plan bytes, or
   refuses for the same reason, over a version-zero input record.
+- The K_BCIR -> StreamPack chain advances by declared deltas (G18, S4-B). A one-claim edit
+  re-plans its dependency cone, re-emits only the changed pack records, and re-derives only the
+  verdict units whose inputs moved. It costs 491 calls at scale 8 against 10.9 M from scratch,
+  and every link equals the chain from scratch: the plan, the pack bytes, and the verdict,
+  including over forged plans and packs.
 
 ### Still open
 

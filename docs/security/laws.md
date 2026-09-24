@@ -103,6 +103,16 @@ diagnostic: `_lane_name` is total, and each lookup is guarded. Witnesses:
 `unhashable-name@` and `unhashable-phase@` forgeries in
 `planner_fixtures.r9_forgeries`, each held scoped and unscoped. The row counts a
 verdict that raised as misjudged.
+S4-B instance (2026-09-24): a `Delta` whose replacements were not tuples (`None`, a
+list, a generator) raised `TypeError` from the admission loop. That is a traceback
+where the contract promises `DeltaError` before anything moves. The admission now
+refuses the shape first. Witnesses: the malformed-delta corpus
+(`delta_fixtures.malformed_deltas`: `the resources None`, `the claims a list`, `the
+claims a generator`), graded on every rail by `delta.malformed.accepted`, which
+counts an exception of any other type as accepted. The grader follows the same
+rule: a mechanism that raises fails every comparison it owns, and a corpus that
+cannot be built fails its rows (`delta_fixtures._built`), so the parent tree, where
+every mechanism is absent, grades to a number rather than a traceback.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -522,6 +532,19 @@ derived from `Exception` for eleven rounds after the decoder's did not —
 one law, two rails, one spelling, see L14),
 `test_implementation_errors_are_never_graceful`,
 `test_gitleaks_nonzero_fails_the_scan`.
+S4-B instance (2026-09-24): the incremental verdict (`verify.delta.VerifyState`)
+could have asked the planner which columns it changed. The planner reports them
+(`IncrementalPlan.changed`), and trusting that report would make the verdict only as
+right as the thing it verifies. Instead, the verdict finds what changed by object
+identity between the old and the new module, plan and pack. It also keeps an
+`IncrementalOffer` of its own, advanced from the module alone. Witnesses:
+- `test_the_verdict_never_reads_the_offer_the_plan_carries`: a plan naming a
+  realization no module offers, carrying a candidate map that claims it does, draws
+  R9 exactly as the full verifier does;
+- the forged rail of `verify.delta.identity`, which hands the verdict the plan or
+  the pack of the step before (`plan.stale`, `pack.stale`: a planner or emitter
+  that did not move) and a forged field on every step, and must equal the full
+  verdict each time.
 **Port note:** in C the watchdog is a separate process; in-process signals
 are swallowable by longjmp-style recovery just as exceptions are.
 
@@ -621,6 +644,20 @@ was a witness that could not see its law:
   every `_refuse` message in the BKPI decoder and `check_input` must be reached by
   some variant. When it was written, two laws had none: this one, and `the claims
   reference more operands than the record carries`.
+S4-B instances (2026-09-24): the delta fault table's first sweep missed four of 32
+defects. Three were witnesses that could not reach their law:
+- The pack's stale flag (a refused pack leaves the state behind its plan) is only
+  observable if something the refused delta changed survives the repair. The repair
+  restored everything, so a state that ignored the refusal re-derived the same
+  bytes. The refused delta now carries an emittable edit that must survive it.
+- Two verdict paths (a step whose claim's offer moved, and the next step's cost)
+  are reachable only when a step object is unchanged while its inputs moved. An
+  honest planner never does that, and the rotating forgeries rarely did it on a
+  module whose cones were wide. The stale plan is now forged on every cone round.
+- The stale pack and the generation edit sat on rotations of lengths 8 and 10.
+  Since x ≡ 7 (mod 8) and x ≡ 2 (mod 10) has no solution, the pair was never
+  scheduled. The plan and pack forgeries now rotate on coprime lengths.
+The fourth miss was not a witness; it is recorded under L22.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -862,6 +899,26 @@ source list between the gate and the harness (`kplan_sources` /
 `planner_fixtures.C_UNITS`, read out of both files by
 `test_the_gate_and_the_harness_link_the_same_sources`), and one UTF-8 predicate
 with the runtime (`bcir_utf8_valid`, made public for the op table).
+S4-B instance (2026-09-24): an incremental mechanism is a second derivation of a
+full one, which is exactly where second spellings are born. Five were avoided, and
+one was found:
+- the discount is one rule table (`realize._DISCOUNT[duplicate][consumes][fenced]`),
+  read by `fused_offer`'s walk and by the incremental offer's indexed re-derivation;
+- the relaxation is one function (`realize._relax_column`) that `optimize` and
+  `IncrementalPlan` both run;
+- the records are built by `streampack.step_records` and `double_buffer`, which
+  `hydrate`, `hydrate_pipelined` and the delta pack all call;
+- the wire contract is the encoder's own functions (`_validate_header_contract`,
+  `_validate_segment`, `_validate_prefetch`, `_wire_version`, `_record_bytes`),
+  factored out of `encode` byte-identically;
+- the verdict is the three verifiers' own units, re-assembled in their order.
+The found one: "each claim id is declared once" was spelled four times across the
+rails (the offer, the plan, `apply_delta`, the verdict), and `apply_delta`'s spelling
+checked only the ids a delta replaced, so it admitted a module the states refused.
+One predicate, `kbcir.delta._unique_where`, now decides it on every rail. The
+replacement addressing is one function as well (`_addressed`). Witness:
+`test_a_module_a_delta_cannot_address_is_refused_by_every_state`, which names both
+the duplicated id and an id declared once.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1072,6 +1129,13 @@ directions, on all three rails: `admission/restart-other-registry` (refused) and
 `admission/restart-same-registry` (still admitted, so the binding is exactly the
 pair, not the plane's identity). A mutant that drops the registry compare fires
 `handoff.stale.dispatched` on each rail that runs the table.
+S4-B instance (2026-09-24): the delta pack kept a counter of the step prefetches
+beside the section itself. Its one consumer was the header's u32 bound and the
+index in a refusal that no reachable pack can make. A fault that froze the counter
+passed the whole corpus, because no value a pack in memory can hold observes it.
+It was removed rather than witnessed: the count is now the new section's own
+length, built before validation. State that no reachable input can observe is not
+a check; it is a defect held in reserve.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

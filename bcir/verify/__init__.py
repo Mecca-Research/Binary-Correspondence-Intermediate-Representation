@@ -89,8 +89,48 @@ def _is_pow2(n: int) -> bool:
     return isinstance(n, int) and n > 0 and (n & (n - 1)) == 0
 
 
+# The sections of `verify`'s verdict, in its order: the verdict is the sections concatenated,
+# and within a per-claim section the claims come in module order. `verify` and the incremental
+# verifier (`verify.delta`, GEM+ G18) assemble it from the same units -- the module-wide laws,
+# `_claim_laws` per claim and `_pair_laws` per phase -- so the two cannot spell a law twice.
+(
+    _S_REGISTRY,  # R1: the registry
+    _S_CLAIM_IDS,  # R1.1
+    _S_RESOLVE,  # R2, per claim
+    _S_RES_DOMAIN,  # R3, per resource
+    _S_DOMAIN,  # R3, per claim
+    _S_PHASES,  # R4
+    _S_HAZARD,  # R5 (with R18), per claim; each phase's decoupled-tail pairs after its claims
+    _S_LANE,  # R6, per claim
+    _S_BOUNDS,  # R7, per claim
+    _S_COST,  # R8, per claim
+    _S_MASK,  # the EV mask/unmask sub-law, per claim
+    _S_EVENTS,  # EV1-EV3
+) = range(12)
+_SECTIONS = 12
+
+
 def verify(module: Module) -> list[Diagnostic]:
     """Module/claim laws R1-R8 (the static half of R8: cost-class completeness)."""
+    from ..kbcir.events import mask_law
+
+    sections: list[list] = [[] for _ in range(_SECTIONS)]
+    sections[_S_REGISTRY] = _registry_laws(module)
+    sections[_S_CLAIM_IDS] = _claim_id_laws(module)
+    sections[_S_RES_DOMAIN] = _resource_domain_laws(module)
+    sections[_S_PHASES] = _phase_laws(module)
+    hazard = sections[_S_HAZARD]
+    for ph in module.phases:
+        for claim in ph.claims:
+            for section, diag in _claim_laws(module, claim, mask_law):
+                sections[section].append(diag)
+        hazard += _pair_laws(ph)
+    sections[_S_EVENTS] = _event_laws(module)
+    return [diag for section in sections for diag in section]
+
+
+def _registry_laws(module: Module) -> list[Diagnostic]:
+    """R1: the registry's uniqueness and well-formedness."""
     diags: list[Diagnostic] = []
 
     # R1: registry uniqueness (RID unique within the module's registry namespace).
@@ -133,88 +173,45 @@ def verify(module: Module) -> list[Diagnostic]:
                     f"resource {res.rid}: align must be a positive power of two (got {res.align})",
                 )
             )
+    return diags
 
-    # R1.1: claim-id uniqueness (mirror of R1, for the claim namespace). Every claim id must be unique
-    # within the module -- a duplicate/injected claim id makes the claim graph ambiguous (a plan step,
-    # an attestation, or the structural digest could silently bind to the wrong claim). The C twin
-    # (runtime/c/bcir_verify.c) enforces the same law over the WHOLE unit's claim array; the cfront rail
-    # additionally calls cfront_unit_claim_ids_unique() to aggregate across functions (each cfront
-    # function is verified as its own single-phase Module, so this per-module pass only catches an
-    # intra-function duplicate -- the unit-wide pass catches a cross-function one).
+
+def _claim_id_laws(module: Module) -> list[Diagnostic]:
+    """R1.1: claim-id uniqueness (mirror of R1, for the claim namespace). Every claim id must be
+    unique within the module -- a duplicate/injected claim id makes the claim graph ambiguous (a
+    plan step, an attestation, or the structural digest could silently bind to the wrong claim).
+    The C twin (runtime/c/bcir_verify.c) enforces the same law over the WHOLE unit's claim array;
+    the cfront rail additionally calls cfront_unit_claim_ids_unique() to aggregate across
+    functions (each cfront function is verified as its own single-phase Module, so this
+    per-module pass only catches an intra-function duplicate -- the unit-wide pass catches a
+    cross-function one)."""
+    diags: list[Diagnostic] = []
     seen_cid: set[int] = set()
     for ph in module.phases:
         for claim in ph.claims:
             if claim.id in seen_cid:
                 diags.append(Diagnostic("R1.1", f"duplicate claim id {claim.id}"))
             seen_cid.add(claim.id)
+    return diags
 
-    # R2: registry resolution -- every claim resource reference resolves.
-    for ph in module.phases:
-        for claim in ph.claims:
-            for rid in claim.io_rids():
-                if module.resource(rid) is None:
-                    diags.append(
-                        Diagnostic("R2", f"claim {claim.id} references undeclared RID {rid}")
-                    )
 
-    # R3: domain legality -- claim domain contracts correspond to registry placement.
-    for res in module.resources.values():
-        if res.access == "ham" and res.domain == Domain.MMIO:
-            diags.append(
-                Diagnostic("R3", f"resource {res.rid}: HAM access is illegal in the MMIO domain")
-            )
-    for ph in module.phases:
-        for claim in ph.claims:
-            touched = [module.resource(rid) for rid in claim.io_rids()]
-            touched = [r for r in touched if r is not None]
-            if touched and claim.domain not in {r.domain for r in touched}:
-                diags.append(
-                    Diagnostic(
-                        "R3",
-                        f"claim {claim.id}: declares domain {claim.domain.name} but touches only "
-                        f"{{{', '.join(sorted({r.domain.name for r in touched}))}}}",
-                    )
-                )
-            # R3 (the isolated-domain redirection gap, S0-6 -- one rule on both rails): a
-            # resource in a device-ISOLATED domain (MMIO: `model.ISOLATED_DOMAINS`) may be
-            # touched only by a claim declaring that domain. A host-domain claim that reaches a
-            # device register while "backed" by one RAM operand was accepted by the membership
-            # check above -- an isolated resource silently treated as another address space. The
-            # converse stays legal: an MMIO claim carries the RAM value it stores / the index it
-            # reads (every cfront MMIO access has that shape), so only the RESOURCE side of the
-            # pair is required to match.
-            for kind, rids in (("read", claim.rd), ("write", claim.wr)):
-                for rid in rids:
-                    res = module.resource(rid)
-                    if (
-                        res is not None
-                        and res.domain in ISOLATED_DOMAINS
-                        and res.domain != claim.domain
-                    ):
-                        diags.append(
-                            Diagnostic(
-                                "R3",
-                                f"claim {claim.id}: {kind} of RID {rid} (domain {res.domain.name}) "
-                                f"does not match the claim domain {claim.domain.name} -- an "
-                                f"isolated resource may not be reached as another address space",
-                            )
-                        )
-            for rid in claim.wr:
-                res = module.resource(rid)
-                if res is not None and res.domain == Domain.MMIO and claim.hazard == "unique":
-                    diags.append(
-                        Diagnostic(
-                            "R3",
-                            f"claim {claim.id}: MMIO write to RID {rid} requires an "
-                            f"atomic/barriered hazard contract",
-                        )
-                    )
+def _resource_domain_laws(module: Module) -> list[Diagnostic]:
+    """R3, per resource: domain legality of the registry placement itself."""
+    return [
+        Diagnostic("R3", f"resource {res.rid}: HAM access is illegal in the MMIO domain")
+        for res in module.resources.values()
+        if res.access == "ham" and res.domain == Domain.MMIO
+    ]
 
-    # R4 (phase identity, S0-6): a phase id names ONE phase and every dependency names a
-    # declared phase. `Module.phase_map()` keys by id, so a duplicate silently shadowed its
-    # twin (the shadowed phase's deps vanished from the DAG) and `topological_phase_ids`
-    # ignored a dangling dep -- the canonical order was computed over a graph the module did
-    # not declare. Both rails now refuse the module before any order is derived from it.
+
+def _phase_laws(module: Module) -> list[Diagnostic]:
+    """R4: phase identity (S0-6) and phase-DAG legality. A phase id names ONE phase and every
+    dependency names a declared phase. `Module.phase_map()` keys by id, so a duplicate silently
+    shadowed its twin (the shadowed phase's deps vanished from the DAG) and
+    `topological_phase_ids` ignored a dangling dep -- the canonical order was computed over a
+    graph the module did not declare. Both rails now refuse the module before any order is
+    derived from it."""
+    diags: list[Diagnostic] = []
     seen_pid: set[int] = set()
     for ph in module.phases:
         if ph.phase_id in seen_pid:
@@ -230,220 +227,304 @@ def verify(module: Module) -> list[Diagnostic]:
     # R4: phase DAG legality (acyclic).
     if _has_cycle(module):
         diags.append(Diagnostic("R4", "phase dependency graph contains a cycle"))
+    return diags
+
+
+def _claim_laws(module: Module, claim, mask_law) -> list[tuple[int, Diagnostic]]:
+    """Every per-claim law of `verify`, as (section, diagnostic) pairs in the order each section
+    lists them: R2, R3, R5 (with R18), R6, R7, R8 and the EV mask/unmask sub-law.
+
+    A claim's verdict reads the claim and the registry entries of the RIDs it names, and nothing
+    else -- which is what lets the incremental verifier re-check only the claims a delta
+    replaced and the claims that name a resource it replaced. Each RID is resolved once, as
+    `Module.resource` resolves it. `mask_law` is `kbcir.events.mask_law`, handed in because the
+    verifier imports the event module lazily (it reads as an independent statement of the
+    laws)."""
+    out: list[tuple[int, Diagnostic]] = []
+    resources = module.resources
+    rd, wr = claim.rd, claim.wr
+    reads = [(rid, resources[rid] if rid in resources else None) for rid in rd]
+    writes = [(rid, resources[rid] if rid in resources else None) for rid in wr]
+
+    # R2: registry resolution -- every claim resource reference resolves.
+    for rid, res in reads + writes:
+        if res is None:
+            out.append(
+                (_S_RESOLVE, Diagnostic("R2", f"claim {claim.id} references undeclared RID {rid}"))
+            )
+
+    # R3: domain legality -- claim domain contracts correspond to registry placement.
+    touched = [res for _, res in reads + writes if res is not None]
+    if touched and claim.domain not in {r.domain for r in touched}:
+        out.append(
+            (
+                _S_DOMAIN,
+                Diagnostic(
+                    "R3",
+                    f"claim {claim.id}: declares domain {claim.domain.name} but touches only "
+                    f"{{{', '.join(sorted({r.domain.name for r in touched}))}}}",
+                ),
+            )
+        )
+    # R3 (the isolated-domain redirection gap, S0-6 -- one rule on both rails): a resource in a
+    # device-ISOLATED domain (MMIO: `model.ISOLATED_DOMAINS`) may be touched only by a claim
+    # declaring that domain. A host-domain claim that reaches a device register while "backed"
+    # by one RAM operand was accepted by the membership check above -- an isolated resource
+    # silently treated as another address space. The converse stays legal: an MMIO claim
+    # carries the RAM value it stores / the index it reads (every cfront MMIO access has that
+    # shape), so only the RESOURCE side of the pair is required to match.
+    for kind, resolved in (("read", reads), ("write", writes)):
+        for rid, res in resolved:
+            if res is not None and res.domain in ISOLATED_DOMAINS and res.domain != claim.domain:
+                out.append(
+                    (
+                        _S_DOMAIN,
+                        Diagnostic(
+                            "R3",
+                            f"claim {claim.id}: {kind} of RID {rid} (domain {res.domain.name}) "
+                            f"does not match the claim domain {claim.domain.name} -- an "
+                            f"isolated resource may not be reached as another address space",
+                        ),
+                    )
+                )
+    for rid, res in writes:
+        if res is not None and res.domain == Domain.MMIO and claim.hazard == "unique":
+            out.append(
+                (
+                    _S_DOMAIN,
+                    Diagnostic(
+                        "R3",
+                        f"claim {claim.id}: MMIO write to RID {rid} requires an "
+                        f"atomic/barriered hazard contract",
+                    ),
+                )
+            )
 
     # R5: hazard legality -- the hazard contract is sufficient for the declared semantics.
-    for ph in module.phases:
-        for claim in ph.claims:
-            if claim.hazard not in _HAZARDS:
-                diags.append(
-                    Diagnostic("R5", f"claim {claim.id}: unknown hazard contract {claim.hazard!r}")
-                )
-                continue
-            if claim.opcode in _ATOMIC_OPCODES and claim.hazard == "unique":
-                diags.append(
+    if claim.hazard not in _HAZARDS:
+        out.append(
+            (
+                _S_HAZARD,
+                Diagnostic("R5", f"claim {claim.id}: unknown hazard contract {claim.hazard!r}"),
+            )
+        )
+    else:
+        if claim.opcode in _ATOMIC_OPCODES and claim.hazard == "unique":
+            out.append(
+                (
+                    _S_HAZARD,
                     Diagnostic(
                         "R5",
                         f"claim {claim.id}: atomic opcode {claim.opcode.name} requires an "
                         f"atomic/barriered hazard contract",
-                    )
+                    ),
                 )
-            if claim.lane == Lane.A and claim.hazard == "unique":
-                diags.append(
+            )
+        if claim.lane == Lane.A and claim.hazard == "unique":
+            out.append(
+                (
+                    _S_HAZARD,
                     Diagnostic(
                         "R5",
                         f"claim {claim.id}: atomic lane A requires an atomic/barriered "
                         f"hazard contract",
-                    )
+                    ),
                 )
-            # §5.14 Phase 2 (indirect-call effect): a dispatch claim's DECLARED callee signature,
-            # when carried, must be well-formed "ret(params)" -- a malformed record would poison the
-            # R18/commutation consumers silently. Vacuous when absent (the opaque-edge default).
-            if claim.callee_sig and "(" not in claim.callee_sig:
-                diags.append(
+            )
+        # §5.14 Phase 2 (indirect-call effect): a dispatch claim's DECLARED callee signature,
+        # when carried, must be well-formed "ret(params)" -- a malformed record would poison the
+        # R18/commutation consumers silently. Vacuous when absent (the opaque-edge default).
+        if claim.callee_sig and "(" not in claim.callee_sig:
+            out.append(
+                (
+                    _S_HAZARD,
                     Diagnostic(
                         "R18",
                         f"claim {claim.id}: malformed indirect-callee signature "
                         f"{claim.callee_sig!r} (expected 'ret(params)')",
-                    )
+                    ),
                 )
-            # §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
-            # an ordering/legality signal, not a cosmetic tag. Vacuous unless a claim opts in.
-            if claim.volatile and claim.hazard == "unique":
-                diags.append(
+            )
+        # §5.14 Phase 2: a VOLATILE access (MMIO) must carry an ordered hazard -- volatility is
+        # an ordering/legality signal, not a cosmetic tag. Vacuous unless a claim opts in.
+        if claim.volatile and claim.hazard == "unique":
+            out.append(
+                (
+                    _S_HAZARD,
                     Diagnostic(
                         "R5",
                         f"claim {claim.id}: volatile access requires an atomic/barriered "
                         f"hazard contract",
-                    )
+                    ),
                 )
-        # CT2 decoupling soundness: the GGG/random tail executes decoupled from the
-        # wave order, so a same-phase conflict touching a sparse claim loses its
-        # implicit serialization -- both ends must carry an ordered hazard contract.
-        # R5 can ONLY fire on a conflict where at least one side is sparse, so precompute
-        # sparsity once (not per pair) and skip the whole O(n^2) pair scan when the phase
-        # has no sparse claim -- which collapses a large single-phase function (e.g. a 7500-
-        # claim body) from ~n^2/2 `_conflict` calls to O(n). Behaviour-identical: the same
-        # pairs reach the error condition, in the same order; only the cheap sparse gate now
-        # precedes the costly `_conflict` (and the no-sparse phase is provably a no-op here).
-        claims = ph.claims
-        is_sp = [_is_sparse(c) for c in claims]
-        if any(is_sp):
-            for i, a in enumerate(claims):
-                a_sp = is_sp[i]
-                for j in range(i + 1, len(claims)):
-                    if not (a_sp or is_sp[j]):
-                        continue
-                    b = claims[j]
-                    if not _conflict(a, b):
-                        continue
-                    for c in (a, b):
-                        if c.hazard == "unique":
-                            diags.append(
-                                Diagnostic(
-                                    "R5",
-                                    f"claim {c.id}: conflicts across the decoupled GGG tail in "
-                                    f"phase {ph.phase_id} without an atomic/barriered hazard",
-                                )
-                            )
+            )
 
     # R6: lane legality -- lane type matches the declared access pattern.
-    for ph in module.phases:
-        for claim in ph.claims:
-            legal = _LEGAL_LANES.get(claim.stride_class, set())
-            if claim.lane not in legal:
-                diags.append(
-                    Diagnostic(
-                        "R6",
-                        f"claim {claim.id}: lane {claim.lane.name} illegal for "
-                        f"stride_class {claim.stride_class.name}",
-                    )
-                )
+    legal = _LEGAL_LANES.get(claim.stride_class, set())
+    if claim.lane not in legal:
+        out.append(
+            (
+                _S_LANE,
+                Diagnostic(
+                    "R6",
+                    f"claim {claim.id}: lane {claim.lane.name} illegal for "
+                    f"stride_class {claim.stride_class.name}",
+                ),
+            )
+        )
 
-    # R7: bounds legality -- strict bounds are discharged statically (affine
-    # patterns) or guarded by a runtime verify contract (data-dependent patterns).
-    for ph in module.phases:
-        for claim in ph.claims:
-            if claim.bounds not in _BOUNDS:
-                diags.append(
-                    Diagnostic("R7", f"claim {claim.id}: unknown bounds mode {claim.bounds!r}")
+    # R7: bounds legality -- strict bounds are discharged statically (affine patterns) or
+    # guarded by a runtime verify contract (data-dependent patterns).
+    for diag in _bounds_laws(claim, reads, writes):
+        out.append((_S_BOUNDS, diag))
+
+    # R8 (static half): cost completeness -- every claim names a known cost class.
+    if claim.cost_class not in _COST_CLASSES:
+        out.append(
+            (
+                _S_COST,
+                Diagnostic("R8", f"claim {claim.id}: unknown cost class {claim.cost_class!r}"),
+            )
+        )
+
+    # EV (driver roadmap A1/B1): the mask/unmask well-formedness sub-law holds wherever such
+    # claims appear, even in an eventless module.
+    msg = mask_law(claim)
+    if msg is not None:
+        law, _, text = msg.partition(":")
+        out.append((_S_MASK, Diagnostic(law.strip(), text.strip())))
+    return out
+
+
+def _bounds_laws(claim, reads, writes) -> list[Diagnostic]:
+    """R7 for one claim, over its reads and writes as resolved in the registry."""
+    if claim.bounds not in _BOUNDS:
+        return [Diagnostic("R7", f"claim {claim.id}: unknown bounds mode {claim.bounds!r}")]
+    if claim.verify not in _VERIFY:
+        return [Diagnostic("R7", f"claim {claim.id}: unknown verify contract {claim.verify!r}")]
+    # R7 (access-pattern well-formedness, S0-6): the iteration extent is non-negative and the
+    # stride positive, whatever the bounds mode -- the parse-time `bcir.claim` verifier's rule.
+    # The oracle used to fold a zero or negative stride to 1 (`max(1, stride_k)`) and admit a
+    # negative count or offset, so a claim the law rail refuses at parse verified clean here
+    # and priced as a unit-stride stream.
+    diags: list[Diagnostic] = []
+    if claim.count < 0:
+        diags.append(
+            Diagnostic("R7", f"claim {claim.id}: count must be non-negative (got {claim.count})")
+        )
+    if claim.offset < 0:
+        diags.append(
+            Diagnostic("R7", f"claim {claim.id}: offset must be non-negative (got {claim.offset})")
+        )
+    if claim.stride_k < 1:
+        diags.append(
+            Diagnostic("R7", f"claim {claim.id}: stride_k must be positive (got {claim.stride_k})")
+        )
+    if diags:
+        return diags
+    # A `masked` access (the §5.12 promotion: runtime-bounds-checked, the contract the
+    # quarantine handler discharges) must DECLARE that runtime contract -- `verify == "bounds"`.
+    # The law now SEES the masked metadata it previously skipped: a masked claim with no bounds
+    # verify is a promotion the backend would emit without a guard (a silent loss of the check).
+    if claim.bounds == "masked" and claim.verify != "bounds":
+        why = f" (extent provenance: {claim.bounds_provenance})" if claim.bounds_provenance else ""
+        diags.append(
+            Diagnostic(
+                "R7",
+                f"claim {claim.id}: masked (runtime-bounds-checked) access must carry a "
+                f"'bounds' verify contract, not {claim.verify!r}{why}",
+            )
+        )
+    if claim.bounds != "strict":
+        return diags
+    if claim.stride_class in _DATA_DEPENDENT:
+        if claim.verify == "none":
+            diags.append(
+                Diagnostic(
+                    "R7",
+                    f"claim {claim.id}: data-dependent {claim.stride_class.name} access "
+                    f"with strict bounds requires a runtime verify contract",
                 )
+            )
+        return diags
+    # Affine pattern: the touched extent is statically known. The stride applies to the
+    # streamed read source; writes land unit-stride (a conservative under-approximation --
+    # never a false positive). A reduction (op "reduce.*") accumulates count reads into a
+    # single location, so its write extent is one element, not count.
+    k = claim.stride_k
+    read_extent = claim.offset + (claim.count - 1) * k + 1 if claim.count > 0 else 0
+    is_reduction = claim.op.startswith("reduce.")
+    write_extent = claim.offset + (1 if is_reduction else claim.count)
+    if max(read_extent, write_extent) > _I64_MAX:
+        # The wire domain (S0-6): an extent the MLIR attributes and the C runtime cannot carry
+        # is refused, not compared -- checked arithmetic on the law rail.
+        diags.append(
+            Diagnostic("R7", f"claim {claim.id}: affine access extent exceeds signed 64-bit range")
+        )
+        return diags
+    for resolved, extent, kind in ((reads, read_extent, "read"), (writes, write_extent, "write")):
+        for rid, res in resolved:
+            if res is None or not res.shape:
                 continue
-            if claim.verify not in _VERIFY:
-                diags.append(
-                    Diagnostic("R7", f"claim {claim.id}: unknown verify contract {claim.verify!r}")
-                )
-                continue
-            # R7 (access-pattern well-formedness, S0-6): the iteration extent is non-negative
-            # and the stride positive, whatever the bounds mode -- the parse-time `bcir.claim`
-            # verifier's rule. The oracle used to fold a zero or negative stride to 1 (`max(1,
-            # stride_k)`) and admit a negative count or offset, so a claim the law rail refuses
-            # at parse verified clean here and priced as a unit-stride stream.
-            malformed = False
-            if claim.count < 0:
-                diags.append(
-                    Diagnostic(
-                        "R7", f"claim {claim.id}: count must be non-negative (got {claim.count})"
-                    )
-                )
-                malformed = True
-            if claim.offset < 0:
-                diags.append(
-                    Diagnostic(
-                        "R7", f"claim {claim.id}: offset must be non-negative (got {claim.offset})"
-                    )
-                )
-                malformed = True
-            if claim.stride_k < 1:
-                diags.append(
-                    Diagnostic(
-                        "R7", f"claim {claim.id}: stride_k must be positive (got {claim.stride_k})"
-                    )
-                )
-                malformed = True
-            if malformed:
-                continue
-            # A `masked` access (the §5.12 promotion: runtime-bounds-checked, the contract the quarantine
-            # handler discharges) must DECLARE that runtime contract -- `verify == "bounds"`. The law now
-            # SEES the masked metadata it previously skipped: a masked claim with no bounds verify is a
-            # promotion the backend would emit without a guard (a silent loss of the check).
-            if claim.bounds == "masked" and claim.verify != "bounds":
-                why = (
-                    f" (extent provenance: {claim.bounds_provenance})"
-                    if claim.bounds_provenance
-                    else ""
-                )
+            if extent > res.count:
                 diags.append(
                     Diagnostic(
                         "R7",
-                        f"claim {claim.id}: masked (runtime-bounds-checked) access must carry a "
-                        f"'bounds' verify contract, not {claim.verify!r}{why}",
+                        f"claim {claim.id}: {kind} of RID {rid} overruns the resource "
+                        f"(extent {extent} > {res.count})",
                     )
                 )
-            if claim.bounds != "strict":
-                continue
-            if claim.stride_class in _DATA_DEPENDENT:
-                if claim.verify == "none":
-                    diags.append(
-                        Diagnostic(
-                            "R7",
-                            f"claim {claim.id}: data-dependent {claim.stride_class.name} access "
-                            f"with strict bounds requires a runtime verify contract",
-                        )
-                    )
-                continue
-            # Affine pattern: the touched extent is statically known. The stride
-            # applies to the streamed read source; writes land unit-stride (a
-            # conservative under-approximation -- never a false positive). A
-            # reduction (op "reduce.*") accumulates count reads into a single
-            # location, so its write extent is one element, not count.
-            k = claim.stride_k
-            read_extent = claim.offset + (claim.count - 1) * k + 1 if claim.count > 0 else 0
-            is_reduction = claim.op.startswith("reduce.")
-            write_extent = claim.offset + (1 if is_reduction else claim.count)
-            if max(read_extent, write_extent) > _I64_MAX:
-                # The wire domain (S0-6): an extent the MLIR attributes and the C runtime
-                # cannot carry is refused, not compared -- checked arithmetic on the law rail.
-                diags.append(
-                    Diagnostic(
-                        "R7", f"claim {claim.id}: affine access extent exceeds signed 64-bit range"
-                    )
-                )
-                continue
-            for rid, extent, kind in [(r, read_extent, "read") for r in claim.rd] + [
-                (w, write_extent, "write") for w in claim.wr
-            ]:
-                res = module.resource(rid)
-                if res is None or not res.shape:
-                    continue
-                if extent > res.count:
-                    diags.append(
-                        Diagnostic(
-                            "R7",
-                            f"claim {claim.id}: {kind} of RID {rid} overruns the resource "
-                            f"(extent {extent} > {res.count})",
-                        )
-                    )
-
-    # R8 (static half): cost completeness -- every claim names a known cost class.
-    for ph in module.phases:
-        for claim in ph.claims:
-            if claim.cost_class not in _COST_CLASSES:
-                diags.append(
-                    Diagnostic("R8", f"claim {claim.id}: unknown cost class {claim.cost_class!r}")
-                )
-
-    # EV1-EV3 (event phases, driver roadmap A1/B1): module laws too, so the canonical
-    # verifier carries them. Vacuous over every eventless module; the mask/unmask
-    # well-formedness sub-law holds wherever such claims appear. They lived only in
-    # `kbcir.events`, and an unarmed event phase reported EV2 there while `verify_all`
-    # said the module was lawful.
-    from ..kbcir.events import check_event_phases
-
-    for msg in check_event_phases(module):
-        law, _, text = msg.partition(":")
-        diags.append(Diagnostic(law.strip(), text.strip()))
-
     return diags
+
+
+def _pair_laws(ph) -> list[Diagnostic]:
+    """R5 (CT2 decoupling soundness) for one phase: the GGG/random tail executes decoupled from
+    the wave order, so a same-phase conflict touching a sparse claim loses its implicit
+    serialization -- both ends must carry an ordered hazard contract. R5 can ONLY fire on a
+    conflict where at least one side is sparse, so sparsity is computed once (not per pair) and
+    the whole O(n^2) pair scan is skipped when the phase has no sparse claim -- which collapses a
+    large single-phase function (e.g. a 7500-claim body) from ~n^2/2 `_conflict` calls to O(n).
+    The pairs are visited in (i, j) order, i < j, and each is `_pair_law`."""
+    diags: list[Diagnostic] = []
+    claims = ph.claims
+    is_sp = [_is_sparse(c) for c in claims]
+    if any(is_sp):
+        for i, a in enumerate(claims):
+            a_sp = is_sp[i]
+            for j in range(i + 1, len(claims)):
+                if not (a_sp or is_sp[j]):
+                    continue
+                diags += _pair_law(ph.phase_id, a, claims[j])
+    return diags
+
+
+def _pair_law(phase_id, a, b) -> list[Diagnostic]:
+    """The decoupled-tail law of one same-phase pair (a before b), at least one of them sparse:
+    a conflicting pair needs an ordered hazard on both ends."""
+    if not _conflict(a, b):
+        return []
+    return [
+        Diagnostic(
+            "R5",
+            f"claim {c.id}: conflicts across the decoupled GGG tail in "
+            f"phase {phase_id} without an atomic/barriered hazard",
+        )
+        for c in (a, b)
+        if c.hazard == "unique"
+    ]
+
+
+def _event_laws(module: Module) -> list[Diagnostic]:
+    """EV1-EV3 (event phases, driver roadmap A1/B1): module laws too, so the canonical verifier
+    carries them. Vacuous over every eventless module. They lived only in `kbcir.events`, and an
+    unarmed event phase reported EV2 there while `verify_all` said the module was lawful."""
+    from ..kbcir.events import event_phase_laws
+
+    out: list[Diagnostic] = []
+    for msg in event_phase_laws(module):
+        law, _, text = msg.partition(":")
+        out.append(Diagnostic(law.strip(), text.strip()))
+    return out
 
 
 # --- the cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix) ------------------
@@ -749,6 +830,10 @@ def verify_plan(
     re-derives the candidate set from the module and target and requires the chosen
     realization to be a member of it, which is what "the plan is legal" has to mean if a
     certificate is going to rest on it.
+
+    The verdict is assembled from units the incremental verifier (`verify.delta`, GEM+ G18)
+    re-derives one by one: `_step_laws` per step, `_cost_law` per step and its predecessor,
+    and the plan-wide laws (coverage, the score, the phase order, the budget).
     """
     diags: list[Diagnostic] = []
     claims = {c.id: c for ph in module.phases for c in ph.claims}
@@ -762,122 +847,26 @@ def verify_plan(
     for step in result.steps:
         claim = claims[step.claim_id] if step.claim_id in claims else None
         if claim is None:
-            diags.append(Diagnostic("R9", f"plan realizes unknown claim {step.claim_id}"))
+            diags.append(_unknown_step_diag(step))
             continue
         if step.claim_id in seen:
-            diags.append(Diagnostic("R9", f"claim {step.claim_id} realized more than once"))
+            diags.append(_repeated_step_diag(step))
         seen.add(step.claim_id)
-        # R9: a step realizes its claim in the phase that declares it. The step carries the
-        # phase redundantly (the law rail's plan cannot misplace one: a claim's phase is its
-        # enclosing op), so the oracle holds the copy to the module -- the phase-order walk
-        # below only compares steps with each other, and passed a first step in any phase.
-        if step.phase_id != declared_in[step.claim_id]:
-            diags.append(
-                Diagnostic(
-                    "R9",
-                    f"claim {step.claim_id}: realized in phase {step.phase_id!r}; the module "
-                    f"declares it in phase {declared_in[step.claim_id]}",
-                )
-            )
-
-        cand = step.candidate
-        # R8: every realized step carries a complete, non-negative scalarized cost.
-        if len(cand.base.v) != 12:
-            diags.append(
-                Diagnostic("R8", f"claim {step.claim_id}: candidate cost vector is not 12-d")
-            )
-        if step.cost < 0:
-            diags.append(
-                Diagnostic("R8", f"claim {step.claim_id}: negative realized cost {step.cost}")
-            )
+        j = None if entry is None or step.claim_id not in entry else entry[step.claim_id]
+        diags += _step_laws(step, claim, declared_in[step.claim_id], offer, j)
         total += step.cost
-
-        # R9: the realization has to be one the planner could actually have generated
-        # for this claim on this target -- name, lane, width and base cost together.
-        if offer is not None:
-            j = entry[step.claim_id] if step.claim_id in entry else None
-            admitted = False
-            for row in offer.rows[j] if j is not None else ():
-                if _same_realization_row(cand, row):
-                    admitted = True
-                    break
-            if not admitted:
-                offered = offer.full_rows(j) if j is not None else []
-                diags.append(
-                    Diagnostic(
-                        "R9",
-                        f"claim {step.claim_id}: realization "
-                        f"{cand.name!r}({_lane_name(cand.lane)}, width {cand.width}) is not among "
-                        f"the {len(offered)} candidate(s) this target admits: "
-                        f"{sorted(row[2] for row in offered)}",
-                    )
-                )
-
-        # R9: an ATOMIC opcode keeps an atomic realization. Checked before the geometry
-        # rules because it does not depend on them: `stride_class` describes which
-        # elements are touched, and no answer to that question makes a vectorized or
-        # gathered read-modify-write atomic. The geometry check alone passed
-        # ATOMIC_ADD/SCALAR realized as `U vec16` and ATOMIC_ADD/RANDOM as `GGG gather`.
-        if claim.opcode in _ATOMIC_OPCODES and (cand.lane is not Lane.A or cand.width != 1):
-            diags.append(
-                Diagnostic(
-                    "R9",
-                    f"claim {step.claim_id}: atomic opcode {claim.opcode.name} realized as "
-                    f"{_lane_name(cand.lane)} width {cand.width}; an atomic read-modify-write has "
-                    f"one realization, A lane width 1",
-                )
-            )
-
-        # R9: the chosen realization is legal for the claim's declared geometry.
-        if cand.lane == Lane.H:
-            if claim.opcode not in _CONTROL_OPCODES and claim.stride_class != StrideClass.SCALAR:
-                diags.append(
-                    Diagnostic(
-                        "R9",
-                        f"claim {step.claim_id}: H-lane realization {cand.name!r} for a "
-                        f"non-control claim",
-                    )
-                )
-        elif cand.lane not in (
-            _LEGAL_LANES[claim.stride_class] if claim.stride_class in _LEGAL_LANES else ()
-        ):
-            diags.append(
-                Diagnostic(
-                    "R9",
-                    f"claim {step.claim_id}: chosen lane {_lane_name(cand.lane)} illegal for "
-                    f"stride_class {claim.stride_class.name}",
-                )
-            )
 
     # R9 (scope): every realized cost re-derives from (h, theta, policy) -- the same
     # predicate the planner prices its DAG edges with (`realize.edge_cost`).
     if theta is not None and h is not None:
-        from ..kbcir.realize import edge_cost
-        from ..kbcir.weights import PERF, weights
-
-        pol = policy if policy is not None else PERF
-        w_by_phase: dict = {}  # `step_cost`'s weights, derived once per phase
+        scope = _CostScope(h, theta, policy)
         prev = None
         for step in result.steps:
             if step.claim_id not in claims:
                 continue
-            try:
-                if step.phase_id in w_by_phase:
-                    w = w_by_phase[step.phase_id]
-                else:
-                    w = w_by_phase[step.phase_id] = weights(h, theta, step.phase_id, pol)
-            except TypeError:  # a forged, unhashable phase id: derive without the cache
-                w = weights(h, theta, step.phase_id, pol)
-            expected = edge_cost(prev, step.candidate, theta, w)
-            if expected != step.cost:
-                diags.append(
-                    Diagnostic(
-                        "R9",
-                        f"claim {step.claim_id}: realized cost {step.cost} does not re-derive "
-                        f"from the scope (expected {expected} for {step.candidate.name!r} "
-                        f"under policy {pol.name!r})",
-                    )
-                )
+            diag = _cost_law(step, prev, scope)
+            if diag is not None:
+                diags.append(diag)
             prev = step.candidate
     if budget is not None:
         if theta is None:
@@ -895,26 +884,177 @@ def verify_plan(
     # R9: total coverage -- a plan must realize every claim exactly once.
     for cid in claims:
         if cid not in seen:
-            diags.append(Diagnostic("R9", f"plan does not realize claim {cid}"))
+            diags.append(_uncovered_claim_diag(cid))
 
     # R9: the reported score is the sum of the realized step costs.
     if result.steps and total != result.score:
-        diags.append(Diagnostic("R9", f"plan score {result.score} != sum of step costs {total}"))
+        diags.append(_score_diag(result.score, total))
 
     # R9: steps follow the topological phase order.
     pos = {pid: i for i, pid in enumerate(_topo_phase_ids(module))}
     last = -1
     for step in result.steps:
-        try:
-            p = pos[step.phase_id] if step.phase_id in pos else -1
-        except TypeError:  # a forged, unhashable phase id names no phase (L1)
-            p = -1
+        p = _phase_position(pos, step)
         if p < last:
-            diags.append(Diagnostic("R9", f"claim {step.claim_id}: realized out of phase order"))
+            diags.append(_phase_order_diag(step))
             break
         last = p
 
     return diags
+
+
+def _unknown_step_diag(step) -> Diagnostic:
+    return Diagnostic("R9", f"plan realizes unknown claim {step.claim_id}")
+
+
+def _repeated_step_diag(step) -> Diagnostic:
+    return Diagnostic("R9", f"claim {step.claim_id} realized more than once")
+
+
+def _uncovered_claim_diag(cid) -> Diagnostic:
+    return Diagnostic("R9", f"plan does not realize claim {cid}")
+
+
+def _score_diag(score, total) -> Diagnostic:
+    return Diagnostic("R9", f"plan score {score} != sum of step costs {total}")
+
+
+def _phase_order_diag(step) -> Diagnostic:
+    return Diagnostic("R9", f"claim {step.claim_id}: realized out of phase order")
+
+
+def _phase_position(pos: dict, step) -> int:
+    """A step's phase in the canonical order (-1: a phase the module does not declare)."""
+    try:
+        return pos[step.phase_id] if step.phase_id in pos else -1
+    except TypeError:  # a forged, unhashable phase id names no phase (L1)
+        return -1
+
+
+def _step_laws(step, claim, declared_phase, offer, j) -> list[Diagnostic]:
+    """Every law of one plan step that reads only the step, its claim, the phase that declares
+    the claim and the claim's entry `j` in `offer` (the planner's offer as R9 re-derives it;
+    None: no target, so admissibility is not asked). The incremental verifier re-checks exactly
+    the steps whose inputs a delta moved."""
+    diags: list[Diagnostic] = []
+    # R9: a step realizes its claim in the phase that declares it. The step carries the
+    # phase redundantly (the law rail's plan cannot misplace one: a claim's phase is its
+    # enclosing op), so the oracle holds the copy to the module -- the phase-order walk
+    # only compares steps with each other, and passed a first step in any phase.
+    if step.phase_id != declared_phase:
+        diags.append(
+            Diagnostic(
+                "R9",
+                f"claim {step.claim_id}: realized in phase {step.phase_id!r}; the module "
+                f"declares it in phase {declared_phase}",
+            )
+        )
+
+    cand = step.candidate
+    # R8: every realized step carries a complete, non-negative scalarized cost.
+    if len(cand.base.v) != 12:
+        diags.append(Diagnostic("R8", f"claim {step.claim_id}: candidate cost vector is not 12-d"))
+    if step.cost < 0:
+        diags.append(Diagnostic("R8", f"claim {step.claim_id}: negative realized cost {step.cost}"))
+
+    # R9: the realization has to be one the planner could actually have generated
+    # for this claim on this target -- name, lane, width and base cost together.
+    if offer is not None:
+        admitted = False
+        for row in offer.rows[j] if j is not None else ():
+            if _same_realization_row(cand, row):
+                admitted = True
+                break
+        if not admitted:
+            offered = offer.full_rows(j) if j is not None else []
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: realization "
+                    f"{cand.name!r}({_lane_name(cand.lane)}, width {cand.width}) is not among "
+                    f"the {len(offered)} candidate(s) this target admits: "
+                    f"{sorted(row[2] for row in offered)}",
+                )
+            )
+
+    # R9: an ATOMIC opcode keeps an atomic realization. Checked before the geometry
+    # rules because it does not depend on them: `stride_class` describes which
+    # elements are touched, and no answer to that question makes a vectorized or
+    # gathered read-modify-write atomic. The geometry check alone passed
+    # ATOMIC_ADD/SCALAR realized as `U vec16` and ATOMIC_ADD/RANDOM as `GGG gather`.
+    if claim.opcode in _ATOMIC_OPCODES and (cand.lane is not Lane.A or cand.width != 1):
+        diags.append(
+            Diagnostic(
+                "R9",
+                f"claim {step.claim_id}: atomic opcode {claim.opcode.name} realized as "
+                f"{_lane_name(cand.lane)} width {cand.width}; an atomic read-modify-write has "
+                f"one realization, A lane width 1",
+            )
+        )
+
+    # R9: the chosen realization is legal for the claim's declared geometry.
+    if cand.lane == Lane.H:
+        if claim.opcode not in _CONTROL_OPCODES and claim.stride_class != StrideClass.SCALAR:
+            diags.append(
+                Diagnostic(
+                    "R9",
+                    f"claim {step.claim_id}: H-lane realization {cand.name!r} for a "
+                    f"non-control claim",
+                )
+            )
+    elif cand.lane not in (
+        _LEGAL_LANES[claim.stride_class] if claim.stride_class in _LEGAL_LANES else ()
+    ):
+        diags.append(
+            Diagnostic(
+                "R9",
+                f"claim {step.claim_id}: chosen lane {_lane_name(cand.lane)} illegal for "
+                f"stride_class {claim.stride_class.name}",
+            )
+        )
+    return diags
+
+
+class _CostScope:
+    """(h, theta, policy) as R9's cost re-derivation reads it: the planner's own edge
+    (`realize.edge_cost`) and the phase weights, derived once per phase. Built once per
+    verification -- the imports are lazy, because the verifier reads as an independent
+    statement of the laws."""
+
+    __slots__ = ("h", "theta", "policy", "edge_cost", "weights", "by_phase")
+
+    def __init__(self, h, theta, policy):
+        from ..kbcir.realize import edge_cost
+        from ..kbcir.weights import PERF, weights
+
+        self.h, self.theta = h, theta
+        self.policy = policy if policy is not None else PERF
+        self.edge_cost, self.weights = edge_cost, weights
+        self.by_phase: dict = {}  # `step_cost`'s weights, derived once per phase
+
+
+def _cost_law(step, prev, scope: _CostScope) -> Diagnostic | None:
+    """R9 (scope) for one step: its realized cost re-derives from (h, theta, policy) and the
+    candidate of the step before it (`prev`; None for the first) -- the planner's own edge."""
+    by_phase = scope.by_phase
+    try:
+        if step.phase_id in by_phase:
+            w = by_phase[step.phase_id]
+        else:
+            w = by_phase[step.phase_id] = scope.weights(
+                scope.h, scope.theta, step.phase_id, scope.policy
+            )
+    except TypeError:  # a forged, unhashable phase id: derive without the cache
+        w = scope.weights(scope.h, scope.theta, step.phase_id, scope.policy)
+    expected = scope.edge_cost(prev, step.candidate, scope.theta, w)
+    if expected != step.cost:
+        return Diagnostic(
+            "R9",
+            f"claim {step.claim_id}: realized cost {step.cost} does not re-derive "
+            f"from the scope (expected {expected} for {step.candidate.name!r} "
+            f"under policy {scope.policy.name!r})",
+        )
+    return None
 
 
 def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
@@ -931,6 +1071,10 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     and certified. `verify_all` checked plan and pack independently and never proved the
     one came from the other, so a pack hydrated from a `vec4` plan verified clean against
     a `scalar` plan: the artifact chain graph -> plan -> pack had no link.
+
+    The verdict is assembled from units the incremental verifier (`verify.delta`, GEM+ G18)
+    re-derives one by one: `_segment_laws` per segment, `_prefetch_law` per prefetch, and the
+    pack-wide laws (coverage, the duplicate names, the header, the generation vector).
     """
     diags: list[Diagnostic] = []
     claims = {c.id for ph in module.phases for c in ph.claims}
@@ -941,71 +1085,31 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     covered = {s.claim_id for s in pack.segments}
     for cid in sorted(claims - covered):
         claim = next(c for ph in module.phases for c in ph.claims if c.id == cid)
-        if claim.opcode in _CONTROL_OPCODES:
-            continue  # control claims lower to no stream segment
-        diags.append(
-            Diagnostic(
-                "R10",
-                f"claim {cid} has no StreamPack segment; the pack does not realize the module",
-            )
-        )
+        diag = _uncovered_segment_diag(cid, claim)
+        if diag is not None:
+            diags.append(diag)
     segment_ids = [s.claim_id for s in pack.segments]
     trace_ids = [t.claim_id for t in pack.trace_notes]
     prefetch_names = [p.name for p in pack.prefetches]
     traced = {t.claim_id for t in pack.trace_notes}
-    prefetches = {p.name for p in pack.prefetches}
     pf_targets = {p.name: set(p.targets) for p in pack.prefetches}
 
     # R10: stream structure -- v2 pipeline/double-buffer contracts are well-formed.
     if len(set(segment_ids)) != len(segment_ids):
-        diags.append(Diagnostic("R10", "duplicate segment claim_id in StreamPack"))
+        diags.append(_DUPLICATE_SEGMENTS)
     if len(set(trace_ids)) != len(trace_ids):
-        diags.append(Diagnostic("R10", "duplicate trace claim_id in StreamPack"))
+        diags.append(_DUPLICATE_TRACES)
     if len(set(prefetch_names)) != len(prefetch_names):
-        diags.append(Diagnostic("R10", "duplicate prefetch name in StreamPack"))
-    if getattr(pack, "pipeline_depth", 1) < 1:
-        diags.append(
-            Diagnostic("R10", f"invalid pipeline_depth {pack.pipeline_depth} (must be >= 1)")
-        )
+        diags.append(_DUPLICATE_PREFETCHES)
+    diags += _pack_header_laws(pack)
     for pf in pack.prefetches:
-        if getattr(pf, "buffers", 1) not in (1, 2):
-            diags.append(
-                Diagnostic("R10", f"prefetch {pf.name}: invalid buffer count {pf.buffers} (1 or 2)")
-            )
+        diag = _prefetch_law(pf)
+        if diag is not None:
+            diags.append(diag)
 
     # R10: stream provenance -- every segment maps back to a live BCIR claim.
     for seg in pack.segments:
-        if seg.claim_id not in traced:
-            diags.append(
-                Diagnostic("R10", f"segment {seg.name}: no trace note for claim {seg.claim_id}")
-            )
-        if seg.claim_id not in claims:
-            diags.append(
-                Diagnostic("R10", f"segment {seg.name}: references unknown claim {seg.claim_id}")
-            )
-        for rid in tuple(seg.reads) + tuple(seg.writes):
-            if module.resource(rid) is None:
-                diags.append(
-                    Diagnostic("R10", f"segment {seg.name}: references undeclared RID {rid}")
-                )
-        if seg.prefetch is not None and seg.prefetch not in prefetches:
-            diags.append(
-                Diagnostic("R10", f"segment {seg.name}: undeclared prefetch {seg.prefetch!r}")
-            )
-        # R10: a declared prefetch must actually FEED this segment -- at least one of its
-        # read RIDs must be a prefetch target (hydrate sets pf.targets == claim.rd). A
-        # redirected/swapped target (no read covered) is a broken provenance binding the
-        # freestanding C twin (bcir_sp_verify_semantic) also rejects, so the rails agree.
-        elif seg.prefetch is not None and seg.reads:
-            tgts = pf_targets.get(seg.prefetch, set())
-            if not (set(seg.reads) & tgts):
-                diags.append(
-                    Diagnostic(
-                        "R10",
-                        f"segment {seg.name}: prefetch {seg.prefetch!r} feeds no read RID "
-                        f"(targets {sorted(tgts)} disjoint from reads {sorted(seg.reads)})",
-                    )
-                )
+        diags += _segment_laws(module, seg, traced, claims, pf_targets)
 
     # R10: the pack is the lowering of THIS plan. Segment-to-claim provenance is not
     # enough on its own: the claim ids can all be right while the realization the pack
@@ -1045,6 +1149,78 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     # R11: generation validity -- the pack's tags match the live registry. A
     # mismatch is a stale pack: rehydrate (keep/patch/repack/replan,
     # kbcir.calibrate.rehydrate_decide), never execute silently.
+    diags += _pack_generation_laws(module, pack)
+
+    return diags
+
+
+_DUPLICATE_SEGMENTS = Diagnostic("R10", "duplicate segment claim_id in StreamPack")
+_DUPLICATE_TRACES = Diagnostic("R10", "duplicate trace claim_id in StreamPack")
+_DUPLICATE_PREFETCHES = Diagnostic("R10", "duplicate prefetch name in StreamPack")
+
+
+def _uncovered_segment_diag(cid, claim) -> Diagnostic | None:
+    """R10 coverage for one claim no segment realizes (None: a control claim, which lowers to
+    no stream segment)."""
+    if claim.opcode in _CONTROL_OPCODES:
+        return None
+    return Diagnostic(
+        "R10", f"claim {cid} has no StreamPack segment; the pack does not realize the module"
+    )
+
+
+def _pack_header_laws(pack) -> list[Diagnostic]:
+    if getattr(pack, "pipeline_depth", 1) < 1:
+        return [Diagnostic("R10", f"invalid pipeline_depth {pack.pipeline_depth} (must be >= 1)")]
+    return []
+
+
+def _prefetch_law(pf) -> Diagnostic | None:
+    if getattr(pf, "buffers", 1) not in (1, 2):
+        return Diagnostic("R10", f"prefetch {pf.name}: invalid buffer count {pf.buffers} (1 or 2)")
+    return None
+
+
+def _segment_laws(module: Module, seg, traced, claims, pf_targets) -> list[Diagnostic]:
+    """R10 provenance for one segment: its trace note, its claim, the RIDs it names and the
+    prefetch it declares (which must feed one of its reads). Reads the segment, the pack's
+    trace-note claim ids (`traced`), the module's claim ids, the registry and the pack's
+    prefetch targets by name (`pf_targets`)."""
+    diags: list[Diagnostic] = []
+    if seg.claim_id not in traced:
+        diags.append(
+            Diagnostic("R10", f"segment {seg.name}: no trace note for claim {seg.claim_id}")
+        )
+    if seg.claim_id not in claims:
+        diags.append(
+            Diagnostic("R10", f"segment {seg.name}: references unknown claim {seg.claim_id}")
+        )
+    for rid in tuple(seg.reads) + tuple(seg.writes):
+        if module.resource(rid) is None:
+            diags.append(Diagnostic("R10", f"segment {seg.name}: references undeclared RID {rid}"))
+    if seg.prefetch is not None and seg.prefetch not in pf_targets:
+        diags.append(Diagnostic("R10", f"segment {seg.name}: undeclared prefetch {seg.prefetch!r}"))
+    # R10: a declared prefetch must actually FEED this segment -- at least one of its
+    # read RIDs must be a prefetch target (hydrate sets pf.targets == claim.rd). A
+    # redirected/swapped target (no read covered) is a broken provenance binding the
+    # freestanding C twin (bcir_sp_verify_semantic) also rejects, so the rails agree.
+    elif seg.prefetch is not None and seg.reads:
+        tgts = pf_targets.get(seg.prefetch, set())
+        if not (set(seg.reads) & tgts):
+            diags.append(
+                Diagnostic(
+                    "R10",
+                    f"segment {seg.name}: prefetch {seg.prefetch!r} feeds no read RID "
+                    f"(targets {sorted(tgts)} disjoint from reads {sorted(seg.reads)})",
+                )
+            )
+    return diags
+
+
+def _pack_generation_laws(module: Module, pack) -> list[Diagnostic]:
+    """R11: the header's topology tag, and the per-resource generation vector against the live
+    registry."""
+    diags: list[Diagnostic] = []
     if pack.topo_gen < 1:
         diags.append(Diagnostic("R11", f"invalid topo_gen {pack.topo_gen} (must be >= 1)"))
     # R11 per resource (S0-2, StreamPack v4): the header tags are the registry's MAXIMA and
@@ -1058,7 +1234,6 @@ def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     # rule on the law rail and in the C twin (bcir_sp_check_generation_vector). Only a
     # registry with no resources at all is judged by the maxima (which must then be 0).
     diags += _verify_generation_vector(module, pack)
-
     return diags
 
 

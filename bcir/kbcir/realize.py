@@ -523,6 +523,20 @@ def _cse_memory_q8(claim: Claim) -> int:
 # How the intra-phase data flow discounted a claim's realizations (`Offer.mode`).
 _PLAIN, _CSE, _DEFOREST = 0, 1, 2
 
+# The discount rule, as ONE table both evaluations of the offer read (GEM+ G18): the sequential
+# walk of `fused_offer` and the indexed re-derivation of `kbcir.delta` gather the three facts
+# their own way and look the mode up here, so the rule itself is spelled once.
+#   _DISCOUNT[duplicate][consumes][fenced]
+#   duplicate  -- the claim is CSE-eligible and an earlier eligible claim of its phase has its
+#                 value-numbered identity: CSE wins, being the larger credit
+#   consumes   -- a read operand was written earlier in the phase (producer -> consumer)
+#   fenced     -- the claim is barriered, or one of its reads was written by a barriered claim
+#                 earlier in the phase (ASM3b: the fence materializes the intermediate)
+_DISCOUNT = (
+    ((_PLAIN, _PLAIN), (_DEFOREST, _PLAIN)),
+    ((_CSE, _CSE), (_CSE, _CSE)),
+)
+
 
 class Offer:
     """The planner's offer as compact indexed arrays (GEM+ G17): one column per claim in
@@ -651,18 +665,19 @@ def fused_offer(module: Module, h: HProfile, only=None) -> Offer:
         # The value-numbered semantic identity (G1): the same value at the same versions.
         eligible = cse_eligible(claim, module)
         sig = cse_identity(claim, ver) if eligible else None
-        mode = _PLAIN
-        if eligible and sig in seenmap:  # CSE: identical value already computed
-            mode = _CSE
-        elif not pset.isdisjoint(rd):  # producer->consumer deforestation
-            # ASM3b: a barriered claim is a first-class ordering edge -- no fusion across it.
-            # Skip the deforestation discount when the consumer is barriered OR a shared
-            # operand was produced by a barriered producer (the fence forces the intermediate
-            # to materialize, no round-trip elision).
-            if claim.hazard != "barriered" and not (bset and not bset.isdisjoint(pset & set(rd))):
-                mode = _DEFOREST
-            else:
-                mode = _PLAIN
+        # The discount (`_DISCOUNT`): CSE when an identical value is already computed, else
+        # producer->consumer deforestation unless a fence stands between them. ASM3b: a
+        # barriered claim is a first-class ordering edge, so neither a barriered consumer nor a
+        # read a barriered producer wrote fuses (the fence materializes the intermediate). Every
+        # barriered write is also in `pset`, so the reads a fence covers are `bset & rd`. A
+        # duplicate's row of the table does not depend on the other two facts, so they are
+        # gathered only for a claim that is not one.
+        if eligible and sig in seenmap:
+            mode = _DISCOUNT[True][False][False]
+        else:
+            mode = _DISCOUNT[False][not pset.isdisjoint(rd)][
+                claim.hazard == "barriered" or (not bset.isdisjoint(rd) if bset else False)
+            ]
         want = None if only is None else only.get(claim.id, _NO_REALIZATIONS)
         rows[j] = _offer_rows(claim, h, geometry, bw_f, lat_f, access, want, mode)
 
@@ -695,12 +710,16 @@ class OfferMap(Mapping):
 
     __slots__ = ("_offer", "_column", "_cache")
 
-    def __init__(self, offer: Offer):
+    def __init__(self, offer: Offer, column: dict[int, int] | None = None):
+        """`column` (claim id -> its first entry) may be handed in by a caller that already
+        holds it for the same claim order -- the incremental planner, whose deltas never move
+        a claim -- and is otherwise derived from the offer."""
         self._offer = offer
-        column: dict[int, int] = {}
-        for j, claim in enumerate(offer.claims):
-            if claim.id not in column:
-                column[claim.id] = j
+        if column is None:
+            column = {}
+            for j, claim in enumerate(offer.claims):
+                if claim.id not in column:
+                    column[claim.id] = j
         self._column = column
         self._cache: dict[int, list[Candidate]] = {}
 
@@ -718,6 +737,49 @@ class OfferMap(Mapping):
 
 
 # --- the optimizer --------------------------------------------------------------
+
+
+def _relax_column(crow, k, w, hot, shares, pn, dn, pw, dw, dist, pred, first):
+    """Relax one column of the realization DAG -- the one relaxation `optimize` and the
+    incremental planner (`kbcir.delta`, GEM+ G18) both run.
+
+    Slot `first + i` (i < k, the column's `len(crow)`, which every caller already holds)
+    receives row i's least path weight (`dist`) and the predecessor slot it came
+    from (`pred`), from the previous column's cheapest narrow slot `pn` (weight `dn`) and
+    cheapest wide slot `pw` (weight `dw`), each -1 when absent: both -1 is the first column,
+    entered from SOURCE (pred -1). An edge into row i costs its fused value when the predecessor
+    is wide, i is wide and the two claims share a read (`shares`), its plain value otherwise; a
+    tie keeps the predecessor that comes first -- the order of the slot ids the caller passes,
+    whatever their origin (`optimize` passes flat slots, the incremental planner column-relative
+    ones), exactly as `semiring.dag_shortest_path` relaxes with a strict `<`. Only differences
+    of weights decide anything here, so a caller may pass weights shifted by any constant and
+    receive them shifted by the same constant. Returns this column's cheapest narrow and wide
+    slots, the first on a tie, -1 when the column has none."""
+    for i in range(k):
+        width = crow[i][1]
+        plain, fused = _edge_cost_pair(crow[i][3], hot and width >= 16, w)
+        g = first + i
+        if pn >= 0:
+            best, bp = dn + plain, pn
+            if pw >= 0:
+                d = dw + (fused if shares and width > 1 else plain)
+                if d < best or (d == best and pw < bp):
+                    best, bp = d, pw
+        elif pw >= 0:
+            best, bp = dw + (fused if shares and width > 1 else plain), pw
+        else:  # SOURCE -> c
+            best, bp = plain, -1
+        dist[g] = best
+        pred[g] = bp
+    narrow = wide = -1
+    for i in range(k):
+        g = first + i
+        if crow[i][1] > 1:
+            if wide < 0 or dist[g] < dist[wide]:
+                wide = g
+        elif narrow < 0 or dist[g] < dist[narrow]:
+            narrow = g
+    return narrow, wide
 
 
 def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -> RealizationResult:
@@ -738,7 +800,6 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
         return RealizationResult([], 0)
     rows, source, phase_ids = offer.rows, offer.source, offer.phase_ids
     hot = theta.thermal >= 60  # `_hot_wide` once per plan: hot and width >= 16
-    w_by_phase: dict[int, tuple[int, ...]] = {}
 
     # One slot per node, column by column: `start[j]` is column j's first slot, `dist` the
     # least path weight into a slot and `pred` the slot it came from (-1: SOURCE). Two flat
@@ -751,43 +812,32 @@ def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -
     total = 0
     prev_rd = None
     narrow = wide = -1  # the previous column's cheapest narrow / wide slot (first on a tie)
+    wpid = w = None
     for j in range(n):
         s = source[j]
         pid = phase_ids[j]
-        w = w_by_phase.get(pid)
-        if w is None:
-            w = w_by_phase[pid] = weights(h, theta, pid, policy)
+        if w is None or pid != wpid:  # a phase's columns are one run: weigh it once per run
+            w, wpid = weights(h, theta, pid, policy), pid
         crow = rows[s]
         k = len(crow)
         first = start[j] = total
         total += k
         rd = claims[s].rd
         shares = prev_rd is not None and not set(prev_rd).isdisjoint(rd)
-        for i in range(k):
-            width = crow[i][1]
-            plain, fused = _edge_cost_pair(crow[i][3], hot and width >= 16, w)
-            g = first + i
-            if j == 0:  # SOURCE -> c
-                dist[g] = plain
-                continue
-            if narrow >= 0:
-                best, bp = dist[narrow] + plain, narrow
-                if wide >= 0:
-                    d = dist[wide] + (fused if shares and width > 1 else plain)
-                    if d < best or (d == best and wide < bp):
-                        best, bp = d, wide
-            else:
-                best, bp = dist[wide] + (fused if shares and width > 1 else plain), wide
-            dist[g] = best
-            pred[g] = bp
-        narrow = wide = -1
-        for i in range(k):
-            g = first + i
-            if crow[i][1] > 1:
-                if wide < 0 or dist[g] < dist[wide]:
-                    wide = g
-            elif narrow < 0 or dist[g] < dist[narrow]:
-                narrow = g
+        narrow, wide = _relax_column(
+            crow,
+            k,
+            w,
+            hot,
+            shares,
+            narrow,
+            dist[narrow] if narrow >= 0 else 0,
+            wide,
+            dist[wide] if wide >= 0 else 0,
+            dist,
+            pred,
+            first,
+        )
         prev_rd = rd
 
     # SINK: the first last-column slot with the least distance.

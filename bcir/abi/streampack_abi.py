@@ -134,8 +134,8 @@ def _checked_uint(name: str, value, bits: int) -> int:
     return value
 
 
-def _validate_encode_contract(pack: StreamPack) -> None:
-    """Reject a model that the frozen wire cannot represent without changing meaning."""
+def _validate_header_contract(pack: StreamPack) -> None:
+    """The header half of the encode contract: the tags, the section counts and the depth."""
     _checked_uint("topo_gen", pack.topo_gen, 32)
     _checked_uint("map_gen", pack.map_gen, 32)
     _checked_uint("data_gen", pack.data_gen, 32)
@@ -146,28 +146,46 @@ def _validate_encode_contract(pack: StreamPack) -> None:
     depth = _checked_uint("pipeline_depth", pack.pipeline_depth, 16)
     if depth == 0:
         raise AbiError("pipeline_depth must be in [1, 65535]")
+
+
+def _validate_segment(index: int, seg: LaneSegment) -> None:
+    """One segment's half of the encode contract (`index` is its place in the pack)."""
+    if isinstance(seg.lane, bool):
+        raise AbiError(f"segment[{index}] lane must be a Lane value")
+    try:
+        Lane(seg.lane)
+    except (TypeError, ValueError) as exc:
+        raise AbiError(f"segment[{index}] has unknown lane {seg.lane!r}") from exc
+    width = _checked_uint(f"segment[{index}].width", seg.width, 32)
+    if width == 0 or width & (width - 1):
+        raise AbiError(f"segment[{index}] width must be a nonzero power of two, got {width}")
+    if not isinstance(seg.dispatch, str) or seg.dispatch not in _DISPATCH_WIRE:
+        raise AbiError(
+            f"segment[{index}] has unknown dispatch {seg.dispatch!r}; "
+            f"expected one of {sorted(_DISPATCH_WIRE)}"
+        )
+
+
+def _prefetch_buffers_ok(pf: Prefetch) -> bool:
+    return isinstance(pf.buffers, int) and not isinstance(pf.buffers, bool) and pf.buffers in (1, 2)
+
+
+def _validate_prefetch(index: int, pf: Prefetch) -> None:
+    """One prefetch's half of the encode contract (`index` is its place in the pack)."""
+    if not _prefetch_buffers_ok(pf):
+        raise AbiError(f"prefetch[{index}] buffers must be 1 or 2, got {pf.buffers!r}")
+
+
+def _validate_encode_contract(pack: StreamPack) -> None:
+    """Reject a model that the frozen wire cannot represent without changing meaning. The
+    header, each record and the generation vector are checked in that order; the delta
+    StreamPack (`gem.delta_pack`, GEM+ G18) checks the records it re-emits with the same
+    functions, in the same order, so the two refuse a pack with the same first finding."""
+    _validate_header_contract(pack)
     for index, seg in enumerate(pack.segments):
-        if isinstance(seg.lane, bool):
-            raise AbiError(f"segment[{index}] lane must be a Lane value")
-        try:
-            Lane(seg.lane)
-        except (TypeError, ValueError) as exc:
-            raise AbiError(f"segment[{index}] has unknown lane {seg.lane!r}") from exc
-        width = _checked_uint(f"segment[{index}].width", seg.width, 32)
-        if width == 0 or width & (width - 1):
-            raise AbiError(f"segment[{index}] width must be a nonzero power of two, got {width}")
-        if not isinstance(seg.dispatch, str) or seg.dispatch not in _DISPATCH_WIRE:
-            raise AbiError(
-                f"segment[{index}] has unknown dispatch {seg.dispatch!r}; "
-                f"expected one of {sorted(_DISPATCH_WIRE)}"
-            )
+        _validate_segment(index, seg)
     for index, pf in enumerate(pack.prefetches):
-        if (
-            not isinstance(pf.buffers, int)
-            or isinstance(pf.buffers, bool)
-            or pf.buffers not in (1, 2)
-        ):
-            raise AbiError(f"prefetch[{index}] buffers must be 1 or 2, got {pf.buffers!r}")
+        _validate_prefetch(index, pf)
     _validate_generation_vector(pack)
 
 
@@ -288,23 +306,18 @@ def _write_generation(w: _Writer, g: Generation) -> None:
     w.u32(g.data_gen)
 
 
-def encode(pack: StreamPack) -> bytes:
-    """Serialize a StreamPack (CRC trailer); emits the lowest carrying version.
+def _wire_version(needs_v2: bool, needs_v3: bool, needs_v4: bool) -> int:
+    """The lowest version that carries a pack: v4 for a generation vector, else v3 for segment
+    dispatch/channel, else v2 for pipelining, else the frozen v1."""
+    return 4 if needs_v4 else (3 if needs_v3 else (2 if needs_v2 else ABI_VERSION))
 
-    Packs without v2 features (pipeline_depth == 1, no double-buffer prefetch)
-    encode byte-identically to the frozen v1 format. A pack that uses v3 segment
-    dispatch/channel (any non-default `dispatch`/`channel`) encodes as v3; one that
-    carries a per-resource generation vector (every hydrated pack) encodes as v4; one
-    that uses none of them stays byte-identical frozen v1.
-    """
-    _validate_encode_contract(pack)
-    needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
-    needs_v3 = any(
-        seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT
-        for seg in pack.segments
-    )
-    needs_v4 = bool(pack.generations)
-    version = 4 if needs_v4 else (3 if needs_v3 else (2 if needs_v2 else ABI_VERSION))
+
+def _segment_needs_v3(seg: LaneSegment) -> bool:
+    return seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT
+
+
+def _encode_header(pack: StreamPack, version: int) -> bytes:
+    """The 64-byte header of `pack` at `version`."""
     header = _HEADER.pack(
         ABI_MAGIC,
         version,
@@ -322,7 +335,31 @@ def encode(pack: StreamPack) -> bytes:
     if version >= 4:
         header += b"\x00" * (_GENS_OFF - len(header))  # 38..39 stay reserved
         header += struct.pack("<I", len(pack.generations))
-    header = header + b"\x00" * (_HEADER_SIZE - len(header))
+    return header + b"\x00" * (_HEADER_SIZE - len(header))
+
+
+def _record_bytes(write, record, *version) -> bytes:
+    """One record's bytes, exactly as `encode` writes it in place (`write` is one of the
+    `_write_*` functions; the version argument for those that take one)."""
+    w = _Writer()
+    write(w, record, *version)
+    return bytes(w.buf)
+
+
+def encode(pack: StreamPack) -> bytes:
+    """Serialize a StreamPack (CRC trailer); emits the lowest carrying version.
+
+    Packs without v2 features (pipeline_depth == 1, no double-buffer prefetch)
+    encode byte-identically to the frozen v1 format. A pack that uses v3 segment
+    dispatch/channel (any non-default `dispatch`/`channel`) encodes as v3; one that
+    carries a per-resource generation vector (every hydrated pack) encodes as v4; one
+    that uses none of them stays byte-identical frozen v1.
+    """
+    _validate_encode_contract(pack)
+    needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
+    needs_v3 = any(_segment_needs_v3(seg) for seg in pack.segments)
+    version = _wire_version(needs_v2, needs_v3, bool(pack.generations))
+    header = _encode_header(pack, version)
 
     w = _Writer()
     w.s(pack.source_plan)

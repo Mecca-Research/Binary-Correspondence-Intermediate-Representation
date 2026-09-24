@@ -1134,6 +1134,76 @@ METRICS: tuple[Metric, ...] = (
         "wall",
         slice_owner="G17",
     ),
+    # --- G18 (S4-B): the K_BCIR -> StreamPack chain advanced by declared deltas. `DeltaChain` holds
+    # the incremental plan (`kbcir.delta`), the delta StreamPack (`gem.delta_pack`) and the
+    # incremental verdict (`verify.delta`); every link is held to the chain run from scratch on the
+    # module the delta declares (bcir/tests/delta_fixtures.py::measure, which the tests and
+    # tools/perf/check_delta.py grade the same way) over 258 cases of 8 steps (a build and 7
+    # deltas). RED is the slice's parent (825888e9, the S4-A head) running the final corpus: the
+    # mechanisms are absent there, so every comparison they own fails and a delta costs the chain
+    # from scratch.
+    Metric(
+        "planner.delta.parity",
+        "delta",
+        "(case, step) pairs where the chain's incremental plan differs from optimize() of the declared module -- the steps, their costs, the score, the BKPR bytes or refusal -- or its module from the declared one; 258 cases x (a build + 7 deltas)",
+        2064,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the plan a delta advances to is optimize() of the module it declares, byte for byte (roadmap G18)",
+        slice_owner="G18",
+    ),
+    Metric(
+        "pack.delta.identity",
+        "delta",
+        "(case, step) pairs where the delta StreamPack differs from encode(hydrate_pipelined()) of the declared module -- the pack, its bytes, or the refusal with its message; 258 cases x 8 steps, a wire refusal (beside an edit that must survive it) and its repair in every case that can carry one",
+        2064,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the re-emitted pack is the hydrated pack, byte for byte, and refuses what encode refuses",
+        slice_owner="G18",
+    ),
+    Metric(
+        "verify.delta.identity",
+        "delta",
+        "(case, step, rail) triples where the incremental verdict differs from verify() + verify_plan() + verify_pack(): the chain's own links, and a rail handing the verdict each step's plan and pack with a plan and a pack field forged (17 forgery kinds, the stale plan and pack of the step before among them); 258 cases x 8 steps x 2 rails",
+        4128,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the verdict re-derived per unit is the full verdict, over honest and forged inputs alike",
+        slice_owner="G18",
+    ),
+    Metric(
+        "delta.malformed.accepted",
+        "delta",
+        "(malformed input, rail) pairs not refused with DeltaError before anything moved: 15 malformed deltas on apply_delta, IncrementalPlan.apply and DeltaChain.apply (each followed by an honest delta that must reproduce the chain from scratch), a module declaring a claim id twice on 4 rails, a module changed outside a delta on 2",
+        51,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every delta the chain does not admit is refused before anything moves, on every rail",
+        slice_owner="G18",
+    ),
+    Metric(
+        "kbcir-streampack.delta",
+        "delta",
+        "median time of one DeltaChain.apply (a one-claim count edit) / median time of the chain from scratch on the module it declares, audit fixture at scale 4 (4,096 claims), one process",
+        1.0,
+        "x",
+        "ratio",
+        slice_owner="G18",
+    ),
+    Metric(
+        "kbcir-streampack.delta.calls",
+        "delta",
+        "calls (cProfile total, builtins included) of one one-claim delta of the audit fixture at scale 8 (32,768 claims), CPython 3.11: on the parent, the chain from scratch",
+        10855666,
+        "calls",
+        "exact",
+        slice_owner="G18",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -2151,6 +2221,19 @@ def measure_kplan() -> dict[str, float]:
     return out
 
 
+def measure_delta() -> dict[str, float]:
+    """The G18 rows (S4-B): the chain advanced by declared deltas against the chain from scratch
+    (bcir/tests/delta_fixtures.py::measure, which the tests and tools/perf/check_delta.py grade the
+    same way), the time ratio of a one-claim delta at scale 4 and its call count at scale 8. Pure
+    Python: every row is measured wherever the interpreter runs."""
+    from bcir.tests.delta_fixtures import delta_calls, delta_ratio, measure
+
+    out = measure()
+    out["kbcir-streampack.delta"] = delta_ratio()
+    out["kbcir-streampack.delta.calls"] = float(delta_calls()[0])
+    return out
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2204,6 +2287,7 @@ _MEASURERS = {
     "ring": measure_ring,
     "handoff": measure_handoff,
     "kplan": measure_kplan,
+    "delta": measure_delta,
     "memory": measure_memory,
 }
 
@@ -2228,7 +2312,7 @@ def _fmt(value: float | None, unit: str) -> str:
         return "-"
     if unit in ("ms",):
         return f"{value:,.2f}"
-    if unit in ("bytes", "count"):
+    if unit in ("bytes", "count", "calls"):
         return f"{value:,.0f}"
     return f"{value:.4f}"
 
@@ -2363,7 +2447,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, delta, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

@@ -8,15 +8,15 @@
       "label": "Python planner: a tie between the cheapest narrow and wide predecessors keeps the later one",
       "expects": "planner.parity",
       "path": "bcir/kbcir/realize.py",
-      "old": "if d < best or (d == best and wide < bp):",
-      "new": "if d < best or (d == best and wide > bp):"
+      "old": "if d < best or (d == best and pw < bp):",
+      "new": "if d < best or (d == best and pw > bp):"
     },
     {
       "label": "Python planner: a narrow realization takes the path-fusion discount",
       "expects": "planner.parity",
       "path": "bcir/kbcir/realize.py",
-      "old": "                if wide >= 0:\n                    d = dist[wide] + (fused if shares and width > 1 else plain)",
-      "new": "                if wide >= 0:\n                    d = dist[wide] + (fused if shares else plain)"
+      "old": "            if pw >= 0:\n                d = dw + (fused if shares and width > 1 else plain)",
+      "new": "            if pw >= 0:\n                d = dw + (fused if shares else plain)"
     },
     {
       "label": "Python planner: 16-wide SIMD on a hot machine escapes the thermal coupling",
@@ -43,8 +43,8 @@
       "label": "Python offer: a barriered producer no longer fences deforestation",
       "expects": "planner.parity",
       "path": "bcir/kbcir/realize.py",
-      "old": "if claim.hazard != \"barriered\" and not (bset and not bset.isdisjoint(pset & set(rd))):",
-      "new": "if claim.hazard != \"barriered\":"
+      "old": "claim.hazard == \"barriered\" or (not bset.isdisjoint(rd) if bset else False)",
+      "new": "claim.hazard == \"barriered\""
     },
     {
       "label": "Python offer: a write does not bump its operand's version (CSE across a rewrite)",
@@ -78,8 +78,8 @@
       "label": "R9: a step's phase is no longer bound to the phase that declares its claim",
       "expects": "planner.r9.misjudged",
       "path": "bcir/verify/__init__.py",
-      "old": "        if step.phase_id != declared_in[step.claim_id]:",
-      "new": "        if False:"
+      "old": "    if step.phase_id != declared_phase:",
+      "new": "    if False:"
     },
     {
       "label": "R9: a forged lane's diagnostic reads `.name` and raises on a plain int",

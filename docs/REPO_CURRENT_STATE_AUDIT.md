@@ -31,7 +31,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     Python with no third-party deps; `bcir.hosted.models` is an explicit quarantined extra):
     model, K_BCIR optimizer (min-plus + RCSP/Pareto + (max,+) overlap +
     soft-temperature + branch-and-bound rails; since G17 the min-plus planner is a compact
-    offer table and an indexed DP, held byte for byte to the pre-G17 planner it replaced),
+    offer table and an indexed DP, held byte for byte to the pre-G17 planner it replaced;
+    since G18 the K_BCIR -> StreamPack chain also advances by declared deltas -- the plan, the
+    StreamPack and the verdict re-derived over a delta's dependency cone, each held to the
+    chain from scratch, `docs/kernel/BCIR_DELTA_CHAIN.md`),
     GEM hydration/scheduling/execution,
     ROP/MAP front-ends + the **cfront C frontend** (full preprocessor, 5-target ABI
     matrix, atomics/fences/inline-asm/port-I/O edges, VLAs, `_BitInt`, `_Complex`,

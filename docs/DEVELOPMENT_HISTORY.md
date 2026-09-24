@@ -862,6 +862,53 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       law, and a malformed variant that a later law refused with the same status.
   - Not claimed: the MLIR `-bcir-plan` pass (unchanged), the CXX3 joint solvers (Python only),
     and a certificate produced natively.
+  S4-B (2026-09-24) landed G18, the delta chain, and closed Stage 4.
+  - RED, measured on the parent (825888e9, the S4-A head):
+    - there was no delta: a one-claim edit of the audit's 32,768-claim fixture meant the chain
+      from scratch, 10,855,666 calls (CPython 3.11), of which the StreamPack encoder alone is
+      7.4 M;
+    - over the final corpus, with the mechanisms absent, the rows read 2,064, 2,064, 4,128 and 51.
+  - What landed (`docs/kernel/BCIR_DELTA_CHAIN.md`):
+    - the declared `Delta` (claim and resource replacements, each addressed by its own id or
+      RID). Every rail refuses what v0 does not admit with `DeltaError` before anything moves.
+      `apply_delta` is the reference application;
+    - `IncrementalOffer`: `fused_offer` with its position indexes, re-deriving the delta's
+      dependency cone. The discount is one rule table, `realize._DISCOUNT`, which both
+      evaluations of the offer read;
+    - `IncrementalPlan`: the one relaxation `optimize` also runs (`realize._relax_column`), a
+      cutoff where the next column's input is unchanged, lazy shifts, and the path spliced where
+      it rejoins the old one;
+    - `PackState`: per-record encodings in chunks. Only the changed records are re-emitted, with
+      the records `streampack.step_records` / `double_buffer` build and the encoder's own
+      contract functions and writers, which were factored out of `encode` byte-identically;
+    - `VerifyState`: the three verifiers refactored into units, byte-identically over 13,288
+      modules and 45,195 plan/pack verdicts. What changed is found by object identity, and the
+      state keeps an offer of its own;
+    - `DeltaChain`, with the fixtures' own reference (`declared`, `reference_chain`) that runs
+      on a tree without the mechanism.
+  - Outcomes:
+    - All four exact rows are 0.
+    - A one-claim delta costs 491 calls at scale 8 and at scale 4. The time ratio is ~0.0098 at
+      scale 4 and ~0.007 at scale 8, and the build is ~1.45 chains from scratch.
+    - The chain from scratch fell to 10.14 M calls (`verify` 1.65 M → 0.58 M). Its wall row is
+      neutral in an A/B.
+    - `tools/testing/faults/delta.json` injects 31 defects, each caught by its own row.
+  - Found and fixed in the slice:
+    - `apply_delta` admitted a module declaring a claim id twice when the delta named another
+      claim, while the states refused it. One predicate, `_unique_where`, now decides it on
+      every rail.
+    - A `Delta` whose replacements were not tuples raised a `TypeError`.
+    - Sharing the relaxation cost `optimize` a call per column until each phase was weighed once
+      per run; `planner.calls` stays 589,858.
+    - The first fault sweep missed four defects, and each miss was a finding: a prefetch counter
+      no reachable value could observe (removed), a forgery pair the rotations could never
+      schedule (coprime rotations), and two verdict paths reachable only through a stale plan
+      (forged on every cone round).
+    - A profiler window could catch a finalizer, so the call rows now collect first and pause the
+      collector.
+  - Not claimed: a native or MLIR twin of the incremental chain, deltas that change the module's
+    shape or the scope, incremental event laws (rebuilt, counted), and sublinear wall time (the
+    per-delta copies are O(n) at C speed).
 
 ---
 
