@@ -10,6 +10,7 @@ freestanding_core bcir_encode.c
 freestanding_core bcir_exec.c
 freestanding_core bcir_handoff.c
 freestanding_core bcir_hydrate.c
+freestanding_core bcir_kplan.c
 freestanding_core bcir_per.c
 freestanding_core bcir_xer.c
 freestanding_core bcir_jer.c

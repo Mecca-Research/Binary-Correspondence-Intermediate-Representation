@@ -817,6 +817,98 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - the grader tracebacked when the oracle could not build its own corpus.
   - Not claimed: a cross-node transport, a pack table shared across processes, and reduction
     across ranks.
+  S4-A (2026-09-24) landed G17, the compact planner and its native twin, and opened Stage 4.
+  - RED, measured on the parent (731373df):
+    - planning the audit's 32,768-claim fixture made 3,419,172 calls (CPython 3.11): a
+      `Candidate` and a `CostVector` built twice per claim, twelve coupling calls per edge, and the
+      weights re-derived per claim;
+    - R9 re-derived the planner's whole offer, and `verify_plan` cost as much as planning (1.07x);
+    - with the rails absent, the parity rows read 8,430 and 148;
+    - R9, graded over every field a step carries, misjudged 232 verdicts. It raised on a plain-int
+      lane and on an unhashable phase, and never bound a step to its claim's phase.
+  - What landed:
+    - `realize.fused_offer`, the offer as compact rows: one enumeration (`_offer_rows`) over one
+      arithmetic (`_base_cost`), the discounts in the same pass, and no candidate objects.
+      `fused_candidates` and `result.cand_map` (a lazy `OfferMap`) are views of it.
+    - `optimize`: the weights derived once per phase, each realization priced once for both path
+      contexts (`_edge_cost_pair`, which `edge_cost` delegates to), and each column relaxed
+      against the previous column's cheapest narrow and wide predecessor, over two flat arrays.
+    - The pre-G17 planner, kept verbatim as `realize_reference`, is the "before" the parity gate
+      holds the compact planner to.
+    - R9's single-candidate re-derivation, the phase-binding law, and diagnostics that are total
+      over forgeries.
+    - The native planner (`bcir_kplan.{h,c}`, freestanding) over the version-zero BKPI and BKPR
+      records (`bcir.abi.planner_abi`; `docs/kernel/BCIR_PLANNER_ABI.md`). It is exact in 128
+      bits over the declared domain and refuses only a value the record cannot carry, exactly
+      when the Python encoder does. `BCIR_ERR_PLANNER` (25) is appended, and
+      `bcir_utf8_valid` is now the runtime's one UTF-8 validator.
+  - Outcomes:
+    - All three exact rows are 0. `planner.calls` is 589,858 (5.80x fewer), and
+      `verify.plan.scope.overhead` is ~0.73.
+    - The whole K_BCIR->StreamPack chain at scale 8 went from 9.20 M calls to 3.51 M. The
+      `audit.kbcir-streampack.scale4` wall row, measured A/B against the parent, went from
+      201-219 ms to 117-137 ms, with the same result digest. That is indicative only; the
+      chain's unchanged stages (`verify`, hydration, `verify_pack`) now dominate it.
+    - The native planner plans the 4,096-claim fixture in ~3.4 ms, against ~33 ms for the
+      compact planner and ~73 ms for the reference.
+    - The C gate carries a mutant it must fail (the 128-bit carry dropped), and a libFuzzer target
+      and two decoder-campaign surfaces landed.
+    - `tools/testing/faults/planner.json` injects 29 defects, each caught by its own row.
+  - Found and fixed in the slice:
+    - The wide-path fixture looked like a witness to the 128-bit arithmetic, but no path in it
+      depended on the addition's carry. `carry_case` does.
+    - The first sweep missed three faults, and each time the witness was wrong, not the code: a
+      corpus that rewrote an operand only once, R9 graded only with the scope that masks its base
+      law, and a malformed variant that a later law refused with the same status.
+  - Not claimed: the MLIR `-bcir-plan` pass (unchanged), the CXX3 joint solvers (Python only),
+    and a certificate produced natively.
+  S4-B (2026-09-24) landed G18, the delta chain, and closed Stage 4.
+  - RED, measured on the parent (825888e9, the S4-A head):
+    - there was no delta: a one-claim edit of the audit's 32,768-claim fixture meant the chain
+      from scratch, 10,855,666 calls (CPython 3.11), of which the StreamPack encoder alone is
+      7.4 M;
+    - over the final corpus, with the mechanisms absent, the rows read 2,064, 2,064, 4,128 and 51.
+  - What landed (`docs/kernel/BCIR_DELTA_CHAIN.md`):
+    - the declared `Delta` (claim and resource replacements, each addressed by its own id or
+      RID). Every rail refuses what v0 does not admit with `DeltaError` before anything moves.
+      `apply_delta` is the reference application;
+    - `IncrementalOffer`: `fused_offer` with its position indexes, re-deriving the delta's
+      dependency cone. The discount is one rule table, `realize._DISCOUNT`, which both
+      evaluations of the offer read;
+    - `IncrementalPlan`: the one relaxation `optimize` also runs (`realize._relax_column`), a
+      cutoff where the next column's input is unchanged, lazy shifts, and the path spliced where
+      it rejoins the old one;
+    - `PackState`: per-record encodings in chunks. Only the changed records are re-emitted, with
+      the records `streampack.step_records` / `double_buffer` build and the encoder's own
+      contract functions and writers, which were factored out of `encode` byte-identically;
+    - `VerifyState`: the three verifiers refactored into units, byte-identically over 13,288
+      modules and 45,195 plan/pack verdicts. What changed is found by object identity, and the
+      state keeps an offer of its own;
+    - `DeltaChain`, with the fixtures' own reference (`declared`, `reference_chain`) that runs
+      on a tree without the mechanism.
+  - Outcomes:
+    - All four exact rows are 0.
+    - A one-claim delta costs 491 calls at scale 8 and at scale 4. The time ratio is ~0.0098 at
+      scale 4 and ~0.007 at scale 8, and the build is ~1.45 chains from scratch.
+    - The chain from scratch fell to 10.14 M calls (`verify` 1.65 M → 0.58 M). Its wall row is
+      neutral in an A/B.
+    - `tools/testing/faults/delta.json` injects 31 defects, each caught by its own row.
+  - Found and fixed in the slice:
+    - `apply_delta` admitted a module declaring a claim id twice when the delta named another
+      claim, while the states refused it. One predicate, `_unique_where`, now decides it on
+      every rail.
+    - A `Delta` whose replacements were not tuples raised a `TypeError`.
+    - Sharing the relaxation cost `optimize` a call per column until each phase was weighed once
+      per run; `planner.calls` stays 589,858.
+    - The first fault sweep missed four defects, and each miss was a finding: a prefetch counter
+      no reachable value could observe (removed), a forgery pair the rotations could never
+      schedule (coprime rotations), and two verdict paths reachable only through a stale plan
+      (forged on every cone round).
+    - A profiler window could catch a finalizer, so the call rows now collect first and pause the
+      collector.
+  - Not claimed: a native or MLIR twin of the incremental chain, deltas that change the module's
+    shape or the scope, incremental event laws (rebuilt, counted), and sublinear wall time (the
+    per-delta copies are O(n) at C speed).
 
 ---
 

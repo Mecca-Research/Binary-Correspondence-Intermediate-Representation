@@ -204,6 +204,13 @@ add_target ring "live ring + telemetry envelope" "-max_len=4096" \
 add_target handoff "data-plane hand-off" "-max_len=16384" \
   "${C}/fuzz_handoff.c" "${C}/bcir_handoff.c" "${C}/bcir_shard_manifest.c" "${C}/bcir_hydrate.c" "${C}/bcir_plan.c" "${C}/bcir_control_plane.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/bcir_ring.c" "${C}/bcir_telemetry_envelope.c"
 
+# The native K_BCIR planner (G17): the BKPI and BKPR decoders over raw bytes, and a BKPI body the
+# harness reseals (the CRC appended, so a mutation reaches past the seal to every field law and
+# into the planner). Every plan must decode with one step per claim and a score that is the sum of
+# its costs, and a second plan over dirty, misaligned scratch must write the same bytes.
+add_target kplan "native K_BCIR planner" "-max_len=16384" \
+  "${C}/fuzz_kplan.c" "${C}/bcir_kplan.c" "${C}/bcir_runtime.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
@@ -350,6 +357,28 @@ for mode in (2, 3):                                        # modes 2-3: table sc
     for seed in range(8):
         body = bytes((seed * 29 + k * (mode * 6 + 1)) & 0xFF for k in range(400))
         open(os.path.join(d, f"mode{mode}_{seed}.bin"), "wb").write(bytes([mode]) + body)
+PY
+
+python3 - "${tmp}/corpus_kplan" <<'PY' || { echo "  FAIL: planner seed corpus"; exit 1; }
+import os, sys
+from bcir.abi.planner_abi import encode_input, encode_realization
+from bcir.kbcir.realize import optimize
+from bcir.tests.planner_fixtures import corpus_cases, malformed_inputs, malformed_realizations
+d = sys.argv[1]
+for i, case in enumerate(corpus_cases()[::97][:32]):   # modes 0 and 2: real records; 1: plans
+    args = (case.module, case.h, case.theta, case.policy)
+    record = encode_input(*args)
+    open(os.path.join(d, f"input_{i}.bin"), "wb").write(b"\x00" + record)
+    open(os.path.join(d, f"unsealed_{i}.bin"), "wb").write(b"\x02" + record[:-4])
+    try:
+        plan = encode_realization(optimize(*args))
+    except Exception:
+        continue
+    open(os.path.join(d, f"plan_{i}.bin"), "wb").write(b"\x01" + plan)
+for name, blob, _status in malformed_inputs():           # one per law
+    open(os.path.join(d, "bad_input_" + name + ".bin"), "wb").write(b"\x00" + blob)
+for name, blob, _status in malformed_realizations():
+    open(os.path.join(d, "bad_plan_" + name + ".bin"), "wb").write(b"\x01" + blob)
 PY
 
 # The fast path takes the same projections as the X.690 harness -- seed both.

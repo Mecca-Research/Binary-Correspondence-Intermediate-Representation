@@ -30,7 +30,12 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
 - **`bcir/`** — the executable conformance oracle (its default/core path is pure
     Python with no third-party deps; `bcir.hosted.models` is an explicit quarantined extra):
     model, K_BCIR optimizer (min-plus + RCSP/Pareto + (max,+) overlap +
-    soft-temperature + branch-and-bound rails), GEM hydration/scheduling/execution,
+    soft-temperature + branch-and-bound rails; since G17 the min-plus planner is a compact
+    offer table and an indexed DP, held byte for byte to the pre-G17 planner it replaced;
+    since G18 the K_BCIR -> StreamPack chain also advances by declared deltas -- the plan, the
+    StreamPack and the verdict re-derived over a delta's dependency cone, each held to the
+    chain from scratch, `docs/kernel/BCIR_DELTA_CHAIN.md`),
+    GEM hydration/scheduling/execution,
     ROP/MAP front-ends + the **cfront C frontend** (full preprocessor, 5-target ABI
     matrix, atomics/fences/inline-asm/port-I/O edges, VLAs, `_BitInt`, `_Complex`,
     variadics), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
@@ -74,7 +79,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     release — LLVM 23, gating (`mlir-rail-validate`; LLVM 22 stays in the matrix for one release cycle).
 - **`runtime/c/`** — the production C rail (component count in
   [`STATUS.md`](STATUS.md)): the freestanding (no-libc) StreamPack decoder/encoder/
-  executor + hydrate + scalar planner, allocation-free BCAB reader/selector, direct
+  executor + hydrate + scalar planner, the native K_BCIR planner (`bcir_kplan.c`, G17:
+  the oracle's plan byte for byte, or the same refusal, over the version-zero BKPI/BKPR
+  records of [`BCIR_PLANNER_ABI.md`](kernel/BCIR_PLANNER_ABI.md)), allocation-free BCAB
+  reader/selector, direct
   append-only RuntimeChannel v1 hooks and
   loopback, the ETL binary-record decoder, the UART telemetry-frame codec (strict
   flags/CRC/exact decode), the fixed ordinary-x86 interrupt-frame contract, the C23

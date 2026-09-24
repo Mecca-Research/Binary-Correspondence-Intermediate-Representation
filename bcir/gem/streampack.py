@@ -111,6 +111,53 @@ def generation_vector(module: Module) -> list[Generation]:
     ]
 
 
+def step_records(n: int, step, claim) -> tuple[LaneSegment, Prefetch | None, Block, TraceNote]:
+    """The records plan step `n` (realizing `claim`) lowers to: its segment, its prefetch (a
+    vector step with reads streams them ahead; None otherwise), its block and its trace note.
+    `hydrate` and the delta StreamPack (`gem.delta_pack`, GEM+ G18) build them here, so a step
+    the delta re-emits is the step a full hydration would write."""
+    cand = step.candidate
+    prefetch = None
+    if cand.width > 1 and claim.rd:
+        prefetch = Prefetch(name=f"pf{n}", distance=4, targets=tuple(claim.rd))
+    segment = LaneSegment(
+        name=f"seg{n}",
+        claim_id=claim.id,
+        phase_id=step.phase_id,
+        lane=cand.lane,
+        width=cand.width,
+        opcode=f"{claim.op or cand.name}",
+        reads=tuple(claim.rd),
+        writes=tuple(claim.wr),
+        prefetch=None if prefetch is None else prefetch.name,
+    )
+    block = Block(base=claim.offset, count=claim.count, strides=(claim.stride_k,))
+    return segment, prefetch, block, TraceNote(claim_id=claim.id)
+
+
+def double_buffer(prev_pid: int, next_pid: int, phase) -> Prefetch | None:
+    """The double-buffer prefetch of one phase transition (StreamPack v2): the read operands of
+    the next phase, first reference first, streamed while the previous phase computes -- or None
+    when the next phase reads nothing. Shared by `hydrate_pipelined` and the delta StreamPack."""
+    rids: list[int] = []
+    seen_rids: set[int] = set()
+    for c in phase.claims:
+        for rid in c.rd:
+            if rid not in seen_rids:
+                seen_rids.add(rid)
+                rids.append(rid)
+    if not rids:
+        return None
+    return Prefetch(
+        name=f"dbpf{prev_pid}_{next_pid}",
+        distance=4,
+        targets=tuple(rids),
+        hint="T1",
+        pattern="double_buffer",
+        buffers=2,
+    )
+
+
 def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> StreamPack:
     """Lower a selected realization plan into a StreamPack with provenance + tags.
 
@@ -149,27 +196,12 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
             raise ValueError(f"claim {step.claim_id} is out of topological phase order")
         last_phase = position
         seen.add(step.claim_id)
-        cand = step.candidate
-        pf_name = None
-        if cand.width > 1 and claim.rd:
-            pf = Prefetch(name=f"pf{n}", distance=4, targets=tuple(claim.rd))
-            pack.prefetches.append(pf)
-            pf_name = pf.name
-        pack.blocks.append(Block(base=claim.offset, count=claim.count, strides=(claim.stride_k,)))
-        pack.segments.append(
-            LaneSegment(
-                name=f"seg{n}",
-                claim_id=claim.id,
-                phase_id=step.phase_id,
-                lane=cand.lane,
-                width=cand.width,
-                opcode=f"{claim.op or cand.name}",
-                reads=tuple(claim.rd),
-                writes=tuple(claim.wr),
-                prefetch=pf_name,
-            )
-        )
-        pack.trace_notes.append(TraceNote(claim_id=claim.id))
+        segment, prefetch, block, note = step_records(n, step, claim)
+        if prefetch is not None:
+            pack.prefetches.append(prefetch)
+        pack.blocks.append(block)
+        pack.segments.append(segment)
+        pack.trace_notes.append(note)
     missing = sorted(set(claim_by_id) - seen)
     if missing:
         raise ValueError(f"cannot hydrate a partial plan; missing claims {missing[:8]}")
@@ -195,24 +227,9 @@ def hydrate_pipelined(
     pmap = module.phase_map()
     order = _topo_order(module)
     for prev_pid, next_pid in zip(order, order[1:]):
-        rids: list[int] = []
-        seen_rids: set[int] = set()
-        for c in pmap[next_pid].claims:
-            for rid in c.rd:
-                if rid not in seen_rids:
-                    seen_rids.add(rid)
-                    rids.append(rid)
-        if rids:
-            pack.prefetches.append(
-                Prefetch(
-                    name=f"dbpf{prev_pid}_{next_pid}",
-                    distance=4,
-                    targets=tuple(rids),
-                    hint="T1",
-                    pattern="double_buffer",
-                    buffers=2,
-                )
-            )
+        prefetch = double_buffer(prev_pid, next_pid, pmap[next_pid])
+        if prefetch is not None:
+            pack.prefetches.append(prefetch)
     return pack
 
 

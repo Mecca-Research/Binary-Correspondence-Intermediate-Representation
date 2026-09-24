@@ -1073,6 +1073,137 @@ METRICS: tuple[Metric, ...] = (
         bound_source="the direct C walk of the same bytes: every per-dispatch check is O(1)",
         slice_owner="G16",
     ),
+    # --- G17 (S4-A): the compact planner and its native twin. The planner's offer became compact
+    # indexed arrays behind the same API (`realize.fused_offer`), held to the pre-G17 planner kept
+    # verbatim as `realize_reference`, and the native planner (`runtime/c/bcir_kplan.c`) is held
+    # to both byte for byte (bcir/tests/planner_fixtures.py::measure, which the tests and
+    # tools/c/check_runtime.sh grade the same way). RED is the parent (731373df) with every new
+    # entry point made to raise over the final corpora, built first (L25).
+    Metric(
+        "planner.parity",
+        "kplan",
+        "(case, comparison) pairs where the compact planner differs from the pre-G17 planner -- the plan, its BKPR bytes, and on the fixed corpus the ExecutionPlanV1 bytes -- or the native planner from the compact one (its BKPR bytes, or the same refusal), over the fixed corpus under every target, Theta and policy and 240 generated modules under every target",
+        8430,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="identical plan bytes before and after, and Python versus native (roadmap G17)",
+        slice_owner="G17",
+    ),
+    Metric(
+        "planner.malformed.accepted",
+        "kplan",
+        "(malformed record, rail) pairs not refused with the declared status: one BKPI variant per wire and planning law, one BKPR variant per wire law (54 + 20), on the Python codec and the C twin",
+        148,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own violation with one status on both rails",
+        slice_owner="G17",
+    ),
+    Metric(
+        "planner.r9.misjudged",
+        "kplan",
+        "(plan, call) pairs R9 misjudges through the planner's offer: the planner's own plan of a legal module refused, or a forgery of a field a step carries (name, width, base, lane -- including a plain int -- cost, phase, an unhashable name or phase) accepted or answered with a traceback; 14 legal modules x 2 scopes, 396 forgeries, each graded with the scope and (all but a forged cost) without it",
+        232,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every forgery refused with a diagnostic and every honest plan accepted; the parent raised on 176 forgery verdicts (a plain-int lane, an unhashable phase) and accepted 56 (a first step's phase was never bound to its claim)",
+        slice_owner="G17",
+    ),
+    # The 2026-09-04 profile's 6.06 M was the whole K_BCIR->StreamPack chain at scale 8 before
+    # S0-A made R9 re-derive the planner's offer; this row is the planner alone, the thing G17
+    # rewrites, on the parent under CPython 3.11.15 (call counts differ between interpreters: the
+    # tests compare two planners in one process instead, and state the factor).
+    Metric(
+        "planner.calls",
+        "kplan",
+        "calls (cProfile total, builtins included) planning the audit's K_BCIR->StreamPack fixture at scale 8 (32,768 claims), CPython 3.11",
+        3419172,
+        "calls",
+        "exact",
+        slice_owner="G17",
+    ),
+    Metric(
+        "planner.native.scale4",
+        "kplan",
+        "native planner (bcir_kplan.c, -O2) median time per plan of the audit fixture at scale 4 (4,096 claims), BKPI decoded once",
+        3.41,
+        "ms",
+        "wall",
+        slice_owner="G17",
+    ),
+    # --- G18 (S4-B): the K_BCIR -> StreamPack chain advanced by declared deltas. `DeltaChain` holds
+    # the incremental plan (`kbcir.delta`), the delta StreamPack (`gem.delta_pack`) and the
+    # incremental verdict (`verify.delta`); every link is held to the chain run from scratch on the
+    # module the delta declares (bcir/tests/delta_fixtures.py::measure, which the tests and
+    # tools/perf/check_delta.py grade the same way) over 258 cases of 8 steps (a build and 7
+    # deltas). RED is the slice's parent (825888e9, the S4-A head) running the final corpus: the
+    # mechanisms are absent there, so every comparison they own fails and a delta costs the chain
+    # from scratch.
+    Metric(
+        "planner.delta.parity",
+        "delta",
+        "(case, step) pairs where the chain's incremental plan differs from optimize() of the declared module -- the steps, their costs, the score, the BKPR bytes or refusal -- or its module from the declared one; 258 cases x (a build + 7 deltas)",
+        2064,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the plan a delta advances to is optimize() of the module it declares, byte for byte (roadmap G18)",
+        slice_owner="G18",
+    ),
+    Metric(
+        "pack.delta.identity",
+        "delta",
+        "(case, step) pairs where the delta StreamPack differs from encode(hydrate_pipelined()) of the declared module -- the pack, its bytes, or the refusal with its message; 258 cases x 8 steps, a wire refusal (beside an edit that must survive it) and its repair in every case that can carry one",
+        2064,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the re-emitted pack is the hydrated pack, byte for byte, and refuses what encode refuses",
+        slice_owner="G18",
+    ),
+    Metric(
+        "verify.delta.identity",
+        "delta",
+        "(case, step, rail) triples where the incremental verdict differs from verify() + verify_plan() + verify_pack(): the chain's own links, and a rail handing the verdict each step's plan and pack with a plan and a pack field forged (17 forgery kinds, the stale plan and pack of the step before among them); 258 cases x 8 steps x 2 rails",
+        4128,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the verdict re-derived per unit is the full verdict, over honest and forged inputs alike",
+        slice_owner="G18",
+    ),
+    Metric(
+        "delta.malformed.accepted",
+        "delta",
+        "(malformed input, rail) pairs not refused with DeltaError before anything moved: 15 malformed deltas on apply_delta, IncrementalPlan.apply and DeltaChain.apply (each followed by an honest delta that must reproduce the chain from scratch), a module declaring a claim id twice on 4 rails, a module changed outside a delta on 2",
+        51,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every delta the chain does not admit is refused before anything moves, on every rail",
+        slice_owner="G18",
+    ),
+    Metric(
+        "kbcir-streampack.delta",
+        "delta",
+        "median time of one DeltaChain.apply (a one-claim count edit) / median time of the chain from scratch on the module it declares, audit fixture at scale 4 (4,096 claims), one process",
+        1.0,
+        "x",
+        "ratio",
+        slice_owner="G18",
+    ),
+    Metric(
+        "kbcir-streampack.delta.calls",
+        "delta",
+        "calls (cProfile total, builtins included) of one one-claim delta of the audit fixture at scale 8 (32,768 claims), CPython 3.11: on the parent, the chain from scratch",
+        10855666,
+        "calls",
+        "exact",
+        slice_owner="G18",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -2066,6 +2197,43 @@ def measure_handoff() -> dict[str, float]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def measure_kplan() -> dict[str, float]:
+    """The G17 rows (S4-A): the compact planner against the pre-G17 planner and the native planner
+    against both (bcir/tests/planner_fixtures.py::measure, which the tests and
+    tools/c/check_runtime.sh grade the same way), the planner's call count and the native plan's
+    time. The exact parity rows need the C twin: without a C compiler they are NOT-MEASURED, never
+    estimated from one rail; the call count needs nothing but the interpreter."""
+    import shutil
+    import tempfile
+
+    from bcir.kbcir import realize
+    from bcir.tests.planner_fixtures import build_harness, call_count, measure, native_ms
+
+    out = {"planner.calls": float(call_count(realize.optimize))}
+    tmp = tempfile.mkdtemp(prefix="bcir-kplan-")
+    try:
+        exe = build_harness(tmp)
+        if exe is not None:
+            out.update(measure(exe, tmp))
+            out["planner.native.scale4"] = native_ms(exe, tmp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+def measure_delta() -> dict[str, float]:
+    """The G18 rows (S4-B): the chain advanced by declared deltas against the chain from scratch
+    (bcir/tests/delta_fixtures.py::measure, which the tests and tools/perf/check_delta.py grade the
+    same way), the time ratio of a one-claim delta at scale 4 and its call count at scale 8. Pure
+    Python: every row is measured wherever the interpreter runs."""
+    from bcir.tests.delta_fixtures import delta_calls, delta_ratio, measure
+
+    out = measure()
+    out["kbcir-streampack.delta"] = delta_ratio()
+    out["kbcir-streampack.delta.calls"] = float(delta_calls()[0])
+    return out
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2118,6 +2286,8 @@ _MEASURERS = {
     "control": measure_control,
     "ring": measure_ring,
     "handoff": measure_handoff,
+    "kplan": measure_kplan,
+    "delta": measure_delta,
     "memory": measure_memory,
 }
 
@@ -2142,7 +2312,7 @@ def _fmt(value: float | None, unit: str) -> str:
         return "-"
     if unit in ("ms",):
         return f"{value:,.2f}"
-    if unit in ("bytes", "count"):
+    if unit in ("bytes", "count", "calls"):
         return f"{value:,.0f}"
     return f"{value:.4f}"
 
@@ -2277,7 +2447,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, delta, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

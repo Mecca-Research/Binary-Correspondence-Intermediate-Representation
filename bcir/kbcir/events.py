@@ -73,18 +73,36 @@ def check_event_phases(module: Module) -> list:
     """EV1-EV3 (caller-passed messages, [] == lawful). Vacuous when no phase carries an
     event source -- the entire pre-A1 corpus."""
     msgs: list = []
-    event_phases = [p for p in module.phases if getattr(p, "event", "")]
-    program = [p for p in module.phases if not getattr(p, "event", "")]
     # mask/unmask well-formedness holds wherever the claims appear (even eventless
     # modules may mint them ahead of their handler).
     for p in module.phases:
         for c in p.claims:
-            if c.op.startswith((_MASK, _UNMASK)) and (len(c.wr) != 1 or c.rd):
-                msgs.append(
-                    f"EV: claim {c.id} ({c.op}) must write exactly ONE "
-                    f"controller resource and read none; got rd={tuple(c.rd)} "
-                    f"wr={tuple(c.wr)}"
-                )
+            msg = mask_law(c)
+            if msg is not None:
+                msgs.append(msg)
+    return msgs + event_phase_laws(module)
+
+
+def mask_law(c: Claim) -> str | None:
+    """The mask/unmask well-formedness sub-law of one claim (None == lawful): an
+    `irq.mask:*` / `irq.unmask:*` claim writes exactly ONE controller resource and reads
+    none. Claim-local, so the incremental verifier (`verify.delta`, GEM+ G18) re-checks it
+    for the claims a delta replaced."""
+    if c.op.startswith((_MASK, _UNMASK)) and (len(c.wr) != 1 or c.rd):
+        return (
+            f"EV: claim {c.id} ({c.op}) must write exactly ONE "
+            f"controller resource and read none; got rd={tuple(c.rd)} "
+            f"wr={tuple(c.wr)}"
+        )
+    return None
+
+
+def event_phase_laws(module: Module) -> list:
+    """EV1-EV3 proper -- the laws of the event phases themselves ([] == lawful), vacuous when
+    no phase carries an event source."""
+    msgs: list = []
+    event_phases = [p for p in module.phases if getattr(p, "event", "")]
+    program = [p for p in module.phases if not getattr(p, "event", "")]
     if not event_phases:
         return msgs
     # EV1: asynchronous entry has no program-order predecessor.

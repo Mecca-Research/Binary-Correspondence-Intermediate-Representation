@@ -836,7 +836,7 @@ What landed (S3-C):
 Not claimed: a cross-node transport, a pack table shared across processes, and reduction
 across ranks.
 
-### G17 — compact indexed planner, then native parity
+### G17 — compact indexed planner, then native parity — LANDED (S4-A, 2026-09-24)
 
 *New, Stage 4. The profile's hot spot: Python objects per claim, immutable values rebuilt.*
 
@@ -851,7 +851,62 @@ corpus — the same way the C twins earn their rails.
 | `exact` `planner.calls` | Python call count at scale 8 (6.06 M in the profile) reduced by a stated factor |
 | `wall` `audit.kbcir-streampack.scale4` | indicative only |
 
-### G18 — incremental re-verification and delta StreamPack
+What landed (S4-A):
+
+- **The compact planner** (`bcir/kbcir/realize.py`), behind the same API.
+  - The offer is one derivation, `fused_offer`: per claim, row tuples `(lane, width, name,
+    base, rw)` from one enumeration (`_offer_rows`) over one arithmetic (`_base_cost`), with the
+    CSE and deforestation discounts applied in the same pass, and no `Candidate` or `CostVector`
+    built. `fused_candidates` and `result.cand_map` (a lazy `OfferMap`) are views of it.
+  - `optimize` derives the weights once per phase and prices each realization once for both
+    path contexts (`_edge_cost_pair`, which `edge_cost` now delegates to). It relaxes each column
+    against the previous column's cheapest narrow and wide predecessor, first on a tie, exactly
+    as `dag_shortest_path` does, over two flat arrays.
+  - The pre-G17 planner is kept verbatim as `realize_reference`, read only by the parity gate.
+- **R9's single-candidate re-derivation.** `verify_plan` prices only the realizations the plan
+  names, from the same offer (`fused_offer(module, h, only=...)`), and derives the weights once
+  per phase.
+- **The native planner** (`runtime/c/bcir_kplan.{h,c}`, freestanding;
+  [`BCIR_PLANNER_ABI.md`](../kernel/BCIR_PLANNER_ABI.md)).
+  - It reads the planner's whole input as one version-zero record (BKPI) and writes the plan as
+    another (BKPR).
+  - Its arithmetic is 128-bit and exact over the declared domain. It refuses only a value the
+    record cannot carry, exactly when the Python encoder does. `BCIR_ERR_PLANNER` 25 is
+    appended.
+- **Measured.**
+  - `planner.calls` fell from 3,419,172 to 589,858 at scale 8 (5.80×; 5.76× at scale 4). That is
+    CPython 3.11 on the parent; the tests compare the two planners in one process, because counts
+    differ between interpreters.
+  - `verify.plan.scope.overhead` fell from 1.07 to about 0.73.
+  - The native planner plans the 4,096-claim audit fixture in about 3.4 ms, against about 33 ms
+    for the compact planner and 73 ms for the reference on this host. At scale 8 it takes 29 ms,
+    against 421 and 754.
+  - The review's 6.06 M was the whole K_BCIR→StreamPack chain at scale 8 before S0-A made R9
+    re-derive the offer; that chain now reads 3.51 M, down from 9.20 M.
+  - `audit.kbcir-streampack.scale4` (`wall`, indicative) was measured A/B against the parent
+    on one host, over three alternating rounds with the median of five runs each: 201–219 ms
+    before, 117–137 ms after, with the same result digest. The chain still runs `verify`
+    (1.65 M calls at scale 8, untouched), `hydrate_pipelined` and `verify_pack`, so the
+    planner's 5.8× shows up as about 1.6× on the whole chain.
+- **The gates.**
+  - The exact rows, each at 0: `planner.parity` 8,430 → 0, `planner.malformed.accepted` 148 → 0
+    and `planner.r9.misjudged` 232 → 0.
+  - The C gate section, with its carry mutant.
+  - A libFuzzer target.
+  - The decoder campaign's `planner` and `realization` surfaces.
+  - A committed fault table of 29 defects, each caught by its own row. Its first sweep missed
+    three, and in each case the witness, not the code, was wrong (L11).
+
+Found and fixed inside the slice:
+
+- R9 never bound a step to the phase that declares its claim. A forged phase on a first step
+  passed.
+- R9 answered two forgeries with a traceback: a plain-int lane, and an unhashable phase.
+
+Not claimed: the MLIR `-bcir-plan` pass (unchanged); the CXX3 joint solvers (Python only); a
+certificate produced natively.
+
+### G18 — incremental re-verification and delta StreamPack — LANDED (S4-B, 2026-09-24)
 
 *New, Stage 4. Incremental plans are only honest if the laws are re-checked incrementally
 **and** the incremental verifier is proven equal to the full one.*
@@ -864,6 +919,73 @@ re-emits only changed segments, and the differential that keeps both truthful.
 | `exact` `verify.delta.identity` | delta verification equals full verification over the corpus, including every injected violation |
 | `exact` Delta pack identity | a delta-emitted pack equals the full re-emission byte for byte |
 | `ratio` `kbcir-streampack.delta` | incremental re-plan against the full re-plan, a stated mechanism |
+
+What landed (S4-B; the reference is [`BCIR_DELTA_CHAIN.md`](../kernel/BCIR_DELTA_CHAIN.md)):
+
+- **The declared delta** (`bcir/kbcir/delta.py`).
+  - A `Delta` carries claim and resource replacements, each addressed by its own id or RID, so a
+    delta keeps the module's shape.
+  - Every rail refuses what v0 does not admit with `DeltaError`, before anything moves: a
+    malformed or undeclared replacement, a module declaring a claim id twice (one predicate,
+    `_unique_where`), a module changed outside a delta (its revision moved, S1-B).
+  - `apply_delta` is the reference application, sharing everything it does not replace.
+- **The incremental plan.** `IncrementalOffer` keeps `fused_offer` with its position indexes and
+  re-derives only the delta's dependency cone: the edited claims, later readers of an operand
+  written differently, later holders of an identity that moved, claims reading a resource whose
+  tier moved. The discount is one rule table (`realize._DISCOUNT`) both evaluations read.
+  `IncrementalPlan` re-relaxes through the one relaxation `optimize` runs
+  (`realize._relax_column`) and stops at the first column that leaves the next one's input as it
+  was. The constant shift beyond it is lazy (a Fenwick tree), and the path is spliced where it
+  rejoins the old one. A count edit re-relaxes one column of 512; a read edit, two.
+- **The delta StreamPack** (`bcir/gem/delta_pack.py`). Per-record encodings are joined in chunks
+  of 256. A delta re-emits only the changed steps' records (`streampack.step_records`, which
+  `hydrate` also uses), the double buffers of the transitions whose reads moved, and the
+  replaced resources' generation records. They are checked and written by the encoder's own
+  contract functions and writers, in its order, so a pack the wire refuses raises what `encode`
+  raises, and the next delta re-emits in full.
+- **The incremental verdict** (`bcir/verify/delta.py`).
+  - The three verifiers were refactored into units (per claim, pair, step, cost, segment,
+    prefetch), and stay byte-identical over 13,288 modules and 45,195 plan/pack verdicts.
+  - `VerifyState` re-derives only the units whose inputs moved. What moved is found by object
+    identity, never by asking the planner, and with an offer of its own (L9).
+  - It rebuilds, counted, only outside the delta's shape and for modules with event phases (EV3
+    reads the whole flow).
+- **`DeltaChain`** (`bcir/gem/delta_chain.py`) advances all three. Every link equals `full_chain`
+  of the declared module.
+- **Measured.**
+  - A one-claim delta of the audit fixture costs **491 calls** at scale 8 (32,768 claims), and
+    491 at scale 4. The chain from scratch costs 10,855,666 on the parent and 10,142,998 on this
+    tree, about 20,650× in one process.
+  - `kbcir-streampack.delta` is ~0.0098 at scale 4 (1.8 ms against 226 ms) and ~0.007 at scale 8
+    (~17–20 ms against 2.38 s).
+  - What remains linear is C-level list copying and the pack's one join and CRC, so the time is
+    not constant; the calls are.
+  - Building the chain costs ~1.45× one chain from scratch.
+  - `audit.kbcir-streampack.scale4` (`wall`, indicative) A/B against the parent: 137–151 ms
+    before, 144–145 ms after, neutral. The unit refactor adds 1–4 calls per record to
+    `hydrate`, `encode`, `verify_plan` and `verify_pack`; `verify`'s claim laws dropped from
+    1.65 M to 0.58 M calls at scale 8.
+- **The gates.**
+  - The exact rows, each at 0: `planner.delta.parity` 2,064 → 0, `pack.delta.identity`
+    2,064 → 0, `verify.delta.identity` 4,128 → 0 and `delta.malformed.accepted` 51 → 0.
+  - The corpus: 258 cases × (a build + 7 deltas) over every claim and resource field, the
+    offer's cones, the wire's refusals with their repair, and the event laws, plus a forged plan
+    and pack on every step.
+  - A committed fault table of 31 defects, each caught by its own row. Its first sweep missed
+    four: an unobservable counter (removed), a forgery pair the rotations could never schedule,
+    and two unit paths reachable only through a stale plan (L11).
+
+Found and fixed inside the slice:
+
+- `apply_delta` admitted a module declaring a claim id twice when the delta named another claim;
+  the states refused it.
+- A `Delta` whose replacements were not tuples raised a `TypeError`, not a verdict (L1).
+- Sharing the relaxation first cost `optimize` a call per column. Weighing each phase once per run
+  of columns cancels it: `planner.calls` stays 589,858.
+
+Not claimed: a native twin of the delta chain; incremental verification on the MLIR rail; deltas
+that insert, remove or move claims or resources or change the scope; incremental event laws;
+sublinear wall time (the per-delta copies are O(n) at C speed).
 
 ---
 
@@ -932,7 +1054,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16                  ALL LANDED: G14 (S3-A); G15 (S3-B); G16 (S3-C) — exit gate met
-Stage 4  performance program               G17, G18
+Stage 4  performance program               G17, G18                         ALL LANDED: G17 (S4-A); G18 (S4-B) — exit gate met
 Stage 5  movement, alias, escape           G8, G9 remainder, G10
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```

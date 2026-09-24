@@ -22,18 +22,18 @@ weight each shipped policy gives the axis (`bcir/kbcir/weights.py`).
 <!-- generated: axes -->
 | # | axis | files that produce it | latency | throughput | energy | safe |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 0 | `compute` | 10 | 2 | 2 | 1 | 1 |
-| 1 | `memory` | 11 | 2 | 3 | 1 | 1 |
+| 0 | `compute` | 11 | 2 | 2 | 1 | 1 |
+| 1 | `memory` | 12 | 2 | 3 | 1 | 1 |
 | 2 | `fabric` | 1 | 1 | 1 | 1 | 1 |
-| 3 | `sync` | 2 | 1 | 1 | 1 | 2 |
+| 3 | `sync` | 3 | 1 | 1 | 1 | 2 |
 | 4 | `compile` | 0 | 0 | 0 | 0 | 1 |
-| 5 | `thermal` | 14 | 0 | 0 | 2 | 1 |
-| 6 | `power` | 8 | 0 | 0 | 3 | 1 |
+| 5 | `thermal` | 15 | 0 | 0 | 2 | 1 |
+| 6 | `power` | 9 | 0 | 0 | 3 | 1 |
 | 7 | `reliability` | 1 | 1 | 1 | 1 | 3 |
 | 8 | `security` | 0 | 0 | 0 | 0 | 1 |
 | 9 | `accuracy` | 4 | 0 | 0 | 0 | 0 |
 | 10 | `contention` | 6 | 1 | 2 | 1 | 1 |
-| 11 | `verification` | 1 | 1 | 1 | 1 | 2 |
+| 11 | `verification` | 2 | 1 | 1 | 1 | 2 |
 <!-- /generated -->
 
 Read the two extreme rows together, because they are the lesson:

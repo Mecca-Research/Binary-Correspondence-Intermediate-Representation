@@ -20,7 +20,8 @@ candidate. The optimizer reduces cost only among provably-legal realizations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 
 from ..model import (
     ATOMIC_OPCODES,
@@ -71,9 +72,10 @@ class RealizationResult:
     score: int = 0
     # The deforested candidate map optimize() already built (claim id -> candidates).
     # Carried so downstream consumers (plan_view / to_mlir) reuse it instead of
-    # recomputing fused_candidates(). Excluded from equality/repr -- it is derived
-    # state, not part of the result's identity.
-    cand_map: dict[int, list[Candidate]] | None = field(default=None, compare=False, repr=False)
+    # recomputing fused_candidates(). Since G17 it is a read-only view of the planner's
+    # compact offer that builds a claim's `Candidate` list on first access (`OfferMap`).
+    # Excluded from equality/repr -- it is derived state, not part of the result's identity.
+    cand_map: Mapping[int, list[Candidate]] | None = field(default=None, compare=False, repr=False)
 
     def by_claim(self) -> dict[int, Candidate]:
         return {s.claim_id: s.candidate for s in self.steps}
@@ -120,39 +122,113 @@ def _stride_penalty(claim: Claim, h: HProfile) -> int:
     return 1
 
 
-def _cost(
-    claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_compile: int = 0, tier=None
-) -> CostVector:
-    n = max(1, claim.count)
-    streams = _streams(claim)
+_ALU_OPCODES = frozenset({Opcode.ADD, Opcode.SUB, Opcode.MUL})
+_T_MACC = Opcode.T_MACC
+_PRICED_CONTRACTS = frozenset({"exact", "hash"})
+
+
+def _base_cost(
+    claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_compile: int, bw_f, lat_f
+) -> tuple[int, ...]:
+    """The one spelling of a realization's base cost: the 12 axes in `cost.DIMS` order as
+    plain integers. `bw_f`/`lat_f` are the Q8 bandwidth and latency factors of the tier the
+    claim's primary resource lives in (256/256, DRAM, when there is none).
+
+    `_cost` wraps it in a `CostVector` for the object API; the compact planner reads the
+    tuple directly. It is `_opclass`, `_streams` and `_verify_cost` inlined -- the planner's
+    innermost arithmetic, run once per candidate per claim on the planner and on R9."""
+    count = claim.count
+    n = count if count > 1 else 1
+    streams = len(claim.rd) + len(claim.wr)
     ceil = (n + width - 1) // width
-    compute = ceil * _opclass(claim.opcode)
+    op = claim.opcode
+    compute = ceil if op in _ALU_OPCODES else (ceil * 2 if op == _T_MACC else 0)
     # Memory hierarchy: scale traffic by the tier bandwidth factor and latency by the
-    # tier latency factor. DRAM (or tier=None) uses Q8 256/256 == x1.0, so RAM
+    # tier latency factor. DRAM (or no resource) uses Q8 256/256 == x1.0, so RAM
     # resources cost exactly as before (back-compat).
-    bw_f = tier.bw_factor if tier is not None else 256
-    lat_f = tier.lat_factor if tier is not None else 256
     mem_shared = (n * streams * h.mem_unit * bw_f) >> 8
     access_ops = ceil * streams
     overhead = h.base_overhead * stride_penalty
     memory = mem_shared + ((access_ops * overhead * lat_f) >> 8)
-    thermal = width * h.thermal_density + ceil * h.per_op_heat
-    power = width * h.power_density + ceil * h.per_op_heat
+    heat = ceil * h.per_op_heat
+    thermal = width * h.thermal_density + heat
+    power = width * h.power_density + heat
+    verification = n if claim.verify in _PRICED_CONTRACTS else 0
     # Positional in DIMS order (compute, memory, fabric, sync, compile, thermal, power,
-    # reliability, security, accuracy, contention, verification): `CostVector.of` resolves
-    # names through a dict on every call, and this is the planner's innermost constructor.
-    return CostVector(
-        (compute, memory, 0, 0, extra_compile, thermal, power, 0, 0, 0, 0, _verify_cost(claim))
-    )
+    # reliability, security, accuracy, contention, verification).
+    return (compute, memory, 0, 0, extra_compile, thermal, power, 0, 0, 0, 0, verification)
 
 
-def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
+def _cost(
+    claim: Claim, h: HProfile, width: int, stride_penalty: int, extra_compile: int = 0, tier=None
+) -> CostVector:
+    bw_f = tier.bw_factor if tier is not None else 256
+    lat_f = tier.lat_factor if tier is not None else 256
+    return CostVector(_base_cost(claim, h, width, stride_penalty, extra_compile, bw_f, lat_f))
+
+
+# --- the candidate enumeration ----------------------------------------------------
+
+_CONTROL_NOOPS = frozenset({Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE})
+_BARRIER = Opcode.BARRIER
+_ZERO_BASE = (0,) * N
+_BARRIER_BASE = CostVector.of(sync=16).v
+_UNIT_OR_SCALAR = frozenset({StrideClass.UNIT, StrideClass.SCALAR})
+_LANE_U, _LANE_UX, _LANE_T, _LANE_GGG, _LANE_A, _LANE_H = (
+    Lane.U,
+    Lane.UX,
+    Lane.T,
+    Lane.GGG,
+    Lane.A,
+    Lane.H,
+)
+
+# How a realization carries its claim's operands (`Candidate.reads` / `.writes`), exactly as
+# the object enumeration always built them: a control op carries none, the two realizations of
+# a reducible-permutation gather carry the claim's `wr` as declared, every other realization a
+# tuple of it.
+_RW_NONE, _RW_TUPLE, _RW_RAW = 0, 1, 2
+
+
+def _geometry(h: HProfile) -> tuple:
+    """The target's lane geometry as the enumeration reads it, derived once per plan:
+    (the issuable widths, ascending; the cacheline-bucket width; the tile width)."""
+    widths = h.widths()
+    # The tile lane is the widest the hardware can issue, capped at 16 (AVX-512 f32): 16 on
+    # AVX-512/SVE/RVV/PTX, but 4 on NEON, 8 on AVX2 -- never an unrealizable width.
+    return widths, min(8, max(widths)), min(16, h.lane_widths[-1])
+
+
+def _offer_rows(
+    claim: Claim,
+    h: HProfile,
+    geometry: tuple,
+    bw_f,
+    lat_f,
+    access: str,
+    only=None,
+    mode: int = 0,
+) -> list[tuple]:
+    """The one enumeration of a claim's legal realizations, as rows
+    `(lane, width, name, base, rw)` -- `base` the 12-int cost tuple, `rw` how the candidate
+    carries the claim's operands. No `Candidate` is built: `candidates_for` materializes rows
+    for the object API, and the compact planner (`fused_offer`) reads them as they are.
+
+    `geometry` is `_geometry(h)`, and (`bw_f`, `lat_f`, `access`) describe the claim's
+    primary resource (its tier's Q8 factors and its addressing model; 256, 256, "flat"
+    without one). `only`, a set of `(lane, width, name)`, prices just the realizations it
+    names -- R9's single-candidate re-derivation -- and returns an empty list when the claim
+    admits none of them. `mode` is the intra-phase discount `fused_offer` found (`_CSE`,
+    `_DEFOREST`), applied to every row's base."""
     op = claim.opcode
-    sc = claim.stride_class
-    if op in (Opcode.NOP, Opcode.PHASE_ENTER, Opcode.PHASE_LEAVE, Opcode.PROV_NOTE):
-        return [Candidate(Lane.H, 1, "noop", CostVector.zero())]
-    if op == Opcode.BARRIER:
-        return [Candidate(Lane.H, 1, "barrier", CostVector.of(sync=16))]
+    if op in _CONTROL_NOOPS:
+        rows = [(_LANE_H, 1, "noop", _ZERO_BASE, _RW_NONE)]
+        rows = rows if only is None or (_LANE_H, 1, "noop") in only else []
+        return _discounted(claim, rows, mode) if mode else rows
+    if op == _BARRIER:
+        rows = [(_LANE_H, 1, "barrier", _BARRIER_BASE, _RW_NONE)]
+        rows = rows if only is None or (_LANE_H, 1, "barrier") in only else []
+        return _discounted(claim, rows, mode) if mode else rows
 
     # An ATOMIC read-modify-write has exactly one realization: itself, one element at a
     # time, on the atomic lane. Candidate generation used to dispatch on `stride_class`
@@ -162,95 +238,102 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
     # read-modify-write is not a faster atomic; it is not an atomic at all, and the lost
     # ordering and synchronization cost were not priced either.
     if op in ATOMIC_OPCODES:
-        return [
-            Candidate(
-                Lane.A,
-                1,
-                "atomic",
-                _cost(
-                    claim,
-                    h,
+        specs = [(_LANE_A, 1, "atomic", 1, 0, _RW_TUPLE)]
+    else:
+        # Hierarchical Access Memory turns random access from O(gather_penalty) into
+        # O(log n).
+        gp = h.gather_penalty
+        if access == "ham":
+            n = max(1, claim.count)
+            gp = max(1, (n - 1).bit_length())  # ceil(log2 n)
+        sc = claim.stride_class
+        # Reducible-permutation gather (`reduce.gather`): + is commutative and the index is
+        # a permutation, so the random gather (O(gather_penalty)) has a semantically
+        # identical *blocked* sequential realization (O(1) overhead). The cost model offers
+        # both; the blocked one wins, avoiding gather_penalty.
+        if claim.op == "reduce.gather":
+            specs = [
+                (_LANE_U, 1, "blocked", 1, 0, _RW_RAW),
+                (_LANE_GGG, 1, "gather", gp, 0, _RW_RAW),
+            ]
+        elif sc in _UNIT_OR_SCALAR:
+            widths = geometry[0]
+            specs = [
+                (
+                    claim.lane if w == 1 else _LANE_U,
+                    w,
+                    "scalar" if w == 1 else f"vec{w}",
                     1,
-                    1,
-                    tier=(h.mem.tier_for(resource.domain) if resource is not None else None),
-                ),
-                claim.rd,
-                tuple(claim.wr),
-            )
-        ]
-
-    # Memory tier + addressing model come from the (primary) resource, if known.
-    tier = h.mem.tier_for(resource.domain) if resource is not None else None
-    access = resource.access if resource is not None else "flat"
-
-    # Hierarchical Access Memory turns random access from O(gather_penalty) into O(log n).
-    gp = h.gather_penalty
-    if access == "ham":
-        n = max(1, claim.count)
-        gp = max(1, (n - 1).bit_length())  # ceil(log2 n)
-
-    # Reducible-permutation gather (`reduce.gather`): + is commutative and the
-    # index is a permutation, so the random gather (O(gather_penalty)) has a
-    # semantically identical *blocked* sequential realization (O(1) overhead). The
-    # cost model offers both; the blocked one wins, avoiding gather_penalty.
-    if claim.op == "reduce.gather":
+                    0,
+                    _RW_TUPLE,
+                )
+                for w in widths
+            ]
+        elif sc == StrideClass.STRIDED:
+            specs = [
+                (_LANE_U, 1, "strided", _stride_penalty(claim, h), 0, _RW_TUPLE),
+                (_LANE_GGG, 1, "gather", gp, 0, _RW_TUPLE),
+            ]
+        elif sc == StrideClass.CACHELINE:
+            specs = [
+                (_LANE_UX, geometry[1], "ux_bucket", 2, claim.count // 4, _RW_TUPLE),
+                (_LANE_GGG, 1, "gather", gp, 0, _RW_TUPLE),
+            ]
+        elif sc == StrideClass.RANDOM:
+            # Correctness: do not assume locality. Only the declared GGG realization is
+            # legal (HAM-aware).
+            specs = [(_LANE_GGG, 1, "gather", gp, 0, _RW_TUPLE)]
+        elif sc == StrideClass.TILE:
+            specs = [(_LANE_T, geometry[2], "tile", 1, 0, _RW_TUPLE)]
+        else:  # defensive fallback
+            specs = [(claim.lane, 1, "scalar", _stride_penalty(claim, h), 0, _RW_TUPLE)]
+    if mode == _CSE:
+        # The copy-cost couple (`_cse_memory_q8`): no recompute, the result copied once.
+        q = _cse_memory_q8(claim)
         return [
-            Candidate(Lane.U, 1, "blocked", _cost(claim, h, 1, 1, tier=tier), claim.rd, claim.wr),
-            Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd, claim.wr),
+            (lane, w, name, (0, (b[1] * q) >> 8) + b[2:], rw)
+            for lane, w, name, sp, extra, rw in specs
+            if only is None or (lane, w, name) in only
+            for b in (_base_cost(claim, h, w, sp, extra, bw_f, lat_f),)
         ]
+    if mode == _DEFOREST:
+        # The deforestation couple (`_DEFOREST_FACTOR`): x0.75 on the memory axis.
+        return [
+            (lane, w, name, (b[0], (b[1] * 192) >> 8) + b[2:], rw)
+            for lane, w, name, sp, extra, rw in specs
+            if only is None or (lane, w, name) in only
+            for b in (_base_cost(claim, h, w, sp, extra, bw_f, lat_f),)
+        ]
+    return [
+        (lane, w, name, _base_cost(claim, h, w, sp, extra, bw_f, lat_f), rw)
+        for lane, w, name, sp, extra, rw in specs
+        if only is None or (lane, w, name) in only
+    ]
 
-    cands: list[Candidate] = []
-    if sc in (StrideClass.UNIT, StrideClass.SCALAR):
-        for w in h.widths():
-            name = "scalar" if w == 1 else f"vec{w}"
-            lane = claim.lane if w == 1 else Lane.U
-            cands.append(Candidate(lane, w, name, _cost(claim, h, w, 1, tier=tier), claim.rd))
-    elif sc == StrideClass.STRIDED:
-        cands.append(
-            Candidate(
-                Lane.U,
-                1,
-                "strided",
-                _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier),
-                claim.rd,
-            )
-        )
-        cands.append(Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd))
-    elif sc == StrideClass.CACHELINE:
-        uxw = min(8, max(h.widths()))
-        cands.append(
-            Candidate(
-                Lane.UX,
-                uxw,
-                "ux_bucket",
-                _cost(claim, h, uxw, 2, extra_compile=claim.count // 4, tier=tier),
-                claim.rd,
-            )
-        )
-        cands.append(Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd))
-    elif sc == StrideClass.RANDOM:
-        # Correctness: do not assume locality. Only the declared GGG realization is legal (HAM-aware).
-        cands.append(Candidate(Lane.GGG, 1, "gather", _cost(claim, h, 1, gp, tier=tier), claim.rd))
-    elif sc == StrideClass.TILE:
-        # The tile lane is the widest the hardware can issue, capped at 16 (AVX-512 f32):
-        # 16 on AVX-512/SVE/RVV/PTX, but 4 on NEON, 8 on AVX2 -- never an unrealizable width.
-        tw = min(16, h.lane_widths[-1])
-        cands.append(Candidate(Lane.T, tw, "tile", _cost(claim, h, tw, 1, tier=tier), claim.rd))
 
-    if not cands:  # defensive fallback
-        cands.append(
-            Candidate(
-                claim.lane,
-                1,
-                "scalar",
-                _cost(claim, h, 1, _stride_penalty(claim, h), tier=tier),
-                claim.rd,
-            )
-        )
-    wr = tuple(claim.wr)
-    # Positional construction, not `dataclasses.replace`: `replace` introspects the fields on
-    # every call, and this runs once per candidate per claim on both the planner and R9.
-    return [Candidate(c.lane, c.width, c.name, c.base, c.reads, wr) for c in cands]
+def _materialize(claim: Claim, row: tuple) -> Candidate:
+    """A `Candidate` from an offer row, carrying the claim's operands the way `rw` says."""
+    lane, width, name, base, rw = row
+    if rw == _RW_TUPLE:
+        return Candidate(lane, width, name, CostVector(base), claim.rd, tuple(claim.wr))
+    if rw == _RW_RAW:
+        return Candidate(lane, width, name, CostVector(base), claim.rd, claim.wr)
+    return Candidate(lane, width, name, CostVector(base))
+
+
+def _resource_factors(h: HProfile, resource) -> tuple[int, int, str]:
+    """(bw_factor, lat_factor, access) of a claim's primary resource on `h`."""
+    if resource is None:
+        return 256, 256, "flat"
+    tier = h.mem.tier_for(resource.domain)
+    return tier.bw_factor, tier.lat_factor, resource.access
+
+
+def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
+    bw_f, lat_f, access = _resource_factors(h, resource)
+    return [
+        _materialize(claim, row) for row in _offer_rows(claim, h, _geometry(h), bw_f, lat_f, access)
+    ]
 
 
 # --- context coupling f_i(pi) ---------------------------------------------------
@@ -259,6 +342,26 @@ def candidates_for(claim: Claim, h: HProfile, resource=None) -> list[Candidate]:
 # intermediate operand's round-trip. Baked into the consumer's base cost in `optimize`
 # (dependency-based) so it prices identically in the plan score and the GEM makespan.
 _DEFOREST_FACTOR = tuple(192 if i == MEMORY else 256 for i in range(len(IDENTITY_FACTOR)))
+# The same x0.75 on the memory axis, path-based: a vector candidate that shares a read operand
+# with its vector predecessor reuses loaded cache lines.
+_FUSED_MEMORY_Q8 = 192
+# Thermal coupling: wide SIMD on a hot machine pays extra heat/current (AVX-512 downclock).
+_HOT_WIDE_Q8 = 320
+
+
+def _shares_reads(prev: "Candidate | None", cand: Candidate) -> bool:
+    """Path fusion: `cand` and its predecessor are both vector realizations over a common
+    read operand."""
+    return (
+        prev is not None
+        and cand.width > 1
+        and prev.width > 1
+        and bool(set(prev.reads) & set(cand.reads))
+    )
+
+
+def _hot_wide(theta: Theta, width: int) -> bool:
+    return theta.thermal >= 60 and width >= 16
 
 
 def _context_factor(prev: "Candidate | None", cand: Candidate, theta: Theta) -> tuple[int, ...]:
@@ -267,20 +370,48 @@ def _context_factor(prev: "Candidate | None", cand: Candidate, theta: Theta) -> 
     # predecessor reuses loaded cache lines -> discount memory traffic. (Producer->
     # consumer "deforestation" fusion is dependency-based, not path-based, so it is
     # baked into the consumer's base cost in `optimize`, not here.)
-    if prev is not None and cand.width > 1 and prev.width > 1 and set(prev.reads) & set(cand.reads):
-        f[MEMORY] = 192  # x0.75
-    # Thermal coupling: wide SIMD on a hot machine pays extra heat/current (AVX-512 downclock).
-    if theta.thermal >= 60 and cand.width >= 16:
-        f[THERMAL] = 320  # x1.25
-        f[POWER] = 320
+    if _shares_reads(prev, cand):
+        f[MEMORY] = _FUSED_MEMORY_Q8
+    if _hot_wide(theta, cand.width):
+        f[THERMAL] = _HOT_WIDE_Q8
+        f[POWER] = _HOT_WIDE_Q8
     return tuple(f)
+
+
+def _edge_cost_pair(base, hot: bool, w) -> tuple[int, int]:
+    """The one spelling of a DAG edge's weight: a realization's base cost coupled and
+    scalarized under the phase weights `w`, for both path contexts at once -- (after a
+    predecessor it does not fuse with, after one it does). `hot` is `_hot_wide`.
+
+    Equal to `CostVector(base).couple(_context_factor(prev, cand, theta)).dot(w)` in every
+    context: the Q8 identity (x256 >> 8) is exact on integers, so only the memory axis
+    (path fusion) and the thermal and power axes (hot wide SIMD) are ever rescaled."""
+    b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11 = base
+    if hot:
+        b5 = (b5 * _HOT_WIDE_Q8) >> 8
+        b6 = (b6 * _HOT_WIDE_Q8) >> 8
+    rest = (
+        b0 * w[0]
+        + b2 * w[2]
+        + b3 * w[3]
+        + b4 * w[4]
+        + b5 * w[5]
+        + b6 * w[6]
+        + b7 * w[7]
+        + b8 * w[8]
+        + b9 * w[9]
+        + b10 * w[10]
+        + b11 * w[11]
+    )
+    return rest + b1 * w[1], rest + ((b1 * _FUSED_MEMORY_Q8) >> 8) * w[1]
 
 
 def edge_cost(prev: "Candidate | None", cand: Candidate, theta: Theta, w_phase) -> int:
     """The realized cost of `cand` following `prev` under the phase weights `w_phase`: the
     planner's DAG edge weight, and the number R9 re-derives per step. One predicate for
     both, so the plan score and the verdict cannot disagree about what a step costs."""
-    return cand.base.couple(_context_factor(prev, cand, theta)).dot(w_phase)
+    plain, fused = _edge_cost_pair(cand.base.v, _hot_wide(theta, cand.width), w_phase)
+    return fused if _shares_reads(prev, cand) else plain
 
 
 def step_cost(
@@ -347,10 +478,13 @@ def cse_eligible(claim: Claim, module: Module) -> bool:
         return False
     if claim.domain in ISOLATED_DOMAINS:
         return False
-    for rid in claim.io_rids():
-        resource = module.resource(rid)
-        if resource is not None and resource.domain in ISOLATED_DOMAINS:
-            return False
+    # Every operand, reads then writes (`claim.io_rids()`), resolved as `module.resource`
+    # resolves it -- inline, because this runs once per claim on the planner and on R9.
+    resources = module.resources
+    for rids in (claim.rd, claim.wr):
+        for rid in rids:
+            if rid is not None and rid in resources and resources[rid].domain in ISOLATED_DOMAINS:
+                return False
     return True
 
 
@@ -373,28 +507,106 @@ def cse_identity(claim: Claim, version: dict[int, int]) -> tuple:
         claim.offset,
         int(claim.domain),
         bool(claim.dynamic),
-        tuple((r, version.get(r, 0)) for r in claim.rd),
+        tuple([(r, version[r] if r in version else 0) for r in claim.rd]),
     )
 
 
-def _cse_factor(claim: Claim) -> tuple[int, ...]:
-    """The copy-cost factor for a claim that is a common subexpression of an earlier
-    one: the value is already computed, so there is no recompute (compute zeroed) and
-    only the result is copied to this claim's output instead of re-reading every
-    operand (memory scaled from `len(rd)+len(wr)` streams down to the `1 + len(wr)` a
-    copy needs). Conservative on thermal/power (left as-is)."""
-    full = len(claim.rd) + len(claim.wr)
-    copy = 1 + len(claim.wr)
-    mem_q8 = (copy * 256) // max(1, full)
-    return tuple(0 if i == COMPUTE else (mem_q8 if i == MEMORY else 256) for i in range(N))
+def _cse_memory_q8(claim: Claim) -> int:
+    """The copy-cost factor on the memory axis for a claim that is a common subexpression of
+    an earlier one: the value is already computed, so there is no recompute (compute zeroed)
+    and only the result is copied to this claim's output instead of re-reading every
+    operand (memory scaled from `len(rd)+len(wr)` streams down to the `1 + len(wr)` a copy
+    needs). Conservative on thermal/power (left as-is)."""
+    return ((1 + len(claim.wr)) * 256) // max(1, len(claim.rd) + len(claim.wr))
 
 
-def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
-    """Per-claim candidate lists with the **redundancy discounts** baked in, computed
-    from intra-phase data flow (not path adjacency) so all five rails -- tropical,
-    RCSP, soft, accel, scheduled overlap -- price them identically and the plan score,
-    makespan, and serial bound stay consistent (makespan <= serial). Two discounts,
-    applied at most one per claim (CSE wins, being the larger):
+# How the intra-phase data flow discounted a claim's realizations (`Offer.mode`).
+_PLAIN, _CSE, _DEFOREST = 0, 1, 2
+
+# The discount rule, as ONE table both evaluations of the offer read (GEM+ G18): the sequential
+# walk of `fused_offer` and the indexed re-derivation of `kbcir.delta` gather the three facts
+# their own way and look the mode up here, so the rule itself is spelled once.
+#   _DISCOUNT[duplicate][consumes][fenced]
+#   duplicate  -- the claim is CSE-eligible and an earlier eligible claim of its phase has its
+#                 value-numbered identity: CSE wins, being the larger credit
+#   consumes   -- a read operand was written earlier in the phase (producer -> consumer)
+#   fenced     -- the claim is barriered, or one of its reads was written by a barriered claim
+#                 earlier in the phase (ASM3b: the fence materializes the intermediate)
+_DISCOUNT = (
+    ((_PLAIN, _PLAIN), (_DEFOREST, _PLAIN)),
+    ((_CSE, _CSE), (_CSE, _CSE)),
+)
+
+
+class Offer:
+    """The planner's offer as compact indexed arrays (GEM+ G17): one column per claim in
+    planning order, one row tuple `(lane, width, name, base, rw)` per realization, and no
+    `Candidate` or `CostVector` until one is asked for.
+
+    `optimize`, `fused_candidates` and R9 read the same arrays -- the one derivation of what
+    the planner may choose from. `rows[j]` is the offer of the j-th flat entry;
+    `source[j]` is the entry whose rows column j plans with, which is `j` unless a claim id
+    occurs twice (then every occurrence plans with the last one's rows, as the id-keyed
+    candidate map always made it)."""
+
+    __slots__ = ("claims", "phase_ids", "rows", "source", "modes", "factors", "geometry", "h")
+
+    def __init__(self, claims, phase_ids, rows, source, modes, factors, geometry, h):
+        self.claims = claims
+        self.phase_ids = phase_ids
+        self.rows = rows
+        self.source = source
+        self.modes = modes
+        self.factors = factors
+        self.geometry = geometry
+        self.h = h
+
+    def __len__(self) -> int:
+        return len(self.claims)
+
+    def candidates(self, j: int) -> list[Candidate]:
+        """Column j's realizations as `Candidate` objects."""
+        s = self.source[j]
+        claim = self.claims[s]
+        return [_materialize(claim, row) for row in self.rows[s]]
+
+    def candidate_map(self) -> dict[int, list[Candidate]]:
+        """`fused_candidates`' dict: claim id -> candidates, first-occurrence order."""
+        out: dict[int, list[Candidate]] = {}
+        for j, claim in enumerate(self.claims):
+            out[claim.id] = self.candidates(j)
+        return out
+
+    def full_rows(self, j: int) -> list[tuple]:
+        """Every realization of entry j with its discount applied, whatever `only` priced --
+        the diagnostic path of R9's single-candidate re-derivation."""
+        bw_f, lat_f, access = self.factors[j]
+        return _offer_rows(
+            self.claims[j], self.h, self.geometry, bw_f, lat_f, access, None, self.modes[j]
+        )
+
+
+def _discounted(claim: Claim, rows: list[tuple], mode: int) -> list[tuple]:
+    """Apply an intra-phase discount to rows already priced (the Q8 couple, inline)."""
+    if mode == _CSE:
+        q = _cse_memory_q8(claim)
+        return [(lane, w, name, (0, (b[1] * q) >> 8) + b[2:], rw) for lane, w, name, b, rw in rows]
+    if mode == _DEFOREST:
+        return [
+            (lane, w, name, (b[0], (b[1] * 192) >> 8) + b[2:], rw) for lane, w, name, b, rw in rows
+        ]
+    return rows
+
+
+_NO_REALIZATIONS: frozenset = frozenset()
+
+
+def fused_offer(module: Module, h: HProfile, only=None) -> Offer:
+    """Per-claim offers with the **redundancy discounts** baked in, computed from
+    intra-phase data flow (not path adjacency) so all five rails -- tropical, RCSP, soft,
+    accel, scheduled overlap -- price them identically and the plan score, makespan, and
+    serial bound stay consistent (makespan <= serial). Two discounts, applied at most one
+    per claim (CSE wins, being the larger):
 
       * **CSE / duplicate elimination**: a claim whose complete semantic identity
         (`cse_identity`: op, access pattern, domain, numeric contract, operand
@@ -411,103 +623,245 @@ def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
 
     A barrier between phases materializes intermediates, so both credits are
     intra-phase only; single-claim programs (e.g. vector_add) get neither (a no-op,
-    so the pinned scores are preserved)."""
-    out: dict[int, list[Candidate]] = {}
-    produced: dict[int, set[int]] = {}  # phase -> rids written so far (deforestation)
-    version: dict[int, dict[int, int]] = {}  # phase -> {rid: write count} (value numbering)
-    seen: dict[int, dict[tuple, int]] = {}  # phase -> {compute signature: first claim}
-    barr_prod: dict[int, set[int]] = {}  # phase -> rids written by a barriered producer (ASM3b)
-    for phase_id, claim in _flatten(module):
-        cost_rid = claim.rd[0] if claim.rd else claim.primary_rid
-        resource = module.resource(cost_rid) if cost_rid is not None else None
-        pset = produced.setdefault(phase_id, set())
-        ver = version.setdefault(phase_id, {})
-        seenmap = seen.setdefault(phase_id, {})
-        bset = barr_prod.setdefault(phase_id, set())
+    so the pinned scores are preserved).
+
+    `only` (claim id -> set of `(lane, width, name)`) prices only the named realizations of
+    the named claims -- R9 re-derives exactly what the plan chose -- while the data-flow
+    state still walks every claim, because a discount depends on everything before it."""
+    flat = _flatten(module)
+    count = len(flat)
+    geometry = _geometry(h)
+    resources = module.resources
+    tiers: dict = {}  # domain -> (bw_factor, lat_factor): `tier_for` once per domain
+    claims: list = [None] * count
+    phase_ids: list = [None] * count
+    rows: list = [None] * count
+    modes: list = [_PLAIN] * count
+    factors: list = [None] * count
+    last: dict[int, int] = {}  # claim id -> its last flat entry
+    phase = None
+    pset: set[int] = set()  # rids written so far in the phase (deforestation)
+    ver: dict[int, int] = {}  # {rid: write count} in the phase (value numbering)
+    seenmap: dict[tuple, int] = {}  # compute signature -> first claim in the phase
+    bset: set[int] = set()  # rids written by a barriered producer in the phase (ASM3b)
+    for j in range(count):
+        phase_id, claim = flat[j]
+        if phase_id != phase:  # a phase's claims are contiguous in planning order
+            phase = phase_id
+            pset, ver, seenmap, bset = set(), {}, {}, set()
+        rd = claim.rd
+        cost_rid = rd[0] if rd else claim.primary_rid
+        if cost_rid is not None and cost_rid in resources:
+            resource = resources[cost_rid]
+            domain = resource.domain
+            if domain in tiers:
+                bw_f, lat_f = tiers[domain]
+            else:
+                tier = h.mem.tier_for(domain)
+                bw_f, lat_f = tiers[domain] = (tier.bw_factor, tier.lat_factor)
+            access = resource.access
+        else:
+            bw_f, lat_f, access = 256, 256, "flat"
         # The value-numbered semantic identity (G1): the same value at the same versions.
         eligible = cse_eligible(claim, module)
         sig = cse_identity(claim, ver) if eligible else None
-
-        cands = candidates_for(claim, h, resource)
-        shared = pset & set(claim.rd)
-        if eligible and sig in seenmap:  # CSE: identical value already computed
-            cse = _cse_factor(claim)
-            cands = [
-                Candidate(c.lane, c.width, c.name, c.base.couple(cse), c.reads, c.writes)
-                for c in cands
+        # The discount (`_DISCOUNT`): CSE when an identical value is already computed, else
+        # producer->consumer deforestation unless a fence stands between them. ASM3b: a
+        # barriered claim is a first-class ordering edge, so neither a barriered consumer nor a
+        # read a barriered producer wrote fuses (the fence materializes the intermediate). Every
+        # barriered write is also in `pset`, so the reads a fence covers are `bset & rd`. A
+        # duplicate's row of the table does not depend on the other two facts, so they are
+        # gathered only for a claim that is not one.
+        if eligible and sig in seenmap:
+            mode = _DISCOUNT[True][False][False]
+        else:
+            mode = _DISCOUNT[False][not pset.isdisjoint(rd)][
+                claim.hazard == "barriered" or (not bset.isdisjoint(rd) if bset else False)
             ]
-        elif shared:  # producer->consumer deforestation
-            # ASM3b: a barriered claim is a first-class ordering edge -- no fusion across it. Skip the
-            # deforestation discount when the consumer is barriered OR a shared operand was produced by
-            # a barriered producer (the fence forces the intermediate to materialize, no round-trip elision).
-            if claim.hazard != "barriered" and not (shared & bset):
-                cands = [
-                    Candidate(
-                        c.lane, c.width, c.name, c.base.couple(_DEFOREST_FACTOR), c.reads, c.writes
-                    )
-                    for c in cands
-                ]
+        want = None if only is None else only.get(claim.id, _NO_REALIZATIONS)
+        rows[j] = _offer_rows(claim, h, geometry, bw_f, lat_f, access, want, mode)
 
-        if eligible:
-            seenmap.setdefault(sig, claim.id)  # first occurrence pays full
-        for r in claim.wr:  # a write creates a new operand version
-            ver[r] = ver.get(r, 0) + 1
-        pset |= set(claim.wr)
+        if eligible and sig not in seenmap:
+            seenmap[sig] = claim.id  # first occurrence pays full
+        wr = claim.wr
+        for r in wr:  # a write creates a new operand version
+            ver[r] = ver[r] + 1 if r in ver else 1
+        pset.update(wr)
         if claim.hazard == "barriered":  # ASM3b: a barriered producer fences its writes
-            bset |= set(claim.wr)
-        out[claim.id] = cands
-    return out
+            bset.update(wr)
+        last[claim.id] = j
+        claims[j] = claim
+        phase_ids[j] = phase_id
+        modes[j] = mode
+        factors[j] = (bw_f, lat_f, access)
+    source = range(count) if len(last) == count else [last[claim.id] for claim in claims]
+    return Offer(claims, phase_ids, rows, source, modes, factors, geometry, h)
+
+
+def fused_candidates(module: Module, h: HProfile) -> dict[int, list[Candidate]]:
+    """Per-claim candidate lists with the redundancy discounts baked in (`fused_offer`),
+    as `Candidate` objects: claim id -> candidates."""
+    return fused_offer(module, h).candidate_map()
+
+
+class OfferMap(Mapping):
+    """`RealizationResult.cand_map` over a compact `Offer`: claim id -> candidates, each
+    list built on first access and then kept. Read-only, like the dict it stands in for."""
+
+    __slots__ = ("_offer", "_column", "_cache")
+
+    def __init__(self, offer: Offer, column: dict[int, int] | None = None):
+        """`column` (claim id -> its first entry) may be handed in by a caller that already
+        holds it for the same claim order -- the incremental planner, whose deltas never move
+        a claim -- and is otherwise derived from the offer."""
+        self._offer = offer
+        if column is None:
+            column = {}
+            for j, claim in enumerate(offer.claims):
+                if claim.id not in column:
+                    column[claim.id] = j
+        self._column = column
+        self._cache: dict[int, list[Candidate]] = {}
+
+    def __getitem__(self, claim_id: int) -> list[Candidate]:
+        cached = self._cache.get(claim_id)
+        if cached is None:
+            cached = self._cache[claim_id] = self._offer.candidates(self._column[claim_id])
+        return cached
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(self._column)
+
+    def __len__(self) -> int:
+        return len(self._column)
 
 
 # --- the optimizer --------------------------------------------------------------
 
 
+def _relax_column(crow, k, w, hot, shares, pn, dn, pw, dw, dist, pred, first):
+    """Relax one column of the realization DAG -- the one relaxation `optimize` and the
+    incremental planner (`kbcir.delta`, GEM+ G18) both run.
+
+    Slot `first + i` (i < k, the column's `len(crow)`, which every caller already holds)
+    receives row i's least path weight (`dist`) and the predecessor slot it came
+    from (`pred`), from the previous column's cheapest narrow slot `pn` (weight `dn`) and
+    cheapest wide slot `pw` (weight `dw`), each -1 when absent: both -1 is the first column,
+    entered from SOURCE (pred -1). An edge into row i costs its fused value when the predecessor
+    is wide, i is wide and the two claims share a read (`shares`), its plain value otherwise; a
+    tie keeps the predecessor that comes first -- the order of the slot ids the caller passes,
+    whatever their origin (`optimize` passes flat slots, the incremental planner column-relative
+    ones), exactly as `semiring.dag_shortest_path` relaxes with a strict `<`. Only differences
+    of weights decide anything here, so a caller may pass weights shifted by any constant and
+    receive them shifted by the same constant. Returns this column's cheapest narrow and wide
+    slots, the first on a tie, -1 when the column has none."""
+    for i in range(k):
+        width = crow[i][1]
+        plain, fused = _edge_cost_pair(crow[i][3], hot and width >= 16, w)
+        g = first + i
+        if pn >= 0:
+            best, bp = dn + plain, pn
+            if pw >= 0:
+                d = dw + (fused if shares and width > 1 else plain)
+                if d < best or (d == best and pw < bp):
+                    best, bp = d, pw
+        elif pw >= 0:
+            best, bp = dw + (fused if shares and width > 1 else plain), pw
+        else:  # SOURCE -> c
+            best, bp = plain, -1
+        dist[g] = best
+        pred[g] = bp
+    narrow = wide = -1
+    for i in range(k):
+        g = first + i
+        if crow[i][1] > 1:
+            if wide < 0 or dist[g] < dist[wide]:
+                wide = g
+        elif narrow < 0 or dist[g] < dist[narrow]:
+            narrow = g
+    return narrow, wide
+
+
 def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -> RealizationResult:
-    flat = _flatten(module)
-    if not flat:
+    """The min-plus shortest path over the layered realization DAG (one column per claim,
+    one node per realization, SOURCE before the first column and SINK after the last), over
+    the compact offer.
+
+    An edge into realization c costs `_edge_cost_pair(c)` -- the fused value when c and its
+    predecessor are both vector realizations over a shared read, the plain value otherwise --
+    so for each column only two predecessors can win: the cheapest narrow one and the
+    cheapest wide one. The relaxation keeps the first predecessor in node order on a tie,
+    exactly as `semiring.dag_shortest_path` relaxes with a strict `<`; the plan is the
+    pre-G17 planner's plan, byte for byte (`planner.parity`, `realize_reference`)."""
+    offer = fused_offer(module, h)
+    claims = offer.claims
+    n = len(claims)
+    if not n:
         return RealizationResult([], 0)
+    rows, source, phase_ids = offer.rows, offer.source, offer.phase_ids
+    hot = theta.thermal >= 60  # `_hot_wide` once per plan: hot and width >= 16
 
-    # Build a layered DAG. Node 0 = SOURCE; one column per claim; final node = SINK.
-    adj: list[list[tuple[int, int]]] = [[]]  # adj[0] = SOURCE
-    node_meta: list[tuple[int, Claim, Candidate] | None] = [
-        None
-    ]  # (phase_id, claim, candidate) per node
-    prev_nodes: list[int] = [0]
-    prev_cands: list[Candidate | None] = [None]
+    # One slot per node, column by column: `start[j]` is column j's first slot, `dist` the
+    # least path weight into a slot and `pred` the slot it came from (-1: SOURCE). Two flat
+    # lists rather than two per column, so the collector has two objects to walk, not 2n; sized
+    # by the most realizations a column can hold (every width, or two), so no pass counts them.
+    cap = n * max(2, len(offer.geometry[0]))
+    start = [0] * n
+    dist = [0] * cap
+    pred = [-1] * cap
+    total = 0
+    prev_rd = None
+    narrow = wide = -1  # the previous column's cheapest narrow / wide slot (first on a tie)
+    wpid = w = None
+    for j in range(n):
+        s = source[j]
+        pid = phase_ids[j]
+        if w is None or pid != wpid:  # a phase's columns are one run: weigh it once per run
+            w, wpid = weights(h, theta, pid, policy), pid
+        crow = rows[s]
+        k = len(crow)
+        first = start[j] = total
+        total += k
+        rd = claims[s].rd
+        shares = prev_rd is not None and not set(prev_rd).isdisjoint(rd)
+        narrow, wide = _relax_column(
+            crow,
+            k,
+            w,
+            hot,
+            shares,
+            narrow,
+            dist[narrow] if narrow >= 0 else 0,
+            wide,
+            dist[wide] if wide >= 0 else 0,
+            dist,
+            pred,
+            first,
+        )
+        prev_rd = rd
 
-    cand_map = fused_candidates(module, h)  # candidates with deforestation baked in
-    for phase_id, claim in flat:
-        w_phase = weights(h, theta, phase_id, policy)
-        col_nodes: list[int] = []
-        col_cands: list[Candidate] = []
-
-        for cand in cand_map[claim.id]:
-            nid = len(node_meta)
-            node_meta.append((phase_id, claim, cand))
-            adj.append([])
-            for pu, pc in zip(prev_nodes, prev_cands):
-                adj[pu].append((nid, edge_cost(pc, cand, theta, w_phase)))
-            col_nodes.append(nid)
-            col_cands.append(cand)
-        prev_nodes, prev_cands = col_nodes, col_cands
-
-    sink = len(node_meta)
-    node_meta.append(None)
-    adj.append([])
-    for pu in prev_nodes:
-        adj[pu].append((sink, 0))
-
-    dist, pred = dag_shortest_path(len(node_meta), adj, source=0)
+    # SINK: the first last-column slot with the least distance.
+    g = start[n - 1]
+    for k in range(g + 1, total):
+        if dist[k] < dist[g]:
+            g = k
+    score = dist[g]
 
     # Reconstruct the chosen path SINK -> SOURCE.
-    steps: list[ChosenStep] = []
-    node = sink
-    while pred[node] != -1:
-        p = pred[node]
-        meta = node_meta[node]
-        if meta is not None:
-            phase_id, claim, cand = meta
-            steps.append(ChosenStep(claim.id, phase_id, cand, int(dist[node] - dist[p])))
-        node = p
-    steps.reverse()
-    return RealizationResult(steps, int(dist[sink]), cand_map=cand_map)
+    steps: list = [None] * n
+    for j in range(n - 1, -1, -1):
+        s = source[j]
+        p = pred[g]
+        claim = claims[s]
+        lane, width, name, base, rw = rows[s][g - start[j]]
+        if rw == _RW_TUPLE:
+            cand = Candidate(lane, width, name, CostVector(base), claim.rd, tuple(claim.wr))
+        elif rw == _RW_RAW:
+            cand = Candidate(lane, width, name, CostVector(base), claim.rd, claim.wr)
+        else:
+            cand = Candidate(lane, width, name, CostVector(base))
+        steps[j] = ChosenStep(
+            claims[j].id, phase_ids[j], cand, dist[g] - (dist[p] if p >= 0 else 0)
+        )
+        g = p
+    return RealizationResult(steps, score, cand_map=OfferMap(offer))

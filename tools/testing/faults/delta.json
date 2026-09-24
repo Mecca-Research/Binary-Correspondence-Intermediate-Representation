@@ -1,0 +1,225 @@
+{
+  "command": [
+    "@python",
+    "tools/perf/check_delta.py"
+  ],
+  "faults": [
+    {
+      "label": "Plan: the cutoff ignores the gap between a column's cheapest narrow and wide slots",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "and (nn < 0 or nw < 0 or new[nw] - new[nn] == old[ow] - old[on])",
+      "new": "and (nn < 0 or nw < 0 or new[nw] - new[nn] == new[nw] - new[nn])"
+    },
+    {
+      "label": "Plan: the lazy shift of the columns after a cutoff is dropped",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "shifts.add_from(j + 1, delta - running)",
+      "new": "shifts.add_from(j + 1, 0 * running)"
+    },
+    {
+      "label": "Plan: a read edit does not dirty the next column's fused edge",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "                    dirty.add(p + 1)",
+      "new": "                    dirty.add(p + 0)"
+    },
+    {
+      "label": "Plan: the backtrack takes a clean column off the old path for the old path",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "elif s == choice[j]:",
+      "new": "elif s == s:"
+    },
+    {
+      "label": "Plan: an edited claim whose column the pass left alone keeps its old step",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "            for j in edited:\n                changed.setdefault(j, choice[j])",
+      "new": "            for j in ():\n                changed.setdefault(j, choice[j])"
+    },
+    {
+      "label": "Offer: a write edit does not re-derive the later readers of the operand",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "if was.wr.count(r) != claim.wr.count(r) or barred_was != barred_now:",
+      "new": "if was.wr.count(r) != claim.wr.count(r) and barred_was != barred_now:"
+    },
+    {
+      "label": "Offer: an identity that moved does not re-derive its later copies",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "                    lst.remove(p)\n                    for q in lst:",
+      "new": "                    lst.remove(p)\n                    for q in ():"
+    },
+    {
+      "label": "Offer: a resource's tier edit re-derives no claim reading it",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "if (res.domain, res.access) != (before.domain, before.access):",
+      "new": "if (res.access, res.access) != (before.access, before.access):"
+    },
+    {
+      "label": "Offer: the fence a barriered producer raises is not read by the re-derivation",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "mode = _DISCOUNT[False][consumes][fenced or claim.hazard == \"barriered\"]",
+      "new": "mode = _DISCOUNT[False][consumes][claim.hazard == \"barriered\"]"
+    },
+    {
+      "label": "Offer: the first holder of an identity takes a later copy's discount",
+      "expects": "planner.delta.parity",
+      "path": "bcir/kbcir/delta.py",
+      "old": "if eligible and holders[sig][0] < p:",
+      "new": "if eligible and holders[sig][-1] != p:"
+    },
+    {
+      "label": "Admission: a delta whose replacements are not tuples is admitted",
+      "expects": "delta.malformed.accepted",
+      "path": "bcir/kbcir/delta.py",
+      "old": "if not isinstance(delta.claims, tuple) or not isinstance(delta.resources, tuple):",
+      "new": "if not isinstance(delta.claims, object) or not isinstance(delta.resources, object):"
+    },
+    {
+      "label": "Admission: one claim replaced twice by one delta is admitted",
+      "expects": "delta.malformed.accepted",
+      "path": "bcir/kbcir/delta.py",
+      "old": "        if claim.id in claims:\n            raise DeltaError(f\"claim {claim.id}: replaced twice by one delta\")",
+      "new": "        if claim.id is None:\n            raise DeltaError(f\"claim {claim.id}: replaced twice by one delta\")"
+    },
+    {
+      "label": "Admission: a module changed outside a delta is advanced",
+      "expects": "delta.malformed.accepted",
+      "path": "bcir/kbcir/delta.py",
+      "old": "if self.module.revision != self.revision:",
+      "new": "if self.module.revision is None:"
+    },
+    {
+      "label": "Admission: a replacement for a claim id the module does not declare is admitted",
+      "expects": "delta.malformed.accepted",
+      "path": "bcir/kbcir/delta.py",
+      "old": "        if cid not in where:",
+      "new": "        if cid is None:"
+    },
+    {
+      "label": "Admission: a module declaring a claim id twice is admitted on every rail",
+      "expects": "delta.malformed.accepted",
+      "path": "bcir/kbcir/delta.py",
+      "old": "            if claim.id in where:",
+      "new": "            if claim.id is None:"
+    },
+    {
+      "label": "Pack: a changed segment is kept",
+      "expects": "pack.delta.identity",
+      "path": "bcir/gem/delta_pack.py",
+      "old": "if seg != segments[n]:",
+      "new": "if seg is None:"
+    },
+    {
+      "label": "Pack: a transition's double buffer is not re-derived",
+      "expects": "pack.delta.identity",
+      "path": "bcir/gem/delta_pack.py",
+      "old": "if pf != self._tr_pf[t]:",
+      "new": "if pf is self._tr_pf:"
+    },
+    {
+      "label": "Pack: a replaced resource's generation record is kept",
+      "expects": "pack.delta.identity",
+      "path": "bcir/gem/delta_pack.py",
+      "old": "if i is not None and live[rid] != self._gens[i]:",
+      "new": "if i is not None and live[rid] is None:"
+    },
+    {
+      "label": "Pack: a chunk holding a re-emitted record is not re-joined",
+      "expects": "pack.delta.identity",
+      "path": "bcir/gem/delta_pack.py",
+      "old": "touched.add(i // _CHUNK)",
+      "new": "touched.add(0 // _CHUNK)"
+    },
+    {
+      "label": "Pack: a refused pack leaves the state as if it had been emitted",
+      "expects": "pack.delta.identity",
+      "path": "bcir/gem/delta_pack.py",
+      "old": "            self._stale = True",
+      "new": "            self._stale = False"
+    },
+    {
+      "label": "Pack: the header maxima ignore a generation that moved",
+      "expects": "pack.delta.identity",
+      "path": "bcir/gem/delta_pack.py",
+      "old": "max((g.data_gen for g in gens), default=0),",
+      "new": "max((g.data_gen for g in self._gens), default=0),"
+    },
+    {
+      "label": "Verdict: a claim naming a replaced resource is not re-derived",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "dirty_claims |= self._users.get(rid, set())",
+      "new": "dirty_claims |= self._users.get(None, set())"
+    },
+    {
+      "label": "Verdict: the decoupled-tail pairs of a replaced claim are not repaired",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "            for e in locals_:\n                self._repair(pi, e, claims, sparse)",
+      "new": "            for e in ():\n                self._repair(pi, e, claims, sparse)"
+    },
+    {
+      "label": "Verdict: a step whose claim's offer moved is not re-derived",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "            for p in moved:",
+      "new": "            for p in ():"
+    },
+    {
+      "label": "Verdict: the next step's cost is not re-derived after a step changed",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "                    cost_dirty.add(t)",
+      "new": "                    cost_dirty.add(s)"
+    },
+    {
+      "label": "Verdict: a segment whose prefetch moved is not re-derived",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "dirty_segs |= self._pf_ref.get(name, set())",
+      "new": "dirty_segs |= self._pf_ref.get(None, set())"
+    },
+    {
+      "label": "Verdict: a module with event phases is advanced unit by unit",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "            raise _Structure  # EV3 walks the whole program flow",
+      "new": "            pass  # EV3 walks the whole program flow"
+    },
+    {
+      "label": "Verdict: the pack's generation laws are kept after a resource moved under a stale pack",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "if changed_rids or gens_moved or key != self._pack_key:",
+      "new": "if gens_moved or key != self._pack_key:"
+    },
+    {
+      "label": "Verdict: the plan's total ignores a changed step's cost",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "self._total += steps[s].cost - self._steps[s].cost",
+      "new": "self._total += steps[s].cost - steps[s].cost"
+    },
+    {
+      "label": "Verdict: a phase-order descent that went is kept",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "                            descents.discard(t)",
+      "new": "                            descents.discard(-1)"
+    },
+    {
+      "label": "Verdict: the registry laws are kept after a resource was replaced",
+      "expects": "verify.delta.identity",
+      "path": "bcir/verify/delta.py",
+      "old": "            self._registry = _registry_laws(module)",
+      "new": "            self._registry = list(self._registry)"
+    }
+  ]
+}

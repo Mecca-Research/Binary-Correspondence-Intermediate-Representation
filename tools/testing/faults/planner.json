@@ -1,0 +1,211 @@
+{
+  "command": [
+    "@python",
+    "tools/c/check_planner.py"
+  ],
+  "faults": [
+    {
+      "label": "Python planner: a tie between the cheapest narrow and wide predecessors keeps the later one",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "if d < best or (d == best and pw < bp):",
+      "new": "if d < best or (d == best and pw > bp):"
+    },
+    {
+      "label": "Python planner: a narrow realization takes the path-fusion discount",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "            if pw >= 0:\n                d = dw + (fused if shares and width > 1 else plain)",
+      "new": "            if pw >= 0:\n                d = dw + (fused if shares else plain)"
+    },
+    {
+      "label": "Python planner: 16-wide SIMD on a hot machine escapes the thermal coupling",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "plain, fused = _edge_cost_pair(crow[i][3], hot and width >= 16, w)",
+      "new": "plain, fused = _edge_cost_pair(crow[i][3], hot and width > 16, w)"
+    },
+    {
+      "label": "Python offer: deforestation discounts memory by x0.8125, not x0.75",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "            (lane, w, name, (b[0], (b[1] * 192) >> 8) + b[2:], rw)\n            for lane, w, name, sp, extra, rw in specs",
+      "new": "            (lane, w, name, (b[0], (b[1] * 208) >> 8) + b[2:], rw)\n            for lane, w, name, sp, extra, rw in specs"
+    },
+    {
+      "label": "Python offer: a common subexpression keeps its recompute",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "            (lane, w, name, (0, (b[1] * q) >> 8) + b[2:], rw)\n            for lane, w, name, sp, extra, rw in specs",
+      "new": "            (lane, w, name, (b[0], (b[1] * q) >> 8) + b[2:], rw)\n            for lane, w, name, sp, extra, rw in specs"
+    },
+    {
+      "label": "Python offer: a barriered producer no longer fences deforestation",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "claim.hazard == \"barriered\" or (not bset.isdisjoint(rd) if bset else False)",
+      "new": "claim.hazard == \"barriered\""
+    },
+    {
+      "label": "Python offer: a write does not bump its operand's version (CSE across a rewrite)",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "            ver[r] = ver[r] + 1 if r in ver else 1",
+      "new": "            ver[r] = 1"
+    },
+    {
+      "label": "Python offer: an operand in an isolated (MMIO) domain stays CSE-eligible",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "if rid is not None and rid in resources and resources[rid].domain in ISOLATED_DOMAINS:",
+      "new": "if False:"
+    },
+    {
+      "label": "Python planner: the SINK keeps the last cheapest realization, not the first",
+      "expects": "planner.parity",
+      "path": "bcir/kbcir/realize.py",
+      "old": "        if dist[k] < dist[g]:",
+      "new": "        if dist[k] <= dist[g]:"
+    },
+    {
+      "label": "R9: a realization's lane is compared by value, so a plain int passes for the Lane",
+      "expects": "planner.r9.misjudged",
+      "path": "bcir/verify/__init__.py",
+      "old": "        chosen.lane is row[0]",
+      "new": "        chosen.lane == row[0]"
+    },
+    {
+      "label": "R9: a step's phase is no longer bound to the phase that declares its claim",
+      "expects": "planner.r9.misjudged",
+      "path": "bcir/verify/__init__.py",
+      "old": "    if step.phase_id != declared_phase:",
+      "new": "    if False:"
+    },
+    {
+      "label": "R9: a forged lane's diagnostic reads `.name` and raises on a plain int",
+      "expects": "planner.r9.misjudged",
+      "path": "bcir/verify/__init__.py",
+      "old": "    return lane.name if isinstance(lane, Lane) else repr(lane)",
+      "new": "    return lane.name"
+    },
+    {
+      "label": "R9: the chosen realization's base cost is not compared with the offer's",
+      "expects": "planner.r9.misjudged",
+      "path": "bcir/verify/__init__.py",
+      "old": "        and chosen.name == row[2]\n        and chosen.base.v == row[3]",
+      "new": "        and chosen.name == row[2]"
+    },
+    {
+      "label": "C planner: a tie between the cheapest narrow and wide predecessors keeps the later one",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "if (kp_lt(d, best) || (kp_eq(d, best) && wide < narrow)) {",
+      "new": "if (kp_lt(d, best) || (kp_eq(d, best) && wide > narrow)) {"
+    },
+    {
+      "label": "C planner: path fusion leaves the memory axis at x1.0",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "*fused = kp_add(rest, kp_mul(kp_shr8(kp_mul(base[D_MEMORY], 192u)), x->w[D_MEMORY]));",
+      "new": "*fused = kp_add(rest, kp_mul(kp_shr8(kp_mul(base[D_MEMORY], 256u)), x->w[D_MEMORY]));"
+    },
+    {
+      "label": "C planner: 16-wide SIMD on a hot machine escapes the thermal coupling",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "kp_edge(x, base, x->hot && specs[i].width >= 16u, &plain, &fused);",
+      "new": "kp_edge(x, base, x->hot && specs[i].width > 16u, &plain, &fused);"
+    },
+    {
+      "label": "C offer: deforestation discounts memory by x0.8125, not x0.75",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    base[D_MEMORY] = kp_shr8(kp_mul(base[D_MEMORY], 192u));",
+      "new": "    base[D_MEMORY] = kp_shr8(kp_mul(base[D_MEMORY], 208u));"
+    },
+    {
+      "label": "C offer: an operand in an isolated (MMIO) domain stays CSE-eligible",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (r[0] && r[1] == DOM_MMIO) return 0;",
+      "new": "    if (0 && r[1] == DOM_MMIO) return 0;"
+    },
+    {
+      "label": "C offer: a barriered producer no longer fences deforestation",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "if (shared && CL_HAZARD(cl) != HAZ_BARRIERED && !fenced) mode = MODE_DEFOREST;",
+      "new": "if (shared && CL_HAZARD(cl) != HAZ_BARRIERED) mode = MODE_DEFOREST;"
+    },
+    {
+      "label": "C planner: phases rooted in reverse declaration order",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  for (uint32_t root = 0; root < np; root++) {\n    if (x->s[x->L.ph_color + root]) continue;",
+      "new": "  for (uint32_t r_ = np; r_-- > 0;) {\n    uint32_t root = r_;\n    if (x->s[x->L.ph_color + root]) continue;"
+    },
+    {
+      "label": "C planner: Theta.thermal weighs the thermal axis twice as hard",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  x->w[D_THERMAL] += thermal / 20u;",
+      "new": "  x->w[D_THERMAL] += thermal / 10u;"
+    },
+    {
+      "label": "C planner: the 128-bit addition drops its carry",
+      "expects": "planner.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  r.hi = a.hi + b.hi + (r.lo < a.lo ? 1u : 0u);",
+      "new": "  r.hi = a.hi + b.hi;"
+    },
+    {
+      "label": "C decoder: an op that is not UTF-8 is admitted",
+      "expects": "planner.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (!bcir_utf8_valid(data + pos, n)) return BCIR_ERR_UTF8;\n",
+      "new": ""
+    },
+    {
+      "label": "C decoder: the op table need not be ascending",
+      "expects": "planner.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (i && !kp_bytes_lt(data + prev, prev_len, data + pos, n)) return BCIR_ERR_PLANNER;\n",
+      "new": ""
+    },
+    {
+      "label": "C planner: a duplicate claim id is planned",
+      "expects": "planner.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "      if (CL_ID(kp_claim(x, e - 1u)) == id) return BCIR_ERR_PLANNER;\n",
+      "new": ""
+    },
+    {
+      "label": "C realization decoder: the score need not be the sum of the step costs",
+      "expects": "planner.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  if (!kp_eq(total, kp_u(score))) return BCIR_ERR_PLANNER;\n",
+      "new": ""
+    },
+    {
+      "label": "Python decoder: an undeclared resource may carry a domain",
+      "expects": "planner.malformed.accepted",
+      "path": "bcir/abi/planner_abi.py",
+      "old": "        if not declared and (domain or access):\n            raise _refuse(\"an undeclared resource carries a domain or addressing model\")\n",
+      "new": ""
+    },
+    {
+      "label": "Python decoder: the score need not be the sum of the step costs",
+      "expects": "planner.malformed.accepted",
+      "path": "bcir/abi/planner_abi.py",
+      "old": "    if total != score:\n        raise _refuse(f\"the score {score} is not the sum of the step costs {total}\")\n",
+      "new": ""
+    },
+    {
+      "label": "Python encoder: a claim with reads also writes its primary resource",
+      "expects": "planner.parity",
+      "path": "bcir/abi/planner_abi.py",
+      "old": "            if not c.rd and c.primary_rid is not None and c.primary_rid in module.resources:",
+      "new": "            if c.primary_rid is not None and c.primary_rid in module.resources:"
+    }
+  ]
+}
