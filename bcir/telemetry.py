@@ -224,6 +224,55 @@ class TelemetryIntegrity:
         )
 
 
+_SEQ_MASK = 0xFFFFFFFF
+_SEQ_HALF = 0x80000000
+
+
+class SequenceTracker:
+    """The telemetry continuity predicate: one u32 sequence stream, classified the way the frame
+    ABI classifies BTLM frames -- the ONE implementation both the frame stream decoder and the
+    envelope intake express (G15; `bcir_seq_observe` is its C twin).
+
+    The newest forward sequence is kept as a watermark. A sequence equal to it is a duplicate; one
+    ahead of it by ``1 <= delta < 2**31`` (modulo 2**32, so ``0xffffffff -> 0`` is continuous)
+    advances the watermark and counts the ``delta - 1`` numbers it skipped as missing; anything
+    else is behind the watermark -- a reorder -- and leaves the watermark where it is, so an old
+    arrival cannot move it backwards and manufacture a second gap on the next good one."""
+
+    __slots__ = ("watermark", "missing", "reordered", "duplicated", "observed")
+
+    def __init__(self) -> None:
+        self.watermark: int | None = None
+        self.missing = 0
+        self.reordered = 0
+        self.duplicated = 0
+        self.observed = 0
+
+    def observe(self, seq: int) -> str:
+        """Classify one sequence number: ``first``, ``next``, ``gap``, ``duplicate`` or
+        ``reorder``."""
+        if type(seq) is not int or not 0 <= seq <= _SEQ_MASK:
+            raise ValueError("a telemetry sequence number is an unsigned 32-bit integer")
+        self.observed += 1
+        if self.watermark is None:
+            self.watermark = seq
+            return "first"
+        delta = (seq - self.watermark) & _SEQ_MASK
+        if delta == 0:
+            self.duplicated += 1
+            return "duplicate"
+        if delta < _SEQ_HALF:
+            self.missing += delta - 1
+            self.watermark = seq
+            return "next" if delta == 1 else "gap"
+        self.reordered += 1
+        return "reorder"
+
+    def anomalies(self) -> tuple[int, int, int]:
+        """(missing, reordered, duplicated) so far."""
+        return self.missing, self.reordered, self.duplicated
+
+
 def sanitize_events(events, *, dropped: int = 0) -> tuple[list[DataDNA], TelemetryIntegrity]:
     """The ingest gate: filter a telemetry batch to the records that satisfy the
     documented schema and return them alongside a `TelemetryIntegrity` witness.

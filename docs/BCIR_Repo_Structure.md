@@ -71,9 +71,10 @@ model/Q8/plan references plus quiescent rollback-capable activation; `kbcir.opti
 is the bounded exact-Q15/hard-fact oracle for future ANN/property-graph adapters. None of these
 modules configures GDS, P2PDMA, CXL, NVMe, or controller firmware.
 
-Top-level modules such as `telemetry_frame.py`, `telemetry_export.py`,
-`signal_registry.py`, and `channels.py` own host-side protocol/reference behavior. They
-must remain consistent with the corresponding fixed-width C contracts where one exists.
+Top-level modules such as `telemetry_frame.py`, `telemetry_intake.py`, `telemetry_export.py`,
+`signal_registry.py`, `signal_table.py`, and `channels.py` own host-side protocol/reference
+behavior. They must remain consistent with the corresponding fixed-width C contracts where one
+exists.
 
 ## 3. Law rail (`mlir/`)
 
@@ -122,6 +123,10 @@ The kernels have a C ABI usable from C++; this does not expand `runtime/cpp/` ow
 | Artifact Bundle v1 | [`BCIR_ARTIFACT_BUNDLE_ABI.md`](kernel/BCIR_ARTIFACT_BUNDLE_ABI.md) | Python codec/tool/builder, additive ASN.1 DER/COER projection, allocation-free C reader, C++ view, and MLIR metadata ops |
 | BCIRQ8 v1 | [`BCIR_LANGREF.md`](BCIR_LANGREF.md#16-bcirq8-v1-decoder-artifact-contract) §16 | Python artifact reader/writer and portable C loader |
 | Telemetry frame and registry | [`TELEMETRY_FRAME_ABI.md`](kernel/TELEMETRY_FRAME_ABI.md), [`SIGNAL_REGISTRY.md`](kernel/SIGNAL_REGISTRY.md) | Python codec/registry and fixed C frame codec |
+| TelemetryEnvelopeV0, the generated signal table and the intake (version zero) | [`TELEMETRY_ENVELOPE_ABI.md`](kernel/TELEMETRY_ENVELOPE_ABI.md) | `bcir/abi/telemetry_envelope.py`, `bcir/signal_table.py` (generates `runtime/c/bcir_signal_table.h`), `bcir/telemetry_intake.py`, `runtime/c/bcir_telemetry_envelope.h` |
+| The live SPSC ring (version zero) | [`BCIR_LIVE_RING_ABI.md`](kernel/BCIR_LIVE_RING_ABI.md) | `bcir/gem/ring.py`, `runtime/c/bcir_ring.h` (harness `test_ring.c`, fuzz `fuzz_ring.c`), `tools/c/check_ring.py`; no BCAB kind |
+| The data-plane hand-off: the pack table, the per-step freeze and the Stage 3 exit flow | [`BCIR_DATA_PLANE_HANDOFF.md`](kernel/BCIR_DATA_PLANE_HANDOFF.md), [`CPP_HANDOFF_BOUNDARY.md`](languages/CPP_HANDOFF_BOUNDARY.md) | `bcir/gem/handoff.py`, `runtime/c/bcir_handoff.h`, `bcir_hydrate_generations` in `runtime/c/bcir_hydrate.h`, `runtime/cpp/bcir_handoff.hpp` (harnesses `test_handoff.c` / `test_handoff.cpp`, the shared flow `test_stage3.h`, fuzz `fuzz_handoff.c`), `tools/c/check_handoff.py`; no BCAB kind |
+| The manifest-of-shards (BSHM, version zero) | [`BCIR_SHARD_MANIFEST_ABI.md`](kernel/BCIR_SHARD_MANIFEST_ABI.md) | `bcir/abi/shard_manifest.py`, `runtime/c/bcir_shard_manifest.h`; no BCAB kind |
 | RuntimeChannel and future UAPI | [`BCIR_DRIVER_KERNEL_ROADMAP.md`](kernel/BCIR_DRIVER_KERNEL_ROADMAP.md) | direct C hook table today; Linux/native adapters later |
 | HAM routes and context shards | [`BCIR_HAM_MEMORY_FABRIC.md`](kernel/BCIR_HAM_MEMORY_FABRIC.md) | `bcir/kbcir/ham.py`, `context_shard.py`, `optimization_memory.py`, and deterministic tests |
 | Hosted allocation | [`C_MEMORY_DISCIPLINE.md`](languages/C_MEMORY_DISCIPLINE.md) | hosted allocator implementation and fault-injection tests |

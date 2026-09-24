@@ -44,8 +44,9 @@ ControlRecordV1 := header(64) || body(BODY_BYTES[version][kind]) || mac[32] || c
 ```
 
 A record is therefore `100 + BODY_BYTES` bytes. The largest v1 record is 164 bytes; the declared
-bound `CONTROL_RECORD_MAX_BYTES` is **192** (three cache lines — the slot stride G15's ring may
-adopt).
+bound `CONTROL_RECORD_MAX_BYTES` is **192**. The live ring (G15) sizes its CONTROL slots from
+that bound: 256 bytes, the bound plus the ring's 24-byte slot header rounded up to a cache line,
+and it refuses to format a control ring that could not carry a record of the bound.
 
 ## Header (64 bytes, one cache line; every `u64` at an 8-aligned offset)
 
@@ -157,7 +158,7 @@ A plane is one handle's resident control state — `ControlPlane` on the oracle,
 | `in_flight` | phases in progress (`enter` / `leave`) |
 | `draining`, `drain_deadline` | the quiesce state |
 | `root_sequence`, `last_lease_id` | the root's last sequence; the largest lease id ever granted |
-| `leases[≤ 8]` | `(lease_id, granted, issued, expiry, holder, last_sequence)`, ascending by id |
+| `leases[≤ 8]` | `(lease_id, granted, issued, expiry, holder, last_sequence)`, ascending by id — and each lease's derived `lease_key(root, lease_id)`, computed once at the grant and wiped when the lease leaves the table (a cache, excluded from the state digest) |
 | `pending` | at most one deferred switch, held as its own verified bytes |
 
 ### Deciding a record (`submit`)
@@ -224,11 +225,17 @@ against a number a caller passed. The artifact's own verification runs first and
 passes through (`bcir_sp_verify_semantic`, `bcir_ep_verify`; on the oracle the StreamPack and plan
 decoders).
 
+The pack's vector digest is one predicate, `bcir_ctl_pack_registry_digest(data, len, out)`,
+added by S3-C. `bcir_ctl_admit_pack` uses it, and so do the shard manifest's encoder and
+reassembly ([`BCIR_SHARD_MANIFEST_ABI.md`](BCIR_SHARD_MANIFEST_ABI.md)). A manifest's
+`registry_digest` is therefore the same bytes that an admission compares, and it is not a second
+spelling (L14).
+
 ### The resident state digest
 
 `state_digest` / `bcir_ctl_state_digest` is SHA-256 over the canonical serialization of every
-field above except the key — fixed order, little-endian, leases ascending by id, the pending
-record's bytes last:
+field above except the key and the cached lease keys — fixed order, little-endian, leases
+ascending by id, the pending record's bytes last:
 
 ```
 SHA-256( "BCTL/state/v1" || 0x00
@@ -275,10 +282,24 @@ six rows are measured by one function the harness, the gate and the tests share
   legality verdict (the plane invariant: no plane carries a verdict except the verifier's own
   output). `verify.verify_control_record` holds a generation record to the module's registry
   (R11) on the oracle.
-- **The ring (G15)** carries these records second, after telemetry; the 192-byte bound is offered
-  to it. **The data-plane hand-off (G16)** owns generation gating at the C++ `admit()` seam and
-  the invalidation of channel handles at a switch; this format supplies the resident state they
-  will read.
+- **The ring (G15)** carries these records second, after telemetry
+  ([`BCIR_LIVE_RING_ABI.md`](BCIR_LIVE_RING_ABI.md)): a CONTROL ring is BACKPRESSURE (a control
+  record is never overwritten) with 256-byte slots (never unsendable), and all 52 scenarios
+  decide identically through a live control ring as submitted directly, on both rails
+  (`ring.control.divergent`; `test_control_plane --via-ring`).
+- **The data-plane hand-off (G16, landed S3-C)** reads the resident state
+  ([`BCIR_DATA_PLANE_HANDOFF.md`](BCIR_DATA_PLANE_HANDOFF.md)):
+  - the pack table admits through `bcir_ctl_admit_pack`, and records the resident generation
+    *and* registry digest;
+  - it dispatches only while both still hold, as a phase of the plane
+    (`bcir_ctl_enter`/`bcir_ctl_leave`), so a switch requested mid-dispatch lands at the
+    boundary;
+  - a shard manifest is gated against the installed registry before any shard is fetched.
+
+  The Stage 3 exit flow carries these records through a live control ring into a plane that
+  gates plan, pack, manifest and telemetry. After the switch, it offers the old generation at
+  every boundary and each refuses it. Invalidating RuntimeChannel handles and device mappings at
+  a switch stays open: the channel verbs do not yet read the plane.
 
 ## Versioning (the freeze)
 
@@ -300,8 +321,9 @@ digest or MAC is exactly 32 bytes.
   of the root key can forge anything, and a holder of a lease key anything its lease permits.
 - **No capability enforcement beyond the record.** The mask is checked against the lease by
   bytes. There is no OS capability, sandbox or MMU behind it.
-- **No transport.** A boundary is a function call on either rail — no socket, shared memory,
-  eventfd or ring (G15), and no IPC claim beyond the simulator.
+- **No transport of its own.** A boundary is a function call on either rail; the live ring (G15)
+  carries records between two endpoints of one shared region (threads, or processes on one
+  host). No socket or eventfd, and no IPC claim beyond that.
 - **No replay protection beyond `sequence`, `expect` and lease ids that never recur.** No nonce,
   no clock, no distributed ordering; one issuer per lease (no MPSC).
 - **No performance claim.** Every G14 row is an exact count.

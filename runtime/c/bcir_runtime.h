@@ -47,7 +47,20 @@ typedef enum bcir_status {
   BCIR_ERR_CONTROL = 17,    /* a ControlRecordV1 violates a wire law (bcir_control_plane.h): kind,
                              * body length, scope, reason, capability, sequence, lease, the
                              * generation/expect witness, or a body law */
-  BCIR_ERR_MAC = 18         /* a ControlRecordV1 MAC is all zero, or is not the one the key makes */
+  BCIR_ERR_MAC = 18,        /* a ControlRecordV1 MAC is all zero, or is not the one the key makes */
+  BCIR_ERR_TELEMETRY = 19,  /* a TelemetryEnvelopeV0 violates a field law
+                             * (bcir_telemetry_envelope.h), or names a REQUIRED signal the
+                             * consumer's table does not define */
+  BCIR_ERR_RING = 20,       /* a live ring's geometry or shared state violates a ring law
+                             * (bcir_ring.h): a corrupt region, a protocol violation, misuse */
+  BCIR_ERR_FULL = 21,       /* a backpressure ring has no free slot: the record is refused and
+                             * counted, never written over an unconsumed one */
+  BCIR_ERR_BUSY = 22,       /* a ring endpoint is held by a peer (attach without a takeover) */
+  BCIR_ERR_LIFETIME = 23,   /* a pack-table handle or view names no live slot at its epoch: the
+                             * owner released it (a view outlived its owner), the slot was
+                             * reused, or the handle was never issued (bcir_handoff.h) */
+  BCIR_ERR_SHARD = 24       /* a shard manifest violates a manifest law, or a shard set does not
+                             * reassemble to the whole it declares (bcir_shard_manifest.h) */
   /* Append-only: the codes are the rails' shared names for a refusal (the Python codecs'
    * `status`), so a code is never renumbered or reused -- a new status takes the next one. */
 } bcir_status;

@@ -42,7 +42,7 @@ register allocator, or linker (see `docs/BCIR_NATIVE_OBJECT_GATE.md`).
 | `bcir/` | executable Python conformance oracle (dependency-free core) | `bcir.hosted.*` is an import-quarantined opt-in extra, never the default path |
 | `mlir/` | ODS/TableGen/C++ law rail: `bcir-opt`, R1–R25, optimizer passes, IRDL projection | `bcir-aot` is *partial* preparation; targets LLVM/MLIR **23** (22 still in the CI matrix) — one coherent major |
 | `runtime/c/` | production C rail: freestanding StreamPack/codecs, the `bcir_cfront.c` twin, hosted model/compiler tools, RuntimeChannel | three memory classes (freestanding heap-free / hosted allocator-injected / driver handles+offsets) — `docs/languages/C_MEMORY_DISCIPLINE.md` |
-| `runtime/cpp/` | narrow orchestration seam above the C ABI | single-node real; distributed/dynamic backends are honest stubs |
+| `runtime/cpp/` | narrow orchestration seam above the C ABI | single-node and dynamic-graph real over the C pack table (G16); distributed cross-node dispatch is an honest stub |
 | `training/` | human/agent/model training corpus, one folder per subject | **not the IR**; neither may depend on the other |
 
 A change earns a rail through **differential parity, not assertion** (`docs/PARITY.md`).

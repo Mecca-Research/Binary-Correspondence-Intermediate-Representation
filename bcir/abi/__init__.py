@@ -9,6 +9,11 @@ C runtime (`runtime/c/bcir_streampack.h`), and any embedder.
 G11): the same conventions, its own magic, a C twin (`runtime/c/bcir_execution_plan.h`).
 `control_abi` is the control plane as bytes (ControlRecordV1, G14): fixed-width records a
 resident plane decides by their bytes, with a C twin (`runtime/c/bcir_control_plane.h`).
+`telemetry_envelope` is the identity-carrying telemetry record (TelemetryEnvelopeV0, G15) the
+live ring carries, with a C twin (`runtime/c/bcir_telemetry_envelope.h`). It is VERSION ZERO:
+experimental, with no compatibility promise until the driver roadmap's traces freeze it.
+`shard_manifest` is the manifest-of-shards (BSHM, G16): a pack too large to ship as one travels as
+runnable shards and a frame named by digest, reassembling to the whole's bytes. Version zero too.
 """
 
 from .streampack_abi import (
@@ -39,6 +44,28 @@ from .control_abi import (
     issue_control,
     sign_control,
     validate_control,
+)
+from .telemetry_envelope import (
+    ENVELOPE_MAGIC,
+    ENVELOPE_SIZES,
+    ENVELOPE_VERSION,
+    TelemetryEnvelope,
+    TelemetryError,
+    datadna_of,
+    decode_envelope,
+    encode_envelope,
+    validate_envelope,
+)
+from .shard_manifest import (
+    MANIFEST_MAGIC,
+    MANIFEST_VERSION,
+    ShardError,
+    ShardManifest,
+    Split,
+    decode_manifest,
+    encode_manifest,
+    reassemble,
+    split,
 )
 from .artifact_bundle import (
     ENTRY_SIZE as ARTIFACT_ENTRY_SIZE,
@@ -90,6 +117,24 @@ __all__ = [
     "issue_control",
     "sign_control",
     "validate_control",
+    "ENVELOPE_MAGIC",
+    "ENVELOPE_SIZES",
+    "ENVELOPE_VERSION",
+    "TelemetryEnvelope",
+    "TelemetryError",
+    "datadna_of",
+    "decode_envelope",
+    "encode_envelope",
+    "validate_envelope",
+    "MANIFEST_MAGIC",
+    "MANIFEST_VERSION",
+    "ShardError",
+    "ShardManifest",
+    "Split",
+    "decode_manifest",
+    "encode_manifest",
+    "reassemble",
+    "split",
     "ARTIFACT_MAGIC",
     "ARTIFACT_VERSION",
     "ARTIFACT_HEADER_SIZE",

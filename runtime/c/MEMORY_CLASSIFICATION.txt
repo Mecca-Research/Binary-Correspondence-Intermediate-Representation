@@ -8,6 +8,7 @@ freestanding_core bcir_binrec.c
 freestanding_core bcir_decode.c
 freestanding_core bcir_encode.c
 freestanding_core bcir_exec.c
+freestanding_core bcir_handoff.c
 freestanding_core bcir_hydrate.c
 freestanding_core bcir_per.c
 freestanding_core bcir_xer.c
@@ -17,9 +18,12 @@ freestanding_core bcir_per_plan.c
 freestanding_core bcir_emit.c
 freestanding_core bcir_plan.c
 freestanding_core bcir_provenance.c
+freestanding_core bcir_ring.c
 freestanding_core bcir_runtime.c
 freestanding_core bcir_sha256.c
+freestanding_core bcir_shard_manifest.c
 freestanding_core bcir_telemetry_frame.c
+freestanding_core bcir_telemetry_envelope.c
 freestanding_core bcir_train.c
 
 hosted_tool bcir_cc.c

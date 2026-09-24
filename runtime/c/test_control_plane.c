@@ -9,10 +9,14 @@
  *       (Python encode -> C decode -> Python re-encode), and grades each malformed variant's
  *       status against the one the specification declares. `macok` is the keyed check under
  *       the root key (a grant) or the lease's key (bcir_ctl_lease_key).
- *   --script <script>              run scenarios of plane operations and print one trace line
+ *   --script <script> [--via-ring]  run scenarios of plane operations and print one trace line
  *       per operation: "<scenario> <op> <verdict> <refusal> k=<kind> s=<sequence>
  *       g=<generation> <status|-> <state digest>" -- identical, line for line, to the Python
- *       rail's (bcir/tests/control_fixtures.py::trace_line).
+ *       rail's (bcir/tests/control_fixtures.py::trace_line). With --via-ring every submitted
+ *       record first crosses a live control ring (bcir_ring.h: BACKPRESSURE, 256-byte slots):
+ *       written by a producer endpoint, read back by a consumer endpoint, then submitted -- the
+ *       trace must not change (G15, the ring is a transport, never a decision). A record the
+ *       ring cannot carry prints "RINGFAIL", which no Python trace line matches.
  *   --api                          the API's own fail-closed laws, which no record can reach:
  *       prints OK when every one holds.
  *
@@ -32,6 +36,7 @@
 #include <string.h>
 
 #include "bcir_control_plane.h"
+#include "bcir_ring.h"
 
 static const char *status_name(bcir_status s) {
   switch (s) {
@@ -180,7 +185,43 @@ static int run_dump(const char *path, const char *key_hex) {
 enum { OP_SUBMIT = 1, OP_ENTER, OP_LEAVE, OP_ADVANCE, OP_ADMIT_PACK, OP_ADMIT_PLAN,
        OP_POKE_BOUNDARY, OP_POKE_IN_FLIGHT };
 
-static int run_script(const char *path) {
+/* The control ring a --via-ring scenario's records cross (8-byte aligned, as the ring needs). A
+ * control ring's slot carries every legal record, the declared bound included. */
+_Static_assert(BCIR_RING_CONTROL_SLOT_MIN - BCIR_RING_SLOT_HEADER >= BCIR_CTL_RECORD_MAX,
+               "a control ring's slot must carry every legal ControlRecordV1");
+_Static_assert(BCIR_RING_CONTROL_SLOT_MIN - 64u - BCIR_RING_SLOT_HEADER < BCIR_CTL_RECORD_MAX,
+               "BCIR_RING_CONTROL_SLOT_MIN is the smallest cache-line multiple that carries it");
+#define VIA_RING_SLOT  BCIR_RING_CONTROL_SLOT_MIN
+#define VIA_RING_SLOTS 4u
+static _Alignas(64) uint8_t via_region[BCIR_RING_HEADER_SIZE + VIA_RING_SLOTS * VIA_RING_SLOT];
+static bcir_ring_producer via_producer;
+static bcir_ring_consumer via_consumer;
+
+static int via_ring_open(uint32_t scenario) {
+  bcir_ring_geometry g = {0};
+  g.policy = BCIR_RING_BACKPRESSURE;
+  g.payload = BCIR_RING_CONTROL;
+  g.slot_size = VIA_RING_SLOT;
+  g.slot_count = VIA_RING_SLOTS;
+  g.ring_id = (uint64_t)scenario + 1u;
+  if (bcir_ring_format(via_region, sizeof via_region, &g) != BCIR_OK) return 0;
+  bcir_ring_producer_init(&via_producer, via_region, sizeof via_region);
+  bcir_ring_consumer_init(&via_consumer, via_region, sizeof via_region);
+  return bcir_ring_producer_attach(&via_producer, 0).verdict == BCIR_RING_OK &&
+         bcir_ring_consumer_attach(&via_consumer, 0).verdict == BCIR_RING_OK;
+}
+
+/* Carry one record across the ring: write it, read it back into `out`; 0 if the ring refused. */
+static int via_ring_carry(const uint8_t *data, size_t n, uint8_t *out, size_t *out_len) {
+  bcir_ring_outcome w = bcir_ring_publish(&via_producer, data, n);
+  if (w.verdict != BCIR_RING_OK) return 0;
+  bcir_ring_outcome r = bcir_ring_consume(&via_consumer, out, VIA_RING_SLOT);
+  if (r.verdict != BCIR_RING_DELIVERED || r.position != w.position) return 0;
+  *out_len = r.length;
+  return 1;
+}
+
+static int run_script(const char *path, int via_ring) {
   size_t len = 0, at = 8;
   uint8_t *buf = read_file(path, &len);
   if (!buf) { fprintf(stderr, "cannot read %s\n", path); return 2; }
@@ -203,6 +244,11 @@ static int run_script(const char *path) {
       free(buf);
       return 2;
     }
+    if (via_ring && !via_ring_open(scn)) {
+      fprintf(stderr, "scenario %u: the control ring did not open\n", scn);
+      free(buf);
+      return 2;
+    }
     for (uint32_t op = 0; op < n_ops; ++op) {
       if (len - at < 5u) goto bad;
       uint8_t code = buf[at];
@@ -215,7 +261,20 @@ static int run_script(const char *path) {
       at += n;
       bcir_ctl_outcome o;
       switch (code) {
-        case OP_SUBMIT: o = bcir_ctl_submit(&state, n ? data : NULL, n); break;
+        case OP_SUBMIT:
+          if (via_ring) {
+            uint8_t carried[VIA_RING_SLOT];
+            size_t carried_len = 0;
+            if (!via_ring_carry(data, n, carried, &carried_len)) {
+              printf("%u %u RINGFAIL\n", scn, op);
+              free(data);
+              continue;
+            }
+            o = bcir_ctl_submit(&state, carried_len ? carried : NULL, carried_len);
+          } else {
+            o = bcir_ctl_submit(&state, n ? data : NULL, n);
+          }
+          break;
         case OP_ENTER: o = bcir_ctl_enter(&state); break;
         case OP_LEAVE: o = bcir_ctl_leave(&state); break;
         case OP_ADVANCE: o = bcir_ctl_advance(&state); break;
@@ -368,9 +427,12 @@ static int run_api(void) {
 int main(int argc, char **argv) {
   if (argc == 5 && strcmp(argv[1], "--dump") == 0 && strcmp(argv[3], "--key") == 0)
     return run_dump(argv[2], argv[4]);
-  if (argc == 3 && strcmp(argv[1], "--script") == 0) return run_script(argv[2]);
+  if (argc == 3 && strcmp(argv[1], "--script") == 0) return run_script(argv[2], 0);
+  if (argc == 4 && strcmp(argv[1], "--script") == 0 && strcmp(argv[3], "--via-ring") == 0)
+    return run_script(argv[2], 1);
   if (argc == 2 && strcmp(argv[1], "--api") == 0) return run_api();
   fprintf(stderr,
-          "usage: test_control_plane --dump <records> --key <hex> | --script <script> | --api\n");
+          "usage: test_control_plane --dump <records> --key <hex> | --script <script> [--via-ring]"
+          " | --api\n");
   return 2;
 }

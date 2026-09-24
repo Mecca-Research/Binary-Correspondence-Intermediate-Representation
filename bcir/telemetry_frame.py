@@ -68,7 +68,13 @@ import struct
 import zlib
 from dataclasses import dataclass, replace
 
-from .telemetry import DataDNA, TelemetryIntegrity, TelemetryRing, sanitize_events
+from .telemetry import (
+    DataDNA,
+    SequenceTracker,
+    TelemetryIntegrity,
+    TelemetryRing,
+    sanitize_events,
+)
 
 # --- the frozen frame ABI (mirror bcir_telemetry_frame.h) ------------------------
 TELEMETRY_FRAME_MAGIC = b"BTLM"  # BCIR TeLeMetry frame; the resync anchor
@@ -320,25 +326,12 @@ def decode_frames(buf: bytes) -> FrameStream:
 
 
 def _sequence_anomalies(frames: list[DecodedFrame]) -> tuple[int, int, int]:
-    """Classify u32 sequence continuity without confusing wraparound with reorder.
-
-    The newest forward sequence is retained as a watermark: an old/reordered arrival
-    cannot move it backwards and manufacture a second gap on the next good frame."""
-    if not frames:
-        return 0, 0, 0
-    watermark = frames[0].meta.seq
-    missing = reordered = duplicated = 0
-    for frame in frames[1:]:
-        seq = frame.meta.seq
-        delta = (seq - watermark) & 0xFFFFFFFF
-        if delta == 0:
-            duplicated += 1
-        elif delta < 0x80000000:
-            missing += delta - 1
-            watermark = seq
-        else:
-            reordered += 1
-    return missing, reordered, duplicated
+    """Classify u32 sequence continuity without confusing wraparound with reorder: the shared
+    `SequenceTracker` predicate (the envelope intake expresses the same one)."""
+    tracker = SequenceTracker()
+    for frame in frames:
+        tracker.observe(frame.meta.seq)
+    return tracker.anomalies()
 
 
 def parse_uart_frames(buf: bytes) -> tuple[list[DataDNA], TelemetryIntegrity]:

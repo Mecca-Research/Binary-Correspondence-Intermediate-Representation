@@ -36,7 +36,7 @@ not promoted to driver, transport, or hardware evidence.
 | Math, AD, precision, and library substrate | **Advanced but bounded** | BCIRQ4T/AVX2/SmoothQuant, measured schedule artifacts, expanded closed-set AD, and workload-scoped numerical evidence exist; whole-model and multi-target qualification remains |
 | Model inference and training | **Real reference + hosted micro/C gates; not production/bare-metal complete** | Planned/streamed semantics, owned safe-resume pretraining, offline SFT/RM/DPO/PPO/reasoning/embedding stages, and TinyLlama/hosted→BCIRQ8→standalone-C parity exist; 32M/GPU/serving remain open |
 | Driver, kernel, ABI, and IPC | **Foundation only** | Direct RuntimeChannel, manifests, event/DMA and ordinary x86 edges exist; no resident driver, Linux module/fork, stable UAPI, native kernel, or native IPC |
-| Telemetry/control plane | **Codec/meaning landed; live plane missing** | Registry, BTLM, metrics, deterministic exposition and ring baseline exist; identity envelope, live SPSC and transports/providers are open |
+| Telemetry/control plane | **Codec/meaning landed; live plane at version zero** | Registry, BTLM, metrics, deterministic exposition and ring baseline exist; the identity envelope, the generated C signal table and the live SPSC ring (telemetry and control records) exist at version zero with Python/C parity; transports/providers are open |
 
 ## 3. C as registry definition and macro target
 
@@ -143,7 +143,13 @@ implementation claim.
   SFT/preference/PPO/reasoning records, RM/DPO/PPO/reasoning/embedding objectives, three
   bounded non-LLM model families, and an append-only pipeline ledger. Recorded teacher and
   offline remote-compute adapters prove the provider-neutral boundary without a live API.
-- The C++ handoff has a small compiled single-node seam and explicit ownership rules.
+- The C++ handoff seam holds its contract at run time (G16, S3-C):
+  - artifacts are written once into a freestanding C pack table and read in place through
+    borrowed views, and a dead view is refused;
+  - admission is the live control plane's predicate;
+  - the dynamic-graph builder freezes each step through the C/IR rail;
+  - a graph too large for one pack travels as a BSHM manifest-of-shards that reassembles to its
+    bytes.
 
 ### Still open
 
@@ -153,8 +159,9 @@ implementation claim.
   long-context/device kernels, robust serving/evaluation, and physical accelerator qualification.
 - A freestanding whole-decoder profile with caller-owned memory if bare-metal deployment
   is required; the present standalone C decoder is hosted.
-- Real dynamic-graph and distributed MPI/NCCL orchestration. Current C++ backends beyond
-  the bounded seam are honest stubs and need suitable multi-node/device evidence.
+- Real distributed MPI/NCCL orchestration: cross-node dispatch and reduction are an honest
+  stub and need suitable multi-node evidence. The partition, shards, manifest and per-rank
+  admission are real, and the dynamic-graph backend is real.
 
 ## 7. Driver, kernel, telemetry, and IPC alignment
 
@@ -171,10 +178,9 @@ implementation claim.
 
 ### Missing implementation
 
-- Generated fixed-width C signal table and ID-range policy.
-- Source/session/generation/clock/loss telemetry envelope; live publish/backpressure/
-  peer-death SPSC ring; UART, HTTP, OTLP, Prometheus host, Redfish/BMC, GPU, and other
-  live providers/transports.
+- UART, HTTP, OTLP, Prometheus host, Redfish/BMC, GPU, and other live providers/transports
+  (the version-zero envelope, generated signal table and live SPSC ring they would carry
+  exist; no driver emits through them yet).
 - Resident UART, virtio, storage, network, USB, accelerator, or physical-device driver.
 - Linux bridge/module and actual `Mecca-Research/BCIR-Linux` patch queues.
 - Stable userspace ABI, out-of-process Linux adapter, native kernel, and capability IPC.
@@ -186,7 +192,8 @@ kernel-internal ABI or replace POSIX/Linux syscalls.
 
 ## 8. Highest-leverage remaining work
 
-1. Complete the pre-driver telemetry identity and live bounded SPSC contracts.
+1. Drive the version-zero telemetry identity and live SPSC contracts from a first real
+   emitter, revising them from its traces.
 2. Build UART as the first resident in-process proof-carrying driver with simulator,
    faults, cancellation, teardown, telemetry, and replay evidence.
 3. Add Linux-hosted parity, then use virtio-blk to prove queue/DMA/reset/saturation.

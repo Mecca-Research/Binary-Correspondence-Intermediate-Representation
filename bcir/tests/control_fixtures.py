@@ -1134,12 +1134,16 @@ def trace_line(index: int, op: int, outcome, plane: ControlPlane) -> str:
     )
 
 
-def run_python(scenario: Scenario) -> tuple[ControlPlane, list, list[str]]:
+def run_python(scenario: Scenario, transport=None) -> tuple[ControlPlane, list, list[str]]:
+    """Run one scenario on the Python plane. `transport`, when given, carries every submitted
+    record first (G15: `ring_fixtures.control_ring_transport` writes it into a live control ring
+    and reads it back) -- a transport that returns other bytes changes the trace."""
     plane = ControlPlane(scenario.key, scenario.scope, scenario.subject)
+    carry = transport() if transport is not None else None
     outcomes, lines = [], []
     for index, step in enumerate(scenario.steps):
         if step.op == OP_SUBMIT:
-            outcome = plane.submit(step.data)
+            outcome = plane.submit(step.data if carry is None else carry(step.data))
         elif step.op == OP_ENTER:
             outcome = plane.enter()
         elif step.op == OP_LEAVE:
@@ -1273,7 +1277,13 @@ def _verifier_holds() -> bool:
 # --- the C rail ----------------------------------------------------------------------------------
 
 C_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "runtime", "c"))
-C_SOURCES = ("bcir_control_plane.c", "bcir_sha256.c", "bcir_runtime.c", "test_control_plane.c")
+C_SOURCES = (
+    "bcir_control_plane.c",
+    "bcir_ring.c",
+    "bcir_sha256.c",
+    "bcir_runtime.c",
+    "test_control_plane.c",
+)
 
 
 def compiler() -> str | None:
@@ -1337,12 +1347,14 @@ def encode_script(scenarios) -> bytes:
     return bytes(out)
 
 
-def run_c(exe: str, tmp: str, scenarios) -> list[list[str]]:
-    """Run scenarios on the C rail; one list of trace lines per scenario."""
+def run_c(exe: str, tmp: str, scenarios, *, via_ring: bool = False) -> list[list[str]]:
+    """Run scenarios on the C rail; one list of trace lines per scenario. `via_ring` carries
+    every submitted record across a live control ring first (the harness's --via-ring)."""
     path = os.path.join(tmp, "script.bin")
     with open(path, "wb") as fh:
         fh.write(encode_script(scenarios))
-    run = subprocess.run([exe, "--script", path], capture_output=True, text=True, timeout=120)
+    argv = [exe, "--script", path] + (["--via-ring"] if via_ring else [])
+    run = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     if run.returncode != 0:
         raise RuntimeError(f"control harness failed: {run.stderr[-2000:]}")
     traces: list[list[str]] = [[] for _ in scenarios]

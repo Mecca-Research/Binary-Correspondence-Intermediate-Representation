@@ -74,6 +74,23 @@ Review instance (#761, 2026-09-05):
 (`[]` and `null` are valid JSON; the ODS→IRDL inventory gate dereferenced
 the decoded root and raised `AttributeError` in place of its verdict, with
 no `--json-out` report and no exit code).
+S3-B instance (2026-09-23): the G15 grading function (`ring_fixtures.measure`)
+raised `FileNotFoundError` when the harness it was handed did not exist, and let
+any exception but the codec's own escape -- a traceback where nine rows belonged.
+Every rail call is now a count (a rail that raises, or prints what cannot be
+parsed, fails every fixture it was handed), and `tools/c/check_ring.py` exits 0,
+1 or 2 (UNAVAILABLE, never a pass); the C gate refuses to score a mutant it could
+not grade as a catch.
+S3-C instance (2026-09-24): the G16 fault table's first sweep sent one defect
+through the grader and got a traceback instead of a row. The shards had lost
+their vector, so the manifest encoder refused its own output. The self-check did
+its job, but it fired while `measure()` was still *building* the hostile corpus
+it grades against, outside every fail-closed wrapper. The corpora are the
+oracle's own splits and freezes, so a defect in the oracle can surface first as
+a corpus that cannot be built. Every corpus is now built through one guard that
+fails each row the corpus feeds (`handoff_fixtures._built`), and so is the Stage
+3 exit flow. The witness patches `split` to raise and asserts named rows, not an
+exception.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -275,6 +292,31 @@ state-digest comparison caught the one no verdict saw (a digest that dropped
 the drain flag: 52 divergent traces, every decision still conforming). The C
 tests fail closed in a checkout: a missing harness source is a failure, never
 a skip.
+S3-B instance (2026-09-23): the G15 rows' evidence that they can fire is
+committed, not narrated: `tools/testing/faults/ring.json` injects 22 defects,
+each one law on one rail -- the seqlock re-check, the lap count, the full ring,
+the epoch law, a deposed producer, the takeover repair, the progress
+publication, the geometry CRC and the control-slot law; the envelope's CRC and
+session law, the gap count, the stale generation and the unknown REQUIRED
+signal; the table's bytes; the control transport -- and `red_sweep.py` saw all
+22 fire their own row (a green control first; every injection and restore
+proved by digest). ThreadSanitizer is held to the same standard: the C gate
+makes the relaxed atomic stores plain and requires a race REPORT, not merely a
+failure. Its absence has an owner: the x86 C runtime job installs the TSan
+runtime and sets `BCIR_REQUIRE_TSAN=1`, so there an unavailable TSan fails,
+while a runner without it (the aarch64 job) prints an explicit skip -- all three
+branches (available, absent, absent-but-required) driven before landing.
+S3-C instance (2026-09-24): `tools/testing/faults/handoff.json` injects 34
+defects across the oracle, the C twin and the C++ seam. Each one is a single
+law: the admission, the registry binding, the epoch, a moved owner, dispatch in
+place, the freeze's header and claim laws, the manifest's wire laws, the
+partition, the sub-pack and frame spellings, the reassembly predicate, and both
+state digests. Through the Stage 3 exit flow it also covers the *other*
+boundaries one generation crosses: the plane's compare-and-swap, the intake's
+stale law, and the telemetry ring's loss count. The first sweep caught 29, and
+both misses were defects in the gate, not the table. One was a public frame
+spelling that no row measured (L14); the other was a corpus-build traceback
+(L1). After the fixes, all 34 fire their own row.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -717,6 +759,37 @@ the registry digest hashes the generation vector's own wire bytes, so the
 StreamPack and plan readers feed one walk; and the closed sets (kinds, scopes,
 refusals, capabilities, the record bound) are read out of the C header by the
 tests, not mirrored into a third list.
+S3-B instance (2026-09-23): telemetry continuity is ONE predicate,
+`telemetry.SequenceTracker` (C: `bcir_seq_observe`), which the BTLM stream
+decoder and the envelope intake both express -- and the refactor is
+behaviour-identical to the decoder's own copy over 20,000 random streams across
+the 2**31 boundary. The intake's stale-generation law is G14's `is_stale`, not a
+third spelling. The G15 rows are graded by one function behind one entry point,
+`tools/c/check_ring.py`, which the C gate and the fault table both call where the
+gate had carried a copy of its own. The ring's shared constants are read out of
+`bcir_ring.h` by the tests, and the control slot is derived from the record ABI's
+bound and held to it on both rails (a test, and a `_Static_assert` where the two
+headers meet).
+S3-C instance (2026-09-24): the oracle spelled a shard set's frame three times:
+`frame_of`, and again inline in `split` and in `reassemble`. The grader compared
+the C twin only against `split`, so the public function could drift from both the
+split and `bcir_shm_frame` while no row moved (the fault table's `NOT CAUGHT`).
+There is now one private `_frame`, and the grader reads the frame and the shards
+through `frame_of` and `sub_pack`, the twins of the C calls the harness prints.
+The same slice made the registry binding one predicate:
+`bcir_ctl_pack_registry_digest` is used by `bcir_ctl_admit_pack`, by the shard
+manifest's encoder and by its reassembly, where the manifest had been about to
+carry a digest of its own. The Stage 3 exit flow is written once for both native
+rails (`runtime/c/test_stage3.h`, the data boundary supplied through a table of
+operations), not twice.
+
+The #719 trap recurred in the same slice. `bcir/tests/test_cpp_handoff.py` kept
+its own copy of the C++ seam's source list and its own copy of the gate's reject
+probe. The focused runs never touched it, and the complete quick tier caught it:
+two link failures against the pre-G16 API. The test now builds through
+`handoff_fixtures.build_cpp_program`, the one C++ build every harness uses. It
+shares one artifact minter with the gate (`seam_artifacts`), and one committed
+probe (`test_orchestrator --reject`, which must also admit the clean pack, L2).
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -906,6 +979,27 @@ rail), the corpus's `addr.i32_under_arm64_32` and `addr.i32_under_riscv32`
 (a legal address per tabulated width class),
 `verify_plan_annotations.mlir` `@plan_ok` (the plan the planner emits is
 accepted before four corruptions are refused).
+S3-B instance (2026-09-23): S3-A declared the control record bound, 192 bytes, as
+"the slot stride G15's ring may adopt" -- but a ring slot spends 24 bytes on its
+header, so a 192-byte slot carries 168: a record of the bound was a legal case no
+such ring could admit (every v1 kind fits, which is why nothing failed). The
+geometry law now refuses a CONTROL ring below 256 bytes, and both halves have
+witnesses: `geometry-control-slot` (a 192-byte control ring refused on both rails)
+and `test_a_control_ring_carries_every_legal_control_record` (a record of the
+bound delivered). The slice's naming rule has its witness in one program:
+`test_the_live_ring_and_the_v1_ring_emitter_coexist_in_one_program` compiles,
+links and runs the v1 emitter's output beside the live ring, whose C API had
+claimed three of the names that emitter emits.
+S3-C instance (2026-09-24): the pack table's dispatch law binds an admission to
+(generation, registry digest), and the second half had no witness. In every
+one-plane scenario, a registry change also moves the generation, so the
+generation check alone refused every stale dispatch, and a table that ignored the
+registry passed. A plane that restarts reaches generation 1 again, and only the
+binding tells the two incarnations apart. That case now has witnesses in both
+directions, on all three rails: `admission/restart-other-registry` (refused) and
+`admission/restart-same-registry` (still admitted, so the binding is exactly the
+pair, not the plane's identity). A mutant that drops the registry compare fires
+`handoff.stale.dispatched` on each rail that runs the table.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.
@@ -960,6 +1054,17 @@ above the floor; the trained student must not have collapsed).
 in `verify_retrieval.py` are the law's origin evidence, predating the finding
 by a rail. This law came from an experiment rather than an adversarial review
 round, so it does not move the staleness counter below.
+S3-B instance (2026-09-23): the live ring's throughput row was first published
+beside "a minimal unchecked queue measures ~15x -- the floor for any two-thread
+handoff here", a floor measured with the threads wherever the scheduler put them.
+Pinned to each vCPU pair of the same host within one hour, that floor read
+~1.1-6x and the ring ~13-49x (82-313 ns per record, `memcpy` steady at ~6.4 ns):
+the comparison had measured placement on both sides, and the "floor" was an
+artifact of it. A trivial solution is a floor only under the conditions of the
+number it bounds -- same placement, same host state -- and on a host that cannot
+hold those fixed (a virtualized 4-vCPU runner) the honest report is the range and
+the refusal to attribute, which is what the row, the ABI spec and the roadmap now
+say. The claim was retracted before the PR opened.
 **Port note:** every cost model, speedup ratio and calibration is an L23
 site. A plan's price is evidence only against the unfused serial plan; a
 kernel's timing only against the baseline it replaced; a coverage number
@@ -1048,6 +1153,16 @@ matching zero or two sites, a replacement identical to its anchor, a control run
 that is already red, and a restore that does not reproduce the original bytes.
 The committed fault tables under `tools/testing/faults/` are the standing
 evidence that the gates they name can fail.
+S3-B instance (2026-09-23): the RED simulation replaced each G15 entry point with
+one that raises, and its first version replaced `encode_envelope` in the module
+whose corpus builders also call it -- the "absent codec" fault broke the fixtures
+before any rail saw them, and the rows would have counted a harness error as a
+rail's failure. The corpora are now built before anything is patched, and the
+rows the fixture set did not touch reproduce exactly (29 / 22 / 10 / 104 / 6):
+that is the control. The slice's own mutation campaign first ran from a scratch
+script with no bytecode discipline; it is committed as
+`tools/testing/faults/ring.json` and run by the one harness that proves each
+injection landed.
 **Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
 same-size source edit, and any build system whose staleness test is coarser than
 content — timestamps, sizes, or a hash of the command line rather than of the

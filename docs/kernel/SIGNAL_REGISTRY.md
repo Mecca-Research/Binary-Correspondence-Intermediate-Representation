@@ -117,9 +117,14 @@ T1–T4 data contracts are implemented. Exporters consume the definition's decla
 counter/temporality fields; they no longer infer behavior from a metric name or unit.
 `metric_definitions()` includes the BCIR signal ID and semantics in its Redfish OEM block.
 
-This Python registry is the normative taxonomy oracle, not yet a driver UAPI. Before D2,
-generate a fixed-width C definition table from the same source, reserve ID ranges for
-BCIR/vendor/device-local signals, define unknown-required-signal refusal, and carry the ID
-in the new driver telemetry envelope. Live providers and UART/HTTP/OTLP/Redfish transports
+This Python registry is the normative taxonomy oracle, not a driver UAPI. Its pre-D2 byte
+projection has landed at version zero (S3-B, [`TELEMETRY_ENVELOPE_ABI.md`](TELEMETRY_ENVELOPE_ABI.md)):
+`bcir.signal_table` projects every built-in definition into a 64-byte row and **generates**
+`runtime/c/bcir_signal_table.h` from them (drift-checked by a test and the C gate); the ID
+ranges are BCIR `0x1–0xFFFF`, vendor `0x10000–0x7FFFFFFF`, device-local
+`0x80000000–0xFFFFFFFE` (0 unassigned, `0xFFFFFFFF` reserved); an unknown signal is refused
+when the producer marks it REQUIRED and skipped otherwise; and TelemetryEnvelopeV0 carries the
+ID. A new built-in definition is added here and the header regenerated
+(`python -m bcir.signal_table --emit`). Live providers and UART/HTTP/OTLP/Redfish transports
 remain unimplemented. See [`TELEMETRY_PIPELINE_RESEARCH.md`](TELEMETRY_PIPELINE_RESEARCH.md)
 and [`BCIR_DRIVER_KERNEL_ROADMAP.md`](BCIR_DRIVER_KERNEL_ROADMAP.md).

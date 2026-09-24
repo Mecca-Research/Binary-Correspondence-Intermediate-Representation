@@ -321,3 +321,34 @@ def test_the_control_rows_are_exact_on_both_rails_or_not_measured():
     for key in ROWS:
         expected = "GAIN" if key in measured else "NOT-MEASURED"
         assert rows[key]["verdict"] == expected, rows[key]
+
+
+def test_the_ring_rows_are_exact_on_both_rails_or_not_measured():
+    """G15 / S3-B: the live ring. Nine exact rows, every one with a C half, at their bound with a
+    compiler and NOT-MEASURED without one; the concurrent row also needs POSIX threads/processes.
+    The throughput ratio is host-dependent (it measures the host's coherence latency) and so is
+    reported INDICATIVE off the baseline host, never graded there."""
+    import os
+    import shutil
+
+    from bcir.tests.ring_fixtures import ROWS
+    from tools.perf.gemplus_baseline import METRICS, measure_ring
+
+    exact = [m for m in METRICS if m.group == "ring" and m.kind == "exact"]
+    assert [m.key for m in exact] == list(ROWS)
+    assert all(m.bound == 0 and m.slice_owner == "G15" for m in exact)
+    (ratio,) = [m for m in METRICS if m.group == "ring" and m.kind == "ratio"]
+    assert ratio.key == "ring.throughput" and ratio.host_dependent and ratio.bound == 1.0
+    measured = measure_ring()
+    if shutil.which("clang") or shutil.which("cc") or shutil.which("gcc"):
+        expected = set(ROWS) - (set() if os.name == "posix" else {"ring.concurrent.violations"})
+        assert {k: v for k, v in measured.items() if k in ROWS} == {k: 0.0 for k in expected}
+        if os.name == "posix":
+            assert measured["ring.throughput"] >= 1.0  # nothing beats the memcpy floor
+    else:
+        assert measured == {}
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in ROWS:
+        assert rows[key]["verdict"] == ("GAIN" if key in measured else "NOT-MEASURED"), rows[key]
+    want = "INDICATIVE" if "ring.throughput" in measured else "NOT-MEASURED"
+    assert rows["ring.throughput"]["verdict"] == want

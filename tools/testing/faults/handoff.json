@@ -1,0 +1,246 @@
+{
+  "command": [
+    "@python",
+    "tools/c/check_handoff.py"
+  ],
+  "faults": [
+    {
+      "expects": "handoff.stale.admitted",
+      "label": "C table: a stale refusal from the plane is recorded as an admission",
+      "new": "  if (c.verdict == BCIR_CTL_APPLIED || c.refusal == BCIR_CTL_REFUSAL_STALE) {\n    s->admitted = 1;",
+      "old": "  if (c.verdict == BCIR_CTL_APPLIED) {\n    s->admitted = 1;",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.stale.admitted",
+      "label": "Python table: a stale refusal from the plane is recorded as an admission",
+      "new": "        if verdict.applied or (verdict.refusal == \"stale\" and plane.registry is not None):\n            slot.admitted = True",
+      "old": "        if verdict.applied:\n            slot.admitted = True",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.stale.admitted",
+      "label": "C manifest gate: only the tags are compared, so a manifest of an older vector under unchanged maxima is admitted",
+      "new": "      m.data_gen != plane->reg_data_gen || m.topo_gen != plane->reg_topo_gen)",
+      "old": "      m.data_gen != plane->reg_data_gen || m.topo_gen != plane->reg_topo_gen ||\n      !eq32(m.registry_digest, plane->reg_digest))",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.stale.admitted",
+      "label": "Python manifest gate: only the tags are compared",
+      "new": "    if reg is None or (m.map_gen, m.data_gen, m.topo_gen) != reg[:3]:",
+      "old": "    if reg is None or (m.map_gen, m.data_gen, m.topo_gen, m.registry_digest) != reg:",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.stale.dispatched",
+      "label": "C table: dispatch no longer asks whether the slot was admitted",
+      "new": "  if (!plane) {",
+      "old": "  if (!s->admitted || !plane) {",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.stale.dispatched",
+      "label": "C table: an admission is keyed by the generation number alone, so a restarted plane under another registry runs it",
+      "new": "  if (s->admitted_generation != gen) {",
+      "old": "  if (s->admitted_generation != gen ||\n      !eq32(s->admitted_registry, plane->has_registry ? plane->reg_digest : ZERO32)) {",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.stale.dispatched",
+      "label": "Python table: an admission is keyed by the generation number alone",
+      "new": "",
+      "old": "            or slot.admitted_registry != registry\n",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.fresh.refused",
+      "label": "C table: the admission records the next generation, so a fresh pack is never runnable",
+      "new": "    s->admitted_generation = plane->generation + 1u;",
+      "old": "    s->admitted_generation = plane->generation;",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.fresh.refused",
+      "label": "Python table: the registry binding is inverted, so a current admission is refused",
+      "new": "            or slot.admitted_registry == registry\n",
+      "old": "            or slot.admitted_registry != registry\n",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.lifetime.unrefused",
+      "label": "C table: a release never advances the epoch, so an old handle reaches the slot's next artifact",
+      "new": "    s->state = s->pins == 0u ? BCIR_HO_FREE : BCIR_HO_RETIRED;",
+      "old": "    s->epoch++;\n    s->state = s->pins == 0u ? BCIR_HO_FREE : BCIR_HO_RETIRED;",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.lifetime.unrefused",
+      "label": "Python table: a release never advances the epoch",
+      "new": "            slot.state = \"free\" if slot.pins == 0 else \"retired\"",
+      "old": "            slot.epoch += 1\n            slot.state = \"free\" if slot.pins == 0 else \"retired\"",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.lifetime.unrefused",
+      "label": "C++ seam: moving an owner copies it, so the moved-from owner can still release the slot",
+      "new": "PackOwner::PackOwner(PackOwner &&other) noexcept\n    : arena_(other.arena_), handle_(other.handle_) {\n}",
+      "old": "PackOwner::PackOwner(PackOwner &&other) noexcept\n    : arena_(std::move(other.arena_)), handle_(other.handle_) {\n  other.arena_.reset();\n  other.handle_ = bcir_ho_handle{};\n}",
+      "path": "runtime/cpp/bcir_handoff.cpp"
+    },
+    {
+      "expects": "handoff.copies",
+      "label": "C table: dispatch walks a private copy of the slot's bytes",
+      "new": "  {\n    static uint8_t copy[1u << 20];\n    for (size_t k = 0; k < v.len && k < sizeof copy; k++) copy[k] = v.data[k];\n    st = bcir_sp_for_each_segment(copy, v.len, fn, ctx);\n  }",
+      "old": "  st = bcir_sp_for_each_segment(v.data, v.len, fn, ctx);",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.builder.violations",
+      "label": "C freeze: the topology generation is written as 0",
+      "new": "  if (v4) { w_u32(w, 0u); w_u32(w, v4->map_gen); w_u32(w, v4->data_gen); }",
+      "old": "  if (v4) { w_u32(w, v4->topo_gen); w_u32(w, v4->map_gen); w_u32(w, v4->data_gen); }",
+      "path": "runtime/c/bcir_hydrate.c"
+    },
+    {
+      "expects": "handoff.builder.violations",
+      "label": "C freeze: claim ids need not ascend",
+      "new": "",
+      "old": "    if (i && cl->id <= f->claims[i - 1u].id) return BCIR_ERR_PROVENANCE;  /* ids ascend */\n",
+      "path": "runtime/c/bcir_hydrate.c"
+    },
+    {
+      "expects": "handoff.builder.violations",
+      "label": "Python freeze: a claim may touch a RID the vector does not declare",
+      "new": "",
+      "old": "        if any(rid not in declared for rid in (*claim.reads, *claim.writes)):\n            raise FreezeError(\"BCIR_ERR_PROVENANCE\", f\"claim {claim.id}: undeclared RID\")\n",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.builder.violations",
+      "label": "C++ builder: a claim's reads are silently clamped to the record's bound instead of refused",
+      "new": "  c.n_rd = static_cast<std::uint8_t>(spec.reads.size() > BCIR_CLAIM_MAX_RD ? BCIR_CLAIM_MAX_RD : spec.reads.size());",
+      "old": "  c.n_rd = static_cast<std::uint8_t>(spec.reads.size() > 255u ? 255u : spec.reads.size());",
+      "path": "runtime/cpp/bcir_handoff.cpp"
+    },
+    {
+      "expects": "handoff.decisions.nonconforming",
+      "label": "C table: an empty commit is accepted",
+      "new": "  if (length > table->capacity)",
+      "old": "  if (length == 0u || length > table->capacity)",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.shards.mismatches",
+      "label": "C shard: a sub-pack's header claims the whole's blocks",
+      "new": "  put_header(s, w, e - b, n_pf, w->n_blk, e - b);",
+      "old": "  put_header(s, w, e - b, n_pf, 0u, e - b);",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.shards.mismatches",
+      "label": "Python frame: the blocks are dropped (the one spelling split, frame_of and reassemble share)",
+      "new": "    return encode(replace(pack, segments=[], blocks=[]))",
+      "old": "    return encode(replace(pack, segments=[]))",
+      "path": "bcir/abi/shard_manifest.py"
+    },
+    {
+      "expects": "handoff.shards.mismatches",
+      "label": "C partition: floor instead of ceiling, so there are more shards than ranks",
+      "new": "  per = (uint64_t)n_segments / w ? (uint64_t)n_segments / w : 1u;",
+      "old": "  per = ((uint64_t)n_segments + w - 1u) / w;",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.shards.mismatches",
+      "label": "Python partition: floor instead of ceiling",
+      "new": "    per = max(1, n_segments // world)",
+      "old": "    per = -(-n_segments // world)",
+      "path": "bcir/abi/shard_manifest.py"
+    },
+    {
+      "expects": "handoff.shards.mismatches",
+      "label": "C layout law: the trace no longer has to follow the segments (S1)",
+      "new": "    if (s.err) return 0;",
+      "old": "    if (s.err || rd64(w->d + w->tr_start + (size_t)i * 24u) != claim) return 0;",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.shards.malformed.accepted",
+      "label": "C manifest decode: the reserved tail 52..63 is not checked",
+      "new": "",
+      "old": "  for (size_t i = 52; i < 64; i++)\n    if (data[i] != 0u) return BCIR_ERR_RESERVED;\n",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.shards.malformed.accepted",
+      "label": "Python manifest decode: the first shard may start anywhere",
+      "new": "        if index and entry.seg_begin != expect:",
+      "old": "        if entry.seg_begin != expect:",
+      "path": "bcir/abi/shard_manifest.py"
+    },
+    {
+      "expects": "handoff.shards.malformed.accepted",
+      "label": "C reassembly: a fetched shard is not compared with its canonical spelling",
+      "new": "      if (!blob)",
+      "old": "      if (!blob ||\n          !emitted_equals(&w, EMIT_SUB, entry.seg_begin, entry.seg_end, blob, (size_t)entry.length))",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.shards.malformed.accepted",
+      "label": "C reassembly: the manifest's registry digest is not bound to the reassembled whole",
+      "new": "",
+      "old": "      bcir_ctl_pack_registry_digest(out, total, digest) == BCIR_OK &&\n      bcir_sha256_equal(digest, m.registry_digest, 32u) &&\n",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.reentry.divergent",
+      "label": "Python sub-pack: a shard carries no generation vector, so no rank can admit it",
+      "new": "            blocks=[],\n            generations=[],\n            trace_notes=[t for t in pack.trace_notes if t.claim_id in claims],",
+      "old": "            blocks=[],\n            trace_notes=[t for t in pack.trace_notes if t.claim_id in claims],",
+      "path": "bcir/abi/shard_manifest.py"
+    },
+    {
+      "expects": "handoff.reentry.divergent",
+      "label": "C sub-pack: a shard past the first starts one segment late",
+      "new": "    if (i == b + (b != 0u)) seg_begin = c.pos;",
+      "old": "    if (i == b) seg_begin = c.pos;",
+      "path": "runtime/c/bcir_shard_manifest.c"
+    },
+    {
+      "expects": "handoff.stage3.stale.accepted",
+      "label": "C intake: a sample bound to a generation the plane has left is accepted (the telemetry boundary of the Stage 3 flow)",
+      "new": "    if (0 && e.generation < in->live_generation) {",
+      "old": "    if (e.generation < in->live_generation) { /* is_stale: minted against a generation left */",
+      "path": "runtime/c/bcir_telemetry_envelope.c"
+    },
+    {
+      "expects": "handoff.stage3.stale.accepted",
+      "label": "Python plane: a record witnessed against a generation the plane has left is applied (the control boundary of the Stage 3 flow)",
+      "new": "",
+      "old": "        if is_stale(rec.expect, self.generation):\n            return self._outcome(\"refused\", \"stale\", rec)\n",
+      "path": "bcir/gem/control.py"
+    },
+    {
+      "expects": "handoff.stage3.flow.divergent",
+      "label": "C ring: a lapped consumer is told it lost one record more than it did, so the evidence no longer reconciles with the intake's gaps",
+      "new": "return lose(c, q, depth - g->slot_count + 1u);",
+      "old": "return lose(c, q, depth - g->slot_count);",
+      "path": "runtime/c/bcir_ring.c"
+    },
+    {
+      "expects": "handoff.traces.divergent",
+      "label": "C table digest: the admission's registry is left out",
+      "new": "",
+      "old": "    bcir_sha256_update(&h, s->admitted_registry, 32u);\n",
+      "path": "runtime/c/bcir_handoff.c"
+    },
+    {
+      "expects": "handoff.traces.divergent",
+      "label": "Python table digest: the pin count is left out",
+      "new": "                    0,\n                    slot.admitted_generation,",
+      "old": "                    slot.pins,\n                    slot.admitted_generation,",
+      "path": "bcir/gem/handoff.py"
+    }
+  ]
+}

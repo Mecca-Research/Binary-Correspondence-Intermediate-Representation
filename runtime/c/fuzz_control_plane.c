@@ -15,7 +15,8 @@
  *     refuses a due pending switch is the one exception -- it crossed, and reports it);
  *   - the generation never decreases, and a deferral never moves it;
  *   - a switch is applied only while nothing is in flight;
- *   - the lease table holds at most eight leases, strictly ascending by id, and the pending
+ *   - the lease table holds at most eight leases, strictly ascending by id, each holding exactly
+ *     its derived key (an unused slot holds nothing), and the pending
  *     slot is empty or holds a verified switch.
  *===----------------------------------------------------------------------===*/
 #include <stddef.h>
@@ -158,7 +159,7 @@ static size_t sealed(cursor *c, const bcir_ctl_state *s, uint8_t out[BCIR_CTL_RE
  * struct's), so a byte comparison of two snapshots is exact -- and far cheaper than the
  * state digest, which the harness exercises once per input instead. */
 BCIR_STATIC_ASSERT(sizeof(bcir_ctl_state) == 64 + 4 + 4 + 8 + 4 * 4 + 32 * 4 + 8 * 5 + 4 + 4 +
-                                                 48 * BCIR_CTL_LEASE_CAPACITY + BCIR_CTL_RECORD_MAX,
+                                                 80 * BCIR_CTL_LEASE_CAPACITY + BCIR_CTL_RECORD_MAX,
                    "bcir_ctl_state has no padding");
 
 static void check(const bcir_ctl_state *s, const bcir_ctl_outcome *o, const bcir_ctl_state *before,
@@ -175,6 +176,20 @@ static void check(const bcir_ctl_state *s, const bcir_ctl_outcome *o, const bcir
   if (s->n_leases > BCIR_CTL_LEASE_CAPACITY) abort();
   for (uint32_t i = 1; i < s->n_leases; ++i)
     if (s->leases[i].lease_id <= s->leases[i - 1].lease_id) abort();
+  /* the key cache (G15/S3-B) is exact: every live lease holds exactly its derived key, and a
+   * slot the table does not use holds nothing -- a lease that left took its key with it */
+  for (uint32_t i = 0; i < BCIR_CTL_LEASE_CAPACITY; ++i) {
+    uint8_t want[32] = {0};
+    if (i < s->n_leases &&
+        bcir_ctl_lease_key(ROOT, sizeof(ROOT), s->leases[i].lease_id, want) != BCIR_OK)
+      abort();
+    if (i >= s->n_leases) {
+      static const bcir_ctl_lease_entry empty;
+      if (memcmp(&s->leases[i], &empty, sizeof(empty)) != 0) abort();
+    } else if (memcmp(s->leases[i].key, want, sizeof(want)) != 0) {
+      abort();
+    }
+  }
   if (s->pending_len) {
     bcir_ctl_record p;
     if (s->pending_len > BCIR_CTL_RECORD_MAX ||

@@ -753,6 +753,326 @@ METRICS: tuple[Metric, ...] = (
         "record as the oracle does)",
         slice_owner="G14",
     ),
+    # --- G15 (S3-B): the live SPSC ring and the version-zero triple (the generated signal table,
+    # TelemetryEnvelopeV0, the ring itself). Before the slice the only shared telemetry ring was a
+    # quiescent snapshot (a head and slots, no tail, no publication protocol, no loss count, no
+    # epoch): measured on the parent, a reader behind by a lap received the survivors and no count,
+    # and a slot read mid-rewrite came back with the fields of two records and no error. There was
+    # no oracle, no C twin, no envelope and no generated table, so every fixture fails by absence and
+    # the rows count those failures over fixed corpora (bcir/tests/ring_fixtures.py): 15 table rows
+    # + the generated header + 13 envelopes; 23 malformed envelopes x 2 rails + 33 malformed
+    # scenarios x 2 rails; 70 scripted scenarios x 2 rails (loss, torn); 11 continuity fixtures x 2;
+    # 5 stale fixtures x 2; 70 two-rail traces; the 52 G14 scenarios through a live control ring x 2
+    # rails; 6 concurrent C runs. Every row is exact and bounded at zero and needs the C twin: without
+    # a C compiler the group is NOT-MEASURED, and without POSIX threads/processes the concurrent row is.
+    Metric(
+        "ring.abi.mismatches",
+        "ring",
+        "generated signal-table rows whose C bytes differ from Python's, the generated header's "
+        "drift, and corpus envelopes whose Python encode -> C decode -> re-encode is not identical",
+        29,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the taxonomy and the envelope are the same bytes on both rails",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.malformed.accepted",
+        "ring",
+        "(malformed variant, rail) pairs NOT refused with the declared status: every envelope wire "
+        "law, every geometry law, owner and slot corruption, the unknown-required-signal law",
+        112,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own variant on both rails",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.loss.unaccounted",
+        "ring",
+        "(scenario, rail) pairs whose committed accounting is not exactly what the rail's verdicts "
+        "reported (published == delivered + lost + stale; refused counted) or not the declared numbers",
+        140,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="records lost to overwrite are counted exactly; a consumer that falls behind "
+        "sees the count (the G15 gate `ring.loss.accounting`)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.torn.delivered",
+        "ring",
+        "(scenario, rail) pairs that delivered a record not byte-identical to what was published "
+        "at its position",
+        140,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a consumer never sees a torn record (the G15 gate)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.sequence.misreported",
+        "ring",
+        "(continuity fixture, rail) pairs whose (missing, reordered, duplicated) is not the declared "
+        "triple",
+        22,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="gaps, reorders and duplicates reported as the frame ABI reports them (the "
+        "G15 sequence-continuity gate; one predicate, SequenceTracker)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.stale.accepted",
+        "ring",
+        "(stale fixture, rail) pairs not refused as declared: a deposed producer or consumer, a "
+        "record stamped with a deposed epoch, telemetry of a generation the plane has left",
+        10,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="stale generations refused at every boundary (the Stage 3 exit)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.traces.divergent",
+        "ring",
+        "scenarios whose two rails' traces differ in any line (verdict, status, position, count, "
+        "epoch, payload, or the region's CRC after the operation)",
+        70,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one ring, two realizations, the same bytes after every step",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.control.divergent",
+        "ring",
+        "(G14 control scenario, rail) pairs whose plane trace through a live control ring differs "
+        "from the direct trace, plus scenarios whose two rails' ring traces differ",
+        104,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the ring is a transport, never a decision (control records second)",
+        slice_owner="G15",
+    ),
+    Metric(
+        "ring.concurrent.violations",
+        "ring",
+        "concurrent C runs (threads; processes with a peer SIGKILLed and taken over) that tore, "
+        "failed to account, or broke continuity",
+        6,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the same laws with the peers truly concurrent and dying",
+        slice_owner="G15",
+    ),
+    # The G15 ratio: two threads streaming DataDNA envelopes (124 bytes) through a backpressure
+    # ring against one thread memcpy-ing the same bytes. Not measurable on the parent (no ring), so
+    # the baseline is the slice's first measurement on the reference host of this program (4 vCPU
+    # virtualized, clang 18; medians of 5): 26.0x -- the ring pays cross-core cache-line transfers
+    # that memcpy never pays. On that host the ratio is dominated by where the two threads land:
+    # pinned per vCPU pair it ranged ~13-49x within the hour (a minimal unchecked Lamport queue
+    # moving the same bytes, ~1.1-6x), so the row is reported, never graded, and no code change is
+    # attributable to it there. host_dependent: it measures the host's placement and coherence
+    # latency, not only the code.
+    Metric(
+        "ring.throughput",
+        "ring",
+        "ring time per record / memcpy time per record, the same 124-byte envelopes (two threads "
+        "vs one)",
+        26.0,
+        "x",
+        "ratio",
+        bound=1.0,
+        bound_source="the memcpy floor of the same bytes (a two-thread handoff cannot reach it)",
+        slice_owner="G15",
+        host_dependent=True,
+    ),
+    # --- G16 (S3-C): the data-plane hand-off. On the parent (1ee34676) the C++ seam took a raw
+    # (pointer, length) artifact: admit() gated nothing by default and compared header maxima when
+    # handed numbers, dispatch() consulted no admission, a view outlived its buffer silently, the
+    # dynamic-graph backend was a stub and no manifest-of-shards existed. The pack table, the freeze,
+    # the manifest and the C++ RAII types did not exist on any rail, so every fixture fails by
+    # absence; the rows count those failures over fixed corpora (bcir/tests/handoff_fixtures.py: 40
+    # scenarios, 296 operations on three rails -- 3 C-only; 187 freeze cases; 73 split cases, 8
+    # refused splits, 25 malformed manifests, 9 tampered sets, 42 shard runs, 10 C++ witnesses; the
+    # Stage 3 exit flow's 30 declared outcomes and its evidence line on three rails).
+    # Every row is exact and bounded at zero; a rail without its compiler is NOT-MEASURED.
+    Metric(
+        "handoff.stale.admitted",
+        "handoff",
+        "(stale admission, rail) pairs not refused as stale: a pack older than the live registry -- the maxima moved, a resource moved under unchanged maxima (map or data), no vector, a resource undeclared or missing, another program with coinciding maxima, the topology moved -- and a stale shard manifest",
+        42,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="admit() refuses a pack older than the registry generation (the G16 gate); the parent's own seam admitted 9 of 9 by default and 8 of 9 handed the live maxima",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.stale.dispatched",
+        "handoff",
+        "(dispatch the specification refuses, rail) pairs not refused as declared: never admitted, admitted in a generation the plane has left (a switch or an activation between admit and dispatch), a draining plane",
+        90,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="only what was admitted at the resident generation of the installed registry runs (the parent's dispatch consulted no admission at all)",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.fresh.refused",
+        "handoff",
+        "(fresh admission or dispatch, rail) pairs refused: the honest half the stale rows must not buy with over-refusal",
+        90,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a current pack is admitted and runs",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.lifetime.unrefused",
+        "handoff",
+        "(access through a dead handle or view, rail) pairs not refused BCIR_ERR_LIFETIME -- released, reused by the next step's same-length pack, aborted, never issued, a returned borrow -- plus the C++ lifetime witnesses (an owner out of scope, an arena gone, a moved owner, a double return, a foreign arena)",
+        68,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a view that outlives its owner is refused (the G16 gate); on the parent a reused buffer was dispatched through the old view and a freed one read freed memory (ASan)",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.copies",
+        "handoff",
+        "segment views the C++ seam's dispatches read outside the arena slot the view names, over every scenario and shard run, plus the moved-once witness",
+        80,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the hand-off moves bytes once: written into the slot, read in place (the G16 gate)",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.builder.violations",
+        "handoff",
+        "(builder step, rail) pairs not deciding as declared -- a step frozen, admitted and run; a step frozen before a registry switch refused after it; every freeze law refused transactionally -- plus freeze cases whose C bytes or refusal differ from the oracle's",
+        422,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the dynamic-graph builder freezes a fresh StreamPack per step through the C/IR rail",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.decisions.nonconforming",
+        "handoff",
+        "every other declared (operation, rail) outcome not as declared: the table's capacity, fullness and bounds (a full table, an exhausted epoch or pin count), a malformed admission, the producer's own steps",
+        349,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the table decides every operation as specified",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.shards.mismatches",
+        "handoff",
+        "split cases whose manifest, frame or shards differ between the oracle, the C twin and the C++ seam's cut; wholes a rail does not reassemble byte for byte; packs outside the hydrated layout not refused",
+        392,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="shards by digest reassemble to the whole-pack bytes (the G16 gate), identically on every rail",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.shards.malformed.accepted",
+        "handoff",
+        "(malformed manifest or tampered shard set, rail) pairs not refused with the declared status: one variant per manifest wire law; a missing, forged, foreign or non-canonical shard; a manifest whose tags or registry digest lie",
+        68,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own variant on both rails; only the declared whole ever reassembles",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.reentry.divergent",
+        "handoff",
+        "(whole, world, rail) cases whose shards, each admitted by the live plane and run by itself, do not reproduce the whole's dispatch",
+        115,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the per-rank re-entry reproduces the single-node dispatch exactly (the L5 preparation: only the network is missing)",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.traces.divergent",
+        "handoff",
+        "scenarios whose native trace (C twin, C++ seam) differs from the oracle's in any line: outcome, handle, generation, claims, the table's and the plane's digests",
+        77,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one hand-off, three realizations, the same state after every step",
+        slice_owner="G16",
+    ),
+    # The Stage 3 exit gate (the staged plan, section 6): one artifact generation flows plan ->
+    # control -> data -> telemetry -> evidence on the loopback, and after the switch the old
+    # generation is offered at every boundary. The flow (runtime/c/test_stage3.h; the oracle is
+    # handoff_fixtures.run_stage3_python) needs the pack table, so on the parent it fails by
+    # absence on every rail; the parent's real seam admitted and ran the stale pack besides.
+    Metric(
+        "handoff.stage3.stale.accepted",
+        "handoff",
+        "(boundary, rail) pairs at which the Stage 3 exit flow accepted the old generation after the switch: a control record witnessed against it, its plan, its pack's dispatch and admission, its shard manifest, a late telemetry sample bound to it",
+        18,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="stale generations refused at every boundary (the Stage 3 exit gate)",
+        slice_owner="G16",
+    ),
+    Metric(
+        "handoff.stage3.flow.divergent",
+        "handoff",
+        "(declared step, rail) pairs of the Stage 3 exit flow not as declared -- the records carried by the control ring, both plans, both packs stored, admitted, gated and run, their telemetry through the two-slot ring into the intake -- plus evidence laws that do not reconcile (ring loss = intake gaps, one stale record, every delivered record decided, every record carried) and native flows that differ from the oracle's",
+        75,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one generation flows plan -> control -> data -> telemetry -> evidence, identically on every rail",
+        slice_owner="G16",
+    ),
+    # The G16 ratio: the seam's dispatch of an admitted pack over the direct C walk of the same bytes
+    # (one thread, the same callback; the 120-segment synthetic pack). Measured on the parent's own
+    # seam (its dispatch(): shard() re-validated the whole pack, then the walk validated it again),
+    # medians of 7 rounds of 2,000 on the reference host: 1.93-1.98x, baseline 1.95x. The G16 seam
+    # checks the view's lifetime, the admission's generation and registry and the plane phase per
+    # dispatch -- all O(1) -- and moves the full verification and the registry digest to admit(),
+    # once: ~1.00-1.02x. A single-core ratio of the same work, so the band holds across hosts.
+    Metric(
+        "handoff.dispatch.overhead",
+        "handoff",
+        "seam dispatch time / direct C walk time, the same admitted 120-segment pack and callback",
+        1.95,
+        "x",
+        "ratio",
+        bound=1.0,
+        bound_source="the direct C walk of the same bytes: every per-dispatch check is O(1)",
+        slice_owner="G16",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -1697,6 +2017,55 @@ def measure_control() -> dict[str, float]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def measure_ring() -> dict[str, float]:
+    """The G15 rows (S3-B): the live ring, the envelope and the generated table, counted failures
+    over fixed corpora on both rails (bcir/tests/ring_fixtures.py::measure, which the tests and
+    tools/c/check_runtime.sh grade the same way), and the throughput ratio. Every row needs the C
+    twin: without a C compiler the group is NOT-MEASURED rather than estimated from one rail."""
+    import shutil
+    import tempfile
+
+    from bcir.tests.ring_fixtures import build_harness, measure, measure_throughput
+
+    tmp = tempfile.mkdtemp(prefix="bcir-ring-")
+    try:
+        exe = build_harness(tmp)
+        if exe is None:
+            return {}
+        out = measure(exe, tmp)
+        out.update(measure_throughput(exe))
+        return out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def measure_handoff() -> dict[str, float]:
+    """The G16 rows (S3-C): the data-plane hand-off, counted failures over fixed corpora on the
+    oracle, the C twin and the C++ seam (bcir/tests/handoff_fixtures.py::measure, which the tests,
+    tools/c/check_runtime.sh and tools/cpp/check_handoff.sh grade the same way). The rows need
+    both native rails: without the compilers the group is NOT-MEASURED, never one rail's guess."""
+    import shutil
+    import tempfile
+
+    from bcir.tests.handoff_fixtures import (
+        build_cpp_harness,
+        build_harness,
+        measure,
+        measure_overhead,
+    )
+
+    tmp = tempfile.mkdtemp(prefix="bcir-handoff-")
+    try:
+        exe, cpp = build_harness(tmp), build_cpp_harness(tmp)
+        if exe is None or cpp is None:
+            return {}
+        out = measure(exe, cpp, tmp)
+        out.update(measure_overhead(cpp, tmp))
+        return out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -1747,6 +2116,8 @@ _MEASURERS = {
     "digest": measure_digest,
     "plan": measure_plan,
     "control": measure_control,
+    "ring": measure_ring,
+    "handoff": measure_handoff,
     "memory": measure_memory,
 }
 
@@ -1906,7 +2277,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, memory)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

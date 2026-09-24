@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # script execution: sys.path[0] is tools/security
     from proc_bounds import put_down_group
 
 ROOT = Path(__file__).resolve().parents[2]
-REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8", "control")
+REQUIRED_PYTHON = ("streampack", "bcab", "bcirq8", "control", "envelope", "manifest")
 DECODE_TIMEOUT = 10.0
 # Each surface's DELIBERATE rejection type, and only that. A blanket tuple
 # (IndexError, KeyError, struct.error, OverflowError, zlib.error...) counted
@@ -48,6 +48,10 @@ _DECLARED_REJECTIONS = {
     "bcirq8": ("builtins", "ValueError"),
     # a control record (G14) is refused with ControlError, carrying the C twin's status name
     "control": ("bcir.abi.control_abi", "ControlError"),
+    # a telemetry envelope (G15) a device publishes is refused with TelemetryError, likewise
+    "envelope": ("bcir.abi.telemetry_envelope", "TelemetryError"),
+    # a shard manifest (G16) a node receives is refused with ShardError, likewise
+    "manifest": ("bcir.abi.shard_manifest", "ShardError"),
 }
 
 
@@ -253,6 +257,47 @@ def _decode_control_sealed(data: bytes) -> Any:
     return decode_control(data)
 
 
+def _envelope_seed() -> bytes:
+    """The larger version-zero envelope (a DataDNA record, 124 bytes): the kind with the most
+    field laws, its fields at their extremes."""
+    from bcir.tests.ring_fixtures import envelope_corpus
+
+    return dict(envelope_corpus())["datadna-extremes"]
+
+
+def _decode_envelope_sealed(data: bytes) -> Any:
+    """Decode a telemetry envelope with its CRC repaired first -- the control surface's lesson:
+    a random mutation dies at the CRC long before a field law, so every mutant is sealed and the
+    header and field laws behind it are explored; the CRC law itself is pinned by the malformed
+    corpus (bcir/tests/ring_fixtures.py)."""
+    from bcir.abi.telemetry_envelope import decode_envelope
+
+    if len(data) >= 4:
+        data = data[:-4] + struct.pack("<I", zlib.crc32(data[:-4]) & 0xFFFFFFFF)
+    return decode_envelope(data)
+
+
+def _manifest_seed() -> bytes:
+    """A version-zero shard manifest binding three shards of a hydrated-layout pack: every
+    header, digest and entry law has a field to break."""
+    from bcir.abi.shard_manifest import partition, split
+    from bcir.tests.handoff_fixtures import synthetic_pack
+
+    return split(synthetic_pack(12), partition(12, 3)).manifest
+
+
+def _decode_manifest_sealed(data: bytes) -> Any:
+    """Decode a shard manifest with its CRC repaired first -- the control surface's lesson: a
+    random mutation dies at the CRC long before a range or length law, so every mutant is sealed
+    and the laws behind it are explored; the CRC law itself is pinned by the malformed corpus
+    (bcir/tests/handoff_fixtures.py)."""
+    from bcir.abi.shard_manifest import decode_manifest
+
+    if len(data) >= 4:
+        data = data[:-4] + struct.pack("<I", zlib.crc32(data[:-4]) & 0xFFFFFFFF)
+    return decode_manifest(data)
+
+
 def _decode_q8_bytes(data: bytes) -> Any:
     from bcir.frontends.models.weights_io import read_q8_decoder
 
@@ -338,6 +383,18 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
         results.append(_seed_failure("control", exc))
     else:
         results.append(_probe("control", _decode_control_sealed, control, rng, mutations))
+    try:
+        envelope = _envelope_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("envelope", exc))
+    else:
+        results.append(_probe("envelope", _decode_envelope_sealed, envelope, rng, mutations))
+    try:
+        manifest = _manifest_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("manifest", exc))
+    else:
+        results.append(_probe("manifest", _decode_manifest_sealed, manifest, rng, mutations))
     return results
 
 

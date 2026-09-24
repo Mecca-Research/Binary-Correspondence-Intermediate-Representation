@@ -12,6 +12,8 @@
 #   X.690 BER/DER decoder                    -- an ASN.1 artifact from a foreign peer
 #   DER -> native StreamPack fast path       -- a projection a peer hands a driver
 #   ControlRecordV1 decoder + resident plane -- a control record from any issuer (G14)
+#   live SPSC ring + TelemetryEnvelopeV0      -- a shared region a peer writes, and the records
+#                                                 a device publishes into it (G15)
 #
 # Each seeds from real Python-rail output so the campaign starts inside the format rather
 # than rediscovering its magic; the BCIRQ8 harness additionally REPAIRS the format's three
@@ -185,6 +187,23 @@ add_target emit "plan-driven ASN.1 encoder" "-max_len=4096" \
 add_target control "control plane" "-max_len=4096" \
   "${C}/fuzz_control_plane.c" "${C}/bcir_control_plane.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"
 
+# The live ring (G15): the envelope decoder over raw bytes (and its canonicality -- a decoded
+# record re-encodes to the input), a HOSTILE region (the geometry repaired, every shared word and
+# slot from the input: no access may leave the region, no call may fail to return), and an
+# honest region driven as a script -- writes, reads, two-phase interleavings, deaths and
+# takeovers -- with the ring's laws asserted after every operation (exact accounting, no torn
+# or phantom record, backpressure never loses or overfills, nothing honest reported stale).
+add_target ring "live ring + telemetry envelope" "-max_len=4096" \
+  "${C}/fuzz_ring.c" "${C}/bcir_ring.c" "${C}/bcir_telemetry_envelope.c" "${C}/bcir_runtime.c"
+
+# The data-plane hand-off (G16): the shard-manifest decoder over raw bytes; a shard set cut from
+# a real pack then tampered with and RESEALED (CRCs, digests and the manifest repaired, so the
+# mutation reaches past every seal) -- only the declared whole may ever reassemble; the pack table
+# driven as a script, its pin accounting, epochs and the immutability of borrowed bytes asserted
+# after every operation; and the per-step freeze, whose every success verifies and may shard.
+add_target handoff "data-plane hand-off" "-max_len=16384" \
+  "${C}/fuzz_handoff.c" "${C}/bcir_handoff.c" "${C}/bcir_shard_manifest.c" "${C}/bcir_hydrate.c" "${C}/bcir_plan.c" "${C}/bcir_control_plane.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/bcir_ring.c" "${C}/bcir_telemetry_envelope.c"
+
 # The StreamPack decoder itself: an artifact handed to the runtime by anyone.
 add_target decoder "decoder" "" \
   "${C}/fuzz_streampack.c" "${C}/bcir_runtime.c"
@@ -300,6 +319,37 @@ for name, blob in record_corpus():                    # every kind, scope and re
     open(os.path.join(d, name.replace("/", "_") + ".bin"), "wb").write(blob)
 for name, blob, _status in malformed_variants():      # one per wire law
     open(os.path.join(d, "malformed_" + name + ".bin"), "wb").write(blob)
+PY
+
+python3 - "${tmp}/corpus_ring" <<'PY' || { echo "  FAIL: live-ring seed corpus"; exit 1; }
+import os, sys
+from bcir.tests.ring_fixtures import envelope_corpus, malformed_envelopes
+d = sys.argv[1]
+for name, blob in envelope_corpus():                  # mode 0: every kind, clock and unit
+    open(os.path.join(d, "env_" + name + ".bin"), "wb").write(b"\x00" + blob)
+for name, blob, _status in malformed_envelopes():     # mode 0: one per wire law
+    open(os.path.join(d, "bad_" + name + ".bin"), "wb").write(b"\x00" + blob)
+for mode in (1, 2):                                   # hostile regions and scripts
+    for seed in range(8):
+        body = bytes((seed * 37 + i * 11) & 0xFF for i in range(512))
+        open(os.path.join(d, f"mode{mode}_{seed}.bin"), "wb").write(bytes([mode]) + body)
+PY
+
+python3 - "${tmp}/corpus_handoff" <<'PY' || { echo "  FAIL: hand-off seed corpus"; exit 1; }
+import os, struct, sys
+from bcir.abi.shard_manifest import split
+from bcir.tests.handoff_fixtures import split_cases, whole_packs
+d = sys.argv[1]
+for i, (whole, ranges) in enumerate(split_cases()[:24]):   # mode 0: real manifests
+    open(os.path.join(d, f"manifest_{i}.bin"), "wb").write(b"\x00" + split(whole, ranges).manifest)
+for i, whole in enumerate(whole_packs()):                  # mode 1: real packs, tamper directives
+    for world in (1, 3):
+        directive = bytes([1, world - 1, i % 5, i % 4]) + struct.pack("<I", 97 * i + 13) + b"\x55"
+        open(os.path.join(d, f"shards_{i}_{world}.bin"), "wb").write(directive + whole)
+for mode in (2, 3):                                        # modes 2-3: table scripts, step graphs
+    for seed in range(8):
+        body = bytes((seed * 29 + k * (mode * 6 + 1)) & 0xFF for k in range(400))
+        open(os.path.join(d, f"mode{mode}_{seed}.bin"), "wb").write(bytes([mode]) + body)
 PY
 
 # The fast path takes the same projections as the X.690 harness -- seed both.

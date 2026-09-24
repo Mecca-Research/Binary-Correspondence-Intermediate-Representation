@@ -742,6 +742,81 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   proves it fires (the deferral law removed turns three rows red). Not claimed: the BCIR UAPI,
   a transport (G15), a signature scheme, capability enforcement beyond the record, replay
   protection beyond sequences, the witness and never-recurring lease ids.
+  S3-B (2026-09-23) landed G15, the live SPSC ring and the version-zero triple the driver
+  roadmap requires before any D2 driver. RED (measured on the parent, 83c6c015): the only shared
+  telemetry ring was the v1 snapshot -- eight records published into four slots handed a reader
+  a lap behind the four survivors and no loss count, and a slot read three fields into a rewrite
+  came back with the fields of two records and no error -- and no ring, envelope, generated
+  table or intake existed on either rail, so every fixture failed by absence (29 / 112 / 140 /
+  140 / 22 / 10 / 70 / 104 / 6 across the nine rows). What landed: `TelemetryEnvelopeV0` (source,
+  session, generation, signal, sequence, the producer's own loss count and a clock with its
+  unit; wire laws in one order on both rails, one spelling per record;
+  `docs/kernel/TELEMETRY_ENVELOPE_ABI.md`), the generated 64-byte-row signal table with the
+  BCIR/vendor/device ID ranges and the unknown-required-signal law, the host intake (a bounded
+  stream table; continuity classified before any refusal by `SequenceTracker`, which the BTLM
+  decoder now expresses too; stale generations refused by G14's `is_stale`), and the ring
+  (`bcir.gem.ring` and the freestanding C11 twin `bcir_ring.{h,c}`; seven one-writer cache
+  lines, a per-slot seqlock under acquire/release publication, BACKPRESSURE or OVERWRITE with
+  exact loss accounting, double-buffered accounting, epochs with takeover of a peer proved dead;
+  `docs/kernel/BCIR_LIVE_RING_ABI.md`), statuses 19-22 appended. Control records ride a
+  BACKPRESSURE control ring, identically on both rails for all 52 G14 scenarios. Outcomes: the
+  nine exact `ring.*` rows 0; `ring.throughput` 26x a `memcpy` of the same bytes on the
+  reference host (INDICATIVE, and dominated there by thread placement: ~13-49x pinned per vCPU
+  pair within one hour, a minimal unchecked queue ~1.1-6x -- so no ring change, including the
+  one-writer-per-line layout's early ~190-217 -> ~127-153 ns A/B, is attributable on that
+  host). The C gate adds
+  ThreadSanitizer (and the race it must report once the atomics are made plain), the
+  seqlock-removed mutant it must fail, and -O0 == -O3 == the oracle; `tools/c/check_ring.py` is
+  the one grading entry point and `tools/testing/faults/ring.json` the committed fault table.
+  Found and fixed in the slice: the live ring's C API claimed three names the v1 emitter emits
+  (renamed while still version zero, with a one-program witness), and a 192-byte control slot
+  could not carry the control ABI's declared 192-byte bound (a CONTROL ring now needs 256-byte
+  slots). The lease-key cache G14 deferred landed with it: a lease's key is derived once at the
+  grant, and leased records verify as fast as root-key ones (C ~3.7 -> ~2.3 us). Not claimed:
+  MPSC, death detection, blocking or wake-up, authentication of what the ring carries, a
+  transport beyond one host, any freeze before the UART and virtio-blk traces.
+  S3-C (2026-09-24) landed G16, the data-plane hand-off, and with it the Stage 3 exit gate.
+  - RED, measured on the parent (1ee34676) with a real harness over the parent's own seam:
+    - `admit(data, len)` admitted 9 of 9 stale packs by default, and 8 of 9 when handed the live
+      maxima;
+    - `dispatch()` ran every stale pack;
+    - a view into a reused buffer dispatched the next step's bytes, and a freed one read freed
+      memory (ASan);
+    - the dynamic-graph backend was a stub, and there was no manifest-of-shards;
+    - with the rails absent, every fixture failed (42 / 90 / 90 / 68 / 80 / 422 / 349 / 392 / 68 /
+      115 / 77 / 18 / 75 across the thirteen rows), and `handoff.dispatch.overhead` was 1.95x.
+  - What landed:
+    - The pack table (`bcir.gem.handoff` and the freestanding `bcir_handoff.{h,c}`;
+      `docs/kernel/BCIR_DATA_PLANE_HANDOFF.md`). Write-once slots with epoch-bearing handles that
+      never wrap; pins, and retirement instead of reuse under a reader; admission through the live
+      plane's `bcir_ctl_admit_pack`, recording the generation and the registry digest; dispatch
+      in place as a plane phase; the state digest.
+    - The per-step freeze (`bcir_hydrate_generations`, byte-identical to `freeze_claims`).
+    - BSHM v0, the manifest-of-shards (`bcir.abi.shard_manifest` and
+      `bcir_shard_manifest.{h,c}`; `docs/kernel/BCIR_SHARD_MANIFEST_ABI.md`): the hydrated-layout
+      law, canonical sub-packs and a frame, one total reassembly predicate.
+    - The C++ RAII seam (`PackArena`, `Reservation`, `PackOwner`, `PackView`, `Borrow`,
+      `GraphBuilder`). `Orchestrator::admit` is no longer virtual, the dynamic-graph backend is
+      real, and the distributed `cut()` is real.
+    - `bcir_ctl_pack_registry_digest`, shared by admission and the manifest.
+    - Statuses 23 (`LIFETIME`) and 24 (`SHARD`) appended.
+  - The Stage 3 exit flow (`runtime/c/test_stage3.h`, and `run_stage3_python` on the oracle)
+    carries one generation through a live control ring, the plane, the pack table, a two-slot
+    telemetry ring and the intake. After the switch it offers the old generation at six
+    boundaries, and each one refuses it. The evidence reconciles the ring's loss with the intake's
+    gaps. It prints 31 identical lines on three rails.
+  - Outcomes: all thirteen exact rows are 0, and `handoff.dispatch.overhead` is ~1.01x (the
+    whole-pack verification moved from every dispatch to `admit()`, once). The C and C++ gates
+    each carry a mutant they must fail, and everything also runs under ASan and UBSan. A
+    libFuzzer target covers manifests, shard sets, table scripts and freezes, and
+    `tools/testing/faults/handoff.json` injects 34 defects, each caught by its own row.
+  - Found and fixed in the slice:
+    - the registry binding had no witness, because in one-plane scenarios the generation check
+      alone refused every stale dispatch; a restarted plane now witnesses it both ways;
+    - the oracle spelled the frame three times, and the public spelling was unmeasured;
+    - the grader tracebacked when the oracle could not build its own corpus.
+  - Not claimed: a cross-node transport, a pack table shared across processes, and reduction
+    across ranks.
 
 ---
 
