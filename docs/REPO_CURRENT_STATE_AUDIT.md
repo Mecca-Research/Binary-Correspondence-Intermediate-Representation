@@ -38,7 +38,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     GEM hydration/scheduling/execution,
     ROP/MAP front-ends + the **cfront C frontend** (full preprocessor, 5-target ABI
     matrix, atomics/fences/inline-asm/port-I/O edges, VLAs, `_BitInt`, `_Complex`,
-    variadics), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
+    variadics; since G10 a points-to analysis over the unit -- escape verdicts, indirect calls
+    narrowed to their targets, and the effect footprint behind `commute`, byte-identical on the
+    C twin, `docs/kernel/BCIR_ESCAPE_ANALYSIS.md`), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
     semantics, strict UART frame ABI with sequence evidence,
     derived metrics, and OTLP/Prometheus-text/Redfish serialization adapters), StreamPack ABI
     (v1 frozen, v2/v3/v4 append-only; the Python encoder's record layouts compiled, byte for byte

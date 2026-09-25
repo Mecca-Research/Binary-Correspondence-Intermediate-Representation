@@ -1278,35 +1278,38 @@ grep -q "^static _BitInt(13) bh(" "${tmp}/link/sb2_lk.c" \
   && echo "  PASS _BitInt-return static keeps its static (multi-paren name scan)" \
   || { echo "  FAIL: a _BitInt return spelling defeated the static keeper"; exit 1; }
 
-# Module-scope effect / commutation analysis (#effects, the C twin of pipeline.own_footprint +
-# commute): per function the global names it reads/writes (callee effects folded in transitively),
-# then the pairwise commute matrix (two readers commute; a writer conflicts with any reader/writer of
-# the same global). bcir-cc --emit-effects must match the oracle's pipeline.effects / commute exactly,
-# spanning a positive commute (read_a <> read_b over disjoint globals) and conflicts (a writer).
-echo "[c-runtime] effect/commutation analysis (bcir-cc --emit-effects): footprints + commute == oracle (#effects)"
-for fx in cfront_effects.c cfront_global_rw.c; do
-  c_fx="$("${tmp}/bcir-cc" --emit-effects "${C}/${fx}")" || { echo "  FAIL: bcir-cc --emit-effects ${fx}"; exit 1; }
-  py_fx="$(FX="${C}/${fx}" python3 -c "
-import os
+# The effect footprint, escape verdicts and indirect-call narrowing of a unit (#effects, G10: the C
+# twin of bcir/frontends/cfront/escape.py). bcir-cc --emit-effects and --emit-escape must print the
+# oracle's reports byte for byte over every corpus unit, the generated units and the forms of
+# bcir/tests/escape_fixtures.py (every declaration kind against every access form, in every storage
+# place); a unit the twin refuses is a failure, except the pinned preprocessor limits. The same rows,
+# with the dynamic commute witness, gate in tools/perf/check_escape.py.
+echo "[c-runtime] effect footprint + escape analysis (bcir-cc --emit-effects/--emit-escape) == oracle over the corpus, generated units and forms (#effects, G10)"
+BCIR_CC="${tmp}/bcir-cc" FXDIR="${tmp}/fx" python3 -c "
+import os, sys
 from bcir.frontends.cfront import compile_unit
-r=compile_unit(open(os.environ['FX']).read(), check_clang=False)
-fns=list(r.lowered.functions)
-def names(rids): return sorted(r.lowered.resources[x].name for x in rids if x in r.lowered.resources)
-out=[]
-for n in fns:
-    e=r.effects[n]
-    out.append(f\"fn={n} reads={','.join(names(e.reads)) or '-'} writes={','.join(names(e.writes)) or '-'}\")
-for i,a in enumerate(fns):
-    for b in fns[i+1:]:
-        out.append(f'commute {a} {b} = {1 if r.commute(a,b) else 0}')
-print('\n'.join(out))")" || { echo "  FAIL: oracle effects ${fx}"; exit 1; }
-  [ "${c_fx}" = "${py_fx}" ] \
-    && echo "  PASS effects ${fx} (footprints + commute oracle == C)" \
-    || { echo "  FAIL: effects ${fx} (C != PY)"; printf '   C :\n%s\n   PY:\n%s\n' "${c_fx}" "${py_fx}"; exit 1; }
-done
-# the gate must show both a commuting pair (1) and a conflict (0), else it has no teeth.
-"${tmp}/bcir-cc" --emit-effects "${C}/cfront_effects.c" | grep -q "commute read_a read_b = 1" \
-  && "${tmp}/bcir-cc" --emit-effects "${C}/cfront_effects.c" | grep -q "= 0" \
+from bcir.tests import escape_fixtures as ef
+units = ef.corpus()
+pairs = [(p, r) for _n, p, _s, r in units]
+os.makedirs(os.environ['FXDIR'], exist_ok=True)
+extra = [(f'gen_{s}.c', ef.generate(s)[0]) for s in ef.SEEDS]
+extra += [(f'forms_{p}.c', src) for p, src in ef.form_units()]
+for name, src in extra:
+    path = os.path.join(os.environ['FXDIR'], name)
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(src)
+    pairs.append((path, compile_unit(src, check_clang=False)))
+eff, esc, n = ef.rail_parity(os.environ['BCIR_CC'], pairs, ef.TWIN_PREPROCESSOR_LIMITS)
+want = len(pairs) - len(ef.TWIN_PREPROCESSOR_LIMITS)
+print(f'  compared {n} of {len(pairs)} units; effects mismatches {eff}; escape mismatches {esc}')
+sys.exit(0 if (eff, esc, n) == (0, 0, want) and len(units) > 100 else 1)
+" && echo "  PASS effects + escape reports byte-identical over every unit (oracle == C)" \
+  || { echo "  FAIL: effects/escape parity (#effects)"; exit 1; }
+# the gate must span a commuting pair (1) and a conflict (0), else it has no teeth; the report is
+# captured, not piped into grep -q (an early exit under pipefail would fail a found pattern)
+fx_out="$("${tmp}/bcir-cc" --emit-effects "${C}/cfront_effects.c")" \
+  || { echo "  FAIL: bcir-cc --emit-effects cfront_effects.c"; exit 1; }
+grep -q "commute read_a read_b = 1" <<<"${fx_out}" && grep -q "= 0$" <<<"${fx_out}" \
   && echo "  PASS effects analysis distinguishes commute (1) from conflict (0)" \
   || { echo "  FAIL: effects gate did not span commute + conflict"; exit 1; }
 

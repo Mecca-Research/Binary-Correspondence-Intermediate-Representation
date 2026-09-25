@@ -1427,6 +1427,105 @@ METRICS: tuple[Metric, ...] = (
         "exact",
         slice_owner="SP-ENC",
     ),
+    # --- G10 (S5-B): escape analysis, indirect-call narrowing and the effect footprint made
+    # sound. Every row is counted by bcir/tests/escape_fixtures.py::measure, which the tests and
+    # tools/perf/check_escape.py grade the same way: the cfront corpus (173 units, 39 declared-
+    # extent local arrays, 22 indirect sites), 24 generated units whose verdicts and targets are
+    # known by construction, 386 forms, and a dynamic witness that runs every drivable pair of
+    # functions in both orders. RED is the parent (8d3aab84, #792's merge) judged by the same
+    # fixtures: it proved nothing private, narrowed no call, and called 119 diverging pairs
+    # commuting (its footprint recorded every store as a read). The corpus counts are what is
+    # NOT yet proved or narrowed, so each falls from the parent's total toward a proved floor --
+    # and, the analysis being sound, a value below its floor is itself a defect (the gate holds
+    # both sides).
+    Metric(
+        "escape.unproved",
+        "escape",
+        "declared-extent local arrays of the cfront corpus (the roadmap's escape candidates, 39) not proved to stay in their activation -- the candidates less those proved nonescaping",
+        39,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every candidate: the analysis is sound (escape.verdict.mismatch, effects.commute.unsound), so each one it proves private is private, and it proves all 39",
+        slice_owner="G10",
+    ),
+    Metric(
+        "icall.unknown",
+        "escape",
+        "indirect call sites of the cfront corpus (22) not narrowed to known functions of the unit: each may reach code the unit cannot see",
+        22,
+        "count",
+        "exact",
+        bound=15,
+        bound_source="the open world: 15 sites call a function pointer, or a member of a struct, that an exported function takes as a parameter -- another unit may pass anything, so no sound analysis narrows them",
+        slice_owner="G10",
+    ),
+    Metric(
+        "icall.unresolved",
+        "escape",
+        "indirect call sites of the cfront corpus (22) not resolved to exactly one function of the unit",
+        22,
+        "count",
+        "exact",
+        bound=16,
+        bound_source="the 15 open-world sites, and cond_local_fp's pointer, which the value of `which` sets to either of two functions; use_local_fp's two sites resolve only under a flow-sensitive analysis",
+        slice_owner="G10",
+    ),
+    Metric(
+        "escape.verdict.mismatch",
+        "escape",
+        "named locals of 24 generated units (73) whose escape verdict is not the one they have by construction -- read in place (nonescaping), lent to a reader (lent), captured into a global (escaping); no verdict counts",
+        73,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the verdict each local has by construction",
+        slice_owner="G10",
+    ),
+    Metric(
+        "icall.target.mismatch",
+        "escape",
+        "indirect call sites of 24 generated units (20) whose narrowed target set is not the one they have by construction; not narrowed counts",
+        20,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the target set each site has by construction",
+        slice_owner="G10",
+    ),
+    Metric(
+        "effects.commute.unsound",
+        "escape",
+        "function pairs of the cfront corpus and the 24 generated units that CompileResult.commute calls commuting while the dynamic witness shows the two orders diverge (every drivable pair, 1,867 decided, both orders in separate processes over shared buffers); needs a C compiler",
+        119,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a footprint that is sound: every divergence the witness can show is a conflict",
+        slice_owner="G10",
+    ),
+    Metric(
+        "effects.parity.mismatch",
+        "escape",
+        "units of the cfront corpus, the 24 generated units and the 4 forms units (200 compared; a unit the twin refuses counts, except the pinned preprocessor limits) whose bcir-cc --emit-effects differs from the oracle's footprint report; needs a C compiler and the checkout's runtime/c",
+        24,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one analysis, both rails, byte for byte",
+        slice_owner="G10",
+    ),
+    Metric(
+        "escape.parity.mismatch",
+        "escape",
+        "units of the cfront corpus, the 24 generated units and the 4 forms units (200 compared) whose bcir-cc --emit-escape differs from the oracle's escape report (on the parent neither rail had one); needs a C compiler and the checkout's runtime/c",
+        200,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one analysis, both rails, byte for byte",
+        slice_owner="G10",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -2484,6 +2583,17 @@ def measure_encode() -> dict[str, float]:
     return out
 
 
+def measure_escape() -> dict[str, float]:
+    """The G10 rows (S5-B): the escape analysis, indirect-call narrowing and effect footprint of
+    the cfront frontend (bcir/tests/escape_fixtures.py::measure, which the tests and
+    tools/perf/check_escape.py grade the same way). The corpus and truth rows need only the
+    interpreter; the witness and parity rows need a C compiler (and the parity rows the
+    checkout's runtime/c) and are NOT-MEASURED without one, never zero by default."""
+    from bcir.tests.escape_fixtures import measure
+
+    return measure()
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2540,6 +2650,7 @@ _MEASURERS = {
     "delta": measure_delta,
     "alias": measure_alias,
     "encode": measure_encode,
+    "escape": measure_escape,
     "memory": measure_memory,
 }
 

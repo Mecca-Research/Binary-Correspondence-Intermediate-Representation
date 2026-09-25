@@ -22,12 +22,8 @@ int wrapper(void){ return reads_g1(); }
 
 
 def _foot(res, fn):
-    names = {rid: r.name for rid, r in res.lowered.resources.items()}
-    eff = res.effects[fn]
-    return (
-        {names[r] for r in eff.reads if r in names},
-        {names[w] for w in eff.writes if w in names},
-    )
+    eff = res.effects[fn]  # an escape.Footprint: the names it reads and writes
+    return set(eff.reads), set(eff.writes)
 
 
 def _compiled():

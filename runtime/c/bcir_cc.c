@@ -20,6 +20,9 @@
  *     --emit-pack      emit the entry function's hydrated StreamPack (binary; use -o)
  *     --emit-link-flags  emit just the linker flags the unit's external-call edges need (one line,
  *                      space-separated, e.g. `-lm`), for build-system consumption (B1)
+ *     --emit-effects   emit each function's read/write footprint + the commutation matrix (G10)
+ *     --emit-escape    emit each function's named locals by escape verdict + its indirect calls'
+ *                      narrowed target sets (G10); both byte-identical to bcir/frontends/cfront/escape.py
  *     --project        print the per-PROJECT verdict line (CLEAN / PARTIAL-FALLBACK / DIRTY) over
  *                      the compiled file set; automatic for a multi-file invocation. The verdict
  *                      string, bucket rules and exit codes (a hard error 1 DOMINATES a fallback 2)
@@ -68,7 +71,7 @@ static void cc_r21_count(const char *funcname, const char *kind, void *ctx) {
 static const char *USAGE =
   "usage: bcir-cc [-I dir] [-D name[=val]] [-U name] [-std=c23] [-E] [-o out]\n"
   "               [--target abi] [--fallback] [--project] [--emit-c] [--emit-claimgraph]\n"
-  "               [--emit-pack] [--emit-link-flags] file.c ...\n"
+  "               [--emit-pack] [--emit-link-flags] [--emit-effects] [--emit-escape] file.c ...\n"
   "  --target abi   data model to lay out for: x86_64-linux (default), aarch64-linux,\n"
   "                 riscv64-linux, x86_64-windows, i386-linux\n"
   "  --fallback     total compile: a construct outside the supported subset exits 2 with\n"
@@ -81,7 +84,10 @@ static const char *USAGE =
   "  --r21 <policy> how a detected use-after-free / double-free (R21, §5.12) gates the compile:\n"
   "                 advisory (default; surfaced, never gates) | fallback (route to LLVM, exit 2)\n"
   "                 | reject (hard verify error, exit 1)\n"
-  "  --emit-effects per-function module-scope effect footprints + the commutation matrix\n"
+  "  --emit-effects per-function read/write footprints (globals, statics, `*` for unnamed memory)\n"
+  "                 + the commutation matrix\n"
+  "  --emit-escape  per-function named locals by escape verdict (nonescaping / lent / escaping)\n"
+  "                 + each indirect call's narrowed target set (`*` = may reach unknown code)\n"
   "  --emit-link-flags  the linker flags the unit's external-call edges need (one space-separated\n"
   "                 line, e.g. -lm; empty for a pure-integer unit) -- for build-system consumption\n";
 
@@ -243,7 +249,7 @@ int main(int argc, char **argv) {
   const char *undefs[MAXD]; int nundef = 0;
   const char *files[256]; int nfiles = 0;
   const char *std = "c23", *out_path = NULL, *target = NULL;
-  int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, emit_lf = 0, fallback = 0;
+  int pp_only = 0, emit_c = 0, emit_cg = 0, emit_pack = 0, emit_fx = 0, emit_esc = 0, emit_lf = 0, fallback = 0;
   int project = 0, linkable = 0;
   r21_policy r21 = R21_ADVISORY;
 
@@ -262,6 +268,7 @@ int main(int argc, char **argv) {
       else { fprintf(stderr, "bcir-cc: unknown --r21 policy '%s' (advisory|fallback|reject)\n", v); return 2; }
     }
     else if (!strcmp(a, "--emit-effects")) emit_fx = 1;
+    else if (!strcmp(a, "--emit-escape")) emit_esc = 1;
     else if (!strcmp(a, "--emit-link-flags")) emit_lf = 1;
     else if (!strcmp(a, "--emit-c")) emit_c = 1;
     else if (!strcmp(a, "--linkable")) linkable = 1;
@@ -285,7 +292,7 @@ int main(int argc, char **argv) {
   if(strcmp(std,"c11")&&strcmp(std,"c17")&&strcmp(std,"c18")&&strcmp(std,"c23")&&strcmp(std,"c2x")){
     fprintf(stderr,"bcir-cc: unsupported -std=%s\n",std);return 2;
   }
-  if(pp_only+emit_c+emit_cg+emit_pack+emit_fx+emit_lf+linkable>1){
+  if(pp_only+emit_c+emit_cg+emit_pack+emit_fx+emit_esc+emit_lf+linkable>1){
     fputs("bcir-cc: select only one output mode\n",stderr);return 2;
   }
   if(emit_pack&&(nfiles!=1||project)){
@@ -380,9 +387,18 @@ int main(int argc, char **argv) {
         fputs("#include \"bcir_quarantine.h\"\n", outf);
       fputs(r.emitted, outf);
       n_clean++;
-    } else if (emit_fx) {
-      static char fx[8192]; bcir_cfront_effects(&r.unit, fx, sizeof fx);
-      fputs(fx, outf);
+    } else if (emit_fx || emit_esc) {
+      /* G10: measure the complete report, then write it whole (never a truncated report) */
+      bcir_host_allocator heap = bcir_host_allocator_default();
+      size_t need = emit_fx ? bcir_cfront_effects(&r.unit, NULL, 0) : bcir_cfront_escape(&r.unit, NULL, 0);
+      char *rep = (need == SIZE_MAX) ? NULL : (char *)bcir_host_allocate(&heap, need + 1u);
+      size_t got = !rep ? SIZE_MAX : emit_fx ? bcir_cfront_effects(&r.unit, rep, need + 1u)
+                                             : bcir_cfront_escape(&r.unit, rep, need + 1u);
+      if (!rep || got != need) {
+        fprintf(stderr, "%s: %s: out of memory\n", path, emit_fx ? "effects" : "escape");
+        bcir_host_deallocate(&heap, rep); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
+      }
+      fputs(rep, outf); bcir_host_deallocate(&heap, rep);
       n_clean++;
     } else if (emit_cg) {
       char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);

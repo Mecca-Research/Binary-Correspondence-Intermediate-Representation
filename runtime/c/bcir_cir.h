@@ -90,6 +90,13 @@ typedef struct bcir_resource {
                               * `a[i][j]` Horner-flattens with RUNTIME strides (no c.const) -- see vla_strides */
   uint32_t vla_strides[3];   /* the per-dim snapshot rids (`__bcir_extK`), the runtime Horner multipliers:
                               * `a[i][j]` -> i*vla_strides[1] + j (dim d's snapshot is the step-d multiplier) */
+  uint8_t  is_array;         /* a declared ARRAY object -- a local, global or compound-literal array of any
+                              * length, one included (a VLA sets is_vla instead): used as a value it is its own
+                              * address (the decay). Read by the escape analysis (bcir_cfront_escape); a decayed
+                              * array PARAMETER is a pointer, not this. */
+  uint8_t  is_pointer;       /* a declared POINTER variable whose resource kind does not say so: a file-scope
+                              * `T *g`, whose slot is modelled as a scalar. A load or store through it touches
+                              * what it holds, not the slot. Read by the escape analysis only. */
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
@@ -137,11 +144,18 @@ typedef struct bcir_claim {
   uint8_t  lifetime;          /* R21 pointer-lifetime event (§5.12): 0 none/use, 1 alloc, 2 free.
                                * OPTIONAL annotation -- excluded from the R13 provenance digest (it does
                                * not change the claim-graph identity); default 0 via new_claim's memset. */
+  uint8_t  truncated;         /* a call whose operands did not all fit rd[]: the extras were evaluated, but
+                               * they are not operands. OPTIONAL annotation, digest-excluded, default 0; the
+                               * escape analysis refuses a unit holding one (it cannot see those operands). */
   char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
 } bcir_claim;
 
 /* A static-local variable (static storage duration: a once-only constant init). */
-typedef struct bcir_static { char name[BCIR_CIR_NAME]; long long init; } bcir_static;
+typedef struct bcir_static {
+  char name[BCIR_CIR_NAME];
+  long long init;
+  uint32_t rid;               /* its resource (the escape analysis names it `function.name`) */
+} bcir_static;
 
 /* Hosted-frontend metadata retained only so verified-C emission and diagnostics can
  * reproduce source spellings and recovered dynamic bounds. The freestanding core
@@ -172,6 +186,9 @@ typedef struct bcir_func {
   uint8_t  static_fn;         /* source `static` on the definition (internal linkage). The default emit
                                * is static regardless; --linkable keeps `static` only when this is set
                                * (source-static honoring, the oracle's LoweredFunc.static_fn twin). */
+  uint8_t  addr_in_init;      /* a file-scope initializer names this function (an ops table `{ handler }`):
+                               * its address is taken, so callers the unit cannot see may reach it (the
+                               * oracle's LoweredUnit.init_refs twin; read by the escape analysis) */
   uint32_t return_rid; uint8_t has_return;
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */

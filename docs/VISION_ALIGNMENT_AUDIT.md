@@ -124,6 +124,12 @@ not promoted to driver, transport, or hardware evidence.
   `volatile` and fences, a barriered claim's fences on both. R12 holds each fact on both
   backends, LLVM's own alias analysis proves every declared-disjoint pair from the scopes
   alone, and every self-check runs the aliasing the claim declares.
+- The cfront frontend knows what a function touches (G10, S5-B). One points-to analysis over
+  the unit, on both rails, proves all 39 of the corpus's declared-extent local arrays private
+  and narrows 7 of its 22 indirect call sites to known functions. It also rebuilt the footprint
+  behind `CompileResult.commute`, which had recorded every store as a read. A dynamic witness
+  that runs every pair in both orders finds none of 1,867 decided pairs reported as commuting
+  while diverging (119 on the parent).
 
 ### Still open
 

@@ -1001,6 +1001,62 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       `_Writer` packed it (L14). The corpus's "a generator where a sequence belongs" had never
       been built; it now holds a generator, a one-pass iterable and one whose `len()` is short,
       and four faults are caught only by them.
+  S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
+  a sound effect footprint behind `CompileResult.commute`.
+  - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
+    - the footprint recorded every store as a read of its base (`c.store rd=(base, [index,]
+      value) wr=()`), so writes through a pointer, to a static and to the heap were invisible;
+    - the witness shows 119 pairs reported as commuting that diverge;
+    - the rails disagreed on 24 of 200 units, and the twin had no escape report;
+    - no local was proved private and no indirect site was narrowed.
+  - What landed (`bcir/frontends/cfront/escape.py`, the twin's `esc_*` in
+    `runtime/c/bcir_cfront.c`, `bcir-cc --emit-effects` / `--emit-escape`):
+    - one points-to analysis over the unit: Andersen's, open world, monotone and so independent of
+      the order the claims are visited in;
+    - three answers from it: escape verdicts for named locals, target sets for indirect sites
+      (added to the call graph), and the footprint;
+    - the footprint's rules: every store is a write, a static is `function.name`, the heap is one
+      object per allocating function, a pointer made from an integer points anywhere, and an
+      ops-table callback has callers the unit cannot see;
+    - a device access is decided by the access's base resource, not by how the claim was spelled;
+    - a call with more operands than a twin claim holds is refused on both rails.
+  - The judges share no code with the analysis:
+    - generated units whose verdicts and targets are known by construction;
+    - a dynamic witness that runs every pair of functions in both orders, in separate processes;
+    - 386 forms of every declaration kind against every access form, in every storage place.
+  - Outcomes:
+    - `escape.unproved` 39 → 0: every candidate is proved nonescaping;
+    - `icall.unknown` 22 → 15 and `icall.unresolved` 22 → 18, of 22 sites. 7 sites are narrowed and 4
+      resolved. The 15 unknown are the open world's floor: each calls a pointer an exported
+      function takes as a parameter;
+    - `escape.verdict.mismatch` 73 → 0 and `icall.target.mismatch` 20 → 0;
+    - `effects.commute.unsound` 119 → 0, over 1,867 decided pairs;
+    - `effects.parity.mismatch` 24 → 0 and `escape.parity.mismatch` 200 → 0;
+    - `tools/testing/faults/escape.json` injects 26 defects, each caught by its own row;
+    - the analysis costs about 5% of `compile_unit`'s time over the corpus (0.09 s of 1.7 s), and 0.09 s on the 7,630-claim scale unit;
+    - `native.*` is untouched: its rows import no cfront module.
+  - Found and fixed in the slice:
+    - the two rails visited sibling expressions in different orders, and the first indirect-call
+      rule decided once from a partial target set, so the rails' answers differed. Every rule
+      now only grows its sets;
+    - the twin named compound literals per unit where the oracle names them per function;
+    - the witness saw `_BitInt` padding bits as a divergence, until it hashed integers by value;
+    - the first RED leaned on the lowering it judged (`init_refs`), until the witness read the
+      AST;
+    - the first fault sweep caught 18 of 19: dropping static locals from the footprint fired only
+      the parity row, because no two generated functions shared a static (L11);
+    - the parity rows skipped units the twin refused, so a twin that reported on nothing passed
+      both (L2);
+    - the harness admits a zero baseline only on a guard row, and the corpus counts rose from
+      zero. They now count what is not yet proved or narrowed, falling toward proved floors, and
+      the gate holds each floor from below as well: a count under its floor is an unsound claim;
+    - the forms sweep found two defects of the twin's port that the corpus, the generated units
+      and 300 fuzz programs could not show: a file-scope pointer was touched in place, and an
+      index load through a volatile pointer was read as an ordinary load (L14, L22).
+  - Not claimed: flow, context and field sensitivity; the contents of global initializers;
+    type punning; a volatile access that neither frontend carries the qualifier to (a volatile
+    member, a volatile global, a global or member pointer to volatile), queued as a frontend
+    follow-up; and one heap object per allocating function.
 
 ---
 

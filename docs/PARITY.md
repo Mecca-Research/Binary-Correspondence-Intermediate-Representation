@@ -225,7 +225,8 @@ closed).
 | line-map `origin` (`In file included from …` / `includedFrom`) | `bcir_diag.c` origin path | `test_diagnostic_include_stack_origin_dual_rail` |
 | parser recovery (`DiagnosticReport.render` over N) | `bcir_diag_report_render` | `test_diagnostic_error_recovery_report_dual_rail` |
 | scalar file-scope global read + write | `bcir_cfront.c` (`c.copy` to the global rid, emitted by name) | `cfront_global_rw.c`; `test_scalar_globals_read_write_dual_rail` |
-| `pipeline.own_footprint` + `commute` | `bcir_cfront_effects` (`bcir-cc --emit-effects`) | `#effects` block; `test_effect_commutation_analysis_dual_rail` |
+| `escape.analyze` + `effects_report` (the G10 footprint behind `commute`) | `bcir_cfront_effects` (`bcir-cc --emit-effects`) | `#effects` block (every corpus unit, the generated set and the forms; a unit the twin refuses fails, except the pinned preprocessor limit); `test_escape_and_effects_reports_are_byte_identical_over_the_corpus`; row `effects.parity.mismatch` |
+| `escape.escape_report` (escape verdicts + narrowed indirect targets, G10) | `bcir_cfront_escape` (`bcir-cc --emit-escape`) | same; `test_escape_refusal_and_its_boundary_agree_across_rails`; row `escape.parity.mismatch` |
 
 **Delegated (the two-truth line — in the oracle only, by design):** the IPO **cost** model
 (`compose.summarize`/`plan_composite`'s `worst`/`expected`/`reused`) and all K_BCIR cost/plan/RCSP

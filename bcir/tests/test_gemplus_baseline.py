@@ -392,3 +392,36 @@ def test_the_alias_rows_are_exact_and_the_llvm_judged_ones_measured_or_not():
         else:
             expected = "GAIN"
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
+
+
+def test_the_escape_rows_are_exact_and_the_compiler_rows_measured_or_not():
+    """G10 / S5-B: escape analysis, indirect-call narrowing and the effect footprint. The corpus
+    and truth rows need only the interpreter and the checkout's corpus, so they are measured; the
+    witness and parity rows need a C compiler and are NOT-MEASURED without one -- never zero by
+    default. Every measured row moved from the parent: what is not yet proved or narrowed fell from
+    the parent's totals toward a proved floor, the mismatch rows to zero. The gate
+    (`tools/perf/check_escape.py`) holds every row, and its floors are the bounds declared here: a
+    sound analysis cannot go under one, and every row but `icall.unresolved` sits on it."""
+    from bcir.tests import escape_fixtures as ef
+    from tools.perf.check_escape import BOUNDS
+    from tools.perf.gemplus_baseline import METRICS, measure_escape
+
+    declared = [m for m in METRICS if m.group == "escape"]
+    assert [m.key for m in declared] == list(ef.ROWS)
+    assert all(m.kind == "exact" and m.slice_owner == "G10" for m in declared)
+    assert all(m.lower_is_better and m.bound is not None for m in declared)
+    assert set(BOUNDS) == set(ef.ROWS)
+    assert all(BOUNDS[m.key][0] == m.bound for m in declared), BOUNDS
+    measured = measure_escape()
+    assert set(ef.ROWS) - set(ef.CC_ROWS) <= set(measured), measured
+    assert set(measured) <= set(ef.ROWS), measured
+    for metric in declared:
+        if metric.key in measured:
+            value = measured[metric.key]
+            assert value >= metric.bound, (metric.key, value)  # under a proved floor: unsound
+            if metric.key != "icall.unresolved":  # two sites resolve only flow-sensitively
+                assert value == metric.bound, (metric.key, value)
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for metric in declared:
+        expected = "GAIN" if metric.key in measured else "NOT-MEASURED"
+        assert rows[metric.key]["verdict"] == expected, rows[metric.key]

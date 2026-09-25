@@ -65,20 +65,24 @@ run_san_engine() {  # <key> <label> <san-binary>
   local key="$1" label="$2" bin="$3" fx errf rc
   engines_ran=$((engines_ran+1))   # an engine actually built + is running the twin -- the gate has teeth
   local nfix; nfix=$(printf '%s\n' ${FIXTURES} | wc -l)
-  echo "[sanitize] ${label}: all ${nfix} cfront_*.c fixtures through the sanitized twin"
-  local nfx=0 ffail=0
+  echo "[sanitize] ${label}: all ${nfix} cfront_*.c fixtures through the sanitized twin (compile + the G10 reports)"
+  local nfx=0 ffail=0 mode
   for fx in ${FIXTURES}; do
     nfx=$((nfx+1)); errf="${tmp}/fxerr_${key}.txt"
-    "${bin}" "${C}/${fx}" >/dev/null 2>"${errf}"; rc=$?
-    # A clean parse error is rc 1 with no sanitizer text (the adversarial deep-nest / lexer-tail fixtures
-    # deliberately PARSE-ERR -- "nesting too deep" / "input too large" -- which is the CORRECT, crash-free
-    # behavior, not a failure). Only a raw crash (rc>=128: SIGSEGV/SIGABRT not caught by ASan) OR any
-    # sanitizer diagnostic (incl. ASan's rc-1 `stack-overflow` DEADLYSIGNAL, caught by the grep) is a FAIL.
-    if [ "${rc}" -ge 128 ] || grep -qiE "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error|heap-buffer-overflow|global-buffer-overflow|stack-overflow|use-after-free|stack-buffer|out of bounds" "${errf}"; then
-      echo "  FAIL: ${label} sanitizer diagnostic on fixture ${fx} (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; ffail=1; fail=1
-    fi
+    # each fixture is compiled, then run through the escape analysis's two reports (--emit-effects /
+    # --emit-escape, G10): the analysis is code only those modes reach
+    for mode in "" --emit-effects --emit-escape; do
+      "${bin}" ${mode:+"${mode}"} "${C}/${fx}" >/dev/null 2>"${errf}"; rc=$?
+      # A clean parse error is rc 1 with no sanitizer text (the adversarial deep-nest / lexer-tail fixtures
+      # deliberately PARSE-ERR -- "nesting too deep" / "input too large" -- which is the CORRECT, crash-free
+      # behavior, not a failure). Only a raw crash (rc>=128: SIGSEGV/SIGABRT not caught by ASan) OR any
+      # sanitizer diagnostic (incl. ASan's rc-1 `stack-overflow` DEADLYSIGNAL, caught by the grep) is a FAIL.
+      if [ "${rc}" -ge 128 ] || grep -qiE "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error|heap-buffer-overflow|global-buffer-overflow|stack-overflow|use-after-free|stack-buffer|out of bounds" "${errf}"; then
+        echo "  FAIL: ${label} sanitizer diagnostic on fixture ${fx}${mode:+ ${mode}} (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; ffail=1; fail=1
+      fi
+    done
   done
-  [ "${ffail}" -eq 0 ] && echo "  PASS ${label} fixtures (${nfx} cfront_*.c, no ASan/UBSan diagnostic)"
+  [ "${ffail}" -eq 0 ] && echo "  PASS ${label} fixtures (${nfx} cfront_*.c x compile/--emit-effects/--emit-escape, no ASan/UBSan diagnostic)"
 
   echo "[sanitize] ${label}: bounded fuzz campaign (${N_VALID} valid + ${M_MALFORMED} malformed, seed ${FUZZ_SEED})"
   # Drive the EXISTING generators (no new generator): the rich valid-program generator in
