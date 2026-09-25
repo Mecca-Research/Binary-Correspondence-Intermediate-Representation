@@ -226,7 +226,7 @@ class _Unit:
         # MEMORY rids: those whose storage the program addresses -- written by no claim as a
         # result (an array, a parameter, a global stored to), or a load/store/address-of/dispatch
         # base, or a declared VLA. Only these are reported as local objects.
-        self.memory = {}
+        self.memory_rids = {}
         for name, lf in self.functions.items():
             written = {w for c in lf.claims for w in c.wr}
             bases = {
@@ -238,7 +238,7 @@ class _Unit:
             vlas = {c.wr[0] for c in lf.claims if c.op == "c.vladecl" and c.wr}
             used = {r for c in lf.claims for r in (*c.rd, *c.wr)}
             used |= self.returns[name] | self.conditions[name] | set(self.params[name])
-            self.memory[name] = {r for r in used if r not in written} | bases | vlas
+            self.memory_rids[name] = {r for r in used if r not in written} | bases | vlas
 
     def node(self, fn: str, rid: int):
         """The storage node of `rid` in `fn`, or a constant object for a string literal / function
@@ -727,7 +727,7 @@ def analyze(lowered) -> EscapeResult:
     severity = {v: k for k, v in enumerate(VERDICTS)}
     for fn, lf in u.functions.items():
         names = u.local_names[fn]
-        mem = u.memory[fn]
+        mem = u.memory_rids[fn]
         per: dict = {}
         for rid, lname in names.items():
             if rid in mem:  # one name in two scopes: the more severe verdict stands for both
