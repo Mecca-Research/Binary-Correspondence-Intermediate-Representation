@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field, replace
 
 from ...channels import host_channel
-from ...kbcir.compose import Effect, plan_composite, summarize
+from ...kbcir.compose import plan_composite, summarize
 from ...kbcir.cost import Theta
 from ...kbcir.realize import optimize
 from ...kbcir.weights import PERF
@@ -32,13 +32,8 @@ from .cpp import CPPError, preprocess
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
 from .emit import emit_function
 from .linkflags import derive_link_flags, format_link_flags
-from .lower import CLowerError, LoweredUnit, lower_unit, own_footprint
-
-
-# module-scope resource rids (file-scope globals + string-literal globals; see lower_unit) -- the
-# only state shared *between* functions, so the alias/effect footprint is restricted to these for the
-# inter-procedural commutation analysis (per-function local temps live in disjoint rid ranges).
-_SHARED_RID = 900000
+from .escape import analyze as analyze_escape
+from .lower import CLowerError, LoweredUnit, lower_unit
 
 
 def _diag_from(e: Exception, phase: str) -> SourceDiagnostic:
@@ -58,7 +53,10 @@ class CompileResult:
     emitted: dict = field(default_factory=dict)  # fn -> C text
     explain: dict = field(default_factory=dict)  # fn -> bcir-explain text
     attestation: dict = field(default_factory=dict)  # fn -> R12/R13/R17/R18 attestation dict
-    effects: dict = field(default_factory=dict)  # fn -> Effect (global read/write footprint)
+    effects: dict = field(default_factory=dict)  # fn -> escape.Footprint (read/write names, `*`)
+    escape: object = (
+        None  # escape.EscapeResult: footprints, escape verdicts, narrowed indirect calls
+    )
     ipo: dict = field(default_factory=dict)  # inter-procedural plan: worst/expected/leaves/reused
     diagnostics: list = field(default_factory=list)  # R1–R18 Diagnostics (empty == clean)
     lifetime_diagnostics: list = field(
@@ -101,9 +99,10 @@ class CompileResult:
         return self.equivalence == "match"
 
     def commute(self, a: str, b: str) -> bool:
-        """Whether functions `a` and `b` are independent -- their alias/effect footprints over shared
-        (module-scope) state do not conflict (no RAW/WAR/WAW), so the inter-procedural scheduler may
-        reorder or overlap them. Two readers of the same global commute; a writer does not."""
+        """Whether functions `a` and `b` are independent -- their footprints do not conflict (no
+        RAW/WAR/WAW), so the inter-procedural scheduler may reorder or overlap them. Two readers of
+        the same global commute; a writer does not; memory reached through an unknown pointer (`*`)
+        conflicts with everything (`escape.Footprint`)."""
         return not self.effects[a].conflicts(self.effects[b])
 
 
@@ -254,37 +253,13 @@ def compile_unit(
     # `res.diagnostics`, so it couples to the cross-rail `ok` parity.
     res.diagnostics += cfront_unit_claim_ids_unique(lowered)
 
-    # --- alias/effect footprint per function (over shared/module-scope state) -- the basis for
-    #     commutation/independence. Each function's own footprint is folded with its callees'
-    #     (transitively, recursion-guarded) so a wrapper inherits what it calls. ---
-    _own = {name: own_footprint(lf, _SHARED_RID) for name, lf in lowered.functions.items()}
-    # §5.14 Phase 2 (indirect-call effect): a function that DISPATCHES through a function pointer
-    # (c.call.indirect / c.call.imember) may reach any module-scope global through the unknown
-    # callee, so its footprint conservatively includes EVERY shared rid -- without this, commute()
-    # would wrongly reorder an indirect dispatcher past a global writer. The declared callee TYPE
-    # rides the claim (`callee_sig`); the effect set is the conservative half of the same record.
-    _all_shared = frozenset(rid for rid in lowered.resources if rid >= _SHARED_RID)
-    _dispatches = {
-        name: any(c.op == "c.call.indirect" or c.op.startswith("c.call.imember") for c in lf.claims)
-        for name, lf in lowered.functions.items()
-    }
-
-    def _folded(name: str, seen: frozenset) -> tuple:
-        if name not in _own or name in seen:
-            return frozenset(), frozenset()  # external/opaque callee or a recursion guard
-        seen = seen | {name}
-        reads, writes = set(_own[name][0]), set(_own[name][1])
-        if _dispatches.get(name):
-            reads |= _all_shared
-            writes |= _all_shared
-        for callee, _actuals in lowered.functions[name].calls:
-            cr, cw = _folded(callee, seen)
-            reads |= cr
-            writes |= cw
-        return frozenset(reads), frozenset(writes)
-
-    for name in lowered.functions:
-        res.effects[name] = Effect(*_folded(name, frozenset()))
+    # --- the effect footprint, escape and indirect-call narrowing (G10): one points-to analysis over
+    #     the whole unit. A store is `c.store rd=(base,[index,]value) wr=()`, so a footprint that took
+    #     its writes from `wr` recorded every store as a READ; the analysis writes what the base may
+    #     point to, names a static local, and folds the callees an indirect call can reach (all of
+    #     them when its pointer may hold an unknown function). ---
+    res.escape = analyze_escape(lowered)
+    res.effects = dict(res.escape.footprints)
 
     # --- R18 + IPO: the inter-procedural call graph via plan_composite. Each function is summarized
     #     once (plan-once); a call whose actuals are cost-compatible with the callee's formals reuses
@@ -397,13 +372,8 @@ def _attest(res: CompileResult, fn: str, target: str, link_flags: str = "") -> d
     fn_diags = [d for d in res.diagnostics if d.message.startswith(f"{fn}:") or d.law == "R18"]
     eff = res.effects.get(fn)
 
-    def _names(rids):
-        return (
-            ", ".join(
-                sorted(res.lowered.resources[r].name for r in rids if r in res.lowered.resources)
-            )
-            or "-"
-        )
+    def _names(names):
+        return ", ".join(sorted(names)) or "-"
 
     return {
         "function": fn,

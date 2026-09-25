@@ -108,14 +108,25 @@ void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
 void bcir_cfront_canon_with_allocator(const bcir_unit *u, char *buf, size_t n,
                                       const bcir_host_allocator *allocator);
 
-/* The module-scope effect / commutation analysis (the C twin of pipeline.own_footprint + commute):
- * for each function a `fn=<name> reads=<globals|-> writes=<globals|->` line (its alias/effect
- * footprint over file-scope globals, callee effects folded in transitively, names sorted), then a
- * `commute <a> <b> = 0|1` line per function pair (1 iff their footprints don't conflict -- two
- * readers commute, a writer conflicts with any reader/writer of the same global). */
-void bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n);
-void bcir_cfront_effects_with_allocator(const bcir_unit *u, char *buf, size_t n,
-                                        const bcir_host_allocator *allocator);
+/* G10 -- the escape analysis, indirect-call narrowing and effect footprint of a unit (the C twin of
+ * bcir/frontends/cfront/escape.py: the same Andersen analysis and the same reports, byte for byte).
+ * bcir_cfront_effects writes, per function, `fn=<name> reads=<names|-> writes=<names|->` -- the memory
+ * it and everything it can call (directly or through a narrowed pointer) read and write: a global's
+ * name, a static local's `fn.name`, `*` for memory the unit cannot name -- then `commute <a> <b> = 0|1`
+ * for each pair (1 iff neither writes what the other reads or writes; `*` conflicts with any name).
+ * bcir_cfront_escape writes, per function, `fn=<name> nonescaping=.. lent=.. escaping=.. icalls=..`:
+ * its named automatic locals by verdict (never crosses a call / crosses one / reachable from outside its
+ * activation) and each indirect call's target set (`a,b`, or `*` when it may reach unknown code).
+ * A unit with a call carrying more operands than a claim holds is REFUSED (`truncated=1`, every
+ * footprint `*`). Both return the complete report's length (snprintf semantics: at most n-1 bytes plus
+ * a NUL are written; buf may be NULL to measure), or SIZE_MAX when an allocation failed (buf is then
+ * empty). */
+size_t bcir_cfront_effects(const bcir_unit *u, char *buf, size_t n);
+size_t bcir_cfront_effects_with_allocator(const bcir_unit *u, char *buf, size_t n,
+                                          const bcir_host_allocator *allocator);
+size_t bcir_cfront_escape(const bcir_unit *u, char *buf, size_t n);
+size_t bcir_cfront_escape_with_allocator(const bcir_unit *u, char *buf, size_t n,
+                                         const bcir_host_allocator *allocator);
 
 /* B1: derive the linker flags a unit's external-call edges need (e.g. `c.call.libm:sqrt` -> `-lm`),
  * written as one space-separated, deduped, STABLY-SORTED line to `buf` (empty for a pure-integer

@@ -574,7 +574,7 @@ carries two shared classes — G8's fused movement kernels. What changes besides
 barrier reach LLVM, the refusals replace miscompiles, and every self-check executes the aliasing
 it claims.
 
-### G10 — escape analysis and indirect-call target narrowing
+### G10 — escape analysis and indirect-call target narrowing — LANDED (S5-B, 2026-09-25)
 
 *New, from the same triage. Follows G6 — escape analysis over typed regions beats it over the
 opaque claim DAG.*
@@ -592,11 +592,28 @@ are missing and are worth having on their own.
   `c.call.indirect`. Narrowing it to a single admitted target over BCIR's own declared call graph
   turns an opaque effect edge into a known one, which unblocks fusion and reordering across it.
 
-| Gate | Target |
-|---|---|
-| `exact` Resources proved non-escaping on the cfront corpus | a stated count, rising |
-| `exact` Indirect edges resolved to exactly one target | a stated count, rising |
-| `ratio` `native.*` | must not regress |
+| Gate | Before | Outcome (harness row, over the cfront corpus and the fixtures of `bcir/tests/escape_fixtures.py`) |
+|---|---|---|
+| `exact` Resources proved non-escaping on the cfront corpus | none proved | **met, at its bound** — all 39 declared-extent local arrays: `escape.unproved` 39 → **0** |
+| `exact` Indirect edges resolved to exactly one target | none narrowed | **met** — 4 of the corpus's 22 sites resolved and 7 narrowed to known functions. `icall.unknown` 22 → **15** sits at the open world's floor: each of the other 15 calls a pointer an exported function takes as a parameter. `icall.unresolved` 22 → **18**, against a floor of 16: two sites resolve only under a flow-sensitive analysis |
+| `ratio` `native.*` | see baseline | **must not regress: held by construction** — the slice changes the cfront frontend and its C twin, and no module the four rows import or compile |
+| `exact` The footprint behind `commute` is sound | a store read as a read; no write through a pointer, to a static or to the heap | **met** — `effects.commute.unsound` 119 → **0** over 1,867 pairs a dynamic witness decides |
+| `exact` The verdicts and targets are the constructed ones | none reported | **met** — `escape.verdict.mismatch` 73 → **0**, `icall.target.mismatch` 20 → **0** over 24 generated units |
+| `exact` Both rails agree | the rails disagreed on 24 units and the twin had no escape report | **met** — `effects.parity.mismatch` 24 → **0**, `escape.parity.mismatch` 200 → **0** over 200 units |
+
+What landed (S5-B; the reference is [`BCIR_ESCAPE_ANALYSIS.md`](../kernel/BCIR_ESCAPE_ANALYSIS.md)):
+
+- **One analysis behind three answers** (`bcir/frontends/cfront/escape.py`, and the twin's `esc_*`
+  in `runtime/c/bcir_cfront.c`). It is Andersen's analysis over the whole unit, in an open world,
+  and it replaces the footprint `CompileResult.commute` read. That footprint recorded every store
+  as a read of its base, so two functions racing on one array were reported to commute. Both rails
+  were wrong the same way, and they disagreed on 24 units besides.
+- **Measured against a judge that shares no code with it.** Generated units carry their verdicts
+  and targets by construction, a dynamic witness runs every pair of functions in both orders, and
+  386 forms cover every declaration kind against every access form in every storage place. The
+  forms found two defects of the twin's port that the corpus lacked the constructs to show.
+- **`native.*` is untouched.** The rows emit their kernels through `bcir.bench`, which imports no
+  cfront module and compiles no twin source.
 
 
 ### G11 — `ExecutionPlanV1`: the plan as bytes — **landed (S1-C, 2026-09-12)**
@@ -1157,7 +1174,7 @@ Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5             
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16                  ALL LANDED: G14 (S3-A); G15 (S3-B); G16 (S3-C) — exit gate met
 Stage 4  performance program               G17, G18                         ALL LANDED: G17 (S4-A); G18 (S4-B) — exit gate met; the encoder compiled (SP-ENC)
-Stage 5  movement, alias, escape           G8, G9 remainder, G10        G9 LANDED (S5-A); G10, G8 open
+Stage 5  movement, alias, escape           G8, G9 remainder, G10        G9 LANDED (S5-A); G10 LANDED (S5-B); G8 open
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```
 

@@ -664,42 +664,6 @@ def callee_signature(fct) -> str:
     return f"{nm(fct.of)}({', '.join(nm(p) for p in fct.params)})"
 
 
-def own_footprint(lf, shared_min: int = 900000) -> tuple:
-    """The function's *own* alias/effect footprint over shared (module-scope) resources -- the global
-    rids it reads and writes directly (callee effects are folded in by the caller). Writes come from
-    claim results (every store/copy of a global is a claim, so writes are exact). Reads come from
-    claim operands *plus* the rids referenced by control conditions and `return`, which name a value
-    without emitting a read claim -- so the read set stays sound for a bare `return g;` / `if (g)`."""
-    reads = {r for c in lf.claims for r in c.rd if r >= shared_min}
-    writes = {w for c in lf.claims for w in c.wr if w >= shared_min}
-    if lf.return_rid is not None and lf.return_rid >= shared_min:
-        reads.add(lf.return_rid)
-
-    def walk(nodes):
-        for n in nodes:
-            if isinstance(n, ReturnNode):
-                if n.rid is not None and n.rid >= shared_min:
-                    reads.add(n.rid)
-            elif isinstance(n, IfNode):
-                if n.cond >= shared_min:
-                    reads.add(n.cond)
-                walk(n.then)
-                walk(n.els)
-            elif isinstance(n, WhileNode):
-                if n.cond >= shared_min:
-                    reads.add(n.cond)
-                walk(n.cond_block)
-                walk(n.body)
-                walk(n.step)
-            elif isinstance(n, SwitchNode):
-                if n.disc >= shared_min:  # the discriminant is a read
-                    reads.add(n.disc)
-                walk(n.body)
-
-    walk(lf.body)
-    return frozenset(reads), frozenset(writes)
-
-
 @dataclass
 class LoweredFunc:
     """One C function lowered: its claim-graph `Module`, the value/SSA bookkeeping the emitter needs,
@@ -766,6 +730,10 @@ class LoweredUnit:
     #   with constant inits: ints, signed ints, float/string
     #   spellings; extern -> a declaration; static -> kept
     #   file-local). None == not renderable in this slice.
+    init_refs: frozenset = frozenset()  # every identifier a file-scope initializer names: a
+    #   function among them has its address taken (an ops table
+    #   `struct ops t = { handler };`) -- the escape analysis
+    #   then assumes callers it cannot see
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -3285,7 +3253,23 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         compose_functions=compose_functions,
         resources=resources,
         globals_decl=tuple(gdecls),
+        init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),
     )
+
+
+def _names_in(node) -> list:
+    """Every identifier (`cast.Name`) inside an initializer expression tree."""
+    out: list = []
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, cast.Name):
+            out.append(n.ident)
+        elif isinstance(n, (tuple, list)):
+            stack.extend(n)
+        elif dataclasses.is_dataclass(n) and not isinstance(n, type):
+            stack.extend(getattr(n, f.name) for f in dataclasses.fields(n))
+    return out
 
 
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:

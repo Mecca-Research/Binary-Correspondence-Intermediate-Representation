@@ -220,6 +220,7 @@ _MODULES = [
     "bcir.tests.test_cfront_diagnostics",
     "bcir.tests.test_cfront_abi",
     "bcir.tests.test_cfront_effects",
+    "bcir.tests.test_escape_analysis",
     "bcir.tests.test_cfront_fallback",
     "bcir.tests.test_cfront_ipo",
     "bcir.tests.test_cfront_fuzz",

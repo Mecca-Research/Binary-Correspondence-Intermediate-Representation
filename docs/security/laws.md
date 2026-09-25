@@ -374,6 +374,12 @@ injects 29 defects, each one law on one rail:
 
 The first sweep caught 26. Each miss was a witness that could not see its law
 (L11). After the fixes, all 29 fire their own row.
+S5-B instance (2026-09-25): the G10 parity rows skipped every unit the twin
+refused. A twin whose every report failed therefore compared nothing, and both rows
+read 0. A refusal now counts on the row whose report failed. The one exception is
+the pinned preprocessor limit (`escape_fixtures.TWIN_PREPROCESSOR_LIMITS`), and the
+parity test holds that pin exact: a pinned unit that starts to compile fails it.
+Fault: `Twin driver: every report fails, so the twin reports on nothing`.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -730,6 +736,14 @@ S5-A instances (2026-09-25): three gates that could not fire where they had to.
   malformed TBAA tag -- passed. Each forgery now names the finding it must produce
   (`alias_fixtures.FORGERY_FINDS`); the family's name where the parent's own R12
   already had that family, so the parent is credited where it fired.
+S5-B instance (2026-09-25): the first sweep of `tools/testing/faults/escape.json`
+caught 18 of 19. A fault that dropped static locals from the footprints fired only
+the parity row, not the witness row it names. No two generated functions touched one
+static, so no pair had two orders that only the static told apart. Each generated
+unit now ends with two exported functions that differ only through a static local of
+a helper both call. The text is fixed and follows the random functions, so the truths
+are unchanged. Witness:
+`test_the_witness_tells_apart_two_orders_only_a_shared_static_separates`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1023,6 +1037,19 @@ Witnesses:
 `test_an_array_is_walked_once_as_the_writer_walks_it`, the generator and `_Once` forgeries of
 `encode_fixtures`, and four faults in `tools/testing/faults/encode.json` that nothing else in
 the corpus catches.
+S5-B instances (2026-09-25): two decisions of the G10 analysis were read from how a lowering
+spelled something, and the two lowerings spell it differently.
+- "Is this a device access" was the claim's domain. The oracle marks `p[i]` through a
+  `volatile T *` MMIO; the twin lowers it as an ordinary load. One predicate over the
+  access's base resource (`escape._device`, `esc_device`) now decides it on both rails. The
+  oracle's lowering always marks such a load, so the base half is unobservable through it;
+  its witness re-spells the claim
+  (`test_the_base_resource_decides_a_device_access_not_the_claims_spelling`).
+- "Is this variable touched in place or read through" came from the twin's resource kind,
+  and the twin models a file-scope pointer's slot as a scalar. The oracle read the
+  declaration. The twin now reads the declaration too (`bcir_resource.is_pointer`). Witnesses:
+  `test_a_file_scope_pointer_is_read_through_not_touched_in_place`, 12 forms, and two faults,
+  one where the flag is set and one where it is read.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1247,6 +1274,14 @@ next and `kernel_facts` refuses the same claim through the same predicate
 by the emitter rows. The gate is the one every lowering entry point passes, including
 one that never derives facts -- `llvm.harness_trip_counts` -- and that is where its
 witness now sits (`test_the_subset_refuses_what_it_does_not_generate_on_every_emitter`).
+S5-B instance (2026-09-25): the cfront corpus, the generated units and the fuzz programs
+all agreed byte for byte on both rails while the twin's port of the G10 analysis had two
+defects: it touched a file-scope pointer in place, and it read an index load through a
+volatile pointer as an ordinary load. None of those programs held either construct. A
+sweep of every declaration kind against every access form, in every storage place, found
+both (12 and 30 forms). It generated 1,078 functions; both rails lower 625 of them, and
+386 of those are C a compiler accepts. The 386 are pinned (`escape_fixtures.FORMS`) and
+compared in the parity rows.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

@@ -3902,40 +3902,25 @@ int main(void){
 
 
 def _oracle_effects_report(src: str) -> str:
-    """The oracle's per-function effect footprints + commute matrix in the bcir-cc --emit-effects
-    text format (the C twin of pipeline.effects / commute)."""
+    """The oracle's per-function footprints + commute matrix in the bcir-cc --emit-effects text
+    format (`escape.effects_report`, the report the C twin's bcir_cfront_effects prints)."""
+    from bcir.frontends.cfront.escape import effects_report  # noqa: PLC0415
+
     r = compile_unit(src, check_clang=False)
-    fns = list(r.lowered.functions)
-
-    def names(rids):
-        return sorted(r.lowered.resources[x].name for x in rids if x in r.lowered.resources)
-
-    out = []
-    for n in fns:
-        e = r.effects[n]
-        out.append(
-            f"fn={n} reads={','.join(names(e.reads)) or '-'} writes={','.join(names(e.writes)) or '-'}"
-        )
-    for i, a in enumerate(fns):
-        for b in fns[i + 1 :]:
-            out.append(f"commute {a} {b} = {1 if r.commute(a, b) else 0}")
-    return "\n".join(out) + "\n"
+    return effects_report(r.lowered, r.escape)
 
 
 def test_effect_commutation_analysis_dual_rail():
-    """Module-scope effect / commutation analysis (#effects): bcir-cc --emit-effects is the C twin of
-    pipeline.own_footprint + commute. For each function it reports the file-scope globals it reads and
-    writes -- callee effects folded in transitively (the call graph is a DAG under R18) -- then the
-    pairwise commute matrix: two functions commute iff their footprints don't conflict (two readers of
-    a global commute; a writer conflicts with any reader/writer of it). The whole report is
-    byte-identical to the oracle's pipeline.effects / commute, and the gate spans a commuting pair
-    (read_a/read_b over disjoint ga/gb) and conflicts (the writer write_a, and the folded via_a)."""
+    """The effect footprint and the commute matrix (#effects, G10): bcir-cc --emit-effects is the C
+    twin of escape.effects_report -- one points-to analysis, the same reads and writes by name (a
+    global, a static's `fn.name`, `*` for memory the unit cannot name), callees and narrowed
+    indirect targets folded in. The two fixtures pin the teeth: a commuting pair over disjoint
+    globals, a writer's conflict, and a caller inheriting its callee's footprint."""
     fixtures = ["cfront_effects.c", "cfront_global_rw.c"]
     reports = {}
     for fx in fixtures:
         src = open(os.path.join(_C, fx), encoding="utf-8").read()
         reports[fx] = _oracle_effects_report(src)
-    # the analysis has teeth: cfront_effects spans a commute=1 pair and a conflict=0 pair.
     assert "commute read_a read_b = 1" in reports["cfront_effects.c"]
     assert "commute read_a write_a = 0" in reports["cfront_effects.c"]
     assert "fn=via_a reads=ga writes=ga" in reports["cfront_effects.c"]  # folded callee effects
@@ -3948,6 +3933,79 @@ def test_effect_commutation_analysis_dual_rail():
                 [cc, "--emit-effects", os.path.join(_C, fx)], capture_output=True, text=True
             ).stdout
             assert out == reports[fx], f"{fx}: effects diverged\n C:\n{out}\nPY:\n{reports[fx]}"
+
+
+def test_escape_and_effects_reports_are_byte_identical_over_the_corpus():
+    """G10's parity gate: over every cfront corpus unit, the generated units of `escape_fixtures`
+    (heap buffers, pointers made from integers, an ops-table callback, locals read in place / lent /
+    captured, one- and two-target indirect calls) and its forms (every declaration kind against
+    every access form in every storage place), bcir-cc --emit-effects and --emit-escape print the
+    oracle's reports byte for byte. Not vacuous: every unit is compared except the pinned
+    preprocessor limits -- exactly those, so a pin that starts compiling fails here -- and the
+    corpus carries each verdict."""
+    from bcir.tests import escape_fixtures as ef  # noqa: PLC0415
+
+    units = ef.corpus()
+    assert len(units) > 100
+    verdicts = {
+        v for *_x, res in units for per in res.escape.objects.values() for v in per.values()
+    }
+    assert {"nonescaping", "escaping"} <= verdicts
+    assert ef.TWIN_PREPROCESSOR_LIMITS <= {name for name, *_x in units}
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        pairs = [(p, r) for _n, p, _s, r in units]
+        eff, esc, compared = ef.rail_parity(cc, pairs, ef.TWIN_PREPROCESSOR_LIMITS)
+        assert (eff, esc) == (0, 0), (eff, esc)
+        assert compared == len(units) - len(ef.TWIN_PREPROCESSOR_LIMITS), (compared, len(units))
+        extra = [(f"gen_{seed}.c", ef.generate(seed)[0]) for seed in ef.SEEDS]
+        extra += [(f"forms_{place}.c", source) for place, source in ef.form_units()]
+        made = []
+        for name, source in extra:
+            path = os.path.join(d, name)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(source)
+            made.append((path, compile_unit(source, check_clang=False)))
+        eff, esc, compared = ef.rail_parity(cc, made)
+        assert (eff, esc, compared) == (0, 0, len(extra)), (eff, esc, compared)
+
+
+def test_escape_refusal_and_its_boundary_agree_across_rails():
+    """A call with more operands than a claim holds is dropped past the sixth on the twin, so both
+    rails REFUSE the unit (`truncated=1`, every footprint `*`); six operands is analyzed. The
+    twin's `truncated` claim flag is what makes the refusal visible to it."""
+    from bcir.frontends.cfront.escape import effects_report, escape_report  # noqa: PLC0415
+
+    seven = (
+        "static unsigned s7(unsigned a, unsigned b, unsigned c, unsigned d, unsigned e,"
+        " unsigned f, unsigned *p) { p[0] = a + b + c + d + e + f; return p[1]; }\n"
+        "unsigned caller(unsigned x) { unsigned t[4]; t[1] = x;"
+        " return s7(x, x, x, x, x, x, t); }\n"
+    )
+    six = (
+        "static unsigned s6(unsigned a, unsigned b, unsigned c, unsigned d, unsigned e,"
+        " unsigned *p) { p[0] = a + b + c + d + e; return p[1]; }\n"
+        "unsigned caller(unsigned x) { unsigned t[4]; t[1] = x;"
+        " return s6(x, x, x, x, x, t); }\n"
+    )
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        for label, src in (("seven", seven), ("six", six)):
+            path = os.path.join(d, f"{label}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            r = compile_unit(src, check_clang=False)
+            for flag, report in (
+                ("--emit-effects", effects_report),
+                ("--emit-escape", escape_report),
+            ):
+                out = subprocess.run([cc, flag, path], capture_output=True, text=True).stdout
+                assert out == report(r.lowered, r.escape), (label, flag, out)
+            assert r.escape.truncated == (label == "seven")
 
 
 def _scale_unit_src() -> str:

@@ -66,7 +66,11 @@ typedef struct {
   int sidx;          /* struct index for kind 1 or ptr_to_struct */
 } venv;
 
-typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count; } gvar;  /* a file-scope global */
+typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count;
+                 int is_arr;          /* declared with `[...]` (an array of any length) */
+                 int init_a, init_b;  /* the initializer's token range [init_a, init_b) (empty: none) --
+                                       * the escape analysis marks every function it names address-taken */
+               } gvar;  /* a file-scope global */
 
 /* The size-varying part of a target's C data model -- the C twin of frontends/cfront/abi.py. `long`,
  * the pointer, and the pointer-tracking `size_t`-class types move across the matrix; `int`, `short`,
@@ -167,6 +171,8 @@ typedef struct {
   int tok_overflow;  /* set by lex() when the input exceeds MAXTOK tokens -- the entry then fails cleanly
                       * ("input too large") and routes to fallback rather than silently truncating the
                       * token stream and mis-compiling a partial unit (Bug B correctness gap). */
+  int call_dropped;  /* p_call dropped an operand past BCIR_CLAIM_MAX_RD: its call-site wrapper marks the call
+                      * claim `truncated` (the escape analysis then refuses the unit) */
   char err[256]; int failed;
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
@@ -1649,8 +1655,8 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       field mf=member_descend(c,S->f[fi]);           /* flatten any nested value-struct hops */
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
       if(is(c,"(")){     /* funcptr-member call through the loaded pointer: `d->ops->fn(args)` (#fnptrchain) */
-        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
-        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
+        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
           if(is(c,",")){c->i++;continue;} break; }
         eat(c,")");
         field ff=S->f[fi];                               /* the funcptr field carries its captured return type */
@@ -1661,7 +1667,7 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
         if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=ptr;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-          cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;}   /* imm0=1: base is a pointer -> `ptr->fn(args)` */
+          cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;cl->truncated=(uint8_t)dropped;}   /* imm0=1: `ptr->fn(args)` */
         return t;
       }
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
@@ -1949,10 +1955,11 @@ static uint32_t p_call(CC *c, const tok *name) {
     return t;
   }
   c->i++; /* '(' */
-  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
-  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;
+  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
+  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a; else dropped=1;
     if(is(c,",")){c->i++;continue;} break; }
   eat(c,")");
+  c->call_dropped=dropped;             /* every path below creates the call claim LAST (the site marks it) */
   if(tok_is(name,"va_start")||tok_is(name,"va_end")||tok_is(name,"va_copy")){   /* opaque void variadic builtins */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.vabuiltin:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
@@ -2081,14 +2088,14 @@ static uint32_t p_icall(CC *c, const venv *fv) {
    * realloc c->env[] -- `fv`, a pointer into it, would dangle before fv->type / fv->rid are read. */
   venv fvsnap=*fv; fv=&fvsnap;
   c->i++; /* '(' */
-  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
-  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
+  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
     if(is(c,",")){c->i++;continue;} break; }
   eat(c,")");
   uint32_t t=fp_result_temp(c,&fv->type);   /* type by the funcptr's captured return -> a signed return reads back signed */
   bcir_claim *cl=new_claim(c,"c.call.indirect",BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=fv->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-    cl->n_wr=1;cl->wr[0]=t;}
+    cl->n_wr=1;cl->wr[0]=t;cl->truncated=(uint8_t)dropped;}
   return t;
 }
 
@@ -2159,16 +2166,18 @@ static const char *fence_order_op(CC *c){
   return "c.fence";                                        /* non-constant / shadowed / unknown -> full */
 }
 static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered){
-  c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
+  c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
   /* SEG7: an order-taking fence (`__atomic_thread_fence`/`atomic_thread_fence`) routes its KIND by the
    * first arg's order value -- peeked HERE, BEFORE the arg is lowered, so the arg's const claim (the
    * value rail) is still emitted in sequence, exactly as the oracle does (digest = [const, fence]). */
   if(ordered && kind==AK_FENCE && !is(c,")")) op=fence_order_op(c);
-  if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;if(is(c,",")){c->i++;continue;}break;}
+  if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;else dropped=1;
+    if(is(c,",")){c->i++;continue;}break;}
   eat(c,")");
   uint32_t t=temp(c,4);
   if(!strncmp(op,"c.c11atom.cas",13) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;  /* compare_exchange -> _Bool */
   bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
+  cl->truncated=(uint8_t)dropped;
   cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
   if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
@@ -2222,8 +2231,8 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
     if(fi<0){fail(c,"unknown field");return 0;}
     if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
-      c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0;
-      if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a;
+      c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
+      if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
         if(is(c,",")){c->i++;continue;} break; }
       eat(c,")");
       field ff=S->f[fi];                          /* the funcptr field carries its captured return type */
@@ -2234,7 +2243,7 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.imember:%s",S->f[fi].name);
       bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
       if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-        cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
+        cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;cl->truncated=(uint8_t)dropped;}
       return t;
     }
     field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
@@ -2392,7 +2401,10 @@ static uint32_t p_primary(CC *c) {
     if(is(c,"(")){ venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
       if(fv&&fv->type.kind==3) return p_icall(c,fv);
       const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
+      int drop_save=c->call_dropped; c->call_dropped=0;   /* a call nested in an argument restores it */
       uint32_t r=p_call(c,&id);
+      if(c->call_dropped && c->fn->n_claims) c->fn->claims[c->fn->n_claims-1].truncated=1;
+      c->call_dropped=drop_save;
       if(rt && rt->kind==1 && (is(c,".")||is(c,"->")||is(c,"["))){   /* the by-value struct result is addressable */
         venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
         sv.sidx=find_struct(c,rt->tag,(int)strlen(rt->tag));
@@ -2639,6 +2651,7 @@ static uint32_t p_unary_inner(CC *c) {
            tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
           uint32_t rid=p_array_literal(c,&ty,si,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
+          for(size_t z=c->fn->n_res;z-->0;) if(c->fn->res[z].rid==rid){ c->fn->res[z].is_array=1; break; }
           if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=ty.kind==1?si:-1;
             if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
             return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` / `(struct P[A][B]){...}[i][j].f` */
@@ -2821,7 +2834,9 @@ static venv *use_global(CC *c,const tok *id){
   gvar *g=&c->gv[gi];
   int kind = g->count>1 ? BCIR_RK_POINTER : (g->ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
   uint32_t rid=add_res(c,BCIR_DOM_RAM,g->ty.size,g->count,0,kind,g->name);
-  if(c->fn->n_res) c->fn->res[c->fn->n_res-1].read_only=1;   /* a global, not a local */
+  if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].read_only=1;   /* a global, not a local */
+    c->fn->res[c->fn->n_res-1].is_array=(uint8_t)(g->is_arr?1:0);
+    c->fn->res[c->fn->n_res-1].is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0); }
   env_add(c,id,rid,&g->ty,-1);
   return lookup(c,id);
 }
@@ -4061,6 +4076,7 @@ static void p_stmt_inner(CC *c) {
       uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                            is_arr?arr_elem:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
                            is_arr?(arr?arr:1):(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
+      if(is_arr && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_array=1;   /* an array object, whatever its length */
       if(is_arr && ty.kind==1){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an ARRAY-OF-STRUCTS local
         * `struct P a[N]`: a SCALAR-kind array of struct-sized elements; carry the struct tag so the decl
         * emits `struct P a[N]` and `a[i].field` strides by the element struct (the venv keeps `si`). */
@@ -4090,7 +4106,7 @@ static void p_stmt_inner(CC *c) {
         { bcir_func *f=c->fn;
           CC_ENSURE(c,f->statics,f->n_statics,f->cap_statics);
           if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
-            f->statics[f->n_statics].init=init; f->n_statics++; } }
+            f->statics[f->n_statics].init=init; f->statics[f->n_statics].rid=rid; f->n_statics++; } }
       } else if(is(c,"=")){c->i++;
         if(is(c,"{")){
           int md_nested=0;                                  /* peek: does a MULTI-dim init use a nested ROW brace? */
@@ -4412,6 +4428,9 @@ static uint32_t p_stmt_expr(CC *c){
 
 static int p_func(CC *c, bcir_func *fn) {
   c->fn=fn; c->nenv=0; c->n_vlaext=0;
+  c->cl_ctr=0;                                     /* compound literals number per function (`_cl1` ...), as
+                                                    * the oracle's _FuncLowerer.cl_ctr does -- they are
+                                                    * function-local declarations, so the names never clash */
   c->saw_static=0;                                 /* fresh for THIS definition's return type (a prior
                                                     * body's block-static must not leak into the flag) */
   bcir_ctype rt;int rsi;if(p_type(c,&rt,&rsi))return 1; fn->ret=rt;
@@ -5043,15 +5062,17 @@ static int looks_global(CC *c){
  * the claim graph needs only the name + element type + length. */
 static void p_global(CC *c){
   bcir_ctype ty; int si; if(p_type(c,&ty,&si)) return; tok nm=adv(c);
-  int count=1;
-  while(is(c,"[")){ c->i++; count = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); }
-  if(is(c,"=")){ c->i++;
+  int count=1, is_arr=0, init_a=0, init_b=0;
+  while(is(c,"[")){ c->i++; count = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); is_arr=1; }
+  if(is(c,"=")){ c->i++; init_a=c->i;
     if(is(c,"{")){ c->i++; int d=1; while(d>0&&!isk(c,T_END)&&!c->failed){ if(is(c,"{"))d++; else if(is(c,"}"))d--; c->i++; } }
     else (void)ce_expr(c,0);
+    init_b=c->i;
   }
   eat(c,";");
   CC_ENSURE(c, c->gv, c->ngv, c->cap_gv);
-  if(c->ngv<c->cap_gv){ idcpy(c->gv[c->ngv].name,&nm); c->gv[c->ngv].ty=ty; c->gv[c->ngv].count=count; c->ngv++; }
+  if(c->ngv<c->cap_gv){ gvar *g=&c->gv[c->ngv++]; idcpy(g->name,&nm); g->ty=ty; g->count=count;
+    g->is_arr=is_arr; g->init_a=init_a; g->init_b=init_b; }
 }
 
 /* --- public entry -------------------------------------------------------- */
@@ -5219,6 +5240,16 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
         return cfront_failure(context,out,c->err);
       snprintf(f->calls[f->n_calls++],BCIR_CIR_NAME,"%s",callee);
     }
+  }
+  /* G10: a function a file-scope initializer names (an ops table `struct ops t = { handler };`) has its
+   * address taken -- callers this unit cannot see may reach it. Every identifier in the initializer counts
+   * except a designator's field name (`.fn = ...`); the oracle's twin is LoweredUnit.init_refs. */
+  for(int g=0;g<c->ngv;g++) for(int k=c->gv[g].init_a;k<c->gv[g].init_b && k<c->nt;k++){
+    const tok *tk=&c->t[k];
+    if(tk->k!=T_ID) continue;
+    if(k>0 && (tok_is(&c->t[k-1],".") || tok_is(&c->t[k-1],"->"))) continue;
+    for(int i=0;i<out->unit.n_funcs;i++){ bcir_func *f=&out->unit.funcs[i];
+      if((int)strlen(f->name)==tk->n && !strncmp(f->name,tk->s,(size_t)tk->n)) f->addr_in_init=1; }
   }
   int emit_impossible=c->emit_overflow;
   out->ok=bcir_verify_unit_with_allocator(&out->unit,out->diag,sizeof out->diag,&c->allocator);
@@ -5618,85 +5649,629 @@ void bcir_cfront_canon(const bcir_unit *u,char *buf,size_t n){
   bcir_cfront_canon_with_allocator(u,buf,n,&allocator);
 }
 
-/* --- module-scope effect / commutation analysis (the C twin of pipeline own_footprint + commute) ---
- * Each function's alias/effect footprint over file-scope globals: the global NAMES it reads and writes
- * (a read references a global rid in a claim operand -- including the c.return / control-condition
- * markers -- a write is a claim result writing a global rid). Callee effects fold into the caller
- * transitively (R18 keeps the graph a DAG). Two functions commute iff their footprints don't conflict:
- * two readers of the same global commute; a writer conflicts with any reader or writer of it. */
-#define BCIR_FX_MAXG 32
+/* --- G10: escape analysis, indirect-call narrowing and the effect footprint -------------------------
+ * The C twin of bcir/frontends/cfront/escape.py -- the same objects, rules and reports, byte for byte
+ * (parity-gated over the cfront corpus and generated programs by test_c_cfront.py and check_runtime.sh).
+ * Andersen's analysis: inclusion-based, flow-, context- and field-insensitive, OPEN WORLD. The objects:
+ *   TOP  unknown memory              STR  every string literal (read-only)
+ *   G    a file-scope global (name)  S    a static local (`fn.name`)
+ *   L    an automatic local or a temporary (function + rid)
+ *   H    a function's heap (everything its allocator calls return)
+ *   F    a function (name)
+ * pt(o) is the set of objects the pointers stored in storage object o may point to: a bitset over the
+ * objects that can be pointed to at all (TOP, STR, F, H, arrays used as values, address-taken objects).
+ * Every rule is monotone in pt, so the least fixpoint -- and every report -- is independent of the order
+ * the claims are visited in (the rails order sibling expressions differently). The rules, the escape
+ * verdicts and the named footprint are the oracle's; each helper names its twin. Hosted tool code: every
+ * temporary lives in one arena, released before return. */
+enum { EK_SCALAR=0, EK_ARRAY=1, EK_STRUCT=2, EK_POINTER=3 };
+enum { EO_TOP=0, EO_STR=1, EO_G=2, EO_S=3, EO_L=4, EO_H=5, EO_F=6 };
+enum { EV_NONESCAPING=0, EV_LENT=1, EV_ESCAPING=2 };
+static const char *const esc_verdicts[3]={"nonescaping","lent","escaping"};
 
-/* the unit's distinct file-scope global names (read_only named resources), first-seen order. */
-static int fx_globals(const bcir_unit *u, char names[][BCIR_CIR_NAME]) {
+typedef struct {
+  uint8_t kind;              /* EO_* */
+  uint8_t taken;             /* F: its value is used (address-taken) */
+  int fn;                    /* the owning function (S / L / H), else -1 */
+  int def;                   /* F: the defined function it names, else -1 */
+  int u;                     /* its index among the pointable objects, or -1 */
+  const char *name;          /* G / F: the name; S: `fn.name` */
+} esc_obj;
+
+typedef struct {             /* one rid of one function */
+  uint32_t rid;
+  int obj;                   /* its storage node, or its F / STR object */
+  int def;                   /* the first claim writing it, or -1 */
+  uint8_t kind;              /* EK_*: how its C type makes it behave */
+  uint8_t declared;          /* a variable the source declares (not a temporary) */
+  uint8_t memory;            /* storage the program addresses (see esc_build) */
+  uint8_t named_local;       /* a named automatic local: reported with a verdict */
+  const char *name;
+} esc_rid;
+
+typedef struct {
+  const bcir_func *f;
+  esc_rid *r; int nr;        /* sorted by rid, plus one sentinel entry r[nr] (a rid no claim names) */
+  int *params;               /* esc_rid index of each parameter */
+  int *rets; int nret;       /* esc_rid indices of the `c.return` operands */
+  int heap, fobj;            /* its H object; the F object naming it (-1: its value is never used) */
+  int *edges; int nedges;    /* the defined functions it calls, directly or through a known pointer */
+} esc_fn;
+
+typedef struct {
+  bcir_host_arena *arena;
+  const bcir_unit *u;
+  esc_fn *fn; int nf;
+  esc_obj *obj; int nobj;
+  int *named; int nnamed;    /* the G / S / F objects (found by name) */
+  int *uobj; int nu, W;      /* the pointable objects (u index -> object) and the bitset width in words */
+  uint64_t *pt;              /* nobj x W */
+  uint64_t *esc;             /* W: objects stored into unknown memory */
+  uint64_t *tmp;             /* ESC_NTMP scratch bitsets of W words */
+  int *tg;                   /* nf: an indirect call's targets */
+  int changed;
+} esc_ctx;
+#define ESC_NTMP 8
+
+static void *esc_alloc(esc_ctx *e,size_t count,size_t size){ return vn_alloc(e->arena,count?count:1u,size,1); }
+static int esc_has(const uint64_t *b,int u){ return u>=0 && ((b[u>>6]>>(u&63))&1u); }
+static void esc_bit(uint64_t *b,int u){ if(u>=0) b[u>>6]|=(uint64_t)1u<<(u&63); }
+static void esc_clear(const esc_ctx *e,uint64_t *b){ memset(b,0,(size_t)e->W*sizeof *b); }
+static void esc_or(const esc_ctx *e,uint64_t *d,const uint64_t *s){ for(int i=0;i<e->W;i++) d[i]|=s[i]; }
+static uint64_t *esc_tmp(const esc_ctx *e,int k){ return e->tmp+(size_t)k*(size_t)e->W; }
+static uint64_t *esc_pt(const esc_ctx *e,int o){ return e->pt+(size_t)o*(size_t)e->W; }
+
+static int esc_is(const char *op,const char *prefix){ return !strncmp(op,prefix,strlen(prefix)); }
+static int esc_any(const char *op,const char *const *prefixes){
+  for(int i=0;prefixes[i];i++) if(esc_is(op,prefixes[i])) return 1;
+  return 0;
+}
+static const char *const esc_ops_noflow[]={"c.const","c.fconst:","c.cconst:","c.labeladdr:","c.sizeof.vla",
+                                        "c.fence","c.vladecl",NULL};
+static const char *const esc_ops_atomic[]={"c.atomic.","c.c11atom.","c.cmpxchg.",NULL};
+static const char *const esc_ops_external[]={"c.call.tu:","c.call.extern:","c.asm:","c.asm.volatile:",NULL};
+static const char *const esc_ops_library[]={"c.call.libm:","c.call.libm.void:","c.call.builtin:",
+                                         "c.call.vabuiltin:",NULL};
+static const char *const esc_ops_allocators[]={"c.call.libm:malloc","c.call.libm:calloc","c.call.libm:realloc",
+                                            "c.call.libm:aligned_alloc",NULL};
+static int esc_direct(const char *op){ return esc_is(op,"c.call:")||esc_is(op,"c.call.void:"); }
+static int esc_indirect(const char *op){ return !strcmp(op,"c.call.indirect")||esc_is(op,"c.call.imember"); }
+static int esc_allocator(const char *op){
+  for(int i=0;esc_ops_allocators[i];i++) if(!strcmp(op,esc_ops_allocators[i])) return 1;
+  return 0;
+}
+static int esc_pointer_cast(const char *op){   /* `(T *)v`: both rails spell it `c.cast:<pointee> *` */
+  size_t n=strlen(op); return esc_is(op,"c.cast:") && n && op[n-1]=='*';
+}
+static const char *esc_callee(const char *op){ const char *p=strchr(op,':'); return p?p+1:""; }
+static int esc_find_fn(const esc_ctx *e,const char *name){
+  for(int i=0;i<e->nf;i++) if(!strcmp(e->fn[i].f->name,name)) return i;
+  return -1;
+}
+/* the esc_rid of `rid` (binary search; a rid outside the table is the sentinel r[nr]) */
+static esc_rid *esc_R(const esc_fn *F,uint32_t rid){
+  int lo=0,hi=F->nr-1;
+  while(lo<=hi){ int mid=lo+(hi-lo)/2; if(F->r[mid].rid==rid) return &F->r[mid];
+    if(F->r[mid].rid<rid) lo=mid+1; else hi=mid-1; }
+  return &F->r[F->nr];
+}
+static int esc_u32cmp(const void *a,const void *b){
+  uint32_t x=*(const uint32_t *)a,y=*(const uint32_t *)b; return (x>y)-(x<y);
+}
+static int esc_strcmp(const void *a,const void *b){ return strcmp(*(const char *const *)a,*(const char *const *)b); }
+
+/* a new object; a named G / S / F object is found by name first */
+static int esc_object(esc_ctx *e,int kind,int fn,const char *name){
+  if(name) for(int i=0;i<e->nnamed;i++){ const esc_obj *o=&e->obj[e->named[i]];
+    if(o->kind==kind && !strcmp(o->name,name)) return e->named[i]; }
+  esc_obj *o=&e->obj[e->nobj]; memset(o,0,sizeof *o);
+  o->kind=(uint8_t)kind; o->fn=fn; o->def=-1; o->u=-1; o->name=name;
+  if(name) e->named[e->nnamed++]=e->nobj;
+  return e->nobj++;
+}
+
+/* how a resource's C type makes it behave (the oracle's `_kind` over the rid's CType) */
+static int esc_kind(const bcir_func *f,const bcir_resource *r){
+  for(int p=0;p<f->n_params;p++) if(f->params[p].rid==r->rid){
+    int k=f->params[p].type.kind;                              /* 0 scalar, 1 struct, 2 ptr, 3 funcptr */
+    return k==1?EK_STRUCT : (k==2||k==3)?EK_POINTER : EK_SCALAR; }
+  if(r->is_array||r->is_vla) return EK_ARRAY;
+  if(r->kind==BCIR_RK_AGGREGATE) return EK_STRUCT;
+  if(r->kind==BCIR_RK_POINTER||r->is_funcptr||r->is_pointer) return EK_POINTER;
+  return EK_SCALAR;
+}
+
+/* one function's rids: their objects, kinds and roles (the oracle's `_Unit`). 0 on OOM. */
+static int esc_build_fn(esc_ctx *e,int fi){
+  esc_fn *F=&e->fn[fi]; const bcir_func *f=&e->u->funcs[fi]; F->f=f;
+  size_t nids=f->n_res; for(size_t k=0;k<f->n_claims;k++) nids+=f->claims[k].n_rd+f->claims[k].n_wr;
+  uint32_t *ids=esc_alloc(e,nids,sizeof *ids); if(!ids) return 0;
+  size_t m=0;
+  for(size_t k=0;k<f->n_res;k++) ids[m++]=f->res[k].rid;
+  for(size_t k=0;k<f->n_claims;k++){ const bcir_claim *c=&f->claims[k];
+    for(int j=0;j<c->n_rd;j++) ids[m++]=c->rd[j];
+    for(int j=0;j<c->n_wr;j++) ids[m++]=c->wr[j]; }
+  qsort(ids,m,sizeof *ids,esc_u32cmp);
+  size_t uniq=0; for(size_t k=0;k<m;k++) if(!uniq||ids[uniq-1]!=ids[k]) ids[uniq++]=ids[k];
+  F->nr=(int)uniq; F->r=esc_alloc(e,uniq+1u,sizeof *F->r); if(!F->r) return 0;
+  for(size_t k=0;k<=uniq;k++){ F->r[k].rid=k<uniq?ids[k]:0u; F->r[k].def=-1; F->r[k].obj=-1; }
+  for(size_t k=0;k<f->n_res;k++){ const bcir_resource *res=&f->res[k]; esc_rid *R=esc_R(F,res->rid);
+    if(R->obj>=0) continue;                                    /* a duplicate rid: the first wins */
+    int is_param=0; for(int p=0;p<f->n_params;p++) if(f->params[p].rid==res->rid) is_param=1;
+    int is_str=0; for(int h=0;h<f->n_host_literals;h++) if(f->host_literals[h].rid==res->rid) is_str=1;
+    int st=-1; for(int s=0;s<f->n_statics;s++) if(f->statics[s].rid==res->rid && !res->read_only) st=s;
+    R->kind=(uint8_t)esc_kind(f,res); R->name=res->name;
+    if(is_str) R->obj=EO_STR;
+    else if(res->read_only && res->is_funcptr) R->obj=esc_object(e,EO_F,-1,res->name);
+    else if(res->read_only){ R->obj=esc_object(e,EO_G,-1,res->name); R->declared=1; }
+    else if(st>=0){
+      size_t z=strlen(f->name)+strlen(f->statics[st].name)+2u; char *nm=esc_alloc(e,z,1u); if(!nm) return 0;
+      snprintf(nm,z,"%s.%s",f->name,f->statics[st].name);
+      R->obj=esc_object(e,EO_S,fi,nm); R->declared=1; }
+    else{ R->obj=esc_object(e,EO_L,fi,NULL);
+      R->declared=(uint8_t)(is_param||res->name[0]);
+      R->named_local=(uint8_t)(!is_param && res->name[0]); } }
+  for(int k=0;k<=F->nr;k++) if(F->r[k].obj<0) F->r[k].obj=esc_object(e,EO_L,fi,NULL);   /* no resource */
+  F->heap=esc_object(e,EO_H,fi,NULL);
+  /* roles: the first writer; memory = used and never written, or an addressed base, or a declared VLA */
+  uint8_t *written=esc_alloc(e,(size_t)F->nr+1u,1u), *used=esc_alloc(e,(size_t)F->nr+1u,1u);
+  F->params=esc_alloc(e,(size_t)f->n_params,sizeof *F->params);
+  F->rets=esc_alloc(e,f->n_claims,sizeof *F->rets);
+  if(!written||!used||!F->params||!F->rets) return 0;
+  for(int p=0;p<f->n_params;p++){ esc_rid *R=esc_R(F,f->params[p].rid); F->params[p]=(int)(R-F->r); used[R-F->r]=1; }
+  for(size_t k=0;k<f->n_claims;k++){ const bcir_claim *c=&f->claims[k];
+    for(int j=0;j<c->n_rd;j++) used[esc_R(F,c->rd[j])-F->r]=1;
+    for(int j=0;j<c->n_wr;j++){ esc_rid *R=esc_R(F,c->wr[j]); used[R-F->r]=1; written[R-F->r]=1;
+      if(R->def<0) R->def=(int)k; }
+    if(!strcmp(c->op,"c.return") && c->n_rd==1) F->rets[F->nret++]=(int)(esc_R(F,c->rd[0])-F->r); }
+  for(int k=0;k<F->nr;k++) F->r[k].memory=(uint8_t)(used[k]&&!written[k]);
+  for(size_t k=0;k<f->n_claims;k++){ const bcir_claim *c=&f->claims[k];
+    if(c->n_rd && (!strcmp(c->op,"c.load")||!strcmp(c->op,"c.store")||!strcmp(c->op,"c.addrof")||
+                   esc_is(c->op,"c.call.imember"))) esc_R(F,c->rd[0])->memory=1;
+    if(!strcmp(c->op,"c.vladecl") && c->n_wr) esc_R(F,c->wr[0])->memory=1; }
+  return 1;
+}
+
+/* the unit's objects and the pointable universe. 0 on OOM. */
+static int esc_build(esc_ctx *e){
+  const bcir_unit *u=e->u; size_t cap=2;
+  for(int i=0;i<u->n_funcs;i++){ const bcir_func *f=&u->funcs[i];
+    cap+=f->n_res+2u; for(size_t k=0;k<f->n_claims;k++) cap+=f->claims[k].n_rd+f->claims[k].n_wr; }
+  e->nf=u->n_funcs;
+  e->fn=esc_alloc(e,(size_t)e->nf,sizeof *e->fn);
+  e->obj=esc_alloc(e,cap,sizeof *e->obj);
+  e->named=esc_alloc(e,cap,sizeof *e->named);
+  e->tg=esc_alloc(e,(size_t)e->nf,sizeof *e->tg);
+  if(!e->fn||!e->obj||!e->named||!e->tg) return 0;
+  esc_object(e,EO_TOP,-1,NULL); esc_object(e,EO_STR,-1,NULL);
+  for(int fi=0;fi<e->nf;fi++) if(!esc_build_fn(e,fi)) return 0;
+  for(int i=0;i<e->nobj;i++) if(e->obj[i].kind==EO_F) e->obj[i].def=esc_find_fn(e,e->obj[i].name);
+  for(int fi=0;fi<e->nf;fi++){ e->fn[fi].fobj=-1;
+    for(int i=0;i<e->nnamed;i++) if(e->obj[e->named[i]].kind==EO_F && e->obj[e->named[i]].def==fi) e->fn[fi].fobj=e->named[i]; }
+  /* the pointable objects: TOP, STR, every F and H, every array used as a value, every addressed base */
+  uint8_t *pointable=esc_alloc(e,(size_t)e->nobj,1u); if(!pointable) return 0;
+  pointable[EO_TOP]=pointable[EO_STR]=1;
+  for(int i=0;i<e->nobj;i++) if(e->obj[i].kind==EO_F||e->obj[i].kind==EO_H) pointable[i]=1;
+  for(int fi=0;fi<e->nf;fi++){ const esc_fn *F=&e->fn[fi];
+    for(int k=0;k<F->nr;k++) if(F->r[k].kind==EK_ARRAY) pointable[F->r[k].obj]=1;
+    for(size_t k=0;k<F->f->n_claims;k++){ const bcir_claim *c=&F->f->claims[k];
+      if(!strcmp(c->op,"c.addrof") && c->n_rd) pointable[esc_R(F,c->rd[0])->obj]=1; } }
+  e->uobj=esc_alloc(e,(size_t)e->nobj,sizeof *e->uobj); if(!e->uobj) return 0;
+  for(int i=0;i<e->nobj;i++) if(pointable[i]){ e->obj[i].u=e->nu; e->uobj[e->nu++]=i; }
+  e->W=(e->nu+63)/64;
+  e->pt=esc_alloc(e,(size_t)e->nobj*(size_t)e->W,sizeof *e->pt);
+  e->esc=esc_alloc(e,(size_t)e->W,sizeof *e->esc);
+  e->tmp=esc_alloc(e,(size_t)ESC_NTMP*(size_t)e->W,sizeof *e->tmp);
+  return e->pt&&e->esc&&e->tmp;
+}
+
+/* what a storage object holds: what the program stored, plus unknown pointers when unknown code can
+ * have written it -- a global, a static, an escaped object (the oracle's `held`) */
+static void esc_held(const esc_ctx *e,int o,uint64_t *out){
+  esc_or(e,out,esc_pt(e,o));
+  if(e->obj[o].kind==EO_G||e->obj[o].kind==EO_S||esc_has(e->esc,e->obj[o].u)) esc_bit(out,0);
+}
+static int esc_in_place(const esc_ctx *e,const esc_rid *R){   /* touched in place, not through it */
+  int k=e->obj[R->obj].kind;
+  return k==EO_F||k==EO_STR||R->kind==EK_ARRAY||R->kind==EK_STRUCT||(R->kind==EK_SCALAR&&R->declared);
+}
+/* the objects a rid's VALUE may point to (`val`) */
+static void esc_val(esc_ctx *e,int fi,uint32_t rid,uint64_t *out){
+  const esc_rid *R=esc_R(&e->fn[fi],rid); esc_obj *o=&e->obj[R->obj];
+  if(o->kind==EO_F){ if(!o->taken){ o->taken=1; e->changed=1; } esc_bit(out,o->u); return; }
+  if(o->kind==EO_STR||R->kind==EK_ARRAY){ esc_bit(out,o->u); return; }   /* the decay: its own address */
+  esc_held(e,R->obj,out);
+}
+/* what a load or store with base `rid` touches (`deref`): the object itself (its id is returned), or
+ * what the pointer holds (-1 is returned, the set is OR-ed into *out) */
+static int esc_deref(const esc_ctx *e,int fi,uint32_t rid,uint64_t *out){
+  const esc_rid *R=esc_R(&e->fn[fi],rid);
+  if(esc_in_place(e,R)) return R->obj;
+  esc_held(e,R->obj,out); return -1;
+}
+/* what `c.addrof` of base `rid` points to (`address`) */
+static void esc_address(const esc_ctx *e,int fi,uint32_t rid,uint64_t *out){
+  const esc_rid *R=esc_R(&e->fn[fi],rid);
+  esc_bit(out,e->obj[R->obj].u);
+  if(!esc_in_place(e,R)) esc_held(e,R->obj,out);
+}
+/* whether `(T *)rid` may make a pointer out of an integer (`forged`) */
+static int esc_forged(const esc_ctx *e,int fi,uint32_t rid){
+  const esc_fn *F=&e->fn[fi]; const esc_rid *R=esc_R(F,rid); int k=e->obj[R->obj].kind;
+  if(k==EO_F||k==EO_STR) return 0;
+  if(R->declared) return !(R->kind==EK_POINTER||R->kind==EK_ARRAY);
+  if(R->def<0) return 1;
+  const bcir_claim *c=&F->f->claims[R->def];
+  if(!strcmp(c->op,"c.addrof")||esc_pointer_cast(c->op)) return 0;
+  return !(!strcmp(c->op,"c.const") && c->n_imm>=1 && c->imm[0]==0);
+}
+/* the pointers held by object `one` (if >= 0) and the objects in `objs` (if non-NULL) (`contents`) */
+static void esc_contents1(const esc_ctx *e,int o,uint64_t *out){
+  int k=e->obj[o].kind;
+  if(k==EO_TOP) esc_bit(out,0); else if(k!=EO_F&&k!=EO_STR) esc_held(e,o,out);
+}
+static void esc_contents(const esc_ctx *e,int one,const uint64_t *objs,uint64_t *out){
+  if(one>=0) esc_contents1(e,one,out);
+  if(objs) for(int x=0;x<e->nu;x++) if(esc_has(objs,x)) esc_contents1(e,e->uobj[x],out);
+}
+/* store `objs` into object o (`add`): stored into TOP they escape; code and literals hold nothing */
+static void esc_add(esc_ctx *e,int o,const uint64_t *objs){
+  int k=e->obj[o].kind;
+  if(k==EO_TOP){
+    for(int w=0;w<e->W;w++){ uint64_t nb=objs[w]&~e->esc[w]; if(!w) nb&=~(uint64_t)1u;
+      if(nb){ e->esc[w]|=nb; e->changed=1; } }
+    return; }
+  if(k==EO_F||k==EO_STR) return;
+  uint64_t *d=esc_pt(e,o);
+  for(int w=0;w<e->W;w++){ uint64_t nb=objs[w]&~d[w]; if(nb){ d[w]|=nb; e->changed=1; } }
+}
+static void esc_add_all(esc_ctx *e,int one,const uint64_t *targets,const uint64_t *objs){
+  if(one>=0) esc_add(e,one,objs);
+  if(targets) for(int x=0;x<e->nu;x++) if(esc_has(targets,x)) esc_add(e,e->uobj[x],objs);
+}
+static void esc_add_rid(esc_ctx *e,int fi,uint32_t rid,const uint64_t *objs){
+  esc_add(e,esc_R(&e->fn[fi],rid)->obj,objs);
+}
+
+/* what an indirect call's function pointer may hold (`call_values`) */
+static void esc_call_values(const esc_ctx *e,int fi,const bcir_claim *c,uint64_t *values,uint64_t *scratch){
+  if(!strcmp(c->op,"c.call.indirect")){ const esc_rid *R=esc_R(&e->fn[fi],c->rd[0]);
+    if(e->obj[R->obj].kind==EO_F) esc_bit(values,e->obj[R->obj].u); else esc_held(e,R->obj,values);
+    return; }
+  esc_clear(e,scratch); int one=esc_deref(e,fi,c->rd[0],scratch);   /* c.call.imember: the base's member */
+  esc_contents(e,one,one<0?scratch:NULL,values);
+}
+/* the defined functions an indirect call can reach (`targets`): their indices, sorted by name, in
+ * e->tg (the count is returned), or -1 when it may reach unknown code or nothing known */
+static int esc_targets(esc_ctx *e,int fi,const bcir_claim *c){
+  uint64_t *values=esc_tmp(e,6); esc_clear(e,values);
+  esc_call_values(e,fi,c,values,esc_tmp(e,7));
+  if(esc_has(values,0)) return -1;
   int n=0;
-  for(int fi=0;fi<u->n_funcs;fi++){ const bcir_func *f=&u->funcs[fi];
-    for(size_t i=0;i<f->n_res;i++){ const bcir_resource *r=&f->res[i];
-      if(r->name[0] && r->read_only){
-        int seen=0; for(int k=0;k<n;k++) if(!strcmp(names[k],r->name)){seen=1;break;}
-        if(!seen && n<BCIR_FX_MAXG){ snprintf(names[n],BCIR_CIR_NAME,"%s",r->name); n++; } } } }
+  for(int x=0;x<e->nu;x++) if(esc_has(values,x)){ const esc_obj *o=&e->obj[e->uobj[x]];
+    if(o->kind!=EO_F) continue;                   /* a data address is not a callable target */
+    if(o->def<0) return -1;                       /* a function of another unit */
+    e->tg[n++]=o->def; }
+  if(!n) return -1;
+  for(int i=1;i<n;i++) for(int j=i;j>0 && strcmp(e->fn[e->tg[j-1]].f->name,e->fn[e->tg[j]].f->name)>0;j--){
+    int t=e->tg[j-1]; e->tg[j-1]=e->tg[j]; e->tg[j]=t; }
   return n;
 }
-static int fx_index(char names[][BCIR_CIR_NAME], int n, const char *nm){
-  for(int k=0;k<n;k++) if(!strcmp(names[k],nm)) return k; return -1;
+
+/* a call binds actuals to formals and the callee's return values to its results (`bind`) */
+static void esc_bind(esc_ctx *e,int fi,int ci,const uint32_t *act,int nact,const bcir_claim *c){
+  uint64_t *v=esc_tmp(e,0); const esc_fn *C=&e->fn[ci];
+  for(int k=0;k<nact;k++){ esc_clear(e,v); esc_val(e,fi,act[k],v);
+    if(k<C->f->n_params) esc_add(e,C->r[C->params[k]].obj,v);
+    else esc_add(e,EO_TOP,v); }                    /* a variadic extra: read through va_arg as unknown */
+  if(c->n_wr){ esc_clear(e,v);
+    for(int k=0;k<C->nret;k++) esc_val(e,ci,C->r[C->rets[k]].rid,v);
+    for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],v); }
 }
-/* function f's OWN read/write global masks (over the names table). */
-static void fx_own(const bcir_func *f, char names[][BCIR_CIR_NAME], int ng, uint64_t *rd, uint64_t *wr){
-  *rd=0; *wr=0;
-  for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *c=&f->claims[i];
-    for(int k=0;k<c->n_rd;k++){ const bcir_resource *r=res_of(f,c->rd[k]);
-      if(r&&r->name[0]&&r->read_only){ int gi=fx_index(names,ng,r->name); if(gi>=0)*rd|=1ull<<gi; } }
-    for(int k=0;k<c->n_wr;k++){ const bcir_resource *r=res_of(f,c->wr[k]);
-      if(r&&r->name[0]&&r->read_only){ int gi=fx_index(names,ng,r->name); if(gi>=0)*wr|=1ull<<gi; } } }
+/* an unknown callee receives its actuals into unknown memory and returns unknown pointers (`external`) */
+static void esc_external(esc_ctx *e,int fi,const uint32_t *act,int nact,const bcir_claim *c){
+  uint64_t *v=esc_tmp(e,0);
+  for(int k=0;k<nact;k++){ esc_clear(e,v); esc_val(e,fi,act[k],v); esc_add(e,EO_TOP,v); }
+  esc_clear(e,v); esc_bit(v,0);
+  for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],v);
 }
-static int fx_find(const bcir_unit *u, const char *name){
-  for(int i=0;i<u->n_funcs;i++) if(!strcmp(u->funcs[i].name,name)) return i; return -1;
-}
-/* fold function fi's footprint with its callees' (transitively; the `seen` mask guards the DAG). */
-static void fx_fold(const bcir_unit *u, int fi, char names[][BCIR_CIR_NAME], int ng,
-                    uint64_t *rd, uint64_t *wr, char *seen){      /* seen[]: a visited byte per func */
-  if(fi<0 || seen[fi]) return; seen[fi]=1;
-  uint64_t ord,owr; fx_own(&u->funcs[fi],names,ng,&ord,&owr); *rd|=ord; *wr|=owr;
-  const bcir_func *f=&u->funcs[fi];
-  for(int k=0;k<f->n_calls;k++) fx_fold(u,fx_find(u,f->calls[k]),names,ng,rd,wr,seen);
-}
-/* append the sorted, comma-joined globals selected by `mask` (or "-" if empty). */
-static size_t fx_print_names(char *o,size_t cap,size_t w, char names[][BCIR_CIR_NAME], int ng, uint64_t mask){
-  int idx[BCIR_FX_MAXG], m=0;
-  for(int k=0;k<ng;k++) if(mask&(1ull<<k)) idx[m++]=k;
-  for(int i=1;i<m;i++){ int j=i; while(j>0 && strcmp(names[idx[j-1]],names[idx[j]])>0){int t=idx[j-1];idx[j-1]=idx[j];idx[j]=t;j--;} }
-  if(m==0) return w + (size_t)snprintf(o+w, w<cap?cap-w:0, "-");
-  for(int i=0;i<m;i++) w += (size_t)snprintf(o+w, w<cap?cap-w:0, "%s%s", i?",":"", names[idx[i]]);
-  return w;
+static int esc_callers_unknown(const esc_ctx *e,int fi){
+  const esc_fn *F=&e->fn[fi];
+  return !F->f->static_fn || F->f->addr_in_init || (F->fobj>=0 && e->obj[F->fobj].taken);
 }
 
-void bcir_cfront_effects_with_allocator(const bcir_unit *u,char *buf,size_t n,
-                                        const bcir_host_allocator *allocator){
-  bcir_host_arena arena;
-  if(!buf||!n)return;buf[0]=0;if(!u)return;
-  if(!bcir_host_arena_init(&arena,allocator,1024u))return;
-  char names[BCIR_FX_MAXG][BCIR_CIR_NAME]; int ng=fx_globals(u,names);
-  int nf=u->n_funcs; size_t af=(size_t)(nf>0?nf:1);   /* per-function footprints (any number of funcs) */
-  uint64_t *frd=(uint64_t *)vn_alloc(&arena,af,sizeof *frd,1);
-  uint64_t *fwr=(uint64_t *)vn_alloc(&arena,af,sizeof *fwr,1);
-  char *seen=(char *)vn_alloc(&arena,af,1u,1);
-  if(!frd||!fwr||!seen){buf[0]=0;bcir_host_arena_destroy(&arena);return;}
-  for(int i=0;i<nf;i++){ memset(seen,0,af); uint64_t rd=0,wr=0; fx_fold(u,i,names,ng,&rd,&wr,seen); frd[i]=rd; fwr[i]=wr; }
-  size_t w=0;
-  for(int i=0;i<u->n_funcs;i++){
-    w+=(size_t)snprintf(buf+w,w<n?n-w:0,"fn=%s reads=",u->funcs[i].name);
-    w=fx_print_names(buf,n,w,names,ng,frd[i]);
-    w+=(size_t)snprintf(buf+w,w<n?n-w:0," writes=");
-    w=fx_print_names(buf,n,w,names,ng,fwr[i]);
-    w+=(size_t)snprintf(buf+w,w<n?n-w:0,"\n");
-  }
-  for(int i=0;i<u->n_funcs;i++) for(int j=i+1;j<u->n_funcs;j++){
-    uint64_t wa=fwr[i],wb=fwr[j],ra=frd[i],rb=frd[j];
-    int conflict = (wa & (rb|wb)) || (wb & (ra|wa));      /* a writes b's footprint, or vice versa */
-    w+=(size_t)snprintf(buf+w,w<n?n-w:0,"commute %s %s = %d\n",u->funcs[i].name,u->funcs[j].name,conflict?0:1);
+/* one claim's constraints (the oracle's `_Solver.claim`) */
+static void esc_claim(esc_ctx *e,int fi,const bcir_claim *c){
+  const char *op=c->op; uint64_t *a=esc_tmp(e,1), *b=esc_tmp(e,2), *g=esc_tmp(e,3);
+  if(esc_any(op,esc_ops_noflow)) return;
+  if(!strcmp(op,"c.load")||!strcmp(op,"c.store")||!strcmp(op,"c.addrof")){
+    if(!c->n_rd) return;
+    esc_clear(e,a); esc_clear(e,g);
+    if(!strcmp(op,"c.store")){
+      if(c->n_rd>1) esc_val(e,fi,c->rd[c->n_rd-1],g);
+      int one=esc_deref(e,fi,c->rd[0],a); esc_add_all(e,one,one<0?a:NULL,g); return; }
+    if(!strcmp(op,"c.load")){ int one=esc_deref(e,fi,c->rd[0],a); esc_contents(e,one,one<0?a:NULL,g); }
+    else esc_address(e,fi,c->rd[0],g);
+    for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],g);
+    return; }
+  if(esc_any(op,esc_ops_atomic)){
+    int ones[BCIR_CLAIM_MAX_RD]; int n1=0; esc_clear(e,a); esc_clear(e,b); esc_clear(e,g);
+    for(int k=0;k<c->n_rd;k++){ int one=esc_deref(e,fi,c->rd[k],a); if(one>=0) ones[n1++]=one;
+      esc_val(e,fi,c->rd[k],b); }
+    for(int k=0;k<n1;k++) esc_add(e,ones[k],b);
+    esc_add_all(e,-1,a,b);
+    for(int k=0;k<n1;k++) esc_contents1(e,ones[k],g);
+    esc_contents(e,-1,a,g);
+    for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],g);
+    return; }
+  if(esc_direct(op)){ int ci=esc_find_fn(e,esc_callee(op));
+    if(ci>=0) esc_bind(e,fi,ci,c->rd,c->n_rd,c); else esc_external(e,fi,c->rd,c->n_rd,c);
+    return; }
+  if(esc_indirect(op)){           /* monotone: bind every known target; external once anything is unknown */
+    if(!c->n_rd) return;
+    esc_clear(e,a); esc_val(e,fi,c->rd[0],a);    /* the pointer / dispatch base is used */
+    esc_clear(e,g); esc_call_values(e,fi,c,g,b);
+    int n=0, unknown=esc_has(g,0);
+    for(int x=0;x<e->nu;x++) if(esc_has(g,x)){ const esc_obj *o=&e->obj[e->uobj[x]];
+      if(o->kind!=EO_F) continue;
+      if(o->def<0) unknown=1; else e->tg[n++]=o->def; }
+    for(int k=0;k<n;k++) esc_bind(e,fi,e->tg[k],c->rd+1,c->n_rd-1,c);
+    if(unknown) esc_external(e,fi,c->rd+1,c->n_rd-1,c);
+    return; }
+  if(esc_is(op,"c.call.vaarg")){ esc_clear(e,g); esc_bit(g,0);
+    for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],g);
+    return; }
+  if(esc_any(op,esc_ops_external)){ esc_external(e,fi,c->rd,c->n_rd,c); return; }
+  if(esc_any(op,esc_ops_library)){    /* keeps no pointer, returns what it was given (memcpy-like moves kept) */
+    const esc_fn *F=&e->fn[fi];
+    esc_clear(e,a); esc_clear(e,b);
+    for(int k=0;k<c->n_rd;k++) esc_val(e,fi,c->rd[k],a);
+    esc_contents(e,-1,a,b); esc_add_all(e,-1,a,b);
+    for(int k=0;k<c->n_wr;k++){ const esc_rid *R=esc_R(F,c->wr[k]);
+      memcpy(g,a,(size_t)e->W*sizeof *g);
+      if(esc_allocator(op)) esc_bit(g,e->obj[F->heap].u);          /* fresh memory: this function's heap */
+      else if(R->kind==EK_POINTER) esc_bit(g,0);                   /* a pointer a library routine made */
+      esc_add(e,R->obj,g); }
+    return; }
+  if(esc_pointer_cast(op)){ esc_clear(e,g);
+    if(c->n_rd) esc_val(e,fi,c->rd[0],g);
+    if(!c->n_rd||esc_forged(e,fi,c->rd[0])) esc_bit(g,0);          /* an integer made into a pointer */
+    for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],g);
+    return; }
+  esc_clear(e,g);                 /* every other op (and a control marker): a value made of its operands */
+  for(int k=0;k<c->n_rd;k++) esc_val(e,fi,c->rd[k],g);
+  for(int k=0;k<c->n_wr;k++) esc_add_rid(e,fi,c->wr[k],g);
+}
+static void esc_solve(esc_ctx *e){
+  uint64_t *top=esc_tmp(e,5);
+  do{ e->changed=0;
+    esc_clear(e,top); esc_bit(top,0);
+    for(int fi=0;fi<e->nf;fi++) if(esc_callers_unknown(e,fi)){ const esc_fn *F=&e->fn[fi];
+      for(int p=0;p<F->f->n_params;p++)            /* a scalar only becomes a pointer through a cast */
+        if(F->r[F->params[p]].kind!=EK_SCALAR) esc_add(e,F->r[F->params[p]].obj,top); }
+    for(int fi=0;fi<e->nf;fi++)
+      for(size_t k=0;k<e->fn[fi].f->n_claims;k++) esc_claim(e,fi,&e->fn[fi].f->claims[k]);
+  } while(e->changed);
+}
+
+/* the objects reachable from `roots` through what they hold (`_closure`), OR-ed into out. 0 on OOM. */
+static int esc_closure(esc_ctx *e,const uint64_t *roots,uint64_t *out){
+  int *work=esc_alloc(e,(size_t)e->nu+1u,sizeof *work); if(!work) return 0;
+  int n=0;
+  for(int x=1;x<e->nu;x++) if(esc_has(roots,x) && !esc_has(out,x)){ esc_bit(out,x); work[n++]=x; }
+  while(n){ int o=e->uobj[work[--n]]; int k=e->obj[o].kind;
+    if(k==EO_F||k==EO_STR||k==EO_TOP) continue;
+    const uint64_t *p=esc_pt(e,o);
+    for(int x=1;x<e->nu;x++) if(esc_has(p,x) && !esc_has(out,x)){ esc_bit(out,x); work[n++]=x; } }
+  return 1;
+}
+
+/* the report writer: snprintf semantics over the caller's buffer, the full length counted */
+typedef struct { char *buf; size_t cap, w; } esc_out;
+static void esc_emit(esc_out *o,const char *s){
+  size_t n=strlen(s);
+  if(o->buf && o->cap && o->w<o->cap-1u){ size_t room=o->cap-1u-o->w; memcpy(o->buf+o->w,s,n<room?n:room); }
+  o->w+=n;
+}
+static size_t esc_finish(esc_out *o){
+  if(o->buf && o->cap) o->buf[o->w<o->cap?o->w:o->cap-1u]=0;
+  return o->w;
+}
+/* sort, deduplicate and `sep`-join `names` (or "-") */
+static void esc_emit_names(esc_out *o,const char **names,int n,const char *sep){
+  qsort(names,(size_t)n,sizeof *names,esc_strcmp);
+  int m=0; for(int i=0;i<n;i++){ if(m && !strcmp(names[i],names[m-1])) continue;
+    if(m) esc_emit(o,sep); esc_emit(o,names[i]); names[m++]=names[i]; }
+  if(!m) esc_emit(o,"-");
+}
+/* the refused unit (a call's operands did not all fit a claim): the oracle's `_refused` reports */
+static size_t esc_refused(const bcir_unit *u,esc_out *out,int which){
+  if(which) esc_emit(out,"truncated=1\n");
+  for(int i=0;i<u->n_funcs;i++){ esc_emit(out,"fn="); esc_emit(out,u->funcs[i].name);
+    esc_emit(out,which?" refused\n":" reads=* writes=*\n"); }
+  if(!which) for(int i=0;i<u->n_funcs;i++) for(int j=i+1;j<u->n_funcs;j++){
+    esc_emit(out,"commute "); esc_emit(out,u->funcs[i].name); esc_emit(out," ");
+    esc_emit(out,u->funcs[j].name); esc_emit(out," = 0\n"); }
+  return esc_finish(out);
+}
+
+/* the escape report: each function's named locals by verdict, then its indirect calls' target sets */
+static int esc_escape_report(esc_ctx *e,esc_out *out,const uint64_t *lent,const uint64_t *frame){
+  for(int fi=0;fi<e->nf;fi++){ const esc_fn *F=&e->fn[fi]; const uint64_t *fr=frame+(size_t)fi*(size_t)e->W;
+    const char **nm=esc_alloc(e,(size_t)F->nr+1u,sizeof *nm), **col=esc_alloc(e,(size_t)F->nr+1u,sizeof *col);
+    const char **site=esc_alloc(e,F->f->n_claims,sizeof *site);
+    int *vd=esc_alloc(e,(size_t)F->nr+1u,sizeof *vd);
+    if(!nm||!col||!site||!vd) return 0;
+    int m=0;
+    for(int k=0;k<F->nr;k++){ const esc_rid *R=&F->r[k]; if(!R->named_local||!R->memory) continue;
+      int uo=e->obj[R->obj].u, v=esc_has(fr,uo)?EV_ESCAPING:esc_has(lent,uo)?EV_LENT:EV_NONESCAPING;
+      int at=-1; for(int j=0;j<m;j++) if(!strcmp(nm[j],R->name)){ at=j; break; }
+      if(at<0){ nm[m]=R->name; vd[m]=v; m++; }         /* one name in two scopes: the more severe stands */
+      else if(v>vd[at]) vd[at]=v; }
+    esc_emit(out,"fn="); esc_emit(out,F->f->name);
+    for(int v=0;v<3;v++){ int nc=0; for(int j=0;j<m;j++) if(vd[j]==v) col[nc++]=nm[j];
+      esc_emit(out," "); esc_emit(out,esc_verdicts[v]); esc_emit(out,"="); esc_emit_names(out,col,nc,","); }
+    int ns=0;
+    for(size_t k=0;k<F->f->n_claims;k++){ const bcir_claim *c=&F->f->claims[k];
+      if(!esc_indirect(c->op)||!c->n_rd) continue;
+      int nt=esc_targets(e,fi,c);
+      if(nt<0){ site[ns++]="*"; continue; }
+      size_t len=1; for(int t=0;t<nt;t++) len+=strlen(e->fn[e->tg[t]].f->name)+1u;
+      char *s=esc_alloc(e,len,1u); if(!s) return 0;
+      size_t w=0; for(int t=0;t<nt;t++){ const char *fnm=e->fn[e->tg[t]].f->name; size_t z=strlen(fnm);
+        if(t) s[w++]=','; memcpy(s+w,fnm,z); w+=z; }
+      s[w]=0; site[ns++]=s; }
+    qsort(site,(size_t)ns,sizeof *site,esc_strcmp);
+    esc_emit(out," icalls="); if(!ns) esc_emit(out,"-");
+    for(int j=0;j<ns;j++){ if(j) esc_emit(out,";"); esc_emit(out,site[j]); }
+    esc_emit(out,"\n"); }
+  return 1;
+}
+
+/* a device access: an MMIO-domain claim, or a load or store whose BASE resource is MMIO-domain. The base
+ * decides, not the claim's spelling -- `p[i]` through a `volatile T *` lowers here as an ordinary load
+ * (the oracle marks it MMIO), and one predicate over the resource keeps the two rails' answers the same. */
+static int esc_device(const bcir_func *f,const bcir_claim *c){
+  if(c->domain==BCIR_DOM_MMIO) return 1;
+  if(c->n_rd && (!strcmp(c->op,"c.load")||!strcmp(c->op,"c.store"))){
+    const bcir_resource *r=res_of(f,c->rd[0]); return r && r->domain==BCIR_DOM_MMIO; }
+  return 0;
+}
+
+/* the effects report: each function's own accesses and everything it can call, named; the commute matrix */
+static int esc_effects_report(esc_ctx *e,esc_out *out,const uint64_t *frame){
+  size_t NW=(size_t)(e->nobj+63)/64u;
+  uint64_t *own=esc_alloc(e,(size_t)e->nf*2u*NW,sizeof *own);   /* per function: reads, writes (all objects) */
+  uint64_t *set=esc_alloc(e,(size_t)e->W,sizeof *set), *acc=esc_alloc(e,2u*NW,sizeof *acc);
+  const char ***names=esc_alloc(e,(size_t)e->nf*2u,sizeof *names);
+  int *nnames=esc_alloc(e,(size_t)e->nf*2u,sizeof *nnames), *work=esc_alloc(e,(size_t)e->nf,sizeof *work);
+  uint8_t *reach=esc_alloc(e,(size_t)e->nf,1u);
+  if(!own||!set||!acc||!names||!nnames||!work||!reach) return 0;
+#define ESC_SET(bits,o) ((bits)[(size_t)(o)>>6]|=(uint64_t)1u<<((o)&63))
+  for(int fi=0;fi<e->nf;fi++){ const esc_fn *F=&e->fn[fi]; uint64_t *rd=own+(size_t)fi*2u*NW, *wr=rd+NW;
+    for(size_t k=0;k<F->f->n_claims;k++){ const bcir_claim *c=&F->f->claims[k]; const char *op=c->op;
+      for(int j=0;j<c->n_rd;j++){ int o=esc_R(F,c->rd[j])->obj, ok=e->obj[o].kind;
+        if(ok==EO_G||ok==EO_S||ok==EO_L) ESC_SET(rd,o); }
+      for(int j=0;j<c->n_wr;j++){ int o=esc_R(F,c->wr[j])->obj, ok=e->obj[o].kind;
+        if(ok==EO_G||ok==EO_S||ok==EO_L) ESC_SET(wr,o); }
+      if(esc_device(F->f,c)){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }   /* a device access */
+      int touch=0, one=-1;          /* touch: 1 read, 2 write, 3 both -- the object `one` and those in `set` */
+      esc_clear(e,set);
+      if(!strcmp(op,"c.load")){ if(c->n_rd){ one=esc_deref(e,fi,c->rd[0],set); touch=1; } }
+      else if(!strcmp(op,"c.store")){ if(c->n_rd){ one=esc_deref(e,fi,c->rd[0],set); touch=2; } }
+      else if(esc_any(op,esc_ops_atomic)){
+        for(int j=0;j<c->n_rd;j++){ int x=esc_deref(e,fi,c->rd[j],set); if(x>=0){ ESC_SET(rd,x); ESC_SET(wr,x); } }
+        touch=3; }
+      else if(esc_any(op,esc_ops_library)){ for(int j=0;j<c->n_rd;j++) esc_val(e,fi,c->rd[j],set); touch=3; }
+      else if(esc_any(op,esc_ops_external)||(esc_direct(op)&&esc_find_fn(e,esc_callee(op))<0)){
+        ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }
+      else if(esc_indirect(op)){ if(c->n_rd){
+        if(esc_is(op,"c.call.imember")){ one=esc_deref(e,fi,c->rd[0],set); touch=1; }
+        if(esc_targets(e,fi,c)<0){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); } } }
+      else if(esc_is(op,"c.call.vaarg")) ESC_SET(rd,EO_TOP);
+      if(one>=0){ if(touch&1) ESC_SET(rd,one); if(touch&2) ESC_SET(wr,one); }
+      if(touch) for(int x=0;x<e->nu;x++) if(esc_has(set,x)){ int o=e->uobj[x];
+        if(touch&1) ESC_SET(rd,o); if(touch&2) ESC_SET(wr,o); } } }
+#undef ESC_SET
+  for(int fi=0;fi<e->nf;fi++){
+    memset(reach,0,(size_t)e->nf); int nw=0; reach[fi]=1; work[nw++]=fi;
+    while(nw){ int h=work[--nw]; for(int k=0;k<e->fn[h].nedges;k++){ int g2=e->fn[h].edges[k];
+      if(!reach[g2]){ reach[g2]=1; work[nw++]=g2; } } }
+    memset(acc,0,2u*NW*sizeof *acc);
+    for(int h=0;h<e->nf;h++) if(reach[h]){ const uint64_t *src=own+(size_t)h*2u*NW;
+      for(size_t w=0;w<2u*NW;w++) acc[w]|=src[w]; }
+    for(int side=0;side<2;side++){ const uint64_t *bits=acc+(size_t)side*NW;
+      const char **lst=esc_alloc(e,(size_t)e->nobj+1u,sizeof *lst); if(!lst) return 0;
+      int m=0;
+      for(int o=0;o<e->nobj;o++){ if(!((bits[(size_t)o>>6]>>(o&63))&1u)) continue; const esc_obj *ob=&e->obj[o];
+        if(ob->kind==EO_TOP) lst[m++]="*";
+        else if(ob->kind==EO_G||ob->kind==EO_S) lst[m++]=ob->name;
+        else if(ob->kind==EO_L||ob->kind==EO_H){  /* private to these activations unless reachable */
+          if(!reach[ob->fn]||esc_has(frame+(size_t)ob->fn*(size_t)e->W,ob->u)) lst[m++]="*"; } }
+      qsort(lst,(size_t)m,sizeof *lst,esc_strcmp);
+      int d=0; for(int i=0;i<m;i++) if(!d||strcmp(lst[i],lst[d-1])) lst[d++]=lst[i];
+      names[fi*2+side]=lst; nnames[fi*2+side]=d; } }
+  for(int fi=0;fi<e->nf;fi++){
+    esc_emit(out,"fn="); esc_emit(out,e->fn[fi].f->name);
+    esc_emit(out," reads="); esc_emit_names(out,names[fi*2],nnames[fi*2],",");
+    esc_emit(out," writes="); esc_emit_names(out,names[fi*2+1],nnames[fi*2+1],",");
+    esc_emit(out,"\n"); }
+  for(int i=0;i<e->nf;i++) for(int j=i+1;j<e->nf;j++){
+    int conflict=0;                 /* a writes what b reads or writes, or b writes what a reads */
+    for(int pass=0;pass<3 && !conflict;pass++){
+      const char **x=pass<2?names[i*2+1]:names[j*2+1]; int nx=pass<2?nnames[i*2+1]:nnames[j*2+1];
+      const char **y=pass==0?names[j*2]:pass==1?names[j*2+1]:names[i*2];
+      int ny=pass==0?nnames[j*2]:pass==1?nnames[j*2+1]:nnames[i*2];
+      if(!nx||!ny) continue;
+      if(!strcmp(x[0],"*")||!strcmp(y[0],"*")){ conflict=1; break; }   /* `*` sorts first: anything */
+      for(int p=0,q=0;p<nx&&q<ny;){ int r=strcmp(x[p],y[q]); if(!r){ conflict=1; break; } if(r<0) p++; else q++; } }
+    esc_emit(out,"commute "); esc_emit(out,e->fn[i].f->name); esc_emit(out," ");
+    esc_emit(out,e->fn[j].f->name); esc_emit(out,conflict?" = 0\n":" = 1\n"); }
+  return 1;
+}
+
+/* the analysis and one report: which==0 the effects report, which==1 the escape report. Returns the
+ * complete report's length (snprintf semantics: at most n-1 bytes and a NUL are written), or SIZE_MAX
+ * when an allocation failed (buf is then empty). */
+static size_t esc_report(const bcir_unit *u,char *buf,size_t n,const bcir_host_allocator *allocator,int which){
+  bcir_host_arena arena; esc_ctx E; esc_ctx *e=&E; esc_out out={buf,n,0}; int ok=0;
+  if(buf&&n) buf[0]=0;
+  if(!u) return 0;
+  for(int i=0;i<u->n_funcs;i++) for(size_t k=0;k<u->funcs[i].n_claims;k++)
+    if(u->funcs[i].claims[k].truncated) return esc_refused(u,&out,which);
+  if(!bcir_host_arena_init(&arena,allocator,4096u)) return SIZE_MAX;
+  memset(e,0,sizeof *e); e->arena=&arena; e->u=u;
+  if(esc_build(e)){
+    esc_solve(e);
+    /* the call graph, direct and narrowed */
+    uint8_t *callee=esc_alloc(e,(size_t)e->nf,1u);
+    int graph=callee!=NULL;
+    for(int fi=0;fi<e->nf && graph;fi++){ esc_fn *F=&e->fn[fi];
+      memset(callee,0,(size_t)e->nf);
+      for(size_t k=0;k<F->f->n_claims;k++){ const bcir_claim *c=&F->f->claims[k];
+        if(esc_direct(c->op)){ int ci=esc_find_fn(e,esc_callee(c->op)); if(ci>=0) callee[ci]=1; }
+        else if(esc_indirect(c->op) && c->n_rd){ int nt=esc_targets(e,fi,c); for(int t=0;t<nt;t++) callee[e->tg[t]]=1; } }
+      F->edges=esc_alloc(e,(size_t)e->nf,sizeof *F->edges); if(!F->edges){ graph=0; break; }
+      for(int ci=0;ci<e->nf;ci++) if(callee[ci]) F->edges[F->nedges++]=ci; }
+    /* escape: what unknown code, a global or a static can reach, and what a function returns */
+    uint64_t *roots=esc_alloc(e,(size_t)e->W,sizeof *roots), *escaped=esc_alloc(e,(size_t)e->W,sizeof *escaped);
+    uint64_t *lent=esc_alloc(e,(size_t)e->W,sizeof *lent);
+    uint64_t *frame=esc_alloc(e,(size_t)e->nf*(size_t)e->W,sizeof *frame);
+    if(graph && roots && escaped && lent && frame){
+      esc_or(e,roots,e->esc);
+      for(int i=0;i<e->nobj;i++) if(e->obj[i].kind==EO_G||e->obj[i].kind==EO_S) esc_or(e,roots,esc_pt(e,i));
+      ok=esc_closure(e,roots,escaped);
+      esc_clear(e,roots);
+      for(int fi=0;fi<e->nf && ok;fi++){ const bcir_func *f=e->fn[fi].f;
+        for(size_t k=0;k<f->n_claims;k++){ const bcir_claim *c=&f->claims[k];
+          if(!esc_is(c->op,"c.call") && !esc_any(c->op,esc_ops_external)) continue;
+          for(int j=esc_indirect(c->op)?1:0;j<c->n_rd;j++) esc_val(e,fi,c->rd[j],roots); } }
+      ok=ok && esc_closure(e,roots,lent);
+      for(int fi=0;fi<e->nf && ok;fi++){ uint64_t *fr=frame+(size_t)fi*(size_t)e->W; const esc_fn *F=&e->fn[fi];
+        esc_clear(e,roots);
+        for(int k=0;k<F->nret;k++) esc_val(e,fi,F->r[F->rets[k]].rid,roots);
+        ok=esc_closure(e,roots,fr); esc_or(e,fr,escaped); }
+      if(ok) ok=which?esc_escape_report(e,&out,lent,frame):esc_effects_report(e,&out,frame);
+    }
   }
   bcir_host_arena_destroy(&arena);
+  if(!ok){ if(buf&&n) buf[0]=0; return SIZE_MAX; }
+  return esc_finish(&out);
 }
-void bcir_cfront_effects(const bcir_unit *u,char *buf,size_t n){
+
+size_t bcir_cfront_effects_with_allocator(const bcir_unit *u,char *buf,size_t n,
+                                          const bcir_host_allocator *allocator){
+  return esc_report(u,buf,n,allocator,0);
+}
+size_t bcir_cfront_effects(const bcir_unit *u,char *buf,size_t n){
   bcir_host_allocator allocator=bcir_host_allocator_default();
-  bcir_cfront_effects_with_allocator(u,buf,n,&allocator);
+  return bcir_cfront_effects_with_allocator(u,buf,n,&allocator);
+}
+size_t bcir_cfront_escape_with_allocator(const bcir_unit *u,char *buf,size_t n,
+                                         const bcir_host_allocator *allocator){
+  return esc_report(u,buf,n,allocator,1);
+}
+size_t bcir_cfront_escape(const bcir_unit *u,char *buf,size_t n){
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_cfront_escape_with_allocator(u,buf,n,&allocator);
 }

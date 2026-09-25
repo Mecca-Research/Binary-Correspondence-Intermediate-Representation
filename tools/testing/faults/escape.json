@@ -1,0 +1,191 @@
+{
+  "command": [
+    "@python",
+    "tools/perf/check_escape.py",
+    "--require-cc"
+  ],
+  "faults": [
+    {
+      "label": "Footprint: a store reads what its base points to instead of writing it",
+      "expects": "effects.commute.unsound",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        elif op == \"c.store\":\n            writes |= solver.deref(fn, c.rd[0])",
+      "new": "        elif op == \"c.store\":\n            reads |= solver.deref(fn, c.rd[0])"
+    },
+    {
+      "label": "Footprint: a static local is private to its activation",
+      "expects": "effects.commute.unsound",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        elif o[0] in (\"G\", \"S\"):\n            out.add(o[1])",
+      "new": "        elif o[0] == \"G\":\n            out.add(o[1])"
+    },
+    {
+      "label": "Heap: an allocator's result points nowhere",
+      "expects": "effects.parity.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "                    got.add((\"H\", fn))  # fresh memory: this function's heap object",
+      "new": "                    pass  # fresh memory: this function's heap object"
+    },
+    {
+      "label": "Cast: a pointer made from an integer points only where the integer's operands did",
+      "expects": "effects.parity.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        if self.u.declared(fn, rid):\n            return self.u.kind(fn, rid) not in (\"pointer\", \"array\")",
+      "new": "        if self.u.declared(fn, rid) or True:\n            return False"
+    },
+    {
+      "label": "Ops table: a static callback named by a file-scope initializer has only the unit's callers",
+      "expects": "effects.commute.unsound",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "not getattr(lf, \"static_fn\", False) or fn in address_taken or fn in self.init_refs",
+      "new": "not getattr(lf, \"static_fn\", False) or fn in address_taken"
+    },
+    {
+      "label": "Device: a volatile (MMIO) access is an ordinary one",
+      "expects": "effects.parity.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        if _device(lf, c):  # a device access: an observable effect on unnamed state",
+      "new": "        if _device(lf, c) and False:  # a device access: an observable effect on unnamed state"
+    },
+    {
+      "label": "Kind: a file-scope variable is read as its slot, not as what it declares",
+      "expects": "effects.parity.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        return _kind(self.functions[fn].rid_types.get(rid))",
+      "new": "        return \"scalar\" if rid >= _SHARED_RID else _kind(self.functions[fn].rid_types.get(rid))"
+    },
+    {
+      "label": "Escape: a local lent to a callee is reported private",
+      "expects": "escape.verdict.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        return \"lent\" if node in lent else \"nonescaping\"",
+      "new": "        return \"nonescaping\""
+    },
+    {
+      "label": "Escape: what a global or a static holds is not a root of escape",
+      "expects": "escape.verdict.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        if node[0] in (\"G\", \"S\"):\n            roots |= objs",
+      "new": "        if node[0] in (\"G\", \"S\") and False:\n            roots |= objs"
+    },
+    {
+      "label": "Narrowing: a site with two targets reads as its first",
+      "expects": "icall.target.mismatch",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        if not names or any(n not in self.u.functions for n in names):\n            return None\n        return tuple(names)",
+      "new": "        if not names or any(n not in self.u.functions for n in names):\n            return None\n        return tuple(names[:1])"
+    },
+    {
+      "label": "Narrowing: a site that may reach unknown code is narrowed to the known functions it holds (none)",
+      "expects": "icall.unknown",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        if TOP in values:\n            return None\n        names = sorted({o[1] for o in values if o[0] == \"F\"})\n        if not names or any(n not in self.u.functions for n in names):\n            return None",
+      "new": "        names = sorted({o[1] for o in values if o[0] == \"F\"})\n        if any(n not in self.u.functions for n in names):\n            return None"
+    },
+    {
+      "label": "Lowering: a file-scope initializer names no function",
+      "expects": "effects.commute.unsound",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),",
+      "new": "init_refs=frozenset(),"
+    },
+    {
+      "label": "Twin: a store reads what its base points to",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "else if(!strcmp(op,\"c.store\")){ if(c->n_rd){ one=esc_deref(e,fi,c->rd[0],set); touch=2; } }",
+      "new": "else if(!strcmp(op,\"c.store\")){ if(c->n_rd){ one=esc_deref(e,fi,c->rd[0],set); touch=1; } }"
+    },
+    {
+      "label": "Twin: a static local is named without its function",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "snprintf(nm,z,\"%s.%s\",f->name,f->statics[st].name);",
+      "new": "snprintf(nm,z,\"%s\",f->statics[st].name);"
+    },
+    {
+      "label": "Twin: an allocator's result points nowhere",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "if(esc_allocator(op)) esc_bit(g,e->obj[F->heap].u);",
+      "new": "if(esc_allocator(op)) (void)F->heap;"
+    },
+    {
+      "label": "Twin: an ops-table callback has only the unit's callers",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "return !F->f->static_fn || F->f->addr_in_init || (F->fobj>=0 && e->obj[F->fobj].taken);",
+      "new": "return !F->f->static_fn || (F->fobj>=0 && e->obj[F->fobj].taken);"
+    },
+    {
+      "label": "Twin: a pointer made from an integer points only where its operands did",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "if(!c->n_rd||esc_forged(e,fi,c->rd[0])) esc_bit(g,0);",
+      "new": "if(!c->n_rd) esc_bit(g,0);"
+    },
+    {
+      "label": "Twin: a device access is an ordinary one",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "if(esc_device(F->f,c)){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }",
+      "new": "if(esc_device(F->f,c)&&0){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }"
+    },
+    {
+      "label": "Twin: a load through a volatile pointer is a device access only when the frontend marked it",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "const bcir_resource *r=res_of(f,c->rd[0]); return r && r->domain==BCIR_DOM_MMIO; }",
+      "new": "const bcir_resource *r=res_of(f,c->rd[0]); return r && 0; }"
+    },
+    {
+      "label": "Twin: a declared pointer whose resource kind is scalar is touched in place",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "if(r->kind==BCIR_RK_POINTER||r->is_funcptr||r->is_pointer) return EK_POINTER;",
+      "new": "if(r->kind==BCIR_RK_POINTER||r->is_funcptr) return EK_POINTER;"
+    },
+    {
+      "label": "Twin: the lent verdict reads as nonescaping",
+      "expects": "escape.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "v=esc_has(fr,uo)?EV_ESCAPING:esc_has(lent,uo)?EV_LENT:EV_NONESCAPING;",
+      "new": "v=esc_has(fr,uo)?EV_ESCAPING:esc_has(lent,uo)?EV_NONESCAPING:EV_NONESCAPING;"
+    },
+    {
+      "label": "Twin: a site that may reach unknown code is narrowed to the known functions it holds (none)",
+      "expects": "escape.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(esc_has(values,0)) return -1;\n  int n=0;\n  for(int x=0;x<e->nu;x++) if(esc_has(values,x)){ const esc_obj *o=&e->obj[e->uobj[x]];\n    if(o->kind!=EO_F) continue;                   /* a data address is not a callable target */\n    if(o->def<0) return -1;                       /* a function of another unit */\n    e->tg[n++]=o->def; }\n  if(!n) return -1;",
+      "new": "  int n=0;\n  for(int x=0;x<e->nu;x++) if(esc_has(values,x)){ const esc_obj *o=&e->obj[e->uobj[x]];\n    if(o->kind!=EO_F) continue;                   /* a data address is not a callable target */\n    if(o->def<0) return -1;                       /* a function of another unit */\n    e->tg[n++]=o->def; }\n  if(!n) return 0;"
+    },
+    {
+      "label": "Twin parser: a local array is not marked an array object",
+      "expects": "escape.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      if(is_arr && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_array=1;   /* an array object, whatever its length */",
+      "new": "      if(is_arr && c->fn->n_res && 0) c->fn->res[c->fn->n_res-1].is_array=1;   /* an array object, whatever its length */"
+    },
+    {
+      "label": "Twin parser: a file-scope initializer marks no function address-taken",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      if((int)strlen(f->name)==tk->n && !strncmp(f->name,tk->s,(size_t)tk->n)) f->addr_in_init=1; }",
+      "new": "      if((int)strlen(f->name)==tk->n && !strncmp(f->name,tk->s,(size_t)tk->n)) f->addr_in_init=0; }"
+    },
+    {
+      "label": "Twin parser: a file-scope pointer is not marked a pointer",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "c->fn->res[c->fn->n_res-1].is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0); }",
+      "new": "c->fn->res[c->fn->n_res-1].is_pointer=0; }"
+    },
+    {
+      "label": "Twin driver: every report fails, so the twin reports on nothing",
+      "expects": "effects.parity.mismatch",
+      "path": "runtime/c/bcir_cc.c",
+      "old": "      if (!rep || got != need) {",
+      "new": "      if (1 || !rep || got != need) {"
+    }
+  ]
+}

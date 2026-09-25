@@ -32,6 +32,7 @@ python3 tools/testing/red_sweep.py --faults ... --json-out build/red/database.js
 | `delta.json` | `tools/perf/check_delta.py` (the G18 rows: the chain advanced by declared deltas against the chain from scratch; pure Python) | the incremental plan's cutoff, lazy shift, fused-edge dirtying, backtrack and kept steps; the incremental offer's reader, identity, tier and fence cones and its copy rule; the delta's admission (shape, duplicates, revision, addressing, the one id predicate); the delta pack's records, transitions, generation records, chunks, stale state and header maxima; the incremental verdict's resource, pair, offer, cost, prefetch, event, generation, total, descent and registry units |
 | `alias.json` | `tools/perf/check_alias.py --require-llvm` (the G9 rows: the declared alias facts on every emitter of the elementwise kernel; needs a coherent clang/llvm-link/opt) | the one derivation's partition, hazard, element-size, declaration and qualifier rules and its fences; the LLVM kernel's `noalias`, alias scopes, domain, TBAA root and type, volatility and exit fence (four judged by LLVM itself); the ABI header's plan, the Q-fixed kernel's qualifier, the gather form's fence and the specialist's facts; the harness binding and the node harness's operation; R12's noalias, volatility, own-scope, TBAA, fence and restrict findings and its metadata reading |
 | `encode.json` | `tools/perf/check_encode.py` (SP-ENC: the compiled StreamPack encoder against the encoder before it, and its call floor) | the plain layouts' exact-type gates (a bool claim id, an `__index__` target, a bool stride, a missing fence array), a swapped v3 segment layout and a dropped v2 buffer count; the encode contract's fast paths (width, lane, buffers) and the generation maxima; the field path's u16 string length, u32 element, u8 lane and trace-hash checks and its empty-array shortcut; its single walk of an array that is not a tuple or a list (u32, u64, strings) and its refusal of a generator at `len()`; the version test's dispatch; the saving itself (each plain path never taken) |
+| `escape.json` | `tools/perf/check_escape.py --require-cc` (the G10 rows: escape verdicts, indirect-call narrowing and the effect footprint behind `commute`, judged by generated units, a dynamic witness and the twin's reports; needs a C compiler) | the oracle's store-as-write, static naming, heap object, cast, ops-table, device, declared-kind, lent, escape-root and two-target rules; the lowering's file-scope initializer names; the twin's twins of these, its device predicate's base half, its declared-pointer kind (read and set), its array and initializer marks, and its driver reporting on nothing |
 | `planner.json` | `tools/c/check_planner.py` (the G17 rows on the compact planner, the pre-G17 reference and the native twin; needs a C compiler) | the compact planner's tie-break, fusion, thermal coupling, discounts, fence, value numbering, CSE exclusions and sink; R9's lane identity, phase binding, total diagnostics and base comparison; the native planner's tie-break, coupling, discounts, exclusions, fence, phase order, weights and 128-bit carry; both codecs' laws |
 
 ## What runs in CI, and what does not
@@ -216,6 +217,25 @@ large numbers is not a fixture that exercises the carry.
 A witness has to be the only thing standing between the defect and a pass. When a law shares a
 status with a later one, the variant must stop at it; when a law is shadowed by a stricter call
 shape, the gate must also grade the call shape where it stands alone.
+
+## A pair the witness cannot tell apart, and a row that compares nothing
+
+The first sweep of `escape.json` caught 18 of 19:
+
+    Footprint: a static local is private to its activation   effects.parity.mismatch   WRONG CHECK
+        expected 'effects.commute.unsound'; the gate failed but 'effects.commute.unsound' did not fire
+
+The footprints were wrong, and the parity row saw the two rails disagree. The witness row did not,
+and it is the one judge that shares no code with the analysis. No two generated functions touched
+one static, so every pair's two orders agreed whatever the footprints said. Each generated unit now
+ends with `s_a` and `s_b`, which differ only through the static counter of a helper both call. Their
+two orders diverge, and a footprint that drops the static calls them commuting.
+
+The same slice found the parity rows blind to a twin that reports on nothing. They skipped any unit
+the twin refused, so a driver whose every report failed read 0 on both rows. A refusal now counts,
+except the one pinned preprocessor limit, and the table holds a fault that makes every report fail
+(L2). A third addition narrows the open-world sites to no function. That is a claim no sound
+analysis can make, and it fires `icall.unknown` under its proved floor. The last sweep caught all 26.
 
 ## Adding a fault
 
