@@ -187,10 +187,17 @@ class Metric:
         return "NO-CHANGE"
 
     def improvement(self, value: float) -> float:
-        """Signed fractional improvement over the baseline, positive = better."""
+        """Signed fractional improvement over the baseline, positive = better.
+
+        A baseline of zero has no fraction to move by, and this returned 0.0 for it -- so a
+        guard row held at zero (a fact that must stay false, S5-A's `alias.llvm.false_noalias`)
+        could climb to any count and still grade NO-CHANGE. Any move off a zero baseline is the
+        whole of it: 100% in the direction it went."""
         base = self.baseline
         if base == 0:
-            return 0.0
+            if value == 0:
+                return 0.0
+            return -1.0 if (value > 0) == self.lower_is_better else 1.0
         return (base - value) / abs(base) if self.lower_is_better else (value - base) / abs(base)
 
 
@@ -1203,6 +1210,178 @@ METRICS: tuple[Metric, ...] = (
         "calls",
         "exact",
         slice_owner="G18",
+    ),
+    # --- G9 (S5-A): the declared alias facts carried the rest of the way to LLVM. Each row counts
+    # failures over the fixed corpus of bcir/tests/alias_fixtures.py::measure, which the tests and
+    # tools/perf/check_alias.py grade the same way: 504 lawful kernels (7 RID partitions x 3 ops x
+    # 2 element types x 4 widths x 3 contracts) on the LLVM and C backends, the gather form, the
+    # hot-shape specialist, the ABI header and the Q-fixed kernel once per plan, 112 modules the
+    # subset must refuse, 290 one-fact flips per rail, 5 self-checks per plan and 21 forgery kinds.
+    # RED is the slice's parent (ad4ebff0, the S4-B head) running the final corpus.
+    Metric(
+        "alias.noalias.mismatch",
+        "alias",
+        "pointer parameters whose no-alias assertion (LLVM noalias, C restrict) is not the RID partition's -- false on a shared resource or dropped on an exclusive one -- over the LLVM kernel and the C kernel, gather form, specialist, ABI header and Q-fixed kernel",
+        648,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="noalias / restrict exactly where the declared RIDs prove a pointer exclusive, on every emitter (roadmap G9)",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.scope.mismatch",
+        "alias",
+        "LLVM memory accesses whose !alias.scope / !noalias do not encode the RID partition (one scope per resource in one domain; its own in !alias.scope, every other in !noalias); 2,646 accesses",
+        2646,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="alias scopes derived from the RID partition on every access (roadmap G9)",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.tbaa.mismatch",
+        "alias",
+        "LLVM memory accesses without the TBAA tag of the declared element type -- the tag clang gives the same C type; 2,646 accesses",
+        2646,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="TBAA from the declared element type on every access (roadmap G9)",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.volatile.mismatch",
+        "alias",
+        "LLVM memory accesses and C pointer parameters (kernel, gather form, specialist, header, Q-fixed kernel) whose volatility is not the claim's",
+        1533,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="volatile carried through to LLVM, not fenced in BCIR only (roadmap G9)",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.fence.mismatch",
+        "alias",
+        "kernels whose fences are not the hazard's (seq_cst first and last for a barriered claim, none for a unique one), LLVM and every C emitter with a body",
+        742,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the hazard contract realized in the kernel R12 already required it of",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.refusal.accepted",
+        "alias",
+        "(module, emitter) pairs lowered that the elementwise subset must refuse: an atomic or unknown hazard, an operand resource declaring an element size the kernel does not address or not declared at all; 112 modules on 6 emitters (the Q-fixed kernel, whose lanes read no declared element, on the hazards only)",
+        602,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the subset refuses what it does not generate instead of lowering it to plain accesses",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.differential.silent",
+        "alias",
+        "(module, module', emitter) triples differing in exactly one declared fact (the RID partition, volatility, the hazard, an operand's element size, the element type) whose emitted facts are identical",
+        1072,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="two modules differing only in an alias fact differ in the emitted facts (roadmap G9)",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.harness.unaliased",
+        "alias",
+        "self-checks (LLVM AOT/JIT harness, C and Q-fixed self-checks, WASM node harness) that do not bind one buffer per declared resource; 105 over 21 plans",
+        75,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every self-check runs the kernel with the aliasing the claim declares",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.r12.rejected",
+        "alias",
+        "(kernel, backend) pairs the emitter produced and its own lowering law R12 rejects; 504 kernels on 2 backends",
+        336,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the emitter and its lowering law agree on every lawful kernel",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.r12.forgery.accepted",
+        "alias",
+        "forged kernels (one fact dropped, added or contradicted; 21 forgery kinds over 84 kernels on 2 backends) to which R12 raises nothing it did not raise to the honest one",
+        1084,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="R12 holds every emitted alias fact to the declaration",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.llvm.false_noalias",
+        "alias",
+        "access pairs (one at least a store) through two positions naming one resource that LLVM's default alias analysis proves NoAlias (opt aa-eval, 84 kernels); needs a coherent LLVM toolset",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="no fact the declaration contradicts -- held at zero since the landed half of G9",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.llvm.scope_facts.missing",
+        "alias",
+        "access pairs (one at least a store) through positions naming distinct resources that LLVM's scoped-noalias analysis ALONE does not prove NoAlias (opt aa-eval, 84 kernels); needs a coherent LLVM toolset",
+        300,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every declared-disjoint pair proved by the scopes alone: present, and effective",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.backends.disagree",
+        "alias",
+        "(kernel, fact family) pairs where clang's IR for the C kernel carries other noalias parameters, TBAA types, volatility or fences than the LLVM kernel; 84 kernels; needs a coherent LLVM toolset",
+        132,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the two paths to LLVM carry the same declared facts",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.llvm.caller_memory",
+        "alias",
+        "accesses to a C caller's own long data around the kernel LLVM inlined into it (clang -O2 caller, llvm-link, opt -O2) that contradict the declared facts: kept across a unique kernel whose TBAA proves them disjoint, or dropped across a barriered kernel whose fences order them; 84 callers; needs a coherent LLVM toolset",
+        56,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the declared facts are what LLVM needs to remove the caller's redundant store and reload -- and what stops it at a barrier",
+        slice_owner="G9",
+    ),
+    Metric(
+        "alias.exec.failed",
+        "alias",
+        "(kernel, runner) pairs whose self-check fails with the declared aliasing bound: 14 kernels (every partition, the ops rotating) on LLVM AOT and JIT, the C and Q-fixed kernels and WASM under node -- each runner the host has; RED is the node harness computing `+` for every op",
+        9,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every kernel runs correctly under the aliasing it declares, on every runner",
+        slice_owner="G9",
     ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
@@ -2234,6 +2413,17 @@ def measure_delta() -> dict[str, float]:
     return out
 
 
+def measure_alias() -> dict[str, float]:
+    """The G9 rows (S5-A): the declared alias facts on every emitter of the elementwise kernel,
+    counted failures over fixed corpora (bcir/tests/alias_fixtures.py::measure, which the tests
+    and tools/perf/check_alias.py grade the same way). The text rows need only the interpreter;
+    the rows LLVM judges need a coherent clang/llvm-link/opt and are NOT-MEASURED without one,
+    never zero by default."""
+    from bcir.tests.alias_fixtures import measure
+
+    return measure(llvm=True)
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2288,6 +2478,7 @@ _MEASURERS = {
     "handoff": measure_handoff,
     "kplan": measure_kplan,
     "delta": measure_delta,
+    "alias": measure_alias,
     "memory": measure_memory,
 }
 

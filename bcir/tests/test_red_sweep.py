@@ -219,7 +219,9 @@ def test_every_committed_table_loads_and_anchors_exactly_once():
     for table in tables:
         command, faults = load_table(table)
         assert faults, f"{table.name} declares no faults"
-        assert Path(command[-1]).name.endswith(".py")
+        # The gate is a Python script; arguments may follow it (alias.json requires the LLVM
+        # toolset, so a host without one fails the control instead of missing the LLVM faults).
+        assert any(Path(part).name.endswith(".py") for part in command[1:]), command
         for fault in faults:
             text = fault.path.read_text(encoding="utf-8")
             assert fault.anchor_count(text) == 1, (

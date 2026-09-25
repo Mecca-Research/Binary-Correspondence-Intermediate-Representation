@@ -1782,15 +1782,23 @@ def verify_lowering(
     (S0-8): its vector loop is bounded by `n & -W` and a scalar epilogue finishes the
     remainder, and the head declares `epilogue=scalar`. A kernel that steps its vector
     loop to `n` is a miscompile for any `n` that is not a multiple of W.
+
+    The declared alias facts (S5-A) are part of the semantic the lowering preserves: `noalias`
+    on exactly the pointers no other operand aliases, one alias scope per resource on every
+    access, the TBAA tag of the declared element type, `volatile` on every access of a
+    volatile claim and on no other, and a barriered claim's fences before its first access and
+    after its last (`verify.alias`). A false fact and a dropped one are each a finding.
     """
+    from ..lower.alias_facts import kernel_facts
     from ..lower.llvm import _FOP, _IOP, find_elementwise
-    from ..lower.memory_model import hazard_to_ordering
+    from .alias import ll_alias_diagnostics
 
     diags: list[Diagnostic] = []
     try:
         claim, cand = find_elementwise(module, result)
-    except NotImplementedError:
-        return [Diagnostic("R12", "no lowerable elementwise claim selected in this plan")]
+        facts = kernel_facts(module, claim, elem)
+    except NotImplementedError as exc:
+        return [Diagnostic("R12", f"no lowerable elementwise claim selected in this plan: {exc}")]
 
     # Discharge note: the head comment carries the realized lane geometry.
     head = ll_text.splitlines()[0] if ll_text else ""
@@ -1875,6 +1883,7 @@ def verify_lowering(
             or s.startswith(";")
             or s.startswith("source_filename")
             or s.startswith("define")
+            or s.startswith("!")  # metadata: the alias scopes and the TBAA type DAG
             or s == "}"
             or s.endswith(":")
         ):
@@ -1890,17 +1899,8 @@ def verify_lowering(
             Diagnostic("R12", "strict bounds contract not discharged (no trip-count guard on %n)")
         )
 
-    # Hazard: an ordered hazard contract must materialize as a fence.
-    ordering = hazard_to_ordering(claim.hazard)
-    if ordering in ("acq_rel", "seq_cst") and "fence" not in ll_text:
-        diags.append(
-            Diagnostic(
-                "R12",
-                f"hazard contract {claim.hazard!r} requires a fence (>= {ordering}) "
-                f"in the lowered kernel",
-            )
-        )
-
+    # The declared alias facts, the hazard's fences among them (`verify.alias`).
+    diags.extend(Diagnostic("R12", message) for message in ll_alias_diagnostics(facts, ll_text))
     return diags
 
 
@@ -1916,8 +1916,9 @@ def verify_c_lowering(
     (`lower.c_kernel.emit_kernel_c`) preserves the K_BCIR-selected realization --
     lane geometry, precision (the contracted element type), bounds (a trip-count
     guard so the kernel is safe for any n), the elementwise op, and the
-    non-aliasing contract (`restrict` when the read and write resources are
-    disjoint).
+    declared alias facts (S5-A, `verify.alias`): `restrict` on exactly the pointers no
+    other operand aliases, `volatile` pointees for a volatile claim and no other, and
+    a barriered claim's fences as the first and last statements.
 
     Lane geometry is *width-aware* (`hw_width` = the target's widest lane,
     `HProfile.vector_width`): the lowering must **honor** the selected width, which
@@ -1929,15 +1930,17 @@ def verify_c_lowering(
     (a fixed-trip width-`w` loop) so the compiler cannot widen past the sub-maximal
     lane. With no `hw_width` the check conservatively requires the cap for `w > 1`
     (the literal geometry-encoding form -- unchanged from before)."""
-    from ..gem import hydrate
-    from ..lower.c_kernel import C_OP, _ctype
+    from ..lower.alias_facts import kernel_facts
+    from ..lower.c_kernel import C_OP
     from ..lower.llvm import find_elementwise
+    from .alias import c_alias_diagnostics, c_param_types
 
     diags: list[Diagnostic] = []
     try:
         claim, cand = find_elementwise(module, result)
-    except NotImplementedError:
-        return [Diagnostic("R12", "no lowerable elementwise claim selected in this plan")]
+        facts = kernel_facts(module, claim, elem)
+    except NotImplementedError as exc:
+        return [Diagnostic("R12", f"no lowerable elementwise claim selected in this plan: {exc}")]
 
     head = c_text.splitlines()[0] if c_text else ""
     if not head.startswith("/* BCIR -> portable C"):
@@ -1988,9 +1991,10 @@ def verify_c_lowering(
                 Diagnostic("R12", f"lane geometry not preserved: no width-{w} throttle cap emitted")
             )
 
-    # Precision: the contracted element type on the kernel signature.
-    ctype = _ctype(elem)
-    if f"const {ctype} " not in c_text:
+    # Precision: the contracted element type on every pointer of the kernel signature.
+    ctype = facts.ctype
+    types = c_param_types(c_text)
+    if types is None or any(ctype not in toks for toks in types):
         diags.append(
             Diagnostic("R12", f"precision not preserved: kernel does not operate on {ctype}")
         )
@@ -2004,20 +2008,10 @@ def verify_c_lowering(
     if "< n" not in c_text and "<= n" not in c_text:
         diags.append(Diagnostic("R12", "bounds not preserved: no trip-count guard on n"))
 
-    # Non-aliasing: restrict when the read/write resources are disjoint.
-    pack = hydrate(module, result)
-    seg = next((s for s in pack.segments if s.claim_id == claim.id), None)
-    reads = tuple(seg.reads) if seg else tuple(claim.rd)
-    writes = tuple(seg.writes) if seg else tuple(claim.wr)
-    if not (set(reads) & set(writes)) and "restrict" not in c_text:
-        diags.append(
-            Diagnostic(
-                "R12",
-                "aliasing contract not preserved: disjoint operands but no "
-                "restrict-qualified pointers",
-            )
-        )
-
+    # The declared alias facts, the hazard's fences among them (`verify.alias`).
+    diags.extend(
+        Diagnostic("R12", message) for message in c_alias_diagnostics(facts, c_text, ctype)
+    )
     return diags
 
 

@@ -62,7 +62,10 @@ def test_every_metric_is_well_formed_and_points_the_right_way() -> None:
         seen.add(metric.key)
         assert metric.kind in ("wall", "ratio", "exact"), (metric.key, metric.kind)
         assert metric.group and metric.what and metric.unit, metric.key
-        assert metric.baseline > 0, metric.key
+        # A zero baseline is a guard: an exact row, held at a zero bound, that can only regress.
+        assert metric.baseline > 0 or (
+            metric.kind == "exact" and metric.lower_is_better and metric.bound == 0
+        ), metric.key
         assert metric.slice_owner, f"{metric.key} names no owning slice"
         if metric.bound is not None:
             assert metric.bound_source, f"{metric.key} has a bound with no justification"
@@ -112,6 +115,17 @@ def test_a_wall_row_is_never_graded_off_the_baseline_host() -> None:
     assert exact.verdict(1.0, same_host=False) == "GAIN"
     assert exact.verdict(2.0, same_host=False) == "NO-CHANGE"
     assert exact.verdict(3.0, same_host=False) == "REGRESSION"
+
+
+def test_a_guard_row_held_at_zero_can_still_regress() -> None:
+    """`improvement` returned 0.0 for a zero baseline, so a guard row -- a count that must stay
+    zero, like G9's `alias.llvm.false_noalias` -- graded NO-CHANGE at any value it climbed to."""
+    guard = Metric("z", "g", "w", 0, "count", "exact", bound=0, slice_owner="G9")
+    assert guard.verdict(0.0) == "NO-CHANGE"
+    assert guard.verdict(1.0) == "REGRESSION"
+    assert guard.verdict(3000.0, same_host=False) == "REGRESSION"
+    ceiling = Metric("c", "g", "w", 0, "x", "exact", lower_is_better=False, slice_owner="G0")
+    assert ceiling.verdict(2.0) == "GAIN"
 
 
 def test_the_noise_band_widens_with_how_noisy_the_kind_is() -> None:
@@ -352,3 +366,29 @@ def test_the_ring_rows_are_exact_on_both_rails_or_not_measured():
         assert rows[key]["verdict"] == ("GAIN" if key in measured else "NOT-MEASURED"), rows[key]
     want = "INDICATIVE" if "ring.throughput" in measured else "NOT-MEASURED"
     assert rows["ring.throughput"]["verdict"] == want
+
+
+def test_the_alias_rows_are_exact_and_the_llvm_judged_ones_measured_or_not():
+    """G9 / S5-A: the declared alias facts. The text rows need only the interpreter, so they are
+    always measured, and at their bound; the rows LLVM judges are measured and at their bound
+    with a coherent clang/llvm-link/opt, and NOT-MEASURED without one -- never zero by default.
+    The false-fact guard was already zero on the parent: it grades NO-CHANGE, at its bound."""
+    from bcir.tests import alias_fixtures as af
+    from tools.perf.gemplus_baseline import METRICS, measure_alias
+
+    declared = [m for m in METRICS if m.group == "alias"]
+    assert [m.key for m in declared] == list(af.ROWS) + list(af.LLVM_ROWS)
+    assert all(m.kind == "exact" and m.bound == 0 and m.slice_owner == "G9" for m in declared)
+    measured = measure_alias()
+    judged = af.llvm_tools() is not None
+    want = set(af.ROWS) | (set(af.LLVM_ROWS) if judged else set())
+    assert measured == {key: 0.0 for key in want}, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for metric in declared:
+        if metric.key not in measured:
+            expected = "NOT-MEASURED"
+        elif metric.baseline == 0:
+            expected = "NO-CHANGE"
+        else:
+            expected = "GAIN"
+        assert rows[metric.key]["verdict"] == expected, rows[metric.key]

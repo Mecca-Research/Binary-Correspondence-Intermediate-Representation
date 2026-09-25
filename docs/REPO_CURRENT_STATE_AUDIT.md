@@ -42,7 +42,9 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     semantics, strict UART frame ABI with sequence evidence,
     derived metrics, and OTLP/Prometheus-text/Redfish serialization adapters), StreamPack ABI
     (v1 frozen, v2/v3/v4 append-only), the **R1–R25** verifier, lowering (the single-claim
-    elementwise LLVM AOT/JIT/WASM subset /
+    elementwise LLVM AOT/JIT/WASM subset, carrying the claim's declared alias facts -- `noalias`,
+    alias scopes from the RID partition, TBAA of the element type, `volatile`, a barrier's
+    fences -- on every emitter, R12-held on both backends (G9, S5-A) /
     stackify / per-target llc / portable C23 kernels / Area-B library wraps), the
     Phase 13–26 learned organs (calibration, portfolio + replay gate, MoE gate, search
     accelerator, soft optimizer, regret ledger, provenance manifest, e-graph +

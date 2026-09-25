@@ -506,7 +506,7 @@ accuracy certificate; deadlines and backpressure prevent "optimal" plans that th
 
 Gate: new metrics, plus **no regression** on every row above.
 
-### G9 — export declared alias facts to LLVM — **partly landed**
+### G9 — export declared alias facts to LLVM — LANDED (S5-A, 2026-09-25)
 
 *New, from the [advanced-technique triage](BCIR_ADVANCED_TECHNIQUE_TRIAGE.md). Small, and it
 fixes a false assertion the emitter was making.*
@@ -519,17 +519,60 @@ wr=(1,))` is `A[i] = A[i] + B[i]`, and A and C were both declared not to alias w
 resource 1. `noalias` is an assertion LLVM reorders across, so that is undefined behaviour, not
 a missed optimization.
 
-| Gate | Before | Status |
+| Gate | Before | Outcome (harness row, counted over the corpus of `bcir/tests/alias_fixtures.py`) |
 |---|---|---|
-| `exact` No `noalias` on a pointer pair sharing a RID | 3 of 3 on an in-place graph | **landed** — 1 of 3, and the disjoint case still gets all three |
-| `exact` Alias scopes derived from the RID partition | absent | open |
-| `exact` TBAA from the declared element type | absent | open |
-| `exact` `volatile` carried through to LLVM | fenced in BCIR only | open |
-| `ratio` `native.*` | see baseline | must not regress |
+| `exact` No `noalias` on a pointer pair sharing a RID | 3 of 3 on an in-place graph | **landed** (the first half) — 1 of 3, the disjoint case still gets all three; LLVM's own analysis draws no false fact: `alias.llvm.false_noalias` **0 → 0** |
+| `exact` Alias scopes derived from the RID partition | absent | **met** — one scope per resource in one domain per kernel, on every access: `alias.scope.mismatch` 2,646 → **0**; the scopes alone prove every declared-disjoint pair: `alias.llvm.scope_facts.missing` 300 → **0** |
+| `exact` TBAA from the declared element type | absent | **met** — clang's C/C++ tag for the element type (`float` / `int`), on every access: `alias.tbaa.mismatch` 2,646 → **0** |
+| `exact` `volatile` carried through to LLVM | fenced in BCIR only | **met** — every access of a volatile claim, on the LLVM kernel and every C emitter: `alias.volatile.mismatch` 1,533 → **0** |
+| `exact` Two modules differing only in an alias fact differ in the emitted facts | — | **met** — `alias.differential.silent` 1,072 → **0** over the partition, volatility, the hazard, an element size and the element type, on six emitters |
+| `ratio` `native.*` | see baseline | **must not regress: held by construction** — every source the four rows compile is byte-identical to the parent's (30 of 30: each row's own program and parameters, on all six targets) |
+| `exact` The facts compose with the C code around the kernel | — | **met** — inlined into a C caller, LLVM removes the caller's redundant `long` store and reload the kernel's TBAA proves disjoint, and keeps both across a barrier: `alias.llvm.caller_memory` 56 → **0** |
 
-The landed half is the correctness half. The rest is upside: LLVM's OoO scheduling, load/store
-reordering and vectorizer all improve on real alias facts, and BCIR is uniquely placed to supply
-them because it has them by declaration rather than by inference.
+What landed (S5-A; the reference is [`BCIR_ALIAS_FACTS.md`](../kernel/BCIR_ALIAS_FACTS.md)):
+
+- **One derivation** (`bcir/lower/alias_facts.py`). `kernel_facts` reads the declaration once —
+  the RID partition of (A, B, C), the element type the lowering contract names and every operand
+  resource's declared size, the volatility, the hazard's fence — and every emitter of the
+  elementwise claim and both R12s read it. It replaces four predicates that disagreed (L14): the
+  LLVM emitter's, two all-or-nothing `restrict` rules in the C backend, and the hot-shape
+  specialist's, which wrote `restrict` on all three pointers of an in-place claim.
+- **The LLVM kernel** carries `noalias` on exactly the exclusive pointers, one alias scope per
+  resource (`!alias.scope` its own, `!noalias` every other), clang's TBAA tag for the element
+  type, `volatile` on every access of a volatile claim, and a barriered claim's `fence seq_cst`
+  before the first access and after the last. **The C emitters** (kernel, gather form,
+  specialist, ABI header, Q-fixed kernel) carry `restrict`, `volatile` and
+  `atomic_thread_fence`; the header states the plan's contract, not "non-overlapping" for every
+  claim.
+- **The subset refuses what it does not generate.** An `atomic` hazard needs atomic element
+  operations and an unknown one names no ordering: both were lowered to plain accesses, and every
+  ordered kernel then failed its own R12. A 4-byte kernel over a resource declaring 8-byte
+  elements, or naming an undeclared one, addressed the wrong bytes. All are refused by name on
+  every emitter (`alias.refusal.accepted` 602 → **0**).
+- **R12 holds every fact on both backends** (`bcir/verify/alias.py`), a false fact and a dropped
+  one named apart, and it is total (L1). The emitter and its law now agree on every lawful kernel
+  (`alias.r12.rejected` 336 → **0**), and each of 21 kinds of forged fact is named
+  (`alias.r12.forgery.accepted` 1,084 → **0**) — among them an access spelled without its
+  alignment, a fence narrowed to one thread, and a C read that sheds `volatile` through a cast.
+- **Every self-check runs the declared aliasing** — one buffer per resource on the LLVM AOT/JIT
+  harness, the C and Q-fixed self-checks and the WASM node harness (`alias.harness.unaliased`
+  75 → **0**). The node harness also computed `+` whatever the claim declared, so a SUB or MUL
+  kernel could never pass it (`alias.exec.failed` 9 → **0**).
+- **The two paths to LLVM agree**: clang's IR for the C kernel carries the LLVM kernel's
+  `noalias` parameters, TBAA types, volatility and fences (`alias.backends.disagree` 132 → **0**).
+
+The landed half was the correctness half; this is the rest of the declared facts, and the
+measurement says plainly what it buys (see the reference). **The kernel alone is at its bound**:
+with three pointers at most one resource is shared, so `noalias` already carried the whole
+partition, and the `-O2` code of every unique kernel is byte-identical to the parent's (112 of
+112, clang 18 and 23, two x86 levels). **Inlined into a C caller, the facts pay**: the kernel's
+TBAA tags share clang's type system, so LLVM proves the kernel's accesses disjoint from the
+caller's own `long` data and removes one dead store and one reload per call site, which `noalias`
+parameters cannot do (`alias.llvm.caller_memory` 56 → **0**; a barriered kernel keeps both, its
+fences ordering the caller's memory). The scopes will pay the same way inside a kernel once one
+carries two shared classes — G8's fused movement kernels. What changes besides: `volatile` and the
+barrier reach LLVM, the refusals replace miscompiles, and every self-check executes the aliasing
+it claims.
 
 ### G10 — escape analysis and indirect-call target narrowing
 
@@ -1055,7 +1098,7 @@ Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5             
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16                  ALL LANDED: G14 (S3-A); G15 (S3-B); G16 (S3-C) — exit gate met
 Stage 4  performance program               G17, G18                         ALL LANDED: G17 (S4-A); G18 (S4-B) — exit gate met
-Stage 5  movement, alias, escape           G8, G9 remainder, G10
+Stage 5  movement, alias, escape           G8, G9 remainder, G10        G9 LANDED (S5-A); G10, G8 open
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```
 

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 
 from ..model import Module
 from ..kbcir.realize import RealizationResult
+from .alias_facts import KernelFacts, c_includes, c_prologue_epilogue, kernel_facts
 from .c_kernel import C_OP, _ctype
 from .llvm import find_elementwise
 
@@ -74,28 +75,48 @@ def emit_specialist_c(
     elem: str = "f32",
     fn_name: str | None = None,
     unroll: int = DEFAULT_UNROLL,
+    facts: KernelFacts | None = None,
 ) -> str:
     """Emit a shape-baked, unrolled specialist for `C = A op B` over exactly `count`
     elements. The count is a compile-time constant (no `n` parameter), the inner
     block is unrolled by `unroll`, and the `count % unroll` remainder is baked as
     explicit statements -- so the kernel is correct for this exact shape and the
-    compiler fully unrolls a constant-trip loop."""
+    compiler fully unrolls a constant-trip loop.
+
+    `facts` are the claim's declared alias facts (`alias_facts.kernel_facts`, which
+    `synthesize` passes): `restrict` on exactly the pointers no other operand aliases,
+    `volatile` pointees and a barrier's fences. The specialist used to write `restrict` on all
+    three whatever the claim declared -- on an in-place claim, a false assertion about the
+    pointer it writes (S5-A). Without `facts` it states the disjoint contract."""
     ctype = _ctype(elem)
     fn = fn_name or f"bcir_kernel_{op_str.replace('.', '_')}_{count}"
     u = max(1, min(unroll, count))
     full = (count // u) * u
     inc = "#include <stddef.h>\n" + ("#include <stdint.h>\n" if elem == "i32" else "")
+    fence_in = fence_out = ""
+    params = f"const {ctype} *restrict A, const {ctype} *restrict B,", f"{ctype} *restrict C"
+    if facts is not None:
+        inc += c_includes(facts)
+        fence_in, fence_out = c_prologue_epilogue(facts)
+        params = (
+            f"{facts.c_param(0, ctype, tight=True)}, {facts.c_param(1, ctype, tight=True)},",
+            facts.c_param(2, ctype, tight=True),
+        )
     fp = "" if elem == "i32" else "#pragma STDC FP_CONTRACT OFF\n"
     block = "  ".join(f"C[i + {j}u] = A[i + {j}u] {c_op} B[i + {j}u];" for j in range(u))
     body = [
-        f"void {fn}(const {ctype} *restrict A, const {ctype} *restrict B,",
-        f"             {ctype} *restrict C) {{",
+        f"void {fn}({params[0]}",
+        f"             {params[1]}) {{",
         f"  /* shape specialist: n = {count} baked constant, unroll {u} */",
     ]
+    if fence_in:
+        body.append(fence_in.rstrip("\n"))
     if full > 0:
         body.append(f"  for (size_t i = 0; i + {u}u <= {full}u; i += {u}u) {{ {block} }}")
     for r in range(full, count):  # baked remainder (count % unroll)
         body.append(f"  C[{r}u] = A[{r}u] {c_op} B[{r}u];")
+    if fence_out:
+        body.append(fence_out.rstrip("\n"))
     body.append("}")
     return (
         f"/* BCIR -> shape specialist (n={count}, op={op_str}, elem={ctype}; "
@@ -128,6 +149,7 @@ def synthesize(
     its shape is hot and small, else the generic kernel (`emit_kernel_c`). Records
     the request in `ledger` first, so frequency reflects this call too."""
     claim, _ = find_elementwise(module, result)
+    facts = kernel_facts(module, claim, elem)
     key = ledger.observe(claim.op or "vector.op", max(1, claim.count), elem)
     c_op = C_OP.get(claim.opcode, "+")
     if ledger.is_hot(key, threshold) and specializable(key.count, max_unroll):
@@ -136,7 +158,7 @@ def synthesize(
             specialized=True,
             fn_name=fn,
             count=key.count,
-            kernel_c=emit_specialist_c(key.op, c_op, key.count, elem, fn),
+            kernel_c=emit_specialist_c(key.op, c_op, key.count, elem, fn, facts=facts),
             reason=f"hot shape n={key.count} (x{ledger.frequency(key)}) -> baked specialist",
         )
     # generic fallback (the gains-only no-op: cold or large shapes are not baked).

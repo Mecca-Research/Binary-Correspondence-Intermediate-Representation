@@ -871,6 +871,20 @@ semantic (lane geometry, bounds, hazard, precision) or carries an explicit
 discharge in `bcir.trace`. LLVM is the **first** backend, not the center.
 Encoded via `bcir.isa.*` / `bcir.target.lower_contract`.
 
+**Declared alias facts (G9).** A claim declares its resources, hazard and volatility, and a
+resource its element size, so a lowering carries these as facts rather than inferring them,
+and R12 holds each emitted fact to the declaration (`verify.alias`; a *false* fact and a
+*dropped* one are both findings). For the elementwise kernel `C = A op B`
+(`lower.alias_facts`): a pointer is *exclusive* when no other operand names its resource,
+and only an exclusive pointer carries LLVM `noalias` or C `restrict`; each resource is one
+alias scope in one domain per kernel, an access naming its own in `!alias.scope` and every
+other in `!noalias`; every access carries the TBAA tag clang gives the element type's C type
+(the kernel is called through that C ABI, so the tag asserts nothing C's effective-type rule
+does not); every access of a volatile claim is volatile; a `barriered` claim is fenced
+`seq_cst` before its first access and after its last. What the subset does not generate is
+refused, never lowered to plain accesses: an `atomic` hazard (atomic element operations), an
+unknown one, an operand resource that is undeclared or declares another element size.
+
 **Modular Mapping Functions (`kbcir.mapping`).** A lowering — and any
 representation change — is a mapping function `f` between cost-bearing
 representations, and R12 imposes two further laws on it:
@@ -1341,7 +1355,9 @@ and reject work outside it. The current profiles are:
   kernel bounds its `<W x …>` loop by `n & -W` and finishes the remainder in a scalar
   epilogue, so it is bounds-safe for any `n` at the selected width; R12 holds the mask
   and the epilogue, and the self-check harness drives every kernel with a non-divisible
-  count, a sub-width count and zero behind canaries.
+  count, a sub-width count and zero behind canaries. The kernel carries the claim's declared
+  alias facts (§12), and every self-check binds one buffer per declared resource, so an
+  in-place claim runs in place.
   MLIR `bcir-aot` is partial preparation and may leave mixed BCIR/GEM/LLVM operations.
 - **x86 ordinary-entry profile:** long-mode C handoff, descriptor/segment operations,
   and the accepted ordinary interrupt/trap vectors described in §11. It excludes reset

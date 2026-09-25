@@ -113,6 +113,15 @@ counts an exception of any other type as accepted. The grader follows the same
 rule: a mechanism that raises fails every comparison it owns, and a corpus that
 cannot be built fails its rows (`delta_fixtures._built`), so the parent tree, where
 every mechanism is absent, grades to a number rather than a traceback.
+S5-A instance (2026-09-25): R12 now reads the alias facts of a kernel's text -- its
+parameters, its accesses' attachments and the metadata graph they name -- and text
+is untrusted input: a dangling `!12`, a list that names itself, a truncated line.
+`verify.alias` answers every one of them with an R12 finding and never raises.
+Witness: `test_r12_reads_any_text_without_raising` (every eighth-length prefix of a
+kernel, a kernel with dangling and self-referential nodes, one with no function).
+The grader holds the emitters to the same rule: a lowering that raises anything but
+`NotImplementedError` for a module it must refuse is counted as having lowered it
+(`alias.refusal.accepted`) -- a traceback is not a refusal.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -422,6 +431,25 @@ with the tail retained, never a traceback);
 two shapes, declared in the tool; a URL, marker, wildcard, compound or
 arbitrary-equality declaration is refused and reported, never approximated
 into a pin the declaration did not make).
+S5-A instance (2026-09-25): R12's reader of an emitted kernel is a hand-rolled
+reader of LLVM IR and of C, and a review before the slice landed found it
+subsetting both. It recognized an access only when spelled with its alignment --
+`load float, ptr %p` is the same load, and the parser fills the alignment in -- so a
+plain load in a volatile claim was invisible and passed. It read
+`fence syncscope("singlethread") seq_cst` as the barrier: a fence that orders a
+thread against its own signal handlers and nothing else. And it took the C
+kernel's parameter qualifiers as the facts of every access while the body could
+shed them, through a cast or an address, or return between the barrier's fences.
+The reader now attributes every `load` and `store` in any spelling the IR parser
+accepts (an operand it cannot attribute is an `unreadable` finding). It names a
+fence's sync scope (`syncscope("")` is the system scope's spelled-out name). And it
+holds a C body to the shape that makes the declarations the whole story: operands
+used only by subscript, no address taken, no `return` in a barriered kernel.
+Witnesses: the forgery kinds `fence.narrow`, `volatile.bare`, `c.fence.narrow`,
+`c.fence.return`, `c.volatile.cast` and `c.volatile.address` in `alias_fixtures`
+(252 forged kernels, 196 of which the earlier reader accepted; the signal fence
+was already refused, and holds the C rail to the same rule), each with a fault in
+`tools/testing/faults/alias.json`.
 **Port note:** BCIR wire formats get grammar-complete parsers generated
 from the registry, or refusal. No "good enough" readers in C, ever.
 
@@ -545,6 +573,17 @@ identity between the old and the new module, plan and pack. It also keeps an
   the pack of the step before (`plan.stale`, `pack.stale`: a planner or emitter
   that did not move) and a forged field on every step, and must equal the full
   verdict each time.
+S5-A instances (2026-09-25): two self-checks that could not hit the law they ran
+under. Every harness of the elementwise kernel -- the LLVM AOT/JIT harness, the C and
+Q-fixed self-checks, the WASM node harness -- allocated three private buffers
+whatever the claim's RIDs said. An in-place claim (`rd=(1, 2), wr=(1,)`) therefore
+never ran in place, and no alias fact the kernel carried was ever executed against
+the aliasing it describes. Each now binds one buffer per declared resource and checks
+every buffer against its snapshot, so a write through a read pointer fails too
+(`alias.harness.unaliased` 75 → 0). The node harness also computed `A + B` whatever
+the claim's operation: its only witness had ever been `vector_add`, so a correct SUB
+or MUL kernel failed it and nothing noticed. The execution corpus rotates the
+operation across the partitions (`alias.exec.failed` 9 → 0).
 **Port note:** in C the watchdog is a separate process; in-process signals
 are swallowable by longjmp-style recovery just as exceptions are.
 
@@ -658,6 +697,23 @@ defects. Three were witnesses that could not reach their law:
   Since x ≡ 7 (mod 8) and x ≡ 2 (mod 10) has no solution, the pair was never
   scheduled. The plan and pack forgeries now rotate on coprime lengths.
 The fourth miss was not a witness; it is recorded under L22.
+S5-A instances (2026-09-25): three gates that could not fire where they had to.
+- The baseline harness graded a row by its fractional change from the baseline, and
+  returned 0.0 for a zero baseline. A guard row held at zero -- a count that must stay
+  zero, like `alias.llvm.false_noalias` -- therefore graded NO-CHANGE at any value it
+  climbed to. A move off zero now counts as the whole of it, and a zero baseline is
+  admitted only on an `exact`, lower-is-better row whose bound is zero. Witness:
+  `test_a_guard_row_held_at_zero_can_still_regress`.
+- The rows LLVM itself judges need clang, llvm-link and opt, and without them they are
+  NOT-MEASURED. In the two CI jobs that install LLVM for the suite, NOT-MEASURED would
+  silently remove the only judge that shares no code with the emitters, so those jobs
+  set `BCIR_REQUIRE_LLVM=1` and the test fails instead; `check_alias.py
+  --require-llvm` is the gate's spelling, and the fault table runs with it.
+- R12's forgery row first counted a forgery as caught when R12 said anything new.
+  A law that called a false fact "dropped" -- or reported a forged scope as a
+  malformed TBAA tag -- passed. Each forgery now names the finding it must produce
+  (`alias_fixtures.FORGERY_FINDS`); the family's name where the parent's own R12
+  already had that family, so the parent is credited where it fired.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -919,6 +975,19 @@ One predicate, `kbcir.delta._unique_where`, now decides it on every rail. The
 replacement addressing is one function as well (`_addressed`). Witness:
 `test_a_module_a_delta_cannot_address_is_refused_by_every_state`, which names both
 the duplicated id and an id declared once.
+S5-A instance (2026-09-25): "which pointers are disjoint" was spelled four times,
+and the four disagreed. The LLVM emitter wrote `noalias` per position (G9's landed
+half); two C emitters wrote `restrict` on all three pointers or none (so an in-place
+claim lost B's, and a claim reading one resource twice kept A's and B's); and the
+hot-shape specialist wrote `restrict` on all three whatever the claim declared -- on
+an in-place claim, a false assertion about the pointer it writes, which is the defect
+G9's first half removed from one emitter of four. One derivation,
+`lower.alias_facts.kernel_facts`, now decides the partition, the element type, the
+volatility and the hazard's fence for every emitter (the LLVM kernel, the C kernel,
+the gather form, the specialist, the ABI header, the Q-fixed kernel) and for R12 on
+both backends. Witnesses: `alias.noalias.mismatch` over six emitters, and
+`alias.backends.disagree`, which compares clang's IR for the C kernel with the LLVM
+kernel's facts.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1136,6 +1205,13 @@ passed the whole corpus, because no value a pack in memory can hold observes it.
 It was removed rather than witnessed: the count is now the new section's own
 length, built before validation. State that no reachable input can observe is not
 a check; it is a defect held in reserve.
+S5-A instance (2026-09-25): the subset gate's hazard refusal (`find_elementwise`)
+could not be observed through any emitter, because every emitter derives the facts
+next and `kernel_facts` refuses the same claim through the same predicate
+(`hazard_refusal`) to stay total. A fault that removed the gate's call went uncaught
+by the emitter rows. The gate is the one every lowering entry point passes, including
+one that never derives facts -- `llvm.harness_trip_counts` -- and that is where its
+witness now sits (`test_the_subset_refuses_what_it_does_not_generate_on_every_emitter`).
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.
