@@ -97,6 +97,10 @@ typedef struct bcir_resource {
   uint8_t  is_pointer;       /* a declared POINTER variable whose resource kind does not say so: a file-scope
                               * `T *g`, whose slot is modelled as a scalar. A load or store through it touches
                               * what it holds, not the slot. Read by the escape analysis only. */
+  uint32_t ptee_bytes;       /* an ARRAY of pointers `T *a[N]` -- a SCALAR array whose elem_bytes is the pointer
+                              * width: the pointee's width, with its sign, float and plain-char flags below, so
+                              * the declaration spells `T *a[N]` (0 == not one; a struct pointee rides in `agg`) */
+  uint8_t  ptee_signed, ptee_float, ptee_plain_char;
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
 } bcir_resource;
@@ -147,6 +151,12 @@ typedef struct bcir_claim {
   uint8_t  truncated;         /* a call whose operands did not all fit rd[]: the extras were evaluated, but
                                * they are not operands. OPTIONAL annotation, digest-excluded, default 0; the
                                * escape analysis refuses a unit holding one (it cannot see those operands). */
+  uint8_t  is_volatile;       /* a volatile ACCESS: the lvalue it reads or writes is volatile -- the pointee of a
+                               * pointer to volatile, a volatile member or a member of a volatile aggregate, an
+                               * element of a volatile array, a volatile named object. The emit performs it
+                               * through a volatile lvalue of exactly the accessed type. A claim that only moves
+                               * a pointer to volatile storage is device-domain (R3) without it. OPTIONAL
+                               * annotation, digest-excluded, default 0; the oracle's `Claim.volatile`. */
   char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
 } bcir_claim;
 

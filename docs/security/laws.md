@@ -380,6 +380,15 @@ read 0. A refusal now counts on the row whose report failed. The one exception i
 the pinned preprocessor limit (`escape_fixtures.TWIN_PREPROCESSOR_LIMITS`), and the
 parity test holds that pin exact: a pinned unit that starts to compile fails it.
 Fault: `Twin driver: every report fails, so the twin reports on nothing`.
+CF-VOL instance (2026-09-25): `tools/testing/faults/volatile.json` injects 23 defects, on
+both rails, into the device-region type rule, a global's domain, R3's ordering pass, the
+access mark, the exact-width slot and volatile spelling of the emit, the effect report's
+device rule, the pointer cast, a global's value type, the array-of-pointers declaration
+and the file-scope pointer read through. The first sweep caught all 23, one of them on a
+row it did not name: a loaded value that stays volatile does not break R3 -- the ordering
+pass makes every claim touching it a device claim -- it re-reads the device at each use,
+which the emit row sees. The expectation was wrong, not the gate; the table names the row
+that owns the law.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -744,6 +753,15 @@ unit now ends with two exported functions that differ only through a static loca
 a helper both call. The text is fixed and follows the random functions, so the truths
 are unchanged. Witness:
 `test_the_witness_tells_apart_two_orders_only_a_shared_static_separates`.
+CF-VOL instance (2026-09-25): the volatile gate's first run over the repaired twin
+reported 362 forms as emit and behaviour mismatches -- every twin form it compared --
+while the same forms, probed one by one, were right. The judges build a unit's original
+and emitted C into one translation unit, and the twin's driver makes `--emit-c`
+self-contained by including `bcir_quarantine.h` whenever an access is masked; the judges
+inline that ABI, so the include failed, and a judge that cannot build fails closed on
+every entry of its unit. The rows measured the judges' own translation unit, on one rail.
+`volatile_fixtures.twin` now drops the driver's include, as the oracle's emit (which has
+none) was always judged. Witness: the rows at 0 over the masked `aptr` forms.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1050,6 +1068,20 @@ spelled something, and the two lowerings spell it differently.
   declaration. The twin now reads the declaration too (`bcir_resource.is_pointer`). Witnesses:
   `test_a_file_scope_pointer_is_read_through_not_touched_in_place`, 12 forms, and two faults,
   one where the flag is set and one where it is read.
+CF-VOL instances (2026-09-25):
+- "Is this storage a device region" was decided per declaration site, on each rail -- a
+  pointer parameter here, a volatile struct there -- and never for a global, a member
+  pointer, a cast or a temp, so whether a register access was ordered depended on where the
+  program kept its handle. Both rails now ask the declared type one question
+  (`CType.touches_mmio`, `ty_mmio`), and one pass (`_order_device_claims`,
+  `order_device_claims`) makes every claim touching such a region device-domain and ordered.
+  Faults: `... a pointer to volatile storage is not a device region` and `... R3's pass
+  leaves a claim touching a device region ordinary`, one per rail.
+- "Is this base the address, or does it hold the address" was spelled at six sites of the
+  twin's emitter, five of them inline, and each missed a file-scope pointer's slot
+  (`is_pointer`), so `*gp = v` wrote into the pointer variable. One predicate,
+  `holds_pointer`, answers for all six. Witnesses: the `gptr` `dst`/`dld`/`pst` forms, and
+  the fault `Twin emit: a file-scope pointer is addressed in place, not read through`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1282,6 +1314,18 @@ sweep of every declaration kind against every access form, in every storage plac
 both (12 and 30 forms). It generated 1,078 functions; both rails lower 625 of them, and
 386 of those are C a compiler accepts. The 386 are pinned (`escape_fixtures.FORMS`) and
 compared in the parity rows.
+CF-VOL instance (2026-09-25): no unit of the cfront corpus held a pointer-to-pointer cast,
+a signed or float file-scope variable in arithmetic, or a local array of pointers to a
+scalar, and each was a miscompile on at least one rail. A cast's result was an integer
+temp on both (the oracle's 32 bits wide, truncating the address), so the emitted C did not
+compile under a current Clang; the twin typed every file-scope variable as `uint32_t`, so
+`(g >> 1) < 0` was false for a negative `int32_t g` and `-g` truncated a float -- with the
+digests equal, because the digest carries no types; and the twin declared an array of
+pointers as the pointer-wide integer. The volatile corpus reached all three because a
+volatile place is reached through them (`(volatile T *)raw`, a volatile float global,
+`volatile T *q[2]`). Re-sweeping the G10 forms afterwards added 90 that both rails now
+lower. Witnesses: `cfront_globaltype.c`, `cfront_volatile_width.c`, the `vcast`, `vglobal`
+and `aptr` forms.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

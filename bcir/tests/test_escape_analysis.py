@@ -171,11 +171,40 @@ def test_a_device_access_is_an_effect_on_state_the_unit_cannot_name():
     assert r.commute("pl", "pm")
 
 
+def test_readers_of_a_volatile_global_member_or_register_pointer_do_not_commute():
+    """Two reads of a FIFO register do not commute, however the program reaches it: a volatile
+    file-scope variable, a file-scope pointer to volatile, a struct member pointing at volatile
+    storage. Each read is a device access. The parent lowered all three as plain RAM accesses, so it
+    reported that the two readers of `fifo` commute. Two readers of a plain global still do."""
+    r = _unit(
+        "#include <stdint.h>\n"
+        "volatile uint32_t fifo;\n"
+        "uint32_t g1(void) { return fifo; }\n"
+        "uint32_t g2(void) { return fifo; }\n"
+        "volatile uint32_t *gvp;\n"
+        "uint32_t p1(uint32_t i) { return gvp[i & 3u]; }\n"
+        "uint32_t p2(uint32_t i) { return *gvp + i; }\n"
+        "struct D { volatile uint32_t *regs; };\n"
+        "uint32_t m1(struct D *d) { return d->regs[0]; }\n"
+        "uint32_t m2(struct D *d) { return d->regs[1]; }\n"
+        "uint32_t plain;\n"
+        "uint32_t q1(void) { return plain; }\n"
+        "uint32_t q2(void) { return plain; }\n"
+    )
+    for a, b in (("g1", "g2"), ("p1", "p2"), ("m1", "m2")):
+        for fn in (a, b):
+            reads, writes = _foot(r, fn)
+            assert UNKNOWN in reads and UNKNOWN in writes, (fn, reads, writes)
+        assert not r.commute(a, b)
+    assert _foot(r, "q1") == ({"plain"}, set())
+    assert r.commute("q1", "q2")
+
+
 def test_the_base_resource_decides_a_device_access_not_the_claims_spelling():
-    """The C twin lowers `p[i]` through a `volatile T *` as an ordinary load, where the oracle marks
-    it MMIO. The device rule reads the access's BASE resource, so the same load spelled RAM-domain is
-    still a device access -- one predicate, one answer on both rails (the twin's half is held by the
-    forms' parity) -- and a load through a plain pointer is not."""
+    """The C twin once lowered `p[i]` through a `volatile T *` as an ordinary load, where the oracle
+    marked it MMIO; both rails mark it now. The device rule still reads the access's BASE resource,
+    so the same load spelled RAM-domain is a device access -- one predicate, one answer on both rails
+    (the twin's half is held by the forms' parity) -- and a load through a plain pointer is not."""
     r = _unit("unsigned vget(volatile unsigned *p, unsigned i) { return p[i & 7u]; }\n")
     lf = r.lowered.functions["vget"]
     assert [c.domain for c in lf.claims if c.op == "c.load"] == [Domain.MMIO]

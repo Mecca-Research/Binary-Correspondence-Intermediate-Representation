@@ -44,6 +44,10 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx;
+                 int is_volatile;   /* the member's own storage is volatile (`volatile T m`, `volatile T m[N]`, a
+                                     * volatile struct member): an access to it is a volatile access */
+                 int ptee_volatile; /* a pointer member to volatile storage (`volatile T *regs`): the member is
+                                     * plain storage; what it points at is a device region */
                  int elem_sidx;     /* arr_count>0 AND element is a value struct: its sdef index (array-of-structs,
                                      * for `arr[i].field`); -1 otherwise. Distinct from `sidx` so member_descend
                                      * (which descends a `.` only when sidx>=0) never walks an un-indexed array. */
@@ -55,7 +59,11 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                   * (ptee_size width / signd sign / ptee_float / ptee_sidx struct) types the loaded `T *` */
                  /* arr_count > 0: a member array; `size` is the element, arr_count the total element
                   * count, nadims/adims the per-dim sizes (`T m[A][B]` -> nadims 2, adims {A,B}) */
-typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union; } sdef;
+typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union;
+                 int vol_storage;   /* the struct holds volatile storage: a volatile member, or a value-struct /
+                                     * array-of-structs member that does (a pointer member does not) -- the
+                                     * oracle's `CType.volatile_storage` */
+               } sdef;
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx; } tdef;   /* a typedef alias */
 typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
 
@@ -639,7 +647,7 @@ static int p_struct_body(CC *c) {
   if(c->ns>=c->cap_s){ fail(c,"too many struct definitions"); return -1; }
   int my=c->ns++;                       /* claim our slot NOW: an inline aggregate member recurses into
                                          * p_struct_body and must take a LATER slot (and may realloc c->s). */
-  sdef *S=&c->s[my]; S->nf=0; S->align=1; S->is_union=is_union;
+  sdef *S=&c->s[my]; S->nf=0; S->align=1; S->is_union=is_union; S->vol_storage=0;
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
   else snprintf(S->tag,sizeof S->tag,"$anon%d",my);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
@@ -738,6 +746,9 @@ static int p_struct_body(CC *c) {
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
       f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
       f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
+      f->is_volatile=(ty.kind!=2 && ty.kind!=3 && ty.is_volatile)?1:0;   /* `volatile T m` (a pointer's `volatile`
+                                                                           * qualifies its pointee, not itself) */
+      f->ptee_volatile=(ty.kind==2 && ty.is_volatile)?1:0;               /* `volatile T *m`: the pointee */
       f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
       f->elem_sidx = (ty.kind==1 && !ty.ptr_to_struct && arr_count) ? si : -1;   /* array-of-structs element struct */
       f->fp_ret_size=ty.fp_ret_size; f->fp_ret_signd=ty.fp_ret_signd; f->fp_ret_float=ty.fp_ret_float;   /* funcptr member: return type */
@@ -761,6 +772,12 @@ static int p_struct_body(CC *c) {
     eat(c,";");
   }
   eat(c,"}"); attrs(c,&packed,&aligned);
+  S=&c->s[my]; S->vol_storage=0;                       /* volatile storage anywhere in the object (not through a
+                                                        * pointer member): an access through a pointer to it is a
+                                                        * device access (the registry's region is MMIO) */
+  for(int k=0;k<S->nf;k++){ const field *mf=&S->f[k];
+    if(mf->is_volatile || (mf->sidx>=0 && c->s[mf->sidx].vol_storage)
+       || (mf->elem_sidx>=0 && c->s[mf->elem_sidx].vol_storage)) S->vol_storage=1; }
   int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
   int total = is_union ? maxsz : (int)((dbits+7)/8);   /* union size = the widest member; struct: bits->bytes */
   if(total%salign)total+=salign-(total%salign); S->size=total;
@@ -1023,6 +1040,105 @@ static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expressi
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` / `(struct P[]){init}` (defined w/ arr_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
 
+/* --- volatile: one model on both rails (the oracle: ctype_model.touches_mmio, lower._load_unit/_write,
+ * lower._order_device_claims) -------------------------------------------------------------------------
+ * R3 holds the base of a device access to a device region, so a resource is MMIO exactly when its declared
+ * type holds volatile storage or points (through any number of pointers) at some. An access is a VOLATILE
+ * access exactly when the lvalue it reads or writes is volatile; it is then device-domain, lane H,
+ * `barriered`, with the claim's volatile bit. Any other claim that touches a device region -- the copy that
+ * binds a pointer to volatile storage, the load of a pointer member that points at some -- is made
+ * device-domain and ordered by order_device_claims, without the bit. */
+static int sdef_vol(const CC *c,int si){ return si>=0 && si<c->ns && c->s[si].vol_storage; }
+/* An object of type `ty` (an array of `ty` when `is_arr`; `si` its struct) is a device region. An array of
+ * pointers holds addresses: plain storage. */
+static int ty_mmio(const CC *c,const bcir_ctype *ty,int si,int is_arr){
+  if(ty->kind==3) return 0;
+  if(ty->kind==2) return !is_arr && (ty->is_volatile || (ty->ptr_to_struct && sdef_vol(c,si)));
+  if(ty->kind==1) return ty->is_volatile || sdef_vol(c,si);
+  return ty->is_volatile;
+}
+/* Mark an access claim: a volatile access (`vol`), or one through a device region (its base is MMIO), is
+ * device-domain and ordered; only the former carries the volatile bit (the emit performs exactly it). */
+static void mark_access(CC *c,bcir_claim *cl,int vol){
+  if(!cl) return;
+  const bcir_resource *br = cl->n_rd ? res_of(c->fn,cl->rd[0]) : NULL;
+  if(vol || (br && br->domain==BCIR_DOM_MMIO)){ cl->domain=BCIR_DOM_MMIO; cl->lane=BCIR_LANE_H; cl->hazard=BCIR_HZ_BARRIERED; }
+  cl->is_volatile=(uint8_t)(vol?1:0);
+}
+/* R3 over a finished function, one pass: a claim that touches a device region is device-domain and ordered
+ * (lane H, `barriered` unless already `atomic`). Its volatile bit is left as the lowering set it. */
+static void order_device_claims(bcir_func *f){
+  for(size_t i=0;i<f->n_claims;i++){ bcir_claim *cl=&f->claims[i];
+    if(cl->domain==BCIR_DOM_MMIO) continue;
+    int dev=0;
+    for(int k=0;k<cl->n_rd && !dev;k++){ const bcir_resource *r=res_of(f,cl->rd[k]); dev = r && r->domain==BCIR_DOM_MMIO; }
+    for(int k=0;k<cl->n_wr && !dev;k++){ const bcir_resource *r=res_of(f,cl->wr[k]); dev = r && r->domain==BCIR_DOM_MMIO; }
+    if(dev){ cl->domain=BCIR_DOM_MMIO; cl->lane=BCIR_LANE_H; if(cl->hazard==BCIR_HZ_UNIQUE) cl->hazard=BCIR_HZ_BARRIERED; }
+  }
+}
+/* A named object that is itself volatile (a scalar or a struct; an array decays, a pointer's `volatile`
+ * qualifies its pointee): a read or a write of it BY NAME is a volatile access. */
+static int obj_vol(CC *c,const venv *v){
+  if(!v->type.is_volatile || v->type.kind!=0) return 0;   /* a scalar (a struct copies whole, plain) */
+  const bcir_resource *r=res_of(c->fn,v->rid);
+  return !(r && r->is_array);
+}
+/* The element of `b[i]` is volatile: the pointee of a pointer to volatile (a `T **` element is a pointer,
+ * an array of pointers holds pointers), or an element of a volatile array. */
+static int index_elem_vol(CC *c,const venv *b){
+  if(!b->type.is_volatile) return 0;
+  if(b->type.kind==2){
+    const bcir_resource *br=res_of(c->fn,b->rid);
+    if(br && br->kind==BCIR_RK_SCALAR && br->count>1) return 0;      /* an array of pointers */
+    return (b->type.ptr_depth?b->type.ptr_depth:1)==1;
+  }
+  return 1;
+}
+/* A pointer temp of pointer type `ty` (the oracle's `_temp(pointer)`): it carries the pointee -- width, sign,
+ * float, plain char, _Bool, struct tag, void, depth and volatility -- and is an MMIO resource when it points
+ * at volatile storage, so what is read through it is typed and marked as through a declared pointer. */
+static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si){
+  uint32_t t=add_res(c,ty_mmio(c,ty,si,0)?BCIR_DOM_MMIO:BCIR_DOM_RAM,ty->size>0?ty->size:1,1<<16,ty->is_volatile,
+                     BCIR_RK_POINTER,"");
+  if(c->fn->n_res){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];
+    pr->is_signed=(uint8_t)(ty->signd?1:0); pr->is_float=(uint8_t)(ty->is_float?1:0);
+    pr->is_complex=(uint8_t)(ty->is_complex?1:0); pr->is_bool=(uint8_t)(ty->is_bool?1:0);
+    pr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); pr->ptr_depth=ty->ptr_depth;
+    if(ty->ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
+    else if(ty->size==0 && !ty->is_float) pr->is_voidptr=1; }
+  return t;
+}
+/* A fresh ordinary temp of `rid`'s value type -- the value a volatile object's read yields (lvalue
+ * conversion drops the qualifier). */
+static uint32_t temp_like(CC *c,uint32_t rid){
+  const bcir_resource *r=res_of(c->fn,rid);
+  bcir_resource snap; if(r) snap=*r; else memset(&snap,0,sizeof snap);   /* add_res may realloc res[] */
+  uint32_t t=add_res(c,BCIR_DOM_RAM,(int)(snap.elem_bytes?snap.elem_bytes:4),1,0,
+                     snap.kind==BCIR_RK_AGGREGATE?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR,"");
+  if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+    tr->is_float=snap.is_float; tr->is_complex=snap.is_complex; tr->is_signed=snap.is_signed;
+    tr->is_bool=snap.is_bool; tr->is_plain_char=snap.is_plain_char; tr->bit_width=snap.bit_width;
+    if(snap.kind==BCIR_RK_AGGREGATE) snprintf(tr->agg,sizeof tr->agg,"%s",snap.agg); }
+  return t;
+}
+/* A read of the named object `v` as a value: its rid -- or, for a volatile object, a volatile read into an
+ * ordinary temp (a c.copy carrying the volatile bit): the oracle's `_rvalue(Name)`. */
+static uint32_t named_read(CC *c,const venv *v){
+  if(!obj_vol(c,v)) return v->rid;
+  uint32_t t=temp_like(c,v->rid);
+  bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);
+  if(cl){ cl->n_rd=1; cl->rd[0]=v->rid; cl->n_wr=1; cl->wr[0]=t; mark_access(c,cl,1); }
+  return t;
+}
+/* The pointer temp just created points at volatile storage (`vol`: its pointee is volatile, declared so) or
+ * at an aggregate holding some (`sdev`): a device region, like the oracle's typed temp. */
+static void last_ptr_to_volatile(CC *c,int vol,int sdev){
+  if(!c->fn->n_res || !(vol||sdev)) return;
+  bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->domain=BCIR_DOM_MMIO; if(vol) tr->is_volatile=1;
+}
+/* A write of the named object `v` (a c.copy into it): a volatile access when the object is volatile. */
+static void mark_obj_write(CC *c,bcir_claim *cl,const venv *v){ if(cl && obj_vol(c,v)) mark_access(c,cl,1); }
+
 /* typeof( expression ) -- the operand is UNEVALUATED, so resolve its type by SPECULATIVELY lowering it,
  * reading the produced value's type off its resource, then rolling the whole emission back: the resource
  * and claim arrays, the rid/cid/compound-literal counters, and any call-graph / string-literal / local-env
@@ -1103,7 +1219,9 @@ static uint32_t tempptr(CC *c, uint32_t src){
 /* A pointer temporary typed from a pointer struct MEMBER's pointee descriptor -- so a loaded `s->p`
  * carries its real `T *` type (the load reads pointer_size bytes; the emit declares `T *`). */
 static uint32_t tempptr_field(CC *c, const field *fld){
-  uint32_t r=add_res(c,BCIR_DOM_RAM, fld->ptee_size?fld->ptee_size:4, 1, 0, BCIR_RK_POINTER, "");
+  int dev = fld->ptee_volatile || (fld->ptee_sidx>=0 && sdef_vol(c,fld->ptee_sidx));
+  uint32_t r=add_res(c,dev?BCIR_DOM_MMIO:BCIR_DOM_RAM, fld->ptee_size?fld->ptee_size:4, 1,
+                     fld->ptee_volatile, BCIR_RK_POINTER, "");
   if(c->fn->n_res){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
     t->is_signed=(uint8_t)(fld->signd?1:0); t->is_float=(uint8_t)(fld->ptee_float?1:0);
     if(fld->ptee_sidx>=0) snprintf(t->agg,sizeof t->agg,"%s %s",
@@ -1125,7 +1243,7 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->bit_w?fld->access_bytes:fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
-  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  mark_access(c,cl,fld->is_volatile||base->type.is_volatile);
   if(fld->bit_w){uint32_t u=t;
     /* integer promotion (6.3.1.1) of a bitfield read, keyed on the BITFIELD WIDTH W (`fld->bit_w`):
      *   * W <= 32  -> promotes to int (int holds all W-bit values), so an UNSIGNED sub-int bitfield reads
@@ -1149,7 +1267,7 @@ static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t 
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;cl->bounds=BCIR_BND_ASSUMED;
-  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  mark_access(c,cl,fld->is_volatile||base->type.is_volatile);
   return t;
 }
 /* After `arr[i]` on an ARRAY-OF-STRUCTS member (`arr->elem_sidx>=0`) with a trailing `.`/`->`, parse the
@@ -1174,7 +1292,7 @@ static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uin
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=3;cl->imm[0]=arr->byte_off+sub->byte_off;cl->imm[1]=sub->size;cl->imm[2]=arr->size;
   cl->bounds=BCIR_BND_ASSUMED;
-  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  mark_access(c,cl,sub->is_volatile||arr->is_volatile||base->type.is_volatile);
   return t;
 }
 /* After `a[i]` on a DIRECT local/global ARRAY-OF-STRUCTS variable (`v->sidx>=0`, the element struct) with a
@@ -1199,7 +1317,7 @@ static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *s
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=3;cl->imm[0]=sub->byte_off;cl->imm[1]=sub->size;cl->imm[2]=base->type.size;
   cl->bounds=BCIR_BND_ASSUMED;
-  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  mark_access(c,cl,sub->is_volatile||base->type.is_volatile);
   return t;
 }
 /* `a[i].field = val` on a DIRECT array-of-structs variable: store `sub->size` bytes at offsetof(sub),
@@ -1212,7 +1330,7 @@ static void store_index_field(CC *c, venv *base, uint32_t idx, const field *sub,
   cl->imm[0]=sub->byte_off;cl->imm[1]=sub->size;cl->bounds=BCIR_BND_ASSUMED;
   if(sub->is_bool){cl->imm[2]=1;cl->n_imm=3;}
   if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=base->type.size; cl->n_imm=4;   /* stride imm[3] */
-  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  mark_access(c,cl,sub->is_volatile||base->type.is_volatile);
 }
 /* `s.arr[i] = val` (member array, the element copy size == the element/stride size) OR `s.arr[i].field = val`
  * (member array-of-structs, the field copy size != the element stride): store at member_off + field_off,
@@ -1227,7 +1345,7 @@ static void store_member_index(CC *c, venv *base, const field *arr, uint32_t idx
   cl->bounds=BCIR_BND_ASSUMED;
   if(sf->is_bool){cl->imm[2]=1;cl->n_imm=3;}                      /* a _Bool element/field: normalize on store */
   if(soa){ if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=arr->size; cl->n_imm=4; }   /* stride imm[3] */
-  if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+  mark_access(c,cl,sf->is_volatile||arr->is_volatile||base->type.is_volatile);
 }
 /* Parse the `[i]` (or `[i][j][k]`) indices of a member-array access and flatten them row-major into a
  * single linear index (Horner: lin = lin*adims[d] + idx[d]) -- matching the oracle, so 1-D `s.a[i]` and
@@ -1528,6 +1646,8 @@ static void bind_extent(CC *c, uint32_t p_rid, const bcir_resource *pr, const to
  * emit/behaviour change; `verify` already defaults to bounds. */
 static bcir_bounds access_bnd(CC *c, uint32_t rid) {
   const bcir_resource *r = res_of(c->fn, rid);
+  if (r && r->domain == BCIR_DOM_MMIO) return BCIR_BND_ASSUMED;   /* a device region (a register block, a
+                                                                * volatile array): trusted, like the oracle */
   /* A known-extent ARRAY object (oracle `rt.kind=="array" and rt.count`): a LOCAL/STATIC array (kind !=
    * POINTER), OR a file-scope (static/const) global array -- the twin tags a global array POINTER for
    * index decay, but it carries its real, small element count, whereas a genuine pointer has the SYMBOLIC
@@ -1539,20 +1659,31 @@ static bcir_bounds access_bnd(CC *c, uint32_t rid) {
   if (ptrext_get(c->fn, rid)) return BCIR_BND_MASKED;   /* §5.12 a malloc/calloc pointer with a recovered count */
   return BCIR_BND_ASSUMED;
 }
-static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
+/* The temp an element of `base` loads into: an ARRAY of pointers yields a pointer typed as the element,
+ * anything else a value of the element's type. Shared by `a[i]` and `*a`. */
+static uint32_t elem_temp(CC *c, venv *base) {
   const bcir_resource *br=res_of(c->fn,base->rid);
   uint32_t t;
   if(base->type.kind==2 && br && br->kind==BCIR_RK_SCALAR && br->count>1){   /* an ARRAY of pointers `T *a[N]`
-    * (a SCALAR array with pointer-wide elements, NOT a pointer variable `T *p`): `a[i]` loads a pointer */
-    t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");
+    * (a SCALAR array with pointer-wide elements, NOT a pointer variable `T *p`): `a[i]` loads a pointer, typed
+    * as the element (its pointee's width, sign and volatility), so indexing it lands on the right objects */
+    t=add_res(c,BCIR_DOM_RAM,base->type.size?base->type.size:4,1,0,BCIR_RK_POINTER,"");
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
       tr->ptr_depth=base->type.ptr_depth?base->type.ptr_depth:1;
+      tr->is_signed=(uint8_t)(base->type.signd?1:0); tr->is_float=(uint8_t)(base->type.is_float?1:0);
+      tr->is_plain_char=(uint8_t)(base->type.is_plain_char?1:0);
       if(base->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",base->type.is_union?"union":"struct",base->type.tag);
       else if(base->type.size==0 && !base->type.is_float) tr->is_voidptr=1; }   /* a `void *` element */
+    last_ptr_to_volatile(c,base->type.is_volatile,base->type.ptr_to_struct && sdef_vol(c,base->sidx));
   } else { int es=base->type.size?base->type.size:4;
     t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd); }  /* float -> a float temp; else keep the sign */
+  return t;
+}
+static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
+  uint32_t t=elem_temp(c,base);
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=access_bnd(c,base->rid);
+  mark_access(c,cl,index_elem_vol(c,base));        /* the element of a pointer to volatile / a volatile array */
   return t;
 }
 /* Parse `[i]` (or `[i][j][k]`) on an array variable and Horner-flatten via its declared dims
@@ -1591,11 +1722,12 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
   /* SNAPSHOT every field of `r` we still need: the add_res/tempi/tempf calls below allocate a
    * NEW resource, which may realloc (and thus MOVE+free) c->fn->res -- so `r`, a pointer INTO that
    * array, dangles after the first allocation. Reading through it afterward is a use-after-free. */
-  uint8_t r_signd=r->is_signed, r_float=r->is_float, r_plain_char=r->is_plain_char;
+  uint8_t r_signd=r->is_signed, r_float=r->is_float, r_plain_char=r->is_plain_char, r_vol=r->is_volatile;
+  bcir_domain r_dom=r->domain;
   char r_agg[sizeof r->agg]; snprintf(r_agg,sizeof r_agg,"%s",r->agg);
   uint32_t t;
   if(depth>1){                                     /* the pointee is itself a pointer (read pointer_size) */
-    t=add_res(c,BCIR_DOM_RAM,base,1,0,BCIR_RK_POINTER,"");
+    t=add_res(c,r_dom,base,1,r_vol,BCIR_RK_POINTER,"");   /* still pointing at the same (device) storage */
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
       tr->is_signed=r_signd; tr->is_float=r_float; tr->ptr_depth=(uint8_t)(depth-1);
       snprintf(tr->agg,sizeof tr->agg,"%s",r_agg); }
@@ -1605,19 +1737,32 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
   int rd_sz = depth>1 ? cc_abi(c)->pointer_size : base;
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=rd_sz;
+  mark_access(c,cl,depth==1 && r_vol);             /* the pointee of a pointer to volatile, at its own width */
   return t;
 }
-static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load (named pointer) */
-  if(pv->type.is_volatile){                        /* MMIO: an ordered volatile load (unchanged) */
-    int psz=pv->type.size?pv->type.size:4;
-    uint32_t t=tempi(c,psz,pv->type.signd);
+static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load (named pointer or array) */
+  const bcir_resource *r=res_of(c->fn,pv->rid);
+  if(r && r->kind!=BCIR_RK_POINTER && r->is_array && pv->type.kind!=1){   /* `*a` on an ARRAY: its first element,
+    * one load at offset 0 (the oracle's `mem` lvalue of the element type); volatile when the element is */
+    int es = pv->type.kind==2 ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4);
+    uint32_t t=elem_temp(c,pv);
     bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
-    cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;
-    cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=psz;
-    cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;
+    cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;
+    mark_access(c,cl,index_elem_vol(c,pv));
     return t;
   }
-  return emit_deref_rid(c,pv->rid);                /* depth-aware (the resource carries width + ptr_depth) */
+  if(r && r->is_pointer && pv->type.kind==2 && (pv->type.ptr_depth?pv->type.ptr_depth:1)==1){   /* `*gp`: a
+    * file-scope pointer's slot is modelled as a scalar; the load goes THROUGH the value it holds, typed as the
+    * pointee (the oracle's `mem` lvalue at offset 0), volatile when the pointee is */
+    int es=pv->type.size?pv->type.size:4;
+    uint32_t t=elem_temp(c,pv);
+    bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
+    cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;
+    mark_access(c,cl,index_elem_vol(c,pv));
+    return t;
+  }
+  return emit_deref_rid(c,pv->rid);                /* depth-aware: the resource carries width, sign, float,
+                                                    * ptr_depth and the pointee's volatility */
 }
 /* Nested member access (`o.in.v` / `dev->ctrl.flags` -- a sub-register-block): given a member `f`
  * already resolved (byte_off relative to the access base) and the cursor at a possible further
@@ -1645,6 +1790,7 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       c->i++; uint32_t ix=p_expr(c); eat(c,"]");
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
       b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
+      b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);   /* `d->regs[i]` through a `volatile T *regs` */
       return emit_index(c,&b,ix);
     }
     if(is(c,"->")||is(c,".")){
@@ -1654,6 +1800,7 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       if(fi<0){ fail(c,"unknown field"); return ptr; }
       field mf=member_descend(c,S->f[fi]);           /* flatten any nested value-struct hops */
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+      b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);   /* a pointer to a volatile struct */
       if(is(c,"(")){     /* funcptr-member call through the loaded pointer: `d->ops->fn(args)` (#fnptrchain) */
         c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
         if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
@@ -2279,7 +2426,7 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       if(c->failed) return 0; }
     return emit_index(c,v,lin);
   }
-  return v->rid;
+  return named_read(c,v);                        /* the value; a volatile object's read is a volatile access */
 }
 /* `_Generic(ctrl, T1: e1, ..., default: eN)` (C11 §6.5.1.1): the controlling expr is UNEVALUATED -- its
  * static type (read via the speculative typeof machinery, then rolled back) selects the association. The
@@ -2452,6 +2599,22 @@ static uint32_t p_primary(CC *c) {
  * set, a width-named integer uses the SIGNED fixed-width spelling -- needed for a float -> signed-int
  * conversion, which is UB/target-divergent if rendered as float -> unsigned. */
 static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
+  if(ty->kind==2){   /* a POINTER target, spelled faithfully (the oracle's `_pointer_spelling`): the pointee's own
+                      * type -- its sign, a plain `char`, `_Bool`, a float, a struct/union tag or `void` -- behind
+                      * its `volatile`, then one `*` per level; the cast yields a real `T *` of that type */
+    char base[BCIR_CIR_NAME+8];
+    if(ty->ptr_to_struct) snprintf(base,sizeof base,"%s %s",ty->is_union?"union":"struct",ty->tag);
+    else if(ty->size==0 && !ty->is_float) snprintf(base,sizeof base,"void");
+    else if(ty->bit_width>0) snprintf(base,sizeof base,"%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width);
+    else if(ty->is_complex) snprintf(base,sizeof base,"%s",ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex");
+    else if(ty->is_float) snprintf(base,sizeof base,"%s",ty->size==4?"float":ty->size>8?"long double":"double");
+    else if(ty->is_bool) snprintf(base,sizeof base,"_Bool");
+    else if(ty->is_plain_char) snprintf(base,sizeof base,"char");
+    else snprintf(base,sizeof base,"%s",ty->signd?(ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
+                                              :(ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t"));
+    int d=ty->ptr_depth?ty->ptr_depth:1; if(d>BCIR_MAX_PTR_DEPTH) d=BCIR_MAX_PTR_DEPTH;
+    char stars[BCIR_MAX_PTR_DEPTH+1]; for(int k=0;k<d;k++) stars[k]='*'; stars[d]=0;
+    snprintf(o,n,"c.cast:%s%s %s",ty->is_volatile?"volatile ":"",base,stars); return; }
   if(ty->kind==0 && ty->bit_width>0){               /* a `_BitInt(N)` cast target -- the exact spelling (faithful) */
     snprintf(o,n,"c.cast:%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width); return; }
   const char *nm=ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
@@ -2459,7 +2622,7 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
                 : ty->is_float ? (ty->size==4?"float":ty->size>8?"long double":"double")  /* >8: extended (matches the oracle's `long double`) */
                 : signed_int ? (ty->size==1?"int8_t":ty->size==2?"int16_t":ty->size==8?"int64_t":"int32_t")
                 : ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t";
-  if(ty->kind==2) snprintf(o,n,"c.cast:%s *",nm); else snprintf(o,n,"c.cast:%s",nm);
+  snprintf(o,n,"c.cast:%s",nm);
 }
 static int incdec_value(CC *c, uint32_t *out);   /* fwd: `++a`/`a++`/`--a`/`a--` in EXPRESSION position */
 static uint32_t p_unary_inner(CC *c);
@@ -2507,6 +2670,7 @@ static uint32_t p_unary_inner(CC *c) {
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];   /* pointee = the member's pointee */
               tr->is_signed=(uint8_t)(mf.signd?1:0); tr->is_float=(uint8_t)(mf.ptee_float?1:0); tr->ptr_depth=2;
               if(mf.ptee_sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.ptee_sidx].is_union?"union":"struct",c->s[mf.ptee_sidx].tag); }
+            last_ptr_to_volatile(c,mf.ptee_volatile,mf.ptee_sidx>=0 && sdef_vol(c,mf.ptee_sidx));
             bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
             if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
             return t;
@@ -2581,6 +2745,7 @@ static uint32_t p_unary_inner(CC *c) {
           tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0);
           tr->ptr_depth=(uint8_t)((v->type.kind==2?(v->type.ptr_depth?v->type.ptr_depth:1):0)+1);
           if(v->type.kind==1||v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
+        last_ptr_to_volatile(c,v->type.is_volatile,v->sidx>=0 && sdef_vol(c,v->sidx));   /* &x of volatile storage */
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     if(is(c,"(")){ int save=c->i; c->i++;             /* `&(type){...}` -- address of a compound literal */
@@ -2620,13 +2785,13 @@ static uint32_t p_unary_inner(CC *c) {
   if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
     c->i++;
     if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
-      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid);
+      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
         if(pvp){ c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
           if(is(c,"+")){ c->i++; uint32_t idx=p_expr(c); eat(c,")"); return emit_index(c,pv,idx); }
           if(is(c,")")){ c->i++; return emit_deref(c,pv); } } }
       c->i=save;
-    } else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid);
-      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use) */
+    } else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pv=lookup(c,&pid); if(!pv) pv=use_global(c,&pid);
+      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use); a global too */
     return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
   if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{')
@@ -2670,9 +2835,10 @@ static uint32_t p_unary_inner(CC *c) {
          * cast operator (float -> unsigned is UB / target-divergent). */
         int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0
                   && ty.bit_width==0;                                  /* a `_BitInt` keeps its exact spelling */
-        uint32_t r = ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
+        uint32_t r = ty.kind==2 ? temp_ptr(c, &ty, si)                /* a pointer cast: a `T *` of the target (first:
+                                                                        * a `float *` target is a pointer, not a float) */
+                   : ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
                    : ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
-                   : ty.kind==2 ? temp(c, cc_abi(c)->pointer_size)    /* a pointer cast */
                    : ty.bit_width>0 ? tempbi(c, ty.bit_width, ty.signd?1:0)   /* a C23 `_BitInt(N)` cast */
                                 : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
         if(ty.is_bool && !ty.is_float && ty.kind!=2 && c->fn->n_res)
@@ -2833,10 +2999,21 @@ static venv *use_global(CC *c,const tok *id){
   venv *ex=lookup(c,id); if(ex) return ex;
   gvar *g=&c->gv[gi];
   int kind = g->count>1 ? BCIR_RK_POINTER : (g->ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
-  uint32_t rid=add_res(c,BCIR_DOM_RAM,g->ty.size,g->count,0,kind,g->name);
-  if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].read_only=1;   /* a global, not a local */
-    c->fn->res[c->fn->n_res-1].is_array=(uint8_t)(g->is_arr?1:0);
-    c->fn->res[c->fn->n_res-1].is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0); }
+  uint32_t rid=add_res(c,ty_mmio(c,&g->ty,-1,g->is_arr)?BCIR_DOM_MMIO:BCIR_DOM_RAM,   /* a volatile global, or a */
+                       g->ty.size,g->count,g->ty.is_volatile,kind,g->name);            /* pointer to volatile storage */
+  if(c->fn->n_res){ bcir_resource *gr=&c->fn->res[c->fn->n_res-1];
+    gr->read_only=1;                                  /* a global, not a local */
+    gr->is_array=(uint8_t)(g->is_arr?1:0);
+    gr->is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0);
+    /* the value type rides on the resource, as a local's does: every temp typed from it (a deref of the
+     * array, `-g`, the usual arithmetic conversions, a volatile read) is the global's type, not uint32 */
+    if(g->ty.kind==0 && kind==BCIR_RK_POINTER){       /* an array: its element, as a pointer local's pointee */
+      gr->is_signed=(uint8_t)(g->ty.signd?1:0); gr->is_float=(uint8_t)(g->ty.is_float?1:0);
+      gr->is_plain_char=(uint8_t)(g->ty.is_plain_char?1:0); }
+    else if(g->ty.kind==0){                           /* a scalar: as a scalar local */
+      gr->is_signed=(uint8_t)(g->ty.signd?1:0); gr->is_float=(uint8_t)(g->ty.is_float?1:0);
+      gr->is_complex=(uint8_t)(g->ty.is_complex?1:0); gr->is_bool=(uint8_t)(g->ty.is_bool?1:0);
+      gr->is_plain_char=(uint8_t)(g->ty.is_plain_char?1:0); gr->bit_width=g->ty.bit_width; } }
   env_add(c,id,rid,&g->ty,-1);
   return lookup(c,id);
 }
@@ -2875,7 +3052,7 @@ static void store_member(CC *c, venv *base, const field *f, uint32_t val){
   if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f->byte_off;cl->imm[1]=f->size;
     cl->bounds=BCIR_BND_ASSUMED;
     if(f->is_bool){cl->imm[2]=1;cl->n_imm=3;}                         /* a _Bool member normalizes on store */
-    if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+    mark_access(c,cl,f->is_volatile||base->type.is_volatile);}
 }
 /* Emit a BITFIELD member store `base.field = val` (#bfassignexpr): read the storage unit (`access_bytes`
  * spanned bytes, into a pow2 temp), insert the masked bits (c.bf.set), store the unit's spanned bytes back
@@ -2886,14 +3063,14 @@ static void store_member_bf(CC *c, venv *base, const field *f, uint32_t val){
   uint32_t unit=temp(c,absz);
   bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
   if(ld){ld->n_rd=1;ld->rd[0]=base->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f->byte_off;ld->imm[1]=f->access_bytes;ld->bounds=BCIR_BND_ASSUMED;
-    if(base->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
+    mark_access(c,ld,f->is_volatile||base->type.is_volatile);}
   uint32_t nu=temp(c,absz);
   bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
   if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=f->bit_off;bs->imm[1]=f->bit_w;}
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
   if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=nu;cl->n_imm=3;cl->imm[0]=f->byte_off;cl->imm[1]=f->access_bytes;cl->imm[2]=2;
     cl->bounds=BCIR_BND_ASSUMED;                                      /* a bitfield UNIT store: `_v` takes the unit's full type */
-    if(base->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+    mark_access(c,cl,f->is_volatile||base->type.is_volatile);}
 }
 static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is itself an assign (right-assoc) */
 /* A MEMORY-lvalue assignment used as a VALUE (the C twin of the oracle's generalized _is_scalar_member_lv
@@ -3291,6 +3468,7 @@ static uint32_t p_assign(CC *c){
       if(op->n==1 && op->s[0]=='='){                 /* name = rhs  (right-recursive: a = b = c) */
         tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t rhs=p_assign(c); int ien=c->i;
         bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        mark_obj_write(c,cl,v);
         bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
         return v->rid;
       }
@@ -3301,11 +3479,13 @@ static uint32_t p_assign(CC *c){
         bcir_claim *cl=new_claim(c,o,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         return v->rid;
       }
+      uint32_t cur=named_read(c,v);                 /* the current value (a volatile read, first) */
       c->i+=2; uint32_t rhs=p_assign(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-      uint32_t tmp=binop_result(c,suf,v->rid,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
-      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
+      mark_obj_write(c,cp,v);
       return v->rid;
     }
   }
@@ -3754,6 +3934,7 @@ static void p_simple(CC *c) {
     if(v && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='='){      /* name = expr */
       c->i+=2; uint32_t val=p_expr(c);
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
+      mark_obj_write(c,cl,v);
       return; }
     if(v && is_compound_op(tat(c,c->i+1))){                                             /* name OP= expr */
       char ch=tat(c,c->i+1)->s[0];
@@ -3762,11 +3943,13 @@ static void p_simple(CC *c) {
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         return; }
+      uint32_t cur=named_read(c,v);                     /* the current value (a volatile read, first) */
       c->i+=2; uint32_t rhs=p_expr(c);                  /* scalar:  name = name OP expr  (bin op + copy) */
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-      uint32_t tmp=binop_result(c,suf,v->rid,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
-      bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
+      mark_obj_write(c,cp,v);
       return; } }
   (void)p_expr(c);
 }
@@ -3787,6 +3970,7 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     c->i++; uint32_t idx=p_expr(c); eat(c,"]");
     venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
     b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
+    b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);
     uint32_t val;
     if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
       uint32_t cur=emit_index(c,&b,idx); uint32_t rhs=p_expr(c);
@@ -3796,7 +3980,8 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
       val=tmp;
     } else { if(!eat(c,"="))return; val=p_expr(c); }
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=3;cl->rd[0]=ptr;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;}
+    if(cl){cl->n_rd=3;cl->rd[0]=ptr;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
+      mark_access(c,cl,pfld.ptee_volatile);}
     return;
   }
   if(!(is(c,"->")||is(c,"."))){ fail(c,"expected ->/./[ after a pointer field"); return; }
@@ -3806,6 +3991,7 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
   if(fi<0){ fail(c,"unknown field"); return; }
   field f=member_descend(c,S->f[fi]);
   venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+  b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);
   if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){  /* another pointer hop: load it, recurse */
     uint32_t nptr=emit_member(c,&b,&f,0); store_through_ptr(c,nptr,f.ptee_sidx,f); return;
   }
@@ -3818,7 +4004,8 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     val=tmp;
   } else { if(!eat(c,"="))return; val=p_expr(c); }
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-  if(cl){cl->n_rd=2;cl->rd[0]=b.rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;cl->bounds=BCIR_BND_ASSUMED;}
+  if(cl){cl->n_rd=2;cl->rd[0]=b.rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;cl->bounds=BCIR_BND_ASSUMED;
+    mark_access(c,cl,f.is_volatile||b.type.is_volatile);}
 }
 static void p_stmt_inner(CC *c);
 /* Depth-guarded wrapper: p_stmt is a recursive-cycle entry (p_stmt->p_block->p_stmt, and the stmt-expr
@@ -4073,7 +4260,7 @@ static void p_stmt_inner(CC *c) {
         * array resource (count>1; a struct-element array carries the struct tag in `agg` for the decl) */
       int rk=is_arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
       int arr_elem = (is_arr && ty.kind==2) ? cc_abi(c)->pointer_size : ty.size;   /* an array of pointers: pointer-wide elements */
-      uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
+      uint32_t rid=add_res(c, ty_mmio(c,&ty,si,is_arr)?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                            is_arr?arr_elem:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
                            is_arr?(arr?arr:1):(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
       if(is_arr && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_array=1;   /* an array object, whatever its length */
@@ -4084,6 +4271,8 @@ static void p_stmt_inner(CC *c) {
       else if(arr && ty.kind==2){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an array of pointers `T *a[N]`: a
         * SCALAR array of pointer-wide elements; the decl + `a[i]` load/store carry the pointee (void* for now) */
         ar->ptr_depth=ty.ptr_depth?ty.ptr_depth:1;
+        ar->ptee_bytes=(uint32_t)(ty.size>0?ty.size:0); ar->ptee_signed=(uint8_t)(ty.signd?1:0);   /* the decl's `T` */
+        ar->ptee_float=(uint8_t)(ty.is_float?1:0); ar->ptee_plain_char=(uint8_t)(ty.is_plain_char?1:0);
         if(ty.ptr_to_struct) snprintf(ar->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
         else if(ty.size==0 && !ty.is_float) ar->is_voidptr=1; }
       else if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
@@ -4143,6 +4332,7 @@ static void p_stmt_inner(CC *c) {
           } else agg_init(c,rid,si); }   /* {…} struct-union init */
         else { int ist=c->i; uint32_t v=p_expr(c); int ien=c->i;
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
+          { venv *dv=lookup(c,&nm); if(dv) mark_obj_write(c,cl,dv); }   /* `volatile T x = v;` */
           bind_extent(c,rid,res_of(c->fn,rid),&nm,ist,ien); } }   /* §5.12: `T *p = malloc(N*sizeof(T))` -> extent N */
       if(is(c,",")){ c->i++; continue; }   /* another declarator off the same specifier */
       break;
@@ -4159,11 +4349,12 @@ static void p_stmt_inner(CC *c) {
     /* SNAPSHOT the pointer's env entry: the `*(p + i)` index and the RHS p_expr below can declare locals
      * and realloc c->env[] -- a pointer into it dangles. The store/emit helpers only READ the venv. */
     if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
-      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid);
+      if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
         if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap;
           if(is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
           else if(is(c,")")){ c->i++; ok=1; } } } }
-    else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; } }   /* *p */
+    else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);   /* *p, *g */
+      if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; } }
     if(ok && pv && (is_compound_op(&c->t[c->i]) ||
                     (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
       int sz = (pv->type.ptr_depth>1) ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4); uint32_t val;
@@ -4182,7 +4373,7 @@ static void p_stmt_inner(CC *c) {
         if(has_idx){ cl->n_rd=3; cl->rd[0]=pv->rid; cl->rd[1]=idx; cl->rd[2]=val; }   /* *(p+i) == p[i] */
         else { cl->n_rd=2; cl->rd[0]=pv->rid; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; }
         cl->bounds=BCIR_BND_ASSUMED;
-        if(pv->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}
+        mark_access(c,cl,index_elem_vol(c,pv));          /* `*p` / `*(p+i)`: the pointee */
       }
       eat(c,";"); return;
     }
@@ -4203,7 +4394,8 @@ static void p_stmt_inner(CC *c) {
         val=tmp;
       } else { c->i++; val=p_expr(c); }                /* **pp = expr */
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){ cl->n_rd=2; cl->rd[0]=base; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; cl->bounds=BCIR_BND_ASSUMED; }
+      if(cl){ cl->n_rd=2; cl->rd[0]=base; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; cl->bounds=BCIR_BND_ASSUMED;
+        const bcir_resource *bb=res_of(c->fn,base); mark_access(c,cl,depth==1 && bb && bb->is_volatile); }
       eat(c,";"); return;
     }
     c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
@@ -4262,7 +4454,7 @@ static void p_stmt_inner(CC *c) {
         uint32_t unit=temp(c,absz);
         bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
         if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f.byte_off;ld->imm[1]=f.access_bytes;ld->bounds=BCIR_BND_ASSUMED;
-          if(v->type.is_volatile){ld->domain=BCIR_DOM_MMIO;ld->lane=BCIR_LANE_H;ld->hazard=BCIR_HZ_BARRIERED;}}
+          mark_access(c,ld,f.is_volatile||v->type.is_volatile);}
         uint32_t nu=temp(c,absz);
         bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
         if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=f.bit_off;bs->imm[1]=f.bit_w;}
@@ -4273,7 +4465,7 @@ static void p_stmt_inner(CC *c) {
         cl->bounds=BCIR_BND_ASSUMED;
         if(f.bit_w){cl->imm[2]=2;cl->n_imm=3;}      /* a bitfield UNIT store: `_v` takes the unit's full type */
         else if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}    /* a _Bool member: emit `_Bool _v` so the store normalizes */
-        if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+        mark_access(c,cl,f.is_volatile||v->type.is_volatile);}
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
     if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='['){
@@ -4309,11 +4501,12 @@ static void p_stmt_inner(CC *c) {
         c->i=as_start; (void)p_expr(c); eat(c,";"); return; }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=access_bnd(c,v->rid);  /* §5.12 promote */
-        if(v->type.is_volatile){cl->domain=BCIR_DOM_MMIO;cl->lane=BCIR_LANE_H;cl->hazard=BCIR_HZ_BARRIERED;}}
+        mark_access(c,cl,index_elem_vol(c,v));}
       eat(c,";");return;}
     if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='='){
       tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t val=p_expr(c); int ien=c->i;
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
+      mark_obj_write(c,cl,v);
       bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
       eat(c,";");return;}
     /* compound assignment  name OP= expr  ->  name = name OP expr  (a bin op + a copy). */
@@ -4325,11 +4518,13 @@ static void p_stmt_inner(CC *c) {
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         eat(c,";");return;
       }
+      uint32_t cur=named_read(c,v);                     /* the current value (a volatile read, first) */
       c->i+=2; uint32_t rhs=p_expr(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-      uint32_t tmp=binop_result(c,suf,v->rid,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
-      bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+      bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
       bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=tmp;cp->n_wr=1;cp->wr[0]=v->rid;}
+      mark_obj_write(c,cp,v);
       eat(c,";");return;}}
   if(p_incdec(c)){eat(c,";");return;}    /* ++i / i++ / --i / i-- as a statement */
   (void)p_expr(c);eat(c,";");
@@ -4513,7 +4708,7 @@ static int p_func(CC *c, bcir_func *fn) {
     }
     char pb[BCIR_CIR_NAME]; idcpy(pb,&pn);
     int rk=ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR;
-    uint32_t rid=add_res(c, ty.is_volatile?BCIR_DOM_MMIO:BCIR_DOM_RAM,
+    uint32_t rid=add_res(c, ty_mmio(c,&ty,si,0)?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
     if(ty.kind==2){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer param: carry the pointee
@@ -4577,6 +4772,7 @@ static int p_func(CC *c, bcir_func *fn) {
   }
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed) p_stmt(c);
   eat(c,"}");
+  order_device_claims(fn);   /* R3: every claim touching a device region is device-domain and ordered */
   return c->failed;
 }
 
@@ -4685,26 +4881,68 @@ static const char *tty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32
  * `<pointee> *` (the pointee width/sign/float/tag ride on the resource); for everything else it is the
  * scalar `tty`. Pointer types must be composed (not static strings), so it writes into a caller buffer
  * and returns it -- byte-identical to `tty` for non-pointers, so scalar emit is unchanged. */
+static const char *ptr_spelling(char *buf,size_t n,int vol,int voidp,const char *agg,int flt,uint32_t bytes,int signd,int depth,
+                                int cplx,int boolp,int pchar){
+  const char *base = voidp ? "void"   /* a `void *` pointee (`&&L`, void-pointee local): no width/sign */
+    : agg[0] ? agg
+    : cplx ? (bytes==8?"float _Complex":bytes>16?"long double _Complex":"double _Complex")
+    : flt ? (bytes==4?"float":bytes>8?"long double":"double")
+    : boolp ? "_Bool" : pchar ? "char"   /* the pointee's own type (the oracle's `_cname`) */
+    : bytes==1?(signd?"int8_t":"uint8_t") : bytes==2?(signd?"int16_t":"uint16_t")
+    : bytes==8?(signd?"int64_t":"uint64_t") : (signd?"int32_t":"uint32_t");
+  char stars[BCIR_MAX_PTR_DEPTH+2]; int d=depth?depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
+  if(d>BCIR_MAX_PTR_DEPTH) d=BCIR_MAX_PTR_DEPTH;
+  stars[si++]=' '; for(int k=0;k<d;k++) stars[si++]='*'; stars[si]=0;
+  snprintf(buf,n,"%s%s%s",vol?"volatile ":"",base,stars);   /* a pointer to volatile storage */
+  return buf;
+}
 static const char *decl_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t rid,char *buf,size_t n){
   const bcir_resource *r=res_of(f,rid);
-  if(r && r->kind==BCIR_RK_POINTER){
-    const char *base = r->is_voidptr ? "void"   /* a `void *` pointee (`&&L`, void-pointee local): no width/sign */
-      : r->agg[0] ? r->agg
-      : r->is_float ? (r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double")
-      : r->elem_bytes==1?(r->is_signed?"int8_t":"uint8_t") : r->elem_bytes==2?(r->is_signed?"int16_t":"uint16_t")
-      : r->elem_bytes==8?(r->is_signed?"int64_t":"uint64_t") : (r->is_signed?"int32_t":"uint32_t");
-    char stars[BCIR_MAX_PTR_DEPTH+2]; int d=r->ptr_depth?r->ptr_depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
-    stars[si++]=' '; for(int k=0;k<d;k++) stars[si++]='*'; stars[si]=0;
-    snprintf(buf,n,"%s%s",base,stars);
-  } else snprintf(buf,n,"%s",tty(scratch,f,rid));
+  if(r && r->kind==BCIR_RK_POINTER)
+    return ptr_spelling(buf,n,r->is_volatile,r->is_voidptr,r->agg,r->is_float,r->elem_bytes,r->is_signed,r->ptr_depth,
+                        r->is_complex,r->is_bool,r->is_plain_char);
+  snprintf(buf,n,"%s",tty(scratch,f,rid));
   return buf;
+}
+/* A pointer to a volatile slot of C type `t`: the conventional `volatile T *`, or `T volatile *` when `t` is
+ * itself a pointer type (a qualifier in front would qualify its pointee, not the slot). The oracle's
+ * `_volatile_ptr`, byte-identical. */
+static const char *vol_ptr(const char *t,char *buf,size_t n){
+  size_t k=strlen(t); while(k && t[k-1]==' ') k--;
+  if(k && t[k-1]=='*') snprintf(buf,n,"%s volatile *",t); else snprintf(buf,n,"volatile %s *",t);
+  return buf;
+}
+/* The type a volatile LOAD reads into temp `trid`: the value's own type, at the slot's width `w` for an
+ * integer (a bitfield's storage unit) -- the oracle reads `et`, or the unit's unsigned type. */
+static const char *vol_load_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t trid,long long w,char *buf,size_t n){
+  const bcir_resource *r=res_of(f,trid);
+  if(!r || r->kind==BCIR_RK_POINTER || r->is_float || r->is_complex || r->bit_width>0 || r->is_bool || r->is_plain_char)
+    return decl_ty(scratch,f,trid,buf,n);
+  if(w==1||w==2||w==4||w==8){ snprintf(buf,n,"%sint%lld_t",r->is_signed?"":"u",w*8); return buf; }
+  return decl_ty(scratch,f,trid,buf,n);
+}
+/* The C type of the `sz`-byte slot a volatile STORE of `vrid` writes -- the oracle's `_slot_ctype`: a `_Bool`
+ * slot (`flag` 1), a float of the slot's width, a pointer or an aggregate as itself, else the unsigned integer
+ * of the slot's width (a bitfield's unit, `flag` 2, included): one access of exactly the slot. */
+static const char *vol_slot_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t vrid,long long sz,int flag,char *buf,size_t n){
+  const bcir_resource *vr=res_of(f,vrid);
+  if(flag==1) return "_Bool";
+  if(vr && vr->is_complex) return sz==8?"float _Complex":sz>16?"long double _Complex":"double _Complex";
+  if(vr && vr->is_float) return sz==4?"float":sz>8?"long double":"double";
+  if(vr && vr->kind==BCIR_RK_POINTER) return decl_ty(scratch,f,vrid,buf,n);
+  if(vr && vr->kind==BCIR_RK_AGGREGATE && vr->agg[0]) return vr->agg;
+  return sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t";
 }
 /* The `&`-or-not prefix that turns a BASE resource into a `(char *)`-castable pointer (mirrors the oracle's
  * _base_ptr): a POINTER value decays to itself (`(char *)p`), and so does an ARRAY name (a scalar resource
  * with count>1 -- a DIRECT array-of-structs `a[i].f`, `(char *)a`); a struct/scalar VALUE is addressed
  * (`(char *)&s`). NOTE: the addrof path keeps its own `&`-for-array rule (it addresses `&arr[i]`). */
+/* A base whose value IS the address an access goes through: a pointer resource, or a file-scope `T *g`
+ * whose slot is modelled as a scalar (`is_pointer`) -- `(char *)g`, never `(char *)&g`, which would address
+ * the pointer variable itself. The one predicate every base-address spelling below uses. */
+static int holds_pointer(const bcir_resource *br){ return br && (br->kind==BCIR_RK_POINTER || br->is_pointer); }
 static const char *base_amp(const bcir_resource *br){
-  if(br && br->kind==BCIR_RK_POINTER) return "";
+  if(holds_pointer(br)) return "";
   if(br && br->kind==BCIR_RK_SCALAR && br->count>1) return "";   /* a direct array name decays */
   return "&";
 }
@@ -4777,15 +5015,24 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(is_named_local(f,r->rid)){
       char un[BCIR_CIR_NAME]; const char *nm=uniq_local(f,r->rid,un);   /* unique vs same-named scopes */
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
-      if(sx>=0) w+=snprintf(o+EO,on-EO,"  static uint32_t %s = %lluu;\n",nm,(unsigned long long)f->statics[sx].init);
+      /* a volatile OBJECT (scalar, array of scalars, struct) keeps its qualifier; a pointer's `volatile` is its
+       * pointee's and rides in decl_ty; an array of pointers holds plain pointers */
+      const char *vq=(r->is_volatile && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"volatile ":"";
+      if(sx>=0){                                     /* a static: its own type (the oracle's `_cname`), not uint32 */
+        if(r->kind==BCIR_RK_POINTER) w+=snprintf(o+EO,on-EO,"  static %s%s = %lluu;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm,(unsigned long long)f->statics[sx].init);
+        else w+=snprintf(o+EO,on-EO,"  static %s%s %s = %lluu;\n",vq,tty(&type_scratch,f,r->rid),nm,(unsigned long long)f->statics[sx].init); }
       else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
-      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s%s;\n",r->agg,nm,r->zinit?" = {0}":"");
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s %s%s;\n",vq,r->agg,nm,r->zinit?" = {0}":"");
       else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
-      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+EO,on-EO,"  %s %s[%u]%s;\n",tty(&type_scratch,f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s%s %s[%u]%s;\n",vq,r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->ptr_depth)   /* an ARRAY of pointers `T *a[N]`: each element
+        * its pointer type (a pointer to volatile keeps the pointee's qualifier), never the pointer-wide integer */
+        w+=snprintf(o+EO,on-EO,"  %s%s[%u]%s;\n",ptr_spelling(tb,sizeof tb,r->is_volatile,0,r->agg,r->ptee_float,
+                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char),nm,r->count,r->zinit?" = {0}":"");
+      else if(r->kind==BCIR_RK_SCALAR&&r->count>1) w+=snprintf(o+EO,on-EO,"  %s%s %s[%u]%s;\n",vq,tty(&type_scratch,f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
         w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm);
-      else w+=snprintf(o+EO,on-EO,"  %s %s;\n",tty(&type_scratch,f,r->rid),nm);}}
+      else w+=snprintf(o+EO,on-EO,"  %s%s %s;\n",vq,tty(&type_scratch,f,r->rid),nm);}}
   int depth=1, lstk[BCIR_MAXDEPTH+1], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+EO,on-EO,"  "); }while(0)
   for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
@@ -4860,12 +5107,23 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         long long stride=cl->n_imm>2?cl->imm[2]:es;   /* array-of-structs `arr[i].field`: stride sizeof(elem) != es */
         /* the temp carries the element's (width, signedness): memcpy es bytes into it so a signed sub-int
          * element reads sign-extended (the zero-extending uint32 form dropped the sign). */
+        if(cl->is_volatile){ char at[96], vp[112];     /* a volatile element: one access of exactly its type */
+          w+=snprintf(o+EO,on-EO,"%s %s = *(%s)((const volatile char *)%s%s + %lld + (size_t)%s * %lld);\n",
+            tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),
+            vol_ptr(vol_load_ty(&type_scratch,f,cl->wr[0],es,at,sizeof at),vp,sizeof vp),
+            amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride); }
+        else
         w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
           tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
       else if(cl->n_rd==2) w+=snprintf(o+EO,on-EO,"%s %s = %s[%s];\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
-      else if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+EO,on-EO,"uint32_t %s = *(volatile uint32_t *)((const volatile char *)%s + %lld);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),off);
-      else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
+      else if(cl->is_volatile){ char at[96], vp[112];   /* a volatile member / dereference: one ordered access of
+                                                       * exactly the accessed type -- never a 32-bit register */
+        const char *amp=holds_pointer(br)?"":"&";
+        w+=snprintf(o+EO,on-EO,"%s %s = *(%s)((const volatile char *)%s%s + %lld);\n",
+          decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),
+          vol_ptr(vol_load_ty(&type_scratch,f,cl->wr[0],cl->n_imm>1?cl->imm[1]:0,at,sizeof at),vp,sizeof vp),
+          amp,rname(f,cl->rd[0],a),off); }
+      else { const char *amp=holds_pointer(br)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
         /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
         w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
@@ -4879,17 +5137,29 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                       :(vr&&vr->is_complex)?(es==8?"float _Complex":es>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
+        if(cl->is_volatile){ char st[96], vp[112];     /* a volatile element: one store of exactly its slot */
+          w+=snprintf(o+EO,on-EO,"*(%s)((volatile char *)%s%s + %lld + (size_t)%s * %lld) = %s;\n",
+            vol_ptr(vol_slot_ty(&type_scratch,f,cl->rd[2],es,(int)(cl->n_imm>2?cl->imm[2]:0),st,sizeof st),vp,sizeof vp),
+            amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,rname(f,cl->rd[2],d)); }
+        else
         w+=snprintf(o+EO,on-EO,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
           vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
-      else if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+EO,on-EO,"((volatile uint32_t *)%s)[%s] = %s;\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],d));
-      else
+      else                                    /* `base[idx] = v`: through the base's declared type, which
+                                                * carries its pointee's `volatile` -- the element's own width */
         w+=snprintf(o+EO,on-EO,"%s[%s] = %s;\n",rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,1),rname(f,cl->rd[2],d));  /* WRITE guard: an OOB store fails-fast, never clamps */
     }else if(!strcmp(cl->op,"c.store")){          /* L8: member store -> memcpy `size` bytes */
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->imm[0]; long long sz=cl->n_imm>1?cl->imm[1]:4;
-      if(cl->domain==BCIR_DOM_MMIO)
-        w+=snprintf(o+EO,on-EO,"*(volatile uint32_t *)((volatile char *)%s + %lld) = %s;\n",rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
-      else { const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";
+      if(cl->is_volatile){ const char *amp=holds_pointer(br)?"":"&";   /* a volatile member /
+        * dereference: one ordered store of exactly its slot type -- never a 32-bit register by assumption */
+        const bcir_resource *vr=res_of(f,cl->rd[1]);
+        if(vr && vr->is_funcptr)
+          w+=snprintf(o+EO,on-EO,"*(void (* volatile *)(void))((volatile char *)%s%s + %lld) = (void (*)(void))%s;\n",
+                      amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
+        else { char st[96], vp[112];
+          w+=snprintf(o+EO,on-EO,"*(%s)((volatile char *)%s%s + %lld) = %s;\n",
+            vol_ptr(vol_slot_ty(&type_scratch,f,cl->rd[1],sz,(int)(cl->n_imm>2?cl->imm[2]:0),st,sizeof st),vp,sizeof vp),
+            amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b)); } }
+      else { const char *amp=holds_pointer(br)?"":"&";
         /* a pointer value stored into a (pointer_size) member: `_v` carries the real `T *` type so the
          * full pointer is copied -- a `uint32_t _v` would truncate the 8-byte pointer to 4. */
         /* `_v` is sized to the MEMBER width `sz` (not a flat uint32) so a wide scalar member store
@@ -4957,7 +5227,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
       const char *pt=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);
       const bcir_resource *br=res_of(f,cl->rd[0]);
-      const char *amp=(br&&br->kind==BCIR_RK_POINTER)?"":"&";   /* a pointer base decays (`(char*)s`), a value
+      const char *amp=holds_pointer(br)?"":"&";   /* a pointer base decays (`(char*)s`), a value
                                                                  * / array base is addressed (`(char*)&s`) */
       if(cl->n_rd==2)                              /* &base[idx] -> (T *)((char *)base + off + idx*es) */
         w+=snprintf(o+EO,on-EO,"%s%s = (%s)((char *)%s%s + %lld + (size_t)%s * %lld);\n",
@@ -6129,9 +6399,13 @@ static int esc_escape_report(esc_ctx *e,esc_out *out,const uint64_t *lent,const 
 }
 
 /* a device access: an MMIO-domain claim, or a load or store whose BASE resource is MMIO-domain. The base
- * decides, not the claim's spelling -- `p[i]` through a `volatile T *` lowers here as an ordinary load
- * (the oracle marks it MMIO), and one predicate over the resource keeps the two rails' answers the same. */
+ * decides, not the claim's spelling -- both rails mark every such access today (`p[i]` through a
+ * `volatile T *` was once an ordinary load here), and one predicate over the resource keeps the two rails'
+ * answers the same should a spelling drift again. */
 static int esc_device(const bcir_func *f,const bcir_claim *c){
+  if(c->opcode==BCIR_OP_NOP) return 0;   /* a control marker (`c.return`, `c.if`, ...) reads a value and performs
+                                          * no access; R3 may still make it device-domain when that value is a
+                                          * pointer to volatile storage. The oracle has no marker claims. */
   if(c->domain==BCIR_DOM_MMIO) return 1;
   if(c->n_rd && (!strcmp(c->op,"c.load")||!strcmp(c->op,"c.store"))){
     const bcir_resource *r=res_of(f,c->rd[0]); return r && r->domain==BCIR_DOM_MMIO; }

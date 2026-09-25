@@ -1,0 +1,170 @@
+{
+  "command": [
+    "@python",
+    "tools/perf/check_volatile.py",
+    "--require-cc"
+  ],
+  "faults": [
+    {
+      "label": "Oracle emit: a volatile object's declaration drops its qualifier",
+      "expects": "volatile.emit.mismatch",
+      "path": "bcir/frontends/cfront/emit.py",
+      "old": "    vol = \"volatile \" if ct.volatile else \"\"  # a volatile object / pointee keeps its qualifier:",
+      "new": "    vol = \"\"  # a volatile object / pointee keeps its qualifier:"
+    },
+    {
+      "label": "Oracle emit: a volatile member or dereference is accessed through a plain pointer",
+      "expects": "volatile.emit.mismatch",
+      "path": "bcir/frontends/cfront/emit.py",
+      "old": "    return f\"{t} volatile *\" if t.rstrip().endswith(\"*\") else f\"volatile {t} *\"",
+      "new": "    return f\"{t} *\""
+    },
+    {
+      "label": "Oracle emit: a volatile store writes a 32-bit register whatever its slot",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "bcir/frontends/cfront/emit.py",
+      "old": "    return _unit_ctype(size)\n\n\ndef _store_conv",
+      "new": "    return \"uint32_t\"\n\n\ndef _store_conv"
+    },
+    {
+      "label": "Oracle types: a pointer to volatile storage is not a device region",
+      "expects": "volatile.refused",
+      "path": "bcir/frontends/cfront/ctype_model.py",
+      "old": "        return self.kind == \"pointer\" and bool(self.of and self.of.touches_mmio)",
+      "new": "        return False"
+    },
+    {
+      "label": "Oracle: a volatile file-scope object is ordinary memory",
+      "expects": "volatile.refused",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            domain=Domain.MMIO if ct.touches_mmio else Domain.RAM,",
+      "new": "            domain=Domain.RAM,"
+    },
+    {
+      "label": "Oracle: a member of a volatile struct is not volatile",
+      "expects": "volatile.emit.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate\n            off = (\n                byte_off if node.arrow else base_off + byte_off\n            )  # `->` resets to *base; `.` accumulates\n            return _LV(",
+      "new": "            off = (\n                byte_off if node.arrow else base_off + byte_off\n            )  # `->` resets to *base; `.` accumulates\n            return _LV("
+    },
+    {
+      "label": "Oracle: a read of a volatile object by name is an ordinary read",
+      "expects": "volatile.parity.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            volatile_read = ct.volatile and ct.kind == \"scalar\"",
+      "new": "            volatile_read = False"
+    },
+    {
+      "label": "Oracle: a value loaded from volatile storage stays volatile, so each use re-reads the device",
+      "expects": "volatile.emit.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "        unit_ct = unqualified(lv.ct)  # the VALUE read from a volatile lvalue is an ordinary value",
+      "new": "        unit_ct = lv.ct  # the VALUE read from a volatile lvalue is an ordinary value"
+    },
+    {
+      "label": "Oracle: a pointer cast yields a uint32",
+      "expects": "volatile.emit.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            typed = ct.is_integer or ct.is_float or ct.kind == \"pointer\"",
+      "new": "            typed = ct.is_integer or ct.is_float"
+    },
+    {
+      "label": "Oracle: a pointer cast's spelling drops its pointee's qualifier",
+      "expects": "volatile.parity.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "    return (\"volatile \" if b is not None and b.volatile else \"\") + base + \" \" + \"*\" * depth",
+      "new": "    return base + \" \" + \"*\" * depth"
+    },
+    {
+      "label": "Oracle: R3's pass leaves a claim touching a device region ordinary",
+      "expects": "volatile.refused",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            c.domain, c.lane = Domain.MMIO, Lane.H\n            if c.hazard == \"unique\":\n                c.hazard = \"barriered\"",
+      "new": "            pass"
+    },
+    {
+      "label": "Oracle escape: a volatile access is not a device access",
+      "expects": "volatile.device.missed",
+      "path": "bcir/frontends/cfront/escape.py",
+      "old": "        if _device(lf, c):  # a device access: an observable effect on unnamed state",
+      "new": "        if _device(lf, c) and False:  # a device access: an observable effect on unnamed state"
+    },
+    {
+      "label": "Twin: an access is never marked volatile",
+      "expects": "volatile.emit.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  cl->is_volatile=(uint8_t)(vol?1:0);",
+      "new": "  cl->is_volatile=0;"
+    },
+    {
+      "label": "Twin emit: a volatile member or dereference is accessed through a plain pointer",
+      "expects": "volatile.emit.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(k && t[k-1]=='*') snprintf(buf,n,\"%s volatile *\",t); else snprintf(buf,n,\"volatile %s *\",t);",
+      "new": "  (void)k; snprintf(buf,n,\"%s *\",t);"
+    },
+    {
+      "label": "Twin emit: a volatile store writes a 32-bit register whatever its slot",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  return sz==1?\"uint8_t\":sz==2?\"uint16_t\":sz==8?\"uint64_t\":\"uint32_t\";\n}",
+      "new": "  (void)sz; return \"uint32_t\";\n}"
+    },
+    {
+      "label": "Twin types: a pointer to volatile storage is not a device region",
+      "expects": "volatile.refused",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(ty->kind==2) return !is_arr && (ty->is_volatile || (ty->ptr_to_struct && sdef_vol(c,si)));",
+      "new": "  if(ty->kind==2) return 0;"
+    },
+    {
+      "label": "Twin: a volatile file-scope object is ordinary memory",
+      "expects": "volatile.refused",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  uint32_t rid=add_res(c,ty_mmio(c,&g->ty,-1,g->is_arr)?BCIR_DOM_MMIO:BCIR_DOM_RAM,",
+      "new": "  uint32_t rid=add_res(c,BCIR_DOM_RAM,"
+    },
+    {
+      "label": "Twin: a scalar global's resource has no value type (a float global reads as uint32)",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    else if(g->ty.kind==0){                           /* a scalar: as a scalar local */",
+      "new": "    else if(0){                           /* a scalar: as a scalar local */"
+    },
+    {
+      "label": "Twin: R3's pass leaves a claim touching a device region ordinary",
+      "expects": "volatile.refused",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  order_device_claims(fn);   /* R3: every claim touching a device region is device-domain and ordered */",
+      "new": "  (void)order_device_claims;   /* R3: every claim touching a device region is device-domain and ordered */"
+    },
+    {
+      "label": "Twin: a pointer cast yields an integer",
+      "expects": "volatile.emit.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "        uint32_t r = ty.kind==2 ? temp_ptr(c, &ty, si)                /* a pointer cast",
+      "new": "        uint32_t r = ty.kind==2 ? temp(c, cc_abi(c)->pointer_size)                /* a pointer cast"
+    },
+    {
+      "label": "Twin escape: a volatile access is not a device access",
+      "expects": "volatile.device.missed",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(c->domain==BCIR_DOM_MMIO) return 1;\n  if(c->n_rd && (!strcmp(c->op,\"c.load\")||!strcmp(c->op,\"c.store\"))){",
+      "new": "  if(0) return 1;\n  if(0 && c->n_rd && (!strcmp(c->op,\"c.load\")||!strcmp(c->op,\"c.store\"))){"
+    },
+    {
+      "label": "Twin emit: an array of pointers is declared as the pointer-wide integer",
+      "expects": "volatile.emit.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->ptr_depth)",
+      "new": "      else if(0)"
+    },
+    {
+      "label": "Twin emit: a file-scope pointer is addressed in place, not read through",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "static int holds_pointer(const bcir_resource *br){ return br && (br->kind==BCIR_RK_POINTER || br->is_pointer); }",
+      "new": "static int holds_pointer(const bcir_resource *br){ return br && br->kind==BCIR_RK_POINTER; }"
+    }
+  ]
+}

@@ -1431,7 +1431,7 @@ METRICS: tuple[Metric, ...] = (
     # sound. Every row is counted by bcir/tests/escape_fixtures.py::measure, which the tests and
     # tools/perf/check_escape.py grade the same way: the cfront corpus (173 units, 39 declared-
     # extent local arrays, 22 indirect sites), 24 generated units whose verdicts and targets are
-    # known by construction, 386 forms, and a dynamic witness that runs every drivable pair of
+    # known by construction, the forms (386 then, 476 since CF-VOL), and a dynamic witness that runs every drivable pair of
     # functions in both orders. RED is the parent (8d3aab84, #792's merge) judged by the same
     # fixtures: it proved nothing private, narrowed no call, and called 119 diverging pairs
     # commuting (its footprint recorded every store as a read). The corpus counts are what is
@@ -1507,7 +1507,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "effects.parity.mismatch",
         "escape",
-        "units of the cfront corpus, the 24 generated units and the 4 forms units (200 compared; a unit the twin refuses counts, except the pinned preprocessor limits) whose bcir-cc --emit-effects differs from the oracle's footprint report; needs a C compiler and the checkout's runtime/c",
+        "units of the cfront corpus, the 24 generated units and the 4 forms units (202 compared -- 200 when these rows landed; a unit the twin refuses counts, except the pinned preprocessor limits) whose bcir-cc --emit-effects differs from the oracle's footprint report; needs a C compiler and the checkout's runtime/c",
         24,
         "count",
         "exact",
@@ -1518,13 +1518,76 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "escape.parity.mismatch",
         "escape",
-        "units of the cfront corpus, the 24 generated units and the 4 forms units (200 compared) whose bcir-cc --emit-escape differs from the oracle's escape report (on the parent neither rail had one); needs a C compiler and the checkout's runtime/c",
+        "units of the cfront corpus, the 24 generated units and the 4 forms units (202 compared -- 200 when these rows landed) whose bcir-cc --emit-escape differs from the oracle's escape report (on the parent neither rail had one); needs a C compiler and the checkout's runtime/c",
         200,
         "count",
         "exact",
         bound=0,
         bound_source="one analysis, both rails, byte for byte",
         slice_owner="G10",
+    ),
+    # --- CF-VOL: `volatile` carried through both cfront rails. Every row is counted by
+    # bcir/tests/volatile_fixtures.py::measure, which the tests and tools/perf/check_volatile.py
+    # grade the same way: 432 forms -- every place a C program puts `volatile` (a pointer to it as a
+    # parameter, local, file-scope pointer, member, array element or cast; a volatile member, member
+    # array, array-of-structs field, file-scope object or array, automatic object or array, static)
+    # against every access form it admits, at 8 element widths -- lowered by both rails and judged by
+    # Clang. RED is the parent (c72d9e29, #793's merge) judged by the same fixtures; each row counts
+    # forms per rail, so a form both rails get wrong counts twice.
+    Metric(
+        "volatile.refused",
+        "volatile",
+        "forms of the volatile corpus (432) a cfront rail refuses, per rail -- C both rails should lower (the oracle refused 170, mostly R3 on a loaded value or a local pointer to volatile; the twin 186); needs Clang and the checkout's runtime/c",
+        356,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every form is C that both rails now lower: a refusal is a lowering gap, not a verdict",
+        slice_owner="CF-VOL",
+    ),
+    Metric(
+        "volatile.emit.mismatch",
+        "volatile",
+        "forms (per rail) whose emitted C does not perform the original's volatile loads and stores, in order, at their LLVM types (Clang -O2, inlining off) -- the parent dropped the qualifier (oracle) or wrote 32-bit registers (twin); needs Clang and the checkout's runtime/c",
+        369,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the original program's own volatile accesses: the emitted twin performs exactly those",
+        slice_owner="CF-VOL",
+    ),
+    Metric(
+        "volatile.behaviour.mismatch",
+        "volatile",
+        "forms (per rail) whose emitted C returns a different value or leaves different bytes in a buffer or global than the original, from the same seeded memory -- e.g. a byte store written as a word at p + 4*i; needs Clang and the checkout's runtime/c",
+        69,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the original program's behaviour: equivalence is the lowering's contract",
+        slice_owner="CF-VOL",
+    ),
+    Metric(
+        "volatile.parity.mismatch",
+        "volatile",
+        "forms both rails lower whose two claim graphs differ (the cross-rail structural digest) -- a guard: on the parent the refusals hid every comparison; needs Clang and the checkout's runtime/c",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one lowering, two rails: the digest is the parity contract",
+        slice_owner="CF-VOL",
+    ),
+    Metric(
+        "volatile.device.missed",
+        "volatile",
+        "functions (per rail) performing a volatile access that the rail's effect report does not give the device footprint (`*` read and written) -- the parent read a volatile global, member or register block as ordinary memory, so two FIFO readers commuted; needs Clang and the checkout's runtime/c",
+        282,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a device access reads and writes state the unit cannot name (G10's device rule)",
+        slice_owner="CF-VOL",
     ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
@@ -2594,6 +2657,16 @@ def measure_escape() -> dict[str, float]:
     return measure()
 
 
+def measure_volatile() -> dict[str, float]:
+    """The CF-VOL rows: `volatile` through both cfront rails, judged by Clang
+    (bcir/tests/volatile_fixtures.py::measure, which the tests and tools/perf/check_volatile.py
+    grade the same way). Every row needs Clang and the checkout's runtime/c, and is NOT-MEASURED
+    without them -- never zero by default."""
+    from bcir.tests.volatile_fixtures import measure
+
+    return measure()
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2651,6 +2724,7 @@ _MEASURERS = {
     "alias": measure_alias,
     "encode": measure_encode,
     "escape": measure_escape,
+    "volatile": measure_volatile,
     "memory": measure_memory,
 }
 

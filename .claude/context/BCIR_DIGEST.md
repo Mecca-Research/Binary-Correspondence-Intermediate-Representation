@@ -220,11 +220,11 @@ Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **3928** across 279 files |
+| Static Python `test_*` function inventory | **3940** across 280 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **128** files; 386 `expected-error` markers |
-| Static runtime C source/header inventory (`runtime/c/`) | **328** files |
+| Static runtime C source/header inventory (`runtime/c/`) | **330** files |
 | Verifier-law negative-fixture tag inventory | **R1–R25** (25/25 present) |
 | Registered hardware-channel inventory | **9** (cpu, fpga, gpu, memory, storage) |
 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 | R9 | R10 | R11 | R12 | R13 | R14 | R15 | R16 | R17 | R18 | R19 | R20 | R21 | R22 | R23 | R24 | R25 |
@@ -252,11 +252,11 @@ Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
 - **docs/BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md** (219L): 0. Executive verdicts · 1. The machine model as built (the "BCIR ISA") · 2. The toolchain as built · 3. What the research docs add to the frame · 4. HAL/ABI as built · 5. The ABI ledger (what is frozen today) · 6. The gap register — the MC-track (code-backed) · 7. Standing positions this audit confirms (no change needed)
 - **docs/BCIR_MASTER_ROADMAP.md** (390L): 1. Mission and non-negotiable invariants · 2. Architecture and current baseline · 3. Dependency order · 4. Active workstreams · 5. Program milestones · 6. Release policy · 7. Validation and publication gate · 8. Decision boundaries · 9. Risk register · 10. Document ownership · 11. Immediate priority queue
 - **docs/BCIR_NATIVE_OBJECT_GATE.md** (152L): 1. The decision · 2. The warranted slice (done): real native objects end-to-en · 3. GO criteria — what would warrant BCIR-native isel · 4. STOP criteria — if a native-isel experiment is taken · 5. Current verdict and evidence boundary
-- **docs/BCIR_Repo_Structure.md** (224L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · Fast dependency-free oracle tier · Full local oracle/toolchain tier, with bounded concurrency · Production C and C++ boundaries · Optional pinned hosted-model CPU gate (one thread in CI) · MLIR/IRDL rails when the coherent LLVM toolset is installed · Documentation governance
+- **docs/BCIR_Repo_Structure.md** (225L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · Fast dependency-free oracle tier · Full local oracle/toolchain tier, with bounded concurrency · Production C and C++ boundaries · Optional pinned hosted-model CPU gate (one thread in CI) · MLIR/IRDL rails when the coherent LLVM toolset is installed · Documentation governance
 - **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
-- **docs/DEVELOPMENT_HISTORY.md** (1114L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/DEVELOPMENT_HISTORY.md** (1161L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
-- **docs/PARITY.md** (421L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
+- **docs/PARITY.md** (424L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
 - **docs/RELEASE_NOTES_0.3b.md** (147L): Candidate baseline already landed · Release blockers · Explicit non-goals · Candidate validation
 - **docs/REPO_CURRENT_STATE_AUDIT.md** (361L): Snapshot · Confirmed strengths · Confirmed limitations · Recommended next milestones · Changelog
@@ -269,7 +269,7 @@ Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
 - **docs/kernel/BCIR_DATA_PLANE_HANDOFF.md** (224L): The pack table · The per-step freeze (the dynamic-graph builder) · The Stage 3 exit flow · Gates · Not claimed
 - **docs/kernel/BCIR_DELTA_CHAIN.md** (253L): The declared delta (v0) · The plan — `IncrementalOffer` and `IncrementalPlan` · The pack — `PackState` · The verdict — `VerifyState` · The gates · Measured · Not claimed
 - **docs/kernel/BCIR_DRIVER_KERNEL_ROADMAP.md** (803L): 1. Mission and product split · 2. Current baseline · 3. The BCIR driver package contract · 4. Execution, telemetry, and continual optimization · 5. Driver maturity and build order · 6. BCIR-Linux: compatibility oracle and experimental fork · 7. Universal ABI, POSIX compatibility, and IPC · 8. Validation and promotion policy · 9. Risks and stop conditions · 10. Historical rationale retained from roadmap v1
-- **docs/kernel/BCIR_ESCAPE_ANALYSIS.md** (253L): The analysis · The answers · The reports (both rails, byte for byte) · What is not claimed · Evidence
+- **docs/kernel/BCIR_ESCAPE_ANALYSIS.md** (263L): The analysis · The answers · The reports (both rails, byte for byte) · What is not claimed · Evidence
 - **docs/kernel/BCIR_EXECUTION_PLAN_ABI.md** (190L): Conventions · Header (64 bytes, cache-line aligned; every `u64` at an 8-al · Body (sequential, length-prefixed) · Trailer · The wire laws (both rails, before publication and again on r · Semantic trust boundary · Readers · Where the plan travels · v2 (append-only): the liveness domain and the lifetime ticks · Versioning (the freeze)
 - **docs/kernel/BCIR_HAM_MEMORY_FABRIC.md** (269L): 1. Decision · 2. What the proposal got right—and what required correction · 3. Source-backed inventory · 4. Semantic metadata and planning contract · 5. Lowering and verification · 6. Context shards: transport crystallized artifacts, not “ne · 7. Dual-rail optimization memory · 8. Tiny-model placement · 9. Driver/kernel/firmware sequence · 10. Acceptance and promotion
 - **docs/kernel/BCIR_LIVE_RING_ABI.md** (322L): Conventions · The region · Geometry laws (in this order, both rails) · Ownership: attach, detach, takeover · Publishing (the producer) · Consuming (the consumer) · The accounting law · Memory ordering (the C11 argument) · Peer death and the SPSC contract · Payloads · Gates · Relation to the other surfaces · Versioning
@@ -310,4 +310,4 @@ Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
 - **docs/research/CLANG_COMPARISON.md** (98L): The fair frame · Results · Where we WIN · Where we MATCH · Where we LOSE (honest) · Bottom line
 - **docs/security/DEPENDENCY_AUDIT_2026-09-03.md** (233L): 1. Verdict · 2. Inventory and currency · 3. The advisory scan — method and result · 4. What the rail enforces from this slice on · 5. What this audit does not cover · 6. Recommendations
 - **docs/security/DEPENDENCY_AUDIT_2026-09-04.md** (289L): 1. Verdict · 2. Scope and method · 3. Inventory · 4. Advisory results · 5. Findings and dispositions · 6. Changes landed with this audit · 7. Reproduction · from the repository root; a scratch venv with pip-audit==2.1
-- **docs/security/laws.md** (1690L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary
+- **docs/security/laws.md** (1734L): The harvest protocol · The staleness rule (declared, not discretionary) · The laws · Campaign classification summary

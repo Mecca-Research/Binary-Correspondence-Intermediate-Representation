@@ -1056,7 +1056,54 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: flow, context and field sensitivity; the contents of global initializers;
     type punning; a volatile access that neither frontend carries the qualifier to (a volatile
     member, a volatile global, a global or member pointer to volatile), queued as a frontend
-    follow-up; and one heap object per allocating function.
+    follow-up (closed by CF-VOL, below); and one heap object per allocating function.
+  CF-VOL (2026-09-25) carried `volatile` through both cfront rails, to every place a C program
+  puts it.
+  - RED, measured on the parent (`c72d9e29`) over 432 forms -- every place `volatile` can sit,
+    against every access form it admits, at eight element widths -- and judged by Clang:
+    - 356 refusals (the oracle 170, the twin 186). The oracle typed the value a volatile load
+      yields as volatile, so `x |= 1` on it broke R3, and neither rail made a local, global or
+      member pointer to volatile a device region;
+    - 369 forms whose emitted C did not perform the original's volatile accesses. The oracle's
+      declarations dropped the qualifier, and the twin wrote every register access as 32 bits;
+    - 69 forms that returned or wrote different bytes: a byte store through a `volatile uint8_t *`
+      landed as a word at `p + 4*i`;
+    - 282 functions whose effect report missed the device, so two readers of a volatile global,
+      member or register block were reported to commute.
+  - What landed (`bcir/frontends/cfront/{ctype_model,lower,emit}.py`, `runtime/c/bcir_cfront.c`):
+    - one model on both rails. A resource is a device region when its type holds volatile storage
+      or points at it: a parameter, local, static, global or temp alike. An access is volatile when
+      its lvalue is. R3's pass then makes every claim touching a device region device-domain and
+      ordered;
+    - a loaded value is an ordinary value: lvalue conversion drops the qualifier;
+    - the emit performs each volatile access through a volatile lvalue of exactly its type.
+      Declarations keep the qualifier, and a member or dereference goes through
+      `*(volatile T *)(base + off)`, or `T volatile *` when the slot is itself a pointer.
+  - The judges share no code with either rail: Clang's volatile loads and stores, in order and at
+    their LLVM types, for each original function against its emitted twin; a seeded harness that
+    compares every return value, buffer and global; the structural digest; and each rail's effect
+    report.
+  - Outcomes: `volatile.refused` 356 → 0, `volatile.emit.mismatch` 369 → 0,
+    `volatile.behaviour.mismatch` 69 → 0, `volatile.device.missed` 282 → 0, and the parity guard
+    held at 0 (group `volatile`); the G10 forms went from 386 to 476 on a second sweep;
+    `tools/testing/faults/volatile.json` injects 23 defects, each caught by its own row.
+  - Found and fixed on the way. All were pre-existing and none was volatile's own:
+    - a pointer cast `(T *)x` gave an integer temp on both rails. The oracle's was 32 bits wide,
+      truncating the address, and the spelling dropped the pointee's sign and qualifier. No corpus
+      unit held a pointer-to-pointer cast, so the emitted C had never been compiled (L22). The
+      register idiom `*(volatile uint32_t *)ADDR` now lowers on both rails;
+    - the twin typed every file-scope variable as `uint32_t`. `(g >> 1) < 0` was false for a
+      negative `int32_t g`, and `-g` truncated a float, under equal digests
+      (`cfront_globaltype.c`);
+    - the twin declared a local array of pointers as the pointer-wide integer, and a `(float *)`
+      cast as a float;
+    - the twin refused `*a` on an array and `*g` through a file-scope pointer, both of which the
+      oracle lowers. Its emitter spelled a base's address at six sites, and each addressed a
+      file-scope pointer's slot instead of reading it (L14, `holds_pointer`);
+    - the gate's first run judged the twin's output without the header its driver includes for a
+      masked access. It graded 362 forms as mismatches that were compile errors in the judge (L11).
+  - Not claimed: `++`/`--` on a volatile lvalue (both rails refuse); on the twin, a member of a
+    file-scope struct and `**` through a file-scope pointer; and a `_BitInt` pointee's temp.
 
 ---
 

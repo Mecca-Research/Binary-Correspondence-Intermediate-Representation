@@ -48,10 +48,8 @@ function can be called from another unit with anything, and a global can be writ
 What is not claimed: flow sensitivity (`f = add1; f(x); f = dbl; f(x)` narrows both sites to
 {add1, dbl}), field sensitivity (a struct of two function pointers holds both), global
 initializers' pointer contents (a pointer loaded from a global is unknown), a pointer forged by
-type punning (an integer stored into memory and reloaded as a pointer through a union), a volatile
-access neither frontend carries the qualifier to -- a volatile member of a non-volatile struct, a
-volatile file-scope variable, a file-scope or member pointer to volatile: each reads as an ordinary
-access -- and a unit with a call carrying more operands than a C-twin claim holds -- both rails
+type punning (an integer stored into memory and reloaded as a pointer through a union), and a unit
+with a call carrying more operands than a C-twin claim holds -- both rails
 REFUSE it (every footprint is `*`, no verdict, no narrowed site), because the C twin never sees the
 dropped operands.
 """
@@ -607,9 +605,10 @@ def _closure(solver: _Solver, roots) -> set:
 
 def _device(lf, c) -> bool:
     """Whether claim `c` of function `lf` touches a device: it is MMIO-domain, or it is a load or
-    store whose base resource is. The base decides, not the claim's spelling -- this lowering marks
-    every such access, but the C twin lowers `p[i]` through a `volatile T *` as an ordinary load,
-    and one predicate over the resource keeps the two rails' answers the same."""
+    store whose base resource is. The base decides, not the claim's spelling: both lowerings mark
+    every such access today (the C twin once lowered `p[i]` through a `volatile T *` as an ordinary
+    load), and one predicate over the resource keeps the two rails' answers the same should a
+    spelling drift again."""
     if c.domain == Domain.MMIO:
         return True
     if c.op in ("c.load", "c.store") and c.rd:

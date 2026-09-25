@@ -134,6 +134,7 @@ _ABI = [
     "cfront_funcptr.c",  # + funcptr param + indirect call (HAL dispatch)
     "cfront_fnptrparam.c",  # + DIRECT inline funcptr params int (*g)(int) (no typedef)
     "cfront_rmw.c",  # + MMIO register read-modify-write (d->reg |= bits)
+    "cfront_volatile_width.c",  # + volatile `p[i]` at 8/16/32 bits, stores seen through a plain alias
     "cfront_bitfield.c",  # + MMIO bitfield write (r->field = v, c.bf.set)
     "cfront_bfcompound.c",  # + bitfield compound-assign (r->field |= bits)
     "cfront_signedbf.c",  # + signed bitfield read sign-extension (int x:N)
@@ -167,6 +168,7 @@ _ABI = [
 _FLOAT = [
     "cfront_float.c",
     "cfront_floatcast.c",
+    "cfront_globaltype.c",  # a signed / float global's value type (shift, divide, negate, *array)
     "cfront_hexfloat.c",
     "cfront_mathh.c",
     "cfront_mathh_mixed.c",

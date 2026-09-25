@@ -425,3 +425,33 @@ def test_the_escape_rows_are_exact_and_the_compiler_rows_measured_or_not():
     for metric in declared:
         expected = "GAIN" if metric.key in measured else "NOT-MEASURED"
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
+
+
+def test_the_volatile_rows_are_exact_and_measured_or_not():
+    """CF-VOL: `volatile` through both cfront rails, judged by Clang. Every row needs Clang and the
+    checkout's runtime/c (the twin is built from it), so without them every row is NOT-MEASURED --
+    never zero by default. With them every row is at its bound of 0: the refusals, emit and
+    behaviour mismatches and missed device accesses fell from the parent's totals, and the parity
+    guard (hidden by the parent's refusals) holds. The gate (`tools/perf/check_volatile.py`) holds
+    every row at the bounds declared here."""
+    from bcir.tests import volatile_fixtures as vf
+    from tools.perf.check_volatile import BOUNDS
+    from tools.perf.gemplus_baseline import METRICS, measure_volatile
+
+    declared = [m for m in METRICS if m.group == "volatile"]
+    assert [m.key for m in declared] == list(vf.ROWS)
+    assert all(m.kind == "exact" and m.slice_owner == "CF-VOL" for m in declared)
+    assert all(m.lower_is_better and m.bound == 0 for m in declared)
+    assert BOUNDS == {m.key: m.bound for m in declared}
+    measured = measure_volatile()
+    assert set(measured) in (set(), set(vf.ROWS)), measured  # all rows, or none on this host
+    assert all(value == 0 for value in measured.values()), measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for metric in declared:
+        if not measured:
+            expected = "NOT-MEASURED"
+        elif metric.baseline == 0:
+            expected = "NO-CHANGE"
+        else:
+            expected = "GAIN"
+        assert rows[metric.key]["verdict"] == expected, rows[metric.key]
