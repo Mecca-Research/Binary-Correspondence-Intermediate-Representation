@@ -1115,6 +1115,22 @@ CF-MEMCONV instances (2026-09-25):
   through a pointer member. The third lacked the `_Bool` flag and the bitfield unit. All three are
   now the helper. The explicit cast and the conversion share one lowering (`_cast_value`,
   `emit_cast`), so a conversion is spelled exactly as `(T)v` is.
+CF-CALIGN instances (2026-09-25):
+- "What is this scalar's alignment" was answered at two sites of the twin, a member's placement and
+  `_Alignof`, both by the size, while the oracle answers it once (`CType.align`). The twin now asks
+  one predicate at both (`scalar_align`, under `type_layout` for `sizeof` and `_Alignof`), and a
+  cross-target test compares the two rails' folded layout constants on every target. Faults, injected
+  by hand: the predicate aligning a complex or a `long double` to its size, and each site bypassing it.
+- A type's `_Atomic` was applied by the oracle's local resolver (`_resolve_type`) and dropped by its
+  member resolver (`_resolve_member_type`), as `volatile` had been before CF-VOL. Both now ask
+  `_atomic_type`, which lays the type out by the ABI's promotion and refuses an aggregate; the twin
+  asks `atomic_layout`. Faults: a member dropping `_Atomic`, and either rail skipping the promotion
+  or ignoring the ABI's width.
+- "Does a type-name start here" was one list spelled at five sites of the twin, and none admitted
+  `_Atomic`, so `sizeof(_Atomic T)` was a parse error there and a fold on the oracle. The oracle
+  asks two predicates (`_is_decl_start`, `_is_cast`), and so does the twin now (`starts_decl_type`,
+  `starts_type_name`), with the same answer for `_Atomic`. Fault: `sizeof(_Atomic T)` not a
+  type-name on the twin.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1364,6 +1380,14 @@ struct, and both rails emitted every such object as a scalar, so the emitted C d
 units were reported clean, and the digest agreed, since it carries no declarations. Only a harness
 that builds and runs the emitted C sees it. The CF-IDX fixture reached one by chance, as a table for
 a callee. Witness: `cfront_staticarr.c`.
+CF-CALIGN instance (2026-09-25): the cfront corpus held one `_Complex` member, at offset 0
+(`cfront_complexmember.c`), where aligning it to its size moves no member. It held no `_Atomic`
+member, no typedef'd complex, and no cross-target `sizeof` of either. Each was a layout defect on
+at least one rail: the twin's complex alignment and typedef size, and both rails' missing atomic
+promotion. The atomic defect had also lain behind an accident. The twin's size alignment placed an
+`_Atomic double _Complex` member where Clang does, so fixing the complex alignment alone would have
+moved it, and the rails would then have agreed on the wrong offset. Witnesses: `cfront_complexalign.c`,
+`test_scalar_alignment_matrix_dual_rail`.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

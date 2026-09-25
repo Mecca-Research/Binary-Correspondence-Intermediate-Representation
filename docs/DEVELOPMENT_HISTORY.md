@@ -1170,7 +1170,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     seeds with no divergence.
   - Found, not fixed here: the twin aligns a `double _Complex` member to 16 bytes where the ABI and
     the oracle use 8. For a struct that holds one after a smaller member, the rails' digests differ
-    (queued as its own task).
+    (CF-CALIGN, below).
   CF-STATIC (2026-09-25) made a `static` local array or aggregate keep its shape in the emitted C,
   on both cfront rails.
   - The defect: both rails lowered a static array or struct as the object it is, its subscripts
@@ -1187,6 +1187,54 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Outcomes: `cfront_staticarr.c` is equivalent on both rails with equal digests, guards and
     storage extents. Three injected defects, one per rail and one per shape on the oracle, are each
     caught.
+  CF-CALIGN (2026-09-25) made a scalar's layout the target ABI's on the twin, and gave both rails the
+  ABI's atomic promotion.
+  - The defect: the twin aligned every scalar member to its size. A `double _Complex` after a smaller
+    member sat at offset 16 where the ABI and the oracle put it at 8, and every member after it moved
+    too. `sizeof` and `_Alignof` gave the same wrong answers, and on i386 a `long double` aligned to 12,
+    not 4. The oracle places each by `CType.align`, so the rails' digests and emitted offsets disagreed.
+  - RED, measured on the parent (CF-STATIC, `c18f4deb`):
+    - with `cfront_complexalign.c`, the rails' claim graphs differ, and both rails' emitted C returns a
+      different value from the first input on. The oracle's is wrong through the `_Atomic` member
+      (below);
+    - over the five targets, the parent twin refuses the cross-target source (`sizeof(_Atomic cf)`),
+      and the parent oracle folds three of its thirteen constants wrong on each LP64 target, four on
+      Windows and two on i386, all of them `_Atomic` layouts (besides the two i386 `double` entries
+      it still gets wrong, below).
+  - What landed: one twin predicate, `scalar_align`, mirrors `CType.align`:
+    - a complex type takes its element's alignment, and a `long double _Complex` the long double's;
+    - a `long double` takes the ABI's alignment;
+    - any other scalar takes its size.
+    A member's placement asks it, and `sizeof` and `_Alignof` ask `type_layout`, which is built on it.
+  - Found and fixed on the way:
+    - the ABI's atomic promotion, on both rails. The twin placed an `_Atomic double _Complex` member
+      where Clang does only because it aligned everything to its size, so aligning a complex to its
+      element would have moved it. Neither rail modeled the promotion, and the oracle dropped `_Atomic`
+      on members. The rule: an `_Atomic` type no wider than the target's promotion width (16 bytes on
+      the 64-bit targets, 8 on i386) rounds its size up to a power of two and aligns to it. Both ABI
+      tables now carry that width (`atomic_promote_size`). Each rail asks one predicate for a local's,
+      a parameter's, a member's and a global's type (`with_atomic`, `atomic_layout`), and `packed`
+      still wins over it. An `_Atomic` struct or union is refused on both rails;
+    - the twin sized a typedef'd complex twice. `typedef float _Complex cf;` was 16 bytes, not 8, and
+      a `long double _Complex` typedef was 16, not 32. A complex type reached through `typeof` or
+      `_Atomic(T)` was doubled the same way. A typedef of it also dropped `_Atomic` on the twin;
+    - the twin spelled "does a type-name start here" at five sites, and refused `sizeof(_Atomic T)`,
+      which the oracle folds. Two predicates now answer, as on the oracle. One is for a declaration,
+      `sizeof` and `typeof`, and it takes `_Atomic`. The other is for a cast and a compound literal,
+      and it does not, so both rails refuse `(_Atomic T)x`.
+  - Outcomes: `cfront_complexalign.c` is equivalent on both rails with equal digests. A cross-target
+    test pins thirteen layout constants per target. The rails agree on every target, and they agree with
+    Clang on every target except two i386 entries. A refusal test holds both rails to one refusal of an
+    `_Atomic` aggregate and to the same folds of `sizeof`, `_Alignof` and `typeof` of an `_Atomic`
+    type. Eighteen injected defects, one per part of the fix on either rail, are each caught.
+  - Found, not fixed here (each queued as its own task):
+    - on i386, Clang aligns a `double`, a `long long` and a `double _Complex` to 4, where both rails
+      use 8;
+    - the twin lays out an array-of-pointers member by its pointee and truncates the pointer on a
+      store;
+    - the twin ignores an `__attribute__((packed))` written after the closing brace;
+    - both rails access an `_Atomic` object through a pointer or a member with a plain byte copy, not
+      an atomic operation.
 
 ---
 

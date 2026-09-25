@@ -93,6 +93,7 @@ typedef struct {
   int pointer_size;          /* sizeof(void *); also size_t / intptr_t / uintptr_t */
   int long_double_size;      /* sizeof(long double): 16 (x86-64), 12 (ILP32), or 8 where it aliases double */
   int long_double_align;
+  int atomic_promote_size;   /* the widest `_Atomic` type the ABI promotes (Clang's MaxAtomicPromoteWidth, bytes) */
 } bcir_abi;
 
 /* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
@@ -100,11 +101,11 @@ typedef struct {
  * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
  * --target-less compilation is byte-identical to the layout used before --target existed. */
 static const bcir_abi g_targets[] = {
-  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16},
-  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16},
-  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16},
-  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8},
-  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4},
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8},
 };
 #define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
 static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
@@ -235,6 +236,34 @@ oom:
 }
 /* The active target ABI (defaults to the host LP64 model when the driver set none). */
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
+/* The alignment of a scalar type of `sz` bytes under the target ABI -- the oracle's `CType.align`: a `long
+ * double` takes the ABI's long-double alignment, a complex type its element's (a `long double _Complex` the
+ * long double's), every other scalar its size. The one answer a member's placement and `_Alignof` share;
+ * aligning a complex to its size put a `double _Complex` member at 16 where the ABI puts it at 8. */
+static int scalar_align(const CC *c, const bcir_ctype *ty, int sz){
+  const bcir_abi *a=cc_abi(c);
+  int el=ty->is_complex ? sz/2 : sz;                    /* a complex: the element float */
+  if(ty->is_float && el==a->long_double_size && el>8) return a->long_double_align;   /* `long double` */
+  return el<1 ? 1 : el;
+}
+/* The target ABI's atomic promotion -- the oracle's `with_atomic`: an `_Atomic` type no wider than the ABI's
+ * `atomic_promote_size` (Clang's MaxAtomicPromoteWidth) rounds its size up to a power of two and aligns to
+ * it, so an `_Atomic float _Complex` aligns to 8 and an `_Atomic double _Complex` to 16 on a 64-bit target; a
+ * wider one keeps its layout. A pointer's `is_atomic` qualifies its pointee, so a pointer is left alone. */
+static void atomic_layout(const CC *c, const bcir_ctype *ty, int *sz, int *al){
+  if(!ty->is_atomic || ty->kind==2 || *sz<1 || *sz>cc_abi(c)->atomic_promote_size) return;
+  int p=1; while(p<*sz) p<<=1;
+  *sz=p; *al=p;
+}
+/* A type-name's size and alignment under the target ABI (the oracle's `CType.size` / `CType.align`): a
+ * pointer is the ABI's, a struct or union its laid-out size and alignment, a scalar its size and
+ * `scalar_align`, and an `_Atomic` one then `atomic_layout`. The one answer `sizeof` and `_Alignof` give. */
+static void type_layout(const CC *c, const bcir_ctype *ty, int si, int *sz, int *al){
+  if(ty->kind==2){ *sz=*al=cc_abi(c)->pointer_size; return; }
+  if(ty->kind==1 && si>=0){ *sz=c->s[si].size; *al=c->s[si].align<1?1:c->s[si].align; }
+  else { *sz=ty->size; *al=scalar_align(c,ty,ty->size); }
+  atomic_layout(c,ty,sz,al);
+}
 
 static int is_idc(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9');}
 static int is_id0(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z');}
@@ -509,10 +538,24 @@ static void apply_stars(CC *c, bcir_ctype *ty) {
 static int p_type(CC *c, bcir_ctype *ty, int *sidx);          /* fwd: typeof(type-name) parses recursively */
 static venv *lookup(CC *c, const tok *t);                     /* fwd: typeof(variable) resolves its type */
 static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx);   /* fwd: typeof(expression) -- speculative lower */
+/* Does a cast's type-name start at the cursor -- `( type-name )` rather than `( expression )`? The oracle's
+ * `_is_cast`: the answer for a cast and a compound literal. Each of the five sites that asks kept its own
+ * copy of this list. A cast to an `_Atomic` type is refused on both rails. */
+static int starts_type_name(CC *c){
+  return scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
+      || is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
+      || is(c,"const")||is(c,"volatile")
+      || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
+      || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+}
+/* ... and where a declaration's type may start (the oracle's `_is_decl_start`): `sizeof`, a size operand
+ * and `typeof` take `_Atomic T` too, as the oracle folds `sizeof(_Atomic T)`; the twin refused it. */
+static int starts_decl_type(CC *c){ return starts_type_name(c) || is(c,"_Atomic"); }
 static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
   memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
-  int seen=0, longs=0, ptrtrk=0, sign_explicit=0, floatkw=0;   /* longs: `long` (data-model) vs `long long` (8);
-                                                               * floatkw: a float/double keyword was scanned */
+  int seen=0, longs=0, ptrtrk=0, sign_explicit=0, floatkw=0, cplxkw=0;   /* longs: `long` (data-model) vs `long
+                                                               * long` (8); floatkw / cplxkw: a float/double or a
+                                                               * `_Complex` keyword was scanned in THIS specifier */
   for(;;){
     if(is(c,"volatile")){ty->is_volatile=1;c->i++;continue;}
     if(is(c,"_Atomic")){ c->i++;
@@ -528,10 +571,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
-                    || is(c,"const")||is(c,"volatile")
-                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
-                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+      int is_type = starts_decl_type(c);
       if(is_type){ bcir_ctype inner; int isi;                            /* typeof( type-name ), incl. typeof(int*) */
         if(p_type(c,&inner,&isi)) return 1; *ty=inner; *sidx=isi; }
       else {                                                            /* typeof( expression ) operand */
@@ -543,7 +583,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"signed")){ty->signd=1;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}   /* `signed` alone ==
                                                           * `signed int`; a following base (char/long/...) overrides */
     if(is(c,"unsigned")){ty->signd=0;sign_explicit=1;ty->size=4;seen=1;c->i++;continue;}
-    if(is(c,"_Complex")||is(c,"complex")){ty->is_complex=1;ty->is_float=1;seen=1;c->i++;continue;}  /* C99 _Complex
+    if(is(c,"_Complex")||is(c,"complex")){ty->is_complex=1;ty->is_float=1;cplxkw=1;seen=1;c->i++;continue;}  /* C99 _Complex
                                                        * (a modifier on a float base; bare _Complex == double) */
     if(is(c,"_BitInt")){                                /* C23 `_BitInt ( N )` -- a bit-precise integer type */
       c->i++; if(!eat(c,"(")){return 1;}
@@ -566,7 +606,10 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"va_list")||is(c,"__builtin_va_list")){              /* the variadic cursor type (<stdarg.h>) -- */
       ty->kind=0;ty->is_valist=1;ty->size=cc_abi(c)->pointer_size;ty->signd=0;c->i++;seen=1;break;}  /* opaque, emit `va_list` */
     if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
-      if(ti>=0){int vol=ty->is_volatile;*ty=c->td[ti].ty;if(vol)ty->is_volatile=1;*sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
+      if(ti>=0){int vol=ty->is_volatile, at=ty->is_atomic;*ty=c->td[ti].ty;
+        if(vol)ty->is_volatile=1;
+        if(at)ty->is_atomic=1;                        /* `_Atomic T` of a typedef stays atomic */
+        *sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
       if(sz<0){if(seen)break;fail(c,"unknown type");return 1;}
       if(ty->bit_width){fail(c,"unsupported `_BitInt` type specifier");return 1;}   /* a base int after `_BitInt` */
@@ -585,13 +628,19 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
+  if(ty->is_atomic && ty->kind==1){   /* as the oracle refuses it: its promoted layout would reach every
+                                       * declaration, copy and extent, and its accesses must be atomic whole */
+    fail(c,"an `_Atomic` struct or union is not supported"); return 1; }
   /* apply the target data model: `size_t`-class -> pointer_size; `long double` -> long_double_size; a
    * single `long` -> long_size (`long long` keeps its fixed 8). On the host LP64 model long/ptr are 8. */
   if(ptrtrk) ty->size=cc_abi(c)->pointer_size;
   else if(longs>=1&&ty->is_float) ty->size=cc_abi(c)->long_double_size;   /* `long double` (80/128-bit) */
   else if(longs==1&&!ty->is_float&&ty->kind==0) ty->size=cc_abi(c)->long_size;
-  if(ty->is_complex) ty->size = (floatkw ? ty->size : 8) * 2;   /* a complex is a pair of the element float;
-                                                                 * a bare `_Complex` (no float kw) is double */
+  if(cplxkw) ty->size = (floatkw ? ty->size : 8) * 2;   /* a complex is a pair of the element float; a bare
+                                                         * `_Complex` (no float kw) is double. Only a complex
+                                                         * spelled HERE: one from a typedef, `typeof` or
+                                                         * `_Atomic(T)` already has its size, and doubling it
+                                                         * again made a `float _Complex` typedef 16 bytes */
   return 0;
 }
 /* The full type: the specifier + the (first declarator's) `*`s folded in -- the single-declarator /
@@ -729,8 +778,12 @@ static int p_struct_body(CC *c) {
       int sz=isptr?cc_abi(c)->pointer_size:ty.size;
       /* a (array of) value-struct/union member aligns to the NESTED type's alignment, not its size --
        * `struct{int;struct Big t;}` puts t at the struct's align, not at sizeof(Big) (which over-pads). */
-      int al = packed?1 : (ty.kind==1 && !ty.ptr_to_struct && si>=0) ? (c->s[si].align<1?1:c->s[si].align)
-                        : (sz<1?1:sz);
+      int al = (ty.kind==1 && !ty.ptr_to_struct && si>=0) ? (c->s[si].align<1?1:c->s[si].align)
+             : ty.kind==2 ? (sz<1?1:sz)
+             : scalar_align(c,&ty,sz);                 /* a scalar: its ABI alignment (a complex its element's,
+                                                        * a `long double` the ABI's) */
+      atomic_layout(c,&ty,&sz,&al);                   /* an `_Atomic` member: the ABI's atomic promotion */
+      if(packed) al=1;                                /* packed wins over every natural alignment */
       if(maln>al) al=maln;                            /* `_Alignas(N)`/`aligned(N)` over-aligns (survives packed) */
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
@@ -1558,13 +1611,9 @@ static int rec_size_bytes(CC *c, int i) {
   if (t->k == T_ID && t->n == 6 && !strncmp(t->s, "sizeof", 6) && c->t[i + 1].k == T_PUN
       && c->t[i + 1].n == 1 && c->t[i + 1].s[0] == '(') {
     int save = c->i; c->i = i + 2;                         /* past `sizeof (` -- parse the type-name on a copy */
-    int isty = scalar_size(pk(c)->s, pk(c)->n) >= 0 || is(c, "struct") || is(c, "union") || is(c, "enum")
-               || is(c, "_Complex") || is(c, "complex") || is(c, "_BitInt") || is(c, "const") || is(c, "volatile")
-               || is(c, "typeof") || is(c, "__typeof__") || is(c, "typeof_unqual")
-               || find_typedef(c, pk(c)->s, pk(c)->n) >= 0;
+    int isty = starts_decl_type(c);
     int sz = -1;
-    if (isty) { bcir_ctype ty; int si; if (!p_type(c, &ty, &si))
-      sz = ty.kind == 2 ? cc_abi(c)->pointer_size : (ty.kind == 1 ? c->s[si].size : ty.size); }
+    if (isty) { bcir_ctype ty; int si, al; if (!p_type(c, &ty, &si)) type_layout(c, &ty, si, &sz, &al); }
     c->i = save;                                           /* speculative -- never advance the real cursor */
     return sz;
   }
@@ -2595,7 +2644,7 @@ static uint32_t p_primary(CC *c) {
   }
   if(is(c,"_Alignof")||is(c,"alignof")){   /* _Alignof(type) -> the type's alignment, a folded const */
     c->i++; eat(c,"("); bcir_ctype ty;int si; long long al=4;
-    if(!p_type(c,&ty,&si)) al = ty.kind==2?cc_abi(c)->pointer_size:(ty.kind==1?c->s[si].align:(ty.size?ty.size:1));
+    if(!p_type(c,&ty,&si)){ int sz,a; type_layout(c,&ty,si,&sz,&a); al=a; }
     eat(c,")");
     uint32_t r=temp(c,4); bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
     if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=al;} return r;
@@ -2603,12 +2652,9 @@ static uint32_t p_primary(CC *c) {
   if(is(c,"sizeof")){                  /* sizeof(type) / sizeof expr -> a folded constant (no eval) */
     c->i++; long long size=4; int got=0;
     if(is(c,"(")){ int save=c->i; c->i++;
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
-                    || is(c,"const")||is(c,"volatile")
-                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
-                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+      int is_type = starts_decl_type(c);
       if(is_type){ bcir_ctype ty;int si;
-        if(!p_type(c,&ty,&si)){ size = ty.kind==2?cc_abi(c)->pointer_size:(ty.kind==1?c->s[si].size:ty.size); got=1; }
+        if(!p_type(c,&ty,&si)){ int sz,a; type_layout(c,&ty,si,&sz,&a); size=sz; got=1; }
         eat(c,")"); }
       else c->i=save;                  /* not a type -> sizeof ( expr ) */
     }
@@ -2862,10 +2908,7 @@ static uint32_t p_unary_inner(CC *c) {
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
     if(is(c,"(")){ int save=c->i; c->i++;             /* `&(type){...}` -- address of a compound literal */
-      int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
-                    || is(c,"const")||is(c,"volatile")
-                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
-                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+      int is_type = starts_type_name(c);
       bcir_ctype ty; int si;
       if(is_type && !p_type(c,&ty,&si) && is(c,")")){ c->i++;
         if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* materialize the anonymous object */
@@ -2917,10 +2960,7 @@ static uint32_t p_unary_inner(CC *c) {
     return p_stmt_expr(c);                          /* `({ ... })` -- a GCC statement expression */
   if(is(c,"(")){                                   /* (type)operand -- a cast binds at the unary level */
     int save=c->i; c->i++;
-    int is_type = scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
-                  || is(c,"const")||is(c,"volatile")
-                    || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
-                    || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+    int is_type = starts_type_name(c);
     if(is_type){ bcir_ctype ty;int si;
       if(!p_type(c,&ty,&si)){
         int la_count=0,la_nd=0,la_dims[3]={0,0,0};   /* a `(T[N]...)` array type-name -> an array compound literal */

@@ -25,7 +25,9 @@ _PTR_TRACKING = frozenset({"size_t", "intptr_t", "uintptr_t", "ptrdiff_t"})
 class TargetABI:
     """The size-varying part of a target's C data model. `long_size`/`pointer_size`/`long_double_*`
     are the axes that move across the matrix; everything else (`int`, fixed-width, `long long`) is
-    fixed by C / the common ABIs and lives in `ctype_model._SCALAR`."""
+    fixed by C / the common ABIs and lives in `ctype_model._SCALAR`. `atomic_promote_size` is the
+    widest `_Atomic` type the ABI promotes (Clang's `MaxAtomicPromoteWidth`, in bytes): one no wider
+    rounds its size up to a power of two and aligns to it (`ctype_model.with_atomic`)."""
 
     name: str  # short id, e.g. "x86_64-linux"
     triple: str  # the Clang target triple (for `-target` / provenance)
@@ -34,6 +36,7 @@ class TargetABI:
     pointer_size: int  # sizeof(void *); also size_t / intptr_t / ptrdiff_t
     long_double_size: int
     long_double_align: int
+    atomic_promote_size: int
     endian: str = "little"
 
     def scalar_size(self, name: str, default: int) -> int:
@@ -47,7 +50,12 @@ class TargetABI:
 
 
 _LP64 = dict(
-    data_model="LP64", long_size=8, pointer_size=8, long_double_size=16, long_double_align=16
+    data_model="LP64",
+    long_size=8,
+    pointer_size=8,
+    long_double_size=16,
+    long_double_align=16,
+    atomic_promote_size=16,
 )
 
 # The named matrix. x86-64 / AArch64 / RISC-V are all LP64, so their *layouts* coincide (they differ
@@ -66,6 +74,7 @@ TARGETS: dict[str, TargetABI] = {
         pointer_size=8,
         long_double_size=8,
         long_double_align=8,
+        atomic_promote_size=16,
     ),
     "i386-linux": TargetABI(
         "i386-linux",
@@ -75,6 +84,7 @@ TARGETS: dict[str, TargetABI] = {
         pointer_size=4,
         long_double_size=12,
         long_double_align=4,
+        atomic_promote_size=8,
     ),
 }
 

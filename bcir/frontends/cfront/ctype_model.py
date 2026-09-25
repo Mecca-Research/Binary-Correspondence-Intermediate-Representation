@@ -156,10 +156,23 @@ def qualified(ct: CType, vol: bool) -> CType:
     return ct if ct.volatile else replace(ct, volatile=True)
 
 
-def with_atomic(ct: CType, at: bool = True) -> CType:
+def with_atomic(ct: CType, at: bool = True, abi=None) -> CType:
+    """`ct` as `_Atomic` qualifies it, laid out by the target ABI's atomic promotion: an `_Atomic`
+    type no wider than `abi.atomic_promote_size` (Clang's `MaxAtomicPromoteWidth`: 16 bytes on the
+    64-bit targets, 8 on i386) rounds its size up to a power of two and aligns to that size, so an
+    `_Atomic float _Complex` aligns to 8, an `_Atomic double _Complex` to 16 on a 64-bit target, and a
+    3-byte `_Atomic struct` occupies 4. A wider one keeps its own layout. The twin asks the same rule
+    (`bcir_cfront.c` `atomic_layout`)."""
     from dataclasses import replace
 
-    return replace(ct, atomic=at) if at else ct
+    if not at:
+        return ct
+    width = abi.atomic_promote_size if abi is not None else 16  # no abi: the host LP64 model
+    size, align = ct.size, ct.align
+    if ct.kind != "array" and 0 < size <= width:
+        size = 1 << (size - 1).bit_length()
+        align = size
+    return replace(ct, atomic=True, size=size, align=align)
 
 
 def scalar(name: str, abi=None) -> CType:

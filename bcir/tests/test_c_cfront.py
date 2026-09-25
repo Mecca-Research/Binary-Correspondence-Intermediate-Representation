@@ -184,6 +184,7 @@ _FLOAT = [
     "cfront_imagunit.c",  # + <complex.h> imaginary unit `I` (#imagunit)
     "cfront_complexlong.c",  # + long-double complex (#complexlong)
     "cfront_complexmember.c",
+    "cfront_complexalign.c",  # a _Complex member aligns to its element: `double _Complex` at 8 (CF-CALIGN)
 ]  # + complex struct members (#complexmember)
 #   float/double: parity + emit + Clang ≡ (the
 #   integer StreamPack executor doesn't compute float; the math is delegated to the resident backend)
@@ -3330,6 +3331,131 @@ def _abi_const_vec_twin(exe: str, path: str, target: str):
     out = subprocess.run([exe, "--target", target, path], capture_output=True, text=True).stdout
     _summary, _, emit = out.partition("----EMIT----\n")
     return [int(m) for m in re.findall(r"=\s*(\d+)u;", emit)]
+
+
+_SCALAR_ALIGN_SRC = """#include <stdint.h>
+typedef float _Complex cf;
+struct Ld { uint8_t c; long double l; uint16_t h; };
+struct Lc { uint8_t c; long double _Complex l; uint16_t h; };
+struct Dc { float _Complex z; double _Complex w; uint32_t t; };
+struct Td { uint8_t c; cf z; uint16_t h; };
+struct Am { uint8_t c; _Atomic float _Complex z; _Atomic double _Complex w; uint16_t h; };
+struct Al { uint8_t c; _Atomic long double _Complex l; uint16_t h; };
+struct __attribute__((packed)) Pk { uint8_t c; _Atomic uint64_t n; _Atomic float _Complex z; };
+struct At { uint8_t c; _Atomic cf z; uint16_t h; };
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct Ld);
+    uint32_t b = (uint32_t)sizeof(struct Lc);
+    uint32_t d = (uint32_t)sizeof(struct Dc);
+    uint32_t e = (uint32_t)_Alignof(long double);
+    uint32_t g = (uint32_t)_Alignof(long double _Complex);
+    uint32_t h = (uint32_t)_Alignof(double _Complex);
+    uint32_t i = (uint32_t)sizeof(struct Td);
+    uint32_t j = (uint32_t)sizeof(struct Am);
+    uint32_t k = (uint32_t)sizeof(struct Al);
+    uint32_t l = (uint32_t)_Alignof(_Atomic float _Complex);
+    uint32_t m = (uint32_t)sizeof(_Atomic cf);
+    uint32_t p = (uint32_t)sizeof(struct Pk);
+    uint32_t q = (uint32_t)sizeof(struct At);
+    return a + b + d + e + g + h + i + j + k + l + m + p + q;
+}
+"""
+
+
+def test_scalar_alignment_matrix_dual_rail():
+    """CF-CALIGN: a scalar's layout is the target ABI's, on every target and identically on both rails. A
+    `_Complex` member aligns to its element; a `long double` (and a `long double _Complex`) to the ABI's
+    long-double alignment; an `_Atomic` type no wider than the ABI's atomic promotion width (16 bytes on
+    the 64-bit targets, 8 on i386) to its size; and a typedef'd complex keeps its size. The twin aligned
+    every scalar member to its size, so a `double _Complex` after an 8-byte member sat at 16 (x86-64
+    `sizeof(struct Dc)` 48, not 32) and an i386 `long double` at 12 (`sizeof(struct Ld)` 36, not 20). It
+    sized `cf` 16, refused `sizeof(_Atomic cf)`, and dropped `_Atomic` from a typedef. Neither rail promoted an `_Atomic` member: the
+    oracle folded `sizeof(struct Am)` to 40, not 48, and `_Alignof(_Atomic float _Complex)` to 4, not 8.
+    The folded constants [Ld, Lc, Dc, _Alignof(long double), _Alignof(long double _Complex),
+    _Alignof(double _Complex), Td, Am, Al, _Alignof(_Atomic float _Complex), sizeof(_Atomic cf), Pk, At]
+    are compared per target; `packed` (Pk) still wins over the atomic alignment, and an `_Atomic` typedef
+    (At) keeps its qualifier. Every vector is Clang's, except two i386 entries: Clang aligns an i386 `double`
+    to 4, where both rails use 8 (Dc and `_Alignof(double _Complex)`), which is not this fix's."""
+    vecs = {t: _abi_const_vec_oracle(_SCALAR_ALIGN_SRC, t) for t in _ABI_TARGETS}
+    for t in ("x86_64-linux", "aarch64-linux", "riscv64-linux"):
+        assert vecs[t] == [48, 64, 32, 16, 16, 8, 16, 48, 64, 8, 8, 17, 24], (t, vecs[t])
+    win = vecs["x86_64-windows"]
+    assert win == [24, 32, 32, 8, 8, 8, 16, 48, 48, 8, 8, 17, 24], win
+    i386 = vecs["i386-linux"]
+    assert i386[:2] + i386[3:5] + i386[6:] == [20, 32, 4, 4, 16, 40, 32, 8, 8, 17, 24], i386
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "scalar_align.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_SCALAR_ALIGN_SRC)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+
+
+# An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the
+# one reason; and a cast or compound literal of an `_Atomic` type, which neither rail parses as one.
+_ATOMIC_AGGREGATE = "an `_Atomic` struct or union is not supported"
+_ATOMIC_REFUSED = (
+    (
+        "struct P3 { uint8_t c[3]; };\nstruct W { uint8_t k; _Atomic struct P3 p; uint8_t t; };\n"
+        "uint32_t f(struct W *w) { w->t = 9u; return w->t; }\n",
+        _ATOMIC_AGGREGATE,
+    ),
+    (
+        "struct P3 { uint8_t c[3]; };\nuint32_t f(void) { return (uint32_t)sizeof(_Atomic struct P3); }\n",
+        _ATOMIC_AGGREGATE,
+    ),
+    (
+        "struct P3 { uint8_t c[3]; };\nuint32_t f(_Atomic struct P3 *p) { return 1u; }\n",
+        _ATOMIC_AGGREGATE,
+    ),
+    ("uint32_t f(uint32_t x) { uint32_t y = (_Atomic uint32_t)x; return y + 1u; }\n", None),
+    ("uint32_t f(uint32_t x) { uint32_t *p = &(_Atomic uint32_t){x}; return *p; }\n", None),
+)
+
+
+def test_an_atomic_aggregate_or_cast_is_refused_on_both_rails():
+    """CF-CALIGN: the ABI's atomic promotion would lay out an `_Atomic` struct at a rounded-up size (a
+    3-byte one occupies 4), which every declaration, copy and extent would then have to carry, and each
+    access to it would have to be one atomic operation on the whole object. Neither rail models that, so
+    both refuse it, wherever it is spelled. The oracle had laid it out as the plain struct, and the twin
+    had placed it as a member but refused `sizeof(_Atomic struct P3)`. A cast or compound literal of an
+    `_Atomic` type is refused on both rails too (the oracle's `_is_cast`, the twin's
+    `starts_type_name`); `sizeof`, `_Alignof` and `typeof` of one fold identically on both."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for body, why in _ATOMIC_REFUSED:
+        src = "#include <stdint.h>\n" + body
+        try:
+            compile_unit(src, check_clang=False)
+            raise AssertionError(f"the oracle lowered {body!r}")
+        except (CParseError, CLowerError) as e:
+            assert why is None or str(e) == why, (body, str(e))
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "atomic_refused.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode != 0 and run.stdout.startswith("PARSE-ERR"), (body, run.stdout)
+            assert why is None or why in run.stdout, (body, run.stdout)
+    src = (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { typeof(_Atomic uint32_t) y = x;"
+        " return y + (uint32_t)sizeof(_Atomic(float _Complex)) + 100u * (uint32_t)_Alignof(typeof(_Atomic"
+        " float _Complex)); }\n"
+    )
+    assert _abi_const_vec_oracle(src, "x86_64-linux") == [8, 100, 8]
+    if exe is not None:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "atomic_folds.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            assert _abi_const_vec_twin(exe, path, "x86_64-linux") == [8, 100, 8]
 
 
 def test_abi_target_matrix_dual_rail():

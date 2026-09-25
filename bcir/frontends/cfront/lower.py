@@ -937,8 +937,8 @@ class _FuncLowerer:
             raise CLowerError(f"unknown type {tref.base!r}")
         if "volatile" in tref.quals:  # volatile pointee/object -> MMIO region
             base = with_volatile(base)
-        if "_Atomic" in tref.quals:  # _Atomic-qualified object (C11/C23)
-            base = with_atomic(base)
+        if "_Atomic" in tref.quals:  # _Atomic-qualified object (C11/C23), laid out by the ABI
+            base = _atomic_type(base, self.abi)
         t = base
         for _ in range(tref.ptr):
             t = pointer(t, self.abi)
@@ -3423,6 +3423,16 @@ def _names_in(node) -> list:
     return out
 
 
+def _atomic_type(base: CType, abi) -> CType:
+    """`base` `_Atomic`-qualified: the target ABI's atomic layout (`ctype_model.with_atomic`), the one
+    answer for a local's, a parameter's, a member's and a global's type. An `_Atomic` struct or union is
+    refused, as on the twin: its promoted layout would reach every declaration, copy and extent, and each
+    access would have to be one atomic operation on the whole object."""
+    if base.is_aggregate:
+        raise CLowerError("an `_Atomic` struct or union is not supported")
+    return with_atomic(base, abi=abi)
+
+
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
     if tref.funcptr:  # a function-pointer member (dispatch table)
@@ -3437,6 +3447,8 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
         base = scalar(tref.base, abi)
     if "volatile" in tref.quals:  # a volatile member / global, or a pointer to one: device storage
         base = with_volatile(base)
+    if "_Atomic" in tref.quals:  # an _Atomic member / global: the ABI's atomic layout, as a local's
+        base = _atomic_type(base, abi)
     t = base
     for _ in range(tref.ptr):
         t = pointer(t, abi)
