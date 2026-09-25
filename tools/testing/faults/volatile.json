@@ -156,7 +156,7 @@
       "label": "Twin emit: an array of pointers is declared as the pointer-wide integer",
       "expects": "volatile.emit.mismatch",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "      else if(r->kind==BCIR_RK_SCALAR&&r->count>1&&r->ptr_depth)",
+      "old": "      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->ptr_depth)",
       "new": "      else if(0)"
     },
     {
@@ -165,6 +165,62 @@
       "path": "runtime/c/bcir_cfront.c",
       "old": "static int holds_pointer(const bcir_resource *br){ return br && (br->kind==BCIR_RK_POINTER || br->is_pointer); }",
       "new": "static int holds_pointer(const bcir_resource *br){ return br && br->kind==BCIR_RK_POINTER; }"
+    },
+    {
+      "label": "Oracle index: a subscript chain is flattened into its base as a multi-dimensional index",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "                    take = max(1, len(shape))",
+      "new": "                    take = len(idx_rids)"
+    },
+    {
+      "label": "Oracle index: a dereference of a subscripted element `*q[j]` is refused",
+      "expects": "volatile.refused",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            if isinstance(operand, cast.Index):",
+      "new": "            if False:"
+    },
+    {
+      "label": "Twin index: a subscript chain is flattened into its base as a multi-dimensional index",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    uint32_t lin=array_index_n(c,v,subscript_dims(c,v));",
+      "new": "    uint32_t lin=array_index_n(c,v,INT_MAX);"
+    },
+    {
+      "label": "Twin index: a store `*(q[j] + i)` indexes the table, not the block its element points to",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "            if(!step_to_elem_ptr(c,pv,lin)) pv=NULL; }",
+      "new": "            (void)lin; }"
+    },
+    {
+      "label": "Twin index: `*q[j]` dereferences the table's first element, then subscripts what it loaded",
+      "expects": "volatile.refused",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    } else if(isk(c,T_ID) && !(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='[')){",
+      "new": "    } else if(isk(c,T_ID)){"
+    },
+    {
+      "label": "Twin index: a `T *rows[]` parameter decays one level short, to `T *`",
+      "expects": "volatile.refused",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      else if(ty.kind==2) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);",
+      "new": "      else if(0) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);"
+    },
+    {
+      "label": "Twin index: a one-element array is declared as a scalar",
+      "expects": "volatile.behaviour.mismatch",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "static int decl_array(const bcir_resource *r){ return r->count>1 || r->is_array; }",
+      "new": "static int decl_array(const bcir_resource *r){ return r->count>1; }"
+    },
+    {
+      "label": "Twin index: an element of a one-element array of pointers is not a pointer",
+      "expects": "volatile.refused",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  return b->type.kind==2 && br && (br->is_array || br->is_vla);",
+      "new": "  return b->type.kind==2 && br && br->kind==BCIR_RK_SCALAR && br->count>1;"
     }
   ]
 }

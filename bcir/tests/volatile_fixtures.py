@@ -23,7 +23,8 @@ The judges share no code with either frontend:
     footprint: `*` among both its reads and its writes.
 
 The corpus (`units()`) is every PLACE -- a pointer-to-volatile parameter, local, file-scope pointer,
-struct member and array element, and one made by a cast (`(volatile T *)raw`); a volatile member,
+struct member and element of a table of them (two-element, one-element, and a parameter
+`volatile T *rows[]`), and one made by a cast (`(volatile T *)raw`); a volatile member,
 member array and array-of-structs field of a
 plain struct; a pointer to a volatile struct, and its member array; a volatile file-scope scalar and
 array; a volatile automatic scalar and array; a volatile static -- against
@@ -35,11 +36,11 @@ is re-graded one form at a time, so a count is exact per form.
 Out of the corpus, because neither rail lowers them (a refusal both rails agree on, not a
 miscompile): increment and decrement of a volatile lvalue. A dereference of a cast integer
 (`*(volatile uint32_t *)ADDR`) lowers on both rails but names no storage a harness can hand it,
-so the corpus reaches the same cast through `(volatile T *)raw` instead. Two more stay
-out for reasons of their own: a second subscript on a pointer element (`q[1][i]`, `pp[0][i]`), which
-both rails lower as a two-dimensional index -- a miscompile that is not volatile's and is tracked
-on its own -- and an initializer on a volatile aggregate, whose zero baseline the oracle also
-stores element by element.
+so the corpus reaches the same cast through `(volatile T *)raw` instead. One more stays
+out for a reason of its own: an initializer on a volatile aggregate, whose zero baseline the oracle
+also stores element by element. The array-element place reaches its register block through a
+second subscript (`q[1][i]`, `*(q[1] + i)`), which both rails once lowered as a two-dimensional
+index into the array of pointers (CF-IDX).
 
 The rows (`measure`), each counted over the forms, lower is better, 0 at the bound:
 
@@ -108,8 +109,9 @@ SCALAR_ACCESSES = {
 class Place:
     """Where the volatile qualifier sits. `params` is the entry's parameter list (before `i, v`),
     `prefix` runs first, `x` is the expression the access forms act on, `decls` go at file scope,
-    `arg` is how the harness passes storage ("ptr": a `{T}` buffer, "struct": a struct buffer
-    `struct_tag`, "" none), `globals` the file-scope objects the harness resets and compares."""
+    `arg` is how the harness passes storage ("ptr": a `{T}` buffer, "rows": a table of two pointers
+    into one, "struct": a struct buffer `struct_tag`, "" none), `globals` the file-scope objects the
+    harness resets and compares."""
 
     params: str
     x: str
@@ -193,9 +195,23 @@ PLACES = {
     ),
     "aptr": Place(
         "{T} *b, ",
-        "p",
-        ("st", "ld", "rmw"),
-        prefix="volatile {T} *q[2]; q[0] = b; q[1] = b; volatile {T} *p = q[1]; ",
+        "q[1]",
+        ("st", "ld", "rmw", "dst", "dld", "pst"),
+        prefix="volatile {T} *q[2]; q[0] = b; q[1] = b; ",
+    ),
+    # a one-element table: still an array (declared with its brackets, its subscript guarded)
+    "aptr1": Place(
+        "{T} *b, ",
+        "q1[0]",
+        ("st", "ld", "rmw", "dst", "dld", "pst"),
+        prefix="volatile {T} *q1[1]; q1[0] = b; ",
+    ),
+    # a table of register blocks handed to a function: `T *rows[]` is `T **`, one level more
+    "aparam": Place(
+        "volatile {T} *rows[], ",
+        "rows[1]",
+        ("st", "ld", "rmw", "dst", "dld", "pst"),
+        arg="rows",
     ),
     "vglobal": Place(
         "",
@@ -469,6 +485,12 @@ def _harness(unit: Unit, emitted: str) -> str:
         if e.arg == "ptr":
             store = f"{e.ctype} a[64], b[64];"
             argsa, argsb = "a, ", "b, "
+        elif e.arg == "rows":
+            store = (
+                f"{e.ctype} a[64], b[64];"
+                f" volatile {e.ctype} *ra[2] = {{a, a + 8}}, *rb[2] = {{b, b + 8}};"
+            )
+            argsa, argsb = "ra, ", "rb, "
         elif e.arg == "struct":
             store = f"struct {e.struct_tag} a[8], b[8];"
             argsa, argsb = "a, ", "b, "

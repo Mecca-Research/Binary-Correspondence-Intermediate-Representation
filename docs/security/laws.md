@@ -762,6 +762,14 @@ inline that ABI, so the include failed, and a judge that cannot build fails clos
 every entry of its unit. The rows measured the judges' own translation unit, on one rail.
 `volatile_fixtures.twin` now drops the driver's include, as the oracle's emit (which has
 none) was always judged. Witness: the rows at 0 over the masked `aptr` forms.
+CF-IDX instance (2026-09-25): the G10 forms held `X[0][i]` on an array of pointers and on a
+pointer to pointers, in every storage place, and both rails' effect and escape reports agreed
+on all of them -- while both rails lowered the chain as a two-dimensional index into the
+table, reading a pointer as a number. The forms are compared, never run, and a differential
+between two rails that share a misreading agrees: parity is a witness for divergence, not for
+a lowering. The volatile gate's behaviour harness runs the same shape (the `aptr`, `aptr1` and
+`aparam` forms) and counted 134 mismatches on the parent. Faults: `Oracle index: a subscript
+chain is flattened ...` and `Twin index: a subscript chain is flattened ...`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1082,6 +1090,20 @@ CF-VOL instances (2026-09-25):
   (`is_pointer`), so `*gp = v` wrote into the pointer variable. One predicate,
   `holds_pointer`, answers for all six. Witnesses: the `gptr` `dst`/`dld`/`pst` forms, and
   the fault `Twin emit: a file-scope pointer is addressed in place, not read through`.
+CF-IDX instances (2026-09-25):
+- "Is this an array of pointers" was `kind == SCALAR && count > 1` at two sites of the twin
+  and "is this local an array" was `count > 1` at six: four declaration branches, the bounds
+  class and the guard. Each missed a one-element array, which was declared as a scalar,
+  subscripted unguarded and read as a value. Two predicates now answer for every site
+  (`ptr_array`, `decl_array`), and both are total: a VLA and a file-scope table are arrays too.
+  Faults: `Twin index: a one-element array is declared as a scalar` and `... an element of a
+  one-element array of pointers is loaded as a value`.
+- A subscript chain `q[j][i]`, a dereference `*q[j]` and a pointer sum `*(q[j] + i)` all load
+  a pointer element and continue from it, in an expression and in a store. The twin takes that
+  step in one function (`step_to_elem_ptr`), and the oracle reaches all three through
+  `_lvalue(Index)`. Faults: `Twin index: a store *(q[j] + i) indexes the table, ...`,
+  `Twin index: *q[j] dereferences the table's first element, ...` and `Oracle index: a
+  dereference of a subscripted element *q[j] is refused`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

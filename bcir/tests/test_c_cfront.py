@@ -193,6 +193,7 @@ _INIT = [
 #   (a local decl, a compound literal, and a struct return BY VALUE) -- offset-based element stores
 #   parity + emit + Clang ≡ (the table is referenced by name, defined in the source -- not re-hydrated)
 _PTRVALUE = [
+    "cfront_ptrindex.c",  # a subscript chain through pointer elements: q[j][i], pp[j][i], *(q[j] + i)
     "cfront_ptrvalue.c",  # pointer VALUES across non-address contexts (#ptrvalue): pointer
     #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
     #   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).

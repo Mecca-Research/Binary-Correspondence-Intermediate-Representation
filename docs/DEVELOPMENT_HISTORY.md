@@ -1104,6 +1104,41 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       masked access. It graded 362 forms as mismatches that were compile errors in the judge (L11).
   - Not claimed: `++`/`--` on a volatile lvalue (both rails refuse); on the twin, a member of a
     file-scope struct and `**` through a file-scope pointer; and a `_BitInt` pointee's temp.
+  CF-IDX (2026-09-25) made a subscript chain through a pointer element index what the element
+  holds, on both cfront rails.
+  - The defect: a base took every subscript that followed it. `q[j][i]` on `T *q[N]` and
+    `pp[j][i]` on `T **pp` were Horner-flattened as if the base were a two-dimensional array,
+    into `q[j + i]`: a load read a pointer out of the table and returned it as a number, and a
+    store wrote a value over one. The oracle refused `*q[j]`; the twin read `*q` and subscripted
+    what it loaded. The twin also declared a one-element array (`T *a[1]`) as a scalar and left
+    its subscript unguarded, and decayed a parameter `T *rows[]` to `T *` instead of `T **`.
+  - RED, measured on the parent (CF-VOL, `b386191b`) by the volatile gate over the 138 forms that
+    reach a register block through a table of pointers (two elements, one element, and a
+    parameter `volatile T *rows[]`), per rail: 126 refused, 120 emit mismatches, 134 behaviour
+    mismatches, 22 parity mismatches and 40 device accesses missed. `cfront_ptrindex.c` is
+    refused by the parent's oracle; with its dereference taken out, both rails emit C that is
+    not behaviour-equivalent, under equal digests.
+  - What landed: one rule on both rails. A base takes one subscript per declared dimension (a
+    multi-dimensional VLA's too), else one; while subscripts remain, its element must be a
+    pointer, which is loaded, and the rest index what it holds (`lower._lvalue(Index)`; the
+    twin's `index_chain`, `subscript_dims` and `step_to_elem_ptr`). `*q[j]` and `*(q[j] + i)`
+    take the same step, in an expression and in a store. A one-element array is an array
+    (`decl_array`), an array of pointers is one predicate (`ptr_array`), and `T *rows[]` is
+    `T **`.
+  - Outcomes: every `volatile.*` row 0 over 548 forms; `cfront_ptrindex.c` equivalent on both
+    rails with equal digests; `tools/testing/faults/volatile.json` gains eight faults, each caught
+    by its own row. The pinned G10 forms are unchanged (476); the parameter forms they
+    leave out now lower on the twin as well.
+  - Found on the way:
+    - the G10 forms held `X[0][i]` on an array of pointers and a pointer to pointers in every
+      storage place, and both rails' reports agreed on them. The forms are compared, never run,
+      and two rails that share a misreading agree (L11);
+    - the rule's first cut counted a multi-dimensional VLA as one dimension, and the corpus
+      refused `a[i][j]` on one at once;
+    - the fixture's first cut lent a local table to a call. The escape analysis reports that
+      array lent, rightly, and `escape.unproved` counts it, so the table moved to file scope;
+    - both rails declare a `static` local array as a scalar, so the emitted C does not compile
+      (CF-STATIC, below).
 
 ---
 

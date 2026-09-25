@@ -1528,16 +1528,17 @@ METRICS: tuple[Metric, ...] = (
     ),
     # --- CF-VOL: `volatile` carried through both cfront rails. Every row is counted by
     # bcir/tests/volatile_fixtures.py::measure, which the tests and tools/perf/check_volatile.py
-    # grade the same way: 432 forms -- every place a C program puts `volatile` (a pointer to it as a
-    # parameter, local, file-scope pointer, member, array element or cast; a volatile member, member
-    # array, array-of-structs field, file-scope object or array, automatic object or array, static)
-    # against every access form it admits, at 8 element widths -- lowered by both rails and judged by
-    # Clang. RED is the parent (c72d9e29, #793's merge) judged by the same fixtures; each row counts
-    # forms per rail, so a form both rails get wrong counts twice.
+    # grade the same way: 548 forms -- every place a C program puts `volatile` (a pointer to it as a
+    # parameter, local, file-scope pointer, member, element of a table of them or cast; a volatile
+    # member, member array, array-of-structs field, file-scope object or array, automatic object or
+    # array, static) against every access form it admits, at 8 element widths -- lowered by both rails
+    # and judged by Clang. RED is the parent (c72d9e29, #793's merge) judged by the fixtures as they
+    # landed, 432 forms (CF-IDX added the tables of pointers); each row counts forms per rail, so a
+    # form both rails get wrong counts twice.
     Metric(
         "volatile.refused",
         "volatile",
-        "forms of the volatile corpus (432) a cfront rail refuses, per rail -- C both rails should lower (the oracle refused 170, mostly R3 on a loaded value or a local pointer to volatile; the twin 186); needs Clang and the checkout's runtime/c",
+        "forms of the volatile corpus (548; the baseline counts the 432 of CF-VOL) a cfront rail refuses, per rail -- C both rails should lower (the oracle refused 170, mostly R3 on a loaded value or a local pointer to volatile; the twin 186); needs Clang and the checkout's runtime/c",
         356,
         "count",
         "exact",

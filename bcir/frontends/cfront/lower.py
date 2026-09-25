@@ -1105,34 +1105,49 @@ class _FuncLowerer:
                     n
                 )  # a non-Member base: its accumulated offset
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
-            shape = mem_shape if mem_shape is not None else base_ct.shape
-            lin = idx_rids[0]
-            vla_str = self.vla_strides.get(base_rid)  # a multi-dim VLA -> runtime dim multipliers
-            for d in range(1, len(idx_rids)):
-                if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
-                    k = vla_str[d]  # extent), so `m[i][j]` -> i*dim1 + j masks the total
+            member = isinstance(n, cast.Member) and not ptr_member
+            while True:
+                shape = mem_shape if mem_shape is not None else base_ct.shape
+                # a multi-dim VLA -> runtime dim multipliers
+                vla_str = self.vla_strides.get(base_rid)
+                # the subscripts this base takes: one per dimension of a declared multi-dimensional
+                # array, a multi-dim VLA's too (Horner-flattened below), else one (a member array
+                # took all of them above) -- the twin's `subscript_dims`
+                if mem_shape is not None:
+                    take = len(idx_rids)
+                elif vla_str is not None:
+                    take = len(vla_str)
                 else:
-                    dim = shape[d] if d < len(shape) else 1
-                    k = self._temp(scalar("uint32_t"), f"k{dim}")
-                    self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
-                m1 = self._temp(scalar("uint32_t"), "b_mul")
-                self._emit("c.bin.mul", Opcode.MUL, (lin, k), (m1,))
-                a1 = self._temp(scalar("uint32_t"), "b_add")
-                self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
-                lin = a1
-            elem = (
-                mem_elem
-                if mem_elem is not None
-                else (base_ct.of if base_ct.of else scalar("uint32_t"))
-            )
-            return _LV(
-                "mem",
-                base_rid,
-                elem,
-                idx=lin,
-                byte_off=byte_off,
-                member=isinstance(n, cast.Member) and not ptr_member,
-            )
+                    take = max(1, len(shape))
+                here, rest = idx_rids[:take], idx_rids[take:]
+                lin = here[0]
+                for d in range(1, len(here)):
+                    if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
+                        k = vla_str[d]  # extent), so `m[i][j]` -> i*dim1 + j masks the total
+                    else:
+                        dim = shape[d] if d < len(shape) else 1
+                        k = self._temp(scalar("uint32_t"), f"k{dim}")
+                        self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
+                    m1 = self._temp(scalar("uint32_t"), "b_mul")
+                    self._emit("c.bin.mul", Opcode.MUL, (lin, k), (m1,))
+                    a1 = self._temp(scalar("uint32_t"), "b_add")
+                    self._emit("c.bin.add", Opcode.ADD, (m1, here[d]), (a1,))
+                    lin = a1
+                elem = (
+                    mem_elem
+                    if mem_elem is not None
+                    else (base_ct.of if base_ct.of else scalar("uint32_t"))
+                )
+                lv = _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off, member=member)
+                if not rest:
+                    return lv
+                # more subscripts than the base has dimensions: the element is a pointer -- `q[j][i]`
+                # on `T *q[N]`, `pp[j][i]` on `T **pp` -- so it is loaded, and the rest index what it
+                # holds (the twin's `index_chain`). Flattening them into the base read `q[j + i]`.
+                if elem.kind != "pointer":
+                    raise CLowerError("a subscript of an element that is not a pointer")
+                base_rid, base_ct, idx_rids = self._read(lv), elem, rest
+                byte_off, mem_shape, mem_elem, member = 0, None, None, False
         if isinstance(node, cast.Member):
             if isinstance(
                 node.base, cast.Index
@@ -1182,6 +1197,13 @@ class _FuncLowerer:
             operand = node.operand
             if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
                 return self._lvalue(cast.Index(operand.lhs, operand.rhs))
+            # `*q[j]`: the element is a pointer, loaded, and dereferenced (the twin's general deref of
+            # a pointer rvalue); `_addr` knows no subscripted base
+            if isinstance(operand, cast.Index):
+                el = self._lvalue(operand)
+                if el.ct.kind != "pointer":
+                    raise CLowerError("dereference of an element that is not a pointer")
+                return _LV("mem", self._read(el), el.ct.of or scalar("uint32_t"), byte_off=0)
             # `*(volatile uint32_t *)ADDR`: the cast yields a real `T *` (the twin's general deref of
             # a pointer rvalue)
             if isinstance(operand, cast.Cast):
