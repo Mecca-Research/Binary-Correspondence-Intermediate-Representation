@@ -232,6 +232,10 @@ calls**, against **10,855,666** for the chain from scratch on the parent. At sca
 from scratch is 10,142,998 / 491, about 20,650×. The timed ratio at scale 4 is ~0.0085–0.0097, a
 one-claim delta about 105–118× faster than the chain from scratch.
 
+Since SP-ENC compiled the StreamPack encoder's record layouts (2026-09-25), the records a delta
+re-emits go through the same compiled records: a one-claim delta costs **472 calls** at scale 8,
+and the chain from scratch it is measured against **3,588,368** (the encoder was 74% of it).
+
 What remains linear is C-level list copying (the new plan's and pack's lists), so wall time is
 not constant in the module; the calls are.
 

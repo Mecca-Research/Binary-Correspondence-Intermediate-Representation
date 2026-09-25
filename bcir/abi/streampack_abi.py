@@ -182,10 +182,23 @@ def _validate_encode_contract(pack: StreamPack) -> None:
     StreamPack (`gem.delta_pack`, GEM+ G18) checks the records it re-emits with the same
     functions, in the same order, so the two refuse a pack with the same first finding."""
     _validate_header_contract(pack)
+    # A record whose fields are the exact types in range passes every check below; any other
+    # record goes to the full check, which decides it (and names the first finding) as before.
     for index, seg in enumerate(pack.segments):
-        _validate_segment(index, seg)
+        lane, width, dispatch = seg.lane, seg.width, seg.dispatch
+        if not (
+            type(lane) is Lane
+            and type(width) is int
+            and 0 < width <= _MAX32
+            and not width & (width - 1)
+            and type(dispatch) is str
+            and dispatch in _DISPATCH_WIRE
+        ):
+            _validate_segment(index, seg)
     for index, pf in enumerate(pack.prefetches):
-        _validate_prefetch(index, pf)
+        buffers = pf.buffers
+        if type(buffers) is not int or not (buffers == 1 or buffers == 2):
+            _validate_prefetch(index, pf)
     _validate_generation_vector(pack)
 
 
@@ -197,19 +210,29 @@ def _validate_generation_vector(pack: StreamPack) -> None:
     gens = list(pack.generations)
     _checked_uint("n_gens", len(gens), 32)
     previous = -1
+    vec_map = vec_data = -1
     for index, g in enumerate(gens):
-        rid = _checked_uint(f"generation[{index}].rid", g.rid, 32)
-        _checked_uint(f"generation[{index}].map_gen", g.map_gen, 32)
-        _checked_uint(f"generation[{index}].data_gen", g.data_gen, 32)
+        rid, map_gen, data_gen = g.rid, g.map_gen, g.data_gen
+        if not (
+            type(rid) is int
+            and 0 <= rid <= _MAX32
+            and type(map_gen) is int
+            and 0 <= map_gen <= _MAX32
+            and type(data_gen) is int
+            and 0 <= data_gen <= _MAX32
+        ):
+            rid = _checked_uint(f"generation[{index}].rid", rid, 32)
+            _checked_uint(f"generation[{index}].map_gen", map_gen, 32)
+            _checked_uint(f"generation[{index}].data_gen", data_gen, 32)
         if rid <= previous:
             raise AbiError(
                 f"generation vector RIDs must be strictly ascending (generation[{index}] "
                 f"rid {rid} after {previous})"
             )
         previous = rid
+        vec_map = map_gen if map_gen > vec_map else vec_map
+        vec_data = data_gen if data_gen > vec_data else vec_data
     if gens:
-        vec_map = max(g.map_gen for g in gens)
-        vec_data = max(g.data_gen for g in gens)
         if pack.map_gen != vec_map or pack.data_gen != vec_data:
             raise AbiError(
                 f"header map_gen/data_gen ({pack.map_gen}, {pack.data_gen}) must be the "
@@ -257,53 +280,330 @@ class _Reader:
         return tuple(self.s() for _ in range(self.u16()))
 
 
-# These four writers are the ONE wire-record definition used by both `encode` and the MC1
-# inspector. Keeping layout recovery on the writer rail avoids a second parser drifting from the
-# frozen ABI whenever an append-only version adds a tail field.
-def _write_segment(w: _Writer, seg: LaneSegment, version: int) -> None:
-    w.s(seg.name)
-    w.u64(seg.claim_id)
-    w.u32(seg.phase_id)
-    w.u8(int(seg.lane))
-    w.u32(seg.width)
-    w.u32(0)  # stride_k reserved on the segment record (carried per-claim)
-    w.s(seg.opcode)
-    w.u32_array(seg.reads)
-    w.u32_array(seg.writes)
-    w.s(seg.prefetch or "")
-    w.s_array(seg.fence_before)
-    w.s_array(seg.fence_after)
+# The record layouts, compiled (SP-ENC). Each record kind has ONE function (`_segment_bytes`,
+# `_prefetch_bytes`, `_block_bytes`, `_trace_bytes`, `_generation_bytes`), and it builds the
+# record one of two ways:
+#   * a PLAIN record -- every field of its exact type, no fence names -- in one `struct` call,
+#     through the precompiled layout of its shape (its string lengths and array counts);
+#   * any other record, and any plain one a layout cannot carry (`struct` refuses a value out of
+#     range), field by field: each field passes on an inline test (an exact `int` in range, an
+#     exact `str`) or goes to the check `_Writer` makes (`_checked_uint`, the string check), in
+#     wire order, so the refusal -- its type, its message, the field found first -- is
+#     `_Writer`'s, and an `int` or `str` subclass the contract accepts is accepted.
+# `struct` alone is not the contract: it packs a `bool` and any object with `__index__`, which the
+# contract refuses (L4), so a layout only ever sees exact types. `bcir/tests/encode_fixtures.py`
+# keeps the `_Writer` encoder verbatim, and the parity row holds these functions to it byte for
+# byte and refusal for refusal. They are the ONE wire-record definition used by `encode`, the
+# delta StreamPack and the MC1 inspector (through the `_write_*` wrappers below): keeping layout
+# recovery on the writer rail avoids a second parser drifting from the frozen ABI whenever an
+# append-only version adds a tail field.
+_U8 = struct.Struct("<B")
+_U16 = struct.Struct("<H")
+_U32 = struct.Struct("<I")
+_U64 = struct.Struct("<Q")
+_SEGMENT_FIXED = struct.Struct("<QIBII")  # claim_id, phase_id, lane, width, stride_k (reserved 0)
+_BLOCK_FIXED = struct.Struct("<QQ")  # base, count
+_TRACE_RECORD = struct.Struct("<QQQ")  # claim_id, src_hash, trace_hash
+_GENERATION_RECORD = struct.Struct("<III")  # rid, map_gen, data_gen
+_MAX8, _MAX16, _MAX32, _MAX64 = (1 << 8) - 1, (1 << 16) - 1, (1 << 32) - 1, (1 << 64) - 1
+_SMALL = 16  # arrays shorter than this pack through a precompiled layout
+_U32_ARRAYS = tuple(struct.Struct(f"<H{n}I") for n in range(_SMALL))
+_U64_ARRAYS = tuple(struct.Struct(f"<H{n}Q") for n in range(_SMALL))
+_BLOCKS = tuple(struct.Struct(f"<QQH{n}Q") for n in range(_SMALL))  # a plain block, by strides
+_EMPTY_ARRAY = _U16.pack(0)
+# The layouts of the plain records' shapes, cached up to `_SHAPES_MAX` shapes per kind, so what
+# the caches hold is bounded whatever packs pass through (L3).
+_SHAPES_MAX = 1024
+_SEQUENCES = (tuple, list)
+_SEGMENT_V2_SHAPES: dict = {}  # (name, opcode, reads, writes, prefetch) -> layout
+_SEGMENT_V3_SHAPES: dict = {}  # ... + channel
+_PREFETCH_V1_SHAPES: dict = {}  # (name, targets, hint, pattern) -> layout
+_PREFETCH_V2_SHAPES: dict = {}
+
+
+def _new_layout(shapes: dict, shape: tuple, fmt: str) -> struct.Struct:
+    """Compile a record shape's layout, and keep it while the cache has room."""
+    layout = struct.Struct(fmt)
+    if len(shapes) < _SHAPES_MAX:
+        shapes[shape] = layout
+    return layout
+
+
+def _str_bytes(text) -> bytes:
+    """A wire string: u16 byte length + UTF-8 (`_Writer.s`)."""
+    if type(text) is not str and not isinstance(text, str):
+        raise AbiError(f"wire string must be str, got {type(text).__name__}")
+    raw = text.encode("utf-8")
+    n = len(raw)
+    if n > _MAX16:
+        _checked_uint("u16", n, 16)
+    return _U16.pack(n) + raw
+
+
+def _u32_array_bytes(xs) -> bytes:
+    """u16 count + u32 elements (`_Writer.u32_array`)."""
+    n = len(xs)
+    if n > _MAX16:
+        _checked_uint("u16", n, 16)
+    if type(xs) not in _SEQUENCES:
+        # Walked once, as `_Writer` walks it: below, an array is walked twice (checked, then
+        # packed), and an iterable may yield its items once, or other than `len()` of them.
+        return _U16.pack(n) + b"".join([_U32.pack(_checked_uint("u32", x, 32)) for x in xs])
+    for x in xs:
+        if type(x) is not int or not 0 <= x <= _MAX32:
+            _checked_uint("u32", x, 32)
+    if n < _SMALL:
+        return _U32_ARRAYS[n].pack(n, *xs)
+    return struct.pack(f"<H{n}I", n, *xs)
+
+
+def _u64_array_bytes(xs) -> bytes:
+    """u16 count + u64 elements (`_Writer.u64_array`)."""
+    n = len(xs)
+    if n > _MAX16:
+        _checked_uint("u16", n, 16)
+    if type(xs) not in _SEQUENCES:  # walked once, as `_Writer` walks it (`_u32_array_bytes`)
+        return _U16.pack(n) + b"".join([_U64.pack(_checked_uint("u64", x, 64)) for x in xs])
+    for x in xs:
+        if type(x) is not int or not 0 <= x <= _MAX64:
+            _checked_uint("u64", x, 64)
+    if n < _SMALL:
+        return _U64_ARRAYS[n].pack(n, *xs)
+    return struct.pack(f"<H{n}Q", n, *xs)
+
+
+def _str_array_bytes(xs) -> bytes:
+    """u16 count + wire strings (`_Writer.s_array`), walked once."""
+    n = len(xs)
+    if not n and type(xs) in _SEQUENCES:  # anything else may yield what its `len()` denies
+        return _EMPTY_ARRAY
+    if n > _MAX16:
+        _checked_uint("u16", n, 16)
+    return _U16.pack(n) + b"".join([_str_bytes(x) for x in xs])
+
+
+def _segment_bytes(seg: LaneSegment, version: int) -> bytes:
+    try:
+        wire = _plain_segment(seg, version)
+    except Exception:  # noqa: BLE001 -- not carried by a layout: the field path decides it
+        wire = None
+    return wire if wire is not None else _segment_fields(seg, version)
+
+
+def _plain_segment(seg: LaneSegment, version: int) -> bytes | None:
+    """A plain segment's record in one `pack`, or None when the segment is not plain."""
+    name, opcode, prefetch = seg.name, seg.opcode, seg.prefetch or ""
+    claim_id, phase_id, lane, width = seg.claim_id, seg.phase_id, seg.lane, seg.width
+    reads, writes = seg.reads, seg.writes
+    fence_before, fence_after = seg.fence_before, seg.fence_after
+    if not (
+        type(name) is str
+        and type(opcode) is str
+        and type(prefetch) is str
+        and type(claim_id) is int
+        and type(phase_id) is int
+        and type(lane) is Lane
+        and type(width) is int
+        and type(reads) in _SEQUENCES
+        and type(writes) in _SEQUENCES
+        # EMPTY fence arrays, not merely falsy ones: `None` is no array (the wire refuses it)
+        and type(fence_before) in _SEQUENCES
+        and not fence_before
+        and type(fence_after) in _SEQUENCES
+        and not fence_after
+    ):
+        return None
+    for x in reads:
+        if type(x) is not int:
+            return None
+    for x in writes:
+        if type(x) is not int:
+            return None
+    name_b, opcode_b, prefetch_b = name.encode(), opcode.encode(), prefetch.encode()
+    a, b, r, w, c = len(name_b), len(opcode_b), len(reads), len(writes), len(prefetch_b)
+    if version < 3:
+        shape = (a, b, r, w, c)
+        layout = _SEGMENT_V2_SHAPES.get(shape) or _new_layout(
+            _SEGMENT_V2_SHAPES, shape, f"<H{a}sQIBIIH{b}sH{r}IH{w}IH{c}sHH"
+        )
+        # stride_k is reserved 0, and the two fence arrays are empty
+        return layout.pack(
+            a, name_b, claim_id, phase_id, int(lane), width, 0, b, opcode_b,
+            r, *reads, w, *writes, c, prefetch_b, 0, 0,
+        )  # fmt: skip
+    channel = seg.channel
+    if type(channel) is not str:
+        return None
+    channel_b = channel.encode()
+    d = len(channel_b)
+    shape = (a, b, r, w, c, d)
+    layout = _SEGMENT_V3_SHAPES.get(shape) or _new_layout(
+        _SEGMENT_V3_SHAPES, shape, f"<H{a}sQIBIIH{b}sH{r}IH{w}IH{c}sHHBH{d}s"
+    )
+    return layout.pack(
+        a, name_b, claim_id, phase_id, int(lane), width, 0, b, opcode_b,
+        r, *reads, w, *writes, c, prefetch_b, 0, 0, _DISPATCH_WIRE[seg.dispatch], d, channel_b,
+    )  # fmt: skip
+
+
+def _segment_fields(seg: LaneSegment, version: int) -> bytes:
+    """The segment record field by field: each field checked in wire order, exactly as `_Writer`
+    checks it."""
+    name = _str_bytes(seg.name)
+    claim_id = seg.claim_id
+    if type(claim_id) is not int or not 0 <= claim_id <= _MAX64:
+        claim_id = _checked_uint("u64", claim_id, 64)
+    phase_id = seg.phase_id
+    if type(phase_id) is not int or not 0 <= phase_id <= _MAX32:
+        phase_id = _checked_uint("u32", phase_id, 32)
+    lane = int(seg.lane)
+    if not 0 <= lane <= _MAX8:
+        _checked_uint("u8", lane, 8)
+    width = seg.width
+    if type(width) is not int or not 0 <= width <= _MAX32:
+        width = _checked_uint("u32", width, 32)
+    parts = [
+        name,
+        _SEGMENT_FIXED.pack(claim_id, phase_id, lane, width, 0),  # stride_k: carried per claim
+        _str_bytes(seg.opcode),
+        _u32_array_bytes(seg.reads),
+        _u32_array_bytes(seg.writes),
+        _str_bytes(seg.prefetch or ""),
+        _str_array_bytes(seg.fence_before),
+        _str_array_bytes(seg.fence_after),
+    ]
     if version >= 3:
-        w.u8(_DISPATCH_WIRE[seg.dispatch])
-        w.s(seg.channel)
+        parts.append(_U8.pack(_DISPATCH_WIRE[seg.dispatch]))
+        parts.append(_str_bytes(seg.channel))
+    return b"".join(parts)
+
+
+def _prefetch_bytes(pf: Prefetch, version: int) -> bytes:
+    try:
+        wire = _plain_prefetch(pf, version)
+    except Exception:  # noqa: BLE001 -- not carried by a layout: the field path decides it
+        wire = None
+    return wire if wire is not None else _prefetch_fields(pf, version)
+
+
+def _plain_prefetch(pf: Prefetch, version: int) -> bytes | None:
+    """A plain prefetch's record in one `pack`, or None when the prefetch is not plain."""
+    name, hint, pattern, distance, targets = pf.name, pf.hint, pf.pattern, pf.distance, pf.targets
+    if not (
+        type(name) is str
+        and type(hint) is str
+        and type(pattern) is str
+        and type(distance) is int
+        and type(targets) in _SEQUENCES
+    ):
+        return None
+    for x in targets:
+        if type(x) is not int:
+            return None
+    name_b, hint_b, pattern_b = name.encode(), hint.encode(), pattern.encode()
+    a, t, h, p = len(name_b), len(targets), len(hint_b), len(pattern_b)
+    shape = (a, t, h, p)
+    if version < 2:
+        layout = _PREFETCH_V1_SHAPES.get(shape) or _new_layout(
+            _PREFETCH_V1_SHAPES, shape, f"<H{a}sIH{t}IH{h}sH{p}s"
+        )
+        return layout.pack(a, name_b, distance, t, *targets, h, hint_b, p, pattern_b)
+    buffers = pf.buffers
+    if type(buffers) is not int:
+        return None
+    layout = _PREFETCH_V2_SHAPES.get(shape) or _new_layout(
+        _PREFETCH_V2_SHAPES, shape, f"<H{a}sIH{t}IH{h}sH{p}sB"
+    )
+    return layout.pack(a, name_b, distance, t, *targets, h, hint_b, p, pattern_b, buffers)
+
+
+def _prefetch_fields(pf: Prefetch, version: int) -> bytes:
+    """The prefetch record field by field, exactly as `_Writer` writes it."""
+    name = _str_bytes(pf.name)
+    distance = pf.distance
+    if type(distance) is not int or not 0 <= distance <= _MAX32:
+        distance = _checked_uint("u32", distance, 32)
+    parts = [
+        name,
+        _U32.pack(distance),
+        _u32_array_bytes(pf.targets),
+        _str_bytes(pf.hint),
+        _str_bytes(pf.pattern),
+    ]
+    if version >= 2:
+        buffers = pf.buffers
+        if type(buffers) is not int or not 0 <= buffers <= _MAX8:
+            buffers = _checked_uint("u8", buffers, 8)
+        parts.append(_U8.pack(buffers))
+    return b"".join(parts)
+
+
+def _block_bytes(blk: Block) -> bytes:
+    base, count, strides = blk.base, blk.count, blk.strides
+    if type(base) is int and type(count) is int and type(strides) in _SEQUENCES:
+        n = len(strides)
+        if n < _SMALL:
+            for x in strides:
+                if type(x) is not int:
+                    break
+            else:
+                try:
+                    return _BLOCKS[n].pack(base, count, n, *strides)
+                except struct.error:
+                    pass  # a value out of range: the field path refuses it
+    return _block_fields(blk)
+
+
+def _block_fields(blk: Block) -> bytes:
+    """The block record field by field, exactly as `_Writer` writes it."""
+    base, count = blk.base, blk.count
+    if type(base) is not int or not 0 <= base <= _MAX64:
+        base = _checked_uint("u64", base, 64)
+    if type(count) is not int or not 0 <= count <= _MAX64:
+        count = _checked_uint("u64", count, 64)
+    return _BLOCK_FIXED.pack(base, count) + _u64_array_bytes(blk.strides)
+
+
+def _trace_bytes(note: TraceNote) -> bytes:
+    claim_id, src_hash, trace_hash = note.claim_id, note.src_hash, note.trace_hash
+    if type(claim_id) is not int or not 0 <= claim_id <= _MAX64:
+        claim_id = _checked_uint("u64", claim_id, 64)
+    if type(src_hash) is not int or not 0 <= src_hash <= _MAX64:
+        src_hash = _checked_uint("u64", src_hash, 64)
+    if type(trace_hash) is not int or not 0 <= trace_hash <= _MAX64:
+        trace_hash = _checked_uint("u64", trace_hash, 64)
+    return _TRACE_RECORD.pack(claim_id, src_hash, trace_hash)
+
+
+def _generation_bytes(g: Generation) -> bytes:
+    rid, map_gen, data_gen = g.rid, g.map_gen, g.data_gen
+    if type(rid) is not int or not 0 <= rid <= _MAX32:
+        rid = _checked_uint("u32", rid, 32)
+    if type(map_gen) is not int or not 0 <= map_gen <= _MAX32:
+        map_gen = _checked_uint("u32", map_gen, 32)
+    if type(data_gen) is not int or not 0 <= data_gen <= _MAX32:
+        data_gen = _checked_uint("u32", data_gen, 32)
+    return _GENERATION_RECORD.pack(rid, map_gen, data_gen)
+
+
+def _write_segment(w: _Writer, seg: LaneSegment, version: int) -> None:
+    w.buf += _segment_bytes(seg, version)
 
 
 def _write_prefetch(w: _Writer, pf: Prefetch, version: int) -> None:
-    w.s(pf.name)
-    w.u32(pf.distance)
-    w.u32_array(pf.targets)
-    w.s(pf.hint)
-    w.s(pf.pattern)
-    if version >= 2:
-        w.u8(pf.buffers)
+    w.buf += _prefetch_bytes(pf, version)
 
 
 def _write_block(w: _Writer, blk: Block) -> None:
-    w.u64(blk.base)
-    w.u64(blk.count)
-    w.u64_array(blk.strides)
+    w.buf += _block_bytes(blk)
 
 
 def _write_trace(w: _Writer, note: TraceNote) -> None:
-    w.u64(note.claim_id)
-    w.u64(note.src_hash)
-    w.u64(note.trace_hash)
+    w.buf += _trace_bytes(note)
 
 
 def _write_generation(w: _Writer, g: Generation) -> None:
-    w.u32(g.rid)
-    w.u32(g.map_gen)
-    w.u32(g.data_gen)
+    w.buf += _generation_bytes(g)
 
 
 def _wire_version(needs_v2: bool, needs_v3: bool, needs_v4: bool) -> int:
@@ -356,27 +656,28 @@ def encode(pack: StreamPack) -> bytes:
     that uses none of them stays byte-identical frozen v1.
     """
     _validate_encode_contract(pack)
-    needs_v2 = pack.pipeline_depth > 1 or any(pf.buffers != 1 for pf in pack.prefetches)
-    needs_v3 = any(_segment_needs_v3(seg) for seg in pack.segments)
+    needs_v2 = pack.pipeline_depth > 1
+    if not needs_v2:
+        for pf in pack.prefetches:
+            if pf.buffers != 1:
+                needs_v2 = True
+                break
+    needs_v3 = False
+    for seg in pack.segments:  # `_segment_needs_v3`, inline: one test per segment, no call
+        if seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT:
+            needs_v3 = True
+            break
     version = _wire_version(needs_v2, needs_v3, bool(pack.generations))
-    header = _encode_header(pack, version)
-
-    w = _Writer()
-    w.s(pack.source_plan)
-    for seg in pack.segments:
-        _write_segment(w, seg, version)
-    for pf in pack.prefetches:
-        _write_prefetch(w, pf, version)
-    for blk in pack.blocks:
-        _write_block(w, blk)
-    for t in pack.trace_notes:
-        _write_trace(w, t)
+    parts = [_encode_header(pack, version), _str_bytes(pack.source_plan)]
+    parts += [_segment_bytes(seg, version) for seg in pack.segments]
+    parts += [_prefetch_bytes(pf, version) for pf in pack.prefetches]
+    parts += [_block_bytes(blk) for blk in pack.blocks]
+    parts += [_trace_bytes(t) for t in pack.trace_notes]
     if version >= 4:
-        for g in pack.generations:
-            _write_generation(w, g)
+        parts += [_generation_bytes(g) for g in pack.generations]
 
-    body = header + bytes(w.buf)
-    return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+    body = b"".join(parts)
+    return body + _U32.pack(zlib.crc32(body) & 0xFFFFFFFF)
 
 
 def decode(data: bytes) -> StreamPack:

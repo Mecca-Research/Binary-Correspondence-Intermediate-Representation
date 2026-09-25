@@ -969,6 +969,38 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     cannot), atomic element operations (refused), the Q-fixed kernel's element size (a
     representation question recorded, not settled), and a law-rail emitter (none exists; the C
     backend is the second path to LLVM, held to the same facts).
+  SP-ENC (2026-09-25) compiled the StreamPack encoder's record layouts: S4-B's first
+  recommendation, taken up at the user's request.
+  - RED, measured on the parent tree (`b1f8bdce`; S5-A does not touch the encoder): one encode of
+    the audit fixture's pack at scale 8
+    made 7,543,875 calls (74% of the chain from scratch, 10,110,215), and took 66 ms at scale 4.
+  - What landed (`bcir/abi/streampack_abi.py`):
+    - one function per record kind, and two ways to build a record. A plain record (every field
+      of its exact type, no fence names) is packed in one `struct` call through the precompiled
+      layout of its shape. Any other record is written field by field and refused exactly as the
+      `_Writer` rail refused it;
+    - an exact fast path for the encode contract per record.
+  - `struct` is not the contract: it packs `True` and any object with `__index__`, which the wire
+    refuses, so a layout takes only exact types (L4).
+  - The encoder before is kept verbatim as `encode_fixtures.encode_reference`, and
+    `streampack.encode.parity` holds the two byte for byte and refusal for refusal: 588 honest
+    packs (49 packs, each in 12 wire versions and spellings), 510 packs with one or two fields
+    forged, and 1,202 calls handing the forged records to the record functions directly.
+  - Outcomes: `streampack.encode.calls` 7,543,875 → 989,245; `streampack.encode` 1.0 → ~0.30;
+    `kbcir-streampack.full.calls` 10,110,215 → 3,555,585; the parity guard 0; the C re-encode
+    still byte-identical. The delta chain re-emits through the same records: a one-claim delta
+    491 → 472 calls. `tools/testing/faults/encode.json` injects 22 defects, each caught by
+    its own row.
+  - Found and fixed in the slice:
+    - the first plain layout read a missing fence array as an empty one (L14);
+    - the first sweep charged one defect to the wrong row, because the call floor's refusal hid
+      the parity row's finding (L1);
+    - the array helpers walked an array twice (checked, then packed), which is sound only for the
+      tuple or list the plain layouts' guard admits. The field path, their second caller, gets
+      everything else, so an iterable that yields its items once raised `struct.error` where
+      `_Writer` packed it (L14). The corpus's "a generator where a sequence belongs" had never
+      been built; it now holds a generator, a one-pass iterable and one whose `len()` is short,
+      and four faults are caught only by them.
 
 ---
 

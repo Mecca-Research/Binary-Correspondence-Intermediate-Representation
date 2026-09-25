@@ -1383,6 +1383,50 @@ METRICS: tuple[Metric, ...] = (
         bound_source="every kernel runs correctly under the aliasing it declares, on every runner",
         slice_owner="G9",
     ),
+    # --- SP-ENC: the StreamPack encoder's record layouts compiled (#790's recommendation 1).
+    # The parity row counts failures over the fixed corpus of bcir/tests/encode_fixtures.py, which
+    # the tests and tools/perf/check_encode.py grade the same way; the encoder before the slice is
+    # kept verbatim as its reference, so the row is a guard that reads 0 on the parent as well.
+    # The rows that move are the calls (exact) and the time (ratio, same process) of `encode`, and
+    # the calls of the K_BCIR -> StreamPack chain from scratch, where `encode` was 74%.
+    Metric(
+        "streampack.encode.parity",
+        "encode",
+        "(item, rail) pairs where the compiled encoder's bytes or refusal (the exception's type and message) differ from the encoder before SP-ENC, kept verbatim: every honest pack of the corpus in every wire version and spelling, every field of every record forged one and two at a time, and every forged record through the record functions directly",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="byte for byte and refusal for refusal the encoder it replaces -- the frozen ABI's reference codec does not move",
+        slice_owner="SP-ENC",
+    ),
+    Metric(
+        "streampack.encode.calls",
+        "encode",
+        "calls (cProfile total, builtins included) of one encode of the audit fixture's pipelined StreamPack at scale 8 (32,768 claims, 5.76 MB, wire v4), CPython 3.11",
+        7543875,
+        "calls",
+        "exact",
+        slice_owner="SP-ENC",
+    ),
+    Metric(
+        "streampack.encode",
+        "encode",
+        "median time of encode / median time of the encoder before SP-ENC (kept verbatim), the audit fixture's pipelined StreamPack at scale 4, interleaved in one process",
+        1.0,
+        "x",
+        "ratio",
+        slice_owner="SP-ENC",
+    ),
+    Metric(
+        "kbcir-streampack.full.calls",
+        "encode",
+        "calls (cProfile total, builtins included) of the K_BCIR -> StreamPack chain from scratch -- plan, hydrate, encode and the three verdicts -- on the audit fixture's one-claim delta module at scale 8 (32,768 claims), CPython 3.11",
+        10110215,
+        "calls",
+        "exact",
+        slice_owner="SP-ENC",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -2424,6 +2468,22 @@ def measure_alias() -> dict[str, float]:
     return measure(llvm=True)
 
 
+def measure_encode() -> dict[str, float]:
+    """The SP-ENC rows: the compiled StreamPack encoder held to the encoder it replaces
+    (bcir/tests/encode_fixtures.py::measure, which the tests and tools/perf/check_encode.py grade
+    the same way), its calls at scale 8 and its time against the reference at scale 4, and the
+    calls of the chain from scratch at scale 8. Pure Python: measured wherever the interpreter
+    runs."""
+    from bcir.tests.delta_fixtures import full_calls
+    from bcir.tests.encode_fixtures import encode_calls, encode_ratio, measure
+
+    out = measure()
+    out["streampack.encode.calls"] = float(encode_calls()[0])
+    out["streampack.encode"] = encode_ratio()
+    out["kbcir-streampack.full.calls"] = float(full_calls())
+    return out
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2479,6 +2539,7 @@ _MEASURERS = {
     "kplan": measure_kplan,
     "delta": measure_delta,
     "alias": measure_alias,
+    "encode": measure_encode,
     "memory": measure_memory,
 }
 

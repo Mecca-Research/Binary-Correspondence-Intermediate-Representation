@@ -1030,6 +1030,65 @@ Not claimed: a native twin of the delta chain; incremental verification on the M
 that insert, remove or move claims or resources or change the scope; incremental event laws;
 sublinear wall time (the per-delta copies are O(n) at C speed).
 
+### SP-ENC — the StreamPack encoder's record layouts, compiled — LANDED (2026-09-25)
+
+*A performance slice with no law in it: S4-B's first recommendation. The encoder was 74% of the
+calls of the chain from scratch.*
+
+- **What landed** (`bcir/abi/streampack_abi.py`). Each record kind is one function, which builds
+  the record one of two ways:
+  - a plain record -- every field of its exact type, no fence names -- in one `struct` call,
+    through the precompiled layout of its shape (its string lengths and array counts, cached per
+    kind up to 1,024 shapes);
+  - any other record, and any plain one a layout cannot carry, field by field, refused exactly as
+    the `_Writer` rail refused it.
+
+  The encode contract takes an exact fast path per record and falls through to the full check.
+- **`struct` is not the contract** (L4). It packs `True` and any object with `__index__`, and the
+  wire refuses both, so a layout only ever sees exact types. An `int` subclass the contract
+  accepts takes the field path.
+- **The reference** is the encoder as it was before, kept verbatim
+  (`bcir/tests/encode_fixtures.py::encode_reference`). `streampack.encode.parity` holds the two
+  byte for byte and refusal for refusal over:
+  - every honest pack in every wire version and spelling;
+  - every field of every record kind forged, one field and two at a time;
+  - every forged record handed to the record functions directly.
+
+  The C twin's re-encode still equals the Python encoding byte for byte.
+- **Measured** (CPython 3.11, one process):
+
+  | Row | RED (parent) | GREEN |
+  |---|---:|---:|
+  | `streampack.encode.calls` (`exact`, scale 8) | 7,543,875 | **989,245** (7.6× fewer) |
+  | `streampack.encode` (`ratio`, scale 4) | 1.0 | **~0.30** (3.3× faster) |
+  | `kbcir-streampack.full.calls` (`exact`, scale 8) | 10,110,215 | **3,555,585** (2.8× fewer) |
+  | `streampack.encode.parity` (`exact` guard) | 0 | **0** |
+
+  The delta chain re-emits its records through the same functions: a one-claim delta falls from
+  491 to 472 calls at scale 8, and the chain from scratch it is measured against from 10,142,998
+  to 3,588,368.
+
+- **What the residual is made of.** About 2 µs per segment and 1.2 µs per prefetch remain: the
+  string encodes, the exact-type tests, the shape lookup and the one `pack`. That is the
+  per-record floor of a pure-Python encoder, and the next step down is native (the C twin, which
+  the runtime already has). In the chain from scratch, the planner and the three verdicts are now
+  the larger share.
+- **The gates.** `tools/perf/check_encode.py` is the gate. `tools/testing/faults/encode.json`
+  injects 22 defects, each caught by its own row. Two of them take the saving itself away (a
+  plain path never taken), and `streampack.encode.calls.over` catches those.
+- **Found inside the slice.**
+  - The first plain layout read a missing fence array (`None`) as an empty one, where the field
+    path refused it (L14).
+  - The first fault sweep charged one defect to the wrong row. The call floor refuses to time
+    two encoders that disagree, and its refusal hid the parity row's finding; the gate now
+    grades each row on its own (L1).
+  - The array helpers walked an array twice, which is sound only for the tuple or list the plain
+    layouts admit; the field path hands them everything else, so an iterable that yields its
+    items once raised `struct.error` where `_Writer` packed it (L14). An array that is not a
+    tuple or a list is now walked once, as `_Writer` walks it.
+
+Not claimed: `decode` is unchanged; no native encoder in the oracle.
+
 ---
 
 ## 4. The sublinearity question, answered precisely
@@ -1097,7 +1156,7 @@ Stage 0  correctness closure remainder     S0-1 two-rail hash widening (B7)     
 Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5               ALL LANDED: G1 (S1-A); G3 (S1-B); G11 (S1-C); G5 (S1-D)
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16                  ALL LANDED: G14 (S3-A); G15 (S3-B); G16 (S3-C) — exit gate met
-Stage 4  performance program               G17, G18                         ALL LANDED: G17 (S4-A); G18 (S4-B) — exit gate met
+Stage 4  performance program               G17, G18                         ALL LANDED: G17 (S4-A); G18 (S4-B) — exit gate met; the encoder compiled (SP-ENC)
 Stage 5  movement, alias, escape           G8, G9 remainder, G10        G9 LANDED (S5-A); G10, G8 open
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```
