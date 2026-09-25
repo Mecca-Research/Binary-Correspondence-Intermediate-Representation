@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from ..gem import hydrate
 from ..model import Module, Opcode, StrideClass
 from ..kbcir.realize import RealizationResult
+from .alias_facts import bound_harness, c_includes, c_prologue_epilogue, kernel_facts
 from .llvm import find_elementwise
 
 # Opcode -> C operator (the elementwise binary ops the lowering supports).
@@ -93,15 +94,15 @@ def emit_kernel_c(
     w = int(width_override) if width_override else int(seg.width if seg else cand.width)
     w = w if w >= 1 else 1
     op = C_OP[claim.opcode]
-    ctype = _ctype(elem)
+    facts = kernel_facts(module, claim, elem)
+    ctype = facts.ctype
+    # The declared alias facts (S5-A, `alias_facts`): `restrict` on exactly the pointers no
+    # other operand aliases -- the rule used to be all three or none, so an in-place claim lost
+    # B's and a claim reading one resource twice kept A's and B's -- `volatile` pointees for a
+    # volatile claim, and a barriered claim's fences first and last.
+    fence_in, fence_out = c_prologue_epilogue(facts)
 
-    # restrict is sound only when the read and write resources are disjoint (no
-    # aliasing). The elementwise contract (2 reads, 1 write) makes this the norm.
-    reads = tuple(seg.reads) if seg else tuple(claim.rd)
-    writes = tuple(seg.writes) if seg else tuple(claim.wr)
-    rqual = " restrict" if not (set(reads) & set(writes)) else ""
-
-    includes = "#include <stddef.h>\n"
+    includes = "#include <stddef.h>\n" + c_includes(facts)
     fp_pragma = ""
     if elem == "i32":
         includes += "#include <stdint.h>\n"
@@ -127,8 +128,8 @@ def emit_kernel_c(
         f"{fp_pragma}\n"
     )
     sig = (
-        f"void {fn_name}(const {ctype} *{rqual} A, const {ctype} *{rqual} B,\n"
-        f"             {ctype} *{rqual} C, size_t n)"
+        f"void {fn_name}({facts.c_param(0)}, {facts.c_param(1)},\n"
+        f"             {facts.c_param(2)}, size_t n)"
     )
 
     if w == 1 or full_lane:
@@ -137,13 +138,17 @@ def emit_kernel_c(
         # hand-blocked loop would pin it at exactly w. Measured-neutral on
         # bandwidth-bound kernels -- this is the correct division of labor, not a
         # speedup claim.
-        body = f"{sig} {{\n  for (size_t i = 0; i < n; ++i)\n    C[i] = A[i] {op} B[i];\n}}\n"
+        body = (
+            f"{sig} {{\n{fence_in}  for (size_t i = 0; i < n; ++i)\n    C[i] = A[i] {op} B[i];\n"
+            f"{fence_out}}}\n"
+        )
     else:
         # Sub-maximal throttle: a fixed-trip width-w inner loop the compiler
         # vectorizes to exactly w (honoring the deliberate sub-maximal lane), plus a
         # bounds-safe scalar tail.
         body = (
             f"{sig} {{\n"
+            f"{fence_in}"
             f"  size_t i = 0;\n"
             f"  /* width-{w} lane: a fixed-trip inner loop capped at the selected "
             f"(sub-maximal) width -- honors the thermal/power throttle */\n"
@@ -153,6 +158,7 @@ def emit_kernel_c(
             f"  /* scalar tail: bounds-safe for any trip count (the strict bounds contract) */\n"
             f"  for (; i < n; ++i)\n"
             f"    C[i] = A[i] {op} B[i];\n"
+            f"{fence_out}"
             f"}}\n"
         )
     return head + body
@@ -211,9 +217,10 @@ def emit_qfixed_kernel_c(
     acc_std = _std_int_for(n2)
     qm, qn = lane_bits - frac_bits, frac_bits
 
-    reads = tuple(claim.rd)
-    writes = tuple(claim.wr)
-    rqual = " restrict" if not (set(reads) & set(writes)) else ""
+    # The same declared alias facts as every elementwise emitter (`alias_facts`); the lanes are
+    # the kernel's own Q-fixed representation, so no element size is derived for them.
+    facts = kernel_facts(module, claim, None)
+    fence_in, fence_out = c_prologue_epilogue(facts)
 
     # MUL rescales by >> frac_bits; ADD/SUB keep the Q scale (no shift).
     combine = (
@@ -228,6 +235,7 @@ def emit_qfixed_kernel_c(
         f"the {'scaled multiply' if is_mul else 'same-scale add/sub'} of the integer "
         f"execution path). */\n"
         "#include <stddef.h>\n#include <stdint.h>\n"
+        f"{c_includes(facts)}"
         f"#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L \\\n"
         f"    && defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= {n2}\n"
         f"  typedef _BitInt({lane_bits}) q_lane_t;   /* exact {lane_bits}-bit Q-fixed lane */\n"
@@ -241,10 +249,12 @@ def emit_qfixed_kernel_c(
         f"_Static_assert(BCIR_QFIXED_BITINT || sizeof(q_acc_t) * 8 >= {n2},\n"
         f'               "BCIR Q-fixed accumulator must hold the {n2}-bit product");\n'
         f"\n"
-        f"void {fn_name}(const q_lane_t *{rqual} A, const q_lane_t *{rqual} B,\n"
-        f"             q_lane_t *{rqual} C, size_t n) {{\n"
+        f"void {fn_name}({facts.c_param(0, 'q_lane_t')}, {facts.c_param(1, 'q_lane_t')},\n"
+        f"             {facts.c_param(2, 'q_lane_t')}, size_t n) {{\n"
+        f"{fence_in}"
         f"  for (size_t i = 0; i < n; ++i)\n"
         f"    C[i] = (q_lane_t)({combine});\n"
+        f"{fence_out}"
         f"}}\n"
     )
 
@@ -1904,42 +1914,45 @@ def emit_qfixed_selfcheck_c(
     """Wrap the Q-fixed kernel with a self-checking `main`: it computes the reference
     in a 64-bit accumulator and asserts the kernel matches at the selected count and a
     tail-exercising size. In-range inputs keep the Q-fixed result within `lane_bits`,
-    so the `_BitInt(N)` and standard-int fallback builds are bit-identical."""
+    so the `_BitInt(N)` and standard-int fallback builds are bit-identical. The operands
+    are bound as the claim declares them (S5-A), one buffer per resource."""
     claim, _ = find_elementwise(module, result)
     n = max(1, claim.count)
     is_mul = claim.opcode == Opcode.MUL
     op = C_OP[claim.opcode]
     kernel = emit_qfixed_kernel_c(module, result, fn_name, lane_bits, frac_bits)
+    facts = kernel_facts(module, claim, None)
     ref = (
-        f"((int64_t)A[i] * (int64_t)B[i]) >> {frac_bits}"
+        f"((int64_t){{SA}}[i] * (int64_t){{SB}}[i]) >> {frac_bits}"
         if is_mul
-        else f"(int64_t)A[i] {op} (int64_t)B[i]"
+        else f"(int64_t){{SA}}[i] {op} (int64_t){{SB}}[i]"
     )
     # Inputs use ~half the lane so the product>>frac and the sum stay within lane_bits.
     half = lane_bits // 2
+    patterns = (
+        f"(q_lane_t)((int64_t)(i % {1 << half}) - {1 << (half - 1)})",
+        f"(q_lane_t)((int64_t)((i * 3 + 1) % {1 << half}) - {1 << (half - 1)})",
+        "(q_lane_t)0",
+    )
+    setup, checks = bound_harness(
+        facts,
+        "q_lane_t",
+        patterns,
+        f"{fn_name}({{A}}, {{B}}, {{C}}, n);",
+        total="n + CANARY",
+        index="size_t",
+        want=ref,
+        want_type="int64_t",  # the reference in 64 bits: a lane overflow fails, never agrees
+    )
     return (
-        "#include <stddef.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n\n"
+        "#include <stddef.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n"
+        "#include <string.h>\n\n"
         + kernel
         + f"""
+#define CANARY 16
+
 static int check(size_t n) {{
-  q_lane_t *A = malloc(n * sizeof *A), *B = malloc(n * sizeof *B), *C = malloc(n * sizeof *C);
-  if (!A || !B || !C) {{ free(A); free(B); free(C); return 2; }}
-  for (size_t i = 0; i < n; ++i) {{
-    A[i] = (q_lane_t)((int64_t)(i % {1 << half}) - {1 << (half - 1)});
-    B[i] = (q_lane_t)((int64_t)((i * 3 + 1) % {1 << half}) - {1 << (half - 1)});
-    C[i] = (q_lane_t)0;
-  }}
-  {fn_name}(A, B, C, n);
-  int rc = 0;
-  for (size_t i = 0; i < n; ++i) {{
-    int64_t want = {ref};
-    if ((int64_t)C[i] != want) {{
-      printf("FAIL n=%zu i=%zu got %lld want %lld\\n", n, i, (long long)C[i], (long long)want);
-      rc = 1; break;
-    }}
-  }}
-  free(A); free(B); free(C);
-  return rc;
+{setup}{checks}  return 0;
 }}
 
 int main(void) {{
@@ -2001,8 +2014,10 @@ def emit_gather_kernel_c(
     direct realization (`emit_kernel_c`) whenever the access is not random."""
     claim, _ = find_elementwise(module, result)
     op = C_OP[claim.opcode]
-    ctype = _ctype(elem)
-    includes = "#include <stddef.h>\n"
+    facts = kernel_facts(module, claim, elem)  # the same alias facts as the direct form
+    ctype = facts.ctype
+    fence_in, fence_out = c_prologue_epilogue(facts)
+    includes = "#include <stddef.h>\n" + c_includes(facts)
     fp_pragma = ""
     if elem == "i32":
         includes += "#include <stdint.h>\n"
@@ -2014,10 +2029,12 @@ def emit_gather_kernel_c(
         f"{includes}"
         f'_Static_assert(sizeof({ctype}) == 4, "BCIR {ctype} gather needs a 4-byte element");\n'
         f"{fp_pragma}\n"
-        f"void {fn_name}(const {ctype} *restrict A, const {ctype} *restrict B,\n"
-        f"             {ctype} *restrict C, const long *restrict idx, size_t n) {{\n"
+        f"void {fn_name}({facts.c_param(0, tight=True)}, {facts.c_param(1, tight=True)},\n"
+        f"             {facts.c_param(2, tight=True)}, const long *restrict idx, size_t n) {{\n"
+        f"{fence_in}"
         f"  for (size_t i = 0; i < n; ++i)\n"
         f"    C[i] = A[idx[i]] {op} B[i];\n"
+        f"{fence_out}"
         f"}}\n"
     )
 
@@ -2291,22 +2308,50 @@ def emit_strided_c(
     )
 
 
-def emit_header_c(fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
+def emit_header_c(
+    fn_name: str = "bcir_kernel",
+    elem: str = "f32",
+    *,
+    module: Module | None = None,
+    result: RealizationResult | None = None,
+) -> str:
     """A freestanding C23 header declaring the kernel ABI -- the stable contract a
-    driver/runtime compiles the emitted kernel against (no BCIR dependency)."""
+    driver/runtime compiles the emitted kernel against (no BCIR dependency).
+
+    Given the plan (`module`, `result`), the prototype states what the claim declares (S5-A):
+    `restrict` on exactly the pointers no other operand aliases and `volatile` pointees for a
+    volatile claim -- the definition's own qualifiers, so a translation unit including both
+    compiles. Without it the header can only state the disjoint contract (every pointer
+    `restrict`), which was the one it published for every claim, in-place ones included."""
     ctype = _ctype(elem)
     guard = f"BCIR_{fn_name.upper()}_H"
     includes = "#include <stddef.h>\n"
     if elem == "i32":
         includes += "#include <stdint.h>\n"
+    params = (
+        f"const {ctype} *restrict A, const {ctype} *restrict B,\n             {ctype} *restrict C"
+    )
+    contract = "A,B,C are non-overlapping."
+    if module is not None and result is not None:
+        claim, _ = find_elementwise(module, result)
+        facts = kernel_facts(module, claim, elem)
+        params = (
+            f"{facts.c_param(0, tight=True)}, {facts.c_param(1, tight=True)},\n"
+            f"             {facts.c_param(2, tight=True)}"
+        )
+        if not all(facts.exclusive) or facts.volatile:
+            rids = ", ".join(str(r) for r in facts.rids)
+            contract = (
+                f"A,B,C name RIDs {rids}; restrict marks each pointer no other one aliases"
+                + ("; every access is volatile." if facts.volatile else ".")
+            )
     return (
         f"/* BCIR kernel ABI (freestanding, generated). Stable contract for a "
         f"resident toolchain. */\n"
         f"#ifndef {guard}\n#define {guard}\n"
         f"{includes}\n"
-        f"/* Elementwise C = A op B over n elements; A,B,C are non-overlapping. */\n"
-        f"void {fn_name}(const {ctype} *restrict A, const {ctype} *restrict B,\n"
-        f"             {ctype} *restrict C, size_t n);\n"
+        f"/* Elementwise C = A op B over n elements; {contract} */\n"
+        f"void {fn_name}({params}, size_t n);\n"
         f"#endif /* {guard} */\n"
     )
 
@@ -2321,35 +2366,39 @@ def emit_selfcheck_c(
     """Wrap the kernel with a self-checking C23 `main` (the AOT path). Checks the
     selected count and a non-divisible size (count + 7) to exercise the tail.
     `hw_width` is forwarded so the self-check validates the exact deployed kernel
-    (the go-fast form at the full lane)."""
+    (the go-fast form at the full lane).
+
+    The operands are bound as the claim declares them (S5-A, `alias_facts.bound_harness`):
+    one buffer per resource, so an in-place claim runs in place, each with canary headroom
+    past `n` and checked against its snapshot."""
     claim, _ = find_elementwise(module, result)
     n = max(1, claim.count)
     op = C_OP[claim.opcode]
-    ctype = _ctype(elem)
+    facts = kernel_facts(module, claim, elem)
+    ctype = facts.ctype
     kernel = emit_kernel_c(module, result, fn_name, elem, hw_width=hw_width)
     if elem == "i32":
-        init = "A[i] = (int32_t)i; B[i] = (int32_t)(2u * i); C[i] = -1;"
-        fmt = "%d"
+        patterns = ("(int32_t)i", "(int32_t)(2u * i)", "(int32_t)-1")
     else:
-        init = "A[i] = (float)i; B[i] = 2.0f * (float)i; C[i] = -1.0f;"
-        fmt = "%g"
+        patterns = ("(float)i", "2.0f * (float)i", "-1.0f")
+    setup, checks = bound_harness(
+        facts,
+        ctype,
+        patterns,
+        f"{fn_name}({{A}}, {{B}}, {{C}}, n);",
+        total="n + CANARY",
+        index="size_t",
+        want=f"{{SA}}[i] {op} {{SB}}[i]",
+    )
 
     return (
-        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n\n"
+        "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
         + kernel
         + f"""
+#define CANARY 16
+
 static int check(size_t n) {{
-  {ctype} *A = malloc(n * sizeof *A), *B = malloc(n * sizeof *B), *C = malloc(n * sizeof *C);
-  if (!A || !B || !C) {{ free(A); free(B); free(C); return 2; }}
-  for (size_t i = 0; i < n; ++i) {{ {init} }}
-  {fn_name}(A, B, C, n);
-  int rc = 0;
-  for (size_t i = 0; i < n; ++i) {{
-    {ctype} want = A[i] {op} B[i];
-    if (C[i] != want) {{ printf("FAIL n=%zu i=%zu got {fmt} want {fmt}\\n", n, i, C[i], want); rc = 1; break; }}
-  }}
-  free(A); free(B); free(C);
-  return rc;
+{setup}{checks}  return 0;
 }}
 
 int main(void) {{

@@ -909,6 +909,66 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: a native or MLIR twin of the incremental chain, deltas that change the module's
     shape or the scope, incremental event laws (rebuilt, counted), and sublinear wall time (the
     per-delta copies are O(n) at C speed).
+  S5-A (2026-09-25) landed the G9 remainder: the declared alias facts carried the rest of the way
+  to LLVM.
+  - RED, measured on the parent (ad4ebff0, the S4-B head), over the final corpus (504 lawful
+    kernels, 112 modules to refuse, six emitters, five self-checks per plan):
+    - the landed half held (`alias.llvm.false_noalias` 0), but no access carried a scope or a TBAA
+      tag (2,646 each);
+    - `volatile` was dropped on 1,533 facts, and 742 barriered kernels had no fence;
+    - 602 modules the subset cannot lower were lowered, and 336 emitted kernels failed their own
+      R12;
+    - 1,072 one-fact differentials were silent, 75 self-checks ran three private buffers whatever
+      the RIDs said, and 9 correct kernels failed the WASM self-check;
+    - inlined into a C caller, the kernel forced 56 redundant accesses to the caller's own data;
+    - R12 accepted 1,084 forged kernels (21 kinds of one fact dropped, added or contradicted).
+  - What landed (`docs/kernel/BCIR_ALIAS_FACTS.md`):
+    - one derivation, `lower.alias_facts.kernel_facts`: the RID partition (exclusive pointers),
+      the element type the lowering names and every operand's declared size, the volatility, the
+      hazard's fence. It replaced four predicates that disagreed; the hot-shape specialist's
+      wrote `restrict` on all three pointers of an in-place claim;
+    - the LLVM kernel: `noalias` on exactly the exclusive pointers, one alias scope per resource
+      on every access, clang's TBAA tag for the element type, `volatile`, and a barrier's
+      `fence seq_cst` first and last. The C kernel, gather form, specialist, ABI header and
+      Q-fixed kernel carry `restrict`, `volatile` and `atomic_thread_fence`;
+    - refusals where there were miscompiles: `atomic` and unknown hazards, an operand resource
+      that is undeclared or declares another element size;
+    - R12 holding every fact on both backends (`verify.alias`, total), a false fact and a dropped
+      one named apart;
+    - every self-check bound one buffer per declared resource (the LLVM AOT/JIT harness, the C
+      and Q-fixed self-checks, the WASM node harness).
+  - Outcomes:
+    - All fifteen rows are 0 (`python tools/perf/check_alias.py --require-llvm`). LLVM's own alias
+      analysis proves every declared-disjoint pair from the scopes alone, and clang's IR for the C
+      kernel carries the LLVM kernel's facts.
+    - The kernel alone is at its bound: its `-O2` code is byte-identical to the parent's (112 of
+      112, clang 18 and 23). Inlined into a C caller, the TBAA tags remove one dead store and one
+      reload of the caller's data per call site, and a barriered kernel keeps both.
+    - Every source the `native.*` rows compile is byte-identical to the parent's (30 of 30).
+    - `tools/testing/faults/alias.json` injects 43 defects, each caught by its own row.
+  - Found and fixed in the slice:
+    - Every emitter lowered `volatile` claims to plain accesses, and ordered hazards to no fence.
+      R12 rejected every such kernel, and a volatile claim could never produce one it accepted.
+    - Both backends addressed every operand as 4-byte elements whatever the resource declared.
+    - The ABI header published "A,B,C are non-overlapping" for every claim.
+    - The WASM node self-check computed `+` whatever the claim's operation.
+    - The baseline harness could not grade a zero-baseline guard row as a regression.
+    - Designing the fault table found two grader gaps: the forgery row accepted any new R12
+      message where it needed a finding naming the forged fact, and no module named an undeclared
+      resource.
+    - A review of R12's reader before landing found it reading a subset of both languages (L4). An
+      access spelled without its alignment was invisible to it, so a plain load in a volatile claim
+      passed. A fence narrowed to `syncscope("singlethread")` counted as the barrier. In C, a read
+      through a cast or an address shed `volatile`, and an early `return` skipped the exit fence.
+      Six forgery kinds now witness the rule (252 forged kernels, 196 of which the earlier reader
+      accepted).
+    - The Q-fixed self-check compares in 64 bits again, as it did before the binding moved into
+      the shared harness, so a result that does not fit the lane cannot be narrowed until it
+      agrees.
+  - Not claimed: kernels beyond the single-claim subset (where scopes carry what `noalias`
+    cannot), atomic element operations (refused), the Q-fixed kernel's element size (a
+    representation question recorded, not settled), and a law-rail emitter (none exists; the C
+    backend is the second path to LLVM, held to the same facts).
 
 ---
 

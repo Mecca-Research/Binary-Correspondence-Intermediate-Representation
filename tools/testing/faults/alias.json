@@ -1,0 +1,310 @@
+{
+  "command": [
+    "@python",
+    "tools/perf/check_alias.py",
+    "--require-llvm"
+  ],
+  "faults": [
+    {
+      "label": "Facts: a position is called exclusive while one other position shares its resource",
+      "expects": "alias.noalias.mismatch",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "exclusive = tuple(sum(r == other for other in rids) == 1 for r in rids)",
+      "new": "exclusive = tuple(sum(r == other for other in rids) <= 2 for r in rids)"
+    },
+    {
+      "label": "Facts: an atomic hazard reads as one the subset realizes",
+      "expects": "alias.refusal.accepted",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "    if hazard in HAZARD_FENCES:\n",
+      "new": "    if hazard in HAZARD_FENCES or hazard == \"atomic\":\n"
+    },
+    {
+      "label": "Facts: a resource declaring another element size is addressed with the kernel's",
+      "expects": "alias.refusal.accepted",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "            if resource.elem_bytes != size:\n",
+      "new": "            if resource.elem_bytes != size and False:\n"
+    },
+    {
+      "label": "Facts: a resource the module does not declare is lowered with the kernel's element type",
+      "expects": "alias.refusal.accepted",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "            if resource is None:\n                raise NotImplementedError(",
+      "new": "            if resource is None and False:\n                raise NotImplementedError("
+    },
+    {
+      "label": "Facts: the header's restrict marks the shared pointers instead of the exclusive ones",
+      "expects": "alias.noalias.mismatch",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "qual = \"restrict \" if self.exclusive[position] else \"\"",
+      "new": "qual = \"restrict \" if not self.exclusive[position] else \"\""
+    },
+    {
+      "label": "Facts: the kernels' restrict is written on the written pointer whatever its resource",
+      "expects": "alias.noalias.mismatch",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "qual = \" restrict\" if self.exclusive[position] else \"\"",
+      "new": "qual = \" restrict\" if self.exclusive[position] or position == 2 else \"\""
+    },
+    {
+      "label": "Facts: a volatile claim's C pointers point to plain data",
+      "expects": "alias.volatile.mismatch",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "vol = \"volatile \" if self.volatile else \"\"",
+      "new": "vol = \"\""
+    },
+    {
+      "label": "Facts: a barriered C kernel fences before its first access and not after its last",
+      "expects": "alias.fence.mismatch",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "return f\"{indent}{C_FENCE} {note}\\n\", f\"{indent}{C_FENCE}\\n\"",
+      "new": "return f\"{indent}{C_FENCE} {note}\\n\", \"\""
+    },
+    {
+      "label": "Harness: the written operand is bound to the last resource's buffer, not its own",
+      "expects": "alias.harness.unaliased",
+      "path": "bcir/lower/alias_facts.py",
+      "old": "{call.format(A=bound[0], B=bound[1], C=bound[2])}",
+      "new": "{call.format(A=bound[0], B=bound[1], C=bufs[-1])}"
+    },
+    {
+      "label": "LLVM: noalias on every pointer, the in-place one among them",
+      "expects": "alias.noalias.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "f\"ptr {'noalias ' if facts.exclusive[p] else ''}%{POSITIONS[p]}\"",
+      "new": "f\"ptr {'noalias '}%{POSITIONS[p]}\""
+    },
+    {
+      "label": "LLVM: noalias on every pointer -- LLVM's own analysis draws the false fact",
+      "expects": "alias.llvm.false_noalias",
+      "path": "bcir/lower/llvm.py",
+      "old": "f\"ptr {'noalias ' if facts.exclusive[p] else ''}%{POSITIONS[p]}\"",
+      "new": "f\"ptr {'noalias '}%{POSITIONS[p]}\""
+    },
+    {
+      "label": "LLVM: an access's !noalias names no other resource's scope",
+      "expects": "alias.scope.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "rest = [r for r in facts.resources if r != rid]",
+      "new": "rest = [r for r in facts.resources if r != rid][:0]"
+    },
+    {
+      "label": "LLVM: an access's !noalias names no other resource's scope -- the scopes alone prove nothing",
+      "expects": "alias.llvm.scope_facts.missing",
+      "path": "bcir/lower/llvm.py",
+      "old": "rest = [r for r in facts.resources if r != rid]",
+      "new": "rest = [r for r in facts.resources if r != rid][:0]"
+    },
+    {
+      "label": "LLVM: an access's !noalias names its own resource's scope",
+      "expects": "alias.scope.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "rest = [r for r in facts.resources if r != rid]",
+      "new": "rest = list(facts.resources)"
+    },
+    {
+      "label": "LLVM: an access's !noalias names its own resource's scope -- LLVM separates the in-place pointers",
+      "expects": "alias.llvm.false_noalias",
+      "path": "bcir/lower/llvm.py",
+      "old": "rest = [r for r in facts.resources if r != rid]",
+      "new": "rest = list(facts.resources)"
+    },
+    {
+      "label": "LLVM: the alias domain is not a distinct node",
+      "expects": "alias.scope.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "domain = md.add(f'!\"bcir.{fn_name}\"', distinct=True, self_ref=True)",
+      "new": "domain = md.add(f'!\"bcir.{fn_name}\"', distinct=False, self_ref=True)"
+    },
+    {
+      "label": "LLVM: the TBAA tags hang from a root clang does not use",
+      "expects": "alias.tbaa.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "root = md.add(f'!\"{TBAA_ROOT}\"')",
+      "new": "root = md.add('!\"BCIR TBAA\"')"
+    },
+    {
+      "label": "LLVM: the TBAA tags hang from a root clang does not use -- the C kernel's IR disagrees",
+      "expects": "alias.backends.disagree",
+      "path": "bcir/lower/llvm.py",
+      "old": "root = md.add(f'!\"{TBAA_ROOT}\"')",
+      "new": "root = md.add('!\"BCIR TBAA\"')"
+    },
+    {
+      "label": "LLVM: the TBAA scalar type is the LLVM type, not the C type clang names",
+      "expects": "alias.tbaa.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "scalar = md.add(f'!\"{facts.tbaa}\", !{char}, i64 0')",
+      "new": "scalar = md.add(f'!\"{facts.ll_type}\", !{char}, i64 0')"
+    },
+    {
+      "label": "LLVM: a volatile claim's epilogue loads of A are plain",
+      "expects": "alias.volatile.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "  %a = load {vol}{ety}, ptr %ta, align 4{a}",
+      "new": "  %a = load {ety}, ptr %ta, align 4{a}"
+    },
+    {
+      "label": "LLVM: the barrier's exit fence is dropped",
+      "expects": "alias.fence.mismatch",
+      "path": "bcir/lower/llvm.py",
+      "old": "    fence_out = fence_in\n",
+      "new": "    fence_out = \"\"\n"
+    },
+    {
+      "label": "LLVM: the TBAA tags hang from a root clang does not use -- a C caller's own data is reloaded around the inlined kernel",
+      "expects": "alias.llvm.caller_memory",
+      "path": "bcir/lower/llvm.py",
+      "old": "root = md.add(f'!\"{TBAA_ROOT}\"')",
+      "new": "root = md.add('!\"BCIR TBAA\"')"
+    },
+    {
+      "label": "LLVM: a barriered kernel loses both fences -- LLVM moves a C caller's data across the barrier",
+      "expects": "alias.llvm.caller_memory",
+      "path": "bcir/lower/llvm.py",
+      "old": "    fence_in = f\"  fence {facts.fence}\\n\" if facts.fence else \"\"\n",
+      "new": "    fence_in = \"\"\n"
+    },
+    {
+      "label": "C: the ABI header ignores the plan and publishes the disjoint contract for every claim",
+      "expects": "alias.noalias.mismatch",
+      "path": "bcir/lower/c_kernel.py",
+      "old": "    if module is not None and result is not None:\n",
+      "new": "    if False:\n"
+    },
+    {
+      "label": "C: the Q-fixed kernel's written pointer drops a volatile claim's qualifier",
+      "expects": "alias.volatile.mismatch",
+      "path": "bcir/lower/c_kernel.py",
+      "old": "        f\"             {facts.c_param(2, 'q_lane_t')}, size_t n) {{\\n\"",
+      "new": "        f\"             {facts.c_param(2, 'q_lane_t').replace('volatile ', '')}, size_t n) {{\\n\""
+    },
+    {
+      "label": "C: the gather form drops the barrier's closing fence",
+      "expects": "alias.fence.mismatch",
+      "path": "bcir/lower/c_kernel.py",
+      "old": "        f\"    C[i] = A[idx[i]] {op} B[i];\\n\"\n        f\"{fence_out}\"",
+      "new": "        f\"    C[i] = A[idx[i]] {op} B[i];\\n\""
+    },
+    {
+      "label": "Specialist: synthesize does not hand the specialist the claim's facts",
+      "expects": "alias.noalias.mismatch",
+      "path": "bcir/lower/specialist.py",
+      "old": "emit_specialist_c(key.op, c_op, key.count, elem, fn, facts=facts)",
+      "new": "emit_specialist_c(key.op, c_op, key.count, elem, fn)"
+    },
+    {
+      "label": "WASM: the node harness binds one buffer per operand",
+      "expects": "alias.harness.unaliased",
+      "path": "bcir/lower/wasm.py",
+      "old": "    return tuple(facts.resources.index(rid) for rid in facts.rids)\n",
+      "new": "    return (0, 1, 2)\n"
+    },
+    {
+      "label": "WASM: the node harness computes + for a SUB claim",
+      "expects": "alias.exec.failed",
+      "path": "bcir/lower/wasm.py",
+      "old": "'-': (a, b) => Math.fround(a - b)",
+      "new": "'-': (a, b) => Math.fround(a + b)"
+    },
+    {
+      "label": "R12: noalias on a pointer whose resource another operand names is not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "        if \"noalias\" in toks and sharers:\n",
+      "new": "        if \"noalias\" in toks and sharers and False:\n"
+    },
+    {
+      "label": "R12: an exclusive pointer without noalias is not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "        elif \"noalias\" not in toks and not sharers:\n",
+      "new": "        elif False:\n"
+    },
+    {
+      "label": "R12: plain accesses in a volatile claim are not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    if facts.volatile and plain:\n",
+      "new": "    if facts.volatile and plain and False:\n"
+    },
+    {
+      "label": "R12: an access declaring its own resource disjoint from itself reads as a dropped fact",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "            if got is not None and per_rid[rid] in got:\n",
+      "new": "            if False:\n"
+    },
+    {
+      "label": "R12: an access without the declared element type's TBAA tag is not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    if wrong:\n",
+      "new": "    if wrong and False:\n"
+    },
+    {
+      "label": "R12: a fence in a unique claim's LLVM kernel is not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    rets = [i for i, ins in enumerate(k.instrs) if ins.startswith(\"ret\")]\n    if facts.fence is None:\n        if fences:\n",
+      "new": "    rets = [i for i, ins in enumerate(k.instrs) if ins.startswith(\"ret\")]\n    if facts.fence is None:\n        if fences and False:\n"
+    },
+    {
+      "label": "R12: a C pointer restrict-qualified on a shared resource is not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "        if \"restrict\" in toks and sharers:\n",
+      "new": "        if \"restrict\" in toks and sharers and False:\n"
+    },
+    {
+      "label": "R12: a barriered C kernel without its fences is not a finding",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    elif not (\n        stmts and stmts[0].startswith(C_FENCE) and stmts[-1].startswith(C_FENCE) and fences == 2\n    ):\n",
+      "new": "    elif False:\n"
+    },
+    {
+      "label": "R12: a fence narrowed to one thread discharges the barrier",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    return order if not scope else f'{order} in syncscope(\"{scope}\")'\n",
+      "new": "    return order\n"
+    },
+    {
+      "label": "R12: an access spelled without its alignment is invisible to the reader",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "_ACCESS = re.compile(r\"^(?:%[\\w.]+\\s*=\\s*)?(load|store)\\b(.*)$\")\n",
+      "new": "_ACCESS = re.compile(r\"^(?:%[\\w.]+\\s*=\\s*)?(load|store)\\b(.*,\\s*align\\b.*)$\")\n"
+    },
+    {
+      "label": "R12: a barriered C kernel may return between its fences",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    elif re.search(r\"\\breturn\\b\", code):\n",
+      "new": "    elif re.search(r\"\\breturn\\b\", code) and False:\n"
+    },
+    {
+      "label": "R12: a C operand read through a cast keeps the qualifiers its declaration carries",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "        if re.search(rf\"\\b{name}\\b(?!\\s*\\[)\", code):\n",
+      "new": "        if re.search(rf\"\\b{name}\\b(?!\\s*[\\[)])\", code):\n"
+    },
+    {
+      "label": "R12: a C kernel body may take an operand's address",
+      "expects": "alias.r12.forgery.accepted",
+      "path": "bcir/verify/alias.py",
+      "old": "    if \"&\" in code:\n",
+      "new": "    if \"&\" in code and False:\n"
+    },
+    {
+      "label": "R12: the kernel's metadata is read as instructions",
+      "expects": "alias.r12.rejected",
+      "path": "bcir/verify/__init__.py",
+      "old": "            or s.startswith(\"!\")  # metadata: the alias scopes and the TBAA type DAG\n",
+      "new": ""
+    }
+  ]
+}

@@ -118,6 +118,12 @@ not promoted to driver, transport, or hardware evidence.
   verdict units whose inputs moved. It costs 491 calls at scale 8 against 10.9 M from scratch,
   and every link equals the chain from scratch: the plan, the pack bytes, and the verdict,
   including over forged plans and packs.
+- The declared alias facts reach LLVM (G9, S5-A). One derivation of the RID partition, the
+  element type, the volatility and the hazard feeds every emitter of the elementwise claim:
+  the LLVM kernel's `noalias`, alias scopes, TBAA and `volatile`, the C emitters' `restrict`,
+  `volatile` and fences, a barriered claim's fences on both. R12 holds each fact on both
+  backends, LLVM's own alias analysis proves every declared-disjoint pair from the scopes
+  alone, and every self-check runs the aliasing the claim declares.
 
 ### Still open
 

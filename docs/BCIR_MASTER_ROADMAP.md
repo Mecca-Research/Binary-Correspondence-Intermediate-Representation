@@ -324,7 +324,9 @@ measurement validity, toolchain/profile identity, and honest degraded/skipped re
 
 ## 8. Decision boundaries
 
-- **AOT:** Python LLVM lowering remains a single-claim elementwise subset; MLIR `bcir-aot`
+- **AOT:** Python LLVM lowering remains a single-claim elementwise subset (it carries the
+  claim's declared alias facts -- `noalias`, alias scopes, TBAA, `volatile`, a barrier's fences,
+  G9/S5-A); MLIR `bcir-aot`
   remains partial preparation. Arbitrary-graph native lowering is a separate approved program.
 - **Native backend:** use LLVM/resident toolchains until the native-object gate demonstrates a
   repeated BCIR-owned gap with bounded scope and maintenance ownership.

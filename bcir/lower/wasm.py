@@ -17,7 +17,8 @@ from shutil import which
 from ..model import Module
 from ..kbcir.realize import RealizationResult
 from ..toolchain import resolve_llvm_tools
-from .llvm import emit_kernel_ll
+from .alias_facts import kernel_facts
+from .llvm import _FOP, emit_kernel_ll, find_elementwise
 
 
 def is_valid_wasm(data: bytes) -> bool:
@@ -84,26 +85,50 @@ def compile_to_wasm(
 # safe base, runs the kernel, and self-checks C == A + B (A[i]=i, B[i]=2i).
 _HARNESS_JS = r"""
 const fs = require('fs');
-const path = process.argv[2];
-const n = parseInt(process.argv[3], 10);
-const fn = process.argv[4];
+const [path, nArg, fn, bindArg, op] = process.argv.slice(2);
+const n = parseInt(nArg, 10);
+// One buffer per declared resource: bind[p] is the buffer operand p (A, B, C) is bound to.
+const bind = bindArg.split(',').map(Number);
+const nbuf = Math.max(...bind) + 1;
+const CANARY = 64;
+const total = n + CANARY;
+const apply = { '+': (a, b) => Math.fround(a + b), '-': (a, b) => Math.fround(a - b),
+                '*': (a, b) => Math.fround(a * b) }[op];
 const bytes = fs.readFileSync(path);
 WebAssembly.instantiate(bytes, {}).then(({ instance }) => {
   const mem = instance.exports.memory;
   const base = 1 << 20;                 // above clang's stack/data region
-  const need = base + 3 * n * 4;
+  const need = base + nbuf * total * 4;
   while (mem.buffer.byteLength < need) mem.grow(16);
   const f32 = new Float32Array(mem.buffer);
-  const iA = base / 4, iB = iA + n, iC = iB + n;
-  for (let i = 0; i < n; i++) { f32[iA + i] = i; f32[iB + i] = 2 * i; f32[iC + i] = -1; }
-  instance.exports[fn](iA * 4, iB * 4, iC * 4, BigInt(n));
-  for (let i = 0; i < n; i++) {
-    const want = f32[iA + i] + f32[iB + i];
-    if (f32[iC + i] !== want) { console.log(`FAIL at ${i}: ${f32[iC + i]} != ${want}`); process.exit(1); }
+  const at = (k) => base / 4 + k * total;
+  const pattern = [(i) => i, (i) => 2 * i, (i) => -7777777];
+  const first = [];                     // each buffer's pattern: the first operand bound to it
+  for (let p = 0; p < 3; p++) if (first[bind[p]] === undefined) first[bind[p]] = p;
+  for (let k = 0; k < nbuf; k++) for (let i = 0; i < total; i++) f32[at(k) + i] = pattern[first[k]](i);
+  const snap = [];
+  for (let k = 0; k < nbuf; k++) snap.push(f32.slice(at(k), at(k) + total));
+  instance.exports[fn](at(bind[0]) * 4, at(bind[1]) * 4, at(bind[2]) * 4, BigInt(n));
+  // The written buffer holds A op B below n and its snapshot from n on (an unmasked tail);
+  // every other buffer holds its snapshot everywhere (a write through a read pointer).
+  for (let k = 0; k < nbuf; k++) for (let i = 0; i < total; i++) {
+    const want = (k === bind[2] && i < n) ? apply(snap[bind[0]][i], snap[bind[1]][i]) : snap[k][i];
+    if (f32[at(k) + i] !== want) {
+      console.log(`FAIL buffer ${k} at ${i}: ${f32[at(k) + i]} != ${want}`);
+      process.exit(1);
+    }
   }
   console.log(`OK wasm ${fn} n=${n}`);
 }).catch((e) => { console.log('ERROR ' + e); process.exit(2); });
 """
+
+
+def harness_binding(module: Module, result: RealizationResult) -> tuple[int, int, int]:
+    """The buffer each operand (A, B, C) is bound to in the node self-check: one buffer per
+    declared resource (S5-A), so an in-place claim runs in place."""
+    claim, _ = find_elementwise(module, result)
+    facts = kernel_facts(module, claim, "f32")
+    return tuple(facts.resources.index(rid) for rid in facts.rids)
 
 
 def run_wasm_node(
@@ -116,17 +141,11 @@ def run_wasm_node(
     node = _tool("node")
     if node is None:
         return False, "node not found for WASM execution"
+    claim, _ = find_elementwise(module, result)
     if n is None:
-        # the single elementwise claim's count
-        n = next(
-            (
-                c.count
-                for ph in module.phases
-                for c in ph.claims
-                if len(c.rd) == 2 and len(c.wr) == 1
-            ),
-            1024,
-        )
+        n = max(1, claim.count)  # the single elementwise claim's count
+    binding = ",".join(str(k) for k in harness_binding(module, result))
+    op = _FOP[claim.opcode][1]
 
     workdir = tempfile.mkdtemp(prefix="bcir-wasm-run-")
     try:
@@ -139,7 +158,9 @@ def run_wasm_node(
         js = os.path.join(workdir, "harness.js")
         with open(js, "w", newline="\n") as f:
             f.write(_HARNESS_JS)
-        run = subprocess.run([node, js, wasm, str(n), fn_name], capture_output=True, text=True)
+        run = subprocess.run(
+            [node, js, wasm, str(n), fn_name, binding, op], capture_output=True, text=True
+        )
         ok = run.returncode == 0 and "OK" in run.stdout
         return ok, run.stdout + run.stderr
     finally:

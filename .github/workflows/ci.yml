@@ -83,7 +83,9 @@ jobs:
         # runner has no such constraint and the suite is ~2x oversubscribed against it.
         # Measured on the thorough tier: 343s of test CPU over 4 cores, so the wall time is
         # bound by the pool width, not by any single test (the longest is ~15s).
-        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all -j0 --shard ${{ matrix.shard }}/2
+        # BCIR_REQUIRE_LLVM: this job installs clang/llvm for the suite, so the alias rows LLVM
+        # itself judges (test_alias_facts) must run here -- their absence fails, never skips (L2).
+        run: BCIR_THOROUGH=1 BCIR_REQUIRE_LLVM=1 python3 -m bcir.tests.run_all -j0 --shard ${{ matrix.shard }}/2
 
       # The campaigns below are whole-suite work, not per-test, so they run ONCE on shard 1
       # rather than being duplicated. Guarding them also keeps the artifact names unique.
@@ -878,7 +880,7 @@ jobs:
             print('host default:', default_target_name(), TargetProfile.for_host().name)"
 
       - name: BCIR oracle (Python conformance) on ARM
-        run: BCIR_THOROUGH=1 python3 -m bcir.tests.run_all -j0
+        run: BCIR_THOROUGH=1 BCIR_REQUIRE_LLVM=1 python3 -m bcir.tests.run_all -j0
 
       - name: Python<->MLIR differential parity on ARM (smaller campaign)
         run: python3 -m bcir.kbcir.differential -n 3000 --seed 1

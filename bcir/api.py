@@ -130,7 +130,8 @@ def build_artifact(
     # sub-maximal width is capped to honor the thermal/power throttle (R12).
     hw_width = h.vector_width
     kernel_c = emit_kernel_c(module, result, fn_name, elem, hw_width=hw_width)
-    header_c = emit_header_c(fn_name, elem)
+    # The header states what the claim declares: the kernel's own pointer qualifiers (S5-A).
+    header_c = emit_header_c(fn_name, elem, module=module, result=result)
     # The WHOLE chain, not just R12. `attested` used to mean "the emitted C matches the
     # plan", while reading as "this artifact is legal" -- so a module violating R5 (a
     # volatile access carrying the `unique` hazard) came back `attested=True` with an
