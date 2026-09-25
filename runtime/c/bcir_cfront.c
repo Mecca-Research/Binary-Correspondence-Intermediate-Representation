@@ -1330,32 +1330,115 @@ static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *s
   mark_access(c,cl,sub->is_volatile||base->type.is_volatile);
   return t;
 }
+/* --- C's assignment conversion at a store the emit spells as a byte copy (CF-MEMCONV) ------------------- */
+static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n);   /* fwd: a cast's spelling */
+/* `(ty)v`: one `c.cast` claim into a temp of the target type -- the explicit cast, and C's assignment
+ * conversion at a store (`store_conv`). The oracle's `_cast_value`. */
+static uint32_t emit_cast(CC *c, uint32_t v, const bcir_ctype *tyin, int si){
+  bcir_ctype ty=*tyin;
+  const bcir_resource *vr=res_of(c->fn,v);
+  /* The result temp carries the target's signedness, so a signed (sub-int) target keeps its sign
+   * even when the cast value is used directly -- `(signed char)(-5)` stays -5, and `(int)u` reads
+   * back signed (an arithmetic `>>`). A float -> signed-int conversion additionally needs a SIGNED
+   * cast operator (float -> unsigned is UB / target-divergent). */
+  int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0
+            && ty.bit_width==0;                                  /* a `_BitInt` keeps its exact spelling */
+  uint32_t r = ty.kind==2 ? temp_ptr(c, &ty, si)                /* a pointer cast: a `T *` of the target (first:
+                                                                  * a `float *` target is a pointer, not a float) */
+             : ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
+             : ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
+             : ty.bit_width>0 ? tempbi(c, ty.bit_width, ty.signd?1:0)   /* a C23 `_BitInt(N)` cast */
+                          : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
+  if(ty.is_bool && !ty.is_float && ty.kind!=2 && c->fn->n_res)
+    c->fn->res[c->fn->n_res-1].is_bool=1;    /* a bool cast -> a _Bool temp (normalizes to 0/1) */
+  char op[BCIR_CIR_NAME]; cast_name(&ty,f2s,op,sizeof op);
+  bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
+  if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;}
+  return r;
+}
+/* A value's arithmetic class for C's assignment conversion -- 0 integer, 1 real floating, 2 complex -- or -1
+ * when it takes none: a pointer (a file-scope one's slot included), an aggregate, a function pointer, an
+ * array. The oracle's `_arith_class` over a scalar value type. */
+static int res_arith_class(const bcir_resource *r){
+  if(!r || r->kind!=BCIR_RK_SCALAR || r->is_funcptr || r->is_pointer || r->count>1 || r->is_array || r->is_vla)
+    return -1;
+  return r->is_complex?2:r->is_float?1:0;
+}
+/* C's assignment conversion (C23 6.5.17.2) at a store the emit spells as a byte copy -- a member, a
+ * member-array element, a field of an array of structs, a bitfield, a store through a pointer, an
+ * initializer's member or element: the value converts to the slot's declared type `slot`. The emit picks the
+ * stored bytes' type from the VALUE, so a value of another arithmetic class -- an integer into a float slot, a
+ * float into an integer one, a real into a complex one -- converts first, through the `c.cast` an explicit
+ * `(T)v` lowers to, and the conversion is in the claim graph (the oracle's `_store_conversion`). A width or
+ * sign change within a class is the emit's; a `_Bool` slot normalizes by its flag; a pointer, aggregate or
+ * unsized slot takes no arithmetic conversion. Returns the value to store: every byte-copy store asks this. */
+static uint32_t store_conv(CC *c, uint32_t val, const bcir_ctype *slot){
+  if(slot->kind!=0 || slot->is_bool || slot->size<=0) return val;
+  int vc=res_arith_class(res_of(c->fn,val));
+  int sc=slot->is_complex?2:slot->is_float?1:0;
+  if(vc<0 || vc==sc) return val;
+  bcir_ctype t=*slot; t.is_volatile=0; t.is_atomic=0;   /* a value is never qualified (6.3.2.1p2) */
+  return emit_cast(c,val,&t,-1);
+}
+/* The declared type of the slot a member store writes -- the member; a member array's element; a bitfield's
+ * declared type -- for `store_conv`. A pointer, struct or union member is no arithmetic slot. */
+static bcir_ctype field_slot(const field *f){
+  bcir_ctype t; memset(&t,0,sizeof t);
+  t.kind=(uint8_t)(f->is_ptr?2:(f->sidx>=0||f->elem_sidx>=0)?1:0);
+  t.size=f->size; t.signd=f->signd; t.is_float=(uint8_t)(f->is_float?1:0);
+  t.is_complex=(uint8_t)(f->is_complex?1:0); t.is_bool=(uint8_t)(f->is_bool?1:0);
+  t.is_plain_char=(uint8_t)(f->is_plain_char?1:0); t.bit_width=f->bit_width;
+  return t;
+}
+/* The declared type of the object `*p` writes, for `p` of type `*p_ty` (an array's element when it is an
+ * array): a pointer to pointers or to a struct is no arithmetic slot. */
+static bcir_ctype pointee_slot(const bcir_ctype *p_ty){
+  bcir_ctype t=*p_ty;
+  if(p_ty->kind==2){
+    if((p_ty->ptr_depth?p_ty->ptr_depth:1)>1) return t;       /* the slot holds a pointer (kind 2) */
+    t.kind=(uint8_t)(p_ty->ptr_to_struct?1:0); t.ptr_depth=0; }
+  t.nadims=0; t.is_volatile=0;
+  return t;
+}
+/* The same for a pointer held in a resource (the general `*(expr) = v` store): its pointee's flags. */
+static bcir_ctype res_pointee_slot(const bcir_resource *r){
+  bcir_ctype t; memset(&t,0,sizeof t);
+  if(!r || r->kind!=BCIR_RK_POINTER || (r->ptr_depth?r->ptr_depth:1)>1 || r->agg[0] || r->is_voidptr){
+    t.kind=2; return t; }
+  t.size=(int)r->elem_bytes; t.signd=r->is_signed; t.is_float=r->is_float; t.is_complex=r->is_complex;
+  t.is_bool=r->is_bool; t.is_plain_char=r->is_plain_char; t.bit_width=r->bit_width;
+  return t;
+}
 /* `a[i].field = val` on a DIRECT array-of-structs variable: store `sub->size` bytes at offsetof(sub),
  * STRIDING by the element (struct) size. The base is the array itself (member offset 0). Mirrors the
  * member-array strided store (imm = [field_off, field_size, _Bool-flag, stride]). */
-static void store_index_field(CC *c, venv *base, uint32_t idx, const field *sub, uint32_t val) {
+static uint32_t store_index_field(CC *c, venv *base, uint32_t idx, const field *sub, uint32_t val) {
+  bcir_ctype st=field_slot(sub); val=store_conv(c,val,&st);        /* returns the value stored */
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-  if(!cl) return;
+  if(!cl) return val;
   cl->n_rd=3;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->n_imm=2;
   cl->imm[0]=sub->byte_off;cl->imm[1]=sub->size;cl->bounds=BCIR_BND_ASSUMED;
   if(sub->is_bool){cl->imm[2]=1;cl->n_imm=3;}
   if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=base->type.size; cl->n_imm=4;   /* stride imm[3] */
   mark_access(c,cl,sub->is_volatile||base->type.is_volatile);
+  return val;
 }
 /* `s.arr[i] = val` (member array, the element copy size == the element/stride size) OR `s.arr[i].field = val`
  * (member array-of-structs, the field copy size != the element stride): store at member_off + field_off,
  * striding by the element size. `sf` is the stored slot (the element FIELD for AOS, else the array element),
  * `soa` selects which (1 -> AOS field, stride = arr->size; 0 -> plain element, stride == copy size). */
-static void store_member_index(CC *c, venv *base, const field *arr, uint32_t idx,
-                               int soa, const field *sf, uint32_t val) {
+static uint32_t store_member_index(CC *c, venv *base, const field *arr, uint32_t idx,
+                                   int soa, const field *sf, uint32_t val) {
+  bcir_ctype st=field_slot(sf); val=store_conv(c,val,&st);          /* returns the value stored */
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-  if(!cl) return;
+  if(!cl) return val;
   cl->n_rd=3;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->n_imm=2;
   cl->imm[0]= soa ? arr->byte_off+sf->byte_off : arr->byte_off; cl->imm[1]=sf->size;
   cl->bounds=BCIR_BND_ASSUMED;
   if(sf->is_bool){cl->imm[2]=1;cl->n_imm=3;}                      /* a _Bool element/field: normalize on store */
   if(soa){ if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=arr->size; cl->n_imm=4; }   /* stride imm[3] */
   mark_access(c,cl,sf->is_volatile||arr->is_volatile||base->type.is_volatile);
+  return val;
 }
 /* Parse the `[i]` (or `[i][j][k]`) indices of a member-array access and flatten them row-major into a
  * single linear index (Horner: lin = lin*adims[d] + idx[d]) -- matching the oracle, so 1-D `s.a[i]` and
@@ -2864,24 +2947,7 @@ static uint32_t p_unary_inner(CC *c) {
             venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=si; return postfix_lvalue(c,&sv); }
           return rid; }
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
-        const bcir_resource *vr=res_of(c->fn,v);
-        /* The result temp carries the target's signedness, so a signed (sub-int) target keeps its sign
-         * even when the cast value is used directly -- `(signed char)(-5)` stays -5, and `(int)u` reads
-         * back signed (an arithmetic `>>`). A float -> signed-int conversion additionally needs a SIGNED
-         * cast operator (float -> unsigned is UB / target-divergent). */
-        int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0
-                  && ty.bit_width==0;                                  /* a `_BitInt` keeps its exact spelling */
-        uint32_t r = ty.kind==2 ? temp_ptr(c, &ty, si)                /* a pointer cast: a `T *` of the target (first:
-                                                                        * a `float *` target is a pointer, not a float) */
-                   : ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
-                   : ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
-                   : ty.bit_width>0 ? tempbi(c, ty.bit_width, ty.signd?1:0)   /* a C23 `_BitInt(N)` cast */
-                                : tempi(c, ty.size?ty.size:4, ty.signd?1:0);   /* an integer cast */
-        if(ty.is_bool && !ty.is_float && ty.kind!=2 && c->fn->n_res)
-          c->fn->res[c->fn->n_res-1].is_bool=1;    /* a bool cast -> a _Bool temp (normalizes to 0/1) */
-        char op[BCIR_CIR_NAME]; cast_name(&ty,f2s,op,sizeof op);
-        bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD);
-        if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=r;} return r;
+        return emit_cast(c,v,&ty,si);
       } }
     }
     c->i=save;                                     /* not a cast -> a parenthesized expression */
@@ -3083,18 +3149,21 @@ static int member_assign_ahead(CC *c, field *out, venv **base){
   *out=f; *base=v; return 1;
 }
 /* Emit the member store `base.field = val` (the C twin of the oracle's _write for a plain member). */
-static void store_member(CC *c, venv *base, const field *f, uint32_t val){
+static uint32_t store_member(CC *c, venv *base, const field *f, uint32_t val){
+  bcir_ctype st=field_slot(f); val=store_conv(c,val,&st);           /* returns the value stored */
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
   if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f->byte_off;cl->imm[1]=f->size;
     cl->bounds=BCIR_BND_ASSUMED;
     if(f->is_bool){cl->imm[2]=1;cl->n_imm=3;}                         /* a _Bool member normalizes on store */
     mark_access(c,cl,f->is_volatile||base->type.is_volatile);}
+  return val;
 }
 /* Emit a BITFIELD member store `base.field = val` (#bfassignexpr): read the storage unit (`access_bytes`
  * spanned bytes, into a pow2 temp), insert the masked bits (c.bf.set), store the unit's spanned bytes back
  * -- the same bf.set machinery the STATEMENT-form bitfield store uses, factored out so the value path reuses
  * it. The reload that yields the assignment's VALUE is a plain emit_member (its c.load + c.bf.get). */
-static void store_member_bf(CC *c, venv *base, const field *f, uint32_t val){
+static uint32_t store_member_bf(CC *c, venv *base, const field *f, uint32_t val){
+  bcir_ctype st=field_slot(f); val=store_conv(c,val,&st);           /* the field's declared type, then the bits */
   int absz=f->access_bytes<=4?4:8;
   uint32_t unit=temp(c,absz);
   bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
@@ -3107,6 +3176,7 @@ static void store_member_bf(CC *c, venv *base, const field *f, uint32_t val){
   if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=nu;cl->n_imm=3;cl->imm[0]=f->byte_off;cl->imm[1]=f->access_bytes;cl->imm[2]=2;
     cl->bounds=BCIR_BND_ASSUMED;                                      /* a bitfield UNIT store: `_v` takes the unit's full type */
     mark_access(c,cl,f->is_volatile||base->type.is_volatile);}
+  return val;
 }
 static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is itself an assign (right-assoc) */
 /* A MEMORY-lvalue assignment used as a VALUE (the C twin of the oracle's generalized _is_scalar_member_lv
@@ -3138,8 +3208,10 @@ static int lv_assign_value(CC *c, uint32_t *out){
     if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile      /* a non-volatile pointer to a scalar pointee */
        && pv->type.ptr_depth<=1 && (is_eq || is_compound_op(op))){
       int sz = pv->type.size?pv->type.size:4;
+      bcir_ctype pst=pointee_slot(&pv->type);           /* `*p` stores a byte copy: C's conversion first */
       if(is_eq){                                       /* plain: rhs FIRST, then store, then RELOAD */
         c->i++; uint32_t rhs=p_assign(c);
+        if(!has_idx) rhs=store_conv(c,rhs,&pst);
         bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
         if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=rhs;}
           else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=rhs;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
@@ -3153,6 +3225,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
       uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
       bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+      if(!has_idx) tmp=store_conv(c,tmp,&pst);          /* the value as stored (converted) */
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=tmp;}
         else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=tmp;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
@@ -3196,7 +3269,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-    store_index_field(c,v,idx,&sub,tmp);
+    tmp=store_index_field(c,v,idx,&sub,tmp);              /* the value as stored (converted) */
     /* a sub-int element FIELD (`unsigned char c; (a[i].c += v)`) truncates on store, so RE-READ the same
      * strided slot (#narrowcompound, the fixture's aos_narrow); a full-width field needs no re-read. */
     const bcir_resource *trr=res_of(c->fn,tmp);
@@ -3270,7 +3343,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
       const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc);
       uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
       bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-      store_member_index(c,v,&f,idx,soa,sf,tmp);
+      tmp=store_member_index(c,v,&f,idx,soa,sf,tmp);      /* the value as stored (converted) */
       /* a sub-int element/field truncates on store -> RE-READ the same strided slot (#narrowcompound); a
        * full-width element/field needs no re-read (oracle: lv.ct.size < rt.size). */
       const bcir_resource *trr=res_of(c->fn,tmp);
@@ -3297,7 +3370,8 @@ static int lv_assign_value(CC *c, uint32_t *out){
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-    if(f.bit_w) store_member_bf(c,v,&f,tmp); else store_member(c,v,&f,tmp);     /* a nested bitfield: bf.set */
+    tmp = f.bit_w ? store_member_bf(c,v,&f,tmp) : store_member(c,v,&f,tmp);     /* a nested bitfield: bf.set;
+                                                        * the value as stored (converted) */
     /* the value is the STORED (narrowed) value: a sub-int leaf truncates on store, so RE-READ the same
      * member (#narrowcompound); a full-width leaf needs no re-read (oracle: lv.ct.size < rt.size). A BITFIELD
      * narrows to its BIT width (the byte-size test misses it) -- always RE-READ it. */
@@ -3479,6 +3553,8 @@ static int incdec_value(CC *c, uint32_t *out){
   uint32_t nw=binop_result(c,suf,v->rid,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
   bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=v->rid;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
   int sz=v->type.size?v->type.size:4;
+  { bcir_ctype st=v->type; nw=store_conv(c,nw,&st); }      /* a byte copy asks C's conversion (x +/- 1 keeps
+                                                            * x's class, so it is the value itself) */
   bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
   if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=nw;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;cl->bounds=BCIR_BND_ASSUMED;
     if(v->type.is_bool){cl->imm[2]=1;cl->n_imm=3;}}        /* a _Bool local normalizes on store */
@@ -3543,7 +3619,8 @@ static uint32_t p_assign(CC *c){
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
     bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-    if(mf.bit_w) store_member_bf(c,mbase,&mf,tmp); else store_member(c,mbase,&mf,tmp);       /* a bitfield: bf.set */
+    tmp = mf.bit_w ? store_member_bf(c,mbase,&mf,tmp) : store_member(c,mbase,&mf,tmp);   /* a bitfield: bf.set;
+                                                        * the value as stored (converted) */
     /* the value of a compound is the STORED (narrowed) value: a sub-int member (`unsigned char c;
      * (s.c += v)`) truncates on store, so RE-READ it (#narrowcompound) -- the plain `=` path above
      * already re-reads; a full-width member needs no re-read (oracle: lv.ct.size < rt.size), so the
@@ -3578,7 +3655,8 @@ static uint32_t p_expr(CC *c);
  * byte offset, the leaf store size + bitfield position (bit_w 0 if not a bitfield), and the TOP-LEVEL
  * field index (for the positional cursor). The cursor is left at the `=`. (An array-of-struct element --
  * nesting past `[i]` -- is a follow-on: the field model drops the element's struct index.) */
-static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int *bit_off, int *top_fi){
+static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int *bit_off, int *top_fi,
+                            const field **leaf){
   *off=0; *size=4; *bit_w=0; *bit_off=0; *top_fi=0;
   sdef *cur=S; field *F=NULL; int started=0;
   for(;;){
@@ -3601,21 +3679,22 @@ static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int
     } else break;
   }
   if(!started){ fail(c,"empty designator"); return 1; }
+  *leaf=F;                                             /* the leaf: a member, or an array member's element */
   return 0;
 }
 static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit);   /* fwd: mutual recursion */
 /* A NESTED braced initializer for an array member inside a struct/union init -- `struct S s = { {e0,e1,
  * ..}, n };` (the C twin of lower._init_subagg). Stores each element with an OFFSET-based member c.store
  * at `base_off + idx*es` (so it composes through the enclosing struct's `= {0}` baseline); positional
- * entries advance a cursor, `[i]=` jumps it, gaps zero-fill. Element float-ness/width is carried by the
- * stored value's resource (the member-store emit), exactly like a `s.arr[i] = v` element write. */
-static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) {
+ * entries advance a cursor, `[i]=` jumps it, gaps zero-fill. Each value converts to the element's declared
+ * type `elem` (`store_conv`), exactly like a `s.arr[i] = v` element write. */
+static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool, const bcir_ctype *elem) {
   eat(c,"{");
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
     int idx=cursor;
     if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    uint32_t v=p_expr(c);
+    uint32_t v=store_conv(c,p_expr(c),elem);
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
       if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}          /* a _Bool[] element init normalizes the value */
@@ -3630,15 +3709,19 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool) 
  * `stride = product(dims[1:]) * es` (the leaf element size `es`). A nested brace recurses with the inner dims
  * (`dims+1`, `nd-1`); a scalar inside the innermost dim stores at its element offset (an OFFSET-based member
  * c.store at `base_off + idx*es`, exactly like subagg_init -- composing through the enclosing `= {0}`
- * baseline). Positional entries advance a cursor, `[i]=` jumps it, gaps zero-fill (§6.7.10). */
-static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool);
+ * baseline), converted to the element's declared type `elem`. Positional entries advance a cursor, `[i]=`
+ * jumps it, gaps zero-fill (§6.7.10). */
+static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool,
+                                 const bcir_ctype *elem);
 /* Depth-guarded wrapper: subagg_init_md self-recurses per nested-row brace, so a deeply nested
  * multi-dim `{{{...}}}` initializer would exhaust the stack. Bump/check depth once per row level. */
-static void subagg_init_md(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool) {
+static void subagg_init_md(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool,
+                           const bcir_ctype *elem) {
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }
-  subagg_init_md_inner(c, rid, base_off, dims, nd, es, is_bool); LEAVE_REC(c);
+  subagg_init_md_inner(c, rid, base_off, dims, nd, es, is_bool, elem); LEAVE_REC(c);
 }
-static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool) {
+static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool,
+                                 const bcir_ctype *elem) {
   eat(c,"{");
   int stride=es;                                          /* row stride = product(dims[1:]) * es */
   for(int d=1; d<nd; d++) stride*=dims[d];
@@ -3647,9 +3730,9 @@ static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *d
     int idx=cursor;
     if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
     if(nd>1 && is(c,"{")){                                /* an outer dim takes a nested ROW brace */
-      subagg_init_md(c, rid, base_off+idx*stride, dims+1, nd-1, es, is_bool);
+      subagg_init_md(c, rid, base_off+idx*stride, dims+1, nd-1, es, is_bool, elem);
     } else {                                              /* innermost dim: a scalar element store */
-      uint32_t v=p_expr(c);
+      uint32_t v=store_conv(c,p_expr(c),elem);
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
         if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}           /* a _Bool[] element init normalizes the value */
@@ -3727,24 +3810,27 @@ static void agg_init_at_inner(CC *c, uint32_t rid, int sidx, int base_off, int d
   int cursor=0;
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
     int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0, fbool=0, abytes=4;   /* store target (chain/positional) */
+    const field *leaf=NULL;                             /* the member the value lands in: its type, flag, unit */
     if(is(c,".")||is(c,"[")){                           /* a (possibly nested) designator */
-      if(designator_chain(c,S,&off,&size,&bit_w,&bit_off,&top_fi)) return;
-      if(top_fi>=0&&top_fi<S->nf){ fbool=S->f[top_fi].is_bool; abytes=S->f[top_fi].access_bytes; }
+      if(designator_chain(c,S,&off,&size,&bit_w,&bit_off,&top_fi,&leaf)) return;
       eat(c,"=");
-    } else if(cursor<S->nf){ field *F=&S->f[cursor];    /* positional: the cursor-th member */
-      off=F->byte_off; size=F->size; bit_w=F->bit_w; bit_off=F->bit_off; fbool=F->is_bool; abytes=F->access_bytes;
+    } else if(cursor<S->nf){ leaf=&S->f[cursor];        /* positional: the cursor-th member */
+      off=leaf->byte_off; size=leaf->size; bit_w=leaf->bit_w; bit_off=leaf->bit_off;
     } else skip=1;                                      /* past the last member -> parse but do not store */
+    if(leaf){ fbool=leaf->is_bool; abytes=leaf->access_bytes; }   /* the LEAF's, through a nested designator */
     off += base_off;                                   /* shift into the enclosing object (nested aggregate) */
     if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array OR struct) member */
       field *AF = (top_fi>=0 && top_fi<S->nf) ? &S->f[top_fi] : NULL;
       if(AF && AF->arr_count>0 && AF->elem_sidx>=0){      /* an ARRAY-OF-STRUCTS member: `{ {a,b}, {c,d} }` */
         subagg_init_struct(c, rid, off, AF->elem_sidx, AF->size); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
-      if(AF && AF->arr_count>0){ subagg_init(c, rid, off, AF->size, AF->is_bool); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
+      if(AF && AF->arr_count>0){ bcir_ctype afs=field_slot(AF);
+        subagg_init(c, rid, off, AF->size, AF->is_bool, &afs); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
       if(AF && AF->sidx>=0){ agg_init_at(c, rid, AF->sidx, off, 0); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
       fail(c,"nested initializer for a non-aggregate member"); return;
     }
     uint32_t v=p_expr(c); uint32_t val=v;
     if(skip){ cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
+    if(leaf){ bcir_ctype ls=field_slot(leaf); v=store_conv(c,v,&ls); val=v; }   /* C's conversion to the leaf */
     if(bit_w){                                          /* a bitfield member: read unit, set bits, store */
       int absz=abytes<=4?4:8;
       uint32_t unit=temp(c,absz);
@@ -3906,7 +3992,7 @@ static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, 
       if(ty->is_bool) c->fn->res[ari].is_bool=1;
       if(ty->is_plain_char) c->fn->res[ari].is_plain_char=1; }
     c->fn->res[ari].zinit=1;                         /* a `= {0}` baseline -- unwritten elements zero-fill */
-    subagg_init_md(c, rid, 0, dims, la_nd, es, ty->is_bool);   /* descend the nested ROW braces */
+    subagg_init_md(c, rid, 0, dims, la_nd, es, ty->is_bool, ty);   /* descend the nested ROW braces */
     return rid;
   }
   uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
@@ -4039,9 +4125,8 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
     val=tmp;
   } else { if(!eat(c,"="))return; val=p_expr(c); }
-  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-  if(cl){cl->n_rd=2;cl->rd[0]=b.rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.size;cl->bounds=BCIR_BND_ASSUMED;
-    mark_access(c,cl,f.is_volatile||b.type.is_volatile);}
+  /* the member store every other path takes: C's conversion, a `_Bool` member's flag, a bitfield's unit */
+  if(f.bit_w) store_member_bf(c,&b,&f,val); else store_member(c,&b,&f,val);
 }
 static void p_stmt_inner(CC *c);
 /* Depth-guarded wrapper: p_stmt is a recursive-cycle entry (p_stmt->p_block->p_stmt, and the stmt-expr
@@ -4347,7 +4432,7 @@ static void p_stmt_inner(CC *c) {
             * `{e0,e1,..}` multi-dim init (no nested braces) keeps the idx-based arr_init path -- the oracle
             * also flattens that form positionally, so the rails stay byte-identical. */
             for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
-            subagg_init_md(c, rid, 0, la_dims, la_nd, ty.size, ty.is_bool);
+            subagg_init_md(c, rid, 0, la_dims, la_nd, ty.size, ty.is_bool, &ty);
           }
           else if(is_arr){                                  /* a 1-D local array init (the C twin of the oracle's
             * array _agg_init). A struct/union ELEMENT array routes each `{...}` element to subagg_init_struct
@@ -4399,6 +4484,7 @@ static void p_stmt_inner(CC *c) {
                     (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
       int sz = (pv->type.ptr_depth>1) ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4); uint32_t val;
       /* `*pp = q` through a `T**` stores a full pointer (pointer_size), not the base scalar width */
+      bcir_ctype pst=pointee_slot(&pv->type);           /* `*p` stores a byte copy: C's conversion first */
       if(is_compound_op(&c->t[c->i])){                  /* *p OP= expr  ->  load, bin op, store */
         char ch=c->t[c->i].s[0]; c->i++;
         uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
@@ -4408,6 +4494,7 @@ static void p_stmt_inner(CC *c) {
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { c->i++; val=p_expr(c); }                 /* *p = expr */
+      if(!has_idx) val=store_conv(c,val,&pst);
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){
         if(has_idx){ cl->n_rd=3; cl->rd[0]=pv->rid; cl->rd[1]=idx; cl->rd[2]=val; }   /* *(p+i) == p[i] */
@@ -4427,6 +4514,7 @@ static void p_stmt_inner(CC *c) {
         (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
       int depth=br->ptr_depth?br->ptr_depth:1;
       int sz=(depth>1)?cc_abi(c)->pointer_size:(br->elem_bytes?(int)br->elem_bytes:4); uint32_t val;
+      bcir_ctype pst=res_pointee_slot(br);              /* read before the value's parse can move res[] */
       if(is_compound_op(&c->t[c->i])){                 /* **pp OP= expr -> load through base, bin, store */
         char ch=c->t[c->i].s[0]; c->i++;
         uint32_t cur=emit_deref_rid(c,base); uint32_t rhs=p_expr(c);
@@ -4435,6 +4523,7 @@ static void p_stmt_inner(CC *c) {
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { c->i++; val=p_expr(c); }                /* **pp = expr */
+      val=store_conv(c,val,&pst);                      /* C's conversion to the pointee's type */
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){ cl->n_rd=2; cl->rd[0]=base; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; cl->bounds=BCIR_BND_ASSUMED;
         const bcir_resource *bb=res_of(c->fn,base); mark_access(c,cl,depth==1 && bb && bb->is_volatile); }
@@ -4489,25 +4578,9 @@ static void p_stmt_inner(CC *c) {
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
       } else { if(!eat(c,"="))return; val=p_expr(c); }
-      if(f.bit_w){
-        /* a bitfield store: read the storage unit (`access_bytes` spanned bytes, into a pow2 temp), insert
-         * the masked bits (c.bf.set), store the unit's spanned bytes back. */
-        int absz=f.access_bytes<=4?4:8;
-        uint32_t unit=temp(c,absz);
-        bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-        if(ld){ld->n_rd=1;ld->rd[0]=v->rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=f.byte_off;ld->imm[1]=f.access_bytes;ld->bounds=BCIR_BND_ASSUMED;
-          mark_access(c,ld,f.is_volatile||v->type.is_volatile);}
-        uint32_t nu=temp(c,absz);
-        bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
-        if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=val;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=f.bit_off;bs->imm[1]=f.bit_w;}
-        val=nu;
-      }
-      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f.byte_off;cl->imm[1]=f.bit_w?f.access_bytes:f.size;
-        cl->bounds=BCIR_BND_ASSUMED;
-        if(f.bit_w){cl->imm[2]=2;cl->n_imm=3;}      /* a bitfield UNIT store: `_v` takes the unit's full type */
-        else if(f.is_bool){cl->imm[2]=1;cl->n_imm=3;}    /* a _Bool member: emit `_Bool _v` so the store normalizes */
-        mark_access(c,cl,f.is_volatile||v->type.is_volatile);}
+      /* a bitfield: read the storage unit, insert the masked bits (c.bf.set), store the unit's spanned bytes
+       * back; a `_Bool` member normalizes; either converts the value to the member's type first */
+      if(f.bit_w) store_member_bf(c,v,&f,val); else store_member(c,v,&f,val);
       eat(c,";");return;}
     /* L3: array element store  a[idx] = expr  /  a[idx] OP= expr  (driver buffer fill / scatter). */
     if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='['){

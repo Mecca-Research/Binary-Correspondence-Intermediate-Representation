@@ -716,8 +716,15 @@ def _slot_ctype(vt, size: int, is_bool: bool) -> str:
 def _store_conv(vt, size: int):
     """The C type to convert a store source through (a slot-typed temp) before memcpy'ing `size` bytes into
     the slot -- or None when the source already matches the slot width/kind (a direct memcpy is correct). A
-    `float`/`double` source of a different width must convert (float<->double, not a byte copy); a narrower
-    integer source must widen/sign-extend to the slot width."""
+    `float`/`double` source of a different width must convert (float<->double, not a byte copy), a complex one
+    to the complex type of the slot's width; a narrower integer source must widen/sign-extend to the slot
+    width. A source of another arithmetic class was already converted by the lowering (`c.cast`)."""
+    if vt is not None and vt.is_complex and vt.size != size:
+        return (
+            "float _Complex"
+            if size == 8
+            else ("long double _Complex" if size > 16 else "double _Complex")
+        )
     if vt is not None and vt.is_float and vt.size != size:
         return "float" if size == 4 else ("long double" if size > 8 else "double")
     if vt is not None and vt.is_integer and vt.size < size:

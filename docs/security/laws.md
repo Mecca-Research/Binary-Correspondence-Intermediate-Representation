@@ -1104,6 +1104,17 @@ CF-IDX instances (2026-09-25):
   `_lvalue(Index)`. Faults: `Twin index: a store *(q[j] + i) indexes the table, ...`,
   `Twin index: *q[j] dereferences the table's first element, ...` and `Oracle index: a
   dereference of a subscripted element *q[j] is refused`.
+CF-MEMCONV instances (2026-09-25):
+- "What type do these bytes land as" was answered by the stored VALUE at every byte-copy store,
+  on both rails, so a float slot took an integer's bits. Both rails now ask one predicate at
+  every such store (`_store_conversion`, `store_conv`). The oracle has one store site (`_write`);
+  the twin creates one at twelve, so its store helpers convert and return the value they stored,
+  and the parity digest over a fixture that reaches every site catches a site that skips the
+  predicate. Faults, injected by hand: a predicate that keeps the value's class, on either rail.
+- The twin spelled the member store three times: the helper, the statement path, and the store
+  through a pointer member. The third lacked the `_Bool` flag and the bitfield unit. All three are
+  now the helper. The explicit cast and the conversion share one lowering (`_cast_value`,
+  `emit_cast`), so a conversion is spelled exactly as `(T)v` is.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

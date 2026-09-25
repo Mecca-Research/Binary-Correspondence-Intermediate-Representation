@@ -558,6 +558,13 @@ class _LV:
         return max(1, self.ct.size)
 
 
+def _arith_class(ct: CType) -> int:
+    """An arithmetic type's class for C's assignment conversion: 0 integer, 1 real floating, 2 complex
+    (a complex type is floating too). A store between classes converts the value; within one it is a
+    width or sign change the emit makes (`emit._store_conv`)."""
+    return 2 if ct.is_complex else (1 if ct.is_float else 0)
+
+
 def _object_write(ct: CType) -> dict:
     """The claim fields of a write to a named object of type `ct`: a volatile scalar's write is a
     volatile access (a device-domain claim, lane H, `barriered`); anything else is an ordinary copy
@@ -1642,32 +1649,7 @@ class _FuncLowerer:
             t = self._temp(rt, f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
         if isinstance(node, cast.Cast):
-            v = self._rvalue(node.operand)
-            ct = self._resolve_type(node.type)
-            # a float cast target types the temp float (so downstream arithmetic is float, and the emit
-            # declares it float); an integer cast to a uint32 temp reproduces integer-promotion (a
-            # narrowing cast masks/zero-extends back), so either way the result matches Clang.
-            # a pointer cast yields a pointer of the target type (its pointee, and whether that pointee
-            # is volatile, ride on the temp): a uint32 temp truncated the address
-            typed = ct.is_integer or ct.is_float or ct.kind == "pointer"
-            t = self._temp(ct if typed else scalar("uint32_t"), "cast")
-            # A float -> signed-integer conversion needs a SIGNED cast operator: the canonical unsigned
-            # name (uint32_t / uint8_t) makes it float -> unsigned, which is UB for a negative value and
-            # diverges by target (x86 wraps, aarch64 saturates to 0) -- and even on x86 a sub-int signed
-            # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
-            vt = self.rtypes.get(v)
-            cname = (
-                _CAST_W_SIGNED.get(ct.size, "int32_t")
-                if (
-                    vt is not None
-                    and vt.is_float
-                    and ct.is_integer
-                    and ct.signed
-                    and not ct.is_bitint
-                )
-                else _cast_name(ct)
-            )  # a `_BitInt` target keeps its exact spelling (no width-named fallback)
-            return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
+            return self._cast_value(self._rvalue(node.operand), self._resolve_type(node.type))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
         if isinstance(
@@ -1988,7 +1970,52 @@ class _FuncLowerer:
             volatile=vol,
         )
 
-    def _write(self, lv: "_LV", v: int) -> None:
+    def _cast_value(self, v: int, ct: CType) -> int:
+        """`(ct)v`: one `c.cast` claim into a temp of the target type -- the explicit cast, and C's
+        assignment conversion at a store (`_store_conversion`). The twin's `emit_cast`."""
+        # a float cast target types the temp float (so downstream arithmetic is float, and the emit
+        # declares it float); an integer cast to a uint32 temp reproduces integer-promotion (a
+        # narrowing cast masks/zero-extends back), so either way the result matches Clang.
+        # a pointer cast yields a pointer of the target type (its pointee, and whether that pointee
+        # is volatile, ride on the temp): a uint32 temp truncated the address
+        typed = ct.is_integer or ct.is_float or ct.kind == "pointer"
+        t = self._temp(ct if typed else scalar("uint32_t"), "cast")
+        # A float -> signed-integer conversion needs a SIGNED cast operator: the canonical unsigned
+        # name (uint32_t / uint8_t) makes it float -> unsigned, which is UB for a negative value and
+        # diverges by target (x86 wraps, aarch64 saturates to 0) -- and even on x86 a sub-int signed
+        # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
+        vt = self.rtypes.get(v)
+        cname = (
+            _CAST_W_SIGNED.get(ct.size, "int32_t")
+            if (vt is not None and vt.is_float and ct.is_integer and ct.signed and not ct.is_bitint)
+            else _cast_name(ct)
+        )  # a `_BitInt` target keeps its exact spelling (no width-named fallback)
+        return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
+
+    def _store_conversion(self, ct: CType, v: int) -> int:
+        """C's assignment conversion (C23 6.5.17.2) at a store the emit spells as a byte copy -- a
+        member, a member-array element, a field of an array of structs, a bitfield, a store through a
+        pointer: the value converts to the slot's declared type `ct`. The emit picks the stored bytes'
+        type from the VALUE, so a value of another arithmetic class -- an integer into a float slot, a
+        float into an integer one, a real into a complex one -- converts first, through the `c.cast` an
+        explicit `(T)v` lowers to (the twin's `store_conv`), and the conversion is in the claim graph. A
+        width or sign change within a class is the emit's (`_store_conv`); a `_Bool` slot normalizes by
+        its flag; a pointer, aggregate or function-pointer slot takes no arithmetic conversion."""
+        vt = self.rtypes.get(v)
+        if ct.kind != "scalar" or ct.name in ("_Bool", "bool") or vt is None or vt.kind != "scalar":
+            return v
+        if _arith_class(vt) == _arith_class(ct):
+            return v
+        return self._cast_value(v, unqualified(ct))  # the value is never volatile (6.3.2.1p2)
+
+    def _write(self, lv: "_LV", v: int) -> int:
+        """Store `v` through `lv`; returns the value stored -- after C's conversion, before a
+        bitfield's insertion into its unit."""
+        # a store the emit spells as a byte copy takes C's conversion first; a typed `base[idx] = v`
+        # converts in the emitted C itself
+        if lv.idx is None or lv.member or lv.stride:
+            v = self._store_conversion(lv.ct, v)
+        stored = v
         if lv.bit_width:  # read-modify-write the storage unit
             old = self._load_unit(lv)
             t = self._temp(
@@ -2025,6 +2052,7 @@ class _FuncLowerer:
             hazard="barriered" if mmio else "unique",
             volatile=vol,
         )
+        return stored
 
     def _compound_literal(self, node: "cast.CompoundLiteral") -> tuple[int, CType]:
         """Materialize a compound literal `(type){init}` as an anonymous local and initialize it, exactly
@@ -2301,13 +2329,14 @@ class _FuncLowerer:
             rt = self._bin_result_type(node.value.op, cur, b)
             t = self._temp(rt, f"b_{suf}")
             res = self._emit(f"c.bin.{suf}", opcode, (cur, b), (t,))
-            self._write(lv, res)
+            # the value as stored: converted to the target's type when its class differs (`s.i += 0.5f`)
+            res = self._write(lv, res)
             # the value of a compound assignment is the STORED (narrowed) value, not the raw binop result --
             # when the target is NARROWER than the promoted result the store truncates, so re-read it (like
             # the plain `=` path); `res` would be the un-narrowed sum (a both-rails miscompile). A BITFIELD
             # narrows to its BIT width (its ct.size is the full underlying type, so the size test misses it) --
             # re-read it too. A full-width non-bitfield target needs no re-read (res == the stored value).
-            narrows = lv.bit_width or lv.ct.size < rt.size
+            narrows = lv.bit_width or lv.ct.size < self.rtypes.get(res, rt).size
             return res if (stmt or not narrows) else self._read(lv)
         v = self._rvalue(node.value)
         if named_local:

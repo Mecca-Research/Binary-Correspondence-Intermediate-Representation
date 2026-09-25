@@ -169,6 +169,8 @@ _FLOAT = [
     "cfront_float.c",
     "cfront_floatcast.c",
     "cfront_globaltype.c",  # a signed / float global's value type (shift, divide, negate, *array)
+    "cfront_memberconv.c",  # a byte-copy store converts to the slot's type: int <-> float members, bitfields,
+    #   `*p`, initializers, the value of `(s.i += x)` (CF-MEMCONV)
     "cfront_hexfloat.c",
     "cfront_mathh.c",
     "cfront_mathh_mixed.c",
@@ -4929,6 +4931,37 @@ def test_vla_function_parameters_recover_masked_bounds():
     src2 = "unsigned f(unsigned n, unsigned a[n]){ n=n+1u; unsigned s=0u; for(unsigned i=0u;i<3u;i++) s+=a[i]; return s; }"
     assert "BCIR_CHK" not in _body(src2)
     assert compile_unit(src2, check_clang=True).equivalence == "match"
+
+
+@_requires_cc
+def test_a_byte_copy_store_converts_the_value_to_the_slots_type():
+    """CF-MEMCONV: a store the emit spells as a byte copy converts the value to the slot's declared type,
+    as C's assignment does. The conversion is in the claim graph -- `s->f = v` lowers to a `c.cast:float`
+    feeding the store, so the cross-rail digest carries it -- where both rails once copied the integer's
+    bits into the float. And the oracle's emit converts a complex value to the complex type of a member of
+    another width; it went through a real `double` and wrote that value's bytes into the slot. The twin's
+    half, and every store form, is `cfront_memberconv.c`."""
+    from bcir.frontends.cfront import compile_unit
+
+    r = compile_unit(
+        "#include <stdint.h>\nstruct P { uint32_t tag; float f; };\n"
+        "uint32_t f(struct P *s, int32_t v) { s->f = v;"
+        " return (uint32_t)(s->f > 0.0f) + 2u * (uint32_t)(s->f == (float)v); }\n",
+        check_clang=True,
+    )
+    assert r.is_clean and r.equivalence == "match", r.equivalence
+    claims = r.lowered.functions["f"].claims
+    cast = next(c for c in claims if c.op == "c.cast:float")
+    store = next(c for c in claims if c.op == "c.store")
+    assert store.rd[1] == cast.wr[0]
+    r = compile_unit(
+        "#include <stdint.h>\nstruct C { uint32_t pad; float _Complex z; };\n"
+        "uint32_t g(struct C *c, double _Complex w) { c->z = w;"
+        " return (uint32_t)(__real__ c->z == (float)__real__ w)"
+        " + 2u * (uint32_t)(__imag__ c->z == (float)__imag__ w); }\n",
+        check_clang=True,
+    )
+    assert r.is_clean and r.equivalence == "match", r.equivalence
 
 
 @_requires_cc

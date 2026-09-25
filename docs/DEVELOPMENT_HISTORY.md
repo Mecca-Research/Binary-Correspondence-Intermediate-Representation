@@ -1139,6 +1139,38 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       array lent, rightly, and `escape.unproved` counts it, so the table moved to file scope;
     - both rails declare a `static` local array as a scalar, so the emitted C does not compile
       (CF-STATIC, below).
+  CF-MEMCONV (2026-09-25) made every store the emit spells as a byte copy convert the value to the
+  slot's declared type, on both cfront rails.
+  - The defect: both rails chose the stored bytes' type from the VALUE. A float member, member-array
+    element, array-of-structs field or `*p` received an integer's bits (`s->f = v`), an integer slot
+    received a float's (`s->si = x`), and a real value landed in a `_Complex` member at the wrong
+    width. A float stored into a bitfield did not compile, and `(s->si += x)` yielded the
+    unconverted float sum.
+  - RED, measured on the parent (CF-IDX, `609b3413`) with `cfront_memberconv.c`: the rails' claim
+    graphs differ, and both rails' emitted C fails to build (a float inserted into a bitfield).
+    Without those stores, both rails' emitted C returns a different value from the first input on.
+  - What landed: C's assignment conversion, in the claim graph and on both rails. A byte-copy store
+    whose value is of another arithmetic class (integer, real floating, complex) converts first,
+    through the `c.cast` an explicit `(T)v` lowers to: `lower._store_conversion` over `_cast_value`,
+    and the twin's `store_conv` over `emit_cast`. So the digest carries the conversion. A width or
+    sign change within a class stays the emit's, and a `_Bool` slot normalizes by its flag. Every twin
+    store path asks the one predicate: the store helpers convert and return the value they stored,
+    and on both rails a compound assignment's value is that stored value.
+  - Found and fixed on the way:
+    - the twin spelled the member store three times, and one copy lacked parts of it. A store through
+      a pointer member (`s->p->f = v`) dropped a `_Bool` member's flag and wrote a bitfield as a
+      plain member. Both copies are now the helper (L14);
+    - on the twin, an initializer reached through a nested designator (`.in.b = x`) took its `_Bool`
+      flag and bitfield unit from the top member, not the leaf;
+    - the oracle's emit converted a complex value of another width through a real float, and wrote
+      that value's bytes into the slot.
+  - Outcomes: `cfront_memberconv.c` is equivalent on both rails with equal digests, and a focused
+    test pins the cast in the claim graph and the complex width on the oracle. Six injected defects,
+    one per part of the fix, are each caught. The differential fuzzer ran 450 programs over three new
+    seeds with no divergence.
+  - Found, not fixed here: the twin aligns a `double _Complex` member to 16 bytes where the ABI and
+    the oracle use 8. For a struct that holds one after a smaller member, the rails' digests differ
+    (queued as its own task).
 
 ---
 
