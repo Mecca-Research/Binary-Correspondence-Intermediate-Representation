@@ -41,7 +41,8 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     variadics), M5 ETL, telemetry/calibration (T1–T4: stable signal IDs and explicit metric
     semantics, strict UART frame ABI with sequence evidence,
     derived metrics, and OTLP/Prometheus-text/Redfish serialization adapters), StreamPack ABI
-    (v1 frozen, v2/v3/v4 append-only), the **R1–R25** verifier, lowering (the single-claim
+    (v1 frozen, v2/v3/v4 append-only; the Python encoder's record layouts compiled, byte for byte
+    and refusal for refusal the encoder before them -- SP-ENC), the **R1–R25** verifier, lowering (the single-claim
     elementwise LLVM AOT/JIT/WASM subset, carrying the claim's declared alias facts -- `noalias`,
     alias scopes from the RID partition, TBAA of the element type, `volatile`, a barrier's
     fences -- on every emitter, R12-held on both backends (G9, S5-A) /

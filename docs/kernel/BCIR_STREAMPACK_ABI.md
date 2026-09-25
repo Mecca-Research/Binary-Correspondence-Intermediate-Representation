@@ -7,6 +7,14 @@ v1 wire format. The reference encoder/decoder is
 [`runtime/c/bcir_streampack.h`](../../runtime/c/bcir_streampack.h). All three must
 agree (a parity test pins the round-trip).
 
+The Python encoder builds its records through compiled layouts (SP-ENC, 2026-09-25). A plain
+record -- every field of its exact type, no fence names -- is packed in one `struct` call through
+the precompiled layout of its shape. Any other record is written field by field and refused
+exactly as the encoder before refused it. That encoder, the `_Writer` rail, is kept verbatim as
+`bcir/tests/encode_fixtures.py::encode_reference`; the `streampack.encode.parity` row holds the
+two to the same bytes and the same refusals. No byte of this ABI moved, and the C twin's
+re-encode (`bcir_sp_reencode`) still equals the Python encoding byte for byte.
+
 StreamPack is intentionally not a fat binary. When one portable plan is distributed with
 multiple standard target images, it is the `root_variant` payload of a separately versioned
 [`BCIR Artifact Bundle`](BCIR_ARTIFACT_BUNDLE_ABI.md). BCAB selection does not change any

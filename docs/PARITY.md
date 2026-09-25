@@ -150,6 +150,7 @@ accuracy, contention, verification`.
 | data-DNA telemetry (CT4) | `telemetry.DataDNA` + `kbcir.calibrate` | `bcir.trace.data_dna` |
 | calibration loop (closed) | `kbcir.calibloop` (`close_loop` / `measure_and_close` / `rescore_plan` / `CalibrationCertificate`) + `verify.verify_calibration` | `bcir.kbcir.calibration` (R13: measure → freeze → replan; `cal_gen ≥ 1` ∧ `win ≥ 0`; the measured cost of not recalibrating) |
 | JIT (CT5) | `lower.jit` (lli) | per-target `bcir.target.lower_contract` |
+| StreamPack encoder, compiled (SP-ENC) | `abi.streampack_abi` record layouts (a plain record in one `struct` call per shape, the field path for the rest) ≡ `tests.encode_fixtures.encode_reference` (the `_Writer` rail, verbatim): `streampack.encode.parity` 0, bytes and refusals | `bcir_encode.c` `bcir_sp_reencode` byte-identical to the compiled encoder (`tools/c/check_runtime.sh`) |
 | StreamPack ABI | `abi.streampack_abi` (frozen v1, append-only v2/v3/v4 codec) | `runtime/c/bcir_streampack.h` (spec) + `bcir_runtime.c` (decode; `bcir_sp_for_each_generation`, `bcir_sp_check_generation_vector`) + **`bcir_encode.c`** (`bcir_sp_reencode`, byte-identical re-encode; `test_c_encoder.py`) |
 | WASM (Phase 7) | `lower.wasm` (clang→wasm + node) | per-target `bcir.target.lower_contract` |
 | stackify (Phase 7) | `lower.stackify` (→ wasm/jvm/cil) | foundation for `bcir.target.lower_contract` encoders |

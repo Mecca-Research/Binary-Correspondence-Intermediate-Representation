@@ -1,0 +1,162 @@
+{
+  "command": [
+    "@python",
+    "tools/perf/check_encode.py"
+  ],
+  "faults": [
+    {
+      "label": "Plain segment: a bool claim id is packed (struct takes a bool)",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        and type(claim_id) is int\n",
+      "new": ""
+    },
+    {
+      "label": "Plain segment: a missing fence array reads as an empty one",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        and type(fence_before) in _SEQUENCES\n",
+      "new": ""
+    },
+    {
+      "label": "Plain prefetch: a target with __index__ is packed",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    for x in targets:\n        if type(x) is not int:\n            return None\n",
+      "new": ""
+    },
+    {
+      "label": "Plain block: a bool stride is packed",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "                if type(x) is not int:\n                    break\n",
+      "new": "                if False:\n                    break\n"
+    },
+    {
+      "label": "Contract fast path: a width that is not a power of two passes",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "            and not width & (width - 1)\n",
+      "new": ""
+    },
+    {
+      "label": "Contract fast path: any integer lane passes, a bool among them",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "            type(lane) is Lane\n            and type(width) is int\n",
+      "new": "            isinstance(lane, int)\n            and type(width) is int\n"
+    },
+    {
+      "label": "Contract fast path: any integer buffer count passes",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if type(buffers) is not int or not (buffers == 1 or buffers == 2):\n",
+      "new": "        if type(buffers) is not int:\n"
+    },
+    {
+      "label": "Generation vector: the map maximum is the first entry's",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        vec_map = map_gen if map_gen > vec_map else vec_map\n",
+      "new": "        vec_map = map_gen if vec_map < 0 else vec_map\n"
+    },
+    {
+      "label": "Field path: a string past the u16 length reaches struct",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    n = len(raw)\n    if n > _MAX16:\n        _checked_uint(\"u16\", n, 16)\n    return _U16.pack(n) + raw",
+      "new": "    n = len(raw)\n    return _U16.pack(n) + raw"
+    },
+    {
+      "label": "Field path: a u32 array takes a bool element",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if type(x) is not int or not 0 <= x <= _MAX32:\n            _checked_uint(\"u32\", x, 32)\n",
+      "new": "        if not isinstance(x, int) or not 0 <= x <= _MAX32:\n            _checked_uint(\"u32\", x, 32)\n"
+    },
+    {
+      "label": "Field path: a lane past a byte reaches struct",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    lane = int(seg.lane)\n    if not 0 <= lane <= _MAX8:\n        _checked_uint(\"u8\", lane, 8)\n",
+      "new": "    lane = int(seg.lane)\n"
+    },
+    {
+      "label": "Field path: one fence name is written as none",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    if not n and type(xs) in _SEQUENCES:",
+      "new": "    if n < 2 and type(xs) in _SEQUENCES:"
+    },
+    {
+      "label": "Field path: a trace note's source hash is not checked",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    if type(src_hash) is not int or not 0 <= src_hash <= _MAX64:\n        src_hash = _checked_uint(\"u64\", src_hash, 64)\n",
+      "new": ""
+    },
+    {
+      "label": "Field path: a u32 array that is not a tuple or a list is walked twice",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    if type(xs) not in _SEQUENCES:\n        # Walked once, as `_Writer` walks it: below, an array is walked twice (checked, then\n        # packed), and an iterable may yield its items once, or other than `len()` of them.\n        return _U16.pack(n) + b\"\".join([_U32.pack(_checked_uint(\"u32\", x, 32)) for x in xs])\n",
+      "new": ""
+    },
+    {
+      "label": "Field path: a u64 array that is not a tuple or a list is walked twice",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    if type(xs) not in _SEQUENCES:  # walked once, as `_Writer` walks it (`_u32_array_bytes`)\n        return _U16.pack(n) + b\"\".join([_U64.pack(_checked_uint(\"u64\", x, 64)) for x in xs])\n",
+      "new": ""
+    },
+    {
+      "label": "Field path: a string array's empty len() is believed",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    if not n and type(xs) in _SEQUENCES:",
+      "new": "    if not n:"
+    },
+    {
+      "label": "Field path: a generator where an array belongs is materialized",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    \"\"\"u16 count + u32 elements (`_Writer.u32_array`).\"\"\"\n    n = len(xs)\n",
+      "new": "    \"\"\"u16 count + u32 elements (`_Writer.u32_array`).\"\"\"\n    xs = tuple(xs) if hasattr(xs, \"__next__\") else xs\n    n = len(xs)\n"
+    },
+    {
+      "label": "Version: a segment dispatched off the core does not raise the version",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if seg.dispatch != _DISPATCH_DEFAULT or seg.channel != _CHANNEL_DEFAULT:\n",
+      "new": "        if seg.channel != _CHANNEL_DEFAULT:\n"
+    },
+    {
+      "label": "Plain v3 segment: the layout swaps the phase and the width",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        a, name_b, claim_id, phase_id, int(lane), width, 0, b, opcode_b,\n        r, *reads, w, *writes, c, prefetch_b, 0, 0, _DISPATCH_WIRE",
+      "new": "        a, name_b, claim_id, width, int(lane), phase_id, 0, b, opcode_b,\n        r, *reads, w, *writes, c, prefetch_b, 0, 0, _DISPATCH_WIRE"
+    },
+    {
+      "label": "Plain v2 prefetch: the buffer count is written as 1",
+      "expects": "streampack.encode.parity",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "p, pattern_b, buffers)",
+      "new": "p, pattern_b, 1)"
+    },
+    {
+      "label": "Speed: the plain segment layouts are never taken",
+      "expects": "streampack.encode.calls.over",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        wire = _plain_segment(seg, version)\n",
+      "new": "        wire = None\n"
+    },
+    {
+      "label": "Speed: the plain prefetch layouts are never taken",
+      "expects": "streampack.encode.calls.over",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        wire = _plain_prefetch(pf, version)\n",
+      "new": "        wire = None\n"
+    }
+  ]
+}

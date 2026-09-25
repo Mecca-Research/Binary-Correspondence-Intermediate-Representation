@@ -122,6 +122,13 @@ kernel, a kernel with dangling and self-referential nodes, one with no function)
 The grader holds the emitters to the same rule: a lowering that raises anything but
 `NotImplementedError` for a module it must refuse is counted as having lowered it
 (`alias.refusal.accepted`) -- a traceback is not a refusal.
+SP-ENC instance (2026-09-25): a gate grading two rows let one row's refusal hide the other's
+finding. `check_encode.py` measured the parity row and then the call floor, and the call floor
+refuses to time two encoders that disagree. Under a defect that changed the bytes, the grader
+raised after the parity row had fired, the report named only `grader`, and the fault sweep read
+it as the wrong check. Each row is now graded on its own, and a row that raises is reported
+beside the rows that did not (`tools/perf/check_encode.py`; the fault `Plain v3 segment: the
+layout swaps the phase and the width`).
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -450,6 +457,15 @@ Witnesses: the forgery kinds `fence.narrow`, `volatile.bare`, `c.fence.narrow`,
 (252 forged kernels, 196 of which the earlier reader accepted; the signal fence
 was already refused, and holds the C rail to the same rule), each with a fault in
 `tools/testing/faults/alias.json`.
+SP-ENC instance (2026-09-25): an encoder can widen a grammar too, from the other side. `struct`
+packs `True` as 1 and any object with `__index__` as its index, and the StreamPack contract
+refuses both (`_checked_uint`: an `int`, not a `bool`, in range). A fast path that handed fields
+straight to `struct` would have widened the wire's integer language to `struct`'s. The compiled
+layouts take only exact types -- an `int` subclass the contract accepts goes to the field path
+with everything else -- so `struct` only ever refuses a value (out of range), never accepts one.
+Witnesses: `test_struct_packs_what_the_wire_refuses_so_a_layout_sees_only_exact_types`, the
+`True` and `_Index` forgeries of `encode_fixtures`, and three faults in
+`tools/testing/faults/encode.json` (a bool claim id, an `__index__` target, a bool stride).
 **Port note:** BCIR wire formats get grammar-complete parsers generated
 from the registry, or refusal. No "good enough" readers in C, ever.
 
@@ -988,6 +1004,25 @@ the gather form, the specialist, the ABI header, the Q-fixed kernel) and for R12
 both backends. Witnesses: `alias.noalias.mismatch` over six emitters, and
 `alias.backends.disagree`, which compares clang's IR for the C kernel with the LLVM
 kernel's facts.
+SP-ENC instance (2026-09-25): the compiled encoder decides every record twice -- a plain layout,
+and the field path -- and the first plain layout spelled "no fence names" as `not
+seg.fence_before`, which calls `None` empty where the field path (and the encoder before it)
+refused it: two predicates for one decision, disagreeing where nobody looked. The parity row
+holds both paths to one reference, the encoder before kept verbatim, over every field forged.
+Witnesses: the `None` fence forgeries of `encode_fixtures`, and the fault `Plain segment: a
+missing fence array reads as an empty one`.
+A second SP-ENC instance, the precondition half: the array helpers `_u32_array_bytes` and
+`_u64_array_bytes` walked their argument twice (checked, then packed), which is sound for exactly
+the containers the plain layouts' guard admits -- a tuple or a list. That precondition lived in
+the guard, not in the helpers, and the field path is their second caller: it receives precisely
+what the guard rejects. An iterable that yields its items once packed under `_Writer` and raised
+`struct.error` here; the string-array helper took an empty `len()` to mean no items, where
+`_Writer` writes `len()` as the count and walks the array regardless. Each helper now carries the
+predicate itself (`type(xs) in _SEQUENCES`; anything else is walked once, as `_Writer` walks it).
+Witnesses:
+`test_an_array_is_walked_once_as_the_writer_walks_it`, the generator and `_Once` forgeries of
+`encode_fixtures`, and four faults in `tools/testing/faults/encode.json` that nothing else in
+the corpus catches.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

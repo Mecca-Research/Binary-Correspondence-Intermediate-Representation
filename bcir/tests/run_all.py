@@ -178,6 +178,7 @@ _MODULES = [
     "bcir.tests.test_planner_compact",
     "bcir.tests.test_delta_chain",
     "bcir.tests.test_alias_facts",
+    "bcir.tests.test_streampack_encoder",
     "bcir.tests.test_rcsp",
     "bcir.tests.test_overlap",
     "bcir.tests.test_fusion",
