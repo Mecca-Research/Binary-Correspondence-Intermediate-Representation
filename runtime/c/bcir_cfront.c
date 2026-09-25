@@ -5137,18 +5137,22 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       /* a volatile OBJECT (scalar, array of scalars, struct) keeps its qualifier; a pointer's `volatile` is its
        * pointee's and rides in decl_ty; an array of pointers holds plain pointers */
       const char *vq=(r->is_volatile && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"volatile ":"";
-      if(sx>=0){                                     /* a static: its own type (the oracle's `_cname`), not uint32 */
+      /* a static takes its storage class; a static array or aggregate starts zeroed -- its initializer is 0, as
+       * both rails refuse any other -- while a static scalar's or pointer's value is baked in (the first arm) */
+      const char *sp=sx>=0?"static ":"", *zi=(sx>=0||r->zinit)?" = {0}":"";
+      if(sx>=0 && r->kind!=BCIR_RK_AGGREGATE && !decl_array(r)){   /* a static scalar or pointer: its own type
+                                                                   * (the oracle's `_cname`), not uint32 */
         if(r->kind==BCIR_RK_POINTER) w+=snprintf(o+EO,on-EO,"  static %s%s = %lluu;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm,(unsigned long long)f->statics[sx].init);
         else w+=snprintf(o+EO,on-EO,"  static %s%s %s = %lluu;\n",vq,tty(&type_scratch,f,r->rid),nm,(unsigned long long)f->statics[sx].init); }
       else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
-      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s %s%s;\n",vq,r->agg,nm,r->zinit?" = {0}":"");
-      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  void *%s[%u]%s;\n",nm,r->count,r->zinit?" = {0}":"");  /* an array of `void *` */
-      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s%s %s[%u]%s;\n",vq,r->agg,nm,r->count,r->zinit?" = {0}":"");  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s;\n",sp,vq,r->agg,nm,zi);
+      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  %svoid *%s[%u]%s;\n",sp,nm,r->count,zi);  /* an array of `void *` */
+      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s;\n",sp,vq,r->agg,nm,r->count,zi);  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
       else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->ptr_depth)   /* an ARRAY of pointers `T *a[N]`: each element
         * its pointer type (a pointer to volatile keeps the pointee's qualifier), never the pointer-wide integer */
-        w+=snprintf(o+EO,on-EO,"  %s%s[%u]%s;\n",ptr_spelling(tb,sizeof tb,r->is_volatile,0,r->agg,r->ptee_float,
-                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char),nm,r->count,r->zinit?" = {0}":"");
-      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)) w+=snprintf(o+EO,on-EO,"  %s%s %s[%u]%s;\n",vq,tty(&type_scratch,f,r->rid),nm,r->count,r->zinit?" = {0}":"");  /* a local array */
+        w+=snprintf(o+EO,on-EO,"  %s%s%s[%u]%s;\n",sp,ptr_spelling(tb,sizeof tb,r->is_volatile,0,r->agg,r->ptee_float,
+                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char),nm,r->count,zi);
+      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s;\n",sp,vq,tty(&type_scratch,f,r->rid),nm,r->count,zi);  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
         w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm);
       else w+=snprintf(o+EO,on-EO,"  %s%s %s;\n",vq,tty(&type_scratch,f,r->rid),nm);}}

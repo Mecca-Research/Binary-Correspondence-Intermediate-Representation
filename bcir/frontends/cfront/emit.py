@@ -283,11 +283,17 @@ def emit_function(lf: LoweredFunc) -> str:
             return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
         return f"    {_cname(ct)} {name}{zi};"
 
+    def _static_decl(name, ct, init):
+        # static storage: a once-only constant init. An array or an aggregate keeps its shape and starts
+        # zeroed (the lowering refuses any other initializer for one); a scalar or pointer takes its value
+        if ct.kind == "array":
+            return f"    static {_cname(ct.of)} {name}[{ct.count}] = {{0}};"
+        if ct.kind in ("struct", "union"):
+            return f"    static {_cname(ct)} {name} = {{0}};"
+        return f"    static {_cname(ct)} {name} = {init}u;"
+
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
-    decls += [
-        f"    static {_cname(ct)} {name} = {init}u;"  # static storage: once-only const init
-        for _rid, name, ct, init in lf.statics
-    ]
+    decls += [_static_decl(name, ct, init) for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
     parts = [
         _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"

@@ -1171,6 +1171,22 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Found, not fixed here: the twin aligns a `double _Complex` member to 16 bytes where the ABI and
     the oracle use 8. For a struct that holds one after a smaller member, the rails' digests differ
     (queued as its own task).
+  CF-STATIC (2026-09-25) made a `static` local array or aggregate keep its shape in the emitted C,
+  on both cfront rails.
+  - The defect: both rails lowered a static array or struct as the object it is, its subscripts
+    guarded against its extent, and then declared it as a scalar (`static uint32_t hist = 0u;`,
+    `static struct Q s = 0u;`). The unit was reported clean, but its emitted C did not compile. An
+    initializer on one is refused on both rails, and still is.
+  - RED, measured on the parent (CF-MEMCONV, `46c87786`) with `cfront_staticarr.c` (a scalar,
+    two-dimensional, pointer, one-element and volatile array, a struct and an array of structs): the
+    digests are equal, since the digest carries no declarations, and both rails' emitted C fails to
+    build.
+  - What landed: a static array takes the array declaration and a static aggregate the aggregate one,
+    with `static` and a zero initializer (`emit._static_decl`; the twin's declaration chain, whose
+    local branches now take the storage class). A static scalar or pointer keeps its baked-in value.
+  - Outcomes: `cfront_staticarr.c` is equivalent on both rails with equal digests, guards and
+    storage extents. Three injected defects, one per rail and one per shape on the oracle, are each
+    caught.
 
 ---
 

@@ -1359,6 +1359,11 @@ volatile place is reached through them (`(volatile T *)raw`, a volatile float gl
 `volatile T *q[2]`). Re-sweeping the G10 forms afterwards added 90 that both rails now
 lower. Witnesses: `cfront_globaltype.c`, `cfront_volatile_width.c`, the `vcast`, `vglobal`
 and `aptr` forms.
+CF-STATIC instance (2026-09-25): no unit of the cfront corpus held a `static` local array or
+struct, and both rails emitted every such object as a scalar, so the emitted C did not compile. The
+units were reported clean, and the digest agreed, since it carries no declarations. Only a harness
+that builds and runs the emitted C sees it. The CF-IDX fixture reached one by chance, as a table for
+a callee. Witness: `cfront_staticarr.c`.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

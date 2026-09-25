@@ -80,6 +80,7 @@ _STRAIGHTLINE = [
     "cfront_cast.c",
     "cfront_alignof.c",
     "cfront_static.c",
+    "cfront_staticarr.c",  # a static array or aggregate keeps its shape: scalar, 2-D, of pointers, of structs
     "cfront_global.c",
     "cfront_compound.c",
     "cfront_logic.c",
