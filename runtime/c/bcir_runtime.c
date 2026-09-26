@@ -627,6 +627,9 @@ bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
   return BCIR_OK;
 }
 
+/* v3: the source/spec binding trailer after the generation vector. */
+#define EP_BINDING_SIZE 16
+
 /* Two's complement i64 from the wire word (well-defined for every bit pattern, pre-C23 too). */
 static int64_t ep_i64(uint64_t raw) {
   if (raw < (UINT64_C(1) << 63)) return (int64_t)raw;
@@ -690,6 +693,86 @@ static int ep_lifetime_aliases_before(const uint8_t *data, size_t body_len, size
   return 0;
 }
 
+/* The placement slot of step `cid`: found in the validated step prefix (no heap). */
+static int ep_step_slot(const uint8_t *data, size_t body_len, size_t steps_start,
+                        uint32_t n_steps, uint64_t cid, uint64_t *start, uint64_t *finish) {
+  cur c; c.d = data; c.len = body_len; c.pos = steps_start; c.err = 0;
+  for (uint32_t i = 0; i < n_steps && !c.err; i++) {
+    uint64_t claim = c_u64(&c);
+    uint64_t s, d;
+    c_skip(&c, 4);                      /* phase_id */
+    c_skip_str(&c);                     /* candidate */
+    c_skip(&c, 1 + 4 + 8 + 4);          /* lane, width, cost, stream */
+    s = c_u64(&c);
+    d = c_u64(&c);
+    if (c.err) return 0;
+    if (claim == cid) { *start = s; *finish = s + d; return 1; }
+  }
+  return 0;
+}
+
+/* The bank of resource `rid`'s lifetime, if the plan carries one (no heap). */
+static int ep_lifetime_bank(const uint8_t *data, size_t body_len, size_t lifetimes_start,
+                            uint32_t n_lifetimes, uint16_t version, uint32_t rid,
+                            const char **bank, uint16_t *bank_len) {
+  cur c; c.d = data; c.len = body_len; c.pos = lifetimes_start; c.err = 0;
+  for (uint32_t i = 0; i < n_lifetimes && !c.err; i++) {
+    bcir_ep_lifetime_view v;
+    ep_read_lifetime(&c, version, &v);
+    if (c.err) return 0;
+    if (v.rid == rid) { *bank = v.bank; *bank_len = v.bank_len; return 1; }
+  }
+  return 0;
+}
+
+/* The v3 move laws over one edge (see bcir_execution_plan.h). */
+static bcir_status ep_check_move_v3(const uint8_t *data, size_t body_len, size_t steps_start,
+                                    size_t lifetimes_start, const bcir_ep_header *hdr,
+                                    const bcir_ep_move_view *v) {
+  uint64_t cs = 0, cf = 0, s, f;
+  const int has_claim = (v->flags & BCIR_EP_MOVE_HAS_CLAIM) != 0u;
+  if ((v->flags & ~BCIR_EP_MOVE_FLAGS) != 0u) return BCIR_ERR_PLAN;
+  if (!(v->flags & BCIR_EP_MOVE_HAS_AFTER) && v->after_claim) return BCIR_ERR_PLAN;
+  if (!(v->flags & BCIR_EP_MOVE_HAS_BEFORE) && v->before_claim) return BCIR_ERR_PLAN;
+  if (!(v->flags & BCIR_EP_MOVE_HAS_PRODUCER) && v->producer) return BCIR_ERR_PLAN;
+  if (!has_claim && v->claim) return BCIR_ERR_PLAN;
+  if (((v->flags & BCIR_EP_MOVE_HAS_PRODUCER) != 0u) !=
+      (v->kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED))
+    return BCIR_ERR_PLAN;
+  if ((v->kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED) != (v->bits >= 1u && v->bits <= 31u))
+    return BCIR_ERR_PLAN;
+  if (v->kind != (uint8_t)BCIR_EP_MOVE_COMPRESSED && v->bits) return BCIR_ERR_PLAN;
+  if ((v->cert != 0u) != (v->kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED ||
+                          v->kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED))
+    return BCIR_ERR_PLAN;
+  if (has_claim &&
+      !ep_step_slot(data, body_len, steps_start, hdr->n_steps, v->claim, &cs, &cf))
+    return BCIR_ERR_PLAN;
+  if (v->flags & BCIR_EP_MOVE_HAS_PRODUCER) {
+    if (!ep_step_slot(data, body_len, steps_start, hdr->n_steps, v->producer, &s, &f))
+      return BCIR_ERR_PLAN;
+    if (has_claim && v->producer == v->claim) return BCIR_ERR_PLAN;
+  }
+  if (v->flags & BCIR_EP_MOVE_HAS_AFTER) {
+    if (!ep_step_slot(data, body_len, steps_start, hdr->n_steps, v->after_claim, &s, &f))
+      return BCIR_ERR_PLAN;
+    if (has_claim && f > cs) return BCIR_ERR_PLAN;        /* the source's writer finishes first */
+  }
+  if (v->flags & BCIR_EP_MOVE_HAS_BEFORE) {
+    if (!ep_step_slot(data, body_len, steps_start, hdr->n_steps, v->before_claim, &s, &f))
+      return BCIR_ERR_PLAN;
+    if (has_claim && cf > s) return BCIR_ERR_PLAN;        /* ... and the first reader starts after */
+  }
+  if (v->coherence == (uint8_t)BCIR_EP_COHERENCE_WRITEBACK) {
+    const char *home; uint16_t home_len;
+    if (ep_lifetime_bank(data, body_len, lifetimes_start, hdr->n_lifetimes, hdr->version,
+                         v->rid, &home, &home_len) &&
+        !str_eq(home, home_len, v->dst_bank, v->dst_len))
+      return BCIR_ERR_PLAN;                                /* a writeback lands home */
+  }
+  return BCIR_OK;
+}
+
 typedef struct ep_callbacks {
   bcir_ep_step_fn step; void *step_ctx;
   bcir_ep_lifetime_fn lifetime; void *lifetime_ctx;
@@ -741,9 +824,9 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
         return BCIR_ERR_PROVENANCE;
       if (invoke_step && cb && cb->step && cb->step(&v, cb->step_ctx)) invoke_step = 0;
     }
+    size_t lifetimes_start = c.pos;
     {
       uint32_t prev = 0; int have_prev = 0;
-      size_t lifetimes_start = c.pos;
       for (i = 0; i < hdr.n_lifetimes; i++) {
         bcir_ep_lifetime_view v;
         ep_read_lifetime(&c, hdr.version, &v);
@@ -776,11 +859,32 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
       v.data_gen = c_u32(&c);
       v.after_claim = c_u64(&c);
       v.before_claim = c_u64(&c);
+      v.claim = 0; v.version = 0; v.flags = 0; v.producer = 0; v.bits = 0; v.cert = 0;
+      if (hdr.version >= 3u) {
+        v.claim = c_u64(&c);
+        v.version = c_u32(&c);
+        v.flags = c_u8(&c);
+        v.producer = c_u64(&c);
+        v.bits = c_u8(&c);
+        v.cert = c_u64(&c);
+      }
       if (c.err) return c_status(&c);
       if (v.src_len == 0u || v.dst_len == 0u || v.size == 0u) return BCIR_ERR_PLAN;
       if (v.offset > UINT64_MAX - v.size) return BCIR_ERR_OVERFLOW;
       if (v.kind > (uint8_t)BCIR_EP_MOVE_KIND_MAX) return BCIR_ERR_PLAN;
       if (v.coherence > (uint8_t)BCIR_EP_COHERENCE_MAX) return BCIR_ERR_PLAN;
+      /* a move moves between two banks; a remat replays its producer in place */
+      if (str_eq(v.src_bank, v.src_len, v.dst_bank, v.dst_len) !=
+          (v.kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED))
+        return BCIR_ERR_PLAN;
+      if (v.coherence == (uint8_t)BCIR_EP_COHERENCE_WRITEBACK &&
+          (v.kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED ||
+           v.kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED))
+        return BCIR_ERR_PLAN;
+      if (hdr.version >= 3u) {
+        bcir_status mst = ep_check_move_v3(data, body_len, steps_start, lifetimes_start, &hdr, &v);
+        if (mst != BCIR_OK) return mst;
+      }
       if (invoke_mv && cb && cb->move && cb->move(&v, cb->move_ctx)) invoke_mv = 0;
     }
     {
@@ -793,6 +897,11 @@ static bcir_status ep_walk(const uint8_t *BCIR_RESTRICT data, size_t len,
         prev = g.rid; have_prev = 1;
         if (invoke_gen && cb && cb->gen && cb->gen(&g, cb->gen_ctx)) invoke_gen = 0;
       }
+    }
+    if (hdr.version >= 3u) {            /* the binding trailer: the source and the spec */
+      uint64_t source_hash = c_u64(&c), spec_hash = c_u64(&c);
+      if (c.err) return c_status(&c);
+      if (source_hash == 0u || spec_hash == 0u) return BCIR_ERR_PLAN;
     }
     if (c.pos != body_len) return BCIR_ERR_TRAILING;
   }
@@ -845,8 +954,14 @@ bcir_status bcir_ep_for_each_generation(const uint8_t *BCIR_RESTRICT data, size_
   return ep_walk(data, len, &cb);
 }
 
-/* The vector is the body's tail (verified above to end exactly at the CRC), located by
- * arithmetic after the walk, as the StreamPack's is. */
+/* Where a verified plan's generation vector ends: the body's end (the CRC), before the v3
+ * binding trailer. The one predicate every reader of the vector locates it by. */
+static size_t ep_generations_end(size_t len, const bcir_ep_header *hdr) {
+  return len - 4u - (hdr->version >= 3u ? (size_t)EP_BINDING_SIZE : 0u);
+}
+
+/* The vector is the body's tail (the walk verified the declared records end exactly at the
+ * CRC, or at the v3 trailer), located by arithmetic after the walk, as the StreamPack's is. */
 static bcir_status ep_locate_generations(const uint8_t *BCIR_RESTRICT data, size_t len,
                                          bcir_ep_header *hdr, size_t *start) {
   bcir_status st = bcir_ep_verify(data, len);
@@ -856,10 +971,29 @@ static bcir_status ep_locate_generations(const uint8_t *BCIR_RESTRICT data, size
   *start = 0;
   if (hdr->n_gens == 0u) return BCIR_OK;
   {
-    size_t body_len = len - 4u;
+    size_t body_len = ep_generations_end(len, hdr);
     size_t room = body_len - (size_t)BCIR_EP_HEADER_SIZE;
     if ((size_t)hdr->n_gens > room / BCIR_GENERATION_WIRE_SIZE) return BCIR_ERR_TRUNCATED;
     *start = body_len - (size_t)hdr->n_gens * BCIR_GENERATION_WIRE_SIZE;
+  }
+  return BCIR_OK;
+}
+
+bcir_status bcir_ep_binding(const uint8_t *BCIR_RESTRICT data, size_t len,
+                            uint64_t *BCIR_RESTRICT source_hash,
+                            uint64_t *BCIR_RESTRICT spec_hash) {
+  bcir_ep_header hdr;
+  bcir_status st;
+  if (source_hash) *source_hash = 0;
+  if (spec_hash) *spec_hash = 0;
+  st = bcir_ep_verify(data, len);
+  if (st != BCIR_OK) return st;
+  st = bcir_ep_validate(data, len, &hdr);
+  if (st != BCIR_OK) return st;
+  if (hdr.version >= 3u) {              /* verified: the trailer ends exactly at the CRC */
+    const uint8_t *tail = data + len - 4u - (size_t)EP_BINDING_SIZE;
+    if (source_hash) *source_hash = rd64(tail);
+    if (spec_hash) *spec_hash = rd64(tail + 8);
   }
   return BCIR_OK;
 }
@@ -947,7 +1081,7 @@ bcir_status bcir_ep_check_pack(const uint8_t *BCIR_RESTRICT plan, size_t plan_le
     uint32_t sn = sh.version >= 4 ? sh.n_gens : 0u;
     size_t ps, ss, k;
     if (pn != sn) return BCIR_ERR_STALE;
-    ps = (plan_len - 4u) - (size_t)pn * BCIR_GENERATION_WIRE_SIZE;
+    ps = ep_generations_end(plan_len, &ph) - (size_t)pn * BCIR_GENERATION_WIRE_SIZE;
     ss = (pack_len - 4u) - (size_t)sn * BCIR_GENERATION_WIRE_SIZE;
     for (k = 0; k < (size_t)pn * BCIR_GENERATION_WIRE_SIZE; k++)
       if (plan[ps + k] != pack[ss + k]) return BCIR_ERR_STALE;

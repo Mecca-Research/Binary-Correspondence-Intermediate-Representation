@@ -270,6 +270,43 @@ cp "${tmp}/pack.bin" "${tmp}/corpus_decoder/"
 cp "${tmp}/pack.bin" "${tmp}/corpus_exec/"
 cp "${tmp}/pack.bin" "${tmp}/corpus_encode/"
 rmdir "${tmp}/corpus_binrec"
+# The decoder target also walks the ExecutionPlan twin (and reseals each mutant's CRC), so its
+# corpus starts inside every plan version: v1 (the audit fixture), v2 (schedule-liveness
+# lifetimes) and the v3 plans the movement planner mints (G8: direct, staged, compressed, remat
+# and writeback edges, the binding trailer).
+python3 - "${tmp}/corpus_decoder" <<'PY' || { echo "  FAIL: ExecutionPlan seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.abi import encode_plan
+from bcir.gem.execution_plan import plan_from_realization
+from bcir.kbcir.movement import execution_plan_of
+from bcir.tests import movement_fixtures as mf
+from bcir.tests.plan_fixtures import audit_fixture
+out = Path(sys.argv[1])
+module, target, _theta, result = audit_fixture()
+out.joinpath("plan_v1.bplan").write_bytes(
+    encode_plan(plan_from_realization(module, result, target, "tokens", plan="plan0"))
+)
+# v2: a small program's schedule-liveness plan (seeds stay small: each pass is a full walk)
+from bcir.examples import PROGRAMS
+from bcir.gem.schedule import schedule_plan
+from bcir.kbcir.realize import optimize
+from bcir.kbcir.static_memory import plan_static_memory
+from bcir.performance_audit import _AuditHardware
+sm = PROGRAMS["multi_histogram"]()
+sm_result = optimize(sm, target, _theta)
+placement = schedule_plan(sm, sm_result, target, "tokens")
+static = plan_static_memory(
+    sm, {rid: "ram" for rid in sm.resources}, _AuditHardware(), schedule=placement
+)
+v2 = encode_plan(plan_from_realization(sm, sm_result, target, "tokens", static_plan=static))
+assert v2[4] == 2
+out.joinpath("plan_v2.bplan").write_bytes(v2)
+h, _theta = mf.target_and_theta()
+for name, (_module, _spec, mp) in sorted(mf.planned().items()):
+    blob = encode_plan(execution_plan_of(mp.best, h))
+    out.joinpath(f"plan_v{blob[4]}_{name}.bplan").write_bytes(blob)
+PY
 
 if ! python3 - "${tmp}/corpus_artifact" <<'PY'
 import sys

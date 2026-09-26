@@ -1243,6 +1243,69 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - both rails access an `_Atomic` object through a pointer or a member with a plain byte copy, not
       an atomic operation.
 
+
+  S5-C (2026-09-26) landed G8: data movement as a first-class transformation, chosen jointly with
+  compute, and closed Stage 5.
+  - RED, measured on the parent (`2221db5e`), judged by this slice's fixtures and, where the parent
+    had them, by its own verifier, codec, ASN.1 projection and C twin:
+    - four example programs held nine claims that read RAM and HBM at once, with no move (D-R2);
+    - the plan's movement family, declared by G11, was always empty;
+    - the only transfer-aware rule, `channels.orchestrate`'s site choice with movement priced after
+      it, sat 597,840 ticks off the joint optimum across eleven fixtures (16.2%);
+    - the parent's R9 refused every plan that moves data, the nine legal ones included, because
+      its lifetime cover compared phase ids with topological positions. Its refusals of the thirty
+      law variants were therefore all by R9 or R13, never by the law each breaks;
+    - neither rail read a plan that moves data, and both read a v1 plan whose "move" stays in its
+      bank and one whose writeback is lossy; its ASN.1 decoders read all 18 malformed documents its
+      projection could spell.
+  - What landed (`bcir/kbcir/movement.py`; the reference is
+    `docs/kernel/BCIR_DATA_MOVEMENT.md`):
+    - a module transform M → M′. The optimizer chooses each claim's site and makes every crossing
+      an explicit `mem.move.{far,near}` claim over a per-(resource, bank, episode) copy. Moves go in
+      inbound, outbound and final phases, because the scheduler orders a phase by claim id. M′ is
+      realized, placed, laid out and minted by the machinery every rail already shares;
+    - Semantic Swap as the spec's classes: immutable resources drop and reload; recomputable ones
+      rematerialize only from a `replay_safe` producer, with a replay certificate; mutable ones are
+      written back home at their final version; a lossy codec needs every reader's R17 tolerance and
+      an accuracy certificate; Belady eviction with an anti-thrash law; a deadline;
+    - the joint planner over the transformed module's scheduled makespan: exact within a budget
+      (TMSAO-1), greedy search otherwise (TMSAO-4); the three pre-G8 rules priced as baselines;
+    - MV1–MV11 over (M, spec, M′, plan), trusting none of the planner's bookkeeping, and total;
+    - ExecutionPlan v3, append-only: the move tail and the source/spec binding, on the codec, the C
+      twin, BCAB, the control plane, the ASN.1 projection (version 3), the decoder fuzzer and the
+      decoder campaign.
+  - Outcomes (group `movement`; gate `tools/perf/check_movement.py --require-cc`):
+    - `movement.implicit_cross_tier` 9 → 0 and `movement.excess` 597,840 → 0: every fixture at the
+      optimum of the joint objective. The optimum comes from an independent enumeration, never from
+      the planner's own answer;
+    - `movement.laws.misattributed` 30 → 0 and `movement.laws.accepted` 0 → 0: each variant is
+      refused by exactly its own law;
+    - `movement.plans.unlawful` 9 → 0, `movement.roundtrip.mismatch` 9 → 0,
+      `movement.parity.mismatch` 11 → 0 and `movement.asn1.accepted` 18 → 0 (of 87);
+    - `movement.identity.drift` 0 → 0: a plan that moves nothing is the parent's, byte for byte;
+    - `tools/testing/faults/movement.json` injects 51 defects into the planner, the transform, the
+      producer, every movement law, R9, the codec, the ASN.1 projection and the C twin, and each is
+      caught by its own row.
+  - Found and fixed on the way:
+    - R9's lifetime cover read phase ids as positions (above);
+    - the C plan/pack binding located the generation vector at the body's end, past the v3 trailer,
+      and called a matching v3 pack stale. One locator predicate now serves both readers (L14);
+    - the Python codec applied the v3 laws only when a decoded plan "needed" v3, so it read a v3
+      buffer with an all-zero binding that the C twin refused. The wire version now decides (L11);
+    - the ASN.1 plan decoders applied no wire law. They now hold the native predicate in both
+      directions, and a newer projection version is refused;
+    - `verify_movement` raised on four malformed inputs and accepted a copy re-declared in the
+      MMIO domain (L1);
+    - the decoder fuzzer's plan passes had never reached a plan law: its corpus held only a
+      StreamPack, and every plan is CRC-sealed (L2);
+    - three sweep findings on the gate itself. The law rows depended on the planner's corpus, and
+      the tolerance variant was also caught by the accuracy certificate. And `movement.excess` first
+      measured the planner against its own answer, so a planner that returned the worst candidate
+      read 0 (L1, L11).
+  - Found, not fixed here: `realize` prices a far move like a near one, since the base cost is
+    shared by four rails. `device_manifest`'s docstring claims distance-aware pricing that
+    `realize` does not do.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

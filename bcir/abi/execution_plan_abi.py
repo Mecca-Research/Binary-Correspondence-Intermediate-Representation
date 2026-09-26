@@ -25,7 +25,11 @@ runtime/c/bcir_execution_plan.h):
       moves[n_moves]           rid:u32 src_bank:str dst_bank:str offset:u64 size:u64 route:str
                                kind:u8 coherence:u8 map_gen:u32 data_gen:u32
                                after_claim:u64 before_claim:u64
+                               [v3: claim:u64 version:u32 flags:u8 producer:u64 bits:u8
+                                cert:u64]                     (G8: what executes and carries it)
       generations[n_gens]      rid:u32 map_gen:u32 data_gen:u32           (RIDs strictly ascending)
+      [v3: source_hash:u64 spec_hash:u64]    (the goal graph and the movement spec it was planned
+                                              for; kbcir.movement)
     Trailer:
       crc32:u32  (CRC-32 of every preceding byte)
 
@@ -33,10 +37,11 @@ Strings are u16 length + UTF-8, as in the StreamPack ABI whose conventions this 
 shares (the same writer/reader primitives). `stream` spells the decoupled tail as
 0xFFFFFFFF (the model's `TAIL_STREAM`, -1); `cost` is a two's-complement i64 because a
 plan's step costs are signed. The format is frozen at v1 and evolves append-only: v2 carves
-the liveness byte out of the header pad and appends the tick tail to the lifetime record.
+the liveness byte out of the header pad and appends the tick tail to the lifetime record; v3
+(G8) appends a tail to the move record and a binding trailer after the generation vector.
 The encoder emits the lowest carrying version (a plan under phase liveness whose lifetimes
-carry the phase default is byte-identical v1); a v1 reader rejects v2 and refuses nonzero
-reserved bytes.
+carry the phase default is byte-identical v1, and a plan that moves nothing is never v3); a
+reader rejects a newer version and refuses nonzero reserved bytes.
 
 The wire laws (applied by the encoder AND the decoder, and by the C twin identically):
 mode legal; streams >= 1 and 1 <= knee <= streams; every step's lane legal, width a nonzero
@@ -44,8 +49,10 @@ power of two, stream in range or the tail, duration == max(0, cost), start + dur
 makespan; claim ids unique; lifetimes with strictly ascending RIDs, a power-of-two alignment
 the offset honors, size >= 1, first_phase <= last_phase, last_tick > first_tick, and no two
 lifetimes of one bank live at once at overlapping addresses (the alias law by bytes); moves
-with legal kind/coherence codes and size >= 1; a generation vector with strictly ascending
-RIDs; the declared records
+with legal kind/coherence codes, size >= 1, two different banks unless the edge is a remat
+(which replays in place), and a writeback that is neither compressed nor a remat; the v3 move
+laws (`_validate_moves_v3`); a generation vector with strictly ascending RIDs; the declared
+records
 consume the body exactly (undeclared trailing bytes are refused, never treated as an
 extension point).
 """
@@ -58,6 +65,11 @@ import zlib
 from ..gem.execution_plan import (
     COHERENCE_ACTIONS,
     LIVENESS_DOMAINS,
+    MOVE_FLAGS,
+    MOVE_HAS_AFTER,
+    MOVE_HAS_BEFORE,
+    MOVE_HAS_CLAIM,
+    MOVE_HAS_PRODUCER,
     MOVE_KINDS,
     PLAN_MODES,
     TAIL_STREAM,
@@ -73,7 +85,8 @@ from .streampack_abi import AbiError, _checked_uint, _Reader, _Writer
 PLAN_MAGIC = b"BPLN"
 PLAN_VERSION = 1
 # v2 (G5, S1-D): the liveness byte in the header and the lifetime tick tail -- append-only.
-PLAN_VERSION_MAX = 2
+# v3 (G8, S5-C): the move record tail and the source/spec binding trailer -- append-only.
+PLAN_VERSION_MAX = 3
 PLAN_HEADER_SIZE = 64
 _LIVENESS_OFF = 9
 
@@ -112,10 +125,13 @@ def _checked_str(name: str, value) -> str:
     return value
 
 
-def validate_plan(plan: ExecutionPlan) -> None:
+def validate_plan(plan: ExecutionPlan, version: int | None = None) -> None:
     """The wire laws, shared by `encode_plan` and `decode_plan` (rail symmetry with the C
     twin's `bcir_ep_verify`): a plan that violates them is refused before it is published
-    and refused again when it is read."""
+    and refused again when it is read. `version` is the wire version the plan travels in --
+    the one it was read from, or by default the lowest that carries it: the v3 laws bind
+    every v3 plan, so a v3 wire whose binding and move tails are all zero is refused rather
+    than read as the v2 plan it would re-encode to."""
     if plan.mode not in _MODE_WIRE:
         raise AbiError(f"unknown plan mode {plan.mode!r}; expected one of {PLAN_MODES}")
     if plan.liveness not in _LIVENESS_WIRE:
@@ -231,6 +247,18 @@ def validate_plan(plan: ExecutionPlan) -> None:
         _checked_uint(f"move[{index}].data_gen", mv.data_gen, 32)
         _checked_uint(f"move[{index}].after_claim", mv.after_claim, 64)
         _checked_uint(f"move[{index}].before_claim", mv.before_claim, 64)
+        # a move moves between two banks; a remat replays its producer in place
+        if (mv.src_bank == mv.dst_bank) != (mv.kind == "rematerialized"):
+            raise AbiError(
+                f"move[{index}] ({mv.kind}) from {mv.src_bank!r} to {mv.dst_bank!r}: only a remat "
+                f"stays in its bank"
+            )
+        if mv.coherence == "writeback" and mv.kind in ("compressed", "rematerialized"):
+            raise AbiError(f"move[{index}] writes back through a {mv.kind} edge")
+    _checked_uint("source_hash", plan.source_hash, 64)
+    _checked_uint("spec_hash", plan.spec_hash, 64)
+    if (plan_version(plan) if version is None else version) >= 3:
+        _validate_moves_v3(plan)
     previous = -1
     for index, g in enumerate(plan.generations):
         rid = _checked_uint(f"generation[{index}].rid", g.rid, 32)
@@ -242,6 +270,66 @@ def validate_plan(plan: ExecutionPlan) -> None:
                 f"rid {rid} after {previous})"
             )
         previous = rid
+
+
+def _validate_moves_v3(plan: ExecutionPlan) -> None:
+    """The v3 move laws, from the plan's bytes alone (the C twin's `bcir_ep_verify` applies the
+    same): flags within the defined set, and a reference the flags call absent is zero; a remat
+    names its producer and nothing else does; a compressed edge names its codec's bits (1..31)
+    and nothing else does; exactly the remat and compressed edges carry a certificate; every
+    referenced claim is a step, the executing claim is not its own producer, and the window is
+    ordered by the placement (the source's writer finishes before the move starts, and the move
+    finishes before its first reader starts); a writeback lands in its resource's home -- the
+    bank of its lifetime -- when the plan carries one; and the plan names the goal graph and the
+    spec its movement was planned under."""
+    if not plan.source_hash or not plan.spec_hash:
+        raise AbiError("a v3 plan must name its source module and movement spec (nonzero hashes)")
+    slots = {s.claim_id: (s.start, s.start + s.duration) for s in plan.steps}
+    home = {lt.rid: lt.bank for lt in plan.lifetimes}
+    for index, mv in enumerate(plan.moves):
+        claim = _checked_uint(f"move[{index}].claim", mv.claim, 64)
+        _checked_uint(f"move[{index}].version", mv.version, 32)
+        flags = _checked_uint(f"move[{index}].flags", mv.flags, 8)
+        producer = _checked_uint(f"move[{index}].producer", mv.producer, 64)
+        bits = _checked_uint(f"move[{index}].bits", mv.bits, 8)
+        cert = _checked_uint(f"move[{index}].cert", mv.cert, 64)
+        if flags & ~MOVE_FLAGS:
+            raise AbiError(f"move[{index}] has undefined flags 0x{flags:02x}")
+        for flag, value, name in (
+            (MOVE_HAS_AFTER, mv.after_claim, "after_claim"),
+            (MOVE_HAS_BEFORE, mv.before_claim, "before_claim"),
+            (MOVE_HAS_PRODUCER, producer, "producer"),
+            (MOVE_HAS_CLAIM, claim, "claim"),
+        ):
+            if not flags & flag and value:
+                raise AbiError(f"move[{index}] carries {name} {value}, which its flags call absent")
+            if flags & flag and value not in slots:
+                raise AbiError(f"move[{index}] {name} {value} is not a step of the plan")
+        if bool(flags & MOVE_HAS_PRODUCER) != (mv.kind == "rematerialized"):
+            raise AbiError(f"move[{index}] ({mv.kind}): exactly a remat names a producer")
+        if flags & MOVE_HAS_PRODUCER and flags & MOVE_HAS_CLAIM and producer == claim:
+            raise AbiError(f"move[{index}] remat replays itself")
+        if (mv.kind == "compressed") != (1 <= bits <= 31) or (mv.kind != "compressed" and bits):
+            raise AbiError(
+                f"move[{index}] ({mv.kind}) codec bits {bits}: exactly a compressed edge names 1..31"
+            )
+        if bool(cert) != (mv.kind in ("rematerialized", "compressed")):
+            raise AbiError(
+                f"move[{index}] ({mv.kind}): exactly a remat or compressed edge carries a certificate"
+            )
+        if flags & MOVE_HAS_CLAIM:
+            start, finish = slots[claim]
+            if flags & MOVE_HAS_AFTER and slots[mv.after_claim][1] > start:
+                raise AbiError(
+                    f"move[{index}] starts before its source's writer {mv.after_claim} finishes"
+                )
+            if flags & MOVE_HAS_BEFORE and finish > slots[mv.before_claim][0]:
+                raise AbiError(f"move[{index}] finishes after its reader {mv.before_claim} starts")
+        if mv.coherence == "writeback" and mv.rid in home and mv.dst_bank != home[mv.rid]:
+            raise AbiError(
+                f"move[{index}] writes resource {mv.rid} back to {mv.dst_bank!r}, not its home "
+                f"{home[mv.rid]!r}"
+            )
 
 
 def _write_step(w: _Writer, s: PlanStep) -> None:
@@ -270,14 +358,17 @@ def _write_lifetime(w: _Writer, lt: Lifetime, version: int = PLAN_VERSION) -> No
 
 
 def plan_version(plan: ExecutionPlan) -> int:
-    """The lowest wire version that carries `plan`: v2 when the lifetimes live in the
-    schedule domain or any lifetime's ticks are not the phase default, else the frozen v1."""
+    """The lowest wire version that carries `plan`: v3 when a move carries the v3 tail or the
+    plan binds a movement transform (G8); v2 when the lifetimes live in the schedule domain or
+    any lifetime's ticks are not the phase default; else the frozen v1."""
+    if plan.source_hash or plan.spec_hash or any(mv.v3 for mv in plan.moves):
+        return 3
     if plan.liveness != "phase" or any(not lt.phase_default for lt in plan.lifetimes):
         return 2
     return PLAN_VERSION
 
 
-def _write_move(w: _Writer, mv: MovementEdge) -> None:
+def _write_move(w: _Writer, mv: MovementEdge, version: int = PLAN_VERSION) -> None:
     w.u32(mv.rid)
     w.s(mv.src_bank)
     w.s(mv.dst_bank)
@@ -290,6 +381,13 @@ def _write_move(w: _Writer, mv: MovementEdge) -> None:
     w.u32(mv.data_gen)
     w.u64(mv.after_claim)
     w.u64(mv.before_claim)
+    if version >= 3:
+        w.u64(mv.claim)
+        w.u32(mv.version)
+        w.u8(mv.flags)
+        w.u64(mv.producer)
+        w.u8(mv.bits)
+        w.u64(mv.cert)
 
 
 def _write_generation(w: _Writer, g: Generation) -> None:
@@ -330,15 +428,18 @@ def encode_plan(plan: ExecutionPlan) -> bytes:
     for lt in plan.lifetimes:
         _write_lifetime(w, lt, version)
     for mv in plan.moves:
-        _write_move(w, mv)
+        _write_move(w, mv, version)
     for g in plan.generations:
         _write_generation(w, g)
+    if version >= 3:
+        w.u64(plan.source_hash)
+        w.u64(plan.spec_hash)
     body = header + bytes(w.buf)
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
 def decode_plan(data: bytes) -> ExecutionPlan:
-    """Parse the v1 wire format back into an ExecutionPlan (magic/version/reserved/CRC,
+    """Parse the wire format (v1..v3) back into an ExecutionPlan (magic/version/reserved/CRC,
     bounds, exact consumption, then the wire laws)."""
     if len(data) < PLAN_HEADER_SIZE + 4:
         raise AbiError("buffer too small for an ExecutionPlan")
@@ -439,6 +540,18 @@ def decode_plan(data: bytes) -> ExecutionPlan:
             raise AbiError(f"move[{index}] has unknown kind code {kind_code}")
         if coherence_code not in _COHERENCE_FROM_WIRE:
             raise AbiError(f"move[{index}] has unknown coherence code {coherence_code}")
+        map_gen, data_gen = r.u32(), r.u32()
+        after_claim, before_claim = r.u64(), r.u64()
+        tail = {}
+        if version >= 3:
+            tail = {
+                "claim": r.u64(),
+                "version": r.u32(),
+                "flags": r.u8(),
+                "producer": r.u64(),
+                "bits": r.u8(),
+                "cert": r.u64(),
+            }
         plan.moves.append(
             MovementEdge(
                 rid=rid,
@@ -449,20 +562,23 @@ def decode_plan(data: bytes) -> ExecutionPlan:
                 route=route,
                 kind=_KIND_FROM_WIRE[kind_code],
                 coherence=_COHERENCE_FROM_WIRE[coherence_code],
-                map_gen=r.u32(),
-                data_gen=r.u32(),
-                after_claim=r.u64(),
-                before_claim=r.u64(),
+                map_gen=map_gen,
+                data_gen=data_gen,
+                after_claim=after_claim,
+                before_claim=before_claim,
+                **tail,
             )
         )
     for _ in range(n_gens):
         plan.generations.append(Generation(rid=r.u32(), map_gen=r.u32(), data_gen=r.u32()))
+    if version >= 3:
+        plan.source_hash, plan.spec_hash = r.u64(), r.u64()
     if r.pos != len(data) - 4:
         raise AbiError(
             f"unexpected trailing body bytes: decoded through offset {r.pos}, "
             f"CRC trailer starts at {len(data) - 4}"
         )
-    validate_plan(plan)
+    validate_plan(plan, version)
     return plan
 
 

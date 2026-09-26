@@ -35,7 +35,10 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     since G18 the K_BCIR -> StreamPack chain also advances by declared deltas -- the plan, the
     StreamPack and the verdict re-derived over a delta's dependency cone, each held to the
     chain from scratch, `docs/kernel/BCIR_DELTA_CHAIN.md`),
-    GEM hydration/scheduling/execution,
+    GEM hydration/scheduling/execution, data movement as a first-class transformation (G8:
+    explicit move claims chosen jointly with compute, the exact planner at the optimum within its
+    budget, Semantic Swap and MV1–MV11, ExecutionPlan v3 on both rails,
+    `docs/kernel/BCIR_DATA_MOVEMENT.md`),
     ROP/MAP front-ends + the **cfront C frontend** (full preprocessor, 5-target ABI
     matrix, atomics/fences/inline-asm/port-I/O edges, VLAs, `_BitInt`, `_Complex`,
     variadics; since G10 a points-to analysis over the unit -- escape verdicts, indirect calls

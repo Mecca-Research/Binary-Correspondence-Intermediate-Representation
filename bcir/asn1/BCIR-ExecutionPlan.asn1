@@ -15,7 +15,9 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       lifetimes      [9] SEQUENCE OF Lifetime     DEFAULT {},
       moves         [10] SEQUENCE OF MovementEdge DEFAULT {},
       generations   [11] SEQUENCE OF Generation   DEFAULT {},
-      liveness      [12] Liveness DEFAULT phase }
+      liveness      [12] Liveness DEFAULT phase,
+      sourceHash    [13] INTEGER DEFAULT 0,
+      specHash      [14] INTEGER DEFAULT 0 }
 
   Mode     ::= ENUMERATED { eft(0), tokens(1) }
   Liveness ::= ENUMERATED { phase(0), schedule(1) }
@@ -56,7 +58,13 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       mapGen         [8] INTEGER DEFAULT 0,
       dataGen        [9] INTEGER DEFAULT 0,
       afterClaim    [10] INTEGER DEFAULT 0,
-      beforeClaim   [11] INTEGER DEFAULT 0 }
+      beforeClaim   [11] INTEGER DEFAULT 0,
+      claim         [12] INTEGER DEFAULT 0,
+      version       [13] INTEGER DEFAULT 0,
+      flags         [14] INTEGER DEFAULT 0,
+      producer      [15] INTEGER DEFAULT 0,
+      bits          [16] INTEGER DEFAULT 0,
+      cert          [17] INTEGER DEFAULT 0 }
 
   MoveKind  ::= ENUMERATED { direct(0), peer(1), staged(2), rematerialized(3),
                              compressed(4), evicted(5) }

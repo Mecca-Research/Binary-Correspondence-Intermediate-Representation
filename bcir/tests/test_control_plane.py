@@ -73,7 +73,7 @@ from bcir.verify import verify_control_record
 # Every deferral the scenario corpus makes (each must reach exactly one reported decision).
 DEFERRED_TOTAL = 11
 # Every refusal the corpus makes that must leave the resident state untouched.
-INERT_REFUSALS = 50
+INERT_REFUSALS = 51
 
 
 def _status(data: bytes) -> str:
@@ -284,7 +284,7 @@ def test_every_scenario_decides_as_the_specification_requires():
         plane, outcomes, _lines = cf.run_python(scenario)
         assert cf.conforms(scenario, outcomes, plane), scenario.name
         families[scenario.family] = families.get(scenario.family, 0) + 1
-    assert families == {"transition": 6, "authority": 9, "stale": 12, "midphase": 8, "witness": 17}
+    assert families == {"transition": 6, "authority": 9, "stale": 13, "midphase": 8, "witness": 17}
 
 
 def test_every_refusal_and_every_verdict_has_a_witness():
@@ -353,7 +353,7 @@ def test_a_switch_is_deferred_mid_phase_and_decided_exactly_once_at_a_boundary()
 
 def test_a_stale_generation_is_refused_at_every_boundary():
     stale = cf.stale_scenarios()
-    assert len(stale) == 12
+    assert len(stale) == 13
     for scenario in stale:
         plane, outcomes, _lines = cf.run_python(scenario)
         assert cf.conforms(scenario, outcomes, plane), scenario.name

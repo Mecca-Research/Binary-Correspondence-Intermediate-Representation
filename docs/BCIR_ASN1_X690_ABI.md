@@ -223,6 +223,16 @@ plus the OER and JER realizations over the same type model). The text below is
 compiled module produces byte-identical DER to the hand-built one in
 [`bcir/asn1/execution_plan.py`](../bcir/asn1/execution_plan.py).
 
+Projection version 3 (G8, S5-C) adds the movement edge's `claim`, `version`, `flags`,
+`producer`, `bits` and `cert` and the plan's `sourceHash` and `specHash` -- the native v3 move
+tail and binding ([`BCIR_DATA_MOVEMENT.md`](kernel/BCIR_DATA_MOVEMENT.md)). Each defaults to 0,
+the native v1/v2 meaning, so a plan that moves nothing projects as before apart from the version.
+A reader decodes every version up to its own and refuses a newer one, or a version below 1. Both
+directions hold the plan to the native wire laws (`execution_plan_abi.validate_plan`), so the DER,
+OER and JER decoders admit exactly the plans `decode_plan` and the C twin admit. The parent's
+decoders read the 18 malformed documents its projection could spell (a same-bank "move", a lossy
+or remat writeback); every one of the 87 is refused now (`movement.asn1.accepted`).
+
 ```asn1
 BCIR-ExecutionPlan { iso(1) identified-organization(3) dod(6) internet(1)
                      private(4) enterprise(1) 62596 3 }
@@ -241,7 +251,9 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       lifetimes      [9] SEQUENCE OF Lifetime     DEFAULT {},
       moves         [10] SEQUENCE OF MovementEdge DEFAULT {},
       generations   [11] SEQUENCE OF Generation   DEFAULT {},
-      liveness      [12] Liveness DEFAULT phase }
+      liveness      [12] Liveness DEFAULT phase,
+      sourceHash    [13] INTEGER DEFAULT 0,
+      specHash      [14] INTEGER DEFAULT 0 }
 
   Mode     ::= ENUMERATED { eft(0), tokens(1) }
   Liveness ::= ENUMERATED { phase(0), schedule(1) }
@@ -282,7 +294,13 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       mapGen         [8] INTEGER DEFAULT 0,
       dataGen        [9] INTEGER DEFAULT 0,
       afterClaim    [10] INTEGER DEFAULT 0,
-      beforeClaim   [11] INTEGER DEFAULT 0 }
+      beforeClaim   [11] INTEGER DEFAULT 0,
+      claim         [12] INTEGER DEFAULT 0,
+      version       [13] INTEGER DEFAULT 0,
+      flags         [14] INTEGER DEFAULT 0,
+      producer      [15] INTEGER DEFAULT 0,
+      bits          [16] INTEGER DEFAULT 0,
+      cert          [17] INTEGER DEFAULT 0 }
 
   MoveKind  ::= ENUMERATED { direct(0), peer(1), staged(2), rematerialized(3),
                              compressed(4), evicted(5) }

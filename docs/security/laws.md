@@ -129,6 +129,22 @@ raised after the parity row had fired, the report named only `grader`, and the f
 it as the wrong check. Each row is now graded on its own, and a row that raises is reported
 beside the rows that did not (`tools/perf/check_encode.py`; the fault `Plain v3 segment: the
 layout swaps the phase and the width`).
+S5-C instances (2026-09-26):
+- `verify_movement` judges a transform and a plan the planner did not mint, and before this
+  slice four such inputs raised `KeyError`: an edge naming no source resource, an isolated
+  register's lifetime in an undeclared bank, a spec with no home for a resource, and a remat of a
+  producer reading an unplaced register. A fifth input was worse than a traceback: a copy
+  re-declared in the MMIO domain passed every law, because the exemption meant for device
+  registers also covered copies. The laws now check what the relation is judged over before any
+  lookup, look homes up totally, and hold copies out of isolated domains. Witnesses: the law
+  variants `edge.unknown`, `claim.undeclared`, `copy.isolated`, `spec.homeless`,
+  `lifetime.undeclared`, `lifetime.domain`, `edge.isolated` and `remat.device_input`, each refused
+  by exactly its own law. Faults: `Totality: ...` in `tools/testing/faults/movement.json`.
+- The grader repeated SP-ENC's lesson one level up. The law variants are minted from the planned
+  corpus, so a planner or transform defect that dropped the edge a variant breaks made
+  `law_variants()` raise, and the fault sweep read three such defects as `grader`. The law rows are
+  now their own section: a corpus that lost an edge leaves them unmeasured (a `rows` finding), and
+  the planner rows report the defect.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -389,6 +405,13 @@ row it did not name: a loaded value that stays volatile does not break R3 -- the
 pass makes every claim touching it a device claim -- it re-reads the device at each use,
 which the emit row sees. The expectation was wrong, not the gate; the table names the row
 that owns the law.
+S5-C instance (2026-09-26): the decoder fuzzer had walked the ExecutionPlan twin over every
+input since G11. But its corpus held only a StreamPack and every plan is CRC-sealed, so no mutant
+ever reached a plan law. The target now also runs each input with its CRC repaired, the BCIRQ8
+checksum repair, and its corpus holds v1, v2 and v3 plans. The first v2 seed chosen was 85 KB and
+ran 12 inputs per second; the small one runs 585. A seed's size is the campaign's budget. The
+Python decoder campaign had no plan surface at all; it has one now (`plan`, a v3 movement plan,
+sealed).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -770,6 +793,18 @@ between two rails that share a misreading agrees: parity is a witness for diverg
 a lowering. The volatile gate's behaviour harness runs the same shape (the `aptr`, `aptr1` and
 `aparam` forms) and counted 134 mismatches on the parent. Faults: `Oracle index: a subscript
 chain is flattened ...` and `Twin index: a subscript chain is flattened ...`.
+S5-C instances (2026-09-26):
+- A law variant must break only its own law. The tolerance variant (a reader's tolerance set to
+  0) was also refused by the accuracy certificate, which digests the readers' tolerances, so a
+  fault disabling the tolerance law went NOT CAUGHT. The variant now re-derives its certificate
+  for the intolerant reader. The parent refused every variant, but by R9 or R13, never by the law
+  the variant breaks: its R9 also refused the legal plans. A refusal is a witness only for the law
+  that issued it, so `movement.laws.misattributed` counts the others.
+- On every rail: the v3 wire laws applied on the Python codec only when the decoded plan "needed"
+  v3. So a v3 buffer whose binding and tails were all zero was read by Python as the v2 plan it
+  re-encodes to, while the C twin refused it. The malformed variants now run through both
+  decoders (`plan_fixtures.v3_variants`, `movement.parity.mismatch`), and the wire version decides
+  which laws apply.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1132,6 +1167,16 @@ CF-CALIGN instances (2026-09-25):
   asks two predicates (`_is_decl_start`, `_is_cast`), and so does the twin now (`starts_decl_type`,
   `starts_type_name`), with the same answer for `_Atomic`. Fault: `sizeof(_Atomic T)` not a
   type-name on the twin.
+S5-C instances (2026-09-26):
+- "Where does a plan's generation vector end" was answered at two sites of the C twin: the R11
+  locator and the plan/pack binding. v3 moved the answer, because the binding trailer now follows
+  the vector, and only the locator learned it, so the binding called every matching v3 pack stale.
+  Both now ask `ep_generations_end`. Witness: the v3 C test binds every planned plan to its pack.
+  Fault: `C twin: the generation vector is located at the body's end ...`.
+- The malformed v3 moves and bindings are one list (`plan_fixtures.v3_variants`), read by the
+  Python codec test, the C test, the C gate, the ASN.1 row and the harness row. The ASN.1
+  projection asks the native predicate (`validate_plan`) in both directions instead of
+  re-deriving laws; before, it asked none.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

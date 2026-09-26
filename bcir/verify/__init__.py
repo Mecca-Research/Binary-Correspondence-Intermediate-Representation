@@ -1245,6 +1245,7 @@ def verify_execution_plan(
     result=None,
     pack=None,
     identity=None,
+    movement=None,
 ) -> list[Diagnostic]:
     """ExecutionPlanV1 laws (G11, staged plan S1-C): the plan as bytes realizes THIS module.
 
@@ -1272,7 +1273,11 @@ def verify_execution_plan(
     * R10, with `pack`: the pack is the lowering of this plan -- its `source_plan`, one
       segment per step in step order with the step's claim, phase, lane and width -- and its
       vector is the plan's (a pack whose plan carries an older vector is refused; the C twin
-      `bcir_ep_check_pack` applies the same predicate).
+      `bcir_ep_check_pack` applies the same predicate);
+    * MV1-MV11 (G8), with `movement=(source, spec)`: `module` is a correctness-neutral movement
+      transform of `source` under the `kbcir.movement.MovementSpec` and the plan's edges describe
+      it faithfully (`kbcir.movement.verify_movement`). A plan that moves data -- or binds a
+      source module or a spec -- is judged only against them: without `movement` it is refused.
     """
     diags: list[Diagnostic] = []
     from ..abi.execution_plan_abi import AbiError, validate_plan
@@ -1438,7 +1443,11 @@ def verify_execution_plan(
                         )
                     )
             else:
-                phases = {claim_phase[c.id] for c in claims}
+                # the declared span is in topological phase POSITIONS (`allocator.live_intervals`,
+                # the static memory planner's phase liveness), not phase ids: a module whose ids
+                # are not their positions (a movement transform's inbound phases) is judged by
+                # where its phases run
+                phases = {position[claim_phase[c.id]] for c in claims}
                 if not all(lt.first_phase <= p <= lt.last_phase for p in phases):
                     diags.append(
                         Diagnostic(
@@ -1551,6 +1560,22 @@ def verify_execution_plan(
                     f"stale: the pack's generation vector is not its plan's (RIDs {moved[:8]})",
                 )
             )
+
+    # MV1-MV11 (G8): a plan that moves data is judged against its source and its spec
+    moves_data = bool(plan.moves) or bool(plan.source_hash) or bool(plan.spec_hash)
+    if movement is not None:
+        from ..kbcir.movement import verify_movement
+
+        source, spec = movement
+        diags.extend(verify_movement(source, spec, module, plan))
+    elif moves_data:
+        diags.append(
+            Diagnostic(
+                "MV11",
+                "the plan moves data: it is judged against its source module and movement spec "
+                "(movement=(source, spec)), and none was given",
+            )
+        )
     return diags
 
 

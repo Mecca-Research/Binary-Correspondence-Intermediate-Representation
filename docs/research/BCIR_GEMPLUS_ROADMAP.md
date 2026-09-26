@@ -490,7 +490,7 @@ printed `native microbench (bare-metal)` under WSL and under this session's hype
 A `native.*` row is a silicon certificate only where its evidence says `bare-metal`; on this
 session's host it says `virtualized: hypervisor-flag`, which is the refusal made mechanical.
 
-### G8 — data movement as a first-class transformation
+### G8 — data movement as a first-class transformation — LANDED (S5-C, 2026-09-26)
 
 *Report P2.10. HAM and Semantic Swap.*
 
@@ -505,6 +505,34 @@ producer; mutable state requires generation-checked writeback; approximation req
 accuracy certificate; deadlines and backpressure prevent "optimal" plans that thrash storage.
 
 Gate: new metrics, plus **no regression** on every row above.
+
+| Gate | Before | Outcome (harness group `movement`, counted by `bcir/tests/movement_fixtures.py`) |
+|---|---|---|
+| `exact` Every tier crossing is an explicit move | the example programs read RAM and HBM in one claim | **met** — `movement.implicit_cross_tier` 9 → **0**: each crossing is a `mem.move.{far,near}` claim over a per-(resource, bank, episode) copy, one plan edge each |
+| `exact` Movement and compute chosen jointly | `channels.orchestrate`'s site choice, movement priced after | **met at the optimum** — `movement.excess` 597,840 → **0** ticks over eleven fixtures, every one planned by exhaustive enumeration of its site/remat/compression space (TMSAO-1), re-derived by an independent brute force |
+| `exact` Semantic Swap correctness-neutral | no law; the parent's R9 refused every plan that moves data, legal or not | **met** — MV1–MV11 over (M, spec, M′, plan): 30 variants, each refused by exactly its own law (`movement.laws.misattributed` 30 → **0**, `movement.laws.accepted` **0**); every planned plan lawful (`movement.plans.unlawful` 9 → **0**) |
+| `exact` The plan carries what moves | no edge; the parent's codec had no move tail | **met** — ExecutionPlan v3 (move tail + source/spec binding, append-only): `movement.roundtrip.mismatch` 9 → **0**; both rails verdict for verdict, `movement.parity.mismatch` 11 → **0**; the ASN.1 projection held to the wire laws, `movement.asn1.accepted` 18 → **0** |
+| `exact` No regression | — | **held** — a plan that moves nothing is the parent's byte for byte (`movement.identity.drift` **0**); every existing row unchanged |
+
+What landed (S5-C; the reference is [`BCIR_DATA_MOVEMENT.md`](../kernel/BCIR_DATA_MOVEMENT.md)):
+
+- **A module transform, not a second scheduler.** The optimizer chooses each claim's site and
+  transforms M into M′ -- explicit move claims over copy resources, in inbound/outbound/final
+  phases because the scheduler orders a phase by claim id -- and M′ is realized, placed, laid out
+  and minted by the machinery every rail already shares.
+- **Semantic Swap as classes.** Immutable resources drop and reload; recomputable ones
+  rematerialize only from a `replay_safe` producer, with a replay certificate; mutable ones are
+  written back home at their final version; a lossy codec needs every reader's R17 tolerance and
+  an accuracy certificate; capacity is Belady eviction with an anti-thrash law; a deadline bounds
+  the makespan.
+- **Laws that trust nothing the planner kept.** MV1–MV11 derive the copy relation positionally,
+  the banks from the plan's lifetimes and the versions by replay, and are total: a malformed
+  transform is answered by its law, never by a traceback.
+- **Found on the way:** the parent's R9 lifetime cover compared phase ids with positions (fixed);
+  the C plan/pack binding located the generation vector at the body's end (fixed with one locator
+  predicate); a v3 wire with an all-zero binding was refused by the C twin and read by Python
+  (the wire version now decides); the ASN.1 plan decoders applied no wire law (fixed). Open, and
+  recorded: `realize` prices a far move like a near one (a four-rail change).
 
 ### G9 — export declared alias facts to LLVM — LANDED (S5-A, 2026-09-25)
 
@@ -638,7 +666,7 @@ the executable; the plan is what the pack was derived from and what every reader
 What landed: `gem.execution_plan` is the abstract value — one `PlanStep` per claim carrying the
 realization (candidate, lane, width, the plan's own cost) and the canonical placement (stream,
 start, duration) G1 made canonical, the static-memory planner's `Lifetime` rows, the G8
-`MovementEdge` family (declared, carried and verified now; empty until G8 produces edges) and
+`MovementEdge` family (declared, carried and verified at G11; G8 fills it since S5-C, as v3) and
 the registry's generation vector; `plan_from_realization` mints it bound to the module (the
 S1-B identity API) and the target, `schedule_of` / `realization_of` are the readers.
 `abi.execution_plan_abi` is the frozen v1 wire format (`docs/kernel/BCIR_EXECUTION_PLAN_ABI.md`:
@@ -1174,7 +1202,7 @@ Stage 1  one canonical plan and its ABI    G1 → G3 → G11 → G5             
 Stage 2  best-fit solver portfolio         G2 → G4 (first TMSAO-2) → G12 → G6 → G13   ALL LANDED: G2 (S2-A); G4 (S2-B); G12 (S2-C); G6 (S2-D); G13 (S2-E)
 Stage 3  IPC at every level                G14 → G15 → G16                  ALL LANDED: G14 (S3-A); G15 (S3-B); G16 (S3-C) — exit gate met
 Stage 4  performance program               G17, G18                         ALL LANDED: G17 (S4-A); G18 (S4-B) — exit gate met; the encoder compiled (SP-ENC)
-Stage 5  movement, alias, escape           G8, G9 remainder, G10        G9 LANDED (S5-A); G10 LANDED (S5-B); G8 open
+Stage 5  movement, alias, escape           G8, G9 remainder, G10        ALL LANDED: G9 (S5-A); G10 (S5-B); G8 (S5-C)
 Stage 6  physical evidence                 two targets, PMU/energy — hardware-gated
 ```
 

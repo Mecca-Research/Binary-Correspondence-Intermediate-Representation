@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Bounded malformed-input campaign over StreamPack, BCAB, BCIRQ8, ControlRecordV1 and C decoders.
+"""Bounded malformed-input campaign over StreamPack, BCAB, BCIRQ8, ControlRecordV1,
+ExecutionPlan and C decoders.
 
 Python surfaces always run. The C sanitizer/libFuzzer rail is invoked when clang
 and compiler-rt are available; otherwise it is recorded as UNAVAILABLE/SKIPPED.
@@ -38,6 +39,7 @@ REQUIRED_PYTHON = (
     "manifest",
     "planner",
     "realization",
+    "plan",
 )
 DECODE_TIMEOUT = 10.0
 # Each surface's DELIBERATE rejection type, and only that. A blanket tuple
@@ -64,6 +66,8 @@ _DECLARED_REJECTIONS = {
     # the native planner's input and realization records (G17) with PlannerAbiError, likewise
     "planner": ("bcir.abi.planner_abi", "PlannerAbiError"),
     "realization": ("bcir.abi.planner_abi", "PlannerAbiError"),
+    # an ExecutionPlan (G11; v3 moves and binding, G8) with the codec's AbiError, likewise
+    "plan": ("bcir.abi.streampack_abi", "AbiError"),
 }
 
 
@@ -338,6 +342,31 @@ def _decode_realization_sealed(data: bytes) -> Any:
     return decode_realization(data)
 
 
+def _plan_seed() -> bytes:
+    """A v3 ExecutionPlan (G8): the movement planner's plan of the `remat` fixture -- steps,
+    lifetimes, direct and remat edges naming their claims, producer and certificate, the
+    generation vector and the source/spec binding: every wire law, the v3 move laws included,
+    has a field to break."""
+    from bcir.abi.execution_plan_abi import encode_plan
+    from bcir.kbcir.movement import execution_plan_of
+    from bcir.tests import movement_fixtures as mf
+
+    target, _theta = mf.target_and_theta()
+    _module, _spec, mp = mf.planned("remat")["remat"]
+    return encode_plan(execution_plan_of(mp.best, target))
+
+
+def _decode_plan_sealed(data: bytes) -> Any:
+    """Decode an ExecutionPlan with its CRC repaired first -- the manifest surface's lesson, for
+    the same reason; the CRC law itself is pinned by the malformed corpus
+    (bcir/tests/plan_fixtures.py)."""
+    from bcir.abi.execution_plan_abi import decode_plan
+
+    if len(data) >= 4:
+        data = data[:-4] + struct.pack("<I", zlib.crc32(data[:-4]) & 0xFFFFFFFF)
+    return decode_plan(data)
+
+
 def _decode_manifest_sealed(data: bytes) -> Any:
     """Decode a shard manifest with its CRC repaired first -- the control surface's lesson: a
     random mutation dies at the CRC long before a range or length law, so every mutant is sealed
@@ -461,6 +490,12 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
         results.append(
             _probe("realization", _decode_realization_sealed, realization, rng, mutations)
         )
+    try:
+        plan = _plan_seed()
+    except Exception as exc:  # noqa: BLE001
+        results.append(_seed_failure("plan", exc))
+    else:
+        results.append(_probe("plan", _decode_plan_sealed, plan, rng, mutations))
     return results
 
 

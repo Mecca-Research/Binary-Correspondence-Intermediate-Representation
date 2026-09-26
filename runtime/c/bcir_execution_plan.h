@@ -20,15 +20,24 @@
  *     moves[n_moves]           := rid:u32 src_bank:str dst_bank:str offset:u64 size:u64
  *                                 route:str kind:u8 coherence:u8 map_gen:u32 data_gen:u32
  *                                 after_claim:u64 before_claim:u64
+ *                                 [v3: claim:u64 version:u32 flags:u8 producer:u64 bits:u8
+ *                                  cert:u64]   (G8: the claim that executes the edge, the version
+ *                                  it lands, which claim references are present, the producer
+ *                                  a remat replays, a compressed edge's codec bits, the
+ *                                  remat / accuracy certificate)
  *     generations[n_gens]      := rid:u32 map_gen:u32 data_gen:u32    (RIDs strictly ascending;
  *                                 bcir_generation_view, the StreamPack v4 record)
+ *     [v3: source_hash:u64 spec_hash:u64]   (the goal graph the movement transform started from
+ *                                 and the movement spec it was planned under; both nonzero)
  *   Trailer: u32 CRC-32 of every preceding byte.
  *
  * The format is frozen at v1; fields are append-only across versions and a v1 reader
  * rejects a newer version and refuses nonzero reserved bytes. v2 (G5, S1-D) carves the
  * liveness byte out of the header pad (offset 9: 0 = phase positions, 1 = the placement's
- * ticks) and appends the tick tail to the lifetime record; encoders emit the lowest carrying
- * version, so a phase-liveness plan with default ticks is byte-identical v1.
+ * ticks) and appends the tick tail to the lifetime record; v3 (G8, S5-C) appends the move
+ * record tail and the binding trailer after the generation vector. Encoders emit the lowest
+ * carrying version, so a phase-liveness plan with default ticks is byte-identical v1 and a
+ * plan that moves nothing is never v3.
  *
  * The wire laws (bcir_ep_verify; the Python codec applies the same predicate): mode legal;
  * streams >= 1 and 1 <= knee <= streams; per step a legal lane, a nonzero power-of-two
@@ -36,9 +45,19 @@
  * start + duration <= makespan; claim ids unique; lifetimes with ascending RIDs, a
  * power-of-two alignment the offset honors, size >= 1, first_phase <= last_phase,
  * last_tick > first_tick, and no two lifetimes of one bank live at once at overlapping
- * addresses (the alias law by bytes, BCIR_ERR_PLAN); moves with legal kind/coherence codes
- * and size >= 1; an ascending generation vector; the declared records consume the body
- * exactly (BCIR_ERR_TRAILING otherwise).
+ * addresses (the alias law by bytes, BCIR_ERR_PLAN); moves with legal kind/coherence codes,
+ * size >= 1, two different banks unless the edge is a remat, and a writeback that is neither
+ * compressed nor a remat; on v3 the move laws below (BCIR_EP_MOVE_HAS_*); an ascending
+ * generation vector; the declared records consume the body exactly (BCIR_ERR_TRAILING).
+ *
+ * The v3 move laws (bytes alone; bcir/abi/execution_plan_abi.py::_validate_moves_v3): flags
+ * within BCIR_EP_MOVE_FLAGS and a reference the flags call absent is zero; exactly a remat
+ * names a producer, and it is not the edge's own claim; exactly a compressed edge names codec
+ * bits 1..31; exactly the remat and compressed edges carry a certificate; every referenced
+ * claim is a step, and the window is ordered by the placement (the source's writer finishes
+ * before the edge's claim starts, which finishes before its first reader starts); a writeback
+ * lands in the bank of its resource's lifetime when the plan carries one; the binding trailer
+ * names both hashes.
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_EXECUTION_PLAN_H
 #define BCIR_EXECUTION_PLAN_H
@@ -51,7 +70,8 @@ extern "C" {
 
 #define BCIR_EP_MAGIC       "BPLN"   /* bytes 0..3 of the header */
 #define BCIR_EP_VERSION     1
-#define BCIR_EP_VERSION_MAX 2   /* v2: the liveness byte + the lifetime tick tail (G5) */
+#define BCIR_EP_VERSION_MAX 3   /* v2: liveness + lifetime ticks (G5); v3: the move tail +
+                                   the source/spec binding trailer (G8) */
 #define BCIR_EP_HEADER_SIZE 64
 
 /* The decoupled GGG/random tail's stream on the wire (the scheduler's TAIL_STREAM, -1). */
@@ -82,6 +102,14 @@ typedef enum bcir_ep_coherence {
   BCIR_EP_COHERENCE_INVALIDATE = 2, BCIR_EP_COHERENCE_WRITEBACK = 3
 } bcir_ep_coherence;
 #define BCIR_EP_COHERENCE_MAX 3
+
+/* v3 move flags: which optional claim references an edge carries (a v1/v2 edge spelled
+ * "unconstrained" as claim id 0, which is also a legal claim; v3 says it). */
+#define BCIR_EP_MOVE_HAS_AFTER    1u
+#define BCIR_EP_MOVE_HAS_BEFORE   2u
+#define BCIR_EP_MOVE_HAS_PRODUCER 4u
+#define BCIR_EP_MOVE_HAS_CLAIM    8u
+#define BCIR_EP_MOVE_FLAGS        15u
 
 /* The 64-byte header IS the wire layout: the three u64 fields sit at 40/48/56. */
 typedef struct bcir_ep_header {
@@ -142,8 +170,15 @@ typedef struct bcir_ep_move_view {
   uint8_t  coherence;       /* bcir_ep_coherence */
   uint32_t map_gen;
   uint32_t data_gen;
-  uint64_t after_claim;     /* the overlap window: after this claim finishes (0 = none) */
-  uint64_t before_claim;    /* ... and before this claim starts (0 = none) */
+  uint64_t after_claim;     /* the overlap window: after this claim finishes (v1/v2: 0 = none) */
+  uint64_t before_claim;    /* ... and before this claim starts (v1/v2: 0 = none) */
+  /* v3 (G8); zero on a v1/v2 edge */
+  uint64_t claim;           /* the claim that executes the edge (BCIR_EP_MOVE_HAS_CLAIM) */
+  uint32_t version;         /* the logical version it lands (0 = before the module ran) */
+  uint8_t  flags;           /* BCIR_EP_MOVE_HAS_* */
+  uint64_t producer;        /* a remat's replayed producer (BCIR_EP_MOVE_HAS_PRODUCER) */
+  uint8_t  bits;            /* a compressed edge's codec bits per element */
+  uint64_t cert;            /* the remat / accuracy certificate digest (0 = none) */
 } bcir_ep_move_view;
 
 typedef int (*bcir_ep_step_fn)(const bcir_ep_step_view *step, void *ctx);
@@ -178,6 +213,12 @@ BCIR_NODISCARD bcir_status bcir_ep_for_each_move(const uint8_t *BCIR_RESTRICT da
                                                  bcir_ep_move_fn fn, void *ctx);
 BCIR_NODISCARD bcir_status bcir_ep_for_each_generation(const uint8_t *BCIR_RESTRICT data,
                                                        size_t len, bcir_gen_fn fn, void *ctx);
+
+/* The v3 binding trailer (verifies first): the goal graph the movement transform started
+ * from and the movement spec it was planned under; both 0 on a v1/v2 plan. */
+BCIR_NODISCARD bcir_status bcir_ep_binding(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                           uint64_t *BCIR_RESTRICT source_hash,
+                                           uint64_t *BCIR_RESTRICT spec_hash);
 
 /* R11 for the plan: `live[0..n_live)` is the caller's live registry (any order). The plan
  * is STALE (BCIR_ERR_STALE) unless every vector entry names a live resource with exactly
