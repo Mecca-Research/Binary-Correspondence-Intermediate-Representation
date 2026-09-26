@@ -1301,7 +1301,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - three sweep findings on the gate itself. The law rows depended on the planner's corpus, and
       the tolerance variant was also caught by the accuracy certificate. And `movement.excess` first
       measured the planner against its own answer, so a planner that returned the worst candidate
-      read 0 (L1, L11).
+      read 0 (L1, L11);
+    - CI found what the pre-PR mapping missed: `training/` was untouched, but a training chapter's
+      `axes` table counts the non-test `bcir/` files that pass a cost axis by keyword, and
+      `movement.py` prices fabric and sync. The table was regenerated, and the plan baseline
+      bound to the corpus fingerprint re-recorded, with all 29 plans unchanged. S4-A met the same
+      trap, so CONTRIBUTING now names the trigger.
   - Found, not fixed here: `realize` prices a far move like a near one, since the base cost is
     shared by four rails. `device_manifest`'s docstring claims distance-aware pricing that
     `realize` does not do.

@@ -216,6 +216,7 @@ pending required check is not ready for handoff.
 | MLIR bridge examples | `./training/llvm/tools/verify-mlir-examples.sh` |
 | CSV binary-analysis fixtures | `./training/llvm/tools/verify-csv-schema.sh` |
 | BCIR mapping examples or fragments | `./training/llvm/tools/verify-bcir-mapping.sh` |
+| Anything the `training/llvm/22-bcir-approach/` tables are regenerated from, even with `training/` untouched: a K_BCIR score or lane choice, a policy weight, the IRDL projection, or a new non-test `bcir/` module that passes a cost axis by keyword (the `axes` table counts those files) | `python3 training/llvm/tools/verify-bcir-approach.py`; on drift, `--update` and check the chapter's prose still holds. A regenerated chapter moves the corpus fingerprint the plan baseline is bound to: rebuild `build/training/chunks` and `build/training/catalog` (`build_chunks.py`, `catalog.py`), `python3 training/tools/plan_baseline.py --record` (only its `corpus` field may move; `--compare` then reports every plan unchanged), and `python3 training/tools/verify_database.py --require-native` |
 | Portable backend smoke coverage | `./training/llvm/tools/smoke-llc.sh` |
 | Interpreter smoke coverage | `./training/llvm/tools/smoke-lli.sh` |
 | BOLT fixture changes | `./training/llvm/tools/smoke-bolt.sh` |
