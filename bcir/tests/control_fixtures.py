@@ -735,13 +735,54 @@ def stale_record_scenarios() -> list[Scenario]:
     ]
 
 
+def _movement_plans() -> tuple[tuple, bytes, bytes]:
+    """G8: the registry of the module a movement plan realizes (M', its copies included), that
+    v3 plan -- whose generation vector sits before the binding trailer -- and the same plan
+    minted after one copy's map generation moved."""
+    from ..abi import encode_plan
+    from ..gem.streampack import generation_vector, hydrate
+    from ..kbcir.movement import execution_plan_of
+    from . import movement_fixtures as mf
+
+    target, _theta = mf.target_and_theta()
+    _module, _spec, mp = mf.planned("writeback")["writeback"]
+    module = mp.best.transform.module
+    pack = hydrate(module, mp.best.result)
+    registry = (
+        pack.map_gen,
+        pack.data_gen,
+        pack.topo_gen,
+        registry_digest(generation_vector(module)),
+    )
+    plan = execution_plan_of(mp.best, target)
+    copy = max(module.resources)
+    moved = replace(
+        plan,
+        generations=[
+            replace(g, map_gen=g.map_gen + 1) if g.rid == copy else g for g in plan.generations
+        ],
+    )
+    return registry, encode_plan(plan), encode_plan(moved)
+
+
 def stale_artifact_scenarios() -> list[Scenario]:
     """The data plane: after the bootstrap installs the current registry, every artifact from
-    an older registry state is refused by bytes; the current pack and plan are admitted."""
+    an older registry state is refused by bytes; the current pack and plan are admitted -- a
+    plan that moves data (v3) as well."""
     art = artifacts()
     boot = _bootstrap()
     mid = _bootstrap(registry=art.old_registry)  # maxima equal to the undermax artifacts'
+    moving_registry, moving_plan, moving_moved = _movement_plans()
     return [
+        Scenario(
+            "stale/plan-v3",
+            "stale",
+            (
+                *_bootstrap(registry=moving_registry),
+                _admit_plan(moving_plan),
+                _admit_plan(moving_moved, "refused", "stale"),
+            ),
+        ),
         Scenario(
             "stale/pack-old",
             "stale",

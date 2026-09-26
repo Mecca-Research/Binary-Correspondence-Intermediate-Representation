@@ -427,6 +427,39 @@ def test_the_escape_rows_are_exact_and_the_compiler_rows_measured_or_not():
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
 
 
+def test_the_movement_rows_are_exact_and_the_compiler_row_measured_or_not():
+    """G8 / S5-C: data movement as a first-class transformation. Every row but the parity row
+    needs only the interpreter, so it is measured; the parity row needs a C compiler (the plan
+    harness) and is NOT-MEASURED without one -- never zero by default. Every measured row is at
+    its bound of 0: the rows the parent failed (the implicit cross-tier reads, the excess of its
+    transfer-aware rule over the joint optimum, the variants its R9 refused for the wrong reason,
+    the plans it refused or could not carry, the documents its ASN.1 decoders read) fell from the
+    parent's totals, and the guardrails the parent held (no variant accepted -- vacuously, as it
+    refused every plan that moves data -- and no drift in a plan that moves nothing) still hold.
+    The gate (`tools/perf/check_movement.py`) holds every row at the bounds declared here."""
+    from bcir.tests import movement_fixtures as mf
+    from tools.perf.check_movement import BOUNDS
+    from tools.perf.gemplus_baseline import METRICS, measure_movement
+
+    declared = [m for m in METRICS if m.group == "movement"]
+    assert [m.key for m in declared] == list(mf.ROWS)
+    assert all(m.kind == "exact" and m.slice_owner == "G8" for m in declared)
+    assert all(m.lower_is_better and m.bound == 0 for m in declared)
+    assert BOUNDS == {m.key: m.bound for m in declared}
+    measured = measure_movement()
+    assert set(mf.ROWS) - set(mf.CC_ROWS) <= set(measured) <= set(mf.ROWS), measured
+    assert all(value == 0 for value in measured.values()), measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for metric in declared:
+        if metric.key not in measured:
+            expected = "NOT-MEASURED"
+        elif metric.baseline == 0:
+            expected = "NO-CHANGE"
+        else:
+            expected = "GAIN"
+        assert rows[metric.key]["verdict"] == expected, rows[metric.key]
+
+
 def test_the_volatile_rows_are_exact_and_measured_or_not():
     """CF-VOL: `volatile` through both cfront rails, judged by Clang. Every row needs Clang and the
     checkout's runtime/c (the twin is built from it), so without them every row is NOT-MEASURED --

@@ -1,0 +1,366 @@
+{
+  "command": [
+    "@python",
+    "tools/perf/check_movement.py",
+    "--require-cc"
+  ],
+  "faults": [
+    {
+      "label": "Planner: the exact enumeration keeps the worst candidate, not the best",
+      "expects": "movement.excess",
+      "path": "bcir/kbcir/movement.py",
+      "old": "if p is not None and (best is None or p.key < best.key):",
+      "new": "if p is not None and (best is None or p.key > best.key):"
+    },
+    {
+      "label": "Transform: a claim reads its operands where they live, not at its site (an implicit cross-tier read)",
+      "expects": "movement.implicit_cross_tier",
+      "path": "bcir/kbcir/movement.py",
+      "old": "rd = [r if _isolated(self.m, r) else self._need(index, pid, c, r, site) for r in c.rd]",
+      "new": "rd = [r for r in c.rd]"
+    },
+    {
+      "label": "Transform: a staged route is described as a direct edge",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/kbcir/movement.py",
+      "old": "    if len(route) > 2:\n        return \"staged\"",
+      "new": "    if len(route) > 2:\n        return \"direct\""
+    },
+    {
+      "label": "Transform: a move between two domains is spelled near",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/kbcir/movement.py",
+      "old": "                op=f\"{MOVE_PREFIX}{'far' if far else 'near'}:{a}->{b}\",",
+      "new": "                op=f\"{MOVE_PREFIX}{'near' if far else 'far'}:{a}->{b}\","
+    },
+    {
+      "label": "Transform: mutable state updated away from home is never written back",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            self._writeback(self._final(), rid)",
+      "new": "            pass"
+    },
+    {
+      "label": "Transform: a remat is certified for its home bank, not the bank it replays in",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/kbcir/movement.py",
+      "old": "                cert = replay_certificate(self.m, self.versions, producer, rid, site)",
+      "new": "                cert = replay_certificate(self.m, self.versions, producer, rid, self.homes.get(rid, site))"
+    },
+    {
+      "label": "Transform: a compressed edge's accuracy certificate is not recomputed from its actual readers",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/kbcir/movement.py",
+      "old": "                cert = accuracy_certificate(self.m, mv.rid, mv.bits, readers.get(mv.dst_copy, ()))",
+      "new": "                cert = accuracy_certificate(self.m, mv.rid, mv.bits, ())"
+    },
+    {
+      "label": "Producer: a plan that moves nothing is minted as v3 with a binding",
+      "expects": "movement.identity.drift",
+      "path": "bcir/kbcir/movement.py",
+      "old": "    if not pm.transform.moves and pm.transform.module == pm.transform.source:",
+      "new": "    if False:"
+    },
+    {
+      "label": "Producer: the plan binds a spec other than the one it was planned under",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/kbcir/movement.py",
+      "old": "    ep.spec_hash = pm.transform.spec.digest()",
+      "new": "    ep.spec_hash = pm.transform.spec.digest() ^ 1"
+    },
+    {
+      "label": "MV11: the source binding is not checked",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "        if plan.source_hash != source_digest(source):",
+      "new": "        if False:"
+    },
+    {
+      "label": "MV1: a copy need not have the shape of its logical resource",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            fail(\"MV1\", f\"copy {rid} does not have the shape of resource {lrid}\")",
+      "new": "            pass"
+    },
+    {
+      "label": "MV2: an original claim may change beyond its operands",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "                fail(\"MV2\", f\"claim {cid} is not the source claim with its operands remapped\")",
+      "new": "                pass"
+    },
+    {
+      "label": "MV3: a move's spelling is not checked",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            fail(\"MV3\", f\"move {cid} is spelled {c.op!r}\")",
+      "new": "            pass"
+    },
+    {
+      "label": "MV4: two unordered accesses of one resource do not race",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "    for msg in races(module):\n        fail(\"MV4\", msg)",
+      "new": "    for msg in races(module)[:0]:\n        fail(\"MV4\", msg)"
+    },
+    {
+      "label": "MV5: a mutable resource's home need not end at its final version",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "        if spec.class_of(rid) == \"mutable\" and final and held.get(rid) != final:",
+      "new": "        if False:"
+    },
+    {
+      "label": "MV6: a claim writing an immutable resource is refused under the wrong law",
+      "expects": "movement.laws.misattributed",
+      "path": "bcir/kbcir/movement.py",
+      "old": "                    fail(\"MV6\", f\"claim {o.id} writes immutable resource {a}\")",
+      "new": "                    fail(\"MV2\", f\"claim {o.id} writes immutable resource {a}\")"
+    },
+    {
+      "label": "MV7: a remat's certificate is not re-derived",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            if mv.cert != replay_certificate(source, versions, p.id, mv.rid, mv.dst_bank):",
+      "new": "            if False:"
+    },
+    {
+      "label": "MV7: a producer need not be replay-safe to be rematerialized",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            why = replay_safe(source, p)",
+      "new": "            why = \"\""
+    },
+    {
+      "label": "MV8: a compressed edge's accuracy certificate is not re-derived",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "        if mv.cert != accuracy_certificate(source, mv.rid, mv.bits, rows):",
+      "new": "        if False:"
+    },
+    {
+      "label": "MV8: a reader need not tolerate the codec it is fed through",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            if not codec_admits(o, mv.bits):",
+      "new": "            if False:"
+    },
+    {
+      "label": "MV8: a compressed edge may use a codec the spec does not declare",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            if spec.codec_of(mv.rid) != mv.bits:",
+      "new": "            if False:"
+    },
+    {
+      "label": "MV9: a lifetime may end past its bank's allocatable bytes",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "        if lt.offset + lt.size_bytes > bank.allocatable_bytes:",
+      "new": "        if False:"
+    },
+    {
+      "label": "MV9: an unforced reload is not thrash",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            if not any(occupancy.get((bank, p), 0) + size[a] > cap for p in gap):",
+      "new": "            if False:"
+    },
+    {
+      "label": "MV10: the deadline is not checked",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "    if spec.deadline and plan.makespan > spec.deadline:",
+      "new": "    if False:"
+    },
+    {
+      "label": "MV11: an edge's window need not be its source's writer and its first reader",
+      "expects": "movement.laws.accepted",
+      "path": "bcir/kbcir/movement.py",
+      "old": "        if (got_after, got_before) != (after, before):",
+      "new": "        if False:"
+    },
+    {
+      "label": "Totality: an operand the transform does not declare is looked up anyway",
+      "expects": "movement.laws.misattributed",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            if r not in module.resources:\n                fail(\n                    \"MV1\"",
+      "new": "            if r not in module.resources and False:\n                fail(\n                    \"MV1\""
+    },
+    {
+      "label": "Totality: an edge naming no source resource is judged by the copy relation instead",
+      "expects": "movement.laws.misattributed",
+      "path": "bcir/kbcir/movement.py",
+      "old": "        if mv.rid not in source.resources:\n            fail(\"MV11\"",
+      "new": "        if mv.rid not in source.resources and False:\n            fail(\"MV11\""
+    },
+    {
+      "label": "Totality: a spec with no home for a resource raises instead of refusing",
+      "expects": "grader",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            except ValueError as exc:\n                fail(\"MV1\", str(exc))",
+      "new": "            except KeyError as exc:\n                fail(\"MV1\", str(exc))"
+    },
+    {
+      "label": "Totality: a remat's inputs are looked up as if the plan placed every one",
+      "expects": "grader",
+      "path": "bcir/kbcir/movement.py",
+      "old": "            if any(bank_of.get(r) != mv.dst_bank for r in c.rd):",
+      "new": "            if any(bank_of[r] != mv.dst_bank for r in c.rd):"
+    },
+    {
+      "label": "R9: the lifetime cover compares phase ids with topological positions (the parent's defect)",
+      "expects": "movement.plans.unlawful",
+      "path": "bcir/verify/__init__.py",
+      "old": "phases = {position[claim_phase[c.id]] for c in claims}",
+      "new": "phases = {claim_phase[c.id] for c in claims}"
+    },
+    {
+      "label": "Codec: the encoder writes a move's version one past the version it lands",
+      "expects": "movement.roundtrip.mismatch",
+      "path": "bcir/abi/execution_plan_abi.py",
+      "old": "        w.u32(mv.version)",
+      "new": "        w.u32(mv.version + 1)"
+    },
+    {
+      "label": "Codec: a v3 wire is judged by the version its plan re-encodes to, not the one it arrived in",
+      "expects": "movement.parity.mismatch",
+      "path": "bcir/abi/execution_plan_abi.py",
+      "old": "    validate_plan(plan, version)\n    return plan",
+      "new": "    validate_plan(plan)\n    return plan"
+    },
+    {
+      "label": "Codec: a move may finish after its first reader starts",
+      "expects": "movement.parity.mismatch",
+      "path": "bcir/abi/execution_plan_abi.py",
+      "old": "            if flags & MOVE_HAS_BEFORE and finish > slots[mv.before_claim][0]:",
+      "new": "            if False:"
+    },
+    {
+      "label": "Codec: a writeback may land outside its resource's home",
+      "expects": "movement.parity.mismatch",
+      "path": "bcir/abi/execution_plan_abi.py",
+      "old": "        if mv.coherence == \"writeback\" and mv.rid in home and mv.dst_bank != home[mv.rid]:",
+      "new": "        if False:"
+    },
+    {
+      "label": "Codec: a move may stay in its bank without being a remat",
+      "expects": "movement.parity.mismatch",
+      "path": "bcir/abi/execution_plan_abi.py",
+      "old": "        if (mv.src_bank == mv.dst_bank) != (mv.kind == \"rematerialized\"):",
+      "new": "        if False:"
+    },
+    {
+      "label": "ASN.1: a decoded plan is not held to the native wire laws",
+      "expects": "movement.asn1.accepted",
+      "path": "bcir/asn1/execution_plan.py",
+      "old": "    return _lawful(_value_to_plan(value))",
+      "new": "    return _value_to_plan(value)"
+    },
+    {
+      "label": "C twin: the binding trailer may name no source or spec",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "      if (source_hash == 0u || spec_hash == 0u) return BCIR_ERR_PLAN;",
+      "new": "      if (source_hash == 0u && spec_hash == 0u && source_hash) return BCIR_ERR_PLAN;"
+    },
+    {
+      "label": "C twin: the generation vector is located at the body's end, over the binding trailer",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  return len - 4u - (hdr->version >= 3u ? (size_t)EP_BINDING_SIZE : 0u);",
+      "new": "  return len - 4u - (hdr->version >= 30u ? (size_t)EP_BINDING_SIZE : 0u);"
+    },
+    {
+      "label": "C twin: a v3 plan's binding trailer is not read",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (hdr.version >= 3u) {            /* the binding trailer: the source and the spec */",
+      "new": "    if (hdr.version >= 30u) {           /* the binding trailer: the source and the spec */"
+    },
+    {
+      "label": "C twin: a move's version is read one past the wire's",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "        v.version = c_u32(&c);",
+      "new": "        v.version = c_u32(&c) + 1u;"
+    },
+    {
+      "label": "C twin: undefined move flags are admitted",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  if ((v->flags & ~BCIR_EP_MOVE_FLAGS) != 0u) return BCIR_ERR_PLAN;",
+      "new": "  if ((v->flags & ~0xFFu) != 0u) return BCIR_ERR_PLAN;"
+    },
+    {
+      "label": "C twin: a claim reference the flags call absent may be nonzero",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  if (!(v->flags & BCIR_EP_MOVE_HAS_AFTER) && v->after_claim) return BCIR_ERR_PLAN;",
+      "new": "  if (!(v->flags & BCIR_EP_MOVE_HAS_AFTER) && v->after_claim && 0) return BCIR_ERR_PLAN;"
+    },
+    {
+      "label": "C twin: a non-remat edge may name a producer",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  if (((v->flags & BCIR_EP_MOVE_HAS_PRODUCER) != 0u) !=",
+      "new": "  if (0 && ((v->flags & BCIR_EP_MOVE_HAS_PRODUCER) != 0u) !="
+    },
+    {
+      "label": "C twin: a remat may replay itself",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (has_claim && v->producer == v->claim) return BCIR_ERR_PLAN;",
+      "new": "    if (has_claim && v->producer == v->claim && 0) return BCIR_ERR_PLAN;"
+    },
+    {
+      "label": "C twin: a compressed edge may name 32 codec bits",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  if ((v->kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED) != (v->bits >= 1u && v->bits <= 31u))",
+      "new": "  if ((v->kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED) != (v->bits >= 1u && v->bits <= 32u))"
+    },
+    {
+      "label": "C twin: a certificate may ride any edge",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  if ((v->cert != 0u) != (v->kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED ||",
+      "new": "  if (0 && (v->cert != 0u) != (v->kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED ||"
+    },
+    {
+      "label": "C twin: a move may start before its source's writer finishes",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (has_claim && f > cs) return BCIR_ERR_PLAN;        /* the source's writer finishes first */",
+      "new": "    if (has_claim && f > cs && 0) return BCIR_ERR_PLAN;   /* the source's writer finishes first */"
+    },
+    {
+      "label": "C twin: a move may finish after its first reader starts",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (has_claim && cf > s) return BCIR_ERR_PLAN;        /* ... and the first reader starts after */",
+      "new": "    if (has_claim && cf > s && 0) return BCIR_ERR_PLAN;   /* ... and the first reader starts after */"
+    },
+    {
+      "label": "C twin: a writeback may land outside its resource's home",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "      return BCIR_ERR_PLAN;                                /* a writeback lands home */",
+      "new": "      (void)home;                                          /* a writeback lands home */"
+    },
+    {
+      "label": "C twin: a move may stay in its bank without being a remat",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "          (v.kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED))\n        return BCIR_ERR_PLAN;\n      if (v.coherence",
+      "new": "          (v.kind == (uint8_t)BCIR_EP_MOVE_REMATERIALIZED) && 0)\n        return BCIR_ERR_PLAN;\n      if (v.coherence"
+    },
+    {
+      "label": "C twin: a writeback may be lossy",
+      "expects": "movement.parity.mismatch",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "      if (v.coherence == (uint8_t)BCIR_EP_COHERENCE_WRITEBACK &&\n          (v.kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED ||",
+      "new": "      if (0 && v.coherence == (uint8_t)BCIR_EP_COHERENCE_WRITEBACK &&\n          (v.kind == (uint8_t)BCIR_EP_MOVE_COMPRESSED ||"
+    }
+  ]
+}

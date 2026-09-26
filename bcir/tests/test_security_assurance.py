@@ -2810,6 +2810,7 @@ def test_seed_construction_failure_is_a_structured_campaign_verdict() -> None:
         "manifest",
         "planner",
         "realization",
+        "plan",
     }
     assert by_name["bcirq8"]["state"] == "FAIL"
     assert [f["kind"] for f in by_name["bcirq8"]["findings"]] == ["seed-construction-failed"]
