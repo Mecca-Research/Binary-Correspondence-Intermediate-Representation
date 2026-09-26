@@ -86,8 +86,8 @@
       "label": "Oracle escape: a volatile access is not a device access",
       "expects": "volatile.device.missed",
       "path": "bcir/frontends/cfront/escape.py",
-      "old": "        if _device(lf, c):  # a device access: an observable effect on unnamed state",
-      "new": "        if _device(lf, c) and False:  # a device access: an observable effect on unnamed state"
+      "old": "        if _device(c):  # a device access: an observable effect on unnamed state",
+      "new": "        if _device(c) and False:  # a device access: an observable effect on unnamed state"
     },
     {
       "label": "Twin: an access is never marked volatile",
@@ -149,8 +149,8 @@
       "label": "Twin escape: a volatile access is not a device access",
       "expects": "volatile.device.missed",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "  if(c->domain==BCIR_DOM_MMIO) return 1;\n  if(c->n_rd && (!strcmp(c->op,\"c.load\")||!strcmp(c->op,\"c.store\"))){",
-      "new": "  if(0) return 1;\n  if(0 && c->n_rd && (!strcmp(c->op,\"c.load\")||!strcmp(c->op,\"c.store\"))){"
+      "old": "  return c->domain==BCIR_DOM_MMIO;",
+      "new": "  return 0 && c->domain==BCIR_DOM_MMIO;"
     },
     {
       "label": "Twin emit: an array of pointers is declared as the pointer-wide integer",

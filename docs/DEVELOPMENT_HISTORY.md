@@ -1104,6 +1104,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       masked access. It graded 362 forms as mismatches that were compile errors in the judge (L11).
   - Not claimed: `++`/`--` on a volatile lvalue (both rails refuse); on the twin, a member of a
     file-scope struct and `**` through a file-scope pointer; and a `_BitInt` pointee's temp.
+  - Found after the series, by the escape table's sweep over its head (2026-09-26): 25 of 26
+    caught. The G10 device rule read a load's base resource as well as its domain, because the twin
+    once lowered `p[i]` through a `volatile T *` as an ordinary load. R3's pass now makes every claim
+    touching a device region MMIO-domain on both rails before any analysis runs, so no input reached
+    the base reading, and its fault passed the whole corpus. The reading was removed from both rails
+    (`escape._device`, `esc_device` read the domain alone), and the table's fault moved to R3's pass,
+    one per rail, each caught by the effect parity row: 27 of 27 (L22).
   CF-IDX (2026-09-25) made a subscript chain through a pointer element index what the element
   holds, on both cfront rails.
   - The defect: a base took every subscript that followed it. `q[j][i]` on `T *q[N]` and

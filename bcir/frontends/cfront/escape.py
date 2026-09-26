@@ -42,8 +42,9 @@ function can be called from another unit with anything, and a global can be writ
     constant is known not to be one;
   * a volatile (MMIO-domain) access is an observable side effect on state the unit cannot name:
     it reads and writes unknown memory, so two device accesses never commute. A claim is one when
-    it is MMIO-domain, or when it is a load or store whose BASE resource is (`_device`): the base
-    decides, not how a lowering spelled the claim.
+    it is MMIO-domain (`_device`). R3's pass, the last step of both lowerings, makes every claim
+    that touches a device region MMIO-domain, so the domain carries the base: how a lowering
+    spelled the access does not decide it.
 
 What is not claimed: flow sensitivity (`f = add1; f(x); f = dbl; f(x)` narrows both sites to
 {add1, dbl}), field sensitivity (a struct of two function pointers holds both), global
@@ -603,18 +604,14 @@ def _closure(solver: _Solver, roots) -> set:
     return seen
 
 
-def _device(lf, c) -> bool:
-    """Whether claim `c` of function `lf` touches a device: it is MMIO-domain, or it is a load or
-    store whose base resource is. The base decides, not the claim's spelling: both lowerings mark
-    every such access today (the C twin once lowered `p[i]` through a `volatile T *` as an ordinary
-    load), and one predicate over the resource keeps the two rails' answers the same should a
-    spelling drift again."""
-    if c.domain == Domain.MMIO:
-        return True
-    if c.op in ("c.load", "c.store") and c.rd:
-        res = lf.resources.get(c.rd[0])
-        return res is not None and res.domain == Domain.MMIO
-    return False
+def _device(c) -> bool:
+    """Whether claim `c` touches a device: it is MMIO-domain. R3's pass
+    (`lower._order_device_claims`; the C twin's `order_device_claims`) makes every claim that
+    reads or writes a device region MMIO-domain before any analysis runs, so the domain already
+    carries the base resource. The analysis once read a load's base as well, for a twin that
+    lowered `p[i]` through a `volatile T *` as an ordinary load; with R3 on both rails no input
+    reached that second reading, so it went, and the rule lives in one place."""
+    return c.domain == Domain.MMIO
 
 
 def _own_access(solver: _Solver, u: _Unit, fn: str) -> tuple[set, set]:
@@ -634,7 +631,7 @@ def _own_access(solver: _Solver, u: _Unit, fn: str) -> tuple[set, set]:
             operand(r, reads)
         for w in c.wr:
             operand(w, writes)
-        if _device(lf, c):  # a device access: an observable effect on unnamed state
+        if _device(c):  # a device access: an observable effect on unnamed state
             reads.add(TOP)
             writes.add(TOP)
         if op == "c.load":

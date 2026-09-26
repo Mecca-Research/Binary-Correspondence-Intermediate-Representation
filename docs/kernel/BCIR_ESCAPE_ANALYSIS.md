@@ -142,10 +142,12 @@ function it can reach through the call graph, narrowed edges included:
   is not listed.
 
 A **device access** reads and writes `*`. Device state is observable, and two reads of a FIFO
-register do not commute. A claim is a device access when it is MMIO-domain, or when it is a load or
-store whose **base resource** is MMIO-domain. The base decides, not how the claim was spelled: the
-twin once lowered `p[i]` through a `volatile T *` as an ordinary load, where the oracle marked the
-load MMIO. The one predicate (`_device`, `esc_device`) gives both rails the same answer.
+register do not commute. A claim is a device access when it is MMIO-domain (`_device`,
+`esc_device`). R3's pass, the last step of both lowerings, makes every claim that reads or writes a
+device region MMIO-domain, so the domain carries the **base resource**, and how a lowering spelled
+the access does not decide it. The analysis once also read a load's base resource itself, because
+the twin lowered `p[i]` through a `volatile T *` as an ordinary load. R3 on both rails left no input
+that reaches that second reading, so it was removed, and the base rule lives in R3 alone.
 
 Both frontends carry `volatile` to every place a C program puts it: a pointer to volatile (a
 parameter, a local, a file-scope pointer, a struct member, an array element, a cast), a volatile
@@ -254,9 +256,10 @@ Each of the checks below is held to the same standard.
   generated unit and form, and `clang --analyze` reports nothing. The memory-discipline gate's
   allocation-fault injection covers it: every failure leaves an empty report and no leak.
 - **Faults.** [`tools/testing/faults/escape.json`](../../tools/testing/faults/escape.json)
-  injects 26 defects into the oracle, the lowering, the twin and its driver, and each one is caught
-  by the row it names. One of them makes every report of the twin fail: the parity rows fire, where
-  they used to read 0.
+  injects 27 defects into the oracle, the lowering, the twin and its driver, and each one is caught
+  by the row it names. Two of them leave R3's pass undone, one per rail, and the effect parity row
+  sees the device accesses go. One of them makes every report of the twin fail: the parity rows
+  fire, where they used to read 0.
 
 **Cost.** The analysis takes about 5% of `compile_unit`'s time over the corpus (0.09 s of
 1.7 s), and 0.09 s on the 7,630-claim scale unit. It runs eagerly because the verified-C

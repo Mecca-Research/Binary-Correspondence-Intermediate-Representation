@@ -1069,8 +1069,9 @@ spelled something, and the two lowerings spell it differently.
   `volatile T *` MMIO; the twin lowers it as an ordinary load. One predicate over the
   access's base resource (`escape._device`, `esc_device`) now decides it on both rails. The
   oracle's lowering always marks such a load, so the base half is unobservable through it;
-  its witness re-spells the claim
-  (`test_the_base_resource_decides_a_device_access_not_the_claims_spelling`).
+  its witness re-spelled the claim. CF-VOL then moved the base rule into R3's pass on both
+  rails, and the predicate now reads the domain alone (an L22 instance below; witness
+  `test_a_device_access_is_read_from_the_domain_r3_gives_it`).
 - "Is this variable touched in place or read through" came from the twin's resource kind,
   and the twin models a file-scope pointer's slot as a scalar. The oracle read the
   declaration. The twin now reads the declaration too (`bcir_resource.is_pointer`). Witnesses:
@@ -1388,6 +1389,16 @@ promotion. The atomic defect had also lain behind an accident. The twin's size a
 `_Atomic double _Complex` member where Clang does, so fixing the complex alignment alone would have
 moved it, and the rails would then have agreed on the wrong offset. Witnesses: `cfront_complexalign.c`,
 `test_scalar_alignment_matrix_dual_rail`.
+CF-VOL follow-up instance (2026-09-26): the escape table's sweep over the cfront series caught 25
+of 26. The G10 device rule read a load's base resource as well as its domain, a second reading
+kept for a twin that once lowered `p[i]` through a `volatile T *` as an ordinary load. CF-VOL's R3
+pass makes every claim touching a device region MMIO-domain on both rails before any analysis
+runs, so no input reached the second reading, and the fault that removed it passed the whole
+corpus. It was removed on both rails rather than witnessed, as the S4-B counter was: the base rule
+lives in R3's pass alone, and the table's fault moved there, one per rail, both caught by the
+effect parity row (27 of 27). Witnesses: the two R3 faults in `tools/testing/faults/escape.json`,
+and `test_a_device_access_is_read_from_the_domain_r3_gives_it`, which re-spells the load
+RAM-domain and finds an ordinary read.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

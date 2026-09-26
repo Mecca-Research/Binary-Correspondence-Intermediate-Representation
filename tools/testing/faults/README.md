@@ -236,7 +236,22 @@ The same slice found the parity rows blind to a twin that reports on nothing. Th
 the twin refused, so a driver whose every report failed read 0 on both rows. A refusal now counts,
 except the one pinned preprocessor limit, and the table holds a fault that makes every report fail
 (L2). A third addition narrows the open-world sites to no function. That is a claim no sound
-analysis can make, and it fires `icall.unknown` under its proved floor. The last sweep caught all 26.
+analysis can make, and it fires `icall.unknown` under its proved floor. That sweep caught all 26.
+
+## A rule no input reaches
+
+The sweep of `escape.json` over the cfront series' head (CF-VOL through CF-CALIGN) caught 25 of 26:
+
+    Twin: a load through a volatile pointer is a device access only when the frontend marked it   (none)   NOT CAUGHT
+        expected 'effects.parity.mismatch'; the gate passed with the defect in place
+
+The G10 device rule read a load's base resource as well as its domain, because the twin once lowered
+`p[i]` through a `volatile T *` as an ordinary load. CF-VOL gave both rails R3's pass, which makes
+every claim that touches a device region MMIO-domain before any analysis runs. No input reached the
+base reading on either rail after that, so a fault that removed it could not fire anything. The
+reading was removed from both rails rather than witnessed (L22), and the table's fault moved to
+where the answer is now decided: R3's pass, one fault per rail, each caught by the effect parity
+row. The last sweep caught all 27.
 
 ## Adding a fault
 

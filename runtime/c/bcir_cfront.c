@@ -6561,18 +6561,16 @@ static int esc_escape_report(esc_ctx *e,esc_out *out,const uint64_t *lent,const 
   return 1;
 }
 
-/* a device access: an MMIO-domain claim, or a load or store whose BASE resource is MMIO-domain. The base
- * decides, not the claim's spelling -- both rails mark every such access today (`p[i]` through a
- * `volatile T *` was once an ordinary load here), and one predicate over the resource keeps the two rails'
- * answers the same should a spelling drift again. */
-static int esc_device(const bcir_func *f,const bcir_claim *c){
+/* a device access: an MMIO-domain claim (the oracle's `escape._device`). R3's pass (`order_device_claims`, the
+ * last step of every function's lowering) makes each claim that reads or writes a device region MMIO-domain, so
+ * the domain already carries the base resource. The analysis once read a load's base as well, when `p[i]`
+ * through a `volatile T *` was an ordinary load here; with R3 on both rails no input reached that second
+ * reading, so it went, and the rule lives in one place. */
+static int esc_device(const bcir_claim *c){
   if(c->opcode==BCIR_OP_NOP) return 0;   /* a control marker (`c.return`, `c.if`, ...) reads a value and performs
                                           * no access; R3 may still make it device-domain when that value is a
                                           * pointer to volatile storage. The oracle has no marker claims. */
-  if(c->domain==BCIR_DOM_MMIO) return 1;
-  if(c->n_rd && (!strcmp(c->op,"c.load")||!strcmp(c->op,"c.store"))){
-    const bcir_resource *r=res_of(f,c->rd[0]); return r && r->domain==BCIR_DOM_MMIO; }
-  return 0;
+  return c->domain==BCIR_DOM_MMIO;
 }
 
 /* the effects report: each function's own accesses and everything it can call, named; the commute matrix */
@@ -6591,7 +6589,7 @@ static int esc_effects_report(esc_ctx *e,esc_out *out,const uint64_t *frame){
         if(ok==EO_G||ok==EO_S||ok==EO_L) ESC_SET(rd,o); }
       for(int j=0;j<c->n_wr;j++){ int o=esc_R(F,c->wr[j])->obj, ok=e->obj[o].kind;
         if(ok==EO_G||ok==EO_S||ok==EO_L) ESC_SET(wr,o); }
-      if(esc_device(F->f,c)){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }   /* a device access */
+      if(esc_device(c)){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }   /* a device access */
       int touch=0, one=-1;          /* touch: 1 read, 2 write, 3 both -- the object `one` and those in `set` */
       esc_clear(e,set);
       if(!strcmp(op,"c.load")){ if(c->n_rd){ one=esc_deref(e,fi,c->rd[0],set); touch=1; } }
