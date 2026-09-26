@@ -44,8 +44,8 @@
       "label": "Device: a volatile (MMIO) access is an ordinary one",
       "expects": "effects.parity.mismatch",
       "path": "bcir/frontends/cfront/escape.py",
-      "old": "        if _device(lf, c):  # a device access: an observable effect on unnamed state",
-      "new": "        if _device(lf, c) and False:  # a device access: an observable effect on unnamed state"
+      "old": "        if _device(c):  # a device access: an observable effect on unnamed state",
+      "new": "        if _device(c) and False:  # a device access: an observable effect on unnamed state"
     },
     {
       "label": "Kind: a file-scope variable is read as its slot, not as what it declares",
@@ -90,6 +90,13 @@
       "new": "init_refs=frozenset(),"
     },
     {
+      "label": "Lowering: R3's pass leaves a claim touching a device region ordinary, so the analysis reads it as memory",
+      "expects": "effects.parity.mismatch",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "            c.domain, c.lane = Domain.MMIO, Lane.H\n            if c.hazard == \"unique\":\n                c.hazard = \"barriered\"",
+      "new": "            pass"
+    },
+    {
       "label": "Twin: a store reads what its base points to",
       "expects": "effects.parity.mismatch",
       "path": "runtime/c/bcir_cfront.c",
@@ -128,15 +135,15 @@
       "label": "Twin: a device access is an ordinary one",
       "expects": "effects.parity.mismatch",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "if(esc_device(F->f,c)){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }",
-      "new": "if(esc_device(F->f,c)&&0){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }"
+      "old": "if(esc_device(c)){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }",
+      "new": "if(esc_device(c)&&0){ ESC_SET(rd,EO_TOP); ESC_SET(wr,EO_TOP); }"
     },
     {
-      "label": "Twin: a load through a volatile pointer is a device access only when the frontend marked it",
+      "label": "Twin: R3's pass leaves a claim touching a device region ordinary, so the analysis reads it as memory",
       "expects": "effects.parity.mismatch",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "const bcir_resource *r=res_of(f,c->rd[0]); return r && r->domain==BCIR_DOM_MMIO; }",
-      "new": "const bcir_resource *r=res_of(f,c->rd[0]); return r && 0; }"
+      "old": "  order_device_claims(fn);   /* R3: every claim touching a device region is device-domain and ordered */",
+      "new": "  (void)order_device_claims;   /* R3: every claim touching a device region is device-domain and ordered */"
     },
     {
       "label": "Twin: a declared pointer whose resource kind is scalar is touched in place",
@@ -177,8 +184,8 @@
       "label": "Twin parser: a file-scope pointer is not marked a pointer",
       "expects": "effects.parity.mismatch",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "c->fn->res[c->fn->n_res-1].is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0); }",
-      "new": "c->fn->res[c->fn->n_res-1].is_pointer=0; }"
+      "old": "gr->is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0);",
+      "new": "gr->is_pointer=0;"
     },
     {
       "label": "Twin driver: every report fails, so the twin reports on nothing",

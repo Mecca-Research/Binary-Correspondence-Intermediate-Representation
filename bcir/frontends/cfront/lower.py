@@ -33,7 +33,9 @@ from .ctype_model import (
     is_scalar_name,
     pointer,
     promote_int,
+    qualified,
     scalar,
+    unqualified,
     usual_arith_int,
     valist,
     with_atomic,
@@ -78,9 +80,35 @@ def _strip_quotes(spelling: str) -> str:
     return spelling
 
 
+def _pointer_spelling(ct: CType) -> str:
+    """A pointer cast target, spelled faithfully: the innermost pointee's own type -- its sign, a
+    plain `char`, `_Bool`, a float, a struct/union tag or `void` -- behind its `volatile`, then one
+    `*` per level. The cast then yields a real `T *` of exactly the target type (a width-named
+    pointee dropped the qualifier and the sign, and gave a struct pointee an integer name). The twin
+    spells it byte-identically (`bcir_cfront.c`, `cast_name`); the structural digest keeps it."""
+    depth, b = 0, ct
+    while b is not None and b.kind == "pointer":
+        depth, b = depth + 1, b.of
+    if b is None or b.name == "void":
+        base = "void"
+    elif b.is_aggregate:
+        base = f"{b.kind} {b.name}"
+    elif b.is_float or b.is_bitint:
+        base = b.name
+    elif b.name in ("_Bool", "bool"):
+        base = "_Bool"
+    elif b.name == "char":
+        base = "char"
+    elif b.signed:
+        base = _CAST_W_SIGNED.get(b.size, "int32_t")
+    else:
+        base = _CAST_W.get(b.size, "uint32_t")
+    return ("volatile " if b is not None and b.volatile else "") + base + " " + "*" * depth
+
+
 def _cast_name(ct: CType) -> str:
     if ct.kind == "pointer":
-        return _cast_name(ct.of) + " *" if ct.of else "void *"
+        return _pointer_spelling(ct)
     if ct.is_bitint:
         return ct.name  # `_BitInt(N)` / `unsigned _BitInt(N)` -- faithful, exact width
     if ct.is_float:
@@ -530,6 +558,42 @@ class _LV:
         return max(1, self.ct.size)
 
 
+def _arith_class(ct: CType) -> int:
+    """An arithmetic type's class for C's assignment conversion: 0 integer, 1 real floating, 2 complex
+    (a complex type is floating too). A store between classes converts the value; within one it is a
+    width or sign change the emit makes (`emit._store_conv`)."""
+    return 2 if ct.is_complex else (1 if ct.is_float else 0)
+
+
+def _object_write(ct: CType) -> dict:
+    """The claim fields of a write to a named object of type `ct`: a volatile scalar's write is a
+    volatile access (a device-domain claim, lane H, `barriered`); anything else is an ordinary copy
+    (`_order_device_claims` still orders one that touches a device region, a volatile struct's whole
+    copy included)."""
+    if ct.volatile and ct.kind == "scalar":
+        return {"domain": Domain.MMIO, "lane": Lane.H, "hazard": "barriered", "volatile": True}
+    return {}
+
+
+def _order_device_claims(claims, resources) -> None:
+    """R3 over a finished function, one pass (the C twin runs the same, `bcir_cfront.c`'s
+    `order_device_claims`): a claim that touches a device region is a device-domain claim and ordered
+    (lane H, `barriered` unless it is already `atomic`) -- the copy that binds a pointer to volatile
+    storage, the load of a pointer member that points at some, pointer arithmetic or a call over one.
+    It is a volatile ACCESS only if it reads or writes volatile storage itself: `Claim.volatile` is set
+    where the lvalue is resolved and is left alone here."""
+    for c in claims:
+        if c.domain == Domain.MMIO:
+            continue
+        if any(
+            (r := resources.get(rid)) is not None and r.domain == Domain.MMIO
+            for rid in (*c.rd, *c.wr)
+        ):
+            c.domain, c.lane = Domain.MMIO, Lane.H
+            if c.hazard == "unique":
+                c.hazard = "barriered"
+
+
 def _is_scalar_member_lv(target, lv: "_LV") -> bool:
     """A memory lvalue safe to store+reload as an assignment-EXPRESSION value: any SCALAR memory lvalue -- a
     direct/nested struct member `s.x` / `s.a.b`, an array element `a[i]`, a pointer deref `*p`, a BITFIELD
@@ -873,8 +937,8 @@ class _FuncLowerer:
             raise CLowerError(f"unknown type {tref.base!r}")
         if "volatile" in tref.quals:  # volatile pointee/object -> MMIO region
             base = with_volatile(base)
-        if "_Atomic" in tref.quals:  # _Atomic-qualified object (C11/C23)
-            base = with_atomic(base)
+        if "_Atomic" in tref.quals:  # _Atomic-qualified object (C11/C23), laid out by the ABI
+            base = _atomic_type(base, self.abi)
         t = base
         for _ in range(tref.ptr):
             t = pointer(t, self.abi)
@@ -1013,6 +1077,7 @@ class _FuncLowerer:
                 base_rid, struct_ct, base_off = self._addr(n.base)
                 agg = struct_ct.of if n.arrow else struct_ct
                 ftype, byte_off, _bo, _bw = agg.field(n.field)
+                ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
                 byte_off += (
                     0 if n.arrow else base_off
                 )  # ride the enclosing offset (a non-first member array)
@@ -1047,34 +1112,49 @@ class _FuncLowerer:
                     n
                 )  # a non-Member base: its accumulated offset
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
-            shape = mem_shape if mem_shape is not None else base_ct.shape
-            lin = idx_rids[0]
-            vla_str = self.vla_strides.get(base_rid)  # a multi-dim VLA -> runtime dim multipliers
-            for d in range(1, len(idx_rids)):
-                if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
-                    k = vla_str[d]  # extent), so `m[i][j]` -> i*dim1 + j masks the total
+            member = isinstance(n, cast.Member) and not ptr_member
+            while True:
+                shape = mem_shape if mem_shape is not None else base_ct.shape
+                # a multi-dim VLA -> runtime dim multipliers
+                vla_str = self.vla_strides.get(base_rid)
+                # the subscripts this base takes: one per dimension of a declared multi-dimensional
+                # array, a multi-dim VLA's too (Horner-flattened below), else one (a member array
+                # took all of them above) -- the twin's `subscript_dims`
+                if mem_shape is not None:
+                    take = len(idx_rids)
+                elif vla_str is not None:
+                    take = len(vla_str)
                 else:
-                    dim = shape[d] if d < len(shape) else 1
-                    k = self._temp(scalar("uint32_t"), f"k{dim}")
-                    self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
-                m1 = self._temp(scalar("uint32_t"), "b_mul")
-                self._emit("c.bin.mul", Opcode.MUL, (lin, k), (m1,))
-                a1 = self._temp(scalar("uint32_t"), "b_add")
-                self._emit("c.bin.add", Opcode.ADD, (m1, idx_rids[d]), (a1,))
-                lin = a1
-            elem = (
-                mem_elem
-                if mem_elem is not None
-                else (base_ct.of if base_ct.of else scalar("uint32_t"))
-            )
-            return _LV(
-                "mem",
-                base_rid,
-                elem,
-                idx=lin,
-                byte_off=byte_off,
-                member=isinstance(n, cast.Member) and not ptr_member,
-            )
+                    take = max(1, len(shape))
+                here, rest = idx_rids[:take], idx_rids[take:]
+                lin = here[0]
+                for d in range(1, len(here)):
+                    if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
+                        k = vla_str[d]  # extent), so `m[i][j]` -> i*dim1 + j masks the total
+                    else:
+                        dim = shape[d] if d < len(shape) else 1
+                        k = self._temp(scalar("uint32_t"), f"k{dim}")
+                        self._emit("c.const", Opcode.LOAD, (), (k,), imm=(dim,))
+                    m1 = self._temp(scalar("uint32_t"), "b_mul")
+                    self._emit("c.bin.mul", Opcode.MUL, (lin, k), (m1,))
+                    a1 = self._temp(scalar("uint32_t"), "b_add")
+                    self._emit("c.bin.add", Opcode.ADD, (m1, here[d]), (a1,))
+                    lin = a1
+                elem = (
+                    mem_elem
+                    if mem_elem is not None
+                    else (base_ct.of if base_ct.of else scalar("uint32_t"))
+                )
+                lv = _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off, member=member)
+                if not rest:
+                    return lv
+                # more subscripts than the base has dimensions: the element is a pointer -- `q[j][i]`
+                # on `T *q[N]`, `pp[j][i]` on `T **pp` -- so it is loaded, and the rest index what it
+                # holds (the twin's `index_chain`). Flattening them into the base read `q[j + i]`.
+                if elem.kind != "pointer":
+                    raise CLowerError("a subscript of an element that is not a pointer")
+                base_rid, base_ct, idx_rids = self._read(lv), elem, rest
+                byte_off, mem_shape, mem_elem, member = 0, None, None, False
         if isinstance(node, cast.Member):
             if isinstance(
                 node.base, cast.Index
@@ -1085,6 +1165,7 @@ class _FuncLowerer:
                     ftype, foff, fbo, fbw = agg.field(
                         node.field
                     )  # the runtime index, and stride by the element size
+                    ftype = qualified(ftype, agg.volatile)
                     if (
                         fbw or ftype.kind != "scalar"
                     ):  # a bitfield / nested / array / pointer element
@@ -1106,6 +1187,7 @@ class _FuncLowerer:
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
+            ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off = (
                 byte_off if node.arrow else base_off + byte_off
             )  # `->` resets to *base; `.` accumulates
@@ -1122,6 +1204,21 @@ class _FuncLowerer:
             operand = node.operand
             if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
                 return self._lvalue(cast.Index(operand.lhs, operand.rhs))
+            # `*q[j]`: the element is a pointer, loaded, and dereferenced (the twin's general deref of
+            # a pointer rvalue); `_addr` knows no subscripted base
+            if isinstance(operand, cast.Index):
+                el = self._lvalue(operand)
+                if el.ct.kind != "pointer":
+                    raise CLowerError("dereference of an element that is not a pointer")
+                return _LV("mem", self._read(el), el.ct.of or scalar("uint32_t"), byte_off=0)
+            # `*(volatile uint32_t *)ADDR`: the cast yields a real `T *` (the twin's general deref of
+            # a pointer rvalue)
+            if isinstance(operand, cast.Cast):
+                rid = self._rvalue(operand)
+                ct = self.rtypes.get(rid)
+                if ct is not None and ct.kind == "pointer":
+                    return _LV("mem", rid, ct.of or scalar("uint32_t"), byte_off=0)
+                raise CLowerError("dereference of a non-pointer cast")
             base_rid, base_ct, base_off = self._addr(operand)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
@@ -1198,6 +1295,7 @@ class _FuncLowerer:
             base_rid, base_ct, base_off = self._addr(node.base)
             agg = base_ct.of if node.arrow else base_ct
             ftype, byte_off, bit_off, bit_w = agg.field(node.field)
+            ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off = (
                 byte_off if node.arrow else base_off + byte_off
             )  # `->` resets to *base; `.` accumulates
@@ -1449,7 +1547,23 @@ class _FuncLowerer:
                         scalar("int", self.abi), f"k{val}"
                     )  # an int const, like an IntLit
                     return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(val,))
-            return self._lookup(node.ident, node.pos)[0]
+            rid, ct = self._lookup(node.ident, node.pos)
+            # a read of a volatile object is a device access, its value an ordinary one (an array
+            # decays; a struct copies whole)
+            volatile_read = ct.volatile and ct.kind == "scalar"
+            if volatile_read:
+                t = self._temp(unqualified(ct), "vld")
+                return self._emit(
+                    "c.copy",
+                    Opcode.ADD,
+                    (rid,),
+                    (t,),
+                    domain=Domain.MMIO,
+                    lane=Lane.H,
+                    hazard="barriered",
+                    volatile=True,
+                )
+            return rid
         if isinstance(node, cast.StringLit):  # a string value -> the global pointer
             return self._string_ptr(node.value)
         if isinstance(node, cast.Binary) and node.op == ",":
@@ -1535,29 +1649,7 @@ class _FuncLowerer:
             t = self._temp(rt, f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
         if isinstance(node, cast.Cast):
-            v = self._rvalue(node.operand)
-            ct = self._resolve_type(node.type)
-            # a float cast target types the temp float (so downstream arithmetic is float, and the emit
-            # declares it float); an integer cast to a uint32 temp reproduces integer-promotion (a
-            # narrowing cast masks/zero-extends back), so either way the result matches Clang.
-            t = self._temp(ct if (ct.is_integer or ct.is_float) else scalar("uint32_t"), "cast")
-            # A float -> signed-integer conversion needs a SIGNED cast operator: the canonical unsigned
-            # name (uint32_t / uint8_t) makes it float -> unsigned, which is UB for a negative value and
-            # diverges by target (x86 wraps, aarch64 saturates to 0) -- and even on x86 a sub-int signed
-            # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
-            vt = self.rtypes.get(v)
-            cname = (
-                _CAST_W_SIGNED.get(ct.size, "int32_t")
-                if (
-                    vt is not None
-                    and vt.is_float
-                    and ct.is_integer
-                    and ct.signed
-                    and not ct.is_bitint
-                )
-                else _cast_name(ct)
-            )  # a `_BitInt` target keeps its exact spelling (no width-named fallback)
-            return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
+            return self._cast_value(self._rvalue(node.operand), self._resolve_type(node.type))
         if isinstance(node, (cast.Index, cast.Member)):
             return self._read(self._lvalue(node))
         if isinstance(
@@ -1827,7 +1919,8 @@ class _FuncLowerer:
             ub = lv.unit_bytes()
             t = self._temp(scalar("uint32_t" if ub <= 4 else "uint64_t", self.abi), "ld")
             rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
-            mmio = self._mmio(lv.rid)
+            vol = lv.ct.volatile
+            mmio = vol or self._mmio(lv.rid)
             return self._emit(
                 "c.load",
                 Opcode.LOAD,
@@ -1839,12 +1932,17 @@ class _FuncLowerer:
                 bounds_provenance=self._bounds_provenance(lv),
                 lane=Lane.H if mmio else Lane.U,
                 hazard="barriered" if mmio else "unique",
-                volatile=mmio,
+                volatile=vol,
             )
-        unit_ct = lv.ct
+        unit_ct = unqualified(lv.ct)  # the VALUE read from a volatile lvalue is an ordinary value
         t = self._temp(unit_ct, "ld")
         rd = (lv.rid,) if lv.idx is None else (lv.rid, lv.idx)
-        mmio = self._mmio(lv.rid)
+        # a volatile ACCESS is one whose lvalue is volatile (the pointee of a pointer to volatile, a
+        # volatile member or a member of a volatile aggregate, an element of a volatile array); an access
+        # through a device region whose own lvalue is not volatile (a plain member beside a volatile one,
+        # the pointer element of a `volatile T **`) is a device-domain claim, not a volatile access
+        vol = lv.ct.volatile
+        mmio = vol or self._mmio(lv.rid)
         # the byte offset rides in imm (not the strict-bounds `offset`), and the access is
         # assumed_safe (the frontend resolved the member/index). MMIO accesses are ordered. A member
         # array `s.arr[i]` carries BOTH (member offset, element size) and an index -- so the emit lands
@@ -1869,17 +1967,63 @@ class _FuncLowerer:
             bounds_provenance=self._bounds_provenance(lv),
             lane=Lane.H if mmio else Lane.U,
             hazard="barriered" if mmio else "unique",
-            volatile=mmio,
+            volatile=vol,
         )
 
-    def _write(self, lv: "_LV", v: int) -> None:
+    def _cast_value(self, v: int, ct: CType) -> int:
+        """`(ct)v`: one `c.cast` claim into a temp of the target type -- the explicit cast, and C's
+        assignment conversion at a store (`_store_conversion`). The twin's `emit_cast`."""
+        # a float cast target types the temp float (so downstream arithmetic is float, and the emit
+        # declares it float); an integer cast to a uint32 temp reproduces integer-promotion (a
+        # narrowing cast masks/zero-extends back), so either way the result matches Clang.
+        # a pointer cast yields a pointer of the target type (its pointee, and whether that pointee
+        # is volatile, ride on the temp): a uint32 temp truncated the address
+        typed = ct.is_integer or ct.is_float or ct.kind == "pointer"
+        t = self._temp(ct if typed else scalar("uint32_t"), "cast")
+        # A float -> signed-integer conversion needs a SIGNED cast operator: the canonical unsigned
+        # name (uint32_t / uint8_t) makes it float -> unsigned, which is UB for a negative value and
+        # diverges by target (x86 wraps, aarch64 saturates to 0) -- and even on x86 a sub-int signed
+        # target loses the sign. Emit the signed fixed-width operator so `(int)(-5.0f)` is -5.
+        vt = self.rtypes.get(v)
+        cname = (
+            _CAST_W_SIGNED.get(ct.size, "int32_t")
+            if (vt is not None and vt.is_float and ct.is_integer and ct.signed and not ct.is_bitint)
+            else _cast_name(ct)
+        )  # a `_BitInt` target keeps its exact spelling (no width-named fallback)
+        return self._emit(f"c.cast:{cname}", Opcode.ADD, (v,), (t,))
+
+    def _store_conversion(self, ct: CType, v: int) -> int:
+        """C's assignment conversion (C23 6.5.17.2) at a store the emit spells as a byte copy -- a
+        member, a member-array element, a field of an array of structs, a bitfield, a store through a
+        pointer: the value converts to the slot's declared type `ct`. The emit picks the stored bytes'
+        type from the VALUE, so a value of another arithmetic class -- an integer into a float slot, a
+        float into an integer one, a real into a complex one -- converts first, through the `c.cast` an
+        explicit `(T)v` lowers to (the twin's `store_conv`), and the conversion is in the claim graph. A
+        width or sign change within a class is the emit's (`_store_conv`); a `_Bool` slot normalizes by
+        its flag; a pointer, aggregate or function-pointer slot takes no arithmetic conversion."""
+        vt = self.rtypes.get(v)
+        if ct.kind != "scalar" or ct.name in ("_Bool", "bool") or vt is None or vt.kind != "scalar":
+            return v
+        if _arith_class(vt) == _arith_class(ct):
+            return v
+        return self._cast_value(v, unqualified(ct))  # the value is never volatile (6.3.2.1p2)
+
+    def _write(self, lv: "_LV", v: int) -> int:
+        """Store `v` through `lv`; returns the value stored -- after C's conversion, before a
+        bitfield's insertion into its unit."""
+        # a store the emit spells as a byte copy takes C's conversion first; a typed `base[idx] = v`
+        # converts in the emitted C itself
+        if lv.idx is None or lv.member or lv.stride:
+            v = self._store_conversion(lv.ct, v)
+        stored = v
         if lv.bit_width:  # read-modify-write the storage unit
             old = self._load_unit(lv)
             t = self._temp(
                 scalar("uint32_t" if lv.unit_bytes() <= 4 else "uint64_t", self.abi), "bf"
             )
             v = self._emit("c.bf.set", Opcode.ADD, (old, v), (t,), imm=(lv.bit_off, lv.bit_width))
-        mmio = self._mmio(lv.rid)
+        vol = lv.ct.volatile
+        mmio = vol or self._mmio(lv.rid)
         if lv.idx is None:  # member/deref: carry (offset, size) -- a packed
             rd, imm = (
                 (lv.rid, v),
@@ -1906,8 +2050,9 @@ class _FuncLowerer:
             bounds_provenance=self._bounds_provenance(lv),
             lane=Lane.H if mmio else Lane.U,
             hazard="barriered" if mmio else "unique",
-            volatile=mmio,
+            volatile=vol,
         )
+        return stored
 
     def _compound_literal(self, node: "cast.CompoundLiteral") -> tuple[int, CType]:
         """Materialize a compound literal `(type){init}` as an anonymous local and initialize it, exactly
@@ -2184,20 +2329,21 @@ class _FuncLowerer:
             rt = self._bin_result_type(node.value.op, cur, b)
             t = self._temp(rt, f"b_{suf}")
             res = self._emit(f"c.bin.{suf}", opcode, (cur, b), (t,))
-            self._write(lv, res)
+            # the value as stored: converted to the target's type when its class differs (`s.i += 0.5f`)
+            res = self._write(lv, res)
             # the value of a compound assignment is the STORED (narrowed) value, not the raw binop result --
             # when the target is NARROWER than the promoted result the store truncates, so re-read it (like
             # the plain `=` path); `res` would be the un-narrowed sum (a both-rails miscompile). A BITFIELD
             # narrows to its BIT width (its ct.size is the full underlying type, so the size test misses it) --
             # re-read it too. A full-width non-bitfield target needs no re-read (res == the stored value).
-            narrows = lv.bit_width or lv.ct.size < rt.size
+            narrows = lv.bit_width or lv.ct.size < self.rtypes.get(res, rt).size
             return res if (stmt or not narrows) else self._read(lv)
         v = self._rvalue(node.value)
         if named_local:
             rid, _ct = self._lookup(
                 node.target.ident, node.target.pos
             )  # copy into the mutable storage
-            self._emit("c.copy", Opcode.ADD, (v,), (rid,))
+            self._emit("c.copy", Opcode.ADD, (v,), (rid,), **_object_write(_ct))
             self._bind_extent(
                 rid, _ct, node.target.ident, node.value
             )  # §5.12: `p = malloc(N*…)` -> N
@@ -2835,7 +2981,9 @@ class _FuncLowerer:
             if isinstance(st.init, cast.AggInit):  # struct/union/array `= { ... }`
                 self._agg_init(rid, ct, st.init)
             elif st.init is not None:
-                self._emit("c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,))
+                self._emit(
+                    "c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,), **_object_write(ct)
+                )
                 self._bind_extent(
                     rid, ct, st.name, st.init
                 )  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
@@ -2989,6 +3137,7 @@ class _FuncLowerer:
                 # this rid, so this branch is unreachable; it pins the invariant locally regardless.
                 continue
             self.resources[rid] = self.gres[rid]
+        _order_device_claims(claims, self.resources)
         gnames = {rid: nm for nm, (rid, _ct) in self.genv.items() if rid in touched}
         gnames.update(self.str_globals)  # string globals render as inline literals
         gnames.update(self.func_globals)  # function-as-value globals render as the bare name
@@ -3148,7 +3297,9 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         rid = _check_band_rid(900000 + gi)  # guard the reserved I/O-port rid (belt + suspenders)
         gres[rid] = Resource(
             rid=rid,
-            domain=Domain.RAM,
+            # a volatile global, or a pointer to volatile storage, is a device region: the base of
+            # every access through it (R3 holds the claims touching it to the MMIO domain)
+            domain=Domain.MMIO if ct.touches_mmio else Domain.RAM,
             elem_bytes=(ct.of.size if ct.of else ct.size),
             shape=(ct.count or len(g.init) or 1,),
             access="ro",
@@ -3272,6 +3423,16 @@ def _names_in(node) -> list:
     return out
 
 
+def _atomic_type(base: CType, abi) -> CType:
+    """`base` `_Atomic`-qualified: the target ABI's atomic layout (`ctype_model.with_atomic`), the one
+    answer for a local's, a parameter's, a member's and a global's type. An `_Atomic` struct or union is
+    refused, as on the twin: its promoted layout would reach every declaration, copy and extent, and each
+    access would have to be one atomic operation on the whole object."""
+    if base.is_aggregate:
+        raise CLowerError("an `_Atomic` struct or union is not supported")
+    return with_atomic(base, abi=abi)
+
+
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
     if tref.funcptr:  # a function-pointer member (dispatch table)
@@ -3284,6 +3445,10 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
         base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
     else:
         base = scalar(tref.base, abi)
+    if "volatile" in tref.quals:  # a volatile member / global, or a pointer to one: device storage
+        base = with_volatile(base)
+    if "_Atomic" in tref.quals:  # an _Atomic member / global: the ABI's atomic layout, as a local's
+        base = _atomic_type(base, abi)
     t = base
     for _ in range(tref.ptr):
         t = pointer(t, abi)

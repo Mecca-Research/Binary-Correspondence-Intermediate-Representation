@@ -1056,7 +1056,192 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Not claimed: flow, context and field sensitivity; the contents of global initializers;
     type punning; a volatile access that neither frontend carries the qualifier to (a volatile
     member, a volatile global, a global or member pointer to volatile), queued as a frontend
-    follow-up; and one heap object per allocating function.
+    follow-up (closed by CF-VOL, below); and one heap object per allocating function.
+  CF-VOL (2026-09-25) carried `volatile` through both cfront rails, to every place a C program
+  puts it.
+  - RED, measured on the parent (`c72d9e29`) over 432 forms -- every place `volatile` can sit,
+    against every access form it admits, at eight element widths -- and judged by Clang:
+    - 356 refusals (the oracle 170, the twin 186). The oracle typed the value a volatile load
+      yields as volatile, so `x |= 1` on it broke R3, and neither rail made a local, global or
+      member pointer to volatile a device region;
+    - 369 forms whose emitted C did not perform the original's volatile accesses. The oracle's
+      declarations dropped the qualifier, and the twin wrote every register access as 32 bits;
+    - 69 forms that returned or wrote different bytes: a byte store through a `volatile uint8_t *`
+      landed as a word at `p + 4*i`;
+    - 282 functions whose effect report missed the device, so two readers of a volatile global,
+      member or register block were reported to commute.
+  - What landed (`bcir/frontends/cfront/{ctype_model,lower,emit}.py`, `runtime/c/bcir_cfront.c`):
+    - one model on both rails. A resource is a device region when its type holds volatile storage
+      or points at it: a parameter, local, static, global or temp alike. An access is volatile when
+      its lvalue is. R3's pass then makes every claim touching a device region device-domain and
+      ordered;
+    - a loaded value is an ordinary value: lvalue conversion drops the qualifier;
+    - the emit performs each volatile access through a volatile lvalue of exactly its type.
+      Declarations keep the qualifier, and a member or dereference goes through
+      `*(volatile T *)(base + off)`, or `T volatile *` when the slot is itself a pointer.
+  - The judges share no code with either rail: Clang's volatile loads and stores, in order and at
+    their LLVM types, for each original function against its emitted twin; a seeded harness that
+    compares every return value, buffer and global; the structural digest; and each rail's effect
+    report.
+  - Outcomes: `volatile.refused` 356 → 0, `volatile.emit.mismatch` 369 → 0,
+    `volatile.behaviour.mismatch` 69 → 0, `volatile.device.missed` 282 → 0, and the parity guard
+    held at 0 (group `volatile`); the G10 forms went from 386 to 476 on a second sweep;
+    `tools/testing/faults/volatile.json` injects 23 defects, each caught by its own row.
+  - Found and fixed on the way. All were pre-existing and none was volatile's own:
+    - a pointer cast `(T *)x` gave an integer temp on both rails. The oracle's was 32 bits wide,
+      truncating the address, and the spelling dropped the pointee's sign and qualifier. No corpus
+      unit held a pointer-to-pointer cast, so the emitted C had never been compiled (L22). The
+      register idiom `*(volatile uint32_t *)ADDR` now lowers on both rails;
+    - the twin typed every file-scope variable as `uint32_t`. `(g >> 1) < 0` was false for a
+      negative `int32_t g`, and `-g` truncated a float, under equal digests
+      (`cfront_globaltype.c`);
+    - the twin declared a local array of pointers as the pointer-wide integer, and a `(float *)`
+      cast as a float;
+    - the twin refused `*a` on an array and `*g` through a file-scope pointer, both of which the
+      oracle lowers. Its emitter spelled a base's address at six sites, and each addressed a
+      file-scope pointer's slot instead of reading it (L14, `holds_pointer`);
+    - the gate's first run judged the twin's output without the header its driver includes for a
+      masked access. It graded 362 forms as mismatches that were compile errors in the judge (L11).
+  - Not claimed: `++`/`--` on a volatile lvalue (both rails refuse); on the twin, a member of a
+    file-scope struct and `**` through a file-scope pointer; and a `_BitInt` pointee's temp.
+  - Found after the series, by the escape table's sweep over its head (2026-09-26): 25 of 26
+    caught. The G10 device rule read a load's base resource as well as its domain, because the twin
+    once lowered `p[i]` through a `volatile T *` as an ordinary load. R3's pass now makes every claim
+    touching a device region MMIO-domain on both rails before any analysis runs, so no input reached
+    the base reading, and its fault passed the whole corpus. The reading was removed from both rails
+    (`escape._device`, `esc_device` read the domain alone), and the table's fault moved to R3's pass,
+    one per rail, each caught by the effect parity row: 27 of 27 (L22).
+  CF-IDX (2026-09-25) made a subscript chain through a pointer element index what the element
+  holds, on both cfront rails.
+  - The defect: a base took every subscript that followed it. `q[j][i]` on `T *q[N]` and
+    `pp[j][i]` on `T **pp` were Horner-flattened as if the base were a two-dimensional array,
+    into `q[j + i]`: a load read a pointer out of the table and returned it as a number, and a
+    store wrote a value over one. The oracle refused `*q[j]`; the twin read `*q` and subscripted
+    what it loaded. The twin also declared a one-element array (`T *a[1]`) as a scalar and left
+    its subscript unguarded, and decayed a parameter `T *rows[]` to `T *` instead of `T **`.
+  - RED, measured on the parent (CF-VOL, `b386191b`) by the volatile gate over the 138 forms that
+    reach a register block through a table of pointers (two elements, one element, and a
+    parameter `volatile T *rows[]`), per rail: 126 refused, 120 emit mismatches, 134 behaviour
+    mismatches, 22 parity mismatches and 40 device accesses missed. `cfront_ptrindex.c` is
+    refused by the parent's oracle; with its dereference taken out, both rails emit C that is
+    not behaviour-equivalent, under equal digests.
+  - What landed: one rule on both rails. A base takes one subscript per declared dimension (a
+    multi-dimensional VLA's too), else one; while subscripts remain, its element must be a
+    pointer, which is loaded, and the rest index what it holds (`lower._lvalue(Index)`; the
+    twin's `index_chain`, `subscript_dims` and `step_to_elem_ptr`). `*q[j]` and `*(q[j] + i)`
+    take the same step, in an expression and in a store. A one-element array is an array
+    (`decl_array`), an array of pointers is one predicate (`ptr_array`), and `T *rows[]` is
+    `T **`.
+  - Outcomes: every `volatile.*` row 0 over 548 forms; `cfront_ptrindex.c` equivalent on both
+    rails with equal digests; `tools/testing/faults/volatile.json` gains eight faults, each caught
+    by its own row. The pinned G10 forms are unchanged (476); the parameter forms they
+    leave out now lower on the twin as well.
+  - Found on the way:
+    - the G10 forms held `X[0][i]` on an array of pointers and a pointer to pointers in every
+      storage place, and both rails' reports agreed on them. The forms are compared, never run,
+      and two rails that share a misreading agree (L11);
+    - the rule's first cut counted a multi-dimensional VLA as one dimension, and the corpus
+      refused `a[i][j]` on one at once;
+    - the fixture's first cut lent a local table to a call. The escape analysis reports that
+      array lent, rightly, and `escape.unproved` counts it, so the table moved to file scope;
+    - both rails declare a `static` local array as a scalar, so the emitted C does not compile
+      (CF-STATIC, below).
+  CF-MEMCONV (2026-09-25) made every store the emit spells as a byte copy convert the value to the
+  slot's declared type, on both cfront rails.
+  - The defect: both rails chose the stored bytes' type from the VALUE. A float member, member-array
+    element, array-of-structs field or `*p` received an integer's bits (`s->f = v`), an integer slot
+    received a float's (`s->si = x`), and a real value landed in a `_Complex` member at the wrong
+    width. A float stored into a bitfield did not compile, and `(s->si += x)` yielded the
+    unconverted float sum.
+  - RED, measured on the parent (CF-IDX, `609b3413`) with `cfront_memberconv.c`: the rails' claim
+    graphs differ, and both rails' emitted C fails to build (a float inserted into a bitfield).
+    Without those stores, both rails' emitted C returns a different value from the first input on.
+  - What landed: C's assignment conversion, in the claim graph and on both rails. A byte-copy store
+    whose value is of another arithmetic class (integer, real floating, complex) converts first,
+    through the `c.cast` an explicit `(T)v` lowers to: `lower._store_conversion` over `_cast_value`,
+    and the twin's `store_conv` over `emit_cast`. So the digest carries the conversion. A width or
+    sign change within a class stays the emit's, and a `_Bool` slot normalizes by its flag. Every twin
+    store path asks the one predicate: the store helpers convert and return the value they stored,
+    and on both rails a compound assignment's value is that stored value.
+  - Found and fixed on the way:
+    - the twin spelled the member store three times, and one copy lacked parts of it. A store through
+      a pointer member (`s->p->f = v`) dropped a `_Bool` member's flag and wrote a bitfield as a
+      plain member. Both copies are now the helper (L14);
+    - on the twin, an initializer reached through a nested designator (`.in.b = x`) took its `_Bool`
+      flag and bitfield unit from the top member, not the leaf;
+    - the oracle's emit converted a complex value of another width through a real float, and wrote
+      that value's bytes into the slot.
+  - Outcomes: `cfront_memberconv.c` is equivalent on both rails with equal digests, and a focused
+    test pins the cast in the claim graph and the complex width on the oracle. Six injected defects,
+    one per part of the fix, are each caught. The differential fuzzer ran 450 programs over three new
+    seeds with no divergence.
+  - Found, not fixed here: the twin aligns a `double _Complex` member to 16 bytes where the ABI and
+    the oracle use 8. For a struct that holds one after a smaller member, the rails' digests differ
+    (CF-CALIGN, below).
+  CF-STATIC (2026-09-25) made a `static` local array or aggregate keep its shape in the emitted C,
+  on both cfront rails.
+  - The defect: both rails lowered a static array or struct as the object it is, its subscripts
+    guarded against its extent, and then declared it as a scalar (`static uint32_t hist = 0u;`,
+    `static struct Q s = 0u;`). The unit was reported clean, but its emitted C did not compile. An
+    initializer on one is refused on both rails, and still is.
+  - RED, measured on the parent (CF-MEMCONV, `46c87786`) with `cfront_staticarr.c` (a scalar,
+    two-dimensional, pointer, one-element and volatile array, a struct and an array of structs): the
+    digests are equal, since the digest carries no declarations, and both rails' emitted C fails to
+    build.
+  - What landed: a static array takes the array declaration and a static aggregate the aggregate one,
+    with `static` and a zero initializer (`emit._static_decl`; the twin's declaration chain, whose
+    local branches now take the storage class). A static scalar or pointer keeps its baked-in value.
+  - Outcomes: `cfront_staticarr.c` is equivalent on both rails with equal digests, guards and
+    storage extents. Three injected defects, one per rail and one per shape on the oracle, are each
+    caught.
+  CF-CALIGN (2026-09-25) made a scalar's layout the target ABI's on the twin, and gave both rails the
+  ABI's atomic promotion.
+  - The defect: the twin aligned every scalar member to its size. A `double _Complex` after a smaller
+    member sat at offset 16 where the ABI and the oracle put it at 8, and every member after it moved
+    too. `sizeof` and `_Alignof` gave the same wrong answers, and on i386 a `long double` aligned to 12,
+    not 4. The oracle places each by `CType.align`, so the rails' digests and emitted offsets disagreed.
+  - RED, measured on the parent (CF-STATIC, `c18f4deb`):
+    - with `cfront_complexalign.c`, the rails' claim graphs differ, and both rails' emitted C returns a
+      different value from the first input on. The oracle's is wrong through the `_Atomic` member
+      (below);
+    - over the five targets, the parent twin refuses the cross-target source (`sizeof(_Atomic cf)`),
+      and the parent oracle folds three of its thirteen constants wrong on each LP64 target, four on
+      Windows and two on i386, all of them `_Atomic` layouts (besides the two i386 `double` entries
+      it still gets wrong, below).
+  - What landed: one twin predicate, `scalar_align`, mirrors `CType.align`:
+    - a complex type takes its element's alignment, and a `long double _Complex` the long double's;
+    - a `long double` takes the ABI's alignment;
+    - any other scalar takes its size.
+    A member's placement asks it, and `sizeof` and `_Alignof` ask `type_layout`, which is built on it.
+  - Found and fixed on the way:
+    - the ABI's atomic promotion, on both rails. The twin placed an `_Atomic double _Complex` member
+      where Clang does only because it aligned everything to its size, so aligning a complex to its
+      element would have moved it. Neither rail modeled the promotion, and the oracle dropped `_Atomic`
+      on members. The rule: an `_Atomic` type no wider than the target's promotion width (16 bytes on
+      the 64-bit targets, 8 on i386) rounds its size up to a power of two and aligns to it. Both ABI
+      tables now carry that width (`atomic_promote_size`). Each rail asks one predicate for a local's,
+      a parameter's, a member's and a global's type (`with_atomic`, `atomic_layout`), and `packed`
+      still wins over it. An `_Atomic` struct or union is refused on both rails;
+    - the twin sized a typedef'd complex twice. `typedef float _Complex cf;` was 16 bytes, not 8, and
+      a `long double _Complex` typedef was 16, not 32. A complex type reached through `typeof` or
+      `_Atomic(T)` was doubled the same way. A typedef of it also dropped `_Atomic` on the twin;
+    - the twin spelled "does a type-name start here" at five sites, and refused `sizeof(_Atomic T)`,
+      which the oracle folds. Two predicates now answer, as on the oracle. One is for a declaration,
+      `sizeof` and `typeof`, and it takes `_Atomic`. The other is for a cast and a compound literal,
+      and it does not, so both rails refuse `(_Atomic T)x`.
+  - Outcomes: `cfront_complexalign.c` is equivalent on both rails with equal digests. A cross-target
+    test pins thirteen layout constants per target. The rails agree on every target, and they agree with
+    Clang on every target except two i386 entries. A refusal test holds both rails to one refusal of an
+    `_Atomic` aggregate and to the same folds of `sizeof`, `_Alignof` and `typeof` of an `_Atomic`
+    type. Eighteen injected defects, one per part of the fix on either rail, are each caught.
+  - Found, not fixed here (each queued as its own task):
+    - on i386, Clang aligns a `double`, a `long long` and a `double _Complex` to 4, where both rails
+      use 8;
+    - the twin lays out an array-of-pointers member by its pointee and truncates the pointer on a
+      store;
+    - the twin ignores an `__attribute__((packed))` written after the closing brace;
+    - both rails access an `_Atomic` object through a pointer or a member with a plain byte copy, not
+      an atomic operation.
 
 ---
 

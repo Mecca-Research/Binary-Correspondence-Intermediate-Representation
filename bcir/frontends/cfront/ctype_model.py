@@ -101,9 +101,26 @@ class CType:
         return self.kind in ("struct", "union")
 
     @property
+    def volatile_storage(self) -> bool:
+        """The object itself holds volatile storage: it is volatile, an array of such, or an
+        aggregate with such a member at any depth. A pointer member holds an address -- what it
+        points at is not the aggregate's storage."""
+        if self.volatile:
+            return True
+        if self.kind == "array":
+            return bool(self.of and self.of.volatile_storage)
+        if self.is_aggregate:
+            return any(f[1].volatile_storage for f in self.fields)
+        return False
+
+    @property
     def touches_mmio(self) -> bool:
-        """A volatile object — or a pointer/array to one — accesses an MMIO region."""
-        return self.volatile or bool(self.of and self.of.touches_mmio)
+        """A resource of this type is an MMIO region: it holds volatile storage, or it points (through
+        any number of pointers) at volatile storage. The twin decides the same (`bcir_cfront.c`,
+        `ty_mmio`)."""
+        if self.volatile_storage:
+            return True
+        return self.kind == "pointer" and bool(self.of and self.of.touches_mmio)
 
     def field(self, name: str):
         """Return (CType, byte_offset, bit_offset, bit_width) for a member; bit_width 0 == plain."""
@@ -119,10 +136,43 @@ def with_volatile(ct: CType, vol: bool = True) -> CType:
     return replace(ct, volatile=vol) if vol else ct
 
 
-def with_atomic(ct: CType, at: bool = True) -> CType:
+def unqualified(ct: CType) -> CType:
+    """The type of the VALUE an lvalue of type `ct` yields: lvalue conversion drops the qualifiers
+    (C23 6.3.2.1p2), so a value read from a volatile register is an ordinary value."""
     from dataclasses import replace
 
-    return replace(ct, atomic=at) if at else ct
+    return replace(ct, volatile=False) if ct.volatile else ct
+
+
+def qualified(ct: CType, vol: bool) -> CType:
+    """`ct` as a member of a volatile aggregate sees it: volatile itself, and an array member's
+    elements volatile too (C23 6.5.2.3p3, the member designator takes the aggregate's qualifiers)."""
+    from dataclasses import replace
+
+    if not vol:
+        return ct
+    if ct.kind == "array" and ct.of is not None:
+        return replace(ct, of=qualified(ct.of, True))
+    return ct if ct.volatile else replace(ct, volatile=True)
+
+
+def with_atomic(ct: CType, at: bool = True, abi=None) -> CType:
+    """`ct` as `_Atomic` qualifies it, laid out by the target ABI's atomic promotion: an `_Atomic`
+    type no wider than `abi.atomic_promote_size` (Clang's `MaxAtomicPromoteWidth`: 16 bytes on the
+    64-bit targets, 8 on i386) rounds its size up to a power of two and aligns to that size, so an
+    `_Atomic float _Complex` aligns to 8, an `_Atomic double _Complex` to 16 on a 64-bit target, and a
+    3-byte `_Atomic struct` occupies 4. A wider one keeps its own layout. The twin asks the same rule
+    (`bcir_cfront.c` `atomic_layout`)."""
+    from dataclasses import replace
+
+    if not at:
+        return ct
+    width = abi.atomic_promote_size if abi is not None else 16  # no abi: the host LP64 model
+    size, align = ct.size, ct.align
+    if ct.kind != "array" and 0 < size <= width:
+        size = 1 << (size - 1).bit_length()
+        align = size
+    return replace(ct, atomic=True, size=size, align=align)
 
 
 def scalar(name: str, abi=None) -> CType:

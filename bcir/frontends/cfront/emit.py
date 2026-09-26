@@ -10,7 +10,7 @@ an *arbitrary* straight-line scalar claim graph, not a fixed kernel template.
 from __future__ import annotations
 
 from ...model import Claim
-from .ctype_model import CType
+from .ctype_model import CType, unqualified
 from .lower import (
     AsmInfo,
     BreakNode,
@@ -141,9 +141,17 @@ def _cname(ct: CType) -> str:
         return _cname(ct.of) + " *"
     if ct.kind == "array":
         return _cname(ct.of)  # decays in a parameter position
-    if ct.is_aggregate:
-        return f"{ct.kind} {ct.name}"
-    return ("_Atomic " if ct.atomic else "") + ct.name
+    vol = "volatile " if ct.volatile else ""  # a volatile object / pointee keeps its qualifier:
+    if ct.is_aggregate:  # every access through the declaration stays one
+        return f"{vol}{ct.kind} {ct.name}"
+    return vol + ("_Atomic " if ct.atomic else "") + ct.name
+
+
+def _volatile_ptr(t: str) -> str:
+    """A pointer to a volatile slot of C type `t`: the conventional `volatile T *`, or `T volatile *`
+    when `t` is itself a pointer type (a qualifier in front would qualify its pointee, not the slot).
+    The twin spells it byte-identically (`bcir_cfront.c`, `vol_ptr`)."""
+    return f"{t} volatile *" if t.rstrip().endswith("*") else f"volatile {t} *"
 
 
 def _funcptr_decl(ct: CType, name: str) -> str:
@@ -275,11 +283,17 @@ def emit_function(lf: LoweredFunc) -> str:
             return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
         return f"    {_cname(ct)} {name}{zi};"
 
+    def _static_decl(name, ct, init):
+        # static storage: a once-only constant init. An array or an aggregate keeps its shape and starts
+        # zeroed (the lowering refuses any other initializer for one); a scalar or pointer takes its value
+        if ct.kind == "array":
+            return f"    static {_cname(ct.of)} {name}[{ct.count}] = {{0}};"
+        if ct.kind in ("struct", "union"):
+            return f"    static {_cname(ct)} {name} = {{0}};"
+        return f"    static {_cname(ct)} {name} = {init}u;"
+
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
-    decls += [
-        f"    static {_cname(ct)} {name} = {init}u;"  # static storage: once-only const init
-        for _rid, name, ct, init in lf.statics
-    ]
+    decls += [_static_decl(name, ct, init) for _rid, name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
     parts = [
         _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
@@ -412,6 +426,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"{ty} {ref(rid)} = {expr};"
 
     if c.op == "c.copy":  # write a mutable local (no new decl)
+        if ref(c.wr[0]) == f"t{c.wr[0]}":  # into a temp: the value read from a volatile object
+            return deftmp(c.wr[0], ref(c.rd[0]))
         return f"{ref(c.wr[0])} = {ref(c.rd[0])};"
     if c.op == "c.vladecl":  # an in-body stack VLA decl: `T a[__ext];`
         act = lf.rid_types.get(c.wr[0])  # the VLA array CType (count 0, of=element type)
@@ -470,6 +486,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                     c.imm[2] if len(c.imm) > 2 else es
                 )  # array-of-structs `arr[i].field`: stride sizeof(elem)
                 bp = _base_ptr(lf, c.rd[0], ref)  # != the field copy size `es`
+                if c.volatile:  # a volatile element: one access of exactly its type
+                    return deftmp(
+                        c.wr[0],
+                        f"*({_volatile_ptr(et)})((const volatile char *){bp} + {off} + "
+                        f"(size_t){ref(c.rd[1])} * {stride})",
+                        et,
+                    )
                 return (
                     f"{et} {t}; memcpy(&{t}, (const char *){bp} + {off} + "
                     f"(size_t){ref(c.rd[1])} * {stride}, {es});"
@@ -478,10 +501,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 c.wr[0], f"{ref(c.rd[0])}[{_idx(lf, c, ref)}]", et
             )  # typed array (masked -> guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
-        if c.domain.name == "MMIO":  # device register: ordered volatile load (its
+        if c.volatile:
+            # a volatile member / dereference: one ordered access of exactly the accessed type (a
+            # bitfield: its storage unit's width)
+            at = _unit_ctype(c.imm[1]) if len(c.imm) > 1 else et
             return deftmp(
-                c.wr[0], f"*(volatile {et} *)((const volatile char *){ptr} + {off})", et
-            )  # natural width)
+                c.wr[0], f"*({_volatile_ptr(at)})((const volatile char *){ptr} + {off})", et
+            )
         if len(c.imm) > 1:  # a (non-MMIO) BITFIELD unit: read only `imm[1]`
             return f"{et} {t} = 0; memcpy(&{t}, (const char *){ptr} + {off}, {c.imm[1]});"  # spanned bytes (zeroed)
         # plain RAM member/deref: memcpy is alignment-safe (handles packed) — Clang folds it to a load.
@@ -495,6 +521,14 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                     c.imm[3] if len(c.imm) > 3 else es
                 )  # array-of-structs `arr[i].field=v`: stride sizeof(elem)
                 bp = _base_ptr(lf, c.rd[0], ref)
+                if c.volatile:  # a volatile element: one store of exactly its slot type
+                    slot = _slot_ctype(
+                        lf.rid_types.get(c.rd[2]), es, len(c.imm) > 2 and bool(c.imm[2])
+                    )
+                    return (
+                        f"*({_volatile_ptr(slot)})((volatile char *){bp} + {off} + "
+                        f"(size_t){ref(c.rd[1])} * {stride}) = {ref(c.rd[2])};"
+                    )
                 dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {stride}"
                 conv = (
                     "_Bool"
@@ -507,8 +541,17 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             return f"{ref(c.rd[0])}[{_idx(lf, c, ref, write=True)}] = {ref(c.rd[2])};"  # typed array (masked -> WRITE-guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
-        if c.domain.name == "MMIO":  # device register: ordered volatile store
-            return f"*(volatile uint32_t *)((volatile char *){ptr} + {off}) = {ref(c.rd[1])};"
+        if c.volatile:
+            # a volatile member / dereference: one ordered store of exactly its slot type -- never a
+            # 32-bit register by assumption
+            vt = lf.rid_types.get(c.rd[1])
+            if vt is not None and vt.kind == "funcptr":
+                return (
+                    f"*(void (* volatile *)(void))((volatile char *){ptr} + {off}) = "
+                    f"(void (*)(void)){ref(c.rd[1])};"
+                )
+            slot = _slot_ctype(vt, size, len(c.imm) > 2 and bool(c.imm[2]))
+            return f"*({_volatile_ptr(slot)})((volatile char *){ptr} + {off}) = {ref(c.rd[1])};"
         # plain RAM member/deref: memcpy `size` bytes (correct truncation on little-endian, packed-safe). A
         # source whose type does not match the slot is CONVERTED through a slot-typed temp first -- a narrower
         # int (`*p = (short)b`) must widen, and a `float` stored into a `double` member must convert (not
@@ -650,11 +693,44 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
 
 
+def _unit_ctype(size: int) -> str:
+    """The unsigned type of a `size`-byte storage unit (a bitfield's), `uint32_t` if not a width C has."""
+    return f"uint{size * 8}_t" if size in (1, 2, 4, 8) else "uint32_t"
+
+
+def _slot_ctype(vt, size: int, is_bool: bool) -> str:
+    """The C type of the `size`-byte slot a store of a `vt` value writes, decided the way the plain
+    store decides it (`_store_conv`): a `_Bool` slot, a float of the slot's width, a pointer or an
+    aggregate as itself, else the unsigned integer of the slot's width. The C twin decides the same
+    (`bcir_cfront.c`, `vol_slot_ty`). A volatile store writes exactly this type -- one access of the slot's
+    width, never a 32-bit register by assumption."""
+    if is_bool:
+        return "_Bool"
+    if vt is not None and vt.is_complex:
+        return (
+            "float _Complex"
+            if size == 8
+            else ("long double _Complex" if size > 16 else "double _Complex")
+        )
+    if vt is not None and vt.is_float:
+        return "float" if size == 4 else ("long double" if size > 8 else "double")
+    if vt is not None and (vt.kind == "pointer" or vt.is_aggregate):
+        return _cname(unqualified(vt))
+    return _unit_ctype(size)
+
+
 def _store_conv(vt, size: int):
     """The C type to convert a store source through (a slot-typed temp) before memcpy'ing `size` bytes into
     the slot -- or None when the source already matches the slot width/kind (a direct memcpy is correct). A
-    `float`/`double` source of a different width must convert (float<->double, not a byte copy); a narrower
-    integer source must widen/sign-extend to the slot width."""
+    `float`/`double` source of a different width must convert (float<->double, not a byte copy), a complex one
+    to the complex type of the slot's width; a narrower integer source must widen/sign-extend to the slot
+    width. A source of another arithmetic class was already converted by the lowering (`c.cast`)."""
+    if vt is not None and vt.is_complex and vt.size != size:
+        return (
+            "float _Complex"
+            if size == 8
+            else ("long double _Complex" if size > 16 else "double _Complex")
+        )
     if vt is not None and vt.is_float and vt.size != size:
         return "float" if size == 4 else ("long double" if size > 8 else "double")
     if vt is not None and vt.is_integer and vt.size < size:

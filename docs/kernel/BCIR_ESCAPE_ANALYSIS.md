@@ -142,10 +142,21 @@ function it can reach through the call graph, narrowed edges included:
   is not listed.
 
 A **device access** reads and writes `*`. Device state is observable, and two reads of a FIFO
-register do not commute. A claim is a device access when it is MMIO-domain, or when it is a load or
-store whose **base resource** is MMIO-domain. The base decides, not how the claim was spelled: the
-twin lowers `p[i]` through a `volatile T *` as an ordinary load, where the oracle marks the load
-MMIO. The one predicate (`_device`, `esc_device`) gives both rails the same answer.
+register do not commute. A claim is a device access when it is MMIO-domain (`_device`,
+`esc_device`). R3's pass, the last step of both lowerings, makes every claim that reads or writes a
+device region MMIO-domain, so the domain carries the **base resource**, and how a lowering spelled
+the access does not decide it. The analysis once also read a load's base resource itself, because
+the twin lowered `p[i]` through a `volatile T *` as an ordinary load. R3 on both rails left no input
+that reaches that second reading, so it was removed, and the base rule lives in R3 alone.
+
+Both frontends carry `volatile` to every place a C program puts it: a pointer to volatile (a
+parameter, a local, a file-scope pointer, a struct member, an array element, a cast), a volatile
+member or member array, a member of a volatile struct, a volatile file-scope or automatic object or
+array, and a volatile static. A resource whose type holds volatile storage, or points at it, is an
+MMIO resource on both rails, and every access through it is a device access -- so two readers of a
+volatile global, of a file-scope pointer to volatile, or of a register block through a member
+pointer do not commute. The frontends' volatile corpus (`bcir/tests/volatile_fixtures.py`) holds
+each place against each access form at eight element widths.
 
 Two footprints conflict when one writes what the other reads or writes. `*` conflicts with any
 name, and an empty footprint commutes with everything.
@@ -184,11 +195,6 @@ operand on the claim (`bcir_claim.truncated`), so it sees what it cannot hold.
   another unit can write it.
 - **Type punning.** An integer stored into memory and read back as a pointer through a union is not
   modelled.
-- **A volatile access that neither frontend carries the qualifier to.** This covers three cases:
-  a volatile member of a non-volatile struct, a volatile file-scope variable, and a file-scope or
-  member pointer to volatile. The oracle's types for globals and members drop the qualifier, and
-  the twin's `use_global` never marks a global. Each case reads as an ordinary access. This is a
-  frontend gap, recorded as a follow-up.
 - **The heap is one object per allocating function.** Two buffers one function allocates are not
   told apart.
 - **The dynamic witness cannot observe a device.** The MMIO rule is held by the parity rows and the
@@ -229,12 +235,18 @@ Each of the checks below is held to the same standard.
   callback in a file-scope ops table. Each unit ends with two exported functions that differ only
   through a static local of a helper they both call. That pair holds the static-local rule to the
   witness, not only to parity.
-- **The forms.** `form_units()` holds 386 small functions in four units, one unit per storage place
-  (file scope, static, automatic, parameter). They cover 13 declaration kinds, the volatile ones
-  included, against 21 access forms. The forms were chosen by sweeping every combination and keeping
+- **The forms.** `form_units()` holds 476 small functions in four units, one unit per storage place
+  (file scope, static, automatic, parameter). They cover 15 declaration kinds, the volatile ones
+  included, against 27 access forms. The forms were chosen by sweeping every combination and keeping
   those that are C a compiler accepts and both rails lower. That sweep found the twin touching a
   file-scope pointer in place (12 forms) and missing the device access through a volatile pointer
-  (30 forms). The list is pinned, so a frontend that stops lowering a form fails its unit.
+  (30 forms). A second sweep, once volatile reached globals and members on both rails, added 90:
+  stores through a file-scope pointer to volatile and into a volatile file-scope array, reads and
+  writes of a volatile scalar, `*a` of an array, `*g` through a file-scope pointer, and a struct
+  whose member points at volatile storage. Array parameters are pointers, so the parameter place
+  leaves them out; a member of a file-scope struct and `**` through a file-scope pointer are forms
+  the twin does not lower. The list is pinned, so a frontend that stops lowering a form fails its
+  unit.
 - **Refusals count.** A unit the twin refuses is a parity failure, except the one pinned
   preprocessor limit (`cfront_sec_cppmacro.c`). A twin that reported on nothing used to pass both
   parity rows.
@@ -244,9 +256,10 @@ Each of the checks below is held to the same standard.
   generated unit and form, and `clang --analyze` reports nothing. The memory-discipline gate's
   allocation-fault injection covers it: every failure leaves an empty report and no leak.
 - **Faults.** [`tools/testing/faults/escape.json`](../../tools/testing/faults/escape.json)
-  injects 26 defects into the oracle, the lowering, the twin and its driver, and each one is caught
-  by the row it names. One of them makes every report of the twin fail: the parity rows fire, where
-  they used to read 0.
+  injects 27 defects into the oracle, the lowering, the twin and its driver, and each one is caught
+  by the row it names. Two of them leave R3's pass undone, one per rail, and the effect parity row
+  sees the device accesses go. One of them makes every report of the twin fail: the parity rows
+  fire, where they used to read 0.
 
 **Cost.** The analysis takes about 5% of `compile_unit`'s time over the corpus (0.09 s of
 1.7 s), and 0.09 s on the 7,630-claim scale unit. It runs eagerly because the verified-C

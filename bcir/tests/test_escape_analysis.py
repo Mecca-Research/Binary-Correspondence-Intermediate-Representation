@@ -171,14 +171,48 @@ def test_a_device_access_is_an_effect_on_state_the_unit_cannot_name():
     assert r.commute("pl", "pm")
 
 
-def test_the_base_resource_decides_a_device_access_not_the_claims_spelling():
-    """The C twin lowers `p[i]` through a `volatile T *` as an ordinary load, where the oracle marks
-    it MMIO. The device rule reads the access's BASE resource, so the same load spelled RAM-domain is
-    still a device access -- one predicate, one answer on both rails (the twin's half is held by the
-    forms' parity) -- and a load through a plain pointer is not."""
+def test_readers_of_a_volatile_global_member_or_register_pointer_do_not_commute():
+    """Two reads of a FIFO register do not commute, however the program reaches it: a volatile
+    file-scope variable, a file-scope pointer to volatile, a struct member pointing at volatile
+    storage. Each read is a device access. The parent lowered all three as plain RAM accesses, so it
+    reported that the two readers of `fifo` commute. Two readers of a plain global still do."""
+    r = _unit(
+        "#include <stdint.h>\n"
+        "volatile uint32_t fifo;\n"
+        "uint32_t g1(void) { return fifo; }\n"
+        "uint32_t g2(void) { return fifo; }\n"
+        "volatile uint32_t *gvp;\n"
+        "uint32_t p1(uint32_t i) { return gvp[i & 3u]; }\n"
+        "uint32_t p2(uint32_t i) { return *gvp + i; }\n"
+        "struct D { volatile uint32_t *regs; };\n"
+        "uint32_t m1(struct D *d) { return d->regs[0]; }\n"
+        "uint32_t m2(struct D *d) { return d->regs[1]; }\n"
+        "uint32_t plain;\n"
+        "uint32_t q1(void) { return plain; }\n"
+        "uint32_t q2(void) { return plain; }\n"
+    )
+    for a, b in (("g1", "g2"), ("p1", "p2"), ("m1", "m2")):
+        for fn in (a, b):
+            reads, writes = _foot(r, fn)
+            assert UNKNOWN in reads and UNKNOWN in writes, (fn, reads, writes)
+        assert not r.commute(a, b)
+    assert _foot(r, "q1") == ({"plain"}, set())
+    assert r.commute("q1", "q2")
+
+
+def test_a_device_access_is_read_from_the_domain_r3_gives_it():
+    """R3's pass, the last step of both lowerings, makes every claim that touches a device region
+    MMIO-domain, so the analysis reads a device access from the claim's domain alone: `p[i]` through a
+    `volatile T *` is MMIO-domain (the twin's domains are held by the forms' digests, which carry
+    them) and reads and writes unknown memory, while a load through a plain pointer only reads it.
+    The analysis once also read a load's base resource, for a twin that lowered this load as an
+    ordinary one; with R3 on both rails no input reached that second reading (its fault passed the
+    escape table's corpus), so it was removed. Re-spelling the load RAM-domain shows the one rule
+    left: an ordinary read through the parameter."""
     r = _unit("unsigned vget(volatile unsigned *p, unsigned i) { return p[i & 7u]; }\n")
     lf = r.lowered.functions["vget"]
     assert [c.domain for c in lf.claims if c.op == "c.load"] == [Domain.MMIO]
+    assert _foot(r, "vget") == ({UNKNOWN}, {UNKNOWN})
     plain = [
         dataclasses.replace(c, domain=Domain.RAM, volatile=False) if c.op == "c.load" else c
         for c in lf.claims
@@ -187,7 +221,7 @@ def test_the_base_resource_decides_a_device_access_not_the_claims_spelling():
         r.lowered, functions={"vget": dataclasses.replace(lf, claims=plain)}
     )
     fp = analyze(spelled).footprints["vget"]
-    assert (set(fp.reads), set(fp.writes)) == ({UNKNOWN}, {UNKNOWN})
+    assert (set(fp.reads), set(fp.writes)) == ({UNKNOWN}, set())
     q = _unit("unsigned get(unsigned *p, unsigned i) { return p[i & 7u]; }\n")
     assert _foot(q, "get") == ({UNKNOWN}, set())
 

@@ -380,6 +380,15 @@ read 0. A refusal now counts on the row whose report failed. The one exception i
 the pinned preprocessor limit (`escape_fixtures.TWIN_PREPROCESSOR_LIMITS`), and the
 parity test holds that pin exact: a pinned unit that starts to compile fails it.
 Fault: `Twin driver: every report fails, so the twin reports on nothing`.
+CF-VOL instance (2026-09-25): `tools/testing/faults/volatile.json` injects 23 defects, on
+both rails, into the device-region type rule, a global's domain, R3's ordering pass, the
+access mark, the exact-width slot and volatile spelling of the emit, the effect report's
+device rule, the pointer cast, a global's value type, the array-of-pointers declaration
+and the file-scope pointer read through. The first sweep caught all 23, one of them on a
+row it did not name: a loaded value that stays volatile does not break R3 -- the ordering
+pass makes every claim touching it a device claim -- it re-reads the device at each use,
+which the emit row sees. The expectation was wrong, not the gate; the table names the row
+that owns the law.
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -744,6 +753,23 @@ unit now ends with two exported functions that differ only through a static loca
 a helper both call. The text is fixed and follows the random functions, so the truths
 are unchanged. Witness:
 `test_the_witness_tells_apart_two_orders_only_a_shared_static_separates`.
+CF-VOL instance (2026-09-25): the volatile gate's first run over the repaired twin
+reported 362 forms as emit and behaviour mismatches -- every twin form it compared --
+while the same forms, probed one by one, were right. The judges build a unit's original
+and emitted C into one translation unit, and the twin's driver makes `--emit-c`
+self-contained by including `bcir_quarantine.h` whenever an access is masked; the judges
+inline that ABI, so the include failed, and a judge that cannot build fails closed on
+every entry of its unit. The rows measured the judges' own translation unit, on one rail.
+`volatile_fixtures.twin` now drops the driver's include, as the oracle's emit (which has
+none) was always judged. Witness: the rows at 0 over the masked `aptr` forms.
+CF-IDX instance (2026-09-25): the G10 forms held `X[0][i]` on an array of pointers and on a
+pointer to pointers, in every storage place, and both rails' effect and escape reports agreed
+on all of them -- while both rails lowered the chain as a two-dimensional index into the
+table, reading a pointer as a number. The forms are compared, never run, and a differential
+between two rails that share a misreading agrees: parity is a witness for divergence, not for
+a lowering. The volatile gate's behaviour harness runs the same shape (the `aptr`, `aptr1` and
+`aparam` forms) and counted 134 mismatches on the parent. Faults: `Oracle index: a subscript
+chain is flattened ...` and `Twin index: a subscript chain is flattened ...`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1043,13 +1069,69 @@ spelled something, and the two lowerings spell it differently.
   `volatile T *` MMIO; the twin lowers it as an ordinary load. One predicate over the
   access's base resource (`escape._device`, `esc_device`) now decides it on both rails. The
   oracle's lowering always marks such a load, so the base half is unobservable through it;
-  its witness re-spells the claim
-  (`test_the_base_resource_decides_a_device_access_not_the_claims_spelling`).
+  its witness re-spelled the claim. CF-VOL then moved the base rule into R3's pass on both
+  rails, and the predicate now reads the domain alone (an L22 instance below; witness
+  `test_a_device_access_is_read_from_the_domain_r3_gives_it`).
 - "Is this variable touched in place or read through" came from the twin's resource kind,
   and the twin models a file-scope pointer's slot as a scalar. The oracle read the
   declaration. The twin now reads the declaration too (`bcir_resource.is_pointer`). Witnesses:
   `test_a_file_scope_pointer_is_read_through_not_touched_in_place`, 12 forms, and two faults,
   one where the flag is set and one where it is read.
+CF-VOL instances (2026-09-25):
+- "Is this storage a device region" was decided per declaration site, on each rail -- a
+  pointer parameter here, a volatile struct there -- and never for a global, a member
+  pointer, a cast or a temp, so whether a register access was ordered depended on where the
+  program kept its handle. Both rails now ask the declared type one question
+  (`CType.touches_mmio`, `ty_mmio`), and one pass (`_order_device_claims`,
+  `order_device_claims`) makes every claim touching such a region device-domain and ordered.
+  Faults: `... a pointer to volatile storage is not a device region` and `... R3's pass
+  leaves a claim touching a device region ordinary`, one per rail.
+- "Is this base the address, or does it hold the address" was spelled at six sites of the
+  twin's emitter, five of them inline, and each missed a file-scope pointer's slot
+  (`is_pointer`), so `*gp = v` wrote into the pointer variable. One predicate,
+  `holds_pointer`, answers for all six. Witnesses: the `gptr` `dst`/`dld`/`pst` forms, and
+  the fault `Twin emit: a file-scope pointer is addressed in place, not read through`.
+CF-IDX instances (2026-09-25):
+- "Is this an array of pointers" was `kind == SCALAR && count > 1` at two sites of the twin
+  and "is this local an array" was `count > 1` at six: four declaration branches, the bounds
+  class and the guard. Each missed a one-element array, which was declared as a scalar,
+  subscripted unguarded and read as a value. Two predicates now answer for every site
+  (`ptr_array`, `decl_array`), and both are total: a VLA and a file-scope table are arrays too.
+  Faults: `Twin index: a one-element array is declared as a scalar` and `... an element of a
+  one-element array of pointers is loaded as a value`.
+- A subscript chain `q[j][i]`, a dereference `*q[j]` and a pointer sum `*(q[j] + i)` all load
+  a pointer element and continue from it, in an expression and in a store. The twin takes that
+  step in one function (`step_to_elem_ptr`), and the oracle reaches all three through
+  `_lvalue(Index)`. Faults: `Twin index: a store *(q[j] + i) indexes the table, ...`,
+  `Twin index: *q[j] dereferences the table's first element, ...` and `Oracle index: a
+  dereference of a subscripted element *q[j] is refused`.
+CF-MEMCONV instances (2026-09-25):
+- "What type do these bytes land as" was answered by the stored VALUE at every byte-copy store,
+  on both rails, so a float slot took an integer's bits. Both rails now ask one predicate at
+  every such store (`_store_conversion`, `store_conv`). The oracle has one store site (`_write`);
+  the twin creates one at twelve, so its store helpers convert and return the value they stored,
+  and the parity digest over a fixture that reaches every site catches a site that skips the
+  predicate. Faults, injected by hand: a predicate that keeps the value's class, on either rail.
+- The twin spelled the member store three times: the helper, the statement path, and the store
+  through a pointer member. The third lacked the `_Bool` flag and the bitfield unit. All three are
+  now the helper. The explicit cast and the conversion share one lowering (`_cast_value`,
+  `emit_cast`), so a conversion is spelled exactly as `(T)v` is.
+CF-CALIGN instances (2026-09-25):
+- "What is this scalar's alignment" was answered at two sites of the twin, a member's placement and
+  `_Alignof`, both by the size, while the oracle answers it once (`CType.align`). The twin now asks
+  one predicate at both (`scalar_align`, under `type_layout` for `sizeof` and `_Alignof`), and a
+  cross-target test compares the two rails' folded layout constants on every target. Faults, injected
+  by hand: the predicate aligning a complex or a `long double` to its size, and each site bypassing it.
+- A type's `_Atomic` was applied by the oracle's local resolver (`_resolve_type`) and dropped by its
+  member resolver (`_resolve_member_type`), as `volatile` had been before CF-VOL. Both now ask
+  `_atomic_type`, which lays the type out by the ABI's promotion and refuses an aggregate; the twin
+  asks `atomic_layout`. Faults: a member dropping `_Atomic`, and either rail skipping the promotion
+  or ignoring the ABI's width.
+- "Does a type-name start here" was one list spelled at five sites of the twin, and none admitted
+  `_Atomic`, so `sizeof(_Atomic T)` was a parse error there and a fold on the oracle. The oracle
+  asks two predicates (`_is_decl_start`, `_is_cast`), and so does the twin now (`starts_decl_type`,
+  `starts_type_name`), with the same answer for `_Atomic`. Fault: `sizeof(_Atomic T)` not a
+  type-name on the twin.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1282,6 +1364,41 @@ sweep of every declaration kind against every access form, in every storage plac
 both (12 and 30 forms). It generated 1,078 functions; both rails lower 625 of them, and
 386 of those are C a compiler accepts. The 386 are pinned (`escape_fixtures.FORMS`) and
 compared in the parity rows.
+CF-VOL instance (2026-09-25): no unit of the cfront corpus held a pointer-to-pointer cast,
+a signed or float file-scope variable in arithmetic, or a local array of pointers to a
+scalar, and each was a miscompile on at least one rail. A cast's result was an integer
+temp on both (the oracle's 32 bits wide, truncating the address), so the emitted C did not
+compile under a current Clang; the twin typed every file-scope variable as `uint32_t`, so
+`(g >> 1) < 0` was false for a negative `int32_t g` and `-g` truncated a float -- with the
+digests equal, because the digest carries no types; and the twin declared an array of
+pointers as the pointer-wide integer. The volatile corpus reached all three because a
+volatile place is reached through them (`(volatile T *)raw`, a volatile float global,
+`volatile T *q[2]`). Re-sweeping the G10 forms afterwards added 90 that both rails now
+lower. Witnesses: `cfront_globaltype.c`, `cfront_volatile_width.c`, the `vcast`, `vglobal`
+and `aptr` forms.
+CF-STATIC instance (2026-09-25): no unit of the cfront corpus held a `static` local array or
+struct, and both rails emitted every such object as a scalar, so the emitted C did not compile. The
+units were reported clean, and the digest agreed, since it carries no declarations. Only a harness
+that builds and runs the emitted C sees it. The CF-IDX fixture reached one by chance, as a table for
+a callee. Witness: `cfront_staticarr.c`.
+CF-CALIGN instance (2026-09-25): the cfront corpus held one `_Complex` member, at offset 0
+(`cfront_complexmember.c`), where aligning it to its size moves no member. It held no `_Atomic`
+member, no typedef'd complex, and no cross-target `sizeof` of either. Each was a layout defect on
+at least one rail: the twin's complex alignment and typedef size, and both rails' missing atomic
+promotion. The atomic defect had also lain behind an accident. The twin's size alignment placed an
+`_Atomic double _Complex` member where Clang does, so fixing the complex alignment alone would have
+moved it, and the rails would then have agreed on the wrong offset. Witnesses: `cfront_complexalign.c`,
+`test_scalar_alignment_matrix_dual_rail`.
+CF-VOL follow-up instance (2026-09-26): the escape table's sweep over the cfront series caught 25
+of 26. The G10 device rule read a load's base resource as well as its domain, a second reading
+kept for a twin that once lowered `p[i]` through a `volatile T *` as an ordinary load. CF-VOL's R3
+pass makes every claim touching a device region MMIO-domain on both rails before any analysis
+runs, so no input reached the second reading, and the fault that removed it passed the whole
+corpus. It was removed on both rails rather than witnessed, as the S4-B counter was: the base rule
+lives in R3's pass alone, and the table's fault moved there, one per rail, both caught by the
+effect parity row (27 of 27). Witnesses: the two R3 faults in `tools/testing/faults/escape.json`,
+and `test_a_device_access_is_read_from_the_domain_r3_gives_it`, which re-spells the load
+RAM-domain and finds an ordinary read.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.

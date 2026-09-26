@@ -33,6 +33,7 @@ python3 tools/testing/red_sweep.py --faults ... --json-out build/red/database.js
 | `alias.json` | `tools/perf/check_alias.py --require-llvm` (the G9 rows: the declared alias facts on every emitter of the elementwise kernel; needs a coherent clang/llvm-link/opt) | the one derivation's partition, hazard, element-size, declaration and qualifier rules and its fences; the LLVM kernel's `noalias`, alias scopes, domain, TBAA root and type, volatility and exit fence (four judged by LLVM itself); the ABI header's plan, the Q-fixed kernel's qualifier, the gather form's fence and the specialist's facts; the harness binding and the node harness's operation; R12's noalias, volatility, own-scope, TBAA, fence and restrict findings and its metadata reading |
 | `encode.json` | `tools/perf/check_encode.py` (SP-ENC: the compiled StreamPack encoder against the encoder before it, and its call floor) | the plain layouts' exact-type gates (a bool claim id, an `__index__` target, a bool stride, a missing fence array), a swapped v3 segment layout and a dropped v2 buffer count; the encode contract's fast paths (width, lane, buffers) and the generation maxima; the field path's u16 string length, u32 element, u8 lane and trace-hash checks and its empty-array shortcut; its single walk of an array that is not a tuple or a list (u32, u64, strings) and its refusal of a generator at `len()`; the version test's dispatch; the saving itself (each plain path never taken) |
 | `escape.json` | `tools/perf/check_escape.py --require-cc` (the G10 rows: escape verdicts, indirect-call narrowing and the effect footprint behind `commute`, judged by generated units, a dynamic witness and the twin's reports; needs a C compiler) | the oracle's store-as-write, static naming, heap object, cast, ops-table, device, declared-kind, lent, escape-root and two-target rules; the lowering's file-scope initializer names; the twin's twins of these, its device predicate's base half, its declared-pointer kind (read and set), its array and initializer marks, and its driver reporting on nothing |
+| `volatile.json` | `tools/perf/check_volatile.py --require-cc` (CF-VOL: every place `volatile` can sit, against every access form, at eight widths, lowered by both cfront rails and judged by Clang; needs Clang) | on both rails: the device-region type rule, a volatile global's domain, R3's ordering pass, the access mark, the exact-width slot and the volatile spelling of the emit, the device rule of the effect report; on the oracle, the member of a volatile struct, the named read, the unqualified loaded value, the pointer cast's temp and spelling; on the twin, the pointer cast's temp, a global's value type, the array-of-pointers declaration and the file-scope pointer read through; and a subscript chain through a pointer element (CF-IDX): flattened into its base on either rail, `*q[j]` refused by the oracle or read as `(*q)[j]` by the twin, `*(q[j] + i)` indexing the table, a `T *rows[]` parameter one level short, and a one-element array declared as a scalar or read as a value |
 | `planner.json` | `tools/c/check_planner.py` (the G17 rows on the compact planner, the pre-G17 reference and the native twin; needs a C compiler) | the compact planner's tie-break, fusion, thermal coupling, discounts, fence, value numbering, CSE exclusions and sink; R9's lane identity, phase binding, total diagnostics and base comparison; the native planner's tie-break, coupling, discounts, exclusions, fence, phase order, weights and 128-bit carry; both codecs' laws |
 
 ## What runs in CI, and what does not
@@ -235,7 +236,22 @@ The same slice found the parity rows blind to a twin that reports on nothing. Th
 the twin refused, so a driver whose every report failed read 0 on both rows. A refusal now counts,
 except the one pinned preprocessor limit, and the table holds a fault that makes every report fail
 (L2). A third addition narrows the open-world sites to no function. That is a claim no sound
-analysis can make, and it fires `icall.unknown` under its proved floor. The last sweep caught all 26.
+analysis can make, and it fires `icall.unknown` under its proved floor. That sweep caught all 26.
+
+## A rule no input reaches
+
+The sweep of `escape.json` over the cfront series' head (CF-VOL through CF-CALIGN) caught 25 of 26:
+
+    Twin: a load through a volatile pointer is a device access only when the frontend marked it   (none)   NOT CAUGHT
+        expected 'effects.parity.mismatch'; the gate passed with the defect in place
+
+The G10 device rule read a load's base resource as well as its domain, because the twin once lowered
+`p[i]` through a `volatile T *` as an ordinary load. CF-VOL gave both rails R3's pass, which makes
+every claim that touches a device region MMIO-domain before any analysis runs. No input reached the
+base reading on either rail after that, so a fault that removed it could not fire anything. The
+reading was removed from both rails rather than witnessed (L22), and the table's fault moved to
+where the answer is now decided: R3's pass, one fault per rail, each caught by the effect parity
+row. The last sweep caught all 27.
 
 ## Adding a fault
 

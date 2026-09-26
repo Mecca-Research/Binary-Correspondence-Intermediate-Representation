@@ -425,11 +425,13 @@ def witness_available(cc: str | None) -> bool:
 
 # --- the forms: every declaration kind against every access form, in every storage place ----------
 
-#: What every form unit declares first: a struct with a scalar, a pointer and an array member, the
-#: globals a form can leak to or read, an extern the unit cannot see, and two static callees that
-#: keep nothing (a reader and a writer).
+#: What every form unit declares first: a struct with a scalar, a pointer and an array member, one
+#: whose member points at volatile storage (a register block's handle), the globals a form can leak
+#: to or read, an extern the unit cannot see, and two static callees that keep nothing (a reader
+#: and a writer).
 _FORM_PRELUDE = """#include <stdint.h>
 struct S { unsigned a; unsigned *p; unsigned arr[4]; };
+struct V { unsigned a; volatile unsigned *regs; };
 unsigned gsink_v;
 unsigned *gsink_p;
 unsigned gbuf[8];
@@ -452,6 +454,8 @@ FORM_KINDS = {
     "varr": "volatile unsigned {n}[8]",
     "vst": "volatile struct S {n}",
     "vpst": "volatile struct S *{n}",
+    "vmst": "struct V {n}",
+    "vmpst": "struct V *{n}",
 }
 #: An access form: one statement over the variable `{x}`, the running value `v` and the index `i`.
 FORM_ACCESSES = {
@@ -476,69 +480,88 @@ FORM_ACCESSES = {
     "pp_ld": "v = v + **{x};",
     "pp_idx": "v = v + {x}[0][i & 3u];",
     "aptr_set": "{x}[i & 3u] = gbuf;",
+    "sc_ld": "v = v + {x};",
+    "sc_st": "{x} = v;",
+    "mem_regs_ld": "v = v + {x}.regs[i & 3u];",
+    "mem_regs_st": "{x}.regs[i & 3u] = v;",
+    "arrow_regs_ld": "v = v + {x}->regs[i & 3u];",
+    "arrow_regs_st": "{x}->regs[i & 3u] = v;",
 }
 #: The forms graded, per storage place and kind: every (kind, access) whose function is C that clang
 #: accepts and that both rails lower -- chosen by sweeping all of them, which is how the twin's
 #: file-scope pointer (touched in place) and its index load through a volatile pointer (an ordinary
-#: load) were found. Pinned, not rediscovered: a frontend that stops lowering one fails its place's
-#: unit, and the parity rows count that. The units are compared, never run.
+#: load) were found. Swept again once volatile reached globals and members on both rails: the stores
+#: through a file-scope pointer to volatile and into a volatile file-scope array, the reads and writes
+#: of a volatile scalar, `*a` of an array, `*g` of a file-scope pointer and the member pointer to
+#: volatile joined. (Array parameters are pointers, so the `param` place leaves them out; a member of
+#: a file-scope struct, and `**` through a file-scope pointer, are forms the twin does not lower.)
+#: Pinned, not rediscovered: a frontend that stops lowering one fails its place's unit, and the
+#: parity rows count that. The units are compared, never run.
 FORMS = {
     "global": {
-        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
-        "ptr": "addr_ext addr_glob assign_glob idx_ld idx_st pass_ext pass_keep pass_put val",
+        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
+        "ptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "arr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
-        "arr1": "addr_ext addr_glob idx_ld idx_st pass_ext pass_keep pass_put val",
+        "arr1": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "st": "addr_ext addr_glob",
         "pst": "addr_ext addr_glob pass_ext pass_keep pass_put val",
         "aptr": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx val",
         "pp": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx val",
-        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
-        "vptr": "addr_ext addr_glob assign_glob idx_ld pass_ext pass_keep pass_put val",
-        "varr": "addr_ext addr_glob deref_ld deref_st idx_ld pass_ext pass_keep pass_put val",
+        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
+        "vptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "varr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "vst": "addr_ext addr_glob",
         "vpst": "addr_ext addr_glob pass_ext pass_keep pass_put val",
+        "vmst": "addr_ext addr_glob",
+        "vmpst": "addr_ext addr_glob pass_ext pass_keep pass_put val",
     },
     "static": {
-        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
+        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
         "ptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
-        "arr": "addr_ext addr_glob deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
-        "arr1": "addr_ext addr_glob deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "arr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "arr1": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "st": "addr_ext addr_glob mem_arr_st mem_ld mem_st",
         "pst": "addr_ext addr_glob arrow_arr_st arrow_ld arrow_p_ld arrow_st pass_ext pass_keep pass_put val",
-        "aptr": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx val",
+        "aptr": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx pp_ld val",
         "pp": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx pp_ld val",
-        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
-        "vptr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
+        "vptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "varr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "vst": "addr_ext addr_glob mem_arr_st mem_ld mem_st",
         "vpst": "addr_ext addr_glob arrow_arr_st arrow_ld arrow_p_ld arrow_st pass_ext pass_keep pass_put val",
+        "vmst": "addr_ext addr_glob mem_ld mem_regs_ld mem_regs_st mem_st",
+        "vmpst": "addr_ext addr_glob arrow_ld arrow_regs_ld arrow_regs_st arrow_st pass_ext pass_keep pass_put val",
     },
     "local": {
-        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
+        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
         "ptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
-        "arr": "addr_ext addr_glob deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
-        "arr1": "addr_ext addr_glob deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "arr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "arr1": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "st": "addr_ext addr_glob mem_arr_st mem_ld mem_st",
         "pst": "addr_ext addr_glob arrow_arr_st arrow_ld arrow_p_ld arrow_st pass_ext pass_keep pass_put val",
-        "aptr": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx val",
+        "aptr": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx pp_ld val",
         "pp": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx pp_ld val",
-        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
-        "vptr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
+        "vptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "varr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "vst": "addr_ext addr_glob mem_arr_st mem_ld mem_st",
         "vpst": "addr_ext addr_glob arrow_arr_st arrow_ld arrow_p_ld arrow_st pass_ext pass_keep pass_put val",
+        "vmst": "addr_ext addr_glob mem_ld mem_regs_ld mem_regs_st mem_st",
+        "vmpst": "addr_ext addr_glob arrow_ld arrow_regs_ld arrow_regs_st arrow_st pass_ext pass_keep pass_put val",
     },
     "param": {
-        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
+        "scalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
         "ptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "st": "addr_ext addr_glob mem_arr_st mem_ld mem_st",
         "pst": "addr_ext addr_glob arrow_arr_st arrow_ld arrow_p_ld arrow_st pass_ext pass_keep pass_put val",
         "pp": "addr_ext addr_glob aptr_set pass_ext pass_keep pass_put pp_idx pp_ld val",
-        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put val",
-        "vptr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
-        "varr": "addr_ext addr_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "vscalar": "addr_ext addr_glob pass_ext pass_keep pass_put sc_ld sc_st val",
+        "vptr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
+        "varr": "addr_ext addr_glob assign_glob deref_ld deref_st idx_ld idx_st pass_ext pass_keep pass_put val",
         "vst": "addr_ext addr_glob mem_arr_st mem_ld mem_st",
         "vpst": "addr_ext addr_glob arrow_arr_st arrow_ld arrow_p_ld arrow_st pass_ext pass_keep pass_put val",
+        "vmst": "addr_ext addr_glob mem_ld mem_regs_ld mem_regs_st mem_st",
+        "vmpst": "addr_ext addr_glob arrow_ld arrow_regs_ld arrow_regs_st arrow_st pass_ext pass_keep pass_put val",
     },
 }
 
