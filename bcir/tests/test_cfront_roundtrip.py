@@ -319,8 +319,10 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # 63 since SEG6.1: `cfront_atomic.c` now round-trips (was excluded). Its emit contains
     # `__atomic_thread_fence(__ATOMIC_SEQ_CST)`; the `__ATOMIC_*` / `memory_order_*` constants are now
     # recognized on re-parse (lower.py `_rvalue`), so the emitted unit re-parses cleanly -- a coverage gain.
-    assert len(included) == 63, (
-        f"included-set size changed from the pinned 63 to {len(included)} -- a "
+    # 64 since CF-PASTE: the new `cfront_paste.c` round-trips (`cfront_ptrmember.c` and
+    # `cfront_trailpacked.c`, registered with it, are excluded as emit-not-reparseable).
+    assert len(included) == 64, (
+        f"included-set size changed from the pinned 64 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )

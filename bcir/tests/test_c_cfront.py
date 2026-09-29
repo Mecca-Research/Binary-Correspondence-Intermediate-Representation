@@ -125,6 +125,7 @@ _PREPROC = [
     "cfront_macros.c",
     "cfront_ppinc.c",
     "cfront_comments.c",
+    "cfront_paste.c",  # tokens that would lex as others, written apart: `a + ++g` (CF-PASTE)
 ]  # L7: exercise the preprocessor
 _ABI = [
     "cfront_structret.c",
@@ -6763,3 +6764,104 @@ def test_c_twin_preprocessor_differential_against_reference():
         f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
         f"(pinned={pinned}) -- a real differential must exercise the clean subset"
     )
+
+
+# --- CF-PASTE: the preprocessor keeps apart tokens that would lex as others ----------------------------
+# Every pp-token the property below draws from: words, pp-numbers (an exponent's sign, a leading `.`, a hex
+# digit `e`), string literals, and every punctuator the preprocessor lexes.
+_PASTE_VOCAB = (
+    "a", "b", "x1", "e", "E", "p", "_y", "L",
+    "0", "1", "12", "1.5", ".5", "0x1e", "1e", "1e+5", "0x1p-3", "07",
+    '"s"', '"a b"',
+    *_cpp._PUNCT,
+)  # fmt: skip
+
+
+def _paste_lines(seed: int, n: int) -> list[list[str]]:
+    """`n` random token sequences over `_PASTE_VOCAB` (2..8 tokens each), deterministic in `seed`."""
+    import random
+
+    rng = random.Random(seed)
+    return [[rng.choice(_PASTE_VOCAB) for _ in range(rng.randint(2, 8))] for _ in range(n)]
+
+
+def test_the_preprocessor_keeps_apart_tokens_that_would_lex_as_others():
+    """CF-PASTE: both cfront preprocessors re-spell every source line from its tokens, and kept a space
+    only between two words, so two tokens whose spellings run together into others came out as those
+    (maximal munch, C 6.4p4). `a + ++g` came out `a+++g`, which is `(a++) + g`; `-NEG(a)` with
+    `#define NEG(x) -x` came out `--a`; `a + INC b` with `#define INC ++` came out `a+++b` -- each unit
+    lowered clean and computed another value. `y / *p` came out as a comment opener and `a + +b` as a
+    parse error. One predicate on each rail now decides the space (`cpp._pastes`, `bcir_cpp.c` `pastes`):
+    two words, a comment opener, a punctuator maximal munch would extend, two dots (the ellipsis), a
+    pp-number that runs on. The property: for random token sequences over every punctuator, pp-number
+    shape and word, the joined text re-lexes to exactly those tokens, and the twin writes the same text
+    byte for byte. Every tracked C source preprocesses as before (checked when this landed: the rule
+    only ever adds a space where the text lexed as other tokens). `cfront_paste.c` runs each once-wrong
+    function against the original on both rails' emits; `cfront_pp_avoidpaste.c` holds both
+    preprocessors to clang and gcc in the reference differentials above."""
+    lines = _paste_lines(20260929, 2000)
+    for toks in lines:
+        text = _cpp._join(toks)
+        assert _cpp._tokens(text) == toks, (toks, text)
+    assert _cpp._join(["a", "+", "++", "g"]) == "a+ ++g"  # the space where it is needed ...
+    assert _cpp._join(["i", "--", ">", "0"]) == "i-->0"  # ... and only there: `-->` lexes `--` `>`
+    assert _cpp._join([".", ".", "."]) == ". . ."  # three tokens, not the ellipsis
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    # each sequence as a line (after a word, so never a directive); then -- where it is one macro
+    # argument (no parenthesis or comma; no string, whose escaping in `#` the twin does not model) --
+    # stringized, which keeps the argument's own spelling, and through an identity macro, rescanned. Two
+    # units, each inside the twin harness's 64 KiB input.
+    args = [t for t in lines if not {"(", ")", ",", '"s"', '"a b"'} & set(t)][:700]
+    assert len(args) == 700, len(args)
+    units = (
+        "".join(f"q {' '.join(t)}\n" for t in lines),
+        "#define STR(x) #x\n#define ID(x) x\n"
+        + "".join(f"q STR({' '.join(t)}) ID({' '.join(t)})\n" for t in args),
+    )
+    for body in units:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "paste_lines.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            twin = subprocess.run([exe, "--emit-cpp", path], capture_output=True, text=True)
+        assert twin.returncode == 0, twin.stderr
+        py = _cpp.preprocess(body, name=path)
+        assert twin.stdout.splitlines() == py.splitlines(), next(
+            (t, p) for t, p in zip(twin.stdout.splitlines(), py.splitlines(), strict=True) if t != p
+        )
+    fx = "cfront_paste.c"
+    fpath = os.path.join(_C, fx)
+    src = open(fpath, encoding="utf-8").read()
+    oracle_summary, r, _entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    c_summary, c_emit = _c_run(exe, fpath)
+    assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    renamed = src
+    for f in r.lowered.functions:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""
+static int fail(const char *what) { puts(what); return 1; }
+int main(void) {
+  for (int32_t k = -300; k < 300; k++) {
+    uint32_t u = (uint32_t)k * 2654435761u, v = (uint32_t)(k * 7 + 3), dv = v | 1u;
+    if (ps_preinc_s(u, v) != bcir_ps_preinc(u, v)) return fail("preinc");
+    if (ps_predec_s(u, v) != bcir_ps_predec(u, v)) return fail("predec");
+    if (ps_negneg_s(k) != bcir_ps_negneg(k)) return fail("negneg");
+    if (ps_incmacro_s(k, 3 * k) != bcir_ps_incmacro(k, 3 * k)) return fail("incmacro");
+    if (ps_deref_s(u, &dv) != bcir_ps_deref(u, &dv)) return fail("deref");
+    if (ps_unary_s(k, 5 * k) != bcir_ps_unary(k, 5 * k)) return fail("unary");
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+                out = _build_run_c(d, cc, label, f"{head}{renamed}\n{emit}\n{driver}")
+                assert out == "MATCH", f"{fx}: {label} emit not equivalent under {cc} ({out})"
