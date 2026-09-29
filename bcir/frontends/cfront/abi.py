@@ -27,7 +27,11 @@ class TargetABI:
     are the axes that move across the matrix; everything else (`int`, fixed-width, `long long`) is
     fixed by C / the common ABIs and lives in `ctype_model._SCALAR`. `atomic_promote_size` is the
     widest `_Atomic` type the ABI promotes (Clang's `MaxAtomicPromoteWidth`, in bytes): one no wider
-    rounds its size up to a power of two and aligns to it (`ctype_model.with_atomic`)."""
+    rounds its size up to a power of two and aligns to it (`ctype_model.with_atomic`).
+    `eight_byte_align` is the alignment of an 8-byte scalar -- `double`, `long long`, `int64_t`, a
+    `_BitInt(33..64)`, and so a `double _Complex`'s element (Clang's `DoubleAlign` / `LongLongAlign`,
+    in bytes): 8 on the 64-bit targets, 4 on i386, whose ABI aligns them to 4 inside a struct and in
+    `_Alignof` while their size stays 8."""
 
     name: str  # short id, e.g. "x86_64-linux"
     triple: str  # the Clang target triple (for `-target` / provenance)
@@ -37,6 +41,7 @@ class TargetABI:
     long_double_size: int
     long_double_align: int
     atomic_promote_size: int
+    eight_byte_align: int
     endian: str = "little"
 
     def scalar_size(self, name: str, default: int) -> int:
@@ -56,6 +61,7 @@ _LP64 = dict(
     long_double_size=16,
     long_double_align=16,
     atomic_promote_size=16,
+    eight_byte_align=8,
 )
 
 # The named matrix. x86-64 / AArch64 / RISC-V are all LP64, so their *layouts* coincide (they differ
@@ -75,6 +81,7 @@ TARGETS: dict[str, TargetABI] = {
         long_double_size=8,
         long_double_align=8,
         atomic_promote_size=16,
+        eight_byte_align=8,
     ),
     "i386-linux": TargetABI(
         "i386-linux",
@@ -85,6 +92,7 @@ TARGETS: dict[str, TargetABI] = {
         long_double_size=12,
         long_double_align=4,
         atomic_promote_size=8,
+        eight_byte_align=4,
     ),
 }
 

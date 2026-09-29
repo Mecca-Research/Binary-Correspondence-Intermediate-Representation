@@ -94,6 +94,8 @@ typedef struct {
   int long_double_size;      /* sizeof(long double): 16 (x86-64), 12 (ILP32), or 8 where it aliases double */
   int long_double_align;
   int atomic_promote_size;   /* the widest `_Atomic` type the ABI promotes (Clang's MaxAtomicPromoteWidth, bytes) */
+  int eight_byte_align;      /* an 8-byte scalar's alignment -- `double`, `long long`, `int64_t`, a `_BitInt(33..64)`
+                              * and a `double _Complex`'s element (Clang's DoubleAlign / LongLongAlign): 4 on i386 */
 } bcir_abi;
 
 /* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
@@ -101,11 +103,11 @@ typedef struct {
  * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
  * --target-less compilation is byte-identical to the layout used before --target existed. */
 static const bcir_abi g_targets[] = {
-  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16},
-  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16},
-  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16},
-  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16},
-  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8},
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4},
 };
 #define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
 static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
@@ -238,13 +240,25 @@ oom:
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
 /* The alignment of a scalar type of `sz` bytes under the target ABI -- the oracle's `CType.align`: a `long
  * double` takes the ABI's long-double alignment, a complex type its element's (a `long double _Complex` the
- * long double's), every other scalar its size. The one answer a member's placement and `_Alignof` share;
- * aligning a complex to its size put a `double _Complex` member at 16 where the ABI puts it at 8. */
+ * long double's), an 8-byte scalar the ABI's `eight_byte_align` (4 on i386: `double`, `long long`, `int64_t`,
+ * a `_BitInt(33..64)`), every other scalar its size -- the oracle's `ctype_model.scalar_align`. The one answer
+ * a member's placement and `_Alignof` share; aligning a complex to its size put a `double _Complex` member at
+ * 16 where the ABI puts it at 8. */
 static int scalar_align(const CC *c, const bcir_ctype *ty, int sz){
   const bcir_abi *a=cc_abi(c);
   int el=ty->is_complex ? sz/2 : sz;                    /* a complex: the element float */
   if(ty->is_float && el==a->long_double_size && el>8) return a->long_double_align;   /* `long double` */
+  if(el==8) return a->eight_byte_align;                 /* an 8-byte scalar (or a `double _Complex`'s element) */
   return el<1 ? 1 : el;
+}
+/* Where Clang (the Itanium layout) starts a non-packed bitfield of `width` bits at the bit cursor `dbits`, for a
+ * type of `size` bytes aligned to `align` -- the oracle's `ctype_model.bitfield_start`: at the cursor, unless it
+ * would overflow a storage unit of the type's SIZE that begins at an ALIGNMENT boundary; then at the next
+ * alignment boundary. With align == size (every type but i386's 8-byte integers) a field never crosses a unit. */
+static long long bitfield_start(long long dbits, int width, int size, int align){
+  long long fa=(long long)align*8;
+  if(dbits%fa + width > (long long)size*8) dbits+=fa-(dbits%fa);
+  return dbits;
 }
 /* The target ABI's atomic promotion -- the oracle's `with_atomic`: an `_Atomic` type no wider than the ABI's
  * `atomic_promote_size` (Clang's MaxAtomicPromoteWidth) rounds its size up to a power of two and aligns to
@@ -737,10 +751,11 @@ static int p_struct_body(CC *c) {
       if(is(c,":")){                                  /* an UNNAMED `int :3` / ZERO-WIDTH `int :0` bitfield (no
                                                        * name): positions the cursor, NOT a field, no align bump. */
         c->i++; int w=(int)adv(c).v;
-        if(!is_union){ int ub=ty.size*8;
-          if(w==0){ if(dbits%ub)dbits+=ub-(dbits%ub); }       /* zero-width -> next storage-unit boundary */
+        if(!is_union){ int ta=scalar_align(c,&ty,ty.size); long long fa=(long long)ta*8;
+          if(w==0){ if(dbits%fa)dbits+=fa-(dbits%fa); }       /* zero-width -> the next boundary of its type's
+                                                               * ALIGNMENT, packed or not (as Clang does) */
           else if(packed){ dbits+=w; }                        /* packed: pack bit-by-bit */
-          else { if((int)(dbits%ub)+w>ub)dbits+=ub-(dbits%ub); dbits+=w; }
+          else { dbits=bitfield_start(dbits,w,ty.size,ta)+w; }
         }
         if(is(c,",")){c->i++;continue;} break;
       }
@@ -783,6 +798,7 @@ static int p_struct_body(CC *c) {
              : scalar_align(c,&ty,sz);                 /* a scalar: its ABI alignment (a complex its element's,
                                                         * a `long double` the ABI's) */
       atomic_layout(c,&ty,&sz,&al);                   /* an `_Atomic` member: the ABI's atomic promotion */
+      int tal=al;                                     /* the type's own alignment: a bitfield's FieldAlign */
       if(packed) al=1;                                /* packed wins over every natural alignment */
       if(maln>al) al=maln;                            /* `_Alignas(N)`/`aligned(N)` over-aligns (survives packed) */
       field *f=&S->f[S->nf++];
@@ -813,9 +829,18 @@ static int p_struct_body(CC *c) {
           * spans (`access_bytes`), which may straddle byte/word boundaries; the struct stays align 1. */
           int P=(int)dbits; f->byte_off=P/8; f->bit_off=P%8;
           f->access_bytes=(f->bit_off+width+7)/8; dbits+=width;
-        }else{                                          /* natural: pack at the bit cursor, NOT a fresh unit */
-          if((int)(dbits%ub)+width>ub)dbits+=ub-(dbits%ub);   /* would cross a storage-unit boundary -> bump */
-          int uoff=(int)(dbits/ub)*sz; f->byte_off=uoff;f->bit_off=(int)(dbits-(long long)uoff*8);dbits+=width;
+        }else{                                          /* natural: pack at the bit cursor unless it would
+                                                         * overflow its storage unit (`bitfield_start`) */
+          dbits=bitfield_start(dbits,width,sz,tal);
+          if(tal==sz){                                  /* the size-aligned storage unit holding it */
+            int uoff=(int)(dbits/ub)*sz; f->byte_off=uoff;f->bit_off=(int)(dbits-(long long)uoff*8);
+          }else{                                        /* an under-aligned type (i386 `long long`): its unit
+            * can run past the struct's end (`struct { char c; long long x : 8; }` is 4 bytes), so the field
+            * sits at its first byte and is accessed over the bytes it spans, as a packed one is (the oracle's
+            * `narrow_bitfield`) */
+            f->byte_off=(int)(dbits/8); f->bit_off=(int)(dbits%8); f->access_bytes=(f->bit_off+width+7)/8;
+          }
+          dbits+=width;
         }
       }else{long long a8=(long long)al*8;if(dbits%a8)dbits+=a8-(dbits%a8);
         f->byte_off=(int)(dbits/8);f->bit_off=0;dbits+=(long long)total*8;}

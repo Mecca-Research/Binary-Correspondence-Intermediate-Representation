@@ -31,6 +31,7 @@ from .ctype_model import (
     bitint,
     funcptr,
     is_scalar_name,
+    narrow_bitfield,
     pointer,
     promote_int,
     qualified,
@@ -550,10 +551,11 @@ class _LV:
     # ceil((bit_off+bit_width)/8) bytes, possibly straddling words
 
     def unit_bytes(self) -> int:
-        """The bitfield storage-unit byte span: a PACKED field covers only the bytes it straddles; otherwise
-        the declared type width (an MMIO register must be accessed at its natural width, so non-packed is
-        unchanged)."""
-        if self.packed and self.bit_width:
+        """The bitfield storage-unit byte span: a PACKED field, and one whose type aligns below its size
+        (`narrow_bitfield`: i386's 8-byte integers), covers only the bytes it straddles; otherwise the
+        declared type width (an MMIO register must be accessed at its natural width, so a naturally
+        aligned unit is unchanged)."""
+        if self.bit_width and (self.packed or narrow_bitfield(self.ct)):
             return (self.bit_off + self.bit_width + 7) // 8
         return max(1, self.ct.size)
 
@@ -930,7 +932,7 @@ class _FuncLowerer:
         elif tref.base == "va_list":  # the <stdarg.h> variadic cursor (opaque)
             base = valist(self.abi)
         elif tref.bit_width:  # C23 `_BitInt(N)`: an exact-width, non-promoting int
-            base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
+            base = bitint(tref.bit_width, signed="unsigned" not in tref.base, abi=self.abi)
         elif is_scalar_name(tref.base):
             base = scalar(tref.base, self.abi)
         else:
@@ -3442,7 +3444,7 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
     if tref.aggregate:
         base = aggregates[tref.base]
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)
-        base = bitint(tref.bit_width, signed="unsigned" not in tref.base)
+        base = bitint(tref.bit_width, signed="unsigned" not in tref.base, abi=abi)
     else:
         base = scalar(tref.base, abi)
     if "volatile" in tref.quals:  # a volatile member / global, or a pointer to one: device storage

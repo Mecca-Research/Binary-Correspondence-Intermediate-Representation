@@ -3374,15 +3374,15 @@ def test_scalar_alignment_matrix_dual_rail():
     The folded constants [Ld, Lc, Dc, _Alignof(long double), _Alignof(long double _Complex),
     _Alignof(double _Complex), Td, Am, Al, _Alignof(_Atomic float _Complex), sizeof(_Atomic cf), Pk, At]
     are compared per target; `packed` (Pk) still wins over the atomic alignment, and an `_Atomic` typedef
-    (At) keeps its qualifier. Every vector is Clang's, except two i386 entries: Clang aligns an i386 `double`
-    to 4, where both rails use 8 (Dc and `_Alignof(double _Complex)`), which is not this fix's."""
+    (At) keeps its qualifier. Every vector is Clang's: the two i386 entries a `double` decides (Dc and
+    `_Alignof(double _Complex)`, 4-aligned there) became so with CF-I386's `eight_byte_align`."""
     vecs = {t: _abi_const_vec_oracle(_SCALAR_ALIGN_SRC, t) for t in _ABI_TARGETS}
     for t in ("x86_64-linux", "aarch64-linux", "riscv64-linux"):
         assert vecs[t] == [48, 64, 32, 16, 16, 8, 16, 48, 64, 8, 8, 17, 24], (t, vecs[t])
     win = vecs["x86_64-windows"]
     assert win == [24, 32, 32, 8, 8, 8, 16, 48, 48, 8, 8, 17, 24], win
     i386 = vecs["i386-linux"]
-    assert i386[:2] + i386[3:5] + i386[6:] == [20, 32, 4, 4, 16, 40, 32, 8, 8, 17, 24], i386
+    assert i386 == [20, 32, 28, 4, 4, 4, 16, 40, 32, 8, 8, 17, 24], i386
     if not _CC:
         return
     exe = _build_frontend(_session_build_dir())
@@ -3392,6 +3392,190 @@ def test_scalar_alignment_matrix_dual_rail():
             fh.write(_SCALAR_ALIGN_SRC)
         for t in _ABI_TARGETS:
             assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+
+
+# CF-I386: i386 aligns an 8-byte scalar -- `double`, `long long`, `int64_t`, a `_BitInt(33..64)`, a `double
+# _Complex`'s element -- to 4 while its size stays 8 (Clang's DoubleAlign / LongLongAlign), and a bitfield of
+# such a type then follows Clang's placement rule, whose storage unit starts at an ALIGNMENT boundary.
+_EIGHT_BYTE_SRC = """#include <stdint.h>
+struct D { uint8_t c; double d; };
+struct L { uint8_t c; long long x; };
+struct Z { uint8_t c; double _Complex z; };
+union U { uint8_t c; double d; };
+struct A2 { uint8_t c; double d[2]; };
+struct AL { uint8_t c; _Atomic long long x; };
+struct BI { uint8_t c; _BitInt(40) x; };
+struct B1 { uint8_t c; long long x : 8; };
+struct B2 { uint8_t c; long long x : 40; uint8_t d; };
+struct B3 { uint32_t a; uint8_t b; long long x : 40; };
+struct B4 { uint8_t a; long long : 0; uint8_t b; };
+struct __attribute__((packed)) B5 { uint8_t a; long long : 0; uint8_t b; };
+struct B7 { unsigned long long a : 40; unsigned long long b : 30; };
+struct B8 { uint8_t c; long long : 3; long long x : 60; };
+struct B9 { uint8_t c; _BitInt(40) x : 20; uint8_t d; };
+uint64_t g(struct B1 *o, struct B3 *p, struct B7 *q, struct B8 *r, uint64_t v) {
+    o->x = (long long)v;  /* no literal here: the twin's constant vector reads every `= N;` in the emit */
+    p->x = (long long)v;
+    q->b = v;
+    r->x = (long long)v;
+    return (uint64_t)o->x + (uint64_t)p->x + q->a + q->b + (uint64_t)r->x;
+}
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct D);
+    uint32_t b = (uint32_t)sizeof(struct L);
+    uint32_t d = (uint32_t)sizeof(struct Z);
+    uint32_t e = (uint32_t)sizeof(union U);
+    uint32_t g2 = (uint32_t)sizeof(struct A2);
+    uint32_t h = (uint32_t)sizeof(struct AL);
+    uint32_t i = (uint32_t)sizeof(struct BI);
+    uint32_t j = (uint32_t)sizeof(struct B1);
+    uint32_t k = (uint32_t)sizeof(struct B2);
+    uint32_t l = (uint32_t)sizeof(struct B3);
+    uint32_t m = (uint32_t)sizeof(struct B4);
+    uint32_t n = (uint32_t)sizeof(struct B5);
+    uint32_t o = (uint32_t)sizeof(struct B7);
+    uint32_t p = (uint32_t)sizeof(struct B8);
+    uint32_t q = (uint32_t)sizeof(struct B9);
+    uint32_t r = (uint32_t)_Alignof(double);
+    uint32_t s = (uint32_t)_Alignof(long long);
+    uint32_t t = (uint32_t)_Alignof(double _Complex);
+    uint32_t u = (uint32_t)_Alignof(struct BI);
+    uint32_t w = (uint32_t)_Alignof(union U);
+    uint32_t x = (uint32_t)_Alignof(struct B1);
+    uint32_t y = (uint32_t)_Alignof(_Atomic double _Complex);
+    return a + b + d + e + g2 + h + i + j + k + l + m + n + o + p + q + r + s + t + u + w + x + y;
+}
+"""
+# the folded operands of `f`, in order (a `_Static_assert` per entry is what Clang checks)
+_EIGHT_BYTE_EXPRS = [
+    *(
+        f"sizeof({agg})"
+        for agg in (
+            "struct D", "struct L", "struct Z", "union U", "struct A2", "struct AL", "struct BI",
+            "struct B1", "struct B2", "struct B3", "struct B4", "struct B5", "struct B7", "struct B8",
+            "struct B9",
+        )
+    ),
+    "_Alignof(double)", "_Alignof(long long)", "_Alignof(double _Complex)", "_Alignof(struct BI)",
+    "_Alignof(union U)", "_Alignof(struct B1)", "_Alignof(_Atomic double _Complex)",
+]  # fmt: skip
+_LP64_EIGHT = [16, 16, 24, 8, 24, 16, 16, 8, 8, 16, 9, 9, 16, 16, 8, 8, 8, 8, 8, 8, 8, 16]
+_I386_EIGHT = [12, 12, 20, 8, 20, 16, 12, 4, 8, 12, 5, 5, 12, 12, 8, 4, 4, 4, 4, 4, 4, 4]
+# The entries that do not depend on a bitfield's layout. Bitfields follow the Itanium rules the rails model
+# on x86-64 and RISC-V Linux and on i386; AArch64 also raises a record's alignment for an unnamed bitfield,
+# and Windows lays bitfields out by the MSVC rules. Neither rail models either yet, so on those two targets
+# only these entries are held to Clang.
+_NO_BITFIELD = [i for i, e in enumerate(_EIGHT_BYTE_EXPRS) if not re.search(r"struct B\d", e)]
+_ITANIUM_BITFIELDS = ("x86_64-linux", "riscv64-linux", "i386-linux")
+# the members of each bitfield struct in declaration order (None: an unnamed bitfield), as Clang's
+# record-layout dump lists their bit offsets
+_EIGHT_BYTE_BITFIELDS = {
+    "B1": ("c", "x"),
+    "B2": ("c", "x", "d"),
+    "B3": ("a", "b", "x"),
+    "B4": ("a", None, "b"),
+    "B5": ("a", None, "b"),
+    "B7": ("a", "b"),
+    "B8": ("c", None, "x"),
+    "B9": ("c", "x", "d"),
+}
+
+
+def _clang_bit_offsets(clang: str, triple: str, src: str) -> dict:
+    """Each record's field bit offsets as Clang lays them out under `triple` (`-fdump-record-layouts-simple`,
+    unnamed bitfields included): the reference the rails' layouts are held to, bitfields included, since
+    `offsetof` is illegal on a bitfield."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "layout.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        run = subprocess.run(
+            [clang, "-target", triple, "-std=c2x", "-ffreestanding", "-fsyntax-only", "-Xclang",
+             "-fdump-record-layouts-simple", path],
+            capture_output=True, text=True,
+        )  # fmt: skip
+    assert run.returncode == 0, run.stderr
+    out, name = {}, None
+    for line in run.stdout.splitlines():
+        m = re.match(r"Type: (?:struct|union) (\w+)", line)
+        if m:
+            name = m.group(1)
+        m = re.match(r"\s*FieldOffsets: \[([\d, ]*)\]", line)
+        if m and name:
+            out[name] = [int(v) for v in m.group(1).split(",") if v.strip()]
+    return out
+
+
+def test_an_eight_byte_scalar_and_its_bitfields_follow_the_target_abi():
+    """CF-I386: both rails aligned an 8-byte scalar to 8 on every target, but i386 aligns `double`, `long
+    long`, `int64_t`, a `_BitInt(33..64)` and a `double _Complex` to 4 while their size stays 8, so every
+    such member, `sizeof` and `_Alignof` disagreed with the ABI there (`struct D` folded to 16, not 12). Both
+    target tables now carry the ABI's `eight_byte_align`, and a bitfield follows Clang's placement rule: a
+    field bumps to its type's next ALIGNMENT boundary only if it would overflow a storage unit of its type's
+    size, and a zero-width one aligns to its type's alignment, packed or not. Where the alignment equals the
+    size (every other target and type) that is the old rule, so no other layout moves. A bitfield of an
+    under-aligned type is accessed over only the bytes it spans (`struct B1` is 4 bytes; an 8-byte unit at
+    its start would run past the end). Checked per target: the folded sizes and alignments against a pinned
+    vector, between the rails, and against Clang (a `_Static_assert` per entry); each bitfield's bit offset
+    against Clang's record layout on i386 and x86-64; and the claim graphs of code reading and writing those
+    bitfields, digest for digest between the rails. Bitfield layout is held to Clang only where the rails
+    implement its rules (`_ITANIUM_BITFIELDS`): AArch64's alignment for an unnamed bitfield and the MSVC
+    bitfield layout are modeled by neither rail, which this test does not claim."""
+    vecs = {t: _abi_const_vec_oracle(_EIGHT_BYTE_SRC, t) for t in _ABI_TARGETS}
+    for t in ("x86_64-linux", "riscv64-linux"):
+        assert vecs[t] == _LP64_EIGHT, (t, vecs[t])
+    for t in ("aarch64-linux", "x86_64-windows"):
+        assert [vecs[t][i] for i in _NO_BITFIELD] == [_LP64_EIGHT[i] for i in _NO_BITFIELD], t
+    assert vecs["i386-linux"] == _I386_EIGHT, vecs["i386-linux"]
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        # Clang's own layout for every target, one `_Static_assert` per folded entry
+        for t in _ABI_TARGETS:
+            held = range(len(_EIGHT_BYTE_EXPRS)) if t in _ITANIUM_BITFIELDS else _NO_BITFIELD
+            asserts = "".join(
+                f'_Static_assert({_EIGHT_BYTE_EXPRS[i]} == {vecs[t][i]}, "{t}: {_EIGHT_BYTE_EXPRS[i]}");\n'
+                for i in held
+            )
+            src = _EIGHT_BYTE_SRC.split("uint64_t g(")[0] + asserts
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "eight.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(src)
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding",
+                     "-fsyntax-only", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+            assert run.returncode == 0, (t, run.stderr)
+        # each named bitfield's bit offset, against Clang's record layout
+        for t in ("i386-linux", "x86_64-linux"):
+            uses = " + ".join(f"sizeof(struct {tag})" for tag in _EIGHT_BYTE_BITFIELDS)
+            defs = _EIGHT_BYTE_SRC.split("uint64_t g(")[0] + f"int layout_uses = {uses};\n"
+            # Clang dumps only the records a unit uses
+            want = _clang_bit_offsets(clang, TARGETS[t].triple, defs)
+            aggs = compile_unit(_EIGHT_BYTE_SRC, check_clang=False, target=t).lowered.aggregates
+            for tag, names in _EIGHT_BYTE_BITFIELDS.items():
+                clang_at = {n: off for n, off in zip(names, want[tag], strict=True) if n}
+                ours = {fn: fbo * 8 + fbit for fn, _ft, fbo, fbit, _fw in aggs[tag].fields}
+                assert ours == clang_at, (t, tag, ours, clang_at)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "eight_byte.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_EIGHT_BYTE_SRC)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+        # the bitfield accesses: the same claim graph (offsets, unit bytes, bit positions) on both rails
+        for t in ("i386-linux", "x86_64-linux"):
+            r = compile_unit(_EIGHT_BYTE_SRC, check_clang=False, target=t)
+            oracle = f"{cfront_structural_digest(r.lowered):016x}"
+            run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+            twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
+            assert twin and twin.group(1) == oracle, (t, run.stdout[:300], oracle)
 
 
 # An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the
