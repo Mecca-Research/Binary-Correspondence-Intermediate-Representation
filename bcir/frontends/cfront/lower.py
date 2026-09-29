@@ -567,6 +567,31 @@ def _arith_class(ct: CType) -> int:
     return 2 if ct.is_complex else (1 if ct.is_float else 0)
 
 
+def _access_order(mmio: bool, atomic: bool) -> dict:
+    """The lane and hazard of a memory access (CF-ATOMIC): an access to an `_Atomic` object is an atomic
+    operation -- lane A and the `atomic` hazard, the contract the C11 generics' claims carry (R5) -- a
+    device access is ordered (lane H, `barriered`), and a device access to an `_Atomic` object is both
+    (lane H, `atomic`, as R3's pass leaves an atomic claim it moves into the device domain). The twin's
+    `mark_access` decides the same."""
+    return {
+        "lane": Lane.H if mmio else (Lane.A if atomic else Lane.U),
+        "hazard": "atomic" if atomic else ("barriered" if mmio else "unique"),
+    }
+
+
+# The opcode of an atomic read-modify-write by its operator: the three the opcode set names, else the
+# compare-and-swap every other one is (C11 6.5.16.2p3: a loop of them). The twin's `rmw_opcode`.
+_RMW_OPCODE = {
+    "add": Opcode.ATOMIC_ADD,
+    "sub": Opcode.ATOMIC_SUB,
+    "xor": Opcode.ATOMIC_XOR,
+    "preinc": Opcode.ATOMIC_ADD,
+    "postinc": Opcode.ATOMIC_ADD,
+    "predec": Opcode.ATOMIC_SUB,
+    "postdec": Opcode.ATOMIC_SUB,
+}
+
+
 def _object_write(ct: CType) -> dict:
     """The claim fields of a write to a named object of type `ct`: a volatile scalar's write is a
     volatile access (a device-domain claim, lane H, `barriered`); anything else is an ordinary copy
@@ -1946,7 +1971,9 @@ class _FuncLowerer:
         vol = lv.ct.volatile
         mmio = vol or self._mmio(lv.rid)
         # the byte offset rides in imm (not the strict-bounds `offset`), and the access is
-        # assumed_safe (the frontend resolved the member/index). MMIO accesses are ordered. A member
+        # assumed_safe (the frontend resolved the member/index). MMIO accesses are ordered, and a read
+        # of an `_Atomic` object is an atomic load (the emit performs it through an `_Atomic` lvalue,
+        # never a byte copy). A member
         # array `s.arr[i]` carries BOTH (member offset, element size) and an index -- so the emit lands
         # the element at `&s + member_off + i*elem_size`, distinct from a plain `base[idx]` (no imm).
         if lv.idx is not None:
@@ -1967,9 +1994,8 @@ class _FuncLowerer:
             domain=Domain.MMIO if mmio else Domain.RAM,
             bounds=self._access_bounds(lv),
             bounds_provenance=self._bounds_provenance(lv),
-            lane=Lane.H if mmio else Lane.U,
-            hazard="barriered" if mmio else "unique",
             volatile=vol,
+            **_access_order(mmio, lv.ct.atomic),
         )
 
     def _cast_value(self, v: int, ct: CType) -> int:
@@ -2050,11 +2076,49 @@ class _FuncLowerer:
             domain=Domain.MMIO if mmio else Domain.RAM,
             bounds=self._access_bounds(lv),
             bounds_provenance=self._bounds_provenance(lv),
-            lane=Lane.H if mmio else Lane.U,
-            hazard="barriered" if mmio else "unique",
             volatile=vol,
+            **_access_order(mmio, lv.ct.atomic),  # a store to an `_Atomic` object: an atomic store
         )
         return stored
+
+    def _atomic_rmw(self, lv: "_LV", kind: str, v: int | None = None) -> int:
+        """One atomic read-modify-write of the `_Atomic` object `lv` designates (CF-ATOMIC): a compound
+        assignment `E op= v` (C11 6.5.16.2p3) or an increment or decrement (6.5.2.4p2), whose load
+        and store must not come apart -- lowered as a load, an operation and a store, a concurrent
+        write between them was lost. `kind` is the operator's suffix (`add`, `shl`, ...) or
+        `preinc`/`predec`/`postinc`/`postdec`. One `c.c11atom.rmw:<kind>` claim, addressed as the
+        store addresses the object (its reads `(base[, idx][, v])`, its imm the store's), a named
+        object as a base at offset 0; its value is the new value (the old for a postfix operator), of
+        the object's unqualified type. The operand keeps its own type, so the emitted `E op= v`
+        converts as C does (`*p *= 0.5` on an `_Atomic int` multiplies in double). The twin's
+        `emit_rmw`."""
+        rt = unqualified(lv.ct)
+        t = self._temp(rt, f"rmw_{kind}")
+        if lv.kind == "var":  # a named object: a memory base at offset 0
+            rd, imm = (lv.rid,), (0, max(1, lv.ct.size))
+        elif lv.idx is None:  # a member / a dereference
+            rd, imm = (lv.rid,), (lv.byte_off, lv.unit_bytes())
+        elif lv.member:  # s.arr[i], aos[i].f: (member offset, element size), the store's layout
+            rd, imm = (lv.rid, lv.idx), (lv.byte_off, max(1, lv.ct.size))
+            if lv.stride:
+                imm = imm + (0, lv.stride)
+        else:  # base[idx]: a typed element (its bounds guard kept)
+            rd, imm = (lv.rid, lv.idx), ()
+        if v is not None:
+            rd = rd + (v,)
+        mmio = lv.ct.volatile or (lv.kind == "mem" and self._mmio(lv.rid))
+        return self._emit(
+            f"c.c11atom.rmw:{kind}",
+            _RMW_OPCODE.get(kind, Opcode.CMPXCHG),
+            rd,
+            (t,),
+            imm=imm,
+            domain=Domain.MMIO if mmio else Domain.RAM,
+            bounds=self._access_bounds(lv),
+            bounds_provenance=self._bounds_provenance(lv),
+            volatile=lv.ct.volatile,
+            **_access_order(mmio, True),
+        )
 
     def _compound_literal(self, node: "cast.CompoundLiteral") -> tuple[int, CType]:
         """Materialize a compound literal `(type){init}` as an anonymous local and initialize it, exactly
@@ -2248,6 +2312,9 @@ class _FuncLowerer:
             raise CLowerError(
                 "inc/dec of this lvalue form is a follow-on"
             )  # MMIO / non-scalar member
+        if lv.ct.atomic:  # an `_Atomic` object: one read-modify-write, no snapshot or re-read
+            kind = ("pre" if node.prefix else "post") + ("inc" if node.op == "+" else "dec")
+            return self._atomic_rmw(lv, kind)
         cur = self._read(lv)
         if (
             not node.prefix and lv.kind == "var"
@@ -2310,6 +2377,16 @@ class _FuncLowerer:
                     "c.ptradd" if node.value.op == "+" else "c.ptrsub", Opcode.ADD, (rid, n), (rid,)
                 )
                 return rid
+        # a compound assignment to a NAMED `_Atomic` object (`g += v`, the node-identity desugaring below):
+        # one atomic read-modify-write of it, never a read, an operation and a copy back
+        if (
+            named_local
+            and isinstance(node.value, cast.Binary)
+            and node.value.lhs is node.target
+            and self._lookup(node.target.ident, node.target.pos)[1].atomic
+        ):
+            lv = self._lvalue(node.target)
+            return self._atomic_rmw(lv, _BIN[node.value.op][1], self._rvalue(node.value.rhs))
         # compound assignment to a MEMORY lvalue (`a[i] OP= e`, `s.m OP= e`, `*p OP= e`): the parser desugars
         # `lhs OP= e` to `lhs = lhs OP e` REUSING the same target node, so resolve the lvalue ONCE (C
         # evaluates `lhs` once) -- one index/address, read + stored through it -- instead of recomputing it
@@ -2325,6 +2402,8 @@ class _FuncLowerer:
                 raise CLowerError(
                     "this lvalue form's compound assignment as a value is a follow-on"
                 )
+            if lv.ct.atomic:  # an `_Atomic` object: one read-modify-write, its value the new one
+                return self._atomic_rmw(lv, _BIN[node.value.op][1], self._rvalue(node.value.rhs))
             cur = self._read(lv)
             b = self._rvalue(node.value.rhs)
             opcode, suf = _BIN[node.value.op]
@@ -2349,13 +2428,17 @@ class _FuncLowerer:
             self._bind_extent(
                 rid, _ct, node.target.ident, node.value
             )  # §5.12: `p = malloc(N*…)` -> N
+            if _ct.atomic and not stmt:  # the value stored, converted: a re-read by name would be
+                return self._cast_value(v, unqualified(_ct))  # a second atomic access
             return rid
         lv = self._lvalue(node.target)
         if not stmt and not (_is_scalar_member_lv(node.target, lv) and not self._mmio(lv.rid)):
             raise CLowerError(
                 "this lvalue form's assignment as a value is a follow-on"
             )  # MMIO re-read unsound
-        self._write(lv, v)
+        stored = self._write(lv, v)
+        if lv.ct.atomic and not stmt:  # the value stored, converted to the object's type: a re-read
+            return self._cast_value(stored, unqualified(lv.ct))  # would be a second atomic access
         return v if stmt else self._read(lv)  # value context: the stored/converted value (re-read)
 
     # --- inline assembly (ASM1): an ISA-neutral TRUSTED OPAQUE EFFECT EDGE, modeled on c.call.libm.void: ---
@@ -2532,6 +2615,19 @@ class _FuncLowerer:
         "atomic_exchange": ("c.c11atom.exchange", Opcode.ATOMIC_ADD),
     }  # swap: set + return old
 
+    def _atomic_value_type(self, ptr: int) -> CType:
+        """The type of the value an atomic builtin reads through `ptr` -- `atomic_load`, a fetch-op,
+        `atomic_exchange`, a value compare-and-swap: the pointee's, unqualified (C11 7.17.7, `C
+        atomic_load(volatile A *)` returns the non-atomic type of `*obj`). A uint32 temp truncated a
+        64-bit counter and converted an `_Atomic float` to an integer (CF-ATOMIC). A pointer to a pointer,
+        an aggregate or `void`, or a value the lowering cannot type, keeps the uint32 it had. The twin's
+        `atomic_value_temp`."""
+        pt = self.rtypes.get(ptr)
+        el = pt.of if pt is not None and pt.kind in ("pointer", "array") else None
+        if el is None or el.kind != "scalar" or el.name == "void":
+            return scalar("uint32_t")
+        return unqualified(el)
+
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
         # Indirect call through a function-pointer local/param (HAL dispatch): the target is dynamic,
@@ -2571,7 +2667,7 @@ class _FuncLowerer:
             op, oc = self._ATOMIC[node.callee]
             ptr = actuals[0]
             val = actuals[1] if len(actuals) > 1 else actuals[0]
-            t = self._temp(scalar("uint32_t"), "atom")
+            t = self._temp(self._atomic_value_type(ptr), "atom")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, oc, (ptr, val), (t,), lane=Lane.A, domain=dom, hazard="atomic")
         if node.callee in self._CMPXCHG:
@@ -2579,7 +2675,8 @@ class _FuncLowerer:
             ptr = actuals[0]
             exp = actuals[1] if len(actuals) > 1 else ptr
             des = actuals[2] if len(actuals) > 2 else exp
-            t = self._temp(scalar("uint32_t"), "cas")
+            vt = self._atomic_value_type(ptr) if op == "c.cmpxchg.val" else scalar("uint32_t")
+            t = self._temp(vt, "cas")  # the value form returns the old `*p`; the bool form 0/1
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(
                 op, Opcode.CMPXCHG, (ptr, exp, des), (t,), lane=Lane.A, domain=dom, hazard="atomic"
@@ -2601,12 +2698,12 @@ class _FuncLowerer:
             op, oc = self._C11_RMW[node.callee]
             ptr = actuals[0]
             val = actuals[1] if len(actuals) > 1 else actuals[0]
-            t = self._temp(scalar("uint32_t"), "c11")
+            t = self._temp(self._atomic_value_type(ptr), "c11")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(op, oc, (ptr, val), (t,), lane=Lane.A, domain=dom, hazard="atomic")
         if node.callee == "atomic_load":  # atomic_load(p) -> *p (ordered)
             ptr = actuals[0]
-            t = self._temp(scalar("uint32_t"), "c11ld")
+            t = self._temp(self._atomic_value_type(ptr), "c11ld")
             dom = self.resources[ptr].domain if ptr in self.resources else Domain.RAM
             return self._emit(
                 "c.c11atom.load",
@@ -3251,6 +3348,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width, malign in agg.members:
             mt = _resolve_member_type(tref, aggregates, abi)
+            if mt.atomic and width:  # GCC and Clang reject it (C leaves it implementation-defined)
+                raise CLowerError("a bit-field of `_Atomic` type is not supported")
             if mt.is_bitint and width:  # a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` is now
                 # first-class: it packs into the `_BitInt(N)` STORAGE UNIT (its `mt.size` = 1/2/4/8 bytes,
                 # the Clang slot) with the same LSB-first packing as a standard-int bitfield of that storage

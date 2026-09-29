@@ -74,6 +74,9 @@ class CType:
     #   not canonicalize to a power-of-two width: `name` carries the verbatim
     #   spelling (`_BitInt(12)` / `unsigned _BitInt(12)`) so the emit prints it
     #   faithfully -- Clang then applies the N-bit semantics in both rails.
+    natural: tuple = ()  # an `_Atomic` type's own (size, align) before the ABI's atomic promotion
+    #   (`with_atomic`), which `unqualified` restores: the value read from an
+    #   `_Atomic float _Complex` is a `float _Complex`, aligned to 4, not 8
 
     @property
     def is_bitint(self) -> bool:
@@ -137,10 +140,16 @@ def with_volatile(ct: CType, vol: bool = True) -> CType:
 
 
 def unqualified(ct: CType) -> CType:
-    """The type of the VALUE an lvalue of type `ct` yields: lvalue conversion drops the qualifiers
-    (C23 6.3.2.1p2), so a value read from a volatile register is an ordinary value."""
+    """The type of the VALUE an lvalue of type `ct` yields: lvalue conversion drops the qualifiers and
+    the atomicity (C23 6.3.2.1p2), so a value read from a volatile register is an ordinary value, and one
+    read from an `_Atomic` object has the non-atomic type -- its layout too, which the ABI's atomic
+    promotion widened (`with_atomic`). The twin keeps an `_Atomic` type's own layout and promotes only
+    where it lays out storage, so clearing the flag is its whole answer (`bcir_cfront.c`, `store_conv`)."""
     from dataclasses import replace
 
+    if ct.atomic:
+        size, align = ct.natural or (ct.size, ct.align)
+        return replace(ct, volatile=False, atomic=False, size=size, align=align, natural=())
     return replace(ct, volatile=False) if ct.volatile else ct
 
 
@@ -172,7 +181,8 @@ def with_atomic(ct: CType, at: bool = True, abi=None) -> CType:
     if ct.kind != "array" and 0 < size <= width:
         size = 1 << (size - 1).bit_length()
         align = size
-    return replace(ct, atomic=True, size=size, align=align)
+    natural = ct.natural or (ct.size, ct.align)  # `_Atomic` twice: the first's own layout
+    return replace(ct, atomic=True, size=size, align=align, natural=natural)
 
 
 def scalar_align(size: int, abi=None) -> int:

@@ -103,6 +103,9 @@ typedef struct bcir_resource {
   uint8_t  ptee_signed, ptee_float, ptee_plain_char;
   char     name[BCIR_CIR_NAME];
   char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
+  uint8_t  is_atomic;        /* `_Atomic` storage, as `bcir_ctype.is_atomic` reads it: a named object (or an array's
+                              * elements) is `_Atomic T`, and a POINTER's pointee is -- so a declaration spells it and
+                              * an access through it is an atomic one (CF-ATOMIC). A value temp is never atomic. */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */

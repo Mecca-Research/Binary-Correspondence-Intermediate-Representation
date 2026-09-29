@@ -1857,6 +1857,268 @@ def test_atomic_local_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+# CF-ATOMIC: per function of `cfront_atomicaccess.c`, the atomic loads and stores and the atomic
+# read-modify-writes each rail lowers -- every access to an `_Atomic` object is exactly one of them -- and so
+# the `_Atomic` lvalues its emit spells, one per claim. Pinned exactly: a count that only had to be nonzero
+# would pass with one access left a byte copy.
+_ATOMIC_ACCESS = {
+    "acc_deref": (2, 4),
+    "acc_member": (8, 4),
+    "acc_float": (4, 0),
+    "acc_elems": (6, 2),
+    "acc_index": (2, 1),
+    "acc_global": (0, 3),  # a named object is atomic by declaration: loaded and stored by name
+    "acc_load64": (0, 0),  # the generics lower to their own `c.c11atom.*` claims
+    "acc_loadf": (0, 0),
+    "acc_ptrmember": (4, 1),
+    "acc_bool": (4, 0),
+    "acc_bump": (0, 3),
+}
+# the plain memory accesses a function keeps: only the loads of a plain pointer member (`s->ap` itself)
+_ATOMIC_ACCESS_PLAIN = {"acc_ptrmember": 5}
+
+# every function of the fixture, run on independent copies of the same state by the original and by an
+# emit, compared by value and by memory; the global is written before it is modified, so a second run of
+# the same function sees the state the first did
+_ATOMIC_ACCESS_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+int main(void) {
+  for (uint32_t k = 0; k < 97u; k++) {
+    uint32_t v = k * 2654435761u, i = k;
+    { _Atomic uint32_t a = 7u, b = 7u;
+      if (acc_deref_s(&a, v) != bcir_acc_deref(&b, v) || a != b) return fail("deref"); }
+    { struct acc_s a, b; memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
+      if (acc_member_s(&a, v) != bcir_acc_member(&b, v) || memcmp(&a, &b, sizeof a)) return fail("member");
+      float x = (float)v * 0.25f;
+      if (acc_float_s(&a, x) != bcir_acc_float(&b, x) || memcmp(&a, &b, sizeof a)) return fail("float"); }
+    { struct acc_a a, b; struct acc_e ea[2], eb[2];
+      memset(&a, 0x11, sizeof a); memset(&b, 0x11, sizeof b); memset(ea, 0x22, sizeof ea); memset(eb, 0x22, sizeof eb);
+      if (acc_elems_s(&a, ea, i, v) != bcir_acc_elems(&b, eb, i, v) || memcmp(&a, &b, sizeof a)
+          || memcmp(ea, eb, sizeof ea)) return fail("elems"); }
+    { _Atomic uint32_t a[4] = {1u, 2u, 3u, 4u}, b[4] = {1u, 2u, 3u, 4u};
+      if (acc_index_s(a, i, v) != bcir_acc_index(b, i, v) || memcmp(a, b, sizeof a)) return fail("index"); }
+    { uint32_t ra = acc_global_s(v), ga = acc_g, rb = bcir_acc_global(v);
+      if (ra != rb || ga != acc_g) return fail("global"); }
+    { _Atomic uint64_t a = 0u, b = 0u; uint64_t w = ((uint64_t)v << 32) | (k * 7u + 3u);
+      if (acc_load64_s(&a, w) != bcir_acc_load64(&b, w) || a != b) return fail("load64"); }
+    { _Atomic float a = 0.0f, b = 0.0f; float x = (float)k * 1.375f + 0.3f;
+      if (acc_loadf_s(&a, x) != bcir_acc_loadf(&b, x) || a != b) return fail("loadf"); }
+    { _Atomic uint32_t ca[2] = {0u, 0u}, cb[2] = {0u, 0u}; struct acc_p a, b;
+      memset(&a, 0, sizeof a); memset(&b, 0, sizeof b); a.c = b.c = (uint8_t)k; a.ap = ca; b.ap = cb;
+      if (acc_ptrmember_s(&a, v) != bcir_acc_ptrmember(&b, v) || memcmp(ca, cb, sizeof ca) || a.c != b.c
+          || a.ap != ca || b.ap != cb) return fail("ptrmember"); }
+    { _Atomic _Bool a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+      if (acc_bool_s(a, i, v) != bcir_acc_bool(b, i, v) || memcmp(a, b, sizeof a)) return fail("bool"); }
+    { _Atomic uint32_t a = k, b = k; struct acc_s sa, sb; struct acc_a aa, ab;
+      memset(&sa, 0, sizeof sa); memset(&sb, 0, sizeof sb); memset(&aa, 0, sizeof aa); memset(&ab, 0, sizeof ab);
+      acc_bump_s(&a, &sa, &aa); bcir_acc_bump(&b, &sb, &ab);
+      if (a != b || memcmp(&sa, &sb, sizeof sa) || memcmp(&aa, &ab, sizeof aa)) return fail("bump"); }
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+
+# the emitted `acc_bump` from several threads at once: an update lowered as a load, an add and a store
+# loses the increments a concurrent step wrote between them; one atomic read-modify-write loses none. The
+# call goes through a volatile function pointer, so no compiler folds the loop's steps into one.
+_ATOMIC_BUMP_THREADS = r"""
+#include <pthread.h>
+enum { THREADS = 4, STEPS = 100000 };
+static _Atomic uint32_t cnt;
+static struct acc_s S;
+static struct acc_a A;
+static void (*volatile bump)(_Atomic uint32_t *, struct acc_s *, struct acc_a *) = bcir_acc_bump;
+static void *worker(void *arg) {
+  (void)arg;
+  for (int k = 0; k < STEPS; k++) bump(&cnt, &S, &A);
+  return 0;
+}
+int main(void) {
+  pthread_t t[THREADS];
+  for (int j = 0; j < THREADS; j++)
+    if (pthread_create(&t[j], 0, worker, 0)) { puts("pthread_create"); return 2; }
+  for (int j = 0; j < THREADS; j++) pthread_join(t[j], 0);
+  uint32_t want = (uint32_t)THREADS * STEPS;
+  if (cnt != want || S.n != want || A.arr[1] != want) {
+    printf("LOST %u %u %u of %u\n", (unsigned)cnt, (unsigned)S.n, (unsigned)A.arr[1], (unsigned)want);
+    return 1;
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+def _emit_functions(emit: str) -> dict:
+    """The emitted C of each function: `bcir_<name>` -> its text, up to the next function's."""
+    starts = [
+        (m.start(), m.group(1)) for m in re.finditer(r"^static [^\n(]*\bbcir_(\w+)\(", emit, re.M)
+    ]
+    return {
+        name: emit[at : starts[k + 1][0] if k + 1 < len(starts) else len(emit)]
+        for k, (at, name) in enumerate(starts)
+    }
+
+
+def _assert_atomic_emit(emit: str, rail: str) -> None:
+    """Every access to an `_Atomic` object in `emit` goes through an `_Atomic` lvalue, one per claim, and
+    no byte copy moves one: a `memcpy` of an atomic object is no atomic access, and it tears. The generics
+    type their value by the pointee."""
+    bodies = _emit_functions(emit)
+    assert set(bodies) == set(_ATOMIC_ACCESS), (rail, sorted(bodies))
+    for name, (loads_stores, rmws) in _ATOMIC_ACCESS.items():
+        body = bodies[name]
+        lvalues = re.findall(r"\(\*\((?:volatile )?_Atomic ", body)
+        assert len(lvalues) == loads_stores + rmws, (rail, name, len(lvalues), body)
+        copies = [line for line in body.splitlines() if "memcpy" in line]
+        assert len(copies) == _ATOMIC_ACCESS_PLAIN.get(name, 0), (rail, name, copies)
+        for line in copies:  # the pointer member itself: copied whole into a pointer temp
+            assert re.search(r"\* (t\d+); memcpy\(&\1, ", line), (rail, name, line)
+    assert re.search(r"\buint64_t t\d+ = atomic_load\(p\);", bodies["acc_load64"]), (rail, bodies)
+    assert re.search(r"\bfloat t\d+ = atomic_load\(p\);", bodies["acc_loadf"]), (rail, bodies)
+
+
+def _build_run_c(d: str, cc: str, label: str, text: str, extra=()) -> str:
+    """Build `text` with `cc` (the newest C standard it takes) and run it; its stdout, stripped."""
+    cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+    with open(cpath, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    for std in ("c23", "c2x", "c17"):
+        b = subprocess.run(
+            [cc, f"-std={std}", "-O2", "-Werror=incompatible-pointer-types", cpath, "-o", epath]
+            + list(extra),
+            capture_output=True,
+            text=True,
+        )
+        if b.returncode == 0:
+            break
+    else:
+        raise AssertionError(f"{label}: build failed under {cc}:\n{b.stderr}")
+    return subprocess.run([epath], capture_output=True, text=True, timeout=300).stdout.strip()
+
+
+def test_atomic_access_is_one_atomic_operation_on_both_rails():
+    """CF-ATOMIC: an access to an `_Atomic` object is one atomic operation wherever the object is --
+    through a pointer, a member, a member array, an array of structs, a subscripted pointer, a pointer
+    member or a named global. Both rails had lowered one through a pointer or a member as a plain byte
+    copy, and a compound assignment or an increment as a load, an operation and a store, so a concurrent
+    update between them was lost (C11 6.5.16.2p3 and 6.5.2.4p2 make each one read-modify-write). A load or a
+    store now keeps its claim on lane A with the atomic hazard; `E op= v` and `++E` are one
+    `c.c11atom.rmw:<op>` claim; both emits spell every one through an `_Atomic` lvalue. The value of an
+    assignment is the value stored, never a second atomic read; an `_Atomic _Bool` normalizes every store;
+    the generics type their value by the pointee (a 64-bit `atomic_load` truncated to 32 bits). The
+    fixture runs against the original on both emits under both compilers, and `acc_bump` from four
+    threads at once loses no update."""
+    from bcir.model.lanes import Lane
+
+    fx = "cfront_atomicaccess.c"
+    path = os.path.join(_C, fx)
+    src = open(path, encoding="utf-8").read()
+    oracle_summary, r, _entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    assert set(r.lowered.functions) == set(_ATOMIC_ACCESS), sorted(r.lowered.functions)
+    for name, fn in r.lowered.functions.items():
+        mem = [c for c in fn.claims if c.op in ("c.load", "c.store")]
+        atomic = [c for c in mem if c.hazard == "atomic"]
+        rmw = [c for c in fn.claims if c.op.startswith("c.c11atom.rmw:")]
+        assert (len(atomic), len(rmw)) == _ATOMIC_ACCESS[name], (name, [c.op for c in fn.claims])
+        plain = len(mem) - len(atomic)
+        assert plain == _ATOMIC_ACCESS_PLAIN.get(name, 0), (name, [c.op for c in mem])
+        for c in atomic + rmw:
+            assert c.lane == Lane.A and c.hazard == "atomic", (name, c.op, c.lane, c.hazard)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    _assert_atomic_emit(oracle_emit, "oracle")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    c_summary, c_emit = _c_run(exe, path)
+    assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+    _assert_atomic_emit(c_emit, "twin")
+    renamed = src
+    for f in _ATOMIC_ACCESS:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdatomic.h>\n"
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+                text = f"{head}{renamed}\n{emit}\n{_ATOMIC_ACCESS_DRIVER}"
+                out = _build_run_c(d, cc, label, text)
+                assert out == "MATCH", f"{fx}: {label} emit not equivalent under {cc} ({out})"
+        if os.name == "posix":  # the threaded witness needs pthreads
+            for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+                text = f"{head}{src}\n{emit}\n{_ATOMIC_BUMP_THREADS}"
+                out = _build_run_c(d, _CC, f"{label}_threads", text, ("-pthread",))
+                assert out == "MATCH", f"{fx}: the {label} emit lost concurrent updates ({out})"
+
+
+# CF-ATOMIC: sources that differ ONLY in `_Atomic` (`{A}` spelled empty, then `_Atomic `) -- an atomic
+# access is a different operation, so each pair must digest differently, on both rails alike.
+_ATOMIC_DIGEST_PAIRS = (
+    "uint32_t f({A}uint32_t *p, uint32_t v) {{ *p = v; return *p; }}\n",
+    "uint32_t f({A}uint32_t *p, uint32_t i) {{ return p[i & 3u]; }}\n",
+    "void f({A}uint32_t *p, uint32_t i, uint32_t v) {{ p[i & 3u] = v; }}\n",
+    "struct S {{ uint8_t c; {A}uint32_t n; }};\nuint32_t f(struct S *s, uint32_t v) {{ s->n = v; return s->n; }}\n",
+    "struct A {{ uint8_t c; {A}uint32_t arr[4]; }};\n"
+    "uint32_t f(struct A *a, uint32_t i) {{ return a->arr[i & 3u]; }}\n",
+    "uint32_t f({A}uint32_t *p, uint32_t v) {{ *p += v; return *p; }}\n",
+)
+
+
+def test_an_atomic_access_changes_the_structural_digest():
+    """CF-ATOMIC: an atomic load or store keeps the plain access's claim and differs only in its order
+    (lane A, the atomic hazard) -- which the structural digest did not read, so a source with `_Atomic`
+    and one without digested alike, and a cross-rail parity gate could not tell an atomic access from a
+    byte copy. The digest canon names it (`c.load!atomic`, `c.store!atomic`: the oracle's `_vn_op`, the
+    twin's `canon_op`); every pair here differs in the digest, and each digest is the same on both
+    rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for form in _ATOMIC_DIGEST_PAIRS:
+        digests = []
+        for qual in ("", "_Atomic "):
+            src = "#include <stdint.h>\n" + form.format(A=qual)
+            s, _r, _e = _oracle(src)
+            assert "ok=1" in s, (src, s)
+            digest = s.split("digest=")[1]
+            if exe is not None:
+                with tempfile.TemporaryDirectory() as d:
+                    p = os.path.join(d, "atomic_digest.c")
+                    with open(p, "w", encoding="utf-8") as fh:
+                        fh.write(src)
+                    c_summary, _emit = _c_run(exe, p)
+                assert c_summary == s, f"parity\n C: {c_summary}\nPY: {s}\n{src}"
+            digests.append(digest)
+        assert digests[0] != digests[1], form
+
+
+def test_unqualified_drops_atomic_and_restores_the_natural_layout():
+    """CF-ATOMIC: lvalue conversion (C23 6.3.2.1p2) drops `_Atomic` with the other qualifiers, and the value
+    it yields has the non-atomic type's layout. The ABI's atomic promotion (`with_atomic`) widened an
+    `_Atomic float _Complex` to align 8 and an i386 `_Atomic uint64_t` to align 8; neither belongs to the
+    value read out of one, whose temp and whose arithmetic are the plain type's. `unqualified` had kept
+    the flag and the promoted layout."""
+    from bcir.frontends.cfront.abi import TARGETS
+    from bcir.frontends.cfront.ctype_model import scalar, unqualified, with_atomic, with_volatile
+
+    names = ("_Bool", "uint8_t", "int16_t", "uint32_t", "uint64_t", "float", "double")
+    for tname, abi in TARGETS.items():
+        for name in (*names, "float _Complex", "double _Complex"):
+            plain = scalar(name, abi)
+            at = with_atomic(plain, abi=abi)
+            assert at.atomic and at.natural == (plain.size, plain.align), (tname, name, at)
+            assert unqualified(at) == plain, (tname, name, unqualified(at))
+            assert unqualified(with_volatile(at)) == plain, (tname, name)
+            assert unqualified(with_atomic(at, abi=abi)) == plain, (tname, name)  # `_Atomic` twice
+    x86, i386 = TARGETS["x86_64-linux"], TARGETS["i386-linux"]
+    fc = with_atomic(scalar("float _Complex", x86), abi=x86)
+    assert (fc.size, fc.align) == (8, 8)
+    assert (unqualified(fc).size, unqualified(fc).align) == (8, 4)
+    u64 = with_atomic(scalar("uint64_t", i386), abi=i386)
+    assert (u64.size, u64.align) == (8, 8)
+    assert (unqualified(u64).size, unqualified(u64).align) == (8, 4)
+
+
 def test_addrmember_dual_rail():
     """Address-of a (nested) struct member (#addrmember): `&s.field`, `&t.q.a`, `&t.q`. The twin couldn't
     parse `&member` at all; the oracle emitted the enclosing struct's address (right only for a first
@@ -3781,6 +4043,7 @@ def test_a_trailing_packed_attribute_packs_the_members_on_both_rails():
 # An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the
 # one reason; and a cast or compound literal of an `_Atomic` type, which neither rail parses as one.
 _ATOMIC_AGGREGATE = "an `_Atomic` struct or union is not supported"
+_ATOMIC_BITFIELD = "a bit-field of `_Atomic` type is not supported"
 _ATOMIC_REFUSED = (
     (
         "struct P3 { uint8_t c[3]; };\nstruct W { uint8_t k; _Atomic struct P3 p; uint8_t t; };\n"
@@ -3797,6 +4060,22 @@ _ATOMIC_REFUSED = (
     ),
     ("uint32_t f(uint32_t x) { uint32_t y = (_Atomic uint32_t)x; return y + 1u; }\n", None),
     ("uint32_t f(uint32_t x) { uint32_t *p = &(_Atomic uint32_t){x}; return *p; }\n", None),
+    # CF-ATOMIC: a bit-field of `_Atomic` type -- named, unnamed or `_Atomic(T)` -- which GCC and Clang
+    # reject too; no atomic operation reaches a bit-field
+    (
+        "struct B { uint8_t k; _Atomic uint32_t x : 3; uint32_t y; };\n"
+        "uint32_t f(struct B *b) { return b->y; }\n",
+        _ATOMIC_BITFIELD,
+    ),
+    (
+        "struct B { uint8_t k; _Atomic uint32_t : 3; uint32_t y; };\n"
+        "uint32_t f(struct B *b) { return b->y; }\n",
+        _ATOMIC_BITFIELD,
+    ),
+    (
+        "struct B { uint8_t k; _Atomic(uint32_t) x : 3; };\nuint32_t f(struct B *b) { return b->k; }\n",
+        _ATOMIC_BITFIELD,
+    ),
 )
 
 
