@@ -202,6 +202,8 @@ _PTRVALUE = [
     #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
     #   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
     "cfront_ptrfield.c",  # + a pointer stored into / loaded from a struct field (#ptrfield):
+    "cfront_ptrmember.c",  # an array-of-pointers member `T *arr[N]`: pointer-size elements, whole-pointer
+    #   loads/stores typed `T *`, `*t->arr[i]` / `*s->p` through the element (CF-PTRARR)
     "cfront_addrof.c",  # general address-of `&`
     "cfront_addrofarr.c",  # member-array element address
     "cfront_addrofaos.c",  # array-of-structs element field address
@@ -3576,6 +3578,125 @@ def test_an_eight_byte_scalar_and_its_bitfields_follow_the_target_abi():
             run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
             twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
             assert twin and twin.group(1) == oracle, (t, run.stdout[:300], oracle)
+
+
+# CF-PTRARR: an array-of-pointers member `T *arr[N]` -- every form of access, and whether both rails lower
+# it (True) or both refuse it (False). The twin laid the elements out by their pointee (`uint32_t *arr[2]` at
+# 4-byte elements), so every lowered form here differed from the oracle, and it accepted three forms the
+# oracle refuses while refusing `*t->arr[i]`, which a postfix operator's precedence makes `*(t->arr[i])`.
+_PTRARR_HEAD = """#include <stdint.h>
+struct T { uint8_t c; uint32_t *arr[2]; uint8_t d; };
+struct S { uint32_t v; };
+struct U { uint8_t c; struct S *sp[2]; double *dp[3]; };
+struct Q { uint8_t c; uint32_t *p; };
+struct R { uint8_t c; uint32_t **pp[2]; };
+struct V { uint8_t c; volatile uint32_t *regs[2]; };
+"""
+_PTRARR_FORMS = {
+    "uint32_t f(struct T *t, uint32_t *p){ t->arr[1] = p; return t->d; }": True,
+    "uint32_t f(struct T *t){ uint32_t *q = t->arr[1]; return *q; }": True,
+    "uint32_t f(struct T *t){ return *t->arr[1]; }": True,
+    "uint32_t f(struct T *t){ return *(t->arr[1]); }": True,
+    "uint32_t f(struct T *t, uint32_t v){ *t->arr[1] = v; return t->d; }": True,
+    "uint32_t f(struct T *t, uint32_t v){ *t->arr[1] += v; return t->d; }": True,
+    "uint32_t f(struct T *t, uint32_t i){ return *t->arr[i & 1u]; }": True,
+    "uint32_t f(struct T *t){ uint32_t **pp = &t->arr[1]; return **pp; }": True,
+    "uint32_t f(struct T *t, uint32_t *p){ return t->arr[0] == p; }": True,
+    "static uint32_t g(uint32_t *x){ return *x; }\nuint32_t f(struct T *t){ return g(t->arr[0]); }": True,
+    "uint32_t f(uint32_t *p){ struct T s = {0}; s.arr[0] = p; return *s.arr[0]; }": True,
+    "uint32_t f(uint32_t *p){ struct T s = { 1, { p, p }, 2 }; uint32_t *q = s.arr[1]; return *q + s.d; }": True,
+    "uint32_t f(uint32_t *p){ struct T s = { .arr = { p, p } }; uint32_t *q = s.arr[0]; return *q; }": True,
+    "uint32_t f(struct T *t){ t->arr[0] += 1; return t->d; }": True,
+    "uint32_t f(struct T *t){ t->arr[0] -= 1; return t->d; }": True,
+    "long f(struct T *t){ return t->arr[1] - t->arr[0]; }": True,
+    "double f(struct U *u){ double *q = u->dp[2]; return *q; }": True,
+    "uint32_t f(struct U *u, struct S *s){ u->sp[0] = s; struct S *q = u->sp[0]; return q->v; }": True,
+    "uint32_t f(struct R *r, uint32_t **x){ r->pp[1] = x; uint32_t **y = r->pp[1]; return **y; }": True,
+    "uint32_t f(struct V *v){ volatile uint32_t *r = v->regs[1]; return *r; }": True,
+    "uint32_t f(struct Q *q){ return *q->p; }": True,
+    "uint32_t f(struct Q q){ return *q.p + 1u; }": True,
+    "uint32_t f(void){ return (uint32_t)sizeof(struct T) + 100u*(uint32_t)sizeof(struct U); }": True,
+    "uint32_t f(struct T *t){ return t->arr[1][2]; }": False,
+    "uint32_t f(struct U *u){ return u->sp[1]->v; }": False,
+    "uint32_t f(struct T *t){ t->arr[0]++; return t->d; }": False,
+    "uint32_t f(struct T *t){ t->arr[0]--; return t->d; }": False,
+    "uint32_t f(struct T *t){ ++t->arr[0]; return t->d; }": False,
+    "uint32_t f(struct T *t){ uint32_t *q = t->arr[0]++; return *q; }": False,
+}
+_PTRARR_LAYOUT = """#include <stdint.h>
+struct T { uint8_t c; uint32_t *arr[2]; uint8_t d; };
+struct U { uint8_t c; double *dp[3]; uint32_t n; };
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct T);
+    uint32_t b = (uint32_t)_Alignof(struct T);
+    uint32_t d = (uint32_t)sizeof(struct U);
+    return a + b + d;
+}
+"""
+
+
+def test_an_array_of_pointers_member_is_laid_out_and_accessed_as_pointers():
+    """CF-PTRARR: the twin gave a `T *arr[N]` member's elements its pointee's size, not the pointer's, so a
+    later member sat at the wrong offset, `sizeof` was wrong, a store truncated the pointer and a load read
+    the element into an integer (the emitted C did not compile). Each element now takes the ABI's pointer
+    size and loads and stores whole, typed `T *`. `*t->arr[i]` (and `*s->p` through a plain pointer member)
+    dereferences the postfix expression, as its precedence says, where the twin had dereferenced the name.
+    `t->arr[i][j]` and `t->arr[i]++` are refused on both rails, since the oracle refuses them. Every form is
+    pinned (lowered or refused) and compared digest for digest on x86-64 and i386; the layout is held to
+    Clang on every target. `cfront_ptrmember.c` runs the lowered forms against the original."""
+    for body, lowered in _PTRARR_FORMS.items():
+        for t in ("x86_64-linux", "i386-linux"):
+            try:
+                compile_unit(_PTRARR_HEAD + body + "\n", check_clang=False, target=t)
+                got = True
+            except Exception:  # a refusal: both rails route the unit to fallback
+                got = False
+            assert got is lowered, (t, body)
+    vecs = {t: _abi_const_vec_oracle(_PTRARR_LAYOUT, t) for t in _ABI_TARGETS}
+    for t in ("x86_64-linux", "aarch64-linux", "riscv64-linux", "x86_64-windows"):
+        assert vecs[t] == [32, 8, 40], (t, vecs[t])
+    assert vecs["i386-linux"] == [16, 4, 20], vecs["i386-linux"]
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        for t in _ABI_TARGETS:
+            asserts = (
+                f'_Static_assert(sizeof(struct T) == {vecs[t][0]}, "{t} T");\n'
+                f'_Static_assert(_Alignof(struct T) == {vecs[t][1]}, "{t} align T");\n'
+                f'_Static_assert(sizeof(struct U) == {vecs[t][2]}, "{t} U");\n'
+            )
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "ptrarr.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(_PTRARR_LAYOUT.split("uint32_t f(")[0] + asserts)
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding",
+                     "-fsyntax-only", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+            assert run.returncode == 0, (t, run.stderr)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "ptrarr.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_PTRARR_LAYOUT)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+        for body, lowered in _PTRARR_FORMS.items():
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_PTRARR_HEAD + body + "\n")
+            for t in ("x86_64-linux", "i386-linux"):
+                run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+                if not lowered:
+                    assert run.returncode != 0 and not run.stdout.startswith("funcs="), (t, body)
+                    continue
+                r = compile_unit(_PTRARR_HEAD + body + "\n", check_clang=False, target=t)
+                oracle = f"{cfront_structural_digest(r.lowered):016x}"
+                twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
+                assert twin and twin.group(1) == oracle, (t, body, run.stdout[:200], oracle)
 
 
 # An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the

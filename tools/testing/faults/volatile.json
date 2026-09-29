@@ -198,7 +198,7 @@
       "label": "Twin index: `*q[j]` dereferences the table's first element, then subscripts what it loaded",
       "expects": "volatile.refused",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "    } else if(isk(c,T_ID) && !(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='[')){",
+      "old": "    } else if(isk(c,T_ID) && !postfix_follows(c,c->i+1)){",
       "new": "    } else if(isk(c,T_ID)){"
     },
     {

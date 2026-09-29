@@ -44,6 +44,9 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx;
+                 int elem_ptr;      /* arr_count>0 AND the element is a pointer (`T *arr[N]`): each element is
+                                     * pointer_size wide, and the ptee_* fields describe what it points at, as
+                                     * they do for a pointer member (`is_ptr` stays 0: the member is an array) */
                  int is_volatile;   /* the member's own storage is volatile (`volatile T m`, `volatile T m[N]`, a
                                      * volatile struct member): an access to it is a volatile access */
                  int ptee_volatile; /* a pointer member to volatile storage (`volatile T *regs`): the member is
@@ -790,7 +793,10 @@ static int p_struct_body(CC *c) {
        * Either way the member's exact width rides in f->bit_width so the load/store + emit spell `_BitInt(N)`. */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
-      int sz=isptr?cc_abi(c)->pointer_size:ty.size;
+      int elptr=(ty.kind==2 && arr_count);             /* an array of pointers: each ELEMENT is pointer_size -- the
+                                                        * pointee's size here put `uint32_t *arr[2]` at 4-byte
+                                                        * elements and truncated every stored pointer */
+      int sz=(isptr||elptr)?cc_abi(c)->pointer_size:ty.size;
       /* a (array of) value-struct/union member aligns to the NESTED type's alignment, not its size --
        * `struct{int;struct Big t;}` puts t at the struct's align, not at sizeof(Big) (which over-pads). */
       int al = (ty.kind==1 && !ty.ptr_to_struct && si>=0) ? (c->s[si].align<1?1:c->s[si].align)
@@ -804,17 +810,18 @@ static int p_struct_body(CC *c) {
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
-      f->bit_width=(!isptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
+      f->bit_width=(!isptr && !elptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
                                                                               * bitfield): exact N; f->bit_w holds W */
-      f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
-      f->is_complex=(!isptr && ty.is_complex)?1:0;      /* a `_Complex` member: load/store as the complex pair,
+      f->is_float=(!isptr && !elptr && ty.is_float)?1:0;   /* a float/double member loads/stores as itself */
+      f->is_complex=(!isptr && !elptr && ty.is_complex)?1:0;   /* a `_Complex` member: load/store as the complex pair,
                                                          * NOT a same-size real (16B would wrongly read as long double) */
-      f->is_bool=(!isptr && ty.is_bool)?1:0;            /* a _Bool member: a store normalizes any nonzero to 1 */
-      f->is_plain_char=(!isptr && ty.is_plain_char)?1:0;/* a plain `char` member: read as `char` (impl-defined
+      f->is_bool=(!isptr && !elptr && ty.is_bool)?1:0;  /* a _Bool member: a store normalizes any nonzero to 1 */
+      f->is_plain_char=(!isptr && !elptr && ty.is_plain_char)?1:0;/* a plain `char` member: read as `char` (impl-defined
                                                          * sign), NOT int8_t -- `char` is UNSIGNED on AArch64 */
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
-      f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
-      f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
+      f->is_ptr=isptr; f->elem_ptr=elptr;
+      f->ptee_size=(isptr||elptr)?ty.size:0; f->ptee_float=(isptr||elptr)?(ty.is_float?1:0):0;   /* pointee type */
+      f->ptee_sidx=((isptr||elptr) && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
       f->is_volatile=(ty.kind!=2 && ty.kind!=3 && ty.is_volatile)?1:0;   /* `volatile T m` (a pointer's `volatile`
                                                                            * qualifies its pointee, not itself) */
       f->ptee_volatile=(ty.kind==2 && ty.is_volatile)?1:0;               /* `volatile T *m`: the pointee */
@@ -1350,7 +1357,8 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
 /* `s.arr[idx]` -- a load from a struct member array: the element lands at `&s + member_off + idx*elem`,
  * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
 static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
-  uint32_t t=fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
+  uint32_t t=fld->elem_ptr?tempptr_field(c,fld)        /* an array-of-pointers element: a `T *` temp */
+            :fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* `char[]` element: `char` */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
@@ -1462,7 +1470,7 @@ static uint32_t store_conv(CC *c, uint32_t val, const bcir_ctype *slot){
  * declared type -- for `store_conv`. A pointer, struct or union member is no arithmetic slot. */
 static bcir_ctype field_slot(const field *f){
   bcir_ctype t; memset(&t,0,sizeof t);
-  t.kind=(uint8_t)(f->is_ptr?2:(f->sidx>=0||f->elem_sidx>=0)?1:0);
+  t.kind=(uint8_t)((f->is_ptr||f->elem_ptr)?2:(f->sidx>=0||f->elem_sidx>=0)?1:0);
   t.size=f->size; t.signd=f->signd; t.is_float=(uint8_t)(f->is_float?1:0);
   t.is_complex=(uint8_t)(f->is_complex?1:0); t.is_bool=(uint8_t)(f->is_bool?1:0);
   t.is_plain_char=(uint8_t)(f->is_plain_char?1:0); t.bit_width=f->bit_width;
@@ -1523,7 +1531,12 @@ static uint32_t store_member_index(CC *c, venv *base, const field *arr, uint32_t
  * N-D `s.m[i][j]` both reduce to one element-scaled index into the member at its byte offset. */
 static uint32_t member_arr_index(CC *c, const field *fld) {
   uint32_t lin=0; int d=0;
-  while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+  while(is(c,"[")){
+    if(fld->elem_ptr && d>=(fld->nadims>0?fld->nadims:1)){   /* `t->arr[i][j]` on `T *arr[N]`: a subscript of the
+      * loaded POINTER, not a further dimension -- the oracle refuses it (partial indexing), so the twin does too
+      * rather than folding `j` into the element index */
+      fail(c,"partial indexing of a struct member array is not yet supported"); return lin; }
+    c->i++; uint32_t ix=p_expr(c); eat(c,"]");
     if(d==0){ lin=ix; }
     else { int dim = d<fld->nadims ? fld->adims[d] : 1;
       uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
@@ -2810,6 +2823,14 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
 }
 static int incdec_value(CC *c, uint32_t *out);   /* fwd: `++a`/`a++`/`--a`/`a--` in EXPRESSION position */
 static uint32_t p_unary_inner(CC *c);
+/* Token `k` starts a postfix operator -- `[`, `->`, `.`, `(`, `++` or `--` -- which binds tighter than a prefix
+ * operator, so `*name` followed by one dereferences the postfix expression, not the name. */
+static int postfix_follows(CC *c, int k){
+  const tok *t=tat(c,k);
+  if(t->k!=T_PUN) return 0;
+  if(t->n==1) return t->s[0]=='[' || t->s[0]=='.' || t->s[0]=='(';
+  return t->n==2 && ((t->s[0]=='-' && t->s[1]=='>') || (t->s[0]=='+' && t->s[1]=='+') || (t->s[0]=='-' && t->s[1]=='-'));
+}
 /* Depth-guarded wrapper: p_unary is a recursive-cycle entry point (p_unary->p_primary->`(`->p_expr->
  * ...->p_unary), so a deeply-nested expression would exhaust the native stack. Bump/check depth once
  * per level here; on overflow fail cleanly ("nesting too deep") and return without recursing. */
@@ -2975,10 +2996,11 @@ static uint32_t p_unary_inner(CC *c) {
           if(through && is(c,")")){ c->i++; return emit_deref(c,pv); }
           c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; } }   /* not ours: undo */
       c->i=save;
-    } else if(isk(c,T_ID) && !(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='[')){
-      tok pid=*pk(c); venv *pv=lookup(c,&pid); if(!pv) pv=use_global(c,&pid);   /* `*q[j]` is `*(q[j])`: the */
-      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use); a global too --
-                                                     * a subscript first takes the general path below */
+    } else if(isk(c,T_ID) && !postfix_follows(c,c->i+1)){
+      tok pid=*pk(c); venv *pv=lookup(c,&pid); if(!pv) pv=use_global(c,&pid);   /* `*q[j]` is `*(q[j])` and
+      * `*t->p` is `*(t->p)`: a postfix operator binds tighter than `*`, so a name followed by one takes the
+      * general path below. Taking this one for `*t->arr[i]` dereferenced `t` and failed on the `->` */
+      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use); a global too */
     return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
   if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{')
@@ -3573,6 +3595,10 @@ static int incdec_value(CC *c, uint32_t *out){
       field sub; int soa=(is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);
       if(c->failed) return 0;
       const field *sf = soa ? &sub : &f;                  /* the stored slot: the element FIELD, or the element */
+      if(!soa && f.elem_ptr){                             /* a pointer element steps by its pointee, as a pointer
+        * member would: both rails refuse that form (the oracle's `_incdec` lvalue gate), so it is not stepped
+        * here as an integer */
+        fail(c,"inc/dec of this lvalue form is a follow-on"); return 0; }
       if(!incdec_settle(c,prefix,save)){
         c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
       uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
@@ -5302,7 +5328,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
             amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride); }
         else
         w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
-          tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
+          decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }   /* decl_ty: an array-of-pointers element is `T *` */
       else if(cl->n_rd==2) w+=snprintf(o+EO,on-EO,"%s %s = %s[%s];\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
       else if(cl->is_volatile){ char at[96], vp[112];   /* a volatile member / dereference: one ordered access of
                                                        * exactly the accessed type -- never a 32-bit register */
@@ -5322,6 +5348,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         const bcir_resource *vr=res_of(f,cl->rd[2]);   /* a float element converts (double->float), not a uint
                                                         * reinterpret; a narrower int widens to the element. */
         const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool element: `_Bool _v = x` normalizes to 0/1 */
+                      :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(&type_scratch,f,cl->rd[2],tb,sizeof tb)   /* a pointer
+                       * element (`T *arr[N]`) copies the whole pointer, never a truncating uint32 */
                       :(vr&&vr->is_complex)?(es==8?"float _Complex":es>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
