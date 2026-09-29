@@ -560,7 +560,10 @@ def _event_laws(module: Module) -> list[Diagnostic]:
 #   rail-divergent label the two rails spell differently -- which is ONLY `c.call.vaarg` (the Python
 #   oracle emits bare `c.call.vaarg`; the C twin emits `c.call.vaarg:int`). Every OTHER ':' suffix is
 #   STRUCTURAL and KEPT: the callee in `c.call:foo` (a redirect @foo->@bar changes it), the WIDTH in
-#   `c.cast:uint8_t` (a width change is a real type corruption), and the VALUE in `c.fconst:1.0`.
+#   `c.cast:uint8_t` (a width change is a real type corruption), and the VALUE in `c.fconst:1.0`. A
+#   `c.load` / `c.store` of an `_Atomic` object (hazard `atomic`, CF-ATOMIC) takes the suffix `!atomic`:
+#   an atomic access is not a plain one, and a rail that emitted it as a plain byte copy -- the defect
+#   CF-ATOMIC fixed -- keeps every other field of the record (see _vn_op).
 # - opcode/domain: their INTEGER values (Opcode/Domain are IntEnum valued 0..17 / 0..5 to match the C
 #   bcir_opcode/bcir_domain enums by construction -- no enum->name table can drift between rails).
 # - SEMANTIC imm is folded per op (see _vn_imm): c.const's value; the struct member BYTE OFFSET (c.load
@@ -610,6 +613,17 @@ def _vn_base(op: str) -> str:
     return head if head in _VN_STRIP_SUFFIX else op
 
 
+def _vn_op(c) -> str:
+    """A claim's op identity in the canon: `_vn_base`, and a load or store of an `_Atomic` object (the
+    `atomic` hazard, CF-ATOMIC) marked `!atomic` -- the same op and operands as a plain access, but not
+    the same access. No other c.load / c.store carries the hazard, so every other record is unchanged.
+    The twin marks the same (`bcir_cfront.c`, `canon_op`)."""
+    base = _vn_base(c.op)
+    if c.hazard == "atomic" and base in ("c.load", "c.store"):
+        return base + "!atomic"
+    return base
+
+
 def _vn_imm(c) -> str:
     """The SEMANTIC immediate component of a claim's record -- the imm fields that encode WHICH datum a
     claim touches (a constant value, a struct member byte offset, a bitfield bit-offset/width/sign), so
@@ -622,7 +636,9 @@ def _vn_imm(c) -> str:
       c.addrof          -> all imm (&member offset [+ array stride] -- agrees on both rails);
       c.bf.get/c.bf.set -> all imm (bit offset, bit width, signedness -- agrees on both rails);
       c.call.imember    -> all imm (the arrow/dot dispatch flag);
-      c.sizeof.vla      -> all imm (the element size).
+      c.sizeof.vla      -> all imm (the element size);
+      c.c11atom.rmw:*   -> imm[0],imm[1], the store's (byte offset, unit size) of the `_Atomic` object
+                           a read-modify-write addresses (CF-ATOMIC; its stride tail dropped as the store's).
     A digest-relevant imm change (s->x vs s->y offset, a bitfield p->a vs p->b layout, a signed-vs-
     unsigned bitfield) thus moves the digest, while non-member loads stay cross-rail identical."""
     op = c.op
@@ -631,7 +647,7 @@ def _vn_imm(c) -> str:
         keep = imm
     elif op == "c.load":
         keep = [imm[0] if imm else 0]  # the member byte offset (drop the divergent bound)
-    elif op == "c.store":
+    elif op == "c.store" or op.startswith("c.c11atom.rmw:"):
         keep = imm[:2]  # (byte offset, unit size); drop the _Bool/stride tail
     else:
         return ""
@@ -677,7 +693,7 @@ def _canon_func_records(lf) -> list[str]:
             memo[i] = "cyc"  # cycle guard (a loop-carried rid resolves to "cyc")
             c = claims[i]
             parts = _ordered(c, [vn(int(r), depth + 1) for r in c.rd])
-            memo[i] = "{}({})".format(_vn_base(c.op), ",".join(parts))
+            memo[i] = "{}({})".format(_vn_op(c), ",".join(parts))
             return memo[i]
 
         return vn
@@ -689,7 +705,7 @@ def _canon_func_records(lf) -> list[str]:
         parts = _ordered(c, [vn_first(int(r), 0) for r in c.rd])
         recs.append(
             "{}|{}|{}|{}|{}".format(
-                _vn_base(c.op), int(c.opcode), ",".join(parts), _vn_imm(c), int(c.domain)
+                _vn_op(c), int(c.opcode), ",".join(parts), _vn_imm(c), int(c.domain)
             )
         )
     recs.sort()
@@ -1245,6 +1261,7 @@ def verify_execution_plan(
     result=None,
     pack=None,
     identity=None,
+    movement=None,
 ) -> list[Diagnostic]:
     """ExecutionPlanV1 laws (G11, staged plan S1-C): the plan as bytes realizes THIS module.
 
@@ -1272,7 +1289,11 @@ def verify_execution_plan(
     * R10, with `pack`: the pack is the lowering of this plan -- its `source_plan`, one
       segment per step in step order with the step's claim, phase, lane and width -- and its
       vector is the plan's (a pack whose plan carries an older vector is refused; the C twin
-      `bcir_ep_check_pack` applies the same predicate).
+      `bcir_ep_check_pack` applies the same predicate);
+    * MV1-MV11 (G8), with `movement=(source, spec)`: `module` is a correctness-neutral movement
+      transform of `source` under the `kbcir.movement.MovementSpec` and the plan's edges describe
+      it faithfully (`kbcir.movement.verify_movement`). A plan that moves data -- or binds a
+      source module or a spec -- is judged only against them: without `movement` it is refused.
     """
     diags: list[Diagnostic] = []
     from ..abi.execution_plan_abi import AbiError, validate_plan
@@ -1438,7 +1459,11 @@ def verify_execution_plan(
                         )
                     )
             else:
-                phases = {claim_phase[c.id] for c in claims}
+                # the declared span is in topological phase POSITIONS (`allocator.live_intervals`,
+                # the static memory planner's phase liveness), not phase ids: a module whose ids
+                # are not their positions (a movement transform's inbound phases) is judged by
+                # where its phases run
+                phases = {position[claim_phase[c.id]] for c in claims}
                 if not all(lt.first_phase <= p <= lt.last_phase for p in phases):
                     diags.append(
                         Diagnostic(
@@ -1551,6 +1576,22 @@ def verify_execution_plan(
                     f"stale: the pack's generation vector is not its plan's (RIDs {moved[:8]})",
                 )
             )
+
+    # MV1-MV11 (G8): a plan that moves data is judged against its source and its spec
+    moves_data = bool(plan.moves) or bool(plan.source_hash) or bool(plan.spec_hash)
+    if movement is not None:
+        from ..kbcir.movement import verify_movement
+
+        source, spec = movement
+        diags.extend(verify_movement(source, spec, module, plan))
+    elif moves_data:
+        diags.append(
+            Diagnostic(
+                "MV11",
+                "the plan moves data: it is judged against its source module and movement spec "
+                "(movement=(source, spec)), and none was given",
+            )
+        )
     return diags
 
 

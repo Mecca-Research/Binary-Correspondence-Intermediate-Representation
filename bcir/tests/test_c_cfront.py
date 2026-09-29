@@ -125,6 +125,7 @@ _PREPROC = [
     "cfront_macros.c",
     "cfront_ppinc.c",
     "cfront_comments.c",
+    "cfront_paste.c",  # tokens that would lex as others, written apart: `a + ++g` (CF-PASTE)
 ]  # L7: exercise the preprocessor
 _ABI = [
     "cfront_structret.c",
@@ -202,6 +203,9 @@ _PTRVALUE = [
     #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
     #   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
     "cfront_ptrfield.c",  # + a pointer stored into / loaded from a struct field (#ptrfield):
+    "cfront_trailpacked.c",  # `} __attribute__((packed))` after the body packs the members (CF-TRAILPACK)
+    "cfront_ptrmember.c",  # an array-of-pointers member `T *arr[N]`: pointer-size elements, whole-pointer
+    #   loads/stores typed `T *`, `*t->arr[i]` / `*s->p` through the element (CF-PTRARR)
     "cfront_addrof.c",  # general address-of `&`
     "cfront_addrofarr.c",  # member-array element address
     "cfront_addrofaos.c",  # array-of-structs element field address
@@ -1854,6 +1858,268 @@ def test_atomic_local_dual_rail():
             assert out == "MATCH", f"{fx}: {label} not behaviour-equivalent ({out})"
 
 
+# CF-ATOMIC: per function of `cfront_atomicaccess.c`, the atomic loads and stores and the atomic
+# read-modify-writes each rail lowers -- every access to an `_Atomic` object is exactly one of them -- and so
+# the `_Atomic` lvalues its emit spells, one per claim. Pinned exactly: a count that only had to be nonzero
+# would pass with one access left a byte copy.
+_ATOMIC_ACCESS = {
+    "acc_deref": (2, 4),
+    "acc_member": (8, 4),
+    "acc_float": (4, 0),
+    "acc_elems": (6, 2),
+    "acc_index": (2, 1),
+    "acc_global": (0, 3),  # a named object is atomic by declaration: loaded and stored by name
+    "acc_load64": (0, 0),  # the generics lower to their own `c.c11atom.*` claims
+    "acc_loadf": (0, 0),
+    "acc_ptrmember": (4, 1),
+    "acc_bool": (4, 0),
+    "acc_bump": (0, 3),
+}
+# the plain memory accesses a function keeps: only the loads of a plain pointer member (`s->ap` itself)
+_ATOMIC_ACCESS_PLAIN = {"acc_ptrmember": 5}
+
+# every function of the fixture, run on independent copies of the same state by the original and by an
+# emit, compared by value and by memory; the global is written before it is modified, so a second run of
+# the same function sees the state the first did
+_ATOMIC_ACCESS_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+int main(void) {
+  for (uint32_t k = 0; k < 97u; k++) {
+    uint32_t v = k * 2654435761u, i = k;
+    { _Atomic uint32_t a = 7u, b = 7u;
+      if (acc_deref_s(&a, v) != bcir_acc_deref(&b, v) || a != b) return fail("deref"); }
+    { struct acc_s a, b; memset(&a, 0, sizeof a); memset(&b, 0, sizeof b);
+      if (acc_member_s(&a, v) != bcir_acc_member(&b, v) || memcmp(&a, &b, sizeof a)) return fail("member");
+      float x = (float)v * 0.25f;
+      if (acc_float_s(&a, x) != bcir_acc_float(&b, x) || memcmp(&a, &b, sizeof a)) return fail("float"); }
+    { struct acc_a a, b; struct acc_e ea[2], eb[2];
+      memset(&a, 0x11, sizeof a); memset(&b, 0x11, sizeof b); memset(ea, 0x22, sizeof ea); memset(eb, 0x22, sizeof eb);
+      if (acc_elems_s(&a, ea, i, v) != bcir_acc_elems(&b, eb, i, v) || memcmp(&a, &b, sizeof a)
+          || memcmp(ea, eb, sizeof ea)) return fail("elems"); }
+    { _Atomic uint32_t a[4] = {1u, 2u, 3u, 4u}, b[4] = {1u, 2u, 3u, 4u};
+      if (acc_index_s(a, i, v) != bcir_acc_index(b, i, v) || memcmp(a, b, sizeof a)) return fail("index"); }
+    { uint32_t ra = acc_global_s(v), ga = acc_g, rb = bcir_acc_global(v);
+      if (ra != rb || ga != acc_g) return fail("global"); }
+    { _Atomic uint64_t a = 0u, b = 0u; uint64_t w = ((uint64_t)v << 32) | (k * 7u + 3u);
+      if (acc_load64_s(&a, w) != bcir_acc_load64(&b, w) || a != b) return fail("load64"); }
+    { _Atomic float a = 0.0f, b = 0.0f; float x = (float)k * 1.375f + 0.3f;
+      if (acc_loadf_s(&a, x) != bcir_acc_loadf(&b, x) || a != b) return fail("loadf"); }
+    { _Atomic uint32_t ca[2] = {0u, 0u}, cb[2] = {0u, 0u}; struct acc_p a, b;
+      memset(&a, 0, sizeof a); memset(&b, 0, sizeof b); a.c = b.c = (uint8_t)k; a.ap = ca; b.ap = cb;
+      if (acc_ptrmember_s(&a, v) != bcir_acc_ptrmember(&b, v) || memcmp(ca, cb, sizeof ca) || a.c != b.c
+          || a.ap != ca || b.ap != cb) return fail("ptrmember"); }
+    { _Atomic _Bool a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+      if (acc_bool_s(a, i, v) != bcir_acc_bool(b, i, v) || memcmp(a, b, sizeof a)) return fail("bool"); }
+    { _Atomic uint32_t a = k, b = k; struct acc_s sa, sb; struct acc_a aa, ab;
+      memset(&sa, 0, sizeof sa); memset(&sb, 0, sizeof sb); memset(&aa, 0, sizeof aa); memset(&ab, 0, sizeof ab);
+      acc_bump_s(&a, &sa, &aa); bcir_acc_bump(&b, &sb, &ab);
+      if (a != b || memcmp(&sa, &sb, sizeof sa) || memcmp(&aa, &ab, sizeof aa)) return fail("bump"); }
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+
+# the emitted `acc_bump` from several threads at once: an update lowered as a load, an add and a store
+# loses the increments a concurrent step wrote between them; one atomic read-modify-write loses none. The
+# call goes through a volatile function pointer, so no compiler folds the loop's steps into one.
+_ATOMIC_BUMP_THREADS = r"""
+#include <pthread.h>
+enum { THREADS = 4, STEPS = 100000 };
+static _Atomic uint32_t cnt;
+static struct acc_s S;
+static struct acc_a A;
+static void (*volatile bump)(_Atomic uint32_t *, struct acc_s *, struct acc_a *) = bcir_acc_bump;
+static void *worker(void *arg) {
+  (void)arg;
+  for (int k = 0; k < STEPS; k++) bump(&cnt, &S, &A);
+  return 0;
+}
+int main(void) {
+  pthread_t t[THREADS];
+  for (int j = 0; j < THREADS; j++)
+    if (pthread_create(&t[j], 0, worker, 0)) { puts("pthread_create"); return 2; }
+  for (int j = 0; j < THREADS; j++) pthread_join(t[j], 0);
+  uint32_t want = (uint32_t)THREADS * STEPS;
+  if (cnt != want || S.n != want || A.arr[1] != want) {
+    printf("LOST %u %u %u of %u\n", (unsigned)cnt, (unsigned)S.n, (unsigned)A.arr[1], (unsigned)want);
+    return 1;
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+def _emit_functions(emit: str) -> dict:
+    """The emitted C of each function: `bcir_<name>` -> its text, up to the next function's."""
+    starts = [
+        (m.start(), m.group(1)) for m in re.finditer(r"^static [^\n(]*\bbcir_(\w+)\(", emit, re.M)
+    ]
+    return {
+        name: emit[at : starts[k + 1][0] if k + 1 < len(starts) else len(emit)]
+        for k, (at, name) in enumerate(starts)
+    }
+
+
+def _assert_atomic_emit(emit: str, rail: str) -> None:
+    """Every access to an `_Atomic` object in `emit` goes through an `_Atomic` lvalue, one per claim, and
+    no byte copy moves one: a `memcpy` of an atomic object is no atomic access, and it tears. The generics
+    type their value by the pointee."""
+    bodies = _emit_functions(emit)
+    assert set(bodies) == set(_ATOMIC_ACCESS), (rail, sorted(bodies))
+    for name, (loads_stores, rmws) in _ATOMIC_ACCESS.items():
+        body = bodies[name]
+        lvalues = re.findall(r"\(\*\((?:volatile )?_Atomic ", body)
+        assert len(lvalues) == loads_stores + rmws, (rail, name, len(lvalues), body)
+        copies = [line for line in body.splitlines() if "memcpy" in line]
+        assert len(copies) == _ATOMIC_ACCESS_PLAIN.get(name, 0), (rail, name, copies)
+        for line in copies:  # the pointer member itself: copied whole into a pointer temp
+            assert re.search(r"\* (t\d+); memcpy\(&\1, ", line), (rail, name, line)
+    assert re.search(r"\buint64_t t\d+ = atomic_load\(p\);", bodies["acc_load64"]), (rail, bodies)
+    assert re.search(r"\bfloat t\d+ = atomic_load\(p\);", bodies["acc_loadf"]), (rail, bodies)
+
+
+def _build_run_c(d: str, cc: str, label: str, text: str, extra=()) -> str:
+    """Build `text` with `cc` (the newest C standard it takes) and run it; its stdout, stripped."""
+    cpath, epath = os.path.join(d, f"{label}.c"), os.path.join(d, label)
+    with open(cpath, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    for std in ("c23", "c2x", "c17"):
+        b = subprocess.run(
+            [cc, f"-std={std}", "-O2", "-Werror=incompatible-pointer-types", cpath, "-o", epath]
+            + list(extra),
+            capture_output=True,
+            text=True,
+        )
+        if b.returncode == 0:
+            break
+    else:
+        raise AssertionError(f"{label}: build failed under {cc}:\n{b.stderr}")
+    return subprocess.run([epath], capture_output=True, text=True, timeout=300).stdout.strip()
+
+
+def test_atomic_access_is_one_atomic_operation_on_both_rails():
+    """CF-ATOMIC: an access to an `_Atomic` object is one atomic operation wherever the object is --
+    through a pointer, a member, a member array, an array of structs, a subscripted pointer, a pointer
+    member or a named global. Both rails had lowered one through a pointer or a member as a plain byte
+    copy, and a compound assignment or an increment as a load, an operation and a store, so a concurrent
+    update between them was lost (C11 6.5.16.2p3 and 6.5.2.4p2 make each one read-modify-write). A load or a
+    store now keeps its claim on lane A with the atomic hazard; `E op= v` and `++E` are one
+    `c.c11atom.rmw:<op>` claim; both emits spell every one through an `_Atomic` lvalue. The value of an
+    assignment is the value stored, never a second atomic read; an `_Atomic _Bool` normalizes every store;
+    the generics type their value by the pointee (a 64-bit `atomic_load` truncated to 32 bits). The
+    fixture runs against the original on both emits under both compilers, and `acc_bump` from four
+    threads at once loses no update."""
+    from bcir.model.lanes import Lane
+
+    fx = "cfront_atomicaccess.c"
+    path = os.path.join(_C, fx)
+    src = open(path, encoding="utf-8").read()
+    oracle_summary, r, _entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    assert set(r.lowered.functions) == set(_ATOMIC_ACCESS), sorted(r.lowered.functions)
+    for name, fn in r.lowered.functions.items():
+        mem = [c for c in fn.claims if c.op in ("c.load", "c.store")]
+        atomic = [c for c in mem if c.hazard == "atomic"]
+        rmw = [c for c in fn.claims if c.op.startswith("c.c11atom.rmw:")]
+        assert (len(atomic), len(rmw)) == _ATOMIC_ACCESS[name], (name, [c.op for c in fn.claims])
+        plain = len(mem) - len(atomic)
+        assert plain == _ATOMIC_ACCESS_PLAIN.get(name, 0), (name, [c.op for c in mem])
+        for c in atomic + rmw:
+            assert c.lane == Lane.A and c.hazard == "atomic", (name, c.op, c.lane, c.hazard)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    _assert_atomic_emit(oracle_emit, "oracle")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    c_summary, c_emit = _c_run(exe, path)
+    assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+    _assert_atomic_emit(c_emit, "twin")
+    renamed = src
+    for f in _ATOMIC_ACCESS:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stdatomic.h>\n"
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+                text = f"{head}{renamed}\n{emit}\n{_ATOMIC_ACCESS_DRIVER}"
+                out = _build_run_c(d, cc, label, text)
+                assert out == "MATCH", f"{fx}: {label} emit not equivalent under {cc} ({out})"
+        if os.name == "posix":  # the threaded witness needs pthreads
+            for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+                text = f"{head}{src}\n{emit}\n{_ATOMIC_BUMP_THREADS}"
+                out = _build_run_c(d, _CC, f"{label}_threads", text, ("-pthread",))
+                assert out == "MATCH", f"{fx}: the {label} emit lost concurrent updates ({out})"
+
+
+# CF-ATOMIC: sources that differ ONLY in `_Atomic` (`{A}` spelled empty, then `_Atomic `) -- an atomic
+# access is a different operation, so each pair must digest differently, on both rails alike.
+_ATOMIC_DIGEST_PAIRS = (
+    "uint32_t f({A}uint32_t *p, uint32_t v) {{ *p = v; return *p; }}\n",
+    "uint32_t f({A}uint32_t *p, uint32_t i) {{ return p[i & 3u]; }}\n",
+    "void f({A}uint32_t *p, uint32_t i, uint32_t v) {{ p[i & 3u] = v; }}\n",
+    "struct S {{ uint8_t c; {A}uint32_t n; }};\nuint32_t f(struct S *s, uint32_t v) {{ s->n = v; return s->n; }}\n",
+    "struct A {{ uint8_t c; {A}uint32_t arr[4]; }};\n"
+    "uint32_t f(struct A *a, uint32_t i) {{ return a->arr[i & 3u]; }}\n",
+    "uint32_t f({A}uint32_t *p, uint32_t v) {{ *p += v; return *p; }}\n",
+)
+
+
+def test_an_atomic_access_changes_the_structural_digest():
+    """CF-ATOMIC: an atomic load or store keeps the plain access's claim and differs only in its order
+    (lane A, the atomic hazard) -- which the structural digest did not read, so a source with `_Atomic`
+    and one without digested alike, and a cross-rail parity gate could not tell an atomic access from a
+    byte copy. The digest canon names it (`c.load!atomic`, `c.store!atomic`: the oracle's `_vn_op`, the
+    twin's `canon_op`); every pair here differs in the digest, and each digest is the same on both
+    rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for form in _ATOMIC_DIGEST_PAIRS:
+        digests = []
+        for qual in ("", "_Atomic "):
+            src = "#include <stdint.h>\n" + form.format(A=qual)
+            s, _r, _e = _oracle(src)
+            assert "ok=1" in s, (src, s)
+            digest = s.split("digest=")[1]
+            if exe is not None:
+                with tempfile.TemporaryDirectory() as d:
+                    p = os.path.join(d, "atomic_digest.c")
+                    with open(p, "w", encoding="utf-8") as fh:
+                        fh.write(src)
+                    c_summary, _emit = _c_run(exe, p)
+                assert c_summary == s, f"parity\n C: {c_summary}\nPY: {s}\n{src}"
+            digests.append(digest)
+        assert digests[0] != digests[1], form
+
+
+def test_unqualified_drops_atomic_and_restores_the_natural_layout():
+    """CF-ATOMIC: lvalue conversion (C23 6.3.2.1p2) drops `_Atomic` with the other qualifiers, and the value
+    it yields has the non-atomic type's layout. The ABI's atomic promotion (`with_atomic`) widened an
+    `_Atomic float _Complex` to align 8 and an i386 `_Atomic uint64_t` to align 8; neither belongs to the
+    value read out of one, whose temp and whose arithmetic are the plain type's. `unqualified` had kept
+    the flag and the promoted layout."""
+    from bcir.frontends.cfront.abi import TARGETS
+    from bcir.frontends.cfront.ctype_model import scalar, unqualified, with_atomic, with_volatile
+
+    names = ("_Bool", "uint8_t", "int16_t", "uint32_t", "uint64_t", "float", "double")
+    for tname, abi in TARGETS.items():
+        for name in (*names, "float _Complex", "double _Complex"):
+            plain = scalar(name, abi)
+            at = with_atomic(plain, abi=abi)
+            assert at.atomic and at.natural == (plain.size, plain.align), (tname, name, at)
+            assert unqualified(at) == plain, (tname, name, unqualified(at))
+            assert unqualified(with_volatile(at)) == plain, (tname, name)
+            assert unqualified(with_atomic(at, abi=abi)) == plain, (tname, name)  # `_Atomic` twice
+    x86, i386 = TARGETS["x86_64-linux"], TARGETS["i386-linux"]
+    fc = with_atomic(scalar("float _Complex", x86), abi=x86)
+    assert (fc.size, fc.align) == (8, 8)
+    assert (unqualified(fc).size, unqualified(fc).align) == (8, 4)
+    u64 = with_atomic(scalar("uint64_t", i386), abi=i386)
+    assert (u64.size, u64.align) == (8, 8)
+    assert (unqualified(u64).size, unqualified(u64).align) == (8, 4)
+
+
 def test_addrmember_dual_rail():
     """Address-of a (nested) struct member (#addrmember): `&s.field`, `&t.q.a`, `&t.q`. The twin couldn't
     parse `&member` at all; the oracle emitted the enclosing struct's address (right only for a first
@@ -3374,15 +3640,15 @@ def test_scalar_alignment_matrix_dual_rail():
     The folded constants [Ld, Lc, Dc, _Alignof(long double), _Alignof(long double _Complex),
     _Alignof(double _Complex), Td, Am, Al, _Alignof(_Atomic float _Complex), sizeof(_Atomic cf), Pk, At]
     are compared per target; `packed` (Pk) still wins over the atomic alignment, and an `_Atomic` typedef
-    (At) keeps its qualifier. Every vector is Clang's, except two i386 entries: Clang aligns an i386 `double`
-    to 4, where both rails use 8 (Dc and `_Alignof(double _Complex)`), which is not this fix's."""
+    (At) keeps its qualifier. Every vector is Clang's: the two i386 entries a `double` decides (Dc and
+    `_Alignof(double _Complex)`, 4-aligned there) became so with CF-I386's `eight_byte_align`."""
     vecs = {t: _abi_const_vec_oracle(_SCALAR_ALIGN_SRC, t) for t in _ABI_TARGETS}
     for t in ("x86_64-linux", "aarch64-linux", "riscv64-linux"):
         assert vecs[t] == [48, 64, 32, 16, 16, 8, 16, 48, 64, 8, 8, 17, 24], (t, vecs[t])
     win = vecs["x86_64-windows"]
     assert win == [24, 32, 32, 8, 8, 8, 16, 48, 48, 8, 8, 17, 24], win
     i386 = vecs["i386-linux"]
-    assert i386[:2] + i386[3:5] + i386[6:] == [20, 32, 4, 4, 16, 40, 32, 8, 8, 17, 24], i386
+    assert i386 == [20, 32, 28, 4, 4, 4, 16, 40, 32, 8, 8, 17, 24], i386
     if not _CC:
         return
     exe = _build_frontend(_session_build_dir())
@@ -3394,9 +3660,391 @@ def test_scalar_alignment_matrix_dual_rail():
             assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
 
 
+# CF-I386: i386 aligns an 8-byte scalar -- `double`, `long long`, `int64_t`, a `_BitInt(33..64)`, a `double
+# _Complex`'s element -- to 4 while its size stays 8 (Clang's DoubleAlign / LongLongAlign), and a bitfield of
+# such a type then follows Clang's placement rule, whose storage unit starts at an ALIGNMENT boundary.
+_EIGHT_BYTE_SRC = """#include <stdint.h>
+struct D { uint8_t c; double d; };
+struct L { uint8_t c; long long x; };
+struct Z { uint8_t c; double _Complex z; };
+union U { uint8_t c; double d; };
+struct A2 { uint8_t c; double d[2]; };
+struct AL { uint8_t c; _Atomic long long x; };
+struct BI { uint8_t c; _BitInt(40) x; };
+struct B1 { uint8_t c; long long x : 8; };
+struct B2 { uint8_t c; long long x : 40; uint8_t d; };
+struct B3 { uint32_t a; uint8_t b; long long x : 40; };
+struct B4 { uint8_t a; long long : 0; uint8_t b; };
+struct __attribute__((packed)) B5 { uint8_t a; long long : 0; uint8_t b; };
+struct B7 { unsigned long long a : 40; unsigned long long b : 30; };
+struct B8 { uint8_t c; long long : 3; long long x : 60; };
+struct B9 { uint8_t c; _BitInt(40) x : 20; uint8_t d; };
+uint64_t g(struct B1 *o, struct B3 *p, struct B7 *q, struct B8 *r, uint64_t v) {
+    o->x = (long long)v;  /* no literal here: the twin's constant vector reads every `= N;` in the emit */
+    p->x = (long long)v;
+    q->b = v;
+    r->x = (long long)v;
+    return (uint64_t)o->x + (uint64_t)p->x + q->a + q->b + (uint64_t)r->x;
+}
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct D);
+    uint32_t b = (uint32_t)sizeof(struct L);
+    uint32_t d = (uint32_t)sizeof(struct Z);
+    uint32_t e = (uint32_t)sizeof(union U);
+    uint32_t g2 = (uint32_t)sizeof(struct A2);
+    uint32_t h = (uint32_t)sizeof(struct AL);
+    uint32_t i = (uint32_t)sizeof(struct BI);
+    uint32_t j = (uint32_t)sizeof(struct B1);
+    uint32_t k = (uint32_t)sizeof(struct B2);
+    uint32_t l = (uint32_t)sizeof(struct B3);
+    uint32_t m = (uint32_t)sizeof(struct B4);
+    uint32_t n = (uint32_t)sizeof(struct B5);
+    uint32_t o = (uint32_t)sizeof(struct B7);
+    uint32_t p = (uint32_t)sizeof(struct B8);
+    uint32_t q = (uint32_t)sizeof(struct B9);
+    uint32_t r = (uint32_t)_Alignof(double);
+    uint32_t s = (uint32_t)_Alignof(long long);
+    uint32_t t = (uint32_t)_Alignof(double _Complex);
+    uint32_t u = (uint32_t)_Alignof(struct BI);
+    uint32_t w = (uint32_t)_Alignof(union U);
+    uint32_t x = (uint32_t)_Alignof(struct B1);
+    uint32_t y = (uint32_t)_Alignof(_Atomic double _Complex);
+    return a + b + d + e + g2 + h + i + j + k + l + m + n + o + p + q + r + s + t + u + w + x + y;
+}
+"""
+# the folded operands of `f`, in order (a `_Static_assert` per entry is what Clang checks)
+_EIGHT_BYTE_EXPRS = [
+    *(
+        f"sizeof({agg})"
+        for agg in (
+            "struct D", "struct L", "struct Z", "union U", "struct A2", "struct AL", "struct BI",
+            "struct B1", "struct B2", "struct B3", "struct B4", "struct B5", "struct B7", "struct B8",
+            "struct B9",
+        )
+    ),
+    "_Alignof(double)", "_Alignof(long long)", "_Alignof(double _Complex)", "_Alignof(struct BI)",
+    "_Alignof(union U)", "_Alignof(struct B1)", "_Alignof(_Atomic double _Complex)",
+]  # fmt: skip
+_LP64_EIGHT = [16, 16, 24, 8, 24, 16, 16, 8, 8, 16, 9, 9, 16, 16, 8, 8, 8, 8, 8, 8, 8, 16]
+_I386_EIGHT = [12, 12, 20, 8, 20, 16, 12, 4, 8, 12, 5, 5, 12, 12, 8, 4, 4, 4, 4, 4, 4, 4]
+# The entries that do not depend on a bitfield's layout. Bitfields follow the Itanium rules the rails model
+# on x86-64 and RISC-V Linux and on i386; AArch64 also raises a record's alignment for an unnamed bitfield,
+# and Windows lays bitfields out by the MSVC rules. Neither rail models either yet, so on those two targets
+# only these entries are held to Clang.
+_NO_BITFIELD = [i for i, e in enumerate(_EIGHT_BYTE_EXPRS) if not re.search(r"struct B\d", e)]
+_ITANIUM_BITFIELDS = ("x86_64-linux", "riscv64-linux", "i386-linux")
+# the members of each bitfield struct in declaration order (None: an unnamed bitfield), as Clang's
+# record-layout dump lists their bit offsets
+_EIGHT_BYTE_BITFIELDS = {
+    "B1": ("c", "x"),
+    "B2": ("c", "x", "d"),
+    "B3": ("a", "b", "x"),
+    "B4": ("a", None, "b"),
+    "B5": ("a", None, "b"),
+    "B7": ("a", "b"),
+    "B8": ("c", None, "x"),
+    "B9": ("c", "x", "d"),
+}
+
+
+def _clang_bit_offsets(clang: str, triple: str, src: str) -> dict:
+    """Each record's field bit offsets as Clang lays them out under `triple` (`-fdump-record-layouts-simple`,
+    unnamed bitfields included): the reference the rails' layouts are held to, bitfields included, since
+    `offsetof` is illegal on a bitfield."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "layout.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        run = subprocess.run(
+            [clang, "-target", triple, "-std=c2x", "-ffreestanding", "-fsyntax-only", "-Xclang",
+             "-fdump-record-layouts-simple", path],
+            capture_output=True, text=True,
+        )  # fmt: skip
+    assert run.returncode == 0, run.stderr
+    out, name = {}, None
+    for line in run.stdout.splitlines():
+        m = re.match(r"Type: (?:struct|union) (\w+)", line)
+        if m:
+            name = m.group(1)
+        m = re.match(r"\s*FieldOffsets: \[([\d, ]*)\]", line)
+        if m and name:
+            out[name] = [int(v) for v in m.group(1).split(",") if v.strip()]
+    return out
+
+
+def test_an_eight_byte_scalar_and_its_bitfields_follow_the_target_abi():
+    """CF-I386: both rails aligned an 8-byte scalar to 8 on every target, but i386 aligns `double`, `long
+    long`, `int64_t`, a `_BitInt(33..64)` and a `double _Complex` to 4 while their size stays 8, so every
+    such member, `sizeof` and `_Alignof` disagreed with the ABI there (`struct D` folded to 16, not 12). Both
+    target tables now carry the ABI's `eight_byte_align`, and a bitfield follows Clang's placement rule: a
+    field bumps to its type's next ALIGNMENT boundary only if it would overflow a storage unit of its type's
+    size, and a zero-width one aligns to its type's alignment, packed or not. Where the alignment equals the
+    size (every other target and type) that is the old rule, so no other layout moves. A bitfield of an
+    under-aligned type is accessed over only the bytes it spans (`struct B1` is 4 bytes; an 8-byte unit at
+    its start would run past the end). Checked per target: the folded sizes and alignments against a pinned
+    vector, between the rails, and against Clang (a `_Static_assert` per entry); each bitfield's bit offset
+    against Clang's record layout on i386 and x86-64; and the claim graphs of code reading and writing those
+    bitfields, digest for digest between the rails. Bitfield layout is held to Clang only where the rails
+    implement its rules (`_ITANIUM_BITFIELDS`): AArch64's alignment for an unnamed bitfield and the MSVC
+    bitfield layout are modeled by neither rail, which this test does not claim."""
+    vecs = {t: _abi_const_vec_oracle(_EIGHT_BYTE_SRC, t) for t in _ABI_TARGETS}
+    for t in ("x86_64-linux", "riscv64-linux"):
+        assert vecs[t] == _LP64_EIGHT, (t, vecs[t])
+    for t in ("aarch64-linux", "x86_64-windows"):
+        assert [vecs[t][i] for i in _NO_BITFIELD] == [_LP64_EIGHT[i] for i in _NO_BITFIELD], t
+    assert vecs["i386-linux"] == _I386_EIGHT, vecs["i386-linux"]
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        # Clang's own layout for every target, one `_Static_assert` per folded entry
+        for t in _ABI_TARGETS:
+            held = range(len(_EIGHT_BYTE_EXPRS)) if t in _ITANIUM_BITFIELDS else _NO_BITFIELD
+            asserts = "".join(
+                f'_Static_assert({_EIGHT_BYTE_EXPRS[i]} == {vecs[t][i]}, "{t}: {_EIGHT_BYTE_EXPRS[i]}");\n'
+                for i in held
+            )
+            src = _EIGHT_BYTE_SRC.split("uint64_t g(")[0] + asserts
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "eight.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(src)
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding",
+                     "-fsyntax-only", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+            assert run.returncode == 0, (t, run.stderr)
+        # each named bitfield's bit offset, against Clang's record layout
+        for t in ("i386-linux", "x86_64-linux"):
+            uses = " + ".join(f"sizeof(struct {tag})" for tag in _EIGHT_BYTE_BITFIELDS)
+            defs = _EIGHT_BYTE_SRC.split("uint64_t g(")[0] + f"int layout_uses = {uses};\n"
+            # Clang dumps only the records a unit uses
+            want = _clang_bit_offsets(clang, TARGETS[t].triple, defs)
+            aggs = compile_unit(_EIGHT_BYTE_SRC, check_clang=False, target=t).lowered.aggregates
+            for tag, names in _EIGHT_BYTE_BITFIELDS.items():
+                clang_at = {n: off for n, off in zip(names, want[tag], strict=True) if n}
+                ours = {fn: fbo * 8 + fbit for fn, _ft, fbo, fbit, _fw in aggs[tag].fields}
+                assert ours == clang_at, (t, tag, ours, clang_at)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "eight_byte.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_EIGHT_BYTE_SRC)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+        # the bitfield accesses: the same claim graph (offsets, unit bytes, bit positions) on both rails
+        for t in ("i386-linux", "x86_64-linux"):
+            r = compile_unit(_EIGHT_BYTE_SRC, check_clang=False, target=t)
+            oracle = f"{cfront_structural_digest(r.lowered):016x}"
+            run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+            twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
+            assert twin and twin.group(1) == oracle, (t, run.stdout[:300], oracle)
+
+
+# CF-PTRARR: an array-of-pointers member `T *arr[N]` -- every form of access, and whether both rails lower
+# it (True) or both refuse it (False). The twin laid the elements out by their pointee (`uint32_t *arr[2]` at
+# 4-byte elements), so every lowered form here differed from the oracle, and it accepted three forms the
+# oracle refuses while refusing `*t->arr[i]`, which a postfix operator's precedence makes `*(t->arr[i])`.
+_PTRARR_HEAD = """#include <stdint.h>
+struct T { uint8_t c; uint32_t *arr[2]; uint8_t d; };
+struct S { uint32_t v; };
+struct U { uint8_t c; struct S *sp[2]; double *dp[3]; };
+struct Q { uint8_t c; uint32_t *p; };
+struct R { uint8_t c; uint32_t **pp[2]; };
+struct V { uint8_t c; volatile uint32_t *regs[2]; };
+"""
+_PTRARR_FORMS = {
+    "uint32_t f(struct T *t, uint32_t *p){ t->arr[1] = p; return t->d; }": True,
+    "uint32_t f(struct T *t){ uint32_t *q = t->arr[1]; return *q; }": True,
+    "uint32_t f(struct T *t){ return *t->arr[1]; }": True,
+    "uint32_t f(struct T *t){ return *(t->arr[1]); }": True,
+    "uint32_t f(struct T *t, uint32_t v){ *t->arr[1] = v; return t->d; }": True,
+    "uint32_t f(struct T *t, uint32_t v){ *t->arr[1] += v; return t->d; }": True,
+    "uint32_t f(struct T *t, uint32_t i){ return *t->arr[i & 1u]; }": True,
+    "uint32_t f(struct T *t){ uint32_t **pp = &t->arr[1]; return **pp; }": True,
+    "uint32_t f(struct T *t, uint32_t *p){ return t->arr[0] == p; }": True,
+    "static uint32_t g(uint32_t *x){ return *x; }\nuint32_t f(struct T *t){ return g(t->arr[0]); }": True,
+    "uint32_t f(uint32_t *p){ struct T s = {0}; s.arr[0] = p; return *s.arr[0]; }": True,
+    "uint32_t f(uint32_t *p){ struct T s = { 1, { p, p }, 2 }; uint32_t *q = s.arr[1]; return *q + s.d; }": True,
+    "uint32_t f(uint32_t *p){ struct T s = { .arr = { p, p } }; uint32_t *q = s.arr[0]; return *q; }": True,
+    "uint32_t f(struct T *t){ t->arr[0] += 1; return t->d; }": True,
+    "uint32_t f(struct T *t){ t->arr[0] -= 1; return t->d; }": True,
+    "long f(struct T *t){ return t->arr[1] - t->arr[0]; }": True,
+    "double f(struct U *u){ double *q = u->dp[2]; return *q; }": True,
+    "uint32_t f(struct U *u, struct S *s){ u->sp[0] = s; struct S *q = u->sp[0]; return q->v; }": True,
+    "uint32_t f(struct R *r, uint32_t **x){ r->pp[1] = x; uint32_t **y = r->pp[1]; return **y; }": True,
+    "uint32_t f(struct V *v){ volatile uint32_t *r = v->regs[1]; return *r; }": True,
+    "uint32_t f(struct Q *q){ return *q->p; }": True,
+    "uint32_t f(struct Q q){ return *q.p + 1u; }": True,
+    "uint32_t f(void){ return (uint32_t)sizeof(struct T) + 100u*(uint32_t)sizeof(struct U); }": True,
+    "uint32_t f(struct T *t){ return t->arr[1][2]; }": False,
+    "uint32_t f(struct U *u){ return u->sp[1]->v; }": False,
+    "uint32_t f(struct T *t){ t->arr[0]++; return t->d; }": False,
+    "uint32_t f(struct T *t){ t->arr[0]--; return t->d; }": False,
+    "uint32_t f(struct T *t){ ++t->arr[0]; return t->d; }": False,
+    "uint32_t f(struct T *t){ uint32_t *q = t->arr[0]++; return *q; }": False,
+}
+_PTRARR_LAYOUT = """#include <stdint.h>
+struct T { uint8_t c; uint32_t *arr[2]; uint8_t d; };
+struct U { uint8_t c; double *dp[3]; uint32_t n; };
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct T);
+    uint32_t b = (uint32_t)_Alignof(struct T);
+    uint32_t d = (uint32_t)sizeof(struct U);
+    return a + b + d;
+}
+"""
+
+
+def test_an_array_of_pointers_member_is_laid_out_and_accessed_as_pointers():
+    """CF-PTRARR: the twin gave a `T *arr[N]` member's elements its pointee's size, not the pointer's, so a
+    later member sat at the wrong offset, `sizeof` was wrong, a store truncated the pointer and a load read
+    the element into an integer (the emitted C did not compile). Each element now takes the ABI's pointer
+    size and loads and stores whole, typed `T *`. `*t->arr[i]` (and `*s->p` through a plain pointer member)
+    dereferences the postfix expression, as its precedence says, where the twin had dereferenced the name.
+    `t->arr[i][j]` and `t->arr[i]++` are refused on both rails, since the oracle refuses them. Every form is
+    pinned (lowered or refused) and compared digest for digest on x86-64 and i386; the layout is held to
+    Clang on every target. `cfront_ptrmember.c` runs the lowered forms against the original."""
+    for body, lowered in _PTRARR_FORMS.items():
+        for t in ("x86_64-linux", "i386-linux"):
+            try:
+                compile_unit(_PTRARR_HEAD + body + "\n", check_clang=False, target=t)
+                got = True
+            except Exception:  # a refusal: both rails route the unit to fallback
+                got = False
+            assert got is lowered, (t, body)
+    vecs = {t: _abi_const_vec_oracle(_PTRARR_LAYOUT, t) for t in _ABI_TARGETS}
+    for t in ("x86_64-linux", "aarch64-linux", "riscv64-linux", "x86_64-windows"):
+        assert vecs[t] == [32, 8, 40], (t, vecs[t])
+    assert vecs["i386-linux"] == [16, 4, 20], vecs["i386-linux"]
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        for t in _ABI_TARGETS:
+            asserts = (
+                f'_Static_assert(sizeof(struct T) == {vecs[t][0]}, "{t} T");\n'
+                f'_Static_assert(_Alignof(struct T) == {vecs[t][1]}, "{t} align T");\n'
+                f'_Static_assert(sizeof(struct U) == {vecs[t][2]}, "{t} U");\n'
+            )
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "ptrarr.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(_PTRARR_LAYOUT.split("uint32_t f(")[0] + asserts)
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding",
+                     "-fsyntax-only", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+            assert run.returncode == 0, (t, run.stderr)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "ptrarr.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_PTRARR_LAYOUT)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+        for body, lowered in _PTRARR_FORMS.items():
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_PTRARR_HEAD + body + "\n")
+            for t in ("x86_64-linux", "i386-linux"):
+                run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+                if not lowered:
+                    assert run.returncode != 0 and not run.stdout.startswith("funcs="), (t, body)
+                    continue
+                r = compile_unit(_PTRARR_HEAD + body + "\n", check_clang=False, target=t)
+                oracle = f"{cfront_structural_digest(r.lowered):016x}"
+                twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
+                assert twin and twin.group(1) == oracle, (t, body, run.stdout[:200], oracle)
+
+
+# CF-TRAILPACK: `__attribute__((packed))` / `aligned(N)` written after a struct's closing brace, beside the
+# leading spelling the twin already honoured. `(expression, holds a bitfield)` per folded entry.
+_TRAILPACK_SRC = """#include <stdint.h>
+struct In { uint8_t a; uint32_t b; } __attribute__((packed));
+struct Pk { uint8_t c; uint64_t n; uint32_t lo : 3; uint32_t hi : 30; struct In in; uint16_t arr[3]; }
+    __attribute__((packed));
+struct Pn { uint8_t c; uint64_t n; struct In in; uint16_t arr[3]; } __attribute__((packed));
+struct __attribute__((packed)) Pl { uint8_t c; uint64_t n; };
+struct Wide { uint8_t c; uint32_t n; } __attribute__((packed, aligned(4)));
+struct Al { uint8_t c; uint32_t n; } __attribute__((aligned(16)));
+typedef struct TPt { uint8_t c; uint32_t n; uint16_t h; } __attribute__((packed)) TP;
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct In);
+    uint32_t b = (uint32_t)sizeof(struct Pk);
+    uint32_t c = (uint32_t)sizeof(struct Pn);
+    uint32_t d = (uint32_t)sizeof(struct Pl);
+    uint32_t e = (uint32_t)sizeof(struct Wide);
+    uint32_t g = (uint32_t)_Alignof(struct Wide);
+    uint32_t h = (uint32_t)sizeof(struct Al);
+    uint32_t i = (uint32_t)_Alignof(struct Al);
+    uint32_t j = (uint32_t)sizeof(TP);
+    uint32_t k = (uint32_t)_Alignof(struct Pn);
+    return a + b + c + d + e + g + h + i + j + k;
+}
+"""
+_TRAILPACK_EXPRS = [
+    ("sizeof(struct In)", False), ("sizeof(struct Pk)", True), ("sizeof(struct Pn)", False),
+    ("sizeof(struct Pl)", False), ("sizeof(struct Wide)", False), ("_Alignof(struct Wide)", False),
+    ("sizeof(struct Al)", False), ("_Alignof(struct Al)", False), ("sizeof(TP)", False),
+    ("_Alignof(struct Pn)", False),
+]  # fmt: skip
+
+
+def test_a_trailing_packed_attribute_packs_the_members_on_both_rails():
+    """CF-TRAILPACK: the twin honoured `__attribute__((packed))` before a struct's body but read one written
+    after the closing brace -- the common spelling -- only for the aggregate's alignment, after every member
+    had been placed at its natural offset: `struct { uint8_t c; uint64_t n; } __attribute__((packed))` put
+    `n` at 8 and folded `sizeof` to 16 where Clang and the oracle say 1 and 9. The attributes after the `}`
+    are now read before the members are laid out. The folded sizes and alignments (a misaligned `uint64_t`,
+    a straddling bitfield, a nested packed struct, an array member, `packed, aligned(4)`, a trailing
+    `aligned(16)`, and a typedef) are compared between the rails on every target and held to Clang; the
+    bitfield struct only where the rails implement the target's bitfield rules. `cfront_trailpacked.c` runs
+    the accesses against the original."""
+    vecs = {t: _abi_const_vec_oracle(_TRAILPACK_SRC, t) for t in _ABI_TARGETS}
+    for t in _ABI_TARGETS:
+        # packed: no member moves with the data model
+        assert vecs[t][1:4] == [25, 20, 9], (t, vecs[t])
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        for t in _ABI_TARGETS:
+            asserts = "".join(
+                f'_Static_assert({e} == {v}, "{t}: {e}");\n'
+                for (e, bitfield), v in zip(_TRAILPACK_EXPRS, vecs[t], strict=True)
+                if t in _ITANIUM_BITFIELDS or not bitfield
+            )
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "trailpack.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(_TRAILPACK_SRC.split("uint32_t f(")[0] + asserts)
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding",
+                     "-fsyntax-only", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+            assert run.returncode == 0, (t, run.stderr)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "trailpack.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_TRAILPACK_SRC)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
+
+
 # An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the
 # one reason; and a cast or compound literal of an `_Atomic` type, which neither rail parses as one.
 _ATOMIC_AGGREGATE = "an `_Atomic` struct or union is not supported"
+_ATOMIC_BITFIELD = "a bit-field of `_Atomic` type is not supported"
 _ATOMIC_REFUSED = (
     (
         "struct P3 { uint8_t c[3]; };\nstruct W { uint8_t k; _Atomic struct P3 p; uint8_t t; };\n"
@@ -3413,6 +4061,22 @@ _ATOMIC_REFUSED = (
     ),
     ("uint32_t f(uint32_t x) { uint32_t y = (_Atomic uint32_t)x; return y + 1u; }\n", None),
     ("uint32_t f(uint32_t x) { uint32_t *p = &(_Atomic uint32_t){x}; return *p; }\n", None),
+    # CF-ATOMIC: a bit-field of `_Atomic` type -- named, unnamed or `_Atomic(T)` -- which GCC and Clang
+    # reject too; no atomic operation reaches a bit-field
+    (
+        "struct B { uint8_t k; _Atomic uint32_t x : 3; uint32_t y; };\n"
+        "uint32_t f(struct B *b) { return b->y; }\n",
+        _ATOMIC_BITFIELD,
+    ),
+    (
+        "struct B { uint8_t k; _Atomic uint32_t : 3; uint32_t y; };\n"
+        "uint32_t f(struct B *b) { return b->y; }\n",
+        _ATOMIC_BITFIELD,
+    ),
+    (
+        "struct B { uint8_t k; _Atomic(uint32_t) x : 3; };\nuint32_t f(struct B *b) { return b->k; }\n",
+        _ATOMIC_BITFIELD,
+    ),
 )
 
 
@@ -6100,3 +6764,104 @@ def test_c_twin_preprocessor_differential_against_reference():
         f"C-twin preprocessor differential degenerated: only {tested} fixtures ran "
         f"(pinned={pinned}) -- a real differential must exercise the clean subset"
     )
+
+
+# --- CF-PASTE: the preprocessor keeps apart tokens that would lex as others ----------------------------
+# Every pp-token the property below draws from: words, pp-numbers (an exponent's sign, a leading `.`, a hex
+# digit `e`), string literals, and every punctuator the preprocessor lexes.
+_PASTE_VOCAB = (
+    "a", "b", "x1", "e", "E", "p", "_y", "L",
+    "0", "1", "12", "1.5", ".5", "0x1e", "1e", "1e+5", "0x1p-3", "07",
+    '"s"', '"a b"',
+    *_cpp._PUNCT,
+)  # fmt: skip
+
+
+def _paste_lines(seed: int, n: int) -> list[list[str]]:
+    """`n` random token sequences over `_PASTE_VOCAB` (2..8 tokens each), deterministic in `seed`."""
+    import random
+
+    rng = random.Random(seed)
+    return [[rng.choice(_PASTE_VOCAB) for _ in range(rng.randint(2, 8))] for _ in range(n)]
+
+
+def test_the_preprocessor_keeps_apart_tokens_that_would_lex_as_others():
+    """CF-PASTE: both cfront preprocessors re-spell every source line from its tokens, and kept a space
+    only between two words, so two tokens whose spellings run together into others came out as those
+    (maximal munch, C 6.4p4). `a + ++g` came out `a+++g`, which is `(a++) + g`; `-NEG(a)` with
+    `#define NEG(x) -x` came out `--a`; `a + INC b` with `#define INC ++` came out `a+++b` -- each unit
+    lowered clean and computed another value. `y / *p` came out as a comment opener and `a + +b` as a
+    parse error. One predicate on each rail now decides the space (`cpp._pastes`, `bcir_cpp.c` `pastes`):
+    two words, a comment opener, a punctuator maximal munch would extend, two dots (the ellipsis), a
+    pp-number that runs on. The property: for random token sequences over every punctuator, pp-number
+    shape and word, the joined text re-lexes to exactly those tokens, and the twin writes the same text
+    byte for byte. Every tracked C source preprocesses as before (checked when this landed: the rule
+    only ever adds a space where the text lexed as other tokens). `cfront_paste.c` runs each once-wrong
+    function against the original on both rails' emits; `cfront_pp_avoidpaste.c` holds both
+    preprocessors to clang and gcc in the reference differentials above."""
+    lines = _paste_lines(20260929, 2000)
+    for toks in lines:
+        text = _cpp._join(toks)
+        assert _cpp._tokens(text) == toks, (toks, text)
+    assert _cpp._join(["a", "+", "++", "g"]) == "a+ ++g"  # the space where it is needed ...
+    assert _cpp._join(["i", "--", ">", "0"]) == "i-->0"  # ... and only there: `-->` lexes `--` `>`
+    assert _cpp._join([".", ".", "."]) == ". . ."  # three tokens, not the ellipsis
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    # each sequence as a line (after a word, so never a directive); then -- where it is one macro
+    # argument (no parenthesis or comma; no string, whose escaping in `#` the twin does not model) --
+    # stringized, which keeps the argument's own spelling, and through an identity macro, rescanned. Two
+    # units, each inside the twin harness's 64 KiB input.
+    args = [t for t in lines if not {"(", ")", ",", '"s"', '"a b"'} & set(t)][:700]
+    assert len(args) == 700, len(args)
+    units = (
+        "".join(f"q {' '.join(t)}\n" for t in lines),
+        "#define STR(x) #x\n#define ID(x) x\n"
+        + "".join(f"q STR({' '.join(t)}) ID({' '.join(t)})\n" for t in args),
+    )
+    for body in units:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "paste_lines.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            twin = subprocess.run([exe, "--emit-cpp", path], capture_output=True, text=True)
+        assert twin.returncode == 0, twin.stderr
+        py = _cpp.preprocess(body, name=path)
+        assert twin.stdout.splitlines() == py.splitlines(), next(
+            (t, p) for t, p in zip(twin.stdout.splitlines(), py.splitlines(), strict=True) if t != p
+        )
+    fx = "cfront_paste.c"
+    fpath = os.path.join(_C, fx)
+    src = open(fpath, encoding="utf-8").read()
+    oracle_summary, r, _entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    c_summary, c_emit = _c_run(exe, fpath)
+    assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    renamed = src
+    for f in r.lowered.functions:
+        renamed = re.sub(r"\b" + f + r"\b", f + "_s", renamed)
+    driver = r"""
+static int fail(const char *what) { puts(what); return 1; }
+int main(void) {
+  for (int32_t k = -300; k < 300; k++) {
+    uint32_t u = (uint32_t)k * 2654435761u, v = (uint32_t)(k * 7 + 3), dv = v | 1u;
+    if (ps_preinc_s(u, v) != bcir_ps_preinc(u, v)) return fail("preinc");
+    if (ps_predec_s(u, v) != bcir_ps_predec(u, v)) return fail("predec");
+    if (ps_negneg_s(k) != bcir_ps_negneg(k)) return fail("negneg");
+    if (ps_incmacro_s(k, 3 * k) != bcir_ps_incmacro(k, 3 * k)) return fail("incmacro");
+    if (ps_deref_s(u, &dv) != bcir_ps_deref(u, &dv)) return fail("deref");
+    if (ps_unary_s(k, 5 * k) != bcir_ps_unary(k, 5 * k)) return fail("unary");
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+                out = _build_run_c(d, cc, label, f"{head}{renamed}\n{emit}\n{driver}")
+                assert out == "MATCH", f"{fx}: {label} emit not equivalent under {cc} ({out})"

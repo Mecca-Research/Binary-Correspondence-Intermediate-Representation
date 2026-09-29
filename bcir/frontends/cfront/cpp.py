@@ -623,12 +623,54 @@ def _unescape_str(tok: str) -> str:
     return "".join(out)
 
 
+# Two characters that, side by side, may begin a punctuator longer than the token they end (C 6.4.6):
+# the first two of a multi-character one (the ellipsis's `..` is its own rule, in `_pastes`). Whether it
+# does is maximal munch's to say (6.4p4): `+` then `++`, written with no space, lexes as `++` `+`, so
+# `a + ++g` spelled `a+++g` is `(a++) + g`; `--` then `>` lexes as `--` `>` again. The twin keeps the
+# same set (`bcir_cpp.c`, `pastes`).
+_PASTE_PAIRS = frozenset(
+    ("<<", "<=", ">>", ">=", "->", "++", "--", "==", "!=", "&&", "||", "##",
+     "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=")
+)  # fmt: skip
+_PUNCT_RE = re.compile("|".join(re.escape(p) for p in _PUNCT))  # longest first: maximal munch
+
+
+def _is_ppnum(t: str) -> bool:
+    """Whether the preprocessing token `t` is a pp-number (C 6.4.8): a digit, or `.` and a digit, first."""
+    return t[:1].isdigit() or (t[:1] == "." and t[1:2].isdigit())
+
+
+def _pastes(prev: str, t: str) -> bool:
+    """Whether the token `t`, written right after the token `prev`, would lex as part of another token:
+    two words run together, a comment opens (`y / *p` spelled `y/*p`, C 6.4.9), a punctuator runs on
+    into a longer one, two `.` start an ellipsis (`..` is no punctuator, so maximal munch over two
+    tokens cannot see it), a pp-number runs on through a `.` or an exponent's sign, or a `.` begins a
+    number. A space between them keeps them two (the twin's `pastes`, byte for byte)."""
+    a, b = prev[-1], t[0]
+    if (_is_id(a) or a.isdigit()) and (_is_id(b) or b.isdigit()):
+        return True
+    if (a == "/" and b in "*/") or (a == "." and b == "."):
+        return True
+    if a + b in _PASTE_PAIRS:
+        m = _PUNCT_RE.match(prev + t[:2])
+        if m is not None and len(m.group()) > len(prev):
+            return True
+    if _is_ppnum(prev) and (b == "." or (a in "eEpP" and b in "+-")):
+        return True
+    return a == "." and b.isdigit()
+
+
 def _join(toks: list[str]) -> str:
-    out = ""
+    """The tokens as one line of text, with a space only between two that would otherwise lex as
+    another (`_pastes`), so the text re-lexes to exactly these tokens."""
+    out, prev = "", ""
     for t in toks:
-        if out and (_is_id(out[-1]) or out[-1].isdigit()) and (_is_id(t) or t[:1].isdigit()):
+        if not t:
+            continue
+        if prev and _pastes(prev, t):
             out += " "
         out += t
+        prev = t
     return out
 
 

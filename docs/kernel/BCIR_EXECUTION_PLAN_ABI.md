@@ -1,10 +1,10 @@
-# BCIR ExecutionPlanV1 binary ABI — v1 (frozen, normative) + v2 (append-only)
+# BCIR ExecutionPlanV1 binary ABI — v1 (frozen, normative) + v2, v3 (append-only)
 
 The ExecutionPlan is **the plan as bytes** (GEM+ roadmap G11, staged plan S1-C): the plan a
 [StreamPack](BCIR_STREAMPACK_ABI.md) was derived from and what every reader prices. The pack
 stays the executable; the plan carries what G1 makes canonical — the K_BCIR realization and
 the one placement both executors run and both pricers read — together with the static-memory
-planner's lifetimes and addresses, the movement-edge family G8 will fill, and the registry's
+planner's lifetimes and addresses, the movement-edge family G8 fills (v3), and the registry's
 per-resource generation vector (R11). The reference encoder/decoder is
 [`bcir/abi/execution_plan_abi.py`](../../bcir/abi/execution_plan_abi.py); the C view is
 [`runtime/c/bcir_execution_plan.h`](../../runtime/c/bcir_execution_plan.h) with the
@@ -71,11 +71,19 @@ The C `bcir_ep_header` is this layout without padding (a static assertion locks 
    before_claim:u64` — a G8 movement edge: `kind` ∈ {`0` direct, `1` peer, `2` staged,
    `3` rematerialized, `4` compressed, `5` evicted}, `coherence` ∈ {`0` none, `1` flush,
    `2` invalidate, `3` writeback}, the generation it moves, and the overlap window (after
-   `after_claim` finishes, before `before_claim` starts; `0` = unconstrained). Declared,
-   carried and verified now; empty until G8 produces edges.
+   `after_claim` finishes, before `before_claim` starts; on v1/v2 `0` = unconstrained).
+   **v3** appends `claim:u64  version:u32  flags:u8  producer:u64  bits:u8  cert:u64`: the
+   claim that executes the edge, the logical version it lands, which claim references are
+   present (`flags`: `1` after, `2` before, `4` producer, `8` claim), the producer a remat
+   replays, a compressed edge's codec bits and the remat or accuracy certificate. G8 fills the
+   family: one edge per move and remat claim of the movement transform
+   ([`BCIR_DATA_MOVEMENT.md`](BCIR_DATA_MOVEMENT.md)).
 5. `generations[n_gens]`, each: `rid:u32  map_gen:u32  data_gen:u32` — the StreamPack v4
    record, RIDs strictly ascending: the registry's per-resource generation vector the plan was
    placed under.
+6. **v3**: the binding, `source_hash:u64  spec_hash:u64` — the goal graph the movement transform
+   started from (its canonical digest, zero spelled 1) and the movement spec it was planned
+   under. Both are nonzero on every v3 plan.
 
 ## Trailer
 
@@ -93,7 +101,17 @@ The encoder refuses to emit, and every decoder refuses to read, a plan that viol
   the offset honors, `first_phase ≤ last_phase`, `last_tick > first_tick`, no 64-bit overflow of
   `offset + size`, and **no two lifetimes of one bank live at once at overlapping addresses**
   (the alias law by bytes — `BCIR_ERR_PLAN` / `AbiError`, judged on the half-open ticks);
-- moves: non-empty banks, `size ≥ 1`, legal `kind` and `coherence` codes, no overflow;
+- moves: non-empty banks, `size ≥ 1`, legal `kind` and `coherence` codes, no overflow; two
+  different banks unless the edge is a remat (which replays in place); a writeback that is
+  neither compressed nor a remat -- on every version;
+- v3 moves: flags within the defined set and a reference the flags call absent zero; exactly a
+  remat names a producer, and not its own claim; exactly a compressed edge names codec bits
+  `1..31`; exactly the remat and compressed edges carry a certificate; every referenced claim is
+  a step, and the window is ordered by the placement (the source's writer finishes before the
+  edge's claim starts, which finishes before its first reader starts); a writeback lands in the
+  bank of its resource's lifetime; the binding names both hashes. The **wire version decides**
+  which laws apply: a v3 buffer whose binding and tails are all zero is refused, not read as
+  the v2 plan it would re-encode to;
 - generations: RIDs strictly ascending;
 - **exact body consumption**: the declared records end exactly at the CRC trailer. CRC-valid
   bytes inserted before a recomputed CRC are refused (`BCIR_ERR_TRAILING`); reserved header
@@ -152,8 +170,9 @@ from the plan's bytes are identical to their in-memory counterparts.
   run the complete wire verification before admitting the variant; the root stays a StreamPack.
 - **ASN.1**: the `BCIR-ExecutionPlan` module (OID `{ 1 3 6 1 4 1 62596 3 }`,
   [`docs/BCIR_ASN1_X690_ABI.md`](../BCIR_ASN1_X690_ABI.md) §3b; projection version 2 carries
-  `liveness` and the ticks) projects the abstract value under DER, OER and JER; the native
-  octets — v1 or v2 — survive the round trip byte for byte.
+  `liveness` and the ticks, version 3 the move tail and the binding) projects the abstract value
+  under DER, OER and JER; the native octets — v1, v2 or v3 — survive the round trip byte for
+  byte, and every decoder holds the plan to the wire laws above.
 - **MLIR**: `bcir.artifact.variant` accepts `kind = "execution_plan"` with
   `format = "execution_plan"` (the pair is closed). The law rail has no plan op of its own yet;
   the C decoder is the reader every rail can link.
@@ -176,13 +195,32 @@ static memory planner (staged plan S1-D). It changes **no** v1 field offset:
 - **The alias law by bytes** applies to every version: the C twin (`bcir_ep_verify`) and the
   Python codec refuse two lifetimes of one bank that are live at once at overlapping addresses.
 
+## v3 (append-only): the move tail and the binding (G8)
+
+v3 lands with the movement transform (staged plan S5-C). It changes **no** v1/v2 field offset:
+
+- **Move records** append the tail in item 4; step, lifetime and generation records are
+  unchanged.
+- **The binding** trails the generation vector (item 6). Readers that locate the vector by
+  arithmetic -- the R11 registry check and the plan/pack binding -- locate it through one
+  predicate that stops before the trailer (`ep_generations_end`); the plan/pack binding had
+  located it at the body's end, and a matching v3 pack read as stale.
+- **Encoders emit the lowest carrying version**: a plan that moves nothing -- no move carries
+  the v3 tail and the binding is zero -- is never v3, so every v1/v2 plan is byte-identical to
+  the parent's.
+- `bcir_ep_binding(data, len, &source_hash, &spec_hash)` verifies the buffer and returns the
+  binding (both zero on v1/v2); `bcir_ep_move_view` carries the tail (zero on v1/v2).
+- The semantic laws of a move -- that the transform is correctness-neutral and the edge is the
+  claim's -- need the source module and the spec, and live on the oracle (`verify_movement`,
+  MV1–MV11); `verify_execution_plan` refuses a plan that moves data without them (MV11).
+
 ## Versioning (the freeze)
 
 - v1 is **frozen**: the field layout above does not change.
 - New fields are **append-only** (the StreamPack's discipline: header pad first, record tails,
   then trailing record families — v2 above is the worked instance); a v1 reader of a v1 buffer
   is exact and lossless.
-- A reader **rejects** a buffer whose `version` exceeds the maximum it supports (v2 today), and
+- A reader **rejects** a buffer whose `version` exceeds the maximum it supports (v3 today), and
   refuses nonzero reserved bytes: reserved or trailing bytes are not implicit ABI.
 
 Writers reject values that cannot be represented exactly: integer fields never mask or wrap, a

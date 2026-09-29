@@ -221,6 +221,7 @@ _MODULES = [
     "bcir.tests.test_cfront_abi",
     "bcir.tests.test_cfront_effects",
     "bcir.tests.test_escape_analysis",
+    "bcir.tests.test_movement",
     "bcir.tests.test_cfront_volatile",
     "bcir.tests.test_cfront_fallback",
     "bcir.tests.test_cfront_ipo",

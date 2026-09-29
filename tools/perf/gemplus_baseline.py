@@ -1590,6 +1590,116 @@ METRICS: tuple[Metric, ...] = (
         bound_source="a device access reads and writes state the unit cannot name (G10's device rule)",
         slice_owner="CF-VOL",
     ),
+    # --- G8 (S5-C): data movement as a first-class transformation. Every row is counted by
+    # bcir/tests/movement_fixtures.py::measure, which the tests and tools/perf/check_movement.py
+    # grade the same way: eleven fixtures whose candidate spaces fit the exact planner's budget
+    # (every chosen plan is the optimum of the joint objective, TMSAO-1), thirty law variants each
+    # breaking one movement law, and the malformed moves and bindings of the v3 wire. RED is the
+    # parent (2221db5e, #794's merge) judged by the same fixtures and, where it had them, its own
+    # verifier, codec, ASN.1 projection and C twin: the example programs read two memory tiers with
+    # no move, its best transfer-aware rule (channels.orchestrate's site choice, movement priced
+    # after) sat 597,840 ticks off the optimum, its R9 lifetime cover refused every plan that moves
+    # data -- legal or not, so its verdict on a variant said nothing about which movement law broke
+    # -- and neither rail could read a v3 plan while both read a same-bank "move".
+    Metric(
+        "movement.implicit_cross_tier",
+        "movement",
+        "claims of the example programs that read or write two memory tiers without an explicit move (D-R2), after the movement planner",
+        9,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every access sits in the bank of its claim's site: each tier crossing is a mem.move claim the plan carries",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.excess",
+        "movement",
+        "summed makespan of the chosen plans over the exact optimum of the joint objective, eleven fixtures (the parent's rule: channels.orchestrate's site choice with movement priced after it)",
+        597840,
+        "ticks",
+        "exact",
+        bound=0,
+        bound_source="exhaustive enumeration of every fixture's site/remat/compression space within the planner's budget (TMSAO-1), re-derived by an independent brute force in the tests",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.laws.accepted",
+        "movement",
+        "law variants (30, each breaking one movement law) the verifier accepts",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="each variant breaks a law by construction",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.laws.misattributed",
+        "movement",
+        "law variants refused, but not by the movement law they break (the parent had none: it refused all 30 by R9 or R13, as it refused the legal plans)",
+        30,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the law each variant breaks by construction",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.identity.drift",
+        "movement",
+        "fixtures whose optimum moves nothing but whose plan is not byte-identical to the plan of the module itself",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a plan that moves nothing is the parent's plan, byte for byte (v1, no binding)",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.roundtrip.mismatch",
+        "movement",
+        "planned plans whose bytes do not decode to themselves (the parent's codec carried no move tail and no binding: every plan that moves data)",
+        9,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the v3 wire carries every field of the plan",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.plans.unlawful",
+        "movement",
+        "fixtures whose chosen plan a law refuses -- the movement laws with their source and spec, R1-R25 over the transformed module, or a racing access (the parent's R9 refused every plan that moves data)",
+        9,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the planner's plans are lawful and the verifier refuses no lawful plan",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.asn1.accepted",
+        "movement",
+        "(malformed plan, transfer syntax) pairs a BCIR-ExecutionPlan decoder (DER, OER, JER) accepts (the parent: the 18 its projection can spell, of 87)",
+        18,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every transfer syntax admits exactly the plans the native codec admits",
+        slice_owner="G8",
+    ),
+    Metric(
+        "movement.parity.mismatch",
+        "movement",
+        "planned plans not read, bound to their pack and registry and round-tripped by both rails, and malformed moves and bindings not refused by both (the parent: 9 plans read by neither, 2 same-bank or lossy-writeback plans read by both); needs a C compiler",
+        11,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one wire, both rails, verdict for verdict",
+        slice_owner="G8",
+    ),
     # --- §5.1: the deterministic audit. These are the end-to-end rows; they move only when
     # a slice changes something real, which makes them the honest integration signal.
     Metric(
@@ -2668,6 +2778,16 @@ def measure_volatile() -> dict[str, float]:
     return measure()
 
 
+def measure_movement() -> dict[str, float]:
+    """The G8 rows (S5-C): the joint movement/compute planner, the movement laws and the v3 wire
+    (bcir/tests/movement_fixtures.py::measure, which the tests and tools/perf/check_movement.py
+    grade the same way). Every row but the parity row needs only the interpreter; the parity
+    row needs a C compiler and is NOT-MEASURED without one, never zero by default."""
+    from bcir.tests.movement_fixtures import measure
+
+    return measure()
+
+
 def measure_memory() -> dict[str, float]:
     """The G5 rows (S1-D): the static memory planner's engaged layout against the proved
     optimum, over the section 6.4 corpus and its worst-case witness, through the REAL planner
@@ -2726,6 +2846,7 @@ _MEASURERS = {
     "encode": measure_encode,
     "escape": measure_escape,
     "volatile": measure_volatile,
+    "movement": measure_movement,
     "memory": measure_memory,
 }
 

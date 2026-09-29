@@ -89,6 +89,11 @@ static int idc(int c) { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' &
                                (c >= '0' && c <= '9'); }
 static int id0(int c) { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 
+/* Every multi-character punctuator (C 6.4.6), longest first: `++` is one token, never two `+`. */
+static const char *const punct_ops[] = {"<<=", ">>=", "...", "->", "##", "<<", ">>", "<=", ">=", "==", "!=",
+                                        "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=", "&=", "|=",
+                                        "^=", 0};
+
 /* next token from s[*i]; copies into out; returns 'i' ident, 'n' number, 's' string,
  * 'p' punct, 0 end. skips leading spaces. */
 static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
@@ -104,7 +109,8 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
     }
     out[j] = 0; return 'i';
   }
-  if (c >= '0' && c <= '9') {                            /* a pp-number: digits, '.', idents, and an
+  if ((c >= '0' && c <= '9') || (c == '.' && s[*i+1] >= '0' && s[*i+1] <= '9')) {   /* a pp-number (a digit, or
+                                                          * `.` and a digit, first): digits, '.', idents, and an
                                                           * e/E/p/P binary/decimal exponent's +/- sign */
     while (idc((unsigned char)s[*i]) || s[*i] == '.') {
       char d = s[*i];
@@ -132,10 +138,9 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
       (*i)++;
     }
     out[j] = 0; return 's'; }
-  static const char *ops[] = {"<<=", ">>=", "...", "->", "##", "<<", ">>", "<=", ">=", "==",
-                              "!=", "&&", "||", 0};
-  for (int k = 0; ops[k]; k++) { int L = (int)strlen(ops[k]);
-    if (!strncmp(s + *i, ops[k], (size_t)L)) { memcpy(out, ops[k], (size_t)L); out[L] = 0; *i += L; return 'p'; } }
+  for (int k = 0; punct_ops[k]; k++) { int L = (int)strlen(punct_ops[k]);
+    if (!strncmp(s + *i, punct_ops[k], (size_t)L)) {
+      memcpy(out, punct_ops[k], (size_t)L); out[L] = 0; *i += L; return 'p'; } }
   out[0] = s[(*i)++]; out[1] = 0; return 'p';
 }
 
@@ -145,8 +150,36 @@ static void app(CppState *state, char *o, size_t cap, size_t *w, const char *s) 
   if (*w >= cap || n >= cap - *w) { cpp_limit(state, "preprocessed output too large"); return; }
   memcpy(o + *w, s, n); *w += n; o[*w] = 0;
 }
-static int needspace(char a, char b) {            /* keep ident/number tokens apart */
-  int ai = idc((unsigned char)a), bi = idc((unsigned char)b); return ai && bi;
+/* The length of the punctuator `s` begins with: its multi-character one (longest first), else 1. */
+static int punct_len(const char *s) {
+  for (int k = 0; punct_ops[k]; k++) { size_t L = strlen(punct_ops[k]); if (!strncmp(s, punct_ops[k], L)) return (int)L; }
+  return 1;
+}
+/* Whether the text `t`, written right after a token ending with `a`, would lex as part of another token
+ * (maximal munch, C 6.4p4): two words run together, a comment opens (`y / *p` without its space, 6.4.9), a
+ * punctuator runs on into a longer one (`a + ++g` spelled `a+++g` is `(a++) + g`), two `.` start an ellipsis
+ * (`..` is no punctuator, so maximal munch over two tokens cannot see it), a pp-number runs on
+ * through a `.` or an exponent's sign (`anum`: the token before is one), or a `.` begins a number. A space
+ * between them keeps them two. `prevp` is the token before when it is known: itself when a punctuator,
+ * `""` when not one; NULL (unknown) keeps two punctuators apart whenever they might run on. The oracle's
+ * `_pastes` (cpp.py), byte for byte where the token is known. */
+static int pastes(const char *prevp, char a, const char *t, int anum) {
+  static const char pairs[][3] = {"<<", "<=", ">>", ">=", "->", "++", "--", "==", "!=", "&&", "||", "##",
+                                  "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^="};
+  char b = t[0];
+  if (idc((unsigned char)a) && idc((unsigned char)b)) return 1;
+  if ((a == '/' && (b == '*' || b == '/')) || (a == '.' && b == '.')) return 1;   /* a comment; an ellipsis */
+  for (size_t k = 0; k < sizeof pairs / sizeof pairs[0]; k++)
+    if (pairs[k][0] == a && pairs[k][1] == b) {
+      if (!prevp) return 1;
+      if (!prevp[0]) break;                          /* a word, number or literal: no punctuator runs on */
+      char st[8]; snprintf(st, sizeof st, "%.3s%.2s", prevp, t);
+      if (punct_len(st) > (int)strlen(prevp)) return 1;
+      break;
+    }
+  if (anum && (b == '.' || ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (b == '+' || b == '-'))))
+    return 1;
+  return a == '.' && b >= '0' && b <= '9';
 }
 
 /* Append __VA_ARGS__: every trailing arg from index `first`, comma-joined (matching cpp.py). */
@@ -168,7 +201,11 @@ static int va_nonempty_of(const Macro *m, char args[][1024], int na) {
 }
 
 /* Substitute the macro's args into body string `body`, appending to out at *w (prev = the last
- * emitted token, for spacing). Recurses for __VA_OPT__(content); `va_ne` is va_nonempty_of(). */
+ * emitted token, for spacing). Recurses for __VA_OPT__(content); `va_ne` is va_nonempty_of().
+ * The spacing here keeps every two tokens apart that could lex as another, counting any word before a
+ * `.` or a sign as a possible number: the substitution is always rescanned by expand_line's next pass,
+ * which spaces the line token by token (`pastes`), so no space written here reaches the output. Only a
+ * stringized argument keeps its spelling, and it is spaced exactly where the argument is gathered. */
 static void subst_into(CppState *state, const char *body, const Macro *m,
                        char args[][1024], int na, int va_ne,
                        char *out, size_t cap, size_t *w, char *prev) {
@@ -217,7 +254,7 @@ static void subst_into(CppState *state, const char *body, const Macro *m,
     int pi = -1; if (k == 'i') for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
     if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* all trailing args, comma-joined */
       if (na > pi) {
-        if (*w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], args[pi][0]))
+        if (*w && pastes(NULL, prev[strlen(prev) ? strlen(prev) - 1 : 0], args[pi], 1))
           app(state, out, cap, w, " ");
         app_va(state, out, cap, w, args, na, pi);
         strncpy(prev, args[na - 1], 255); prev[255] = 0;
@@ -225,7 +262,7 @@ static void subst_into(CppState *state, const char *body, const Macro *m,
       continue;                                              /* empty __VA_ARGS__: emit nothing */
     }
     const char *emit = (pi >= 0 && pi < na) ? args[pi] : t;
-    if (*w && needspace(prev[strlen(prev) ? strlen(prev) - 1 : 0], emit[0])) app(state, out, cap, w, " ");
+    if (*w && pastes(NULL, prev[strlen(prev) ? strlen(prev) - 1 : 0], emit, 1)) app(state, out, cap, w, " ");
     app(state, out, cap, w, emit);
     strncpy(prev, emit, 255); prev[255] = 0;
   }
@@ -241,6 +278,11 @@ static void substitute(CppState *state, const Macro *m, char args[][1024], int n
 static int expand_once(CppState *state, const char *line, char *out, size_t cap, int *changed) {
   size_t w = 0; out[0] = 0; *changed = 0;
   int i = 0; char t[256], prevc = 0;
+  char ptok[4] = ""; const char *prevp = ptok;   /* the last token written: a punctuator's spelling (else
+                                                    * ""), and whether a pp-number -- exact after a token;
+                                                    * unknown after a substitution, which the next pass
+                                                    * rescans, so a guess that keeps tokens apart */
+  int prevnum = 0;
   while (1) {
     int save = i, k = ntok(state, line, &i, t, sizeof t); if (!k) break;
     if (k == 'i') {
@@ -249,25 +291,27 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
         int j = i; char nx[8]; int nk = ntok(state, line, &j, nx, sizeof nx);
         if (nk && !strcmp(nx, "(")) {
           char args[16][1024]; int na = 0; int depth = 1, closed = 0; size_t aw = 0; args[0][0] = 0;
-          char a[256];
+          char a[256], ap[4] = ""; int anum = 0;   /* the argument's last token: a punctuator's
+                                                     * spelling (else ""), and whether a pp-number */
           while (depth) { int ak = ntok(state, line, &j, a, sizeof a); if (!ak) break;
             if (!strcmp(a, "(")) depth++;
             else if (!strcmp(a, ")")) { depth--; if (!depth) { closed = 1; break; } }
             else if (!strcmp(a, ",") && depth == 1) {
               if (na >= 15) cpp_limit(state, "too many macro arguments");
               else { args[na][aw] = 0; na++; args[na][0] = 0; }
-              aw = 0; continue;
+              aw = 0; ap[0] = 0; anum = 0; continue;
             }
-            if (na < 16) { if (aw && needspace(args[na][aw-1], a[0]) && aw < 1023) args[na][aw++] = ' ';
+            if (na < 16) { if (aw && pastes(ap, args[na][aw-1], a, anum) && aw < 1023) args[na][aw++] = ' ';
               for (int z = 0; a[z]; z++) {
                 if (aw < 1023) args[na][aw++] = a[z]; else cpp_limit(state, "macro argument is too large");
               }
-              args[na][aw] = 0; } }
+              args[na][aw] = 0; anum = ak == 'n';
+              snprintf(ap, sizeof ap, "%s", ak == 'p' && strlen(a) < sizeof ap ? a : ""); } }
           if (!closed) cpp_limit(state, "unterminated macro invocation");
           if (na < 16) na++;             /* the final argument; excess arguments already diagnosed */
           char sub[2048]; substitute(state, &state->macros[mi], args, na, sub, sizeof sub);
-          if (w && needspace(prevc, sub[0])) app(state, out, cap, &w, " ");
-          app(state, out, cap, &w, sub); prevc = sub[0] ? sub[strlen(sub) - 1] : prevc;
+          if (w && sub[0] && pastes(prevp, prevc, sub, prevnum)) app(state, out, cap, &w, " ");
+          app(state, out, cap, &w, sub); prevc = sub[0] ? sub[strlen(sub) - 1] : prevc; prevp = NULL; prevnum = 1;
           i = j; *changed = 1; continue;
         }
       } else if (mi >= 0) {                        /* object macro */
@@ -276,13 +320,14 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
          * substitute/paste path (no args: `#`/`##` see only literal tokens) so object + function macros
          * use ONE paste engine; the result is rescanned by the outer expand_line loop. */
         char osub[2048]; substitute(state, &state->macros[mi], NULL, 0, osub, sizeof osub);
-        if (w && needspace(prevc, osub[0])) app(state, out, cap, &w, " ");
-        app(state, out, cap, &w, osub); prevc = osub[0] ? osub[strlen(osub) - 1] : prevc;
+        if (w && osub[0] && pastes(prevp, prevc, osub, prevnum)) app(state, out, cap, &w, " ");
+        app(state, out, cap, &w, osub); prevc = osub[0] ? osub[strlen(osub) - 1] : prevc; prevp = NULL; prevnum = 1;
         *changed = 1; continue;
       } else if (!strcmp(t, "__LINE__")) {         /* dynamic predefined: current line number */
         char num[16]; snprintf(num, sizeof num, "%d", state->current_line);
-        if (w && needspace(prevc, num[0])) app(state, out, cap, &w, " ");
-        app(state, out, cap, &w, num); prevc = num[strlen(num) - 1]; *changed = 1; continue;
+        if (w && pastes(prevp, prevc, num, prevnum)) app(state, out, cap, &w, " ");
+        app(state, out, cap, &w, num); prevc = num[strlen(num) - 1]; ptok[0] = 0; prevp = ptok; prevnum = 1;
+        *changed = 1; continue;
       } else if (!strcmp(t, "__FILE__")) {         /* dynamic predefined: current file, a string */
         char fl[1100]; size_t fw = 0; fl[fw++] = '"';
         for (const char *q = state->current_file ? state->current_file : ""; *q; q++) {
@@ -292,8 +337,8 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
           fl[fw++] = *q;
         }
         fl[fw++] = '"'; fl[fw] = 0;
-        if (w && needspace(prevc, fl[0])) app(state, out, cap, &w, " ");
-        app(state, out, cap, &w, fl); prevc = '"'; *changed = 1; continue;
+        if (w && pastes(prevp, prevc, fl, prevnum)) app(state, out, cap, &w, " ");
+        app(state, out, cap, &w, fl); prevc = '"'; ptok[0] = 0; prevp = ptok; prevnum = 0; *changed = 1; continue;
       } else if (!strcmp(t, "_Pragma")) {          /* _Pragma("..."): a lowering no-op (like #pragma) */
         int j = i; char nx[8]; int nk = ntok(state, line, &j, nx, sizeof nx);
         if (nk && !strcmp(nx, "(")) {              /* consume the balanced (...), emit nothing */
@@ -305,8 +350,9 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
       }
     }
     (void)save;
-    if (w && needspace(prevc, t[0])) app(state, out, cap, &w, " ");
-    app(state, out, cap, &w, t); prevc = t[strlen(t) - 1];
+    if (w && pastes(prevp, prevc, t, prevnum)) app(state, out, cap, &w, " ");
+    app(state, out, cap, &w, t); prevc = t[strlen(t) - 1]; prevnum = k == 'n';
+    snprintf(ptok, sizeof ptok, "%s", k == 'p' && strlen(t) < sizeof ptok ? t : ""); prevp = ptok;
   }
   return 0;
 }
@@ -473,7 +519,8 @@ static long eval_if(CppState *state, const char *expr, const char *const *dirs, 
         has = nm[0] ? header_exists(state, dirs, ndirs, nm) : 0;
         i = (expr[e]==')') ? e+1 : e; }
       { char bit[2]={(char)(has?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
-    if(w&&needspace(buf[w-1],t[0]))app(state,buf,sizeof state->conditional_buffer,&w," ");
+    if(w&&pastes(NULL,buf[w-1],t,1))app(state,buf,sizeof state->conditional_buffer,&w," ");   /* expand_line
+                                                        * rescans this, so any word may count as a number */
     app(state,buf,sizeof state->conditional_buffer,&w,t);}
   expand_line(state,buf,state->conditional_expanded,sizeof state->conditional_expanded);
   CE c; c.n=0;c.i=0;c.state=state; int j=0; char tk[64];

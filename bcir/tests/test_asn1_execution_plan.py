@@ -59,6 +59,14 @@ def _plans():
         MovementEdge(2, "ram", "hbm", 0, 64),
     ]
     yield "full", plan
+    # v3 (G8): every plan the movement planner mints -- direct, staged, compressed, remat and
+    # writeback edges with their claim references, certificates and the binding
+    from bcir.kbcir.movement import execution_plan_of
+    from bcir.tests import movement_fixtures as mf
+
+    h, _theta = mf.target_and_theta()
+    for name, (_module, _spec, mp) in sorted(mf.planned().items()):
+        yield f"movement/{name}", execution_plan_of(mp.best, h)
 
 
 def test_projection_round_trips_every_corpus_plan():
@@ -119,7 +127,7 @@ def test_the_module_has_its_own_arc_and_version():
     module, target, _theta, result = audit_fixture()
     plan = plan_from_realization(module, result, target, "eft")
     value = plan_to_value(plan)
-    assert value["version"] == PROJECTION_VERSION == 2
+    assert value["version"] == PROJECTION_VERSION == 3
     without = dict(value)
     del without["version"]
     assert value_to_plan(without) == plan
@@ -132,6 +140,35 @@ def test_the_module_has_its_own_arc_and_version():
     assert value["liveness"] == 0
     legacy = {k: v for k, v in value.items() if k != "liveness"}
     assert value_to_plan(legacy) == plan
+    # a version-2 document (no binding, no edge tails) still means a plan that moves nothing;
+    # a newer version than this reader's -- or no version at all -- is refused
+    v2 = {k: v for k, v in value.items() if k not in ("sourceHash", "specHash")}
+    assert value_to_plan({**v2, "version": 2}) == plan
+    for bad in (PROJECTION_VERSION + 1, 0):
+        try:
+            value_to_plan({**value, "version": bad})
+            raise AssertionError(f"projection version {bad} was read")
+        except Asn1Error:
+            pass
+
+
+def test_the_projection_admits_exactly_the_plans_the_native_codec_admits():
+    """The value space is the native one: every malformed move and binding of the native wire
+    (plan_fixtures.v3_variants) is refused by the DER, OER and JER decoders -- and by the
+    encoders before it is published -- as `decode_plan` and the C twin refuse its bytes."""
+    from bcir.tests.plan_fixtures import asn1_accepted, v3_variants
+
+    accepted, count = asn1_accepted()
+    assert count >= 3 * 29 and accepted == 0, (accepted, count)
+    for name, _blob, broken in v3_variants():
+        if broken is None:
+            continue
+        for encode in (encode_plan_der, encode_plan_oer, encode_plan_jer):
+            try:
+                encode(broken)
+                raise AssertionError(f"{name} was published through {encode.__name__}")
+            except Asn1Error:
+                pass
 
 
 def test_a_schedule_liveness_plan_projects_its_ticks():

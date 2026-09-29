@@ -154,6 +154,45 @@ def _volatile_ptr(t: str) -> str:
     return f"{t} volatile *" if t.rstrip().endswith("*") else f"volatile {t} *"
 
 
+def _atomic_ptr(t: str, vol: bool = False) -> str:
+    """A pointer to an `_Atomic` object of C type `t` (CF-ATOMIC): `_Atomic T *`, `volatile` too for a
+    device access, and `T _Atomic *` when `t` is itself a pointer type (a qualifier in front would
+    qualify its pointee). The twin spells it the same (`bcir_cfront.c`, `atomic_ptr`)."""
+    q = "volatile _Atomic" if vol else "_Atomic"
+    return f"{t} {q} *" if t.rstrip().endswith("*") else f"{q} {t} *"
+
+
+# An increment or decrement of an `_Atomic` object (`c.c11atom.rmw:<kind>`), as the emitted operator.
+_RMW_INCDEC = {"preinc": "++{}", "predec": "--{}", "postinc": "{}++", "postdec": "{}--"}
+
+
+def _atomic_object(lf: LoweredFunc, c: Claim, ref, t: str, naddr: int, *, stride_at: int) -> str:
+    """The `_Atomic` lvalue an atomic access performs (CF-ATOMIC), `(*(_Atomic T *)ADDR)`, at the
+    address the claim's first `naddr` reads and its imm name -- exactly where the plain access lands: a
+    typed element `base[idx]` keeps its bounds guard (a write site's, since an atomic access may write);
+    a member-array element or an array-of-structs field lands at `base + off + idx*stride` (the stride at
+    `imm[stride_at]`, else the element size); a member, a dereference or a named object at `base + off`.
+    Never a byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears."""
+    ptr = _atomic_ptr(t, c.volatile)
+    if naddr == 2 and not c.imm:
+        return f"(*({ptr})&{ref(c.rd[0])}[{_idx(lf, c, ref, write=c.op != 'c.load')}])"
+    bp = _base_ptr(lf, c.rd[0], ref)
+    off = c.imm[0] if c.imm else 0
+    if naddr == 2:
+        es = c.imm[1] if len(c.imm) > 1 else 4
+        stride = c.imm[stride_at] if len(c.imm) > stride_at else es
+        return f"(*({ptr})((char *){bp} + {off} + (size_t){ref(c.rd[1])} * {stride}))"
+    return f"(*({ptr})((char *){bp} + {off}))"
+
+
+def _elem_ctype(lf: LoweredFunc, rid: int) -> str:
+    """The C type of an element of the pointer or array `rid`, unqualified: the slot an atomic store
+    into a typed element `base[idx]` writes."""
+    ct = lf.rid_types.get(rid)
+    el = ct.of if ct is not None and ct.of is not None else None
+    return _cname(unqualified(el)) if el is not None else "uint32_t"
+
+
 def _funcptr_decl(ct: CType, name: str) -> str:
     """Render an inline function-pointer declarator `RET (*name)(PARAMS)`. Used in param + local
     position, where (unlike a typedef alias) there is no spelling to print and the full signature
@@ -475,6 +514,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({ref(c.rd[0])} ? {ref(c.rd[1])} : {ref(c.rd[2])})")
     if c.op == "c.load":
         et = _load_ctype(lf, c.wr[0])
+        if c.hazard == "atomic":  # a read of an `_Atomic` object (CF-ATOMIC): one atomic load
+            return deftmp(c.wr[0], _atomic_object(lf, c, ref, et, len(c.rd), stride_at=2), et)
         off = c.imm[0] if c.imm else 0
         t = ref(c.wr[0])
         if len(c.rd) == 2:  # base[index]
@@ -513,6 +554,19 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         # plain RAM member/deref: memcpy is alignment-safe (handles packed) — Clang folds it to a load.
         return f"{et} {t}; memcpy(&{t}, (const char *){ptr} + {off}, sizeof {t});"
     if c.op == "c.store":
+        # a write of an `_Atomic` object (CF-ATOMIC): one atomic store of exactly its slot's type (a
+        # typed element: the element's own type)
+        if c.hazard == "atomic":
+            naddr = len(c.rd) - 1
+            if naddr == 2 and not c.imm:
+                slot = _elem_ctype(lf, c.rd[0])
+            else:
+                slot = _slot_ctype(
+                    lf.rid_types.get(c.rd[-1]),
+                    c.imm[1] if len(c.imm) > 1 else 4,
+                    len(c.imm) > 2 and bool(c.imm[2]),
+                )
+            return f"{_atomic_object(lf, c, ref, slot, naddr, stride_at=3)} = {ref(c.rd[-1])};"
         off = c.imm[0] if c.imm else 0
         if len(c.rd) == 3:  # base[index] = value
             if c.imm:  # s.arr[i] = v: &base + off + i*stride, copy `es` bytes
@@ -678,6 +732,15 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         "c.fence."
     ):  # memory fence (ASM3): the real per-ISA hardware
         return _fence_stmt(lf, c)  # barrier behind --target ("memory" compiler barrier)
+    # a compound assignment / inc / dec of an `_Atomic` object (CF-ATOMIC): one atomic
+    # read-modify-write through an `_Atomic` lvalue, its value the expression's
+    if c.op.startswith("c.c11atom.rmw:"):
+        kind = c.op.split(":", 1)[1]
+        et = _load_ctype(lf, c.wr[0])
+        incdec = _RMW_INCDEC.get(kind)
+        obj = _atomic_object(lf, c, ref, et, len(c.rd) - (0 if incdec else 1), stride_at=3)
+        expr = incdec.format(obj) if incdec else f"{obj} {_BINOP[kind]}= {ref(c.rd[-1])}"
+        return deftmp(c.wr[0], f"({expr})", et)
     if c.op.startswith("c.c11atom."):  # C11 <stdatomic.h> generics on _Atomic objects
         fn = c.op.split(".")[-1]  # fetch_add / fetch_sub / fetch_xor / load / store
         if fn == "load":

@@ -189,8 +189,18 @@ def parse_c_dump(text: str) -> ExecutionPlan:
                     data_gen=int(f["data_gen"]),
                     after_claim=int(f["after"]),
                     before_claim=int(f["before"]),
+                    claim=int(f.get("claim", "0")),
+                    version=int(f.get("version", "0")),
+                    flags=int(f.get("flags", "0")),
+                    producer=int(f.get("producer", "0")),
+                    bits=int(f.get("bits", "0")),
+                    cert=int(f.get("cert", "0")),
                 )
             )
+        elif kind == "binding":
+            f = _fields(line)
+            plan.source_hash = int(f["source_hash"])
+            plan.spec_hash = int(f["spec_hash"])
         elif kind == "gen":
             f = _fields(line)
             plan.generations.append(
@@ -207,12 +217,13 @@ def reseal(blob: bytes) -> bytes:
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
-def raw_encode(plan: ExecutionPlan) -> bytes:
+def raw_encode(plan: ExecutionPlan, version: int | None = None) -> bytes:
     """The wire bytes of `plan` WITHOUT the wire laws -- the only way to mint the malformed
-    variants both rails must refuse (the public encoder refuses to emit them)."""
+    variants both rails must refuse (the public encoder refuses to emit them). `version`
+    forces the wire version; by default it is the lowest that carries the plan."""
     from bcir.abi.execution_plan_abi import _LIVENESS_OFF, _LIVENESS_WIRE, plan_version
 
-    version = plan_version(plan)
+    version = plan_version(plan) if version is None else version
     header = _HEADER.pack(
         PLAN_MAGIC,
         version,
@@ -239,9 +250,12 @@ def raw_encode(plan: ExecutionPlan) -> bytes:
     for lt in plan.lifetimes:
         _write_lifetime(w, lt, version)
     for mv in plan.moves:
-        _write_move(w, mv)
+        _write_move(w, mv, version)
     for g in plan.generations:
         _write_generation(w, g)
+    if version >= 3:
+        w.u64(plan.source_hash)
+        w.u64(plan.spec_hash)
     body = header + bytes(w.buf)
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
@@ -433,6 +447,179 @@ def malformed_variants(exe: str | None, tmp: str | None) -> tuple[int, int]:
             count += 1
             refused += c_refuses(exe, tmp, blob)
     return refused, count
+
+
+# --- the v3 wire (G8, S5-C) -------------------------------------------------------------------
+
+
+def v3_plan() -> ExecutionPlan:
+    """The smallest v3 plan: three steps, resource 9's lifetime in `ram`, and one edge that
+    names every reference -- the claim that executes it (2), the writer it follows (1) and the
+    reader it precedes (3) -- plus the source/spec binding."""
+    from bcir.gem.execution_plan import MOVE_HAS_AFTER, MOVE_HAS_BEFORE, MOVE_HAS_CLAIM
+
+    steps = [
+        PlanStep(1, 0, "scalar", Lane.U, 1, 5, 0, 0, 5),
+        PlanStep(2, 0, "scalar", Lane.U, 1, 5, 0, 5, 5),
+        PlanStep(3, 1, "scalar", Lane.U, 1, 5, 0, 10, 5),
+    ]
+    edge = MovementEdge(
+        9,
+        "ram",
+        "hbm",
+        0,
+        64,
+        "ram>hbm",
+        "direct",
+        "none",
+        0,
+        0,
+        1,
+        3,
+        claim=2,
+        version=1,
+        flags=MOVE_HAS_AFTER | MOVE_HAS_BEFORE | MOVE_HAS_CLAIM,
+    )
+    return ExecutionPlan(
+        makespan=15,
+        steps=steps,
+        lifetimes=[Lifetime(9, "ram", 0, 64, 64, 0, 1)],
+        moves=[edge],
+        source_hash=11,
+        spec_hash=12,
+    )
+
+
+def v3_variants() -> list[tuple[str, bytes, ExecutionPlan | None]]:
+    """(name, bytes, plan) for every malformed move and binding of the wire -- each refused by
+    BOTH rails' decoders (`decode_plan` and `bcir_ep_verify`), and each `plan` refused by the
+    encoder before it is published. Minted through `raw_encode`, since the encoder will not
+    emit them. Two carry no plan: a well-formed plan spelled as v3 with no binding
+    (`unbound.zero`, which re-encodes as v1) and a binding cut short (`binding.truncated`) --
+    only their bytes are illegal."""
+    from bcir.gem.execution_plan import (
+        MOVE_HAS_AFTER,
+        MOVE_HAS_BEFORE,
+        MOVE_HAS_CLAIM,
+        MOVE_HAS_PRODUCER,
+    )
+
+    plan = v3_plan()
+    mv = plan.moves[0]
+
+    def edge(**kw) -> ExecutionPlan:
+        return replace(plan, moves=[replace(mv, **kw)])
+
+    remat = dict(kind="rematerialized", dst_bank="ram", route="ram", cert=5)
+    bare = replace(mv, claim=0, version=0, flags=0, producer=0, bits=0, cert=0)
+    v1 = replace(plan, moves=[bare], source_hash=0, spec_hash=0)
+    plans = {
+        # every version: a move changes banks unless it is a remat; a writeback is exact
+        "same.bank": edge(dst_bank="ram", route="ram"),
+        "remat.moves": edge(
+            kind="rematerialized", producer=1, cert=5, flags=mv.flags | MOVE_HAS_PRODUCER
+        ),
+        "writeback.lossy": edge(  # home-bound, so only the lossy-writeback law is broken
+            src_bank="hbm",
+            dst_bank="ram",
+            route="hbm>ram",
+            kind="compressed",
+            coherence="writeback",
+            bits=8,
+            cert=5,
+        ),
+        "writeback.remat": edge(
+            coherence="writeback", producer=1, flags=mv.flags | MOVE_HAS_PRODUCER, **remat
+        ),
+        "v1.same.bank": replace(v1, moves=[replace(bare, dst_bank="ram", route="ram")]),
+        "v1.writeback.lossy": replace(
+            v1, moves=[replace(bare, kind="compressed", coherence="writeback")]
+        ),
+        # the flags: defined, and what they call absent is zero
+        "flags.undefined": edge(flags=mv.flags | 0x10),
+        "after.absent": edge(flags=mv.flags & ~MOVE_HAS_AFTER),
+        "before.absent": edge(flags=mv.flags & ~MOVE_HAS_BEFORE),
+        "claim.absent": edge(flags=mv.flags & ~MOVE_HAS_CLAIM),
+        "producer.absent": edge(producer=1),
+        # what they call present is a step of the plan
+        "claim.unknown": edge(claim=99),
+        "after.unknown": edge(after_claim=42),
+        "before.unknown": edge(before_claim=42),
+        "producer.unknown": edge(producer=99, flags=mv.flags | MOVE_HAS_PRODUCER, **remat),
+        # exactly a remat names a producer, and not itself
+        "remat.no_producer": edge(**remat),
+        "producer.direct": edge(producer=1, flags=mv.flags | MOVE_HAS_PRODUCER),
+        "producer.self": edge(producer=2, flags=mv.flags | MOVE_HAS_PRODUCER, **remat),
+        # exactly a compressed edge names 1..31 codec bits; exactly remat/compressed certify
+        "compressed.no_bits": edge(kind="compressed", cert=5),
+        "compressed.wide": edge(kind="compressed", bits=32, cert=5),
+        "compressed.no_cert": edge(kind="compressed", bits=8),
+        "direct.bits": edge(bits=8),
+        "direct.cert": edge(cert=5),
+        "remat.no_cert": edge(
+            producer=1, flags=mv.flags | MOVE_HAS_PRODUCER, **{**remat, "cert": 0}
+        ),
+        # the window is ordered by the placement
+        "window.after": edge(after_claim=3),
+        "window.before": edge(before_claim=1),
+        # a writeback lands home
+        "writeback.home": edge(coherence="writeback"),
+        # the binding names both hashes
+        "unbound.source": replace(plan, source_hash=0),
+        "unbound.spec": replace(plan, spec_hash=0),
+    }
+    variants: list[tuple[str, bytes, ExecutionPlan | None]] = [
+        (name, raw_encode(broken), broken) for name, broken in plans.items()
+    ]
+    variants.append(("unbound.zero", raw_encode(v1, 3), None))
+    variants.append(("binding.truncated", reseal(raw_encode(plan)[:-12]), None))
+    return variants
+
+
+def wire_refuses(blob: bytes) -> bool:
+    """The Python codec's verdict on `blob` alone."""
+    try:
+        decode_plan(blob)
+    except AbiError:
+        return True
+    return False
+
+
+def asn1_accepted() -> tuple[int, int]:
+    """(accepted, count) over (variant, transfer syntax): each malformed plan of `v3_variants`
+    spelled as a DER, a CANONICAL-OER and a JER document of the BCIR-ExecutionPlan module --
+    minted through the raw projection, since `plan_to_value` refuses them -- and read back by
+    that syntax's decoder, which must refuse every one (the value space is the native one)."""
+    from bcir.asn1 import Asn1Error
+    from bcir.asn1.execution_plan import (
+        EXECUTION_PLAN,
+        MODULE,
+        _plan_value,
+        decode_plan_der,
+        decode_plan_jer,
+        decode_plan_oer,
+    )
+    from bcir.asn1.jer import JerRules, encode_jer
+    from bcir.asn1.oer import OerRules, encode_oer
+
+    syntaxes = (
+        (lambda v: MODULE.encode("ExecutionPlan", v), decode_plan_der),
+        (lambda v: encode_oer(EXECUTION_PLAN, v, rules=OerRules.CANONICAL), decode_plan_oer),
+        (lambda v: encode_jer(EXECUTION_PLAN, v, rules=JerRules.CANONICAL), decode_plan_jer),
+    )
+    accepted = count = 0
+    for _name, _blob, broken in v3_variants():
+        if broken is None:
+            continue
+        value = _plan_value(broken)
+        for encode, decode in syntaxes:
+            count += 1
+            try:
+                decode(encode(value))
+            except Asn1Error:
+                continue
+            accepted += 1
+    return accepted, count
 
 
 # --- stale generation vectors ------------------------------------------------------------------

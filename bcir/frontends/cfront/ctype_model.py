@@ -74,6 +74,9 @@ class CType:
     #   not canonicalize to a power-of-two width: `name` carries the verbatim
     #   spelling (`_BitInt(12)` / `unsigned _BitInt(12)`) so the emit prints it
     #   faithfully -- Clang then applies the N-bit semantics in both rails.
+    natural: tuple = ()  # an `_Atomic` type's own (size, align) before the ABI's atomic promotion
+    #   (`with_atomic`), which `unqualified` restores: the value read from an
+    #   `_Atomic float _Complex` is a `float _Complex`, aligned to 4, not 8
 
     @property
     def is_bitint(self) -> bool:
@@ -137,10 +140,16 @@ def with_volatile(ct: CType, vol: bool = True) -> CType:
 
 
 def unqualified(ct: CType) -> CType:
-    """The type of the VALUE an lvalue of type `ct` yields: lvalue conversion drops the qualifiers
-    (C23 6.3.2.1p2), so a value read from a volatile register is an ordinary value."""
+    """The type of the VALUE an lvalue of type `ct` yields: lvalue conversion drops the qualifiers and
+    the atomicity (C23 6.3.2.1p2), so a value read from a volatile register is an ordinary value, and one
+    read from an `_Atomic` object has the non-atomic type -- its layout too, which the ABI's atomic
+    promotion widened (`with_atomic`). The twin keeps an `_Atomic` type's own layout and promotes only
+    where it lays out storage, so clearing the flag is its whole answer (`bcir_cfront.c`, `store_conv`)."""
     from dataclasses import replace
 
+    if ct.atomic:
+        size, align = ct.natural or (ct.size, ct.align)
+        return replace(ct, volatile=False, atomic=False, size=size, align=align, natural=())
     return replace(ct, volatile=False) if ct.volatile else ct
 
 
@@ -172,14 +181,24 @@ def with_atomic(ct: CType, at: bool = True, abi=None) -> CType:
     if ct.kind != "array" and 0 < size <= width:
         size = 1 << (size - 1).bit_length()
         align = size
-    return replace(ct, atomic=True, size=size, align=align)
+    natural = ct.natural or (ct.size, ct.align)  # `_Atomic` twice: the first's own layout
+    return replace(ct, atomic=True, size=size, align=align, natural=natural)
+
+
+def scalar_align(size: int, abi=None) -> int:
+    """The ABI alignment of a scalar (or a complex type's element) of `size` bytes: its size, except an
+    8-byte one, which takes the ABI's `eight_byte_align` (4 on i386, where `double`, `long long` and
+    `int64_t` align to 4 while their size stays 8). The twin asks the same rule (`scalar_align`)."""
+    if size == 8 and abi is not None:
+        return abi.eight_byte_align
+    return max(1, size)
 
 
 def scalar(name: str, abi=None) -> CType:
     """A scalar `CType`. With no `abi`, sizes are the host LP64 model (unchanged). With a `TargetABI`,
     the size-varying types follow the selected data model: `long` and the pointer-tracking integers
-    take the ABI's widths, and `long double` takes the ABI's size *and* alignment (which can differ --
-    12-byte/4-aligned on ILP32)."""
+    take the ABI's widths, `long double` takes the ABI's size *and* alignment (which can differ --
+    12-byte/4-aligned on ILP32), and an 8-byte scalar the ABI's `eight_byte_align`."""
     if name in _FLOAT:
         if name == "long double" and abi is not None:
             return CType(
@@ -190,8 +209,9 @@ def scalar(name: str, abi=None) -> CType:
                 signed=True,
             )
         size = _FLOAT[name]
-        return CType("scalar", name=name, size=size, align=max(1, size), signed=True)
-    if name in _COMPLEX:  # a _Complex pair: element-aligned (align == size/2)
+        return CType("scalar", name=name, size=size, align=scalar_align(size, abi), signed=True)
+    # a _Complex pair: aligned as its element (a `double _Complex` as a double)
+    if name in _COMPLEX:
         if name == "long double _Complex" and abi is not None:
             return CType(
                 "scalar",
@@ -201,13 +221,15 @@ def scalar(name: str, abi=None) -> CType:
                 signed=True,
             )
         size = _COMPLEX[name]
-        return CType("scalar", name=name, size=size, align=max(1, size // 2), signed=True)
+        return CType(
+            "scalar", name=name, size=size, align=scalar_align(size // 2, abi), signed=True
+        )
     if name not in _SCALAR:
         raise KeyError(f"unknown scalar type {name!r}")
     size, signed = _SCALAR[name]
     if abi is not None:
         size = abi.scalar_size(name, size)
-    return CType("scalar", name=name, size=size, align=max(1, size), signed=signed)
+    return CType("scalar", name=name, size=size, align=scalar_align(size, abi), signed=signed)
 
 
 def _bitint_storage(n: int) -> int:
@@ -223,16 +245,19 @@ def _bitint_storage(n: int) -> int:
     return unit
 
 
-def bitint(n: int, signed: bool) -> CType:
+def bitint(n: int, signed: bool, abi=None) -> CType:
     """A C23 `_BitInt(N)` scalar CType. It carries the EXACT width N in `bit_width` and the verbatim
     spelling in `name` (`_BitInt(N)` / `unsigned _BitInt(N)`), so every emit site that prints the type
     spelling reproduces it faithfully -- and the value model keeps it OUT of the power-of-two integer
     canonicalization (`promote_int`/`usual_arith_int` short-circuit on `bit_width`), since `_BitInt(N)`
     does not undergo integer promotion. `size` is the storage slot (1/2/4/8 bytes) so a same-type
-    store/load and `sizeof` match Clang; `signed` drives the spelling + any same-type signed arithmetic."""
+    store/load and `sizeof` match Clang, and it aligns as a scalar of that size (an 8-byte slot to 4 on
+    i386, like `long long`); `signed` drives the spelling + any same-type signed arithmetic."""
     sz = _bitint_storage(n)
     spelling = f"_BitInt({n})" if signed else f"unsigned _BitInt({n})"
-    return CType("scalar", name=spelling, size=sz, align=max(1, sz), signed=signed, bit_width=n)
+    return CType(
+        "scalar", name=spelling, size=sz, align=scalar_align(sz, abi), signed=signed, bit_width=n
+    )
 
 
 def is_scalar_name(name: str) -> bool:
@@ -299,7 +324,12 @@ def bitint_arith_result(a: CType, b: CType) -> CType | None:
         if b.bit_width > a.bit_width:
             return b
         # equal width: combine signedness (unsigned iff either unsigned); a same-type pair stays itself.
-        return a if (a.signed and b.signed) else bitint(a.bit_width, signed=False)
+        # The unsigned result keeps the operands' layout (their slot's ABI alignment).
+        if a.signed and b.signed:
+            return a
+        from dataclasses import replace
+
+        return replace(bitint(a.bit_width, signed=False), align=a.align)
     bi = a if a.is_bitint else b
     std = b if a.is_bitint else a
     # `std` is already integer-promoted (>= int), so its width is its rank-width; std_width 4/8 bytes here.
@@ -408,6 +438,27 @@ def array(of: CType, count: int) -> CType:
     return CType("array", name="array", size=of.size * count, align=of.align, of=of, count=count)
 
 
+def bitfield_start(dbits: int, width: int, mtype: CType) -> int:
+    """Where Clang (the Itanium layout) starts a non-packed bitfield of `width` bits and type `mtype` at
+    the bit cursor `dbits`: at the cursor, unless the field would overflow a storage unit of its type's
+    SIZE that begins at an ALIGNMENT boundary -- then at the next alignment boundary. When the alignment
+    equals the size (every type but i386's 8-byte integers) this is the storage-unit rule: a field never
+    crosses a unit boundary. On i386 a `long long x : 40` after 40 bits stays at bit 40 (40 % 32 + 40
+    fits in 64), where x86-64 bumps it to 64. The twin asks the same rule (`bitfield_start`)."""
+    field_align, unit_bits = mtype.align * 8, mtype.size * 8
+    if (dbits % field_align) + width > unit_bits:
+        dbits += field_align - (dbits % field_align)
+    return dbits
+
+
+def narrow_bitfield(ct: CType) -> bool:
+    """A bitfield of type `ct` is accessed over only the bytes it spans, not a storage unit of its
+    type's size: its type aligns below its size (i386's 8-byte integers), so a unit starting at the
+    field could run past the struct's end. The layout records such a field at its first byte
+    (`AggregateBuilder`), as it does a packed one."""
+    return ct.align < ct.size
+
+
 @dataclass
 class AggregateBuilder:
     """Compute a struct/union layout the way Clang does (natural alignment). Bitfields pack LSB-first
@@ -447,16 +498,14 @@ class AggregateBuilder:
                 mname == "" and mtype.kind == "scalar"
             ):  # an UNNAMED (`int :3`) or ZERO-WIDTH (`int :0`)
                 if self.kind == "struct":  # bitfield: positions the cursor but is NOT a
-                    unit_bits = mtype.size * 8  # field and does NOT raise the struct's alignment.
-                    if width == 0:  # zero-width -> bump to the next unit boundary
-                        if dbits % unit_bits:
-                            dbits += unit_bits - (dbits % unit_bits)
+                    field_align = mtype.align * 8  # field, nor raises the struct's alignment.
+                    if width == 0:  # zero-width -> the next boundary of its type's ALIGNMENT
+                        if dbits % field_align:  # (packed or not, as Clang does)
+                            dbits += field_align - (dbits % field_align)
                     elif self.packed:
                         dbits += width
                     else:
-                        if (dbits % unit_bits) + width > unit_bits:
-                            dbits += unit_bits - (dbits % unit_bits)
-                        dbits += width
+                        dbits = bitfield_start(dbits, width, mtype) + width
                 continue
             align = max(align, ma)
             if mname == "":  # an ANONYMOUS struct/union member: it occupies
@@ -472,19 +521,21 @@ class AggregateBuilder:
                     laid.append((fn, fty, off + fbo, fbit, fbw))
                 continue
             if width and self.kind == "struct":
-                unit_bits = mtype.size * 8
                 if self.packed:  # packed: pack bit-by-bit, NO unit reservation
                     laid.append(
                         (mname, mtype, dbits // 8, dbits % 8, width)
                     )  # field at the running bit cursor
                     dbits += width  # its access unit spans only the bytes it covers
-                else:  # natural: pack at the bit cursor
-                    if (
-                        dbits % unit_bits
-                    ) + width > unit_bits:  # would cross a storage-unit boundary
-                        dbits += unit_bits - (dbits % unit_bits)  # -> bump to the next one
-                    unit_off = (dbits // unit_bits) * mtype.size
-                    laid.append((mname, mtype, unit_off, dbits - unit_off * 8, width))
+                else:  # natural: pack at the bit cursor unless it would overflow its unit
+                    dbits = bitfield_start(dbits, width, mtype)
+                    if mtype.align == mtype.size:  # the size-aligned storage unit holding it
+                        unit_off = (dbits // (mtype.size * 8)) * mtype.size
+                        laid.append((mname, mtype, unit_off, dbits - unit_off * 8, width))
+                    else:  # an under-aligned type (i386 `long long`): its unit can run past the
+                        # struct's end (`struct { char c; long long x : 8; }` is 4 bytes), so the
+                        # field is recorded at its first byte and accessed over the bytes it spans
+                        # (`narrow_bitfield`), as a packed one is
+                        laid.append((mname, mtype, dbits // 8, dbits % 8, width))
                     dbits += width
             elif self.kind == "union":
                 laid.append((mname, mtype, 0, 0, width))

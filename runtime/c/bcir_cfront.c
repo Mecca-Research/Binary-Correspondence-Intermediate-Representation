@@ -44,10 +44,17 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                                       * boundaries; `size` stays the DECLARED type width, for read promotion) */
                  int arr_count; int nadims; int adims[3];
                  int is_ptr; int ptee_size; int ptee_float; int ptee_sidx;
+                 int elem_ptr;      /* arr_count>0 AND the element is a pointer (`T *arr[N]`): each element is
+                                     * pointer_size wide, and the ptee_* fields describe what it points at, as
+                                     * they do for a pointer member (`is_ptr` stays 0: the member is an array) */
                  int is_volatile;   /* the member's own storage is volatile (`volatile T m`, `volatile T m[N]`, a
                                      * volatile struct member): an access to it is a volatile access */
                  int ptee_volatile; /* a pointer member to volatile storage (`volatile T *regs`): the member is
                                      * plain storage; what it points at is a device region */
+                 int is_atomic;     /* the member's own storage is `_Atomic` (`_Atomic T m`, `_Atomic T m[N]`): an
+                                     * access to it is an atomic one (CF-ATOMIC) */
+                 int ptee_atomic;   /* a pointer member to `_Atomic` storage (`_Atomic T *m`): the member is plain
+                                     * storage; an access through it is atomic */
                  int elem_sidx;     /* arr_count>0 AND element is a value struct: its sdef index (array-of-structs,
                                      * for `arr[i].field`); -1 otherwise. Distinct from `sidx` so member_descend
                                      * (which descends a `.` only when sidx>=0) never walks an un-indexed array. */
@@ -94,6 +101,8 @@ typedef struct {
   int long_double_size;      /* sizeof(long double): 16 (x86-64), 12 (ILP32), or 8 where it aliases double */
   int long_double_align;
   int atomic_promote_size;   /* the widest `_Atomic` type the ABI promotes (Clang's MaxAtomicPromoteWidth, bytes) */
+  int eight_byte_align;      /* an 8-byte scalar's alignment -- `double`, `long long`, `int64_t`, a `_BitInt(33..64)`
+                              * and a `double _Complex`'s element (Clang's DoubleAlign / LongLongAlign): 4 on i386 */
 } bcir_abi;
 
 /* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
@@ -101,11 +110,11 @@ typedef struct {
  * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
  * --target-less compilation is byte-identical to the layout used before --target existed. */
 static const bcir_abi g_targets[] = {
-  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16},
-  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16},
-  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16},
-  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16},
-  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8},
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4},
 };
 #define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
 static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
@@ -238,13 +247,25 @@ oom:
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
 /* The alignment of a scalar type of `sz` bytes under the target ABI -- the oracle's `CType.align`: a `long
  * double` takes the ABI's long-double alignment, a complex type its element's (a `long double _Complex` the
- * long double's), every other scalar its size. The one answer a member's placement and `_Alignof` share;
- * aligning a complex to its size put a `double _Complex` member at 16 where the ABI puts it at 8. */
+ * long double's), an 8-byte scalar the ABI's `eight_byte_align` (4 on i386: `double`, `long long`, `int64_t`,
+ * a `_BitInt(33..64)`), every other scalar its size -- the oracle's `ctype_model.scalar_align`. The one answer
+ * a member's placement and `_Alignof` share; aligning a complex to its size put a `double _Complex` member at
+ * 16 where the ABI puts it at 8. */
 static int scalar_align(const CC *c, const bcir_ctype *ty, int sz){
   const bcir_abi *a=cc_abi(c);
   int el=ty->is_complex ? sz/2 : sz;                    /* a complex: the element float */
   if(ty->is_float && el==a->long_double_size && el>8) return a->long_double_align;   /* `long double` */
+  if(el==8) return a->eight_byte_align;                 /* an 8-byte scalar (or a `double _Complex`'s element) */
   return el<1 ? 1 : el;
+}
+/* Where Clang (the Itanium layout) starts a non-packed bitfield of `width` bits at the bit cursor `dbits`, for a
+ * type of `size` bytes aligned to `align` -- the oracle's `ctype_model.bitfield_start`: at the cursor, unless it
+ * would overflow a storage unit of the type's SIZE that begins at an ALIGNMENT boundary; then at the next
+ * alignment boundary. With align == size (every type but i386's 8-byte integers) a field never crosses a unit. */
+static long long bitfield_start(long long dbits, int width, int size, int align){
+  long long fa=(long long)align*8;
+  if(dbits%fa + width > (long long)size*8) dbits+=fa-(dbits%fa);
+  return dbits;
 }
 /* The target ABI's atomic promotion -- the oracle's `with_atomic`: an `_Atomic` type no wider than the ABI's
  * `atomic_promote_size` (Clang's MaxAtomicPromoteWidth) rounds its size up to a power of two and aligns to
@@ -686,6 +707,20 @@ static int c23_attrs(CC *c,int *repro){
   }
   return any;
 }
+/* The attributes written AFTER a body's closing brace -- `struct S { ... } __attribute__((packed));` -- read
+ * before its members are laid out: `open` is the `{`. A trailing `packed` changes where every member sits,
+ * and the members are placed as they are parsed, so it cannot wait for the `}` (the twin used to read it only
+ * there, for the aggregate's alignment, so the members kept their natural offsets). The cursor is restored. */
+static void trailing_attrs(CC *c, int open, int *packed, int *aligned){
+  int depth=0, k=open;
+  for(;; k++){
+    const tok *t=tat(c,k);
+    if(t->k==T_END) return;                          /* unbalanced: the body parse reports it */
+    if(t->k==T_PUN && t->n==1 && t->s[0]=='{') depth++;
+    else if(t->k==T_PUN && t->n==1 && t->s[0]=='}' && --depth==0) break;
+  }
+  int save=c->i; c->i=k+1; attrs(c,packed,aligned); c->i=save;
+}
 /* Parse `struct|union [tag] [attrs] { members } [attrs]` (NO trailing `;`). Registers an sdef and
  * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
  * gets a synthesized internal tag so a typedef can alias it. */
@@ -700,6 +735,7 @@ static int p_struct_body(CC *c) {
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
   else snprintf(S->tag,sizeof S->tag,"$anon%d",my);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
+  if(is(c,"{")) trailing_attrs(c,c->i,&packed,&aligned);   /* `} __attribute__((packed))` packs these members */
   if(!eat(c,"{"))return -1;
   long long dbits=0;int maxsz=0;   /* dbits: a bit cursor (Itanium/packed layout) */
   while(!is(c,"}")&&!c->failed){
@@ -737,10 +773,12 @@ static int p_struct_body(CC *c) {
       if(is(c,":")){                                  /* an UNNAMED `int :3` / ZERO-WIDTH `int :0` bitfield (no
                                                        * name): positions the cursor, NOT a field, no align bump. */
         c->i++; int w=(int)adv(c).v;
-        if(!is_union){ int ub=ty.size*8;
-          if(w==0){ if(dbits%ub)dbits+=ub-(dbits%ub); }       /* zero-width -> next storage-unit boundary */
+        if(ty.is_atomic && ty.kind!=2){ fail(c,"a bit-field of `_Atomic` type is not supported"); return -1; }
+        if(!is_union){ int ta=scalar_align(c,&ty,ty.size); long long fa=(long long)ta*8;
+          if(w==0){ if(dbits%fa)dbits+=fa-(dbits%fa); }       /* zero-width -> the next boundary of its type's
+                                                               * ALIGNMENT, packed or not (as Clang does) */
           else if(packed){ dbits+=w; }                        /* packed: pack bit-by-bit */
-          else { if((int)(dbits%ub)+w>ub)dbits+=ub-(dbits%ub); dbits+=w; }
+          else { dbits=bitfield_start(dbits,w,ty.size,ta)+w; }
         }
         if(is(c,",")){c->i++;continue;} break;
       }
@@ -767,6 +805,8 @@ static int p_struct_body(CC *c) {
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
+      if(width && ty.is_atomic && ty.kind!=2){          /* as the oracle refuses it: GCC and Clang reject it */
+        fail(c,"a bit-field of `_Atomic` type is not supported"); return -1; }
       if(ty.bit_width>0 && width && !(width>=1 && width<=ty.bit_width)){   /* a `_BitInt(N)` BITFIELD: W in 1..N */
         fail(c,"a `_BitInt` bitfield width outside 1..N is not supported"); return -1; }   /* W>N is invalid C */
       /* a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` (1<=W<=N) is first-class: `ty.size` is the Clang storage slot
@@ -775,7 +815,10 @@ static int p_struct_body(CC *c) {
        * Either way the member's exact width rides in f->bit_width so the load/store + emit spell `_BitInt(N)`. */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
       int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
-      int sz=isptr?cc_abi(c)->pointer_size:ty.size;
+      int elptr=(ty.kind==2 && arr_count);             /* an array of pointers: each ELEMENT is pointer_size -- the
+                                                        * pointee's size here put `uint32_t *arr[2]` at 4-byte
+                                                        * elements and truncated every stored pointer */
+      int sz=(isptr||elptr)?cc_abi(c)->pointer_size:ty.size;
       /* a (array of) value-struct/union member aligns to the NESTED type's alignment, not its size --
        * `struct{int;struct Big t;}` puts t at the struct's align, not at sizeof(Big) (which over-pads). */
       int al = (ty.kind==1 && !ty.ptr_to_struct && si>=0) ? (c->s[si].align<1?1:c->s[si].align)
@@ -783,25 +826,29 @@ static int p_struct_body(CC *c) {
              : scalar_align(c,&ty,sz);                 /* a scalar: its ABI alignment (a complex its element's,
                                                         * a `long double` the ABI's) */
       atomic_layout(c,&ty,&sz,&al);                   /* an `_Atomic` member: the ABI's atomic promotion */
+      int tal=al;                                     /* the type's own alignment: a bitfield's FieldAlign */
       if(packed) al=1;                                /* packed wins over every natural alignment */
       if(maln>al) al=maln;                            /* `_Alignas(N)`/`aligned(N)` over-aligns (survives packed) */
       field *f=&S->f[S->nf++];
       int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
       idcpy(f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
-      f->bit_width=(!isptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
+      f->bit_width=(!isptr && !elptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
                                                                               * bitfield): exact N; f->bit_w holds W */
-      f->is_float=(!isptr && ty.is_float)?1:0;          /* a float/double member loads/stores as itself */
-      f->is_complex=(!isptr && ty.is_complex)?1:0;      /* a `_Complex` member: load/store as the complex pair,
+      f->is_float=(!isptr && !elptr && ty.is_float)?1:0;   /* a float/double member loads/stores as itself */
+      f->is_complex=(!isptr && !elptr && ty.is_complex)?1:0;   /* a `_Complex` member: load/store as the complex pair,
                                                          * NOT a same-size real (16B would wrongly read as long double) */
-      f->is_bool=(!isptr && ty.is_bool)?1:0;            /* a _Bool member: a store normalizes any nonzero to 1 */
-      f->is_plain_char=(!isptr && ty.is_plain_char)?1:0;/* a plain `char` member: read as `char` (impl-defined
+      f->is_bool=(!isptr && !elptr && ty.is_bool)?1:0;  /* a _Bool member: a store normalizes any nonzero to 1 */
+      f->is_plain_char=(!isptr && !elptr && ty.is_plain_char)?1:0;/* a plain `char` member: read as `char` (impl-defined
                                                          * sign), NOT int8_t -- `char` is UNSIGNED on AArch64 */
       f->nadims=nadims; for(int z=0;z<3;z++) f->adims[z]=adims[z];
-      f->is_ptr=isptr; f->ptee_size=isptr?ty.size:0; f->ptee_float=isptr?(ty.is_float?1:0):0;   /* pointee type */
-      f->ptee_sidx=(isptr && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
+      f->is_ptr=isptr; f->elem_ptr=elptr;
+      f->ptee_size=(isptr||elptr)?ty.size:0; f->ptee_float=(isptr||elptr)?(ty.is_float?1:0):0;   /* pointee type */
+      f->ptee_sidx=((isptr||elptr) && ty.ptr_to_struct)?si:-1;  /* a pointer-to-struct member: the pointee struct tag */
       f->is_volatile=(ty.kind!=2 && ty.kind!=3 && ty.is_volatile)?1:0;   /* `volatile T m` (a pointer's `volatile`
                                                                            * qualifies its pointee, not itself) */
       f->ptee_volatile=(ty.kind==2 && ty.is_volatile)?1:0;               /* `volatile T *m`: the pointee */
+      f->is_atomic=(ty.kind!=2 && ty.kind!=3 && ty.is_atomic)?1:0;       /* `_Atomic T m`: its own storage */
+      f->ptee_atomic=(ty.kind==2 && ty.is_atomic)?1:0;                   /* `_Atomic T *m`: the pointee */
       f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
       f->elem_sidx = (ty.kind==1 && !ty.ptr_to_struct && arr_count) ? si : -1;   /* array-of-structs element struct */
       f->fp_ret_size=ty.fp_ret_size; f->fp_ret_signd=ty.fp_ret_signd; f->fp_ret_float=ty.fp_ret_float;   /* funcptr member: return type */
@@ -813,9 +860,18 @@ static int p_struct_body(CC *c) {
           * spans (`access_bytes`), which may straddle byte/word boundaries; the struct stays align 1. */
           int P=(int)dbits; f->byte_off=P/8; f->bit_off=P%8;
           f->access_bytes=(f->bit_off+width+7)/8; dbits+=width;
-        }else{                                          /* natural: pack at the bit cursor, NOT a fresh unit */
-          if((int)(dbits%ub)+width>ub)dbits+=ub-(dbits%ub);   /* would cross a storage-unit boundary -> bump */
-          int uoff=(int)(dbits/ub)*sz; f->byte_off=uoff;f->bit_off=(int)(dbits-(long long)uoff*8);dbits+=width;
+        }else{                                          /* natural: pack at the bit cursor unless it would
+                                                         * overflow its storage unit (`bitfield_start`) */
+          dbits=bitfield_start(dbits,width,sz,tal);
+          if(tal==sz){                                  /* the size-aligned storage unit holding it */
+            int uoff=(int)(dbits/ub)*sz; f->byte_off=uoff;f->bit_off=(int)(dbits-(long long)uoff*8);
+          }else{                                        /* an under-aligned type (i386 `long long`): its unit
+            * can run past the struct's end (`struct { char c; long long x : 8; }` is 4 bytes), so the field
+            * sits at its first byte and is accessed over the bytes it spans, as a packed one is (the oracle's
+            * `narrow_bitfield`) */
+            f->byte_off=(int)(dbits/8); f->bit_off=(int)(dbits%8); f->access_bytes=(f->bit_off+width+7)/8;
+          }
+          dbits+=width;
         }
       }else{long long a8=(long long)al*8;if(dbits%a8)dbits+=a8-(dbits%a8);
         f->byte_off=(int)(dbits/8);f->bit_off=0;dbits+=(long long)total*8;}
@@ -1118,6 +1174,13 @@ static void mark_access(CC *c,bcir_claim *cl,int vol){
   if(vol || (br && br->domain==BCIR_DOM_MMIO)){ cl->domain=BCIR_DOM_MMIO; cl->lane=BCIR_LANE_H; cl->hazard=BCIR_HZ_BARRIERED; }
   cl->is_volatile=(uint8_t)(vol?1:0);
 }
+/* An access to `_Atomic` storage is an atomic operation (CF-ATOMIC): lane A and the `atomic` hazard -- lane H
+ * when `mark_access` made it a device access -- the oracle's `_access_order`. The emit performs it through an
+ * `_Atomic` lvalue, never a byte copy. Called after `mark_access`. */
+static void mark_atomic(bcir_claim *cl,int at){
+  if(!cl || !at) return;
+  cl->hazard=BCIR_HZ_ATOMIC; cl->lane=(uint8_t)(cl->domain==BCIR_DOM_MMIO?BCIR_LANE_H:BCIR_LANE_A);
+}
 /* R3 over a finished function, one pass: a claim that touches a device region is device-domain and ordered
  * (lane H, `barriered` unless already `atomic`). Its volatile bit is left as the lowering set it. */
 static void order_device_claims(bcir_func *f){
@@ -1157,6 +1220,16 @@ static int index_elem_vol(CC *c,const venv *b){
   }
   return 1;
 }
+/* The same for `_Atomic` (CF-ATOMIC): `b`'s element or pointee is `_Atomic` storage -- a venv's `is_atomic`
+ * qualifies what a pointer points at or an array holds -- so an access to it is an atomic one. */
+static int index_elem_atomic(CC *c,const venv *b){
+  if(!b->type.is_atomic) return 0;
+  if(b->type.kind==2){
+    if(ptr_array(c,b)) return 0;                                      /* an array of pointers */
+    return (b->type.ptr_depth?b->type.ptr_depth:1)==1;
+  }
+  return 1;
+}
 /* A pointer temp of pointer type `ty` (the oracle's `_temp(pointer)`): it carries the pointee -- width, sign,
  * float, plain char, _Bool, struct tag, void, depth and volatility -- and is an MMIO resource when it points
  * at volatile storage, so what is read through it is typed and marked as through a declared pointer. */
@@ -1167,6 +1240,7 @@ static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si){
     pr->is_signed=(uint8_t)(ty->signd?1:0); pr->is_float=(uint8_t)(ty->is_float?1:0);
     pr->is_complex=(uint8_t)(ty->is_complex?1:0); pr->is_bool=(uint8_t)(ty->is_bool?1:0);
     pr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); pr->ptr_depth=ty->ptr_depth;
+    pr->is_atomic=(uint8_t)(ty->is_atomic?1:0);          /* a pointer to `_Atomic` storage (CF-ATOMIC) */
     if(ty->ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
     else if(ty->size==0 && !ty->is_float) pr->is_voidptr=1; }
   return t;
@@ -1201,6 +1275,61 @@ static void last_ptr_to_volatile(CC *c,int vol,int sdev){
 }
 /* A write of the named object `v` (a c.copy into it): a volatile access when the object is volatile. */
 static void mark_obj_write(CC *c,bcir_claim *cl,const venv *v){ if(cl && obj_vol(c,v)) mark_access(c,cl,1); }
+
+/* --- atomic read-modify-write (CF-ATOMIC): a compound assignment or an increment/decrement of an `_Atomic`
+ * object is ONE atomic operation, never a load, an operation and a store (a concurrent write between them was
+ * lost). The oracle's `_atomic_rmw`. --- */
+/* The opcode of an atomic read-modify-write by its operator: the three the opcode set names, else the
+ * compare-and-swap every other one is (the oracle's `_RMW_OPCODE`). */
+static bcir_opcode rmw_opcode(const char *kind){
+  if(!strcmp(kind,"add")||!strcmp(kind,"preinc")||!strcmp(kind,"postinc")) return BCIR_OP_ATOMIC_ADD;
+  if(!strcmp(kind,"sub")||!strcmp(kind,"predec")||!strcmp(kind,"postdec")) return BCIR_OP_ATOMIC_SUB;
+  if(!strcmp(kind,"xor")) return BCIR_OP_ATOMIC_XOR;
+  return BCIR_OP_CMPXCHG;
+}
+/* A temp of the VALUE type of an object of type `ty` -- unqualified (6.3.2.1p2), its _Bool, plain char, float,
+ * complex or `_BitInt` kind kept: the value an atomic read-modify-write yields, and the type it operates on. */
+static uint32_t ctype_value_temp(CC *c,const bcir_ctype *ty){
+  bcir_ctype t=*ty; t.is_volatile=0; t.is_atomic=0;
+  if(t.kind==2) return temp_ptr(c,&t,-1);
+  if(t.is_complex) return tempc(c,t.size);
+  if(t.is_float) return tempf(c,t.size);
+  if(t.bit_width>0) return tempbi(c,t.bit_width,t.signd?1:0);
+  uint32_t r=tempi(c,t.size?t.size:4,t.signd?1:0);
+  if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+    if(t.is_bool) tr->is_bool=1;
+    if(t.is_plain_char) tr->is_plain_char=1; }
+  return r;
+}
+/* One `c.c11atom.rmw:<kind>` claim on the `_Atomic` object of type `ty` addressed as a store addresses it: the
+ * reads (base[, idx][, v]); the imm (off, size) for a member, a dereference or a named object, (off, element
+ * size, 0, stride) for an array-of-structs field (`stride` > 0), none for a typed element (`size` 0). `kind` is
+ * the operator's suffix (`add`, `shl`, ...) or preinc/predec/postinc/postdec. Returns the value temp: the new
+ * value, the old one for a postfix operator. */
+static uint32_t emit_rmw(CC *c,const char *kind,const bcir_ctype *ty,uint32_t base,int has_idx,uint32_t idx,
+                         int has_v,uint32_t v,long long off,long long size,long long stride,int vol,bcir_bounds bnd){
+  uint32_t t=ctype_value_temp(c,ty);
+  char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.c11atom.rmw:%s",kind);
+  bcir_claim *cl=new_claim(c,op,rmw_opcode(kind)); if(!cl) return t;
+  cl->n_rd=0; cl->rd[cl->n_rd++]=base; if(has_idx) cl->rd[cl->n_rd++]=idx; if(has_v) cl->rd[cl->n_rd++]=v;
+  cl->n_wr=1; cl->wr[0]=t;
+  if(size>0){ cl->n_imm=2; cl->imm[0]=off; cl->imm[1]=size;
+    if(stride>0){ cl->imm[2]=0; cl->imm[3]=stride; cl->n_imm=4; } }
+  cl->bounds=bnd;
+  mark_access(c,cl,vol); mark_atomic(cl,1);
+  return t;
+}
+/* The kind of an increment or decrement: pre/post, inc/dec. */
+static const char *incdec_kind(int prefix,char ch){
+  return prefix ? (ch=='+'?"preinc":"predec") : (ch=='+'?"postinc":"postdec");
+}
+/* The value of an assignment to an `_Atomic` object `(E = v)`: the value stored, converted to the object's
+ * type -- a re-read would be a second atomic access (the oracle's `_cast_value(v, unqualified(ct))`). */
+static uint32_t emit_cast(CC *c, uint32_t v, const bcir_ctype *tyin, int si);   /* fwd */
+static uint32_t atomic_assign_value(CC *c,uint32_t v,const bcir_ctype *ty){
+  bcir_ctype t=*ty; t.is_volatile=0; t.is_atomic=0;
+  return emit_cast(c,v,&t,-1);
+}
 
 /* typeof( expression ) -- the operand is UNEVALUATED, so resolve its type by SPECULATIVELY lowering it,
  * reading the produced value's type off its resource, then rolling the whole emission back: the resource
@@ -1287,6 +1416,7 @@ static uint32_t tempptr_field(CC *c, const field *fld){
                      fld->ptee_volatile, BCIR_RK_POINTER, "");
   if(c->fn->n_res){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
     t->is_signed=(uint8_t)(fld->signd?1:0); t->is_float=(uint8_t)(fld->ptee_float?1:0);
+    t->is_atomic=(uint8_t)(fld->ptee_atomic?1:0);          /* a pointer to `_Atomic` storage (CF-ATOMIC) */
     if(fld->ptee_sidx>=0) snprintf(t->agg,sizeof t->agg,"%s %s",
       c->s[fld->ptee_sidx].is_union?"union":"struct", c->s[fld->ptee_sidx].tag); }
   return r;
@@ -1303,10 +1433,13 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
                                                                     * storage width, typed `_BitInt(N)` (faithful) */
             :tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* read as `char`, not int8_t */
+  if(fld->is_bool && fld->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* an `_Atomic _Bool`
+                                                   * is read as one: the atomic load names the object's type */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=base->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->bit_w?fld->access_bytes:fld->size;
   cl->bounds=BCIR_BND_ASSUMED;
   mark_access(c,cl,fld->is_volatile||base->type.is_volatile);
+  mark_atomic(cl,fld->is_atomic);                  /* a read of an `_Atomic` member: an atomic load */
   if(fld->bit_w){uint32_t u=t;
     /* integer promotion (6.3.1.1) of a bitfield read, keyed on the BITFIELD WIDTH W (`fld->bit_w`):
      *   * W <= 32  -> promotes to int (int holds all W-bit values), so an UNSIGNED sub-int bitfield reads
@@ -1325,12 +1458,15 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
 /* `s.arr[idx]` -- a load from a struct member array: the element lands at `&s + member_off + idx*elem`,
  * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
 static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
-  uint32_t t=fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
+  uint32_t t=fld->elem_ptr?tempptr_field(c,fld)        /* an array-of-pointers element: a `T *` temp */
+            :fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* `char[]` element: `char` */
+  if(fld->is_bool && fld->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* `_Atomic _Bool[]` */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=2;cl->imm[0]=fld->byte_off;cl->imm[1]=fld->size;cl->bounds=BCIR_BND_ASSUMED;
   mark_access(c,cl,fld->is_volatile||base->type.is_volatile);
+  mark_atomic(cl,fld->is_atomic);
   return t;
 }
 /* After `arr[i]` on an ARRAY-OF-STRUCTS member (`arr->elem_sidx>=0`) with a trailing `.`/`->`, parse the
@@ -1351,11 +1487,13 @@ static int elem_field(CC *c, const field *arr, field *sub) {
 static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uint32_t idx, const field *sub) {
   uint32_t t=sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);
   if(sub->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;
+  if(sub->is_bool && sub->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* `_Atomic _Bool` field */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=3;cl->imm[0]=arr->byte_off+sub->byte_off;cl->imm[1]=sub->size;cl->imm[2]=arr->size;
   cl->bounds=BCIR_BND_ASSUMED;
   mark_access(c,cl,sub->is_volatile||arr->is_volatile||base->type.is_volatile);
+  mark_atomic(cl,sub->is_atomic);
   return t;
 }
 /* After `a[i]` on a DIRECT local/global ARRAY-OF-STRUCTS variable (`v->sidx>=0`, the element struct) with a
@@ -1376,11 +1514,13 @@ static int aos_elem_field(CC *c, venv *base, field *sub) {
 static uint32_t emit_index_field(CC *c, venv *base, uint32_t idx, const field *sub) {
   uint32_t t=sub->is_float?tempf(c,sub->size):tempi(c,sub->size,sub->signd);
   if(sub->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;
+  if(sub->is_bool && sub->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* `_Atomic _Bool` field */
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;
   cl->n_imm=3;cl->imm[0]=sub->byte_off;cl->imm[1]=sub->size;cl->imm[2]=base->type.size;
   cl->bounds=BCIR_BND_ASSUMED;
   mark_access(c,cl,sub->is_volatile||base->type.is_volatile);
+  mark_atomic(cl,sub->is_atomic);
   return t;
 }
 /* --- C's assignment conversion at a store the emit spells as a byte copy (CF-MEMCONV) ------------------- */
@@ -1437,10 +1577,11 @@ static uint32_t store_conv(CC *c, uint32_t val, const bcir_ctype *slot){
  * declared type -- for `store_conv`. A pointer, struct or union member is no arithmetic slot. */
 static bcir_ctype field_slot(const field *f){
   bcir_ctype t; memset(&t,0,sizeof t);
-  t.kind=(uint8_t)(f->is_ptr?2:(f->sidx>=0||f->elem_sidx>=0)?1:0);
+  t.kind=(uint8_t)((f->is_ptr||f->elem_ptr)?2:(f->sidx>=0||f->elem_sidx>=0)?1:0);
   t.size=f->size; t.signd=f->signd; t.is_float=(uint8_t)(f->is_float?1:0);
   t.is_complex=(uint8_t)(f->is_complex?1:0); t.is_bool=(uint8_t)(f->is_bool?1:0);
   t.is_plain_char=(uint8_t)(f->is_plain_char?1:0); t.bit_width=f->bit_width;
+  t.is_atomic=(uint8_t)(f->is_atomic?1:0);                  /* `_Atomic` storage (CF-ATOMIC) */
   return t;
 }
 /* The declared type of the object `*p` writes, for `p` of type `*p_ty` (an array's element when it is an
@@ -1452,6 +1593,12 @@ static bcir_ctype pointee_slot(const bcir_ctype *p_ty){
     t.kind=(uint8_t)(p_ty->ptr_to_struct?1:0); t.ptr_depth=0; }
   t.nadims=0; t.is_volatile=0;
   return t;
+}
+/* The element type of `v[i]` -- a depth-1 pointer's pointee, an array's element: the type an `_Atomic`
+ * element's read-modify-write operates on and the value an assignment to it yields (CF-ATOMIC). */
+static bcir_ctype index_elem_ctype(const venv *v){
+  bcir_ctype t = v->type.kind==2 ? pointee_slot(&v->type) : v->type;
+  t.nadims=0; return t;
 }
 /* The same for a pointer held in a resource (the general `*(expr) = v` store): its pointee's flags. */
 static bcir_ctype res_pointee_slot(const bcir_resource *r){
@@ -1474,6 +1621,7 @@ static uint32_t store_index_field(CC *c, venv *base, uint32_t idx, const field *
   if(sub->is_bool){cl->imm[2]=1;cl->n_imm=3;}
   if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=base->type.size; cl->n_imm=4;   /* stride imm[3] */
   mark_access(c,cl,sub->is_volatile||base->type.is_volatile);
+  mark_atomic(cl,sub->is_atomic);
   return val;
 }
 /* `s.arr[i] = val` (member array, the element copy size == the element/stride size) OR `s.arr[i].field = val`
@@ -1491,6 +1639,7 @@ static uint32_t store_member_index(CC *c, venv *base, const field *arr, uint32_t
   if(sf->is_bool){cl->imm[2]=1;cl->n_imm=3;}                      /* a _Bool element/field: normalize on store */
   if(soa){ if(cl->n_imm<3){cl->imm[2]=0;cl->n_imm=3;} cl->imm[3]=arr->size; cl->n_imm=4; }   /* stride imm[3] */
   mark_access(c,cl,sf->is_volatile||arr->is_volatile||base->type.is_volatile);
+  mark_atomic(cl,sf->is_atomic);
   return val;
 }
 /* Parse the `[i]` (or `[i][j][k]`) indices of a member-array access and flatten them row-major into a
@@ -1498,7 +1647,12 @@ static uint32_t store_member_index(CC *c, venv *base, const field *arr, uint32_t
  * N-D `s.m[i][j]` both reduce to one element-scaled index into the member at its byte offset. */
 static uint32_t member_arr_index(CC *c, const field *fld) {
   uint32_t lin=0; int d=0;
-  while(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+  while(is(c,"[")){
+    if(fld->elem_ptr && d>=(fld->nadims>0?fld->nadims:1)){   /* `t->arr[i][j]` on `T *arr[N]`: a subscript of the
+      * loaded POINTER, not a further dimension -- the oracle refuses it (partial indexing), so the twin does too
+      * rather than folding `j` into the element index */
+      fail(c,"partial indexing of a struct member array is not yet supported"); return lin; }
+    c->i++; uint32_t ix=p_expr(c); eat(c,"]");
     if(d==0){ lin=ix; }
     else { int dim = d<fld->nadims ? fld->adims[d] : 1;
       uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
@@ -1814,6 +1968,7 @@ static uint32_t elem_temp(CC *c, venv *base) {
       tr->ptr_depth=base->type.ptr_depth?base->type.ptr_depth:1;
       tr->is_signed=(uint8_t)(base->type.signd?1:0); tr->is_float=(uint8_t)(base->type.is_float?1:0);
       tr->is_plain_char=(uint8_t)(base->type.is_plain_char?1:0);
+      tr->is_atomic=(uint8_t)(base->type.is_atomic?1:0);   /* a pointer to `_Atomic` storage (CF-ATOMIC) */
       if(base->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",base->type.is_union?"union":"struct",base->type.tag);
       else if(base->type.size==0 && !base->type.is_float) tr->is_voidptr=1; }   /* a `void *` element */
     last_ptr_to_volatile(c,base->type.is_volatile,base->type.ptr_to_struct && sdef_vol(c,base->sidx));
@@ -1822,7 +1977,9 @@ static uint32_t elem_temp(CC *c, venv *base) {
     bcir_ctype et=base->type; et.ptr_depth=(uint8_t)((base->type.ptr_depth?base->type.ptr_depth:1)-1);
     t=temp_ptr(c,&et,base->sidx);
   } else { int es=base->type.size?base->type.size:4;
-    t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd); }  /* float -> a float temp; else keep the sign */
+    t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd);   /* float -> a float temp; else keep the sign */
+    if(base->type.is_bool && index_elem_atomic(c,base) && c->fn->n_res)   /* an `_Atomic _Bool` element */
+      c->fn->res[c->fn->n_res-1].is_bool=1; }
   return t;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
@@ -1830,6 +1987,7 @@ static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=idx;cl->n_wr=1;cl->wr[0]=t;cl->bounds=access_bnd(c,base->rid);
   mark_access(c,cl,index_elem_vol(c,base));        /* the element of a pointer to volatile / a volatile array */
+  mark_atomic(cl,index_elem_atomic(c,base));       /* ... and of a pointer to / an array of `_Atomic` */
   return t;
 }
 /* Parse up to `maxd` subscripts `[i][j][k]` on an array variable and Horner-flatten via its declared dims
@@ -1900,6 +2058,7 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
    * NEW resource, which may realloc (and thus MOVE+free) c->fn->res -- so `r`, a pointer INTO that
    * array, dangles after the first allocation. Reading through it afterward is a use-after-free. */
   uint8_t r_signd=r->is_signed, r_float=r->is_float, r_plain_char=r->is_plain_char, r_vol=r->is_volatile;
+  uint8_t r_atom=r->is_atomic, r_bool=r->is_bool;
   bcir_domain r_dom=r->domain;
   char r_agg[sizeof r->agg]; snprintf(r_agg,sizeof r_agg,"%s",r->agg);
   uint32_t t;
@@ -1907,14 +2066,18 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
     t=add_res(c,r_dom,base,1,r_vol,BCIR_RK_POINTER,"");   /* still pointing at the same (device) storage */
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
       tr->is_signed=r_signd; tr->is_float=r_float; tr->ptr_depth=(uint8_t)(depth-1);
+      tr->is_atomic=r_atom;                          /* one level down, still pointing at `_Atomic` storage */
       snprintf(tr->agg,sizeof tr->agg,"%s",r_agg); }
   } else { t = r_float ? tempf(c,base) : tempi(c,base,r_signd);
     if(depth==1 && r_plain_char && c->fn->n_res)   /* a `char *` deref loads a plain `char` value */
-      c->fn->res[c->fn->n_res-1].is_plain_char=1; }
+      c->fn->res[c->fn->n_res-1].is_plain_char=1;
+    if(depth==1 && r_atom && r_bool && c->fn->n_res)   /* through `_Atomic _Bool *`: a `_Bool` value */
+      c->fn->res[c->fn->n_res-1].is_bool=1; }
   int rd_sz = depth>1 ? cc_abi(c)->pointer_size : base;
   bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
   cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=rd_sz;
   mark_access(c,cl,depth==1 && r_vol);             /* the pointee of a pointer to volatile, at its own width */
+  mark_atomic(cl,depth==1 && r_atom);              /* the pointee of a pointer to `_Atomic`: an atomic load */
   return t;
 }
 static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load (named pointer or array) */
@@ -1926,6 +2089,7 @@ static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereferenc
     bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
     cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;
     mark_access(c,cl,index_elem_vol(c,pv));
+    mark_atomic(cl,index_elem_atomic(c,pv));
     return t;
   }
   if(r && r->is_pointer && pv->type.kind==2 && (pv->type.ptr_depth?pv->type.ptr_depth:1)==1){   /* `*gp`: a
@@ -1936,6 +2100,7 @@ static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereferenc
     bcir_claim *cl=new_claim(c,"c.load",BCIR_OP_LOAD); if(!cl) return t;
     cl->n_rd=1;cl->rd[0]=pv->rid;cl->n_wr=1;cl->wr[0]=t;cl->bounds=BCIR_BND_ASSUMED;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;
     mark_access(c,cl,index_elem_vol(c,pv));
+    mark_atomic(cl,index_elem_atomic(c,pv));
     return t;
   }
   return emit_deref_rid(c,pv->rid);                /* depth-aware: the resource carries width, sign, float,
@@ -1968,6 +2133,7 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
       b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
       b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);   /* `d->regs[i]` through a `volatile T *regs` */
+      b.type.is_atomic=(uint8_t)(pfld.ptee_atomic?1:0);       /* ... and `s->ap[i]` through an `_Atomic T *ap` */
       return emit_index(c,&b,ix);
     }
     if(is(c,"->")||is(c,".")){
@@ -2489,6 +2655,20 @@ static const char *fence_order_op(CC *c){
   }
   return "c.fence";                                        /* non-constant / shadowed / unknown -> full */
 }
+/* A temp of the value type of what pointer `ptr` points at (the oracle's `_atomic_value_type`): its pointee,
+ * unqualified, when it is a pointer (depth 1) to a scalar or an array of scalars; else the 4-byte temp it was. */
+static uint32_t atomic_value_temp(CC *c,uint32_t ptr){
+  const bcir_resource *pr=res_of(c->fn,ptr); bcir_resource p;
+  if(!pr) return temp(c,4);
+  p=*pr;                                               /* snapshot: the temp below may move res[] */
+  int ptr1 = p.kind==BCIR_RK_POINTER && (p.ptr_depth?p.ptr_depth:1)==1;
+  int arr = p.kind==BCIR_RK_SCALAR && (p.is_array || p.count>1) && !p.ptr_depth;
+  if(!(ptr1||arr) || p.agg[0] || p.is_voidptr || p.is_funcptr) return temp(c,4);
+  bcir_ctype t; memset(&t,0,sizeof t);
+  t.size=(int)p.elem_bytes; t.signd=p.is_signed; t.is_float=p.is_float; t.is_complex=p.is_complex;
+  t.is_bool=p.is_bool; t.is_plain_char=p.is_plain_char; t.bit_width=p.bit_width;
+  return ctype_value_temp(c,&t);
+}
 static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered){
   c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
   /* SEG7: an order-taking fence (`__atomic_thread_fence`/`atomic_thread_fence`) routes its KIND by the
@@ -2498,7 +2678,11 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordere
   if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;else dropped=1;
     if(is(c,",")){c->i++;continue;}break;}
   eat(c,")");
-  uint32_t t=temp(c,4);
+  /* the value an atomic reads through its pointer -- atomic_load, a fetch-op, atomic_exchange, a value CAS --
+   * has the pointee's type, unqualified (the oracle's `_atomic_value_type`): a uint32 temp truncated a 64-bit
+   * counter and converted an `_Atomic float` to an integer (CF-ATOMIC). The bool forms and a fence stay 4-byte. */
+  int valued = na>=1 && (kind==AK_RMW || kind==AK_LOAD || !strcmp(op,"c.cmpxchg.val"));
+  uint32_t t = valued ? atomic_value_temp(c,args[0]) : temp(c,4);
   if(!strncmp(op,"c.c11atom.cas",13) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;  /* compare_exchange -> _Bool */
   bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
   cl->truncated=(uint8_t)dropped;
@@ -2785,6 +2969,14 @@ static void cast_name(const bcir_ctype *ty,int signed_int,char *o,size_t n){
 }
 static int incdec_value(CC *c, uint32_t *out);   /* fwd: `++a`/`a++`/`--a`/`a--` in EXPRESSION position */
 static uint32_t p_unary_inner(CC *c);
+/* Token `k` starts a postfix operator -- `[`, `->`, `.`, `(`, `++` or `--` -- which binds tighter than a prefix
+ * operator, so `*name` followed by one dereferences the postfix expression, not the name. */
+static int postfix_follows(CC *c, int k){
+  const tok *t=tat(c,k);
+  if(t->k!=T_PUN) return 0;
+  if(t->n==1) return t->s[0]=='[' || t->s[0]=='.' || t->s[0]=='(';
+  return t->n==2 && ((t->s[0]=='-' && t->s[1]=='>') || (t->s[0]=='+' && t->s[1]=='+') || (t->s[0]=='-' && t->s[1]=='-'));
+}
 /* Depth-guarded wrapper: p_unary is a recursive-cycle entry point (p_unary->p_primary->`(`->p_expr->
  * ...->p_unary), so a deeply-nested expression would exhaust the native stack. Bump/check depth once
  * per level here; on overflow fail cleanly ("nesting too deep") and return without recursing. */
@@ -2828,6 +3020,7 @@ static uint32_t p_unary_inner(CC *c) {
             uint32_t t=add_res(c,BCIR_DOM_RAM, mf.ptee_size?mf.ptee_size:4, 1,0,BCIR_RK_POINTER,"");
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];   /* pointee = the member's pointee */
               tr->is_signed=(uint8_t)(mf.signd?1:0); tr->is_float=(uint8_t)(mf.ptee_float?1:0); tr->ptr_depth=2;
+              tr->is_atomic=(uint8_t)(mf.ptee_atomic?1:0);   /* still reaching `_Atomic` storage (CF-ATOMIC) */
               if(mf.ptee_sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.ptee_sidx].is_union?"union":"struct",c->s[mf.ptee_sidx].tag); }
             last_ptr_to_volatile(c,mf.ptee_volatile,mf.ptee_sidx>=0 && sdef_vol(c,mf.ptee_sidx));
             bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
@@ -2840,6 +3033,7 @@ static uint32_t p_unary_inner(CC *c) {
             int es = mf.size?mf.size:4, off=mf.byte_off;   /* element (struct) STRIDE + the member offset */
             int resz = es;                         /* the RESULT pointee size (the field's, for &s.arr[i].field) */
             int rsd=mf.signd, rfl=mf.is_float, rsx=mf.elem_sidx;   /* result-pointer pointee type */
+            int rat=mf.is_atomic, rcx=mf.is_complex, rbo=mf.is_bool, rpc=mf.is_plain_char;   /* `_Atomic` (CF-ATOMIC) */
             if(is(c,".")||is(c,"->")){             /* &s.arr[i].field -- array-of-structs element FIELD address */
               if(mf.elem_sidx<0){ fail(c,"address-of a field of a non-struct member-array element"); return 0; }
               sdef *ES=&c->s[mf.elem_sidx]; c->i++; tok efn=adv(c); int efi=-1;
@@ -2848,12 +3042,15 @@ static uint32_t p_unary_inner(CC *c) {
               field ef=member_descend(c,ES->f[efi]);
               if(ef.bit_w||ef.is_ptr||ef.arr_count){ fail(c,"address-of a non-scalar array-of-structs field is a follow-on"); return 0; }
               off += ef.byte_off; resz=ef.size?ef.size:4; rsd=ef.signd; rfl=ef.is_float; rsx=ef.sidx;   /* field at member_off+field_off; stride stays the struct */
+              rat=ef.is_atomic; rcx=ef.is_complex; rbo=ef.is_bool; rpc=ef.is_plain_char;
             }
             if(is(c,".")||is(c,"->")||is(c,"[")){  /* a further descent is a follow-on */
               fail(c,"address-of a nested member-array element is a follow-on"); return 0; }
             uint32_t t=add_res(c,BCIR_DOM_RAM, resz, 1,0,BCIR_RK_POINTER,"");   /* an `element/field *` */
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
               tr->is_signed=(uint8_t)(rsd?1:0); tr->is_float=(uint8_t)(rfl?1:0); tr->ptr_depth=1;
+              tr->is_atomic=(uint8_t)(rat?1:0); tr->is_complex=(uint8_t)(rcx?1:0);
+              tr->is_bool=(uint8_t)(rbo?1:0); tr->is_plain_char=(uint8_t)(rpc?1:0);
               if(rsx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[rsx].is_union?"union":"struct",c->s[rsx].tag); }
             bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
             if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=es;}
@@ -2862,6 +3059,9 @@ static uint32_t p_unary_inner(CC *c) {
           uint32_t t=add_res(c,BCIR_DOM_RAM, mf.size?mf.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `leaf *` */
           if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
             tr->is_signed=(uint8_t)(mf.signd?1:0); tr->ptr_depth=1;
+            tr->is_float=(uint8_t)(mf.is_float?1:0); tr->is_complex=(uint8_t)(mf.is_complex?1:0);   /* the leaf's own */
+            tr->is_bool=(uint8_t)(mf.is_bool?1:0); tr->is_plain_char=(uint8_t)(mf.is_plain_char?1:0);   /* type, as the */
+            tr->is_atomic=(uint8_t)(mf.is_atomic?1:0);                                   /* oracle's `T *` */
             if(mf.sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[mf.sidx].is_union?"union":"struct",c->s[mf.sidx].tag); }
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
@@ -2880,6 +3080,8 @@ static uint32_t p_unary_inner(CC *c) {
             uint32_t t=add_res(c,BCIR_DOM_RAM, fz, 1,0,BCIR_RK_POINTER,"");   /* a `field *` */
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
               tr->is_signed=(uint8_t)(sub.signd?1:0); tr->is_float=(uint8_t)(sub.is_float?1:0); tr->ptr_depth=1;
+              tr->is_complex=(uint8_t)(sub.is_complex?1:0); tr->is_bool=(uint8_t)(sub.is_bool?1:0);
+              tr->is_plain_char=(uint8_t)(sub.is_plain_char?1:0); tr->is_atomic=(uint8_t)(sub.is_atomic?1:0);
               if(sub.sidx>=0) snprintf(tr->agg,sizeof tr->agg,"%s %s",c->s[sub.sidx].is_union?"union":"struct",c->s[sub.sidx].tag); }
             bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
             if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=sub.byte_off;cl->imm[1]=strd;}
@@ -2891,6 +3093,9 @@ static uint32_t p_unary_inner(CC *c) {
           uint32_t t=add_res(c,BCIR_DOM_RAM, es, 1,0,BCIR_RK_POINTER,"");
           if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
             tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0); tr->ptr_depth=1;
+            tr->is_complex=(uint8_t)(v->type.is_complex?1:0); tr->is_bool=(uint8_t)(v->type.is_bool?1:0);
+            tr->is_plain_char=(uint8_t)(v->type.is_plain_char?1:0);
+            tr->is_atomic=(uint8_t)(v->type.is_atomic?1:0);   /* an element of `_Atomic` storage (CF-ATOMIC) */
             if(v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;}
@@ -2902,6 +3107,9 @@ static uint32_t p_unary_inner(CC *c) {
         uint32_t t=add_res(c,BCIR_DOM_RAM, v->type.size?v->type.size:4, 1,0,BCIR_RK_POINTER,"");  /* &p (T*) -> T** */
         if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
           tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0);
+          tr->is_complex=(uint8_t)(v->type.is_complex?1:0); tr->is_bool=(uint8_t)(v->type.is_bool?1:0);
+          tr->is_plain_char=(uint8_t)(v->type.is_plain_char?1:0);
+          tr->is_atomic=(uint8_t)(v->type.is_atomic?1:0);     /* `&a` of an `_Atomic` object: `_Atomic T *` */
           tr->ptr_depth=(uint8_t)((v->type.kind==2?(v->type.ptr_depth?v->type.ptr_depth:1):0)+1);
           if(v->type.kind==1||v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
         last_ptr_to_volatile(c,v->type.is_volatile,v->sidx>=0 && sdef_vol(c,v->sidx));   /* &x of volatile storage */
@@ -2915,7 +3123,7 @@ static uint32_t p_unary_inner(CC *c) {
           uint32_t t=add_res(c,BCIR_DOM_RAM, ty.size?ty.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `T *` to it */
           if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
             tr->is_signed=(uint8_t)(ty.signd?1:0); tr->is_float=(uint8_t)(ty.is_float?1:0); tr->ptr_depth=1;
-            tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);
+            tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0); tr->is_atomic=(uint8_t)(ty.is_atomic?1:0);
             if(ty.kind==1) snprintf(tr->agg,sizeof tr->agg,"%s %s",ty.is_union?"union":"struct",ty.tag); }
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
@@ -2950,10 +3158,11 @@ static uint32_t p_unary_inner(CC *c) {
           if(through && is(c,")")){ c->i++; return emit_deref(c,pv); }
           c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; } }   /* not ours: undo */
       c->i=save;
-    } else if(isk(c,T_ID) && !(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='[')){
-      tok pid=*pk(c); venv *pv=lookup(c,&pid); if(!pv) pv=use_global(c,&pid);   /* `*q[j]` is `*(q[j])`: the */
-      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use); a global too --
-                                                     * a subscript first takes the general path below */
+    } else if(isk(c,T_ID) && !postfix_follows(c,c->i+1)){
+      tok pid=*pk(c); venv *pv=lookup(c,&pid); if(!pv) pv=use_global(c,&pid);   /* `*q[j]` is `*(q[j])` and
+      * `*t->p` is `*(t->p)`: a postfix operator binds tighter than `*`, so a name followed by one takes the
+      * general path below. Taking this one for `*t->arr[i]` dereferenced `t` and failed on the `->` */
+      if(pv){ c->i++; return emit_deref(c,pv); } }  /* *p (no sub-parse between lookup and use); a global too */
     return emit_deref_rid(c, p_unary(c));            /* general: `**pp`, `*(<expr>)` -- deref a ptr rvalue */
   }
   if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{')
@@ -3146,6 +3355,7 @@ static venv *use_global(CC *c,const tok *id){
   if(c->fn->n_res){ bcir_resource *gr=&c->fn->res[c->fn->n_res-1];
     gr->read_only=1;                                  /* a global, not a local */
     gr->is_array=(uint8_t)(g->is_arr?1:0);
+    gr->is_atomic=(uint8_t)(g->ty.is_atomic?1:0);     /* `_Atomic` storage, or a pointer to it (CF-ATOMIC) */
     gr->is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0);
     /* the value type rides on the resource, as a local's does: every temp typed from it (a deref of the
      * array, `-g`, the usual arithmetic conversions, a volatile read) is the global's type, not uint32 */
@@ -3195,7 +3405,8 @@ static uint32_t store_member(CC *c, venv *base, const field *f, uint32_t val){
   if(cl){cl->n_rd=2;cl->rd[0]=base->rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=f->byte_off;cl->imm[1]=f->size;
     cl->bounds=BCIR_BND_ASSUMED;
     if(f->is_bool){cl->imm[2]=1;cl->n_imm=3;}                         /* a _Bool member normalizes on store */
-    mark_access(c,cl,f->is_volatile||base->type.is_volatile);}
+    mark_access(c,cl,f->is_volatile||base->type.is_volatile);
+    mark_atomic(cl,f->is_atomic);}                                    /* an `_Atomic` member: an atomic store */
   return val;
 }
 /* Emit a BITFIELD member store `base.field = val` (#bfassignexpr): read the storage unit (`access_bytes`
@@ -3249,17 +3460,27 @@ static int lv_assign_value(CC *c, uint32_t *out){
        && pv->type.ptr_depth<=1 && (is_eq || is_compound_op(op))){
       int sz = pv->type.size?pv->type.size:4;
       bcir_ctype pst=pointee_slot(&pv->type);           /* `*p` stores a byte copy: C's conversion first */
+      int at=index_elem_atomic(c,pv);                   /* an `_Atomic` pointee: atomic accesses (CF-ATOMIC) */
       if(is_eq){                                       /* plain: rhs FIRST, then store, then RELOAD */
         c->i++; uint32_t rhs=p_assign(c);
         if(!has_idx) rhs=store_conv(c,rhs,&pst);
         bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
         if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=rhs;}
-          else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=rhs;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
-          cl->bounds=BCIR_BND_ASSUMED; }
+          else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=rhs;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;
+                if(pst.kind==0 && pst.is_bool){cl->imm[2]=1;cl->n_imm=3;}}   /* a _Bool pointee normalizes */
+          cl->bounds=BCIR_BND_ASSUMED; mark_atomic(cl,at); }
+        if(at){ *out=atomic_assign_value(c,rhs,&pst); return 1; }   /* the value stored: no second atomic read */
         *out = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);   /* reload the SAME resolved lvalue */
         return 1;
       }
       char ch=op->s[0]; c->i++;                         /* compound: read cur, binop, store, value = stored */
+      if(at){                                          /* an `_Atomic` pointee: one atomic read-modify-write */
+        uint32_t rhs=p_assign(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        *out = has_idx ? emit_rmw(c,suf,&pst,pv->rid,1,idx,1,rhs,0,0,0,0,BCIR_BND_ASSUMED)
+                       : emit_rmw(c,suf,&pst,pv->rid,0,0,1,rhs,0,sz,0,0,BCIR_BND_ASSUMED);
+        return 1;
+      }
       uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
       uint32_t rhs=p_assign(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -3268,7 +3489,8 @@ static int lv_assign_value(CC *c, uint32_t *out){
       if(!has_idx) tmp=store_conv(c,tmp,&pst);          /* the value as stored (converted) */
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){ if(has_idx){cl->n_rd=3;cl->rd[0]=pv->rid;cl->rd[1]=idx;cl->rd[2]=tmp;}
-        else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=tmp;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;}
+        else {cl->n_rd=2;cl->rd[0]=pv->rid;cl->rd[1]=tmp;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;
+              if(pst.kind==0 && pst.is_bool){cl->imm[2]=1;cl->n_imm=3;}}     /* a _Bool pointee normalizes */
         cl->bounds=BCIR_BND_ASSUMED; }
       /* the value of a compound is the STORED (narrowed) value: a sub-int target (`unsigned char *p;
        * (*p += v)`) truncates on store, so RE-READ (#narrowcompound); a full-width target needs no
@@ -3300,11 +3522,18 @@ static int lv_assign_value(CC *c, uint32_t *out){
     }
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same strided slot */
       c->i++; uint32_t rhs=p_assign(c);
-      store_index_field(c,v,idx,&sub,rhs);
+      uint32_t st=store_index_field(c,v,idx,&sub,rhs);
+      if(sub.is_atomic){ bcir_ctype ft=field_slot(&sub); *out=atomic_assign_value(c,st,&ft); return 1; }
       *out=emit_index_field(c,v,idx,&sub);             /* reload reuses idx + field offset + element stride */
       return 1;
     }
     char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
+    if(sub.is_atomic){                                 /* an `_Atomic` field: one atomic read-modify-write */
+      uint32_t rhs=p_assign(c); bcir_ctype ft=field_slot(&sub);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+      *out=emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,sub.byte_off,sub.size,v->type.size,sub.is_volatile,BCIR_BND_ASSUMED);
+      return 1;
+    }
     uint32_t cur=emit_index_field(c,v,idx,&sub); uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3329,14 +3558,24 @@ static int lv_assign_value(CC *c, uint32_t *out){
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc;
       c->i=istart-1; c->i=save; return 0;
     }
+    int at=index_elem_atomic(c,v);                    /* `_Atomic` elements: atomic accesses (CF-ATOMIC) */
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same index */
       c->i++; uint32_t rhs=p_assign(c);
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=rhs;cl->bounds=access_bnd(c,v->rid);}
+      if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=rhs;cl->bounds=access_bnd(c,v->rid);mark_atomic(cl,at);}
+      if(at){ bcir_ctype et=index_elem_ctype(v); *out=atomic_assign_value(c,rhs,&et); return 1; }   /* the value
+                                                        * stored, never a re-read */
       *out=emit_index(c,v,idx);                         /* reload reuses idx */
       return 1;
     }
     char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
+    if(at){                                            /* an `_Atomic` element: one atomic read-modify-write */
+      uint32_t rhs=p_assign(c);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+      bcir_ctype et=index_elem_ctype(v);
+      *out=emit_rmw(c,suf,&et,v->rid,1,idx,1,rhs,0,0,0,0,access_bnd(c,v->rid));
+      return 1;
+    }
     uint32_t cur=emit_index(c,v,idx); uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3373,11 +3612,19 @@ static int lv_assign_value(CC *c, uint32_t *out){
         c->i=save; return 0; }
       if(a_eq){                                        /* plain: store rhs, then RELOAD the same strided slot */
         c->i++; uint32_t rhs=p_assign(c);
-        store_member_index(c,v,&f,idx,soa,sf,rhs);
+        uint32_t st=store_member_index(c,v,&f,idx,soa,sf,rhs);
+        if(sf->is_atomic){ bcir_ctype ft=field_slot(sf); *out=atomic_assign_value(c,st,&ft); return 1; }
         *out = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
         return 1;
       }
       char ach=aop->s[0]; c->i++;                       /* compound: read cur, binop, store, value = stored */
+      if(sf->is_atomic){                                /* an `_Atomic` element/field: one atomic read-modify-write */
+        uint32_t rhs=p_assign(c); bcir_ctype ft=field_slot(sf);
+        const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc); (void)oc;
+        *out=emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,soa?f.size:0,
+                      sf->is_volatile||f.is_volatile,BCIR_BND_ASSUMED);
+        return 1;
+      }
       uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
       uint32_t rhs=p_assign(c);
       const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc);
@@ -3401,11 +3648,19 @@ static int lv_assign_value(CC *c, uint32_t *out){
        || v->type.is_volatile){ c->i=save; return 0; }
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same member */
       c->i++; uint32_t rhs=p_assign(c);
-      if(f.bit_w) store_member_bf(c,v,&f,rhs); else store_member(c,v,&f,rhs);   /* a nested bitfield: bf.set */
+      if(f.bit_w) store_member_bf(c,v,&f,rhs);          /* a nested bitfield: bf.set */
+      else { uint32_t st=store_member(c,v,&f,rhs);
+        if(f.is_atomic){ bcir_ctype ft=field_slot(&f); *out=atomic_assign_value(c,st,&ft); return 1; } }
       *out=emit_member(c,v,&f,0);                       /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
       return 1;
     }
     char ch=op->s[0]; c->i++;                           /* compound: read cur, binop, store, value = stored */
+    if(f.is_atomic){                                   /* an `_Atomic` member: one atomic read-modify-write */
+      uint32_t rhs=p_assign(c); bcir_ctype ft=field_slot(&f);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+      *out=emit_rmw(c,suf,&ft,v->rid,0,0,1,rhs,f.byte_off,f.size,0,f.is_volatile,BCIR_BND_ASSUMED);
+      return 1;
+    }
     uint32_t cur=emit_member(c,v,&f,0); uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
     uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3502,6 +3757,12 @@ static int incdec_value(CC *c, uint32_t *out){
     if(c->failed) return 0;
     if(!got || !incdec_settle(c,prefix,save)){             /* not `a[i].field++` -> roll back, fall through */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+    if(sub.is_atomic){                                     /* an `_Atomic` field: one atomic read-modify-write */
+      bcir_ctype ft=field_slot(&sub);
+      *out=emit_rmw(c,incdec_kind(prefix,ch),&ft,v->rid,1,idx,0,0,sub.byte_off,sub.size,v->type.size,sub.is_volatile,
+                    BCIR_BND_ASSUMED);
+      return 1;
+    }
     uint32_t cur=emit_index_field(c,v,idx,&sub);           /* read OLD (a fresh declared temp -- no snapshot) */
     uint32_t one=incdec_emit_const1(c);
     uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3521,6 +3782,11 @@ static int incdec_value(CC *c, uint32_t *out){
     if(c->failed){ return 0; }
     if(!incdec_settle(c,prefix,save)){                     /* `a[i]` not stepped -> roll back, fall through */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+    if(index_elem_atomic(c,v)){                            /* an `_Atomic` element: one atomic read-modify-write */
+      bcir_ctype et=index_elem_ctype(v);
+      *out=emit_rmw(c,incdec_kind(prefix,ch),&et,v->rid,1,idx,0,0,0,0,0,0,access_bnd(c,v->rid));
+      return 1;
+    }
     uint32_t cur=emit_index(c,v,idx);                      /* read OLD (a fresh declared temp -- no snapshot) */
     uint32_t one=incdec_emit_const1(c);
     uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3548,8 +3814,18 @@ static int incdec_value(CC *c, uint32_t *out){
       field sub; int soa=(is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);
       if(c->failed) return 0;
       const field *sf = soa ? &sub : &f;                  /* the stored slot: the element FIELD, or the element */
+      if(!soa && f.elem_ptr){                             /* a pointer element steps by its pointee, as a pointer
+        * member would: both rails refuse that form (the oracle's `_incdec` lvalue gate), so it is not stepped
+        * here as an integer */
+        fail(c,"inc/dec of this lvalue form is a follow-on"); return 0; }
       if(!incdec_settle(c,prefix,save)){
         c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+      if(sf->is_atomic){                                  /* an `_Atomic` element/field: one atomic RMW */
+        bcir_ctype ft=field_slot(sf);
+        *out=emit_rmw(c,incdec_kind(prefix,ch),&ft,v->rid,1,idx,0,0,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,
+                      soa?f.size:0,sf->is_volatile||f.is_volatile,BCIR_BND_ASSUMED);
+        return 1;
+      }
       uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
       uint32_t one=incdec_emit_const1(c);
       uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3564,6 +3840,11 @@ static int incdec_value(CC *c, uint32_t *out){
     if(f.is_ptr || f.arr_count || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
     if(!incdec_settle(c,prefix,save)){                    /* a deeper lvalue / not stepped -> roll back */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+    if(f.is_atomic){                                      /* an `_Atomic` member: one atomic read-modify-write */
+      bcir_ctype ft=field_slot(&f);
+      *out=emit_rmw(c,incdec_kind(prefix,ch),&ft,v->rid,0,0,0,0,f.byte_off,f.size,0,f.is_volatile,BCIR_BND_ASSUMED);
+      return 1;
+    }
     uint32_t cur=emit_member(c,v,&f,0);                   /* read OLD (a fresh declared temp -- no snapshot) */
     uint32_t one=incdec_emit_const1(c);
     uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
@@ -3578,6 +3859,11 @@ static int incdec_value(CC *c, uint32_t *out){
   /* --- a NAMED local/param/global (scalar OR pointer) `a` -- the bare name followed by the step --- */
   c->i++;                                                  /* consume the name */
   if(!incdec_settle(c,prefix,save)) return 0;              /* postfix: consume `++`/`--`; prefix: lvalue done */
+  if(v->type.is_atomic && v->type.kind==0){                /* an `_Atomic` object: one atomic read-modify-write */
+    *out=emit_rmw(c,incdec_kind(prefix,ch),&v->type,v->rid,0,0,0,0,0,v->type.size?v->type.size:4,0,
+                  v->type.is_volatile,BCIR_BND_ASSUMED);
+    return 1;
+  }
   if(v->type.is_volatile){ c->i=save; return 0; }          /* a volatile/MMIO target stays a both-rails fallback */
   if(v->type.kind==2){                                     /* a POINTER local steps by element (in place) */
     uint32_t old = !prefix ? incdec_snapshot(c,v) : 0;     /* postfix: snapshot the pre-step pointer first */
@@ -3622,6 +3908,8 @@ static uint32_t p_assign(CC *c){
         bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         mark_obj_write(c,cl,v);
         bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
+        if(v->type.is_atomic && v->type.kind==0)     /* an `_Atomic` object: the value stored, converted -- a */
+          return atomic_assign_value(c,rhs,&v->type);   /* re-read by name would be a second atomic access */
         return v->rid;
       }
       char ch=op->s[0];                              /* name OP= rhs */
@@ -3630,6 +3918,12 @@ static uint32_t p_assign(CC *c){
         char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.ptr%s",ch=='+'?"add":"sub");
         bcir_claim *cl=new_claim(c,o,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         return v->rid;
+      }
+      if(v->type.is_atomic && v->type.kind==0){     /* an `_Atomic` object: one atomic read-modify-write of it */
+        c->i+=2; uint32_t rhs=p_assign(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        return emit_rmw(c,suf,&v->type,v->rid,0,0,1,rhs,0,v->type.size?v->type.size:4,0,v->type.is_volatile,
+                        BCIR_BND_ASSUMED);
       }
       uint32_t cur=named_read(c,v);                 /* the current value (a volatile read, first) */
       c->i+=2; uint32_t rhs=p_assign(c);
@@ -3650,10 +3944,18 @@ static uint32_t p_assign(CC *c){
     const tok *op=&c->t[c->i];
     if(op->n==1 && op->s[0]=='='){                  /* plain: store rhs, then RE-READ -> the converted value */
       c->i++; uint32_t rhs=p_assign(c);             /* right-associative: p->x = s.y = v */
-      if(mf.bit_w) store_member_bf(c,mbase,&mf,rhs); else store_member(c,mbase,&mf,rhs);   /* a bitfield: bf.set */
+      if(mf.bit_w) store_member_bf(c,mbase,&mf,rhs);   /* a bitfield: bf.set */
+      else { uint32_t st=store_member(c,mbase,&mf,rhs);
+        if(mf.is_atomic){ bcir_ctype ft=field_slot(&mf); return atomic_assign_value(c,st,&ft); } }   /* no re-read */
       return emit_member(c,mbase,&mf,0);            /* reload: a bitfield re-reads via bf.get (#bfassignexpr) */
     }
     char ch=op->s[0]; c->i++;                       /* compound `OP=`: read-once, binop, store, value = stored */
+    if(mf.is_atomic){                               /* an `_Atomic` member: one atomic read-modify-write */
+      uint32_t rhs=p_assign(c); bcir_ctype ft=field_slot(&mf);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+      return emit_rmw(c,suf,&ft,mbase->rid,0,0,1,rhs,mf.byte_off,mf.size,0,mf.is_volatile||mbase->type.is_volatile,
+                      BCIR_BND_ASSUMED);
+    }
     uint32_t cur=emit_member(c,mbase,&mf,0);        /* read FIRST (matches the oracle's claim order) */
     uint32_t rhs=p_assign(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -3737,7 +4039,8 @@ static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool, 
     uint32_t v=store_conv(c,p_expr(c),elem);
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
-      if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}          /* a _Bool[] element init normalizes the value */
+      if(is_bool){cl->imm[2]=1;cl->n_imm=3;}           /* a _Bool[] element init normalizes the value */
+      mark_atomic(cl,elem && elem->is_atomic);}        /* an `_Atomic` element: an atomic store, as the oracle's */
     cursor=idx+1;
     if(is(c,",")) c->i++;
   }
@@ -3775,7 +4078,8 @@ static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *d
       uint32_t v=store_conv(c,p_expr(c),elem);
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
-        if(is_bool){cl->imm[2]=1;cl->n_imm=3;}}           /* a _Bool[] element init normalizes the value */
+        if(is_bool){cl->imm[2]=1;cl->n_imm=3;}            /* a _Bool[] element init normalizes the value */
+        mark_atomic(cl,elem && elem->is_atomic);}         /* an `_Atomic` element: an atomic store */
     }
     cursor=idx+1;
     if(is(c,",")) c->i++;
@@ -3883,7 +4187,9 @@ static void agg_init_at_inner(CC *c, uint32_t rid, int sidx, int base_off, int d
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=bit_w?abytes:size;cl->bounds=BCIR_BND_ASSUMED;
       if(bit_w){cl->imm[2]=2;cl->n_imm=3;}             /* a bitfield UNIT store: `_v` takes the unit's full type */
-      else if(fbool){cl->imm[2]=1;cl->n_imm=3;}}       /* a _Bool member init normalizes the value */
+      else if(fbool){cl->imm[2]=1;cl->n_imm=3;}        /* a _Bool member init normalizes the value */
+      mark_atomic(cl,leaf && leaf->is_atomic && !bit_w);}   /* an `_Atomic` member: an atomic store, as the
+                                                        * oracle's initializer writes through `_write` */
     cursor=top_fi+1;
     if(is(c,",")) c->i++;
   }
@@ -3935,7 +4241,8 @@ static int arr_init(CC *c, uint32_t rid) {
     uint32_t ic=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
     if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=idx;}
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=access_bnd(c,rid);}  /* §5.12 promote a known-extent array */
+    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=access_bnd(c,rid);  /* §5.12 promote a known-extent array */
+      const bcir_resource *ar=res_of(c->fn,rid); mark_atomic(cl,ar && ar->is_atomic);}   /* `_Atomic` elements */
     cursor=idx+1; if(cursor>n) n=cursor;
     if(is(c,",")) c->i++;
   }
@@ -4073,6 +4380,12 @@ static int p_incdec(CC *c) {
   } else return 0;
   uint32_t one=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
   if(kc){kc->n_wr=1;kc->wr[0]=one;kc->n_imm=1;kc->imm[0]=1;}
+  if(v->type.is_atomic && v->type.kind==0){             /* `a++;` on an `_Atomic` object is `a += 1` (the oracle's
+                                                         * desugaring): one atomic read-modify-write */
+    (void)emit_rmw(c,ch=='+'?"add":"sub",&v->type,v->rid,0,0,1,one,0,v->type.size?v->type.size:4,0,v->type.is_volatile,
+                   BCIR_BND_ASSUMED);
+    return 1;
+  }
   if(v->type.kind==2){                                  /* pointer ++/-- : p += 1 / p -= 1 (verbatim) */
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
     bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=one;cl->n_wr=1;cl->wr[0]=v->rid;}
@@ -4105,6 +4418,11 @@ static void p_simple(CC *c) {
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         return; }
+      if(v->type.is_atomic && v->type.kind==0){         /* an `_Atomic` object: one atomic read-modify-write */
+        c->i+=2; uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        (void)emit_rmw(c,suf,&v->type,v->rid,0,0,1,rhs,0,v->type.size?v->type.size:4,0,v->type.is_volatile,BCIR_BND_ASSUMED);
+        return; }
       uint32_t cur=named_read(c,v);                     /* the current value (a volatile read, first) */
       c->i+=2; uint32_t rhs=p_expr(c);                  /* scalar:  name = name OP expr  (bin op + copy) */
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -4133,7 +4451,14 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
     b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
     b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);
+    b.type.is_atomic=(uint8_t)(pfld.ptee_atomic?1:0);   /* a pointer to `_Atomic` storage (CF-ATOMIC) */
     uint32_t val;
+    if(pfld.ptee_atomic && is_compound_op(&c->t[c->i])){   /* on `_Atomic`: one atomic read-modify-write */
+      char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c);
+      const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+      (void)emit_rmw(c,suf,&b.type,ptr,1,idx,1,rhs,0,0,0,pfld.ptee_volatile,BCIR_BND_ASSUMED);
+      return;
+    }
     if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
       uint32_t cur=emit_index(c,&b,idx); uint32_t rhs=p_expr(c);
       const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -4143,7 +4468,7 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     } else { if(!eat(c,"="))return; val=p_expr(c); }
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=3;cl->rd[0]=ptr;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
-      mark_access(c,cl,pfld.ptee_volatile);}
+      mark_access(c,cl,pfld.ptee_volatile); mark_atomic(cl,pfld.ptee_atomic);}
     return;
   }
   if(!(is(c,"->")||is(c,"."))){ fail(c,"expected ->/./[ after a pointer field"); return; }
@@ -4158,6 +4483,12 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     uint32_t nptr=emit_member(c,&b,&f,0); store_through_ptr(c,nptr,f.ptee_sidx,f); return;
   }
   uint32_t val;                                        /* terminal member store through the loaded pointer */
+  if(f.is_atomic && is_compound_op(&c->t[c->i])){      /* an `_Atomic` member: one atomic read-modify-write */
+    char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(&f);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+    (void)emit_rmw(c,suf,&ft,ptr,0,0,1,rhs,f.byte_off,f.size,0,f.is_volatile||pfld.ptee_volatile,BCIR_BND_ASSUMED);
+    return;
+  }
   if(is_compound_op(&c->t[c->i])){ char ch=c->t[c->i].s[0]; c->i++;
     uint32_t cur=emit_member(c,&b,&f,0); uint32_t rhs=p_expr(c);
     const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
@@ -4425,6 +4756,8 @@ static void p_stmt_inner(CC *c) {
                            is_arr?arr_elem:(ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size)),
                            is_arr?(arr?arr:1):(ty.kind==2?(1<<16):1), ty.is_volatile, rk, nb);
       if(is_arr && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_array=1;   /* an array object, whatever its length */
+      if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_atomic=(uint8_t)(ty.is_atomic?1:0);   /* `_Atomic` storage: the
+        * object, its elements, or a pointer's pointee (CF-ATOMIC) -- declared so, and accessed atomically */
       if(is_arr && ty.kind==1){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* an ARRAY-OF-STRUCTS local
         * `struct P a[N]`: a SCALAR-kind array of struct-sized elements; carry the struct tag so the decl
         * emits `struct P a[N]` and `a[i].field` strides by the element struct (the venv keeps `si`). */
@@ -4440,6 +4773,7 @@ static void p_stmt_inner(CC *c) {
         * pointee type (elem_bytes already = pointee size) so the decl emits `T *p`, not a truncating uint32 */
         pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
         pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
+        pr->is_bool=(uint8_t)(ty.is_bool?1:0);   /* a `_Bool *` pointee: its element is `_Bool` (CF-ATOMIC) */
         if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);
         else if(ty.size==0 && !ty.is_float) pr->is_voidptr=1; }   /* a `void *` local (void pointee) -> emit `void *` */
       else if(ty.is_valist) c->fn->res[c->fn->n_res-1].is_valist=1;     /* a `va_list ap;` local -> emit `va_list` */
@@ -4525,6 +4859,14 @@ static void p_stmt_inner(CC *c) {
       int sz = (pv->type.ptr_depth>1) ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4); uint32_t val;
       /* `*pp = q` through a `T**` stores a full pointer (pointer_size), not the base scalar width */
       bcir_ctype pst=pointee_slot(&pv->type);           /* `*p` stores a byte copy: C's conversion first */
+      int at=index_elem_atomic(c,pv);                   /* an `_Atomic` pointee: atomic accesses (CF-ATOMIC) */
+      if(at && is_compound_op(&c->t[c->i])){            /* *p OP= expr on `_Atomic`: one read-modify-write */
+        char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        if(has_idx) (void)emit_rmw(c,suf,&pst,pv->rid,1,idx,1,rhs,0,0,0,index_elem_vol(c,pv),BCIR_BND_ASSUMED);
+        else (void)emit_rmw(c,suf,&pst,pv->rid,0,0,1,rhs,0,sz,0,index_elem_vol(c,pv),BCIR_BND_ASSUMED);
+        eat(c,";"); return;
+      }
       if(is_compound_op(&c->t[c->i])){                  /* *p OP= expr  ->  load, bin op, store */
         char ch=c->t[c->i].s[0]; c->i++;
         uint32_t cur = has_idx ? emit_index(c,pv,idx) : emit_deref(c,pv);
@@ -4538,9 +4880,11 @@ static void p_stmt_inner(CC *c) {
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){
         if(has_idx){ cl->n_rd=3; cl->rd[0]=pv->rid; cl->rd[1]=idx; cl->rd[2]=val; }   /* *(p+i) == p[i] */
-        else { cl->n_rd=2; cl->rd[0]=pv->rid; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; }
+        else { cl->n_rd=2; cl->rd[0]=pv->rid; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz;
+               if(pst.kind==0 && pst.is_bool){cl->imm[2]=1;cl->n_imm=3;} }   /* a _Bool pointee normalizes */
         cl->bounds=BCIR_BND_ASSUMED;
         mark_access(c,cl,index_elem_vol(c,pv));          /* `*p` / `*(p+i)`: the pointee */
+        mark_atomic(cl,at);
       }
       eat(c,";"); return;
     }
@@ -4555,6 +4899,13 @@ static void p_stmt_inner(CC *c) {
       int depth=br->ptr_depth?br->ptr_depth:1;
       int sz=(depth>1)?cc_abi(c)->pointer_size:(br->elem_bytes?(int)br->elem_bytes:4); uint32_t val;
       bcir_ctype pst=res_pointee_slot(br);              /* read before the value's parse can move res[] */
+      int at=(depth==1 && br->is_atomic), bvol=(depth==1 && br->is_volatile);   /* `_Atomic` / volatile pointee */
+      if(at && is_compound_op(&c->t[c->i])){           /* on `_Atomic`: one atomic read-modify-write */
+        char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        (void)emit_rmw(c,suf,&pst,base,0,0,1,rhs,0,sz,0,bvol,BCIR_BND_ASSUMED);
+        eat(c,";"); return;
+      }
       if(is_compound_op(&c->t[c->i])){                 /* **pp OP= expr -> load through base, bin, store */
         char ch=c->t[c->i].s[0]; c->i++;
         uint32_t cur=emit_deref_rid(c,base); uint32_t rhs=p_expr(c);
@@ -4566,7 +4917,9 @@ static void p_stmt_inner(CC *c) {
       val=store_conv(c,val,&pst);                      /* C's conversion to the pointee's type */
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){ cl->n_rd=2; cl->rd[0]=base; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; cl->bounds=BCIR_BND_ASSUMED;
-        const bcir_resource *bb=res_of(c->fn,base); mark_access(c,cl,depth==1 && bb && bb->is_volatile); }
+        if(pst.kind==0 && pst.is_bool){cl->imm[2]=1;cl->n_imm=3;}   /* a _Bool pointee normalizes (6.3.1.2) */
+        const bcir_resource *bb=res_of(c->fn,base); mark_access(c,cl,depth==1 && bb && bb->is_volatile);
+        mark_atomic(cl,at); }
       eat(c,";"); return;
     }
     c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
@@ -4594,6 +4947,13 @@ static void p_stmt_inner(CC *c) {
         field sub; int soa=elem_field(c,&f,&sub);   /* arr[i].field on an array-of-structs (strided store) */
         if(c->failed) return;
         const field *sf = soa ? &sub : &f;          /* the stored slot: the element FIELD, or the array element */
+        if(sf->is_atomic && is_compound_op(&c->t[c->i])){   /* on `_Atomic`: one atomic read-modify-write */
+          char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(sf);
+          const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+          (void)emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,soa?f.size:0,
+                         sf->is_volatile||f.is_volatile||v->type.is_volatile,BCIR_BND_ASSUMED);
+          eat(c,";"); return;
+        }
         if(is_compound_op(&c->t[c->i])){          /* load element, bin op, store back */
           char ch=c->t[c->i].s[0]; c->i++;
           uint32_t cur=soa?emit_member_index_field(c,v,&f,idx,&sub):emit_member_index(c,v,&f,idx);
@@ -4607,6 +4967,12 @@ static void p_stmt_inner(CC *c) {
         eat(c,";");return;
       }
       uint32_t val;
+      if(f.is_atomic && is_compound_op(&c->t[c->i])){  /* an `_Atomic` member: one atomic read-modify-write */
+        char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(&f);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        (void)emit_rmw(c,suf,&ft,v->rid,0,0,1,rhs,f.byte_off,f.size,0,f.is_volatile||v->type.is_volatile,BCIR_BND_ASSUMED);
+        eat(c,";"); return;
+      }
       if(is_compound_op(&c->t[c->i])){
         /* compound assignment to a member:  r->field OP= expr  (the set/clear-bits driver idiom; a
          * bitfield field reads via c.bf.get, a plain member via a plain load). */
@@ -4633,6 +4999,13 @@ static void p_stmt_inner(CC *c) {
           c->fn->n_res=as_res;c->fn->n_claims=as_cl;c->rid=as_rid;c->cid=as_cid;c->cl_ctr=as_clc;
           c->i=as_start;(void)p_expr(c);eat(c,";");return; }
         uint32_t aval;
+        if(sub.is_atomic && is_compound_op(&c->t[c->i])){   /* an `_Atomic` field: one atomic read-modify-write */
+          char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(&sub);
+          const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+          (void)emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,sub.byte_off,sub.size,v->type.size,
+                         sub.is_volatile||v->type.is_volatile,BCIR_BND_ASSUMED);
+          eat(c,";"); return;
+        }
         if(is_compound_op(&c->t[c->i])){               /* a[i].f OP= expr -> strided load, bin op, strided store */
           char ch=c->t[c->i].s[0]; c->i++;
           uint32_t cur=emit_index_field(c,v,idx,&sub); uint32_t rhs=p_expr(c);
@@ -4642,6 +5015,13 @@ static void p_stmt_inner(CC *c) {
           aval=tmp;
         } else { if(!eat(c,"="))return; aval=p_expr(c); }
         store_index_field(c,v,idx,&sub,aval); eat(c,";"); return;
+      }
+      if(index_elem_atomic(c,v) && is_compound_op(&c->t[c->i])){   /* `_Atomic` elements: one atomic RMW */
+        char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        bcir_ctype et=index_elem_ctype(v);
+        (void)emit_rmw(c,suf,&et,v->rid,1,idx,1,rhs,0,0,0,index_elem_vol(c,v),access_bnd(c,v->rid));
+        eat(c,";"); return;
       }
       if(is_compound_op(&c->t[c->i])){
         char ch=c->t[c->i].s[0]; c->i++;                /* a[idx] OP= expr -> load, op, store */
@@ -4657,7 +5037,7 @@ static void p_stmt_inner(CC *c) {
         c->i=as_start; (void)p_expr(c); eat(c,";"); return; }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=access_bnd(c,v->rid);  /* §5.12 promote */
-        mark_access(c,cl,index_elem_vol(c,v));}
+        mark_access(c,cl,index_elem_vol(c,v)); mark_atomic(cl,index_elem_atomic(c,v));}
       eat(c,";");return;}
     if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='='){
       tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t val=p_expr(c); int ien=c->i;
@@ -4672,6 +5052,12 @@ static void p_stmt_inner(CC *c) {
         c->i+=2; uint32_t rhs=p_expr(c);
         char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.ptr%s",ch=='+'?"add":"sub");
         bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
+        eat(c,";");return;
+      }
+      if(v->type.is_atomic && v->type.kind==0){         /* an `_Atomic` object: one atomic read-modify-write */
+        c->i+=2; uint32_t rhs=p_expr(c);
+        const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+        (void)emit_rmw(c,suf,&v->type,v->rid,0,0,1,rhs,0,v->type.size?v->type.size:4,0,v->type.is_volatile,BCIR_BND_ASSUMED);
         eat(c,";");return;
       }
       uint32_t cur=named_read(c,v);                     /* the current value (a volatile read, first) */
@@ -4869,10 +5255,13 @@ static int p_func(CC *c, bcir_func *fn) {
     uint32_t rid=add_res(c, ty_mmio(c,&ty,si,0)?BCIR_DOM_MMIO:BCIR_DOM_RAM,
                          ty.kind==2?ty.size:(ty.kind==1?c->s[si].size:ty.size),
                          ty.kind==2?(1<<16):1, ty.is_volatile, rk, pb);
+    if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_atomic=(uint8_t)(ty.is_atomic?1:0);   /* `_Atomic` (CF-ATOMIC) */
     if(ty.kind==2){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer param: carry the pointee
       * (width/sign/tag/depth) so pointer arithmetic on it (`p + i`) clones the real `T *` type, not uint32 */
       pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0); pr->ptr_depth=ty.ptr_depth;
       pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
+      pr->is_bool=(uint8_t)(ty.is_bool?1:0);   /* a `_Bool *` pointee: its element is `_Bool` (a typed store
+                                                * through `_Atomic _Bool *` converts, never a byte copy) */
       if(ty.ptr_to_struct) snprintf(pr->agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag); }
     else if(ty.is_float){ c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
       if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }     /* a _Complex parameter (a float pair) */
@@ -5040,7 +5429,7 @@ static const char *tty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32
  * scalar `tty`. Pointer types must be composed (not static strings), so it writes into a caller buffer
  * and returns it -- byte-identical to `tty` for non-pointers, so scalar emit is unchanged. */
 static const char *ptr_spelling(char *buf,size_t n,int vol,int voidp,const char *agg,int flt,uint32_t bytes,int signd,int depth,
-                                int cplx,int boolp,int pchar){
+                                int cplx,int boolp,int pchar,int atom){
   const char *base = voidp ? "void"   /* a `void *` pointee (`&&L`, void-pointee local): no width/sign */
     : agg[0] ? agg
     : cplx ? (bytes==8?"float _Complex":bytes>16?"long double _Complex":"double _Complex")
@@ -5051,14 +5440,15 @@ static const char *ptr_spelling(char *buf,size_t n,int vol,int voidp,const char 
   char stars[BCIR_MAX_PTR_DEPTH+2]; int d=depth?depth:1, si=0;   /* depth `*`s: `T**` at depth 2 */
   if(d>BCIR_MAX_PTR_DEPTH) d=BCIR_MAX_PTR_DEPTH;
   stars[si++]=' '; for(int k=0;k<d;k++) stars[si++]='*'; stars[si]=0;
-  snprintf(buf,n,"%s%s%s",vol?"volatile ":"",base,stars);   /* a pointer to volatile storage */
+  snprintf(buf,n,"%s%s%s%s",vol?"volatile ":"",atom?"_Atomic ":"",base,stars);   /* a pointer to volatile /
+                                                        * `_Atomic` storage (the oracle's `_cname`) */
   return buf;
 }
 static const char *decl_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t rid,char *buf,size_t n){
   const bcir_resource *r=res_of(f,rid);
   if(r && r->kind==BCIR_RK_POINTER)
     return ptr_spelling(buf,n,r->is_volatile,r->is_voidptr,r->agg,r->is_float,r->elem_bytes,r->is_signed,r->ptr_depth,
-                        r->is_complex,r->is_bool,r->is_plain_char);
+                        r->is_complex,r->is_bool,r->is_plain_char,r->is_atomic);
   snprintf(buf,n,"%s",tty(scratch,f,rid));
   return buf;
 }
@@ -5068,6 +5458,14 @@ static const char *decl_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,ui
 static const char *vol_ptr(const char *t,char *buf,size_t n){
   size_t k=strlen(t); while(k && t[k-1]==' ') k--;
   if(k && t[k-1]=='*') snprintf(buf,n,"%s volatile *",t); else snprintf(buf,n,"volatile %s *",t);
+  return buf;
+}
+/* A pointer to an `_Atomic` object of C type `t` (CF-ATOMIC) -- the oracle's `_atomic_ptr`: `_Atomic T *`,
+ * `volatile` too for a device access, `T _Atomic *` when `t` is itself a pointer type. */
+static const char *atomic_ptr(const char *t,int vol,char *buf,size_t n){
+  size_t k=strlen(t); while(k && t[k-1]==' ') k--;
+  const char *q=vol?"volatile _Atomic":"_Atomic";
+  if(k && t[k-1]=='*') snprintf(buf,n,"%s %s *",t,q); else snprintf(buf,n,"%s %s *",q,t);
   return buf;
 }
 /* The type a volatile LOAD reads into temp `trid`: the value's own type, at the slot's width `w` for an
@@ -5119,6 +5517,40 @@ static int is_global_ref(const bcir_func *f,uint32_t rid){
  * never a `uint32_t a = v;` declaration -- that would redeclare the parameter (invalid C). */
 static int is_param_ref(const bcir_func *f,uint32_t rid){
   for(int i=0;i<f->n_params;i++) if(f->params[i].rid==rid) return 1; return 0;
+}
+static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf, size_t bn, int is_write);   /* fwd */
+/* The `_Atomic` lvalue an atomic access performs (CF-ATOMIC) -- the oracle's `_atomic_object` --
+ * `(*(_Atomic T *)ADDR)` at the address the claim's first `naddr` reads and its imm name, exactly where the
+ * plain access lands: a typed element `base[idx]` keeps its bounds guard (a write site's unless the claim is a
+ * load); a member-array element or an array-of-structs field lands at base + off + idx*stride (the stride at
+ * imm[stride_at], else the element size); a member, a dereference or a named object at base + off. Never a
+ * byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears. */
+static const char *atomic_object(const bcir_func *f,const bcir_claim *cl,const char *t,int naddr,int stride_at,
+                                 char *buf,size_t n){
+  char pb[192], a[BCIR_CIR_NAME], b[BCIR_CIR_NAME], gb[256];
+  atomic_ptr(t,cl->is_volatile,pb,sizeof pb);
+  if(naddr==2 && !cl->n_imm){
+    snprintf(buf,n,"(*(%s)&%s[%s])",pb,rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,strcmp(cl->op,"c.load")!=0));
+    return buf; }
+  const char *amp=base_amp(res_of(f,cl->rd[0])); long long off=cl->n_imm?cl->imm[0]:0;
+  if(naddr==2){ long long es=cl->n_imm>1?cl->imm[1]:4, stride=cl->n_imm>stride_at?cl->imm[stride_at]:es;
+    snprintf(buf,n,"(*(%s)((char *)%s%s + %lld + (size_t)%s * %lld))",pb,amp,rname(f,cl->rd[0],a),off,
+             rname(f,cl->rd[1],b),stride);
+    return buf; }
+  snprintf(buf,n,"(*(%s)((char *)%s%s + %lld))",pb,amp,rname(f,cl->rd[0],a),off);
+  return buf;
+}
+/* The C type of an element of the pointer or array `rid` (the oracle's `_elem_ctype`): the slot an atomic
+ * store into a typed element `base[idx]` writes. A pointer's pointee is its spelling without the ` *`. */
+static const char *elem_spelling(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t rid,char *buf,size_t n){
+  const bcir_resource *r=res_of(f,rid);
+  if(r && r->kind==BCIR_RK_POINTER && (r->ptr_depth?r->ptr_depth:1)==1){
+    ptr_spelling(buf,n,0,r->is_voidptr,r->agg,r->is_float,r->elem_bytes,r->is_signed,1,r->is_complex,r->is_bool,
+                 r->is_plain_char,0);
+    size_t k=strlen(buf); while(k && (buf[k-1]=='*' || buf[k-1]==' ')) buf[--k]=0;
+    return buf; }
+  snprintf(buf,n,"%s",tty(scratch,f,rid));
+  return buf;
 }
 /* The index expression for `base[idx]`: a MASKED (runtime-bounds-checked, §5.12) access into a known-extent
  * array is wrapped in a bounds guard -- in-bounds returns idx (behaviour-identical to the raw `a[i]`),
@@ -5176,7 +5608,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
       /* a volatile OBJECT (scalar, array of scalars, struct) keeps its qualifier; a pointer's `volatile` is its
        * pointee's and rides in decl_ty; an array of pointers holds plain pointers */
-      const char *vq=(r->is_volatile && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"volatile ":"";
+      /* ... and an `_Atomic` object (a scalar, or an array's elements) is declared `_Atomic` (CF-ATOMIC): its reads
+       * and writes by name are atomic, and it takes the ABI's atomic alignment */
+      char vqb[24]; snprintf(vqb,sizeof vqb,"%s%s",
+                             (r->is_volatile && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"volatile ":"",
+                             (r->is_atomic && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"_Atomic ":"");
+      const char *vq=vqb;
       /* a static takes its storage class; a static array or aggregate starts zeroed -- its initializer is 0, as
        * both rails refuse any other -- while a static scalar's or pointer's value is baked in (the first arm) */
       const char *sp=sx>=0?"static ":"", *zi=(sx>=0||r->zinit)?" = {0}":"";
@@ -5191,7 +5628,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->ptr_depth)   /* an ARRAY of pointers `T *a[N]`: each element
         * its pointer type (a pointer to volatile keeps the pointee's qualifier), never the pointer-wide integer */
         w+=snprintf(o+EO,on-EO,"  %s%s%s[%u]%s;\n",sp,ptr_spelling(tb,sizeof tb,r->is_volatile,0,r->agg,r->ptee_float,
-                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char),nm,r->count,zi);
+                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char,r->is_atomic),nm,r->count,zi);
       else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s;\n",sp,vq,tty(&type_scratch,f,r->rid),nm,r->count,zi);  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
         w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm);
@@ -5263,6 +5700,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     else if(!strcmp(cl->op,"c.copy")){
       if(is_named_local(f,cl->wr[0])||is_global_ref(f,cl->wr[0])||is_param_ref(f,cl->wr[0])) w+=snprintf(o+EO,on-EO,"%s = %s;\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));   /* decl_ty: a copied pointer temp keeps `T *` */
+    }else if(!strcmp(cl->op,"c.load") && cl->hazard==BCIR_HZ_ATOMIC){   /* a read of an `_Atomic` object
+                                                       * (CF-ATOMIC): one atomic load through an `_Atomic` lvalue */
+      char ob[512]; const char *et=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);
+      atomic_object(f,cl,et,cl->n_rd,2,ob,sizeof ob);
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",et,rname(f,cl->wr[0],d),ob);
     }else if(!strcmp(cl->op,"c.load")){
       const bcir_resource *br=res_of(f,cl->rd[0]); long long off=cl->n_imm?cl->imm[0]:0;
       if(cl->n_rd==2 && cl->n_imm){       /* s.arr[i] / a[i].f: load at base + off + idx*stride, copy `es` bytes */
@@ -5277,7 +5719,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
             amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride); }
         else
         w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld + (size_t)%s * %lld, %lld);\n",
-          tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
+          decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }   /* decl_ty: an array-of-pointers element is `T *` */
       else if(cl->n_rd==2) w+=snprintf(o+EO,on-EO,"%s %s = %s[%s];\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),guard_idx(f,cl,gb,sizeof gb,0));  /* READ guard; decl_ty: an array-of-pointers element load is `T *` */
       else if(cl->is_volatile){ char at[96], vp[112];   /* a volatile member / dereference: one ordered access of
                                                        * exactly the accessed type -- never a 32-bit register */
@@ -5289,6 +5731,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       else { const char *amp=holds_pointer(br)?"":"&"; long long fsz=cl->n_imm>1?cl->imm[1]:4;
         /* a plain member load: memcpy fsz bytes into the typed temp so a signed sub-int member sign-extends */
         w+=snprintf(o+EO,on-EO,"%s %s; memcpy(&%s, (const char *)%s%s + %lld, %lld);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->wr[0],d),amp,rname(f,cl->rd[0],a),off,fsz); }  /* decl_ty: a pointer member load is `T *t` */
+    }else if(!strcmp(cl->op,"c.store") && cl->hazard==BCIR_HZ_ATOMIC){   /* a write of an `_Atomic` object
+                                                       * (CF-ATOMIC): one atomic store of exactly its slot's type */
+      char ob[512], st[96]; int naddr=cl->n_rd-1;
+      const char *slot = (naddr==2 && !cl->n_imm) ? elem_spelling(&type_scratch,f,cl->rd[0],st,sizeof st)
+        : vol_slot_ty(&type_scratch,f,cl->rd[cl->n_rd-1],cl->n_imm>1?cl->imm[1]:4,(int)(cl->n_imm>2?cl->imm[2]:0),st,sizeof st);
+      atomic_object(f,cl,slot,naddr,3,ob,sizeof ob);
+      w+=snprintf(o+EO,on-EO,"%s = %s;\n",ob,rname(f,cl->rd[cl->n_rd-1],b));
     }else if(!strcmp(cl->op,"c.store")&&cl->n_rd==3){   /* L3: array element store  a[idx] = value */
       if(cl->n_imm){                      /* s.arr[i]=v / a[i].f=v: store at base + off + idx*stride */
         const bcir_resource *br=res_of(f,cl->rd[0]); const char *amp=base_amp(br);
@@ -5297,6 +5746,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         const bcir_resource *vr=res_of(f,cl->rd[2]);   /* a float element converts (double->float), not a uint
                                                         * reinterpret; a narrower int widens to the element. */
         const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool element: `_Bool _v = x` normalizes to 0/1 */
+                      :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(&type_scratch,f,cl->rd[2],tb,sizeof tb)   /* a pointer
+                       * element (`T *arr[N]`) copies the whole pointer, never a truncating uint32 */
                       :(vr&&vr->is_complex)?(es==8?"float _Complex":es>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
@@ -5367,11 +5818,13 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       unsigned long long clear=~(mask<<off)&(wide?~0ull:0xFFFFFFFFull); const char *sfx=wide?"ull":"u";
       w+=snprintf(o+EO,on-EO,"%s %s = (%s & %llu%s) | ((%s & %llu%s) << %lld);\n",wide?"uint64_t":"uint32_t",
                   rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),clear,sfx,rname(f,cl->rd[1],b),mask,sfx,off); }
-    else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin */
-      w+=snprintf(o+EO,on-EO,"uint32_t %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",
+    else if(!strncmp(cl->op,"c.atomic.",9))      /* atomic RMW -> the matching builtin, its value typed by the
+                                                  * pointee (a uint32 truncated a 64-bit counter, CF-ATOMIC) */
+      w+=snprintf(o+EO,on-EO,"%s %s = __atomic_fetch_%s(%s, %s, __ATOMIC_SEQ_CST);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
                   rname(f,cl->wr[0],d),cl->op+9,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
-    else if(!strncmp(cl->op,"c.cmpxchg.",10))     /* compare-and-swap -> the __sync CAS builtin */
-      w+=snprintf(o+EO,on-EO,"uint32_t %s = __sync_%s_compare_and_swap(%s, %s, %s);\n",
+    else if(!strncmp(cl->op,"c.cmpxchg.",10))     /* compare-and-swap -> the __sync CAS builtin (the value form
+                                                  * typed by the pointee) */
+      w+=snprintf(o+EO,on-EO,"%s %s = __sync_%s_compare_and_swap(%s, %s, %s);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
                   rname(f,cl->wr[0],d),cl->op+10,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.fence"))
       w+=snprintf(o+EO,on-EO,"__atomic_thread_fence(__ATOMIC_SEQ_CST);\n");
@@ -5379,14 +5832,29 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+EO,on-EO,"__atomic_thread_fence(__ATOMIC_ACQUIRE);\n");   /* C twin does NO per-ISA asm) */
     else if(!strcmp(cl->op,"c.fence.release"))    /* SEG7: order-parameterized release fence (PORTABLE) */
       w+=snprintf(o+EO,on-EO,"__atomic_thread_fence(__ATOMIC_RELEASE);\n");
+    else if(!strncmp(cl->op,"c.c11atom.rmw:",14)){   /* a compound assignment / inc / dec of an `_Atomic` object
+                                                       * (CF-ATOMIC): one atomic read-modify-write through an
+                                                       * `_Atomic` lvalue, its value the expression's */
+      const char *kind=cl->op+14; char ob[512], ex[640];
+      int incdec=!strcmp(kind,"preinc")||!strcmp(kind,"predec")||!strcmp(kind,"postinc")||!strcmp(kind,"postdec");
+      const char *et=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);
+      atomic_object(f,cl,et,cl->n_rd-(incdec?0:1),3,ob,sizeof ob);
+      if(!strcmp(kind,"preinc")) snprintf(ex,sizeof ex,"++%s",ob);
+      else if(!strcmp(kind,"predec")) snprintf(ex,sizeof ex,"--%s",ob);
+      else if(!strcmp(kind,"postinc")) snprintf(ex,sizeof ex,"%s++",ob);
+      else if(!strcmp(kind,"postdec")) snprintf(ex,sizeof ex,"%s--",ob);
+      else snprintf(ex,sizeof ex,"%s %s= %s",ob,binop_c(kind),rname(f,cl->rd[cl->n_rd-1],b));
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s);\n",et,rname(f,cl->wr[0],d),ex); }
     else if(!strncmp(cl->op,"c.c11atom.",10)){   /* C11 <stdatomic.h> generics on _Atomic objects */
       const char *fn=cl->op+10;                  /* fetch_add / fetch_sub / fetch_xor / load / store */
-      if(!strcmp(fn,"load")) w+=snprintf(o+EO,on-EO,"uint32_t %s = atomic_load(%s);\n",rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
+      if(!strcmp(fn,"load")) w+=snprintf(o+EO,on-EO,"%s %s = atomic_load(%s);\n",   /* typed by the pointee (CF-ATOMIC) */
+                                         decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
       else if(!strcmp(fn,"store")) w+=snprintf(o+EO,on-EO,"atomic_store(%s, %s);\n",rname(f,cl->rd[0],a),rname(f,cl->rd[1],b));
       else if(!strncmp(fn,"cas_",4))             /* cas_strong/weak -> _Bool atomic_compare_exchange_<...>(obj,&exp,des) */
         w+=snprintf(o+EO,on-EO,"_Bool %s = atomic_compare_exchange_%s(%s, %s, %s);\n",
                     rname(f,cl->wr[0],d),fn+4,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
-      else w+=snprintf(o+EO,on-EO,"uint32_t %s = atomic_%s(%s, %s);\n",rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
+      else w+=snprintf(o+EO,on-EO,"%s %s = atomic_%s(%s, %s);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
+                       rname(f,cl->wr[0],d),fn,rname(f,cl->rd[0],a),rname(f,cl->rd[1],b)); }
     else if(!strcmp(cl->op,"c.addrof")){           /* &lvalue -> a pointer value (decl_ty: `T *`, `T **`, ...) */
       const char *pt=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);
       const bcir_resource *br=res_of(f,cl->rd[0]);
@@ -5854,6 +6322,14 @@ static void vn_base(const char *op, char *out){
     if(BCIR_VN_STRIP(head)){ snprintf(out,BCIR_CIR_NAME,"%s",head); return; } }
   snprintf(out,BCIR_CIR_NAME,"%s",op);
 }
+/* A claim's op identity in the canon (the oracle's `_vn_op`): `vn_base`, and a load or store of an `_Atomic`
+ * object (the `atomic` hazard, CF-ATOMIC) marked `!atomic` -- the same op and operands as a plain access, but
+ * not the same access. No other c.load / c.store carries the hazard, so every other record is unchanged. */
+static void canon_op(const bcir_claim *cl, char *out){
+  vn_base(cl->op,out);
+  if(cl->hazard==BCIR_HZ_ATOMIC && (!strcmp(out,"c.load") || !strcmp(out,"c.store"))){
+    size_t n=strlen(out); snprintf(out+n,BCIR_CIR_NAME-n,"!atomic"); }
+}
 
 static void *vn_alloc(bcir_host_arena *arena,size_t count,size_t element_size,int zero){
   size_t bytes;void *result;
@@ -5899,7 +6375,8 @@ static void vn_imm(const bcir_claim *cl, sbuf *rec){
   } else if(!strcmp(op,"c.load")){
     long long off = n>0 ? (long long)cl->imm[0] : 0;   /* the member byte offset (0 if absent) */
     int l=snprintf(nb,sizeof nb,"%lld",off); sb_add(rec,nb,(size_t)l);
-  } else if(!strcmp(op,"c.store")){
+  } else if(!strcmp(op,"c.store") || !strncmp(op,"c.c11atom.rmw:",14)){   /* an atomic read-modify-write: the
+                                                       * store's address imm (CF-ATOMIC) */
     int m = n<2 ? n : 2;                               /* (byte offset, unit size); drop the _Bool/stride tail */
     for(int k=0;k<m;k++){ if(k)sb_str(rec,","); int l=snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]); sb_add(rec,nb,(size_t)l); }
   }
@@ -5929,7 +6406,7 @@ static void vn_claim(vnctx *v, int ci, int depth, sbuf *out){
   if(depth>BCIR_VN_MAXDEPTH){ sb_str(out,"cyc"); return; }
   v->memo[ci]=vn_strdup(v->arena,"cyc");        /* cycle guard: a loop-carried rid resolves to "cyc" */
   const bcir_claim *cl=&v->f->claims[ci];
-  char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
+  char base[BCIR_CIR_NAME]; canon_op(cl,base);
   /* gather the vns of this claim's reads -- POSITIONAL, except sorted for a commutative op */
   char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
   for(int k=0;k<np;k++){ ps[k]=sbuf_for(v->arena); vn_of(v,cl->rd[k],depth+1,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
@@ -5980,7 +6457,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   char **recs=(char **)vn_alloc(arena,(size_t)nc,sizeof *recs,0);
   if(nc&&!recs){emit(ctx,"oom\n",4);return;}
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
-    char base[BCIR_CIR_NAME]; vn_base(cl->op,base);
+    char base[BCIR_CIR_NAME]; canon_op(cl,base);
     char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
     for(int k=0;k<np;k++){ ps[k]=sbuf_for(arena); vn_of(&v,cl->rd[k],0,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
     if(vn_commutative(base)) sort_strs(parts,np);     /* commutative: sort; else POSITIONAL */

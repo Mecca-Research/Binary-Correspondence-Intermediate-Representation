@@ -82,8 +82,10 @@ static int on_move(const bcir_ep_move_view *v, void *ctx) {
   hex(v->dst_bank, v->dst_len);
   printf(" offset=%" PRIu64 " size=%" PRIu64 " route=", v->offset, v->size);
   hex(v->route, v->route_len);
-  printf(" kind=%u coherence=%u map_gen=%u data_gen=%u after=%" PRIu64 " before=%" PRIu64 "\n",
-         v->kind, v->coherence, v->map_gen, v->data_gen, v->after_claim, v->before_claim);
+  printf(" kind=%u coherence=%u map_gen=%u data_gen=%u after=%" PRIu64 " before=%" PRIu64
+         " claim=%" PRIu64 " version=%u flags=%u producer=%" PRIu64 " bits=%u cert=%" PRIu64 "\n",
+         v->kind, v->coherence, v->map_gen, v->data_gen, v->after_claim, v->before_claim,
+         v->claim, v->version, v->flags, v->producer, v->bits, v->cert);
   return 0;
 }
 
@@ -159,6 +161,12 @@ int main(int argc, char **argv) {
     hex(sp ? sp : "", sp ? sp_len : 0);
     printf("\n");
     if (dump) {
+      uint64_t source_hash = 0, spec_hash = 0;
+      if (bcir_ep_binding(buf, n, &source_hash, &spec_hash) != BCIR_OK) {
+        printf("WALK_FAIL\n");
+        ok = 0;
+      }
+      printf("binding source_hash=%" PRIu64 " spec_hash=%" PRIu64 "\n", source_hash, spec_hash);
       if (bcir_ep_for_each_step(buf, n, on_step, 0) != BCIR_OK ||
           bcir_ep_for_each_lifetime(buf, n, on_lifetime, 0) != BCIR_OK ||
           bcir_ep_for_each_move(buf, n, on_move, 0) != BCIR_OK ||

@@ -793,14 +793,14 @@ def _plan_bytes() -> bytes:
     return encode_plan(plan_from_realization(module, result, target, "eft"))
 
 
-def _four_bundle() -> ArtifactBundle:
+def _four_bundle(plan_bytes: bytes | None = None) -> ArtifactBundle:
     """`_three_bundle` plus the plan its root pack was derived from, as its own kind."""
     three = _three_bundle()
     plan = ArtifactVariant(
         "01-plan",
         ArtifactKind.EXECUTION_PLAN,
         ArtifactFormat.EXECUTION_PLAN,
-        _plan_bytes(),
+        _plan_bytes() if plan_bytes is None else plan_bytes,
         channel="host",
         portable=True,
     )
@@ -813,16 +813,21 @@ def _four_bundle() -> ArtifactBundle:
     )
 
 
-def _plan_payload_spoof() -> bytes:
-    """A fully re-sealed BCAB whose plan variant carries an illegal mode code (CRC-valid)."""
-    original = bytearray(encode_bundle(_four_bundle()))
+def _illegal_mode(plan: bytearray) -> None:
+    plan[8] = 7  # mode: 0=eft, 1=tokens; 7 is outside the closed set
+
+
+def _plan_payload_spoof(plan_bytes: bytes | None = None, mutate=_illegal_mode) -> bytes:
+    """A fully re-sealed BCAB whose plan variant is broken by `mutate` (CRC-valid): an illegal
+    mode code by default."""
+    original = bytearray(encode_bundle(_four_bundle(plan_bytes)))
     span = next(
         span
         for span in inspect_bundle(bytes(original)).spans
         if span.kind == "payload" and span.name == "01-plan"
     )
     plan = bytearray(original[span.offset : span.end])
-    plan[8] = 7  # mode: 0=eft, 1=tokens; 7 is outside the closed set
+    mutate(plan)
     struct.pack_into("<I", plan, len(plan) - 4, zlib.crc32(plan[:-4]) & 0xFFFFFFFF)
     original[span.offset : span.end] = plan
     entry = ARTIFACT_HEADER_SIZE + ARTIFACT_ENTRY_SIZE  # "01-plan" is the second directory entry
@@ -904,6 +909,90 @@ def test_an_execution_plan_travels_as_a_bundle_variant_on_both_rails():
         spoof.write_bytes(_plan_payload_spoof())
         rejected = subprocess.run(
             [str(executable), str(spoof), "reject"], capture_output=True, text=True, timeout=30
+        )
+        assert rejected.returncode == 0, rejected.stderr
+        assert rejected.stdout.startswith("REJECT payload"), rejected.stdout
+
+
+def _movement_plan_bytes() -> bytes:
+    """A v3 plan (G8): the movement planner's plan of the `writeback` fixture."""
+    from bcir.kbcir.movement import execution_plan_of
+    from bcir.tests import movement_fixtures as mf
+
+    h, _theta = mf.target_and_theta()
+    _module, _spec, mp = mf.planned("writeback")["writeback"]
+    blob = encode_plan(execution_plan_of(mp.best, h))
+    assert blob[4] == 3
+    return blob
+
+
+def _unbind(plan: bytearray) -> None:
+    plan[-20:-4] = bytes(16)  # the v3 binding trailer: source_hash and spec_hash, both zero
+
+
+def test_a_movement_plan_travels_as_a_bundle_variant_on_both_rails():
+    """v3 (G8): the BCAB reader admits a plan that moves data -- its move tail and binding
+    trailer verified by the same wire laws on both rails -- and refuses one whose binding was
+    erased (CRC-valid, re-sealed), on both rails."""
+    blob = _movement_plan_bytes()
+    bundle = _four_bundle(blob)
+    again = decode_bundle(encode_bundle(bundle))
+    assert again == bundle
+    plan = decode_plan(again.variant("01-plan").payload)
+    assert plan.moves and plan.source_hash and plan.spec_hash
+    unbound = bytearray(blob)
+    _unbind(unbound)
+    struct.pack_into("<I", unbound, len(unbound) - 4, zlib.crc32(unbound[:-4]) & 0xFFFFFFFF)
+    try:
+        ArtifactVariant(
+            "01-plan", ArtifactKind.EXECUTION_PLAN, ArtifactFormat.EXECUTION_PLAN, bytes(unbound)
+        )
+        raise AssertionError("an unbound v3 plan payload was accepted")
+    except BundleError as exc:
+        assert "ExecutionPlan" in str(exc)
+    spoof = _plan_payload_spoof(blob, _unbind)
+    _must_reject(spoof, "ExecutionPlan")
+    compiler = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    if not compiler:
+        return
+    c = Path(__file__).resolve().parents[2] / "runtime" / "c"
+    with tempfile.TemporaryDirectory() as directory:
+        executable = Path(directory) / "test"
+        build = subprocess.run(
+            [
+                compiler,
+                "-std=c11",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                str(c),
+                str(c / "bcir_artifact_bundle.c"),
+                str(c / "bcir_sha256.c"),
+                str(c / "bcir_runtime.c"),
+                str(c / "test_artifact_bundle.c"),
+                "-o",
+                str(executable),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert build.returncode == 0, build.stderr
+        path = Path(directory) / "bundle.bcab"
+        write_bundle(path, bundle)
+        run = subprocess.run(
+            [str(executable), str(path)], capture_output=True, text=True, timeout=30
+        )
+        assert run.returncode == 0 and run.stdout.startswith("OK entries=4"), (
+            run.stdout,
+            run.stderr,
+        )
+        bad = Path(directory) / "unbound.bcab"
+        bad.write_bytes(spoof)
+        rejected = subprocess.run(
+            [str(executable), str(bad), "reject"], capture_output=True, text=True, timeout=30
         )
         assert rejected.returncode == 0, rejected.stderr
         assert rejected.stdout.startswith("REJECT payload"), rejected.stdout

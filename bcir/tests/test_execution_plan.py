@@ -60,6 +60,8 @@ from bcir.tests.plan_fixtures import (
     stale_cases,
     stale_fixtures,
     static_memory_lifetimes_agree,
+    v3_variants,
+    wire_refuses,
 )
 from bcir.verify import verify_execution_plan, verify_pack
 
@@ -511,3 +513,74 @@ def test_the_c_twin_reads_a_v2_plan_and_refuses_an_aliasing_one():
         v1[9] = 1
         assert c_refuses(exe, tmp, reseal(bytes(v1)))
         assert python_refuses(module, reseal(bytes(v1)))
+
+
+def test_the_c_twin_reads_every_planned_v3_plan_and_refuses_every_malformed_edge():
+    """G8 (S5-C) on the C rail: every plan the movement planner mints decodes on the twin and
+    re-encodes byte-identically -- the v3 move tail and the binding trailer included -- and
+    every malformed move and binding is refused by both rails (one verdict per variant)."""
+    if compiler() is None:
+        return
+    from bcir.abi.execution_plan_abi import plan_version
+    from bcir.kbcir.movement import execution_plan_of
+    from bcir.tests import movement_fixtures as mf
+
+    h, _theta = mf.target_and_theta()
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+        moved, edges = set(), set()
+        for name, (_module, _spec, mp) in mf.planned().items():
+            plan = execution_plan_of(mp.best, h)
+            blob = encode_plan(plan)
+            dump = c_roundtrip(exe, tmp, blob)
+            assert parse_c_dump(dump) == plan, name
+            assert encode_plan(parse_c_dump(dump)) == blob, name
+            # the plan binds its pack and the live registry of the module it realizes (M'): the
+            # vector is located before the v3 binding trailer, not at the end of the body
+            mod = mp.best.transform.module
+            code, out = run_harness(
+                exe,
+                tmp,
+                blob,
+                pack_bytes=encode(hydrate(mod, mp.best.result, "plan0")),
+                live=generation_vector(mod),
+            )
+            assert code == 0 and "pack=BCIR_OK" in out and "vector=BCIR_OK" in out, (name, out)
+            if plan_version(plan) == 3:
+                assert f"binding source_hash={plan.source_hash} spec_hash={plan.spec_hash}" in dump
+                moved.add(name)
+                edges |= {(mv.kind, mv.coherence) for mv in plan.moves}
+        # ... and a pack or a registry that moved after the v3 plan was minted is stale
+        _module, _spec, mp = mf.planned("writeback")["writeback"]
+        plan = execution_plan_of(mp.best, h)
+        mod = mp.best.transform.module
+        rid = min(mod.resources)
+        moved_mod = replace(
+            mod,
+            resources={
+                **mod.resources,
+                rid: replace(mod.resources[rid], data_gen=mod.resources[rid].data_gen + 1),
+            },
+        )
+        code, out = run_harness(
+            exe,
+            tmp,
+            encode_plan(plan),
+            pack_bytes=encode(hydrate(moved_mod, mp.best.result, "plan0")),
+            live=generation_vector(moved_mod),
+        )
+        assert code != 0 and "pack=BCIR_ERR_STALE" in out and "vector=BCIR_ERR_STALE" in out, out
+        # the plans that move data, and every edge shape they carry, crossed the C rail
+        assert moved == set(mf.planned()) - mf.IDENTITY, moved
+        assert edges == {
+            ("direct", "none"),
+            ("direct", "writeback"),
+            ("staged", "none"),
+            ("compressed", "none"),
+            ("rematerialized", "none"),
+        }, edges
+        variants = v3_variants()
+        assert len(variants) >= 30
+        for name, blob, _plan in variants:
+            assert wire_refuses(blob), name
+            assert c_refuses(exe, tmp, blob), name

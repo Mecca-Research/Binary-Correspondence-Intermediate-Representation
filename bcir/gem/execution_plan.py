@@ -11,9 +11,10 @@ format (`bcir/abi/execution_plan_abi.py`, `docs/kernel/BCIR_EXECUTION_PLAN_ABI.m
 * **lifetimes** -- the static-memory planner's addresses (bank, offset, size, alignment,
   first/last phase) and, since v2 (G5), the half-open liveness interval in the plan's
   liveness domain (`liveness`: phase positions, or the placement's own ticks);
-* **moves** -- the movement edges G8 will produce (source and destination bank, byte range,
-  route, coherence action, generation, overlap window, kind); declared, carried and verified
-  for well-formedness now so G8 lands as content, not as a wire change;
+* **moves** -- the movement edges G8 produces (`kbcir.movement`): source and destination bank,
+  byte range, route, coherence action, generation, overlap window and kind, and since v3 the
+  claim that executes the edge, the version it lands, the producer a remat replays, a
+  compressed edge's codec bits and the certificate digest;
 * **generations** -- the registry's per-resource generation vector the plan was placed under
   (R11, the StreamPack v4 record carried forward).
 
@@ -50,6 +51,14 @@ LIVENESS_DOMAINS = ("phase", "schedule")
 #: compressed or evicted") and coherence actions, closed sets on the wire (u8 codes).
 MOVE_KINDS = ("direct", "peer", "staged", "rematerialized", "compressed", "evicted")
 COHERENCE_ACTIONS = ("none", "flush", "invalidate", "writeback")
+
+#: v3 (G8, S5-C) movement-edge flags: which optional claim references the edge carries. A v1/v2
+#: edge spelled "unconstrained" as claim id 0, which is also a legal claim; v3 says it.
+MOVE_HAS_AFTER = 1
+MOVE_HAS_BEFORE = 2
+MOVE_HAS_PRODUCER = 4
+MOVE_HAS_CLAIM = 8
+MOVE_FLAGS = MOVE_HAS_AFTER | MOVE_HAS_BEFORE | MOVE_HAS_PRODUCER | MOVE_HAS_CLAIM
 
 
 @dataclass(frozen=True)
@@ -118,6 +127,23 @@ class MovementEdge:
     data_gen: int = 0
     after_claim: int = 0
     before_claim: int = 0
+    # v3 (G8, S5-C), append-only; zero is "absent": the claim that executes the edge (a move or
+    # a remat of the plan's module), the logical version it lands (0 = the content before the
+    # module ran), which claim references are present (`MOVE_HAS_*`), the producer a remat
+    # replays, the codec bits of a compressed edge, and the remat / accuracy certificate digest.
+    claim: int = 0
+    version: int = 0
+    flags: int = 0
+    producer: int = 0
+    bits: int = 0
+    cert: int = 0
+
+    @property
+    def v3(self) -> bool:
+        """Whether the edge needs the v3 record tail to be carried."""
+        return bool(
+            self.claim or self.version or self.flags or self.producer or self.bits or self.cert
+        )
 
 
 @dataclass
@@ -134,6 +160,10 @@ class ExecutionPlan:
     lifetimes: list[Lifetime] = field(default_factory=list)
     moves: list[MovementEdge] = field(default_factory=list)
     generations: list[Generation] = field(default_factory=list)
+    # v3 (G8, S5-C): the goal graph the movement transform started from and the movement spec it
+    # was planned under (`kbcir.movement`); 0 on a plan that moves nothing.
+    source_hash: int = 0
+    spec_hash: int = 0
 
     @property
     def serial(self) -> int:
@@ -282,6 +312,11 @@ __all__ = [
     "ExecutionPlan",
     "LIVENESS_DOMAINS",
     "Lifetime",
+    "MOVE_FLAGS",
+    "MOVE_HAS_AFTER",
+    "MOVE_HAS_BEFORE",
+    "MOVE_HAS_CLAIM",
+    "MOVE_HAS_PRODUCER",
     "MOVE_KINDS",
     "MovementEdge",
     "PLAN_MODES",

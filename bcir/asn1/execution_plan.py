@@ -19,6 +19,13 @@ The non-obvious choices, stated:
 * **Defaults mirror the native format's implicit ones**, so §11.5 omits them under DER and
   the common case stays as small as the native form.
 * **`route` is OPTIONAL**, absent for the empty string, as a segment's `prefetch` is.
+* **The wire laws are the value space.** Both directions apply the native codec's laws
+  (`execution_plan_abi.validate_plan`), so every transfer syntax admits exactly the plans the
+  native format does: a same-bank "move", a lossy writeback or a v3 edge whose flags lie is
+  refused here as it is by `decode_plan` and the C twin (an `Asn1Error`, never a plan).
+* **v3 (G8) is additive.** The movement edge's claim/version/flags/producer/bits/cert and the
+  plan's sourceHash/specHash default to 0 -- the native v1/v2 meaning -- so a plan that moves
+  nothing projects exactly as before, apart from the projection version.
 """
 
 from __future__ import annotations
@@ -33,7 +40,9 @@ EXECUTION_PLAN_MODULE_OID: tuple[int, ...] = (*BCIR_ARC, 3)
 
 #: Bumped only when the ASN.1 module changes shape; independent of the native version.
 #: 2 since G5 (S1-D): the `liveness` component and the lifetime ticks (native v2).
-PROJECTION_VERSION = 2
+#: 3 since G8 (S5-C): the movement edge's v3 tail and the source/spec binding (native v3). A
+#: reader decodes every version up to its own and refuses a newer one, as the native reader does.
+PROJECTION_VERSION = 3
 
 _INTEGER = Primitive(Universal.INTEGER, "INTEGER")
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
@@ -117,6 +126,13 @@ MOVEMENT_EDGE = Sequence(
         Component("dataGen", _INTEGER, tag=9, default=0),
         Component("afterClaim", _INTEGER, tag=10, default=0),
         Component("beforeClaim", _INTEGER, tag=11, default=0),
+        # v3 (G8): what executes the edge and what it carries (native move tail)
+        Component("claim", _INTEGER, tag=12, default=0),
+        Component("version", _INTEGER, tag=13, default=0),
+        Component("flags", _INTEGER, tag=14, default=0),
+        Component("producer", _INTEGER, tag=15, default=0),
+        Component("bits", _INTEGER, tag=16, default=0),
+        Component("cert", _INTEGER, tag=17, default=0),
     ),
     name="MovementEdge",
 )
@@ -149,6 +165,9 @@ EXECUTION_PLAN = Sequence(
             "generations", SequenceOf(GENERATION, "SEQUENCE OF Generation"), tag=11, default=[]
         ),
         Component("liveness", LIVENESS, tag=12, default=0),
+        # v3 (G8): the goal graph and the movement spec the plan was planned under
+        Component("sourceHash", _INTEGER, tag=13, default=0),
+        Component("specHash", _INTEGER, tag=14, default=0),
     ),
     name="ExecutionPlan",
 )
@@ -186,8 +205,28 @@ def _name(table: dict, code: int, what: str) -> str:
         ) from None
 
 
+def _lawful(plan):
+    """`plan`, if the native wire laws admit it (`validate_plan`, the predicate `decode_plan` and
+    the C twin apply); an `Asn1Error` naming the law otherwise."""
+    from ..abi.execution_plan_abi import validate_plan
+    from ..abi.streampack_abi import AbiError
+
+    try:
+        validate_plan(plan)
+    except AbiError as exc:
+        raise Asn1Error(f"the plan violates the ExecutionPlan wire laws: {exc}") from None
+    return plan
+
+
 def plan_to_value(plan) -> dict:
-    """The ASN.1 abstract value for a `gem.execution_plan.ExecutionPlan`."""
+    """The ASN.1 abstract value for a `gem.execution_plan.ExecutionPlan` (refused, like the
+    native encoder refuses it, when the plan breaks a wire law)."""
+    return _plan_value(_lawful(plan))
+
+
+def _plan_value(plan) -> dict:
+    """The document a plan spells, lawful or not (the malformed corpus mints its variants
+    here; every public path goes through `plan_to_value`)."""
     return {
         "version": PROJECTION_VERSION,
         "sourcePlan": plan.source_plan,
@@ -239,6 +278,12 @@ def plan_to_value(plan) -> dict:
                 "dataGen": mv.data_gen,
                 "afterClaim": mv.after_claim,
                 "beforeClaim": mv.before_claim,
+                "claim": mv.claim,
+                "version": mv.version,
+                "flags": mv.flags,
+                "producer": mv.producer,
+                "bits": mv.bits,
+                "cert": mv.cert,
             }
             for mv in plan.moves
         ],
@@ -246,11 +291,25 @@ def plan_to_value(plan) -> dict:
             {"rid": g.rid, "mapGen": g.map_gen, "dataGen": g.data_gen} for g in plan.generations
         ],
         "liveness": _code(LIVENESS_VALUES, plan.liveness, "liveness"),
+        "sourceHash": plan.source_hash,
+        "specHash": plan.spec_hash,
     }
 
 
 def value_to_plan(value: dict):
-    """The inverse of `plan_to_value` (imports the GEM types lazily — cold organ)."""
+    """The inverse of `plan_to_value`: a document of any projection version up to this one,
+    whose plan the native wire laws admit."""
+    version = value.get("version", 1)
+    if not 1 <= version <= PROJECTION_VERSION:
+        raise Asn1Error(
+            f"ExecutionPlan projection version {version} is outside this reader's "
+            f"1..{PROJECTION_VERSION}"
+        )
+    return _lawful(_value_to_plan(value))
+
+
+def _value_to_plan(value: dict):
+    """The plan a document spells (imports the GEM types lazily — cold organ)."""
     from ..gem.execution_plan import ExecutionPlan, Lifetime, MovementEdge, PlanStep
     from ..gem.streampack import Generation
 
@@ -305,6 +364,12 @@ def value_to_plan(value: dict):
                 data_gen=mv.get("dataGen", 0),
                 after_claim=mv.get("afterClaim", 0),
                 before_claim=mv.get("beforeClaim", 0),
+                claim=mv.get("claim", 0),
+                version=mv.get("version", 0),
+                flags=mv.get("flags", 0),
+                producer=mv.get("producer", 0),
+                bits=mv.get("bits", 0),
+                cert=mv.get("cert", 0),
             )
             for mv in value.get("moves", [])
         ],
@@ -312,6 +377,8 @@ def value_to_plan(value: dict):
             Generation(rid=g["rid"], map_gen=g.get("mapGen", 0), data_gen=g.get("dataGen", 0))
             for g in value.get("generations", [])
         ],
+        source_hash=value.get("sourceHash", 0),
+        spec_hash=value.get("specHash", 0),
     )
 
 

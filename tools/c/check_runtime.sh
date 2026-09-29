@@ -267,6 +267,49 @@ fi
 grep -q "^vector=BCIR_ERR_STALE$" "${tmp}/plan_stale.txt" \
   && echo "  PASS ExecutionPlanV1 stale vector refused on the C rail (BCIR_ERR_STALE)" \
   || { echo "  FAIL: unexpected stale verdict"; cat "${tmp}/plan_stale.txt"; exit 1; }
+# v3 (G8, S5-C): every plan the movement planner mints (bcir/kbcir/movement.py) -- the move tail
+# and the source/spec binding trailer -- decodes on the C rail, binds its pack and the live
+# registry of the module it realizes (the vector sits before the binding trailer) and re-encodes
+# byte for byte; every malformed move and binding (plan_fixtures.v3_variants, the list the tests
+# read) is refused on both rails.
+python3 - "${tmp}" "${tmp}/test_execution_plan" <<'PY' || { echo "  FAIL: ExecutionPlan v3 (G8) parity"; exit 1; }
+import sys
+from bcir.abi import encode, encode_plan
+from bcir.abi.execution_plan_abi import plan_version
+from bcir.gem.streampack import generation_vector, hydrate
+from bcir.kbcir.movement import execution_plan_of
+from bcir.tests import movement_fixtures as mf
+from bcir.tests.plan_fixtures import (
+    c_refuses, c_roundtrip, parse_c_dump, run_harness, v3_variants, wire_refuses,
+)
+tmp, exe = sys.argv[1], sys.argv[2]
+h, _theta = mf.target_and_theta()
+moved = set()
+for name, (_module, _spec, mp) in mf.planned().items():
+    plan = execution_plan_of(mp.best, h)
+    blob = encode_plan(plan)
+    if encode_plan(parse_c_dump(c_roundtrip(exe, tmp, blob))) != blob:
+        print(f"  {name}: the C decode does not re-encode byte for byte")
+        sys.exit(1)
+    mod = mp.best.transform.module
+    pack = encode(hydrate(mod, mp.best.result, "plan0"))
+    code, out = run_harness(exe, tmp, blob, pack_bytes=pack, live=generation_vector(mod))
+    if code != 0 or "pack=BCIR_OK" not in out or "vector=BCIR_OK" not in out:
+        print(f"  {name}: the plan/pack/vector binding was refused on the C rail")
+        print(out)
+        sys.exit(1)
+    if plan_version(plan) == 3:
+        moved.add(name)
+variants = v3_variants()
+accepted = [name for name, blob, _plan in variants if not (wire_refuses(blob) and c_refuses(exe, tmp, blob))]
+if moved != set(mf.planned()) - mf.IDENTITY or accepted:
+    print(f"  v3 plans {sorted(moved)}; malformed variants accepted by a rail: {accepted}")
+    sys.exit(1)
+print(
+    f"  PASS ExecutionPlan v3 (G8): {len(moved)} movement plans Python -> C -> Python byte-identical, "
+    f"plan/pack/vector bound; {len(variants)} malformed moves/bindings refused on both rails"
+)
+PY
 
 echo "[c-runtime] ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces"
 # bcir_control_plane.h is the C twin of bcir/abi/control_abi.py (the wire laws, in the same order)

@@ -1243,6 +1243,205 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - both rails access an `_Atomic` object through a pointer or a member with a plain byte copy, not
       an atomic operation.
 
+
+  S5-C (2026-09-26) landed G8: data movement as a first-class transformation, chosen jointly with
+  compute, and closed Stage 5.
+  - RED, measured on the parent (`2221db5e`), judged by this slice's fixtures and, where the parent
+    had them, by its own verifier, codec, ASN.1 projection and C twin:
+    - four example programs held nine claims that read RAM and HBM at once, with no move (D-R2);
+    - the plan's movement family, declared by G11, was always empty;
+    - the only transfer-aware rule, `channels.orchestrate`'s site choice with movement priced after
+      it, sat 597,840 ticks off the joint optimum across eleven fixtures (16.2%);
+    - the parent's R9 refused every plan that moves data, the nine legal ones included, because
+      its lifetime cover compared phase ids with topological positions. Its refusals of the thirty
+      law variants were therefore all by R9 or R13, never by the law each breaks;
+    - neither rail read a plan that moves data, and both read a v1 plan whose "move" stays in its
+      bank and one whose writeback is lossy; its ASN.1 decoders read all 18 malformed documents its
+      projection could spell.
+  - What landed (`bcir/kbcir/movement.py`; the reference is
+    `docs/kernel/BCIR_DATA_MOVEMENT.md`):
+    - a module transform M → M′. The optimizer chooses each claim's site and makes every crossing
+      an explicit `mem.move.{far,near}` claim over a per-(resource, bank, episode) copy. Moves go in
+      inbound, outbound and final phases, because the scheduler orders a phase by claim id. M′ is
+      realized, placed, laid out and minted by the machinery every rail already shares;
+    - Semantic Swap as the spec's classes: immutable resources drop and reload; recomputable ones
+      rematerialize only from a `replay_safe` producer, with a replay certificate; mutable ones are
+      written back home at their final version; a lossy codec needs every reader's R17 tolerance and
+      an accuracy certificate; Belady eviction with an anti-thrash law; a deadline;
+    - the joint planner over the transformed module's scheduled makespan: exact within a budget
+      (TMSAO-1), greedy search otherwise (TMSAO-4); the three pre-G8 rules priced as baselines;
+    - MV1–MV11 over (M, spec, M′, plan), trusting none of the planner's bookkeeping, and total;
+    - ExecutionPlan v3, append-only: the move tail and the source/spec binding, on the codec, the C
+      twin, BCAB, the control plane, the ASN.1 projection (version 3), the decoder fuzzer and the
+      decoder campaign.
+  - Outcomes (group `movement`; gate `tools/perf/check_movement.py --require-cc`):
+    - `movement.implicit_cross_tier` 9 → 0 and `movement.excess` 597,840 → 0: every fixture at the
+      optimum of the joint objective. The optimum comes from an independent enumeration, never from
+      the planner's own answer;
+    - `movement.laws.misattributed` 30 → 0 and `movement.laws.accepted` 0 → 0: each variant is
+      refused by exactly its own law;
+    - `movement.plans.unlawful` 9 → 0, `movement.roundtrip.mismatch` 9 → 0,
+      `movement.parity.mismatch` 11 → 0 and `movement.asn1.accepted` 18 → 0 (of 87);
+    - `movement.identity.drift` 0 → 0: a plan that moves nothing is the parent's, byte for byte;
+    - `tools/testing/faults/movement.json` injects 51 defects into the planner, the transform, the
+      producer, every movement law, R9, the codec, the ASN.1 projection and the C twin, and each is
+      caught by its own row.
+  - Found and fixed on the way:
+    - R9's lifetime cover read phase ids as positions (above);
+    - the C plan/pack binding located the generation vector at the body's end, past the v3 trailer,
+      and called a matching v3 pack stale. One locator predicate now serves both readers (L14);
+    - the Python codec applied the v3 laws only when a decoded plan "needed" v3, so it read a v3
+      buffer with an all-zero binding that the C twin refused. The wire version now decides (L11);
+    - the ASN.1 plan decoders applied no wire law. They now hold the native predicate in both
+      directions, and a newer projection version is refused;
+    - `verify_movement` raised on four malformed inputs and accepted a copy re-declared in the
+      MMIO domain (L1);
+    - the decoder fuzzer's plan passes had never reached a plan law: its corpus held only a
+      StreamPack, and every plan is CRC-sealed (L2);
+    - three sweep findings on the gate itself. The law rows depended on the planner's corpus, and
+      the tolerance variant was also caught by the accuracy certificate. And `movement.excess` first
+      measured the planner against its own answer, so a planner that returned the worst candidate
+      read 0 (L1, L11);
+    - CI found what the pre-PR mapping missed: `training/` was untouched, but a training chapter's
+      `axes` table counts the non-test `bcir/` files that pass a cost axis by keyword, and
+      `movement.py` prices fabric and sync. The table was regenerated, and the plan baseline
+      bound to the corpus fingerprint re-recorded, with all 29 plans unchanged. S4-A met the same
+      trap, so CONTRIBUTING now names the trigger.
+  - Found, not fixed here: `realize` prices a far move like a near one, since the base cost is
+    shared by four rails. `device_manifest`'s docstring claims distance-aware pricing that
+    `realize` does not do.
+
+  Five cfront fixes (2026-09-29) closed the four CF-CALIGN found-not-fixed items and a preprocessor
+  defect found while testing the last. RED for each was measured on the parent (S5-C, `590b5130`).
+  CF-I386 laid out an 8-byte scalar as i386 does, on both rails.
+  - The defect: both rails aligned `double`, `long long`, `int64_t`, a `_BitInt(33..64)` and a
+    `double _Complex` to 8 on every target. i386 aligns them to 4 in a struct and in `_Alignof`, while
+    their size stays 8, so every member after one moved and `sizeof` and `_Alignof` folded wrong there:
+    `struct { uint8_t c; double d; }` was 16 bytes, not 12. The rails agreed with each other, so the
+    parity digest could not see it.
+  - RED: a unit folds 22 layout constants (8-byte members, a union, an array, an `_Atomic long long`,
+    a `_BitInt(40)` and eight bitfield structs), each checked against Clang with a `_Static_assert`.
+    Both rails fold 18 of the 22 wrong on i386, and none on the other four targets.
+  - What landed:
+    - both target tables carry the ABI's `eight_byte_align` (4 on i386, 8 elsewhere), and one predicate
+      on each rail asks it (`ctype_model.scalar_align`, the twin's `scalar_align`);
+    - a bitfield follows Clang's placement rule (`bitfield_start` on both rails): a field moves to its
+      type's next alignment boundary only when it would overflow a storage unit of its type's size, and
+      a zero-width one aligns to its type's alignment, packed or not. Where alignment equals size, which
+      is every other target and type, this is the old rule, so no other layout moves;
+    - a bitfield of an under-aligned type is accessed over only the bytes it spans
+      (`narrow_bitfield`), as a packed one is: an 8-byte unit at the start of a 4-byte struct would read
+      past its end.
+  - Outcomes: the constants match Clang on every target, all 22 where the rails implement the target's
+    bitfield rules (x86-64 and RISC-V Linux, i386) and the 13 without a bitfield on AArch64 and
+    Windows. Each bitfield's bit offset matches Clang's record layout on i386 and x86-64, and code
+    reading and writing them lowers digest-equal on both rails. Two injected defects, one per rail, are
+    each caught.
+  CF-PTRARR laid out an array-of-pointers member as pointers, on the twin.
+  - The defect: the twin gave the elements of a `T *arr[N]` member its pointee's size, so a later
+    member sat at the wrong offset, `sizeof` was wrong, a store truncated the pointer to 4 bytes, and a
+    load read the element into an integer, which Clang rejects. `*t->arr[i]` dereferenced `t` and then
+    failed on the `->`, and so did `*s->p` through a plain pointer member.
+  - RED: `sizeof` and `_Alignof` of `struct { uint8_t c; uint32_t *arr[2]; uint8_t d; }` fold to 16
+    and 4 on x86-64, not 32 and 8. Of 29 access forms, 15 lower to a different claim graph from the
+    oracle's and 12 are refused by one rail only. The twin refuses `cfront_ptrmember.c`.
+  - What landed: each element takes the ABI's pointer size and is loaded and stored whole, typed `T *`;
+    `*t->arr[i]` dereferences the postfix expression, as its precedence says. `t->arr[i][j]` and
+    `t->arr[i]++` stay refused on both rails.
+  - Outcomes: every form lowers or is refused alike on both rails, digest for digest on x86-64 and
+    i386; the layout matches Clang on every target; `cfront_ptrmember.c` runs equivalent to the
+    original on both emits. One injected defect is caught.
+  CF-TRAILPACK read `__attribute__((packed))` written after a struct's closing brace before laying out
+  its members, on the twin.
+  - The defect: the twin honoured the attribute before the body but read the trailing spelling, the
+    common one, only for the aggregate's alignment, after every member had been placed at its natural
+    offset. `struct { uint8_t c; uint64_t n; } __attribute__((packed))` put `n` at 8 and was 16 bytes,
+    where Clang and the oracle say 1 and 9, so every access to it read and wrote the wrong bytes.
+  - RED: four of ten folded constants are wrong on every target (a nested packed struct, a straddling
+    bitfield, an array member and a typedef'd struct), and `cfront_trailpacked.c` digests differently
+    on the two rails.
+  - What landed: the attributes after the `}` are read before the members are laid out
+    (`trailing_attrs`); a trailing `aligned(N)` still raises the alignment.
+  - Outcomes: the constants match between the rails on every target and Clang wherever the rails
+    implement its bitfield rules; `cfront_trailpacked.c` is equivalent on both emits with equal
+    digests. One injected defect is caught.
+  CF-ATOMIC made every access to an `_Atomic` object one atomic operation, on both rails.
+  - The defect: both rails lowered an `_Atomic` object reached through a pointer, a member, a member
+    array, an array of structs or a subscript as a plain byte copy, and a compound assignment or an
+    increment of one as a load, an operation and a store. A concurrent update between them was lost,
+    though C makes each one read-modify-write (C11 6.5.16.2p3, 6.5.2.4p2). The digest could not tell them apart:
+    it did not read an access's order.
+  - RED:
+    - the four new tests fail on the parent;
+    - the parent twin refuses `cfront_atomicaccess.c`, and the parent oracle's emit diverges from the
+      original at the first float generic, whose value it converted through a `uint32_t`;
+    - `acc_bump`, three counter updates run from four threads 100,000 times each, lost 52 to 65% of
+      the updates in three runs of the parent oracle's emit (162,719 of 400,000 in the first).
+  - What landed:
+    - a load or store of an `_Atomic` object keeps its claim, on lane A with the atomic hazard
+      (`lower._access_order`, the twin's `mark_atomic`). A compound assignment or an increment is one
+      `c.c11atom.rmw:<op>` claim, addressed as the store is: `ATOMIC_ADD`, `ATOMIC_SUB` or
+      `ATOMIC_XOR` for those operators, `CMPXCHG` for the rest. Both emits spell every one through an
+      `_Atomic` lvalue (`(*(_Atomic T *)addr) op= v`), never a byte copy;
+    - the value of an assignment to one is the value stored, never a second atomic read;
+    - `unqualified` drops `_Atomic` and restores the layout the ABI's atomic promotion widened
+      (`CType.natural`); a value read out of an `_Atomic float _Complex` aligns to 4, not 8;
+    - the digest canon names the order (`c.load!atomic`, `c.store!atomic`), so a source with `_Atomic`
+      and one without digest differently. No existing claim carries the hazard, so no record moved;
+    - the generics type their value by the pointee: a 64-bit `atomic_load` or `atomic_fetch_add` had
+      been a `uint32_t`;
+    - a bit-field of `_Atomic` type is refused on both rails, as GCC and Clang refuse it.
+  - Found and fixed on the way, on the twin: a typed store through an `_Atomic _Bool *` stored the raw
+    byte (2, not 1), because a pointer parameter or local did not record a `_Bool` pointee; a store
+    through any `_Bool *` did not normalize the value; and a compound assignment to a subscripted
+    pointer typed its value as the pointer.
+  - Outcomes: every function of `cfront_atomicaccess.c` has its exact count of atomic accesses and
+    read-modify-writes on both rails, digest-equal, and runs equivalent to the original on both emits
+    under Clang and GCC; `acc_bump` loses no update on either emit. An 84-form probe over five targets
+    agrees wherever both rails lower a form. Ten injected defects, on both rails, are each caught. The
+    escape and effect reports stay byte-identical across the rails over the corpus, the new unit
+    included.
+  CF-PASTE kept apart, in both preprocessors, tokens that would lex as others.
+  - The defect: both preprocessors re-spell every source line from its tokens, and kept a space only
+    between two words, so tokens whose spellings run together into others came out as those (maximal
+    munch, C 6.4p4). `a + ++g` came out `a+++g`, which is `(a++) + g`; `-NEG(a)` with
+    `#define NEG(x) -x` came out `--a`, a decrement. Each lowered clean and computed another value, on
+    both rails alike, so the parity digest agreed. `y / *p` came out as a comment opener, and
+    `a + +b` as a parse error.
+  - RED: 186 of 2,000 generated token sequences re-lex as other tokens. On a unit of the four
+    silently wrong forms both rails lower clean with equal digests, and all 2,400 calls return
+    another value than the original's. Both preprocessors fail the Clang and GCC differential over
+    `cfront_pp_avoidpaste.c`, where 16 of 24 lines lex as other tokens.
+  - What landed: one predicate on each rail (`cpp._pastes`, `bcir_cpp.c`'s `pastes`) puts a space
+    between two words, before a comment opener, where maximal munch would extend a punctuator, between
+    two dots (an ellipsis spans three tokens), and where a pp-number would run on. The twin's tokenizer
+    now reads every multi-character punctuator and a pp-number that begins with `.`. It decides exactly
+    where the next pass cannot respace: the last pass and a gathered macro argument, which a `#`
+    keeps.
+  - Outcomes: every one of the 357 tracked C sources preprocesses byte-identically to the parent on
+    both rails; the space goes only where the text lexed as other tokens. The generated sequences,
+    stringized and rescanned through macros too, re-lex exactly and match byte for byte between the
+    rails. `cfront_paste.c` runs equivalent to the original on both emits under Clang and GCC. Thirteen
+    injected defects, on both rails, are each caught.
+  Found, not fixed here (each a suggested follow-up):
+  - `sizeof` folds a wrong constant, silently, for most operands that are not a plain scalar or struct
+    name. The twin folds an array variable to its element's size (`sizeof buf` of a `uint32_t buf[10]`
+    is 4) and a global the function has not yet read to 4. The oracle folds a subscripted row or
+    element, a member and a dereference to 4, and a string-initialized array to 0 (`sizeof s.a` of a
+    `uint32_t a[4]` member is 4, `sizeof *sp` of a 32-byte struct 4, `sizeof str` of `"hello"` 0).
+    Of 30 probed forms, 24 fold a constant other than Clang's on one rail or both, and every such unit
+    lowers clean;
+  - the twin reads before its struct table on a file-scope struct's member (`gs.n`), whose entry
+    carries no struct index, and crashes; the oracle lowers it;
+  - the oracle refuses a statement whose first identifier is also a struct tag
+    (`struct st *st; st->n += 1u;` is "expected a type"), though C keeps tags in their own name space;
+  - the twin refuses `(*p)++` and `p[i]++`, as a statement and in an expression, and `*q->a` of an
+    array member, which the oracle lowers; both rails refuse `++q->n;` and `++*p;`;
+  - a stringized argument drops its whitespace on both rails: `S(a + b)` is `"a+b"`, where C 6.10.4.2
+    and Clang make it `"a + b"`;
+  - `_Atomic(T *)`, an atomic pointer object, is modeled on both rails as a pointer to `_Atomic T`;
+  - neither rail models AArch64's alignment for an unnamed bitfield or the MSVC bitfield layout.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

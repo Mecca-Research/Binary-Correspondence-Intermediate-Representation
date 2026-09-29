@@ -24,8 +24,8 @@ weight each shipped policy gives the axis (`bcir/kbcir/weights.py`).
 | ---: | --- | ---: | ---: | ---: | ---: | ---: |
 | 0 | `compute` | 11 | 2 | 2 | 1 | 1 |
 | 1 | `memory` | 12 | 2 | 3 | 1 | 1 |
-| 2 | `fabric` | 1 | 1 | 1 | 1 | 1 |
-| 3 | `sync` | 3 | 1 | 1 | 1 | 2 |
+| 2 | `fabric` | 2 | 1 | 1 | 1 | 1 |
+| 3 | `sync` | 4 | 1 | 1 | 1 | 2 |
 | 4 | `compile` | 0 | 0 | 0 | 0 | 1 |
 | 5 | `thermal` | 15 | 0 | 0 | 2 | 1 |
 | 6 | `power` | 9 | 0 | 0 | 3 | 1 |
