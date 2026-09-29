@@ -171,6 +171,8 @@ _FLOAT = [
     "cfront_float.c",
     "cfront_floatcast.c",
     "cfront_globaltype.c",  # a signed / float global's value type (shift, divide, negate, *array)
+    "cfront_globalstruct.c",  # a file-scope struct's members, read and written; an initialized global keeps
+    #   its declared type (CF-GSTRUCT, CF-GINIT)
     "cfront_memberconv.c",  # a byte-copy store converts to the slot's type: int <-> float members, bitfields,
     #   `*p`, initializers, the value of `(s.i += x)` (CF-MEMCONV)
     "cfront_hexfloat.c",
@@ -206,6 +208,9 @@ _PTRVALUE = [
     "cfront_trailpacked.c",  # `} __attribute__((packed))` after the body packs the members (CF-TRAILPACK)
     "cfront_ptrmember.c",  # an array-of-pointers member `T *arr[N]`: pointer-size elements, whole-pointer
     #   loads/stores typed `T *`, `*t->arr[i]` / `*s->p` through the element (CF-PTRARR)
+    "cfront_decay.c",  # an array used as a value is its first element's address; `p - q` is a ptrdiff_t
+    #   (CF-DECAY, CF-PTRDIFF, CF-DEREFIDX)
+    "cfront_sizeof_forms.c",  # `sizeof` of every operand form, type-name and target width, a size_t (CF-SIZEOF)
     "cfront_addrof.c",  # general address-of `&`
     "cfront_addrofarr.c",  # member-array element address
     "cfront_addrofaos.c",  # array-of-structs element field address
@@ -6865,3 +6870,605 @@ int main(void) {
             for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
                 out = _build_run_c(d, cc, label, f"{head}{renamed}\n{emit}\n{driver}")
                 assert out == "MATCH", f"{fx}: {label} emit not equivalent under {cc} ({out})"
+
+
+# CF-SIZEOF: every operand form `sizeof` takes, one function each, folded per target and held three ways --
+# the oracle's value against a pinned vector (every tier), against Clang's own value for the same function
+# under `-target` (`ret i64 N`) when Clang is present, and the twin's claim graph against the oracle's (the
+# structural digest folds every constant) when a C compiler is. The operand is measured as its own type: an
+# array whole, a row of a multi-dimensional one a row, a member array its member, a parameter declared as an
+# array the pointer it is; an operator's result by its operands after they convert, a bit-field operand
+# promoted as Clang promotes its value; a call by its callee's return. The rails had folded 224 and 119 of
+# these 460 cases wrong (a bare name's element, or a flat 4), and refused 265 on the twin.
+_SIZEOF_HEAD = """#include <stdint.h>
+typedef uint32_t (*fp_t)(uint32_t);
+struct s { uint8_t c; uint64_t n; uint32_t a[4]; };
+struct t { uint16_t k; struct s in; uint8_t z[3]; };
+union u { uint8_t b[5]; uint32_t w; };
+struct bf { uint32_t lo : 3; uint32_t hi : 29; uint64_t big : 40; uint8_t tiny : 2; uint64_t mid : 5; };
+struct fps { uint8_t c; fp_t f; uint8_t d; };
+struct fpd { uint8_t c; uint32_t (*g)(uint32_t); uint8_t d; };
+uint32_t ga[10];
+uint8_t gb[3][5];
+struct s gs;
+struct s gsa[3];
+double gd[7];
+long double gld;
+uint16_t hfun(uint32_t v) { return (uint16_t)v; }
+struct s mk(void) { struct s v = {0}; return v; }
+"""
+_SIZEOF_FORMS = (  # (parameters, locals, the operand after `sizeof`)
+    ("", "uint32_t la[10]; ", "(la)"),
+    ("", "uint16_t l2[4][6]; ", "(l2)"),
+    ("", "uint16_t l2[4][6]; ", "(l2[1])"),
+    ("", "uint16_t l2[4][6]; ", "(l2[1][2])"),
+    ("", "uint16_t l2[4][6]; ", "(*l2)"),
+    ("", "uint32_t la[10]; ", "(la + 1)"),
+    ("", "uint32_t la[10]; ", "(&la)"),
+    ("", "struct s ls; ", "(ls.a)"),
+    ("", "struct s ls; ", "(ls.n)"),
+    ("", "struct s ls; ", "(ls)"),
+    ("", "struct s lsa[4]; ", "(lsa[1].a)"),
+    ("", "struct s lsa[4]; ", "(lsa->n)"),
+    ("", "struct t lt; ", "(lt.in.a)"),
+    ("", "struct t lt; ", "(lt)"),
+    ("", "union u lu; ", "(lu)"),
+    ("", "union u lu; ", "(lu.b)"),
+    ("uint32_t *p", "", "(p)"),
+    ("struct s *sp", "", " *sp"),
+    ("struct s *sp", "", "(sp->a)"),
+    ("uint16_t (*pr)[6]", "", "(*pr)"),
+    ("uint32_t ap[8]", "", "(ap)"),
+    ("uint16_t m[4][6]", "", "(m[1])"),
+    ("", "", "(ga)"),
+    ("", "", "(gb)"),
+    ("", "", "(gb[1])"),
+    ("", "", "(gs)"),
+    ("", "", "(gs.a)"),
+    ("", "", "(gsa)"),
+    ("", "", "(gsa[2].a)"),
+    ("", "", "(gd)"),
+    ("", "", "(gld)"),
+    ("", "", '("abc")'),
+    ("uint8_t x8", "", "(x8 + 1)"),
+    ("int64_t x64", "", " -x64"),
+    ("float xf", "", "(xf * 2.0)"),
+    ("uint32_t x32", "", "((uint8_t)x32)"),
+    ("uint64_t x64u", "", "(!x64u)"),
+    ("uint64_t x64u", "", "(x64u == 1u)"),
+    ("uint8_t x8, uint64_t x64u", "", "(x8 ? x8 : x64u)"),
+    ("uint8_t x8, uint64_t x64u", "", "(x8, x64u)"),
+    ("uint8_t x8, uint64_t x64u", "", "(x8 = x64u)"),
+    ("uint8_t x8", "", "(x8++)"),
+    ("", "", "(hfun(1u))"),
+    ("", "", "(mk().n)"),
+    ("uint8_t x8", "", "(&x8)"),
+    ("uint8_t x8", "", "(sizeof x8)"),
+    ("", "", "(1.0L)"),
+    ("uint32_t *p, uint32_t *q", "", "(p - q)"),
+    ("uint32_t *p, uint32_t *q, uint8_t x8", "", "(x8 ? p : q)"),
+    ("", "struct bf b; ", "(b.lo + 1)"),
+    ("", "struct bf b; ", "(b.big + 1)"),
+    ("", "struct bf b = {0}; ", "(b.tiny = 1)"),
+    ("", "struct bf b = {0}; ", "(0, b.tiny)"),
+    ("fp_t fp", "", "(fp)"),
+    ("", "", "(fp_t)"),
+    ("fp_t fp", "", "(fp(1u))"),
+    ("", "", "(int)"),
+    ("", "", "(struct s)"),
+    ("", "", "(uint32_t *)"),
+    ("", "", "(uint32_t[10])"),
+    ("", "", "(struct s[2])"),
+    ("", "", "(uint8_t *[5])"),
+    ("", "", "(uint32_t[3][4])"),
+    ("", "", "(_Bool)"),
+    ("", "", "(long double)"),
+    ("", "struct bf b; ", "(b.mid + 1)"),
+    ("", "", "(struct fps)"),
+    ("", "", "(struct fpd)"),
+)
+# Clang's values (x86-64, AArch64 and RISC-V Linux share LP64; Windows x64 differs only in `long double`)
+_SIZEOF_LP64 = [
+    40, 48, 12, 2, 12, 8, 8, 16, 8, 32, 16, 8, 16, 48, 8, 5, 8, 32, 16, 12, 8, 12, 40, 15, 5, 32, 16, 96,
+    16, 56, 16, 4, 4, 8, 8, 1, 4, 4, 8, 8, 1, 1, 2, 8, 8, 8, 16, 8, 8, 4, 8, 1, 1, 8, 8, 4, 4, 32, 8, 40,
+    64, 40, 48, 1, 16, 4, 24, 24,
+]  # fmt: skip
+_SIZEOF_PINS = {
+    "x86_64-linux": _SIZEOF_LP64,
+    "aarch64-linux": _SIZEOF_LP64,
+    "riscv64-linux": _SIZEOF_LP64,
+    "x86_64-windows": [
+        40, 48, 12, 2, 12, 8, 8, 16, 8, 32, 16, 8, 16, 48, 8, 5, 8, 32, 16, 12, 8, 12, 40, 15, 5, 32, 16, 96,
+        16, 56, 8, 4, 4, 8, 8, 1, 4, 4, 8, 8, 1, 1, 2, 8, 8, 8, 8, 8, 8, 4, 8, 1, 1, 8, 8, 4, 4, 32, 8, 40,
+        64, 40, 48, 1, 8, 4, 24, 24,
+    ],
+    "i386-linux": [
+        40, 48, 12, 2, 12, 4, 4, 16, 8, 28, 16, 8, 16, 36, 8, 5, 4, 28, 16, 12, 4, 12, 40, 15, 5, 28, 16, 84,
+        16, 56, 12, 4, 4, 8, 8, 1, 4, 4, 8, 8, 1, 1, 2, 8, 4, 4, 12, 4, 4, 4, 8, 1, 1, 4, 4, 4, 4, 28, 4, 40,
+        56, 20, 48, 1, 12, 4, 12, 12,
+    ],
+}  # fmt: skip
+
+
+def _sizeof_unit() -> str:
+    return _SIZEOF_HEAD + "".join(
+        f"uint64_t szf{i}({params or 'void'}) {{ {locals_}return sizeof{operand}; }}\n"
+        for i, (params, locals_, operand) in enumerate(_SIZEOF_FORMS)
+    )
+
+
+def _returned_const(fn):
+    """The constant a lowered function returns: its return value's writer, followed through copies and
+    conversions back to the `c.const` it was folded to (None when the value is not a folded constant)."""
+    writer = {w: c for c in fn.claims for w in c.wr}
+    rid = fn.return_rid
+    for _ in range(8):
+        c = writer.get(rid)
+        if c is None:
+            return None
+        if c.op == "c.const":
+            return c.imm[0]
+        rid = c.rd[0] if c.rd else None
+    return None
+
+
+def test_sizeof_measures_the_operand_type_on_every_target():
+    """CF-SIZEOF: `sizeof` measures its operand's own type (C11 6.5.3.4p2) -- never the pointer an array
+    decays to elsewhere -- on every target the ABI tables model, identically on both rails. The pinned
+    vectors are Clang's; with Clang present they are re-derived, and with a C compiler present the twin's
+    claim graph for the whole unit must be the oracle's (the digest folds every constant)."""
+    src = _sizeof_unit()
+    folded = {}
+    for t in _ABI_TARGETS:
+        r = compile_unit(src, check_clang=False, target=t)
+        folded[t] = [
+            _returned_const(r.lowered.functions[f"szf{i}"]) for i in range(len(_SIZEOF_FORMS))
+        ]
+        wrong = [
+            (_SIZEOF_FORMS[i][2], folded[t][i], _SIZEOF_PINS[t][i])
+            for i in range(len(_SIZEOF_FORMS))
+            if folded[t][i] != _SIZEOF_PINS[t][i]
+        ]
+        assert not wrong, (t, wrong)
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sizeof.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            for t in _ABI_TARGETS:
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding", "-w", "-O1",
+                     "-S", "-emit-llvm", "-o", "-", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+                assert run.returncode == 0, (t, run.stderr[:2000])
+                got = {}
+                for m in re.finditer(r"define [^@]*@szf(\d+)\(.*?\n\}", run.stdout, re.S):
+                    rets = re.findall(r"ret i64 (\d+)", m.group(0))
+                    assert len(rets) == 1, (t, m.group(0)[:300])
+                    got[int(m.group(1))] = int(rets[0])
+                assert [got[i] for i in range(len(_SIZEOF_FORMS))] == _SIZEOF_PINS[t], t
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "sizeof.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        for t in _ABI_TARGETS:
+            r = compile_unit(src, check_clang=False, target=t)
+            oracle = f"{cfront_structural_digest(r.lowered):016x}"
+            run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+            twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
+            assert twin and twin.group(1) == oracle, (t, run.stdout[:300], oracle)
+
+
+# CF-SIZEOF: operands neither rail gives a value to -- each a constraint violation, an incomplete type, a
+# size no target object can have, or a runtime-sized row -- refused by both, never folded to a guess.
+# (the unit, the oracle's refusal, the twin's): each form must be refused for the reason it witnesses
+_SIZEOF_REFUSED = (
+    (
+        "struct bf { uint32_t lo : 3; };\nuint64_t f(void) { struct bf b; return sizeof b.lo; }",
+        "sizeof of a bit-field",
+        "sizeof of a bit-field",
+    ),
+    (
+        "uint32_t g(uint32_t v) { return v; }\nuint64_t f(void) { return sizeof g; }",
+        "sizeof of the function 'g'",
+        "sizeof of a function designator",
+    ),
+    (
+        "uint64_t f(struct fwd *p) { return sizeof *p; }",
+        "incomplete struct or union 'fwd'",
+        "unknown struct",
+    ),
+    ("uint64_t f(void *p) { return sizeof *p; }", "incomplete type", "incomplete type"),
+    (
+        "uint64_t f(void) { return sizeof(char[1000000][1000000][1000000][1000000]); }",
+        "too large for the target",
+        "too large for the target",
+    ),
+    ("uint64_t f(void) { return sizeof(char[-1]); }", "incomplete type", "incomplete type"),
+    (
+        "uint64_t f(uint32_t n) { uint32_t v[n][n]; v[0][0] = 1u; return sizeof v[0]; }",
+        "incomplete type",
+        "incomplete type",
+    ),
+    (
+        "uint64_t f(void) { return sizeof(undeclared(1)); }",
+        "return type is unknown",
+        "return type is unknown",
+    ),
+)
+
+
+def test_sizeof_refuses_what_it_cannot_measure_on_both_rails():
+    """CF-SIZEOF: a bit-field, a function designator, an incomplete type (a pointer to an undefined struct,
+    `void`), a type larger than any target object, a negative dimension, a row of a multi-dimensional VLA
+    and a call to an undeclared function are refused by both rails, each for its own reason; the twin exits
+    with its refusal, never a crash. (The twin had folded the bit-field and the void pointee, and the oracle
+    a 10^24 constant; the oracle refused `sizeof g` as an undeclared identifier, and the undefined struct
+    with a bare KeyError.)"""
+    from bcir.frontends.cfront.lower import CLowerError
+
+    head = "#include <stdint.h>\n"
+    for body, why, _ in _SIZEOF_REFUSED:
+        try:
+            compile_unit(head + body + "\n", check_clang=False)
+        except CLowerError as e:
+            assert why in str(e), (body, str(e))
+        else:
+            raise AssertionError(f"the oracle folded {body!r}")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, _, why) in enumerate(_SIZEOF_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(head + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0, (body, run.returncode, run.stdout[:200])
+            assert why in run.stdout + run.stderr, (body, run.stdout[:200], run.stderr[:200])
+
+
+def test_a_pointer_to_an_undefined_struct_is_a_refusal_not_a_crash():
+    """A pointer to a struct the unit has not defined before it -- an opaque handle, a member pointer to a
+    later struct, or to the struct being defined -- has no layout on the oracle. It raised a bare KeyError
+    out of `compile_unit` (a traceback, not a verdict: the pipeline could not route it); it is a
+    `CLowerError` now, on every path that names a type. (The twin lays out the self-referential struct, and
+    refuses the others at their declaration.)"""
+    from bcir.frontends.cfront.lower import CLowerError
+
+    for body in (
+        "struct node { uint32_t v; struct node *next; };\nuint32_t f(struct node *n) { return n->v; }",
+        "struct a { struct b *pb; uint32_t v; };\nuint32_t f(struct a *p) { return p->v; }",
+        "struct fwd *gp;\nuint32_t f(void) { return gp ? 1u : 0u; }",
+        "uint32_t f(struct fwd *p) { return p ? 1u : 0u; }",
+        "uint32_t f(void) { struct fwd *p = 0; return p ? 1u : 0u; }",
+    ):
+        try:
+            compile_unit("#include <stdint.h>\n" + body + "\n", check_clang=False)
+        except CLowerError as e:
+            assert "incomplete struct or union" in str(e), (body, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+
+
+def _fixture_both_rails(fx: str):
+    """A corpus fixture through both rails: its parity summary (claim counts and the structural digest)
+    equal on both, and the two emits."""
+    path = os.path.join(_C, fx)
+    src = open(path, encoding="utf-8").read()
+    oracle_summary, r, _entry = _oracle(src)
+    assert "ok=1" in oracle_summary, oracle_summary
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    exe = _build_frontend(_session_build_dir())
+    c_summary, c_emit = _c_run(exe, path)
+    assert c_summary == oracle_summary, f"{fx}: parity\n C: {c_summary}\nPY: {oracle_summary}"
+    return src, oracle_emit, c_emit
+
+
+def _run_against_original(fx: str, src: str, emits, driver: str):
+    """Each emit linked with the original under every compiler at hand, run by `driver` (which prints MATCH
+    when every function's result -- and every global it touches -- is the original's)."""
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stddef.h>\n"
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            for label, emit in emits:
+                text = f"{head}{_BOUNDS_GUARD}\n{src}\n{emit}\n{driver}"
+                out = _build_run_c(d, cc, label, text)
+                assert out == "MATCH", (
+                    f"{fx}: the {label} emit is not the original under {cc} ({out})"
+                )
+
+
+_SIZEOF_FORMS_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+#define SAME(f, ...) do { if (f(__VA_ARGS__) != bcir_##f(__VA_ARGS__)) return fail(#f); } while (0)
+int main(void) {
+  static uint32_t p8[8], q8[8]; static struct sz_s s; static uint16_t m[4][6];
+  SAME(sz_local_array); SAME(sz_local_row); SAME(sz_local_elem); SAME(sz_local_decays);
+  SAME(sz_member_array); SAME(sz_nested); SAME(sz_struct_array); SAME(sz_union); SAME(sz_brace_sized);
+  SAME(sz_param_ptr, p8, &s); SAME(sz_param_array, p8);
+  if (sz_param_2d(m) != bcir_sz_param_2d(&m[0][0])) return fail("sz_param_2d");
+  if (sz_param_rowptr(m) != bcir_sz_param_rowptr(&m[0][0])) return fail("sz_param_rowptr");
+  SAME(sz_global); SAME(sz_global_struct); SAME(sz_global_sized); SAME(sz_types); SAME(sz_types2);
+  SAME(sz_alignof); SAME(sz_promote, 200, -5); SAME(sz_bare, -9, &s); SAME(sz_compare, 3u, 4u);
+  SAME(sz_conditional, 1, 5u, p8, q8); SAME(sz_assign, 7, 300u); SAME(sz_float, 1.5f, 2.5);
+  SAME(sz_literals); SAME(sz_calls); SAME(sz_bitfield_ops); SAME(sz_bitfield_keeps);
+  SAME(sz_nested_sizeof, 3); SAME(sz_pointer_difference, p8 + 3, p8);
+  SAME(sz_size_t_wraps); SAME(sz_array_count);
+  for (uint32_t i = 0; i < 20u; i++) {
+    SAME(sz_unevaluated, i); SAME(sz_vla, i); SAME(sz_size_t_scales, 1u << (i + 12u));
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+def test_sizeof_forms_run_as_the_original_on_both_rails():
+    """CF-SIZEOF: `cfront_sizeof_forms.c` -- every operand form, the type-names with their dimensions, the
+    unevaluated operand (an increment or a call inside never runs), a VLA's runtime size, and the size_t
+    witnesses (`sizeof(uint32_t) - 8u` is -4 as an int64, not 4294967292; `sizeof(struct big) * n` does not
+    wrap at 2^32) -- lowers identically on both rails, and each emit returns what the original does."""
+    if not _CC:
+        return
+    fx = "cfront_sizeof_forms.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _run_against_original(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _SIZEOF_FORMS_DRIVER
+    )
+
+
+_GLOBALSTRUCT_DRIVER = r"""
+static unsigned char b1[4096], b2[4096];
+static void seed(void) {
+  memset(&gs_g, 0x5A, sizeof gs_g); memset(&gs_t2, 0x3C, sizeof gs_t2); memset(gs_arr, 0x11, sizeof gs_arr);
+  memset(&gs_static, 0x21, sizeof gs_static); memset(&gs_dev, 0x42, sizeof gs_dev); gs_p = &gs_g;
+  gs_wide = 0x100000000u; gs_small = -3; gs_init.c = 1; gs_init.n = 0x100000005u;
+}
+static size_t snap(unsigned char *b) {
+  size_t o = 0;
+#define TAKE(x) do { memcpy(b + o, &(x), sizeof(x)); o += sizeof(x); } while (0)
+  TAKE(gs_g); TAKE(gs_t2); TAKE(gs_arr); TAKE(gs_static); TAKE(gs_dev); TAKE(gs_wide); TAKE(gs_small); TAKE(gs_init);
+  return o;
+}
+static int fail(const char *what) { puts(what); return 1; }
+#define SAME(f, ...) do { seed(); uint64_t r1 = (uint64_t)(f(__VA_ARGS__)); size_t n1 = snap(b1); \
+    seed(); uint64_t r2 = (uint64_t)(bcir_##f(__VA_ARGS__)); size_t n2 = snap(b2); \
+    if (r1 != r2 || n1 != n2 || memcmp(b1, b2, n1)) return fail(#f); } while (0)
+#define SAME_PTR(f) do { seed(); uintptr_t r1 = (uintptr_t)f(); seed(); uintptr_t r2 = (uintptr_t)bcir_##f(); \
+    if (r1 != r2) return fail(#f); } while (0)
+#define SAME_VOID(f, ...) do { seed(); f(__VA_ARGS__); size_t n1 = snap(b1); seed(); bcir_##f(__VA_ARGS__); \
+    size_t n2 = snap(b2); if (n1 != n2 || memcmp(b1, b2, n1)) return fail(#f); } while (0)
+int main(void) {
+  for (uint32_t i = 0; i < 8u; i++) {
+    SAME(gs_read_u64); SAME(gs_read_u8); SAME_VOID(gs_write, 0x1122334455667788u + i);
+    SAME(gs_member_array, i); SAME(gs_nested, i); SAME(gs_compound, i); SAME_PTR(gs_address);
+    SAME(gs_through_pointer); SAME_VOID(gs_array_of_structs, i, 3u * i); SAME(gs_static_member);
+    SAME(gs_pointer_global); SAME(gs_condition); SAME(gs_sizes); SAME(gs_device, i);
+    SAME(gs_wide_plus); SAME(gs_wide_shift); SAME(gs_small_scaled); SAME(gs_init_member); SAME(gs_init_sizes);
+  }
+  seed(); struct gs_s w1 = gs_whole(); seed(); struct gs_s w2 = bcir_gs_whole();
+  if (memcmp(&w1, &w2, sizeof w1)) return fail("gs_whole");
+  struct gs_s v; memset(&v, 0x77, sizeof v);
+  seed(); gs_whole_write(v); size_t n1 = snap(b1); seed(); bcir_gs_whole_write(v); size_t n2 = snap(b2);
+  if (n1 != n2 || memcmp(b1, b2, n1)) return fail("gs_whole_write");
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+def test_file_scope_struct_members_lower_on_both_rails():
+    """CF-GSTRUCT / CF-GINIT: `cfront_globalstruct.c` -- a file-scope struct's members read, written,
+    nested, indexed, compound-assigned, incremented, addressed, copied whole, reached through a pointer
+    global and an array of them, a static one, one holding volatile registers, and initialized scalars and
+    structs -- lowers to the same claim graph on both rails (the twin had crashed on every member access,
+    reading `c->s[-1]`), and from the same seeded globals each emit returns what the original does and
+    leaves every global byte as it does (the oracle had computed an initialized `uint64_t`'s `gw + 1` in 32
+    bits)."""
+    if not _CC:
+        return
+    fx = "cfront_globalstruct.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _run_against_original(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _GLOBALSTRUCT_DRIVER
+    )
+
+
+def test_an_initialized_global_keeps_its_declared_type_in_the_oracle():
+    """CF-GINIT: an initialized scalar or struct global is one object of its declared type -- not a table
+    of its initializers, the read-only lookup-table model's relic that typed `gw + 1` of a `uint64_t gw =
+    0x100000000u` as a 32-bit int, doubled `sizeof` of a struct with two initializers and refused its
+    members. Held without a compiler: the sum's temp is 64-bit, the struct's size is its own, and the
+    member reads."""
+    src = (
+        "#include <stdint.h>\nstruct gi { uint8_t c; uint64_t n; };\nuint64_t gw = 0x100000000u;\n"
+        "struct gi gs = {1, 2};\nuint64_t f(void) { return gw + 1u; }\n"
+        "uint64_t g(void) { return sizeof gs + gs.n; }\n"
+    )
+    r = compile_unit(src, check_clang=False)
+    f = r.lowered.functions["f"]
+    add = [c for c in f.claims if c.op == "c.bin.add"]
+    assert len(add) == 1 and f.rid_types[add[0].wr[0]].size == 8, [c.op for c in f.claims]
+    g = r.lowered.functions["g"]
+    assert 16 in [c.imm[0] for c in g.claims if c.op == "c.const"], [c.op for c in g.claims]
+
+
+_DECAY_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+#define SAME(f, ...) do { if ((f(__VA_ARGS__)) != (bcir_##f(__VA_ARGS__))) return fail(#f); } while (0)
+int main(void) {
+  static uint8_t b8[16]; static uint32_t b32[16]; static struct dk_s s;
+  memset(&s, 0x33, sizeof s); memset(&dk_g, 0x44, sizeof dk_g);
+  for (uint32_t i = 0; i < 12u; i++) {
+    SAME(dk_diff_u8, b8 + (i % 7u), b8 + 3); SAME(dk_diff_u32, b32 + 1, b32 + (i % 9u));
+    SAME(dk_array_plus, i); SAME(dk_global_plus, i); SAME(dk_select, i & 1u); SAME(dk_select_array, i & 1u);
+    SAME(dk_select_float, i & 1u); SAME(dk_member_local, i); SAME(dk_member_select, i & 1u);
+    SAME(dk_deref_index, i % 9u); SAME(dk_deref_index_value, i);
+  }
+  SAME(dk_diff_array); SAME(dk_float_plus); SAME(dk_array_as_integer); SAME(dk_member_value);
+  SAME(dk_member_arrow, &s); SAME(dk_member_nested); SAME(dk_member_offset);
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+def test_an_array_value_decays_to_its_address_on_both_rails():
+    """CF-DECAY / CF-PTRDIFF / CF-DEREFIDX: `cfront_decay.c` lowers to the same claim graph on both rails and
+    each emit runs as the original: a member array used as a value is its address (both rails had loaded
+    its first element -- `return gs.a;` did not compile and `(uintptr_t)gs.a` was that element's value); an
+    array operand of `+`, `-` or `?:` is a pointer (`int32_t t = la + 1;` did not compile); `p - q` is a
+    signed pointer-wide `ptrdiff_t` (the twin's unsigned 32-bit one made -2 read 4294967294); and the twin
+    lowers the index of `*(la + j++)` once (it had stepped `j` twice and read the wrong element)."""
+    if not _CC:
+        return
+    fx = "cfront_decay.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _DECAY_DRIVER)
+    # the LOCAL arrays whose address leaves the value model, which the corpus fixture keeps at file scope
+    src = _DECAY_LOCAL_ESCAPES
+    oracle_summary, r, _entry = _oracle(src)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "decay_local.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
+    assert c_summary == oracle_summary, f"parity\n C: {c_summary}\nPY: {oracle_summary}"
+    emits = (("twin", c_emit), ("oracle", oracle_emit))
+    _run_against_original("decay_local.c", src, emits, _DECAY_LOCAL_DRIVER)
+
+
+# CF-DECAY: a LOCAL array whose address leaves the value model -- subtracted into a `ptrdiff_t`, or converted
+# to an integer -- escapes, and the escape analysis says so, rightly. `escape.unproved` counts every local
+# array of the `cfront_*.c` corpus the analysis does not prove private, so `cfront_decay.c` holds these forms
+# on a file-scope array and they run here.
+_DECAY_LOCAL_ESCAPES = """#include <stdint.h>
+int64_t dl_diff(void) { uint32_t la[8] = {0}; uint32_t *e = la + 6; return la - e; }
+uintptr_t dl_as_integer(void) { uint32_t la[4] = {0}; return (uintptr_t)(la + 1) - (uintptr_t)la; }
+"""
+_DECAY_LOCAL_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+int main(void) {
+  if (dl_diff() != bcir_dl_diff()) return fail("dl_diff");
+  if (dl_as_integer() != bcir_dl_as_integer()) return fail("dl_as_integer");
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+# CF-DECAY: sources that differ only in reading a member array's ADDRESS (`s.a` as a value) or its first
+# ELEMENT (`s.a[0]`) -- the decay is a different datum, so each pair must digest apart, on both rails alike.
+_DECAY_DIGEST_PAIRS = (
+    "struct s {{ uint8_t c; uint32_t a[4]; }};\nstruct s g;\nuintptr_t f(void) {{ return (uintptr_t){E}; }}\n",
+    "struct s {{ uint8_t c; uint32_t a[4]; }};\nuintptr_t f(struct s *p) {{ return (uintptr_t){P}; }}\n",
+)
+
+
+def test_a_decayed_member_array_digests_apart_from_its_element():
+    """CF-DECAY: the structural digest tells a member array's address from a read of its first element on
+    both rails (the decay was that very read, so the pair had digested alike)."""
+    head = "#include <stdint.h>\n"
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for tmpl in _DECAY_DIGEST_PAIRS:
+        digests = []
+        for addr, elem in (("g.a", "g.a[0]"), ("p->a", "p->a[0]")):
+            if ("{E}" in tmpl) != (addr == "g.a"):
+                continue
+            for spelling in (addr, elem):
+                src = head + tmpl.format(E=spelling, P=spelling)
+                oracle = (
+                    f"{cfront_structural_digest(compile_unit(src, check_clang=False).lowered):016x}"
+                )
+                if exe:
+                    with tempfile.TemporaryDirectory() as d:
+                        path = os.path.join(d, "pair.c")
+                        with open(path, "w", encoding="utf-8") as fh:
+                            fh.write(src)
+                        run = subprocess.run([exe, path], capture_output=True, text=True)
+                    twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
+                    assert twin and twin.group(1) == oracle, (spelling, run.stdout[:200])
+                digests.append(oracle)
+        assert len(digests) == 2 and digests[0] != digests[1], (tmpl, digests)
+
+
+# CF-DECAY: a row -- of a multi-dimensional local, parameter or global, or a multi-dimensional member array --
+# used as a value, and arithmetic on a multi-dimensional array, would decay to a `T (*)[N]` the value model
+# has no spelling for (its emit declares the array flat, so C would step an element where the source steps a
+# row). Both rails refuse each one; both had read the row's flat element silently.
+_DECAY_REFUSED = (
+    "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)l2[1] - (uintptr_t)l2; }",
+    "uint16_t *f(void) { static uint16_t l2[4][6]; return l2[1]; }",
+    "uintptr_t f(void) { uint16_t l2[4][6] = {0}; return (uintptr_t)(l2 + 1) - (uintptr_t)l2; }",
+    "uintptr_t f(uint8_t m[3][5]) { return (uintptr_t)(m + 1) - (uintptr_t)m; }",
+    "uint8_t *f(uint8_t m[3][5]) { return m[1]; }",
+    "uint8_t gb[3][5];\nuint8_t *f(void) { return gb[1]; }",
+    "struct s { uint8_t m[2][3]; };\nuint8_t *f(struct s *p) { return (uint8_t *)p->m; }",
+)
+
+
+def test_a_row_used_as_a_value_is_refused_on_both_rails():
+    """CF-DECAY: every form in `_DECAY_REFUSED` is refused by both rails (the twin with its refusal status,
+    never a crash) -- each had lowered to a read of the row's flat element."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    head = "#include <stdint.h>\n"
+    for body in _DECAY_REFUSED:
+        try:
+            compile_unit(head + body + "\n", check_clang=False)
+        except (CLowerError, CParseError):
+            pass
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_DECAY_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(head + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0, (body, run.returncode, run.stdout[:200])
+
+
+def test_a_member_access_on_a_non_struct_is_refused_on_both_rails():
+    """CF-GSTRUCT: a member access on an object that is no struct or union is refused by both rails. The
+    twin's member path read `c->s[sidx]` unguarded, so an index of -1 -- every struct global's, before
+    `use_global` bound its definition -- read before the table; it now refuses any object without one."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    bodies = (
+        "uint32_t f(uint32_t x) { return x.n; }",
+        "uint32_t g;\nuint32_t f(void) { return g.n; }",
+        "uint32_t *g;\nuint32_t f(void) { return g->n; }",
+    )
+    for body in bodies:
+        try:
+            compile_unit("#include <stdint.h>\n" + body + "\n", check_clang=False)
+        except (CLowerError, CParseError, KeyError, AttributeError):
+            pass
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(bodies):
+            path = os.path.join(d, f"m{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("#include <stdint.h>\n" + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0, (body, run.returncode, run.stdout[:200])

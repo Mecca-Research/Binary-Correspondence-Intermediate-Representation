@@ -8,6 +8,8 @@ standard C precedence with `[]` / `.` / `->` / call postfixes.
 
 from __future__ import annotations
 
+import dataclasses
+
 from . import cast
 from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
@@ -1516,34 +1518,43 @@ class _Parser:
             save = self.i
             self.nxt()
             if self._is_decl_start():  # sizeof ( type-name )
-                tref = self._type_spec()
-                ptr = 0
-                while self.at("OP", "*"):  # `sizeof(uint32_t *)` etc.
-                    ptr += 1
-                    self.nxt()
+                tref = self._abstract_type_name()
                 self.eat("PUNCT", ")")
-                return cast.SizeOf(
-                    type=cast.TypeRef(
-                        base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals
-                    )
-                )
+                return cast.SizeOf(type=tref)
             self.i = save  # not a type -> `sizeof ( expr )`
         return cast.SizeOf(expr=self._unary())  # sizeof expr / sizeof (expr)
+
+    def _abstract_type_name(self) -> cast.TypeRef:
+        """A type-name as `sizeof ( ... )` and `_Alignof ( ... )` take it (C11 6.7.7): the specifier, then
+        any `*`s, then any array dimensions `[N]` (integer constant expressions). The specifier's own
+        TypeRef is kept whole -- a typedef's array dimensions, a `_BitInt(N)` width, a `typeof` operand --
+        where rebuilding it from its base and qualifiers alone had dropped them (`sizeof(row_t)` of
+        `typedef uint16_t row_t[6]` was 2, not 12). A pointer to an array type (`T (*)[N]`, or `*` after
+        an array typedef) has no TypeRef spelling and is refused (CF-SIZEOF)."""
+        tref = self._type_spec()
+        ptr = 0
+        while self.at("OP", "*"):  # `sizeof(uint32_t *)` etc.
+            ptr += 1
+            self.nxt()
+        dims = []
+        while self.at("PUNCT", "["):  # `sizeof(uint32_t[10])`: an array of what precedes
+            self.nxt()
+            dims.append(self._const_eval(self._assign()))
+            self.eat("PUNCT", "]")
+        if ptr and tref.array:
+            raise CParseError(
+                "a pointer to an array type-name is not supported", pos=self.peek().pos
+            )
+        return dataclasses.replace(tref, ptr=tref.ptr + ptr, array=tuple(dims) + tuple(tref.array))
 
     def _alignof(self):
         """`_Alignof ( type-name )` / `alignof(...)` -> a constant: the type's alignment (folded in
         lowering from the shared layout model; unlike sizeof, only the type-name form is valid C)."""
         self.nxt()  # _Alignof / alignof
         self.eat("PUNCT", "(")
-        tref = self._type_spec()
-        ptr = 0
-        while self.at("OP", "*"):  # `_Alignof(uint32_t *)`
-            ptr += 1
-            self.nxt()
+        tref = self._abstract_type_name()
         self.eat("PUNCT", ")")
-        return cast.AlignOf(
-            cast.TypeRef(base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals)
-        )
+        return cast.AlignOf(tref)
 
     def _generic(self):
         """`_Generic ( assignment-expr , (type-name : assignment-expr | default : assignment-expr)+ )`

@@ -131,15 +131,16 @@ def _elem_float_name(t) -> str:
     return t.name[: -len(" _Complex")] if t.is_complex else t.name
 
 
-def _float_lit_type(spelling: str) -> CType:
+def _float_lit_type(spelling: str, abi=None) -> CType:
     """The type of a floating literal from its suffix: `f`/`F` -> float, `l`/`L` -> long double,
-    else double (the C default)."""
+    else double (the C default) -- laid out by the target's ABI, whose `long double` is 16 bytes on
+    x86-64 Linux, 12 on i386 and 8 on Windows x64 (the twin reads the same ABI table)."""
     s = spelling.strip()
     if s and s[-1] in "fF":
-        return scalar("float")
+        return scalar("float", abi)
     if s and s[-1] in "lL":
-        return scalar("long double")
-    return scalar("double")
+        return scalar("long double", abi)
+    return scalar("double", abi)
 
 
 # <math.h> functions whose result is a floating type fixed by the name suffix (base -> double,
@@ -953,7 +954,7 @@ class _FuncLowerer:
         elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
             base = self._type_of(tref.typeof_expr)
         elif tref.aggregate:
-            base = self.aggregates[tref.base]
+            base = _aggregate(self.aggregates, tref.base)
         elif tref.base == "va_list":  # the <stdarg.h> variadic cursor (opaque)
             base = valist(self.abi)
         elif tref.bit_width:  # C23 `_BitInt(N)`: an exact-width, non-promoting int
@@ -1154,6 +1155,13 @@ class _FuncLowerer:
                 else:
                     take = max(1, len(shape))
                 here, rest = idx_rids[:take], idx_rids[take:]
+                if len(here) < take:
+                    # fewer subscripts than the array has dimensions: a ROW, whose value would decay to a
+                    # row pointer `T (*)[N]` the value model has no spelling for -- indexing its flat
+                    # storage instead read an element (CF-DECAY). The twin's `index_chain` refuses alike.
+                    raise CLowerError(
+                        "partial indexing of a multi-dimensional array (a row used as a value) is not yet supported"
+                    )
                 lin = here[0]
                 for d in range(1, len(here)):
                     if vla_str is not None:  # dim d's snapshot rid (NO c.const -- the runtime
@@ -1361,6 +1369,9 @@ class _FuncLowerer:
         `rtypes`). Driving the emitted temp's true C type makes the backend do signed-vs-unsigned and
         width-correct arithmetic (the old flat uint32 model did not)."""
         ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+        if op in ("+", "-") and (a in self.vla_strides or b in self.vla_strides):
+            # a multi-dimensional VLA decays to a row pointer (its rows are runtime extents)
+            raise CLowerError("arithmetic on a multi-dimensional array is not yet supported")
         # C23 `_BitInt(N)` (non-promoting, exact width): same-type stays `_BitInt(N)`; a `_BitInt` op an
         # integer CONSTANT also stays `_BitInt(N)` (the constant converts to the bit-int type). The
         # constant case needs the rid (is this operand a literal?), so it is resolved HERE, not in the
@@ -1423,9 +1434,11 @@ class _FuncLowerer:
                 # wider real float. Comparing element ranks makes this order-independent.
                 if any(t.is_complex for t in floats):
                     er = max(_FLOAT_RANK.get(_elem_float_name(t), 1) for t in floats)
-                    return scalar(f"{_RANK_FLOAT[er]} _Complex")
-                return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name)
+                    return scalar(f"{_RANK_FLOAT[er]} _Complex", self.abi)
+                return scalar(max(floats, key=lambda t: _FLOAT_RANK.get(t.name, 1)).name, self.abi)
         if op in ("+", "-"):  # pointer arithmetic: p + i / i + p / p - i ->
+            # an array operand is its first element's address
+            ta, tb = self._arith_decay(ta), self._arith_decay(tb)
             pa = (
                 ta if (ta is not None and ta.kind == "pointer") else None
             )  # a pointer carrying the pointee.
@@ -1434,6 +1447,10 @@ class _FuncLowerer:
             )  # (p - q, both pointers, is a
             if (pa is None) != (pb is None):  # ptrdiff and stays integer below.)
                 return pa or pb
+            if pa is not None and pb is not None and op == "-":
+                # the difference of two pointers is a `ptrdiff_t` (C11 6.5.6p9): signed and pointer-wide
+                # on every target, as `intptr_t` is, which is how the type model spells it (CF-PTRDIFF)
+                return scalar("intptr_t", self.abi)
         if op in ("<", ">", "<=", ">=", "==", "!=", "&&", "||"):
             return scalar("int", self.abi)  # a relational / logical result is int
         ia = ta if (ta is not None and ta.is_integer) else scalar("int", self.abi)
@@ -1448,6 +1465,22 @@ class _FuncLowerer:
         except BitIntMix as e:
             raise CLowerError(str(e)) from e
 
+    def _arith_decay(self, t: CType | None) -> CType | None:
+        """An array operand of `+` / `-` / `?:` converts to a pointer to its first element (C11 6.3.2.1p3):
+        typing the result as the integer usual arithmetic conversions give a non-integer operand declared
+        `int32_t t = la + 1` -- uncompilable C (CF-DECAY). A multi-dimensional array would decay to a row
+        pointer the value model has no spelling for, and the emit declares it flat, so C would step by one
+        element where the source steps by a row: refused, as the twin refuses it."""
+        if t is not None and t.kind == "pointer" and len(t.shape) > 1:
+            # a decayed `T m[][N]` / `T (*m)[N]` parameter: a row pointer, declared flat
+            raise CLowerError("arithmetic on a multi-dimensional array is not yet supported")
+        if t is None or t.kind != "array":
+            return t
+        if (t.of is not None and t.of.kind == "array") or len(t.shape) > 1:
+            raise CLowerError("arithmetic on a multi-dimensional array is not yet supported")
+        # the element's qualifiers ride on the pointee (`t.of`), as a pointer to volatile storage's do
+        return pointer(t.of, self.abi) if t.of is not None else t
+
     def _type_of(self, node) -> CType:
         """The static C type of an expression, computed WITHOUT evaluating or emitting it -- the operand
         of `typeof` is unevaluated (like `sizeof`). Mirrors the result types `_rvalue` assigns its temps,
@@ -1461,7 +1494,9 @@ class _FuncLowerer:
                 else scalar("int", self.abi)
             )
         if isinstance(node, cast.FloatLit):
-            return _float_lit_type(node.value)
+            return _float_lit_type(node.value, self.abi)
+        if isinstance(node, (cast.SizeOf, cast.AlignOf)):  # a `size_t` (C11 6.5.3.4p5)
+            return scalar("size_t", self.abi)
         if isinstance(node, cast.Name):
             return self._lookup(node.ident, node.pos)[1]
         if isinstance(node, cast.StringLit):  # a string literal has type `char[N]` (not char*)
@@ -1503,6 +1538,139 @@ class _FuncLowerer:
         raise CLowerError(
             f"typeof of this expression form ({type(node).__name__}) is not yet supported"
         )
+
+    def _sizeof_elem(self, t: CType) -> CType:
+        """One subscript or `*` of `t` as `sizeof` sees it (CF-SIZEOF): an array's element -- a whole row
+        of a multi-dimensional one, flattened (`shape`) or nested alike -- or a pointer's pointee, which is
+        a row again for a decayed `T m[][N]` / `T (*m)[N]` parameter (its `shape`)."""
+        if t.kind == "array":
+            return self._array_row(t)[0]
+        if t.kind == "pointer" and t.of is not None:
+            if len(t.shape) > 1:  # the pointee of a decayed multi-dim array parameter is a row
+                return self._array_row(replace(array(t.of, 1), shape=t.shape))[0]
+            return t.of
+        raise CLowerError("sizeof of a subscript of a type that is neither an array nor a pointer")
+
+    def _sizeof_decay(self, t: CType) -> CType:
+        """The array-to-pointer conversion every operand but `sizeof`'s, `&`'s and a member access's
+        undergoes (C11 6.3.2.1p3), for an operator whose result `_sizeof_type` types from its operands."""
+        return pointer(t.of, self.abi) if t.kind == "array" else t
+
+    def _sizeof_member(self, node) -> tuple[CType, int]:
+        """A member access as `sizeof` sees it: the member's declared type and its bit-field width (0 for
+        an ordinary member). `.` names a member of its operand, `->` of what its operand points at."""
+        base_t = self._sizeof_type(node.base)
+        agg = self._sizeof_elem(base_t) if node.arrow else base_t
+        if not agg.is_aggregate:
+            raise CLowerError(f"sizeof of a member of a {agg.kind}")
+        ft, _off, _bit, width = agg.field(node.field)
+        return ft, width
+
+    def _sizeof_object(self, node) -> CType:
+        """The declared type of an lvalue operand -- a bit-field's own declared type included, as an
+        assignment, an increment and a comma operator yield it (Clang: `sizeof(b.f = 1)` of a `uint8_t f : 2`
+        is 1)."""
+        if isinstance(node, cast.Member):
+            return self._sizeof_member(node)[0]
+        return self._sizeof_type(node)
+
+    def _sizeof_operand(self, node) -> CType:
+        """The type an operator's operand converts to (C11 6.3.2.1p3, 6.3.1.1p2): an array decays to a
+        pointer, and a bit-field takes the type Clang gives its value -- `int` when narrower than `int`, at
+        `int`'s width `int` or `unsigned int` by its signedness, and wider its declared type, to which no
+        promotion applies. The operator then applies its own conversions (`_bin_result_type_ct`)."""
+        if isinstance(node, cast.Member):
+            ft, width = self._sizeof_member(node)
+            if not width:
+                return self._sizeof_decay(ft)
+            int_bits = scalar("int", self.abi).size * 8
+            if width < int_bits:
+                return scalar("int", self.abi)
+            if width == int_bits:
+                return scalar("int" if ft.signed else "unsigned int", self.abi)
+            return unqualified(ft)
+        return self._sizeof_decay(self._sizeof_type(node))
+
+    def _sizeof_type(self, node) -> CType:
+        """The type `sizeof` measures (CF-SIZEOF): the operand's own type, with neither the lvalue
+        conversion nor the array-to-pointer conversion applied (C11 6.5.3.4p2, 6.3.2.1p2-3). An array
+        stays its array, a row of a multi-dimensional array is a row, and a member array is its member. An
+        operator's result is typed from its own operands once THEY convert (`_sizeof_operand`), as the
+        lowering types it; `&`, a call, a conditional, an assignment, an increment, a comma and a nested
+        `sizeof` / `_Alignof` are typed here. A bit-field operand is a constraint violation (C11 6.5.3.4p1)
+        and a form this cannot type is refused: neither is folded to a guess."""
+        if isinstance(node, cast.Name):
+            if node.ident not in self.env:
+                # not an object: a function designator is a constraint violation (C11 6.5.3.4p1), and the
+                # constants `_rvalue` resolves after the environment keep the types it gives them
+                if node.ident in self.func_rets or node.ident in self.protos:
+                    raise CLowerError(f"sizeof of the function {node.ident!r}", pos=node.pos)
+                if node.ident in _IMAG_UNIT:
+                    return scalar("float _Complex", self.abi)
+                if node.ident in self._MEMORDER:
+                    return scalar("int", self.abi)
+            rid, ct = self._lookup(node.ident, node.pos)
+            if rid in self.vla_strides:
+                # a multi-dimensional VLA: every row of it is a runtime extent, so a subscript of it has
+                # no constant size (its unknown dimensions make it incomplete here)
+                return replace(ct, shape=(0,) * len(self.vla_strides[rid]))
+            return ct
+        if isinstance(node, cast.Index):
+            return self._sizeof_elem(self._sizeof_type(node.base))
+        if isinstance(node, cast.Member):
+            ft, width = self._sizeof_member(node)
+            if width:
+                raise CLowerError("sizeof of a bit-field")
+            return ft
+        if isinstance(node, cast.Unary):
+            if node.op == "*":
+                return self._sizeof_elem(self._sizeof_type(node.operand))
+            if node.op == "&":
+                return pointer(self._sizeof_type(node.operand), self.abi)
+            if node.op == "!":
+                return scalar("int", self.abi)
+            t = self._sizeof_operand(node.operand)
+            if t.is_float:  # `-` / `~` / `+`: the promoted operand (a float does not promote)
+                return t
+            if t.is_integer:
+                return promote_int(t, self.abi)
+            raise CLowerError(f"sizeof of `{node.op}` applied to a {t.kind}")
+        if isinstance(node, cast.Binary):
+            if node.op == ",":
+                # the comma operator yields its right operand's value, unpromoted (C11 6.5.17p2)
+                return self._sizeof_decay(unqualified(self._sizeof_object(node.rhs)))
+            lhs = self._sizeof_operand(node.lhs)
+            return self._bin_result_type_ct(node.op, lhs, self._sizeof_operand(node.rhs))
+        if isinstance(node, cast.Ternary):
+            a, b = self._sizeof_operand(node.then), self._sizeof_operand(node.els)
+            if a.kind == "pointer" or b.kind == "pointer":
+                return a if a.kind == "pointer" else b
+            if a.is_aggregate:
+                return a
+            # the usual arithmetic conversions (C11 6.5.15p5)
+            return self._bin_result_type_ct("+", a, b)
+        if isinstance(node, cast.Assign):
+            # an assignment has its left operand's type (C11 6.5.16p3)
+            return unqualified(self._sizeof_object(node.target))
+        if isinstance(node, cast.IncDec):
+            return unqualified(self._sizeof_object(node.operand))
+        if isinstance(node, cast.CallExpr):
+            ret = self.func_rets.get(node.callee)
+            if ret is None and node.callee in self.env:  # a call through a function-pointer object
+                fpt = self.env[node.callee][1]
+                ret = fpt.of if fpt.kind == "funcptr" else None
+            elif ret is None and node.callee in self.protos:
+                ret = self.protos[node.callee][0]
+            if ret is None:
+                raise CLowerError(
+                    f"sizeof of a call to {node.callee!r}: its return type is unknown"
+                )
+            return ret
+        if isinstance(node, (cast.SizeOf, cast.AlignOf)):
+            return scalar("size_t", self.abi)
+        if isinstance(node, cast.Generic):
+            return self._sizeof_type(self._generic_select(node))
+        return self._type_of(node)
 
     def _type_key(self, t: CType):
         """A canonical, comparable identity for a type used by `_Generic` matching (C11 §6.5.1.1, after
@@ -1556,7 +1724,8 @@ class _FuncLowerer:
             r = self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
             return r
         if isinstance(node, cast.FloatLit):  # a float constant -> a typed c.fconst
-            ct = _float_lit_type(node.value)  # f/F -> float, l/L -> long double, else double
+            # f/F -> float, l/L -> long double, else double -- by the target's ABI
+            ct = _float_lit_type(node.value, self.abi)
             t = self._temp(ct, "fk")
             return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
@@ -1678,7 +1847,10 @@ class _FuncLowerer:
         if isinstance(node, cast.Cast):
             return self._cast_value(self._rvalue(node.operand), self._resolve_type(node.type))
         if isinstance(node, (cast.Index, cast.Member)):
-            return self._read(self._lvalue(node))
+            lv = self._lvalue(node)
+            if lv.ct.kind == "array" and not lv.bit_width:
+                return self._array_value(node, lv)
+            return self._read(lv)
         if isinstance(
             node, cast.CompoundLiteral
         ):  # `(struct P){a,b}` by value / `(int){v}` as a value
@@ -1717,15 +1889,11 @@ class _FuncLowerer:
         if isinstance(node, cast.Assign):
             return self._assign(node)
         if isinstance(node, cast.SizeOf):
-            # sizeof folds to a compile-time constant -- the operand is NOT evaluated.
-            if node.type is not None:
-                size = self._resolve_type(node.type).size
-            elif isinstance(node.expr, cast.StringLit):
-                prefix, _ = split_lit_prefix(node.expr.value)
-                size = (_str_bytes(node.expr.value) + 1) * str_elem_size(
-                    prefix
-                )  # units incl. NUL × width
-            elif isinstance(node.expr, cast.Name):
+            # sizeof folds to a compile-time constant -- the operand is NOT evaluated. Its value is the
+            # size of the operand's own type (`_sizeof_type`: no array decay), and its type is `size_t`
+            # (C11 6.5.3.4p5), the ABI's pointer-sized unsigned integer, so `sizeof x * n` and `sizeof a -
+            # sizeof b` compute in that width (CF-SIZEOF).
+            if isinstance(node.expr, cast.Name) and node.expr.ident in self.env:
                 rid, ct = self._lookup(node.expr.ident, node.expr.pos)
                 if ct.kind == "array" and ct.count == 0 and rid in self.ptr_extent:
                     # `sizeof a` of a 1-D stack VLA is a RUNTIME value: the snapshot extent × sizeof(element).
@@ -1733,14 +1901,24 @@ class _FuncLowerer:
                     ext = self.ptr_extent[rid]
                     t = self._temp(scalar("size_t", self.abi), "szof")
                     return self._emit("c.sizeof.vla", Opcode.ADD, (ext,), (t,), imm=(ct.of.size,))
-                size = ct.size  # the variable's declared (static) type size
-            else:
-                size = 4  # an integer expression -> int
-            t = self._temp(scalar("uint32_t"), "szof")
-            return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(size,))
+            ct = (
+                self._resolve_type(node.type)
+                if node.type is not None
+                else self._sizeof_type(node.expr)
+            )
+            if ct.size <= 0 or (ct.kind == "array" and ct.count == 0):
+                # an unsized array, `void`, a call to a void function (C11 6.5.3.4p1), or a row of a
+                # multi-dimensional VLA, whose size is a runtime value
+                raise CLowerError("sizeof of an incomplete type")
+            if ct.size > (1 << (8 * self.abi.pointer_size - 1)) - 1:
+                # no object of it fits the target's address space (Clang: "array is too large")
+                raise CLowerError("sizeof of a type too large for the target")
+            t = self._temp(scalar("size_t", self.abi), "szof")
+            return self._emit("c.const", Opcode.LOAD, (), (t,), imm=(ct.size,))
         if isinstance(node, cast.AlignOf):
-            # _Alignof folds to the target type's alignment (operand never evaluated, like sizeof).
-            t = self._temp(scalar("uint32_t"), "alof")
+            # _Alignof folds to the target type's alignment (operand never evaluated, like sizeof); its
+            # type is `size_t` too (C11 6.5.3.4p5).
+            t = self._temp(scalar("size_t", self.abi), "alof")
             return self._emit(
                 "c.const", Opcode.LOAD, (), (t,), imm=(self._resolve_type(node.type).align,)
             )
@@ -1756,6 +1934,9 @@ class _FuncLowerer:
             # select goes unsigned) and a FLOAT arm is truncated to int (`(c?x:y)` of doubles becomes an
             # int, dropping the value / mis-converting a nan). (pointer arms keep the 4-byte unit.)
             ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+            if a in self.vla_strides or b in self.vla_strides:
+                raise CLowerError("a multi-dimensional array operand of `?:` is not yet supported")
+            pa, pb = self._arith_decay(ta), self._arith_decay(tb)
             if (
                 ta is not None
                 and tb is not None
@@ -1763,6 +1944,10 @@ class _FuncLowerer:
                 and (tb.is_integer or tb.is_float)
             ):
                 rt = self._bin_result_type_ct("+", ta, tb)
+            elif pa is not None and pa.kind == "pointer":
+                rt = pa  # a pointer (or a decayed array) arm: the select is that pointer (CF-DECAY)
+            elif pb is not None and pb.kind == "pointer":
+                rt = pb
             else:
                 rt = scalar("uint32_t")
             t = self._temp(rt, "sel")
@@ -1825,6 +2010,25 @@ class _FuncLowerer:
                 "c.bf.get", Opcode.ADD, (unit,), (t,), imm=(lv.bit_off, lv.bit_width, int(signed))
             )
         return unit
+
+    def _array_value(self, node, lv: "_LV") -> int:
+        """An array member used as a value (`s.a`, `p->a`, `g.a`): it decays to a pointer to its first
+        element (C11 6.3.2.1p3) -- its ADDRESS, `&s.a[0]`, never a load of that element, which is what the
+        member read had emitted (an uncompilable `return s.a;`, and a silent element value under a cast to an
+        integer). The one claim `&s.m` emits (`c.addrof` of the base at the member's offset), typed `T *`.
+        A row -- of a multi-dimensional array, or an array element that is itself an array -- would decay to
+        a `T (*)[N]`, which the value model has no spelling for: refused, as the twin refuses it (CF-DECAY)."""
+        elem = lv.ct.of if lv.ct.of is not None else scalar("uint32_t")
+        if not isinstance(node, cast.Member) or lv.idx is not None:
+            raise CLowerError(
+                "an array element that is itself an array, used as a value, is not yet supported"
+            )
+        if elem.kind == "array" or len(lv.ct.shape) > 1:
+            raise CLowerError(
+                "a multi-dimensional member array used as a value is not yet supported"
+            )
+        t = self._temp(pointer(elem, self.abi), "decay")
+        return self._emit("c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,))
 
     def _access_bounds(self, lv: "_LV") -> str:
         """The bounds contract for a load/store (§5.12 bounds-promotion). An INDEXED access into a
@@ -3189,7 +3393,7 @@ class _FuncLowerer:
                     raise CLowerError(
                         "a VLA parameter of an incomplete / array element is not supported"
                     )
-                ct = replace(pointer(elem), shape=(0,))
+                ct = replace(pointer(elem, self.abi), shape=(0,))
                 rid = self._new_rid()
                 self._resource(rid, ct, p.name)
                 self.env[p.name] = (rid, ct)
@@ -3213,7 +3417,7 @@ class _FuncLowerer:
                 while elem.kind == "array":
                     dims.append(elem.count)
                     elem = elem.of
-                ct = replace(pointer(elem), shape=tuple(dims))
+                ct = replace(pointer(elem, self.abi), shape=tuple(dims))
             rid = self._new_rid()
             self._resource(rid, ct, p.name)
             self.env[p.name] = (rid, ct)
@@ -3372,8 +3576,9 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     gres: dict[int, Resource] = {}
     gdecls: list = []  # the linkable emit's global surface
     for gi, g in enumerate(unit.globals):
+        # the declared type: an initialized scalar or struct keeps it -- it is one object, not a table of
+        # its initializers -- and only an unsized array takes its extent from the initializer (CF-GINIT)
         ct = _resolve_member_type(g.type, aggregates, abi)
-        ct_src = ct  # the SOURCE-shaped type (a scalar stays a
         # a string init is only the CHARACTER-ARRAY form when the element is a character-code
         # scalar of the literal's unit width -- `char *tab[] = {"hi"}` (a pointer table) must
         # NOT take this path (it would size the array from the string bytes and mis-render);
@@ -3389,12 +3594,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         if is_string:  # `char s[] = "..."` -- sized from the LITERAL
             if ct.count == 0:  # (decoded code units + the NUL), not the init
                 ct = array(ct.of, _str_bytes(g.init[0].value) + 1)  # tuple length (which is 1)
-                ct_src = ct
-        elif g.init and ct.kind == "array" and ct.count == 0:  # scalar in the linkable declaration)
+        elif g.init and ct.kind == "array" and ct.count == 0:
             ct = array(ct.of, len(g.init))  # `T name[] = {...}` -> sized from the init
-            ct_src = ct
-        elif g.init and ct.kind != "array":
-            ct = array(ct, len(g.init))
         rid = _check_band_rid(900000 + gi)  # guard the reserved I/O-port rid (belt + suspenders)
         gres[rid] = Resource(
             rid=rid,
@@ -3402,7 +3603,9 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             # every access through it (R3 holds the claims touching it to the MMIO domain)
             domain=Domain.MMIO if ct.touches_mmio else Domain.RAM,
             elem_bytes=(ct.of.size if ct.of else ct.size),
-            shape=(ct.count or len(g.init) or 1,),
+            # an array's elements; any other object is one element of its own type -- an initialized
+            # scalar or struct is not a table of its initializers (CF-GINIT)
+            shape=((ct.count or len(g.init) or 1) if ct.kind == "array" else 1,),
             access="ro",
             data_gen=1,
             name=g.name,
@@ -3454,7 +3657,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         gdecls.append(
             (
                 g.name,
-                ct_src,
+                ct,
                 tuple(vals) if vals is not None else None,
                 getattr(g, "extern_decl", False),
                 getattr(g, "static_storage", False),
@@ -3534,6 +3737,18 @@ def _atomic_type(base: CType, abi) -> CType:
     return with_atomic(base, abi=abi)
 
 
+def _aggregate(aggregates: dict, tag: str) -> CType:
+    """The laid-out struct or union `tag`. One the unit has not defined before this use -- an opaque
+    `struct fwd *`, or a member pointer to the struct being defined -- has no layout here, and is refused
+    as a lowering error the pipeline can route, never a bare KeyError."""
+    if tag not in aggregates:
+        raise CLowerError(
+            f"the incomplete struct or union {tag!r} has no layout here "
+            "(an opaque or self-referential pointer to one is not yet supported)"
+        )
+    return aggregates[tag]
+
+
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
     if tref.funcptr:  # a function-pointer member (dispatch table)
@@ -3541,7 +3756,7 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
         params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
         return funcptr(tref.base, ret, params, abi)
     if tref.aggregate:
-        base = aggregates[tref.base]
+        base = _aggregate(aggregates, tref.base)
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)
         base = bitint(tref.bit_width, signed="unsigned" not in tref.base, abi=abi)
     else:
