@@ -1442,6 +1442,112 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - `_Atomic(T *)`, an atomic pointer object, is modeled on both rails as a pointer to `_Atomic T`;
   - neither rail models AArch64's alignment for an unnamed bitfield or the MSVC bitfield layout.
 
+  Four cfront fixes (2026-09-29) closed the first two found-not-fixed items above and two defects found while
+  measuring them. RED for each was measured on the parent (the five fixes, `b958d890`).
+  CF-SIZEOF folded `sizeof` to its operand's own size and typed it `size_t`, on both rails.
+  - The defect: both rails folded a wrong constant for most operands that are not a plain scalar or struct
+    name, and every such unit lowered clean. The twin measured a local array by its element (`sizeof buf`
+    of a `uint32_t buf[10]` was 4) and every global as 4, and refused a type-name array and most operators
+    (a comparison, a shift, `&`, a call, a conditional, a comma, an assignment). Its `sizeof` bound only a
+    primary expression, so `sizeof -x` lowered `4 - x`. The oracle measured a row,
+    a struct element, a member and a dereference as 4, a string-initialized array as 0, and an operator's
+    result without its operands' conversions (`sizeof(x8 = x64u)` was 4, not 1). Both typed the result a
+    32-bit unsigned, so `sizeof(uint32_t) - 8u` wrapped at 2^32 where `size_t` wraps at the pointer
+    width.
+  - RED: two probes hold 159 operand forms against Clang on each of the five targets, 795 cases. The
+    parent oracle folds a wrong constant in 368 of them and refuses 30; the parent twin folds a wrong
+    constant in 138 and refuses 510. The three sizeof tests fail on the parent.
+  - What landed:
+    - the oracle types the operand with neither the lvalue nor the array-to-pointer conversion
+      (`_sizeof_type`): an array stays its array, a row a row, a member array its member. `&`, a call, a
+      conditional, an assignment, an increment, a comma and a nested `sizeof` are typed as C types them, an
+      operator's bit-field operand by its promotion (`_sizeof_operand`), and the parser reads a type-name's
+      `*`s and `[N]`s (`_abstract_type_name`);
+    - the twin has no AST, so a static walk reads a designator (a name, `[...]`, `.m`, `->m`, `*`, `&`,
+      parentheses, a string literal) off the tokens without lowering it (`sz_unary`, `sz_postfix`,
+      `sz_name`). It lowers any other operand speculatively for its value's type and rolls the lowering
+      back (`spec_mark`), as `typeof` does. A global keeps every dimension, and an unsized one takes its
+      extent from its initializer (`brace_init_extent`);
+    - the result is a `size_t` temp on both rails. A bit-field operand, a function designator, an incomplete
+      type and a type larger than the target's `PTRDIFF_MAX` are refused, each for its own reason;
+    - the oracle types a `long double` literal and a floating operation by the target's ABI, not the host's:
+      `sizeof 1.0L` is 12 on i386 and 8 on Windows.
+  - Outcomes: every case matches Clang on both rails except two Windows ABI facts neither rail models
+    (`wchar_t` is 2 bytes there, and MSVC lays out bit-fields its own way) and the forms a rail refuses:
+    the oracle one (a string-initialized local array), the twin three (that and two typedef'd array forms).
+    `cfront_sizeof_forms.c`, 38 functions, runs equivalent to the original on both emits under Clang and
+    GCC.
+  CF-GSTRUCT lowered a file-scope struct's members, on the twin.
+  - The defect: the twin bound a struct global with struct index -1, so every member access read
+    `c->s[-1]` and the frontend crashed: a read of `gs.n`, a store through it, a nested `gt.in.a[1]`, a
+    pointer global's `gp->n`. It computed a global's device domain without the struct, so a global holding
+    volatile members was placed in ordinary memory. The oracle lowered all of these.
+  - RED: of 26 access forms on file-scope structs, the parent twin crashes on 19, refuses 3 and lowers 4.
+  - What landed: `use_global` finds the struct index once and gives it to both the device domain and the
+    environment; a member access on an object that is not a struct or union is refused, never indexed at
+    -1.
+  - Outcomes: 25 of the 26 forms lower digest-equal on both rails and run equivalent to the original from
+    the same seeded globals, the result and every global's bytes compared. Both rails refuse the 26th, a
+    member read through a subscripted array of structs. `cfront_globalstruct.c` runs equivalent on both
+    emits.
+  CF-GINIT kept an initialized global's declared type, on the oracle.
+  - The defect: the oracle typed an initialized scalar or struct global as a one-element array of it, a
+    relic of the read-only lookup-table model. `gw + 1` of a `uint64_t gw = 0x100000000u` was computed in
+    32 bits and returned 1, and `gi.n` of an initialized struct was refused.
+  - RED: 5 of 9 forms on initialized globals fail on the parent: two oracle miscompiles, one oracle refusal
+    and two `sizeof`s.
+  - What landed: an initialized scalar or struct keeps its declared type; only an unsized array takes its
+    extent from its initializer.
+  - Outcomes: all 9 forms lower digest-equal and run equivalent to the original on both emits.
+  CF-DECAY made an array used as a value the address of its first element, on both rails. With it,
+  CF-PTRDIFF typed a pointer difference `ptrdiff_t`, and CF-DEREFIDX lowered the index of `*(la + j++)`
+  once, on the twin.
+  - The defect: both rails read a member array used as a value (`gs.a`, `l.a`, `sp->a`) as a load of its
+    first element, so `return gs.a;` did not compile and `(uintptr_t)gs.a` returned the element. Both
+    typed `la + 1` and a conditional over pointer arms as a 32-bit integer (`int32_t t = la + 1;`, which
+    does not compile), and `p - q` as one too; the twin's was unsigned, so a difference of -2 returned
+    4294967294. The twin lowered the index of `*(la + j++)` twice, reading `la[j + 1]` and stepping `j` by
+    two.
+  - RED: 25 of 28 forms fail on the parent, and 20 of those digest equal on both rails: the digest does
+    not read a temp's type, and both rails shared the misreading.
+  - What landed: a member array's value is the member's address typed as a pointer to its element
+    (`_array_value`, the twin's `member_array_value`); an array operand of `+`, `-` or a conditional
+    decays to a pointer to its element (`_arith_decay`, `rid_addr`); the difference of two pointers is a
+    `ptrdiff_t`. A row of a multi-dimensional array used as a value had been its flat element, silently;
+    it is refused on both rails now. The twin's deref-assignment lookahead rolls back what it lowered.
+  - Outcomes: 23 of the 28 forms lower digest-equal and run equivalent to the original; both rails refuse
+    the other 5, each a row of a multi-dimensional array. `cfront_decay.c` runs equivalent on both emits.
+  Found and fixed on the way:
+  - the twin sized a function pointer 8 bytes on every target, where i386's is 4;
+  - the oracle raised a bare `KeyError` on a pointer to a struct it had not laid out (an opaque
+    `struct fwd *`, a member pointer to a later struct or to the struct being defined): a traceback where
+    the pipeline needs a refusal it can route. It is a `CLowerError` on every path that names a type
+    (`_aggregate`);
+  - the oracle's check for a function designator under `sizeof` was unreachable: its VLA path looked the
+    name up first and refused `sizeof g` as an undeclared identifier. The refusal test passed on that and
+    on a parse error, so each refusal witness now asserts its own reason on each rail;
+  - the G10 escape gate caught the first cut of `cfront_decay.c`. One function read past a local array
+    for an index of 10 or more, which the commute witness passes, so nine pairs diverged on stack
+    garbage (`effects.commute.unsound` 9). Two local arrays had their address subtracted or converted
+    to an integer, and the escape analysis reports them escaping, rightly, which `escape.unproved`
+    counts (2). The index is bounded, those arrays moved to file scope, and the test runs the local
+    forms inline; every G10 row is back at the parent's value.
+  The ten new tests fail on the parent, and 35 injected defects, on both rails, are each caught.
+  Found, not fixed here (each a suggested follow-up):
+  - brace elision: a braced list for a struct whose first member is an array initializes that array's
+    elements first (C11 6.7.9p20). Both rails give the first value to the whole member and the next to
+    the next member, so `struct { uint8_t a[2]; uint8_t c; } l = {1, 2}` computes another value on both
+    emits, silently; the oracle's emit for a 16-byte array member does not compile;
+  - a string-initialized local array (`char str[] = "hello"`) is not sized by its literal, so `sizeof str`
+    is refused on both rails;
+  - both rails make `wchar_t` 4 bytes on every target; Windows makes it 2 (`sizeof(L"ab")` is 6 there);
+  - the twin refuses a typedef'd array type (`typedef uint32_t row_t[3];`);
+  - both rails refuse a subscript of a two- or three-dimensional global (`gb[i][j]`) and a member read
+    through a subscripted array of structs (`gs_arr[i].n`);
+  - the oracle refuses a pointer to a struct it has not laid out, a self-referential one included
+    (`struct node { ...; struct node *next; }`), which the twin lays out;
+  - both rails refuse `sizeof &g`, the size of a function's address.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

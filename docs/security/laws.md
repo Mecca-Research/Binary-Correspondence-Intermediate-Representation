@@ -145,6 +145,17 @@ S5-C instances (2026-09-26):
   `law_variants()` raise, and the fault sweep read three such defects as `grader`. The law rows are
   now their own section: a corpus that lost an edge leaves them unmeasured (a `rows` finding), and
   the planner rows report the defect.
+CF-GSTRUCT instances (2026-09-29): a frontend's refusal is its verdict, and both cfront rails had
+paths that ended in a crash instead. The twin bound a file-scope struct with struct index -1 and read
+`c->s[-1]` on every member access: 19 of 26 forms on struct globals crashed the parent twin, and a
+member access on a scalar (`x.n`) died on SIGSEGV. The oracle raised a bare `KeyError` out of
+`compile_unit` on a pointer to a struct it had not laid out (an opaque handle, or the self-referential
+`struct node *next`), a traceback the pipeline cannot route to its fallback. The twin now finds the
+struct index once for both of its consumers, and refuses a member access on a non-struct; the oracle's
+two type resolvers share one total lookup (`_aggregate`, L14). Witnesses:
+`test_a_member_access_on_a_non_struct_is_refused_on_both_rails` (the refusal, never a signal),
+`test_a_pointer_to_an_undefined_struct_is_a_refusal_not_a_crash`. Faults: `twin: a member access on a
+non-struct reads c->s[-1]`, `oracle: an undefined struct is a bare KeyError`.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -821,6 +832,22 @@ CF-ATOMIC and CF-PASTE instances (2026-09-29):
   (`cfront_pp_avoidpaste.c`) and a generated property: the joined text re-lexes to its tokens. The
   oracle's tokenizer does not model comments, so the property alone passes a join that opens one
   (`y/*p`); the twin's byte-identical text caught that fault, and `cfront_paste.c`, lowered, does.
+CF-SIZEOF and CF-DECAY instances (2026-09-29):
+- The structural digest reads a claim's operation, operands, immediates and domain, never a temp's
+  type. So two rails that give a value the same wrong type agree: of 28 forms that use an array as a
+  value, 20 digested equal on the parent while both rails typed `la + 1` or `p - q` a 32-bit integer and
+  their emits failed to compile or computed another value. Parity is a witness for divergence only;
+  the witnesses that hit the typing law run each emit against the original
+  (`test_an_array_value_decays_to_its_address_on_both_rails`, `cfront_decay.c`) and hold a member
+  array's value apart from its first element in the digest
+  (`test_a_decayed_member_array_digests_apart_from_its_element`). Faults: `oracle: an array operand of +
+  is an integer`, `twin: p - q is an unsigned 32-bit`.
+- A refusal is a witness only for the reason it states. The sizeof refusal test passed on the parent
+  oracle's `use of undeclared identifier` for a function designator and on a parse error for a
+  forward-declared struct, so the fault removing the function-designator check went NOT CAUGHT: its VLA
+  path looked the name up first, and the check was unreachable. Each refusal now asserts its own reason
+  on each rail (`_SIZEOF_REFUSED`). Faults: `oracle: a function designator is looked up as an object`,
+  `oracle: the VLA fast path looks a function designator up as an object`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 

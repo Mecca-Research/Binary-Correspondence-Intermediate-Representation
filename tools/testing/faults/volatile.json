@@ -121,7 +121,7 @@
       "label": "Twin: a volatile file-scope object is ordinary memory",
       "expects": "volatile.refused",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "  uint32_t rid=add_res(c,ty_mmio(c,&g->ty,-1,g->is_arr)?BCIR_DOM_MMIO:BCIR_DOM_RAM,",
+      "old": "  uint32_t rid=add_res(c,ty_mmio(c,&g->ty,gsi,g->is_arr)?BCIR_DOM_MMIO:BCIR_DOM_RAM,",
       "new": "  uint32_t rid=add_res(c,BCIR_DOM_RAM,"
     },
     {
@@ -184,7 +184,7 @@
       "label": "Twin index: a subscript chain is flattened into its base as a multi-dimensional index",
       "expects": "volatile.behaviour.mismatch",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "    uint32_t lin=array_index_n(c,v,subscript_dims(c,v));",
+      "old": "    uint32_t lin=array_index_n(c,v,want);",
       "new": "    uint32_t lin=array_index_n(c,v,INT_MAX);"
     },
     {
