@@ -805,6 +805,22 @@ S5-C instances (2026-09-26):
   re-encodes to, while the C twin refused it. The malformed variants now run through both
   decoders (`plan_fixtures.v3_variants`, `movement.parity.mismatch`), and the wire version decides
   which laws apply.
+CF-ATOMIC and CF-PASTE instances (2026-09-29):
+- A single-threaded differential cannot see atomicity. The parent's byte-copy emit of an `_Atomic`
+  access returned every value the original did, so the behaviour harness passed it; and the digest
+  did not read an access's order, so two sources differing only in `_Atomic` digested alike and
+  parity passed too. What fails on a lost update is the emit's spelling of each access (an exact
+  count of `_Atomic` lvalues per function) and a concurrent witness: `acc_bump` from four threads,
+  which lost 52 to 65% of the updates on the parent and loses none now. The digest now names the
+  order (`c.load!atomic`), and a test holds six pairs differing only in `_Atomic` to different
+  digests. Faults: `the digest canon forgets !atomic` (both rails), `an atomic lvalue spelled
+  plain` (each emit).
+- Parity is a witness for divergence, not for a lowering: both preprocessors re-spelled `a + ++g` as
+  `a+++g`, so both rails lowered `(a++) + g`, digest-equal. The witnesses that hit the law are the
+  reference differentials (clang and gcc token lists) over a fixture that holds the construct
+  (`cfront_pp_avoidpaste.c`) and a generated property: the joined text re-lexes to its tokens. The
+  oracle's tokenizer does not model comments, so the property alone passes a join that opens one
+  (`y/*p`); the twin's byte-identical text caught that fault, and `cfront_paste.c`, lowered, does.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1177,6 +1193,25 @@ S5-C instances (2026-09-26):
   Python codec test, the C test, the C gate, the ASN.1 row and the harness row. The ASN.1
   projection asks the native predicate (`validate_plan`) in both directions instead of
   re-deriving laws; before, it asked none.
+Five cfront instances (2026-09-29):
+- "What is an 8-byte scalar's alignment" was answered by the size on both rails; both now ask the
+  ABI table through the predicate that answers for every other scalar (`scalar_align`). "Where does
+  a bitfield start" was two answers on the twin, a named one and an unnamed one, and one on the
+  oracle; each rail now asks `bitfield_start`, the Itanium rule over alignment and size. Faults: each
+  rail's `scalar_align` ignoring the table.
+- "What order does this access carry" is one predicate on the oracle (`_access_order`), shared by the
+  load, the store and the read-modify-write. The twin creates an access at 22 sites, each asking
+  `mark_atomic`; a site that skips it changes the digest, since the canon reads the order.
+  Fault: a member load that skips it.
+- "What is `v[i]`'s element type" was answered by the base's type at the twin's four subscript
+  read-modify-write sites, so through a pointer the value was typed as the pointer; they now ask
+  `index_elem_ctype`. And a `_Bool` pointee was recorded on a temp pointer but not on a parameter's or
+  a local's, so a typed atomic store through `_Atomic _Bool *` stored the raw byte; all three sites
+  now record it. Fault: `a _Bool * parameter forgets its pointee`.
+- "Does a space go between these two tokens" was one predicate on each preprocessor that knew only
+  words. It is still one predicate per rail (`_pastes`, `pastes`), asked at every site that writes
+  a token, and exact where the text is final: the last pass, and a gathered argument, which `#`
+  keeps. Faults: thirteen, one per rule per rail, and each site guessing where it must be exact.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1444,6 +1479,13 @@ lives in R3's pass alone, and the table's fault moved there, one per rail, both 
 effect parity row (27 of 27). Witnesses: the two R3 faults in `tools/testing/faults/escape.json`,
 and `test_a_device_access_is_read_from_the_domain_r3_gives_it`, which re-spells the load
 RAM-domain and finds an ordinary read.
+Cfront instances (2026-09-29): the corpus held no construct any of these five defects needed. It
+reached `_Atomic` objects only by name and through the C11 generics, never through a pointer, a
+member or a subscript, and no concurrent witness existed. No layout held an 8-byte member on i386,
+an array-of-pointers member, or `packed` written after the closing brace. And no source held two
+tokens that run together, `a + ++g` or `-NEG(a)`. Each rail was wrong alike on the i386 layouts and
+on the paste, so parity agreed. Witnesses: `cfront_atomicaccess.c`, the i386 layout test,
+`cfront_ptrmember.c`, `cfront_trailpacked.c`, `cfront_paste.c` and `cfront_pp_avoidpaste.c`.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.
