@@ -703,6 +703,20 @@ static int c23_attrs(CC *c,int *repro){
   }
   return any;
 }
+/* The attributes written AFTER a body's closing brace -- `struct S { ... } __attribute__((packed));` -- read
+ * before its members are laid out: `open` is the `{`. A trailing `packed` changes where every member sits,
+ * and the members are placed as they are parsed, so it cannot wait for the `}` (the twin used to read it only
+ * there, for the aggregate's alignment, so the members kept their natural offsets). The cursor is restored. */
+static void trailing_attrs(CC *c, int open, int *packed, int *aligned){
+  int depth=0, k=open;
+  for(;; k++){
+    const tok *t=tat(c,k);
+    if(t->k==T_END) return;                          /* unbalanced: the body parse reports it */
+    if(t->k==T_PUN && t->n==1 && t->s[0]=='{') depth++;
+    else if(t->k==T_PUN && t->n==1 && t->s[0]=='}' && --depth==0) break;
+  }
+  int save=c->i; c->i=k+1; attrs(c,packed,aligned); c->i=save;
+}
 /* Parse `struct|union [tag] [attrs] { members } [attrs]` (NO trailing `;`). Registers an sdef and
  * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
  * gets a synthesized internal tag so a typedef can alias it. */
@@ -717,6 +731,7 @@ static int p_struct_body(CC *c) {
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
   else snprintf(S->tag,sizeof S->tag,"$anon%d",my);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
+  if(is(c,"{")) trailing_attrs(c,c->i,&packed,&aligned);   /* `} __attribute__((packed))` packs these members */
   if(!eat(c,"{"))return -1;
   long long dbits=0;int maxsz=0;   /* dbits: a bit cursor (Itanium/packed layout) */
   while(!is(c,"}")&&!c->failed){

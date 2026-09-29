@@ -202,6 +202,7 @@ _PTRVALUE = [
     #   arithmetic `p + i` as an rvalue returned by value -- the temp carries the pointee type (a real
     #   `T *t = p + i`), not a truncating uint32. Parity + emit + Clang ≡ (returns a pointer, not executed).
     "cfront_ptrfield.c",  # + a pointer stored into / loaded from a struct field (#ptrfield):
+    "cfront_trailpacked.c",  # `} __attribute__((packed))` after the body packs the members (CF-TRAILPACK)
     "cfront_ptrmember.c",  # an array-of-pointers member `T *arr[N]`: pointer-size elements, whole-pointer
     #   loads/stores typed `T *`, `*t->arr[i]` / `*s->p` through the element (CF-PTRARR)
     "cfront_addrof.c",  # general address-of `&`
@@ -3697,6 +3698,84 @@ def test_an_array_of_pointers_member_is_laid_out_and_accessed_as_pointers():
                 oracle = f"{cfront_structural_digest(r.lowered):016x}"
                 twin = re.search(r"digest=([0-9a-f]{16})", run.stdout)
                 assert twin and twin.group(1) == oracle, (t, body, run.stdout[:200], oracle)
+
+
+# CF-TRAILPACK: `__attribute__((packed))` / `aligned(N)` written after a struct's closing brace, beside the
+# leading spelling the twin already honoured. `(expression, holds a bitfield)` per folded entry.
+_TRAILPACK_SRC = """#include <stdint.h>
+struct In { uint8_t a; uint32_t b; } __attribute__((packed));
+struct Pk { uint8_t c; uint64_t n; uint32_t lo : 3; uint32_t hi : 30; struct In in; uint16_t arr[3]; }
+    __attribute__((packed));
+struct Pn { uint8_t c; uint64_t n; struct In in; uint16_t arr[3]; } __attribute__((packed));
+struct __attribute__((packed)) Pl { uint8_t c; uint64_t n; };
+struct Wide { uint8_t c; uint32_t n; } __attribute__((packed, aligned(4)));
+struct Al { uint8_t c; uint32_t n; } __attribute__((aligned(16)));
+typedef struct TPt { uint8_t c; uint32_t n; uint16_t h; } __attribute__((packed)) TP;
+uint32_t f(void) {
+    uint32_t a = (uint32_t)sizeof(struct In);
+    uint32_t b = (uint32_t)sizeof(struct Pk);
+    uint32_t c = (uint32_t)sizeof(struct Pn);
+    uint32_t d = (uint32_t)sizeof(struct Pl);
+    uint32_t e = (uint32_t)sizeof(struct Wide);
+    uint32_t g = (uint32_t)_Alignof(struct Wide);
+    uint32_t h = (uint32_t)sizeof(struct Al);
+    uint32_t i = (uint32_t)_Alignof(struct Al);
+    uint32_t j = (uint32_t)sizeof(TP);
+    uint32_t k = (uint32_t)_Alignof(struct Pn);
+    return a + b + c + d + e + g + h + i + j + k;
+}
+"""
+_TRAILPACK_EXPRS = [
+    ("sizeof(struct In)", False), ("sizeof(struct Pk)", True), ("sizeof(struct Pn)", False),
+    ("sizeof(struct Pl)", False), ("sizeof(struct Wide)", False), ("_Alignof(struct Wide)", False),
+    ("sizeof(struct Al)", False), ("_Alignof(struct Al)", False), ("sizeof(TP)", False),
+    ("_Alignof(struct Pn)", False),
+]  # fmt: skip
+
+
+def test_a_trailing_packed_attribute_packs_the_members_on_both_rails():
+    """CF-TRAILPACK: the twin honoured `__attribute__((packed))` before a struct's body but read one written
+    after the closing brace -- the common spelling -- only for the aggregate's alignment, after every member
+    had been placed at its natural offset: `struct { uint8_t c; uint64_t n; } __attribute__((packed))` put
+    `n` at 8 and folded `sizeof` to 16 where Clang and the oracle say 1 and 9. The attributes after the `}`
+    are now read before the members are laid out. The folded sizes and alignments (a misaligned `uint64_t`,
+    a straddling bitfield, a nested packed struct, an array member, `packed, aligned(4)`, a trailing
+    `aligned(16)`, and a typedef) are compared between the rails on every target and held to Clang; the
+    bitfield struct only where the rails implement the target's bitfield rules. `cfront_trailpacked.c` runs
+    the accesses against the original."""
+    vecs = {t: _abi_const_vec_oracle(_TRAILPACK_SRC, t) for t in _ABI_TARGETS}
+    for t in _ABI_TARGETS:
+        # packed: no member moves with the data model
+        assert vecs[t][1:4] == [25, 20, 9], (t, vecs[t])
+    clang = shutil.which("clang")
+    if clang:
+        from bcir.frontends.cfront.abi import TARGETS
+
+        for t in _ABI_TARGETS:
+            asserts = "".join(
+                f'_Static_assert({e} == {v}, "{t}: {e}");\n'
+                for (e, bitfield), v in zip(_TRAILPACK_EXPRS, vecs[t], strict=True)
+                if t in _ITANIUM_BITFIELDS or not bitfield
+            )
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "trailpack.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(_TRAILPACK_SRC.split("uint32_t f(")[0] + asserts)
+                run = subprocess.run(
+                    [clang, "-target", TARGETS[t].triple, "-std=c2x", "-ffreestanding",
+                     "-fsyntax-only", path],
+                    capture_output=True, text=True,
+                )  # fmt: skip
+            assert run.returncode == 0, (t, run.stderr)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "trailpack.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_TRAILPACK_SRC)
+        for t in _ABI_TARGETS:
+            assert _abi_const_vec_twin(exe, path, t) == vecs[t], (t, vecs[t])
 
 
 # An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the
