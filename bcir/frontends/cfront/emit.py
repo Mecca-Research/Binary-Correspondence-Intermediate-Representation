@@ -854,11 +854,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         )  # mk(x);`), not uint32
         return deftmp(c.wr[0], f"bcir_{callee}({_args(lf, ref, c.rd)})", ty)
     if c.op == "c.call.indirect":  # rd[0] is the function pointer; rd[1:] args
-        return deftmp(c.wr[0], f"{ref(c.rd[0])}({_args(lf, ref, c.rd[1:])})")
+        call = f"{ref(c.rd[0])}({_args(lf, ref, c.rd[1:])})"
+        return deftmp(c.wr[0], call) if c.wr else f"{call};"  # a void function: a bare call
     if c.op.startswith("c.call.imember:"):  # o->fn(args): funcptr struct member
         field = c.op.split(":", 1)[1]
         sep = "->" if c.imm and c.imm[0] else "."
-        return deftmp(c.wr[0], f"{ref(c.rd[0])}{sep}{field}({_args(lf, ref, c.rd[1:])})")
+        call = f"{ref(c.rd[0])}{sep}{field}({_args(lf, ref, c.rd[1:])})"
+        return deftmp(c.wr[0], call) if c.wr else f"{call};"
     if c.op.startswith("c.atomic."):  # atomic RMW -> the matching builtin (§5.8)
         return deftmp(
             c.wr[0],

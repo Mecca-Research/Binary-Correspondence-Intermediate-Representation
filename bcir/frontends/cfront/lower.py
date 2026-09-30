@@ -582,6 +582,18 @@ _INIT_MAX_FRAMES = 64  # the subobjects one brace list may nest into (the twin's
 # `x = 5;`, which does not compile. The twin refuses with the same words (`bcir_cfront.c`, `agg_value_ok`).
 _STRUCT_INITIALIZED = "a struct or union is initialized by a brace list or a value of its own type"
 _STRUCT_ASSIGNED = "a struct or union is assigned a value of its own type"
+# The arms of `?:` that are pointers to functions -- designators or function-pointer objects -- point to one function
+# type (C11 6.5.15p3); CF-FNSEL. The twin's `select_temp` refuses with the same words.
+_FN_SELECTED = "the arms of `?:` point to functions of different types"
+# A struct or union is no operand of an operator that takes a scalar -- arithmetic, bitwise, shift, relational,
+# equality, logical, a compound assignment, an increment (C11 6.5.2.4p1, 6.5.3.1p1, 6.5.3.3p1, 6.5.5-6.5.14,
+# 6.5.16.2p1-2) -- and converts to no scalar type: an initializer, an assignment, a `return`, an argument, a cast
+# (6.5.16.1p1, 6.5.4p2). CF-STRUCTARITH: both rails had lowered `a += 5`, `a++` and `uint32_t k = a;` to an emit
+# Clang rejects. The twin refuses with the same words (`bcir_cfront.c`, `agg_operand`, `scalar_value_ok`).
+_STRUCT_OPERAND = (
+    "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator"
+)
+_STRUCT_CONVERTED = "a struct or union is converted to a scalar type"
 
 
 @dataclass
@@ -1027,6 +1039,19 @@ def callee_signature(fct) -> str:
     return f"{nm(fct.of)}({', '.join(nm(p) for p in fct.params)})"
 
 
+def _returns_void(fct) -> bool:
+    """A function-pointer type whose function returns `void` -- a call through it has no value, so it
+    writes no result temp, as a direct call to a void function does (CF-VOIDCB; the twin's
+    `bcir_ctype.fp_ret_void`). A return type that was not captured (`of` None) is not void."""
+    return (
+        fct is not None
+        and fct.kind == "funcptr"
+        and fct.of is not None
+        and fct.of.kind == "scalar"
+        and fct.of.name == "void"
+    )
+
+
 @dataclass
 class LoweredFunc:
     """One C function lowered: its claim-graph `Module`, the value/SSA bookkeeping the emitter needs,
@@ -1153,6 +1178,8 @@ class _FuncLowerer:
         protos: dict | None = None,
         func_params: dict | None = None,
         proto_consts: dict | None = None,
+        func_variadic: frozenset = frozenset(),
+        lowered: dict | None = None,
     ):
         self.func = func
         self.abi = abi or HOST  # the target data model for laying out user types (long/ptr)
@@ -1163,6 +1190,14 @@ class _FuncLowerer:
         # same-unit callee -> its parameters' types, None where the pre-scan cannot type one
         # (`_param_types`): what a null pointer constant argument becomes (CF-NULLARG)
         self.func_params = func_params or {}
+        # the same-unit functions declared with a trailing `...`: a designator of one has no function type a
+        # declarator here can spell (`_fn_type`, CF-FNSEL)
+        self.func_variadic = func_variadic
+        # the unit's functions lowered before this one: name -> LoweredFunc (`_fn_type`)
+        self.lowered = lowered if lowered is not None else {}
+        # the function pointers read from a member or an element, which the twin loads as integers: `_fn_type`
+        # gives them no function type
+        self.fn_loaded: set[int] = set()
         self.tu_used: dict = {}  # the tu callees THIS function actually calls (for the emit decl)
         # a prototyped callee -> whether each parameter points to `const`, which its emitted `extern`
         # declaration keeps (a `const T *` parameter is another type than a `T *` one)
@@ -1382,6 +1417,7 @@ class _FuncLowerer:
         for v, ct in zip(actuals, params):
             if ct is not None:
                 self._null_pointer(v, ct)
+                self._scalar_value(ct, v)  # a struct for a scalar parameter (CF-STRUCTARITH)
 
     def _storage(self, ct: CType, name: str) -> int:
         """A mutable named local — assignments write it, reads read it (so control-flow merges and
@@ -1852,6 +1888,34 @@ class _FuncLowerer:
         self.func_pool[name] = rid
         return rid
 
+    def _fn_type(self, v: int) -> "CType | None":
+        """The function-pointer type of the value `v` when its function type -- return and parameter types -- is
+        known here: a designator (a function the unit defines, named as a value, C11 6.3.2.1p4) has its
+        definition's; a function-pointer object -- a local, a parameter, a global, a select of them, a null
+        pointer typed as one -- its declaration's. None otherwise: a pointer read from a member or an element
+        (`fn_loaded`), a designator of a variadic function (a declarator here spells no `...`) or of one whose
+        parameters only its own scope types while it has not lowered (CF-FNSEL; the twin's `res_sig`)."""
+        ct = self.rtypes.get(v)
+        if ct is None or ct.kind != "funcptr" or v in self.fn_loaded:
+            return None
+        name = self.func_globals.get(v)
+        if name is None:
+            return ct
+        params = self.func_params.get(name)
+        if params is not None and None in params and name in self.lowered:
+            # a `typeof` or `va_list` parameter the pre-scan leaves untyped: the definition's own, once it has
+            # lowered, as the twin types a designator of a function it has parsed
+            params = tuple(p[2] for p in self.lowered[name].params)
+        if params is None or None in params or name in self.func_variadic:
+            return None
+        return funcptr(name, self.func_rets[name], params, self.abi)
+
+    def _fn_key(self, fct: CType) -> tuple:
+        """A function type's identity: its return and its parameters as `_Generic` tells types apart,
+        qualifiers aside (the twin's `sig_same`)."""
+        ret = self._type_key(fct.of) if fct.of is not None else ("void",)
+        return ret, tuple(self._type_key(p) for p in fct.params)
+
     def _addr(self, node):
         """The (rid, type, byte_offset) of an aggregate/pointer base used by member/index access. The
         offset ACCUMULATES through nested value-struct/union members (`t.q.a` -- q's byte offset must ride
@@ -1910,6 +1974,7 @@ class _FuncLowerer:
         `rtypes`). Driving the emitted temp's true C type makes the backend do signed-vs-unsigned and
         width-correct arithmetic (the old flat uint32 model did not)."""
         ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+        self._scalar_operands(ta, tb)  # `a + 1`, `a += 5`, `a++` of a struct (CF-STRUCTARITH)
         if op in ("+", "-") and (a in self.vla_strides or b in self.vla_strides):
             # a multi-dimensional VLA decays to a row pointer (its rows are runtime extents)
             raise CLowerError("arithmetic on a multi-dimensional array is not yet supported")
@@ -1967,6 +2032,7 @@ class _FuncLowerer:
         the *wider* float (float usual arithmetic conversions); a relational/logical op is `int`; a shift
         takes the promoted *left* operand; everything else (`+ - * / %`, bitwise) takes the integer usual
         arithmetic conversions over both operands. Shared by `_rvalue` (emitting) and `_type_of` (typeof)."""
+        self._scalar_operands(ta, tb)
         if op in ("+", "-", "*", "/"):
             floats = [t for t in (ta, tb) if t is not None and t.is_float]
             if floats:
@@ -2361,6 +2427,15 @@ class _FuncLowerer:
             return sel
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
+            if node.op in ("==", "!="):
+                # a null pointer constant compared with a pointer converts to that pointer (C11 6.5.9p5): its
+                # temp is the pointer, where an `int` temp compared with it was a constraint violation (6.5.9p2)
+                # Clang and GCC only warn about. Only the temp's C type moves (CF-NULLCALL).
+                ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+                if ta is not None:
+                    self._null_pointer(b, ta)
+                if tb is not None:
+                    self._null_pointer(a, tb)
             opcode, suf = _BIN[node.op]
             # float arithmetic propagates the (wider) float type; comparisons/bitwise stay int. The
             # actual IEEE-754 math is delegated to the emitted C / resident backend (never computed here).
@@ -2418,6 +2493,8 @@ class _FuncLowerer:
                     "c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,)
                 )  # &base.member
             v = self._rvalue(node.operand)
+            # `-a`, `~a`, `!a` of a struct (CF-STRUCTARITH)
+            self._scalar_operands(self.rtypes.get(v))
             opcode, suf = _UN[node.op]
             if node.op == "!":  # logical not -> int (0/1)
                 rt = scalar("int", self.abi)
@@ -2438,12 +2515,17 @@ class _FuncLowerer:
             ct = self._resolve_type(node.type)
             if ct.kind == "scalar" and ct.name == "void":  # `(void)e`: e for its effects, no value
                 return _VOID_RID  # (C11 6.3.2.2) -- a cast of it to uint32 did not compile
+            self._scalar_value(ct, v)  # `(uint32_t)a` of a struct (C11 6.5.4p2, CF-STRUCTARITH)
             return self._cast_value(v, ct)
         if isinstance(node, (cast.Index, cast.Member)):
             lv = self._lvalue(node)
             if lv.ct.kind == "array" and not lv.bit_width:
                 return self._array_value(node, lv)
-            return self._read(lv)
+            v = self._read(lv)
+            # a function pointer read from a member or an element: `?:` gives it no function type
+            if lv.ct.kind == "funcptr":
+                self.fn_loaded.add(v)
+            return v
         if isinstance(
             node, cast.CompoundLiteral
         ):  # `(struct P){a,b}` by value / `(int){v}` as a value
@@ -2566,12 +2648,21 @@ class _FuncLowerer:
                     )
                 rt = unqualified(ta)
             else:
-                rt = scalar("uint32_t")
+                # a function designator decays to a pointer to its function (C11 6.3.2.1p4): an arm that is one,
+                # or a function-pointer object, makes the select that function pointer (6.5.15p6) -- a uint32
+                # select of it did not compile -- and its arms point to one function type (6.5.15p3) (CF-FNSEL)
+                fa, fb = self._fn_type(a), self._fn_type(b)
+                if fa is not None and fb is not None and self._fn_key(fa) != self._fn_key(fb):
+                    raise CLowerError(_FN_SELECTED)
+                rt = fa if fa is not None else fb if fb is not None else scalar("uint32_t")
             declared = self._declared_rids()
             if _operand_pure(blk_a, declared) and _operand_pure(blk_b, declared):
                 self.block_stack[-1].extend(blk_a)
                 self.block_stack[-1].extend(blk_b)
                 t = self._temp(rt, "sel")
+                # a null pointer constant arm is the other arm's pointer (6.5.15p6), as in a branch below
+                self._null_pointer(a, rt)
+                self._null_pointer(b, rt)
                 return self._emit("c.select", Opcode.ADD, (c, a, b), (t,))
             sel, node_if = self._branch_value(c, rt, blk_a, blk_b)
             self._assign_in(blk_a, self._null_pointer(a, rt), sel)
@@ -2599,6 +2690,19 @@ class _FuncLowerer:
             fct = self._field(agg, m.field)[0] if agg is not None else None
         except CLowerError:
             fct = None
+        # a null pointer argument is its parameter's pointer, as in a direct call (CF-NULLCALL)
+        if fct is not None and fct.kind == "funcptr":
+            self._null_pointer_args(actuals, fct.params)
+        if _returns_void(fct):  # a void member function: a claim with no result, the void value
+            self._emit(
+                f"c.call.imember:{m.field}",
+                Opcode.GEM_DISPATCH,
+                (base_rid, *actuals),
+                (),
+                imm=(1 if m.arrow else 0,),
+                callee_sig=callee_signature(fct),
+            )
+            return _VOID_RID
         ret_ct = fct.of if (fct is not None and fct.kind == "funcptr") else None
         t = self._temp(
             self._call_result_ct(ret_ct), f"icall_{m.field}"
@@ -2871,12 +2975,28 @@ class _FuncLowerer:
     def _struct_value(self, ct: CType, v: int, why: str) -> None:
         """Refuse `v` for an object of the struct or union type `ct` unless it is a value of that type --
         the same kind and tag, qualifiers aside (C11 6.7.9p13, 6.5.16.1p1). `why` is the refusal: an
-        initializer's or an assignment's (CF-STRUCTINIT)."""
+        initializer's or an assignment's (CF-STRUCTINIT). An object of any other type takes no struct
+        (`_scalar_value`)."""
         if not ct.is_aggregate:
+            self._scalar_value(ct, v)
             return
         vt = self.rtypes.get(v)
         if vt is None or (vt.kind, vt.name) != (ct.kind, ct.name):
             raise CLowerError(why)
+
+    def _scalar_value(self, ct: CType, v: int) -> None:
+        """Refuse a struct or union value `v` for an object of the type `ct`, a scalar or a pointer (C11
+        6.5.16.1p1, 6.5.4p2): an initializer, an assignment, a `return`, an argument, a cast (CF-STRUCTARITH;
+        the twin's `scalar_value_ok`)."""
+        vt = self.rtypes.get(v)
+        if not ct.is_aggregate and vt is not None and vt.is_aggregate:
+            raise CLowerError(_STRUCT_CONVERTED)
+
+    def _scalar_operands(self, *types) -> None:
+        """Refuse a struct or union operand of an operator that takes a scalar (CF-STRUCTARITH; the twin's
+        `agg_operand`)."""
+        if any(t is not None and t.is_aggregate for t in types):
+            raise CLowerError(_STRUCT_OPERAND)
 
     def _write(self, lv: "_LV", v: int) -> int:
         """Store `v` through `lv`; returns the value stored -- after C's conversion, before a
@@ -3149,6 +3269,7 @@ class _FuncLowerer:
         if w.const:
             w.image.append((lo, bw or ct.size * 8, _kleaf(v, ct, bw)))
             return
+        self._scalar_value(ct, v)  # a scalar subobject takes no struct (CF-STRUCTARITH)
         if indexed:
             ti = self._temp(scalar("int", self.abi), "ai")
             self._emit("c.const", Opcode.LOAD, (), (ti,), imm=(off // ct.size,))
@@ -3875,6 +3996,21 @@ class _FuncLowerer:
         # opaque external edge (no recursion / callee-resolution constraint can apply).
         if node.callee in self.env and self.env[node.callee][1].kind == "funcptr":
             fptr, fpct = self.env[node.callee]  # the funcptr CType carries its return type in `.of`
+            # an argument converts to its parameter's type (C11 6.5.2.2p7), through a pointer as in a direct
+            # call: a null pointer constant is the parameter's pointer (CF-NULLCALL; CF-NULLARG's direct calls)
+            self._null_pointer_args(actuals, fpct.params)
+            if _returns_void(fpct):
+                # a pointer to a void function: the call has no value -- no result temp (whose emit
+                # `uint32_t t = fp();` did not compile), and `c ? cb() : (void)0` / `return cb();` take
+                # the void value as a direct void call's (CF-VOIDCB)
+                self._emit(
+                    "c.call.indirect",
+                    Opcode.GEM_DISPATCH,
+                    (fptr, *actuals),
+                    (),
+                    callee_sig=callee_signature(fpct),
+                )
+                return _VOID_RID
             t = self._temp(
                 self._call_result_ct(fpct.of), f"icall_{node.callee}"
             )  # a signed return reads back signed
@@ -3994,6 +4130,9 @@ class _FuncLowerer:
                 f"c.call.extern:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,)
             )  # variadic
         if node.callee in _STDLIB_ALLOC and node.callee not in self.func_rets:
+            # `realloc(0, n)`: a null `void *` (CF-NULLCALL)
+            if node.callee == "realloc" and actuals:
+                self._null_pointer(actuals[0], pointer(scalar("void"), self.abi))
             t = self._temp(
                 pointer(scalar("void")), f"mem_{node.callee}"
             )  # malloc/calloc/realloc -> void *
@@ -4015,6 +4154,8 @@ class _FuncLowerer:
             # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it
             # reads) dies after this claim, so a later dereference of it is a use-after-free (§5.12). Vacuous
             # unless the smart-lowering verifier runs R21 -- the frontend pass/fail is unchanged.
+            if actuals:  # `free(0)`: a null `void *` (CF-NULLCALL)
+                self._null_pointer(actuals[0], pointer(scalar("void"), self.abi))
             self._emit(
                 "c.call.libm.void:free", Opcode.GEM_DISPATCH, actuals, (), lifetime=Lifetime("free")
             )
@@ -4325,6 +4466,7 @@ class _FuncLowerer:
                     expr = self._braced_scalar(init)
                     v = self._rvalue(expr) if expr is not None else self._zero_int("zi")
                     v = self._null_pointer(v, ct)
+                    self._scalar_value(ct, v)  # `T x = {a}` of a struct (CF-STRUCTARITH)
                     self._emit("c.copy", Opcode.ADD, (v,), (rid,), **_object_write(ct))
             elif init is not None:
                 if ct.kind == "array" and inferred and len(st.type.array) > 1:
@@ -4353,6 +4495,8 @@ class _FuncLowerer:
                 rid = None  # already emitted; a void function `return;`s
             elif rid is not None:  # `return 0;` from a function returning a pointer
                 rid = self._null_pointer(rid, self._resolve_type(self.func.ret))
+                # `return a;` of a struct from a function returning a scalar (CF-STRUCTARITH)
+                self._scalar_value(self._resolve_type(self.func.ret), rid)
             self.block_stack[-1].append(ReturnNode(rid))
             if rid is not None:
                 self.last_return = rid
@@ -4631,6 +4775,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     # ... and their parameter types, so a null pointer constant a call passes to a pointer parameter is
     # a null pointer of that type, whichever of the caller and the callee is defined first (CF-NULLARG)
     func_params = {fn.name: _param_types(fn.params, aggregates, abi) for fn in unit.funcs}
+    func_variadic = frozenset(fn.name for fn in unit.funcs if fn.variadic)
     # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
     # just a forward declaration (the definition wins); the rest resolve at LINK time. A parameter is
     # read as the definition binds it -- an array parameter is a pointer -- so the emit's `extern`
@@ -4726,6 +4871,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             protos=protos,
             func_params=func_params,
             proto_consts=proto_consts,
+            func_variadic=func_variadic,
+            lowered=functions,
         ).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)

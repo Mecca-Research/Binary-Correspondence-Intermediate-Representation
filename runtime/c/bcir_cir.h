@@ -144,6 +144,9 @@ typedef struct bcir_ctype {
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
   uint8_t  is_valist;        /* the `va_list` type (variadic argument cursor) -- emit `va_list` */
+  uint16_t fp_sig;           /* kind-3 funcptr: its function type -- return and parameter types -- as 1 + the index of
+                              * the front end's record of it (0: not captured). A null pointer constant passed through
+                              * the pointer takes its parameter's type; the arms of `?:` compare by it (CF-FNSEL) */
   int      bit_width;        /* a C23 `_BitInt(N)` type's exact width N (0 == a normal type; >0 == `_BitInt(N)`),
                               * carried on signatures so a param/return spells `_BitInt(N)` faithfully */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
@@ -151,6 +154,10 @@ typedef struct bcir_ctype {
                               * c.call.indirect / c.call.imember result temp; ZERO if the return wasn't captured */
   uint8_t  fp_ret_signd;
   uint8_t  fp_ret_float;
+  uint8_t  fp_ret_void;      /* kind-3 funcptr: the function returns `void` -- a call through it has no value
+                              * and writes no result (CF-VOIDCB). Set where the return type is captured; a zero
+                              * fp_ret_size alone cannot tell `void` from a return that was not captured. It and
+                              * fp_sig sit in padding: a ctype is no larger, and every parser frame holds several */
   int      fp_ret_agg;       /* kind-3 funcptr: a struct/union RETURN, as 1 + the front end's index of its
                               * definition (0: not one) -- the call's result is that aggregate value */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */

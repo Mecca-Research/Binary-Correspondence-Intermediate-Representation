@@ -276,6 +276,12 @@ _PTRVALUE = [
     #   their strings, declarations listing several objects (CF-GARRAY)
     "cfront_gbrace.c",  # file-scope initializers with nested braces, elision and designators (CF-GBRACE), and
     #   thread-local globals and statics (CF-TLS)
+    "cfront_voidcallback.c",  # a call through a pointer to a void function -- a local, a parameter, a member
+    #   by `.`/`->`/a pointer chain, an ops table, in a `?:` arm, `return cb();` -- has no result (CF-VOIDCB)
+    "cfront_fnselect.c",  # the arms of `?:` that are function designators or function-pointer objects: the
+    #   select is a pointer to their function type, a null pointer arm that pointer (CF-FNSEL)
+    "cfront_nullconst.c",  # the constant 0 compared with a pointer, passed through a function pointer, given to
+    #   `free` and `realloc`: a null pointer; `p -= 1` of a pointer to a struct on the twin (CF-NULLCALL)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10771,3 +10777,514 @@ def test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails():
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(head + p)
             assert _c_run(exe, path)[0] == want, (p, want)
+
+
+# CF-VOIDCB: a call through a pointer to a function returning void. Both rails lowered it as a claim writing a
+# result temp, and each emit declared `uint32_t t = fp(s);`, which Clang and GCC reject -- so no void callback
+# compiled. Each function of `cfront_voidcallback.c` starts the callbacks' counter at 0 and returns it.
+_VOIDCB_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(vc_local, s); SAME(vc_param, s); SAME(vc_member, s); SAME(vc_arrow, s); SAME(vc_cond, s);
+    SAME(vc_return, s); SAME(vc_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# ... and the forms whose calls the G10 escape rows count as not resolved to one function (the analysis keeps one
+# set per pointer and per struct) or not narrowed at all (a loaded pointer chain, a file-scope table), which a
+# corpus fixture keeps out: a pointer given two functions, a struct holding several, a member through a loaded
+# pointer chain, a file-scope ops table
+_VOIDCB_OPEN = """#include <stdint.h>
+typedef void (*vo_fn)(uint32_t);
+struct vo_ops { void (*step)(uint32_t); uint32_t k; vo_fn reset; void (*tick)(void); };
+struct vo_dev { struct vo_ops *ops; uint32_t id; };
+static uint32_t vo_n;
+static void vo_bump(uint32_t x) { vo_n += x; }
+static void vo_twice(uint32_t x) { vo_n += 2u * x + 1u; }
+static void vo_tick(void) { vo_n += 100u; }
+static const struct vo_ops vo_table = {vo_bump, 7u, vo_twice, vo_tick};
+static void vo_apply(vo_fn f, uint32_t s) { f(s); }
+uint32_t vo_calls(uint32_t s) {
+  struct vo_ops o = {vo_bump, 2u, vo_twice, vo_tick};
+  struct vo_dev d = {&o, 9u};
+  struct vo_dev *p = &d;
+  void (*fp)(uint32_t) = vo_bump;
+  vo_n = 0u;
+  fp(s);
+  fp = vo_twice;
+  fp(s + 1u);
+  vo_apply(vo_bump, s);
+  vo_apply(vo_twice, s ^ 5u);
+  o.step(s);
+  o.step = vo_twice;
+  o.step(s);
+  o.tick();
+  p->ops->step(s);
+  p->ops->reset(s + p->id);
+  p->ops->tick();
+  vo_table.step(s);
+  vo_table.reset(s + vo_table.k);
+  vo_table.tick();
+  return vo_n;
+}
+"""
+
+
+def test_void_callbacks_run_as_the_original_on_both_rails():
+    """CF-VOIDCB: `cfront_voidcallback.c` -- a call through a pointer to a void function held in a local, a
+    typedef'd local, a parameter (a typedef or a declarator), a struct member (declared or typedef'd) reached by
+    `.` or `->`, one taking no arguments, one in an arm of `?:`, one cast to void, one returned from a void
+    function -- and `_VOIDCB_OPEN`: a pointer given two functions, a struct holding several, a member through a
+    loaded pointer chain, a file-scope ops table. Both rails lowered each call as a claim writing a result temp
+    and emitted `uint32_t t = fp(s);`, which does not compile. Such a call now writes nothing -- the void value,
+    as a direct void call's -- on both rails, which lower each unit to one claim graph on the four targets; each
+    emit spells a bare call and returns what the original does, function by function."""
+    if not _CC:
+        return
+    fx = "cfront_voidcallback.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for unit in (src, _VOIDCB_OPEN):
+        calls = [
+            c
+            for lf in compile_unit(unit, check_clang=False).lowered.functions.values()
+            for c in lf.claims
+            if c.op == "c.call.indirect" or c.op.startswith("c.call.imember:")
+        ]
+        assert calls and all(not c.wr for c in calls), [(c.op, c.wr) for c in calls]
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        for call in ("fp(s);", "t.tick();", "o->step(s);", "r->reset(s);"):
+            assert re.search(rf"^\s+{re.escape(call)}$", emit, re.M), (rail, call)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _VOIDCB_DRIVER)
+
+    oracle_summary, r, _entry = _oracle(_VOIDCB_OPEN)
+    assert "ok=1" in oracle_summary, oracle_summary
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "voidcb_open.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_VOIDCB_OPEN)
+        c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
+        assert c_summary == oracle_summary, f"parity\n C: {c_summary}\nPY: {oracle_summary}"
+        _parity_on_targets(path, _VOIDCB_OPEN)
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(vo_calls, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    emits = (("twin", c_emit), ("oracle", oracle_emit))
+    _run_against_original("voidcb_open.c", _VOIDCB_OPEN, emits, driver)
+
+
+# CF-FNSEL: the arms of `?:` that are function designators decay to function pointers (C11 6.3.2.1p4, 6.5.15p6).
+# Both rails typed such a select `uint32_t`, so `uint32_t t = (c ? f : g);` did not compile. The pointers
+# `cfront_fnselect.c` returns are compared with the original's and called here.
+_FNSELECT_DRIVER = (
+    _GAPS_SAME
+    + r"""
+#define SAME_PICK(f) do { if (f(s) != bcir_##f(s) || f(s)(s) != bcir_##f(s)(s)) return fail(#f); } while (0)
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME_PICK(fs_pick); SAME_PICK(fs_pick_decl); SAME_PICK(fs_pick_assign); SAME_PICK(fs_pick_nested);
+    fs_n = 0u;
+    fs_op fa = fs_pick_branch(s);
+    uint32_t na = fs_n;
+    fs_n = 0u;
+    if (fa != bcir_fs_pick_branch(s) || na != fs_n) return fail("fs_pick_branch");
+    fs_n = s; fs_pick_act(s)(s + 1u); na = fs_n;
+    fs_n = s; bcir_fs_pick_act(s)(s + 1u);
+    if (fs_pick_act(s) != bcir_fs_pick_act(s) || na != fs_n) return fail("fs_pick_act");
+    struct fs_pair p = fs_pick_mk(s)(s), q = bcir_fs_pick_mk(s)(s);
+    if (fs_pick_mk(s) != bcir_fs_pick_mk(s) || p.a != q.a || p.b != q.b) return fail("fs_pick_mk");
+    SAME(fs_pass, s); SAME(fs_object, s); SAME(fs_null, s); SAME(fs_compare, s); SAME(fs_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# ... and a call through a select in place: a pointer the escape rows count as resolved to no one function, which a
+# corpus fixture keeps out (a declarator, a typedef'd local, a member, an argument, a branch's local), and designators
+# of functions whose parameter a `typeof` or a `va_list` types
+_FNSEL_CALLS = """#include <stdint.h>
+#include <stdarg.h>
+typedef uint32_t (*op_t)(uint32_t);
+struct ops { op_t run; uint32_t k; };
+static uint32_t tw(uint32_t x) { return x * 2u + 1u; }
+static uint32_t th(uint32_t x) { return x * 3u + 5u; }
+static uint32_t apply(op_t f, uint32_t s) { return f(s) + 1u; }
+static uint32_t tyo(uint32_t a, typeof(a) n) { return a * 5u + n; }
+static uint32_t tyt(uint32_t a, uint32_t n) { return a * 7u + n; }
+static uint32_t vfirst(uint32_t n, va_list ap) { return n + va_arg(ap, uint32_t); }
+static uint32_t vsecond(uint32_t n, va_list ap) { return n * 3u + va_arg(ap, uint32_t); }
+static uint32_t vrun(uint32_t s, uint32_t n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  uint32_t (*vf)(uint32_t, va_list) = s & 8u ? vfirst : vsecond;
+  uint32_t r = vf(n, ap);
+  va_end(ap);
+  return r;
+}
+uint32_t fsc_calls(uint32_t s) {
+  uint32_t (*fp)(uint32_t) = s > 3u ? tw : th;
+  op_t f = s & 1u ? th : tw;
+  struct ops o = {tw, 4u};
+  o.run = s & 2u ? th : tw;
+  uint32_t n = 0u;
+  op_t g = s > 9u ? (n++, tw) : th;
+  uint32_t (*q)(uint32_t, uint32_t) = s & 4u ? tyo : tyt;
+  return fp(s) + f(s) * 3u + apply(s > 100u ? tw : th, s) * 5u + o.run(s + o.k) * 7u + g(s) * 11u + n
+         + q(s, 3u) * 13u + vrun(s, s, 9u) * 17u;
+}
+"""
+# ... and arms that point to functions of two different types are refused on both rails (6.5.15p3), where Clang and
+# GCC only warn and give the select `void *`: a designator or a function-pointer object, whose return type, parameter
+# count or a parameter's type differs -- a parameter a `typeof` types too, and a `va_list` beside an integer of its size
+_FN_SELECTED = "the arms of `?:` point to functions of different types"
+_FNSEL_HEAD = (
+    "#include <stdint.h>\n#include <stdarg.h>\ntypedef uint32_t (*op_t)(uint32_t);\n"
+    "static uint32_t tw(uint32_t x) { return x * 2u; }\n"
+    "static uint32_t two(uint32_t x, uint32_t y) { return x + y; }\n"
+    "static uint64_t wide(uint32_t x) { return x; }\n"
+    "static uint32_t narrow(uint16_t x) { return x; }\n"
+    "static uint32_t flt(float x) { return (uint32_t)x; }\n"
+    "static void none(uint32_t x) { (void)x; }\n"
+    "static uint32_t tyw(uint64_t a, typeof(a) n) { return (uint32_t)(a + n); }\n"
+    "static uint32_t vl(uint32_t n, va_list ap) { return n + va_arg(ap, uint32_t); }\n"
+    "static uint32_t vw(uint32_t n, uint64_t k) { return n + (uint32_t)k; }\n"
+)
+_FNSEL_REFUSED = (
+    "uint32_t f(uint32_t s) { op_t g = s ? tw : two; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t g = s ? wide : tw; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t g = s ? tw : narrow; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t g = s ? flt : tw; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t g = tw; g = s > 2u ? g : none; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t h = tw; uint32_t (*k)(uint32_t, uint32_t) = two; op_t g = s ? h : k; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t h = tw; op_t g = s ? (s > 1u ? h : tw) : wide; return g(s); }",
+    "uint32_t f(uint32_t s) { return (s ? two : tyw) != 0; }",
+    "uint32_t f(uint32_t s) { return (s ? vl : vw) != 0; }",
+)
+# ... while the same function type spelled another way, and a designator beside a null pointer, lower alike; a pointer
+# read from a member, which the twin loads as an integer, has a function type on neither rail, so neither compares it
+_FNSEL_LOWERED = (
+    "static uint32_t same(unsigned int x) { return x + 1u; }\n"
+    "uint32_t f(uint32_t s) { op_t h = same; op_t g = s ? tw : h; return g(s); }",
+    "uint32_t f(uint32_t s) { op_t g = s ? 0 : tw; return g ? g(s) : 1u; }",
+    "struct ops { op_t run; };\n"
+    "uint32_t f(uint32_t s) { struct ops o = {tw}; return (s ? o.run : wide) != 0; }",
+)
+
+
+def test_function_designator_arms_select_a_function_pointer_on_both_rails():
+    """CF-FNSEL: `cfront_fnselect.c` -- the arms of `?:` that are function designators, or a designator and a
+    function-pointer object, or two objects, or one of them and a null pointer constant (`c ? f : 0`), nested, in a
+    branch whose arm has an effect, of void and of struct-returning functions -- selected, assigned, passed, called
+    and compared. Both rails typed the select `uint32_t` and emitted `uint32_t t = (c ? f : g);`, which does not
+    compile. The select is now a pointer to the arms' function type on both rails -- and a null pointer arm that
+    pointer -- which lower the fixture and `_FNSEL_CALLS` (calls through a select in place) to one claim graph on the
+    four targets; each emit returns what the original does, and the pointers it returns are the original's. Arms
+    that point to functions of different types (`_FNSEL_REFUSED`) are refused on both rails; the same type spelled
+    another way, and an arm neither rail types (`_FNSEL_LOWERED`), lower alike on both."""
+    from bcir.frontends.cfront.lower import CLowerError
+
+    for body in _FNSEL_REFUSED:
+        try:
+            compile_unit(_FNSEL_HEAD + body + "\n", check_clang=False)
+        except CLowerError as e:
+            assert _FN_SELECTED in str(e), (body, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+    if not _CC:
+        return
+    fx = "cfront_fnselect.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        assert not re.search(r"\bu?int\d+_t t\d+ = \(t\d+ \? fs_\w+ : ", emit), (
+            rail,
+            "an integer select",
+        )
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _FNSELECT_DRIVER)
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_FNSEL_CALLS)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "fnsel_calls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_FNSEL_CALLS)
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _FNSEL_CALLS)
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(fsc_calls, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original(
+        "fnsel_calls.c", _FNSEL_CALLS, (("twin", c_emit), ("oracle", oracle_emit)), driver
+    )
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_FNSEL_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_FNSEL_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and _FN_SELECTED in run.stdout, (body, run.stdout[:200])
+        for n, body in enumerate(_FNSEL_LOWERED):
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_FNSEL_HEAD + body + "\n")
+            oracle_summary, _r, _entry = _oracle(_FNSEL_HEAD + body + "\n")
+            c_summary, _emit = _c_run(exe, path)
+            assert c_summary == oracle_summary and "ok=1" in c_summary, (
+                body,
+                c_summary,
+                oracle_summary,
+            )
+
+
+# CF-NULLCALL: the null pointer constants CF-NULLPTR and CF-NULLARG left an `int` -- compared with a pointer, passed
+# through a function pointer, given to `free` and `realloc`, the arm of `?:` beside a pointer. Each emit is built
+# with the pointer/integer mixes made errors: Clang's `-Wint-conversion` and `-Wpointer-integer-compare`; GCC, which
+# names no option for a pointer compared with an integer (a default warning), with every warning an error.
+_NULLCONST_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n], v = s + 1u;
+    SAME(nc_compare, &v, s); SAME(nc_compare, 0, s); SAME(nc_member, s); SAME(nc_fnptr, s); SAME(nc_calls, s);
+    SAME(nc_libc, s); SAME(nc_step, s); SAME(nc_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+_NULLCONST_WERROR = {
+    "clang": ("-Werror=int-conversion", "-Werror=pointer-integer-compare"),
+    "gcc": ("-Werror=int-conversion", "-Werror"),
+}
+
+
+def _run_against_original_werror(fx: str, src: str, emits, driver: str, werror: dict):
+    """`_run_against_original` under Clang and GCC, each with its own flags (`werror`: the compiler's name -> its
+    flags) -- a warning one compiler names and the other does not made an error under both."""
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stddef.h>\n"
+    ran = 0
+    with tempfile.TemporaryDirectory() as d:
+        for name, flags in werror.items():
+            cc = shutil.which(name)
+            if not cc:
+                continue
+            for label, emit in emits:
+                text = f"{head}{_BOUNDS_GUARD}\n{src}\n{emit}\n{driver}"
+                out = _build_run_c(d, cc, label, text, flags)
+                assert out == "MATCH", (
+                    f"{fx}: the {label} emit is not the original under {cc} ({out})"
+                )
+            ran += 1
+    assert ran, "no compiler of the pair"
+
+
+def test_null_pointer_constants_compared_passed_and_freed_run_as_the_original():
+    """CF-NULLCALL: `cfront_nullconst.c` -- the constant 0 compared with a pointer by `==` or `!=` (C11 6.5.9p5), on
+    either side of a parameter, a local, a global, a loaded member or a member chain, or a function pointer; passed
+    through a function pointer to a pointer parameter (a declarator, a typedef'd local, a parameter, a member by `.`
+    and `->`); given to `free` and as `realloc`'s pointer; the arm of `?:` beside a pointer. Both rails lowered each
+    to the same claim graph, and each emit declared the constant an `int` temp -- compared with a pointer, a
+    constraint violation Clang and GCC only warn about, or passed where the callee takes a pointer, which they
+    reject. Each is now declared as the pointer it converts to, on both rails, which lower the fixture to one claim
+    graph on the four targets; each emit, built with those mixes made errors, returns what the original does. The
+    twin now also lowers `p -= 1` for a pointer to a struct, which it had read as `p->` and refused."""
+    if not _CC:
+        return
+    fx = "cfront_nullconst.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _NULLCONST_DRIVER, _NULLCONST_WERROR
+    )
+
+
+# CF-STRUCTARITH: a struct or union is no operand of an operator that takes a scalar, and converts to no scalar type.
+# Both rails had lowered each of these units -- to the same claim graph -- to an emit Clang rejects. (the unit, the
+# reason both rails refuse it with)
+_STRUCT_OPERAND = (
+    "a struct or union is an operand of an arithmetic, bitwise, logical or comparison operator"
+)
+_STRUCT_CONVERTED = "a struct or union is converted to a scalar type"
+_STRUCTARITH_HEAD = (
+    "#include <stdint.h>\nstruct s { uint32_t x, y; };\nunion u { uint32_t w; uint8_t b; };\n"
+    "struct h { struct s in; uint32_t z; };\nstruct s g_s;\nstruct s g_a[2];\n"
+)
+_STRUCTARITH_REFUSED = (
+    # a compound assignment, of every operator class, of a named struct, a union, a global, an element, a member,
+    # `*p`, `p[i]`; a struct value into a scalar's compound assignment; as a value
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; a += 5; return a.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; a -= 1u; return a.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; a *= 2u; return a.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; a |= 1u; return a.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; a <<= 1u; return a.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { union u a = {v}; a += 5; return a.w; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { g_s += v; return g_s.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { g_a[1] += v; return g_a[1].x; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct h *p) { p->in += 1u; return p->z; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct h h) { h.in ^= 1u; return h.z; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s *p) { *p += 1u; return p->x; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s *p) { p[0] -= 1u; return p->x; }", _STRUCT_OPERAND),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k = v; k += a; return k; }",
+        _STRUCT_OPERAND,
+    ),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k = (a += 1u); return k; }",
+        _STRUCT_OPERAND,
+    ),
+    # an increment or a decrement, prefix and postfix, statement and value, of a local, a union, a global
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; a++; return a.x; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; --a; return a.x; }", _STRUCT_OPERAND),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k = a++; return k; }",
+        _STRUCT_OPERAND,
+    ),
+    ("uint32_t f(uint32_t v) { union u a = {v}; a--; return a.w; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { ++g_s; return g_s.x + v; }", _STRUCT_OPERAND),
+    # an operand of an arithmetic, bitwise, shift, relational, equality, logical or unary operator
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k = a + 1u; return k; }",
+        _STRUCT_OPERAND,
+    ),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return v * a; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return a << 1; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return a < v; }", _STRUCT_OPERAND),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}, b = {v, 3u}; return a == b; }",
+        _STRUCT_OPERAND,
+    ),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return a && v; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return v || a; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return -a; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return ~a; }", _STRUCT_OPERAND),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return !a; }", _STRUCT_OPERAND),
+    # converted to an integer, a float or a pointer: an initializer (braced too), an assignment to a local, a
+    # member, an element or `*q`, a list element, a `return`, a cast, an argument
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k = a; return k; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint64_t k = {a}; return (uint32_t)k; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t f(uint32_t v) { union u a = {v}; double k = a; return (uint32_t)k; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t *k = a; return *k; }",
+        _STRUCT_CONVERTED,
+    ),
+    ("uint32_t f(struct s *p) { uint32_t k = *p; return k; }", _STRUCT_CONVERTED),
+    ("uint32_t f(struct h *p) { uint32_t k = p->in; return k; }", _STRUCT_CONVERTED),
+    ("uint32_t f(uint32_t v) { uint32_t k = g_a[1]; return k + v; }", _STRUCT_CONVERTED),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k = 0u; k = a; return k; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "struct w { uint32_t m; };\n"
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; struct w b; b.m = a; return b.m; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t f(uint32_t *q, uint32_t v) { struct s a = {v, 2u}; *q = a; return *q; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k[2]; k[0] = a; return k[0]; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; uint32_t k[2] = {1u, a}; return k[0]; }",
+        _STRUCT_CONVERTED,
+    ),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return a; }", _STRUCT_CONVERTED),
+    ("uint64_t *f(uint32_t v) { union u a = {v}; return a; }", _STRUCT_CONVERTED),
+    ("uint32_t f(uint32_t v) { struct s a = {v, 2u}; return (uint32_t)a; }", _STRUCT_CONVERTED),
+    (
+        "static uint32_t g(uint32_t x) { return x; }\n"
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; return g(a); }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "uint32_t h2(uint32_t x);\nuint32_t f(uint32_t v) { struct s a = {v, 2u}; return h2(a); }\n"
+        "uint32_t h2(uint32_t x) { return x; }",
+        _STRUCT_CONVERTED,
+    ),
+    (
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t g(uint32_t x) { return x; }\n"
+        "uint32_t f(uint32_t v) { struct s a = {v, 2u}; op_t p = g; return p(a); }",
+        _STRUCT_CONVERTED,
+    ),
+)
+# ... while a struct copied whole, its members in arithmetic, a pointer to structs stepped and compared, and an array
+# of structs decayed still lower to one claim graph on both rails
+_STRUCTARITH_LOWERED = (
+    "uint32_t f(uint32_t v) { struct s a = {v, 2u}, b = a; b.x += a.y; b.y++; return b.x + b.y; }",
+    "uint32_t f(struct s *p, uint32_t v) { struct s *q = p + 1; q -= 1; p->x = v; return q == p; }",
+    "uint32_t f(uint32_t v) { struct s *p = g_a; p += 1; return (p - g_a) + v + (g_a != 0); }",
+    "static struct s mk(uint32_t v) { struct s r = {v, 1u}; return r; }\n"
+    "uint32_t f(uint32_t v) { struct s a = mk(v); return a.x * 3u + mk(v + 1u).y; }",
+)
+
+
+def test_struct_arithmetic_and_conversion_are_refused_on_both_rails():
+    """CF-STRUCTARITH: every unit of `_STRUCTARITH_REFUSED` -- a compound assignment of a struct or union (named, a
+    global, an element, a member, `*p`, `p[i]`) or of a struct into a scalar, an increment or decrement of one, a
+    struct operand of an arithmetic, bitwise, shift, relational, equality, logical or unary operator, a struct
+    converted to an integer, a float or a pointer (an initializer, an assignment, a list element, a `return`, a cast,
+    an argument to a function defined before or after its caller or called through a pointer) -- is refused on both
+    rails with the reason it witnesses: both had lowered it to an emit Clang rejects. Every unit of
+    `_STRUCTARITH_LOWERED` still lowers to the same claim graph on both."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    summaries = {}
+    for body in _STRUCTARITH_LOWERED:
+        summaries[body], _r, _e = _oracle(_STRUCTARITH_HEAD + body + "\n")
+        assert "ok=1" in summaries[body], (body, summaries[body])
+    for body, why in _STRUCTARITH_REFUSED:
+        try:
+            compile_unit(_STRUCTARITH_HEAD + body + "\n", check_clang=False)
+        except (CLowerError, CParseError) as e:
+            assert why in str(e), (body, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_STRUCTARITH_LOWERED):
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_STRUCTARITH_HEAD + body + "\n")
+            c_summary, _emit = _c_run(exe, path)
+            assert c_summary == summaries[body], (body, c_summary, summaries[body])
+        for n, (body, why) in enumerate(_STRUCTARITH_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_STRUCTARITH_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode > 0 and why in run.stdout, (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
