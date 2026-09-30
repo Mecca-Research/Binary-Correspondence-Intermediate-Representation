@@ -93,6 +93,8 @@ _TRAILING_SPEC = frozenset(
 )
 # ... and the ones a file-scope declaration of objects may spell before a struct or union it defines
 _OBJECT_SPEC = frozenset({"const", "volatile", "static", "extern", "_Thread_local", "thread_local"})
+# thread storage duration (C11 6.2.4p4): the C11 keyword and C23's
+_THREAD_SPEC = frozenset({"_Thread_local", "thread_local"})
 # `typeof` / `typeof_unqual` (C23) / `__typeof__` (GNU): a type-specifier whose type is the operand's
 # -- supported for a type-name operand `typeof(int*)` and a bare in-scope variable `typeof(x)`.
 _TYPEOF_KW = frozenset({"typeof", "typeof_unqual", "__typeof__"})
@@ -632,45 +634,32 @@ class _Parser:
     def _global(
         self, tref: cast.TypeRef, name: str, extern: bool = False, static: bool = False
     ) -> cast.Global:
-        init: tuple = ()
+        init = None
         if self.at("OP", "="):
             self.nxt()
-            if self.at("PUNCT", "{"):  # an initializer list (positional + [i]= designated)
-                self.nxt()
-                slots: dict[int, object] = {}  # array index -> element expr
-                cursor = 0
-                while not self.at("PUNCT", "}"):
-                    if self.at("PUNCT", "["):  # an array designator: [const-index] = expr
-                        self.nxt()
-                        cursor = self._const_eval(self._expr())  # folds int literals + enumerators
-                        self.eat("PUNCT", "]")
-                        self.eat("OP", "=")
-                    slots[cursor] = self._expr()
-                    cursor += 1
-                    if self.at("PUNCT", ","):
-                        self.nxt()
-                self.eat("PUNCT", "}")
-                n = (max(slots) + 1) if slots else 0  # the highest index reached sizes a `T[]`
-                init = tuple(
-                    slots.get(i, cast.IntLit(0)) for i in range(n)
-                )  # gaps zero-fill (§6.7.10)
-            else:
-                init = (self._expr(),)
+            # the initializer a local takes (CF-GBRACE): an expression, or a brace list whose entries are
+            # expressions or lists, positional or designated (`[i] =`, `.m =`, a chain) -- walked in lowering
+            # as C walks the current object; a flat list of expressions had refused a nested one
+            init = self._init_value()
             # C 6.7.10: a file-scope initializer must be a CONSTANT expression -- a CALL in it
             # is invalid C (gcc/clang: "initializer element is not constant"). Reject it here
             # rather than mislower: before prototypes landed this was caught incidentally (the
             # `T k(void);` line was a parse error); now the prototype parses, so guard the
             # construct itself. Routes to fallback under --fallback like any rejected form.
-            for el in init:
-                for node in ast_walk(el):
-                    if isinstance(node, (cast.CallExpr, cast.CallMember)):
-                        raise CParseError(
-                            f"file-scope initializer of {name!r} calls a "
-                            f"function (not a constant expression)",
-                            pos=self.peek().pos,
-                        )
+            for node in ast_walk(init):
+                if isinstance(node, (cast.CallExpr, cast.CallMember)):
+                    raise CParseError(
+                        f"file-scope initializer of {name!r} calls a "
+                        f"function (not a constant expression)",
+                        pos=self.peek().pos,
+                    )
         return cast.Global(
-            type=tref, name=name, init=init, extern_decl=extern, static_storage=static
+            type=tref,
+            name=name,
+            init=init,
+            extern_decl=extern,
+            static_storage=static,
+            thread_storage=bool(self.storage & _THREAD_SPEC),
         )
 
     def _aggregate_body(self, kind: str, tag: str, attrs: dict) -> cast.Aggregate:
@@ -1451,6 +1440,13 @@ class _Parser:
             )
         # `static` in any position: `volatile static T n` and `T static n` are static (6.7p1)
         is_static = "static" in self.storage
+        # thread storage is kept (CF-TLS): each thread has its own object. At block scope it needs `static` too
+        # (C11 6.7.1p3; a block-scope `extern` is refused above)
+        is_thread = bool(self.storage & _THREAD_SPEC)
+        if is_thread and not is_static:
+            raise CParseError(
+                "a block-scope `_Thread_local` object that is not `static`", pos=self.peek().pos
+            )
         decls = []
         while True:
             tref, name = self._declarator_or_funcptr(base)
@@ -1458,7 +1454,9 @@ class _Parser:
             if self.at("OP", "="):
                 self.nxt()
                 init = self._init_value()
-            decls.append(cast.Decl(tref, name, init, static_storage=is_static))
+            decls.append(
+                cast.Decl(tref, name, init, static_storage=is_static, thread_storage=is_thread)
+            )
             if self.at("PUNCT", ","):  # another declarator off the same specifier
                 self.nxt()
                 continue

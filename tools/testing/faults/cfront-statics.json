@@ -70,7 +70,7 @@
       "expects": "test_static_tables_run_as_the_original_on_both_rails",
       "label": "ST3 the twin canon drops a static's image",
       "new": "  int nsx=0;",
-      "old": "  int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text) nsx++;",
+      "old": "  int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text || f->statics[k].thread_storage) nsx++;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

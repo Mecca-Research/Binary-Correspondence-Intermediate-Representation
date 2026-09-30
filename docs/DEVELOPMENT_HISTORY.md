@@ -1850,9 +1850,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a call through a function pointer returning void (`fp();`, `o.step();`) emits `uint32_t t = fp();` on
     both rails, which does not compile; the twin records "returns void" and "return not captured" alike;
   - a conditional whose arms are function designators (`s ? f : g`) is typed `uint32_t` on both rails;
-  - the oracle refuses a global array of structs with nested braces (`{{1, 2}, {3, 4}}`), which the twin
-    lowers;
-  - both rails drop `_Thread_local` from a static local;
   - the round trip's second emit of a control-flow fixture redeclares its `__cont_<N>` labels, and a
     non-volatile struct fixture stays excluded because its `memcpy` re-parses as a call to an undefined
     function;
@@ -2178,8 +2175,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     count), so an in-bounds `g[2]` reached the quarantine. Both rails refused a declaration's second declarator --
     `uint32_t a[3], b[2];`, `uint32_t gx, gy;`, `struct pt ga, gb;` -- and a declaration defining the struct of the
     objects it declares (`static struct t { ... } a, b;`), each rail for its own reason.
-  - RED: on the parent the fixture is refused by both rails at its first list, and the test fails; a unit with
-    only the row-pointer call builds on neither rail's emit.
+  - RED: on the parent the fixture is refused by both rails -- the oracle at its first list, the twin at its first
+    character table -- and the test fails; a unit with only the row-pointer call builds on neither rail's emit.
   - What landed: a call's argument that is a file-scope multi-dimensional array is its first element's address,
     `&m[0][0]`, in both emits (`emit._args`; the twin's `emit_arg` over a new `bcir_resource.ndims`) -- the emit
     only, so no digest moves. Each declarator of a file-scope declaration is a global of its own type
@@ -2191,6 +2188,77 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     pointer, initialized objects, `static` objects, structs and the objects of a struct the declaration defines --
     lowers to one claim graph on the four targets, and each function of each emit returns, and leaves the
     globals, as the original does.
+  CF-GBRACE walked a file-scope initializer as C walks the current object.
+  - The defect: the oracle parsed a global's initializer as a flat list of expressions, so it refused a nested
+    brace (`struct pt g[2] = {{1u, 2u}, {3u, 4u}};`: `unexpected PUNCT '{'`), which the twin lowered, and the twin
+    read a designator chain at the top of the list (`[5].y = 9u`) as a parse error. Both rails sized an unsized
+    global by its top-level entries, not by the walk: `struct pt g[] = {1u, 2u, 3u, 4u, 5u};` was five elements on
+    both, so `sizeof g / sizeof g[0]` returned 5 in both emits where the original returns 3, and of
+    `uint32_t m[][3] = {1u, 2u, 3u, 4u, 5u, 6u};` the oracle counted six rows and the twin none (`sizeof of an
+    incomplete type`). Neither rail refused an initializer C refuses: `uint32_t g[2] = {1u, 2u, 3u};` lowered on
+    both.
+  - RED: on the parent the fixture is refused by both rails, the oracle at its first nested brace and the twin at
+    `[5].y =`, and both new tests fail; the oracle lowers `uint32_t g[2] = {1u, 2u, 3u};`.
+  - What landed: a global's initializer is a local's -- an expression, or a brace list whose entries are
+    expressions or lists, positional or designated (`cparse._global` over `_init_value`) -- walked for its shape:
+    the walk a local's or a static's initializer takes, in a mode that neither lowers nor folds an entry and
+    records only each store's range (`_InitWalk.shape`, `_file_scope_shape`; the twin's `global_init_shape`, an
+    `iwalk` with `skip`). The walk's constraints hold, so an excess entry, an override of an initialized
+    subobject, a string too long, a designator outside its object and two entries for a scalar are refused on both
+    rails for one reason, and an unsized array takes the extent the walk reaches, a nested one its rows. An
+    initialized array of more than three dimensions is refused on both, the twin's walk holding three. The twin
+    scans the initializer for a call before the walk, as the oracle's parser refuses one before lowering; the scan
+    CF-INTCONST gave it now also finds a call through a parenthesized callee (`(k)()`). The oracle's linkable
+    emit renders the initializer as the source spells it, braces and designators kept, each entry folded or
+    spelled as before and a string literal that initializes a character array by its own spelling
+    (`_file_scope_rendering`, `_spell_init`), and declares a nested global with every dimension
+    (`emit._object_declarator`).
+  - Outcomes: `cfront_gbrace.c` -- arrays of structs, rows, a 3-D array, character tables, a nested struct, a
+    union and a braced scalar at file scope, with nested braces, brace elision and designators -- lowers to one
+    claim graph on the four targets, each function of each emit returns as the original does, and the oracle's
+    linkable emit, given the unit's struct definitions, holds each global's bytes as the original does. No other
+    fixture's digest moves on the four targets.
+  CF-TLS kept `_Thread_local` on a static local.
+  - The defect: both rails read `_Thread_local` as a storage class and dropped it, so `static _Thread_local
+    uint32_t n = 3u;` was emitted as `static uint32_t n = 3u;`, one object every thread shares, and digested as the
+    plain static. The twin read a declaration that begins with it (`_Thread_local static uint32_t t[3];`) as an
+    expression (`undefined identifier`), and the oracle lowered a block-scope `_Thread_local` object that is not
+    `static`, which C11 6.7.1p3 forbids, as an automatic local. The oracle's linkable emit dropped it from a
+    global.
+  - RED: on the parent both rails emit the fixture's first thread-local static as `static uint32_t n = 3u;`, at the
+    plain static's digest.
+  - What landed: the storage duration rides on the static (`Decl.thread_storage`, `LoweredFunc.thread_statics`;
+    the twin's `bcir_static.thread_storage`, from `saw_thread`), both emits declare it `static _Thread_local`, and
+    the canon keeps its line whatever its image (`static _Thread_local n = <image, or 0>`), so a static differing
+    only in its storage duration digests apart. A declaration may begin with `_Thread_local` on the twin, and a
+    block-scope one without `static` is refused on both rails. The oracle's linkable emit declares a thread-local
+    global `_Thread_local` (`LoweredUnit.thread_globals`).
+  - Outcomes: the fixture's thread-local global and its four thread-local statics -- a scalar, an array, a struct
+    and a zero one, the storage class before `static`, after it and after the type -- run as the original on both
+    emits, and again in a second thread, where each starts at its initial value; the linkable emit's thread-local
+    global starts there too.
+  The new tests of these four slices fail on the parent, and 37 injected defects, on both rails, are each caught
+  (`tools/testing/faults/cfront-globals.json`). One fault of an earlier table, ST3 of `cfront-statics.json`,
+  anchored into a line CF-TLS rewrote; it was re-anchored, and is still caught. The G10 and volatile rows are
+  unchanged.
+  Found, not fixed here (each a suggested follow-up):
+  - an enumerator and a `case` label fold `/`, `%` and a comparison differently on the two rails and from C:
+    `enum { ED_Q = -7 / 2, ED_R = -7 % 2, ED_N = ~0u > 5 };` is -4, 1 and 0 on the oracle, -3, -1 and 0 on the
+    twin, and -3, -1 and 1 in C, and the unit digests apart (a `case -7 / 2:` label with it); the twin's emit
+    spells a negative enumerator as its 64-bit two's complement (`int32_t t = 18446744073709551613;`), which Clang
+    and GCC convert back with a warning;
+  - the twin types a plain `char` element of an array `int8_t` in its emit, where the oracle and the source say
+    `char`: on a target whose `char` is unsigned (AArch64 Linux), an element past 0x7F reads back negative;
+  - a member of an element of a 2-D array of structs (`gm[i][j].x`) is refused on both rails (`a subscript of an
+    element that is not a pointer`);
+  - the oracle's linkable emit names the unit's structs and unions without defining them, and drops `const` from
+    a global (`const uint32_t g = 5u;` renders `uint32_t g = 5;`); it still refuses a pointer table's string
+    (`const char *tab[] = {"a"};`) by name;
+  - a parenthesized string literal initializing a character array (`char s[] = ("abc");`, at file scope, at
+    block scope or `static`) lowers on the oracle, whose parser drops the parentheses, and is refused by the twin
+    (`an array is initialized by a brace list or a string literal`);
+  - both rails accept a malformed integer suffix (`1lL`), and the twin names a designator's unknown member
+    without its name (`no member of that name to designate`, the oracle's `no member named 'z' to designate`).
 
 ---
 

@@ -274,6 +274,8 @@ _PTRVALUE = [
     #   initializers folded in C's types (CF-INTCONST)
     "cfront_garray.c",  # multi-dimensional globals passed to row-pointer parameters, character tables sized by
     #   their strings, declarations listing several objects (CF-GARRAY)
+    "cfront_gbrace.c",  # file-scope initializers with nested braces, elision and designators (CF-GBRACE), and
+    #   thread-local globals and statics (CF-TLS)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10554,3 +10556,218 @@ def test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rail
         for whole in ("(&ga_m[0][0], ", "(&ga_w[0][0][0], ", '5u, "ga_chars:ga_name")'):
             assert whole in emit, f"{rail}: the emit does not spell {whole!r}"
     _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _GARRAY_DRIVER)
+
+
+# CF-GBRACE, CF-TLS: a file-scope initializer is walked as C walks it, and thread storage is kept. `gb_tls_bump`
+# writes the thread-local global both builds share, so the original and the emit run it from one saved value. The
+# threaded run repeats the round in a new thread, where every thread-local object starts at its initial value: an
+# emit that declared a thread-local static a plain `static` carries the first thread's value into it.
+_GBRACE_ROUND = (
+    _GAPS_SAME
+    + r"""
+static int gb_round(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n], t0 = gb_tls, r1 = gb_tls_bump(s), t1 = gb_tls;
+    gb_tls = t0;
+    if (bcir_gb_tls_bump(s) != r1 || gb_tls != t1) return fail("gb_tls_bump");
+    SAME(gb_pt_at, s); SAME(gb_counts); SAME(gb_row_at, s, s >> 2); SAME(gb_name_at, s, s >> 1);
+    SAME(gb_rec_at, s, s >> 3); SAME(gb_seg_at, s); SAME(gb_cube_at, s); SAME(gb_scalars); SAME(gb_entry, s);
+    SAME(gb_tls_count, s); SAME(gb_tls_table, s); SAME(gb_tls_point, s); SAME(gb_tls_zero, s);
+  }
+  return 0;
+}
+"""
+)
+_GBRACE_DRIVER = (
+    _GBRACE_ROUND
+    + r"""
+int main(void) {
+  if (gb_round()) return 1;
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+_GBRACE_THREADS = (
+    _GBRACE_ROUND
+    + r"""
+#include <pthread.h>
+static void *gb_thread(void *arg) { (void)arg; return gb_round() ? (void *)1 : (void *)0; }
+int main(void) {
+  if (gb_round()) return 1;   /* this thread's objects move on */
+  pthread_t t;
+  void *bad = (void *)1;
+  if (pthread_create(&t, 0, gb_thread, 0) || pthread_join(t, &bad)) { puts("pthread"); return 2; }
+  if (bad) return 1;
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def _linkable_bytes_are_the_originals(fx: str, src: str, r) -> None:
+    """The oracle's linkable emit defines each of the unit's globals as the original does: built beside a `main`
+    that dumps every global's bytes -- a static-storage object's padding is zero too (C11 6.7.9p10) -- under every
+    compiler at hand, each holds the original's bytes. The linkable emit names the unit's structs and unions without
+    defining them, so both builds take the source's definitions. Where pthreads are, `main` then overwrites each
+    thread-local global and a new thread dumps it: it holds its initial bytes again, as the original's does."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    types = "\n".join(re.findall(r"^(?:struct|union) \w+ \{[^}]*\};$", src, re.M))
+    linkable = emit_linkable(r.lowered, r.emitted)
+    names = [g[0] for g in r.lowered.globals_decl if not g[3]]
+    tls = sorted(r.lowered.thread_globals) if os.name == "posix" else []
+    driver = (
+        "static void dump(const char *name, const void *p, size_t n) {\n"
+        "  const unsigned char *b = p;\n"
+        '  printf("%s", name);\n'
+        '  for (size_t i = 0; i < n; i++) printf(" %02x", b[i]);\n'
+        "  putchar('\\n');\n"
+        "}\n"
+        "#define D(g) dump(#g, &(g), sizeof(g))\n"
+    )
+    if tls:
+        driver += (
+            "#include <pthread.h>\n"
+            "static void *tls_dump(void *arg) {\n  (void)arg;\n  "
+            + " ".join(f"D({n});" for n in tls)
+            + "\n  return 0;\n}\n"
+        )
+    driver += "int main(void) {\n  " + " ".join(f"D({n});" for n in names) + "\n"
+    if tls:
+        driver += (
+            "  " + " ".join(f"memset(&{n}, 0xA5, sizeof {n});" for n in tls) + "\n"
+            "  pthread_t t;\n"
+            '  if (pthread_create(&t, 0, tls_dump, 0) || pthread_join(t, 0)) puts("pthread");\n'
+        )
+    driver += "  return 0;\n}\n"
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <stddef.h>\n"
+    threads = ("-pthread",) if tls else ()
+    quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            want = _build_run_c(d, cc, "original", f"{head}{src}\n{driver}", threads)
+            got = _build_run_c(
+                d, cc, "linkable", f"{head}{types}\n{linkable}\n{driver}", quarantine + threads
+            )
+            assert want and got == want, (
+                f"{fx}: the linkable emit's globals are not the original's under {cc}\n"
+                + "\n".join(
+                    f"  {w!r} != {g!r}"
+                    for w, g in zip(want.splitlines(), got.splitlines())
+                    if w != g
+                )
+            )
+
+
+def test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails():
+    """CF-GBRACE, CF-TLS: `cfront_gbrace.c` -- arrays of structs, rows, a 3-D array, character tables, a nested
+    struct, a union and a braced scalar initialized at file scope with nested braces, brace elision and designators,
+    and a thread-local global and four thread-local statics (a scalar, an array, a struct and a zero one, the
+    storage class before and after `static` and after the type). The oracle refused a nested brace in a global's
+    initializer, and both rails sized an unsized global by its top-level entries; each global is now walked as a
+    local is, for its shape, and both rails dropped `_Thread_local` from a static local, which both emits now keep.
+    The unit lowers to one claim graph on the four targets; each function of each emit returns -- and leaves the
+    thread-local global -- as the original does, in a second thread too; and the oracle's linkable emit renders
+    each global's braces and designators, holding the original's bytes."""
+    if not _CC:
+        return
+    fx = "cfront_gbrace.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        for whole in (
+            "static _Thread_local uint32_t n = 3u;",
+            "static _Thread_local uint32_t t[3] = {1u, 2u};",
+            "static _Thread_local struct gb_pt p = {0u, 4u};",
+            "static _Thread_local uint64_t z = 0u;",
+        ):
+            assert whole in re.sub(r"\s+", " ", emit), (
+                f"{rail}: the emit does not declare {whole!r}"
+            )
+    emits = (("twin", c_emit), ("oracle", oracle_emit))
+    _run_against_original(fx, src, emits, _GBRACE_DRIVER)
+    if os.name == "posix":  # the threaded witness needs pthreads
+        _run_against_original(fx, src, emits, _GBRACE_THREADS, ("-pthread",))
+    _linkable_bytes_are_the_originals(fx, src, compile_unit(src, check_clang=False))
+
+
+# A file-scope initializer C refuses, or the walk does not take, is refused on both rails for one reason: each
+# global's initializer is walked as a local's is (C11 6.7.9p2, p11, p14, p17-19). A block-scope `_Thread_local`
+# object needs `static` too (C11 6.7.1p3).
+_GBRACE_REFUSED = (
+    ("uint32_t g[2] = {1u, 2u, 3u};", "excess elements in an initializer"),
+    ("struct pt g = {1u, 2u, 3u};", "excess elements in an initializer"),
+    (
+        "struct pt g[1] = {[0].x = 3u, [0] = {1u, 2u}};",
+        "an initializer overrides a prior initialization of a subobject",
+    ),
+    ('char g[2] = "abc";', "an initializer-string for a character array is too long"),
+    ("uint32_t g[2] = {[5] = 1u};", "an array designator outside the array"),
+    (
+        "uint8_t g[2][2][2][2] = {0};",
+        "an initialized file-scope array of more than 3 dimensions is not supported",
+    ),
+    ("uint32_t g[2] = 5u;", "an array is initialized by a brace list or a string literal"),
+    ('char g[2][4] = "abc";', "an array is initialized by a brace list or a string literal"),
+    ("uint32_t g = {5u, 6u};", "a braced scalar initializer holds one expression"),
+    (
+        "uint32_t k(void);\nuint32_t g[1] = {1u, k()};",
+        "calls a function (not a constant expression)",
+    ),
+    ("uint32_t k(void);\nuint32_t g = (k)();", "calls a function (not a constant expression)"),
+    (
+        "uint32_t f2(uint32_t s) { _Thread_local uint32_t n = 1u; n += s; return n; }",
+        "a block-scope `_Thread_local` object that is not `static`",
+    ),
+)
+
+
+def test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails():
+    """CF-GBRACE, CF-TLS: an excess entry, an override of an initialized subobject, a string too long, a designator
+    outside its array, an initialized array of more than three dimensions, an array initialized by an expression or
+    a 2-D one by a string, two entries for a scalar, and a call -- by name, or through a parenthesized callee, which
+    the twin's scan had taken -- are each refused on both rails, for the same reason, the call before the walk, as
+    the oracle's parser refuses it. A block-scope `_Thread_local` object that is not `static` is refused on both,
+    which the twin had read as an expression. A static differing only in its storage duration lowers to another
+    claim graph, on both rails alike."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    head = "#include <stdint.h>\nstruct pt { uint32_t x, y; };\n"
+    cases = [
+        (f"{head}{decl}\nuint32_t f(void) {{ return 1u; }}\n", why) for decl, why in _GBRACE_REFUSED
+    ]
+    for text, why in cases:
+        try:
+            compile_unit(text, check_clang=False)
+        except (CParseError, CLowerError) as e:
+            assert why in str(e), (text, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered {text!r}")
+    pair = (
+        "uint32_t f(uint32_t s) { static uint32_t n = 3u; n += s; return n; }\n",
+        "uint32_t f(uint32_t s) { static _Thread_local uint32_t n = 3u; n += s; return n; }\n",
+    )
+    oracle = [_summary_line(compile_unit(head + p, check_clang=False)) for p in pair]
+    assert oracle[0] != oracle[1], oracle
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "g.c")
+        for text, why in cases:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and why in run.stdout, (
+                text,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for p, want in zip(pair, oracle):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(head + p)
+            assert _c_run(exe, path)[0] == want, (p, want)

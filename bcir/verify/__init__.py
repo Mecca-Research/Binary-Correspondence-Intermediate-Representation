@@ -729,12 +729,17 @@ def _canon_func_records(lf) -> list[str]:
     recs.append("ret={}|stores={}".format(ret, ";".join(stores)))
     # A static's constant image (CF-STATICTAB): its initializer runs once, before the program, so no claim
     # writes it (a static reads as an input) -- the initializer both rails render joins the canon instead,
-    # one line per static that has one, sorted. Two statics differing only in a value differ here.
+    # one line per static that has one, sorted. Two statics differing only in a value differ here. A static
+    # of thread storage duration (CF-TLS) has its line whatever its image, `_Thread_local` in it: each
+    # thread's own object is not the one every thread shares.
+    threads = getattr(lf, "thread_statics", frozenset())
     recs.extend(
         sorted(
-            f"static {name} = {init}"
-            for _rid, name, _ct, init in getattr(lf, "statics", ())
-            if init is not None
+            f"static _Thread_local {name} = {init or 0}"
+            if rid in threads
+            else f"static {name} = {init}"
+            for rid, name, _ct, init in getattr(lf, "statics", ())
+            if init is not None or rid in threads
         )
     )
     return recs

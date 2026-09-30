@@ -343,6 +343,11 @@ _mm_sfence();                      //                   store (release) fence ->
 - File-scope declarations of several objects (`uint32_t a[3], b[2], *p;`, `static struct t { ... } x, y;`),
   character tables sized by their string literals (`char name[] = "bcir";`), and a multi-dimensional global
   passed to a row-pointer parameter (`T (*p)[N]`, `T m[][N]`).
+- File-scope initializers as a local's: nested braces, brace elision and designators for arrays of structs, rows
+  and character tables, an unsized global sized by what its initializer reaches (`struct pt g[] = {1u, 2u, 3u,
+  4u};` is two elements).
+- `_Thread_local` globals and `static _Thread_local` locals: each thread has its own object, and both emits
+  keep the storage class.
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
 
@@ -358,6 +363,9 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   without `u` past `long long`, whose type C leaves to the implementation (GCC gives it `__int128`, Clang
   `unsigned long long`). Both rails refuse it (`an integer constant too large for every type its base and suffix
   allow`); write `9223372036854775808u`, or `INT64_MIN` as `-9223372036854775807 - 1`.
+- A file-scope initializer C refuses (an excess entry, a string too long for its array, a designator outside its
+  object) or that overrides a subobject a brace list or a string initialized, and an initialized file-scope array
+  of more than three dimensions. A block-scope `_Thread_local` object that is not `static` (C11 6.7.1p3).
 - An identifier (a function, parameter, local, global, struct or union tag, member, typedef, enum constant or
   label) or a floating constant longer than 63 characters — C11 5.2.4.1's significant initial characters of an
   internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not

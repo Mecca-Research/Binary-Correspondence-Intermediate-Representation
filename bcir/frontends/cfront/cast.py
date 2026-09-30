@@ -196,6 +196,7 @@ class Decl:
     name: str
     init: object = None
     static_storage: bool = False  # `static T name = init;` — static storage duration (persists)
+    thread_storage: bool = False  # `_Thread_local`: each thread's own object (CF-TLS)
 
 
 @dataclass(frozen=True)
@@ -365,11 +366,12 @@ class Global:
 
     type: TypeRef
     name: str
-    init: tuple = ()  # initializer element expressions (for an array/scalar)
+    init: object = None  # the initializer, as a local's: an expression or a brace list (AggInit)
     extern_decl: bool = False  # `extern T g;` -- a DECLARATION of another TU's definition
     #   (the linkable emit prints `extern ...;`, never a definition)
     static_storage: bool = False  # source `static` (internal linkage) -- the linkable emit keeps
     #   the definition file-local instead of exporting it
+    thread_storage: bool = False  # `_Thread_local` -- the linkable emit keeps it (CF-TLS)
 
 
 @dataclass

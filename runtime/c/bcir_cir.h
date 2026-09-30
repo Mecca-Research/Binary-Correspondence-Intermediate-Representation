@@ -193,6 +193,8 @@ typedef struct bcir_static {
                                * (CF-STATICTAB); NULL when it is zero. Owned by the containing hosted cfront
                                * result, like a host literal's spelling. */
   uint32_t rid;               /* its resource (the escape analysis names it `function.name`) */
+  uint8_t thread_storage;     /* 1: thread storage duration, declared `static _Thread_local` -- each thread's
+                               * own object (CF-TLS); its canon line is kept whatever its image */
 } bcir_static;
 
 /* Hosted-frontend metadata retained only so verified-C emission and diagnostics can

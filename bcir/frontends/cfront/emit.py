@@ -229,6 +229,16 @@ def respell_anon(text: str, spelling: dict) -> str:
     return "".join(out)
 
 
+def _object_declarator(ct: CType, name: str) -> str:
+    """An object's declaration without its initializer: `T name`, an array's every dimension after its name
+    (`T name[2][3]`, the element type the innermost; an unsized one `[]`)."""
+    dims = []
+    while ct.kind == "array":
+        dims.append(f"[{ct.count}]" if ct.count else "[]")
+        ct = ct.of
+    return f"{_cname(ct)} {name}{''.join(dims)}"
+
+
 def emit_linkable(lowered, emitted: dict) -> str:
     """The LINKABLE artifact (Phase 3 linking): the unit's emitted functions re-rendered with
     EXTERNAL linkage -- definitions non-static under their REAL names, in-unit calls unprefixed
@@ -261,12 +271,11 @@ def emit_linkable(lowered, emitted: dict) -> str:
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges
+    threads = getattr(lowered, "thread_globals", frozenset())
     for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
+        tls = "_Thread_local " if gname in threads else ""  # each thread's own object (CF-TLS)
         if is_extern:
-            parts.append(
-                f"extern {_cname(ct.of) if ct.kind == 'array' else _cname(ct)} {gname}"
-                + (f"[{ct.count}];" if ct.kind == "array" else ";")
-            )
+            parts.append(f"extern {tls}{_object_declarator(ct, gname)};")
             continue
         if vals is None:
             raise ValueError(
@@ -274,19 +283,10 @@ def emit_linkable(lowered, emitted: dict) -> str:
                 f"initializer (unsupported in this slice)"
             )
         kw = "static " if is_static else ""  # source `static` stays file-local
-        if ct.kind == "array" and len(vals) == 1 and vals[0].startswith('"'):
-            parts.append(f"{kw}{_cname(ct.of)} {gname}[{ct.count}] = {vals[0]};")  # string init
-        elif ct.kind == "array":
-            parts.append(
-                f"{kw}{_cname(ct.of)} {gname}[{ct.count or len(vals)}] = "
-                + "{"
-                + ", ".join(vals)
-                + "};"
-            )
-        elif vals:
-            parts.append(f"{kw}{_cname(ct)} {gname} = {vals[0]};")
-        else:
-            parts.append(f"{kw}{_cname(ct)} {gname};")  # tentative definition (zero-init)
+        # the initializer as the source spells it, re-spelled (`lower._file_scope_rendering`); none: a
+        # tentative definition (zero-init)
+        init = f" = {vals[0]}" if vals else ""
+        parts.append(f"{kw}{tls}{_object_declarator(ct, gname)}{init};")
     for name in names:  # forward-declare every kept-static
         lf = lowered.functions[name]  # function: a static callee may be
         if not lf.static_fn:  # DEFINED after its caller (the C
@@ -402,20 +402,25 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
             return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
         return f"    {_cname(ct)} {name}{zi};"
 
-    def _static_decl(name, ct, init):
+    def _static_decl(name, ct, init, thread):
         # static storage: a once-only constant initializer in the declaration -- the image the lowering
         # folded and rendered (CF-STATICTAB), or zero: `{0}` for an array or aggregate, `0u` for the rest.
-        # An array keeps its shape (a multi-dimensional one flat, as its image is rendered)
+        # An array keeps its shape (a multi-dimensional one flat, as its image is rendered); thread storage
+        # its `_Thread_local` (CF-TLS)
+        sc = "static _Thread_local" if thread else "static"
         if ct.kind == "array":
-            return f"    static {_cname(ct.of)} {name}[{ct.count}] = {init or '{0}'};"
+            return f"    {sc} {_cname(ct.of)} {name}[{ct.count}] = {init or '{0}'};"
         if ct.kind in ("struct", "union"):
-            return f"    static {_cname(ct)} {name} = {init or '{0}'};"
+            return f"    {sc} {_cname(ct)} {name} = {init or '{0}'};"
         if ct.kind == "funcptr":  # `RET (*name)(PARAMS)`, as a local's
-            return f"    static {_funcptr_decl(ct, name)} = {init or '0u'};"
-        return f"    static {_cname(ct)} {name} = {init or '0u'};"
+            return f"    {sc} {_funcptr_decl(ct, name)} = {init or '0u'};"
+        return f"    {sc} {_cname(ct)} {name} = {init or '0u'};"
 
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
-    decls += [_static_decl(nm[rid], ct, init) for rid, _name, ct, init in lf.statics]
+    decls += [
+        _static_decl(nm[rid], ct, init, rid in lf.thread_statics)
+        for rid, _name, ct, init in lf.statics
+    ]
     body = _walk(lf, lf.body, ref, 1, cont=_cont_labels(lf))
     # Phase 3 linking: declare every PROTOTYPED cross-TU callee this function calls, so the
     # emitted TU compiles standalone and the host LINKER resolves the symbol from a sibling object.

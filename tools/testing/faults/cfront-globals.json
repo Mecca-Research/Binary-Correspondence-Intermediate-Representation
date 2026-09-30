@@ -6,7 +6,9 @@
     "bcir.tests.test_c_cfront:_CC",
     "bcir.tests.test_c_cfront:test_integer_constants_are_exact_on_both_rails",
     "bcir.tests.test_c_cfront:test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
-    "bcir.tests.test_c_cfront:test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails"
+    "bcir.tests.test_c_cfront:test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails"
   ],
   "faults": [
     {
@@ -40,15 +42,15 @@
     {
       "expects": "test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
       "label": "IC5 the twin takes a call in a file-scope initializer",
-      "new": "        (void)m; } }\n",
-      "old": "        fail(c,m); return; } }\n",
+      "new": "      (void)m; }\n",
+      "old": "      fail(c,m); return; }\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_integer_constants_are_exact_on_both_rails",
       "label": "IC6 the twin reads a file-scope initializer with the enum evaluator",
-      "new": "    else (void)ce_expr(c,0);\n",
-      "old": "    else skip_init_expr(c,&nm);\n",
+      "new": "  int start=c->i; (void)ce_expr(c,0);\n",
+      "old": "  int start=c->i; skip_init_expr(c,nm);                /* to the initializer's end: a call in it is refused */\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -103,29 +105,29 @@
     {
       "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
       "label": "GA2 the twin sizes a string-initialized global without its NUL",
-      "new": "tok s=adv(c); n+=str_bytes(s.s,s.n); } init_n=n; }",
-      "old": "tok s=adv(c); n+=str_bytes(s.s,s.n); } init_n=n+1; }",
+      "new": "  if(count<0){ count=n; if(count>W->top_n) W->top_n=count; }",
+      "old": "  if(count<0){ count=n+1; if(count>W->top_n) W->top_n=count; }",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
       "label": "GA3 the twin bounds an unsized global's accesses by one element",
       "new": "{ dims[0]=init_n; }",
-      "old": "{ dims[0]=init_n; count=(int)init_n; }",
+      "old": "{ dims[0]=init_n; if(nd==1) count=(int)init_n; }",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
       "label": "GA4 the twin refuses a declaration's second declarator",
-      "new": "  p_global_declarator(c,&base,btd,btdd);\n",
-      "old": "  for(;;){\n    p_global_declarator(c,&base,btd,btdd);\n    if(c->failed || !is(c,\",\")) break;\n    c->i++;\n  }\n",
+      "new": "  p_global_declarator(c,&base,si,btd,btdd);\n",
+      "old": "  for(;;){\n    p_global_declarator(c,&base,si,btd,btdd);\n    if(c->failed || !is(c,\",\")) break;\n    c->i++;\n  }\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
       "label": "GA5 the twin refuses the objects of a struct a declaration defines",
       "new": "        (void)base;\n",
-      "old": "        for(;;){ p_global_declarator(c,&base,0,NULL); if(c->failed || !is(c,\",\")) break; c->i++; }\n",
+      "old": "        for(;;){ p_global_declarator(c,&base,my,0,NULL); if(c->failed || !is(c,\",\")) break; c->i++; }\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -148,6 +150,125 @@
       "new": "        self.eat(\"PUNCT\", \";\")\n        return True\n",
       "old": "        tref, name = self._declarator(base)\n        self._globals(unit, base, tref, name)\n        return True\n",
       "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "GB1 the twin skips a global's initializer instead of walking it",
+      "new": "    skip_init_expr(c,&nm); init_n=-1;\n",
+      "old": "    init_n=global_init_shape(c,&nm,&ty,ty.kind==1?si:-1,is_arr,nd,dims);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails",
+      "label": "GB2 the twin's shape walk records no range, so an override goes unrefused",
+      "new": "  if(W->skip){ return; }",
+      "old": "  if(W->skip){ c->iw_nrng++; return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "GB3 the twin leaves an unsized nested global's rows uncounted",
+      "new": "  if(nd==1 && dims[0]==0 && init_n>=0){ dims[0]=init_n; count=(int)init_n; }",
+      "old": "  if(is_arr && dims[0]==0 && init_n>=0){ dims[0]=init_n; if(nd==1) count=(int)init_n; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "GB4 the twin sizes an unsized global at one element",
+      "new": "  return inferred ? 1 : -1;\n",
+      "old": "  return inferred ? (W.top_n<1?1:W.top_n) : -1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "GB5 the oracle refuses a nested brace in a global's initializer",
+      "new": "            init = self._expr()\n            # C 6.7.10: a file-scope",
+      "old": "            init = self._init_value()\n            # C 6.7.10: a file-scope",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "GB6 the oracle sizes an unsized global by its top-level entries",
+      "new": "        return (array(ct.of, max(len(init.entries), 1)) if inferred else ct), frozenset(w.strings)\n",
+      "old": "        return (array(ct.of, max(w.top_n, 1)) if inferred else ct), frozenset(w.strings)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails",
+      "label": "GB7 the oracle takes an initialized file-scope array of four dimensions",
+      "new": "        if dims > 4:\n",
+      "old": "        if dims > 3:  # the twin's walk holds three dimensions, as a local's\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "GB8 the linkable emit refuses a character array's string in a brace list",
+      "new": "        pass\n",
+      "old": "        w.strings.add(id(lit))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails",
+      "label": "GB9 the twin takes a call through a parenthesized callee in a file-scope initializer",
+      "new": "  return 0;\n",
+      "old": "  return j>=0 && !decl_type_tok(c,tat(c,j+1));\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "TL1 the twin emits a thread-local static as a plain static",
+      "new": "      const char *sp=sx>=0?\"static \":\"\", *eq=iv[0]?\" = \":\"\";",
+      "old": "      const char *sp=sx>=0?(f->statics[sx].thread_storage?\"static _Thread_local \":\"static \"):\"\", *eq=iv[0]?\" = \":\"\";",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "TL2 the twin's canon drops a static's thread storage",
+      "new": "      sb_str(&s,\"static \"); sb_str(&s,f->statics[k].name);",
+      "old": "      sb_str(&s,f->statics[k].thread_storage?\"static _Thread_local \":\"static \"); sb_str(&s,f->statics[k].name);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "TL3 the twin reads a declaration that begins `_Thread_local` as an expression",
+      "new": "",
+      "old": "      ||tok_is(t,\"_Thread_local\")||tok_is(t,\"thread_local\")  /* `_Thread_local static T n;` (CF-TLS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails",
+      "label": "TL4 the twin takes a block-scope `_Thread_local` object that is not static",
+      "new": "    (void)is_thread;",
+      "old": "    if(is_thread && !is_static){ fail(c,\"a block-scope `_Thread_local` object that is not `static`\"); return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "TL5 the oracle emits a thread-local static as a plain static",
+      "new": "        sc = \"static\"\n",
+      "old": "        sc = \"static _Thread_local\" if thread else \"static\"\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "TL6 the oracle's canon drops a static's thread storage",
+      "new": "    threads = frozenset()\n",
+      "old": "    threads = getattr(lf, \"thread_statics\", frozenset())\n",
+      "path": "bcir/verify/__init__.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails",
+      "label": "TL7 the oracle takes a block-scope `_Thread_local` object that is not static",
+      "new": "        if False:\n",
+      "old": "        if is_thread and not is_static:\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
+      "label": "TL8 the linkable emit drops a global's `_Thread_local`",
+      "new": "        tls = \"\"\n",
+      "old": "        tls = \"_Thread_local \" if gname in threads else \"\"  # each thread's own object (CF-TLS)\n",
+      "path": "bcir/frontends/cfront/emit.py"
     }
   ]
 }

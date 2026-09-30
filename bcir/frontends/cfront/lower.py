@@ -423,6 +423,63 @@ def _const_spelling(v: int) -> str:
     return "(-9223372036854775807 - 1)" if v == -(1 << 63) else str(v)
 
 
+def _file_scope_rendering(
+    ginit: "_FuncLowerer", g, genv: dict, strings: frozenset
+) -> "tuple | None":
+    """What the linkable emit renders for the global `g` as its initializer: `()` for none, else a 1-tuple of the
+    initializer re-spelled as the source spells it -- its braces and designators kept, which C walks the same way
+    in the emit (CF-GBRACE) -- each entry rendered: an integer constant expression folded as a static's entry is,
+    in C's own types (`_const_value`, `_const_spelling`; CF-INTCONST), a floating constant by its spelling, a
+    string literal that initializes a character array (`strings`, the ids the shape walk recorded) by its own, the
+    address of a global declared before it by its name. None when an entry is none of these: the linkable emit
+    then refuses the global by name."""
+    if g.init is None:
+        return ()
+    with ginit._scratch():
+        try:
+            return (_spell_init(ginit, g.init, genv, strings),)
+        except CLowerError:
+            return None
+
+
+def _spell_init(ginit: "_FuncLowerer", node, genv: dict, strings: frozenset) -> str:
+    """One initializer, or one entry of a brace list, as `_file_scope_rendering` renders it."""
+    if isinstance(node, cast.AggInit):
+        parts = []
+        for key, expr in node.entries:
+            if isinstance(key, tuple):  # a designator chain `.a[2].b =`
+                pre = "".join(f".{v}" if kind == "m" else f"[{v}]" for kind, v in key) + " = "
+            elif isinstance(key, str):
+                pre = f".{key} = "
+            else:
+                pre = "" if key is None else f"[{key}] = "
+            parts.append(pre + _spell_init(ginit, expr, genv, strings))
+        return "{" + ", ".join(parts) + "}"
+    if isinstance(node, cast.FloatLit):
+        return node.value  # the source spelling, suffix included
+    if (
+        isinstance(node, cast.Unary)
+        and node.op in ("-", "+")
+        and isinstance(node.operand, cast.FloatLit)
+    ):
+        return ("-" if node.op == "-" else "") + node.operand.value
+    if isinstance(node, cast.StringLit):
+        if id(node) not in strings:  # a pointer's string: not rendered in this slice
+            raise CLowerError(_NOT_CONSTANT)
+        return node.value  # spelling incl. quotes (a character array's initializer)
+    if (
+        isinstance(node, cast.Unary)
+        and node.op == "&"
+        and isinstance(node.operand, cast.Name)
+        and node.operand.ident in genv
+    ):
+        # Part VII A4: an ADDRESS CONSTANT (&x of a file-scope object declared earlier in the unit) -- the
+        # platform linker resolves the relocation; the rendering is just the name. Forward references stay
+        # refused (genv accumulates in declaration order -- conservative, recorded).
+        return f"&{node.operand.ident}"
+    return _const_spelling(ginit._const_value(node).v)  # folded as a static's entry is
+
+
 def _is_pure(node) -> bool:
     """True if evaluating `node` has NO side effect -- safe to re-evaluate for the §5.12 extent snapshot:
     an integer literal, a name read, `sizeof`/`_Alignof` (unevaluated), or an arithmetic unary / binary /
@@ -539,6 +596,10 @@ class _InitWalk:
     top_n: int = 0  # the top-level elements reached (an inferred `T a[]` is sized by it)
     const: bool = False  # a static's initializer: its entries fold, its stores make its image
     image: list = field(default_factory=list)  # [(lo_bit, width, value)] of its stores, in order
+    shape: bool = False  # a file-scope initializer, walked for its shape only: an entry is
+    #   neither lowered nor folded, and a store records its range (CF-GBRACE)
+    strings: set = field(default_factory=set)  # ... and the id of each string literal it met that
+    #   initializes a character array, which the linkable emit spells as it is
 
 
 @dataclass
@@ -988,6 +1049,8 @@ class LoweredFunc:
     )  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
     statics: list = field(default_factory=list)  # (rid, name, CType, init) static-storage locals:
     #   init the rendered initializer of its constant image, None when it is zero (CF-STATICTAB)
+    thread_statics: frozenset = frozenset()  # the statics of thread storage duration, each
+    #   thread's own object, declared `static _Thread_local` (CF-TLS)
     globals_used: dict = field(default_factory=dict)  # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
     tu_protos: dict = field(
@@ -1028,11 +1091,13 @@ class LoweredUnit:
     aggregates: dict  # tag -> CType
     compose_functions: dict  # name -> compose.Function
     resources: dict  # rid -> Resource (whole unit)
-    globals_decl: tuple = ()  # (name, CType, rendered-init str tuple | None, extern,
-    #   static) -- what the LINKABLE emit renders (definitions
-    #   with constant inits: ints, signed ints, float/string
-    #   spellings; extern -> a declaration; static -> kept
-    #   file-local). None == not renderable in this slice.
+    globals_decl: tuple = ()  # (name, CType, rendered init | None, extern, static) -- what the
+    #   LINKABLE emit renders: the initializer as a 1-tuple of its
+    #   re-spelled text, () for none (`_file_scope_rendering`);
+    #   extern -> a declaration; static -> kept file-local.
+    #   None == not renderable in this slice.
+    thread_globals: frozenset = frozenset()  # the globals of thread storage duration: the
+    #   linkable emit declares them `_Thread_local` (CF-TLS)
     init_refs: frozenset = frozenset()  # every identifier a file-scope initializer names: a
     #   function among them has its address taken (an ops table
     #   `struct ops t = { handler };`) -- the escape analysis
@@ -1129,6 +1194,7 @@ class _FuncLowerer:
         #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
         self.zero_init: set = set()  # aggregate-local rids that emit the `= {}` zero baseline
         self.statics: list = []  # (rid, name, CType, init) static-storage locals
+        self.thread_statics: set = set()  # the statics of thread storage duration (CF-TLS)
         self.calls: list = []
         self.block_stack: list = [[]]  # claims/control nodes append to the top block
         self.loop_ctr = 0  # unique loop ids (the `continue` label numbering)
@@ -3078,6 +3144,8 @@ class _FuncLowerer:
         ct, off, bo, bw, packed = unit
         lo = off * 8 + bo
         w.stores.append((lo, lo + (bw or ct.size * 8)))
+        if w.shape:  # a file-scope initializer's shape: the range, and no value
+            return
         if w.const:
             w.image.append((lo, bw or ct.size * 8, _kleaf(v, ct, bw)))
             return
@@ -3117,6 +3185,7 @@ class _FuncLowerer:
             w.top_n = max(w.top_n, count)
         if len(units) > count:
             raise CLowerError("an initializer-string for a character array is too long")
+        w.strings.add(id(lit))
         es = ct.of.size
         self._init_overrides(w, off * 8, (off + es * count) * 8)
         for i, u in enumerate(units):
@@ -3258,7 +3327,9 @@ class _FuncLowerer:
 
     def _init_value(self, w: "_InitWalk", expr):
         """An initializer entry's value, evaluated once, before it is placed: lowered -- or, in a static's
-        image (`w.const`), folded (`_const_value`)."""
+        image (`w.const`), folded (`_const_value`); a file-scope initializer's shape (`w.shape`) takes none."""
+        if w.shape:
+            return None
         return self._const_value(expr) if w.const else self._rvalue(expr)
 
     # --- a static's constant image (CF-STATICTAB) ---
@@ -3292,6 +3363,40 @@ class _FuncLowerer:
         if inferred:
             ct = self._sized_array(ct, w.top_n)
         return ct, self._render_image(ct, w)
+
+    def _file_scope_shape(self, ct: CType, init) -> "tuple[CType, frozenset]":
+        """A file-scope initializer walked as C walks the current object (CF-GBRACE), for its shape only: an
+        entry is neither lowered nor folded -- the source defines the global, and the emit names it -- but the
+        walk's constraints hold as for a local or a static (C11 6.7.9p2, p14, p17-19: an excess entry, an
+        override, a string too long, a designator outside its object are refused), and an unsized array takes
+        the extent the walk reaches: `struct pt g[] = {1u, 2u, 3u, 4u}` is two elements, not four. Returns the
+        type, sized, and the ids of the string literals that initialize a character array in it. A scalar's or a
+        struct's expression has nothing to walk. The twin's `global_init_shape`."""
+        dims, el = 0, ct
+        while el.kind == "array":
+            dims, el = dims + 1, el.of
+        if isinstance(init, cast.StringLit) and ct.kind == "array":
+            if not self._init_char_array(ct, init):  # only a character array takes one
+                raise CLowerError("an array is initialized by a brace list or a string literal")
+            init = cast.AggInit(entries=((None, init),))  # `char s[] = "ab"` is `{"ab"}`
+        if not isinstance(init, cast.AggInit):
+            if ct.kind == "array":
+                raise CLowerError("an array is initialized by a brace list or a string literal")
+            return ct, frozenset()
+        if dims > 3:  # the twin's walk holds three dimensions, as a local's
+            raise CLowerError(
+                "an initialized file-scope array of more than 3 dimensions is not supported"
+            )
+        inferred = ct.kind == "array" and ct.count == 0
+        w = _InitWalk(rid=-1, top_array=ct.kind == "array", const=True, shape=True)
+        with self._scratch():
+            if ct.kind in ("struct", "union", "array"):
+                self._init_list(
+                    w, ct, 0, init, top=True, flat=ct.kind == "array", inferred=inferred
+                )
+            else:  # a braced scalar `T g = {e};` (6.7.9p11)
+                self._init_sublist(w, _IFrame(ct, 0), (ct, 0, 0, 0, False), init)
+        return (array(ct.of, max(w.top_n, 1)) if inferred else ct), frozenset(w.strings)
 
     @contextmanager
     def _scratch(self):
@@ -4196,6 +4301,8 @@ class _FuncLowerer:
                 ct = self._resolve_type(st.type)
             if st.static_storage:  # static storage: its constant image, in the decl (CF-STATICTAB)
                 rid = self._static_storage(ct, st.name, None)
+                if st.thread_storage:  # each thread's own object (CF-TLS)
+                    self.thread_statics.add(rid)
                 self.env[st.name] = (rid, ct)  # in scope in its own initializer, as in C
                 ct, init = self._static_init(ct, st.init, inferred)
                 self._resource(rid, ct, st.name)  # an inferred `[]` takes the walk's count
@@ -4409,6 +4516,7 @@ class _FuncLowerer:
             locals=list(self.locals),
             vla_locals=list(self.vla_locals),
             statics=list(self.statics),
+            thread_statics=frozenset(self.thread_statics),
             globals_used=gnames,
             zero_init_locals=set(self.zero_init),
             variadic=self.func.variadic,
@@ -4564,26 +4672,15 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     )
     for gi, g in enumerate(unit.globals):
         # the declared type: an initialized scalar or struct keeps it -- it is one object, not a table of
-        # its initializers -- and only an unsized array takes its extent from the initializer (CF-GINIT)
+        # its initializers (CF-GINIT) -- and an unsized array takes the extent its initializer's walk reaches
+        # (CF-GBRACE): a brace list's, with elision and designators, or a character array's string literal
         ct = _resolve_member_type(g.type, aggregates, abi)
-        # a string init is only the CHARACTER-ARRAY form when the element is a character-code
-        # scalar of the literal's unit width -- `char *tab[] = {"hi"}` (a pointer table) must
-        # NOT take this path (it would size the array from the string bytes and mis-render);
-        # it falls through to vals=None and the linkable emit refuses it loudly.
-        is_string = (
-            len(g.init) == 1
-            and isinstance(g.init[0], cast.StringLit)
-            and ct.kind == "array"
-            and ct.of is not None
-            and ct.of.kind == "scalar"
-            and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0], abi)
-        )
-        if is_string:  # `char s[] = "..."` -- sized from the LITERAL
-            if ct.count == 0:  # (decoded code units + the NUL), not the init
-                ct = array(ct.of, _str_bytes(g.init[0].value) + 1)  # tuple length (which is 1)
-        elif g.init and ct.kind == "array" and ct.count == 0:
-            ct = array(ct.of, len(g.init))  # `T name[] = {...}` -> sized from the init
         rid = _check_band_rid(900000 + gi)  # guard the reserved I/O-port rid (belt + suspenders)
+        ginit.env[g.name] = (rid, ct)  # in scope in its own initializer, as in C
+        ginit.rtypes[rid] = ct
+        strings = frozenset()
+        if g.init is not None:
+            ct, strings = ginit._file_scope_shape(ct, g.init)
         gres[rid] = Resource(
             rid=rid,
             # a volatile global, or a pointer to volatile storage, is a device region: the base of
@@ -4592,7 +4689,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             elem_bytes=(ct.of.size if ct.of else ct.size),
             # an array's elements; any other object is one element of its own type -- an initialized
             # scalar or struct is not a table of its initializers (CF-GINIT)
-            shape=((ct.count or len(g.init) or 1) if ct.kind == "array" else 1,),
+            shape=((ct.count or 1) if ct.kind == "array" else 1,),
             access="ro",
             data_gen=1,
             name=g.name,
@@ -4600,41 +4697,11 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         genv[g.name] = (rid, ct)
         ginit.env[g.name] = (rid, ct)
         ginit.rtypes[rid] = ct
-        vals: list | None = []  # render CONSTANT inits (linkable emit):
-        with ginit._scratch():  # ints, signed ints, float/string spellings
-            for el in g.init:
-                if isinstance(el, cast.FloatLit):
-                    vals.append(el.value)  # the source spelling, suffix included
-                elif (
-                    isinstance(el, cast.Unary)
-                    and el.op in ("-", "+")
-                    and isinstance(el.operand, cast.FloatLit)
-                ):
-                    vals.append(("-" if el.op == "-" else "") + el.operand.value)
-                elif isinstance(el, cast.StringLit) and is_string:
-                    vals.append(el.value)  # spelling incl. quotes (char-array init)
-                elif (
-                    isinstance(el, cast.Unary)
-                    and el.op == "&"
-                    and isinstance(el.operand, cast.Name)
-                    and el.operand.ident in genv
-                ):
-                    # Part VII A4: an ADDRESS CONSTANT (&x of a file-scope object declared
-                    # earlier in the unit) -- the platform linker resolves the relocation;
-                    # the rendering is just the name. Forward references stay refused
-                    # (genv accumulates in declaration order -- conservative, recorded).
-                    vals.append(f"&{el.operand.ident}")
-                else:
-                    try:  # an integer constant expression, folded as a static's entry is
-                        vals.append(_const_spelling(ginit._const_value(el).v))
-                    except CLowerError:  # anything else: not renderable in this
-                        vals = None  # slice -- the linkable emit raises
-                        break
         gdecls.append(
             (
                 g.name,
                 ct,
-                tuple(vals) if vals is not None else None,
+                _file_scope_rendering(ginit, g, genv, strings),
                 getattr(g, "extern_decl", False),
                 getattr(g, "static_storage", False),
             )
@@ -4673,6 +4740,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         compose_functions=compose_functions,
         resources=resources,
         globals_decl=tuple(gdecls),
+        thread_globals=frozenset(g.name for g in unit.globals if g.thread_storage),
         init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),
         anon_spelling=dict(unit.anon_spelling),
     )

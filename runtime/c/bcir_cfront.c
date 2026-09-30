@@ -212,6 +212,8 @@ typedef struct {
                                                       * the return-type parse (source-static honoring) */
   int saw_extern;                                    /* p_type_base scanned an `extern` (a block-scope
                                                       * declaration reads it: CF-STORAGE) */
+  int saw_thread;                                    /* ... a `_Thread_local` / `thread_local`: a block-scope
+                                                      * static of thread storage duration (CF-TLS) */
   struct { char name[BCIR_CIR_NAME]; bcir_ctype ret;
            const bcir_ctype *params; int n_params; } *protos;   /* prototype table: callee -> return
                                                       * type (for call-result typing) and parameter types (a
@@ -780,6 +782,7 @@ static int decl_start_tok(CC *c, const tok *t){
   return t->k==T_ID && (scalar_size(t->s,t->n)>=0||tok_is(t,"static")||tok_is(t,"struct")||tok_is(t,"union")
       ||tok_is(t,"enum")||tok_is(t,"const")||tok_is(t,"volatile")
       ||tok_is(t,"extern")                                   /* refused by p_stmt_inner, not an expression */
+      ||tok_is(t,"_Thread_local")||tok_is(t,"thread_local")  /* `_Thread_local static T n;` (CF-TLS) */
       ||tok_is(t,"_Complex")||tok_is(t,"complex")            /* `double _Complex z;` -- a complex local */
       ||tok_is(t,"_BitInt")                                  /* `_BitInt(N) z;` -- a bit-precise local */
       ||tok_is(t,"_Atomic")                                  /* `_Atomic int a;` -- an atomic local */
@@ -805,9 +808,9 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
                                                             * honoring in --linkable); block-scope
                                                             * statics peek the token BEFORE p_type. */
     if(is(c,"extern")){c->saw_extern=1;c->i++;continue;}
+    if(is(c,"_Thread_local")||is(c,"thread_local")){c->saw_thread=1;c->i++;continue;}   /* thread storage (CF-TLS) */
     if(is(c,"const")){ty->is_const=1;c->i++;continue;}   /* spelled by a prototype's pointer parameter */
-    if(is(c,"inline")
-       ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
+    if(is(c,"inline")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
       int is_type = starts_decl_type(c);
@@ -888,8 +891,9 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"volatile")){ ty->is_volatile=1; c->i++; continue; }
     if(is(c,"static")){ c->saw_static=1; c->i++; continue; }
     if(is(c,"extern")){ c->saw_extern=1; c->i++; continue; }
+    if(is(c,"_Thread_local")||is(c,"thread_local")){ c->saw_thread=1; c->i++; continue; }
     if(is(c,"const")){ ty->is_const=1; c->i++; continue; }
-    if(is(c,"inline")||is(c,"_Thread_local")||is(c,"thread_local")){ c->i++; continue; }
+    if(is(c,"inline")){ c->i++; continue; }
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
@@ -5856,8 +5860,11 @@ typedef struct {            /* one object or subobject the walk initializes (the
 } iunit;
 typedef struct { iunit u; int idx, count, flat, top; } ifrm;   /* idx: the next subobject; count < 0: inferred */
 typedef struct { uint32_t rid; int top_array, top_n, inferred, rng0, un0;
-                 int konst; kval kv; } iwalk;   /* konst: a static's image -- its entries fold (into kv, each before it
-                                                 * is placed), its stores record their values (CF-STATICTAB) */
+                 int konst; kval kv;
+                 int skip; const tok *gname; } iwalk;   /* konst: a static's image -- its entries fold (into kv, each before it
+                                                 * is placed), its stores record their values (CF-STATICTAB); skip (with
+                                                 * konst): a file-scope initializer's shape -- its entries are skipped,
+                                                 * its stores record their ranges only (CF-GBRACE); gname: the global */
 #define IW_MAXFRAMES 64     /* the subobjects one list may nest into (the oracle's `_INIT_MAX_FRAMES`) */
 
 /* A member's subobject: an array, a struct/union, or a scalar (a bit-field keeps its unit). */
@@ -5996,6 +6003,7 @@ static void init_store(CC *c, iwalk *W, const iunit *u, uint32_t v, int indexed)
   long long lo=(long long)u->off*8+u->bit_off, hi=lo+(u->bit_w?u->bit_w:(long long)u->size*8);
   if(!CC_ENSURE(c,c->iw_rng,c->iw_nrng,c->iw_caprng)) return;
   c->iw_rng[c->iw_nrng].lo=lo; c->iw_rng[c->iw_nrng].hi=hi; c->iw_rng[c->iw_nrng].v=0; c->iw_rng[c->iw_nrng].neg=0;
+  if(W->skip){ c->iw_nrng++; return; }              /* a file-scope initializer's shape: the range, no value */
   if(W->konst){ if(kleaf(c,&W->kv,u,&c->iw_rng[c->iw_nrng])) c->iw_nrng++; return; }   /* a static's image: no claim */
   c->iw_nrng++;
   uint32_t rid=W->rid;
@@ -6090,8 +6098,10 @@ static void init_string(CC *c, iwalk *W, const iunit *u, int indexed, int count)
 }
 static void init_list(CC *c, iwalk *W, const iunit *obj, int top, int flat);
 /* An initializer entry's value (the cursor at it), evaluated once, before it is placed: lowered -- or, in a static's
- * image, folded into W->kv (the oracle's `_init_value`). */
+ * image, folded into W->kv; in a file-scope initializer's shape, skipped (the oracle's `_init_value`). */
+static void skip_init_expr(CC *c, const tok *nm);   /* fwd: a file-scope initializer's entry, skipped */
 static uint32_t init_value(CC *c, iwalk *W){
+  if(W->skip){ skip_init_expr(c,W->gname); return 0; }   /* a file-scope initializer's shape: no value (CF-GBRACE) */
   if(!W->konst) return p_expr(c);
   size_t from=c->fn->n_claims; uint32_t v=p_expr(c);
   if(!c->failed) W->kv=kfold(c,from,v);
@@ -6292,13 +6302,14 @@ static int init_image(CC *c, const iunit *obj, int inferred, char **text){
   return W.top_n;
 }
 /* Record the static local `nm` (resource `rid`) with its rendered image `text` (NULL: zero); the function owns a copy. */
-static void add_static(CC *c, const tok *nm, uint32_t rid, const char *text){
+static void add_static(CC *c, const tok *nm, uint32_t rid, const char *text, int thread){
   bcir_func *f=c->fn; char *cp=NULL;
   if(!CC_ENSURE(c,f->statics,f->n_statics,f->cap_statics)) return;
   if(text){ size_t z=strlen(text)+1; cp=(char *)bcir_host_allocate(&c->allocator,z);
     if(!cp){ cc_raise_oom(c); return; }
     memcpy(cp,text,z); }
   idcpy(c,f->statics[f->n_statics].name,nm); f->statics[f->n_statics].text=cp; f->statics[f->n_statics].rid=rid;
+  f->statics[f->n_statics].thread_storage=(uint8_t)(thread?1:0);
   f->n_statics++;
 }
 /* Re-evaluate the bounds of the stores into `rid` from claim `from` on, once an inferred array has its count. */
@@ -6605,11 +6616,14 @@ static void p_stmt_inner(CC *c) {
   }
   if(is(c,"{")){p_block(c);return;}
   if(decl_start_tok(c,pk(c))){
-    c->saw_static=0; c->saw_extern=0;              /* THIS declaration's own storage classes, wherever spelled */
+    c->saw_static=0; c->saw_extern=0; c->saw_thread=0;   /* THIS declaration's own storage classes, wherever spelled */
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return;   /* the shared specifier (eats `static`, NOT `*`) */
     if(c->saw_extern){ fail(c,"a block-scope extern declaration is not supported"); return; }   /* names an object
       * defined elsewhere, never a new local: binding it as one read an uninitialized object (CF-STORAGE) */
     int is_static = c->saw_static;                 /* `volatile static T n` / `T static n` are static (6.7p1) */
+    int is_thread = c->saw_thread;                 /* thread storage is kept (CF-TLS): each thread its own object;
+                                                    * at block scope it needs `static` too (C11 6.7.1p3) */
+    if(is_thread && !is_static){ fail(c,"a block-scope `_Thread_local` object that is not `static`"); return; }
     int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array specifier */
     /* one or more comma-separated declarators sharing this specifier: `T a = x, b, c = z;`. Each gets
      * its OWN declarator `*`/`[]` shape off a fresh copy of the base, so `int *p, q;` types p as `int*`
@@ -6656,7 +6670,7 @@ static void p_stmt_inner(CC *c) {
         env_add(c,&nm,frid,&fty,-1);                    /* p_icall finds kind-3 -> a c.call.indirect dispatch */
         if(is_static){ char *st=NULL;                   /* a static function pointer: its image, as any static's */
           if(is(c,"=")){ c->i++; iunit obj=iunit_scalar(c,&fty); (void)init_image(c,&obj,0,&st); if(c->failed) return; }
-          add_static(c,&nm,frid,st); }
+          add_static(c,&nm,frid,st,is_thread); }
         else if(is(c,"=")){ c->i++;                     /* an init: a function name -> a funcptr value (c.copy) */
           uint32_t v=p_expr(c);
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=frid;} }
@@ -6826,7 +6840,7 @@ static void p_stmt_inner(CC *c) {
         if(inferred && ari>=0){ int n=rows<1?1:rows;
           c->fn->res[ari].count=(uint32_t)(n*inner); sized_inf=1; init_remask(c,rid,s_nclaims);
           if(la_nd>1){ venv *dv=lookup(c,&nm); if(dv) dv->type.adims[0]=n; } } }   /* `m[][B]`: its row count */
-      if(is_static) add_static(c,&nm,rid,stext);   /* static storage: its image baked into the decl, the one place it
+      if(is_static) add_static(c,&nm,rid,stext,is_thread);   /* static storage: its image baked into the decl, the one place it
                                                    * is initialized */
       else if(is(c,"=")){c->i++;
         if(is(c,"{")){                                    /* a braced scalar `T x = {e}` is `T x = e`, and `{}` is
@@ -7744,7 +7758,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       const char *iv = sx>=0 ? (f->statics[sx].text ? f->statics[sx].text
                                 : (r->kind==BCIR_RK_AGGREGATE || (r->kind==BCIR_RK_SCALAR && decl_array(r))) ? "{0}" : "0u")
                              : r->zinit ? "{}" : "";
-      const char *sp=sx>=0?"static ":"", *eq=iv[0]?" = ":"";
+      const char *sp=sx>=0?(f->statics[sx].thread_storage?"static _Thread_local ":"static "):"", *eq=iv[0]?" = ":"";
       if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s %s%s%s;\n",sp,r->agg,nm,eq,iv);   /* a funcptr local: `__bcir_fpN f;` */
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s%s;\n",sp,vq,r->agg,nm,eq,iv);
       else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  %svoid *%s[%u]%s%s;\n",sp,nm,r->count,eq,iv);  /* an array of `void *` */
@@ -8081,7 +8095,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
  * 0 if the current token instead begins a function/global.  Real translation
  * units and vendor headers interleave these with functions, so this is called
  * from the main top-level loop rather than only before the first function. */
-static void p_global_declarator(CC *c, const bcir_ctype *base, int btd, const int *btdd);   /* fwd (below) */
+static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd);   /* fwd (below) */
 static int try_top_decl(CC *c){
   if(c->failed) return 0;
   if(is(c,"typedef")){ p_typedef(c); return 1; }
@@ -8107,7 +8121,7 @@ static int try_top_decl(CC *c){
         if(tag.k!=T_ID){ fail(c,"an object of an untagged struct or union at file scope is not supported"); return 1; }
         bcir_ctype base; memset(&base,0,sizeof base); base.kind=1; base.signd=1; base.size=c->s[my].size;
         base.is_union=(uint8_t)c->s[my].is_union; base.is_volatile=(uint8_t)vol; idcpy(c,base.tag,&tag);
-        for(;;){ p_global_declarator(c,&base,0,NULL); if(c->failed || !is(c,",")) break; c->i++; }
+        for(;;){ p_global_declarator(c,&base,my,0,NULL); if(c->failed || !is(c,",")) break; c->i++; }
         eat(c,";"); return 1; }
     }
     c->i=save;
@@ -8129,51 +8143,80 @@ static int looks_global(CC *c){
   c->i=save; c->failed=sf; c->err[0]=0;
   return global;
 }
-/* Parse a file-scope global `[static][const] TYPE NAME [N] [= ...];` and register it.  The
- * initializer is skipped -- the emitter references the global by name (defined in the source), so
- * the claim graph needs only the name + element type + length. */
+/* The `(` at the cursor opens a call's arguments (the oracle's parser reads a call there): it follows a name that is
+ * no type name, `sizeof`, `_Alignof` or `_Generic`, a subscript, or a parenthesized expression that is no cast's type
+ * -- `(f)(x)`, `(*fp)(x)` -- where `(T)(x)` casts a parenthesized operand. */
+static int init_call_at(CC *c){
+  const tok *pv=tat(c,c->i-1);
+  if(pv->k==T_ID) return !tok_is(pv,"sizeof") && !tok_is(pv,"_Alignof") && !tok_is(pv,"alignof")
+                         && !tok_is(pv,"_Generic") && !decl_type_tok(c,pv);
+  if(tok_is(pv,"]")) return 1;
+  if(!tok_is(pv,")")) return 0;
+  int j=c->i-1;
+  for(int d=0; j>=0; j--){ if(tok_is(tat(c,j),")")) d++; else if(tok_is(tat(c,j),"(") && --d==0) break; }
+  return j>=0 && !decl_type_tok(c,tat(c,j+1));
+}
 /* Skip the file-scope initializer expression at the cursor -- to the `,`, `;` or `}` that ends it at its own depth
  * -- without lowering it (the oracle folds it only for its linkable emit, which renders the globals). A constant
  * expression it is in C (C11 6.7.9p4), of any form -- a cast, `sizeof`, a floating or string constant, an address;
  * it had been read by the enum evaluator, which refused all of those (`non-constant enum initializer`). A call in it
- * is refused, as the oracle refuses it: an identifier before `(` that is no type name, `sizeof`, `_Alignof` or
- * `_Generic`. `nm` is the global. */
+ * is refused, as the oracle refuses it (`init_call_at`). `nm` is the global. */
 static void skip_init_expr(CC *c, const tok *nm){
   for(int d=0; !isk(c,T_END) && !c->failed; c->i++){
     if(d==0 && (is(c,",")||is(c,";")||is(c,"}"))) break;
-    if(is(c,"(") && c->i>0){ const tok *pv=tat(c,c->i-1);
-      if(pv->k==T_ID && !tok_is(pv,"sizeof") && !tok_is(pv,"_Alignof") && !tok_is(pv,"alignof")
-         && !tok_is(pv,"_Generic") && !decl_type_tok(c,pv)){
-        char m[BCIR_CIR_NAME+80];
-        snprintf(m,sizeof m,"file-scope initializer of '%.*s' calls a function (not a constant expression)",
-                 nm->n<BCIR_CIR_IDENT_MAX?nm->n:BCIR_CIR_IDENT_MAX,nm->s);
-        fail(c,m); return; } }
+    if(is(c,"(") && c->i>0 && init_call_at(c)){
+      char m[BCIR_CIR_NAME+80];
+      snprintf(m,sizeof m,"file-scope initializer of '%.*s' calls a function (not a constant expression)",
+               nm->n<BCIR_CIR_IDENT_MAX?nm->n:BCIR_CIR_IDENT_MAX,nm->s);
+      fail(c,m); return; }
     if(is(c,"(")||is(c,"[")||is(c,"{")) d++;
     else if(is(c,")")||is(c,"]")||is(c,"}")) d--;
   }
 }
-/* The extent a flat brace initializer `{e0, e1, [k] = ek, ...}` gives an unsized array -- the highest index it
- * reaches, plus one -- read the way the oracle's global parser reads it (a `[k] =` designator moves the
- * cursor). The cursor is at the `{` and ends past the matching `}`; an element is skipped, not evaluated. */
-static long long brace_init_extent(CC *c){
-  long long cursor=0, n=0;
-  c->i++;
-  while(!is(c,"}") && !isk(c,T_END) && !c->failed){
-    if(is(c,"[")){ c->i++; cursor=ce_expr(c,0); if(!eat(c,"]")||!eat(c,"=")) return 0; }
-    for(int d=0; !isk(c,T_END); c->i++){            /* skip the element: to a top-level `,` or the closing `}` */
-      if(d==0 && (is(c,",")||is(c,"}"))) break;
-      if(is(c,"(")||is(c,"{")||is(c,"[")) d++; else if(is(c,")")||is(c,"}")||is(c,"]")) d--;
-    }
-    if(cursor>=0 && cursor<LLONG_MAX && cursor+1>n) n=cursor+1;
-    if(cursor<LLONG_MAX) cursor++;
-    if(is(c,",")) c->i++;
-  }
-  eat(c,"}");
-  return n;
+/* A file-scope initializer at the cursor, walked as C walks the current object, for its shape only (CF-GBRACE; the
+ * oracle's `_file_scope_shape`): an entry is skipped, neither lowered nor folded -- the source defines the global and
+ * the emit names it -- but the walk's constraints hold as for a local or a static (C11 6.7.9p2, p14, p17-19: an excess
+ * entry, an override, a string too long, a designator outside its object are refused), and an unsized array takes the
+ * extent the walk reaches: `struct pt g[] = {1u, 2u, 3u, 4u}` is two elements, not four. A call in it is refused
+ * first, as the oracle's parser refuses it. `ty` / `si`: the declarator's type (an array's element) and its struct;
+ * `dims[0..nd)`: an array's dimensions, dims[0] 0 when unsized. The cursor ends past the initializer. Returns the
+ * top-level elements an unsized array's walk reached (at least one), else -1. */
+static long long global_init_shape(CC *c, const tok *nm, const bcir_ctype *ty, int si, int is_arr, int nd,
+                                   const long long *dims){
+  int start=c->i; skip_init_expr(c,nm);                /* to the initializer's end: a call in it is refused */
+  if(c->failed) return -1;
+  int end=c->i; c->i=start;
+  int inferred=is_arr && dims[0]==0;
+  iunit obj;
+  if(is_arr){
+    if(nd>3 || !(is(c,"{") || (nd==1 && isk(c,T_STR)))){   /* the twin's walk holds three dimensions, as a local's */
+      fail(c,is(c,"{") && nd>3 ? "an initialized file-scope array of more than 3 dimensions is not supported"
+                               : "an array is initialized by a brace list or a string literal");
+      return -1; }
+    int d3[3]={0,0,0};
+    for(int d=0; d<nd; d++) d3[d]=dims[d]>0 && dims[d]<=INT_MAX ? (int)dims[d] : 0;
+    if(inferred) d3[0]=1;                              /* provisional: the walk counts the rows */
+    obj=iunit_array(ty,si,ty->kind==2?cc_abi(c)->pointer_size:ty->size,d3,nd); }
+  else if(!is(c,"{")){ c->i=end; return -1; }         /* a scalar's or a struct's expression: nothing to walk */
+  else if(ty->kind==1){ if(si<0){ fail(c,"unknown struct"); return -1; } obj=iunit_struct(c,si); }
+  else obj=iunit_scalar(c,ty);
+  iwalk W; memset(&W,0,sizeof W);
+  W.top_array=obj.k==IK_ARR; W.inferred=inferred; W.konst=1; W.skip=1; W.gname=nm;
+  W.rng0=c->iw_nrng; W.un0=c->iw_nun;
+  if(isk(c,T_STR)){                                    /* `char s[] = "ab"` is `char s[] = {"ab"}` (6.7.9p14) */
+    if(!init_char_array(&obj,str_tok_unit(c,pk(c)))) fail(c,"an array is initialized by a brace list or a string literal");
+    else init_string(c,&W,&obj,1,inferred?-1:obj.dims[0]); }
+  else if(obj.k!=IK_SCAL) init_list(c,&W,&obj,1,obj.k==IK_ARR);
+  else { ifrm fr; memset(&fr,0,sizeof fr); init_sublist(c,&W,&fr,&obj); }   /* a braced scalar `T g = {e};` */
+  c->iw_nrng=W.rng0; c->iw_nun=W.un0;                  /* its records end with it */
+  if(c->failed) return -1;
+  return inferred ? (W.top_n<1?1:W.top_n) : -1;
 }
 /* One declarator of a file-scope declaration off the specifier `base` -- its `*`s, name, dimensions and initializer --
- * registered as a global. `btd` / `btdd`: a typedef'd array specifier's dimensions, inner to the declarator's. */
-static void p_global_declarator(CC *c, const bcir_ctype *base, int btd, const int *btdd){
+ * registered as a global. The emit names a global, which the source defines, so its initializer is walked only for
+ * its shape (`global_init_shape`). `si`: the specifier's struct; `btd` / `btdd`: a typedef'd array specifier's
+ * dimensions, inner to the declarator's. */
+static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, const int *btdd){
   if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
   bcir_ctype ty=*base; apply_stars(c,&ty);
   if(c->failed) return;
@@ -8184,18 +8227,15 @@ static void p_global_declarator(CC *c, const bcir_ctype *base, int btd, const in
     if(nd<4){ dims[nd]=count; } nd++; }
   for(int d=0; d<btd; d++){ count=btdd[d]; is_arr=1; if(nd<4){ dims[nd]=count; } nd++; }   /* its dims follow */
   if(is(c,"=")){ c->i++; init_a=c->i;
-    if(is(c,"{")) init_n=brace_init_extent(c);
-    else if(is_arr && isk(c,T_STR)){                 /* `char s[] = "abc"`: a character array, sized by its literal --
-                                                      * its code units and the NUL (the oracle's `is_string`) */
-      int unit=str_tok_unit(c,pk(c)), n=0;
-      if(nd!=1 || ty.kind!=0 || ty.is_float || ty.size!=unit) (void)ce_expr(c,0);   /* not a character array */
-      else { while(isk(c,T_STR)){ tok s=adv(c); n+=str_bytes(s.s,s.n); } init_n=n+1; }
-    }
-    else skip_init_expr(c,&nm);
+    /* the initializer walked for its shape (CF-GBRACE): a brace list's -- nested, elided, designated -- or a character
+     * array's string literal; an unsized array takes the extent the walk reaches */
+    init_n=global_init_shape(c,&nm,&ty,ty.kind==1?si:-1,is_arr,nd,dims);
+    if(c->failed) return;
     init_b=c->i;
   }
-  if(nd==1 && dims[0]==0 && init_n>=0){ dims[0]=init_n; count=(int)init_n; }   /* `T g[] = ...`: its initializer's
-                                                      * extent -- the count its accesses are bounded by too */
+  if(is_arr && dims[0]==0 && init_n>=0){ dims[0]=init_n; if(nd==1) count=(int)init_n; }   /* `T g[] = ...` / `T g[][B]
+                                                      * = ...`: its initializer's extent -- the count a one-dimensional
+                                                      * array's accesses are bounded by too, the rows of a nested one */
   CC_ENSURE(c, c->gv, c->ngv, c->cap_gv);
   if(c->ngv<c->cap_gv){ gvar *g=&c->gv[c->ngv++]; idcpy(c,g->name,&nm); g->ty=ty; g->count=count;
     g->is_arr=is_arr; g->init_a=init_a; g->init_b=init_b;
@@ -8207,7 +8247,7 @@ static void p_global(CC *c){
   bcir_ctype base; int si; if(p_type_base(c,&base,&si)) return;
   int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
   for(;;){
-    p_global_declarator(c,&base,btd,btdd);
+    p_global_declarator(c,&base,si,btd,btdd);
     if(c->failed || !is(c,",")) break;
     c->i++;
   }
@@ -8919,11 +8959,13 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   /* A static's constant image (CF-STATICTAB): its initializer runs once, before the program, so no claim writes it (a
    * static reads as an input) -- the initializer both rails render joins the canon instead, one line per static that
    * has one, sorted. Two statics differing only in a value differ here. */
-  int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text) nsx++;
+  int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text || f->statics[k].thread_storage) nsx++;
   if(nsx){ char **sl=(char **)vn_alloc(arena,(size_t)nsx,sizeof *sl,1); int si=0;
     if(!sl){ emit(ctx,"oom\n",4); return; }
-    for(int k=0;k<f->n_statics;k++) if(f->statics[k].text){ sbuf s=sbuf_for(arena);
-      sb_str(&s,"static "); sb_str(&s,f->statics[k].name); sb_str(&s," = "); sb_str(&s,f->statics[k].text);
+    for(int k=0;k<f->n_statics;k++) if(f->statics[k].text || f->statics[k].thread_storage){ sbuf s=sbuf_for(arena);
+      /* a static of thread storage duration has its line whatever its image (CF-TLS; the oracle's canon) */
+      sb_str(&s,f->statics[k].thread_storage?"static _Thread_local ":"static "); sb_str(&s,f->statics[k].name);
+      sb_str(&s," = "); sb_str(&s,f->statics[k].text?f->statics[k].text:"0");
       sl[si++]=s.s?s.s:vn_strdup(arena,""); }
     sort_strs(sl,si);
     for(int k=0;k<si;k++){ const char *ln=sl[k]?sl[k]:""; emit(ctx,ln,strlen(ln)); emit(ctx,"\n",1); } }
