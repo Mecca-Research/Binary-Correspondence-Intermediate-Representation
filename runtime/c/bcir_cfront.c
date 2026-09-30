@@ -241,6 +241,8 @@ typedef struct {
                                              * literal inside an initializer), and end with it */
   int *pure_memo; int npure, cap_pure;      /* CF-TERNARY: an operand C may leave unevaluated, by the token it
                                              * starts at (`2*tok + pure`) -- a nested chain speculates once */
+  struct { const char *s; int n, def; } libdef[24]; int n_libdef;   /* unit_defines: each library name asked
+                                             * about, and whether the unit defines it (zeroed per compile) */
   char err[256]; int failed;
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
@@ -3082,6 +3084,14 @@ static int is_stdlib_alloc(const char *s, int n) {
   if(n==4 && !strncmp("free",s,4)) return 2;
   return 0;
 }
+/* <string.h> memory routines -- external libc edges like the allocators (verbatim, opaque to R18, NOT
+ * bcir_-renamed), each returning its destination, a `void *`. The emit spells every plain memory access as a
+ * `memcpy`, so a re-parsed emit calls it (CF-RTWIDE). The oracle's `_STRING_MEM`. */
+static int is_string_mem(const char *s, int n) {
+  static const char *M[]={"memcpy","memmove","memset",0};
+  for(int i=0;M[i];i++) if((int)strlen(M[i])==n && !strncmp(M[i],s,(size_t)n)) return 1;
+  return 0;
+}
 
 /* B-breadth (#61) LAPACK: nonzero if s[0..n) is a Fortran-ABI LU/solve driver base name with a trailing
  * underscore (e.g. `sgesv_`) -- the symbol a C caller links against. Mirrors linkflags.py's _LAPACK_FORTRAN
@@ -3113,8 +3123,9 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
   if(n<=0) return NULL;
   /* <math.h> / <complex.h> (incl. the f/l-suffixed + fixed-int/long variants) -> -lm. */
   if(libm_float_size(s,n) || libm_is_int(s,n) || libm_is_long(s,n) || libm_is_ld(s,n)) return "-lm";
-  /* libc-implicit (malloc/free/realloc/calloc/aligned_alloc + the printf/scanf family) -> no flag. */
-  if(is_stdlib_alloc(s,n) || is_extern_variadic(s,n)) return "";
+  /* libc-implicit (malloc/free/realloc/calloc/aligned_alloc, memcpy/memmove/memset + the printf/scanf family)
+   * -> no flag. */
+  if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || is_extern_variadic(s,n)) return "";
   /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
   if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
   /* B2 FFTW: fftwf_* (single-prec) and fftw_* (double) -> -lfftw3 (the B2 wrap's choice -- fftwf_* also
@@ -3212,6 +3223,31 @@ static const bcir_ctype *callee_ret(CC *c, const tok *name) {
   return NULL;
 }
 
+/* Nonzero if the unit DEFINES a function named `name` anywhere -- a file-scope `name ( ... ) {`: the oracle's
+ * `func_rets`, which every definition of the unit fills before any body lowers. A library name the unit defines
+ * is the unit's own function, never the library's edge; the twin parses in one pass, so `callee_ret` sees only
+ * the definitions before the call, and a `malloc` the unit defined had lowered as the libc edge (CF-RTWIDE).
+ * Only the library recognizers ask, for their own few names, and each name's scan is cached. */
+static int unit_defines(CC *c, const tok *name) {
+  for(int k=0;k<c->n_libdef;k++)
+    if(c->libdef[k].n==name->n && !strncmp(c->libdef[k].s,name->s,(size_t)name->n)) return c->libdef[k].def;
+  int def=0, depth=0;
+  for(int i=0;i<c->nt && !def;i++){ const tok *t=&c->t[i];
+    if(t->k==T_PUN){ if(tok_is(t,"{")) depth++; else if(tok_is(t,"}") && depth>0) depth--; continue; }
+    if(t->k!=T_ID || depth || t->n!=name->n || strncmp(t->s,name->s,(size_t)name->n) || !tok_is(tat(c,i+1),"("))
+      continue;
+    int j=i+1, pd=0;                       /* the parameter list's `)`, then the body's `{` */
+    for(;j<c->nt;j++){ const tok *u=&c->t[j];
+      if(u->k!=T_PUN) continue;
+      if(tok_is(u,"(")) pd++; else if(tok_is(u,")") && --pd==0) break; }
+    def=tok_is(tat(c,j+1),"{");
+  }
+  if(c->n_libdef<(int)(sizeof c->libdef/sizeof c->libdef[0])){
+    c->libdef[c->n_libdef].s=name->s; c->libdef[c->n_libdef].n=name->n; c->libdef[c->n_libdef].def=def;
+    c->n_libdef++; }
+  return def;
+}
+
 static uint32_t p_call(CC *c, const tok *name) {
   if(tok_is(name,"va_arg")){          /* va_arg(ap, TYPE) -- the 2nd arg is a type-name, parsed specially */
     c->i++; /* '(' */
@@ -3278,6 +3314,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     return t;                              /* not added to fn->calls (opaque to R18) */
   }
   int sal=is_stdlib_alloc(name->s,name->n);  /* <stdlib.h> malloc/calloc/realloc/free -- external libc edge */
+  if(sal && unit_defines(c,name)) sal=0;     /* ... unless the unit defines it: its own function */
   if(sal){
     if(sal==2){                              /* free(p) -> a void external call statement (opaque to R18) */
       char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.libm.void:%.*s",name->n,name->s);
@@ -3296,6 +3333,14 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;cl->lifetime=1;}
     return t;                                /* not added to fn->calls (opaque to R18) */
   }
+  if(is_string_mem(name->s,name->n) && !unit_defines(c,name)){   /* <string.h> memcpy/memmove/memset */
+    uint32_t t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");  /* the destination */
+    if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->ptr_depth=1; }  /* no agg -> `void *` */
+    char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.libm:%.*s",name->n,name->s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
+    if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
+    return t;                                /* not added to fn->calls (opaque to R18) */
+  }
   const bcir_ctype *rt=callee_ret(c,name);   /* type the result by the callee's return (earlier defs) */
   if(rt && rt->kind==0 && rt->size==0){      /* a void callee -> a bare call statement, no result temp */
     char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.void:%.*s",name->n,name->s);
@@ -3304,7 +3349,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     add_call(c,name);
     return void_temp(c);                     /* an unused placeholder (a void result is never read) */
   }
-  if(!rt && is_extern_variadic(name->s,name->n)){   /* a printf/scanf-family external variadic -> opaque */
+  if(is_extern_variadic(name->s,name->n) && !unit_defines(c,name)){   /* a printf/scanf-family external -> opaque */
     uint32_t t=tempi(c,4,1);                          /* returns int; emitted verbatim against <stdio.h> */
     char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.extern:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
@@ -5671,8 +5716,8 @@ static kval kfold(CC *c,size_t from,uint32_t v){
   fail(c,KV_NOTCONST); return z;
 }
 /* --- C11 6.7.9 initialization: the current-object walk (CF-BRACE; the oracle's `_init_list`) -----------
- * A braced initializer lowers to the object's `= {0}` baseline plus one store per initialized scalar, in
- * list order. Each brace list has a current object whose subobjects -- array elements, struct members in
+ * A braced initializer lowers to the object's zero baseline (emitted `= {}`) plus one store per initialized
+ * scalar, in list order. Each brace list has a current object whose subobjects -- array elements, struct members in
  * order, a union's first member -- the positional entries fill in turn, descending into a sub-aggregate whose
  * initializer has no brace of its own (brace elision, 6.7.9p20: it takes only as many entries as it has
  * scalars); a designator re-points the walk, and the entries after it continue from the subobject after the
@@ -5992,12 +6037,12 @@ static void init_list(CC *c, iwalk *W, const iunit *obj, int top, int flat){
   init_list_inner(c,W,obj,top,flat); LEAVE_REC(c);
 }
 /* Lower the initializer at the cursor -- a brace list, or a string literal for a character array -- of the local
- * object `rid` that `obj` describes: the `= {0}` baseline plus the walk's stores (the oracle's `_agg_init`).
+ * object `rid` that `obj` describes: the zero baseline plus the walk's stores (the oracle's `_agg_init`).
  * Returns the number of top-level elements reached, which sizes an `inferred` array. */
 static int init_object(CC *c, uint32_t rid, const iunit *obj, int inferred){
   iwalk W; memset(&W,0,sizeof W);
   W.rid=rid; W.top_array=obj->k==IK_ARR; W.top_n=0; W.inferred=inferred; W.rng0=c->iw_nrng; W.un0=c->iw_nun;
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }   /* = {0} */
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }   /* = {} */
   if(isk(c,T_STR)){                                    /* `char s[] = "ab"` is `char s[] = {"ab"}` (6.7.9p14) */
     if(!init_char_array(obj,str_tok_unit(c,pk(c)))) fail(c,"an array is initialized by a brace list or a string literal");
     else init_string(c,&W,obj,1,inferred?-1:obj->dims[0]); }
@@ -7495,6 +7540,21 @@ static const char *guard_idx(const bcir_func *f, const bcir_claim *cl, char *buf
   }
   return rname(f,cl->rd[1],buf);
 }
+/* Nonzero if a label of the function's own spells `name` (a source label, or one a re-parsed emit kept). */
+static int label_taken(const bcir_func *f, const char *name){
+  for(size_t i=0;i<f->n_claims;i++)
+    if(!strncmp(f->claims[i].op,"c.label:",8) && !strcmp(f->claims[i].op+8,name)) return 1;
+  return 0;
+}
+/* The continue label of the function's loop `n`: `__cont_<n>`, or `__cont_<n>_<k>` where a label of the
+ * function's own spells that already -- two definitions of one label do not compile (CF-RTWIDE; the oracle's
+ * `_cont_labels`). `own` says whether any label of the function's starts `__cont_`, so a function with none
+ * scans nothing. Two loops never collide: `<n>_<k>` is no loop number. */
+static const char *cont_label(const bcir_func *f, int own, int n, char *buf, size_t cap){
+  snprintf(buf,cap,"__cont_%d",n);
+  for(int k=2; own && label_taken(f,buf); k++) snprintf(buf,cap,"__cont_%d_%d",n,k);
+  return buf;
+}
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_EMIT_NAME],b[BCIR_EMIT_NAME],d[BCIR_EMIT_NAME],e[BCIR_EMIT_NAME],ty[BCIR_EMIT_TYPE],tb[BCIR_EMIT_TYPE],gb[BCIR_EMIT_EXPR];
   bcir_emit_type_scratch type_scratch={0};
@@ -7529,10 +7589,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       /* a static takes its storage class and its constant image (CF-STATICTAB): the rendered initializer, or zero --
        * `{0}` for an array or aggregate, `0u` for a scalar, pointer or function pointer -- in whichever declaration
        * form its type takes (a pointer's extent is no array's: a static pointer is no scalar); a non-static array or
-       * aggregate its `= {0}` baseline */
+       * aggregate its zero baseline, the empty initializer `= {}` (CF-RTWIDE: `= {0}` also stores 0 to the first
+       * scalar, which a re-parsed emit keeps as a store of its own) */
       const char *iv = sx>=0 ? (f->statics[sx].text ? f->statics[sx].text
                                 : (r->kind==BCIR_RK_AGGREGATE || (r->kind==BCIR_RK_SCALAR && decl_array(r))) ? "{0}" : "0u")
-                             : r->zinit ? "{0}" : "";
+                             : r->zinit ? "{}" : "";
       const char *sp=sx>=0?"static ":"", *eq=iv[0]?" = ":"";
       if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s %s%s%s;\n",sp,r->agg,nm,eq,iv);   /* a funcptr local: `__bcir_fpN f;` */
       else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s%s;\n",sp,vq,r->agg,nm,eq,iv);
@@ -7547,6 +7608,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         w+=snprintf(o+EO,on-EO,"  %s%s%s%s%s;\n",sp,decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm,eq,iv);
       else w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s%s;\n",sp,vq,tty(&type_scratch,f,r->rid),nm,eq,iv);}}
   int depth=1, lstk[BCIR_MAXDEPTH+1], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
+  int own_cont=0; char cb[48];                          /* a label of the function's own spelled `__cont_...` */
+  for(size_t i=0;i<f->n_claims && !own_cont;i++) own_cont=!strncmp(f->claims[i].op,"c.label:__cont_",15);
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+EO,on-EO,"  "); }while(0)
   for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
     /* L6 control-flow markers (rendered as braces) */
@@ -7555,8 +7618,15 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.endif")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
     if(!strcmp(cl->op,"c.loop")){IND();w+=snprintf(o+EO,on-EO,"while (1) {\n");depth++;
       if(nls<BCIR_MAXDEPTH+1)lstk[nls++]=lctr++;continue;}
-    if(!strcmp(cl->op,"c.loop.test")){IND();w+=snprintf(o+EO,on-EO,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
-    if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+EO,on-EO,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
+    if(!strcmp(cl->op,"c.loop.test")){
+      /* a loop whose condition is the constant 1 -- `while (1)`, `for (;;)` -- ends no iteration: no test (the
+       * oracle's `_const_true`, CF-RTWIDE) */
+      const bcir_claim *pv=i?&f->claims[i-1]:NULL;
+      if(pv && !strcmp(pv->op,"c.const") && pv->n_wr==1 && cl->n_rd==1 && pv->wr[0]==cl->rd[0] && pv->n_imm==1
+         && pv->imm[0]==1) continue;
+      IND();w+=snprintf(o+EO,on-EO,"if (!%s) break;\n",rname(f,cl->rd[0],a));continue;}
+    if(!strcmp(cl->op,"c.cont.tgt")){IND();
+      w+=snprintf(o+EO,on-EO,"%s: ;\n",cont_label(f,own_cont,nls?lstk[nls-1]:0,cb,sizeof cb));continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
       { const bcir_resource *vr=res_of(f,cl->wr[0]);   /* a volatile VLA keeps its qualifier (the oracle's decl) */
@@ -7569,7 +7639,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+EO,on-EO,"case %s:\n",cl->op+7);continue;}  /* a real case label */
     if(!strcmp(cl->op,"c.default")){IND();w+=snprintf(o+EO,on-EO,"default:\n");continue;}
     if(!strcmp(cl->op,"c.endswitch")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
-    if(!strcmp(cl->op,"c.continue")){IND();w+=snprintf(o+EO,on-EO,"goto __cont_%d;\n",nls?lstk[nls-1]:0);continue;}
+    if(!strcmp(cl->op,"c.continue")){IND();
+      w+=snprintf(o+EO,on-EO,"goto %s;\n",cont_label(f,own_cont,nls?lstk[nls-1]:0,cb,sizeof cb));continue;}
     if(!strncmp(cl->op,"c.goto:",7)){IND();w+=snprintf(o+EO,on-EO,"goto %s;\n",cl->op+7);continue;}
     if(!strcmp(cl->op,"c.cgoto")){IND();w+=snprintf(o+EO,on-EO,"goto *%s;\n",rname(f,cl->rd[0],a));continue;}  /* indirect jump to a label address (GNU) */
     if(!strncmp(cl->op,"c.label:",8)){w+=snprintf(o+EO,on-EO,"%s:;\n",cl->op+8);continue;}

@@ -26,6 +26,7 @@ from .lower import (
     ReturnNode,
     SwitchNode,
     WhileNode,
+    _STRING_MEM,
 )
 
 # ASM2 -- the x86 targets that have port-mapped I/O (`in`/`out` instructions). ARM/RISC-V have no port I/O
@@ -223,11 +224,14 @@ def emit_linkable(lowered, emitted: dict) -> str:
         for op in ops
         if op.startswith(("c.call.libm:", "c.call.libm.void:", "c.call.extern:"))
     }
-    if callees & {"malloc", "calloc", "realloc", "free"}:
+    libc = {"malloc", "calloc", "realloc", "aligned_alloc", "free"}
+    if callees & libc:
         parts.append("#include <stdlib.h>")
+    if callees & _STRING_MEM:
+        parts.append("#include <string.h>")  # the memcpy/memmove/memset edges
     if any(op.startswith("c.call.extern:") for op in ops):
         parts.append("#include <stdio.h>")  # the printf/scanf-family edges
-    if callees - {"malloc", "calloc", "realloc", "free"} and any(
+    if callees - libc - _STRING_MEM and any(
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges
@@ -339,7 +343,9 @@ def emit_function(lf: LoweredFunc) -> str:
     ref = _Names(nm, used)
 
     def _local_decl(rid, name, ct):
-        zi = " = {0}" if rid in lf.zero_init_locals else ""
+        # the zero baseline as the empty initializer: `= {0}` re-lowers as the baseline AND a store of 0 to the
+        # first scalar, which the next emit spells as a store -- one more each round (CF-RTWIDE)
+        zi = " = {}" if rid in lf.zero_init_locals else ""
         if ct.kind == "funcptr":  # `RET (*name)(PARAMS)` (no typedef alias)
             return f"    {_funcptr_decl(ct, name)}{zi};"
         if ct.kind == "array":  # `T name[N]` (the dims follow the name)
@@ -360,7 +366,7 @@ def emit_function(lf: LoweredFunc) -> str:
 
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
     decls += [_static_decl(nm[rid], ct, init) for rid, _name, ct, init in lf.statics]
-    body = _walk(lf, lf.body, ref, 1)
+    body = _walk(lf, lf.body, ref, 1, cont=_cont_labels(lf))
     parts = [
         _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
         for pname, _rid, ct in lf.params
@@ -381,32 +387,102 @@ def emit_function(lf: LoweredFunc) -> str:
     )
 
 
-def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = None) -> list:
+def _labels(block: list, out: set) -> set:
+    """Every label the structured body `block` defines, at any depth."""
+    for node in block:
+        if isinstance(node, LabelNode):
+            out.add(node.name)
+        elif isinstance(node, IfNode):
+            _labels(node.then, out)
+            _labels(node.els, out)
+        elif isinstance(node, WhileNode):
+            for part in (node.cond_block, node.body, node.step):
+                _labels(part, out)
+        elif isinstance(node, SwitchNode):
+            _labels([i for i in node.body if not isinstance(i, (CaseLabel, DefaultLabel))], out)
+    return out
+
+
+def _loop_ids(block: list, out: list) -> list:
+    """Every loop of the structured body `block`, outer before inner, in source order."""
+    for node in block:
+        if isinstance(node, WhileNode):
+            out.append(node.loop_id)
+            for part in (node.cond_block, node.body, node.step):
+                _loop_ids(part, out)
+        elif isinstance(node, IfNode):
+            _loop_ids(node.then, out)
+            _loop_ids(node.els, out)
+        elif isinstance(node, SwitchNode):
+            _loop_ids([i for i in node.body if not isinstance(i, (CaseLabel, DefaultLabel))], out)
+    return out
+
+
+def _cont_labels(lf: LoweredFunc) -> dict:
+    """Each loop's continue label: `__cont_<id>`, or `__cont_<id>_<k>` where a label of the function's own
+    spells that already. A re-parsed emit keeps the labels the emit before it placed, as labels of its own, and a
+    function that defines one label twice does not compile (CF-RTWIDE)."""
+    taken = _labels(lf.body, set())
+    names = {}
+    for loop_id in dict.fromkeys(_loop_ids(lf.body, [])):
+        name, k = f"__cont_{loop_id}", 2
+        while name in taken:
+            name, k = f"__cont_{loop_id}_{k}", k + 1
+        taken.add(name)
+        names[loop_id] = name
+    return names
+
+
+def _const_true(node: WhileNode) -> bool:
+    """The loop's condition is the constant 1 -- `while (1)`, `for (;;)`, the emit's own loop scaffold re-parsed
+    -- which ends no iteration, so its emit tests nothing. A break test the emit wrote re-lowered as a branch of
+    the loop's body, one more each round (CF-RTWIDE). Only 1 is taken: it is nonzero in every integer type."""
+    return any(
+        isinstance(c, Claim)
+        and c.op == "c.const"
+        and c.wr[:1] == (node.cond,)
+        and tuple(c.imm) == (1,)
+        for c in node.cond_block
+    )
+
+
+def _walk(
+    lf: LoweredFunc,
+    block: list,
+    ref,
+    depth: int,
+    loops: list | None = None,
+    cont: dict | None = None,
+) -> list:
     ind = "    " * depth
     loops = loops if loops is not None else []
+    cont = cont if cont is not None else {}
     out: list = []
     for node in block:
         if isinstance(node, IfNode):
             out.append(f"{ind}if ({ref(node.cond)}) {{")
-            out += _walk(lf, node.then, ref, depth + 1, loops)
+            out += _walk(lf, node.then, ref, depth + 1, loops, cont)
             if node.els:
                 out.append(f"{ind}}} else {{")
-                out += _walk(lf, node.els, ref, depth + 1, loops)
+                out += _walk(lf, node.els, ref, depth + 1, loops, cont)
             out.append(f"{ind}}}")
         elif isinstance(node, WhileNode):
             loops.append(node.loop_id)
+            label = cont.get(node.loop_id, f"__cont_{node.loop_id}")
             out.append(f"{ind}while (1) {{")
             if node.test_at_end:  # do/while: body, [continue:], recompute + test
-                out += _walk(lf, node.body, ref, depth + 1, loops)
-                out.append(f"{ind}    __cont_{node.loop_id}: ;")
-                out += _walk(lf, node.cond_block, ref, depth + 1, loops)
-                out.append(f"{ind}    if (!{ref(node.cond)}) break;")
+                out += _walk(lf, node.body, ref, depth + 1, loops, cont)
+                out.append(f"{ind}    {label}: ;")
+                out += _walk(lf, node.cond_block, ref, depth + 1, loops, cont)
+                if not _const_true(node):
+                    out.append(f"{ind}    if (!{ref(node.cond)}) break;")
             else:  # while/for: test, body, [continue:], step
-                out += _walk(lf, node.cond_block, ref, depth + 1, loops)
-                out.append(f"{ind}    if (!{ref(node.cond)}) break;")
-                out += _walk(lf, node.body, ref, depth + 1, loops)
-                out.append(f"{ind}    __cont_{node.loop_id}: ;")
-                out += _walk(lf, node.step, ref, depth + 1, loops)
+                out += _walk(lf, node.cond_block, ref, depth + 1, loops, cont)
+                if not _const_true(node):
+                    out.append(f"{ind}    if (!{ref(node.cond)}) break;")
+                out += _walk(lf, node.body, ref, depth + 1, loops, cont)
+                out.append(f"{ind}    {label}: ;")
+                out += _walk(lf, node.step, ref, depth + 1, loops, cont)
             out.append(f"{ind}}}")
             loops.pop()
         elif isinstance(node, SwitchNode):  # a real C switch (fallthrough preserved)
@@ -417,14 +493,14 @@ def _walk(lf: LoweredFunc, block: list, ref, depth: int, loops: list | None = No
                 elif isinstance(item, DefaultLabel):
                     out.append(f"{ind}default:")
                 else:
-                    out += _walk(lf, [item], ref, depth + 1, loops)
+                    out += _walk(lf, [item], ref, depth + 1, loops, cont)
             out.append(f"{ind}}}")
         elif isinstance(node, ReturnNode):
             out.append(f"{ind}return {ref(node.rid)};" if node.rid is not None else f"{ind}return;")
         elif isinstance(node, BreakNode):
             out.append(f"{ind}break;")
         elif isinstance(node, ContinueNode):
-            out.append(f"{ind}goto __cont_{loops[-1]};")
+            out.append(f"{ind}goto {cont.get(loops[-1], f'__cont_{loops[-1]}')};")
         elif isinstance(node, GotoNode):
             out.append(f"{ind}goto {node.label};")
         elif isinstance(node, ComputedGotoNode):

@@ -295,6 +295,12 @@ _EXTERN_VARIADIC = frozenset(
 # `void *` (assignable to any object pointer); `free` returns void.
 _STDLIB_ALLOC = frozenset({"malloc", "calloc", "realloc", "aligned_alloc"})
 
+# <string.h> memory routines -- external libc edges like the allocators (verbatim, opaque to R18, NOT
+# bcir_-renamed), each returning its destination, a `void *`. The emit spells every plain memory access as a
+# `memcpy`, so a re-parsed emit calls it (CF-RTWIDE); the escape analysis already reads a library routine as
+# copying between its operands.
+_STRING_MEM = frozenset({"memcpy", "memmove", "memset"})
+
 # GCC/Clang integer builtins -- emitted verbatim (no bcir_ twin, opaque to R18) with a fixed result type.
 _BUILTIN_INT = frozenset(
     {  # the bit-count family + abs -> int
@@ -1041,7 +1047,7 @@ class LoweredFunc:
     statics: list = field(default_factory=list)  # (rid, name, CType, init) static-storage locals:
     #   init the rendered initializer of its constant image, None when it is zero (CF-STATICTAB)
     globals_used: dict = field(default_factory=dict)  # rid -> name (file-scope globals referenced)
-    zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
+    zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
     tu_protos: dict = field(
         default_factory=dict
     )  # cross-TU callee -> (ret CType, (param CType, ...))
@@ -1173,7 +1179,7 @@ class _FuncLowerer:
         #   (`T a[__ext];`) at the source decl, NOT up front
         self.vla_strides: dict = {}  # multi-dim VLA array rid -> per-dim snapshot rids (the
         #   runtime Horner multipliers: m[i][j] -> i*dim1 + j)
-        self.zero_init: set = set()  # aggregate-local rids that emit a `= {0}` baseline
+        self.zero_init: set = set()  # aggregate-local rids that emit the `= {}` zero baseline
         self.statics: list = []  # (rid, name, CType, init) static-storage locals
         self.calls: list = []
         self.block_stack: list = [[]]  # claims/control nodes append to the top block
@@ -2973,8 +2979,8 @@ class _FuncLowerer:
 
     # --- C11 6.7.9 initialization: the current-object walk (CF-BRACE) -----------------------------
     #
-    # A braced initializer lowers to the object's `= {0}` baseline (every subobject no initializer
-    # names is zero, §6.7.10) plus one store per initialized scalar, in list order. The walk is C's own:
+    # A braced initializer lowers to the object's zero baseline, emitted `= {}` (every subobject no initializer
+    # names is zero, §6.7.10), plus one store per initialized scalar, in list order. The walk is C's own:
     # each brace list has a current object whose subobjects -- array elements, struct members in order,
     # a union's first member -- the positional entries fill in turn, descending into a sub-aggregate
     # whose initializer has no brace of its own (brace elision, 6.7.9p20: it takes only as many entries
@@ -3925,6 +3931,10 @@ class _FuncLowerer:
                 (t,),  # verbatim, opaque
                 lifetime=Lifetime("alloc"),
             )
+        if node.callee in _STRING_MEM and node.callee not in self.func_rets:
+            # a <string.h> routine: its result is its destination, a `void *`
+            t = self._temp(pointer(scalar("void")), f"mem_{node.callee}")
+            return self._emit(f"c.call.libm:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
         if node.callee == "free" and node.callee not in self.func_rets:
             # void external (verbatim, opaque) + a R21 lifetime FREE event: the freed pointer (the actual it
             # reads) dies after this claim, so a later dereference of it is a use-after-free (§5.12). Vacuous

@@ -21,7 +21,7 @@ the sort byte-for-byte, and `bcir/tests/test_c_cfront.py` + `tools/c/check_runti
 
 from __future__ import annotations
 
-from .lower import _EXTERN_VARIADIC, _LIBM, _LIBM_INT, _STDLIB_ALLOC
+from .lower import _EXTERN_VARIADIC, _LIBM, _LIBM_INT, _STDLIB_ALLOC, _STRING_MEM
 
 # The external-call claim-op prefixes whose `:<callee>` suffix names a real (non-bcir_) symbol the
 # linker must resolve. A unit's link flags are derived purely from the callees behind these edges.
@@ -52,10 +52,16 @@ def _is_libm(callee: str) -> bool:
 
 def _is_libc_implicit(callee: str) -> bool:
     """True if `callee` is a libc symbol linked implicitly (no `-l`): the <stdlib.h> allocators +
-    `free`, and the printf/scanf-family <stdio.h> variadics. These are real external edges but need no
-    flag. Classified explicitly (NO_FLAG) rather than left to the unknown default, so the mapping is a
-    complete statement of what BCIR knows about its own emitted external seams."""
-    return callee == "free" or callee in _STDLIB_ALLOC or callee in _EXTERN_VARIADIC
+    `free`, the <string.h> memory routines, and the printf/scanf-family <stdio.h> variadics. These are
+    real external edges but need no flag. Classified explicitly (NO_FLAG) rather than left to the unknown
+    default, so the mapping is a complete statement of what BCIR knows about its own emitted external
+    seams."""
+    return (
+        callee == "free"
+        or callee in _STDLIB_ALLOC
+        or callee in _STRING_MEM
+        or callee in _EXTERN_VARIADIC
+    )
 
 
 # B-breadth (#61) LAPACK: the Fortran-ABI LU/solve driver base names (the trailing-underscore form a C
@@ -72,7 +78,8 @@ _LAPACK_FORTRAN = frozenset({"sgesv", "dgesv", "sgetrf", "dgetrf", "sgetrs", "dg
 _LIBRARY_RULES: tuple[tuple, ...] = (
     # <math.h> (incl. <complex.h>, which links libm too) -> -lm. The math seam is the dominant case.
     (_is_libm, "-lm"),
-    # libc-implicit (malloc/free/realloc/calloc/aligned_alloc + the printf/scanf family) -> no flag.
+    # libc-implicit (malloc/free/realloc/calloc/aligned_alloc, memcpy/memmove/memset + the printf/scanf
+    # family) -> no flag.
     (_is_libc_implicit, NO_FLAG),
     # B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas. Matches the existing B5 path's choice
     # (bcir/lower/c_kernel.py emit_blas_gemm_c links `-lcblas`); stay consistent so a BLAS unit links

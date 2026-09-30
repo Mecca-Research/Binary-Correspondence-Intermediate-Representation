@@ -264,6 +264,8 @@ _PTRVALUE = [
     "cfront_fnptrlocal.c",  # a function-pointer LOCAL VARIABLE `RET (*f)(P)=fn;` (#fnptrlocal)
     "cfront_arrcomplit.c",  # 1-D scalar array compound literals, bounds-guard-reconciled (#arrcomplit)
     "cfront_stdlibmem.c",
+    "cfront_strmem.c",  # <string.h> memcpy/memmove/memset as external libc edges, each returning its
+    #   destination (CF-RTWIDE)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -889,6 +891,8 @@ def test_link_flag_derivation_dual_rail():
     assert library_for_callee("free") == NO_FLAG  # libc-implicit, EXPLICITLY known (not unknown)
     assert library_for_callee("malloc") == NO_FLAG
     assert library_for_callee("printf") == NO_FLAG  # printf-family extern variadic
+    for name in ("memcpy", "memmove", "memset"):  # the <string.h> memory routines (CF-RTWIDE)
+        assert library_for_callee(name) == NO_FLAG, name
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS (the existing path's choice)
     assert library_for_callee("cblas_dgemm") == "-lcblas"  # any cblas_*
     assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW (single-prec edge)
@@ -934,6 +938,11 @@ def test_link_flag_derivation_dual_rail():
         "math+free": (
             "#include <math.h>\n#include <stdlib.h>\ndouble f(double x){ double *p=malloc(8);"
             " double r=sqrt(x); free(p); return r; }",
+            "-lm",
+        ),
+        "string+math": (
+            "#include <math.h>\n#include <string.h>\ndouble f(double x){ double y; memset(&y, 0, 8);"
+            " memcpy(&y, &x, sizeof y); memmove(&y, &x, 8); return sqrt(y); }",
             "-lm",
         ),
     }
@@ -9788,3 +9797,266 @@ def test_split_forms_on_a_device_object_are_refused_on_both_rails():
                 fh.write(src)
             run = subprocess.run([exe, path], capture_output=True, text=True)
             assert run.returncode != 0 and run.stdout.startswith("PARSE-ERR"), (body, run.stdout)
+
+
+_STRMEM_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(sm_copy, s); SAME(sm_move, s); SAME(sm_fill, s); SAME(sm_result, s); SAME(sm_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_string_routines_are_libc_edges_on_both_rails():
+    """CF-RTWIDE: `memcpy`, `memmove` and `memset` lower on both rails to one `c.call.libm:` edge each -- a libc
+    routine returning its destination, opaque to R18, linked with no flag -- where both rails had refused the
+    unit as a call to an undefined function (R18). `cfront_strmem.c` copies whole structs, moves overlapping
+    bytes and fills; both rails lower it to one claim graph on the four targets, and each emit runs as the
+    original does."""
+    from bcir.frontends.cfront.linkflags import derive_link_flags
+
+    fx = "cfront_strmem.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    r = compile_unit(src, check_clang=False)
+    assert r.is_clean, r.diagnostics
+    ops = [c.op for lf in r.lowered.functions.values() for c in lf.claims]
+    got = {name: ops.count(f"c.call.libm:{name}") for name in ("memcpy", "memmove", "memset")}
+    assert got == {"memcpy": 3, "memmove": 2, "memset": 3}, got
+    assert derive_link_flags(r.lowered) == [], derive_link_flags(r.lowered)
+    if not _CC:
+        return
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _STRMEM_DRIVER)
+
+
+# A library name the unit defines is the unit's own function, wherever its definition stands. The twin parses
+# in one pass and asked only the definitions before the call (the printf family) or none (the allocators and
+# `free`), so it lowered a libc edge where the oracle -- whose `func_rets` holds every definition -- lowered a
+# call of the unit's function.
+_OWN_LIBRARY = {
+    "malloc before": (
+        "static uint32_t pool[4];\nvoid *malloc(unsigned long n) { (void)n; return pool; }\n"
+        "uint32_t f(uint32_t x) { uint32_t *p = malloc(4); *p = x; return *p + pool[0]; }\n",
+        "c.call:malloc",
+    ),
+    "free before": (
+        "static uint32_t freed;\nvoid free(void *p) { (void)p; freed++; }\n"
+        "uint32_t f(uint32_t x) { free(&x); return x + freed; }\n",
+        "c.call.void:free",
+    ),
+    "memcpy after": (
+        "void *memcpy(void *d, const void *s, size_t n);\n"
+        "uint32_t f(uint32_t x) { uint32_t y = 0; memcpy(&y, &x, 4); return y; }\n"
+        "void *memcpy(void *d, const void *s, size_t n) { uint8_t *a = d; const uint8_t *b = s;"
+        " for (size_t i = 0; i < n; i++) a[i] = b[i]; return d; }\n",
+        "c.call:memcpy",
+    ),
+    "memset before": (
+        "void *memset(void *d, int v, size_t n) { uint8_t *a = d;"
+        " for (size_t i = 0; i < n; i++) a[i] = (uint8_t)v; return d; }\n"
+        "uint32_t f(uint32_t x) { uint32_t y = x; memset(&y, 1, 2); return y; }\n",
+        "c.call:memset",
+    ),
+    "printf after": (
+        "int printf(const char *f, ...);\n"
+        'uint32_t f(uint32_t x) { return (uint32_t)printf("%u", x) + x; }\n'
+        "int printf(const char *f, ...) { (void)f; return 3; }\n",
+        "c.call:printf",
+    ),
+}
+
+
+def test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails():
+    """CF-RTWIDE: a call of `malloc`, `free`, `memcpy`, `memset` or `printf` lowers as a call of the unit's own
+    function when the unit defines one -- before the call or after it -- on both rails: the twin asks every
+    definition of the unit (`unit_defines`), as the oracle's `func_rets` holds them all. The twin had lowered
+    `malloc` and `free` as the libc edges even when the unit defined them, and a `printf` defined after its
+    call as the external variadic."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#include <stdint.h>\n#include <stddef.h>\n"
+    for label, (body, want) in _OWN_LIBRARY.items():
+        src = head + body
+        r = compile_unit(src, check_clang=False)
+        calls = [c.op for c in r.lowered.functions["f"].claims if c.op.startswith("c.call")]
+        assert calls == [want], (label, calls)
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "own_library.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            twin, _emit = _c_run(exe, path)
+        assert twin == _summary_line(r), f"{label}\n C: {twin}\nPY: {_summary_line(r)}"
+
+
+# CF-RTWIDE: labels of the function's own spelled as the emitters' continue labels -- the twin numbers its loops
+# from 0 (`__cont_0`), the oracle names each by its loop id (read off a first emit) -- beside two loops that
+# `continue`, and the two constant-1 loops, whose emits test nothing.
+_CONT_LABELS = r"""#include <stdint.h>
+uint32_t cl_f(uint32_t n) {
+  uint32_t s = 0;
+  for (uint32_t i = 0; i < n % 9u; i++) { if (i & 1u) continue; s += i; }
+  while (s < 50u) { s += 7u; if (s & 2u) continue; s ^= 1u; }
+  for (;;) { s += 3u; if (s > 60u) break; }
+  while (1) { if (s & 1u) break; s++; }
+  if (n & 1u) goto TWIN;
+  s += 3u;
+TWIN:
+  if (n & 2u) goto ORACLE;
+  s ^= 5u;
+ORACLE:
+  return s;
+}
+"""
+_CONT_LABELS_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) SAME(cl_f, gaps_in[n]);
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails():
+    """CF-RTWIDE: each loop's continue label is clear of every label the function defines, on both emitters --
+    `__cont_<n>` or, where the function spells that already, `__cont_<n>_<k>`. A source label spelled as an
+    emitter's continue label had been defined twice in that emitter's output, which does not compile. Both
+    rails lower the unit to one claim graph, and each emit runs as the original does."""
+    first = compile_unit(_CONT_LABELS.replace("ORACLE", "done"), check_clang=False)
+    oracle_label = re.search(r"__cont_\d+", first.emitted["cl_f"]).group(0)
+    assert oracle_label != "__cont_0"
+    src = _CONT_LABELS.replace("TWIN", "__cont_0").replace("ORACLE", oracle_label)
+    r = compile_unit(src, check_clang=False)
+    oracle_emit = r.emitted["cl_f"]
+    assert f"{oracle_label}_2: ;" in oracle_emit, (
+        oracle_emit
+    )  # the loop's label, clear of the function's own
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "cont_labels.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        twin, c_emit = _c_run(exe, path)
+    assert twin == _summary_line(r), f"parity\n C: {twin}\nPY: {_summary_line(r)}"
+    assert "__cont_0_2: ;" in c_emit, c_emit
+    for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        assert "if (!" in emit and emit.count("if (!") == 2, (
+            label,
+            emit,
+        )  # the two loops of no constant
+    _run_against_original(
+        "cont_labels", src, (("twin", c_emit), ("oracle", oracle_emit)), _CONT_LABELS_DRIVER
+    )
+
+
+# CF-RTWIDE: aggregate locals a brace initializer names only in part -- positional, designated, a union's first
+# member, a member array's first element: each the object's zero baseline and one store per named scalar.
+_ZERO_BASELINE_UNIT = r"""#include <stdint.h>
+struct zb { uint32_t a; uint16_t b; uint8_t c[3]; };
+union zu { uint8_t c; uint32_t w; };
+struct zw { uint32_t v[4]; };
+uint32_t zb_f(uint32_t x) {
+  struct zb p = { x, (uint16_t)(x + 1u) };
+  union zu u = { (uint8_t)x };
+  struct zw a = { { x } };
+  struct zb q = { .c = { 1u, 2u } };
+  return p.a + p.b + p.c[2] + u.c + a.v[3] + q.c[1] + q.a;
+}
+"""
+_ZERO_BASELINE_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) SAME(zb_f, gaps_in[n]);
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_both_emitters_spell_the_zero_baseline_as_the_empty_initializer():
+    """CF-RTWIDE: both emitters declare an aggregate local's zero baseline as the empty initializer `= {}` -- the
+    whole object zero, and nothing stored -- where both had written `= {0}`, which a re-parse reads as the
+    baseline and a store of 0 to the first scalar. Both rails lower the unit to one claim graph, and each emit
+    runs as the original does: every member no initializer names is zero."""
+    r = compile_unit(_ZERO_BASELINE_UNIT, check_clang=False)
+    oracle_emit = r.emitted["zb_f"]
+    assert oracle_emit.count(" = {};") == 4 and "{0}" not in oracle_emit, oracle_emit
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "zero_baseline.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_ZERO_BASELINE_UNIT)
+        twin, c_emit = _c_run(exe, path)
+    assert twin == _summary_line(r), f"parity\n C: {twin}\nPY: {_summary_line(r)}"
+    assert c_emit.count(" = {};") == 4 and "{0}" not in c_emit, c_emit
+    _run_against_original(
+        "zero_baseline",
+        _ZERO_BASELINE_UNIT,
+        (("twin", c_emit), ("oracle", oracle_emit)),
+        _ZERO_BASELINE_DRIVER,
+    )
+
+
+# CF-RTWIDE: units whose only libc edges are the <string.h> routines, or `aligned_alloc`.
+_LINKABLE_HEADERS = {
+    "string": (
+        "#include <stdint.h>\n#include <string.h>\nuint32_t f(uint32_t x) { uint32_t y; memcpy(&y, &x, 4);"
+        " memset(&x, 0, 4); memmove(&y, &x, 2); return y; }\n",
+        "#include <string.h>",
+        ("#include <math.h>", "#include <stdlib.h>"),
+    ),
+    "aligned_alloc": (
+        "#include <stdint.h>\n#include <stdlib.h>\nuint32_t f(uint32_t n) { uint32_t *p = aligned_alloc(16, 16);"
+        " return (uint32_t)(p != 0) + n; }\n",
+        "#include <stdlib.h>",
+        ("#include <math.h>", "#include <string.h>"),
+    ),
+}
+
+
+def test_the_linkable_emit_includes_the_header_of_each_libc_edge():
+    """CF-RTWIDE: the linkable emit (`--linkable`) includes the header that declares each libc edge it calls --
+    `<string.h>` for `memcpy`/`memmove`/`memset`, `<stdlib.h>` for `aligned_alloc` as for the other allocators
+    -- where it had included `<math.h>` for any edge outside malloc/calloc/realloc/free, which declares neither.
+    Where a C compiler is visible, the artifact compiles with implicit declarations refused."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    for label, (src, want, never) in _LINKABLE_HEADERS.items():
+        r = compile_unit(src, check_clang=False)
+        assert r.is_clean, (label, r.diagnostics)
+        text = emit_linkable(r.lowered, r.emitted)
+        assert want in text and not any(h in text for h in never), (label, text)
+        if _CC:
+            cp = subprocess.run(
+                [
+                    _CC,
+                    "-std=c11",
+                    "-fsyntax-only",
+                    "-Werror=implicit-function-declaration",
+                    "-x",
+                    "c",
+                    "-",
+                ],
+                input=text,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            assert cp.returncode == 0, (label, cp.stderr, text)

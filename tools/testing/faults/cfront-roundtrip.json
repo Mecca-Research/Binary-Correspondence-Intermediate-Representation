@@ -8,7 +8,15 @@
     "bcir.tests.test_c_cfront:test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
     "bcir.tests.test_cfront_roundtrip:test_volatile_member_emits_reach_a_fixed_point_given_their_definitions",
     "bcir.tests.test_cfront_roundtrip:test_a_temporary_never_redeclares_a_declared_name",
-    "bcir.tests.test_cfront_roundtrip:test_roundtrip_smoke_and_exclusion_set_is_pinned"
+    "bcir.tests.test_cfront_roundtrip:test_roundtrip_smoke_and_exclusion_set_is_pinned",
+    "bcir.tests.test_cfront_roundtrip:test_loop_emits_reach_a_fixed_point_and_compile",
+    "bcir.tests.test_cfront_roundtrip:test_the_zero_baseline_re_lowers_as_itself",
+    "bcir.tests.test_c_cfront:test_string_routines_are_libc_edges_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails",
+    "bcir.tests.test_c_cfront:test_both_emitters_spell_the_zero_baseline_as_the_empty_initializer",
+    "bcir.tests.test_c_cfront:test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+    "bcir.tests.test_c_cfront:test_link_flag_derivation_dual_rail"
   ],
   "faults": [
     {
@@ -58,6 +66,111 @@
       "label": "T43 a twin temp redeclares a declared name",
       "new": "    for(int k=2; 0 && declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,\"t%u_%d\",rid,k);",
       "old": "    for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,\"t%u_%d\",rid,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_zero_baseline_re_lowers_as_itself",
+      "label": "O31 the zero baseline spelled `= {0}` again",
+      "new": "        zi = \" = {0}\" if rid in lf.zero_init_locals else \"\"",
+      "old": "        zi = \" = {}\" if rid in lf.zero_init_locals else \"\"",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_loop_emits_reach_a_fixed_point_and_compile",
+      "label": "O32 a loop of the constant 1 tested again",
+      "new": "    return False and any(\n        isinstance(c, Claim)\n        and c.op == \"c.const\"",
+      "old": "    return any(\n        isinstance(c, Claim)\n        and c.op == \"c.const\"",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_loop_emits_reach_a_fixed_point_and_compile",
+      "label": "O33 a continue label not cleared of the function's own labels",
+      "new": "        while False:\n            name, k = f\"__cont_{loop_id}_{k}\", k + 1",
+      "old": "        while name in taken:\n            name, k = f\"__cont_{loop_id}_{k}\", k + 1",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_string_routines_are_libc_edges_on_both_rails",
+      "label": "O34 memcpy/memmove/memset no libc edges on the oracle",
+      "new": "        if False:",
+      "old": "        if node.callee in _STRING_MEM and node.callee not in self.func_rets:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "O35 the oracle's string edge ignores the unit's own definition",
+      "new": "        if node.callee in _STRING_MEM:",
+      "old": "        if node.callee in _STRING_MEM and node.callee not in self.func_rets:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_roundtrip_smoke_and_exclusion_set_is_pinned",
+      "label": "O36 the classifier supplies no definitions",
+      "new": "    defs = \"\"\n    e1 = _emit_joined(r1)",
+      "old": "    defs = _aggregate_defs(src, _includes_for(fx))\n    e1 = _emit_joined(r1)",
+      "path": "bcir/tests/test_cfront_roundtrip.py"
+    },
+    {
+      "expects": "test_link_flag_derivation_dual_rail",
+      "label": "O37 a string routine an unknown callee to the link rule",
+      "new": "",
+      "old": "        or callee in _STRING_MEM\n",
+      "path": "bcir/frontends/cfront/linkflags.py"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+      "label": "O38 the linkable emit includes <math.h> for a string routine",
+      "new": "",
+      "old": "    if callees & _STRING_MEM:\n        parts.append(\"#include <string.h>\")  # the memcpy/memmove/memset edges\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_both_emitters_spell_the_zero_baseline_as_the_empty_initializer",
+      "label": "T44 the twin's zero baseline spelled `{0}` again",
+      "new": "                             : r->zinit ? \"{0}\" : \"\";",
+      "old": "                             : r->zinit ? \"{}\" : \"\";",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails",
+      "label": "T45 a loop of the constant 1 tested again on the twin",
+      "new": "      if(0 && pv && !strcmp(pv->op,\"c.const\") && pv->n_wr==1 && cl->n_rd==1 && pv->wr[0]==cl->rd[0] && pv->n_imm==1\n         && pv->imm[0]==1) continue;",
+      "old": "      if(pv && !strcmp(pv->op,\"c.const\") && pv->n_wr==1 && cl->n_rd==1 && pv->wr[0]==cl->rd[0] && pv->n_imm==1\n         && pv->imm[0]==1) continue;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails",
+      "label": "T46 a twin continue label not cleared of the function's own labels",
+      "new": "  for(int k=2; 0 && own && label_taken(f,buf); k++) snprintf(buf,cap,\"__cont_%d_%d\",n,k);",
+      "old": "  for(int k=2; own && label_taken(f,buf); k++) snprintf(buf,cap,\"__cont_%d_%d\",n,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_string_routines_are_libc_edges_on_both_rails",
+      "label": "T47 memcpy/memmove/memset no libc edges on the twin",
+      "new": "  if(0 && is_string_mem(name->s,name->n) && !unit_defines(c,name)){   /* <string.h> memcpy/memmove/memset */",
+      "old": "  if(is_string_mem(name->s,name->n) && !unit_defines(c,name)){   /* <string.h> memcpy/memmove/memset */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "T48 the twin finds no definition of a library name",
+      "new": "    def=0;",
+      "old": "    def=tok_is(tat(c,j+1),\"{\");",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "T49 the twin's allocator edge ignores the unit's own definition",
+      "new": "  if(0 && sal && unit_defines(c,name)) sal=0;     /* ... unless the unit defines it: its own function */",
+      "old": "  if(sal && unit_defines(c,name)) sal=0;     /* ... unless the unit defines it: its own function */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "T50 the twin asks only the definitions before a printf-family call",
+      "new": "  if(!rt && is_extern_variadic(name->s,name->n)){   /* a printf/scanf-family external -> opaque */",
+      "old": "  if(is_extern_variadic(name->s,name->n) && !unit_defines(c,name)){   /* a printf/scanf-family external -> opaque */",
       "path": "runtime/c/bcir_cfront.c"
     }
   ]

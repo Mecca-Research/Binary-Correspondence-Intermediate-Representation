@@ -79,7 +79,7 @@ typedef struct bcir_resource {
   uint8_t  is_bool;          /* a _Bool/bool object: emit `_Bool` so a store normalizes to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (not signed/unsigned char): emit `char`, whose signedness
                               * is implementation-defined -- NOT int8_t (always signed -> wrong on ARM) */
-  uint8_t  zinit;            /* an aggregate local declared with a `= {0}` zero baseline (§6.7.10) */
+  uint8_t  zinit;            /* an aggregate local declared with the `= {}` zero baseline (§6.7.10) */
   uint8_t  ptr_depth;        /* pointer indirection depth (POINTER kind): 1 `T*`, 2 `T**`, ...; 0 == 1 */
   uint8_t  is_valist;        /* a `va_list` object (variadic): emit `va_list`, opaque to load/store */
   uint8_t  is_voidptr;       /* a `void *` pointer (a `&&L` label address / void-pointee local): emit `void *`,

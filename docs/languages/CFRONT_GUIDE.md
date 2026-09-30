@@ -325,6 +325,10 @@ _mm_sfence();                      //                   store (release) fence ->
   loads (`h.next->v`, `n->next->v`, `s->p[i]`), an element of a pointer (`p[i]`), a dereference of any pointer value
   (`*p`, `*(p + i)`, `*&a`, `*(c ? &a : &b)`, `*p++`) and the first element of a member array (`*q->a`). A call
   through a parenthesized callee, `(fp)(x)` or `(o.fn)(x)`, is the call without the parentheses.
+- The libc memory routines as external edges, opaque to R18 and linked with no flag: `<stdlib.h>`'s
+  `malloc`/`calloc`/`realloc`/`aligned_alloc`/`free` and `<string.h>`'s `memcpy`/`memmove`/`memset`, each string
+  routine returning its destination. A unit that defines one of these names -- before its call or after it --
+  calls its own function.
 - String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
@@ -344,6 +348,8 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.
 - A call through a dereferenced function pointer (`(*fp)(x)`) or an element of an array of function pointers
   (`(ops[i])(x)`); call through the pointer itself (`fp(x)`).
+- A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`): the Python
+  reference refuses the declaration, which the C twin accepts -- a split recorded for follow-up.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18

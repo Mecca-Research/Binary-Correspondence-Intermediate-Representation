@@ -2041,6 +2041,57 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - both rails refuse a call through an element of an array of function pointers (`(ops[i])(x)`), and the twin
     refuses the declaration `int32_t (*t[2])(int32_t);` ("expected declarator name").
 
+  CF-RTWIDE (2026-09-30) widened the cfront emit -> re-parse round trip: 117 of the corpus's 167 fixtures reach its
+  fixed point, where 65 of 166 did. RED was measured on the parent (`5c49f334`).
+  - The defect: four idioms of the emit were not fixed points of their own re-lowering, and the gate excluded every
+    fixture that held one.
+    - The emit spells each plain memory access as a `memcpy`. Both rails refused a call of `memcpy`, `memmove` or
+      `memset` as a call to an undefined function (R18), so no emit with a memory access re-lowered.
+    - A structured loop emits as `while (1) { ...; if (!cond) break; ... }`, which a re-parse reads as a loop whose
+      condition is the constant 1 and whose test is a branch of its body. The emitter tested that constant again,
+      and the test re-lowered as one more branch each round. Its continue label `__cont_<id>` also collided with a
+      label the function defines: a re-parsed emit keeps the labels the emit before it placed, and a source label
+      may spell one. Such an emit defines one label twice and does not compile -- on the twin too, whose labels
+      are `__cont_<n>`.
+    - An aggregate local's zero baseline emitted as `= {0}`, which a re-parse reads as the baseline and a store of 0
+      to the first scalar. The next emit spelled that store out, one more each round.
+    - The classifier re-parsed an emit without the original's struct, union and enum definitions, which the emit
+      names by tag. The definition regex the volatile register maps used missed a nested member and an attribute,
+      and read a comment inside a definition (`struct align 1`) as a tag.
+  - Found beside them and fixed: the twin lowered a call of `malloc`, `calloc`, `realloc`, `aligned_alloc` or `free`
+    as the libc edge even when the unit defined that function, and a printf-family function defined after its call
+    as the external variadic; the oracle lowers both as calls of the unit's own function. The linkable emit
+    included `<math.h>` for any libc edge outside malloc/calloc/realloc/free, and `<math.h>` declares neither
+    `aligned_alloc` nor the string routines.
+  - RED: 9 of the 11 new or changed tests fail on the parent. The two that pass test the harness alone: the
+    definition reader, and the CF-RTVOL fixed point read through it.
+  - What landed:
+    - `memcpy`, `memmove` and `memset` lower on both rails as `<string.h>` libc edges (`c.call.libm:<name>`, a
+      `void *` result, opaque to R18, no link flag), unless the unit defines the function.
+    - The twin asks whether the unit defines a library name through one predicate over the whole unit
+      (`unit_defines`, a cached scan of the file-scope definitions), for the allocators, `free`, the string routines
+      and the printf family, as the oracle's `func_rets` holds every definition.
+    - Both emitters spell a loop whose condition is the constant 1 with no test, and name each loop's continue
+      label clear of every label the function defines (`__cont_<id>_<k>`).
+    - Both emitters spell the zero baseline as `= {}`, the C23 empty initializer, which GCC and Clang take in every
+      mode the harnesses use.
+    - The linkable emit includes `<string.h>` for a string routine and `<stdlib.h>` for `aligned_alloc`.
+    - The classifier supplies the original's definitions, read whole from the preprocessed source, and the
+      control-flow-not-idempotent exclusion is retired.
+  - Outcomes: 52 fixtures joined the round trip, the new `cfront_strmem.c` among them. The 50 still excluded are 42
+    with a masked-access guard and 8 whose emit names what only the original declares, or holds a form the re-parse
+    refuses. `cfront_strmem.c` lowers to one claim graph on the four targets, and each emit runs as the original
+    does. 15 injected defects -- 8 on the oracle and the classifier, 7 on the twin -- are each caught
+    (`tools/testing/faults/cfront-roundtrip.json`, now 22 faults).
+  Found, not fixed here (each a suggested follow-up):
+  - the re-parse refuses three forms the emit writes: a cast to a function-pointer type (`cfront_fnptrmember.c`,
+    `cfront_signedfnptr.c`), a `_Complex` type in a cast (`cfront_complexalign.c`), and `_BitInt` arithmetic beside
+    a bit-field's standard type (`cfront_bitint_bitfield.c`);
+  - the oracle refuses a unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long
+    size_t;`, common in freestanding code), which the twin accepts;
+  - the twin refuses a braced initializer of a function-pointer local (`uint32_t (*fp)(uint32_t) = {g1};`), which
+    the oracle lowers.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

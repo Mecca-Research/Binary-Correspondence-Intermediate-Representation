@@ -34,22 +34,29 @@ label addresses). On that projection the round trip IS a genuine fixed point -- 
 property, since the parser + emitter run a SECOND time on the emitter's own output and any op-graph
 asymmetry (an op dropped, doubled, or retyped on re-lowering) breaks it.
 
+The emit names the original's struct, union and enum types by their tags without defining them, so the
+classifier supplies the original's definitions (`_aggregate_defs`, read from the preprocessed source) ahead
+of every emit it re-parses. Three idioms of the emit are fixed points of their own re-lowering (CF-RTWIDE):
+  * a plain memory access emits as a `memcpy`, which re-lowers as the `<string.h>` libc edge
+    (`c.call.libm:memcpy`) -- it had been a call to an undefined function (R18), which excluded every emit
+    with a memory access;
+  * a structured loop emits as `while (1) { ...; if (!cond) break; ... }`, which re-lowers as a loop whose
+    condition is the constant 1 -- the emitter spells such a loop with no test (`_const_true`), where the
+    test had re-lowered as a branch of the body, one more each round -- and each loop's continue label is
+    clear of every label the function defines (`_cont_labels`), since a re-parsed emit keeps the labels the
+    emit before it placed and a function that defines one label twice does not compile;
+  * an aggregate local's zero baseline emits as the empty initializer `= {}`, which re-lowers as the
+    baseline alone -- `= {0}` also stores 0 to the first scalar, which the next emit spelled as a store, one
+    more each round.
+
 EXCLUDED fixtures (classified + pinned, exactly like a fairness gate -- a regression that GROWS the set
 is visible).  A fixture is excluded, never forced, when its emit legitimately leaves the re-parseable /
 idempotent subset:
-  * "emit-not-reparseable": the standalone emit references a name only the ORIGINAL source defined -- an
-    aggregate/enum type (`struct uart_regs`), a file-scope `#define` constant (`GAMMA`), an external
-    macro (`__ATOMIC_SEQ_CST`), or an in-body VLA whose extent the lowering rejects standalone. The emit
-    is faithful C in context but not a self-contained translation unit, so cfront cannot re-lower it.
-    Three of them -- the volatile register maps `cfront_rmw.c`, `cfront_bitfield.c` and
-    `cfront_bfcompound.c` -- are otherwise inside the idempotent subset: given the original's struct
-    definitions, their emits reach a fixed point (CF-RTVOL,
-    `test_volatile_member_emits_reach_a_fixed_point_given_their_definitions`).
-  * "control-flow-not-idempotent": the emit lowers a structured loop to `while (1) { ...; if (!cond)
-    break; ... }`. Re-parsing that re-introduces the `while(1)` wrapper + a fresh negation each round
-    (the `c.un.lnot` break-test count grows), and the emitter's `__cont_<N>` continue labels collide
-    with the re-parsed ones -- so the SECOND-round emit does not even compile. The loop scaffold is
-    genuinely not a fixed point; pinned with this reason rather than papered over.
+  * "emit-not-reparseable": the standalone emit, with the original's definitions, references a name only
+    the ORIGINAL source declared -- a file-scope object, a function it names by its source name, a struct
+    only ever declared (`struct opaque;`) -- or holds a form the standalone lowering refuses (a cast to a
+    function-pointer type, say). The emit is faithful C in context but not a self-contained translation
+    unit, so cfront cannot re-lower it.
   * "masked-guard-not-idempotent": the emit of a `masked` (§5.12 bounds-promoted) access is
     `a[BCIR_CHK(rid, i, n, "site")]`. `BCIR_CHK` is a runtime macro absent from the standalone emit, so a
     re-parse reads it as a `c.call:BCIR_CHK`, and a re-emit re-wraps the index -- the guard count grows
@@ -66,6 +73,7 @@ import re
 import subprocess
 
 from bcir.frontends.cfront import compile_unit
+from bcir.frontends.cfront.cpp import preprocess
 
 # Reuse the canonical fixture corpus + the header-resolution helper from the C-twin parity module, so a
 # fixture added there is auto-covered here (no second hand-maintained corpus to drift).
@@ -120,6 +128,45 @@ def _observable_signature(result) -> tuple:
     return tuple(sig)
 
 
+# One `__attribute__((...))`; an argument list inside it may nest once (`aligned(4)`).
+_ATTRIBUTE = re.compile(r"__attribute__\s*\(\((?:[^()]|\([^()]*\))*\)\)")
+# The head of a declaration that defines a struct, union or enum: the text before its `{` ends in the keyword
+# and the tag, if any (`struct hdr`, `typedef union`, `static const struct cfg`).
+_TAG_HEAD = re.compile(r"\b(?:struct|union|enum)\s*\w*\s*$")
+# What the definition scan reads: a brace, a semicolon, or a string or character literal, whose braces and
+# semicolons are no punctuation.
+_SCAN = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|[{};]')
+
+
+def _aggregate_defs(src: str, includes: dict | None = None) -> str:
+    """The original's file-scope struct, union and enum definitions, each the whole declaration that defines
+    one -- nested members, attributes and a typedef's names with it (`struct __attribute__((packed)) hdr
+    {...};`, `typedef struct t {...} __attribute__((packed)) T;`) -- read from the preprocessed source (its
+    macros expanded, its comments gone), for its emit, which names the tags without defining them."""
+    text = preprocess(src, includes=includes)
+    out, depth, start, tagged = [], 0, 0, False
+    for m in _SCAN.finditer(text):
+        ch, i = m.group(), m.start()
+        if ch == "{":
+            if depth == 0:
+                tagged = _TAG_HEAD.search(_ATTRIBUTE.sub(" ", text[start:i])) is not None
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and not tagged:
+                start = i + 1  # a function body ends its declaration
+        elif ch == ";" and depth == 0:
+            if tagged:
+                out.append(text[start : i + 1].strip())
+            start, tagged = i + 1, False
+    return "\n".join(out)
+
+
+def _with_defs(defs: str, emit_text: str) -> str:
+    """An emit headed by the original's definitions."""
+    return f"{defs}\n{emit_text}" if defs else emit_text
+
+
 def _reparse(emit_text: str):
     """Re-lower the emitted C through cfront, or None if it leaves the re-parseable subset (it references
     a name only the original source defined, or a construct the standalone lowering rejects). A unit that
@@ -128,8 +175,9 @@ def _reparse(emit_text: str):
     defining is such a name: a pointer to it re-lowers as a pointer to an INCOMPLETE type (CF-SELFREF),
     but the member accesses the original lowered to byte offsets then re-lower as raw pointer arithmetic,
     so the emit is not a self-contained unit of its own sublanguage."""
-    defined = set(re.findall(r"\b(?:struct|union)\s+(\w+)\s*\{", emit_text))
-    if any(tag not in defined for tag in re.findall(r"\b(?:struct|union)\s+(\w+)", emit_text)):
+    plain = _ATTRIBUTE.sub(" ", emit_text)  # `struct __attribute__((packed)) hdr {` defines `hdr`
+    defined = set(re.findall(r"\b(?:struct|union)\s+(\w+)\s*\{", plain))
+    if any(tag not in defined for tag in re.findall(r"\b(?:struct|union)\s+(\w+)", plain)):
         return None
     try:
         r = compile_unit(emit_text, check_clang=False)
@@ -141,12 +189,9 @@ def _reparse(emit_text: str):
 def _nonidempotent_construct(emit_text: str) -> str | None:
     """A statically-detectable emit construct known to leave the IDEMPOTENT subset (vs the re-PARSEABLE
     subset `_reparse` handles). Detected by inspecting `e1` directly, so the reason is precise and does
-    not depend on the failure mode of a second round:
-      * `while (1)`  -- the structured-loop scaffold (`while(1){...; if(!cond) break; ...}`) re-lowers,
-                        growing the break-negation each round (and the 2nd-round emit fails to compile);
-      * `BCIR_CHK`   -- a §5.12 masked-access guard macro, re-parsed as a call and re-wrapped each round."""
-    if "while (1)" in emit_text:
-        return "control-flow-not-idempotent"
+    not depend on the failure mode of a second round: `BCIR_CHK`, a §5.12 masked-access guard macro,
+    re-parsed as a call and re-wrapped each round. (The loop scaffold `while (1)` was one too, until its
+    emit became a fixed point, CF-RTWIDE.)"""
     if "BCIR_CHK" in emit_text:
         return "masked-guard-not-idempotent"
     return None
@@ -156,7 +201,7 @@ def _nonidempotent_construct(emit_text: str) -> str | None:
 # guard), set comfortably below the included count `test_roundtrip_smoke_and_exclusion_set_is_pinned`
 # pins exactly -- so a benign corpus reshuffle does not trip it, but a wholesale collapse (a regression
 # that pushes the whole corpus into FALLBACK, say) does.
-_MIN_EXERCISED = 50
+_MIN_EXERCISED = 100
 
 
 def _classify(fx: str) -> tuple[str, str]:
@@ -176,15 +221,16 @@ def _classify(fx: str) -> tuple[str, str]:
         return ("excluded", f"original-not-lowerable:{type(e).__name__}")
     if not r1.is_clean:
         return ("excluded", "original-not-clean")
+    defs = _aggregate_defs(src, _includes_for(fx))
     e1 = _emit_joined(r1)
     construct = _nonidempotent_construct(e1)
     if construct:
         return ("excluded", construct)
-    g2 = _reparse(e1)
+    g2 = _reparse(_with_defs(defs, e1))
     if g2 is None:
         return ("excluded", "emit-not-reparseable")
     e2 = _emit_joined(g2)
-    g3 = _reparse(e2)
+    g3 = _reparse(_with_defs(defs, e2))
     if g3 is None:
         return ("excluded", "emit2-not-reparseable")
     s2, s3 = _observable_signature(g2), _observable_signature(g3)
@@ -311,7 +357,6 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     _KNOWN = (
         "emit-not-reparseable",
         "emit2-not-reparseable",
-        "control-flow-not-idempotent",
         "masked-guard-not-idempotent",
         "original-not-clean",
         "original-not-lowerable:",
@@ -336,24 +381,20 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # declared temporaries over re-parsed locals of the same `t<rid>` name (`int t4109;` then
     # `unsigned _BitInt(12) t4109 = s * a;`), so its re-parse mixed `_BitInt` with `int` and was refused;
     # the emitter now names a temporary clear of every declared name -- a coverage gain.
-    assert len(included) == 65, (
-        f"included-set size changed from the pinned 65 to {len(included)} -- a "
+    # 117 since CF-RTWIDE: the classifier supplies the original's definitions, a `memcpy` re-lowers as the libc
+    # edge, the loop scaffold and the `= {}` zero baseline re-lower as themselves -- 52 fixtures joined (51 of the
+    # corpus and the new `cfront_strmem.c`), and the control-flow-not-idempotent reason retired (of its 37
+    # fixtures, 17 joined, 18 hold a masked guard as well and two name what only the original declares).
+    assert len(included) == 117, (
+        f"included-set size changed from the pinned 117 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )
 
 
-# The volatile register maps whose standalone emit is excluded only because it names a struct the original
-# defines: every access emits as the one `*(volatile T *)((const volatile char *)p + off)` (CF-RTVOL).
+# The volatile register maps whose emit names a struct the original defines: every access emits as the one
+# `*(volatile T *)((const volatile char *)p + off)` (CF-RTVOL).
 _VOLATILE_MEMBER = ("cfront_rmw.c", "cfront_bitfield.c", "cfront_bfcompound.c")
-
-
-def _aggregate_defs(src: str) -> str:
-    """The original's struct and union definitions (`struct ctl { ... };`), supplied to its emit, which
-    names the tags without defining them."""
-    return "\n".join(
-        m.group(0) for m in re.finditer(r"\b(?:struct|union)\s+\w+\s*\{[^{}]*\}\s*;", src)
-    )
 
 
 def _accesses(result) -> tuple:
@@ -415,16 +456,16 @@ def test_volatile_member_emits_reach_a_fixed_point_given_their_definitions():
     `*(volatile T *)((const volatile char *)p + off)`. That re-lowered as a pointer computation plus an
     access at offset 0, so every round added a `c.cast` + `c.bin.add` layer per access; and a re-parsed
     emit names its locals `t<rid>`, the spelling of the emitter's own temporaries, so the second emit
-    redeclared them and did not compile. The standalone emit stays excluded (it names a struct it does not
-    define); supplied with the original's definitions, over three rounds:
+    redeclared them and did not compile. Supplied with the original's definitions (as the classifier supplies
+    them, CF-RTWIDE: they are in the gate's included set), over three rounds:
       * every re-lowering has exactly the original's accesses -- one load or store, through the same
         parameter, at the same member offset, with the same volatile device-access contract;
       * the observable signature is a fixed point;
       * every emit declares each name once and, where a C compiler is visible, compiles."""
     for fx in _VOLATILE_MEMBER:
-        assert _classify(fx) == ("excluded", "emit-not-reparseable"), fx
+        assert _classify(fx) == ("included", ""), fx
         src = open(f"{_C}/{fx}", encoding="utf-8").read()
-        defs = _aggregate_defs(src)
+        defs = _aggregate_defs(src, _includes_for(fx))
         r1 = compile_unit(src, check_clang=False, includes=_includes_for(fx))
         assert any(_accesses(r1)), f"{fx}: no device access to re-lower"
         rounds = [r1]
@@ -520,3 +561,147 @@ def test_branch_values_round_trip_as_a_fixed_point():
     if _CC:
         err = _c_errors(e1)
         assert not err, f"the emit does not compile:\n{err}\n{e1}"
+
+
+# CF-RTWIDE: every loop form with a `continue` in it, nested loops, a switch in a loop, the two constant-1
+# loops, and a label of the function's own that the test spells as the emitter's continue label of the first
+# loop (`__cont_<id>`, read off a first emit) -- the emit had defined that label twice.
+_LOOPS = r"""#include <stdint.h>
+uint32_t f(uint32_t n, uint32_t m) {
+  uint32_t s = 0;
+  for (uint32_t i = 0; i < n; i++) { if (i & 1u) continue; s += i; }
+  while (m > 3u) { m -= 2u; if (m == 9u) continue; s ^= m; }
+  do { s++; if (s & 4u) continue; s += 2u; } while (s < 40u);
+  for (;;) { if (s > 1000u) break; s = s * 2u + 1u; }
+  while (1) { s--; if ((s & 7u) == 0u) break; }
+  for (uint32_t i = 0; i < 3u; i++) {
+    for (uint32_t j = 0; j < i; j++) { if (j == 1u) continue; s += j; }
+    switch (i) { case 0: continue; case 1: s += 5u; break; default: s ^= 3u; }
+  }
+  if (s == 0u) goto LABEL;
+  s += 1u;
+LABEL:
+  return s;
+}
+"""
+# the loops whose condition is no constant, which the first emit tests; and every `break` the emits hold -- those
+# tests, the two explicit breaks of the constant-1 loops and the switch's
+_LOOPS_TESTED = 5
+_LOOPS_BREAKS = 8
+
+
+def _labels_defined(emit_text: str) -> list:
+    """The labels an emit defines, in order (`case`/`default` are no labels of the function's)."""
+    return [
+        m.group(1)
+        for m in re.finditer(r"^\s*(\w+):(?!:)", emit_text, re.M)
+        if m.group(1) not in ("case", "default")
+    ]
+
+
+def test_loop_emits_reach_a_fixed_point_and_compile():
+    """CF-RTWIDE. The emit spells a loop `while (1) { ...; if (!cond) break; ... }`, which re-lowers as a loop
+    whose condition is the constant 1 and whose test is a branch of its body: the emitter now spells a loop of
+    that condition with no test, where it had tested the constant again, and that test re-lowered as one more
+    branch each round. Each loop's continue label is clear of every label the function defines -- a re-parsed
+    emit keeps the labels the emit before it placed, and a source label may spell one -- where the emit had
+    defined `__cont_<id>` twice and did not compile. Over three rounds: the first emit tests exactly the loops
+    whose condition is no constant and every later one none (their tests are branches now), every emit holds the
+    same breaks, defines each label once, re-lowers clean and, where a C compiler is visible, compiles; the
+    observable signature is a fixed point from the first re-lowering on."""
+    first = compile_unit(_LOOPS.replace("LABEL", "done"), check_clang=False)
+    clash = re.search(r"__cont_\d+", _emit_joined(first)).group(0)
+    r1 = compile_unit(_LOOPS.replace("LABEL", clash), check_clang=False)
+    assert r1.is_clean
+    rounds, sigs = [r1], []
+    for n in range(1, 4):
+        e = _emit_joined(rounds[-1])
+        labels = _labels_defined(e)
+        assert len(labels) == len(set(labels)), f"e{n} defines a label twice: {labels}\n{e}"
+        assert clash in labels, f"e{n} lost the function's own label {clash}:\n{e}"
+        tested = _LOOPS_TESTED if n == 1 else 0
+        assert e.count("if (!") == tested, f"e{n} tests other than {tested} loops:\n{e}"
+        assert e.count("break;") == _LOOPS_BREAKS, (
+            f"e{n} holds other than {_LOOPS_BREAKS} breaks:\n{e}"
+        )
+        if _CC:
+            err = _c_errors(e)
+            assert not err, f"e{n} does not compile:\n{err}\n{e}"
+        g = _reparse(e)
+        assert g is not None, f"e{n} did not re-lower cleanly:\n{e}"
+        rounds.append(g)
+        sigs.append(_observable_signature(g))
+    assert sigs[0] == sigs[1] == sigs[2], f"observable signature drifted: {sigs}"
+
+
+# CF-RTWIDE: aggregate locals a brace initializer names only in part -- positional, designated, a union's first
+# member, a member array's first element -- each lowered as the object's zero baseline and one store per
+# initialized scalar.
+_ZERO_BASELINE = r"""#include <stdint.h>
+struct zb { uint32_t a; uint16_t b; uint8_t c[3]; };
+union zu { uint8_t c; uint32_t w; };
+struct zw { uint32_t v[4]; };
+uint32_t f(uint32_t x) {
+  struct zb p = { x, (uint16_t)(x + 1u) };
+  union zu u = { (uint8_t)x };
+  struct zw a = { { x } };
+  struct zb q = { .c = { 1u, 2u } };
+  return p.a + p.b + p.c[2] + u.w + a.v[3] + q.c[1] + q.a;
+}
+"""
+
+
+def test_the_zero_baseline_re_lowers_as_itself():
+    """CF-RTWIDE. An aggregate local's zero baseline emits as the empty initializer `= {}`, which re-lowers as the
+    baseline alone. The emit had spelled it `= {0}`, which re-lowers as the baseline AND a store of 0 to the
+    first scalar -- a store the next emit spelled out, so every round added one. Over three rounds the emit
+    declares each of the four objects `= {}`, re-lowers to the same stores, and, where a C compiler is visible,
+    compiles."""
+    defs = _aggregate_defs(_ZERO_BASELINE)
+    rounds = [compile_unit(_ZERO_BASELINE, check_clang=False)]
+    stores = []
+    for n in range(1, 4):
+        e = _with_defs(defs, _emit_joined(rounds[-1]))
+        assert e.count(" = {};") == 4 and "{0}" not in e, f"e{n}:\n{e}"
+        if _CC:
+            err = _c_errors(e)
+            assert not err, f"e{n} does not compile:\n{err}\n{e}"
+        g = _reparse(e)
+        assert g is not None, f"e{n} did not re-lower cleanly:\n{e}"
+        rounds.append(g)
+        (lf,) = g.lowered.functions.values()
+        stores.append(sum(c.op == "c.call.libm:memcpy" for c in lf.claims))
+    assert stores[0] == stores[1] == stores[2] > 0, stores
+    sigs = [_observable_signature(g) for g in rounds[1:]]
+    assert sigs[0] == sigs[1] == sigs[2], sigs
+
+
+def test_definitions_are_read_whole_from_the_preprocessed_source():
+    """CF-RTWIDE: the classifier supplies each file-scope struct, union and enum definition whole -- nested and
+    anonymous members, `__attribute__((...))` before the tag or after the brace, a typedef's names, a macro in
+    an extent -- from the preprocessed source, so a comment inside a definition (which once read as a tag named
+    by `struct align ...`) and a brace in a string literal cost nothing; a function, a prototype and a table
+    definition are no definitions of a type."""
+    src = r"""#include <stdint.h>
+#define N 3
+/* struct commented { int x; }; */
+struct __attribute__((packed)) hdr { uint8_t c; uint32_t n; };  // struct align 1
+struct outer { union { uint32_t w; struct { uint16_t lo, hi; }; }; struct { int x; } pt; uint8_t b[N]; };
+typedef struct tp { uint8_t c; } __attribute__((packed, aligned(4))) TP;
+enum mode { M_A, M_B = 4 };
+static const uint32_t tab[2] = { 1u, 2u };
+uint32_t g(const char *s);
+uint32_t f(struct hdr *h) { const char *s = "}{;"; return h->n + g(s) + tab[1]; }
+struct later { struct outer o; };
+"""
+    want = [
+        "struct __attribute__((packed)) hdr { uint8_t c; uint32_t n; };",
+        "struct outer { union { uint32_t w; struct { uint16_t lo, hi; }; }; struct { int x; } pt; uint8_t b[3]; };",
+        "typedef struct tp { uint8_t c; } __attribute__((packed, aligned(4))) TP;",
+        "enum mode { M_A, M_B = 4 };",
+        "struct later { struct outer o; };",
+    ]
+    unspaced = [
+        re.sub(r"\s", "", d) for d in _aggregate_defs(src).splitlines()
+    ]  # the preprocessor's spacing
+    assert unspaced == [re.sub(r"\s", "", d) for d in want], unspaced
