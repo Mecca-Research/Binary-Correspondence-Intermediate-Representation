@@ -1846,19 +1846,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   The five new tests of these two slices fail on the base below them, and 31 injected defects, on both rails,
   are each caught (`tools/testing/faults/cfront-operands.json`). Of the 34 tests this whole change set adds or
   extends, 33 fail on the parent; the 34th, an existing refusal test it extends, already held there.
-  Found, not fixed here (each a suggested follow-up):
-  - a call through a function pointer returning void (`fp();`, `o.step();`) emits `uint32_t t = fp();` on
-    both rails, which does not compile; the twin records "returns void" and "return not captured" alike;
-  - a conditional whose arms are function designators (`s ? f : g`) is typed `uint32_t` on both rails;
-  - the round trip's second emit of a control-flow fixture redeclares its `__cont_<N>` labels, and a
-    non-volatile struct fixture stays excluded because its `memcpy` re-parses as a call to an undefined
-    function;
-  - a comparison with a null pointer constant (`p == 0`) compares the pointer with an `int` temp in both
-    emits, a constraint violation (C11 6.5.9p2) that Clang and GCC only warn about;
-  - both rails accept a compound assignment or an increment of a struct (`a += 5`, `a++`) and a struct
-    converted to an integer (`uint32_t k = a;`), which Clang rejects;
-  - a null pointer constant passed through a function pointer, or to `free` or `realloc`, is still an `int`
-    temp in both emits, which Clang and GCC reject.
+  Found beside them, and each closed by a later slice below: the round trip's continue labels and `memcpy`
+  (CF-RTWIDE); the undeclared calls, the functions no emit declared, the prototypes' `const` and unnamed
+  parameters, and the anonymous structs (CF-DECLS, CF-ANON); the integer constants, file-scope arrays, nested
+  braces and thread storage (CF-INTCONST, CF-GARRAY, CF-GBRACE, CF-TLS); and the void callbacks, the
+  function-designator arms of `?:`, the null pointer constants and the struct arithmetic (CF-VOIDCB, CF-FNSEL,
+  CF-NULLCALL, CF-STRUCTARITH).
 
   The ring drain race, the G2 residual, transport replay and measured floors (2026-09-30) closed the
   GEM+ items that needed no hardware, and reconciled the roadmap with the harness.
@@ -2259,6 +2252,114 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     (`an array is initialized by a brace list or a string literal`);
   - both rails accept a malformed integer suffix (`1lL`), and the twin names a designator's unknown member
     without its name (`no member of that name to designate`, the oracle's `no member named 'z' to designate`).
+
+  CF-VOIDCB, CF-FNSEL, CF-NULLCALL and CF-STRUCTARITH (2026-09-30) typed what goes through a function pointer --
+  its call, the arms of `?:` that point to functions, the null pointer constants passed or compared -- and refused
+  a struct or union where C takes a scalar, on both rails. The twin's function-pointer type now records a `void`
+  return and the whole function type: `bcir_ctype.fp_sig` indexes a table of return and parameter types, filled
+  wherever a declarator, a typedef, a parameter or a struct member is parsed (`sig_add`, `fp_param_list`).
+  CF-VOIDCB made a call through a pointer to a void function a call with no result.
+  - The defect: a call through a function-pointer local, parameter or global, or a struct member by `.`, `->` or
+    a loaded pointer chain, whose function returns `void`, lowered on both rails as a claim writing a `uint32_t`
+    temp, and each emit declared `uint32_t t = cb();`, which does not compile. The twin read a zero return width
+    as both `void` and a return it had not captured.
+  - RED: on the parent both rails refuse `cfront_voidcallback.c` ("one arm of `?:` is void and the other is
+    not"), since `c ? cb() : (void)0` had a non-void arm; a unit of `cb(); o.step();` lowers digest-equal on both,
+    and both emits declare the call's result.
+  - What landed: the call writes no result, and its value is the void value a direct void call has
+    (`_VOID_RID`, the twin's `void_temp`), so a void conditional and `return cb();` in a void function take it;
+    each emit spells a bare call. The twin sets `fp_ret_void` where a return type is captured -- a declarator, a
+    typedef, a parameter, a struct member and the member's `field` copy (`fp_capture_ret`). No digest moves: a
+    claim's result is not in its record.
+  - Outcomes: `cfront_voidcallback.c`, and a unit of structs of several callbacks, `p->ops->step` chains and a
+    file-scope ops table, run function by function on both emits.
+  CF-FNSEL typed the arms of `?:` that point to functions.
+  - The defect: `s > 3u ? tw : th`, whose arms are function designators (C11 6.3.2.1p4) or function-pointer
+    objects, lowered on both rails to a `c.select` typed as an integer (`uint32_t` on the oracle, `uint64_t` on
+    the twin on a 64-bit target), and the emit's `uint32_t t = (c ? tw : th); fp = t;` does not compile. Arms of
+    two function types were not refused.
+  - RED: on the parent the rails lower `cfront_fnselect.c` digest-equal and neither emit compiles; both lower
+    every unit of two function types.
+  - What landed: a designator has its definition's function type and a function-pointer object or a select of
+    them its declaration's; the select is that pointer, and a null pointer arm is typed as it (6.5.15p6). Arms of
+    two types -- a return, a parameter count or a parameter's type, compared as `_Generic` compares types -- are
+    refused with one reason on both rails (6.5.15p3). The twin synthesizes a typedef for a designator's type
+    (`designator_sig`); `res_sig` and `sig_same` are the oracle's `_fn_type` and `_fn_key`. Only temps' C types
+    move.
+  - Found and fixed on the way: the change's first cut split the rails on three arm pairs its own probes found.
+    The oracle had left a designator untyped when a `typeof` or a `va_list` types one of its parameters, which
+    its parameter pre-scan cannot type (it now reads the lowered definition's); it had typed a function pointer
+    read from a member, which the twin loads as an integer (now neither rail types one); and the twin had
+    compared a `va_list` parameter as the integer of its size.
+  - Outcomes: `cfront_fnselect.c` returns its selects to the driver, which compares them with the original's and
+    calls them; a unit calling through selects in place -- designators of functions with `typeof` and `va_list`
+    parameters among them -- runs on both emits.
+  CF-NULLCALL typed the null pointer constants CF-NULLPTR and CF-NULLARG had left an `int`.
+  - The defect: the constant 0 compared with a pointer by `==` or `!=` (C11 6.5.9p5), passed through a function
+    pointer or a function-pointer member to a pointer parameter (6.5.2.2p7), given to `free` or as `realloc`'s
+    pointer, or the arm of a select beside a pointer, was an `int` temp in both emits: a pointer compared with an
+    integer, which Clang and GCC only warn about, or an integer passed for a pointer, which they reject.
+  - RED: on the parent the twin refuses `cfront_nullconst.c` (`unknown field`, the `p -= 1` below); without
+    `nc_step` the rails agree, and neither emit builds under Clang or GCC with the pointer/integer mixes made
+    errors.
+  - What landed: each such constant is typed as the pointer it converts to -- the oracle's `_null_pointer` at
+    each site; the twin's `null_compared`, `null_pointer_sig` over the pointer's recorded parameters,
+    `null_arms_as`, and the `free` / `realloc` branch of `p_call`. Only temps' C types move.
+  - Outcomes: `cfront_nullconst.c` runs function by function on both emits, built under Clang with
+    `-Werror=int-conversion -Werror=pointer-integer-compare` and under GCC with `-Werror`.
+  CF-STRUCTARITH refused a struct or union where C takes a scalar.
+  - The defect: both rails lowered `a += 5`, `a++`, `a + 1`, `-a`, `a && v`, `uint32_t k = a;`, `(uint32_t)a`,
+    `return a;` from a function returning a scalar and `g(a)` for a scalar parameter, and Clang rejects each emit.
+  - RED: the parent's oracle lowers every unit of the refusal test, and its twin every unit but `a -= 1u`, which
+    it refused only by reading `-=` as `->` (below).
+  - What landed: a struct or union operand of an arithmetic, bitwise, shift, relational, equality, logical or
+    unary operator, a compound assignment or an increment is refused with one reason on both rails
+    (`_scalar_operands`, the twin's `agg_operand`), and one converted to a scalar -- an initializer, braced or
+    not, an assignment, a list element, a `return`, a cast, an argument -- with another (`_scalar_value`,
+    `scalar_value_ok`). A struct copied whole, its members in arithmetic, and a pointer to structs stepped and
+    compared still lower digest-equal. The twin refuses the operand of `-`, `~` and `!` once the unit is parsed
+    (`agg_unary_operands`), and the new ctype fields and the member's void flag sit in padding. On the CF-BUF
+    snapshot this change was first built on, the same check in the unary path made GCC stop inlining
+    `p_primary` into `p_unary_inner`; with the ctype grown by the new fields, one nesting level of `(` took
+    16,512 bytes of stack under GCC ASan, not 13,776, and `cfront_sec_deepnest.c` overflowed the native stack
+    before the depth guard (`tools/c/sanitize_cfront.sh`). On CF-SPLIT2.1's frames the change leaves the
+    recursive frames as they are: the fixture runs clean down to a 5,420 KiB stack, as it does without it.
+  - Found and fixed on the way: the twin's statement parser read any two-character token after a name that
+    starts with `-` as `->`, so `p -= 1` of a pointer to a struct was refused (`unknown field`), which the oracle
+    lowers; `nc_step` in `cfront_nullconst.c` holds it.
+  The G10 escape rows stay at the parent's values: each fixture's indirect calls go through a pointer that holds
+  one function, and calls through a select, several callbacks or an ops table are the tests' own units. The new
+  tests fail on the parent, and 46 injected defects, on both rails, are each caught
+  (`tools/testing/faults/cfront-calls.json`).
+  Found, not fixed here (each a suggested follow-up):
+  - a void value used as a value -- `uint32_t k = f();`, `f() + 1u`, `!f()`, `(uint32_t)f()` of a void function,
+    called directly or, now, through a pointer -- lowers digest-equal on both rails, and neither emit compiles;
+    the oracle's verifier fails the unit and the twin's passes it; `if (f())` and `return f();` from a non-void
+    function lower on both;
+  - a struct or union as a controlling expression (`if (a)`, `while (a)`, `for (; a;)`, `a ? x : y`,
+    `switch (a)`), as the operand of unary `+` (`struct s b = +a;`) or of `__real__` lowers on both rails, which
+    Clang rejects;
+  - an increment of a struct in memory (`(*p)++`, `p[0]++`, `p->in++`, `h.in++`, `g_a[1]++`) is refused on both
+    rails with different reasons (the oracle: "inc/dec of this lvalue form is a follow-on"; the twin: a parse
+    error);
+  - a function pointer read from a member as a value (`op_t g = o.fn;`) is a `uint32_t` temp in the oracle's
+    emit and a `uint64_t` in the twin's, neither of which compiles, and as an arm of `?:` it is compared on
+    neither rail, so a member arm beside a function of another type is not refused;
+  - a call to a function returning a function pointer types its result `uint32_t` on both rails
+    (`uint32_t t = bcir_pick(s);`), which Clang rejects; the oracle refuses a `typedef T *(*pf)(T *)`, and the
+    twin types a call through one as an integer;
+  - both rails drop `const` from a function-pointer declarator's parameter (`uint32_t (*fn)(const uint32_t *)`
+    is emitted taking `uint32_t *`), so assigning it a function that takes `const uint32_t *` does not compile;
+  - the twin refuses a postfix on the struct a call through a function pointer returns (`m(s).a`), which the
+    oracle lowers; its reason is now the conversion refusal, since `return m(s)` is checked before `.a`;
+  - the twin refuses a designator of a function defined after its use ("undefined identifier"), which the
+    oracle lowers when a prototype declares it;
+  - a variadic function's designator as an arm of `?:` is still an integer select on both rails, and both
+    refuse a variadic function-pointer declarator (`uint32_t (*g)(uint32_t, ...)`);
+  - an array compared with the constant 0 (`garr == 0`, `arr != 0`) compares it with an `int` temp in both
+    emits;
+  - `void *vp = malloc(4u);` lowers to two claim graphs: the twin records an allocation extent for the
+    `void *` (two claims), the oracle does not.
 
 ---
 

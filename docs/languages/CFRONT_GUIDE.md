@@ -310,6 +310,12 @@ _mm_sfence();                      //                   store (release) fence ->
 - Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
   function pointers — as a `typedef`'d parameter, a `struct` member (HAL dispatch table), **and as a
   local variable** (`RET (*f)(PARAMS) = fn;`, reassignable, called indirectly, return-type-signed).
+  A call through a pointer to a `void` function has no value, as a direct void call has none
+  (`cb();`, `c ? cb() : (void)0`, `return cb();` in a void function). `c ? f : g` whose arms are
+  function designators or function-pointer objects is a pointer to their one function type; arms that
+  point to functions of different types are refused. The constant `0` compared with a pointer by `==`
+  or `!=`, passed through a function pointer to a pointer parameter, or given to `free` and as
+  `realloc`'s pointer is a null pointer of that type.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
