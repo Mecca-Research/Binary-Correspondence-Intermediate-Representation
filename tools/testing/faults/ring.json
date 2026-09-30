@@ -157,6 +157,27 @@
       "new": "        return read.payload[:-1] + bytes([read.payload[-1] ^ 1])\n",
       "old": "        return read.payload\n",
       "path": "bcir/tests/ring_fixtures.py"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: a consumer reads the supervisor's stop after its EMPTY, so it can quit with records the last producer published while it was descheduled",
+      "new": "      if (draining || __atomic_load_n(&sh->stop, __ATOMIC_ACQUIRE)) break;\n",
+      "old": "      if (draining) break;\n",
+      "path": "runtime/c/test_ring.c"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "the drain window is never opened, so the late-stop interleaving is left to preemption",
+      "new": "        window = []\n",
+      "old": "        window = list(declared)\n",
+      "path": "bcir/tests/ring_fixtures.py"
+    },
+    {
+      "expects": "ring.concurrent.violations",
+      "label": "C ring harness: the consumer never sleeps in the drain window, so a window run tests nothing",
+      "new": "      if (!napped && sh->window_us && 0) {\n",
+      "old": "      if (!napped && sh->window_us && __atomic_load_n(&sh->window_open, __ATOMIC_ACQUIRE)) {\n",
+      "path": "runtime/c/test_ring.c"
     }
   ]
 }

@@ -1427,6 +1427,12 @@ def parse_c_envelope(line: str) -> tuple[TelemetryEnvelope | None, bytes, str]:
     return env, bytes.fromhex(kv["hex"]), "BCIR_OK"
 
 
+# The drain window (runtime/c/test_ring.c, `procs_shared`): the consumer sleeps across the end of
+# the stream while the last producer finishes and the supervisor sets `stop`, so a consumer that
+# decides it is done on a `stop` it read after its EMPTY quits with records undrained on every
+# run, not only when a busy host preempts it there (the race AArch64 CI hit once).
+DRAIN_WINDOW_US = 150000
+
 STRESS_RUNS = (
     ("--stress", "bp"),
     ("--stress", "ow"),
@@ -1434,6 +1440,8 @@ STRESS_RUNS = (
     ("--procs", "kill-producer", "ow"),
     ("--procs", "kill-consumer", "bp"),
     ("--procs", "kill-consumer", "ow"),
+    ("--procs", "kill-producer", "ow", f"window={DRAIN_WINDOW_US}"),
+    ("--procs", "kill-consumer", "ow", f"window={DRAIN_WINDOW_US}"),
 )
 
 
@@ -1445,7 +1453,10 @@ def c_concurrent(
     the host has no POSIX threads/processes (exit 3: UNAVAILABLE, measured by CI's Linux jobs)."""
     out = []
     for run_args in STRESS_RUNS:
-        argv = [exe, *run_args, str(records), str(seed)]
+        lead = [arg for arg in run_args if not arg.startswith("window=")]
+        declared = [arg.split("=", 1)[1] for arg in run_args if arg.startswith("window=")]
+        window = list(declared)
+        argv = [exe, *lead, str(records), str(seed), *window]
         try:
             run = _run(argv, timeout=300)
         except RuntimeError as exc:
@@ -1457,6 +1468,9 @@ def c_concurrent(
         fields = dict(part.split("=", 1) for part in line.split() if "=" in part)
         try:
             violations = int(fields["violations"])
+            # A window run must have run with the window it declares, and slept in it (L2).
+            if declared and (fields["window_us"] != declared[0] or int(fields["window_naps"]) < 1):
+                violations = max(violations, 1)
         except (KeyError, ValueError):
             violations = 1
         if run.returncode not in (0, 1):
