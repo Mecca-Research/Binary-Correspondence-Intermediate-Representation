@@ -2053,7 +2053,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       label clear of every label the function defines (`__cont_<id>_<k>`).
     - Both emitters spell the zero baseline as `= {}`, the C23 empty initializer, which GCC and Clang take in every
       mode the harnesses use. `test_local_aggregate_initializers_oracle` still asserted `= {0}`, and failed on this
-      tree: only the slice's focused tests had run. CF-RTWIDE.1 asserts `= {}`.
+      tree: only the slice's focused tests had run. CF-RTWIDE.1 asserts `= {}`. The aggregate check of
+      `tools/c/check_runtime.sh` looked for `= {0}` as well, and only the final serialized gates ran it;
+      CF-RTWIDE.2 looks for `= {}`.
     - The linkable emit includes `<string.h>` for a string routine and `<stdlib.h>` for `aligned_alloc`.
     - The classifier supplies the original's definitions, read whole from the preprocessed source, and the
       control-flow-not-idempotent exclusion is retired.
