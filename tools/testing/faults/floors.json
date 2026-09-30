@@ -14,7 +14,8 @@
     "bcir.tests.test_gemplus_floors:test_the_ratio_floors_are_timed_beside_their_values",
     "bcir.tests.test_gemplus_floors:test_the_verifier_floor_re_derives_every_step",
     "bcir.tests.test_gemplus_floors:test_the_audit_floors_are_the_fixtures_the_cases_build",
-    "bcir.tests.test_gemplus_floors:test_the_native_floor_writes_the_whole_realization"
+    "bcir.tests.test_gemplus_floors:test_the_native_floor_writes_the_whole_realization",
+    "bcir.tests.test_gemplus_floors:test_the_roadmap_lists_the_harness_floors"
   ],
   "faults": [
     {
@@ -149,6 +150,13 @@
       "new": "  size_t wrote = cap / 2; /* the whole realization, and the size the grader holds to 32 + 120n + 4 */\n",
       "old": "  size_t wrote = cap; /* the whole realization, and the size the grader holds to 32 + 120n + 4 */\n",
       "path": "runtime/c/test_kplan.c"
+    },
+    {
+      "expects": "test_the_roadmap_lists_the_harness_floors",
+      "label": "the roadmap's list of measured-floor rows drifts from the harness (a row dropped from \u00a70.3)",
+      "new": "audit.mixed-wave-token-eft.scale4     audit.iterative-phase-dag.scale4\n```",
+      "old": "audit.mixed-wave-token-eft.scale4     audit.iterative-phase-dag.scale4\nverify.plan.scope.overhead\n```",
+      "path": "docs/research/BCIR_GEMPLUS_ROADMAP.md"
     }
   ]
 }

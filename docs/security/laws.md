@@ -424,6 +424,15 @@ checksum repair, and its corpus holds v1, v2 and v3 plans. The first v2 seed cho
 ran 12 inputs per second; the small one runs 585. A seed's size is the campaign's budget. The
 Python decoder campaign had no plan surface at all; it has one now (`plan`, a v3 movement plan,
 sealed).
+Ring drain instance (2026-09-30): the two-process harness's drain race (a consumer that read `stop`
+after its EMPTY) needed a preemption at one instruction, so no test could count on it: the gate
+could not fire on demand. A `--procs` run now takes a drain window that forces the interleaving on
+every run, and the window is itself held to firing. A window run must report the window it
+declared and at least one nap inside it, or the run is a violation. The table's first sweep caught
+two of the three new faults. The third, a harness that never opens its window, passed because the
+check compared the report against the argv it built, which the fault had also emptied. The check now
+compares against the window the run declared. Faults: the late `stop` read, a consumer that never
+naps, a run that drops its window (`ring.json`, 25 of 25).
 **Port note:** identical in any language; fault injection is part of the
 gate's definition of done.
 
@@ -904,6 +913,13 @@ the twin parses in one pass, so it types calls once the unit is parsed. A fixtur
 defined before their callers passes a twin that types from earlier definitions alone, and so would
 not witness that pass. `cfront_nullarg_link.c` calls callees defined after the call, prototyped
 only, and variadic. Faults: `TN1`-`TN3`, `ON3`, `ON4`.
+Transport replay instance (2026-09-30): the envelope log's first fault sweep caught 5 of 7. The
+two defects it missed, an unchecked digest and hex read by the host parser, were masked by other
+laws: every tamper case also changed the event count or the report, so a replay that skipped the
+digest or the grammar still refused each case, for another reason. Each case now isolates one law. A
+resealed log (`_reseal` recomputes the count and the digest after the tamper) reaches the grammar
+and report laws alone, and a forged record the intake decides exactly as the original reaches only
+the digest. Faults: `replay.json`, 7 of 7.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1658,6 +1674,21 @@ number it bounds -- same placement, same host state -- and on a host that cannot
 hold those fixed (a virtualized 4-vCPU runner) the honest report is the range and
 the refusal to attribute, which is what the row, the ABI spec and the roadmap now
 say. The claim was retracted before the PR opened.
+GEM+ floors instance (2026-09-30): thirteen harness rows had no lower bound, and the harness's
+convention of a frozen `bound` could not carry one for them. A millisecond floor frozen on one host
+bounds nothing on another, and a call count moves with the interpreter. Each now measures its floor
+in the same run as its value (`Metric.floor_key`: same process, host, fixture and clock), which is
+this law's condition for a trivial solution to be a floor at all. A value past its floor blocks the
+table, because a floor is work every implementation does and so cannot be beaten. Each floor is held
+to the work it stands for:
+- the digest floor returns the digest;
+- the verifier floor's re-derived costs sum to the plan's score;
+- the emission floor of a delta is its change;
+- each audit floor is the fixture its case calls, once.
+
+The plan this replaced, bounding the audit rows with G4's lower-bound stack, was the wrong objective:
+that stack bounds a schedule's makespan, not the time to compute one. Faults: `floors.json`, 20 of
+20.
 **Port note:** every cost model, speedup ratio and calibration is an L23
 site. A plan's price is evidence only against the unfused serial plan; a
 kernel's timing only against the baseline it replaced; a coverage number

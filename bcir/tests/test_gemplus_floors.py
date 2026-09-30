@@ -392,3 +392,21 @@ def test_the_native_floor_writes_the_whole_realization() -> None:
         assert 0 < floor_ms < native_ms(exe, tmp, scale=1)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_the_roadmap_lists_the_harness_floors() -> None:
+    """The GEM+ roadmap's §0.3 names the rows whose floor is measured in-run, and the harness
+    measures exactly those; no row is left unbounded. §0.3 once listed five unbounded rows while
+    the harness had thirteen -- a mirror list drifts (laws.md L15), so this reads both."""
+    import re
+
+    path = os.path.join(_ROOT, "docs", "research", "BCIR_GEMPLUS_ROADMAP.md")
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    section = text.split("### 0.3 ", 1)[1].split("\n## ", 1)[0]
+    block = re.search(r"```\n(.*?)```", section, re.DOTALL)
+    assert block, "§0.3 lost its fenced list of measured-floor rows"
+    listed = block.group(1).split()
+    assert len(listed) == len(set(listed)), "a row is listed twice"
+    assert set(listed) == {m.key for m in METRICS if m.floor_key}
+    assert not [m.key for m in METRICS if m.bound is None and not m.floor_key]

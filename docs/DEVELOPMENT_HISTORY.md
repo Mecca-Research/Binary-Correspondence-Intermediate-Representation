@@ -1893,6 +1893,59 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a null pointer constant passed through a function pointer, or to `free` or `realloc`, is still an `int`
     temp in both emits, which Clang and GCC reject.
 
+  The ring drain race, the G2 residual, transport replay and measured floors (2026-09-30) closed the
+  GEM+ items that needed no hardware, and reconciled the roadmap with the harness.
+  - The ring drain race. AArch64 CI failed once in `test_ring.c --procs`, reporting
+    `unaccounted=1`: a consumer read `stop` only after an EMPTY verdict. Descheduled between the two
+    reads, it let the last producer publish and exit and the supervisor set `stop`, and then quit
+    with records still in the ring (`stop` was also a plain volatile read). The consumer now loads
+    `stop` with acquire before it consumes and finishes on EMPTY only if `stop` was already set. The
+    supervisor stores it with release after every producer has exited.
+    - The race needed a preemption, so a test could not count on it. A `--procs` run takes a drain
+      window: the producer finishing the stream pauses halfway, and the consumer sleeps through the
+      end of the stream on its first EMPTY after that. A window run must report its window and at
+      least one nap, or it is itself a violation.
+    - With the window, the late read fails 6 runs of 6 with CI's signature, and the fix passes 12 of
+      12. `ring.json` gains three faults (25 of 25 caught).
+  - The G2 residual. `optimize_scheduled`'s dispatch read every RAW/WAR/WAW conflict of the §6.3
+    chain: n(n − 1)/2 = 130,816 edges, walked on every trial placement.
+    `concurrency.hazard_frontier` keeps each resource's last writer and the readers since that write.
+    That is the same closure in O(touches) edges, and every placement is the full DAG's, slot for
+    slot, because a dropped predecessor is an ancestor of a kept one.
+    - `optimize_scheduled.edges.512` 130,816 → 511, its proved floor. The slowdown row went
+      10.9× → 2.8× A/B on one host, under the 4× bound.
+    - The token plan and the exact solver keep the full DAG. `frontier.json`: 6 of 6.
+  - Transport replay (the 2026-09-04 review's finding 16, now closed). `DurableLog` replays values,
+    ordered by static claim ids. `bcir/telemetry_replay.py`'s `EnvelopeLog` keeps what the transport
+    delivered instead: every envelope's bytes in arrival order and every live-generation change,
+    sealed by a trailer holding the intake's report, the ring's overwrite count and a SHA-256.
+    `replay_envelope_log` re-decides through a fresh intake and refuses any log whose report differs.
+    - A ring capture that overwrote records replays with its gaps.
+    - 18 tamper cases are each refused by their own law, and the C twin's intake decides a replayed
+      log identically. `replay.json`: 7 of 7.
+    - Two first-cut defects were caught by the sweep: two faults were masked by other laws until each
+      tamper case isolated one law (a resealed log, and a forged record only the digest can see).
+  - Measured floors. Thirteen harness rows carried no lower bound, so no optimality statement was
+    available for them. Each now measures a floor in the same run as its value (`Metric.floor_key`,
+    §0.3 of the roadmap), and a value past its floor blocks the table:
+    - the digest's own FNV-1a chain over the pre-rendered stream, which returns the same digest:
+      40.4 of 50.7 ms;
+    - the emission floor of the call-count rows: the call plus one constructor per fresh record.
+      The one-claim delta's floor is 13 calls of its 472, the same at every scale;
+    - writing the output's bytes once, for the byte-producing ratios and the native planner:
+      24 µs of 3.73 ms, through `test_kplan --bench-floor`;
+    - each audit case's own fixture, which it builds inside its timed interval. The refactor that
+      exposed the fixtures left the audit's definition and correctness digests unchanged;
+    - re-deriving each step's cost once through R9's predicate, which must sum to the plan's score.
+
+    `test_gemplus_floors.py` holds each floor to the work it stands for, and `floors.json`
+    catches 20 of 20 injected defects.
+  - The roadmap caught up with the harness. §0.3 had listed five unbounded rows while the harness
+    listed thirteen. It now lists the measured-floor rows, and a test pins that list to the harness.
+    §8 had stopped at Stage 3 and called the `verify.*` rows unmeasured; it now carries every stage's
+    rows. The earlier plan to bound the audit rows with G4's lower-bound stack was wrong, and §0.3
+    says why: that stack bounds a schedule's makespan, not the time to compute it.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap
