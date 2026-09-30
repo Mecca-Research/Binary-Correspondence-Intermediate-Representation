@@ -96,7 +96,9 @@ uint32_t ga_structs(uint32_t s)
            (uint32_t)sizeof ga_c1;
 }
 
+/* the unit's entry only reads: the corpus harness calls the original and then the emit, on the same globals */
 uint32_t ga_entry(uint32_t s)
 {
-    return ga_pass(s) ^ ga_chars(s) ^ ga_lists(s) ^ ga_structs(s);
+    return (uint32_t)sizeof ga_m * 3u + (uint32_t)sizeof ga_w + (uint32_t)ga_name[s % 5u] + ga_bytes[s % 4u]
+           + ga_v.x * 7u + ga_v.y + ga_y + (uint32_t)ga_s1 + ga_z[s & 1u] + ga_c2.tag;
 }
