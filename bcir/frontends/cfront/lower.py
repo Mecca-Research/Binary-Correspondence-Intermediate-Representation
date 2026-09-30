@@ -1708,6 +1708,18 @@ class _FuncLowerer:
                 if ct is not None and ct.kind == "pointer":
                     return _LV("mem", rid, ct.of or scalar("uint32_t"), byte_off=0)
                 raise CLowerError("dereference of a non-pointer cast")
+            # any other pointer VALUE -- `*&a`, `*(c ? &a : &b)`, `*p++`, `*(p - 1)` -- is dereferenced at
+            # offset 0, as the cast above is and the twin's general deref of a pointer rvalue is (CF-SPLIT2:
+            # `_addr` knows only the bases below, so these were refused while the twin lowered them)
+            if not isinstance(
+                operand,
+                (cast.Name, cast.CompoundLiteral, cast.StringLit, cast.Member, cast.CallExpr),
+            ) and not (isinstance(operand, cast.Unary) and operand.op == "*"):
+                rid = self._rvalue(operand)
+                ct = self.rtypes.get(rid)
+                if ct is not None and ct.kind == "pointer":
+                    return _LV("mem", rid, ct.of or scalar("uint32_t"), byte_off=0)
+                raise CLowerError("dereference of a value that is not a pointer")
             base_rid, base_ct, base_off = self._addr(operand)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
@@ -3499,13 +3511,15 @@ class _FuncLowerer:
         # pointer compound-assign  p += n / p -= n  (and p++/p--, which desugar to `p = p + 1`):
         # a single pointer-arithmetic claim, so the result stays a pointer (the integer binary result
         # would truncate the pointer). The emit renders `p += n;` and lets C scale by the element size.
+        # Only the parser's desugaring qualifies: it reuses the target node as the left operand. A
+        # written-out `p = p + n` is an ordinary assignment of a pointer sum -- `c.bin.add` then a copy,
+        # as `q = p + n` and `p = n + p` lower on both rails (the twin never folded it; CF-SPLIT2).
         if (
             isinstance(node.target, cast.Name)
             and node.target.ident in self.env
             and isinstance(node.value, cast.Binary)
             and node.value.op in ("+", "-")
-            and isinstance(node.value.lhs, cast.Name)
-            and node.value.lhs.ident == node.target.ident
+            and node.value.lhs is node.target
         ):
             rid, ct = self._lookup(node.target.ident, node.target.pos)
             if ct.kind == "pointer":

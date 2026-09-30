@@ -320,6 +320,11 @@ _mm_sfence();                      //                   store (release) fence ->
   conditional whose arms are void (`c ? f() : (void)0`, an `assert`) runs its arm for its effects.
 - Members of array elements in every access form (read, store, compound assignment, increment, `&`):
   `a[i].m[j]`, `a[i].m.k`, `a[i].m.arr[j]`, on a local, global or pointer base.
+- An object reached through a pointer in every access form (read, store, compound assignment, increment and
+  decrement as a statement or a value, an assignment used as a value, `&`): a member through a pointer the lvalue
+  loads (`h.next->v`, `n->next->v`, `s->p[i]`), an element of a pointer (`p[i]`), a dereference of any pointer value
+  (`*p`, `*(p + i)`, `*&a`, `*(c ? &a : &b)`, `*p++`) and the first element of a member array (`*q->a`). A call
+  through a parenthesized callee, `(fp)(x)` or `(o.fn)(x)`, is the call without the parentheses.
 - String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
@@ -334,6 +339,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not
   supported`, `a floating constant longer than 63 characters is not supported`): the C twin's claim graph holds
   63, and would otherwise have to cut the rest. The emitted C itself has no size limit.
+- An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
+  struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
+  rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.
+- A call through a dereferenced function pointer (`(*fp)(x)`) or an element of an array of function pointers
+  (`(ops[i])(x)`); call through the pointer itself (`fp(x)`).
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18

@@ -2156,6 +2156,11 @@ static int up_operand_end(CC *c, int j, int cl, int *is_name){
     else return j;
   }
 }
+/* The operand P in [a, b) carries a subscript `[..]`. */
+static int up_has_subscript(CC *c, int a, int b){
+  for(int k=a; k<b; k++) if(tok_is(tat(c,k),"[")) return 1;
+  return 0;
+}
 /* May the `(` about to be written at `w` open a parenthesized operand (the body's first token is at `lo`)? */
 static int up_paren_ok(CC *c, int w, int lo, const upframe *f){
   if(f->decl && !f->init && f->xpd<0) return 0;            /* a declarator: `T (x)[N]`, `T *(x)`, `T a, (x)[N]` */
@@ -2232,6 +2237,10 @@ static int unparen_body(CC *c, int start){
     if(r==cand && np<UP_FRAMES && !deep && up_paren_ok(c,w,start,f)){
       const tok *op=tat(c,pe+k); int n=k;
       if(!star && (tok_is(op,"[")||tok_is(op,".")||tok_is(op,"->"))){   /* (^n P )^n OP  ->  P OP */
+        pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n; changed=1; continue; }
+      if(!star && is_name && tok_is(op,"(") && !up_has_subscript(c,run_end,pe)){   /* (^n P )^n (  ->  P (  : a call
+        * through a parenthesized callee, `(fp)(x)`, `(o->fn)(x)` -- the oracle's `fp(x)` / `o->fn(x)` (CF-SPLIT2);
+        * `(ops[i])(x)` stays refused, as the oracle's parse refuses it */
         pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n; changed=1; continue; }
       if(star && is_name && (tok_is(op,".")||tok_is(op,"["))){   /* (^n * P )^n .  ->  P ->  ;  [  ->  P [0] [ */
         int z=tok_is(op,"[");
@@ -2854,6 +2863,102 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
     }
     return ptr;                                       /* no further postfix: the pointer value itself */
   }
+}
+/* A SCALAR object reached through a pointer the lvalue itself loads (CF-SPLIT2) -- `h.next->v`, `n->next->v`,
+ * `s->p[i]`: the oracle's `_lvalue` for an inc/dec or an assignment used as a value, which the twin had lowered
+ * only as a statement (`h.next->v += 1;`) and refused as `h.next->v++`, `++h.next->v` or `x = (h.next->v = 5)`.
+ * Kind 1: the member `f` of the struct `*b` points at; kind 2: the element `b[idx]`. `b.rid` is the loaded
+ * pointer: its accesses carry no known extent (BCIR_BND_ASSUMED), as store_through_ptr's do. */
+typedef struct { int kind; venv b; field f; uint32_t idx; } plv;
+/* The rest of the lvalue past the loaded pointer `ptr` (`psidx` its pointee struct, or -1; `pfld` the member it
+ * was loaded from): the moves postfix_ptr_chain reads, stopping at the object instead of loading it -- a
+ * pointer member followed by another `->`/`.`/`[` is loaded and walked again. 1 with the object in `*o`; 0 when
+ * the object is not a scalar these paths store (a struct, an array or pointer member, a struct element): the
+ * caller rolls back. Iterative, so a long `a->b->c->...` chain costs no stack. */
+static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
+  memset(o,0,sizeof *o);
+  while(!c->failed){
+    if(is(c,"[")){                                    /* `...->p[i]`: an element of the loaded pointer */
+      if(pfld.ptee_sidx>=0 || pfld.ptee_depth>1) return 0;   /* a struct or pointer element: not a scalar */
+      c->i++; uint32_t ix=p_expr(c); if(c->failed || !eat(c,"]")) return 0;
+      o->kind=2; o->b.rid=ptr; o->b.sidx=-1; o->idx=ix;
+      o->b.type.size=pfld.ptee_size?pfld.ptee_size:4; o->b.type.signd=pfld.signd;
+      o->b.type.is_float=(uint8_t)pfld.ptee_float;
+      o->b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0); o->b.type.is_atomic=(uint8_t)(pfld.ptee_atomic?1:0);
+      return !is(c,"[") && !is(c,".") && !is(c,"->");
+    }
+    if(!(is(c,"->")||is(c,".")) || psidx<0) return 0;
+    c->i++; if(!isk(c,T_ID)) return 0;
+    tok fn=adv(c); const sdef *S=&c->s[psidx]; int fi=-1;
+    for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fn.n && !strncmp(S->f[k].name,fn.s,(size_t)fn.n)) fi=k;
+    if(fi<0) return 0;
+    field mf=member_descend(c,S->f[fi]);             /* flatten any nested value-struct hops */
+    venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
+    b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);
+    if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* another pointer hop: load it, walk on */
+      ptr=emit_member(c,&b,&mf,0); psidx=mf.ptee_sidx; pfld=mf; continue;
+    }
+    if(mf.is_ptr || mf.arr_count || mf.sidx>=0) return 0;   /* a pointer, array or struct member */
+    o->kind=1; o->b=b; o->f=mf;
+    return 1;
+  }
+  return 0;
+}
+/* The object is volatile, or the pointer reaches a device region -- a struct holding volatile storage (the
+ * oracle's `_mmio` of the lvalue's base): an extra access on a re-read, so both rails leave the form to the
+ * statement paths. */
+static int plv_volatile(CC *c, const plv *lv){
+  const bcir_resource *r=res_of(c->fn,lv->b.rid);
+  if(r && r->domain==BCIR_DOM_MMIO) return 1;
+  return lv->kind==1 ? (lv->f.is_volatile || lv->b.type.is_volatile) : index_elem_vol(c,&lv->b);
+}
+static int plv_atomic(CC *c, const plv *lv){ return lv->kind==1 ? lv->f.is_atomic : index_elem_atomic(c,&lv->b); }
+static bcir_ctype plv_slot(const plv *lv){ return lv->kind==1 ? field_slot(&lv->f) : index_elem_ctype(&lv->b); }
+static int plv_narrow(CC *c, const plv *lv, uint32_t val){   /* a store truncates `val`: re-read the object */
+  const bcir_resource *r=res_of(c->fn,val); int sz = lv->kind==1 ? lv->f.size : lv->b.type.size;
+  return (lv->kind==1 && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);
+}
+static uint32_t plv_read(CC *c, plv *lv){
+  return lv->kind==1 ? emit_member(c,&lv->b,&lv->f,0) : emit_index(c,&lv->b,lv->idx);
+}
+/* `&obj` of an object through a loaded pointer (CF-SPLIT2: `&h.next->v`, `&n->next->p[i]`): the pointer to it,
+ * a `c.addrof` of the loaded pointer at the member's offset, or of the element (offset 0, the element's size) --
+ * the oracle's address of `_lvalue`. A bit-field has no address; a volatile object's stays a follow-on. */
+static uint32_t plv_addr(CC *c, const plv *lv){
+  if(lv->kind==1 && lv->f.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }
+  if(plv_volatile(c,lv)){ fail(c,"address-of a volatile object through a loaded pointer is a follow-on"); return 0; }
+  bcir_ctype ty=plv_slot(lv); int sz=ty.size?ty.size:4;
+  uint32_t t=add_res(c,BCIR_DOM_RAM, sz, 1,0,BCIR_RK_POINTER,"");   /* a `T *` to the object */
+  if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+    tr->is_signed=(uint8_t)(ty.signd?1:0); tr->is_float=(uint8_t)(ty.is_float?1:0); tr->ptr_depth=1;
+    tr->is_complex=(uint8_t)(ty.is_complex?1:0); tr->is_bool=(uint8_t)(ty.is_bool?1:0);
+    tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0); tr->is_atomic=(uint8_t)(plv_atomic(c,lv)?1:0); }
+  bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+  if(cl){ cl->n_wr=1; cl->wr[0]=t; cl->rd[0]=lv->b.rid;
+    if(lv->kind==1){ cl->n_rd=1; cl->n_imm=1; cl->imm[0]=lv->f.byte_off; }
+    else { cl->n_rd=2; cl->rd[1]=lv->idx; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; } }
+  return t;
+}
+/* `*s.a`, `*q->a`, `*s.in.a` (CF-SPLIT2): the dereference of a one-dimensional member array of non-`_Atomic`
+ * scalars is its first element -- one access at the member's offset, as the oracle's `_lvalue(Deref)` of the member
+ * has it (its `_addr` keeps the member's offset) -- where the twin took the array's address and accessed through
+ * it, a claim graph of its own. With the cursor at the name after `*`: 1 with the base and the element as a scalar
+ * member, the cursor past the chain; 0 (cursor unmoved) for any other operand. */
+static int postfix_follows(CC *c, int k);   /* fwd: a postfix operator follows token `k` */
+static int deref_member_array(CC *c, venv *base, field *elem){
+  int save=c->i;
+  if(!isk(c,T_ID) || !(tok_is(tat(c,c->i+1),".")||tok_is(tat(c,c->i+1),"->")) || tat(c,c->i+2)->k!=T_ID) return 0;
+  venv *vp=lookup(c,pk(c)); if(!vp) vp=use_global(c,pk(c));
+  if(!vp || vp->sidx<0) return 0;
+  venv v=*vp; const sdef *S=&c->s[v.sidx]; const tok *fn=tat(c,c->i+2); int fi=-1;
+  for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fn->n && !strncmp(S->f[k].name,fn->s,(size_t)fn->n)) fi=k;
+  if(fi<0) return 0;
+  c->i+=3;
+  field mf=member_descend(c,S->f[fi]);               /* nested value members add their offsets */
+  if(!mf.arr_count || mf.nadims>1 || mf.elem_ptr || mf.elem_sidx>=0 || mf.is_atomic || mf.bit_w
+     || postfix_follows(c,c->i)){ c->i=save; return 0; }
+  mf.arr_count=0; mf.nadims=0;                       /* the element, a scalar at the member's offset */
+  *base=v; *elem=mf; return 1;
 }
 /* <math.h> real-valued functions (mirrors the oracle's _LIBM): the result is a floating type fixed
  * by the name suffix -- base -> double, +f -> float. They lower to an opaque external library edge
@@ -4043,6 +4148,14 @@ static uint32_t p_unary_inner(CC *c) {
           if(fi<0){ fail(c,"unknown field"); return 0; }
           field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
           if(mf.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }   /* illegal in C */
+          if(mf.is_ptr && !mf.arr_count && (is(c,"->")||is(c,".")||is(c,"["))){   /* `&h.next->v`, `&n->next->p[i]`:
+                                                    * the object through the pointer member it loads (CF-SPLIT2) */
+            plv lv; uint32_t ptr=emit_member(c,v,&mf,0);
+            if(!plv_chain(c,ptr,mf.ptee_sidx,mf,&lv)){
+              if(!c->failed) fail(c,"address-of this lvalue through a loaded pointer is a follow-on");
+              return 0; }
+            return plv_addr(c,&lv);
+          }
           if(mf.is_ptr && !mf.arr_count){          /* &s.ptr / &s->ptr -- address of a POINTER member -> a `T **` */
             uint32_t t=add_res(c,BCIR_DOM_RAM, mf.ptee_size?mf.ptee_size:4, 1,0,BCIR_RK_POINTER,"");
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];   /* pointee = the member's pointee */
@@ -4192,6 +4305,7 @@ static uint32_t p_unary_inner(CC *c) {
   if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
     c->i++;
     { venv bb; field bf; if(byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */
+    { venv mb; field me; if(deref_member_array(c,&mb,&me)) return emit_member(c,&mb,&me,0); }   /* `*q->a` */
     if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
       if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
         if(pvp){ c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
@@ -4662,6 +4776,45 @@ static uint32_t store_member_bf(CC *c, venv *base, const field *f, uint32_t val)
   return val;
 }
 static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is itself an assign (right-assoc) */
+static uint32_t plv_write(CC *c, plv *lv, uint32_t val){     /* the value as stored */
+  if(lv->kind==1) return lv->f.bit_w ? store_member_bf(c,&lv->b,&lv->f,val) : store_member(c,&lv->b,&lv->f,val);
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=3;cl->rd[0]=lv->b.rid;cl->rd[1]=lv->idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
+    mark_access(c,cl,index_elem_vol(c,&lv->b)); mark_atomic(cl,index_elem_atomic(c,&lv->b));}
+  return val;
+}
+/* `obj = rhs` / `obj OP= rhs` used as a value, the cursor at the operator: the oracle's memory-lvalue `_assign`
+ * -- a plain store then a re-read of the same object; a compound read, operation, store, and the stored value
+ * (re-read where the store narrows it); an `_Atomic` object one atomic store or read-modify-write. */
+static uint32_t plv_assign_value(CC *c, plv *lv){
+  const tok *op=&c->t[c->i];
+  int at=plv_atomic(c,lv); bcir_ctype slot=plv_slot(lv);
+  if(op->k==T_PUN && op->n==1 && op->s[0]=='='){
+    c->i++; uint32_t rhs=p_assign(c);
+    uint32_t st=plv_write(c,lv,rhs);
+    return at ? atomic_assign_value(c,st,&slot) : plv_read(c,lv);
+  }
+  char ch=op->s[0]; c->i++;
+  const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+  if(at){ uint32_t rhs=p_assign(c);
+    return lv->kind==1
+      ? emit_rmw(c,suf,&slot,lv->b.rid,0,0,1,rhs,lv->f.byte_off,lv->f.size,0,plv_volatile(c,lv),BCIR_BND_ASSUMED)
+      : emit_rmw(c,suf,&slot,lv->b.rid,1,lv->idx,1,rhs,0,0,0,plv_volatile(c,lv),BCIR_BND_ASSUMED); }
+  uint32_t cur=plv_read(c,lv); uint32_t rhs=p_assign(c);
+  uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_OP]; fits(c,o,sizeof o,"c.bin.%s",suf);
+  bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+  tmp=plv_write(c,lv,tmp);
+  return plv_narrow(c,lv,tmp) ? plv_read(c,lv) : tmp;
+}
+/* `p[i]` of a POINTER variable (`T *p`, a local, parameter or global) to non-volatile scalar storage, subscripted
+ * once, the cursor at the name (CF-SPLIT2): an element the scalar array paths read and write as they do an
+ * array's, the oracle's `_lvalue(Index)` -- the twin lowered `p[i] += v;` but refused `p[i]++`, `++p[i]` and
+ * `x = (p[i] = v)`. A pointer to structs, to pointers or to rows keeps its own paths. */
+static int ptr_elem_lv(CC *c, const venv *v){
+  if(v->type.kind!=2 || v->type.is_volatile || v->type.ptr_to_struct || v->type.nadims>1 || v->type.size<=0
+     || (v->type.ptr_depth?v->type.ptr_depth:1)!=1 || ptr_array(c,v)) return 0;
+  return tok_is(tat(c,c->i+1),"[") && sub_group_count(c,c->i+1)==1;
+}
 /* A MEMORY-lvalue assignment used as a VALUE (the C twin of the oracle's generalized _is_scalar_member_lv
  * value path, #lvassignexpr): an ARRAY ELEMENT `a[i]`, a pointer DEREF `*p` / `*(p+i)`, or a NESTED struct
  * member `o.in.x` -- as a sub-expression `(a[i]=v)+1`, `(*p=v)*2`, `(o.in.x=v)+3`, and chains `a[0]=b[0]=v`.
@@ -4713,6 +4866,10 @@ static int lv_assign_value(CC *c, uint32_t *out){
   if(is(c,"*")){
     spec_mark m; spec_begin(c,&m);                  /* the `*(p + i)` index is lowered to reach the operator */
     c->i++;
+    { plv lv; memset(&lv,0,sizeof lv); int ms=c->i;    /* `x = (*q->a = v)`: its first element (CF-SPLIT2) */
+      if(deref_member_array(c,&lv.b,&lv.f)){ const tok *aop=pk(c);
+        if(tok_is(aop,"=") || is_compound_op(aop)){ lv.kind=1; *out=plv_assign_value(c,&lv); return 1; }
+        c->i=ms; } }
     venv pvsnap; venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
     /* SNAPSHOT the pointer's env entry: the `*(p + i)` index and the RHS p_assign below can declare locals
      * and realloc c->env[] -- a pointer into it dangles. The store/emit helpers only READ the venv. */
@@ -4827,7 +4984,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
   if(tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     /* eligible only for a plain SCALAR-element array (kind 0, non-volatile) indexed directly to an `=`/OP=
      * -- NOT an array-of-structs `a[i].f`, NOT a member-array (those are reached as a Member, not here). */
-    if(v->type.kind!=0 || v->type.is_volatile){ c->i=save; return 0; }
+    if((v->type.kind!=0 || v->type.is_volatile) && !ptr_elem_lv(c,v)){ c->i=save; return 0; }
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     { field gf; c->i++;                               /* `g[i][j] =`/OP= of a multi-dimensional global: the whole
                                                        * object's element at offset 0, as it is read (CF-SMALL) */
@@ -4885,6 +5042,20 @@ static int lv_assign_value(CC *c, uint32_t *out){
     for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n && !strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
     if(fi<0){ c->i=save; return 0; }
     field f=member_descend(c,S->f[fi]);                /* flatten `o.in.x` -> one offset; cursor past the chain */
+    /* --- through the pointer member it loads: `h.next->v = rhs`, `n->next->v OP= rhs`, `s->p[i] = rhs` as a
+     * VALUE (CF-SPLIT2) --- */
+    if(f.is_ptr && !v->type.is_volatile && (is(c,"->")||is(c,".")||is(c,"["))){
+      size_t m_res=c->fn->n_res,m_cl=c->fn->n_claims; uint32_t m_rid=c->rid,m_cid=c->cid,m_clc=c->cl_ctr;
+      plv lv; uint32_t ptr=emit_member(c,v,&f,0);
+      int ok=plv_chain(c,ptr,f.ptee_sidx,f,&lv);
+      if(c->failed) return 0;
+      const tok *aop=&c->t[c->i];
+      if(!ok || plv_volatile(c,&lv) || !((aop->k==T_PUN && aop->n==1 && aop->s[0]=='=') || is_compound_op(aop))){
+        c->fn->n_res=m_res;c->fn->n_claims=m_cl;c->rid=m_rid;c->cid=m_cid;c->cl_ctr=m_clc;   /* a read: undo */
+        c->i=save; return 0; }
+      *out=plv_assign_value(c,&lv);
+      return 1;
+    }
     /* --- a MEMBER-ARRAY element `s.arr[i] = rhs` (and member array-of-structs `s.arr[i].f = rhs`) as a
      * VALUE: a STRIDED store at member_off (+ field_off) + idx*element-size, resolved ONCE, then re-read. --- */
     if(f.arr_count && !v->type.is_volatile && is(c,"[")){
@@ -5005,8 +5176,104 @@ static uint32_t member_elem_incdec(CC *c, venv *v, const field *fp, uint32_t idx
   return ((int)sf->size < (int)(nr?nr->elem_bytes:4))
          ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : nw;
 }
+/* `++`/`--` (prefix or postfix, already settled) on an object through a loaded pointer (CF-SPLIT2): read, step by
+ * one, store back through the same pointer; a postfix value is the old value, a prefix one the stored new value
+ * (re-read where the store narrows it); an `_Atomic` object one atomic read-modify-write. */
+static uint32_t plv_incdec(CC *c, plv *lv, int prefix, char ch){
+  if(plv_atomic(c,lv)){ bcir_ctype slot=plv_slot(lv);
+    return lv->kind==1
+      ? emit_rmw(c,incdec_kind(prefix,ch),&slot,lv->b.rid,0,0,0,0,lv->f.byte_off,lv->f.size,0,plv_volatile(c,lv),
+                 BCIR_BND_ASSUMED)
+      : emit_rmw(c,incdec_kind(prefix,ch),&slot,lv->b.rid,1,lv->idx,0,0,0,0,0,plv_volatile(c,lv),BCIR_BND_ASSUMED); }
+  const char *suf = ch=='+'?"add":"sub"; bcir_opcode oc = ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB;
+  uint32_t cur=plv_read(c,lv);                           /* the old value: a fresh declared temp */
+  uint32_t one=incdec_emit_const1(c);
+  uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_OP]; fits(c,o,sizeof o,"c.bin.%s",suf);
+  bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+  (void)plv_write(c,lv,nw);
+  if(!prefix) return cur;
+  return plv_narrow(c,lv,nw) ? plv_read(c,lv) : nw;
+}
+/* `++*p`, `--*p`, `++(*p)`, `(*p)++`, `(*p)--` (CF-SPLIT2): a step of the pointee of a pointer to non-volatile scalar
+ * storage, read, stepped and stored back through it as `*p += 1` is -- the oracle's `_lvalue(Deref)`, which the twin
+ * had refused. The operand is a named pointer (`*p`), the element spelling `*(p + i)` (stepped as `p[i]` is, as the
+ * oracle lowers it), or any other pointer value (`*&a`, `*q[j]`), lowered once. 1 with the value (postfix the old
+ * one, prefix the stored new one) for these forms, else 0 with the cursor and the claims unmoved (`*p++` is
+ * `*(p++)`, a step of `p`). */
+static int deref_tail(const tok *t){   /* a postfix operator after a name: the operand is more than the name */
+  return tok_is(t,"[")||tok_is(t,".")||tok_is(t,"->")||tok_is(t,"(")||tok_is(t,"++")||tok_is(t,"--");
+}
+static int deref_ptr_ok(const venv *v){   /* a named pointer to non-volatile scalar storage */
+  return v->type.kind==2 && !v->type.is_volatile && !v->type.ptr_to_struct && (v->type.ptr_depth?v->type.ptr_depth:1)==1
+         && v->type.size>0;
+}
+static int deref_incdec(CC *c, uint32_t *out){
+  int k=c->i, prefix=0, paren=0; char ch=0;
+  if(is(c,"++")||is(c,"--")){ prefix=1; ch=pk(c)->s[0]; k++; }
+  if(tok_is(tat(c,k),"(") && tok_is(tat(c,k+1),"*")){ paren=1; k++; }
+  if(!tok_is(tat(c,k),"*") || (!prefix && !paren)) return 0;
+  int save=c->i; spec_mark m; spec_begin(c,&m);
+  int form=0; venv pv; memset(&pv,0,sizeof pv); uint32_t base=0, idx=0;
+  const tok *t1=tat(c,k+1);
+  plv mlv; memset(&mlv,0,sizeof mlv);
+  c->i=k+1;
+  if(deref_member_array(c,&mlv.b,&mlv.f)){ mlv.kind=1; form=4; }   /* `*q->a`: its first element */
+  else c->i=save;
+  if(form){}
+  else if(t1->k==T_ID && !deref_tail(tat(c,k+2))){               /* `*p` */
+    venv *vp=lookup(c,t1); if(!vp) vp=use_global(c,t1);
+    if(vp && deref_ptr_ok(vp)){ pv=*vp; form=1; c->i=k+2; }
+  } else if(tok_is(t1,"(") && tat(c,k+2)->k==T_ID && tok_is(tat(c,k+3),"+")){   /* `*(p + i)`: `p[i]` */
+    venv *vp=lookup(c,tat(c,k+2)); if(!vp) vp=use_global(c,tat(c,k+2));
+    if(vp && deref_ptr_ok(vp) && !ptr_array(c,vp)){ pv=*vp; c->i=k+4; idx=p_expr(c);
+      if(!c->failed && eat(c,")")) form=2; }
+  } else {                                                       /* any other pointer value */
+    c->i=k+1; base=p_unary(c);
+    const bcir_resource *br=c->failed?NULL:res_of(c->fn,base);
+    if(br && br->kind==BCIR_RK_POINTER && (br->ptr_depth?br->ptr_depth:1)==1 && !br->agg[0] && !br->is_voidptr
+       && !br->is_volatile && br->domain!=BCIR_DOM_MMIO) form=3;
+  }
+  if(form && paren){ if(is(c,")")) c->i++; else form=0; }
+  if(form && !prefix){ const tok *t=pk(c); if(tok_is(t,"++")||tok_is(t,"--")){ ch=t->s[0]; c->i++; } else form=0; }
+  if(!form || c->failed){ if(c->failed) return 0; spec_end(c,&m); c->i=save; return 0; }
+  if(form==4){ *out=plv_incdec(c,&mlv,prefix,ch); return 1; }   /* a member array's first element */
+  const char *suf = ch=='+'?"add":"sub"; bcir_opcode oc = ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB;
+  if(form==2){                                                   /* an element: the scalar array path's step */
+    if(index_elem_atomic(c,&pv)){ bcir_ctype et=index_elem_ctype(&pv);
+      *out=emit_rmw(c,incdec_kind(prefix,ch),&et,pv.rid,1,idx,0,0,0,0,0,0,access_bnd(c,pv.rid)); return 1; }
+    uint32_t cur=emit_index(c,&pv,idx), one=incdec_emit_const1(c);
+    uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_OP]; fits(c,o,sizeof o,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+    if(cl){cl->n_rd=3;cl->rd[0]=pv.rid;cl->rd[1]=idx;cl->rd[2]=nw;cl->bounds=access_bnd(c,pv.rid);}
+    if(!prefix){ *out=cur; return 1; }
+    const bcir_resource *nr=res_of(c->fn,nw);
+    *out = ((int)pv.type.size < (int)(nr?nr->elem_bytes:4)) ? emit_index(c,&pv,idx) : nw;
+    return 1;
+  }
+  int sz; bcir_ctype pst; int at;                                 /* read before new resources move res[] */
+  if(form==1){ sz=pv.type.size; pst=pointee_slot(&pv.type); at=index_elem_atomic(c,&pv); }
+  else { const bcir_resource *br=res_of(c->fn,base); sz=br->elem_bytes?(int)br->elem_bytes:4;
+    pst=res_pointee_slot(br); at=br->is_atomic; }
+  uint32_t ptr = form==1 ? pv.rid : base;
+  if(at){ *out=emit_rmw(c,incdec_kind(prefix,ch),&pst,ptr,0,0,0,0,0,sz,0,0,BCIR_BND_ASSUMED); return 1; }
+  uint32_t cur = form==1 ? emit_deref(c,&pv) : emit_deref_rid(c,base);   /* the old value: a fresh temp */
+  uint32_t one=incdec_emit_const1(c);
+  uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_OP]; fits(c,o,sizeof o,"c.bin.%s",suf);
+  bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+  nw=store_conv(c,nw,&pst);                                      /* the value as stored */
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=2;cl->rd[0]=ptr;cl->rd[1]=nw;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=sz;cl->bounds=BCIR_BND_ASSUMED;
+    if(pst.kind==0 && pst.is_bool){cl->imm[2]=1;cl->n_imm=3;}}   /* a _Bool pointee normalizes */
+  if(!prefix){ *out=cur; return 1; }
+  const bcir_resource *nr=res_of(c->fn,nw);
+  *out = (sz < (int)(nr?nr->elem_bytes:4)) ? (form==1 ? emit_deref(c,&pv) : emit_deref_rid(c,base)) : nw;
+  return 1;
+}
 static int incdec_value(CC *c, uint32_t *out){
   int prefix=0; char ch=0;
+  if(deref_incdec(c,out)) return 1;                        /* `++*p` / `(*p)++` (CF-SPLIT2) */
+  if(c->failed) return 0;
   if(is(c,"++")||is(c,"--")){ prefix=1; ch=pk(c)->s[0]; }   /* a PREFIX `++`/`--` -- the operand follows */
   else if(isk(c,T_ID)){
     /* a POSTFIX `name <tail> ++` -- only if a `++`/`--` immediately follows the (bare / member / index)
@@ -5068,7 +5335,7 @@ static int incdec_value(CC *c, uint32_t *out){
   }
 
   /* --- a plain SCALAR ARRAY ELEMENT `a[i]` (kind 0, non-volatile, NOT an array-of-structs) --- */
-  if(isk(c,T_ID) && v->type.kind==0 && !v->type.is_volatile && v->sidx<0
+  if(isk(c,T_ID) && ((v->type.kind==0 && !v->type.is_volatile && v->sidx<0) || ptr_elem_lv(c,v))
      && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     c->i++;
@@ -5109,6 +5376,16 @@ static int incdec_value(CC *c, uint32_t *out){
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fld.n && !strncmp(S->f[i].name,fld.s,fld.n)) fi=i;
     if(fi<0){ c->i=save; return 0; }
     field f=member_descend(c,S->f[fi]);                   /* flatten `o.in.x` -> one offset; cursor past the chain */
+    if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* on through the pointer member it loads: `h.next->v++`,
+                                                           * `--n->next->v`, `s->p[i]++` (CF-SPLIT2) */
+      plv lv; uint32_t ptr=emit_member(c,v,&f,0);
+      int ok=plv_chain(c,ptr,f.ptee_sidx,f,&lv);
+      if(c->failed) return 0;
+      if(!ok || plv_volatile(c,&lv) || !incdec_settle(c,prefix,save)){
+        c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+      *out=plv_incdec(c,&lv,prefix,ch);
+      return 1;
+    }
     if(f.arr_count && is(c,"[")){                         /* a MEMBER-ARRAY element `s.arr[i]` / `s.arr[i].f` */
       uint32_t idx=member_arr_index(c,&f);
       field sub; int soa=(is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);
@@ -5934,6 +6211,9 @@ static void p_block(CC *c){            /* `{ stmts }` or a single statement */
 static int p_incdec(CC *c) {
   venv *v=NULL; char ch=0;
   if((is(c,"++")||is(c,"--")) && tat(c,c->i+1)->k==T_ID){            /* ++name / --name */
+    const tok *nx=tat(c,c->i+2);                        /* ... a bare name: `++h.next->v`, `++p[i]` step the lvalue
+                                                         * the expression grammar parses (CF-SPLIT2) */
+    if(tok_is(nx,".")||tok_is(nx,"->")||tok_is(nx,"[")||tok_is(nx,"(")||tok_is(nx,"++")||tok_is(nx,"--")) return 0;
     v=lookup(c,tat(c,c->i+1)); if(!v) return 0; ch=c->t[c->i].s[0]; c->i+=2;
   } else if(isk(c,T_ID) && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==2 &&
             (tat(c,c->i+1)->s[0]=='+'||tat(c,c->i+1)->s[0]=='-') && tat(c,c->i+1)->s[1]==tat(c,c->i+1)->s[0]){
@@ -6429,6 +6709,18 @@ static void p_stmt_inner(CC *c) {
           else { c->i++; val=p_expr(c); }
           store_member(c,&bb,&bf,val); eat(c,";"); return; }
         spec_end(c,&bm); c->ns=bns; c->nec=bnec; c->i=save+1; } }   /* a read: the expression statement lowers it */
+    { plv lv; memset(&lv,0,sizeof lv);                /* `*q->a = v` / `OP= v`: its first element (CF-SPLIT2) */
+      if(deref_member_array(c,&lv.b,&lv.f)){
+        const tok *aop=pk(c); int cmp=is_compound_op(aop);
+        if(cmp || tok_is(aop,"=")){ uint32_t val; lv.kind=1;
+          if(cmp){ char ch=aop->s[0]; c->i++;
+            uint32_t cur=plv_read(c,&lv); uint32_t rhs=p_expr(c);
+            const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+            val=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.bin.%s",suf);
+            bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=val;} }
+          else { c->i++; val=p_expr(c); }
+          (void)plv_write(c,&lv,val); eat(c,";"); return; }
+        c->i=save+1; } }                                /* a read: the expression statement lowers it */
     venv pvsnap; venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
     /* SNAPSHOT the pointer's env entry: the `*(p + i)` index and the RHS p_expr below can declare locals
      * and realloc c->env[] -- a pointer into it dangles. The store/emit helpers only READ the venv. */

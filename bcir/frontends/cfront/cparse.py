@@ -1092,7 +1092,17 @@ class _Parser:
 
     def _incdec(self):
         """`i++` / `++i` / `i--` / `--i` with the value discarded (statement / for-clause) -> the
-        assignment `i = i ± 1`. Returns the Assign, or None (consuming nothing) if not an inc/dec."""
+        assignment `i = i ± 1`. Returns the Assign, or None (consuming nothing) if not an inc/dec -- or if the
+        operand is more than a name (`++h.next->v`, `++p[i]`, `++*p`), which the expression grammar parses as
+        an increment of that lvalue (CF-SPLIT2: taking `++h` here refused the rest of the statement)."""
+        if (self.at("OP", "++") or self.at("OP", "--")) and not (
+            self.peek(1).kind == "IDENT"
+            and not (
+                (self.peek(2).kind == "PUNCT" and self.peek(2).text in (".", "[", "("))
+                or (self.peek(2).kind == "OP" and self.peek(2).text in ("->", "++", "--"))
+            )
+        ):
+            return None
         if self.at("OP", "++") or self.at("OP", "--"):
             op = self.nxt().text[0]
             tk = self.eat("IDENT")

@@ -242,6 +242,8 @@ _PTRVALUE = [
     #   `(x)++`, `(*p).x` as `p->x`, `(*p)[i]` as `p[0][i]` (CF-PAREN)
     "cfront_longnames.c",  # a 63-character name everywhere the claim graph keeps one, and a 63-character
     #   floating constant: the longest either rail accepts (CF-BUF)
+    "cfront_splits.c",  # forms one rail lowered and the other refused or lowered apart: `p = p + n`, a step
+    #   or a value through a loaded pointer, `p[i]++`, `(*p)++`, `*&a`, `*(c ? &a : &b)`, `(fp)(x)` (CF-SPLIT2)
     "cfront_addrof.c",  # general address-of `&`
     "cfront_addrofarr.c",  # member-array element address
     "cfront_addrofaos.c",  # array-of-structs element field address
@@ -9687,3 +9689,102 @@ def test_the_emit_grows_whole_under_a_failing_allocator():
         run.stdout[-2000:],
         run.stderr[-2000:],
     )
+
+
+_SPLITS_DRIVER = (
+    _GAPS_SAME
+    + r"""
+#define SNAP(t) do { t[0] = sp_n1.v; t[1] = sp_n1.c; t[2] = (uint32_t)sp_n1.w; t[3] = sp_n1.bits;              \
+    t[4] = sp_n2.v; t[5] = sp_n2.c; t[6] = (uint32_t)sp_n2.w; t[7] = sp_n2.bits;                            \
+    for (int k = 0; k < 8; k++) t[8 + k] = sp_buf[k];                                                       \
+    t[16] = sp_at.n; t[17] = sp_slots[1]; t[18] = sp_rw.a[0]; t[19] = sp_rw.c[0]; t[20] = sp_rw.in.b[0]; } while (0)
+/* the result and every global the function touches: the original's, then the emit's from the same start */
+#define SAME_STATE(f, s) do { uint32_t x_[21], y_[21]; uint32_t r_ = f(s); SNAP(x_);                        \
+    uint32_t q_ = bcir_##f(s); SNAP(y_); if (r_ != q_ || memcmp(x_, y_, sizeof x_)) return fail(#f); } while (0)
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME_STATE(sp_ptr_sum, s); SAME_STATE(sp_chain_steps, s); SAME_STATE(sp_chain_values, s);
+    SAME_STATE(sp_derefs, s); SAME_STATE(sp_addresses, s); SAME_STATE(sp_paren_calls, s);
+    SAME_STATE(sp_atomics, s); SAME_STATE(sp_member_arrays, s); SAME_STATE(sp_entry, s);
+    uint32_t pa[4] = {s, s + 1u, s ^ 7u, 3u}, pb[4];
+    memcpy(pb, pa, sizeof pa);
+    if (sp_param_elems(pa, s & 1u) != bcir_sp_param_elems(pb, s & 1u) || memcmp(pa, pb, sizeof pa))
+      return fail("sp_param_elems");
+    uint8_t ba[4] = {(uint8_t)s, 255u, 0u, (uint8_t)(s >> 8)}, bb[4];
+    memcpy(bb, ba, sizeof ba);
+    if (sp_param_bytes(ba, s & 3u) != bcir_sp_param_bytes(bb, s & 3u) || memcmp(ba, bb, sizeof ba))
+      return fail("sp_param_bytes");
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_split_forms_lower_alike_and_run_as_the_original_on_both_rails():
+    """CF-SPLIT2: `cfront_splits.c` -- forms the rails lowered to different claim graphs, or that one lowered
+    and the other refused. `p = p + n` of a pointer was a `c.ptradd` on the oracle and a sum and a copy on the
+    twin; it is the sum and the copy on both now, as `q = p + n` and `p = n + p` were, and only the compound's
+    desugaring (`p += n`, `p++`) steps the pointer in place. The twin refused an increment or an assignment used
+    as a value through a pointer the lvalue loads (`h.next->v++`, `x = (h.next->next->v ^= s)`, `s->p[i]++`),
+    through a pointer parameter (`p[i]++`, `x = (p[i] = v)`) or a dereference (`(*p)++`, `++*p`), the address
+    of such an object (`&h.next->v`) and a call through a parenthesized callee (`(fp)(x)`, `(o.fn)(x)`); the
+    oracle refused a dereference of a pointer value other than a name, a member or a call (`*&a`,
+    `*(c ? &a : &b)`, `*p++`, `*(q - 1)`) and both refused the statement `++h.next->v;`; and the twin took
+    `*q->a` of a member array as the array's address and an access through it, where the oracle accesses the
+    first element at the member's offset. Each lowers to one claim graph on the four targets now, and each emit
+    runs as the original does, globals included."""
+    if not _CC:
+        return
+    fx = "cfront_splits.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    # the one lowering both rails keep: only `p += 1` and `p++` step the pointer in place
+    ops = [
+        c.op for c in compile_unit(src, check_clang=False).lowered.functions["sp_ptr_sum"].claims
+    ]
+    assert ops.count("c.ptradd") == 2 and "c.ptrsub" not in ops, ops
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _SPLITS_DRIVER)
+
+
+# The forms stay refused where the object is a device's: a re-read of it (the value of `=`/OP= and a prefix
+# step) or its read-modify-write through a device pointer would be an extra device access, which the oracle's
+# `_mmio` gate refuses and the twin's `plv_volatile` refuses alike.
+_SPLITS_DEVICE = (
+    "struct dv {{ uint32_t v; volatile uint32_t r; }};\nstruct dh {{ struct dv *d; }};\n"
+    "uint32_t f(struct dh h, uint32_t s) {{ {body} }}\n"
+)
+_SPLITS_DEVICE_BODIES = (
+    "return h.d->v++;",  # a plain member of a struct that holds volatile storage
+    "return ++h.d->r;",  # a volatile member
+    "return (h.d->v = s);",
+    "return (h.d->r += s);",
+    "h.d->v--; return s;",
+)
+
+
+def test_split_forms_on_a_device_object_are_refused_on_both_rails():
+    """CF-SPLIT2: an increment, or an assignment used as a value, through a loaded pointer into a struct that
+    holds volatile storage is refused on both rails -- the oracle's device gate (`_mmio`), the twin's
+    `plv_volatile` reading the loaded pointer's device domain -- rather than lowered by one rail alone."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for body in _SPLITS_DEVICE_BODIES:
+        src = "#include <stdint.h>\n" + _SPLITS_DEVICE.format(body=body)
+        try:
+            compile_unit(src, check_clang=False)
+            raise AssertionError(f"the oracle lowered {body!r}")
+        except (CParseError, CLowerError):
+            pass
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "split_device.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode != 0 and run.stdout.startswith("PARSE-ERR"), (body, run.stdout)

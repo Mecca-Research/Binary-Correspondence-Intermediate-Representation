@@ -1435,8 +1435,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     carries no struct index, and crashes; the oracle lowers it;
   - the oracle refuses a statement whose first identifier is also a struct tag
     (`struct st *st; st->n += 1u;` is "expected a type"), though C keeps tags in their own name space;
-  - the twin refuses `(*p)++` and `p[i]++`, as a statement and in an expression, and `*q->a` of an
-    array member, which the oracle lowers; both rails refuse `++q->n;` and `++*p;`;
   - a stringized argument drops its whitespace on both rails: `S(a + b)` is `"a+b"`, where C 6.10.4.2
     and Clang make it `"a + b"`;
   - `_Atomic(T *)`, an atomic pointer object, is modeled on both rails as a pointer to `_Atomic T`;
@@ -1861,16 +1859,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - the twin miscompiles an integer literal above `LLONG_MAX` (it saturates) and an octal literal (read as
     decimal); the oracle's global-initializer fold ignores C types and floors a division
     (`int32_t gq = -7 / 2;` renders `-4`), where the static fold's helpers would not;
-  - `p = p + 1` lowers to `c.ptradd` on the oracle and to an add and a copy on the twin;
   - the oracle refuses a global array of structs with nested braces (`{{1, 2}, {3, 4}}`), which the twin
     lowers;
   - both rails drop `_Thread_local` from a static local;
   - the round trip's second emit of a control-flow fixture redeclares its `__cont_<N>` labels, and a
     non-volatile struct fixture stays excluded because its `memcpy` re-parses as a call to an undefined
     function;
-  - the twin refuses a value or an increment through a loaded pointer chain (`h.next->v++`), `p[i]++`
-    through a pointer and `(fp)(x)`, which the oracle lowers; the oracle refuses `*&a` and
-    `*(c ? &a : &b)`, which the twin lowers;
   - a comparison with a null pointer constant (`p == 0`) compares the pointer with an `int` temp in both
     emits, a constraint violation (C11 6.5.9p2) that Clang and GCC only warn about;
   - both rails accept a compound assignment or an increment of a struct (`a += 5`, `a++`) and a struct
@@ -2005,6 +1999,47 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     The digest is unaffected, since it hashes the canon as it is produced;
   - the twin's test driver (`runtime/c/test_cfront.c`) reads at most 64 KiB of a source file and does not say
     when it cuts one (`bcir-cc` reads a file of any size).
+
+  CF-SPLIT2 (2026-09-30) closed the rail splits the CF-NULLARG list recorded and those found beside them: forms the
+  cfront rails lowered to two claim graphs, or that one rail lowered and the other refused. RED was measured on the
+  parent (`59740254`).
+  - The defect: a written-out `p = p + n` of a pointer was a `c.ptradd` on the oracle, which folded any `x = x ± e`
+    into the compound's in-place step, and a sum and a copy on the twin, as `q = p + n` and `p = n + p` were on both
+    rails. The twin refused an increment, and an assignment used as a value, through a pointer the lvalue itself
+    loads (`h.next->v++`, `x = (h.next->next->v ^= s)`, `s->p[i]++`), through a pointer variable (`p[i]++`,
+    `x = (p[i] = v)`) and through a dereference (`(*p)++`, `++*p`); it refused the address of such an object
+    (`&h.next->v`) and a call through a parenthesized callee (`(fp)(x)`, `(o.fn)(x)`), all of which the oracle
+    lowered. The oracle refused a dereference of a pointer value other than a name, a member or a call (`*&a`,
+    `*(c ? &a : &b)`, `*p++`, `*(q - 1)`), which the twin lowered, and both rails took `++h` of a statement
+    `++h.next->v;` and failed on the `.`. The twin also lowered `*q->a` of a member array as the array's address and
+    an access through it, where the oracle accesses the first element at the member's offset.
+  - RED: `cfront_splits.c` splits in each of its ten functions on the parent. The twin refuses nine, the oracle four
+    of those nine, and `sp_ptr_sum` lowers on both rails to different claim graphs (36 claims against 39). Its test
+    fails at the oracle's parse.
+  - What landed on the oracle: only the parser's desugaring of a compound assignment, which reuses the target node
+    as the left operand, steps a pointer in place. The statement shortcut takes `++name` only for a bare name, so
+    `++h.next->v;`, `++p[i];` and `++*p;` parse as expressions. A dereference of any other pointer value is an access
+    at offset 0, as a cast's already was.
+  - What landed on the twin:
+    - One resolver handles an object reached through a pointer the lvalue loads (`plv_chain`). The object is read,
+      written, stepped, assigned and addressed as the oracle's `_lvalue` is. A device object is refused, as the
+      oracle's `_mmio` gate refuses it: `plv_volatile` reads the loaded pointer's domain.
+    - An element of a pointer variable subscripted once takes the scalar array paths (`ptr_elem_lv`).
+    - `deref_incdec` steps `*p`, `*(p + i)` (as `p[i]`), `*q->a` and any other pointer value.
+    - `*q->a` of a one-dimensional member array of scalars is its first element at every site
+      (`deref_member_array`).
+    - The parenthesis pass drops a callee's parentheses before its call. It keeps a subscripted callee's, which
+      the oracle refuses.
+    - The statement shortcut `++name` takes only a bare name.
+  - Outcomes: the fixture lowers to one claim graph on the four targets. Each emit runs as the original does under
+    Clang and GCC, and the globals it touches are compared after every call. A device object stays refused on both
+    rails (`test_split_forms_on_a_device_object_are_refused_on_both_rails`, a guard that already held on the parent).
+  17 injected defects, 4 on the oracle and 13 on the twin, are each caught (`tools/testing/faults/cfront-splits.json`).
+  Found, not fixed here (each a suggested follow-up):
+  - both rails refuse a call through a dereferenced function pointer, `(*fp)(x)`: the oracle's parser takes a call
+    only after a name or a member, and the twin's `*` of a function pointer is "dereference of a non-pointer";
+  - both rails refuse a call through an element of an array of function pointers (`(ops[i])(x)`), and the twin
+    refuses the declaration `int32_t (*t[2])(int32_t);` ("expected declarator name").
 
 ---
 
