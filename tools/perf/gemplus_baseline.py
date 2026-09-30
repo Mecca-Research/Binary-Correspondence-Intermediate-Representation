@@ -41,6 +41,7 @@ linear is visible through a factor of noise; a 3% constant-factor change is not.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import platform
@@ -89,6 +90,7 @@ class Metric:
         "slice_owner",
         "noise",
         "host_dependent",
+        "floor_key",
     )
 
     def __init__(
@@ -106,6 +108,7 @@ class Metric:
         slice_owner="",
         noise=None,
         host_dependent=False,
+        floor_key=None,
     ):
         self.key = key
         self.group = group
@@ -132,24 +135,49 @@ class Metric:
         # against another host's number manufactures verdicts in both directions. Such a row
         # is measured and reported everywhere, and graded only on the baseline host.
         self.host_dependent = host_dependent
+        # A floor measured in the SAME run as the value, under the value's own conditions -- the
+        # same process, host, fixture and clock (L23: a trivial solution is a floor only under
+        # the conditions of the number it bounds). `bound` stays None: a millisecond floor
+        # frozen on one host bounds nothing on another, and a call count moves with the
+        # interpreter, so the harness measures the floor beside the value and grades headroom
+        # against that (`compare`). The measurer that produces `key` produces `floor_key`.
+        self.floor_key = floor_key
 
-    def headroom(self, value: float) -> float | None:
+    def headroom(self, value: float, bound: float | None = None) -> float | None:
         """How much of the theoretical win is still unclaimed, as a fraction.
 
         0.0 means the incumbent sits on its proved floor and this metric is finished --
         which is a legitimate and useful outcome to be able to state. `None` means no bound
         is known yet, and that is itself a roadmap item: an optimality claim cannot be made
-        for a row whose floor nobody has computed.
+        for a row whose floor nobody has computed. `bound` is a floor measured in the same run
+        (`floor_key`); without one the frozen `bound` is used.
         """
-        if self.bound is None or value is None:
+        if bound is None:
+            bound = self.bound
+        if bound is None or value is None:
             return None
         if self.lower_is_better:
-            if value <= self.bound:
+            if value <= bound:
                 return 0.0
-            return (value - self.bound) / value
-        if value >= self.bound:
+            return (value - bound) / value
+        if value >= bound:
             return 0.0
-        return (self.bound - value) / self.bound
+        return (bound - value) / bound
+
+    def floor_violated(self, value: float | None, floor: float | None) -> bool:
+        """Whether a floor measured in the same run sits past the value it bounds.
+
+        A floor is work every implementation does, so the incumbent can meet it but never beat
+        it: a value below its floor means the floor is not a floor -- it measured more than the
+        irreducible work, or other work than the row's -- and every headroom read against it is
+        false. An exact floor is held exactly; a timed one past the kind's noise band, since
+        both sides carry the same host's jitter."""
+        if value is None or floor is None:
+            return False
+        slack = 0.0 if self.kind == "exact" else self.noise
+        if self.lower_is_better:
+            return value < floor * (1 - slack)
+        return value > floor * (1 + slack)
 
     def verdict(self, value: float | None, *, same_host: bool = False) -> str:
         """Grade `value`, refusing to grade a wall-clock row measured on another machine.
@@ -615,6 +643,12 @@ METRICS: tuple[Metric, ...] = (
         88.05,
         "ms",
         "wall",
+        floor_key="static_memory.digest.2048.floor",
+        bound_source="the FNV-1a chain alone over the module's pre-rendered canonical stream, "
+        "same run (`provenance.fnv_chain`, which returns the same digest): the content address "
+        "is sequential in its bytes -- h = (h ^ b) * P mod 2**64 admits no reassociation -- so "
+        "a Python digest of this stream makes one xor-multiply per canonical byte; what the "
+        "digest spends above the chain is the walk and the rendering",
         slice_owner="G3",
     ),
     Metric(
@@ -1147,6 +1181,12 @@ METRICS: tuple[Metric, ...] = (
         3419172,
         "calls",
         "exact",
+        floor_key="planner.calls.floor",
+        bound_source="the emission floor, same run (`emission_floor`): the call, and one "
+        "constructor call per record the plan must emit fresh -- a ChosenStep per claim (each "
+        "carries its own claim id), the RealizationResult, and one Candidate and one CostVector "
+        "per distinct value the steps carry. The currency charges nothing for bytecode, so the "
+        "offer, the min-plus relaxation and every per-column call are above it",
         slice_owner="G17",
     ),
     Metric(
@@ -1156,6 +1196,11 @@ METRICS: tuple[Metric, ...] = (
         3.41,
         "ms",
         "wall",
+        floor_key="planner.native.scale4.floor",
+        bound_source="writing the realization once, same harness and run (`test_kplan "
+        "--bench-floor`): BKPR is fixed-size -- 32 + 120 x claims + 4 bytes -- and a plan writes "
+        "every byte of it, so one store of that many bytes into the same warm buffer is work no "
+        "planner avoids. A memory roofline, not a planner",
         slice_owner="G17",
     ),
     # --- G18 (S4-B): the K_BCIR -> StreamPack chain advanced by declared deltas. `DeltaChain` holds
@@ -1217,6 +1262,12 @@ METRICS: tuple[Metric, ...] = (
         1.0,
         "x",
         "ratio",
+        floor_key="kbcir-streampack.delta.floor",
+        bound_source="allocating and writing the new link's pack bytes once, over the same "
+        "from-scratch median in the same rounds: a delta that changes the pack returns a new "
+        "immutable bytes of the whole pack (`Link.data`), so an output-sensitive update still "
+        "writes that much -- an update costs at least its changed output (Ramalingam and Reps, "
+        "bounded incremental computation)",
         slice_owner="G18",
     ),
     Metric(
@@ -1226,6 +1277,13 @@ METRICS: tuple[Metric, ...] = (
         10855666,
         "calls",
         "exact",
+        floor_key="kbcir-streampack.delta.calls.floor",
+        bound_source="the emission floor of the update, same run (`emission_floor`): the call, "
+        "and one constructor call per record the new link carries whose value neither the "
+        "previous link nor the delta holds -- the link, the plan's changed steps, the declared "
+        "module's changed phase and the pack records that changed. A value-equal record of the "
+        "previous link can be shared; an update costs at least its change (bounded incremental "
+        "computation)",
         slice_owner="G18",
     ),
     # --- G9 (S5-A): the declared alias facts carried the rest of the way to LLVM. Each row counts
@@ -1424,6 +1482,12 @@ METRICS: tuple[Metric, ...] = (
         7543875,
         "calls",
         "exact",
+        floor_key="streampack.encode.calls.floor",
+        bound_source="the emission floor, same run (`emission_floor`): the call alone. The wire "
+        "image is one bytes object, not records, and the currency charges a call, not a byte -- "
+        "a pack call can take a whole layout's records at once -- so the floor is independent of "
+        "the pack, and every call above it is per-record structure SP-ENC compiled but did not "
+        "batch",
         slice_owner="SP-ENC",
     ),
     Metric(
@@ -1433,6 +1497,10 @@ METRICS: tuple[Metric, ...] = (
         1.0,
         "x",
         "ratio",
+        floor_key="streampack.encode.floor",
+        bound_source="allocating and writing the wire image's bytes once, over the same "
+        "reference median, interleaved in the same rounds: every encoder returns that one bytes "
+        "object whatever it does to fill it. A memory roofline",
         slice_owner="SP-ENC",
     ),
     Metric(
@@ -1442,6 +1510,12 @@ METRICS: tuple[Metric, ...] = (
         10110215,
         "calls",
         "exact",
+        floor_key="kbcir-streampack.full.calls.floor",
+        bound_source="the emission floor, same run (`emission_floor`): the call, and one "
+        "constructor call per record the chain emits fresh -- the plan (a step per claim, its "
+        "result, each distinct Candidate and CostVector), the pack (the StreamPack, its segments, "
+        "prefetches, blocks, trace notes and generation vector) and the returned link; the bytes "
+        "and the empty verdict are no record",
         slice_owner="SP-ENC",
     ),
     # --- G10 (S5-B): escape analysis, indirect-call narrowing and the effect footprint made
@@ -1726,6 +1800,10 @@ METRICS: tuple[Metric, ...] = (
         275.22,
         "ms",
         "wall",
+        floor_key="audit.kbcir-streampack.scale4.floor",
+        bound_source="the case's own fixture -- matmul 128^2 tiled by 8, which the case builds "
+        "inside its timed interval (`performance_audit.AUDIT_FIXTURES`) -- timed in the same run: "
+        "work the row includes and no GEM slice touches",
         slice_owner="G2",
     ),
     Metric(
@@ -1735,6 +1813,11 @@ METRICS: tuple[Metric, ...] = (
         566.35,
         "ms",
         "wall",
+        floor_key="audit.static-lifetime-planner.scale4.floor",
+        bound_source="the case's own fixture (2,048 resources, 3,972 claims, built inside its "
+        "timed interval) plus the FNV-1a chain of that module's canonical stream, both timed in "
+        "the same run: the plan carries the module digest (`StaticMemoryPlan.module_digest`), so "
+        "the chain is output, not overhead",
         slice_owner="G0",
     ),
     Metric(
@@ -1744,6 +1827,10 @@ METRICS: tuple[Metric, ...] = (
         48.05,
         "ms",
         "wall",
+        floor_key="audit.mixed-wave-token-eft.scale4.floor",
+        bound_source="the case's own fixture -- 2,048 claims over 2,112 resources, the 8-domain "
+        "target and the durations, built inside its timed interval -- timed in the same run: "
+        "work the row includes and no GEM slice touches",
         slice_owner="G1",
     ),
     Metric(
@@ -1753,6 +1840,10 @@ METRICS: tuple[Metric, ...] = (
         34.62,
         "ms",
         "wall",
+        floor_key="audit.iterative-phase-dag.scale4.floor",
+        bound_source="the case's own fixture -- 2,048 single-claim phases declared in reverse, "
+        "built inside its timed interval -- timed in the same run: work the row includes and no "
+        "GEM slice touches",
         slice_owner="G3",
     ),
     # --- §4.4: the native structural wins. These are what BCIR is FOR, and the roadmap must
@@ -1839,6 +1930,12 @@ METRICS: tuple[Metric, ...] = (
         1.07,
         "x",
         "ratio",
+        floor_key="verify.plan.scope.overhead.floor",
+        bound_source="re-deriving each chosen step's cost once through R9's own predicate "
+        "(`realize.edge_cost`, the phase weights once per phase run), over the same optimize "
+        "median in the same run: scope-aware R9 re-derives every step, and the floor's costs sum "
+        "to the plan's score, so it did that work -- the offer re-derivation and the other laws "
+        "are above it",
         slice_owner="G17",
     ),
 )
@@ -1846,17 +1943,145 @@ METRICS: tuple[Metric, ...] = (
 _BY_KEY = {metric.key: metric for metric in METRICS}
 
 
+# --- the emission floor of a call-count row -------------------------------------------------
+
+#: Values that are their own identity (a scalar field of a record).
+_SCALARS = (int, float, str, bytes, bool, type(None))
+
+
+def _value_key(obj, memo: dict, records: list):
+    """`obj`'s value identity: a record (a dataclass of the `bcir` package) by its type and the
+    fields that make up its value (`compare=True` -- a derived cache is not value), a container by
+    its elements, anything else by itself when hashable and by identity when not. Every record
+    reached is appended to `records`, once per object."""
+    if type(obj) in _SCALARS:
+        return obj
+    hit = memo.get(id(obj))
+    if hit is not None:
+        return hit[1]
+    cls = type(obj)
+    if dataclasses.is_dataclass(obj) and cls.__module__.split(".")[0] == "bcir":
+        key = (
+            "R",
+            cls.__module__,
+            cls.__qualname__,
+            tuple(
+                _value_key(getattr(obj, f.name), memo, records)
+                for f in dataclasses.fields(obj)
+                if f.compare
+            ),
+        )
+        records.append(key)
+    elif isinstance(obj, (list, tuple)):
+        key = (
+            "L" if isinstance(obj, list) else "T",
+            tuple(_value_key(x, memo, records) for x in obj),
+        )
+    elif isinstance(obj, dict):
+        key = (
+            "D",
+            frozenset(
+                (_value_key(k, memo, records), _value_key(v, memo, records)) for k, v in obj.items()
+            ),
+        )
+    elif isinstance(obj, (set, frozenset)):
+        key = ("S", frozenset(_value_key(x, memo, records) for x in obj))
+    else:
+        try:
+            hash(obj)
+            key = ("V", cls.__qualname__, obj)
+        except TypeError:
+            key = ("I", id(obj))
+    memo[id(obj)] = (obj, key)  # the object is held so its id cannot be reused mid-walk
+    return key
+
+
+def emission_floor(output, prior=None) -> int:
+    """The floor of a call-count row: the call itself plus the records it must emit fresh.
+
+    The currency is cProfile's total (builtins included), and bytecode is free in it: a loop, an
+    attribute read, an operator or a tuple display is no call. What no implementation can avoid
+    is being called, and one constructor call per record of its output -- an instance of a BCIR
+    dataclass reachable from `output` -- counted once per distinct VALUE, since two equal records
+    may be one object. A record whose value `prior` already holds (the previous link of a delta,
+    the delta's own replacements) can be shared and is not counted: an update costs at least its
+    change. A bytes object is no record -- `encode`'s floor is its call. Every row that reads this
+    floor measures its value on the same output, in the same run."""
+    fresh: list = []
+    _value_key(output, {}, fresh)
+    fresh_values = set(fresh)
+    if prior is not None:
+        held: list = []
+        _value_key(prior, {}, held)
+        fresh_values -= set(held)
+    return 1 + len(fresh_values)
+
+
+def plan_floor(result, module) -> int:
+    """`planner.calls`'s floor: the plan's records, none of which the module holds."""
+    return emission_floor(result, prior=module)
+
+
+def delta_floor(before, after, delta) -> int:
+    """`kbcir-streampack.delta.calls`'s floor: the new link's records that neither the previous
+    link nor the delta's own replacements hold."""
+    return emission_floor(after, prior=(before, delta))
+
+
+def encode_floor(data, pack) -> int:
+    """`streampack.encode.calls`'s floor: the wire image carries no record, so the call alone."""
+    return emission_floor(data, prior=pack)
+
+
+def chain_floor(reference, module) -> int:
+    """`kbcir-streampack.full.calls`'s floor: every record the chain from scratch emits."""
+    return emission_floor(reference, prior=module)
+
+
+def audit_floor(name: str, scale: int, repeats: int) -> dict[str, float]:
+    """The parts of an `audit.*` row's floor, in ms, timed like the audit times its case (warmed
+    once, the median of `repeats`): the fixture the case builds inside its timed interval
+    (`performance_audit.AUDIT_FIXTURES`) and, where the case's output carries the module digest
+    (the static-lifetime plan's `module_digest`), the FNV-1a chain of that module's stream."""
+    import statistics
+    import time
+
+    from bcir.kbcir.provenance import fnv_chain, rendered_stream
+    from bcir.performance_audit import AUDIT_FIXTURES
+
+    def median_ms(fn):
+        fn()
+        samples = []
+        for _ in range(repeats):
+            start = time.perf_counter()
+            fn()
+            samples.append((time.perf_counter() - start) * 1e3)
+        return statistics.median(samples)
+
+    build = AUDIT_FIXTURES[name]
+    parts = {"fixture": median_ms(lambda: build(scale))}
+    if name == "static-lifetime-planner":
+        rendered = rendered_stream(build(scale)[0])
+        parts["digest"] = median_ms(lambda: fnv_chain(rendered))
+    return parts
+
+
 # --- measuring the current tree -------------------------------------------------------------
 
 
 def measure_audit(scale: int, repeats: int) -> dict[str, float]:
-    """Re-run the deterministic audit and return the `audit.*` rows in milliseconds."""
-    from bcir.performance_audit import run_tmsao_audit
+    """Re-run the deterministic audit and return the `audit.*` rows in milliseconds, each with its
+    floor from the same run (`audit_floor`): the case's own fixture, which the case builds inside
+    its timed interval, timed alone with the same repeats and median -- plus, for the
+    static-lifetime planner, the FNV-1a chain of the module its plan digests."""
+    from bcir.performance_audit import AUDIT_FIXTURES, run_tmsao_audit
 
     report = run_tmsao_audit(scale=scale, repeats=repeats)
     out: dict[str, float] = {}
     for sample in report.samples:
         out[f"audit.{sample.name}.scale{scale}"] = sample.median_ns / 1e6
+    for name in AUDIT_FIXTURES:
+        out[f"audit.{name}.scale{scale}.floor"] = sum(audit_floor(name, scale, repeats).values())
     return out
 
 
@@ -2411,8 +2636,8 @@ def measure_verifier() -> dict[str, float]:
 
     from bcir.examples import matmul_tiled
     from bcir.kbcir.cost import TargetProfile, Theta
-    from bcir.kbcir.realize import optimize
-    from bcir.kbcir.weights import PERF
+    from bcir.kbcir.realize import edge_cost, optimize
+    from bcir.kbcir.weights import PERF, weights
     from bcir.verify import verify_plan
 
     out: dict[str, float] = {}
@@ -2430,8 +2655,23 @@ def measure_verifier() -> dict[str, float]:
     result = optimize(module, host, theta, PERF)
     plan_ms = median_ms(lambda: optimize(module, host, theta, PERF))
     verify_ms = median_ms(lambda: verify_plan(module, result, host, theta=theta, policy=PERF))
+
+    def reprice():
+        """R9's irreducible work: each chosen step's cost re-derived once through the shared
+        predicate, the phase weights once per phase run (as the planner weighs them)."""
+        total, prev, weights_of, wpid = 0, None, None, None
+        for step in result.steps:
+            if weights_of is None or step.phase_id != wpid:
+                weights_of, wpid = weights(host, theta, step.phase_id, PERF), step.phase_id
+            total += edge_cost(prev, step.candidate, theta, weights_of)
+            prev = step.candidate
+        return total
+
+    if reprice() != result.score:  # the floor must do the work it stands for
+        raise AssertionError("the re-derived step costs do not sum to the plan's score")
     if plan_ms:
         out["verify.plan.scope.overhead"] = verify_ms / plan_ms
+        out["verify.plan.scope.overhead.floor"] = median_ms(reprice) / plan_ms
 
     forged = replace(
         result,
@@ -2463,7 +2703,13 @@ def measure_digest() -> dict[str, float]:
     import statistics
     import time
 
-    from bcir.kbcir.provenance import digest_stats, hash_module, module_identity
+    from bcir.kbcir.provenance import (
+        digest_stats,
+        fnv_chain,
+        hash_module,
+        module_identity,
+        rendered_stream,
+    )
     from bcir.kbcir.static_memory import plan_static_memory, verify_static_memory_plan
     from bcir.performance_audit import _AuditHardware, static_memory_module
 
@@ -2492,6 +2738,10 @@ def measure_digest() -> dict[str, float]:
     out["static_memory.digests.2048"] = float(digest_stats()["hash_module"] - before)
 
     out["static_memory.digest.2048"] = median_ms(lambda: hash_module(module))
+    rendered = rendered_stream(module)
+    if fnv_chain(rendered) != hash_module(module):  # the floor computes the digest, not less
+        raise AssertionError("the FNV-1a chain over the rendered stream is not the module digest")
+    out["static_memory.digest.2048.floor"] = median_ms(lambda: fnv_chain(rendered))
     out["static_memory.plan.2048"] = median_ms(
         lambda: (module.touch(), plan_static_memory(module, bindings, hardware))
     )
@@ -2726,15 +2976,24 @@ def measure_kplan() -> dict[str, float]:
     import tempfile
 
     from bcir.kbcir import realize
-    from bcir.tests.planner_fixtures import build_harness, call_count, measure, native_ms
+    from bcir.tests.planner_fixtures import (
+        build_harness,
+        call_count,
+        measure,
+        native_floor,
+        native_ms,
+    )
 
-    out = {"planner.calls": float(call_count(realize.optimize))}
+    counted: list = []
+    out = {"planner.calls": float(call_count(realize.optimize, out=counted))}
+    out["planner.calls.floor"] = float(plan_floor(*counted))
     tmp = tempfile.mkdtemp(prefix="bcir-kplan-")
     try:
         exe = build_harness(tmp)
         if exe is not None:
             out.update(measure(exe, tmp))
             out["planner.native.scale4"] = native_ms(exe, tmp)
+            out["planner.native.scale4.floor"] = native_floor(exe, tmp)[0]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return out
@@ -2748,8 +3007,12 @@ def measure_delta() -> dict[str, float]:
     from bcir.tests.delta_fixtures import delta_calls, delta_ratio, measure
 
     out = measure()
-    out["kbcir-streampack.delta"] = delta_ratio()
-    out["kbcir-streampack.delta.calls"] = float(delta_calls()[0])
+    floor: dict = {}
+    out["kbcir-streampack.delta"] = delta_ratio(floor=floor)
+    out["kbcir-streampack.delta.floor"] = floor["ratio"]
+    links: list = []
+    out["kbcir-streampack.delta.calls"] = float(delta_calls(links=links)[0])
+    out["kbcir-streampack.delta.calls.floor"] = float(delta_floor(*links))
     return out
 
 
@@ -2774,9 +3037,15 @@ def measure_encode() -> dict[str, float]:
     from bcir.tests.encode_fixtures import encode_calls, encode_ratio, measure
 
     out = measure()
-    out["streampack.encode.calls"] = float(encode_calls()[0])
-    out["streampack.encode"] = encode_ratio()
-    out["kbcir-streampack.full.calls"] = float(full_calls())
+    counted: list = []
+    out["streampack.encode.calls"] = float(encode_calls(out=counted)[0])
+    out["streampack.encode.calls.floor"] = float(encode_floor(*counted))
+    floor: dict = {}
+    out["streampack.encode"] = encode_ratio(floor=floor)
+    out["streampack.encode.floor"] = floor["ratio"]
+    chained: list = []
+    out["kbcir-streampack.full.calls"] = float(full_calls(links=chained))
+    out["kbcir-streampack.full.calls.floor"] = float(chain_floor(*chained))
     return out
 
 
@@ -2916,7 +3185,15 @@ def compare(measured: dict[str, float], *, same_host: bool | None = None) -> lis
     rows = []
     for metric in METRICS:
         value = measured.get(metric.key)
-        headroom = metric.headroom(value if value is not None else metric.baseline)
+        if metric.floor_key:
+            # A floor measured in this run bounds this run's value and nothing else: without the
+            # value (or the floor) there is no headroom to state, least of all the baseline's,
+            # which was measured on another host.
+            bound = measured.get(metric.floor_key)
+            headroom = metric.headroom(value, bound) if value is not None else None
+        else:
+            bound = metric.bound
+            headroom = metric.headroom(value if value is not None else metric.baseline)
         rows.append(
             {
                 "key": metric.key,
@@ -2929,9 +3206,11 @@ def compare(measured: dict[str, float], *, same_host: bool | None = None) -> lis
                 "measured": value,
                 "verdict": metric.verdict(value, same_host=same_host),
                 "improvement": metric.improvement(value) if value is not None else None,
-                "bound": metric.bound,
+                "bound": bound,
+                "bound_measured": bool(metric.floor_key),
                 "bound_source": metric.bound_source,
                 "headroom": headroom,
+                "floor_violated": bool(metric.floor_key) and metric.floor_violated(value, bound),
             }
         )
     return rows
@@ -2989,6 +3268,19 @@ def render(rows: list[dict]) -> str:
         lines += ["", "REGRESSIONS block the slice:"]
         for row in bad:
             lines.append(f"  - {row['key']}: {row['improvement'] * 100:+.1f}%")
+    violated = [r for r in rows if r.get("floor_violated")]
+    if violated:
+        lines += [
+            "",
+            "FLOORS PAST THEIR VALUE block the table: a floor is work every implementation does,",
+            "so a value beyond it means the floor measured something else, and every headroom",
+            "read against it is false:",
+        ]
+        for row in violated:
+            lines.append(
+                f"  - {row['key']}: {_fmt(row['measured'], row['unit'])} against a floor of "
+                f"{_fmt(row['bound'], row['unit'])}"
+            )
     return "\n".join(lines)
 
 
@@ -2997,11 +3289,12 @@ def render_list() -> str:
     for group in sorted({m.group for m in METRICS}):
         lines.append(f"[{group}]")
         for metric in [m for m in METRICS if m.group == group]:
-            floor = (
-                "no bound computed yet"
-                if metric.bound is None
-                else f"bound {_fmt(metric.bound, metric.unit)} {metric.unit}"
-            )
+            if metric.floor_key:
+                floor = "bound measured in the same run"
+            elif metric.bound is None:
+                floor = "no bound computed yet"
+            else:
+                floor = f"bound {_fmt(metric.bound, metric.unit)} {metric.unit}"
             lines.append(
                 f"  {metric.key:<40} {_fmt(metric.baseline, metric.unit):>12} "
                 f"{metric.unit:<8} slice={metric.slice_owner or '?':<4} {floor}"
@@ -3009,7 +3302,7 @@ def render_list() -> str:
             if metric.bound_source:
                 lines.append(f"      floor: {metric.bound_source}")
         lines.append("")
-    unbounded = [m.key for m in METRICS if m.bound is None]
+    unbounded = [m.key for m in METRICS if m.bound is None and not m.floor_key]
     if unbounded:
         lines += [
             "Rows with no lower bound yet -- no optimality claim is available for "
@@ -3056,7 +3349,7 @@ def main(argv: list[str]) -> int:
                 indent=2,
                 sort_keys=True,
             )
-    return 1 if any(r["verdict"] == "REGRESSION" for r in rows) else 0
+    return 1 if any(r["verdict"] == "REGRESSION" or r["floor_violated"] for r in rows) else 0
 
 
 if __name__ == "__main__":

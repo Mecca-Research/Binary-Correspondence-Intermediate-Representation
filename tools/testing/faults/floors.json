@@ -1,0 +1,154 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_gemplus_floors:test_every_row_has_a_frozen_bound_or_a_floor_measured_beside_it",
+    "bcir.tests.test_gemplus_floors:test_compare_grades_headroom_against_the_floor_of_the_same_run",
+    "bcir.tests.test_gemplus_floors:test_a_floor_past_its_value_blocks_the_table",
+    "bcir.tests.test_gemplus_floors:test_the_emission_floor_counts_each_fresh_record_value_once",
+    "bcir.tests.test_gemplus_floors:test_the_plan_floor_is_a_step_per_claim_and_its_distinct_values",
+    "bcir.tests.test_gemplus_floors:test_the_delta_floor_is_its_change_and_the_previous_link_survives",
+    "bcir.tests.test_gemplus_floors:test_the_chain_floor_counts_the_plan_and_the_pack",
+    "bcir.tests.test_gemplus_floors:test_the_encode_floor_is_its_call",
+    "bcir.tests.test_gemplus_floors:test_the_digest_floor_is_the_digest",
+    "bcir.tests.test_gemplus_floors:test_the_ratio_floors_are_timed_beside_their_values",
+    "bcir.tests.test_gemplus_floors:test_the_verifier_floor_re_derives_every_step",
+    "bcir.tests.test_gemplus_floors:test_the_audit_floors_are_the_fixtures_the_cases_build",
+    "bcir.tests.test_gemplus_floors:test_the_native_floor_writes_the_whole_realization"
+  ],
+  "faults": [
+    {
+      "expects": "test_compare_grades_headroom_against_the_floor_of_the_same_run",
+      "label": "compare grades a measured-floor row against its frozen bound (None), so the headroom it states is never read against the floor measured beside the value",
+      "new": "            bound = metric.bound\n",
+      "old": "            bound = measured.get(metric.floor_key)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_a_floor_past_its_value_blocks_the_table",
+      "label": "an exact floor is held with the noise band, so a call count below its floor by less than 2% passes",
+      "new": "        slack = self.noise\n",
+      "old": "        slack = 0.0 if self.kind == \"exact\" else self.noise\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_a_floor_past_its_value_blocks_the_table",
+      "label": "a lower-is-better value below its floor is never a violation",
+      "new": "            return False\n",
+      "old": "            return value < floor * (1 - slack)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_a_floor_past_its_value_blocks_the_table",
+      "label": "the tool exits zero on a table whose floor sits past its value",
+      "new": "    return 1 if any(r[\"verdict\"] == \"REGRESSION\" for r in rows) else 0\n",
+      "old": "    return 1 if any(r[\"verdict\"] == \"REGRESSION\" or r[\"floor_violated\"] for r in rows) else 0\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_every_row_has_a_frozen_bound_or_a_floor_measured_beside_it",
+      "label": "--list still reports the measured-floor rows as having no lower bound",
+      "new": "    unbounded = [m.key for m in METRICS if m.bound is None]\n",
+      "old": "    unbounded = [m.key for m in METRICS if m.bound is None and not m.floor_key]\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_emission_floor_counts_each_fresh_record_value_once",
+      "label": "the emission floor counts record objects, not distinct values, and ignores what the prior link holds",
+      "new": "    return 1 + len(fresh)\n",
+      "old": "    return 1 + len(fresh_values)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_emission_floor_counts_each_fresh_record_value_once",
+      "label": "the emission floor ignores the prior link: a delta's shared records are counted as emitted",
+      "new": "    if False:\n        held: list = []\n",
+      "old": "    if prior is not None:\n        held: list = []\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_emission_floor_counts_each_fresh_record_value_once",
+      "label": "the emission floor walks a derived cache (compare=False) as if it were output",
+      "new": "                if True\n",
+      "old": "                if f.compare\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_emission_floor_counts_each_fresh_record_value_once",
+      "label": "any dataclass counts as a BCIR record, a foreign one included",
+      "new": "    if dataclasses.is_dataclass(obj):\n",
+      "old": "    if dataclasses.is_dataclass(obj) and cls.__module__.split(\".\")[0] == \"bcir\":\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_delta_floor_is_its_change_and_the_previous_link_survives",
+      "label": "the delta floor forgets the delta's own replacements are input, so the edited claim counts as emitted",
+      "new": "    return emission_floor(after, prior=before)\n",
+      "old": "    return emission_floor(after, prior=(before, delta))\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_plan_floor_is_a_step_per_claim_and_its_distinct_values",
+      "label": "the plan floor subtracts the plan itself instead of the module, so it reads the call alone",
+      "new": "    return emission_floor(result, prior=result)\n",
+      "old": "    return emission_floor(result, prior=module)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_audit_floors_are_the_fixtures_the_cases_build",
+      "label": "the static-lifetime floor drops the digest its plan carries",
+      "new": "    if False:\n        rendered = rendered_stream(build(scale)[0])\n",
+      "old": "    if name == \"static-lifetime-planner\":\n        rendered = rendered_stream(build(scale)[0])\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_verifier_floor_re_derives_every_step",
+      "label": "the verifier floor re-derives each step without its predecessor, so the fused discount is never priced",
+      "new": "            total += edge_cost(None, step.candidate, theta, weights_of)\n",
+      "old": "            total += edge_cost(prev, step.candidate, theta, weights_of)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_digest_floor_is_the_digest",
+      "label": "the digest floor chains the rendered items without their 0xFF separators",
+      "new": "        out.append(e[:-1])\n    return out\n",
+      "old": "        out.append(e)\n    return out\n",
+      "path": "bcir/kbcir/provenance.py"
+    },
+    {
+      "expects": "test_the_digest_floor_is_the_digest",
+      "label": "the digest floor starts its chain from zero instead of the FNV offset basis",
+      "new": "    h = 0\n    prime = _FNV_PRIME\n    mask = _MASK\n    for e in rendered:\n",
+      "old": "    h = _FNV_OFFSET\n    prime = _FNV_PRIME\n    mask = _MASK\n    for e in rendered:\n",
+      "path": "bcir/kbcir/provenance.py"
+    },
+    {
+      "expects": "test_the_audit_floors_are_the_fixtures_the_cases_build",
+      "label": "the phase-DAG floor names the scheduler fixture, which its case never builds",
+      "new": "    \"iterative-phase-dag\": scheduler_fixture,\n",
+      "old": "    \"iterative-phase-dag\": phase_dag_module,\n",
+      "path": "bcir/performance_audit.py"
+    },
+    {
+      "expects": "test_the_ratio_floors_are_timed_beside_their_values",
+      "label": "the delta ratio's floor writes no bytes, so it times an empty allocation",
+      "new": "            size = 0\n",
+      "old": "            size = len(link.data)\n",
+      "path": "bcir/tests/delta_fixtures.py"
+    },
+    {
+      "expects": "test_the_ratio_floors_are_timed_beside_their_values",
+      "label": "the encode ratio's floor writes half the wire image",
+      "new": "    size = len(encode(pack)) // 2\n",
+      "old": "    size = len(encode(pack))\n",
+      "path": "bcir/tests/encode_fixtures.py"
+    },
+    {
+      "expects": "test_the_native_floor_writes_the_whole_realization",
+      "label": "the native floor stores half the realization",
+      "new": "  size_t wrote = cap / 2; /* the whole realization, and the size the grader holds to 32 + 120n + 4 */\n",
+      "old": "  size_t wrote = cap; /* the whole realization, and the size the grader holds to 32 + 120n + 4 */\n",
+      "path": "runtime/c/test_kplan.c"
+    }
+  ]
+}

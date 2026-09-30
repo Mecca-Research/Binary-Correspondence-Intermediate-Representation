@@ -527,28 +527,37 @@ def audit_pack(scale: int):
     return hydrate_pipelined(module, optimize(module, h, theta, PERF), "plan0", 2)
 
 
-def encode_calls(scale: int = CALLS_SCALE) -> tuple[int, int]:
+def encode_calls(scale: int = CALLS_SCALE, out: list | None = None) -> tuple[int, int]:
     """(calls of `encode`, calls of `encode_reference`) on the audit pack at `scale` (cProfile's
     total, builtins included). Deterministic for one interpreter, so a gate compares the two in
-    one process."""
+    one process. With `out`, it receives the counted call's wire image and the pack it encoded --
+    what the row's emission floor is read from."""
     from bcir.abi.streampack_abi import encode
-    from bcir.tests.delta_fixtures import _profiled_calls
+    from bcir.tests.delta_fixtures import _profiled, _profiled_calls
 
     pack = audit_pack(scale)
     if encode(pack) != encode_reference(pack):  # warm, and never time two different answers
         raise AssertionError("encode and encode_reference disagree on the audit pack")
-    return _profiled_calls(encode, pack), _profiled_calls(encode_reference, pack)
+    calls, data = _profiled(encode, pack)
+    if out is not None:
+        out[:] = [data, pack]
+    return calls, _profiled_calls(encode_reference, pack)
 
 
-def encode_ratio(scale: int = RATIO_SCALE, rounds: int = 9) -> float:
+def encode_ratio(scale: int = RATIO_SCALE, rounds: int = 9, floor: dict | None = None) -> float:
     """Median time of `encode` / median time of `encode_reference` on the audit pack at `scale`,
-    interleaved in one process (a same-host ratio, the `ratio` band)."""
+    interleaved in one process (a same-host ratio, the `ratio` band).
+
+    With `floor`, `floor["ratio"]` is the row's floor over the same denominator, interleaved in the
+    same rounds: allocating and writing the wire image's bytes once -- the one `bytes` object every
+    encoder returns, whatever it does to fill it."""
     import time
 
     from bcir.abi.streampack_abi import encode
 
     pack = audit_pack(scale)
-    new, ref = [], []
+    size = len(encode(pack))
+    new, ref, fresh = [], [], []
     for _ in range(rounds):
         start = time.perf_counter()
         encode(pack)
@@ -556,8 +565,16 @@ def encode_ratio(scale: int = RATIO_SCALE, rounds: int = 9) -> float:
         start = time.perf_counter()
         encode_reference(pack)
         ref.append(time.perf_counter() - start)
+        if floor is not None:
+            start = time.perf_counter()
+            b"\x01" * size
+            fresh.append(time.perf_counter() - start)
     new.sort()
     ref.sort()
+    if floor is not None:
+        fresh.sort()
+        floor["ratio"] = fresh[rounds // 2] / ref[rounds // 2]
+        floor["bytes"] = size
     return new[rounds // 2] / ref[rounds // 2]
 
 

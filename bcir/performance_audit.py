@@ -107,10 +107,11 @@ def _values(count: int, *, modulus: int = 31, divisor: float = 64.0) -> list[flo
     return [((index * 17 + 11) % modulus - modulus // 2) / divisor for index in range(count)]
 
 
-def _case_phase_dag(scale: int) -> dict:
-    from .gem.execute import execute
+def phase_dag_module(scale: int):
+    """The deep phase-DAG fixture at `scale`: 512 x scale single-claim phases chained over one
+    resource and declared in reverse, so canonical execution must reorder all of them (the
+    `iterative-phase-dag` case)."""
     from .model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
-    from .verify import verify
 
     count = 512 * scale
     module = Module(name="tmsao_deep_phase_dag")
@@ -130,6 +131,15 @@ def _case_phase_dag(scale: int) -> dict:
         )
         phases.append(Phase(index, () if index == 0 else (index - 1,), [claim]))
     module.phases.extend(reversed(phases))
+    return module
+
+
+def _case_phase_dag(scale: int) -> dict:
+    from .gem.execute import execute
+    from .verify import verify
+
+    count = 512 * scale
+    module = phase_dag_module(scale)
     diagnostics = verify(module)
     result = execute(module)
     if diagnostics or result.executed != count or result.phase_order != list(range(count)):
@@ -143,10 +153,10 @@ def _case_phase_dag(scale: int) -> dict:
     }
 
 
-def _case_gem_schedulers(scale: int) -> dict:
-    from .gem.async_tokens import async_plan
-    from .gem.concurrency import schedule_concurrent
-    from .gem.schedule import schedule_eft
+def scheduler_fixture(scale: int):
+    """(module, target, durations): the mixed wave/token/EFT fixture at `scale` -- 512 x scale
+    claims in one phase over 64 shared resources and one private output each, on an 8-domain
+    target (the `mixed-wave-token-eft` case)."""
     from .kbcir.cost import TargetProfile
     from .model import Claim, Domain, Lane, Module, Opcode, Phase, Resource, StrideClass
 
@@ -178,9 +188,19 @@ def _case_gem_schedulers(scale: int) -> dict:
         )
     module.add_phase(Phase(0, (), claims))
     target = TargetProfile(name="tmsao-8-domain", affinity_domains=8, mem_channels=4)
+    durations = {claim.id: 1 + (claim.id * 13) % 29 for claim in claims}
+    return module, target, durations
+
+
+def _case_gem_schedulers(scale: int) -> dict:
+    from .gem.async_tokens import async_plan
+    from .gem.concurrency import schedule_concurrent
+    from .gem.schedule import schedule_eft
+
+    count = 512 * scale
+    module, target, durations = scheduler_fixture(scale)
     waves = schedule_concurrent(module, target)
     tokens = async_plan(module)
-    durations = {claim.id: 1 + (claim.id * 13) % 29 for claim in claims}
     eft = schedule_eft(module, durations, target)
     edge_count = sum(len(rows) for rows in tokens.awaits.values())
     if len(tokens.forks) != count or len(eft.slots) != count:
@@ -197,18 +217,24 @@ def _case_gem_schedulers(scale: int) -> dict:
     }
 
 
-def _case_kbcir_streampack(scale: int) -> dict:
+def kbcir_streampack_fixture(scale: int):
+    """(module, target, theta): the K_BCIR->StreamPack fixture at `scale` -- matmul
+    (32 x scale)^2 tiled by 8, (4 x scale)^3 claims, x86 AVX2, memory-bound (the
+    `kbcir-streampack` case)."""
     from .examples import matmul_tiled
-    from .gem.streampack import hydrate_pipelined
     from .kbcir.cost import TargetProfile, Theta
+
+    grid = 4 * scale
+    return matmul_tiled(n=grid * 8, tile=8), TargetProfile.x86_avx2(), Theta.mem_bound()
+
+
+def _case_kbcir_streampack(scale: int) -> dict:
+    from .gem.streampack import hydrate_pipelined
     from .kbcir.realize import optimize
     from .kbcir.weights import PERF
     from .verify import verify, verify_pack, verify_plan
 
-    grid = 4 * scale
-    module = matmul_tiled(n=grid * 8, tile=8)
-    target = TargetProfile.x86_avx2()
-    theta = Theta.mem_bound()
+    module, target, theta = kbcir_streampack_fixture(scale)
     result = optimize(module, target, theta)
     pack = hydrate_pipelined(module, result, plan="tmsao", depth=2)
     diagnostics = (
@@ -293,13 +319,29 @@ def static_memory_module(scale: int):
     return module
 
 
+def static_memory_fixture(scale: int):
+    """(module, hardware, bindings): the static-memory fixture at `scale` with the audit's one-bank
+    hardware and every resource bound to it (the `static-lifetime-planner` case)."""
+    module = static_memory_module(scale)
+    return module, _AuditHardware(), {rid: "ram" for rid in module.resources}
+
+
+#: The fixture each timed case builds inside its own measured interval, by case name. Building it
+#: is the part of an `audit.*` row no GEM slice touches -- the floor the GEM+ baseline harness
+#: measures beside the case (tools/perf/gemplus_baseline.py, `measure_audit`).
+AUDIT_FIXTURES = {
+    "iterative-phase-dag": phase_dag_module,
+    "mixed-wave-token-eft": scheduler_fixture,
+    "kbcir-streampack": kbcir_streampack_fixture,
+    "static-lifetime-planner": static_memory_fixture,
+}
+
+
 def _case_static_memory(scale: int) -> dict:
     from .kbcir.static_memory import plan_static_memory, verify_static_memory_plan
 
-    module = static_memory_module(scale)
+    module, hardware, bindings = static_memory_fixture(scale)
     resources, phase_count = len(module.resources), len(module.phases)
-    hardware = _AuditHardware()
-    bindings = {rid: "ram" for rid in module.resources}
     plan = plan_static_memory(module, bindings, hardware)
     errors = verify_static_memory_plan(plan, module, bindings, hardware)
     if errors:
