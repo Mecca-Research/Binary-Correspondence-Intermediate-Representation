@@ -5,7 +5,8 @@
     "--require",
     "bcir.tests.test_c_cfront:_CC",
     "bcir.tests.test_c_cfront:test_integer_constants_are_exact_on_both_rails",
-    "bcir.tests.test_c_cfront:test_an_integer_constant_no_type_holds_is_refused_on_both_rails"
+    "bcir.tests.test_c_cfront:test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
+    "bcir.tests.test_c_cfront:test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails"
   ],
   "faults": [
     {
@@ -91,6 +92,62 @@
       "new": "    if v > (1 << 63) - 1:\n        return str(v)\n",
       "old": "    if v > (1 << 63) - 1:\n        return f\"{v}u\"\n",
       "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA1 the twin passes a multi-dimensional global by name",
+      "new": "    gr->ndims=0;",
+      "old": "    gr->ndims=(uint8_t)(g->is_arr && g->nd>1 ? (g->nd<255?g->nd:255) : 0);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA2 the twin sizes a string-initialized global without its NUL",
+      "new": "tok s=adv(c); n+=str_bytes(s.s,s.n); } init_n=n; }",
+      "old": "tok s=adv(c); n+=str_bytes(s.s,s.n); } init_n=n+1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA3 the twin bounds an unsized global's accesses by one element",
+      "new": "{ dims[0]=init_n; }",
+      "old": "{ dims[0]=init_n; count=(int)init_n; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA4 the twin refuses a declaration's second declarator",
+      "new": "  p_global_declarator(c,&base,btd,btdd);\n",
+      "old": "  for(;;){\n    p_global_declarator(c,&base,btd,btdd);\n    if(c->failed || !is(c,\",\")) break;\n    c->i++;\n  }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA5 the twin refuses the objects of a struct a declaration defines",
+      "new": "        (void)base;\n",
+      "old": "        for(;;){ p_global_declarator(c,&base,0,NULL); if(c->failed || !is(c,\",\")) break; c->i++; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA6 the oracle passes a multi-dimensional global by name",
+      "new": "ref(r)",
+      "old": "f\"&{ref(r)}\" + \"[0]\" * dims if r in lf.globals_used and dims > 1 else ref(r)",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA7 the oracle refuses a declaration's second declarator",
+      "new": "            break\n",
+      "old": "            if not self.at(\"PUNCT\", \",\"):\n                break\n            self.nxt()\n            tref, name = self._declarator(base)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
+      "label": "GA8 the oracle refuses the objects of a struct a declaration defines",
+      "new": "        self.eat(\"PUNCT\", \";\")\n        return True\n",
+      "old": "        tref, name = self._declarator(base)\n        self._globals(unit, base, tref, name)\n        return True\n",
+      "path": "bcir/frontends/cfront/cparse.py"
     }
   ]
 }

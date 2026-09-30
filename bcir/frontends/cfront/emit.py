@@ -808,11 +808,11 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.call.tu:"):  # a PROTOTYPED cross-TU callee (Phase 3 linking):
         callee = c.op.split(":", 1)[1]  # verbatim, external linkage -- the emitted TU
         if not c.wr:  # declares it; the host LINKER resolves it
-            return f"{callee}({', '.join(ref(r) for r in c.rd)});"
+            return f"{callee}({_args(lf, ref, c.rd)});"
         rt = lf.rid_types.get(c.wr[0])
         return deftmp(
             c.wr[0],
-            f"{callee}({', '.join(ref(r) for r in c.rd)})",
+            f"{callee}({_args(lf, ref, c.rd)})",
             _cname(rt) if rt is not None else None,
         )
     if c.op.startswith("c.call.builtin:"):  # a GCC/Clang integer builtin -> verbatim
@@ -832,7 +832,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"{callee}({', '.join(ref(r) for r in c.rd)});"
     if c.op.startswith("c.call.void:"):  # a void callee -> a bare call statement
         callee = c.op.split(":", 1)[1]
-        return f"bcir_{callee}({', '.join(ref(r) for r in c.rd)});"
+        return f"bcir_{callee}({_args(lf, ref, c.rd)});"
     if c.op.startswith("c.call:"):
         callee = c.op.split(":", 1)[1]
         rt = lf.rid_types.get(c.wr[0])  # a wide (8-byte) int OR an aggregate return declares
@@ -847,13 +847,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             )
             else None
         )  # mk(x);`), not uint32
-        return deftmp(c.wr[0], f"bcir_{callee}({', '.join(ref(r) for r in c.rd)})", ty)
+        return deftmp(c.wr[0], f"bcir_{callee}({_args(lf, ref, c.rd)})", ty)
     if c.op == "c.call.indirect":  # rd[0] is the function pointer; rd[1:] args
-        return deftmp(c.wr[0], f"{ref(c.rd[0])}({', '.join(ref(r) for r in c.rd[1:])})")
+        return deftmp(c.wr[0], f"{ref(c.rd[0])}({_args(lf, ref, c.rd[1:])})")
     if c.op.startswith("c.call.imember:"):  # o->fn(args): funcptr struct member
         field = c.op.split(":", 1)[1]
         sep = "->" if c.imm and c.imm[0] else "."
-        return deftmp(c.wr[0], f"{ref(c.rd[0])}{sep}{field}({', '.join(ref(r) for r in c.rd[1:])})")
+        return deftmp(c.wr[0], f"{ref(c.rd[0])}{sep}{field}({_args(lf, ref, c.rd[1:])})")
     if c.op.startswith("c.atomic."):  # atomic RMW -> the matching builtin (§5.8)
         return deftmp(
             c.wr[0],
@@ -892,6 +892,22 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
             )
         return deftmp(c.wr[0], f"atomic_{fn}({ref(c.rd[0])}, {ref(c.rd[1])})")
     raise ValueError(f"emit: unhandled claim op {c.op!r}")
+
+
+def _args(lf: LoweredFunc, ref, rids) -> str:
+    """A call's arguments as the emit spells them. A file-scope multi-dimensional array is declared as the source
+    declares it, nested, so its name decays to a pointer to its first row (`T (*)[N]`); an emitted parameter
+    that takes an array is the flat `T *` (a local array is declared flat already). Such an argument is spelled
+    as its first element's address, `&m[0][0]` -- the same address, of the parameter's type. The twin spells
+    it the same (`bcir_cfront.c`, `emit_arg`)."""
+    out = []
+    for r in rids:
+        ct = lf.rid_types.get(r)
+        dims = 0
+        while ct is not None and ct.kind == "array":
+            dims, ct = dims + 1, ct.of
+        out.append(f"&{ref(r)}" + "[0]" * dims if r in lf.globals_used and dims > 1 else ref(r))
+    return ", ".join(out)
 
 
 def _unit_ctype(size: int) -> str:

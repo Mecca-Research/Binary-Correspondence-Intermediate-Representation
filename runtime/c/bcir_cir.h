@@ -120,6 +120,10 @@ typedef struct bcir_resource {
   uint8_t  is_void;          /* the value of a void expression -- a call to a void function, `(void)e`, a statement
                               * expression ending in a statement: a placeholder no claim writes and nothing reads, so
                               * `c ? f() : g()` is known to have no value (CF-TERNARY; the oracle's `_VOID_RID`) */
+  uint8_t  ndims;            /* a file-scope array's dimensions, when it has more than one; else 0. It is declared nested,
+                              * as the source declares it, so a call passes it as its first element's address,
+                              * `&m[0][0]` -- the flat `T *` an emitted parameter is (CF-GARRAY). Emit-only: the claim
+                              * graph and its digest do not read it. */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */

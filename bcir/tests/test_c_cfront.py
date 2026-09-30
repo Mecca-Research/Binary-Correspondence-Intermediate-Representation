@@ -272,6 +272,8 @@ _PTRVALUE = [
     #   spelled as C names them (CF-ANON)
     "cfront_intconst.c",  # every integer constant base and suffix at its type's edges, and file-scope
     #   initializers folded in C's types (CF-INTCONST)
+    "cfront_garray.c",  # multi-dimensional globals passed to row-pointer parameters, character tables sized by
+    #   their strings, declarations listing several objects (CF-GARRAY)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10495,3 +10497,60 @@ def test_an_integer_constant_no_type_holds_is_refused_on_both_rails():
                 c_summary,
                 oracle_summary,
             )
+
+
+# CF-GARRAY: file-scope arrays and character tables pass through cfront as local ones do. Each function writes the
+# globals, so the driver runs the original and the emit from one saved state and compares what each returns and
+# leaves behind.
+_GARRAY_DRIVER = (
+    _GAPS_SAME
+    + r"""
+#define GA_STATE(X) X(ga_m) X(ga_w) X(ga_name) X(ga_pad) X(ga_bytes) X(ga_a) X(ga_b) X(ga_x) X(ga_y) X(ga_p) \
+  X(ga_z) X(ga_s1) X(ga_s2) X(ga_u) X(ga_v) X(ga_arr) X(ga_c1) X(ga_c2)
+static unsigned char st_before[1024], st_orig[1024], st_emit[1024];
+static size_t ga_save(unsigned char *b) {
+  size_t n = 0;
+#define GA_SAVE(g) memcpy(b + n, &(g), sizeof(g)); n += sizeof(g);
+  GA_STATE(GA_SAVE)
+  return n;
+}
+static void ga_load(const unsigned char *b) {
+  size_t n = 0;
+#define GA_LOAD(g) memcpy(&(g), b + n, sizeof(g)); n += sizeof(g);
+  GA_STATE(GA_LOAD)
+}
+#define SAME_STATE(f, ...) do { size_t n_ = ga_save(st_before); uint64_t r1_ = (uint64_t)f(__VA_ARGS__); \
+    ga_save(st_orig); ga_load(st_before); uint64_t r2_ = (uint64_t)bcir_##f(__VA_ARGS__); ga_save(st_emit); \
+    if (r1_ != r2_ || memcmp(st_orig, st_emit, n_)) return fail(#f); } while (0)
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME_STATE(ga_pass, s); SAME_STATE(ga_chars, s); SAME_STATE(ga_lists, s); SAME_STATE(ga_structs, s);
+    SAME_STATE(ga_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails():
+    """CF-GARRAY: `cfront_garray.c` -- a 2-D and a 3-D global passed to row-pointer parameters (`T (*p)[N]`,
+    `T m[][N]`), character tables sized by their string literals (concatenated, with escapes, and in a larger
+    array), and declarations that list several objects: arrays, scalars, a pointer, initialized ones, a `static`
+    list, structs, and the objects of a struct the declaration itself defines. Both emits passed a
+    multi-dimensional global by name, whose type is still `T[A][N]`, where the emitted parameter is the flat `T *`,
+    which Clang and GCC reject; each now passes its first element's address. The twin refused a character array
+    initialized by a string (`non-constant enum initializer`) and bounded an unsized global array's accesses by one
+    element; both rails refused a declaration's second declarator. The unit lowers to one claim graph on the four
+    targets, and each function of each emit returns -- and leaves the globals -- as the original does."""
+    if not _CC:
+        return
+    fx = "cfront_garray.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        for whole in ("(&ga_m[0][0], ", "(&ga_w[0][0][0], ", '5u, "ga_chars:ga_name")'):
+            assert whole in emit, f"{rail}: the emit does not spell {whole!r}"
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _GARRAY_DRIVER)

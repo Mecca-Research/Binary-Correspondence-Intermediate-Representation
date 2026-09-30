@@ -91,6 +91,8 @@ _TYPE_KW = frozenset(
 _TRAILING_SPEC = frozenset(
     {"const", "volatile", "static", "extern", "inline", "_Thread_local", "thread_local"}
 )
+# ... and the ones a file-scope declaration of objects may spell before a struct or union it defines
+_OBJECT_SPEC = frozenset({"const", "volatile", "static", "extern", "_Thread_local", "thread_local"})
 # `typeof` / `typeof_unqual` (C23) / `__typeof__` (GNU): a type-specifier whose type is the operand's
 # -- supported for a type-name operand `typeof(int*)` and a bare in-scope variable `typeof(x)`.
 _TYPEOF_KW = frozenset({"typeof", "typeof_unqual", "__typeof__"})
@@ -368,25 +370,21 @@ class _Parser:
                 self.eat("PUNCT", ";")
                 return
             self.i = save  # `enum tag` used as a type
+        if self._aggregate_definition(unit):  # `[static] struct t { ... } [a, b];`
+            return
         if self.at("IDENT", "struct") or self.at("IDENT", "union"):
             save = self.i
-            kind = self.nxt().text
-            attrs = self._attributes()
+            self.nxt()
+            self._attributes()
             tag = self.eat("IDENT").text if self.at("IDENT") else ""
-            if self.at("PUNCT", "{"):  # an aggregate definition
-                agg = self._aggregate_body(kind, tag, attrs)
-                unit.aggregates[agg.tag] = agg
-                self.tags.add(agg.tag)
-                self.eat("PUNCT", ";")
-                return
             # `struct tag;` -- a forward declaration: the tag names an incomplete type until
             # (unless) it is defined (CF-SELFREF)
             if tag and self.at("PUNCT", ";"):
                 self.nxt()
                 return
             self.i = save  # a struct *type* (func ret / global)
-        tref = self._type_spec()
-        tref, name = self._declarator(tref)
+        base = self._type_spec()
+        tref, name = self._declarator(base)
         if self.at("PUNCT", "("):  # a function definition (or a prototype)
             fn = self._func_body(
                 tref,
@@ -396,12 +394,58 @@ class _Parser:
             )
             if fn is not None:  # None == a prototype (recorded in protos)
                 unit.funcs.append(fn)
-        else:  # a file-scope global variable
-            unit.globals.append(
-                self._global(
-                    tref, name, extern="extern" in self.storage, static="static" in self.storage
-                )
+        else:  # file-scope global variables: one per declarator off the specifier (C11 6.7p1)
+            self._globals(unit, base, tref, name)
+
+    def _globals(self, unit: cast.Unit, base: cast.TypeRef, tref: cast.TypeRef, name: str) -> None:
+        """The declarators of one file-scope declaration, `T a[3], *p, b = 5;`, each a global of its own
+        type -- its `*`s and dimensions its own, the specifier's storage class every one's -- then its `;`.
+        The first declarator (`tref`, `name`) is already parsed. The twin's `p_global`."""
+        extern, static = "extern" in self.storage, "static" in self.storage
+        while True:
+            unit.globals.append(self._global(tref, name, extern=extern, static=static))
+            if not self.at("PUNCT", ","):
+                break
+            self.nxt()
+            tref, name = self._declarator(base)
+        self.eat("PUNCT", ";")
+
+    def _aggregate_definition(self, unit: cast.Unit) -> bool:
+        """A struct or union defined at file scope -- `struct t { ... };`, and one whose declaration goes on to
+        declare objects of it, `static struct t { ... } a, b[2];` (C11 6.7.2.1): its storage classes and
+        qualifiers, then the definition, then the declarators, globals of `struct t`. An untagged one declaring
+        objects is refused: the emit names a struct by its tag. False, the cursor unmoved, when the item is not
+        a definition. The twin's `try_top_decl`."""
+        save = self.i
+        storage, quals = set(), []
+        while self.peek().kind == "IDENT" and self.peek().text in _OBJECT_SPEC:
+            word = self.nxt().text
+            (quals.append if word in ("const", "volatile") else storage.add)(word)
+        if not (self.at("IDENT", "struct") or self.at("IDENT", "union")):
+            self.i = save
+            return False
+        kind = self.nxt().text
+        attrs = self._attributes()
+        tag = self.eat("IDENT").text if self.at("IDENT") else ""
+        if not self.at("PUNCT", "{"):
+            self.i = save
+            return False
+        agg = self._aggregate_body(kind, tag, attrs)
+        unit.aggregates[agg.tag] = agg
+        self.tags.add(agg.tag)
+        if self.at("PUNCT", ";"):
+            self.nxt()
+            return True
+        if not tag:
+            raise CParseError(
+                "an object of an untagged struct or union at file scope is not supported",
+                pos=self.peek().pos,
             )
+        self.storage = storage
+        base = cast.TypeRef(base=agg.tag, aggregate=kind, quals=tuple(quals))
+        tref, name = self._declarator(base)
+        self._globals(unit, base, tref, name)
+        return True
 
     def _typedef(self, unit: cast.Unit) -> None:
         """`typedef <type> <name>;` -- register `name` -> the aliased type (resolved at parse time,
@@ -625,7 +669,6 @@ class _Parser:
                             f"function (not a constant expression)",
                             pos=self.peek().pos,
                         )
-        self.eat("PUNCT", ";")
         return cast.Global(
             type=tref, name=name, init=init, extern_decl=extern, static_storage=static
         )

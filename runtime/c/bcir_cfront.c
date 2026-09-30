@@ -4862,6 +4862,7 @@ static venv *use_global(CC *c,const tok *id){
   if(c->fn->n_res){ bcir_resource *gr=&c->fn->res[c->fn->n_res-1];
     gr->read_only=1;                                  /* a global, not a local */
     gr->is_array=(uint8_t)(g->is_arr?1:0);
+    gr->ndims=(uint8_t)(g->is_arr && g->nd>1 ? (g->nd<255?g->nd:255) : 0);   /* passed as `&m[0][0]` (CF-GARRAY) */
     gr->is_atomic=(uint8_t)(g->ty.is_atomic?1:0);     /* `_Atomic` storage, or a pointer to it (CF-ATOMIC) */
     gr->is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0);
     /* the value type rides on the resource, as a local's does: every temp typed from it (a deref of the
@@ -7697,6 +7698,17 @@ static size_t emit_sig(const bcir_func *f,char *o,size_t on){
   #undef SO
   return w;
 }
+/* A call's argument as the emit spells it (the oracle's `emit._args`). A file-scope multi-dimensional array is declared
+ * nested, as the source declares it, so its name decays to a pointer to its first row (`T (*)[N]`); an emitted
+ * parameter taking an array is the flat `T *` (a local array is declared flat already). Such an argument is spelled as
+ * its first element's address, `&m[0][0]` -- the same address, of the parameter's type (CF-GARRAY). */
+static const char *emit_arg(const bcir_func *f,uint32_t rid,char *buf,char *out,size_t on){
+  const char *nm=rname(f,rid,buf); const bcir_resource *r=res_of(f,rid);
+  if(!r || !r->read_only || r->ndims<2) return nm;
+  size_t w=(size_t)snprintf(out,on,"&%s",nm);
+  for(int d=0; d<r->ndims && w<on; d++) w+=(size_t)snprintf(out+w,on-w,"[0]");
+  return out;
+}
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_EMIT_NAME],b[BCIR_EMIT_NAME],d[BCIR_EMIT_NAME],e[BCIR_EMIT_NAME],ty[BCIR_EMIT_TYPE],tb[BCIR_EMIT_TYPE],gb[BCIR_EMIT_EXPR];
   bcir_emit_type_scratch type_scratch={0};
@@ -8022,7 +8034,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,"%s(",cl->op+10);
       else w+=snprintf(o+EO,on-EO,"%s %s = %s(",decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty),
                        rname(f,cl->wr[0],d),cl->op+10);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",emit_arg(f,cl->rd[k],a,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.builtin:",15)){  /* a GCC/Clang integer builtin -> emitted verbatim */
       w+=snprintf(o+EO,on-EO,"%s %s = __builtin_%s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+15);
@@ -8037,7 +8049,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.void:",12)){   /* a void callee -> a bare call statement */
       w+=snprintf(o+EO,on-EO,"bcir_%s(",cl->op+12);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",emit_arg(f,cl->rd[k],a,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
       const bcir_resource *rr=res_of(f,cl->wr[0]);   /* a struct/union RETURN declares `struct P t = bcir_..`,
@@ -8046,16 +8058,16 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg
                       :decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty);
       w+=snprintf(o+EO,on-EO,"%s %s = bcir_%s(",dty,rname(f,cl->wr[0],d),cl->op+7);
-      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
+      for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",emit_arg(f,cl->rd[k],a,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
       w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
-      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
+      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",emit_arg(f,cl->rd[k],b,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.imember:",15)){   /* o->fn(args): funcptr struct member */
       const char *sep=(cl->n_imm&&cl->imm[0])?"->":".";
       w+=snprintf(o+EO,on-EO,"%s %s = %s%s%s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
-      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",rname(f,cl->rd[k],b));
+      for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",emit_arg(f,cl->rd[k],b,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
   }
   #undef IND
@@ -8069,6 +8081,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
  * 0 if the current token instead begins a function/global.  Real translation
  * units and vendor headers interleave these with functions, so this is called
  * from the main top-level loop rather than only before the first function. */
+static void p_global_declarator(CC *c, const bcir_ctype *base, int btd, const int *btdd);   /* fwd (below) */
 static int try_top_decl(CC *c){
   if(c->failed) return 0;
   if(is(c,"typedef")){ p_typedef(c); return 1; }
@@ -8077,13 +8090,29 @@ static int try_top_decl(CC *c){
     if(is(c,"{")){ p_enum_body(c); eat(c,";"); return 1; }
     c->i=save; return 0;                             /* `enum tag` as a type -> a function follows */
   }
+  { /* a struct *definition*?  [storage/qualifiers] struct [attrs] [TAG] [attrs] {  -- lookahead past them. A
+     * declaration of objects may define the struct it declares them of, `static struct t { ... } a, b;` (C11
+     * 6.7.2.1): the definition, then its declarators, globals (the oracle's `_aggregate_definition`) */
+    int save=c->i, vol=0;
+    while(is(c,"static")||is(c,"extern")||is(c,"const")||is(c,"volatile")||is(c,"_Thread_local")||is(c,"thread_local")){
+      if(is(c,"volatile")) vol=1;
+      c->i++; }
+    if(is(c,"struct")||is(c,"union")){
+      int kw=c->i; c->i++; int pk_=0,al_=0; attrs(c,&pk_,&al_);
+      tok tag={T_END,"",0,0}; if(isk(c,T_ID)&&!is(c,"{")) tag=adv(c);   /* the tag */
+      attrs(c,&pk_,&al_);
+      if(is(c,"{")){
+        c->i=kw; int my=p_struct_body(c);
+        if(is(c,";")||c->failed||my<0){ eat(c,";"); return 1; }
+        if(tag.k!=T_ID){ fail(c,"an object of an untagged struct or union at file scope is not supported"); return 1; }
+        bcir_ctype base; memset(&base,0,sizeof base); base.kind=1; base.signd=1; base.size=c->s[my].size;
+        base.is_union=(uint8_t)c->s[my].is_union; base.is_volatile=(uint8_t)vol; idcpy(c,base.tag,&tag);
+        for(;;){ p_global_declarator(c,&base,0,NULL); if(c->failed || !is(c,",")) break; c->i++; }
+        eat(c,";"); return 1; }
+    }
+    c->i=save;
+  }
   if(is(c,"struct")||is(c,"union")){
-    /* a struct *definition*?  struct [attrs] [TAG] [attrs] {  -- lookahead past attributes. */
-    int save=c->i; c->i++; int pk_=0,al_=0; attrs(c,&pk_,&al_);
-    if(isk(c,T_ID)&&!is(c,"{")) c->i++;             /* the tag */
-    attrs(c,&pk_,&al_);
-    int isdef = is(c,"{"); c->i=save;
-    if(isdef){ p_struct_body(c); eat(c,";"); return 1; }
     if(tat(c,c->i+1)->k==T_ID && tok_is(tat(c,c->i+2),";")){   /* `struct tag;` -- a forward declaration */
       int isu=is(c,"union"); c->i++; tok tag=adv(c); if(declare_struct(c,&tag,isu)<0) return 1;
       eat(c,";"); return 1; }
@@ -8142,9 +8171,13 @@ static long long brace_init_extent(CC *c){
   eat(c,"}");
   return n;
 }
-static void p_global(CC *c){
-  bcir_ctype ty; int si; if(p_type(c,&ty,&si)) return;
-  int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
+/* One declarator of a file-scope declaration off the specifier `base` -- its `*`s, name, dimensions and initializer --
+ * registered as a global. `btd` / `btdd`: a typedef'd array specifier's dimensions, inner to the declarator's. */
+static void p_global_declarator(CC *c, const bcir_ctype *base, int btd, const int *btdd){
+  if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
+  bcir_ctype ty=*base; apply_stars(c,&ty);
+  if(c->failed) return;
+  if(!isk(c,T_ID)){ fail(c,"expected a declarator"); return; }
   tok nm=adv(c);
   int count=1, is_arr=0, init_a=0, init_b=0, nd=0; long long dims[4]={0,0,0,0}, init_n=-1;
   while(is(c,"[")){ c->i++; count = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); is_arr=1;
@@ -8152,16 +8185,33 @@ static void p_global(CC *c){
   for(int d=0; d<btd; d++){ count=btdd[d]; is_arr=1; if(nd<4){ dims[nd]=count; } nd++; }   /* its dims follow */
   if(is(c,"=")){ c->i++; init_a=c->i;
     if(is(c,"{")) init_n=brace_init_extent(c);
-    else if(is_arr && isk(c,T_STR)) (void)ce_expr(c,0);   /* a string sizes a character array: not yet */
+    else if(is_arr && isk(c,T_STR)){                 /* `char s[] = "abc"`: a character array, sized by its literal --
+                                                      * its code units and the NUL (the oracle's `is_string`) */
+      int unit=str_tok_unit(c,pk(c)), n=0;
+      if(nd!=1 || ty.kind!=0 || ty.is_float || ty.size!=unit) (void)ce_expr(c,0);   /* not a character array */
+      else { while(isk(c,T_STR)){ tok s=adv(c); n+=str_bytes(s.s,s.n); } init_n=n+1; }
+    }
     else skip_init_expr(c,&nm);
     init_b=c->i;
   }
-  eat(c,";");
-  if(nd==1 && dims[0]==0 && init_n>=0) dims[0]=init_n;   /* `T g[] = {...}`: sized by its initializer */
+  if(nd==1 && dims[0]==0 && init_n>=0){ dims[0]=init_n; count=(int)init_n; }   /* `T g[] = ...`: its initializer's
+                                                      * extent -- the count its accesses are bounded by too */
   CC_ENSURE(c, c->gv, c->ngv, c->cap_gv);
   if(c->ngv<c->cap_gv){ gvar *g=&c->gv[c->ngv++]; idcpy(c,g->name,&nm); g->ty=ty; g->count=count;
     g->is_arr=is_arr; g->init_a=init_a; g->init_b=init_b;
     g->nd=nd; for(int d=0;d<4;d++) g->dims[d]=dims[d]; }
+}
+/* A file-scope declaration: each declarator off the one specifier a global of its own type -- `T a[3], *p, b = 5;`
+ * (C11 6.7p1), a declarator's `*`s its own (the oracle's `_globals`). */
+static void p_global(CC *c){
+  bcir_ctype base; int si; if(p_type_base(c,&base,&si)) return;
+  int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
+  for(;;){
+    p_global_declarator(c,&base,btd,btdd);
+    if(c->failed || !is(c,",")) break;
+    c->i++;
+  }
+  eat(c,";");
 }
 
 /* --- public entry -------------------------------------------------------- */

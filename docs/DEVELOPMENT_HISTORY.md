@@ -1850,10 +1850,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a call through a function pointer returning void (`fp();`, `o.step();`) emits `uint32_t t = fp();` on
     both rails, which does not compile; the twin records "returns void" and "return not captured" alike;
   - a conditional whose arms are function designators (`s ? f : g`) is typed `uint32_t` on both rails;
-  - a file-scope multi-dimensional array passed for a `T (*p)[N]` parameter is passed unflattened to the
-    emit's flat `T *` parameter on both rails (an incompatible-pointer-types error); the twin refuses a
-    file-scope `char buf[] = "..."` with a misleading "non-constant enum initializer", which the oracle
-    lowers; both rails refuse a list of file-scope arrays in one declaration (`uint32_t a[3], b[2];`);
   - the oracle refuses a global array of structs with nested braces (`{{1, 2}, {3, 4}}`), which the twin
     lowers;
   - both rails drop `_Thread_local` from a static local;
@@ -2173,6 +2169,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     lowers to one claim graph on the four targets and runs as the original on both emits under Clang and GCC, and
     the oracle's linkable emit defines each of its globals with the value the original's holds. No other
     fixture's digest moves on the four targets.
+  CF-GARRAY passed file-scope arrays and character tables through the rails as local ones.
+  - The defect: a multi-dimensional global passed for a `T (*p)[N]` or `T m[][N]` parameter was passed by name in
+    both emits, where its type is still `T[A][N]` and the emitted parameter the flat `T *`, so Clang and GCC
+    refused the call (`-Werror=incompatible-pointer-types`, as the harness builds); a local one works, being
+    declared flat. The twin refused `char buf[] = "bcir";` at file scope (`non-constant enum initializer`), and
+    bounded each access to an unsized global array by one element (`T g[] = {...}` set its dimension but not its
+    count), so an in-bounds `g[2]` reached the quarantine. Both rails refused a declaration's second declarator --
+    `uint32_t a[3], b[2];`, `uint32_t gx, gy;`, `struct pt ga, gb;` -- and a declaration defining the struct of the
+    objects it declares (`static struct t { ... } a, b;`), each rail for its own reason.
+  - RED: on the parent the fixture is refused by both rails at its first list, and the test fails; a unit with
+    only the row-pointer call builds on neither rail's emit.
+  - What landed: a call's argument that is a file-scope multi-dimensional array is its first element's address,
+    `&m[0][0]`, in both emits (`emit._args`; the twin's `emit_arg` over a new `bcir_resource.ndims`) -- the emit
+    only, so no digest moves. Each declarator of a file-scope declaration is a global of its own type
+    (`cparse._globals`; the twin's `p_global` over `p_global_declarator`), and a declaration may define its
+    struct first (`_aggregate_definition`; the twin's `try_top_decl`), an untagged one refused on both rails. The
+    twin sizes a character array by its literal, as the oracle does, and counts an unsized global's elements.
+  - Outcomes: `cfront_garray.c` -- a 2-D and a 3-D global passed to row-pointer parameters, character tables
+    sized by their literals (concatenated, with escapes, and in a larger array), and lists of arrays, scalars, a
+    pointer, initialized objects, `static` objects, structs and the objects of a struct the declaration defines --
+    lowers to one claim graph on the four targets, and each function of each emit returns, and leaves the
+    globals, as the original does.
 
 ---
 

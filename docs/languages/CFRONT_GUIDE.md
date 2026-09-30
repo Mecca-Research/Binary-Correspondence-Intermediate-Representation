@@ -340,6 +340,9 @@ _mm_sfence();                      //                   store (release) fence ->
   pointer, `typedef struct { ... } *PP;`), with nested anonymous members: the emit names each as C does -- by the
   typedef's name, `__typeof__(*(PP)0)`, or `__typeof__` of the member whose type it is.
 - String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
+- File-scope declarations of several objects (`uint32_t a[3], b[2], *p;`, `static struct t { ... } x, y;`),
+  character tables sized by their string literals (`char name[] = "bcir";`), and a multi-dimensional global
+  passed to a row-pointer parameter (`T (*p)[N]`, `T m[][N]`).
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
 
