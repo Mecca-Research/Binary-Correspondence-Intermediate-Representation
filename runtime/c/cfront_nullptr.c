@@ -79,7 +79,7 @@ uint32_t np_elements(uint32_t s) {                  /* an array of pointers and 
   uint32_t k = *ps[0] + *ps[2];
   if (ps[1]) k += 1u;
   if (qs[0]) k += 2u;
-  if (qs[1]) k += 4u;
+  k += *qs[1] * 4u;                                  /* the pointer stored beside the null one, read through */
   if (rs[1]) k += 8u;
   return k + *rs[0];
 }
