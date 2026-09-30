@@ -280,6 +280,32 @@ def emit_linkable(lowered, emitted: dict) -> str:
     return "\n".join(parts) + "\n"
 
 
+class _Names:
+    """The C identifier each rid emits as (`ref`): a parameter, local, static or global its declared name
+    (`named`), an intermediate `t<rid>`. A temporary's name must be free of every declared one (`used`): a
+    re-parsed emit names its locals `t<rid>` after the temporaries they were (and a source may name a
+    parameter so), so a temporary whose `t<rid>` a declared name spells takes the first free `t<rid>_<k>`
+    -- never a second declaration of the name (CF-RTVOL). Whether a rid is a temporary is `named`
+    membership, never its spelling: a local re-parsed from `t103` may be rid 103 again."""
+
+    def __init__(self, named: dict, used: set):
+        self.named, self.used, self.temps = named, used, {}
+
+    def __call__(self, rid: int) -> str:
+        if rid in self.named:
+            return self.named[rid]
+        if rid not in self.temps:
+            name, k = f"t{rid}", 2
+            while name in self.used:
+                name, k = f"t{rid}_{k}", k + 1
+            self.temps[rid] = name
+        return self.temps[rid]
+
+    def is_temp(self, rid: int) -> bool:
+        """An intermediate, declared where it is written, not a named object declared up front."""
+        return rid not in self.named
+
+
 def emit_function(lf: LoweredFunc) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
@@ -292,27 +318,25 @@ def emit_function(lf: LoweredFunc) -> str:
     # redefinition. Disambiguate the second-and-later occurrences (`i`, `i_2`, ...) -- a fresh variable
     # preserves the source's separate-scope semantics; naive name-sharing would corrupt a shadowed value.
     used: set[str] = set(nm.values())
-    used.update(name for _rid, name, _ct, _init in lf.statics)
     used.update(lf.globals_used.values())
     local_name: dict[int, str] = {}
-    for rid, name, _ct in (
-        lf.locals + lf.vla_locals
-    ):  # VLAs are NAMED here (so accesses resolve) but
-        uniq = name  # are declared IN-BODY (the c.vladecl claim below),
-        if uniq in used:  # never in the up-front `decls` -- their runtime
-            k = 2  # size isn't known until execution reaches the decl
-            while f"{name}_{k}" in used:
-                k += 1
-            uniq = f"{name}_{k}"
-        used.add(uniq)
-        local_name[rid] = uniq
-        nm[rid] = uniq
-    for rid, name, _ct, _init in lf.statics:
-        nm[rid] = name
-    nm.update(lf.globals_used)  # file-scope globals (defined in the source)
 
-    def ref(rid: int) -> str:
-        return nm.get(rid, f"t{rid}")
+    def _uniq(name: str) -> str:
+        uniq, k = name, 2
+        while uniq in used:
+            uniq, k = f"{name}_{k}", k + 1
+        used.add(uniq)
+        return uniq
+
+    # a static too: two scopes' `static n` are two objects, both declared at function scope
+    for rid, name, _ct, _init in lf.statics:
+        nm[rid] = _uniq(name)
+    for rid, name, _ct in lf.locals + lf.vla_locals:
+        # a VLA is NAMED here (so its accesses resolve) but declared IN-BODY (the c.vladecl claim below),
+        # never in the up-front `decls` -- its runtime size isn't known until execution reaches the decl
+        local_name[rid] = nm[rid] = _uniq(name)
+    nm.update(lf.globals_used)  # file-scope globals (defined in the source)
+    ref = _Names(nm, used)
 
     def _local_decl(rid, name, ct):
         zi = " = {0}" if rid in lf.zero_init_locals else ""
@@ -323,16 +347,19 @@ def emit_function(lf: LoweredFunc) -> str:
         return f"    {_cname(ct)} {name}{zi};"
 
     def _static_decl(name, ct, init):
-        # static storage: a once-only constant init. An array or an aggregate keeps its shape and starts
-        # zeroed (the lowering refuses any other initializer for one); a scalar or pointer takes its value
+        # static storage: a once-only constant initializer in the declaration -- the image the lowering
+        # folded and rendered (CF-STATICTAB), or zero: `{0}` for an array or aggregate, `0u` for the rest.
+        # An array keeps its shape (a multi-dimensional one flat, as its image is rendered)
         if ct.kind == "array":
-            return f"    static {_cname(ct.of)} {name}[{ct.count}] = {{0}};"
+            return f"    static {_cname(ct.of)} {name}[{ct.count}] = {init or '{0}'};"
         if ct.kind in ("struct", "union"):
-            return f"    static {_cname(ct)} {name} = {{0}};"
-        return f"    static {_cname(ct)} {name} = {init}u;"
+            return f"    static {_cname(ct)} {name} = {init or '{0}'};"
+        if ct.kind == "funcptr":  # `RET (*name)(PARAMS)`, as a local's
+            return f"    static {_funcptr_decl(ct, name)} = {init or '0u'};"
+        return f"    static {_cname(ct)} {name} = {init or '0u'};"
 
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
-    decls += [_static_decl(name, ct, init) for _rid, name, ct, init in lf.statics]
+    decls += [_static_decl(nm[rid], ct, init) for rid, _name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1)
     parts = [
         _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
@@ -447,25 +474,15 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     suf = c.op.split(".", 2)[-1] if "." in c.op else c.op
 
     def deftmp(rid: int, expr: str, ty: str | None = None) -> str:
-        if ty is None:  # a temp renders its true C type: float/double
-            ct = lf.rid_types.get(rid)  # for a float, the (width, signedness) integer;
-            ty = (
-                _cname(ct)
-                if (
-                    ct is not None
-                    and (
-                        ct.is_float
-                        or ct.is_integer  # a pointer
-                        or ct.kind == "pointer"
-                    )
-                )
-                else "uint32_t"
-            )  # value -> `T *`
-
+        if ty is None and getattr(lf.rid_types.get(rid), "kind", None) == "funcptr":
+            # a null function pointer (CF-NULLPTR): `RET (*t)(PARAMS) = 0u;`
+            return f"{_funcptr_decl(lf.rid_types[rid], ref(rid))} = {expr};"
+        if ty is None:  # a temp renders its true C type (`_load_ctype`): float/double, the
+            ty = _load_ctype(lf, rid)  # (width, signedness) integer, `T *`, a struct/union
         return f"{ty} {ref(rid)} = {expr};"
 
     if c.op == "c.copy":  # write a mutable local (no new decl)
-        if ref(c.wr[0]) == f"t{c.wr[0]}":  # into a temp: the value read from a volatile object
+        if ref.is_temp(c.wr[0]):  # into a temp: the value read from a volatile object
             return deftmp(c.wr[0], ref(c.rd[0]))
         return f"{ref(c.wr[0])} = {ref(c.rd[0])};"
     if c.op == "c.vladecl":  # an in-body stack VLA decl: `T a[__ext];`
@@ -787,7 +804,11 @@ def _store_conv(vt, size: int):
     the slot -- or None when the source already matches the slot width/kind (a direct memcpy is correct). A
     `float`/`double` source of a different width must convert (float<->double, not a byte copy), a complex one
     to the complex type of the slot's width; a narrower integer source must widen/sign-extend to the slot
-    width. A source of another arithmetic class was already converted by the lowering (`c.cast`)."""
+    width. A source of another arithmetic class was already converted by the lowering (`c.cast`). An ARRAY
+    source decays to its address (C11 6.3.2.1p3): the slot takes the pointer, staged in a pointer object --
+    `&arr` would copy the array's first bytes instead (CF-MEMDECAY)."""
+    if vt is not None and vt.kind == "array":
+        return "const volatile void *"
     if vt is not None and vt.is_complex and vt.size != size:
         return (
             "float _Complex"
@@ -807,8 +828,13 @@ def _load_ctype(lf: LoweredFunc, rid: int) -> str:
     # (not 4) and the loaded value is a usable pointer -- a uint32 would truncate it. A float/double load
     # likewise keeps its real type: a `uint32_t` temp would reinterpret-truncate the value (and drop 4 of
     # a double's 8 bytes on the memcpy `sizeof t`), so a `float[]`/double member/deref reads as itself.
+    # A struct or union value -- an element of an array of structs, a struct member, `*p`, a select of two
+    # structs -- is a temp of the aggregate itself, copied whole (CF-STRUCTVAL): `uint32_t t = ps[i];` did
+    # not compile. The twin spells it the same (`bcir_cfront.c`, `tty`).
     return (
-        _cname(ct) if ct and (ct.is_integer or ct.is_float or ct.kind == "pointer") else "uint32_t"
+        _cname(ct)
+        if ct and (ct.is_integer or ct.is_float or ct.kind == "pointer" or ct.is_aggregate)
+        else "uint32_t"
     )
 
 

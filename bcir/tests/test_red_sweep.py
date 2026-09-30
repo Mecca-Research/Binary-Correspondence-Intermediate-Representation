@@ -27,7 +27,9 @@ directly.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -36,7 +38,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from tools.testing.red_sweep import Fault, Sweep, SweepError, load_table  # noqa: E402
+from tools.testing.red_sweep import FINDING, Fault, Sweep, SweepError, load_table  # noqa: E402
 
 #: A subject with one constant, and a gate that reports the constant it actually
 #: imported. The gate is red exactly when the constant is not the expected value,
@@ -249,3 +251,74 @@ def test_a_malformed_table_is_refused_rather_than_partly_run():
             _refused(load_table, path)
     finally:
         shutil.rmtree(directory, ignore_errors=True)
+
+
+# -- the test gate: the check a fault table names when its law lives in test functions --
+
+#: A module of named tests for `tools/testing/check_tests.py` to run: one that passes, one
+#: that fails, one that tries to end the process, and a capability flag that is off.
+_TESTS_SUBJECT = """import sys
+
+READY = False
+
+
+def passes():
+    pass
+
+
+def fails():
+    assert 1 == 2, "one is not two"
+
+
+def exits():
+    sys.exit(0)
+"""
+
+
+def _check_tests(*args: str) -> tuple[int, str, set[str]]:
+    """Run the test gate over `_TESTS_SUBJECT`; its exit code, its output and the findings
+    `red_sweep` would read from that output."""
+    directory = Path(tempfile.mkdtemp(prefix="bcir-check-tests-"))
+    try:
+        (directory / "gate_subject.py").write_text(_TESTS_SUBJECT, encoding="utf-8", newline="\n")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            p for p in (str(directory), env.get("PYTHONPATH", "")) if p
+        )
+        run = subprocess.run(
+            [sys.executable, str(_REPO_ROOT / "tools" / "testing" / "check_tests.py"), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+    fired = {m.group(1) for line in run.stdout.splitlines() if (m := FINDING.match(line))}
+    return run.returncode, run.stdout, fired
+
+
+def test_the_test_gate_names_each_failing_test_as_a_finding():
+    code, out, fired = _check_tests("gate_subject:passes", "gate_subject:fails")
+    assert (code, fired) == (1, {"fails"}), (code, out)
+    assert "  ok passes" in out, out
+    code, out, fired = _check_tests("gate_subject:passes")
+    assert (code, fired) == (0, set()), (code, out)
+
+
+def test_a_test_that_ends_the_process_is_a_finding_not_a_pass():
+    # `sys.exit(0)` inside a test must not end the gate green with the rest unrun
+    code, out, fired = _check_tests("gate_subject:exits", "gate_subject:passes")
+    assert (code, fired) == (1, {"exits"}), (code, out)
+    assert "  ok passes" in out, out
+
+
+def test_the_test_gate_is_unavailable_rather_than_vacuous():
+    # a capability the tests return early without, absent: exit 2 and no test run -- never a pass
+    code, out, fired = _check_tests("--require", "gate_subject:READY", "gate_subject:passes")
+    assert (code, fired) == (2, {"unavailable"}), (code, out)
+    assert "ok passes" not in out, out
+    # a name that is no test function is a gate that cannot run what it was asked to
+    for spec in ("gate_subject:missing", "gate_subject:READY", "gate_subject", "no_module:x"):
+        code, out, fired = _check_tests(spec)
+        assert (code, fired) == (2, {"unresolved"}), (spec, code, out)

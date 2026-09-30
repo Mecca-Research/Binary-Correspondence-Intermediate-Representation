@@ -37,6 +37,7 @@ _SCALAR = {
     "int64_t": (8, True),
     "uint64_t": (8, False),
     "size_t": (8, False),
+    "wchar_t": (4, True),  # the target's `wchar_t` integer (`scalar` resolves it per ABI)
     "intptr_t": (8, True),
     "uintptr_t": (8, False),
 }
@@ -77,6 +78,16 @@ class CType:
     natural: tuple = ()  # an `_Atomic` type's own (size, align) before the ABI's atomic promotion
     #   (`with_atomic`), which `unqualified` restores: the value read from an
     #   `_Atomic float _Complex` is a `float _Complex`, aligned to 4, not 8
+    incomplete: bool = (
+        False  # a struct/union named before (or without) its definition -- the pointee
+    )
+    #   of `struct node *next` inside `struct node`, of `struct fwd *` -- which a pointer to it
+    #   does not need laid out (C11 6.2.5p22); the lowering completes it by tag where its members
+    #   are used (`_FuncLowerer._complete`)
+    anon: tuple = ()  # a struct/union's ANONYMOUS members, in declaration order: (first, n, CType,
+    #   byte_off) -- `fields[first:first+n]` are the member's promoted leaves. An initializer
+    #   takes the member as ONE subobject of its own type (C11 6.7.2.1p13), so an anonymous
+    #   union takes one positional value, as in C, where its flattened leaves would take several
 
     @property
     def is_bitint(self) -> bool:
@@ -131,6 +142,11 @@ class CType:
             if entry[0] == name:
                 return entry[1], entry[2], entry[3], entry[4]
         raise KeyError(name)
+
+
+def incomplete_aggregate(kind: str, tag: str) -> CType:
+    """The incomplete struct or union `tag` -- known by name, not (yet) laid out -- as a pointer's pointee."""
+    return CType(kind, name=tag, size=0, align=1, incomplete=True)
 
 
 def with_volatile(ct: CType, vol: bool = True) -> CType:
@@ -224,6 +240,10 @@ def scalar(name: str, abi=None) -> CType:
         return CType(
             "scalar", name=name, size=size, align=scalar_align(size // 2, abi), signed=True
         )
+    if name == "wchar_t":  # a typedef of the target's integer type (`abi.wchar_type`), so it
+        name = (
+            abi.wchar_type if abi is not None else "int"
+        )  # lowers, emits and converts as that type
     if name not in _SCALAR:
         raise KeyError(f"unknown scalar type {name!r}")
     size, signed = _SCALAR[name]
@@ -483,6 +503,7 @@ class AggregateBuilder:
         dbits = 0
         align = 1
         laid: list = []
+        anon: list = []  # the anonymous members' leaf groups (`CType.anon`)
         bf_unit_off = None  # byte offset of the active bitfield storage unit (packed path)
         bf_bits = 0  # bits already used in it
         bf_unit_size = 0
@@ -517,6 +538,8 @@ class AggregateBuilder:
                         dbits += a8 - (dbits % a8)
                     off = dbits // 8
                     dbits += mtype.size * 8
+                if mtype.fields:  # one initializable subobject over its promoted leaves
+                    anon.append((len(laid), len(mtype.fields), mtype, off))
                 for fn, fty, fbo, fbit, fbw in mtype.fields:
                     laid.append((fn, fty, off + fbo, fbit, fbw))
                 continue
@@ -561,4 +584,5 @@ class AggregateBuilder:
             align=max(1, align),
             fields=tuple(laid),
             packed=self.packed,
+            anon=tuple(anon),
         )

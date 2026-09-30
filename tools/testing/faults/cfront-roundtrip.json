@@ -1,0 +1,64 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+    "bcir.tests.test_cfront_roundtrip:test_volatile_member_emits_reach_a_fixed_point_given_their_definitions",
+    "bcir.tests.test_cfront_roundtrip:test_a_temporary_never_redeclares_a_declared_name",
+    "bcir.tests.test_cfront_roundtrip:test_roundtrip_smoke_and_exclusion_set_is_pinned"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "O28 a byte-offset volatile access not folded",
+      "new": "                lv = None",
+      "old": "                lv = self._byte_offset_access(operand)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+      "label": "O29 an emitter temp redeclares a declared name",
+      "new": "            while False:",
+      "old": "            while name in self.used:",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_volatile_member_emits_reach_a_fixed_point_given_their_definitions",
+      "label": "O30 a copy into a temp recognized by its spelling",
+      "new": "        if ref(c.wr[0]) == f\"t{c.wr[0]}\":  # into a temp: the value read from a volatile object",
+      "old": "        if ref.is_temp(c.wr[0]):  # into a temp: the value read from a volatile object",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "T40 the twin's byte-offset matcher never matches",
+      "new": "  if(0 && bo_match(c,base,f)) return 1;",
+      "old": "  if(bo_match(c,base,f)) return 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "T41 a byte-offset volatile load not folded on the twin",
+      "new": "    { venv bb; field bf; if(0 && byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */",
+      "old": "    { venv bb; field bf; if(byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "T42 a byte-offset volatile store not folded on the twin",
+      "new": "      if(0 && byte_off_access(c,&bb,&bf)){",
+      "old": "      if(byte_off_access(c,&bb,&bf)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+      "label": "T43 a twin temp redeclares a declared name",
+      "new": "    for(int k=2; 0 && declared_name(f,buf); k++) snprintf(buf,BCIR_CIR_NAME,\"t%u_%d\",rid,k);",
+      "old": "    for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_CIR_NAME,\"t%u_%d\",rid,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

@@ -1,12 +1,13 @@
 """The §5.9 integer CONSTANT-EXPRESSION EVALUATOR (both rails).
 
-Enum initializers, `case` labels, static-local initializers and file-scope global
-initializers now fold the full integer constant-expression vocabulary -- arithmetic, bit
-ops, shifts, COMPARISONS, logical &&/|| and the ternary -- through one shared evaluator
-per rail (`cparse._const_eval` / `lower._fold_const` on the oracle; `ce_expr` on the C
-twin), and the linkable emit renders the folded value. `sizeof` stays out on purpose (the
-target ABI is chosen at lower time); a genuinely non-constant initializer still refuses
-loudly. Behavior parity vs the host-cc reference build is the end gate."""
+Enum initializers, `case` labels and file-scope global initializers fold the full integer
+constant-expression vocabulary -- arithmetic, bit ops, shifts, COMPARISONS, logical &&/|| and
+the ternary -- through one shared evaluator per rail (`cparse._const_eval` / `lower._fold_const`
+on the oracle; `ce_expr` on the C twin), and the linkable emit renders the folded value. There
+`sizeof` stays out on purpose (the target ABI is chosen at lower time). A static local's
+initializer folds through the initializer walk's constant mode instead, in C's own types and
+with `sizeof` (CF-STATICTAB, `test_c_cfront`). A genuinely non-constant initializer still
+refuses loudly. Behavior parity vs the host-cc reference build is the end gate."""
 
 import os
 import subprocess

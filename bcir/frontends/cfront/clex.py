@@ -311,10 +311,73 @@ def split_lit_prefix(text: str) -> tuple[str, str]:
     return "", text
 
 
-def str_elem_size(prefix: str) -> int:
-    """The element size of a string literal with this prefix on the Linux/Clang ABI: plain/`u8` = 1
-    (`char`), `u` = 2 (`char16_t`), `L`/`U` = 4 (`wchar_t` / `char32_t`)."""
-    return {"u": 2, "L": 4, "U": 4}.get(prefix, 1)
+def str_elem_size(prefix: str, abi=None) -> int:
+    """The element size of a string literal with this prefix: plain/`u8` = 1 (`char`), `u` = 2
+    (`char16_t`), `U` = 4 (`char32_t`), `L` the target's `wchar_t` (4, or 2 on Windows)."""
+    if prefix == "L":
+        return abi.wchar_size if abi is not None else 4
+    return {"u": 2, "U": 4}.get(prefix, 1)
+
+
+def str_units(spelling: str, unit_bytes) -> tuple[str, list[int]]:
+    """The code units a (possibly concatenated) string literal holds, *excluding* the terminating NUL,
+    for a string that initializes a character array (C11 6.7.9p14-15): its prefix and the unit values.
+    `unit_bytes` maps the prefix to its code-unit width (the target's `wchar_t` for `L`). Adjacent
+    pieces stay separate, as `_str_bytes` counts them, so an escape never merges with the next piece.
+    Each unit is one source character or one escape (`\\c`, octal `\\NNN`, hex `\\xH..`). A spelling
+    the twin cannot decode the same way is a ValueError the caller refuses: pieces with different
+    prefixes, a non-ASCII source character or a universal character name (their code units depend on
+    the source and execution encodings), or an escape too wide for the unit (Clang's error). The twin's
+    `str_units` decodes the same units."""
+    pieces, i, n = [], 0, len(spelling)
+    while i < n:  # the pieces: (prefix, first inner index, closing-quote index)
+        if spelling[i] == " ":
+            i += 1
+            continue
+        j = spelling.find('"', i)
+        if j < 0:
+            break
+        k = j + 1
+        while k < n and spelling[k] != '"':
+            k += 2 if spelling[k] == "\\" else 1
+        pieces.append((spelling[i:j], j + 1, min(k, n)))
+        i = k + 1
+    prefixes = {p for p, _a, _b in pieces}
+    if len(prefixes) > 1:
+        raise ValueError("a string initializer concatenating literals of different prefixes")
+    prefix = next(iter(prefixes)) if prefixes else ""
+    width = unit_bytes(prefix)
+    units: list[int] = []
+    for _p, i, end in pieces:
+        while i < end:
+            ch = spelling[i]
+            if ord(ch) >= 128:
+                raise ValueError("a non-ASCII character in a string initializer is not supported")
+            if ch != "\\" or i + 1 >= end:
+                units.append(ord(ch))
+                i += 1
+                continue
+            e = spelling[i + 1]
+            if e == "x":  # \xH.. -> every following hex digit
+                i, val, nd = i + 2, 0, 0
+                while i < end and spelling[i] in "0123456789abcdefABCDEF":
+                    val, i, nd = val * 16 + int(spelling[i], 16), i + 1, nd + 1
+                if not nd:
+                    raise ValueError("a \\x escape with no hex digit")
+            elif e in "01234567":  # \NNN -> up to three octal digits
+                i, val, k = i + 1, 0, 0
+                while k < 3 and i < end and spelling[i] in "01234567":
+                    val, i, k = val * 8 + int(spelling[i], 8), i + 1, k + 1
+            elif e in "uU":
+                raise ValueError(
+                    "a universal character name in a string initializer is not supported"
+                )
+            else:
+                val, i = _SIMPLE_ESCAPE.get(e, ord(e)), i + 2
+            if val >= 1 << (8 * width):
+                raise ValueError("an escape sequence out of range for its character type")
+            units.append(val)
+    return prefix, units
 
 
 def decode_c_bytes(inner: str) -> list[int]:

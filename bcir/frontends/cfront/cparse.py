@@ -87,6 +87,10 @@ _TYPE_KW = frozenset(
         "_BitInt",
     }
 )  # C23 bit-precise integer `_BitInt(N)` (a type-start keyword)
+# the qualifiers and storage classes a declaration may spell after its type specifier (C11 6.7p1)
+_TRAILING_SPEC = frozenset(
+    {"const", "volatile", "static", "extern", "inline", "_Thread_local", "thread_local"}
+)
 # `typeof` / `typeof_unqual` (C23) / `__typeof__` (GNU): a type-specifier whose type is the operand's
 # -- supported for a type-name operand `typeof(int*)` and a bare in-scope variable `typeof(x)`.
 _TYPEOF_KW = frozenset({"typeof", "typeof_unqual", "__typeof__"})
@@ -330,6 +334,11 @@ class _Parser:
                 unit.aggregates[agg.tag] = agg
                 self.tags.add(agg.tag)
                 self.eat("PUNCT", ";")
+                return
+            # `struct tag;` -- a forward declaration: the tag names an incomplete type until
+            # (unless) it is defined (CF-SELFREF)
+            if tag and self.at("PUNCT", ";"):
+                self.nxt()
                 return
             self.i = save  # a struct *type* (func ret / global)
         tref = self._type_spec()
@@ -731,6 +740,15 @@ class _Parser:
                 self.nxt()
             else:
                 break
+        # declaration specifiers come in any order (C11 6.7p1): a qualifier or storage class after a
+        # struct/union tag or a typedef name (`struct s static x`, `uint32_t_alias volatile y`) is the
+        # same specifier it is before one -- the scalar keyword run above already took those it met
+        while self.at("IDENT") and self.peek().text in _TRAILING_SPEC:
+            w = self.nxt().text
+            if w in ("const", "volatile"):
+                quals.append(w)
+            else:
+                self.storage.add(w)
         if td is not None:  # merge the alias with any leading quals
             if td.funcptr:  # a function-pointer alias carries its own shape
                 return td
@@ -887,10 +905,15 @@ class _Parser:
             dims = raw  # all-literal -> a static (possibly multi-dim) array
         if base.funcptr and ptr == 0 and not dims:  # `binop_fn fn` — keep the funcptr shape
             return base, name
+        if ptr and base.array:  # `row_t *p` of `typedef T row_t[N]`: a pointer to an array has no
+            raise CParseError(  # TypeRef spelling (it would read as an array of pointers)
+                "a pointer to a typedef'd array is not supported", pos=self.peek().pos
+            )
         return cast.TypeRef(
             base=base.base,
             ptr=ptr + base.ptr,  # base.ptr != 0 only for typeof(T*)
-            array=tuple(base.array) + tuple(dims),
+            # the declarator's own dims are the outer ones: `row_t rw[2]` is two `row_t`s
+            array=tuple(dims) + tuple(base.array),
             vla=vla,
             vla_dims=vla_dims,
             aggregate=base.aggregate,
@@ -960,6 +983,9 @@ class _Parser:
             return tuple(stmts)
 
     def _is_decl_start(self) -> bool:
+        """A declaration starts with a type: a keyword, a scalar or typedef name. A struct tag alone is
+        not one -- tags have their own name space (C11 6.2.3), so a local `s` beside a `struct s` is an
+        expression statement, never a declaration."""
         if not self.at("IDENT"):
             return False
         w = self.peek().text
@@ -969,7 +995,6 @@ class _Parser:
             or w == "enum"
             or is_scalar_name(w)
             or w in ("va_list", "__builtin_va_list", "_Atomic")
-            or w in self.tags
             or w in self.typedefs
         )
 
@@ -1272,11 +1297,16 @@ class _Parser:
         """A local declaration, possibly with several comma-separated declarators sharing one
         type-specifier: `T a = x, b, c = z;` == `T a = x; T b; T c = z;`. Each declarator re-derives
         its own pointer/array shape from the base (so `int *p, q;` types p pointer, q int)."""
-        is_static = False
-        if self.at("IDENT", "static"):  # storage class (otherwise eaten by _type_spec)
-            is_static = True
-            self.nxt()
+        self.storage = set()  # this declaration's own storage classes, wherever they are spelled
         base = self._type_spec()
+        # a block-scope `extern` names an object defined elsewhere, never a new local: binding it as
+        # one read an uninitialized object (CF-STORAGE)
+        if "extern" in self.storage:
+            raise CParseError(
+                "a block-scope extern declaration is not supported", pos=self.peek().pos
+            )
+        # `static` in any position: `volatile static T n` and `T static n` are static (6.7p1)
+        is_static = "static" in self.storage
         decls = []
         while True:
             tref, name = self._declarator_or_funcptr(base)
@@ -1418,10 +1448,16 @@ class _Parser:
                 dims.append(0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text))
                 self.eat("PUNCT", "]")
             self.eat("PUNCT", ")")
+            if ptr and tref.array:  # a pointer to a typedef'd array: no TypeRef spelling
+                raise CParseError(
+                    "a pointer to a typedef'd array is not supported", pos=self.peek().pos
+                )
+            # the type-name keeps a typedef's pointer and array shape (`(ip)v` of `typedef T *ip`, a
+            # `(row_t){...}` literal of `typedef T row_t[N]`), which rebuilding it from its base dropped
             tref = cast.TypeRef(
                 base=tref.base,
-                ptr=ptr,
-                array=tuple(dims),
+                ptr=tref.ptr + ptr,
+                array=tuple(dims) + tuple(tref.array),
                 aggregate=tref.aggregate,
                 quals=tref.quals,
                 bit_width=tref.bit_width,
@@ -1455,16 +1491,26 @@ class _Parser:
 
     def _postfix_tail(self, node):
         """Apply the postfix operators (`[i]`, `.f`, `->f`, `(args)`) to an already-parsed base — shared
-        by `_postfix` (after a primary) and `_unary` (a compound literal, so `(struct P){...}.f` works)."""
+        by `_postfix` (after a primary) and `_unary` (a compound literal, so `(struct P){...}.f` works).
+        A parenthesized dereference folds into the chain (CF-PAREN): `(*X)[i]` is `X[0][i]` (C11 6.5.2.1p2)
+        and `(*X).f` is `X->f` (6.5.2.3p4) -- the row a row pointer addresses is indexed where it lies (not
+        loaded as a scalar), a struct member through the pointer (not a load of the whole struct) -- the
+        spelling the twin rewrites the tokens to before it parses."""
         while True:
             if self.at("PUNCT", "["):
                 self.nxt()
                 idx = self._expr()
                 self.eat("PUNCT", "]")
+                if isinstance(node, cast.Unary) and node.op == "*":
+                    node = cast.Index(node.operand, cast.IntLit(0))
                 node = cast.Index(node, idx)
             elif self.at("PUNCT", "."):
                 self.nxt()
-                node = cast.Member(node, self.eat("IDENT").text, arrow=False)
+                field = self.eat("IDENT").text
+                if isinstance(node, cast.Unary) and node.op == "*":
+                    node = cast.Member(node.operand, field, arrow=True)
+                else:
+                    node = cast.Member(node, field, arrow=False)
             elif self.at("OP", "->"):
                 self.nxt()
                 node = cast.Member(node, self.eat("IDENT").text, arrow=True)

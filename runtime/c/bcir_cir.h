@@ -106,6 +106,9 @@ typedef struct bcir_resource {
   uint8_t  is_atomic;        /* `_Atomic` storage, as `bcir_ctype.is_atomic` reads it: a named object (or an array's
                               * elements) is `_Atomic T`, and a POINTER's pointee is -- so a declaration spells it and
                               * an access through it is an atomic one (CF-ATOMIC). A value temp is never atomic. */
+  uint8_t  is_void;          /* the value of a void expression -- a call to a void function, `(void)e`, a statement
+                              * expression ending in a statement: a placeholder no claim writes and nothing reads, so
+                              * `c ? f() : g()` is known to have no value (CF-TERNARY; the oracle's `_VOID_RID`) */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */
@@ -130,6 +133,8 @@ typedef struct bcir_ctype {
                               * c.call.indirect / c.call.imember result temp; ZERO if the return wasn't captured */
   uint8_t  fp_ret_signd;
   uint8_t  fp_ret_float;
+  int      fp_ret_agg;       /* kind-3 funcptr: a struct/union RETURN, as 1 + the front end's index of its
+                              * definition (0: not one) -- the call's result is that aggregate value */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */
 } bcir_ctype;
@@ -166,7 +171,9 @@ typedef struct bcir_claim {
 /* A static-local variable (static storage duration: a once-only constant init). */
 typedef struct bcir_static {
   char name[BCIR_CIR_NAME];
-  long long init;
+  char *text;                 /* its initializer as the declaration spells it -- the rendered constant image
+                               * (CF-STATICTAB); NULL when it is zero. Owned by the containing hosted cfront
+                               * result, like a host literal's spelling. */
   uint32_t rid;               /* its resource (the escape analysis names it `function.name`) */
 } bcir_static;
 

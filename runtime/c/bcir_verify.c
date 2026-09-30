@@ -73,10 +73,13 @@ static int verify_func(const bcir_func *f,char *diag,size_t dn){
     if(atomicish && cl->hazard==BCIR_HZ_UNIQUE){snprintf(diag,dn,"R5: claim %u (atomic/fence) needs an atomic/barriered hazard",cl->id);return 0;}
     /* R6: the claim's lane must be legal for its declared access-pattern shape. */
     if(!lane_legal(cl->stride,cl->lane)){snprintf(diag,dn,"R6: claim %u lane %u illegal for stride %d",cl->id,cl->lane,(int)cl->stride);return 0;}
-    if(!seq(cl->op,"") && cl->opcode!=BCIR_OP_NOP && (cl->n_wr||cl->opcode==BCIR_OP_STORE||cl->opcode==BCIR_OP_BARRIER)) effect=1;
+    if(!seq(cl->op,"") && cl->opcode!=BCIR_OP_NOP
+       && (cl->n_wr||cl->opcode==BCIR_OP_STORE||cl->opcode==BCIR_OP_BARRIER||cl->opcode==BCIR_OP_GEM_DISPATCH)) effect=1;
   }
   /* R12 (lowering contract / support): a lowered function preserves an observable effect --
-   * a return value or a store/barrier. (A pure no-op function would discharge nothing.) */
+   * a return value, a store/barrier, or a call: a void function's only work may be the calls it makes
+   * (`void init(void){ clk_on(); }`), which the oracle verifies clean. (A pure no-op function would
+   * discharge nothing.) */
   if(f->n_claims && !effect && !f->has_return){snprintf(diag,dn,"R12: function %s discharges no effect",f->name);return 0;}
   /* R17 (accuracy): the C subset is integer/Q-fixed -- exact, 0 ULP -- so it holds by construction. */
   return 1;

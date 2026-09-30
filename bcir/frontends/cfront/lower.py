@@ -15,14 +15,17 @@ Mapping:
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+from bisect import bisect_left
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 from ...kbcir import compose
 from ...model import Claim, Domain, Lane, Lifetime, Module, Opcode, Phase, Resource, StrideClass
 from . import cast
 from .abi import HOST
-from .clex import split_lit_prefix, str_elem_size
+from .clex import split_lit_prefix, str_elem_size, str_units
 from .ctype_model import (
     AggregateBuilder,
     BitIntMix,
@@ -40,6 +43,7 @@ from .ctype_model import (
     usual_arith_int,
     valist,
     with_atomic,
+    incomplete_aggregate,
     with_volatile,
 )
 
@@ -403,16 +407,15 @@ def _str_bytes(spelling: str) -> int:
 
 
 def _fold_const(node, resolve=None) -> int:
-    """A `static` local's / file-scope global's initializer must be a constant expression (it
-    is baked into the C declaration). The §5.9 integer constant-expression evaluator: literals,
-    arithmetic/bit/shift, comparisons, logical &&/|| (a constant expression has no side effects
-    to short-circuit away), unary +/-/~/!, and the ternary. Enumerators arrive pre-folded to
-    IntLit by the parser. `sizeof(type)` / `_Alignof(type)` fold ONLY when a `resolve`
-    (TypeRef -> CType) callback is passed -- the ABI is chosen at LOWER time, so the
-    GLOBAL-initializer site (which has the resolved ABI in hand) passes one, while the
-    parse-time `_const_eval` and the static-local site keep the sizeof-free vocabulary
-    (the latter so the freestanding C twin's ce_expr stays vocabulary-identical -- global
-    rendering is oracle-side by design, so no parity is at stake there). A missing init
+    """A file-scope global's initializer must be a constant expression (it is baked into the C
+    declaration). The §5.9 integer constant-expression evaluator: literals, arithmetic/bit/shift,
+    comparisons, logical &&/|| (a constant expression has no side effects to short-circuit
+    away), unary +/-/~/!, and the ternary. Enumerators arrive pre-folded to IntLit by the parser.
+    `sizeof(type)` / `_Alignof(type)` fold ONLY when a `resolve` (TypeRef -> CType) callback is
+    passed -- the ABI is chosen at LOWER time, so the GLOBAL-initializer site (which has the
+    resolved ABI in hand) passes one (global rendering is oracle-side by design, so no parity is
+    at stake there). A `static` local's initializer folds on both rails through the initializer
+    walk's constant mode instead (`_FuncLowerer._const_value`, C's own types). A missing init
     zero-initializes."""
     if node is None:
         return 0
@@ -423,7 +426,12 @@ def _fold_const(node, resolve=None) -> int:
             return resolve(node.type).size  # the CHOSEN ABI's answer (Part VII A4)
         if isinstance(node.expr, cast.StringLit):
             prefix, _ = split_lit_prefix(node.expr.value)
-            return (_str_bytes(node.expr.value) + 1) * str_elem_size(prefix)
+            unit = (  # an `L` literal's unit is the chosen target's `wchar_t`
+                resolve(cast.TypeRef(base="wchar_t")).size
+                if prefix == "L"
+                else str_elem_size(prefix)
+            )
+            return (_str_bytes(node.expr.value) + 1) * unit
         raise CLowerError(
             "sizeof over a non-type operand is not a constant initializer "
             "in this slice (no scope at global-init time)"
@@ -559,6 +567,220 @@ class _LV:
         if self.bit_width and (self.packed or narrow_bitfield(self.ct)):
             return (self.bit_off + self.bit_width + 7) // 8
         return max(1, self.ct.size)
+
+
+_INIT_MAX_FRAMES = 64  # the subobjects one brace list may nest into (the twin's IW_MAXFRAMES)
+
+# A struct or union object takes only a value of its own type: its initializer, when not a brace list, is
+# one expression of it (C11 6.7.9p13), and so is what `=` assigns it (6.5.16.1p1). CF-STRUCTINIT: the rails
+# had lowered `struct s x = "a";`, `= 5`, `= <another struct>` and `x = 5;` to a copy the emit spells
+# `x = 5;`, which does not compile. The twin refuses with the same words (`bcir_cfront.c`, `agg_value_ok`).
+_STRUCT_INITIALIZED = "a struct or union is initialized by a brace list or a value of its own type"
+_STRUCT_ASSIGNED = "a struct or union is assigned a value of its own type"
+
+
+@dataclass
+class _InitWalk:
+    """What one full initializer's brace lists share (CF-BRACE): the object, the bit ranges stored so
+    far, the member each initialized union took, and how many top-level elements were reached."""
+
+    rid: int
+    top_array: bool  # the object is an array: its own list stores whole elements indexed
+    stores: list = field(default_factory=list)  # [(lo_bit, hi_bit)] of every store, in order
+    unions: dict = field(default_factory=dict)  # (byte_off, union tag) -> the member it took
+    top_n: int = 0  # the top-level elements reached (an inferred `T a[]` is sized by it)
+    const: bool = False  # a static's initializer: its entries fold, its stores make its image
+    image: list = field(default_factory=list)  # [(lo_bit, width, value)] of its stores, in order
+
+
+@dataclass
+class _IFrame:
+    """One aggregate a brace list walks: the list's own object, or a sub-aggregate it entered by brace
+    elision or a designator. `idx` is the next subobject; `count` None is an inferred array's."""
+
+    ct: CType
+    off: int
+    idx: int = 0
+    count: int | None = 0
+    flat: bool = False  # the declared array or a row of it: its elements are the array's own
+    top: bool = False  # the declared object's own list's object (its reach sizes an inferred array)
+
+
+# --- a static's constant image (CF-STATICTAB) ---------------------------------------------------------
+# A static's initializer runs once, before the program does -- never as stores at each call. So it is
+# folded, not lowered into the body: the initializer walk runs in constant mode, each entry lowered as any
+# expression is and the claims it made evaluated as C evaluates an integer constant expression -- each
+# operation in its own type -- then discarded; each scalar the walk initializes is recorded in the static's
+# image, which is rendered as its declaration's initializer. The twin's `kfold` / `init_image` / `kimage`.
+
+# the one reason both rails give for an entry the fold cannot evaluate: a variable, a load, a call, an
+# address, a floating value -- or arithmetic C leaves undefined (an overflow, a shift past the width, a
+# division by zero), which is no constant either
+_NOT_CONSTANT = "a static initializer is not an integer constant expression"
+# a union given an anonymous member other than its first: C names that member only through its own
+# leaves, which the rendered brace list does not spell
+_ANON_UNION = "a static union initialized through an anonymous member other than its first"
+
+
+class _KVal(NamedTuple):
+    """A folded constant: its value and its C type -- an integer (`kind` "i") of `bits` bits, signed or
+    not; a `_Bool` ("b"); or a null pointer ("p")."""
+
+    v: int
+    bits: int = 32
+    signed: bool = True
+    kind: str = "i"
+
+
+def _kwrap(v: int, bits: int, signed: bool) -> int:
+    """`v` reduced to a `bits`-bit integer type: modulo 2^bits -- C's conversion to an unsigned type, and
+    the two's complement every target gives a signed one."""
+    v &= (1 << bits) - 1
+    return v - (1 << bits) if signed and v >> (bits - 1) else v
+
+
+def _kfits(v: int, bits: int, signed: bool) -> bool:
+    """`v` is a value of the `bits`-bit type: a signed result outside it overflowed, which is undefined."""
+    return -(1 << (bits - 1)) <= v < (1 << (bits - 1)) if signed else 0 <= v < (1 << bits)
+
+
+def _kpromote(a: _KVal) -> _KVal:
+    """An operand's integer promotion (C11 6.3.1.1p2): a `_Bool` or a type narrower than `int` is an
+    `int`. A pointer is no integer constant."""
+    if a.kind == "p":
+        raise CLowerError(_NOT_CONSTANT)
+    return _KVal(a.v) if a.kind == "b" or a.bits < 32 else a
+
+
+def _kcommon(a: _KVal, b: _KVal) -> "tuple[int, bool]":
+    """The usual arithmetic conversions (6.3.1.8) of two promoted operands: the wider type; of a signed
+    and an unsigned type, the unsigned one unless the signed one is wider."""
+    if a.signed == b.signed:
+        return max(a.bits, b.bits), a.signed
+    u, s = (b, a) if a.signed else (a, b)
+    return (u.bits, False) if u.bits >= s.bits else (s.bits, True)
+
+
+_KARITH = {
+    "add": lambda x, y: x + y,
+    "sub": lambda x, y: x - y,
+    "mul": lambda x, y: x * y,
+    "and": lambda x, y: x & y,
+    "or": lambda x, y: x | y,
+    "xor": lambda x, y: x ^ y,
+}
+_KCMP = {
+    "eq": lambda x, y: x == y,
+    "ne": lambda x, y: x != y,
+    "lt": lambda x, y: x < y,
+    "gt": lambda x, y: x > y,
+    "le": lambda x, y: x <= y,
+    "ge": lambda x, y: x >= y,
+}
+
+
+def _kbin(suf: str, a: _KVal, b: _KVal) -> _KVal:
+    """`a OP b` as C computes it: a comparison or a logical operator gives an `int`, a shift the promoted
+    left operand's type, the rest the operands' common type -- an unsigned one wrapping, a signed one
+    that overflows undefined."""
+    a, b = _kpromote(a), _kpromote(b)
+    if suf in ("land", "lor"):
+        x, y = a.v != 0, b.v != 0
+        return _KVal(int(x and y) if suf == "land" else int(x or y))
+    if suf in ("shl", "shr"):
+        if not 0 <= b.v < a.bits:  # a count outside the promoted width: undefined
+            raise CLowerError(_NOT_CONSTANT)
+        if suf == "shr":  # a negative signed value shifts arithmetically, as on every target
+            return a._replace(v=a.v >> b.v)
+        r = a.v << b.v
+        if a.signed and (a.v < 0 or not _kfits(r, a.bits, True)):
+            raise CLowerError(_NOT_CONSTANT)
+        return a._replace(v=_kwrap(r, a.bits, a.signed))
+    bits, signed = _kcommon(a, b)
+    x, y = _kwrap(a.v, bits, signed), _kwrap(b.v, bits, signed)
+    if suf in _KCMP:
+        return _KVal(int(_KCMP[suf](x, y)))
+    if suf in ("div", "mod"):
+        if y == 0:
+            raise CLowerError(_NOT_CONSTANT)
+        q = abs(x) // abs(y) * (-1 if (x < 0) != (y < 0) else 1)  # C truncates toward zero
+        if signed and not _kfits(q, bits, True):  # INT_MIN / -1 (and its remainder)
+            raise CLowerError(_NOT_CONSTANT)
+        r = q if suf == "div" else x - q * y
+    elif suf in _KARITH:
+        r = _KARITH[suf](x, y)
+    else:
+        raise CLowerError(_NOT_CONSTANT)
+    if signed and not _kfits(r, bits, True):
+        raise CLowerError(_NOT_CONSTANT)
+    return _KVal(_kwrap(r, bits, signed), bits, signed)
+
+
+def _kun(suf: str, a: _KVal) -> _KVal:
+    """`OP a`: `!` gives an `int`; `-` and `~` the promoted operand's type (`-INT_MIN` overflows)."""
+    if suf == "lnot":
+        return _KVal(int(a.v == 0))
+    a = _kpromote(a)
+    if suf not in ("neg", "bnot"):
+        raise CLowerError(_NOT_CONSTANT)
+    r = -a.v if suf == "neg" else ~a.v
+    if a.signed and not _kfits(r, a.bits, True):
+        raise CLowerError(_NOT_CONSTANT)
+    return a._replace(v=_kwrap(r, a.bits, a.signed))
+
+
+def _ksel(c: _KVal, a: _KVal, b: _KVal) -> _KVal:
+    """`c ? a : b` over arithmetic arms: the chosen arm, in the arms' common type."""
+    a, b = _kpromote(a), _kpromote(b)
+    bits, signed = _kcommon(a, b)
+    return _KVal(_kwrap((a if c.v else b).v, bits, signed), bits, signed)
+
+
+def _ktype(ct: "CType | None") -> _KVal:
+    """The type a constant claim's temp declares -- a literal's, `sizeof`'s `size_t`, a cast's target --
+    as a zero of it. A floating or `_BitInt` one is no integer constant expression here."""
+    if ct is not None and ct.kind in ("pointer", "funcptr"):
+        return _KVal(0, 0, False, "p")
+    if ct is None or ct.kind != "scalar" or not ct.is_integer or ct.is_bitint:
+        raise CLowerError(_NOT_CONSTANT)
+    if ct.name in ("_Bool", "bool"):
+        return _KVal(0, 1, False, "b")
+    return _KVal(0, ct.size * 8, ct.signed)
+
+
+def _kconvert(a: _KVal, t: _KVal) -> _KVal:
+    """`a` converted to the type `t` (6.3.1.2-3): an integer wraps to its width, a `_Bool` is whether `a`
+    is nonzero, and a pointer takes only the null pointer constant."""
+    if t.kind == "b":
+        return t._replace(v=int(a.v != 0))
+    if t.kind == "p":
+        if a.v:
+            raise CLowerError(_NOT_CONSTANT)
+        return t
+    return t._replace(v=_kwrap(a.v, t.bits, t.signed))
+
+
+def _kleaf(a: _KVal, ct: CType, bw: int) -> int:
+    """The value the static's scalar subobject `ct` (a bit-field of `bw` bits) holds from the constant
+    `a`: C's conversion as if by assignment. A pointer holds only the null pointer; a floating one holds
+    the integer itself, which the rendered initializer converts exactly as the source's does."""
+    if ct.kind in ("pointer", "funcptr"):
+        return _kconvert(a, _KVal(0, 0, False, "p")).v
+    if ct.kind != "scalar" or ct.name == "void":
+        raise CLowerError(_NOT_CONSTANT)
+    if ct.is_float:
+        return a.v
+    if ct.name in ("_Bool", "bool"):
+        return int(a.v != 0)
+    return _kwrap(a.v, bw or (ct.bit_width if ct.is_bitint else ct.size * 8), ct.signed)
+
+
+def _kspell(v: int) -> str:
+    """A static's scalar as its rendered initializer spells it: `Nu` -- exact in whatever type it
+    initializes -- `-N`, and the one negative with no positive counterpart as an expression."""
+    if v >= 0:
+        return f"{v}u"
+    return "(-9223372036854775807 - 1)" if v == -(1 << 63) else str(v)
 
 
 def _arith_class(ct: CType) -> int:
@@ -743,6 +965,46 @@ def _flatten_block(block: list) -> list:
     return out
 
 
+# --- the operands C may leave unevaluated (CF-TERNARY) ---
+# C evaluates exactly one arm of `c ? a : b` (C11 6.5.15p4) and the right operand of `&&` / `||` only when
+# the left one does not decide the result (6.5.13p4, 6.5.14p4). An operand may still be computed eagerly --
+# as a `c.select` or a `c.bin.land` / `c.bin.lor` over values already in hand -- when computing it can
+# neither trap nor change state: every claim it made is one of these ops, is no volatile access (a device
+# register's included: the lowering marks it volatile as it makes it) and writes no declared variable. An
+# atomic access is a load, a store or a read-modify-write, none of them on the list. Any other operand is
+# lowered as a branch that evaluates it only when C does. The rails decide on the claims each made, which
+# parity already holds equal, so they cannot classify an operand differently; the twin's `operand_pure` is
+# this predicate.
+_PURE_OPS = frozenset(
+    {"c.const", "c.copy", "c.select", "c.addrof", "c.ptradd", "c.ptrsub", "c.sizeof.vla"}
+)
+_PURE_OP_PREFIXES = ("c.fconst:", "c.cconst:", "c.cast:", "c.labeladdr:")
+_PURE_BIN = frozenset(
+    "add sub mul and or xor shl shr lt gt le ge eq ne land lor".split()
+)  # not `div` / `mod`: a zero divisor traps
+_PURE_UN = frozenset({"neg", "bnot", "lnot", "creal", "cimag"})
+
+
+def _operand_pure(block: list, declared: set) -> bool:
+    """Whether the operand `block` lowered to may be computed although C would not evaluate it."""
+    for n in block:
+        if not isinstance(n, Claim):  # an operand it already branches on
+            return False
+        if n.volatile:  # a volatile access: reading one is a side effect
+            return False
+        if any(w in declared for w in n.wr):  # an assignment, an increment
+            return False
+        op = n.op
+        if op in _PURE_OPS or op.startswith(_PURE_OP_PREFIXES):
+            continue
+        if op.startswith("c.bin.") and op[len("c.bin.") :] in _PURE_BIN:
+            continue
+        if op.startswith("c.un.") and op[len("c.un.") :] in _PURE_UN:
+            continue
+        return False
+    return True
+
+
 def callee_signature(fct) -> str:
     """The declared indirect-callee signature "ret(param, ...)" (§5.14 Phase 2) rendered from a
     funcptr CType -- the type record the R18 well-formedness check and the effect/commutation
@@ -776,7 +1038,8 @@ class LoweredFunc:
     vla_locals: list = field(
         default_factory=list
     )  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
-    statics: list = field(default_factory=list)  # (rid, name, CType, init) static-storage locals
+    statics: list = field(default_factory=list)  # (rid, name, CType, init) static-storage locals:
+    #   init the rendered initializer of its constant image, None when it is zero (CF-STATICTAB)
     globals_used: dict = field(default_factory=dict)  # rid -> name (file-scope globals referenced)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {0}`
     tu_protos: dict = field(
@@ -873,6 +1136,7 @@ class _FuncLowerer:
         func_rets: dict | None = None,
         abi=None,
         protos: dict | None = None,
+        func_params: dict | None = None,
     ):
         self.func = func
         self.abi = abi or HOST  # the target data model for laying out user types (long/ptr)
@@ -880,6 +1144,9 @@ class _FuncLowerer:
             func_rets or {}
         )  # callee name -> return CType (for void / wide / float returns)
         self.protos = protos or {}  # PROTOTYPED cross-TU callee -> (ret CType, (param CType, ...))
+        # same-unit callee -> its parameters' types, None where the pre-scan cannot type one
+        # (`_param_types`): what a null pointer constant argument becomes (CF-NULLARG)
+        self.func_params = func_params or {}
         self.tu_used: dict = {}  # the tu callees THIS function actually calls (for the emit decl)
         self.aggregates = aggregates
         self.rid = base_rid
@@ -898,6 +1165,8 @@ class _FuncLowerer:
         self.env: dict[str, tuple[int, CType]] = {}  # name -> (storage rid, type)
         self.resources: dict[int, Resource] = {}
         self.rtypes: dict[int, CType] = {}  # rid -> CType (for emission)
+        self.zero_consts: set[int] = set()  # `c.const 0` temps -- a null pointer constant where a
+        #   pointer takes one (`_null_pointer`, CF-NULLPTR)
         self.params: list = []
         self.locals: list = []  # (rid, name, CType) mutable named locals
         self.vla_locals: list = []  # (rid, name, CType) 1-D stack VLAs -- declared IN-BODY
@@ -933,6 +1202,43 @@ class _FuncLowerer:
         self.loop_ctr += 1
         return self.loop_ctr
 
+    def _complete(self, ct: "CType | None") -> "CType | None":
+        """An incomplete struct or union -- named where it was not laid out yet: the pointee of a member
+        pointer to the struct being defined, or to a later one -- completed by its tag, now that every
+        aggregate is laid out (CF-SELFREF). One never defined stays incomplete."""
+        if ct is not None and ct.incomplete and ct.name in self.aggregates:
+            full = self.aggregates[ct.name]
+            return with_volatile(full) if ct.volatile else full
+        return ct
+
+    def _complete_ptr(self, ct: CType) -> CType:
+        """A member's type with the incomplete struct it points at (through pointers and arrays of them)
+        completed, so `a.next->v` and `a.next + 1` see the pointee's layout."""
+        if ct.kind in ("pointer", "array") and ct.of is not None:
+            of = (
+                self._complete_ptr(ct.of)
+                if ct.of.kind in ("pointer", "array")
+                else self._complete(ct.of)
+            )
+            if of is not ct.of:
+                return replace(ct, of=of)
+        return ct
+
+    def _field(self, agg: "CType | None", name: str) -> tuple:
+        """Member `name` of the struct or union `agg` -- (type, byte offset, bit offset, bit width) -- its
+        type's incomplete pointee completed. A member of a non-aggregate, of a struct never defined, or
+        one the struct lacks is a lowering error, never a bare AttributeError or KeyError."""
+        agg = self._complete(agg)
+        if agg is None or not agg.is_aggregate:
+            raise CLowerError(f"a member access `{name}` into a non-aggregate")
+        if agg.incomplete:
+            raise CLowerError(f"a member access into the incomplete struct or union {agg.name!r}")
+        try:
+            ftype, off, bo, bw = agg.field(name)
+        except KeyError:
+            raise CLowerError(f"no member named {name!r} in {agg.kind} {agg.name!r}") from None
+        return self._complete_ptr(ftype), off, bo, bw
+
     # --- resource allocation ---
     def _new_rid(self) -> int:
         self.rid += 1
@@ -953,8 +1259,8 @@ class _FuncLowerer:
             base = self.env[tref.typeof_var][1]
         elif tref.typeof_expr is not None:  # `typeof(expr)` -> the operand's static type
             base = self._type_of(tref.typeof_expr)
-        elif tref.aggregate:
-            base = _aggregate(self.aggregates, tref.base)
+        elif tref.aggregate:  # a pointer may name a struct never defined (an opaque `struct fwd *`)
+            base = _aggregate(self.aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
         elif tref.base == "va_list":  # the <stdarg.h> variadic cursor (opaque)
             base = valist(self.abi)
         elif tref.bit_width:  # C23 `_BitInt(N)`: an exact-width, non-promoting int
@@ -1034,7 +1340,28 @@ class _FuncLowerer:
                 callee_sig=callee_sig,
             )
         )
+        if op == "c.const" and tuple(imm) == (0,):
+            self.zero_consts.add(wr[0])
         return wr[0] if wr else -1
+
+    def _null_pointer(self, v: int, ct: CType) -> int:
+        """The value `v` taken by an object of type `ct`: a `c.const 0` taken by a pointer is a null pointer
+        constant (C11 6.3.2.3p3), so its temp is typed as that pointer -- the emit declares `T *t = 0u;`,
+        where an `int` temp made `p = t;` an integer VARIABLE assigned to a pointer, which Clang and GCC
+        reject. The claim graph is unchanged: only the temp's C type moves (CF-NULLPTR)."""
+        if v in self.zero_consts and ct.kind in ("pointer", "funcptr"):
+            self.rtypes[v] = unqualified(ct)
+        return v
+
+    def _null_pointer_args(self, actuals: tuple, params: tuple) -> None:
+        """The actuals of a call to a callee whose parameter types are known -- a same-unit definition,
+        before or after the caller, or a prototype: an argument converts to its parameter's type as if by
+        assignment (C11 6.5.2.2p7), so a `c.const 0` passed to a pointer parameter is a null pointer of that
+        parameter's type (`_null_pointer`). A variadic callee's extra actuals have no parameter and keep
+        their type. Only the temps' C types move (CF-NULLARG; the twin's `null_pointer_args`)."""
+        for v, ct in zip(actuals, params):
+            if ct is not None:
+                self._null_pointer(v, ct)
 
     def _storage(self, ct: CType, name: str) -> int:
         """A mutable named local — assignments write it, reads read it (so control-flow merges and
@@ -1042,6 +1369,41 @@ class _FuncLowerer:
         rid = self._temp(ct, name)
         self.locals.append((rid, name, ct))
         return rid
+
+    def _declared_rids(self) -> set:
+        """The variables the source declares -- parameters, locals, statics, globals -- as opposed to the
+        temporaries the lowering makes (`_operand_pure`: writing one is a side effect)."""
+        rids = {rid for _n, rid, _ct in self.params}
+        rids.update(rid for rid, *_ in (*self.locals, *self.vla_locals, *self.statics))
+        rids.update(rid for rid, _ct in self.genv.values())
+        return rids
+
+    def _lower_apart(self, expr) -> tuple:
+        """An operand C may leave unevaluated, lowered into a block of its own -- (the block, its value) --
+        so the caller can compute it eagerly (splice the block in place) or under a branch (CF-TERNARY)."""
+        block: list = []
+        self.block_stack.append(block)
+        try:
+            v = self._rvalue(expr)
+        finally:
+            self.block_stack.pop()
+        return block, v
+
+    def _branch_value(self, cond: int, ct: CType, then: list, els: list) -> tuple:
+        """The branch an operand C may leave unevaluated lowers to: one named local of type `ct` that each
+        arm assigns last -- `if (cond) { then; sel = ...; } else { els; sel = ...; }` -- exactly the source
+        form both rails already lower and emit. Returns (the local, the IfNode) for the caller to finish
+        each arm and place the node (`_assign_in`)."""
+        sel = self._storage(ct, "sel")
+        return sel, IfNode(cond, then, els)
+
+    def _assign_in(self, block: list, v: int, sel: int) -> None:
+        """`sel = v;` at the end of `block` (one arm of `_branch_value`)."""
+        self.block_stack.append(block)
+        try:
+            self._emit("c.copy", Opcode.ADD, (v,), (sel,))
+        finally:
+            self.block_stack.pop()
 
     def _vla_storage(self, ct: CType, name: str, ext_rid: int) -> int:
         """A 1-D stack VLA `T a[n]`. Unlike a normal local it CANNOT be declared up front — its size is the
@@ -1055,9 +1417,10 @@ class _FuncLowerer:
         self._emit("c.vladecl", Opcode.ADD, (ext_rid,), (rid,))
         return rid
 
-    def _static_storage(self, ct: CType, name: str, init: int) -> int:
+    def _static_storage(self, ct: CType, name: str, init: "str | None") -> int:
         """A `static` local: persistent storage with a once-only constant initializer baked into the
-        declaration (so the init is NOT a per-call assignment). Reads/writes hit it like any local."""
+        declaration (so the init is NOT a per-call assignment) -- `init` its rendered image, None for
+        zero (`_static_init`). Reads/writes hit it like any local."""
         rid = self._temp(ct, name)
         self.statics.append((rid, name, ct, init))
         return rid
@@ -1075,6 +1438,44 @@ class _FuncLowerer:
         if name in self.env:
             return self.env[name]
         raise CLowerError(f"use of undeclared identifier {name!r}", pos=pos)
+
+    @staticmethod
+    def _aos_rooted(node) -> bool:
+        """`a[i].m...k`: a `.` member chain whose innermost base is a subscript (no `->` hop on the way)."""
+        while isinstance(node, cast.Member) and not node.arrow:
+            if isinstance(node.base, cast.Index):
+                return True
+            node = node.base
+        return False
+
+    def _aos_member(self, node) -> "tuple | None":
+        """A member of an array-of-structs element -- `a[i].f`, and a nested struct/union member at any depth
+        `a[i].m.k` (CF-NESTMEM) -- as (the element's lvalue, the element struct, the member's type, its byte
+        offset in the element, bit offset, bit width, the aggregate it is a member of). The chain's `.` hops
+        only add offsets (and a volatile aggregate's qualifier): the access keeps the element's runtime index
+        and strides by the element. None when the chain reaches no subscripted struct element (a `->` hop
+        goes through a pointer, which the element's own storage does not hold). The twin's `sdef_elem_field`
+        and `aos_member_array` descend the same chain."""
+        hops, n = [], node
+        while isinstance(n, cast.Member) and not isinstance(n.base, cast.Index):
+            if n.arrow:
+                return None
+            hops.append(n.field)
+            n = n.base
+        if not isinstance(n, cast.Member):
+            return None
+        hops.append(n.field)
+        el = self._lvalue(n.base)
+        if el.kind != "mem" or el.idx is None or el.ct.kind not in ("struct", "union"):
+            return None
+        elem = self._complete(el.ct)
+        agg, ftype, off, fbo, fbw = elem, elem, 0, 0, 0
+        for name in reversed(hops):  # the element's struct, then each nested struct/union reached
+            agg = self._complete(ftype)
+            ftype, foff, fbo, fbw = self._field(agg, name)
+            ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
+            off += foff
+        return el, elem, ftype, off, fbo, fbw, agg
 
     # --- lvalue resolution ---
     def _lvalue(self, node) -> "_LV":
@@ -1097,14 +1498,48 @@ class _FuncLowerer:
             byte_off = 0
             mem_shape = mem_elem = None
             ptr_member = False
-            if isinstance(n, cast.Member):
+            aos_idx = aos_k = (
+                None  # `a[i].m[j]`: the element's index and its stride in `m`'s elements
+            )
+            whole = False  # a multi-dimensional global indexed like a member array at offset 0
+            if isinstance(n, cast.Member) and self._aos_rooted(n):
+                # `a[i].m[j]` -- a member ARRAY of an array-of-structs element (CF-SMALL), at any depth of
+                # nested struct/union members (`a[i].s.m[j]`, CF-NESTMEM): the element's index, scaled to the
+                # member's element size, joins the member's own flattened index, and the access is the member
+                # element at `&a + offsetof(s.m) + (i*K + lin)*es`, K = the element struct's size in elements
+                # (a struct whose size is no multiple of the element size is refused)
+                aos = self._aos_member(n)
+                if aos is None or aos[0].member:
+                    raise CLowerError(
+                        "a member array of a subscripted element that is not a plain array-of-structs element"
+                    )
+                el, agg, ftype, moff = aos[:4]
+                dims, t = [], ftype
+                while t.kind == "array":
+                    dims.append(t.count)
+                    t = t.of if t.of is not None else scalar("uint32_t")
+                if not dims or t.kind != "scalar" or len(dims) > 3:
+                    raise CLowerError(
+                        f"a subscript of the array-of-structs member '{n.field}' is not supported"
+                    )
+                if len(idx_nodes) != len(dims):
+                    raise CLowerError(
+                        f"partial indexing of a struct member array ('{n.field}') is not yet supported"
+                    )
+                if agg.size % t.size:
+                    raise CLowerError(
+                        "an array-of-structs member array whose element does not divide the struct"
+                    )
+                base_rid, base_ct, byte_off = el.rid, ftype, el.byte_off + moff
+                mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size
+            elif isinstance(n, cast.Member):
                 # `s.arr[i]` / `s.m[i][j]` -- indexing a struct *member* array. The base is the enclosing
                 # struct; the member's byte offset rides in the access imm beside the element size, and
                 # the row-major flattened index is scaled by the element, so the element lands at
                 # `&s + member_off + lin*elem_size` -- never the enclosing struct's offset 0.
                 base_rid, struct_ct, base_off = self._addr(n.base)
-                agg = struct_ct.of if n.arrow else struct_ct
-                ftype, byte_off, _bo, _bw = agg.field(n.field)
+                agg = self._complete(struct_ct.of if n.arrow else struct_ct)
+                ftype, byte_off, _bo, _bw = self._field(agg, n.field)
                 ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
                 byte_off += (
                     0 if n.arrow else base_off
@@ -1139,8 +1574,21 @@ class _FuncLowerer:
                 base_rid, base_ct, byte_off = self._addr(
                     n
                 )  # a non-Member base: its accumulated offset
+                dims, t = [], base_ct
+                while t.kind == "array" and not t.shape:
+                    dims.append(t.count)
+                    t = t.of if t.of is not None else scalar("uint32_t")
+                if len(dims) > 1 and len(dims) == len(idx_nodes) and t.kind == "scalar":
+                    # a MULTI-dimensional global `T g[A][B]` (declared nested, by its own source) indexed in
+                    # full: row-major like a member array of the whole object at offset 0, so the access is
+                    # a byte offset its declaration's shape does not matter to (CF-SMALL)
+                    if len(dims) > 3:
+                        raise CLowerError(
+                            "indexing an array of more than 3 dimensions is not yet supported"
+                        )
+                    mem_shape, mem_elem, whole = tuple(dims), t, True
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
-            member = isinstance(n, cast.Member) and not ptr_member
+            member = (isinstance(n, cast.Member) and not ptr_member) or whole
             while True:
                 shape = mem_shape if mem_shape is not None else base_ct.shape
                 # a multi-dim VLA -> runtime dim multipliers
@@ -1175,6 +1623,14 @@ class _FuncLowerer:
                     a1 = self._temp(scalar("uint32_t"), "b_add")
                     self._emit("c.bin.add", Opcode.ADD, (m1, here[d]), (a1,))
                     lin = a1
+                if aos_idx is not None:  # `a[i].m[j]`: fold in the element's index
+                    k = self._temp(scalar("uint32_t"), f"k{aos_k}")
+                    self._emit("c.const", Opcode.LOAD, (), (k,), imm=(aos_k,))
+                    m1 = self._temp(scalar("uint32_t"), "b_mul")
+                    self._emit("c.bin.mul", Opcode.MUL, (aos_idx, k), (m1,))
+                    a1 = self._temp(scalar("uint32_t"), "b_add")
+                    self._emit("c.bin.add", Opcode.ADD, (m1, lin), (a1,))
+                    lin, aos_idx = a1, None
                 elem = (
                     mem_elem
                     if mem_elem is not None
@@ -1191,37 +1647,31 @@ class _FuncLowerer:
                 base_rid, base_ct, idx_rids = self._read(lv), elem, rest
                 byte_off, mem_shape, mem_elem, member = 0, None, None, False
         if isinstance(node, cast.Member):
-            if isinstance(
-                node.base, cast.Index
-            ):  # `arr[i].field` -- index into an ARRAY-OF-STRUCTS
-                el = self._lvalue(node.base)  # member, then descend into the struct element.
-                if el.kind == "mem" and el.idx is not None and el.ct.kind in ("struct", "union"):
-                    agg = el.ct  # the element struct: add the field offset, keep
-                    ftype, foff, fbo, fbw = agg.field(
-                        node.field
-                    )  # the runtime index, and stride by the element size
-                    ftype = qualified(ftype, agg.volatile)
-                    if (
-                        fbw or ftype.kind != "scalar"
-                    ):  # a bitfield / nested / array / pointer element
-                        raise CLowerError(  # field is a follow-on -- both rails fall back
-                            f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported"
-                        )
-                    return _LV(
-                        "mem",
-                        el.rid,
-                        ftype,
-                        idx=el.idx,
-                        byte_off=el.byte_off + foff,
-                        bit_off=fbo,
-                        bit_width=fbw,
-                        member=True,
-                        stride=agg.size,
-                        packed=agg.packed,
+            # `arr[i].field` / `arr[i].m.k` -- a member of an ARRAY-OF-STRUCTS element (nested members at any
+            # depth, CF-NESTMEM): keep the element's runtime index, stride by the element size, and land at the
+            # member's flattened offset in the element
+            aos = self._aos_member(node)
+            if aos is not None:
+                el, elem, ftype, foff, fbo, fbw, agg = aos
+                if fbw or ftype.kind != "scalar":  # a bitfield / struct / array / pointer element
+                    raise CLowerError(  # field is a follow-on -- both rails fall back
+                        f"array-of-structs non-scalar element field ('.{node.field}') is not yet supported"
                     )
+                return _LV(
+                    "mem",
+                    el.rid,
+                    ftype,
+                    idx=el.idx,
+                    byte_off=el.byte_off + foff,
+                    bit_off=fbo,
+                    bit_width=fbw,
+                    member=True,
+                    stride=elem.size,
+                    packed=agg.packed,
+                )
             base_rid, base_ct, base_off = self._addr(node.base)
-            agg = base_ct.of if node.arrow else base_ct
-            ftype, byte_off, bit_off, bit_w = agg.field(node.field)
+            agg = self._complete(base_ct.of if node.arrow else base_ct)
+            ftype, byte_off, bit_off, bit_w = self._field(agg, node.field)
             ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off = (
                 byte_off if node.arrow else base_off + byte_off
@@ -1247,8 +1697,12 @@ class _FuncLowerer:
                     raise CLowerError("dereference of an element that is not a pointer")
                 return _LV("mem", self._read(el), el.ct.of or scalar("uint32_t"), byte_off=0)
             # `*(volatile uint32_t *)ADDR`: the cast yields a real `T *` (the twin's general deref of
-            # a pointer rvalue)
+            # a pointer rvalue) -- unless it is a volatile access at a constant byte offset of a device
+            # region, the member access the emit spelled so
             if isinstance(operand, cast.Cast):
+                lv = self._byte_offset_access(operand)
+                if lv is not None:
+                    return lv
                 rid = self._rvalue(operand)
                 ct = self.rtypes.get(rid)
                 if ct is not None and ct.kind == "pointer":
@@ -1257,6 +1711,51 @@ class _FuncLowerer:
             base_rid, base_ct, base_off = self._addr(operand)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
+
+    def _byte_offset_access(self, node: cast.Cast) -> "_LV | None":
+        """`*(volatile T *)((char *)p + K)`: one volatile access of `T` at byte offset `K` from the device
+        region `p` -- the claim the member access `p->m` lowers to, not a pointer computation and an access
+        at offset 0 (CF-RTVOL). It is how the emit spells a volatile member, dereference or bitfield-unit
+        access (`*(volatile T *)((const volatile char *)p + off)`, `emit.py`), so emitted C re-lowers each
+        such access to the claim it was emitted from -- and ordinary driver code spells a register access
+        by byte offset so, which the twin folds alike (`bcir_cfront.c`, `byte_off_access`). Only where that
+        is exact, else None (the cast lowers as a pointer value). Types are read resolved, as both rails
+        resolve them: the cast's is a pointer to a volatile, non-`_Atomic` integer or floating `T` (its
+        width and signedness), the byte pointer's a pointer to plain `char`, whatever its qualifiers; `K` is
+        an integer literal (an enumerator or a character constant is one) no wider than an `int`; and `p` is
+        a declared pointer or array, or `&s` of a struct or union -- the two bases `_base_ptr` spells --
+        whose region holds volatile storage, so the access stays a device access every refusal still sees
+        (an inc/dec, a re-read as a value), as it was through the cast pointer."""
+        add = node.operand
+        if (
+            not isinstance(add, cast.Binary)
+            or add.op != "+"
+            or not isinstance(add.lhs, cast.Cast)
+            or not isinstance(add.rhs, cast.IntLit)
+            or not 0 <= add.rhs.value <= 0x7FFFFFFF
+        ):
+            return None
+        p = add.lhs.operand
+        addr = isinstance(p, cast.Unary) and p.op == "&"  # `&s`: the struct's own storage
+        name = p.operand if addr else p
+        if not isinstance(name, cast.Name) or name.ident not in self.env:
+            return None
+        rid, pct = self.env[name.ident]
+        if not (pct.is_aggregate if addr else pct.kind in ("pointer", "array")):
+            return None
+        if not self._mmio(rid):
+            return None
+        try:
+            to, tb = self._resolve_type(node.type), self._resolve_type(add.lhs.type)
+        except CLowerError:
+            return None
+        el = to.of if to.kind == "pointer" else None
+        if el is None or not el.volatile or el.atomic or not (el.is_integer or el.is_float):
+            return None
+        by = tb.of if tb.kind == "pointer" else None
+        if by is None or by.kind != "scalar" or by.name != "char" or by.atomic:
+            return None
+        return _LV("mem", rid, el, byte_off=add.rhs.value)
 
     def _string_ptr(self, spelling: str) -> int:
         """A string literal -> an anonymous read-only `char[]` global (NUL-terminated); the value is a
@@ -1267,7 +1766,7 @@ class _FuncLowerer:
         if existing is not None:
             return existing
         prefix, _ = split_lit_prefix(spelling)
-        elem = str_elem_size(prefix)  # 1 (char/u8) / 2 (u) / 4 (L/U)
+        elem = str_elem_size(prefix, self.abi)  # 1 (char/u8) / 2 (u) / 4 (U) / wchar_t (L)
         nunits = _str_bytes(spelling) + 1  # the decoded code units + the NUL
         idx = self.strctr[0]
         self.strctr[0] += 1
@@ -1328,8 +1827,8 @@ class _FuncLowerer:
             return rid, self.rtypes[rid], 0
         if isinstance(node, cast.Member):
             base_rid, base_ct, base_off = self._addr(node.base)
-            agg = base_ct.of if node.arrow else base_ct
-            ftype, byte_off, bit_off, bit_w = agg.field(node.field)
+            agg = self._complete(base_ct.of if node.arrow else base_ct)
+            ftype, byte_off, bit_off, bit_w = self._field(agg, node.field)
             ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off = (
                 byte_off if node.arrow else base_off + byte_off
@@ -1488,11 +1987,7 @@ class _FuncLowerer:
         whose type both rails infer identically (the twin reads it off a speculatively-lowered value);
         calls / address-of / ternary are a deferred follow-on (raised here rather than silently mistyped)."""
         if isinstance(node, cast.IntLit):
-            return (
-                scalar(node.ctype, self.abi)
-                if is_scalar_name(node.ctype)
-                else scalar("int", self.abi)
-            )
+            return self._lit_type(node)
         if isinstance(node, cast.FloatLit):
             return _float_lit_type(node.value, self.abi)
         if isinstance(node, (cast.SizeOf, cast.AlignOf)):  # a `size_t` (C11 6.5.3.4p5)
@@ -1501,7 +1996,7 @@ class _FuncLowerer:
             return self._lookup(node.ident, node.pos)[1]
         if isinstance(node, cast.StringLit):  # a string literal has type `char[N]` (not char*)
             prefix, _ = split_lit_prefix(node.value)
-            elem = str_elem_size(prefix)
+            elem = str_elem_size(prefix, self.abi)
             n = _str_bytes(node.value) + 1  # decoded code units + the NUL
             return array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), n)
         if isinstance(node, cast.Binary):
@@ -1524,8 +2019,7 @@ class _FuncLowerer:
             return self._resolve_type(node.type)
         if isinstance(node, cast.Member):  # `s.f` / `p->f` -> the field's type
             base_t = self._type_of(node.base)
-            agg = base_t.of if node.arrow else base_t
-            return agg.field(node.field)[0]
+            return self._field(base_t.of if node.arrow else base_t, node.field)[0]
         if isinstance(node, cast.Index):  # `a[i]` -> the element (pointee) type
             base_t = self._type_of(node.base)
             return base_t.of if base_t.of is not None else scalar("uint32_t")
@@ -1560,10 +2054,10 @@ class _FuncLowerer:
         """A member access as `sizeof` sees it: the member's declared type and its bit-field width (0 for
         an ordinary member). `.` names a member of its operand, `->` of what its operand points at."""
         base_t = self._sizeof_type(node.base)
-        agg = self._sizeof_elem(base_t) if node.arrow else base_t
+        agg = self._complete(self._sizeof_elem(base_t) if node.arrow else base_t)
         if not agg.is_aggregate:
             raise CLowerError(f"sizeof of a member of a {agg.kind}")
-        ft, _off, _bit, width = agg.field(node.field)
+        ft, _off, _bit, width = self._field(agg, node.field)
         return ft, width
 
     def _sizeof_object(self, node) -> CType:
@@ -1626,7 +2120,14 @@ class _FuncLowerer:
             if node.op == "*":
                 return self._sizeof_elem(self._sizeof_type(node.operand))
             if node.op == "&":
-                return pointer(self._sizeof_type(node.operand), self.abi)
+                o = node.operand
+                if (
+                    isinstance(o, cast.Name)
+                    and o.ident not in self.env
+                    and (o.ident in self.func_rets or o.ident in self.protos)
+                ):  # `&f`: a pointer to the function, as wide as any pointer here
+                    return funcptr(o.ident, self.func_rets.get(o.ident), (), self.abi)
+                return pointer(self._sizeof_type(o), self.abi)
             if node.op == "!":
                 return scalar("int", self.abi)
             t = self._sizeof_operand(node.operand)
@@ -1713,13 +2214,18 @@ class _FuncLowerer:
             return default
         raise CLowerError("no _Generic association matches the controlling expression's type")
 
+    def _lit_type(self, node: "cast.IntLit") -> CType:
+        """An integer constant's type (§6.4.4.1) at this target. The parser picks the candidate for the LP64
+        model, whose `long` holds 64 bits; where it holds 32 (LLP64, ILP32) a value past it is a `long long`
+        -- unsigned for an unsigned candidate -- the next type C's list gives. The twin's `lit_int_type`."""
+        ct = scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
+        if ct.name in ("long", "unsigned long") and not _kfits(node.value, ct.size * 8, ct.signed):
+            return scalar("long long" if ct.signed else "unsigned long long", self.abi)
+        return ct
+
     def _rvalue(self, node) -> int:
         if isinstance(node, cast.IntLit):
-            ct = (
-                scalar(node.ctype, self.abi)
-                if is_scalar_name(node.ctype)
-                else scalar("int", self.abi)
-            )
+            ct = self._lit_type(node)
             t = self._temp(ct, f"k{node.value}")
             r = self._emit("c.const", Opcode.LOAD, (), (t,), imm=(node.value,))
             return r
@@ -1770,6 +2276,42 @@ class _FuncLowerer:
         if isinstance(node, cast.LabelAddr):  # `&&L` -- a label's address as a `void *` value (GNU)
             t = self._temp(pointer(scalar("void")), f"labeladdr_{node.label}")
             return self._emit(f"c.labeladdr:{node.label}", Opcode.LOAD, (), (t,))
+        if isinstance(node, cast.Binary) and node.op in ("&&", "||"):
+            # The right operand is evaluated only when the left does not decide the result (C11 6.5.13p4,
+            # 6.5.14p4). One that can neither trap nor change state is computed eagerly (`c.bin.land` /
+            # `c.bin.lor` over both values); any other lowers as a branch (CF-TERNARY: `p && *p` read
+            # through NULL, `n && m / n` divided by zero). The arm that evaluates it computes the same op --
+            # there the left operand is known, so it is the right one's truth -- and the arm the left
+            # operand decides stores its constant.
+            a = self._rvalue(node.lhs)
+            blk_b, b = self._lower_apart(node.rhs)
+            opcode, suf = _BIN[node.op]
+            rt = self._bin_result_type(node.op, a, b)
+            if _operand_pure(blk_b, self._declared_rids()):
+                self.block_stack[-1].extend(blk_b)
+                t = self._temp(rt, f"b_{suf}")
+                return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
+            decided: list = []
+            if node.op == "&&":
+                sel, node_if = self._branch_value(a, rt, blk_b, decided)
+            else:
+                sel, node_if = self._branch_value(a, rt, decided, blk_b)
+            k = self._temp(rt, "c")
+            self.block_stack.append(decided)
+            try:
+                self._emit("c.const", Opcode.LOAD, (), (k,), imm=(0 if node.op == "&&" else 1,))
+            finally:
+                self.block_stack.pop()
+            self._assign_in(decided, k, sel)
+            t = self._temp(rt, f"b_{suf}")
+            self.block_stack.append(blk_b)
+            try:
+                self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
+            finally:
+                self.block_stack.pop()
+            self._assign_in(blk_b, t, sel)
+            self.block_stack[-1].append(node_if)
+            return sel
         if isinstance(node, cast.Binary):
             a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
             opcode, suf = _BIN[node.op]
@@ -1845,7 +2387,11 @@ class _FuncLowerer:
             t = self._temp(rt, f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
         if isinstance(node, cast.Cast):
-            return self._cast_value(self._rvalue(node.operand), self._resolve_type(node.type))
+            v = self._rvalue(node.operand)
+            ct = self._resolve_type(node.type)
+            if ct.kind == "scalar" and ct.name == "void":  # `(void)e`: e for its effects, no value
+                return _VOID_RID  # (C11 6.3.2.2) -- a cast of it to uint32 did not compile
+            return self._cast_value(v, ct)
         if isinstance(node, (cast.Index, cast.Member)):
             lv = self._lvalue(node)
             if lv.ct.kind == "array" and not lv.bit_width:
@@ -1923,12 +2469,25 @@ class _FuncLowerer:
                 "c.const", Opcode.LOAD, (), (t,), imm=(self._resolve_type(node.type).align,)
             )
         if isinstance(node, cast.Ternary):
-            # A scalar select: both arms are evaluated (the straight-line subset has no branches),
-            # then one is chosen. The emitter renders the real C `(cond ? a : b)` -- behaviour-exact
-            # for the pure scalar arms the driver subset uses (no side effects to double-run).
+            # C evaluates the condition, then exactly one arm (C11 6.5.15p4). Arms that can neither trap nor
+            # change state are computed eagerly and chosen by a select -- the emitter renders the real C
+            # `(cond ? a : b)`; any other pair lowers as a branch that evaluates only the arm C evaluates
+            # (CF-TERNARY: `d ? n / d : 0` divided by zero and `p ? *p : s` read through NULL eagerly).
             c = self._rvalue(node.cond)
-            a = self._rvalue(node.then)
-            b = self._rvalue(node.els)
+            blk_a, a = self._lower_apart(node.then)
+            blk_b, b = self._lower_apart(node.els)
+            if a == _VOID_RID or b == _VOID_RID:
+                # a void conditional (C11 6.5.15p3: both arms void -- `c ? f() : g();`, an `assert`'s
+                # `c ? (void)0 : fail()`) runs the arm C evaluates for its effects alone: no local, no value
+                if a != b:
+                    raise CLowerError("one arm of `?:` is void and the other is not")
+                declared = self._declared_rids()
+                if _operand_pure(blk_a, declared) and _operand_pure(blk_b, declared):
+                    self.block_stack[-1].extend(blk_a)
+                    self.block_stack[-1].extend(blk_b)
+                else:
+                    self.block_stack[-1].append(IfNode(c, blk_a, blk_b))
+                return _VOID_RID
             # a select over ARITHMETIC arms carries their common type (usual arithmetic conversions), NOT a
             # blanket uint32_t -- otherwise a signed arm loses its sign (a downstream `>>`/compare on the
             # select goes unsigned) and a FLOAT arm is truncated to int (`(c?x:y)` of doubles becomes an
@@ -1948,10 +2507,30 @@ class _FuncLowerer:
                 rt = pa  # a pointer (or a decayed array) arm: the select is that pointer (CF-DECAY)
             elif pb is not None and pb.kind == "pointer":
                 rt = pb
+            elif (ta is not None and ta.is_aggregate) or (tb is not None and tb.is_aggregate):
+                # a struct or union arm: the select is that aggregate, copied whole (CF-STRUCTVAL) -- a
+                # uint32 select of it did not compile. Its arms are of one struct or union type (C11
+                # 6.5.15p3); any other pairing is refused, as the twin refuses it (`p_cond`)
+                if not (
+                    ta is not None and tb is not None and (ta.kind, ta.name) == (tb.kind, tb.name)
+                ):
+                    raise CLowerError(
+                        "the arms of `?:` are a struct or union and a value of another type"
+                    )
+                rt = unqualified(ta)
             else:
                 rt = scalar("uint32_t")
-            t = self._temp(rt, "sel")
-            return self._emit("c.select", Opcode.ADD, (c, a, b), (t,))
+            declared = self._declared_rids()
+            if _operand_pure(blk_a, declared) and _operand_pure(blk_b, declared):
+                self.block_stack[-1].extend(blk_a)
+                self.block_stack[-1].extend(blk_b)
+                t = self._temp(rt, "sel")
+                return self._emit("c.select", Opcode.ADD, (c, a, b), (t,))
+            sel, node_if = self._branch_value(c, rt, blk_a, blk_b)
+            self._assign_in(blk_a, self._null_pointer(a, rt), sel)
+            self._assign_in(blk_b, self._null_pointer(b, rt), sel)
+            self.block_stack[-1].append(node_if)
+            return sel
         if isinstance(node, cast.CallExpr):
             return self._call(node)
         if isinstance(node, cast.CallMember):
@@ -1966,10 +2545,12 @@ class _FuncLowerer:
         m = node.callee
         base_rid, base_ct, _base_off = self._addr(m.base)  # a dispatch base is a pointer (offset 0)
         actuals = tuple(self._rvalue(a) for a in node.args)
-        agg = base_ct.of if m.arrow else base_ct  # the struct carrying the funcptr field
+        agg = self._complete(
+            base_ct.of if m.arrow else base_ct
+        )  # the struct with the funcptr field
         try:  # the member's funcptr CType -> its return type
-            fct = agg.field(m.field)[0] if agg is not None else None
-        except KeyError:
+            fct = self._field(agg, m.field)[0] if agg is not None else None
+        except CLowerError:
             fct = None
         ret_ct = fct.of if (fct is not None and fct.kind == "funcptr") else None
         t = self._temp(
@@ -2240,13 +2821,25 @@ class _FuncLowerer:
             return v
         return self._cast_value(v, unqualified(ct))  # the value is never volatile (6.3.2.1p2)
 
+    def _struct_value(self, ct: CType, v: int, why: str) -> None:
+        """Refuse `v` for an object of the struct or union type `ct` unless it is a value of that type --
+        the same kind and tag, qualifiers aside (C11 6.7.9p13, 6.5.16.1p1). `why` is the refusal: an
+        initializer's or an assignment's (CF-STRUCTINIT)."""
+        if not ct.is_aggregate:
+            return
+        vt = self.rtypes.get(v)
+        if vt is None or (vt.kind, vt.name) != (ct.kind, ct.name):
+            raise CLowerError(why)
+
     def _write(self, lv: "_LV", v: int) -> int:
         """Store `v` through `lv`; returns the value stored -- after C's conversion, before a
         bitfield's insertion into its unit."""
         # a store the emit spells as a byte copy takes C's conversion first; a typed `base[idx] = v`
-        # converts in the emitted C itself
+        # converts in the emitted C itself -- where a null pointer constant takes the element's type
         if lv.idx is None or lv.member or lv.stride:
             v = self._store_conversion(lv.ct, v)
+        else:
+            v = self._null_pointer(v, lv.ct)
         stored = v
         if lv.bit_width:  # read-modify-write the storage unit
             old = self._load_unit(lv)
@@ -2329,56 +2922,22 @@ class _FuncLowerer:
         like a braced local decl -- a struct/union/array reuses the `_agg_init` zero-baseline + per-member
         store path; a scalar `(int){v}` copies the single value in. Returns (rid, type) so the result acts
         as an lvalue (address-of / member access) and as an rvalue (a by-value struct arg / scalar read)."""
-        ct = self._resolve_type(node.type)
-        if len(node.type.array or ()) > 1:
-            # A MULTI-DIM `(T[a][b]){...}` literal: `_resolve_type` nests array-of-array and keeps `shape=()`,
-            # so the storage is under-sized and the `[i][j]` stride wrong (the #500 silent miscompile). Rebuild
-            # it the SAME way the regular multi-dim declarator does (lower.py ~1751): a FLAT `array(leaf, total)`
-            # carrying the per-dim `shape`, so `_array_row` descends nested braces by row and `_lvalue` flattens
-            # `[i][j]` row-major via `shape`. Capped at 3 dims (the shape / twin-adims table holds 3).
-            elem = self._resolve_type(replace(node.type, array=()))  # the scalar leaf
-            dims = node.type.array
-            if len(dims) > 3:
-                raise CLowerError(
-                    "a multi-dimensional array compound literal of more than 3 dims is not supported"
-                )
-            if dims[0] in (0, None):  # `(T[][N]){...}` -- infer the OUTER dim from the init
-                n, cursor = 0, 0  # (max top-level index + 1; positional advances, `[i]=` jumps)
-                for key, _expr in node.init.entries:
-                    if isinstance(key, tuple):  # a nested chain `[i]...` -> its outer array index
-                        idx = key[0][1] if key and key[0][0] == "a" else cursor
-                    else:
-                        idx = key if isinstance(key, int) else cursor
-                    cursor = idx + 1
-                    n = max(n, cursor)
-                dims = (n or 1,) + tuple(dims[1:])  # inferred outer + the fixed inner dims
-            total = 1
-            for d in dims:
-                total *= d
-            ct = replace(array(elem, total), shape=tuple(dims))
-        if ct.kind == "array" and len(node.type.array or ()) <= 1 and ct.count == 0:
-            n, cursor = 0, 0  # `(T[]){...}` -- infer the length from the init
-            for (
-                key,
-                _expr,
-            ) in node.init.entries:  # (max index + 1; positional advances, `[i]=` jumps)
-                if isinstance(key, tuple):  # a nested chain `[i]...` -> its outer array index
-                    idx = key[0][1] if key and key[0][0] == "a" else cursor
-                else:
-                    idx = key if isinstance(key, int) else cursor
-                cursor = idx + 1
-                n = max(n, cursor)
-            ct = array(ct.of, n or 1)
+        dims = node.type.array or ()
+        inferred = False  # `(T[]){...}` / `(T[][B]){...}`: the initializer sizes it
+        if len(dims) > 1 or (len(dims) == 1 and dims[0] in (0, None)):
+            ct, inferred = self._inferred_array(node.type)
+        else:
+            ct = self._resolve_type(node.type)
         self.cl_ctr += 1
         rid = self._storage(ct, f"_cl{self.cl_ctr}")
         if ct.kind in ("struct", "union", "array"):
-            self._agg_init(rid, ct, node.init)
-        else:  # a scalar compound literal: one positional value
-            if node.init.entries:
-                v = self._rvalue(node.init.entries[0][1])
-            else:  # `(int){}` (C23 empty init) -> zero
-                v = self._temp(scalar("int", self.abi), "clz")
-                self._emit("c.const", Opcode.LOAD, (), (v,), imm=(0,))
+            n = self._agg_init(rid, ct, node.init, inferred=inferred)
+            if inferred:
+                ct = self._sized_array(ct, n)
+                self._resize_local(rid, ct)
+        else:  # a scalar compound literal `(int){v}`: its one value (`{}` is zero)
+            expr = self._braced_scalar(node.init)
+            v = self._rvalue(expr) if expr is not None else self._zero_int("clz")
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
         return rid, ct
 
@@ -2400,105 +2959,479 @@ class _FuncLowerer:
         )  # `T row[d1*..]`, carrying shape[1:]
         return row, stride
 
-    def _agg_init(self, rid: int, ct: CType, ag: cast.AggInit) -> None:
-        """Lower a braced aggregate initializer to a `= {0}` zero baseline (so uninitialized members
-        zero-fill, §6.7.10) + a store per initialized member/element, reusing the member/array store
-        path (`_write`). Positional entries advance a cursor; `[i]=` / `.field=` designators jump it."""
+    # --- C11 6.7.9 initialization: the current-object walk (CF-BRACE) -----------------------------
+    #
+    # A braced initializer lowers to the object's `= {0}` baseline (every subobject no initializer
+    # names is zero, §6.7.10) plus one store per initialized scalar, in list order. The walk is C's own:
+    # each brace list has a current object whose subobjects -- array elements, struct members in order,
+    # a union's first member -- the positional entries fill in turn, descending into a sub-aggregate
+    # whose initializer has no brace of its own (brace elision, 6.7.9p20: it takes only as many entries
+    # as it has scalars), and a designator re-points the walk, the entries after it continuing from the
+    # subobject after the designated one (p17). The twin walks the same way (`init_list`).
+
+    def _agg_init(self, rid: int, ct: CType, ag: cast.AggInit, inferred: bool = False) -> int:
+        """Lower the braced initializer `ag` of the local object `rid` of type `ct` (a declared local or
+        a compound literal); returns the number of top-level elements it reached, which sizes an
+        inferred `T a[] = {...}` (`inferred`: the array's count is the walk's to find)."""
         self.zero_init.add(rid)
-        cursor = 0
-        for key, expr in ag.entries:
-            # a member/element that is itself an aggregate can take a NESTED brace `{ {e0,e1,..}, n }`
-            # (a struct's array member, a nested struct/array): initialize the sub-object in place rather
-            # than treating the brace as an rvalue.
-            if isinstance(expr, cast.AggInit):
-                if isinstance(key, tuple):
-                    tlv = self._designate(rid, ct, key)
-                    self._init_subagg(rid, tlv.ct, tlv.byte_off, expr)
-                elif ct.kind == "array":
-                    idx = key if isinstance(key, int) else cursor
-                    cursor = idx + 1
-                    elem, stride = self._array_row(
-                        ct
-                    )  # multi-dim: the element is a ROW sub-array, not the leaf
-                    self._init_subagg(rid, elem, idx * stride, expr)
-                else:
-                    if isinstance(key, str):
-                        ftype, boff, _bo, _bw = ct.field(key)
-                    else:
-                        _fn, ftype, boff, _bo, _bw = ct.fields[cursor]
-                        cursor += 1
-                    self._init_subagg(rid, ftype, boff, expr)
-                continue
-            v = self._rvalue(expr)
-            if isinstance(key, tuple):  # a nested designator chain (.a.b / .v[i] / .m[i][j])
-                self._write(self._designate(rid, ct, key), v)
-                continue
-            if ct.kind == "array":
-                idx = key if isinstance(key, int) else cursor
-                cursor = idx + 1
-                ti = self._temp(scalar("int", self.abi), "ai")
-                self._emit("c.const", Opcode.LOAD, (), (ti,), imm=(idx,))
-                lv = _LV("mem", rid, ct.of or scalar("uint32_t"), idx=ti)
-            else:  # struct / union member
-                if isinstance(key, str):
-                    ftype, boff, bo, bw = ct.field(key)
-                else:
-                    _fn, ftype, boff, bo, bw = ct.fields[cursor]
-                    cursor += 1
-                lv = _LV(
-                    "mem", rid, ftype, byte_off=boff, bit_off=bo, bit_width=bw, packed=ct.packed
-                )
-            self._write(lv, v)
+        w = _InitWalk(rid=rid, top_array=ct.kind == "array")
+        self._init_list(w, ct, 0, ag, top=True, flat=ct.kind == "array", inferred=inferred)
+        return w.top_n
 
-    def _init_subagg(self, rid: int, ct: CType, base_off: int, ag: "cast.AggInit") -> None:
-        """Initialize a nested aggregate sub-object (an array member or a nested struct/union) at byte
-        offset `base_off` within `rid` from a braced initializer -- one OFFSET-based store per element /
-        member at its absolute offset (so the stores compose through any depth of nesting), riding the
-        `= {0}` baseline already emitted for the whole object. Positional + `[i]=` / `.field=` keys."""
-        cursor = 0
-        for key, expr in ag.entries:
-            if ct.kind == "array":
-                idx = key if isinstance(key, int) else cursor
-                cursor = idx + 1
-                ftype, stride = self._array_row(
-                    ct
-                )  # multi-dim row sub-array (or the scalar leaf, 1-D)
-                off, bo, bw = base_off + idx * stride, 0, 0
-            else:  # struct / union member
-                if isinstance(key, str):
-                    ftype, mboff, bo, bw = ct.field(key)
-                else:
-                    _fn, ftype, mboff, bo, bw = ct.fields[cursor]
-                    cursor += 1
-                off = base_off + mboff
-            if isinstance(expr, cast.AggInit):  # deeper nesting
-                self._init_subagg(rid, ftype, off, expr)
-            else:
-                self._write(
-                    _LV(
-                        "mem", rid, ftype, byte_off=off, bit_off=bo, bit_width=bw, packed=ct.packed
-                    ),
-                    self._rvalue(expr),
-                )
+    def _init_count(self, ct: CType) -> int:
+        """The number of subobjects of aggregate `ct` an initializer walks: an array's elements (a flat
+        multi-dimensional array's rows), a struct or union's fields."""
+        if ct.kind == "array":
+            return ct.shape[0] if len(ct.shape) > 1 else ct.count
+        return len(ct.fields)
 
-    def _designate(self, rid: int, ct: CType, steps: tuple) -> "_LV":
-        """Resolve a nested designator chain to an lvalue: walk the aggregate type accumulating a byte
-        offset -- a `("m", field)` step descends a struct/union member (carrying its bitfield position), an
-        `("a", i)` step folds a constant array index into the offset. The leaf type sizes the store."""
-        off, cur, bit_off, bit_w, parent_packed = 0, ct, 0, 0, False
-        for kind, val in steps:
-            if kind == "m":
-                parent_packed = cur.packed  # the struct that DECLARES this (maybe bitfield) member
-                ftype, boff, bo, bw = cur.field(val)
-                off += boff
-                cur, bit_off, bit_w = ftype, bo, bw
-            else:  # an array element: fold the constant index
-                elem = cur.of if cur.of is not None else scalar("uint32_t")
-                off += val * elem.size
-                cur, bit_off, bit_w = elem, 0, 0
-        return _LV(
-            "mem", rid, cur, byte_off=off, bit_off=bit_off, bit_width=bit_w, packed=parent_packed
+    def _init_unit(self, fr: "_IFrame") -> tuple:
+        """The subobject at the frame's position -- (type, byte offset, bit offset, bit width, the
+        declaring aggregate's `packed`) -- and the position after it. An anonymous struct or union
+        member is one subobject over its promoted leaves (`CType.anon`); a union holds one."""
+        ct, i = fr.ct, fr.idx
+        if ct.kind == "array":
+            sub, stride = self._array_row(ct)
+            return (sub, fr.off + i * stride, 0, 0, False), i + 1
+        for first, n, act, aoff in ct.anon:
+            if first == i:
+                return (act, fr.off + aoff, 0, 0, False), (
+                    len(ct.fields) if ct.kind == "union" else first + n
+                )
+        _fn, fty, fbo, fbit, fbw = ct.fields[i]
+        return (fty, fr.off + fbo, fbit, fbw, ct.packed), (
+            len(ct.fields) if ct.kind == "union" else i + 1
         )
+
+    def _init_take(self, w: "_InitWalk", fr: "_IFrame") -> tuple:
+        """Consume the subobject at the frame's position. A union takes one member per object: an
+        initializer that would give an initialized union another member is refused, since its other
+        bytes would have to be re-zeroed (the plain stores cannot express that)."""
+        unit, nxt = self._init_unit(fr)
+        if fr.ct.kind == "union" and w.unions.setdefault((fr.off, fr.ct.name), fr.idx) != fr.idx:
+            raise CLowerError("an initializer overrides a prior initialization of a subobject")
+        fr.idx = nxt
+        if fr.top:
+            w.top_n = max(w.top_n, nxt)
+        return unit
+
+    def _init_frame(self, parent: "_IFrame", unit: tuple) -> "_IFrame":
+        """The frame that walks the sub-aggregate `unit` of `parent` (brace elision or a designator)."""
+        return _IFrame(
+            unit[0],
+            unit[1],
+            count=self._init_count(unit[0]),
+            flat=parent.flat and unit[0].kind == "array",
+        )
+
+    def _init_push(self, frames: list, fr: "_IFrame", unit: tuple) -> "_IFrame":
+        """Enter the sub-aggregate `unit` of `fr` (brace elision or a designator step): one more frame
+        of the list's walk, bounded as the twin bounds it -- a deeper nesting is refused, never cut."""
+        if len(frames) >= _INIT_MAX_FRAMES:
+            raise CLowerError(f"an initializer nested deeper than {_INIT_MAX_FRAMES} subobjects")
+        frames.append(self._init_frame(fr, unit))
+        return frames[-1]
+
+    def _init_next(self, frames: list) -> "_IFrame":
+        """The frame whose next subobject the next positional entry fills: the filled sub-aggregates
+        entered by elision are left for their parent; past the list's own object is an excess
+        initializer, a constraint violation (C11 6.7.9p2) that is refused, never dropped."""
+        while True:
+            fr = frames[-1]
+            if fr.count is None or fr.idx < fr.count:
+                return fr
+            if len(frames) == 1:
+                raise CLowerError("excess elements in an initializer")
+            frames.pop()
+
+    def _init_designate(self, w: "_InitWalk", frames: list, key) -> "_IFrame":
+        """Point the walk at the subobject a designator names (6.7.9p17-18): back to the list's own
+        object, then each step selects a member or an element, descending into it before the next
+        step. A member of an anonymous struct or union is reached through that member, so the entries
+        after it continue inside it, as C continues them."""
+        if isinstance(key, tuple):
+            steps = key
+        else:
+            steps = (("a", key),) if isinstance(key, int) else (("m", key),)
+        del frames[1:]
+        for k, (kind, val) in enumerate(steps):
+            fr = frames[-1]
+            if kind == "m":
+                if fr.ct.kind not in ("struct", "union"):
+                    raise CLowerError("a member designator into a non-aggregate")
+                j = next((n for n, f in enumerate(fr.ct.fields) if f[0] == val), None)
+                if j is None:
+                    raise CLowerError(f"no member named {val!r} to designate")
+                while True:
+                    grp = next((g for g in fr.ct.anon if g[0] <= j < g[0] + g[1]), None)
+                    if grp is None:
+                        fr.idx = j
+                        break
+                    fr.idx = grp[0]  # through the anonymous member that holds it
+                    fr, j = self._init_push(frames, fr, self._init_take(w, fr)), j - grp[0]
+            else:
+                if fr.ct.kind != "array":
+                    raise CLowerError("an array designator into a non-array")
+                if val < 0 or val > 0x7FFFFFFF or (fr.count is not None and val >= fr.count):
+                    raise CLowerError("an array designator outside the array")  # (an int index)
+                fr.idx = val
+            if k < len(steps) - 1:  # the next step names a subobject of this one
+                unit = self._init_take(w, fr)
+                if unit[0].kind not in ("struct", "union", "array"):
+                    raise CLowerError("a designator into a scalar")
+                self._init_push(frames, fr, unit)
+        return frames[-1]
+
+    def _init_overrides(self, w: "_InitWalk", lo: int, hi: int) -> None:
+        """A subobject initialized as a whole by a brace list or a string literal is zero wherever its
+        initializer is silent -- which the baseline gives only while nothing has stored into it yet. An
+        earlier store in the range would survive, so that override is refused."""
+        if any(a < hi and lo < b for a, b in w.stores):
+            raise CLowerError("an initializer overrides a prior initialization of a subobject")
+
+    def _init_store(self, w: "_InitWalk", unit: tuple, v, indexed: bool) -> None:
+        """Store `v` into the scalar (or whole struct/union) subobject `unit`: a typed `base[i]` store
+        at its flat index when it is a whole element of the declared array its own list initializes
+        (`indexed`), else a store at its byte offset (a bit-field's through its storage unit). In a
+        static's image (`w.const`) `v` is a folded constant, recorded as the value the subobject holds."""
+        ct, off, bo, bw, packed = unit
+        lo = off * 8 + bo
+        w.stores.append((lo, lo + (bw or ct.size * 8)))
+        if w.const:
+            w.image.append((lo, bw or ct.size * 8, _kleaf(v, ct, bw)))
+            return
+        if indexed:
+            ti = self._temp(scalar("int", self.abi), "ai")
+            self._emit("c.const", Opcode.LOAD, (), (ti,), imm=(off // ct.size,))
+            self._write(_LV("mem", w.rid, ct, idx=ti), v)
+            return
+        self._write(_LV("mem", w.rid, ct, byte_off=off, bit_off=bo, bit_width=bw, packed=packed), v)
+
+    def _init_char_array(self, ct: CType, lit: cast.StringLit) -> bool:
+        """`ct` is an array the string literal `lit` initializes (6.7.9p14-15): one-dimensional, of an
+        integer element as wide as the literal's code unit -- a character type, so neither `_Bool` nor
+        a `_BitInt(N)` (the twin's `init_char_array`)."""
+        if ct.kind != "array" or len(ct.shape) > 1 or ct.of is None:
+            return False
+        el = ct.of
+        if el.name == "_Bool" or el.is_bitint:
+            return False
+        prefix, _ = split_lit_prefix(lit.value)
+        return el.is_integer and el.size == str_elem_size(prefix, self.abi)
+
+    def _init_string(
+        self, w: "_InitWalk", unit: tuple, lit: cast.StringLit, indexed: bool, count: int | None
+    ) -> None:
+        """Initialize the character array `unit` (of `count` elements; None: the declared array its
+        literal sizes) from a string literal: one store per code unit, the terminating NUL and the rest
+        of the array left to the zero baseline. A literal longer than the array is refused -- it fits
+        with its NUL dropped only when exactly as long (p14)."""
+        ct, off = unit[0], unit[1]
+        try:
+            _prefix, units = str_units(lit.value, lambda p: str_elem_size(p, self.abi))
+        except ValueError as e:
+            raise CLowerError(str(e)) from None
+        if count is None:
+            count = len(units) + 1
+            w.top_n = max(w.top_n, count)
+        if len(units) > count:
+            raise CLowerError("an initializer-string for a character array is too long")
+        es = ct.of.size
+        self._init_overrides(w, off * 8, (off + es * count) * 8)
+        for i, u in enumerate(units):
+            if w.const:  # a static's image: the code unit, an `int` constant
+                cv = _KVal(u)
+            else:
+                cv = self._temp(scalar("int", self.abi), "sc")
+                self._emit("c.const", Opcode.LOAD, (), (cv,), imm=(u,))
+            self._init_store(w, (ct.of, off + i * es, 0, 0, False), cv, indexed)
+
+    def _init_list(
+        self,
+        w: "_InitWalk",
+        ct: CType,
+        off: int,
+        ag: cast.AggInit,
+        *,
+        top: bool,
+        flat: bool,
+        inferred: bool = False,
+    ) -> None:
+        """One brace-enclosed list, whose current object is the `ct` at byte offset `off`. `top`: the
+        declared object's own list (its whole elements store indexed); `flat`: `ct` is the declared
+        array or a row of it."""
+        own = _IFrame(ct, off, count=None if inferred else self._init_count(ct), flat=flat, top=top)
+        ents = ag.entries
+        if (  # `{"abc"}` for a character array: the literal initializes the whole array
+            len(ents) == 1
+            and ents[0][0] is None
+            and isinstance(ents[0][1], cast.StringLit)
+            and self._init_char_array(ct, ents[0][1])
+        ):
+            self._init_string(w, (ct, off, 0, 0, False), ents[0][1], top and flat, own.count)
+            return
+        frames = [own]
+        for key, expr in ents:
+            indexed_ok = top and w.top_array and (key is None or isinstance(key, int))
+            fr = self._init_next(frames) if key is None else self._init_designate(w, frames, key)
+            if isinstance(expr, cast.AggInit):  # a nested list initializes the subobject as a whole
+                self._init_sublist(w, fr, self._init_take(w, fr), expr)
+                continue
+            if isinstance(expr, cast.StringLit):  # the character array it fills, found by elision
+                while True:
+                    sub = self._init_unit(fr)[0][0]
+                    if self._init_char_array(sub, expr):
+                        unit = self._init_take(w, fr)
+                        self._init_string(w, unit, expr, indexed_ok and fr.flat, sub.count)
+                        break
+                    if sub.kind not in ("struct", "union", "array"):
+                        self._init_store(
+                            w,
+                            self._init_take(w, fr),
+                            self._init_value(w, expr),
+                            indexed_ok and fr.flat,
+                        )
+                        break
+                    self._init_push(frames, fr, self._init_take(w, fr))
+                    fr = self._init_next(frames)
+                continue
+            v = self._init_value(w, expr)  # evaluated once, before it is placed
+            vt = None if w.const else self.rtypes.get(v)  # a folded constant is never a struct
+            while True:
+                sub = self._init_unit(fr)[0][0]
+                if sub.kind in ("struct", "union") and (
+                    vt is not None and vt.kind == sub.kind and vt.name == sub.name
+                ):  # a struct/union value initializes the subobject whole (6.7.9p13)
+                    self._init_store(w, self._init_take(w, fr), v, indexed_ok and fr.flat)
+                    break
+                if sub.kind not in ("struct", "union", "array"):
+                    self._init_store(w, self._init_take(w, fr), v, indexed_ok and fr.flat)
+                    break
+                self._init_push(frames, fr, self._init_take(w, fr))  # brace elision
+                fr = self._init_next(frames)
+
+    def _zero_int(self, name: str) -> int:
+        """A constant zero `int` value (the value of an empty initializer `{}` for a scalar)."""
+        v = self._temp(scalar("int", self.abi), name)
+        self._emit("c.const", Opcode.LOAD, (), (v,), imm=(0,))
+        return v
+
+    def _braced_scalar(self, ag: cast.AggInit):
+        """The one expression of a braced scalar initializer `{ e }` (C11 6.7.9p11); `{}` has none."""
+        if not ag.entries:
+            return None
+        (key, expr), *rest = ag.entries
+        if rest or key is not None or isinstance(expr, cast.AggInit):
+            raise CLowerError("a braced scalar initializer holds one expression")
+        return expr
+
+    def _resize_local(self, rid: int, ct: CType) -> None:
+        """Give the local `rid` the type its initializer sized (an inferred `T a[] = {...}`): its
+        resource, its declaration and its name's binding."""
+        name = self.resources[rid].name
+        self._resource(rid, ct, name)
+        self.locals = [(r, n, ct if r == rid else c) for r, n, c in self.locals]
+        if self.env.get(name, (None,))[0] == rid:
+            self.env[name] = (rid, ct)
+
+    def _inferred_array(self, tref: cast.TypeRef, flat: bool = True) -> "tuple[CType, bool]":
+        """A local array's type before its initializer is walked: `T a[]` / `T m[][B]..` is provisional
+        -- one element or row, which the walk then counts (`_sized_array`)."""
+        dims = tref.array
+        if len(dims) > 3:
+            raise CLowerError(
+                "a multi-dimensional local array of more than 3 dims is not yet supported"
+            )
+        elem = self._resolve_type(replace(tref, array=()))
+        inferred = dims[0] in (0, None)
+        dims = ((1,) if inferred else (dims[0],)) + tuple(dims[1:])
+        total = 1
+        for d in dims:
+            total *= d
+        if len(dims) == 1:
+            return array(elem, total), inferred
+        # a MULTI-dim array: a flat resource carrying its per-dim shape, so `m[i][j]` flattens row-major
+        # and the emit declares `m[A*B]` (the memory layout of `m[A][B]`)
+        return replace(array(elem, total), shape=dims), inferred
+
+    def _sized_array(self, ct: CType, n: int) -> CType:
+        """The inferred array `ct` sized to the `n` top-level elements (rows) its initializer reached."""
+        n = max(n, 1)
+        if len(ct.shape) > 1:
+            inner = ct.count // ct.shape[0]
+            return replace(array(ct.of, n * inner), shape=(n,) + ct.shape[1:])
+        return array(ct.of, n)
+
+    def _init_sublist(self, w: "_InitWalk", fr: "_IFrame", unit: tuple, ag: cast.AggInit) -> None:
+        """A nested brace list for the subobject `unit`: it initializes the whole subobject, so no
+        earlier store may lie in it. A scalar takes a braced single expression (6.7.9p11)."""
+        ct, off, bo, bw, _packed = unit
+        lo = off * 8 + bo
+        self._init_overrides(w, lo, lo + (bw or ct.size * 8))
+        if ct.kind not in ("struct", "union", "array"):
+            expr = self._braced_scalar(ag)
+            if expr is not None:  # `{}` is zero, which the baseline already holds
+                self._init_store(w, unit, self._init_value(w, expr), False)
+            return
+        self._init_list(w, ct, off, ag, top=False, flat=fr.flat and ct.kind == "array")
+
+    def _init_value(self, w: "_InitWalk", expr):
+        """An initializer entry's value, evaluated once, before it is placed: lowered -- or, in a static's
+        image (`w.const`), folded (`_const_value`)."""
+        return self._const_value(expr) if w.const else self._rvalue(expr)
+
+    # --- a static's constant image (CF-STATICTAB) ---
+
+    def _static_init(self, ct: CType, init, inferred: bool) -> "tuple[CType, str | None]":
+        """A static's initializer: the initializer walk in constant mode -- each entry folded, each store
+        recorded in the static's image, no claim left behind (C initializes a static once, before the
+        program runs, never at a call) -- and the image rendered as the declaration's initializer. Returns
+        the static's type (an inferred `[]` sized by the walk) and its rendered initializer, None when the
+        image is zero. A scalar takes one value (`{e}` braced, `{}` zero); an aggregate or an array takes a
+        brace list, a character array a string literal. The twin's `init_image`."""
+        if init is None:
+            return ct, None
+        if isinstance(init, cast.StringLit) and ct.kind == "array":
+            if not self._init_char_array(ct, init):  # only a character array takes one
+                raise CLowerError("an array is initialized by a brace list or a string literal")
+            init = cast.AggInit(entries=((None, init),))  # `char s[] = "ab"` is `{"ab"}`
+        if ct.kind == "array" and not isinstance(init, cast.AggInit):
+            raise CLowerError("an array is initialized by a brace list or a string literal")
+        w = _InitWalk(rid=-1, top_array=ct.kind == "array", const=True)
+        snap = self._snapshot()
+        self.block_stack.append([])  # the entries' claims: folded, then discarded
+        try:
+            unit = (ct, 0, 0, 0, False)
+            if isinstance(init, cast.AggInit) and ct.kind in ("struct", "union", "array"):
+                self._init_list(
+                    w, ct, 0, init, top=True, flat=ct.kind == "array", inferred=inferred
+                )
+            elif isinstance(init, cast.AggInit):
+                self._init_sublist(w, _IFrame(ct, 0), unit, init)
+            else:  # an expression: a scalar's value (a struct's is never a constant)
+                self._init_store(w, unit, self._init_value(w, init), False)
+        finally:
+            self._restore(snap)
+        if inferred:
+            ct = self._sized_array(ct, w.top_n)
+        return ct, self._render_image(ct, w)
+
+    def _snapshot(self) -> dict:
+        """The lowerer's whole state, each container copied: a static's initializer lowers its entries only
+        to fold them, and `_restore` then leaves no trace of them -- no claim, temp, literal or claim id."""
+        return {
+            k: copy.copy(v) if isinstance(v, (list, dict, set)) else v
+            for k, v in vars(self).items()
+        }
+
+    def _restore(self, snap: dict) -> None:
+        """Wind the lowerer back to `snap`, each container in place -- so the unit's shared ones (the claim
+        ids, the literal pool) keep their identity."""
+        for k in [k for k in vars(self) if k not in snap]:
+            delattr(self, k)
+        for k, v in snap.items():
+            cur = getattr(self, k)
+            if isinstance(v, list) and isinstance(cur, list):
+                cur[:] = v
+            elif isinstance(v, (dict, set)) and isinstance(cur, type(v)):
+                cur.clear()
+                cur.update(v)
+            else:
+                setattr(self, k, v)
+
+    def _const_value(self, expr) -> _KVal:
+        """One entry of a static's initializer, as C evaluates an integer constant expression: lowered as
+        any expression is, into the evaluation's scratch block, and the claims it made folded in order -- a
+        constant (a literal, a `sizeof`, an enumerator) in its declared type, arithmetic, a cast, a select,
+        each over values the entry itself produced. Any other claim, or a value produced elsewhere (a
+        variable, a parameter, a string, a function), is not an integer constant expression. The twin's
+        `kfold`."""
+        block = self.block_stack[-1]
+        start = len(block)
+        v = self._rvalue(expr)
+        vals: dict = {}
+        for c in block[start:]:
+            if not isinstance(c, Claim) or len(c.wr) != 1 or any(r not in vals for r in c.rd):
+                raise CLowerError(_NOT_CONSTANT)
+            vals[c.wr[0]] = self._kfold(c, [vals[r] for r in c.rd])
+        if v not in vals:
+            raise CLowerError(_NOT_CONSTANT)
+        return vals[v]
+
+    def _kfold(self, c: Claim, ops: list) -> _KVal:
+        """One claim of a static initializer's entry, folded (see `_const_value`)."""
+        op = c.op
+        if op == "c.const" and not ops and c.imm:
+            return _kconvert(_KVal(int(c.imm[0])), _ktype(self.rtypes.get(c.wr[0])))
+        if op.startswith("c.cast:") and len(ops) == 1:
+            return _kconvert(ops[0], _ktype(self.rtypes.get(c.wr[0])))
+        if op.startswith("c.bin.") and len(ops) == 2:
+            return _kbin(op[len("c.bin.") :], *ops)
+        if op.startswith("c.un.") and len(ops) == 1:
+            return _kun(op[len("c.un.") :], ops[0])
+        if op == "c.select" and len(ops) == 3:
+            return _ksel(*ops)
+        raise CLowerError(_NOT_CONSTANT)
+
+    def _render_image(self, ct: CType, w: "_InitWalk") -> "str | None":
+        """A static's image as its declaration's initializer -- the brace list both rails render: each
+        scalar the walk stored holds its last value, and a zero one is the static's own zero. An array
+        lists the elements that hold a value, designating one after a gap (`[5] = v`); a struct its members
+        in order, up to the last that holds one; a union the member the walk gave it (`.m = v` for any but
+        the first); a multi-dimensional static its elements flat, as it is declared. None when the whole
+        image is zero (the declaration's own `{0}` / `0u`). The twin's `kimage`."""
+        img: dict = {}
+        for lo, width, v in w.image:
+            img[(lo, width)] = v
+        los = sorted(lo for (lo, _width), v in img.items() if v)
+        if not los:
+            return None
+        if ct.kind == "array" and len(ct.shape) > 1:
+            ct = array(ct.of, ct.count)
+        return self._render_unit((ct, 0, 0, 0, False), img, los, w.unions, 0)
+
+    def _render_unit(self, unit: tuple, img: dict, los: list, unions: dict, depth: int) -> str:
+        """The rendered initializer of one subobject of a static's image (see `_render_image`); `los` the
+        sorted bit offsets of the scalars that hold a nonzero value."""
+        ct, off, bo, bw, _packed = unit
+        lo = off * 8 + bo
+        if ct.kind not in ("struct", "union", "array"):
+            return _kspell(img.get((lo, bw or ct.size * 8), 0))
+        hi = lo + ct.size * 8
+        i = bisect_left(los, lo)
+        if i == len(los) or los[i] >= hi:
+            return "{0}"
+        if depth >= _INIT_MAX_FRAMES:
+            raise CLowerError(f"an initializer nested deeper than {_INIT_MAX_FRAMES} subobjects")
+        fr = _IFrame(ct, off, count=self._init_count(ct))
+        parts: list = []
+        if ct.kind == "array":
+            stride = self._array_row(ct)[1] * 8
+            prev = -1
+            while i < len(los) and los[i] < hi:
+                fr.idx = (los[i] - lo) // stride
+                sub = self._init_unit(fr)[0]
+                pre = "" if fr.idx == prev + 1 else f"[{fr.idx}] = "
+                parts.append(pre + self._render_unit(sub, img, los, unions, depth + 1))
+                prev = fr.idx
+                i = bisect_left(los, lo + (fr.idx + 1) * stride)
+        elif ct.kind == "union":
+            k = unions.get((off, ct.name), 0)
+            if k and any(g[0] == k for g in ct.anon):
+                raise CLowerError(_ANON_UNION)
+            fr.idx = k
+            sub = self._init_unit(fr)[0]
+            pre = f".{ct.fields[k][0]} = " if k else ""
+            parts.append(pre + self._render_unit(sub, img, los, unions, depth + 1))
+        else:  # every member in order, up to the last that holds a value
+            keep = 0
+            while fr.idx < fr.count:
+                sub, fr.idx = self._init_unit(fr)
+                parts.append(self._render_unit(sub, img, los, unions, depth + 1))
+                if parts[-1] not in ("0u", "{0}"):
+                    keep = len(parts)
+            del parts[keep:]
+        return "{" + ", ".join(parts) + "}"
 
     def _incdec_value(self, node: cast.IncDec) -> int:
         """`a++` / `++a` / `a--` / `--a` in EXPRESSION position -> a read-modify-write yielding the OLD value
@@ -2628,6 +3561,10 @@ class _FuncLowerer:
             rid, _ct = self._lookup(
                 node.target.ident, node.target.pos
             )  # copy into the mutable storage
+            v = self._null_pointer(v, _ct)
+            # a plain `=` assigns a struct only its own type (not `x OP= e`'s desugaring)
+            if not (isinstance(node.value, cast.Binary) and node.value.lhs is node.target):
+                self._struct_value(_ct, v, _STRUCT_ASSIGNED)
             self._emit("c.copy", Opcode.ADD, (v,), (rid,), **_object_write(_ct))
             self._bind_extent(
                 rid, _ct, node.target.ident, node.value
@@ -2640,6 +3577,8 @@ class _FuncLowerer:
             raise CLowerError(
                 "this lvalue form's assignment as a value is a follow-on"
             )  # MMIO re-read unsound
+        # a struct member, element or `*p` is assigned only its own type
+        self._struct_value(lv.ct, v, _STRUCT_ASSIGNED)
         stored = self._write(lv, v)
         if lv.ct.atomic and not stmt:  # the value stored, converted to the object's type: a re-read
             return self._cast_value(stored, unqualified(lv.ct))  # would be a second atomic access
@@ -2996,6 +3935,7 @@ class _FuncLowerer:
             # linkage); unlike libm it derives NO -l flag (linkflags: a sibling TU, not a library).
             # The emit declares the recorded signature so the emitted TU compiles standalone.
             ret_ct, param_cts = self.protos[node.callee]
+            self._null_pointer_args(actuals, param_cts)
             self.tu_used[node.callee] = (ret_ct, param_cts)
             if ret_ct.name == "void":
                 self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
@@ -3003,6 +3943,7 @@ class _FuncLowerer:
             t = self._temp(self._call_result_ct(ret_ct), f"tu_{node.callee}")
             return self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, (t,))
         self.calls.append((node.callee, actuals))  # a defined-in-unit callee: a real R18 edge
+        self._null_pointer_args(actuals, self.func_params.get(node.callee, ()))
         ret_ct = self.func_rets.get(node.callee)
         if (
             ret_ct is not None and ret_ct.name == "void"
@@ -3140,6 +4081,9 @@ class _FuncLowerer:
         funcptr whose return type wasn't captured (`ret_ct is None`) stays uint32 -- today's behaviour."""
         if ret_ct is not None and ret_ct.is_aggregate:
             return ret_ct
+        # a pointer return stays a pointer -- `f()->v`, `*f()`, `T *p = f()` (a 4-byte unit truncated it)
+        if ret_ct is not None and ret_ct.kind == "pointer":
+            return self._complete_ptr(ret_ct)
         if (
             ret_ct is not None and ret_ct.is_bitint
         ):  # a C23 `_BitInt(N)` return keeps its exact width
@@ -3238,57 +4182,58 @@ class _FuncLowerer:
                 self.ptr_extent[rid] = ext_total
                 self.vla_strides[rid] = tuple(dim_exts)  # the per-dim Horner multipliers
                 return None
-            if len(st.type.array) > 1:
-                # a multi-dimensional local array `T m[A][B]`: a flat resource of A*B elements carrying
-                # the per-dim shape, so `m[i][j]` flattens row-major to `m[i*B + j]` (the existing Index
-                # Horner) and the emit declares `m[A*B]` (same memory layout as `m[A][B]`). Capped at 3
-                # dims (the shape / twin-adims table holds 3); deeper defers to the LLVM fallback.
-                dims = st.type.array
-                if len(dims) > 3:
-                    raise CLowerError(
-                        f"multi-dimensional local array '{st.name}' of more than 3 dims is not yet supported"
-                    )
-                elem = self._resolve_type(replace(st.type, array=()))
-                total = 1
-                for d in dims:
-                    total *= d
-                ct = replace(array(elem, total), shape=tuple(dims))
-            elif (
+            inferred = False  # `T a[] = {...}` / `T m[][B] = {...}`: the initializer sizes it
+            if len(st.type.array) == 1 and st.type.array[0] in (0, None) and st.init is None:
+                # `T a[];` has no size and nothing to count (6.7.9p22) -- it was a zero-length array
+                raise CLowerError("an array of unknown size needs an initializer")
+            if len(st.type.array) > 1 or (
                 len(st.type.array) == 1
                 and st.type.array[0] in (0, None)
-                and isinstance(st.init, cast.AggInit)
+                and isinstance(st.init, (cast.AggInit, cast.StringLit))
             ):
-                # an INFERRED-size local array `T a[] = {...}` (scalar OR struct element): `_resolve_type`
-                # would size it `array(elem, 0)` -> `a[0]`, so the per-element init stores write past the
-                # storage (UB, a #500-class silent miscompile). Infer the outer count from the initializer
-                # the SAME way the compound-literal path does (max index + 1; positional advances a cursor,
-                # `[i]=` designators jump it), then build the correctly-sized `array(elem, n)`.
-                elem = self._resolve_type(replace(st.type, array=()))
-                n, cursor = 0, 0
-                for key, _expr in st.init.entries:
-                    if isinstance(key, tuple):  # a nested chain `[i]...` -> its outer array index
-                        idx = key[0][1] if key and key[0][0] == "a" else cursor
-                    else:
-                        idx = key if isinstance(key, int) else cursor
-                    cursor = idx + 1
-                    n = max(n, cursor)
-                ct = array(elem, n or 1)
+                ct, inferred = self._inferred_array(st.type)
+                if inferred and st.init is None:
+                    raise CLowerError("an array of unknown size needs an initializer")
             else:
                 ct = self._resolve_type(st.type)
-            if st.static_storage:  # static storage: init once, in the decl
-                rid = self._static_storage(ct, st.name, _fold_const(st.init))
+            if st.static_storage:  # static storage: its constant image, in the decl (CF-STATICTAB)
+                rid = self._static_storage(ct, st.name, None)
+                self.env[st.name] = (rid, ct)  # in scope in its own initializer, as in C
+                ct, init = self._static_init(ct, st.init, inferred)
+                self._resource(rid, ct, st.name)  # an inferred `[]` takes the walk's count
+                self.statics[-1] = (rid, st.name, ct, init)
                 self.env[st.name] = (rid, ct)
                 return None
             rid = self._storage(ct, st.name)  # a mutable named local
             self.env[st.name] = (rid, ct)
-            if isinstance(st.init, cast.AggInit):  # struct/union/array `= { ... }`
-                self._agg_init(rid, ct, st.init)
-            elif st.init is not None:
-                self._emit(
-                    "c.copy", Opcode.ADD, (self._rvalue(st.init),), (rid,), **_object_write(ct)
-                )
+            init = st.init
+            if isinstance(init, cast.StringLit) and ct.kind == "array":
+                if not self._init_char_array(ct, init):  # only a character array takes one
+                    raise CLowerError("an array is initialized by a brace list or a string literal")
+                init = cast.AggInit(entries=((None, init),))  # `char s[] = "ab"` is `{"ab"}`
+            if isinstance(init, cast.AggInit):
+                if ct.kind in ("struct", "union", "array"):  # `= { ... }`
+                    n = self._agg_init(rid, ct, init, inferred=inferred)
+                    if inferred:
+                        self._resize_local(rid, self._sized_array(ct, n))
+                else:  # a braced scalar `T x = {e}` is `T x = e`, and `{}` is zero (6.7.9p11)
+                    expr = self._braced_scalar(init)
+                    v = self._rvalue(expr) if expr is not None else self._zero_int("zi")
+                    v = self._null_pointer(v, ct)
+                    self._emit("c.copy", Opcode.ADD, (v,), (rid,), **_object_write(ct))
+            elif init is not None:
+                if ct.kind == "array" and inferred and len(st.type.array) > 1:
+                    # the parser models `T (*p)[N]` as `T p[][N]` (a parameter's row pointer); as a
+                    # local it has no storage spelling here (and `T p[][N] = e` is not C)
+                    raise CLowerError("a local pointer to an array is not supported")
+                if ct.kind == "array":
+                    raise CLowerError("an array is initialized by a brace list or a string literal")
+                # a struct takes a brace list (above) or a value of its own type
+                v = self._null_pointer(self._rvalue(init), ct)
+                self._struct_value(ct, v, _STRUCT_INITIALIZED)
+                self._emit("c.copy", Opcode.ADD, (v,), (rid,), **_object_write(ct))
                 self._bind_extent(
-                    rid, ct, st.name, st.init
+                    rid, ct, st.name, init
                 )  # §5.12: `T *p = malloc(N*sizeof(T))` -> extent N
         elif isinstance(st, cast.ExprStmt):
             if isinstance(st.expr, cast.Assign):  # a statement assignment: any lvalue form is fine
@@ -3301,6 +4246,8 @@ class _FuncLowerer:
             rid = None if st.value is None else self._rvalue(st.value)
             if rid == _VOID_RID:  # `return void_call();` -> the call stmt is
                 rid = None  # already emitted; a void function `return;`s
+            elif rid is not None:  # `return 0;` from a function returning a pointer
+                rid = self._null_pointer(rid, self._resolve_type(self.func.ret))
             self.block_stack[-1].append(ReturnNode(rid))
             if rid is not None:
                 self.last_return = rid
@@ -3589,7 +4536,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             and ct.kind == "array"
             and ct.of is not None
             and ct.of.kind == "scalar"
-            and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0])
+            and ct.of.size == str_elem_size(split_lit_prefix(g.init[0].value)[0], abi)
         )
         if is_string:  # `char s[] = "..."` -- sized from the LITERAL
             if ct.count == 0:  # (decoded code units + the NUL), not the init
@@ -3672,12 +4619,17 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     # pre-scan every function's return type (forward references resolve too), so a call can be typed
     # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
     func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates, abi) for fn in unit.funcs}
+    # ... and their parameter types, so a null pointer constant a call passes to a pointer parameter is
+    # a null pointer of that type, whichever of the caller and the callee is defined first (CF-NULLARG)
+    func_params = {fn.name: _param_types(fn.params, aggregates, abi) for fn in unit.funcs}
     # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
-    # just a forward declaration (the definition wins); the rest resolve at LINK time.
+    # just a forward declaration (the definition wins); the rest resolve at LINK time. A parameter is
+    # read as the definition binds it -- an array parameter is a pointer -- so the emit's `extern`
+    # declaration spells `T *` for `T a[]` (the element type alone conflicted with the prototype).
     protos = {
         name: (
             _resolve_member_type(ret, aggregates, abi),
-            tuple(_resolve_member_type(p, aggregates, abi) for p in params),
+            tuple(_param_type(p, aggregates, abi) for p in params),
         )
         for name, (ret, params) in unit.protos.items()
         if name not in func_rets
@@ -3694,6 +4646,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             func_rets=func_rets,
             abi=abi,
             protos=protos,
+            func_params=func_params,
         ).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
@@ -3737,16 +4690,17 @@ def _atomic_type(base: CType, abi) -> CType:
     return with_atomic(base, abi=abi)
 
 
-def _aggregate(aggregates: dict, tag: str) -> CType:
-    """The laid-out struct or union `tag`. One the unit has not defined before this use -- an opaque
-    `struct fwd *`, or a member pointer to the struct being defined -- has no layout here, and is refused
-    as a lowering error the pipeline can route, never a bare KeyError."""
-    if tag not in aggregates:
-        raise CLowerError(
-            f"the incomplete struct or union {tag!r} has no layout here "
-            "(an opaque or self-referential pointer to one is not yet supported)"
-        )
-    return aggregates[tag]
+def _aggregate(aggregates: dict, tag: str, kind: str = "", pointee: bool = False) -> CType:
+    """The laid-out struct or union `tag`. One the unit has not laid out at this point -- the struct
+    being defined (`struct node *next`), one defined later, or one never defined (an opaque `struct fwd
+    *`) -- is, as a pointer's pointee (`pointee`), its incomplete type: a pointer to it is complete
+    (C11 6.2.5p22) and the lowering completes it where its members are used. Any other use needs its
+    layout, and is refused as a lowering error the pipeline can route, never a bare KeyError."""
+    if tag in aggregates:
+        return aggregates[tag]
+    if pointee and kind in ("struct", "union"):
+        return incomplete_aggregate(kind, tag)
+    raise CLowerError(f"the incomplete struct or union {tag!r} has no layout here")
 
 
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
@@ -3755,8 +4709,8 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
         ret = _resolve_member_type(tref.func_ret, aggregates, abi)
         params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
         return funcptr(tref.base, ret, params, abi)
-    if tref.aggregate:
-        base = _aggregate(aggregates, tref.base)
+    if tref.aggregate:  # a pointer member may name a struct not laid out yet (or ever)
+        base = _aggregate(aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)
         base = bitint(tref.bit_width, signed="unsigned" not in tref.base, abi=abi)
     else:
@@ -3771,3 +4725,38 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
     for dim in reversed(tref.array):
         t = array(t, dim)
     return t
+
+
+def _param_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
+    """A parameter's type as its function binds it (`_FuncLowerer.lower`): an array -- a VLA `T a[n]`
+    too -- decays to a pointer to its element, keeping the dimensions a subscript needs; any other type
+    is its own. A prototype's parameters and a definition's, read ahead of the function's lowering."""
+    abi = abi or HOST
+    if tref.vla is not None:
+        elem = _resolve_member_type(replace(tref, vla=None, array=()), aggregates, abi)
+        return replace(pointer(elem, abi), shape=(0,))
+    ct = _resolve_member_type(tref, aggregates, abi)
+    if ct.kind == "array":
+        dims, elem = [], ct
+        while elem.kind == "array":
+            dims.append(elem.count)
+            elem = elem.of
+        ct = replace(pointer(elem, abi), shape=tuple(dims))
+    return ct
+
+
+def _param_types(params: tuple, aggregates: dict, abi=None) -> tuple:
+    """A definition's parameter types (`_param_type`), for its callers: a null pointer constant a call
+    passes is typed by them (CF-NULLARG). None for a parameter only the function's own scope types
+    (`typeof`) or that does not resolve here -- `_FuncLowerer.lower` decides it when the function lowers,
+    and a None types nothing."""
+    out = []
+    for p in params:
+        if p.type.typeof_var or p.type.typeof_expr is not None:
+            out.append(None)
+            continue
+        try:
+            out.append(_param_type(p.type, aggregates, abi))
+        except (CLowerError, KeyError):  # an unknown or incomplete type, `va_list`
+            out.append(None)
+    return tuple(out)

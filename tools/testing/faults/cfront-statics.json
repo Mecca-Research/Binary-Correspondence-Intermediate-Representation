@@ -1,0 +1,91 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_static_tables_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_static_table_image_is_in_the_canon_not_the_body_on_both_rails",
+    "bcir.tests.test_c_cfront:test_static_initializer_refusals_on_both_rails",
+    "bcir.tests.test_c_cfront:test_integer_constant_types_follow_the_target_long_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "SO1 a static table lowered without its initializer",
+      "new": "                ct, init = ct, None",
+      "old": "                ct, init = self._static_init(ct, st.init, inferred)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "SO1b a static table's image leaves are zero",
+      "new": "            w.image.append((lo, bw or ct.size * 8, 0))",
+      "old": "            w.image.append((lo, bw or ct.size * 8, _kleaf(v, ct, bw)))",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "SO2 the canon drops a static's image",
+      "new": "            if False",
+      "old": "            if init is not None",
+      "path": "bcir/verify/__init__.py"
+    },
+    {
+      "expects": "test_integer_constant_types_follow_the_target_long_on_both_rails",
+      "label": "SO3 an out-of-range long constant not re-typed",
+      "new": "        if False:",
+      "old": "        if ct.name in (\"long\", \"unsigned long\") and not _kfits(node.value, ct.size * 8, ct.signed):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "SO4 an emitted local named without de-duplication",
+      "new": "        nm[rid] = name",
+      "old": "        nm[rid] = _uniq(name)",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "ST1 a static table lowered as a runtime initialization",
+      "new": "        int rows = init_object(c,rid,&obj,inferred);",
+      "old": "        int rows = is_static ? init_image(c,&obj,inferred,&stext) : init_object(c,rid,&obj,inferred);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "ST1b a static's image leaves dropped",
+      "new": "  if(W->konst) return;   /* a static's image: no claim */",
+      "old": "  if(W->konst){ if(kleaf(c,&W->kv,u,&c->iw_rng[c->iw_nrng])) c->iw_nrng++; return; }   /* a static's image: no claim */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "ST2 a static local emitted without `static` and its image",
+      "new": "        w+=snprintf(o+EO,on-EO,\"  %s%s;\\n\",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm);",
+      "old": "        w+=snprintf(o+EO,on-EO,\"  %s%s%s%s%s;\\n\",sp,decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm,eq,iv);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "ST3 the twin canon drops a static's image",
+      "new": "  int nsx=0;",
+      "old": "  int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text) nsx++;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_integer_constant_types_follow_the_target_long_on_both_rails",
+      "label": "ST4 a long constant typed by the host's long",
+      "new": "    int lsz,lsg; lit_int_type(t.s,t.n,8,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */",
+      "old": "    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c)->long_size,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_static_tables_run_as_the_original_on_both_rails",
+      "label": "ST5 a function-pointer local declared as an integer",
+      "new": "        (void)fr; }",
+      "old": "        fr->is_funcptr=1; snprintf(fr->agg,BCIR_CIR_NAME,\"%s\",ty.tag); }",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

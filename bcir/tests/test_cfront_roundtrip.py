@@ -41,11 +41,15 @@ idempotent subset:
     aggregate/enum type (`struct uart_regs`), a file-scope `#define` constant (`GAMMA`), an external
     macro (`__ATOMIC_SEQ_CST`), or an in-body VLA whose extent the lowering rejects standalone. The emit
     is faithful C in context but not a self-contained translation unit, so cfront cannot re-lower it.
+    Three of them -- the volatile register maps `cfront_rmw.c`, `cfront_bitfield.c` and
+    `cfront_bfcompound.c` -- are otherwise inside the idempotent subset: given the original's struct
+    definitions, their emits reach a fixed point (CF-RTVOL,
+    `test_volatile_member_emits_reach_a_fixed_point_given_their_definitions`).
   * "control-flow-not-idempotent": the emit lowers a structured loop to `while (1) { ...; if (!cond)
     break; ... }`. Re-parsing that re-introduces the `while(1)` wrapper + a fresh negation each round
-    (the `c.un.lnot` break-test count grows), and the emitter's `t<rid>` temp names collide with a
-    re-parsed local that happens to spell `t<NN>` -- so the SECOND-round emit does not even compile. The
-    loop scaffold is genuinely not a fixed point; pinned with this reason rather than papered over.
+    (the `c.un.lnot` break-test count grows), and the emitter's `__cont_<N>` continue labels collide
+    with the re-parsed ones -- so the SECOND-round emit does not even compile. The loop scaffold is
+    genuinely not a fixed point; pinned with this reason rather than papered over.
   * "masked-guard-not-idempotent": the emit of a `masked` (§5.12 bounds-promoted) access is
     `a[BCIR_CHK(rid, i, n, "site")]`. `BCIR_CHK` is a runtime macro absent from the standalone emit, so a
     re-parse reads it as a `c.call:BCIR_CHK`, and a re-emit re-wraps the index -- the guard count grows
@@ -59,12 +63,13 @@ run_all fans out, plus a non-skippable anti-degeneration smoke test.
 """
 
 import re
+import subprocess
 
 from bcir.frontends.cfront import compile_unit
 
 # Reuse the canonical fixture corpus + the header-resolution helper from the C-twin parity module, so a
 # fixture added there is auto-covered here (no second hand-maintained corpus to drift).
-from bcir.tests.test_c_cfront import _ATOMIC, _C, _FIXTURES, _includes_for  # noqa: PLC0415
+from bcir.tests.test_c_cfront import _ATOMIC, _C, _CC, _FIXTURES, _includes_for  # noqa: PLC0415
 
 # The whole shared corpus (straight-line + control-flow + ABI + float + atomics), in a stable order.
 _CORPUS = _FIXTURES + _ATOMIC
@@ -119,7 +124,13 @@ def _reparse(emit_text: str):
     """Re-lower the emitted C through cfront, or None if it leaves the re-parseable subset (it references
     a name only the original source defined, or a construct the standalone lowering rejects). A unit that
     parses but does not verify clean (`is_clean` false) is also treated as not re-parseable -- the round
-    trip is defined only over units cfront fully accepts."""
+    trip is defined only over units cfront fully accepts. A struct or union the emit names without
+    defining is such a name: a pointer to it re-lowers as a pointer to an INCOMPLETE type (CF-SELFREF),
+    but the member accesses the original lowered to byte offsets then re-lower as raw pointer arithmetic,
+    so the emit is not a self-contained unit of its own sublanguage."""
+    defined = set(re.findall(r"\b(?:struct|union)\s+(\w+)\s*\{", emit_text))
+    if any(tag not in defined for tag in re.findall(r"\b(?:struct|union)\s+(\w+)", emit_text)):
+        return None
     try:
         r = compile_unit(emit_text, check_clang=False)
     except Exception:  # noqa: BLE001 -- any front-end stage rejecting the standalone emit -> excluded
@@ -142,9 +153,9 @@ def _nonidempotent_construct(emit_text: str) -> str | None:
 
 
 # The pinned floor on how many fixtures must actually exercise the round trip (the anti-degeneration
-# guard). Discovery currently includes 62 of the 136-fixture corpus; the floor is set comfortably below
-# so a benign corpus reshuffle does not trip it, but a wholesale collapse (a regression that pushes the
-# whole corpus into FALLBACK, say) does. `test_roundtrip_smoke` pins the exact split.
+# guard), set comfortably below the included count `test_roundtrip_smoke_and_exclusion_set_is_pinned`
+# pins exactly -- so a benign corpus reshuffle does not trip it, but a wholesale collapse (a regression
+# that pushes the whole corpus into FALLBACK, say) does.
 _MIN_EXERCISED = 50
 
 
@@ -321,8 +332,191 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # recognized on re-parse (lower.py `_rvalue`), so the emitted unit re-parses cleanly -- a coverage gain.
     # 64 since CF-PASTE: the new `cfront_paste.c` round-trips (`cfront_ptrmember.c` and
     # `cfront_trailpacked.c`, registered with it, are excluded as emit-not-reparseable).
-    assert len(included) == 64, (
-        f"included-set size changed from the pinned 64 to {len(included)} -- a "
+    # 65 since CF-RTVOL: `cfront_bitint.c` round-trips (was emit2-not-reparseable). Its second emit
+    # declared temporaries over re-parsed locals of the same `t<rid>` name (`int t4109;` then
+    # `unsigned _BitInt(12) t4109 = s * a;`), so its re-parse mixed `_BitInt` with `int` and was refused;
+    # the emitter now names a temporary clear of every declared name -- a coverage gain.
+    assert len(included) == 65, (
+        f"included-set size changed from the pinned 65 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )
+
+
+# The volatile register maps whose standalone emit is excluded only because it names a struct the original
+# defines: every access emits as the one `*(volatile T *)((const volatile char *)p + off)` (CF-RTVOL).
+_VOLATILE_MEMBER = ("cfront_rmw.c", "cfront_bitfield.c", "cfront_bfcompound.c")
+
+
+def _aggregate_defs(src: str) -> str:
+    """The original's struct and union definitions (`struct ctl { ... };`), supplied to its emit, which
+    names the tags without defining them."""
+    return "\n".join(
+        m.group(0) for m in re.finditer(r"\b(?:struct|union)\s+\w+\s*\{[^{}]*\}\s*;", src)
+    )
+
+
+def _accesses(result) -> tuple:
+    """Per function, its memory accesses in order as the claim graph records them: the op, the parameter
+    position of the base (None for any other base -- a computed pointer), the member offset (a store's
+    width too, as the structural digest folds them) and the access's contract (volatile, domain, lane,
+    hazard, bounds). A member access `p->m` and its emit `*(volatile T *)((char *)p + off)` re-lowered
+    agree here exactly; a pointer computation and an access at offset 0 do not."""
+    out = []
+    for lf in result.lowered.functions.values():
+        pos = {rid: j for j, (_n, rid, _ct) in enumerate(lf.params)}
+        out.append(
+            tuple(
+                (
+                    c.op,
+                    pos.get(c.rd[0]),
+                    tuple(c.imm[:2]) if c.op == "c.store" else (c.imm[0] if c.imm else 0),
+                    c.volatile,
+                    c.domain,
+                    c.lane,
+                    c.hazard,
+                    c.bounds,
+                    c.bounds_provenance,
+                )
+                for c in lf.claims
+                if c.op in ("c.load", "c.store")
+            )
+        )
+    return tuple(out)
+
+
+def _declared_twice(result) -> dict:
+    """Per function of a re-lowered straight-line emit, the names it declares more than once. The lowering
+    keeps every parameter and every declaration by its name, and a straight-line emit declares all of them
+    in the one function-body scope, so a name here is a C redefinition: the emit does not compile."""
+    dup = {}
+    for name, lf in result.lowered.functions.items():
+        names = [p[0] for p in lf.params] + [n for _rid, n, _ct in lf.locals]
+        twice = sorted({n for n in names if names.count(n) > 1})
+        if twice:
+            dup[name] = twice
+    return dup
+
+
+def _c_errors(text: str) -> str:
+    """The host C compiler's diagnostics for a translation unit that does not compile, else ''."""
+    cp = subprocess.run(
+        [_CC, "-std=c11", "-fsyntax-only", "-x", "c", "-"],
+        input="#include <stdint.h>\n#include <string.h>\n" + text,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    return "" if cp.returncode == 0 else cp.stderr
+
+
+def test_volatile_member_emits_reach_a_fixed_point_given_their_definitions():
+    """CF-RTVOL. A volatile member access `p->m` emits as one volatile access at its byte offset,
+    `*(volatile T *)((const volatile char *)p + off)`. That re-lowered as a pointer computation plus an
+    access at offset 0, so every round added a `c.cast` + `c.bin.add` layer per access; and a re-parsed
+    emit names its locals `t<rid>`, the spelling of the emitter's own temporaries, so the second emit
+    redeclared them and did not compile. The standalone emit stays excluded (it names a struct it does not
+    define); supplied with the original's definitions, over three rounds:
+      * every re-lowering has exactly the original's accesses -- one load or store, through the same
+        parameter, at the same member offset, with the same volatile device-access contract;
+      * the observable signature is a fixed point;
+      * every emit declares each name once and, where a C compiler is visible, compiles."""
+    for fx in _VOLATILE_MEMBER:
+        assert _classify(fx) == ("excluded", "emit-not-reparseable"), fx
+        src = open(f"{_C}/{fx}", encoding="utf-8").read()
+        defs = _aggregate_defs(src)
+        r1 = compile_unit(src, check_clang=False, includes=_includes_for(fx))
+        assert any(_accesses(r1)), f"{fx}: no device access to re-lower"
+        rounds = [r1]
+        for n in range(1, 4):
+            e = defs + "\n" + _emit_joined(rounds[-1])
+            g = _reparse(e)
+            assert g is not None, f"{fx}: e{n} with its definitions did not re-lower cleanly:\n{e}"
+            assert not _declared_twice(g), f"{fx}: e{n} redeclares {_declared_twice(g)}:\n{e}"
+            if _CC:
+                err = _c_errors(e)
+                assert not err, f"{fx}: e{n} does not compile:\n{err}\n{e}"
+            assert _accesses(g) == _accesses(r1), (
+                f"{fx}: e{n} re-lowers to other accesses than the original's\n"
+                f"   original: {_accesses(r1)}\n   parse(e{n}): {_accesses(g)}"
+            )
+            rounds.append(g)
+        sigs = [_observable_signature(g) for g in rounds[1:]]
+        assert sigs[0] == sigs[1] == sigs[2], f"{fx}: observable signature drifted: {sigs}"
+
+
+def test_a_temporary_never_redeclares_a_declared_name():
+    """CF-RTVOL, from the source side: an intermediate emits as `t<rid>` only while no declared name spells
+    it. A parameter named after the rid of the `3u` temporary, and one named after its own rid and then
+    assigned (a write of a declared name, never a temporary's declaration), emit one declaration each --
+    the emit had redeclared both and did not compile. The names derive from a first lowering, so the
+    collision is exercised whatever rids the lowering hands out."""
+    tmpl = "uint32_t f(uint32_t {a}, uint32_t {b}) {{ {a} = {a} + {b} * 3u; return {a}; }}\n"
+    lf0 = compile_unit(tmpl.format(a="a", b="b"), check_clang=False).lowered.functions["f"]
+    own = lf0.params[0][1]
+    k3 = next(c.wr[0] for c in lf0.claims if c.op == "c.const")
+    r = compile_unit(tmpl.format(a=f"t{own}", b=f"t{k3}"), check_clang=False)
+    lf = r.lowered.functions["f"]
+    # the collisions are real: `a` is still rid `own`, the `3u` temporary still rid `k3`
+    assert lf.params[0][1] == own and any(c.op == "c.const" and c.wr[0] == k3 for c in lf.claims)
+    e = _emit_joined(r)
+    g = _reparse(e)
+    assert g is not None and not _declared_twice(g), e
+    assert _observable_signature(g) == _observable_signature(r), e
+    if _CC:
+        err = _c_errors(e)
+        assert not err, f"the emit does not compile:\n{err}\n{e}"
+
+
+# CF-TERNARY: a `?:`, `&&` or `||` operand C may leave unevaluated, and that could trap or change state, lowers as
+# a branch assigning one named local in each arm -- `if (c) { t = n / d; sel = t; } else { ... }`. The local is a
+# declaration the emit makes and the re-parse reads back, so its type (the select's) must survive the round trip.
+_BRANCH_VALUES = r"""#include <stdint.h>
+uint32_t g(uint32_t x) { return x + 1u; }
+uint32_t f_div(uint32_t n, uint32_t d) { return d ? n / d : 0u; }
+int32_t f_signed(int32_t a, int32_t b) { return b ? a / b : -1; }
+uint32_t f_call(uint32_t s) { return s > 3u ? g(s) : 7u; }
+uint32_t f_and(uint32_t n, uint32_t d) { return d && n / d > 1u; }
+uint32_t f_or(uint32_t n, uint32_t d) { return !d || n % d == 0u; }
+double f_float(uint32_t s, double x) { return s > 3u ? x / 2.0 : 1; }
+uint32_t f_nest(uint32_t n, uint32_t d) { return d ? (n > 2u ? n % d : 1u) : 2u; }
+uint32_t f_pure(uint32_t s) { return (s > 5u ? s + 1u : s * 3u) + (s && s - 1u); }
+"""
+_BRANCH_LOCALS = {
+    "f_div": ["uint32_t sel"],
+    "f_signed": ["int32_t sel"],
+    "f_call": ["uint32_t sel"],
+    "f_and": ["int sel"],
+    "f_or": ["int sel"],
+    "f_float": ["double sel"],
+    "f_nest": ["uint32_t sel", "uint32_t sel_2"],
+    "f_pure": [],
+}
+
+
+def test_branch_values_round_trip_as_a_fixed_point():
+    """CF-TERNARY: the branch an operand that divides or calls lowers to declares one local of the select's
+    type -- unsigned, signed, float, the `int` of `&&`/`||`, one per branch when one nests in an arm -- and its
+    emit re-lowers to the same observable claim graph, round after round. Operands that can neither trap nor
+    change state stay a select: no local, no branch."""
+    r1 = compile_unit(_BRANCH_VALUES, check_clang=False)
+    for name, want in _BRANCH_LOCALS.items():
+        emit = r1.emitted[name]
+        got = [
+            d
+            for d in re.findall(r"^\s+(\w+(?: \w+)* sel(?:_\d+)?);$", emit, re.M)
+            if not d.startswith("return ")
+        ]
+        assert got == want, (name, got, emit)
+        assert emit.count("if (") == len(want), (name, emit)
+    e1 = _emit_joined(r1)
+    assert _nonidempotent_construct(e1) is None, e1
+    g2 = _reparse(e1)
+    assert g2 is not None, e1
+    g3 = _reparse(_emit_joined(g2))
+    assert g3 is not None, _emit_joined(g2)
+    sigs = [_observable_signature(g) for g in (r1, g2, g3)]
+    assert sigs[0] == sigs[1] == sigs[2], sigs
+    if _CC:
+        err = _c_errors(e1)
+        assert not err, f"the emit does not compile:\n{err}\n{e1}"

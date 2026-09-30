@@ -659,7 +659,8 @@ def _canon_func_records(lf) -> list[str]:
     OBSERVABLE-OUTPUT anchor line. The per-claim multiset alone is blind to a SINK claim's write target
     (redirecting a dead/return-temp/store wr is invisible if its result is not read downstream); the
     anchor closes that by pinning what the function actually OUTPUTS -- the value it RETURNS and the
-    memory it STORES -- as rail-stable value-number trees."""
+    memory it STORES -- as rail-stable value-number trees. Then one line per static local that has a
+    constant initializer: the initializer both rails render (`static NAME = INIT`, sorted)."""
     claims = [c for c in lf.claims if int(c.opcode) != _NOP]
     first_writer: dict[int, int] = {}  # rid -> index of the FIRST claim that writes it
     last_writer: dict[int, int] = {}  # rid -> index of the LAST claim that writes it
@@ -726,14 +727,25 @@ def _canon_func_records(lf) -> list[str]:
         if c.op == "c.store"
     )
     recs.append("ret={}|stores={}".format(ret, ";".join(stores)))
+    # A static's constant image (CF-STATICTAB): its initializer runs once, before the program, so no claim
+    # writes it (a static reads as an input) -- the initializer both rails render joins the canon instead,
+    # one line per static that has one, sorted. Two statics differing only in a value differ here.
+    recs.extend(
+        sorted(
+            f"static {name} = {init}"
+            for _rid, name, _ct, init in getattr(lf, "statics", ())
+            if init is not None
+        )
+    )
     return recs
 
 
 def cfront_structural_canon(lowered) -> str:
     """The raw canonical serialization the digest hashes -- the byte-identity proof artifact (the Python
     canon must equal the C twin's `--canon` dump byte-for-byte on the corpus, so the digests match).
-    One sorted dataflow value-number record per non-marker claim, with a '@' line per function
-    boundary. See the module note above for the exact record format and the empirical justification."""
+    One sorted dataflow value-number record per non-marker claim, the function's output anchor and its
+    statics' initializers, with a '@' line per function boundary. See the module note above for the
+    exact record format and the empirical justification."""
     out: list[str] = []
     for lf in lowered.functions.values():
         out.extend(_canon_func_records(lf))

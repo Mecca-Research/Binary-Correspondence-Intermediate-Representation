@@ -63,17 +63,29 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                  int fp_ret_size; uint8_t fp_ret_signd; uint8_t fp_ret_float;
                                     /* a funcptr struct member: the captured RETURN type (sign/width/float),
                                      * used to type a c.call.imember result temp; ZERO if not a funcptr / not captured */
+                 int fp_ret_agg;    /* ... and a struct/union return, as 1 + its sdef index (0: not one) */
                  } field;
                  /* is_ptr: a pointer member -- `size` is pointer_size (the ABI layout width), the pointee
                   * (ptee_size width / signd sign / ptee_float / ptee_sidx struct) types the loaded `T *` */
                  /* arr_count > 0: a member array; `size` is the element, arr_count the total element
                   * count, nadims/adims the per-dim sizes (`T m[A][B]` -> nadims 2, adims {A,B}) */
+/* An ANONYMOUS struct/union member: its promoted leaves are `f[first..first+n)` of the containing sdef, the
+ * member itself the sdef `sidx` at byte offset `off` -- one subobject to an initializer (the oracle's
+ * `CType.anon`), so an anonymous union takes one positional value, as in C. */
+typedef struct { int first, n, sidx, off; } anon_grp;
 typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int align; int is_union;
                  int vol_storage;   /* the struct holds volatile storage: a volatile member, or a value-struct /
                                      * array-of-structs member that does (a pointer member does not) -- the
                                      * oracle's `CType.volatile_storage` */
+                 int nanon; anon_grp anon[MAXFLD];   /* its anonymous members, in declaration order */
+                 int incomplete;    /* named but not (yet) laid out -- `struct fwd;`, a pointer to a struct defined
+                                     * later or never, the struct whose body is being parsed: a pointer to it is
+                                     * complete, anything else needs its layout (the oracle's `CType.incomplete`) */
                } sdef;
-typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx; } tdef;   /* a typedef alias */
+typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx;
+                 int nd, dims[3];   /* an array typedef's dims, outer first (`typedef T row_t[6];`): each declarator
+                                     * of the alias appends them after its own (CF-SMALL) */
+               } tdef;   /* a typedef alias */
 typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
 
 typedef struct {
@@ -108,6 +120,9 @@ typedef struct {
   int atomic_promote_size;   /* the widest `_Atomic` type the ABI promotes (Clang's MaxAtomicPromoteWidth, bytes) */
   int eight_byte_align;      /* an 8-byte scalar's alignment -- `double`, `long long`, `int64_t`, a `_BitInt(33..64)`
                               * and a `double _Complex`'s element (Clang's DoubleAlign / LongLongAlign): 4 on i386 */
+  int wchar_size, wchar_signed;   /* `wchar_t` (Clang's __WCHAR_TYPE__), an `L"..."` literal's unit too: a signed
+                              * 4-byte `int` on x86-64, RISC-V and i386 Linux, `unsigned int` on AArch64 Linux,
+                              * `unsigned short` on Windows */
 } bcir_abi;
 
 /* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
@@ -115,11 +130,11 @@ typedef struct {
  * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
  * --target-less compilation is byte-identical to the layout used before --target existed. */
 static const bcir_abi g_targets[] = {
-  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8},
-  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8},
-  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8},
-  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8},
-  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4},
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8, 4, 1},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 0},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 1},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8, 2, 0},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4, 4, 1},
 };
 #define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
 static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
@@ -134,6 +149,10 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
  * pre-pass; an array of these lives on CC, reset per function. */
 typedef struct { char name[BCIR_CIR_NAME]; int assigned; int body; int addr; } mutent;
 
+typedef struct { long long lo, hi;                /* a bit range the initializer walk stored (CF-BRACE), and in a */
+                 unsigned long long v; int neg; } irange;   /* static's image the value stored there -- its 64-bit
+                                                             * two's complement, negative or not (CF-STATICTAB) */
+typedef struct { int off, sidx, member; } iunion; /* a union the initializer walk gave a member, and which */
 typedef struct {
   bcir_host_allocator allocator;
   bcir_host_arena scratch;
@@ -163,8 +182,14 @@ typedef struct {
   int saw_static;                                    /* p_type_base scanned a `static` since p_func last
                                                       * reset it -- captured as fn->static_fn right after
                                                       * the return-type parse (source-static honoring) */
-  struct { char name[BCIR_CIR_NAME]; bcir_ctype ret; } *protos;   /* prototype table: callee -> return
-                                                      * type (for call-result typing); grows geometrically */
+  int saw_extern;                                    /* p_type_base scanned an `extern` (a block-scope
+                                                      * declaration reads it: CF-STORAGE) */
+  struct { char name[BCIR_CIR_NAME]; bcir_ctype ret;
+           const bcir_ctype *params; int n_params; } *protos;   /* prototype table: callee -> return
+                                                      * type (for call-result typing) and parameter types (a
+                                                      * null pointer argument's, CF-NULLARG -- held in the
+                                                      * scratch arena, which lasts the compile); grows
+                                                      * geometrically */
   int n_protos, cap_protos;
   /* §5.12 per-function mutation pre-pass (the C twin of _mut_assigned / _mut_addr): over the whole
    * function body, the number of assignments to each NAME and whether its address is ever taken (`&x`).
@@ -199,6 +224,13 @@ typedef struct {
                       * token stream and mis-compiling a partial unit (Bug B correctness gap). */
   int call_dropped;  /* p_call dropped an operand past BCIR_CLAIM_MAX_RD: its call-site wrapper marks the call
                       * claim `truncated` (the escape analysis then refuses the unit) */
+  int td_nd, td_dims[3];   /* the array dims of the typedef the last p_type_base resolved (0: none), for the
+                            * declarator that consumes the type to append after its own */
+  irange *iw_rng; int iw_nrng, iw_caprng;   /* the initializer walk's stored ranges and union members: one */
+  iunion *iw_un; int iw_nun, iw_capun;      /* walk's records sit above the enclosing walk's (a compound
+                                             * literal inside an initializer), and end with it */
+  int *pure_memo; int npure, cap_pure;      /* CF-TERNARY: an operand C may leave unevaluated, by the token it
+                                             * starts at (`2*tok + pure`) -- a nested chain speculates once */
   char err[256]; int failed;
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
@@ -362,10 +394,11 @@ static int str_bytes(const char *s, int n) {
   return cnt;
 }
 
-/* The element size of a (possibly prefixed) string literal on the Linux/Clang ABI: plain/u8 = 1
- * (char), u = 2 (char16_t), L/U = 4 (wchar_t / char32_t). s[0..n) is the spelling incl. the prefix. */
-static int str_elem_size(const char *s, int n) {
-  if (n>0) { if (s[0]=='u') return (n>1 && s[1]=='8') ? 1 : 2; if (s[0]=='L'||s[0]=='U') return 4; }
+/* The element size of a (possibly prefixed) string literal: plain/u8 = 1 (char), u = 2 (char16_t),
+ * U = 4 (char32_t), L the target's wchar_t (4, or 2 on Windows). s[0..n) is the spelling incl. the prefix. */
+static int str_elem_size(const CC *c, const char *s, int n) {
+  if (n>0) { if (s[0]=='u') return (n>1 && s[1]=='8') ? 1 : 2; if (s[0]=='U') return 4;
+             if (s[0]=='L') return cc_abi(c)->wchar_size; }
   return 1;
 }
 
@@ -501,6 +534,7 @@ static int scalar_size(const char *s,int n) {
     {"int",4},{"unsigned",4},{"signed",4},{"long",8},{"uint8_t",1},{"int8_t",1},{"uint16_t",2},{"int16_t",2},
     {"uint32_t",4},{"int32_t",4},{"uint64_t",8},{"int64_t",8},
     {"size_t",8},{"intptr_t",8},{"uintptr_t",8},     /* the pointer-tracking size_t-class types */
+    {"wchar_t",4},                                   /* the target's wchar_t (p_type_base resolves it) */
     {"float",4},{"double",8},{0,0}};
   for(int i=0;T[i].k;i++) if((int)strlen(T[i].k)==n&&!strncmp(T[i].k,s,n)) return T[i].sz;
   return -1;
@@ -548,6 +582,45 @@ static int find_global(CC *c,const char *s,int n){
   for(int i=0;i<c->ngv;i++) if((int)strlen(c->gv[i].name)==n&&!strncmp(c->gv[i].name,s,n)) return i;
   return -1;
 }
+/* A struct/union tag named before its definition (or never defined): an incomplete sdef slot, which the
+ * definition completes in place (CF-SELFREF). An existing tag keeps its slot. */
+static int declare_struct(CC *c, const tok *tag, int is_union){
+  int si=find_struct(c,tag->s,tag->n);
+  if(si>=0) return si;
+  if(!CC_ENSURE(c, c->s, c->ns, c->cap_s)) return -1;
+  si=c->ns++; sdef *S=&c->s[si];
+  S->nf=0; S->size=0; S->align=1; S->is_union=is_union; S->vol_storage=0; S->nanon=0; S->incomplete=1;
+  idcpy(S->tag,tag);
+  return si;
+}
+/* Whether a `*` follows the cursor (past qualifiers): the struct type just named is a pointer's pointee. */
+static int ptr_follows(CC *c){
+  int j=c->i;
+  while(tok_is(tat(c,j),"const")||tok_is(tat(c,j),"volatile")||tok_is(tat(c,j),"restrict")||
+        tok_is(tat(c,j),"__restrict")||tok_is(tat(c,j),"__restrict__")) j++;
+  return tok_is(tat(c,j),"*");
+}
+/* A struct completed after a pointer to it was laid out (a member `struct b *pb`, a typedef, a global, a
+ * prototype's return): each size captured from the incomplete slot takes the layout's, so a pointer's stride
+ * and a typedef'd object are right (the oracle completes its type by tag where it is used). */
+/* The typedef'd array dimensions the last p_type_base resolved (outer first), into `dims`, and their count --
+ * at most 3, the typedef parse's own bound, restated here so every reader's loop is bounded by it. */
+static int td_dims_of(const CC *c, int dims[3]){
+  int n = c->td_nd<0 ? 0 : c->td_nd>3 ? 3 : c->td_nd;
+  for(int d=0; d<3; d++) dims[d] = d<n ? c->td_dims[d] : 0;
+  return n;
+}
+static void complete_struct_refs(CC *c, int si){
+  const sdef *S=&c->s[si]; int sz=S->size;
+  for(int k=0;k<c->ns;k++) for(int f=0;f<c->s[k].nf;f++){ field *F=&c->s[k].f[f];
+    if(F->ptee_sidx==si && (F->is_ptr||F->elem_ptr) && F->ptee_depth<=1) F->ptee_size=sz; }
+  for(int k=0;k<c->ntd;k++) if(c->td[k].sidx==si){ bcir_ctype *t=&c->td[k].ty;
+    if(t->kind==1 || (t->kind==2 && t->ptr_to_struct && (t->ptr_depth?t->ptr_depth:1)==1)) t->size=sz; }
+  for(int k=0;k<c->ngv;k++){ bcir_ctype *t=&c->gv[k].ty;
+    if(t->kind==2 && t->ptr_to_struct && (t->ptr_depth?t->ptr_depth:1)==1 && !strcmp(t->tag,S->tag)) t->size=sz; }
+  for(int k=0;k<c->n_protos;k++){ bcir_ctype *t=&c->protos[k].ret;
+    if(t->kind==2 && t->ptr_to_struct && (t->ptr_depth?t->ptr_depth:1)==1 && !strcmp(t->tag,S->tag)) t->size=sz; }
+}
 static venv *use_global(CC *c,const tok *id);   /* fwd: materialize a global's resource on first use */
 static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
 
@@ -570,18 +643,32 @@ static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx);   /* fwd: typeof(exp
 /* Does a cast's type-name start at the cursor -- `( type-name )` rather than `( expression )`? The oracle's
  * `_is_cast`: the answer for a cast and a compound literal. Each of the five sites that asks kept its own
  * copy of this list. A cast to an `_Atomic` type is refused on both rails. */
-static int starts_type_name(CC *c){
-  return scalar_size(pk(c)->s,pk(c)->n)>=0 || is(c,"struct")||is(c,"union")||is(c,"enum")
-      || is(c,"_Complex")||is(c,"complex")||is(c,"_BitInt")
-      || is(c,"const")||is(c,"volatile")
-      || is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
-      || find_typedef(c,pk(c)->s,pk(c)->n)>=0;
+static int type_name_tok(CC *c, const tok *t){
+  return scalar_size(t->s,t->n)>=0 || tok_is(t,"struct")||tok_is(t,"union")||tok_is(t,"enum")
+      || tok_is(t,"_Complex")||tok_is(t,"complex")||tok_is(t,"_BitInt")
+      || tok_is(t,"const")||tok_is(t,"volatile")
+      || tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
+      || find_typedef(c,t->s,t->n)>=0;
 }
+static int starts_type_name(CC *c){ return type_name_tok(c,pk(c)); }
 /* ... and where a declaration's type may start (the oracle's `_is_decl_start`): `sizeof`, a size operand
  * and `typeof` take `_Atomic T` too, as the oracle folds `sizeof(_Atomic T)`; the twin refused it. */
-static int starts_decl_type(CC *c){ return starts_type_name(c) || is(c,"_Atomic"); }
+static int decl_type_tok(CC *c, const tok *t){ return type_name_tok(c,t) || tok_is(t,"_Atomic"); }
+static int starts_decl_type(CC *c){ return decl_type_tok(c,pk(c)); }
+/* A block statement that starts with token `t` is a declaration (p_stmt_inner; the CF-PAREN pass). */
+static int decl_start_tok(CC *c, const tok *t){
+  return t->k==T_ID && (scalar_size(t->s,t->n)>=0||tok_is(t,"static")||tok_is(t,"struct")||tok_is(t,"union")
+      ||tok_is(t,"enum")||tok_is(t,"const")||tok_is(t,"volatile")
+      ||tok_is(t,"extern")                                   /* refused by p_stmt_inner, not an expression */
+      ||tok_is(t,"_Complex")||tok_is(t,"complex")            /* `double _Complex z;` -- a complex local */
+      ||tok_is(t,"_BitInt")                                  /* `_BitInt(N) z;` -- a bit-precise local */
+      ||tok_is(t,"_Atomic")                                  /* `_Atomic int a;` -- an atomic local */
+      ||tok_is(t,"va_list")||tok_is(t,"__builtin_va_list")   /* `va_list ap;` -- a variadic cursor local */
+      ||tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
+      ||find_typedef(c,t->s,t->n)>=0);
+}
 static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
-  memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1;
+  memset(ty,0,sizeof *ty); ty->kind=0; ty->size=4; ty->signd=1; *sidx=-1; c->td_nd=0;
   int seen=0, longs=0, ptrtrk=0, sign_explicit=0, floatkw=0, cplxkw=0;   /* longs: `long` (data-model) vs `long
                                                                * long` (8); floatkw / cplxkw: a float/double or a
                                                                * `_Complex` keyword was scanned in THIS specifier */
@@ -596,7 +683,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
                                                             * its return-type parse (source-static
                                                             * honoring in --linkable); block-scope
                                                             * statics peek the token BEFORE p_type. */
-    if(is(c,"const")||is(c,"inline")||is(c,"extern")
+    if(is(c,"extern")){c->saw_extern=1;c->i++;continue;}
+    if(is(c,"const")||is(c,"inline")
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
@@ -627,8 +715,12 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(!sign_explicit) ty->signd=1;                   /* `_BitInt(N)` defaults signed (no signed/unsigned kw) */
       seen=1; continue;
     }
-    if(is(c,"struct")||is(c,"union")){c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
-      if(si<0){fail(c,"unknown struct");return 1;} ty->kind=1;ty->size=c->s[si].size;*sidx=si;
+    if(is(c,"struct")||is(c,"union")){int isu=is(c,"union");c->i++;tok tag=adv(c);int si=find_struct(c,tag.s,tag.n);
+      int ptr=ptr_follows(c);                        /* a pointer to it needs no layout (C11 6.2.5p22) */
+      if(si<0 && ptr && tag.k==T_ID) si=declare_struct(c,&tag,isu);   /* defined later, or never (opaque) */
+      if(si<0){fail(c,"unknown struct");return 1;}
+      if(c->s[si].incomplete && !ptr){fail(c,"the incomplete struct or union has no layout here");return 1;}
+      ty->kind=1;ty->size=c->s[si].size;*sidx=si;
       ty->is_union=(uint8_t)c->s[si].is_union;idcpy(ty->tag,&tag);seen=1;break;}
     if(is(c,"enum")){c->i++;if(isk(c,T_ID)&&!is(c,"{"))c->i++;   /* `enum [tag] [{...}]` -> int */
       if(is(c,"{"))p_enum_body(c); ty->kind=0;ty->size=4;ty->signd=1;seen=1;break;}
@@ -638,7 +730,17 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(ti>=0){int vol=ty->is_volatile, at=ty->is_atomic;*ty=c->td[ti].ty;
         if(vol)ty->is_volatile=1;
         if(at)ty->is_atomic=1;                        /* `_Atomic T` of a typedef stays atomic */
-        *sidx=c->td[ti].sidx;c->i++;seen=1;break;}}
+        *sidx=c->td[ti].sidx;c->i++;seen=1;
+        c->td_nd=c->td[ti].nd; for(int d=0;d<3;d++) c->td_dims[d]=c->td[ti].dims[d];   /* an array typedef */
+        if(c->td_nd && ptr_follows(c)){ fail(c,"a pointer to a typedef'd array is not supported"); return 1; }
+        if(ty->kind==1 && *sidx>=0 && c->s[*sidx].incomplete && !ptr_follows(c)){   /* a by-value use of a
+          * typedef'd struct not yet defined needs its layout */
+          fail(c,"the incomplete struct or union has no layout here"); return 1; }
+        break;}}
+    if(is(c,"wchar_t") && !seen){ const bcir_abi *a=cc_abi(c);   /* a typedef of the target's integer type
+      * (the oracle's `abi.wchar_type`): 4-byte signed on x86-64/RISC-V/i386 Linux, unsigned on AArch64 Linux,
+      * a 2-byte unsigned on Windows */
+      ty->kind=0; ty->size=a->wchar_size; ty->signd=a->wchar_signed; c->i++; seen=1; break; }
     if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
       if(sz<0){if(seen)break;fail(c,"unknown type");return 1;}
       if(ty->bit_width){fail(c,"unsupported `_BitInt` type specifier");return 1;}   /* a base int after `_BitInt` */
@@ -654,6 +756,16 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
         ty->is_plain_char=1;        /* plain `char` (no signed/unsigned): emit `char`, NOT int8_t (ARM) */
       seen=1;c->i++;   /* `long double` / `double _Complex` keep scanning the run */
       if(is(c,"long")||is(c,"int")||is(c,"char")||is(c,"double")||is(c,"_Complex")||is(c,"complex"))continue;break;}
+    break;
+  }
+  /* declaration specifiers come in any order (C11 6.7p1): a qualifier or storage class AFTER a struct tag, a
+   * typedef name or a scalar keyword run (`uint32_t static n`, `struct s volatile *p`) is the same specifier
+   * it is before one -- the oracle's `_TRAILING_SPEC` scan (CF-STORAGE) */
+  while(seen){
+    if(is(c,"volatile")){ ty->is_volatile=1; c->i++; continue; }
+    if(is(c,"static")){ c->saw_static=1; c->i++; continue; }
+    if(is(c,"extern")){ c->saw_extern=1; c->i++; continue; }
+    if(is(c,"const")||is(c,"inline")||is(c,"_Thread_local")||is(c,"thread_local")){ c->i++; continue; }
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
@@ -735,11 +847,18 @@ static void trailing_attrs(CC *c, int open, int *packed, int *aligned){
 static int p_struct_body(CC *c) {
   int is_union = is(c,"union");
   c->i++; int packed=0,aligned=0; attrs(c,&packed,&aligned);
-  CC_ENSURE(c, c->s, c->ns, c->cap_s);
-  if(c->ns>=c->cap_s){ fail(c,"too many struct definitions"); return -1; }
-  int my=c->ns++;                       /* claim our slot NOW: an inline aggregate member recurses into
+  int my=-1;
+  if(isk(c,T_ID)&&!is(c,"{")){ int ex=find_struct(c,pk(c)->s,pk(c)->n);
+    if(ex>=0 && c->s[ex].incomplete && c->s[ex].nf==0) my=ex; }   /* a declared tag: complete its slot in place,
+                                         * so every pointer that named it (its sdef index) sees the layout */
+  if(my<0){
+    CC_ENSURE(c, c->s, c->ns, c->cap_s);
+    if(c->ns>=c->cap_s){ fail(c,"too many struct definitions"); return -1; }
+    my=c->ns++; }                       /* claim our slot NOW: an inline aggregate member recurses into
                                          * p_struct_body and must take a LATER slot (and may realloc c->s). */
-  sdef *S=&c->s[my]; S->nf=0; S->align=1; S->is_union=is_union; S->vol_storage=0;
+  sdef *S=&c->s[my]; S->nf=0; S->align=1; S->is_union=is_union; S->vol_storage=0; S->nanon=0; S->size=0;
+  S->incomplete=1;                      /* until its closing brace: `struct node *next` is fine, a by-value
+                                         * `struct node` member of itself is not */
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(S->tag,&tag);}
   else snprintf(S->tag,sizeof S->tag,"$anon%d",my);   /* anonymous: synth a unique tag */
   attrs(c,&packed,&aligned);
@@ -768,6 +887,8 @@ static int p_struct_body(CC *c) {
       if(!is_union){ long long a8=(long long)al*8; if(dbits%a8)dbits+=a8-(dbits%a8);
                      anon_off=(int)(dbits/8); dbits+=(long long)A->size*8; }
       if(A->size>maxsz)maxsz=A->size;
+      if(A->nf>0){ anon_grp *g=&S->anon[S->nanon++];      /* one initializable subobject over its leaves */
+        g->first=S->nf; g->n=A->nf; g->sidx=si; g->off=anon_off; }
       for(int k=0;k<A->nf;k++){
         if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }
         field nf=A->f[k]; nf.byte_off+=anon_off; S->f[S->nf++]=nf;   /* shift each leaf's offset into S */
@@ -776,7 +897,9 @@ static int p_struct_body(CC *c) {
       continue;
     }
     if(!inl && p_type_base(c,&base,&si))return -1;
+    int btdd[3], btd=td_dims_of(c,btdd); if(inl) btd=0;   /* a typedef'd array type */
     for(;;){                                          /* one or more declarators off one specifier: */
+      if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return -1; }
       bcir_ctype ty=base; apply_stars(c,&ty);   /* per-declarator `*`: `int *p, q;` -> p ptr, q scalar */
       if(is(c,":")){                                  /* an UNNAMED `int :3` / ZERO-WIDTH `int :0` bitfield (no
                                                        * name): positions the cursor, NOT a field, no align bump. */
@@ -804,12 +927,15 @@ static int p_struct_body(CC *c) {
         memset(&ty,0,sizeof ty); ty.kind=3; ty.size=cc_abi(c)->pointer_size; ty.signd=0;
         ty.fp_ret_size=rty.size; ty.fp_ret_signd=(uint8_t)(rty.signd?1:0);   /* carry the funcptr's return type, */
         ty.fp_ret_float=(uint8_t)(rty.is_float?1:0);                          /* used to type a c.call.imember result */
+        ty.fp_ret_agg=rty.kind==1 && si>=0 ? si+1 : 0;                        /* (a struct return: CF-STRUCTVAL) */
       } else {
         if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
         nm=adv(c);
       }
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
       while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+        if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
+      for(int d=0; d<btd; d++){ int dim=btdd[d];      /* a typedef'd array's dims follow the declarator's own */
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
       int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
@@ -861,6 +987,7 @@ static int p_struct_body(CC *c) {
       f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
       f->elem_sidx = (ty.kind==1 && !ty.ptr_to_struct && arr_count) ? si : -1;   /* array-of-structs element struct */
       f->fp_ret_size=ty.fp_ret_size; f->fp_ret_signd=ty.fp_ret_signd; f->fp_ret_float=ty.fp_ret_float;   /* funcptr member: return type */
+      f->fp_ret_agg=ty.fp_ret_agg;
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
       if(is_union){f->byte_off=0;f->bit_off=0;}        /* union: every member overlaps at offset 0 */
       else if(width){int ub=sz*8;
@@ -899,6 +1026,7 @@ static int p_struct_body(CC *c) {
   int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
   int total = is_union ? maxsz : (int)((dbits+7)/8);   /* union size = the widest member; struct: bits->bytes */
   if(total%salign)total+=salign-(total%salign); S->size=total;
+  S->incomplete=0; complete_struct_refs(c,my);
   return my;
 }
 
@@ -962,7 +1090,8 @@ static void p_typedef(CC *c){
     int isdef=is(c,"{"); c->i=save;
     if(isdef){int si=p_struct_body(c);if(si<0)return; ty.kind=1;ty.size=c->s[si].size;sidx=si;
       ty.is_union=(uint8_t)c->s[si].is_union;snprintf(ty.tag,sizeof ty.tag,"%s",c->s[si].tag);}
-    else { c->i++; tok tag=adv(c); int si=find_struct(c,tag.s,tag.n);
+    else { int isu=is(c,"union"); c->i++; tok tag=adv(c); int si=find_struct(c,tag.s,tag.n);
+      if(si<0 && tag.k==T_ID) si=declare_struct(c,&tag,isu);   /* `typedef struct node node_t;` ahead of it */
       if(si<0){fail(c,"unknown struct in typedef");return;} ty.kind=1;ty.size=c->s[si].size;sidx=si;
       ty.is_union=(uint8_t)c->s[si].is_union;idcpy(ty.tag,&tag);}
     while(is(c,"*")){c->i++;
@@ -974,6 +1103,7 @@ static void p_typedef(CC *c){
   } else {
     if(p_type(c,&ty,&sidx))return;                    /* scalar / pointer / typedef-of-typedef */
   }
+  int bdims[3], bnd=td_dims_of(c,bdims);   /* a typedef'd array base */
   if(is(c,"(")){                                       /* typedef RET (*NAME)(PARAMS); -- a funcptr */
     int save=c->i; c->i++;
     if(is(c,"*")){
@@ -986,16 +1116,27 @@ static void p_typedef(CC *c){
       bcir_ctype fp; memset(&fp,0,sizeof fp); fp.kind=3; fp.size=cc_abi(c)->pointer_size; fp.signd=0; idcpy(fp.tag,&nm);
       fp.fp_ret_size=ty.size; fp.fp_ret_signd=(uint8_t)(ty.signd?1:0); fp.fp_ret_float=(uint8_t)(ty.is_float?1:0);
                                                          /* carry the funcptr's RETURN type via the typedef to every use */
+      fp.fp_ret_agg=ty.kind==1 && sidx>=0 ? sidx+1 : 0;  /* (a struct return: CF-STRUCTVAL) */
       CC_ENSURE(c,c->td,c->ntd,c->cap_td);
-      if(c->ntd<c->cap_td){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
+      if(c->ntd<c->cap_td){memset(&c->td[c->ntd],0,sizeof c->td[c->ntd]);
+        idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
       eat(c,";");
       return;
     }
     c->i=save;                                         /* not a funcptr declarator */
   }
   tok nm=adv(c);                                      /* the alias name */
+  int tnd=0, tdims[3]={0,0,0};                        /* `typedef T row_t[6];`: its own dims, then its base's */
+  while(is(c,"[") && !c->failed){ c->i++; long long d=ce_expr(c,0); if(!eat(c,"]")) return;
+    if(d<=0 || d>INT_MAX){ fail(c,"an array typedef needs a positive constant size"); return; }
+    if(tnd>=3){ fail(c,"an array typedef of more than 3 dimensions"); return; }
+    tdims[tnd++]=(int)d; }
+  for(int d=0; d<bnd; d++){ if(tnd>=3){ fail(c,"an array typedef of more than 3 dimensions"); return; }
+    tdims[tnd++]=bdims[d]; }
   CC_ENSURE(c,c->td,c->ntd,c->cap_td);
-  if(c->ntd<c->cap_td){idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;c->ntd++;}
+  if(c->ntd<c->cap_td){memset(&c->td[c->ntd],0,sizeof c->td[c->ntd]);
+    idcpy(c->td[c->ntd].name,&nm);c->td[c->ntd].ty=ty;c->td[c->ntd].sidx=sidx;
+    c->td[c->ntd].nd=tnd; for(int d=0;d<3;d++) c->td[c->ntd].dims[d]=tdims[d]; c->ntd++;}
   eat(c,";");
 }
 
@@ -1019,6 +1160,13 @@ static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   snprintf(cl->op,sizeof cl->op,"%s",op); return cl;
 }
 static uint32_t temp(CC *c,int size){return add_res(c,BCIR_DOM_RAM,size?size:4,1,0,BCIR_RK_SCALAR,"");}
+/* The value of a void expression: a placeholder temp no claim writes, marked so a `?:` whose arms are void has no
+ * value (the oracle's `_VOID_RID`). */
+static uint32_t void_temp(CC *c){
+  uint32_t t=temp(c,4);
+  if(c->fn->n_res && c->fn->res[c->fn->n_res-1].rid==t) c->fn->res[c->fn->n_res-1].is_void=1;
+  return t;
+}
 /* An integer temporary of a given (width, signedness) -- the emit renders the true fixed-width type
  * and the usual arithmetic conversions read it back (the C twin of int_type). */
 static uint32_t tempi(CC *c,int size,int signd){ uint32_t r=add_res(c,BCIR_DOM_RAM,size?size:4,1,0,BCIR_RK_SCALAR,"");
@@ -1030,6 +1178,14 @@ static uint32_t tempf(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,
  * `<elem> _Complex` (elem width = size/2) and the value is delegated to the backend like any float. */
 static uint32_t tempc(CC *c,int size){ uint32_t r=add_res(c,BCIR_DOM_RAM,size,1,0,BCIR_RK_SCALAR,"");
   if(c->fn->n_res){ c->fn->res[c->fn->n_res-1].is_float=1; c->fn->res[c->fn->n_res-1].is_complex=1; } return r; }
+/* A struct/union VALUE temp of the sdef `si` (CF-STRUCTVAL): an element of an array of structs, a struct member,
+ * `*p`, a select of two structs -- the emit declares it as the aggregate (`tty` spells its `agg`), so it copies,
+ * returns, passes and is member-accessed whole. An integer temp of it emitted `int32_t t = ps[i];`, which does not
+ * compile, and hid the struct from a brace list, `typeof` and `_Generic`. The oracle's `_temp` of the aggregate. */
+static uint32_t tempagg(CC *c,int si){ uint32_t r=add_res(c,BCIR_DOM_RAM,c->s[si].size,1,0,BCIR_RK_AGGREGATE,"");
+  if(c->fn->n_res) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",c->s[si].is_union?"union":"struct",
+                            c->s[si].tag);
+  return r; }
 /* A C23 `_BitInt(N)` temp -- carries the EXACT width N (bit_width) and signedness, so the emit spells
  * `_BitInt(N)` / `unsigned _BitInt(N)` (NO power-of-two canonicalization) and the value is delegated to
  * the backend at the N-bit precision. `size` is the storage slot (1/2/4/8 bytes); is_signed drives the
@@ -1050,8 +1206,10 @@ static int rid_bitint(CC *c,uint32_t rid,int *signd){
  * captured RETURN type -- the C twin of the oracle's _call_result_ct ladder: a float keeps its width;
  * a wide (>4-byte) integer keeps its (width, sign); a SIGNED sub-int return promotes to `int` (so a
  * downstream `>>` / compare / `(long)` widen sign-extends); else uint32. A funcptr whose return type
- * wasn't captured (carriers all 0) -> uint32, today's behaviour. Aggregate returns are out of scope. */
+ * wasn't captured (carriers all 0) -> uint32, today's behaviour. A struct or union return is that aggregate
+ * value, as the oracle keeps it (CF-STRUCTVAL): a uint32 of it did not compile. */
 static uint32_t fp_result_temp(CC *c, const bcir_ctype *fp){
+  if(fp->fp_ret_agg) return tempagg(c, fp->fp_ret_agg-1);
   if(fp->fp_ret_float) return tempf(c, fp->fp_ret_size?fp->fp_ret_size:4);
   if(fp->fp_ret_size>4) return tempi(c, fp->fp_ret_size, fp->fp_ret_signd);
   if(fp->fp_ret_signd && fp->fp_ret_size && fp->fp_ret_size<=4) return tempi(c,4,1);
@@ -1083,8 +1241,10 @@ static void uac_i(int sa,int za,int sb,int zb,int *rs,int *rz){
   if(sa!=sb){ if(sa>sb){*rs=sa;*rz=za;}else{*rs=sb;*rz=zb;} } else { *rs=sa; *rz=za&&zb; }
 }
 /* The integer type (width, signedness) of an integer constant from its source text (suffix + magnitude,
- * §6.4.4.1), mirroring ctype_model.int_literal_type. A character constant ('c') has type int. */
-static void lit_int_type(const char *s,int n,int *size,int *signd){
+ * §6.4.4.1), mirroring ctype_model.int_literal_type -- a `long` candidate `lsz` bytes wide, the target's (the
+ * oracle's `_lit_type`: on LLP64 / ILP32 a value past a 32-bit `long` is a `long long`). A character constant
+ * ('c') has type int. */
+static void lit_int_type(const char *s,int n,int lsz,int *size,int *signd){
   *size=4; *signd=1;                                    /* default: int */
   if(n>0 && s[0]=='\'') return;                         /* a character constant is int */
   char buf[64]; int j=0; for(int k=0;k<n&&j<63;k++) if(s[k]!='\'') buf[j++]=s[k]; buf[j]=0;
@@ -1097,9 +1257,10 @@ static void lit_int_type(const char *s,int n,int *size,int *signd){
   else if(e>1&&buf[0]=='0'){ val=strtoull(buf,NULL,8); decimal=0; }
   else { val=strtoull(buf[0]?buf:"0",NULL,10); decimal=1; }
   int cs[6],cz[6],nc=0;                                 /* candidate (size, signed) list, in order */
-  if(u){ if(lr==0){cs[nc]=4;cz[nc++]=0;} cs[nc]=8;cz[nc++]=0; }
-  else if(decimal){ if(lr==0){cs[nc]=4;cz[nc++]=1;} cs[nc]=8;cz[nc++]=1; }
-  else { if(lr==0){cs[nc]=4;cz[nc++]=1; cs[nc]=4;cz[nc++]=0;} cs[nc]=8;cz[nc++]=1; cs[nc]=8;cz[nc++]=0; }
+  if(u){ if(lr==0){cs[nc]=4;cz[nc++]=0;} if(lr<2){cs[nc]=lsz;cz[nc++]=0;} cs[nc]=8;cz[nc++]=0; }
+  else if(decimal){ if(lr==0){cs[nc]=4;cz[nc++]=1;} if(lr<2){cs[nc]=lsz;cz[nc++]=1;} cs[nc]=8;cz[nc++]=1; }
+  else { if(lr==0){cs[nc]=4;cz[nc++]=1; cs[nc]=4;cz[nc++]=0;} if(lr<2){cs[nc]=lsz;cz[nc++]=1; cs[nc]=lsz;cz[nc++]=0;}
+         cs[nc]=8;cz[nc++]=1; cs[nc]=8;cz[nc++]=0; }
   for(int i=0;i<nc;i++){
     unsigned long long hi = cz[i] ? ((1ull<<(cs[i]*8-1))-1) : (cs[i]>=8?~0ull:((1ull<<(cs[i]*8))-1));
     if(val<=hi){ *size=cs[i]; *signd=cz[i]; return; }
@@ -1129,7 +1290,7 @@ static uint32_t intern_string(CC *c, const char *s, int n) {
     if ((int)strlen(c->fn->host_literals[k].spelling)==n &&
         !memcmp(c->fn->host_literals[k].spelling,s,(size_t)n))
       return c->fn->host_literals[k].rid;
-  int elem = str_elem_size(s,n);                              /* element width (wide/UTF prefix) */
+  int elem = str_elem_size(c,s,n);                            /* element width (wide/UTF prefix) */
   int nunits = str_bytes(s,n)+1;                              /* code units incl. the NUL */
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"__str%d",c->fn->n_host_literals);
   uint32_t rid = add_res(c,BCIR_DOM_RAM,elem,nunits,0,BCIR_RK_POINTER,nm);
@@ -1157,6 +1318,13 @@ static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(
 static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` / `(struct P[]){init}` (defined w/ arr_init) */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid);   /* (defined with the verifier) */
+/* A copy of `rid`'s resource, for a caller about to make a temporary: add_res may reallocate res[], so a
+ * pointer into it dangles across the call (CF-UAF). 1 when `rid` names a resource, else 0 and *out zeroed. */
+static int res_copy(const CC *c,uint32_t rid,bcir_resource *out){
+  const bcir_resource *r=res_of(c->fn,rid);
+  if(r) *out=*r; else memset(out,0,sizeof *out);
+  return r!=NULL;
+}
 
 /* --- volatile: one model on both rails (the oracle: ctype_model.touches_mmio, lower._load_unit/_write,
  * lower._order_device_claims) -------------------------------------------------------------------------
@@ -1239,6 +1407,45 @@ static int index_elem_atomic(CC *c,const venv *b){
   }
   return 1;
 }
+/* The sdef of the struct/union the element of `b[i]` (and `*b`) is -- of an array of structs, or through a pointer to
+ * one -- else -1 (a scalar or pointer element): the aggregate its load reads and a store to it takes (CF-STRUCTVAL). */
+static int index_elem_sidx(CC *c,const venv *b){
+  if(b->type.kind==1) return b->sidx;
+  if(b->type.kind==2 && b->type.ptr_to_struct && !ptr_array(c,b) && (b->type.ptr_depth?b->type.ptr_depth:1)==1)
+    return b->sidx;
+  return -1;
+}
+/* The sdef an aggregate spelling `struct T` / `union T` (a resource's `agg`) names, else -1. */
+static int agg_sidx(CC *c,const char *agg){
+  if(!agg[0]) return -1;
+  const char *sp=strchr(agg,' '), *tg=sp?sp+1:agg;
+  return find_struct(c,tg,(int)strlen(tg));
+}
+/* The value's type names the struct/union `sidx` (so it initializes that subobject whole, 6.7.9p13). */
+static int value_is_struct(CC *c, uint32_t v, int sidx){
+  const bcir_resource *r=res_of(c->fn,v);
+  char want[BCIR_CIR_NAME];
+  if(!r || sidx<0 || !r->agg[0] || r->kind!=BCIR_RK_AGGREGATE) return 0;
+  snprintf(want,sizeof want,"%s %s",c->s[sidx].is_union?"union":"struct",c->s[sidx].tag);
+  return !strcmp(want,r->agg);
+}
+/* A struct or union object (of sdef `si`; -1: not one, nothing to check) takes only a value of its own type -- its
+ * initializer, when not a brace list, is one expression of it (C11 6.7.9p13), and so is what `=` assigns it
+ * (6.5.16.1p1). Anything else -- a string, a scalar, another struct -- is refused with `why` (CF-STRUCTINIT): it had
+ * lowered to a copy the emit spells `x = 5;`, which does not compile. The oracle's `_struct_value`. */
+static const char *const agg_initialized="a struct or union is initialized by a brace list or a value of its own type";
+static const char *const agg_assigned="a struct or union is assigned a value of its own type";
+static int agg_value_ok(CC *c,int si,uint32_t v,const char *why){
+  if(si<0 || value_is_struct(c,v,si)) return 1;
+  if(is(c,".")||is(c,"->")||is(c,"[")) return 1;   /* the value stopped short of a postfix the twin does not apply
+                                                    * (`(*p).m`): the statement's own parse error refuses it */
+  fail(c,why); return 0;
+}
+/* The sdef of the struct/union OBJECT `v` names -- not an array of them -- else -1: the type `v = e` assigns. */
+static int obj_sidx(CC *c,const venv *v){
+  const bcir_resource *r=res_of(c->fn,v->rid);
+  return v->type.kind==1 && !(r && (r->is_array || r->is_vla)) ? v->sidx : -1;
+}
 /* A pointer temp of pointer type `ty` (the oracle's `_temp(pointer)`): it carries the pointee -- width, sign,
  * float, plain char, _Bool, struct tag, void, depth and volatility -- and is an MMIO resource when it points
  * at volatile storage, so what is read through it is typed and marked as through a declared pointer. */
@@ -1257,8 +1464,7 @@ static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si){
 /* A fresh ordinary temp of `rid`'s value type -- the value a volatile object's read yields (lvalue
  * conversion drops the qualifier). */
 static uint32_t temp_like(CC *c,uint32_t rid){
-  const bcir_resource *r=res_of(c->fn,rid);
-  bcir_resource snap; if(r) snap=*r; else memset(&snap,0,sizeof snap);   /* add_res may realloc res[] */
+  bcir_resource snap; res_copy(c,rid,&snap);
   uint32_t t=add_res(c,BCIR_DOM_RAM,(int)(snap.elem_bytes?snap.elem_bytes:4),1,0,
                      snap.kind==BCIR_RK_AGGREGATE?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR,"");
   if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
@@ -1269,6 +1475,51 @@ static uint32_t temp_like(CC *c,uint32_t rid){
 }
 /* A read of the named object `v` as a value: its rid -- or, for a volatile object, a volatile read into an
  * ordinary temp (a c.copy carrying the volatile bit): the oracle's `_rvalue(Name)`. */
+/* The value `v` taken by an object of type `ty`: a `c.const 0` taken by a pointer is a null pointer constant
+ * (C11 6.3.2.3p3), so its temp becomes that pointer -- the emit declares `T *t = 0u;`, where an integer temp
+ * made `p = t;` assign an integer variable to a pointer, which Clang and GCC reject. The claim graph is
+ * unchanged: only the temp's C type moves (the oracle's `_null_pointer`, CF-NULLPTR). */
+static uint32_t null_pointer(CC *c, uint32_t v, const bcir_ctype *ty){
+  if(!c->fn || !ty || !(ty->kind==2 || (ty->kind==3 && ty->tag[0]))) return v;   /* a pointer, a function pointer */
+  bcir_resource *r=NULL; for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==v){ r=&c->fn->res[i]; break; }
+  if(!r || r->name[0] || r->kind!=BCIR_RK_SCALAR) return v;         /* a named object is never a constant */
+  const bcir_claim *k=NULL;
+  for(size_t i=c->fn->n_claims; i-- > 0; ) if(c->fn->claims[i].n_wr && c->fn->claims[i].wr[0]==v){ k=&c->fn->claims[i]; break; }
+  if(!k || strcmp(k->op,"c.const") || k->n_imm!=1 || k->imm[0]!=0) return v;
+  if(ty->kind==3){ r->is_funcptr=1; snprintf(r->agg,BCIR_CIR_NAME,"%s",ty->tag); return v; }   /* `op_t f = 0;` */
+  r->kind=BCIR_RK_POINTER; r->elem_bytes=(uint32_t)(ty->size>0?ty->size:0); r->ptr_depth=ty->ptr_depth;
+  r->is_signed=(uint8_t)(ty->signd?1:0); r->is_float=(uint8_t)(ty->is_float?1:0); r->is_complex=(uint8_t)(ty->is_complex?1:0);
+  r->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); r->is_bool=(uint8_t)(ty->is_bool?1:0);
+  r->is_volatile=(uint8_t)(ty->is_volatile?1:0); r->is_atomic=(uint8_t)(ty->is_atomic?1:0);
+  if(ty->ptr_to_struct) snprintf(r->agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
+  else if(ty->size==0 && !ty->is_float) r->is_voidptr=1;
+  return v;
+}
+/* The actuals of every direct call in the unit, typed by the callee's parameters: an argument converts to its
+ * parameter's type as if by assignment (C11 6.5.2.2p7), so a `c.const 0` passed to a pointer parameter is a
+ * null pointer of that type (null_pointer). The parser is single pass -- a callee defined after its caller is
+ * not known at the call -- so this runs once the unit is parsed, reading the callee's definition in the unit,
+ * whichever comes first, else its prototype. A variadic callee's extra actuals have no parameter and keep their
+ * type. Only the temps' C types move (the oracle's `_null_pointer_args`, CF-NULLARG). */
+static void null_pointer_args(CC *c, bcir_unit *u){
+  bcir_func *cur=c->fn;
+  for(int i=0;i<u->n_funcs;i++){ c->fn=&u->funcs[i];
+    for(size_t k=0;k<c->fn->n_claims;k++){ const bcir_claim *cl=&c->fn->claims[k]; const char *callee;
+      if(!strncmp(cl->op,"c.call:",7)) callee=cl->op+7;
+      else if(!strncmp(cl->op,"c.call.void:",12)) callee=cl->op+12;
+      else if(!strncmp(cl->op,"c.call.tu:",10)) callee=cl->op+10;
+      else continue;
+      const bcir_func *def=NULL; const bcir_ctype *pt=NULL; int np=0;
+      for(int j=0;j<u->n_funcs && !def;j++) if(!strcmp(u->funcs[j].name,callee)) def=&u->funcs[j];
+      if(def) np=def->n_params;
+      else for(int j=0;j<c->n_protos;j++)
+        if(!strcmp(c->protos[j].name,callee)){ pt=c->protos[j].params; np=c->protos[j].n_params; break; }
+      for(int a=0;a<cl->n_rd && a<np;a++)
+        null_pointer(c,cl->rd[a],def?&def->params[a].type:pt?&pt[a]:NULL);
+    }
+  }
+  c->fn=cur;
+}
 static uint32_t named_read(CC *c,const venv *v){
   if(!obj_vol(c,v)) return v->rid;
   uint32_t t=temp_like(c,v->rid);
@@ -1418,10 +1669,10 @@ static int ctype_generic_eq(const bcir_ctype *a, const bcir_ctype *b){
  * struct tag). The result of pointer arithmetic `p + i` carries p's type, so the emit declares a real
  * `T *t = p + i` (a pointee-scaled pointer) instead of a width-truncating uint32. */
 static uint32_t tempptr(CC *c, uint32_t src){
-  const bcir_resource *s=res_of(c->fn,src);
-  uint32_t r=add_res(c,BCIR_DOM_RAM, s?(int)s->elem_bytes:4, 1, 0, BCIR_RK_POINTER, "");
-  if(c->fn->n_res && s){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
-    t->is_signed=s->is_signed; t->is_float=s->is_float; snprintf(t->agg,sizeof t->agg,"%s",s->agg); }
+  bcir_resource snap; int have=res_copy(c,src,&snap);
+  uint32_t r=add_res(c,BCIR_DOM_RAM, have?(int)snap.elem_bytes:4, 1, 0, BCIR_RK_POINTER, "");
+  if(c->fn->n_res && have){ bcir_resource *t=&c->fn->res[c->fn->n_res-1];
+    t->is_signed=snap.is_signed; t->is_float=snap.is_float; snprintf(t->agg,sizeof t->agg,"%s",snap.agg); }
   return r;
 }
 /* A pointer temporary typed from a pointer struct MEMBER's pointee descriptor -- so a loaded `s->p`
@@ -1447,6 +1698,7 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
                                           * even a `_BitInt(N)` bitfield -- its unit is read raw, then masked. */
             :fld->bit_width>0?tempbi(c,fld->bit_width,fld->signd)   /* a PLAIN C23 `_BitInt(N)` member: load at the
                                                                     * storage width, typed `_BitInt(N)` (faithful) */
+            :fld->sidx>=0?tempagg(c,fld->sidx)   /* a struct/union member: the aggregate value (CF-STRUCTVAL) */
             :tempi(c,usz,fld->signd);   /* loaded value carries the field's type */
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* read as `char`, not int8_t */
   if(fld->is_bool && fld->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* an `_Atomic _Bool`
@@ -1475,6 +1727,7 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
  * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
 static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
   uint32_t t=fld->elem_ptr?tempptr_field(c,fld)        /* an array-of-pointers element: a `T *` temp */
+            :fld->elem_sidx>=0?tempagg(c,fld->elem_sidx)   /* an array-of-structs element: the aggregate (CF-STRUCTVAL) */
             :fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* `char[]` element: `char` */
   if(fld->is_bool && fld->is_atomic && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;   /* `_Atomic _Bool[]` */
@@ -1485,18 +1738,25 @@ static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t 
   mark_atomic(cl,fld->is_atomic);
   return t;
 }
-/* After `arr[i]` on an ARRAY-OF-STRUCTS member (`arr->elem_sidx>=0`) with a trailing `.`/`->`, parse the
- * element field name and look it up in the element struct. Only a PLAIN SCALAR element field is handled
- * (a bitfield/array/nested/pointer element field is a consistent follow-on -- both rails route to fallback).
- * Returns 1 with *sub filled, else 0 (and may have raised via fail()). The leading `.`/`->` must be present. */
-static int elem_field(CC *c, const field *arr, field *sub) {
-  if(arr->elem_sidx<0 || !(is(c,".")||is(c,"->"))) return 0;
-  c->i++; tok fn=adv(c); sdef *ES=&c->s[arr->elem_sidx]; int fi=-1;
+static field member_descend(CC *c, field f);   /* fwd: a nested `.m.k` member chain -> one flattened offset */
+/* The member of an array-of-structs element (the element struct is sdef `sidx`) named after the `.`/`->` at the
+ * cursor, through any depth of nested struct/union members `.m.k` (CF-NESTMEM): one flattened offset in the
+ * element, which the access keeps striding by -- the oracle's `_aos_member`. Only a PLAIN SCALAR leaf is handled
+ * (a bitfield/array/struct/pointer leaf is a consistent follow-on -- both rails route to fallback). Returns 1
+ * with *sub filled, else 0 (and may have raised via fail()). The cursor is on the `.`/`->`. */
+static int sdef_elem_field(CC *c, int sidx, field *sub) {
+  c->i++; tok fn=adv(c); sdef *ES=&c->s[sidx]; int fi=-1;
   for(int i=0;i<ES->nf;i++) if((int)strlen(ES->f[i].name)==fn.n&&!strncmp(ES->f[i].name,fn.s,fn.n)) fi=i;
   if(fi<0){ fail(c,"unknown field"); return 0; }
-  field s=ES->f[fi];
+  field s=member_descend(c,ES->f[fi]);
   if(s.bit_w||s.arr_count||s.sidx>=0||s.is_ptr){ fail(c,"array-of-structs non-scalar element field"); return 0; }
   *sub=s; return 1;
+}
+/* After `arr[i]` on an ARRAY-OF-STRUCTS member (`arr->elem_sidx>=0`) with a trailing `.`/`->`: the element
+ * field (`sdef_elem_field`). Returns 1 with *sub filled, else 0 (and may have raised via fail()). */
+static int elem_field(CC *c, const field *arr, field *sub) {
+  if(arr->elem_sidx<0 || !(is(c,".")||is(c,"->"))) return 0;
+  return sdef_elem_field(c,arr->elem_sidx,sub);
 }
 /* `arr[i].field` (array-of-structs): load `sub->size` bytes at member_off(arr)+offsetof(sub), STRIDING by the
  * element size `arr->size` (imm[2]) -- decoupled from the field copy size (imm[1]). */
@@ -1512,18 +1772,12 @@ static uint32_t emit_member_index_field(CC *c, venv *base, const field *arr, uin
   mark_atomic(cl,sub->is_atomic);
   return t;
 }
-/* After `a[i]` on a DIRECT local/global ARRAY-OF-STRUCTS variable (`v->sidx>=0`, the element struct) with a
- * trailing `.`/`->`, parse the element field name and look it up in the element struct. Only a PLAIN SCALAR
- * element field is handled (a bitfield/array/nested/pointer field is a both-rails follow-on). Returns 1 with
- * *sub filled, else 0 (may raise via fail()). The leading `.`/`->` must be present; the cursor is past it. */
+/* After `a[i]` on a DIRECT local/global ARRAY-OF-STRUCTS variable, or a pointer to structs (`v->sidx>=0`, the
+ * element struct), with a trailing `.`/`->`: the element field (`sdef_elem_field`). Returns 1 with *sub filled,
+ * else 0 (may raise via fail()); the cursor is past the field chain. */
 static int aos_elem_field(CC *c, venv *base, field *sub) {
   if(base->sidx<0 || !(is(c,".")||is(c,"->"))) return 0;
-  c->i++; tok fn=adv(c); sdef *ES=&c->s[base->sidx]; int fi=-1;
-  for(int i=0;i<ES->nf;i++) if((int)strlen(ES->f[i].name)==fn.n&&!strncmp(ES->f[i].name,fn.s,fn.n)) fi=i;
-  if(fi<0){ fail(c,"unknown field"); return 0; }
-  field s=ES->f[fi];
-  if(s.bit_w||s.arr_count||s.sidx>=0||s.is_ptr){ fail(c,"array-of-structs non-scalar element field"); return 0; }
-  *sub=s; return 1;
+  return sdef_elem_field(c,base->sidx,sub);
 }
 /* `a[i].field` on a DIRECT array-of-structs variable: load `sub->size` bytes at offsetof(sub), STRIDING by
  * the element (struct) size `v->type.size` (imm[2]) -- the base is the array itself (member offset 0). */
@@ -1762,14 +2016,178 @@ static void scan_mutations(CC *c, int start) {
       }
       continue;
     }
-    if (t->k == T_PUN && t->n == 1 && t->s[0] == '&' && c->t[i + 1].k == T_ID) {  /* a UNARY `&x` (address-of) */
+    if (t->k == T_PUN && t->n == 1 && t->s[0] == '&') {   /* a UNARY `&x` (address-of): the oracle's rule --
+                                                          * the operand is the name itself, parenthesized or not;
+                                                          * `&p[i]`, `&s.m`, `&p->m` address what it reaches */
       const tok *pv = (i > start) ? &c->t[i - 1] : NULL;
-      if (!(pv && is_value_ender(pv))) {                   /* unary when the previous token is not a value-ender */
-        mutent *m = mut_find(c, &c->t[i + 1]);
-        if (m) m->addr = 1;
+      int np = 0, j = i + 1;
+      while (tok_is(&c->t[j], "(")) { np++; j++; }
+      if (c->t[j].k == T_ID && !(pv && is_value_ender(pv))) {   /* unary when the previous token is not a value-ender */
+        int k = j + 1, closed = 0;
+        while (closed < np && tok_is(&c->t[k], ")")) { closed++; k++; }
+        if (closed == np && !tok_is(&c->t[k], "[") && !tok_is(&c->t[k], ".") && !tok_is(&c->t[k], "->")) {
+          mutent *m = mut_find(c, &c->t[j]);
+          if (m) m->addr = 1;
+        }
       }
     }
   }
+}
+
+/* --- CF-PAREN: a postfix operator after a parenthesized operand ---------------------------------------------
+ * The oracle's parser reads `( e )` as `e` (cparse `_primary`), so `(a)[1]`, `(s).x`, `(p)->x`, `(x)++` and
+ * `((uint32_t[3]){s, 7})[1]` are the postfix chains without their parentheses, and it folds `(*p).x` to `p->x`
+ * and `(*p)[i]` to `p[0][i]` (`_postfix_tail`). The twin lowers while it parses, from an identifier-rooted chain
+ * at each site -- a read, a store, a value assignment, an inc/dec, `&` -- so this pass rewrites a function body's
+ * tokens to those spellings before any of it is parsed (the mutation pre-pass has read the source spelling, as
+ * the oracle's AST walk sees `(x)++` and `&(p)[i]`). P is a name, a string or a compound literal, then `[..]` `.m`
+ * `->m`:
+ *     (^n P )^n OP   ->  P OP   (OP one of [ . ->)      (^n * P )^n .  ->  P ->
+ *     (^n P )^n ++   ->  (^n P ++ )^n                  (^n * P )^n [  ->  P [ 0 ] [
+ * -- `(x)++;` stays the expression statement the oracle's parse keeps (its `x++;` is an assignment) -- and only
+ * where the `(` opens a parenthesized expression: not a call's arguments (after a name, `)` or `]`), a cast's type
+ * name, an `if`/`while`/`switch` condition, or a declarator (`T (x)[N]`, a form neither rail takes). A pass
+ * rewrites the innermost parentheses of a nesting; the caller repeats it until nothing changes. */
+typedef struct { uint8_t blk, start, decl, init, lab, forhdr, fstart; int pd, dpd, xpd; } upframe;
+#define UP_FRAMES 64
+/* The token after the balanced group that opens at `j` (`(`/`[`/`{` ... its closer), or -1 unbalanced. */
+static int up_group_end(CC *c, int j){
+  char o=tat(c,j)->s[0], cl=o=='('?')':o=='['?']':'}'; int d=0;
+  for(int k=j; tat(c,k)->k!=T_END; k++){
+    const tok *t=tat(c,k); if(t->k!=T_PUN || t->n!=1) continue;
+    if(t->s[0]==o) d++; else if(t->s[0]==cl && --d==0) return k+1;
+  }
+  return -1;
+}
+/* The `(` matching the `)` at `j`, scanning back no further than `lo` (-1 when none). */
+static int up_match_open(CC *c, int j, int lo){
+  int d=0;
+  for(int k=j; k>=lo; k--){ const tok *t=tat(c,k);
+    if(tok_is(t,")")) d++; else if(tok_is(t,"(") && --d==0) return k; }
+  return -1;
+}
+/* The `(` at `q` opens a type name -- a cast (after another one too) or a compound literal -- and not a `sizeof`/
+ * `typeof`/`_Atomic` operand or an attribute's (after a name): no call's arguments or condition start with one. */
+static int up_cast_open(CC *c, int q){
+  const tok *b=tat(c,q-1), *t=tat(c,q+1);
+  if(b->k==T_ID && !tok_is(b,"return") && !tok_is(b,"else") && !tok_is(b,"do")) return 0;
+  return t->k==T_ID && decl_type_tok(c,t);
+}
+/* A name the pass may treat as an operand (not a type, not a keyword). */
+static int up_operand_name(CC *c, const tok *t){
+  static const char *const kw[]={"sizeof","_Alignof","alignof","_Generic","__real__","__imag__","return","if","else",
+    "while","for","do","switch","case","default","break","continue","goto","static","extern","register","auto",
+    "inline","typedef","restrict","__restrict","__restrict__","__attribute__","__extension__","asm","__asm__",
+    "_Static_assert","static_assert","_Alignas","alignas",0};
+  if(t->k!=T_ID || decl_type_tok(c,t)) return 0;
+  for(int k=0;kw[k];k++) if(tok_is(t,kw[k])) return 0;
+  return 1;
+}
+/* The end of the postfix operand P at `j` (a name, a string literal -- or, with `cl`, a compound literal -- then
+ * its `[..]` `.m` `->m` selectors), -1 when there is none; `*is_name` tells whether it is a name's. */
+static int up_operand_end(CC *c, int j, int cl, int *is_name){
+  *is_name=up_operand_name(c,tat(c,j));
+  if(*is_name) j++;
+  else if(tat(c,j)->k==T_STR){ while(tat(c,j)->k==T_STR) j++; }   /* `("abc")[i]`, adjacent pieces included */
+  else if(cl && tok_is(tat(c,j),"(") && decl_type_tok(c,tat(c,j+1))){   /* `(T){...}` */
+    j=up_group_end(c,j); if(j<0 || !tok_is(tat(c,j),"{")) return -1;
+    j=up_group_end(c,j); if(j<0) return -1; }
+  else return -1;
+  for(;;){
+    if(tok_is(tat(c,j),"[")){ j=up_group_end(c,j); if(j<0) return -1; }
+    else if((tok_is(tat(c,j),".")||tok_is(tat(c,j),"->")) && tat(c,j+1)->k==T_ID) j+=2;
+    else return j;
+  }
+}
+/* May the `(` about to be written at `w` open a parenthesized operand (the body's first token is at `lo`)? */
+static int up_paren_ok(CC *c, int w, int lo, const upframe *f){
+  if(f->decl && !f->init && f->xpd<0) return 0;            /* a declarator: `T (x)[N]`, `T *(x)`, `T a, (x)[N]` */
+  const tok *p=tat(c,w-1);                                  /* the token before the `(` (the body's `{` first) */
+  if(p->k==T_ID) return tok_is(p,"return")||tok_is(p,"else")||tok_is(p,"do");   /* a name: its call, condition or
+                                                             * `sizeof`/`typeof` operand */
+  if(p->k!=T_PUN || tok_is(p,"]")) return 0;                /* a literal before it, or `a[i](x)`: a call */
+  if(!tok_is(p,")")) return 1;
+  int q=up_match_open(c,w-1,lo);                            /* after `)`: a condition's, or a cast's */
+  if(q<0) return 0;
+  const tok *b=tat(c,q-1);
+  if(tok_is(b,"if")||tok_is(b,"while")||tok_is(b,"for")||tok_is(b,"switch")) return 1;
+  return up_cast_open(c,q);
+}
+/* Track what the token just written at `w` does to the statement structure (the frames of the braces it is in). */
+static void up_track(CC *c, upframe *fr, int *nf, int *deep, int w){
+  upframe *f=&fr[*nf-1]; const tok *t=tat(c,w), *pv=tat(c,w-1);
+  if(t->k!=T_PUN || t->n!=1) return;
+  switch(t->s[0]){
+    case '(': case '[':
+      if(f->decl && !f->init && f->xpd<0 && (t->s[0]=='[' || tok_is(pv,"typeof")||tok_is(pv,"__typeof__")
+         ||tok_is(pv,"typeof_unqual")||tok_is(pv,"sizeof")||tok_is(pv,"_Alignof")||tok_is(pv,"alignof")
+         ||tok_is(pv,"_Alignas")||tok_is(pv,"alignas"))) f->xpd=f->pd;   /* an expression inside a declarator */
+      f->pd++;
+      if(t->s[0]=='(' && f->forhdr){ f->forhdr=0; f->fstart=1; }   /* the for-init follows */
+      break;
+    case ')': case ']': if(f->pd>0) f->pd--; if(f->pd==f->xpd) f->xpd=-1; break;
+    case '{': {
+      int blk=1;                                           /* a block (`({` a statement expression's too) -- */
+      if(!tok_is(pv,"(")){                                 /* or an initializer's brace list, a compound literal's */
+        if(!f->blk || (f->decl && f->init) || tok_is(pv,"=") || tok_is(pv,",")) blk=0;
+        else if(tok_is(pv,")")){ int q=up_match_open(c,w-1,0); blk=!(q>=0 && up_cast_open(c,q)); } }
+      if(*nf<UP_FRAMES){ upframe *n=&fr[(*nf)++]; memset(n,0,sizeof *n); n->blk=(uint8_t)blk; n->start=(uint8_t)blk; n->xpd=-1; }
+      else (*deep)++;
+      break; }
+    case '}':
+      if(*deep){ (*deep)--; break; }
+      { int was_blk=f->blk; (*nf)--;
+        if(*nf>0 && was_blk){ upframe *o=&fr[*nf-1]; if(o->blk && o->pd==0){ o->start=1; o->decl=0; } } }
+      break;
+    case ';': if(f->blk && f->pd==0){ f->start=1; f->decl=0; } else if(f->decl && f->pd==f->dpd) f->decl=0; break;
+    case '=': if(f->decl && f->pd==f->dpd && f->xpd<0) f->init=1; break;
+    case ',': if(f->decl && f->pd==f->dpd) f->init=0; break;
+    case ':': if(f->lab && f->pd==0){ f->lab=0; f->start=1; } break;
+    default: break;
+  }
+}
+/* One pass over the body at `start` (just past its `{`), compacting it in place; 1 when it rewrote something. Of a
+ * run of `(`, only the one whose closers directly follow P can open P's parentheses: it is found once per run. */
+static int unparen_body(CC *c, int start){
+  static const tok lb={T_PUN,"[",1,0}, zero={T_INT,"0",1,0}, rb={T_PUN,"]",1,0}, arrow={T_PUN,"->",2,0};
+  upframe fr[UP_FRAMES]; int nf=1, deep=0, np=0, w=start, r=start, changed=0;
+  struct { int pos, n, zero; } pend[UP_FRAMES];              /* scheduled closers: dropped, or `[0]` in their place */
+  int run_end=start, cand=-1, pe=-1, k=0, star=0, is_name=0;   /* the current run of `(` and its one candidate */
+  memset(&fr[0],0,sizeof fr[0]); fr[0].blk=1; fr[0].start=1; fr[0].xpd=-1;
+  while(r<c->nt && nf>0){
+    if(np && pend[np-1].pos==r){                           /* P's closers */
+      if(pend[np-1].zero){ c->t[w++]=lb; c->t[w++]=zero; c->t[w++]=rb; }
+      r+=pend[--np].n; continue; }
+    tok t=c->t[r]; upframe *f=&fr[nf-1];
+    if(f->blk && f->pd==0 && f->start){                    /* a statement starts: a label, or a declaration? */
+      f->start=0;
+      if(tok_is(&t,"case")||tok_is(&t,"default")||(t.k==T_ID && tok_is(tat(c,r+1),":"))) f->lab=1;
+      else { f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=0; f->init=0; f->xpd=-1; f->forhdr=(uint8_t)tok_is(&t,"for"); } }
+    else if(f->fstart){ f->fstart=0; f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=f->pd; f->init=0; f->xpd=-1; }
+    if(tok_is(&t,"(") && r>=run_end){                      /* a run of `(` starts: P after it, and its closers */
+      run_end=r; while(tok_is(tat(c,run_end),"(")) run_end++;
+      int ps=run_end;                                      /* P's first token -- the run's last `(` when it opens */
+      star=tok_is(tat(c,ps),"*");                          /* a compound literal's type name, `((T){...})[i]` */
+      if(!star && decl_type_tok(c,tat(c,ps))) ps--;
+      pe=up_operand_end(c,ps+star,!star,&is_name); k=0;
+      if(pe>0) while(tok_is(tat(c,pe+k),")")) k++;
+      cand = pe>0 && k>=1 && k<=ps-r ? ps-k : -1; }
+    if(r==cand && np<UP_FRAMES && !deep && up_paren_ok(c,w,start,f)){
+      const tok *op=tat(c,pe+k); int n=k;
+      if(!star && (tok_is(op,"[")||tok_is(op,".")||tok_is(op,"->"))){   /* (^n P )^n OP  ->  P OP */
+        pend[np].pos=pe; pend[np].n=n; pend[np].zero=0; np++; r+=n; changed=1; continue; }
+      if(star && is_name && (tok_is(op,".")||tok_is(op,"["))){   /* (^n * P )^n .  ->  P ->  ;  [  ->  P [0] [ */
+        int z=tok_is(op,"[");
+        if(!z) c->t[pe+n]=arrow;
+        pend[np].pos=pe; pend[np].n=n; pend[np].zero=z; np++; r+=n+1; changed=1; continue; }
+      if(!star && is_name && (tok_is(op,"++")||tok_is(op,"--"))){   /* (^n P )^n ++  ->  (^n P ++ )^n */
+        tok s=c->t[pe+n]; memmove(&c->t[pe+1],&c->t[pe],(size_t)n*sizeof(tok)); c->t[pe]=s; changed=1; }
+    }
+    c->t[w++]=t; r++;
+    up_track(c,fr,&nf,&deep,w-1);
+  }
+  if(w<r){ memmove(&c->t[w],&c->t[r],(size_t)(c->nt+1-r)*sizeof(tok)); c->nt-=r-w; }
+  return changed;
 }
 
 /* The byte width of a per-element size operand at token `i` -- `sizeof(type)` or an integer literal --
@@ -1992,6 +2410,9 @@ static uint32_t elem_temp(CC *c, venv *base) {
     * `T **`: the element is itself a pointer, one level down (the oracle's `base_ct.of`), never a `T` value */
     bcir_ctype et=base->type; et.ptr_depth=(uint8_t)((base->type.ptr_depth?base->type.ptr_depth:1)-1);
     t=temp_ptr(c,&et,base->sidx);
+  } else if(index_elem_sidx(c,base)>=0){           /* an element of an array of structs, or through a pointer to
+    * one (`ps[i]`, `pp[i]`, `*gp`): the struct/union value itself (CF-STRUCTVAL) */
+    t=tempagg(c,index_elem_sidx(c,base));
   } else { int es=base->type.size?base->type.size:4;
     t=base->type.is_float ? tempf(c,es) : tempi(c,es,base->type.signd);   /* float -> a float temp; else keep the sign */
     if(base->type.is_bool && index_elem_atomic(c,base) && c->fn->n_res)   /* an `_Atomic _Bool` element */
@@ -2088,6 +2509,129 @@ static uint32_t index_chain(CC *c, venv *v){
     if(!step_to_elem_ptr(c,v,lin)){ fail(c,"a subscript of an element that is not a pointer"); return lin; }
   }
 }
+/* A multi-dimensional file-scope array of scalars indexed in full (`g[i][j]` of `T g[A][B]`): the whole object as
+ * a member array at offset 0 (the oracle's `whole` index) -- row-major, then an access at a byte offset, which
+ * the global's own nested declaration does not care about (CF-SMALL). The cursor is at the first `[`. */
+static int global_md_field(CC *c, const venv *v, field *gf){
+  const bcir_resource *r=res_of(c->fn,v->rid);
+  if(!r || !r->read_only || !r->name[0] || v->type.kind!=0) return 0;
+  int gi=find_global(c,r->name,(int)strlen(r->name));
+  if(gi<0 || !c->gv[gi].is_arr || c->gv[gi].nd<2 || c->gv[gi].nd>3) return 0;
+  const gvar *g=&c->gv[gi];
+  if(sub_group_count(c,c->i)!=g->nd) return 0;
+  memset(gf,0,sizeof *gf); snprintf(gf->name,sizeof gf->name,"%s",g->name);
+  gf->sidx=-1; gf->elem_sidx=-1; gf->ptee_sidx=-1;
+  gf->size=v->type.size; gf->signd=v->type.signd; gf->is_float=v->type.is_float; gf->is_complex=v->type.is_complex;
+  gf->is_bool=v->type.is_bool; gf->is_plain_char=v->type.is_plain_char; gf->bit_width=v->type.bit_width;
+  gf->is_volatile=v->type.is_volatile; gf->is_atomic=v->type.is_atomic; gf->access_bytes=gf->size;
+  gf->nadims=g->nd; gf->arr_count=1;
+  for(int d=0; d<g->nd; d++){ gf->adims[d]=(int)g->dims[d]; gf->arr_count*=(int)g->dims[d]; }
+  return 1;
+}
+/* `a[i].m[j]` on a direct array-of-structs `a` (the element index `lin` lowered, the cursor at `.`): the member
+ * array `m` of scalars -- reached through any depth of nested struct/union members, `a[i].s.m[j]` (CF-NESTMEM),
+ * which only add their offsets -- its element index folded with the element's: `lin*K + j`, K the element
+ * struct's size in `m`'s elements (the oracle's `aos_idx`). 1 with `af` (the member at its offset in the element)
+ * and the folded index; 0 when the form is not this one (the cursor unmoved); -1 on a refusal. */
+static int aos_member_array(CC *c, venv *v, uint32_t lin, field *af, uint32_t *total){
+  if(v->sidx<0 || !is(c,".")) return 0;
+  const sdef *ES=&c->s[v->sidx], *S=ES;               /* the element struct; the aggregate a hop names into */
+  int j=c->i, off=0, vol=0; field m;
+  for(;;){                                             /* peek the `.` chain down to a member array's `[` */
+    const tok *fn=tat(c,j+1); int fi=-1;
+    if(!tok_is(tat(c,j),".") || fn->k!=T_ID) return 0;
+    for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fn->n && !strncmp(S->f[k].name,fn->s,(size_t)fn->n)){ fi=k; break; }
+    if(fi<0) return 0;
+    m=S->f[fi];
+    if(m.arr_count && tok_is(tat(c,j+2),"[")) break;
+    if(m.sidx<0 || !tok_is(tat(c,j+2),".")) return 0;  /* a scalar member: `a[i].f` (aos_elem_field) */
+    off+=m.byte_off; vol|=m.is_volatile; S=&c->s[m.sidx]; j+=2;
+  }
+  m.byte_off+=off; if(vol) m.is_volatile=1;           /* the member array at its offset in the element */
+  int nd=m.nadims>0?m.nadims:1;
+  if(m.elem_sidx>=0 || m.elem_ptr || nd>3){ fail(c,"a subscript of an array-of-structs member array is not supported"); return -1; }
+  if(sub_group_count(c,j+2)!=nd){ fail(c,"partial indexing of a struct member array is not yet supported"); return -1; }
+  if(m.size<=0 || ES->size%m.size){ fail(c,"an array-of-structs member array whose element does not divide the struct"); return -1; }
+  c->i=j+2;                                            /* `.s.m` */
+  uint32_t lm=member_arr_index(c,&m);
+  if(c->failed) return -1;
+  uint32_t k=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+  if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=ES->size/m.size;}
+  uint32_t m1=temp(c,4); bcir_claim *mc=new_claim(c,"c.bin.mul",BCIR_OP_MUL);
+  if(mc){mc->n_rd=2;mc->rd[0]=lin;mc->rd[1]=k;mc->n_wr=1;mc->wr[0]=m1;}
+  uint32_t a1=temp(c,4); bcir_claim *ac=new_claim(c,"c.bin.add",BCIR_OP_ADD);
+  if(ac){ac->n_rd=2;ac->rd[0]=m1;ac->rd[1]=lm;ac->n_wr=1;ac->wr[0]=a1;}
+  *af=m; *total=a1; return 1;
+}
+/* `&base.m[idx]` for a member-array (or whole-object) element `mf` at its byte offset: a `T *` (c.addrof). */
+static uint32_t addr_member_elem(CC *c, const venv *v, const field *mf, uint32_t ix){
+  int es=mf->size?mf->size:4;
+  uint32_t t=add_res(c,BCIR_DOM_RAM, es, 1,0,BCIR_RK_POINTER,"");
+  if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+    tr->is_signed=(uint8_t)(mf->signd?1:0); tr->is_float=(uint8_t)(mf->is_float?1:0); tr->ptr_depth=1;
+    tr->is_atomic=(uint8_t)(mf->is_atomic?1:0); tr->is_complex=(uint8_t)(mf->is_complex?1:0);
+    tr->is_bool=(uint8_t)(mf->is_bool?1:0); tr->is_plain_char=(uint8_t)(mf->is_plain_char?1:0); }
+  bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
+  if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=mf->byte_off;cl->imm[1]=es;}
+  return t;
+}
+static void compound_binop(char ch, const char **suf, bcir_opcode *oc);
+static uint32_t binop_result(CC *c, const char *suf, uint32_t a, uint32_t b);
+/* The statement `<element> = e;` / `<element> OP= e;` at the cursor, for the member-array (or whole-object) element
+ * `f[idx]` of `v`: a compound loads, operates and stores back; an `_Atomic` element is one atomic read-modify-write
+ * -- the member-array statement path's shape. 0 when neither follows (the caller re-parses an expression). */
+static int store_member_elem_stmt(CC *c, venv *v, const field *f, uint32_t idx){
+  uint32_t aval;
+  if(f->is_atomic && is_compound_op(&c->t[c->i])){
+    char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(f);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+    (void)emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,f->byte_off,f->size,0,f->is_volatile||v->type.is_volatile,
+                   BCIR_BND_ASSUMED);
+    return 1; }
+  if(is_compound_op(&c->t[c->i])){
+    char ch=c->t[c->i].s[0]; c->i++;
+    uint32_t cur=emit_member_index(c,v,f,idx); uint32_t rhs=p_expr(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+    aval=tmp; }
+  else if(is(c,"=")){ c->i++; aval=p_expr(c); }
+  else return 0;
+  (void)store_member_index(c,v,f,idx,0,f,aval);
+  return 1;
+}
+/* The statement `a[i].f = e;` / `a[i].f OP= e;` at the cursor, for the element field `sub` (at its flattened offset
+ * in the element) of the array-of-structs base `v`, its element index `idx` resolved once: a store strided by the
+ * element; a compound loads, operates and stores back; an `_Atomic` field is one atomic read-modify-write. 0 when
+ * neither follows (`a[i].f++;` -- the caller re-parses an expression). */
+static int store_elem_field_stmt(CC *c, venv *v, uint32_t idx, const field *sub){
+  uint32_t aval;
+  if(sub->is_atomic && is_compound_op(&c->t[c->i])){   /* an `_Atomic` field: one atomic read-modify-write */
+    char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(sub);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+    (void)emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,sub->byte_off,sub->size,v->type.size,
+                   sub->is_volatile||v->type.is_volatile,BCIR_BND_ASSUMED);
+    return 1; }
+  if(is_compound_op(&c->t[c->i])){                    /* a[i].f OP= expr -> strided load, bin op, strided store */
+    char ch=c->t[c->i].s[0]; c->i++;
+    uint32_t cur=emit_index_field(c,v,idx,sub); uint32_t rhs=p_expr(c);
+    const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+    uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+    bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+    aval=tmp; }
+  else if(is(c,"=")){ c->i++; aval=p_expr(c); }
+  else return 0;
+  (void)store_index_field(c,v,idx,sub,aval);
+  return 1;
+}
+/* A loaded pointer to structs (`ptr`, its element struct `psidx`, the pointer field `pfld` it came from) as the
+ * array-of-structs base a subscript of it is -- `s->p[i].f` strides by the element, as `a[i].f` does. */
+static venv ptr_elem_base(CC *c, uint32_t ptr, int psidx, const field *pfld){
+  venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=2; b.type.ptr_to_struct=1;
+  b.type.size=c->s[psidx].size;
+  b.type.is_volatile=(uint8_t)(pfld->ptee_volatile?1:0);   /* a pointer to a volatile struct */
+  return b;
+}
 /* Dereference a pointer RVALUE (rid). Depth-aware: `*pp` where pp is `T**` (depth 2) loads a pointer
  * (pointer_size bytes) into a `T*` temp (depth 1); `*p` where p is `T*` loads the base scalar. The
  * general form powers `**pp` (deref the result of `*pp`) and `*(<expr>)`. */
@@ -2102,8 +2646,10 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
   uint8_t r_atom=r->is_atomic, r_bool=r->is_bool;
   bcir_domain r_dom=r->domain;
   char r_agg[sizeof r->agg]; snprintf(r_agg,sizeof r_agg,"%s",r->agg);
+  int r_si=agg_sidx(c,r_agg);                      /* the pointee struct/union (a pointer's `agg`), else -1 */
   uint32_t t;
-  if(depth>1){                                     /* the pointee is itself a pointer (read pointer_size) */
+  if(depth==1 && r_si>=0) t=tempagg(c,r_si);       /* `*p` of a pointer to a struct: its value (CF-STRUCTVAL) */
+  else if(depth>1){                                /* the pointee is itself a pointer (read pointer_size) */
     t=add_res(c,r_dom,base,1,r_vol,BCIR_RK_POINTER,"");   /* still pointing at the same (device) storage */
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
       tr->is_signed=r_signd; tr->is_float=r_float; tr->ptr_depth=(uint8_t)(depth-1);
@@ -2151,14 +2697,15 @@ static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereferenc
  * already resolved (byte_off relative to the access base) and the cursor at a possible further
  * `.`/`->`, descend through nested value-struct members, accumulating byte offsets. Returns the final
  * field with byte_off set to the total offset from the base, so the load/store paths (which read
- * f.byte_off / f.size / f.bit_*) flatten the chain to a single offset access -- matching the oracle. */
+ * f.byte_off / f.size / f.bit_*) flatten the chain to a single offset access -- matching the oracle. A member
+ * of a volatile struct/union member is volatile storage too (the oracle qualifies each hop by its aggregate). */
 static field member_descend(CC *c, field f) {
   while((is(c,".")||is(c,"->")) && f.sidx>=0){
-    int base_off=f.byte_off; sdef *S=&c->s[f.sidx]; c->i++;
+    int base_off=f.byte_off, base_vol=f.is_volatile; sdef *S=&c->s[f.sidx]; c->i++;
     tok fn=adv(c); int fi=-1;
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
     if(fi<0){ fail(c,"unknown field"); return f; }
-    f=S->f[fi]; f.byte_off+=base_off;
+    f=S->f[fi]; f.byte_off+=base_off; if(base_vol) f.is_volatile=1;
   }
   return f;
 }
@@ -2197,10 +2744,20 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
   for(;;){
     if(is(c,"[")){                                   /* `...->p[i]`: index the loaded pointer (base[idx]) */
       c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+      if(psidx>=0 && (is(c,".")||is(c,"->"))){       /* `...->p[i].f`: a member of an element of a pointer to
+                                                      * structs, strided by the element as `a[i].f` is */
+        venv e=ptr_elem_base(c,ptr,psidx,&pfld);
+        { field af; uint32_t tot; int r=aos_member_array(c,&e,ix,&af,&tot);   /* `...->p[i].m[j]` */
+          if(r<0) return 0;
+          if(r>0) return emit_member_index(c,&e,&af,tot); }
+        field sub; if(aos_elem_field(c,&e,&sub)) return emit_index_field(c,&e,ix,&sub);
+        return 0; }
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
       b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
       b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);   /* `d->regs[i]` through a `volatile T *regs` */
       b.type.is_atomic=(uint8_t)(pfld.ptee_atomic?1:0);       /* ... and `s->ap[i]` through an `_Atomic T *ap` */
+      if(pfld.ptee_sidx>=0 && pfld.ptee_depth<=1){ b.type.kind=1; b.sidx=pfld.ptee_sidx; }   /* `s->ps[i]` through a
+                                                               * `struct T *ps`: a struct element (CF-STRUCTVAL) */
       return emit_index(c,&b,ix);
     }
     if(is(c,"->")||is(c,".")){
@@ -2217,7 +2774,8 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
           if(is(c,",")){c->i++;continue;} break; }
         eat(c,")");
         field ff=S->f[fi];                               /* the funcptr field carries its captured return type */
-        uint32_t t = ff.fp_ret_float ? tempf(c, ff.fp_ret_size?ff.fp_ret_size:4)
+        uint32_t t = ff.fp_ret_agg ? tempagg(c, ff.fp_ret_agg-1)   /* a struct return (CF-STRUCTVAL) */
+                   : ff.fp_ret_float ? tempf(c, ff.fp_ret_size?ff.fp_ret_size:4)
                    : ff.fp_ret_size>4 ? tempi(c, ff.fp_ret_size, ff.fp_ret_signd)
                    : (ff.fp_ret_signd && ff.fp_ret_size && ff.fp_ret_size<=4) ? tempi(c,4,1)
                    : temp(c,4);                           /* a signed member return reads back signed (mirrors the oracle) */
@@ -2500,6 +3058,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     const char *t1=c->t[c->i-1].s + c->t[c->i-1].n; eat(c,")");
     uint32_t t;                        /* type the result by T so downstream arithmetic/loads are correct */
     if(ty.is_float) t=tempf(c,ty.size);
+    else if(ty.kind==1 && si>=0) t=tempagg(c,si);   /* `va_arg(ap, struct T)`: the struct value (CF-STRUCTVAL) */
     else if(ty.kind==2){ t=temp(c,cc_abi(c)->pointer_size); bcir_resource *pr=&c->fn->res[c->fn->n_res-1];
       pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
       pr->ptr_depth=ty.ptr_depth?ty.ptr_depth:1; pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);
@@ -2522,7 +3081,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.call.vabuiltin:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
-    return temp(c,4);                  /* a void result -- never read */
+    return void_temp(c);               /* a void result -- never read */
   }
   int bz = builtin_result(name->s,name->n);
   if(bz){                              /* a GCC/Clang integer builtin -> verbatim, typed, opaque to R18 */
@@ -2559,7 +3118,7 @@ static uint32_t p_call(CC *c, const tok *name) {
       /* R21 lifetime FREE event (§5.12): the freed pointer it reads dies after this claim, so a later
        * dereference is a use-after-free (or a second free a double-free). Digest-excluded + advisory. */
       if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;cl->lifetime=2;}
-      return temp(c,4);                      /* a void result -- never read */
+      return void_temp(c);                   /* a void result -- never read */
     }
     uint32_t t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_POINTER,"");  /* a `void *` result */
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->ptr_depth=1; }  /* no agg -> `void *` */
@@ -2576,7 +3135,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
     if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
     add_call(c,name);
-    return temp(c,4);                        /* an unused placeholder (a void result is never read) */
+    return void_temp(c);                     /* an unused placeholder (a void result is never read) */
   }
   if(!rt && is_extern_variadic(name->s,name->n)){   /* a printf/scanf-family external variadic -> opaque */
     uint32_t t=tempi(c,4,1);                          /* returns int; emitted verbatim against <stdio.h> */
@@ -2600,9 +3159,10 @@ static uint32_t p_call(CC *c, const tok *name) {
       if(ptt->kind==0 && ptt->size==0){               /* a void cross-TU callee -> a bare statement */
         bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
         if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=0;}
-        return temp(c,4);                             /* a void result -- never read */
+        return void_temp(c);                          /* a void result -- never read */
       }
-      uint32_t t = ptt->is_complex ? tempc(c,ptt->size)
+      uint32_t t = ptt->kind==2 ? temp_ptr(c,ptt,ptt->ptr_to_struct?find_struct(c,ptt->tag,(int)strlen(ptt->tag)):-1)
+                 : ptt->is_complex ? tempc(c,ptt->size)
                  : ptt->is_float   ? tempf(c,ptt->size)
                  : (ptt->kind==0 && ptt->bit_width>0) ? tempbi(c,ptt->bit_width,ptt->signd)
                  : (ptt->kind==0 && ptt->size==8) ? tempi(c,8,ptt->signd)
@@ -2621,7 +3181,10 @@ static uint32_t p_call(CC *c, const tok *name) {
     if(c->fn->n_res) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",
                               rt->is_union?"union":"struct", rt->tag);
   } else
-    t = (rt && rt->is_complex)          ? tempc(c,rt->size)   /* _Complex user return (a float pair) */
+    t = (rt && rt->kind==2)             ? temp_ptr(c,rt,rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1)
+                                                            /* a pointer return stays a pointer (`f()->v`, `*f()`):
+                                                            * a 4-byte unit truncated it (the oracle's _call_result_ct) */
+      : (rt && rt->is_complex)          ? tempc(c,rt->size)   /* _Complex user return (a float pair) */
       : (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
       : (rt && rt->kind==0 && rt->bit_width>0) ? tempbi(c,rt->bit_width,rt->signd)  /* a C23 `_BitInt(N)` return:
                                                             * keep the exact width (it does not promote; same-type
@@ -2726,9 +3289,8 @@ static const char *fence_order_op(CC *c){
 /* A temp of the value type of what pointer `ptr` points at (the oracle's `_atomic_value_type`): its pointee,
  * unqualified, when it is a pointer (depth 1) to a scalar or an array of scalars; else the 4-byte temp it was. */
 static uint32_t atomic_value_temp(CC *c,uint32_t ptr){
-  const bcir_resource *pr=res_of(c->fn,ptr); bcir_resource p;
-  if(!pr) return temp(c,4);
-  p=*pr;                                               /* snapshot: the temp below may move res[] */
+  bcir_resource p;
+  if(!res_copy(c,ptr,&p)) return temp(c,4);
   int ptr1 = p.kind==BCIR_RK_POINTER && (p.ptr_depth?p.ptr_depth:1)==1;
   int arr = p.kind==BCIR_RK_SCALAR && (p.is_array || p.count>1) && !p.ptr_depth;
   if(!(ptr1||arr) || p.agg[0] || p.is_voidptr || p.is_funcptr) return temp(c,4);
@@ -2813,7 +3375,8 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
         if(is(c,",")){c->i++;continue;} break; }
       eat(c,")");
       field ff=S->f[fi];                          /* the funcptr field carries its captured return type */
-      uint32_t t = ff.fp_ret_float ? tempf(c, ff.fp_ret_size?ff.fp_ret_size:4)
+      uint32_t t = ff.fp_ret_agg ? tempagg(c, ff.fp_ret_agg-1)   /* a struct return (CF-STRUCTVAL) */
+                 : ff.fp_ret_float ? tempf(c, ff.fp_ret_size?ff.fp_ret_size:4)
                  : ff.fp_ret_size>4 ? tempi(c, ff.fp_ret_size, ff.fp_ret_signd)
                  : (ff.fp_ret_signd && ff.fp_ret_size && ff.fp_ret_size<=4) ? tempi(c,4,1)
                  : temp(c,4);                      /* a signed member return reads back signed (mirrors the oracle) */
@@ -2835,9 +3398,15 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     return emit_member(c,v,&mf,c->stmt_expr_declared_bf);
   }
   if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) / q[j][i] (a chain) */
+    { field gf; if(global_md_field(c,v,&gf)){       /* g[i][j] of a multi-dimensional global (CF-SMALL) */
+        uint32_t ix=member_arr_index(c,&gf); if(c->failed) return 0;
+        return emit_member_index(c,v,&gf,ix); } }
     uint32_t lin=index_chain(c,v);
     if(c->failed) return 0;
     if(v->sidx>=0 && (is(c,".")||is(c,"->"))){    /* a[i].field on a DIRECT array-of-structs (strided load) */
+      { field af; uint32_t tot; int r=aos_member_array(c,v,lin,&af,&tot);   /* a[i].m[j] (CF-SMALL) */
+        if(r<0) return 0;
+        if(r>0) return emit_member_index(c,v,&af,tot); }
       field sub; if(aos_elem_field(c,v,&sub)) return emit_index_field(c,v,lin,&sub);
       if(c->failed) return 0; }
     return emit_index(c,v,lin);
@@ -3028,7 +3597,7 @@ static int sz_postfix(CC *c, szt *t){
   else if(isk(c,T_STR)){                           /* a (concatenated) literal: its units, NUL included */
     tok st=adv(c); const char *sp=st.s; int sn=st.n;
     if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn); if(cb){ sp=cb; sn=cn; } }
-    memset(t,0,sizeof *t); t->si=-1; t->ty.kind=0; t->ty.size=str_elem_size(sp,sn);
+    memset(t,0,sizeof *t); t->si=-1; t->ty.kind=0; t->ty.size=str_elem_size(c,sp,sn);
     t->nd=1; t->dims[0]=(long long)str_bytes(sp,sn)+1; r=1;
   } else if(is(c,"(")){
     c->i++;
@@ -3085,6 +3654,10 @@ static int sz_unary(CC *c, szt *t){
     if(r==1){ t->bf=0; t->ty.is_atomic=0; t->vla=0; }
   }
   else if(is(c,"*")){ c->i++; r=sz_unary(c,t); if(r==1 && !szt_elem(t)) r=0; if(r==1) t->vla=0; }
+  else if(is(c,"&") && tat(c,c->i+1)->k==T_ID && !lookup(c,tat(c,c->i+1)) &&
+          find_global(c,tat(c,c->i+1)->s,tat(c,c->i+1)->n)<0 && callee_ret(c,tat(c,c->i+1)) &&
+          !tok_is(tat(c,c->i+2),"(") && !tok_is(tat(c,c->i+2),"[")){   /* `&f`: a pointer to the function */
+    c->i+=2; memset(t,0,sizeof *t); t->si=-1; t->addr=1; r=1; }
   else if(is(c,"&")){ c->i++; r=sz_unary(c,t); if(r==1 && t->bf) r=0; if(r==1){ t->addr++; t->vla=0; } }
   else r=sz_postfix(c,t);
   LEAVE_REC(c); return r;
@@ -3128,7 +3701,12 @@ static uint32_t p_sizeof(CC *c){
   if(is(c,"(")){
     int save=c->i; c->i++;
     if(starts_decl_type(c)){                            /* sizeof ( type-name ) */
-      if(p_type(c,&t.ty,&t.si) || type_name_dims(c,&t) || !eat(c,")")) return 0;
+      if(p_type(c,&t.ty,&t.si)) return 0;
+      int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array */
+      if(type_name_dims(c,&t)) return 0;
+      for(int d=0; d<btd; d++){ if(t.nd>=4){ fail(c,"a type-name of more than four array dimensions"); return 0; }
+        t.dims[t.nd++]=btdd[d]; }
+      if(!eat(c,")")) return 0;
       size=szt_bytes(c,&t);
       goto fold;
     }
@@ -3178,7 +3756,7 @@ static uint32_t p_alignof(CC *c){
 static uint32_t p_primary(CC *c) {
   if(is(c,"_Generic")) return p_generic(c);
   if(isk(c,T_INT)){tok t=adv(c);
-    int lsz,lsg; lit_int_type(t.s,t.n,&lsz,&lsg);            /* the constant's type (§6.4.4.1) */
+    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c)->long_size,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */
     uint32_t r=tempi(c,lsz,lsg);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
@@ -3222,6 +3800,11 @@ static uint32_t p_primary(CC *c) {
         venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
         sv.sidx=find_struct(c,rt->tag,(int)strlen(rt->tag));
         if(sv.sidx>=0) return postfix_lvalue(c,&sv);
+      }
+      if(rt && rt->kind==2 && (is(c,"->")||is(c,"["))){   /* a returned pointer: `f()->v` / `f()[i]` */
+        venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
+        sv.sidx=rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1;
+        return postfix_lvalue(c,&sv);
       }
       return r; }
     int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant (type int) */
@@ -3299,6 +3882,65 @@ static int postfix_follows(CC *c, int k){
   if(t->k!=T_PUN) return 0;
   if(t->n==1) return t->s[0]=='[' || t->s[0]=='.' || t->s[0]=='(';
   return t->n==2 && ((t->s[0]=='-' && t->s[1]=='>') || (t->s[0]=='+' && t->s[1]=='+') || (t->s[0]=='-' && t->s[1]=='-'));
+}
+/* CF-RTVOL: `*(volatile T *)((char *)p + K)` -- one volatile access of `T` at byte offset `K` from the device
+ * region `p`, the claim the member access `p->m` lowers to, not a pointer computation and an access at offset
+ * 0: the oracle's `_byte_offset_access`, the same predicate. The emit spells a volatile member access so, and
+ * driver code a register access by byte offset. Types are read resolved (p_type): the cast's a pointer to a
+ * volatile, non-`_Atomic` integer or floating `T`, the byte pointer's a pointer to plain `char`, whatever its
+ * qualifiers; `K` an integer literal or an enumerator, no wider than an `int`; `p` a declared pointer or array,
+ * or `&s` of a struct or union, whose region holds volatile storage. The oracle matches its AST, so this match
+ * skips what the oracle's parser drops: a redundant parenthesis anywhere, a unary `+`. */
+static int bo_open(CC *c){                          /* unary `+`s and `(`s opening no type-name: the count of `(` */
+  int n=0;
+  for(;;){
+    if(is(c,"+")){ c->i++; continue; }
+    if(!is(c,"(") || tok_is(tat(c,c->i+1),"{")) return n;   /* `({ ... })` is a statement expression */
+    c->i++;
+    if(starts_type_name(c)){ c->i--; return n; }    /* a cast's own `(` */
+    n++;
+  }
+}
+static int bo_close(CC *c,int n){ for(int k=0;k<n;k++){ if(!is(c,")")) return 0; c->i++; } return 1; }
+static int bo_cast(CC *c,bcir_ctype *ty){           /* `( type-name )`: the type, resolved, the cursor past it */
+  int si; if(!is(c,"(")) return 0; c->i++;
+  if(!starts_type_name(c) || p_type(c,ty,&si) || c->td_nd || !is(c,")")) return 0;
+  c->i++; return 1;
+}
+static int bo_match(CC *c,venv *base,field *f){
+  bcir_ctype to, tb; int k1=bo_open(c);             /* around the cast expression */
+  if(!bo_cast(c,&to) || to.kind!=2 || (to.ptr_depth?to.ptr_depth:1)!=1 || to.ptr_to_struct || !to.is_volatile
+     || to.is_atomic || to.is_valist || to.size<=0) return 0;   /* a pointer to a volatile, non-atomic scalar */
+  int k2=bo_open(c); if(k2<1) return 0;            /* around the operand, and the byte pointer's own */
+  if(!bo_cast(c,&tb) || tb.kind!=2 || (tb.ptr_depth?tb.ptr_depth:1)!=1 || tb.ptr_to_struct || tb.size!=1
+     || !tb.is_plain_char || tb.is_atomic) return 0;          /* a pointer to plain `char` */
+  int p=bo_open(c), addr=is(c,"&");
+  if(addr){ c->i++; p+=bo_open(c); }               /* `&s`: the struct's own storage */
+  if(!isk(c,T_ID) || find_enum(c,pk(c)->s,pk(c)->n)>=0) return 0;
+  { tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id); if(!vp) return 0; *base=*vp; c->i++; }
+  const bcir_resource *br=res_of(c->fn,base->rid); int arr=br && (br->is_array || br->is_vla);
+  if(!br || br->domain!=BCIR_DOM_MMIO || (addr ? base->type.kind!=1 || arr : base->type.kind!=2 && !arr)) return 0;
+  int cl=0; while(is(c,")")){ c->i++; cl++; }       /* the base's parens, then the byte pointer's own */
+  if(cl<p || cl-p>=k2 || !is(c,"+")) return 0;
+  c->i++; k2-=cl-p;
+  int r=bo_open(c), e; long long k;
+  if(isk(c,T_INT)) k=adv(c).v;
+  else if(isk(c,T_ID) && (e=find_enum(c,pk(c)->s,pk(c)->n))>=0){ k=c->ec[e].val; c->i++; }
+  else return 0;
+  if(k<0 || k>INT_MAX || !bo_close(c,r+k2+k1) || postfix_follows(c,c->i)) return 0;
+  memset(f,0,sizeof *f);                            /* a volatile member of T's layout at offset K */
+  f->size=f->access_bytes=to.size; f->signd=to.signd; f->is_float=to.is_float; f->is_complex=to.is_complex;
+  f->is_bool=to.is_bool; f->is_plain_char=to.is_plain_char; f->bit_width=to.bit_width; f->byte_off=(int)k;
+  f->is_volatile=1; f->sidx=f->elem_sidx=f->ptee_sidx=-1;
+  return 1;
+}
+/* Called with the cursor just past the `*`. On a match: *base (p's env entry) and *f, the cursor past the
+ * operand. Else every speculative effect -- a global bound, a struct or an enumerator a type-name declared, a
+ * failed type parse -- is rolled back and the cursor left where it was, for the pointer-value lowering. */
+static int byte_off_access(CC *c,venv *base,field *f){
+  int save=c->i, failed=c->failed, ns=c->ns, nec=c->nec; spec_mark m; spec_begin(c,&m);
+  if(bo_match(c,base,f)) return 1;
+  spec_end(c,&m); c->i=save; c->failed=failed; c->ns=ns; c->nec=nec; return 0;
 }
 /* Depth-guarded wrapper: p_unary is a recursive-cycle entry point (p_unary->p_primary->`(`->p_expr->
  * ...->p_unary), so a deeply-nested expression would exhaust the native stack. Bump/check depth once
@@ -3390,8 +4032,22 @@ static uint32_t p_unary_inner(CC *c) {
           if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
           return t;
         }
+        if(is(c,"[")){ field gf; if(global_md_field(c,v,&gf)){   /* &g[i][j] of a multi-dimensional global */
+            uint32_t ix=member_arr_index(c,&gf); if(c->failed) return 0;
+            if(is(c,".")||is(c,"->")||is(c,"[")){ fail(c,"address-of a nested element is a follow-on"); return 0; }
+            return addr_member_elem(c,v,&gf,ix); } }
         if(is(c,"[")){                             /* &arr[i] / &p[i] -- a plain element address `(char*)base + i*es` */
-          c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+          int want=subscript_dims(c,v); uint32_t ix;
+          if(want>1){                              /* &m[i][j] of a multi-dimensional array (local, VLA, `T m[][N]`
+                                                    * parameter): every subscript, Horner-flattened -- the oracle's
+                                                    * `_lvalue(Index)`; a row's address is refused, as the oracle does */
+            if(sub_group_count(c,c->i)<want){ fail(c,"the address of a row of a multi-dimensional array is not supported"); return 0; }
+            ix=array_index_n(c,v,want); if(c->failed) return 0; }
+          else { c->i++; ix=p_expr(c); eat(c,"]"); }
+          if(is(c,".") && v->sidx>=0){ field af; uint32_t tot; int r=aos_member_array(c,v,ix,&af,&tot);   /* &a[i].m[j] */
+            if(r<0) return 0;
+            if(r>0){ if(is(c,".")||is(c,"->")||is(c,"[")){ fail(c,"address-of a nested element is a follow-on"); return 0; }
+              return addr_member_elem(c,v,&af,tot); } }
           if((is(c,".")||is(c,"->")) && v->sidx>=0){ /* &arr[i].field on a PLAIN array-of-structs base (#495 sibling):
                                                       * the element-field address `(char*)base + i*sizeof(elem) + field_off`,
                                                       * a `field *`. The element struct is v->sidx, the stride v->type.size. */
@@ -3419,7 +4075,9 @@ static uint32_t p_unary_inner(CC *c) {
             tr->is_complex=(uint8_t)(v->type.is_complex?1:0); tr->is_bool=(uint8_t)(v->type.is_bool?1:0);
             tr->is_plain_char=(uint8_t)(v->type.is_plain_char?1:0);
             tr->is_atomic=(uint8_t)(v->type.is_atomic?1:0);   /* an element of `_Atomic` storage (CF-ATOMIC) */
-            if(v->type.ptr_to_struct) snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
+            if(v->type.kind==1||v->type.ptr_to_struct)        /* `&ps[i]` of an array of structs too: `struct T *`,
+                                                              * never the `int32_t *` it had been (CF-STRUCTVAL) */
+              snprintf(tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;}
           return t;
@@ -3454,7 +4112,7 @@ static uint32_t p_unary_inner(CC *c) {
     fail(c,"unsupported address-of (only &local/&param/&(compound literal))"); return 0; }
   if(is(c,"-")||is(c,"~")||is(c,"!")){
     const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot"; int is_lnot=is(c,"!");
-    bcir_opcode oc=is(c,"-")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;
+    bcir_opcode oc=(is(c,"-")||is(c,"!"))?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;   /* the oracle's `_UN`: `-` and `!` SUB, `~` ADD */
     uint32_t a=p_unary(c);
     /* `-`/`~` take the promoted operand type (so negating a `long` stays 64-bit, not a truncated
      * uint32 that widens back to a positive long); `-x` on a float stays float (floats don't promote,
@@ -3471,6 +4129,7 @@ static uint32_t p_unary_inner(CC *c) {
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}return r;}
   if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
     c->i++;
+    { venv bb; field bf; if(byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */
     if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
       if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
         if(pvp){ c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
@@ -3495,18 +4154,21 @@ static uint32_t p_unary_inner(CC *c) {
     int is_type = starts_type_name(c);
     if(is_type){ bcir_ctype ty;int si;
       if(!p_type(c,&ty,&si)){
+        int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
         int la_count=0,la_nd=0,la_dims[3]={0,0,0};   /* a `(T[N]...)` array type-name -> an array compound literal */
         while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
+        for(int d=0; d<btd; d++){ int dim=btdd[d];     /* its dims follow the type-name's own */
+          if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
         /* A SCALAR-element literal `(T[...]){...}` lowers for 1..3 dims; an AGGREGATE-element literal
          * `(struct P[]){...}` / `(struct P[N]){...}` (1-D) AND `(struct P[A][B]){...}` (multi-dim) also lower:
-         * the struct element routes through subagg_init_struct / subagg_init_md_struct, and the indexing venv
-         * carries BOTH `sidx` (so `[...].field` descends the element struct via emit_index_field, striding by
-         * the struct size) AND `adims`/`nadims` (so `[i][j]` Horner-flattens the outer dims). */
+         * the initializer walk (init_object) fills every element, and the indexing venv carries BOTH `sidx`
+         * (so `[...].field` descends the element struct via emit_index_field, striding by the struct size)
+         * AND `adims`/`nadims` (so `[i][j]` Horner-flattens the outer dims). */
         if(la_nd && la_nd<=3 && is(c,")") &&
            tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
-          uint32_t rid=p_array_literal(c,&ty,si,la_count,la_dims,la_nd);   /* multi-dim -> subagg_init_md (row braces) */
+          uint32_t rid=p_array_literal(c,&ty,si,la_count,la_dims,la_nd);
           for(size_t z=c->fn->n_res;z-->0;) if(c->fn->res[z].rid==rid){ c->fn->res[z].is_array=1; break; }
           if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=ty.kind==1?si:-1;
             if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
@@ -3519,6 +4181,8 @@ static uint32_t p_unary_inner(CC *c) {
             venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=si; return postfix_lvalue(c,&sv); }
           return rid; }
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
+        if(ty.kind==0 && ty.size==0 && !ty.is_float && !ty.bit_width)
+          return void_temp(c);                     /* `(void)e`: e for its effects, no value (C11 6.3.2.2) */
         return emit_cast(c,v,&ty,si);
       } }
     }
@@ -3645,18 +4309,148 @@ static uint32_t binop_result(CC *c, const char *suf, uint32_t lhs, uint32_t rhs)
   }
   return temp(c,4);
 }
+/* --- the operands C may leave unevaluated (CF-TERNARY; the oracle's `_operand_pure`) ---------------------------
+ * C evaluates exactly one arm of `c ? a : b` (C11 6.5.15p4) and the right operand of `&&` / `||` only when the left
+ * one does not decide the result (6.5.13p4, 6.5.14p4). An operand may still be computed eagerly -- as a `c.select` or
+ * a `c.bin.land` / `c.bin.lor` over values already in hand -- when computing it can neither trap nor change state:
+ * every claim it made, from `from` on, is one of these ops, is no volatile access (a device register's included: the
+ * lowering marks it volatile as it makes it) and writes no declared (named) variable. An atomic access is a load, a
+ * store or a read-modify-write, none of them on the list. Any other operand lowers as a branch that evaluates it only
+ * when C does. The rails decide on the claims each made, which parity already holds equal, so they cannot classify an
+ * operand differently. */
+static int void_value(CC *c, uint32_t v){ const bcir_resource *r=res_of(c->fn,v); return r && r->is_void; }
+static int operand_pure(CC *c, size_t from){
+  static const char *const ops[]={"c.const","c.copy","c.select","c.addrof","c.ptradd","c.ptrsub","c.sizeof.vla",0};
+  static const char *const pre[]={"c.fconst:","c.cconst:","c.cast:","c.labeladdr:",0};
+  static const char *const bin[]={"add","sub","mul","and","or","xor","shl","shr","lt","gt","le","ge","eq","ne",
+                                  "land","lor",0};   /* not `div` / `mod`: a zero divisor traps */
+  static const char *const un[]={"neg","bnot","lnot","creal","cimag",0};
+  for(size_t i=from;i<c->fn->n_claims;i++){ const bcir_claim *cl=&c->fn->claims[i]; int ok=0;
+    if(cl->opcode==BCIR_OP_NOP) return 0;                       /* a marker: an operand it already branches on */
+    if(cl->is_volatile) return 0;                               /* a volatile access: reading one is a side effect */
+    for(int k=0;k<cl->n_wr;k++){ const bcir_resource *r=res_of(c->fn,cl->wr[k]); if(r && r->name[0]) return 0; }
+    for(int k=0;ops[k] && !ok;k++) ok=!strcmp(cl->op,ops[k]);
+    for(int k=0;pre[k] && !ok;k++) ok=!strncmp(cl->op,pre[k],strlen(pre[k]));
+    if(!ok && !strncmp(cl->op,"c.bin.",6)) for(int k=0;bin[k] && !ok;k++) ok=!strcmp(cl->op+6,bin[k]);
+    if(!ok && !strncmp(cl->op,"c.un.",5)) for(int k=0;un[k] && !ok;k++) ok=!strcmp(cl->op+5,un[k]);
+    if(!ok) return 0; }
+  return 1;
+}
+/* Whether the operand starting at token `at` is pure, deciding it the first time by lowering it speculatively (`lower`
+ * parses exactly the operand) and rolling that back: memoized by the token, so an operand nested in another is not
+ * re-speculated each time the enclosing one is lowered -- a chain `a ? b : c ? d : ...` stays quadratic, not
+ * exponential. -1 when the memo cannot grow (the caller then speculates again: slower, never different). */
+static int pure_memo(CC *c, int at, int pure){
+  for(int k=0;k<c->npure;k++) if(c->pure_memo[k]>>1==at) return c->pure_memo[k]&1;
+  if(pure<0) return -1;
+  if(CC_ENSURE(c,c->pure_memo,c->npure,c->cap_pure)) c->pure_memo[c->npure++]=at*2+(pure?1:0);
+  return pure;
+}
+static int operand_is_pure(CC *c, uint32_t (*lower)(CC *, int), int arg){
+  int at=c->i, pure=pure_memo(c,at,-1);
+  if(pure>=0) return pure;
+  spec_mark m; spec_begin(c,&m); size_t from=c->fn->n_claims;
+  (void)lower(c,arg);
+  pure=!c->failed && operand_pure(c,from);
+  spec_end(c,&m); c->i=at;
+  return pure_memo(c,at,pure);
+}
+static void marker(CC *c,const char *op,uint32_t cond,int has_cond);
+/* The branch such an operand lowers to assigns one named local in each arm -- `if (c) { ..; sel = a; } else { ..;
+ * sel = b; }`, the source form both rails already lower and emit (the oracle's `_branch_value`). Its type is set once
+ * both arms are lowered (`type_as_select`). */
+static uint32_t branch_local(CC *c){ return add_res(c,BCIR_DOM_RAM,4,1,0,BCIR_RK_SCALAR,"sel"); }
+static void assign_local(CC *c, uint32_t v, uint32_t sel){
+  bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=sel;}
+}
+/* The type `?:` gives its arms' values (C11 6.5.15p3-6), as a temp: over ARITHMETIC arms their common type (the usual
+ * arithmetic conversions), NOT a blanket unsigned -- a signed arm keeps its sign and a FLOAT arm makes the result the
+ * wider float; a pointer (or array) arm the pointer, an array decayed (CF-DECAY); a struct or union arm that aggregate,
+ * copied whole (CF-STRUCTVAL), its arms of one type. 0 (after `fail`) for a pair C refuses. */
+static uint32_t select_temp(CC *c, uint32_t a, uint32_t b){
+  int sa,za,sb,zb,fa,fb;
+  int ap=rid_addr(res_of(c->fn,a)), bp=rid_addr(res_of(c->fn,b));
+  const bcir_resource *ra=res_of(c->fn,a), *rb=res_of(c->fn,b);
+  int ag=ra && ra->kind==BCIR_RK_AGGREGATE, bg=rb && rb->kind==BCIR_RK_AGGREGATE;
+  fa=rid_float(c,a,&sa); fb=rid_float(c,b,&sb);
+  if(ap||bp){
+    if((ap && rid_multidim(c,a)) || (bp && rid_multidim(c,b))){
+      fail(c,"a multi-dimensional array operand of `?:` is not yet supported"); return 0; }
+    return tempptr(c, ap?a:b); }
+  if(ag||bg){
+    int si=ag&&bg&&!strcmp(ra->agg,rb->agg) ? agg_sidx(c,ra->agg) : -1;
+    if(si<0){ fail(c,"the arms of `?:` are a struct or union and a value of another type"); return 0; }
+    return tempagg(c,si); }
+  if(fa||fb){ int w=(fa?sa:0)>(fb?sb:0)?(fa?sa:0):(fb?sb:0); return tempf(c,w); }   /* the wider float */
+  if(rid_int(c,a,&sa,&za) && rid_int(c,b,&sb,&zb)){ int rs,rz; uac_i(sa,za,sb,zb,&rs,&rz); return tempi(c,rs,rz); }
+  return temp(c,4);
+}
+/* The branch's local takes the type a select of its arms has: the temp `select_temp` makes, made and then dropped (no
+ * claim names it). A null pointer constant arm is then typed as the pointer, as `null_pointer` types one elsewhere. */
+static void type_as_select(CC *c, uint32_t sel, uint32_t a, uint32_t b){
+  size_t nres=c->fn->n_res; uint32_t rid=c->rid;
+  uint32_t t=select_temp(c,a,b);
+  bcir_resource tr; int have=t && !c->failed && res_copy(c,t,&tr);
+  c->fn->n_res=nres; c->rid=rid;
+  if(!have) return;
+  for(size_t i=0;i<c->fn->n_res;i++){ bcir_resource *r=&c->fn->res[i];
+    if(r->rid==sel){ char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"%s",r->name);
+      *r=tr; r->rid=sel; snprintf(r->name,sizeof r->name,"%s",nm); break; } }
+  int fp=tr.is_funcptr && tr.agg[0];
+  if(tr.kind!=BCIR_RK_POINTER && !fp) return;
+  for(int arm=0;arm<2;arm++){ uint32_t v=arm?b:a; bcir_resource *r=NULL;
+    for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==v){ r=&c->fn->res[i]; break; }
+    if(!r || r->name[0] || r->kind!=BCIR_RK_SCALAR) continue;
+    const bcir_claim *k=NULL;
+    for(size_t i=c->fn->n_claims; i-- > 0; ) if(c->fn->claims[i].n_wr && c->fn->claims[i].wr[0]==v){ k=&c->fn->claims[i]; break; }
+    if(!k || strcmp(k->op,"c.const") || k->n_imm!=1 || k->imm[0]!=0) continue;
+    bcir_domain dom=r->domain; *r=tr; r->rid=v; r->name[0]=0; r->domain=dom; }
+}
+/* The right operand of a binary op at `prec`: a unary operand, then every op that binds tighter. */
+static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs);
+static uint32_t p_binrhs_operand(CC *c,int prec){
+  uint32_t rhs=p_unary(c);
+  char s2[BCIR_CIR_NAME];bcir_opcode o2;int nx=bin_op(c,s2,&o2);
+  while(nx>=0&&prec_of(nx)>prec){rhs=p_binrhs(c,prec_of(nx),rhs);nx=bin_op(c,s2,&o2);}
+  return rhs;
+}
+/* `lhs && rhs` / `lhs || rhs` (the oracle's `cast.Binary` over `&&` / `||`): a pure right operand is computed eagerly
+ * into `c.bin.land` / `c.bin.lor`; any other lowers as a branch -- the arm that evaluates it computes the same op (the
+ * left operand is known there, so it is the right one's truth), the arm the left operand decides stores 0 (`&&`) or
+ * 1 (`||`) -- into one named `int`. */
+static uint32_t p_logical(CC *c,const char *suf,bcir_opcode oc,int prec,uint32_t lhs){
+  char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+  int is_and=!strcmp(suf,"land");
+  if(operand_is_pure(c,p_binrhs_operand,prec)){
+    uint32_t rhs=p_binrhs_operand(c,prec), r=tempi(c,4,1);
+    bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
+    return r; }
+  uint32_t sel=branch_local(c);
+  if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_signed=1;      /* an `int` */
+  marker(c,"c.if",lhs,1);
+  for(int arm=0;arm<2;arm++){
+    if(arm) marker(c,"c.else",0,0);
+    if((arm==0)==is_and){ uint32_t rhs=p_binrhs_operand(c,prec), r=tempi(c,4,1);
+      bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
+      assign_local(c,r,sel); }
+    else { uint32_t k=tempi(c,4,1); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(kc){kc->n_wr=1;kc->wr[0]=k;kc->n_imm=1;kc->imm[0]=is_and?0:1;}
+      assign_local(c,k,sel); } }
+  marker(c,"c.endif",0,0);
+  return sel;
+}
 static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
   for(;;){
     char suf[BCIR_CIR_NAME];bcir_opcode oc;int idx=bin_op(c,suf,&oc);
     if(idx<0||prec_of(idx)<min_prec)return lhs;
-    int prec=prec_of(idx);c->i++;uint32_t rhs=p_unary(c);
-    char s2[BCIR_CIR_NAME];bcir_opcode o2;int nx=bin_op(c,s2,&o2);
-    while(nx>=0&&prec_of(nx)>prec){rhs=p_binrhs(c,prec_of(nx),rhs);nx=bin_op(c,s2,&o2);}
-    /* the result type: a relational/logical op is int; otherwise the usual arithmetic conversions
-     * (float propagates the wider float; a shift the promoted LHS; else the integer UAC) -- shared. */
+    int prec=prec_of(idx);c->i++;
+    if(!strcmp(suf,"land")||!strcmp(suf,"lor")){ lhs=p_logical(c,suf,oc,prec,lhs); continue; }   /* CF-TERNARY */
+    uint32_t rhs=p_binrhs_operand(c,prec);
+    /* the result type: a relational op is int; otherwise the usual arithmetic conversions (float propagates the
+     * wider float; a shift the promoted LHS; else the integer UAC) -- shared. */
     int is_cmp=!strcmp(suf,"lt")||!strcmp(suf,"gt")||!strcmp(suf,"le")||!strcmp(suf,"ge")
-             ||!strcmp(suf,"eq")||!strcmp(suf,"ne")||!strcmp(suf,"land")||!strcmp(suf,"lor");
-    uint32_t r = is_cmp ? tempi(c,4,1)              /* relational / logical -> int */
+             ||!strcmp(suf,"eq")||!strcmp(suf,"ne");
+    uint32_t r = is_cmp ? tempi(c,4,1)              /* relational -> int */
                         : binop_result(c,suf,lhs,rhs);   /* the usual arithmetic conversions (shared) */
     char op[BCIR_CIR_NAME];snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=2;cl->rd[0]=lhs;cl->rd[1]=rhs;cl->n_wr=1;cl->wr[0]=r;}
@@ -3664,30 +4458,43 @@ static uint32_t p_binrhs(CC *c,int min_prec,uint32_t lhs) {
   }
 }
 static uint32_t p_binexpr(CC *c){return p_binrhs(c,1,p_unary(c));}
-/* p_expr layers the ternary `cond ? then : els` over the binary expression: a scalar select claim
- * (both arms lowered, then chosen; the emitter renders the real `(cond ? a : b)`). */
 /* the conditional-expression level (binary + ternary). p_expr wraps this with the assignment level below. */
+static uint32_t p_expr(CC *c);
+static uint32_t cond_arms(CC *c, int unused){   /* both arms of a `?:`, lowered: `a : b` */
+  (void)unused; (void)p_expr(c); eat(c,":"); return p_expr(c);
+}
+/* `cond ? a : b`: C evaluates the condition, then exactly one arm (C11 6.5.15p4). Two pure arms (`operand_pure`) are
+ * computed eagerly and chosen by a select -- the emitter renders the real `(cond ? a : b)`; any other pair lowers as a
+ * branch that evaluates only the arm C evaluates, into one named local of the select's type (CF-TERNARY: `d ? n / d
+ * : 0` divided by zero and `p ? *p : s` read through NULL eagerly). Arms of type void have no value to select or
+ * assign. The oracle's `cast.Ternary`. */
 static uint32_t p_cond(CC *c){
   uint32_t cond=p_binexpr(c);
-  if(is(c,"?")){ c->i++; uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
-    /* a select over ARITHMETIC arms carries their common type (usual arithmetic conversions), NOT a blanket
-     * unsigned: a signed arm must keep its sign (else a downstream `>>` / compare goes unsigned) and a FLOAT
-     * arm makes the result the wider float (else the double is truncated to int / a nan mis-converts). */
-    int sa,za,sb,zb,fa,fb; uint32_t t;
-    int ap=rid_addr(res_of(c->fn,a)), bp=rid_addr(res_of(c->fn,b));
-    fa=rid_float(c,a,&sa); fb=rid_float(c,b,&sb);
-    if(ap||bp){                                    /* a pointer (or array) arm: the select is that pointer, an
-                                                    * array decayed -- a 4-byte integer select made `T *r = c ? p : q`
-                                                    * uncompilable (CF-DECAY) */
-      if((ap && rid_multidim(c,a)) || (bp && rid_multidim(c,b))){
-        fail(c,"a multi-dimensional array operand of `?:` is not yet supported"); return 0; }
-      t=tempptr(c, ap?a:b); }
-    else if(fa||fb){ int w=(fa?sa:0)>(fb?sb:0)?(fa?sa:0):(fb?sb:0); t=tempf(c,w); }   /* the wider float */
-    else if(rid_int(c,a,&sa,&za) && rid_int(c,b,&sb,&zb)){ int rs,rz; uac_i(sa,za,sb,zb,&rs,&rz); t=tempi(c,rs,rz); }
-    else t=temp(c,4);
+  if(!is(c,"?")) return cond;
+  c->i++;
+  if(operand_is_pure(c,cond_arms,0)){
+    uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
+    int va=void_value(c,a);
+    if(va!=void_value(c,b)){ fail(c,"one arm of `?:` is void and the other is not"); return 0; }
+    if(va) return a;                                   /* two void arms: evaluated for nothing, no value */
+    uint32_t t=select_temp(c,a,b); if(!t) return 0;
     bcir_claim *cl=new_claim(c,"c.select",BCIR_OP_ADD);
     if(cl){cl->n_rd=3;cl->rd[0]=cond;cl->rd[1]=a;cl->rd[2]=b;cl->n_wr=1;cl->wr[0]=t;} return t; }
-  return cond;
+  /* A void conditional (C11 6.5.15p3: both arms void -- `c ? f() : g();`, an `assert`'s `c ? (void)0 : fail()`)
+   * branches for the arm's effects alone: no local, no value. */
+  marker(c,"c.if",cond,1);
+  uint32_t a=p_expr(c);
+  int va=void_value(c,a);
+  uint32_t sel=va?0:branch_local(c);
+  if(!va) assign_local(c,a,sel);
+  marker(c,"c.else",0,0); eat(c,":");
+  uint32_t b=p_expr(c);
+  if(va!=void_value(c,b)){ fail(c,"one arm of `?:` is void and the other is not"); return 0; }
+  if(!va) assign_local(c,b,sel);
+  marker(c,"c.endif",0,0);
+  if(va) return a;
+  type_as_select(c,sel,a,b);
+  return sel;
 }
 
 /* --- statements + functions ---------------------------------------------- */
@@ -3725,7 +4532,10 @@ static venv *use_global(CC *c,const tok *id){
     else if(g->ty.kind==0){                           /* a scalar: as a scalar local */
       gr->is_signed=(uint8_t)(g->ty.signd?1:0); gr->is_float=(uint8_t)(g->ty.is_float?1:0);
       gr->is_complex=(uint8_t)(g->ty.is_complex?1:0); gr->is_bool=(uint8_t)(g->ty.is_bool?1:0);
-      gr->is_plain_char=(uint8_t)(g->ty.is_plain_char?1:0); gr->bit_width=g->ty.bit_width; } }
+      gr->is_plain_char=(uint8_t)(g->ty.is_plain_char?1:0); gr->bit_width=g->ty.bit_width; }
+    else if(kind==BCIR_RK_AGGREGATE)                  /* a struct or union: its type, as a local's -- a value of it
+                                                       * in a brace list, an initializer or a select (CF-STRUCTVAL) */
+      snprintf(gr->agg,BCIR_CIR_NAME,"%s %s",g->ty.is_union?"union":"struct",g->ty.tag); }
   env_add(c,id,rid,&g->ty,gsi);
   return lookup(c,id);
 }
@@ -3800,6 +4610,41 @@ static uint32_t p_assign(CC *c);   /* fwd: the rhs of an assignment-as-value is 
  * target -- a BITFIELD, an ARRAY-OF-STRUCTS strided element, a MEMBER-ARRAY element, or a VOLATILE/MMIO
  * lvalue -- falls through to the conditional grammar and PARSE-ERRs, routing the function to fallback exactly
  * as the oracle's CLowerError does (the two rails promote the SAME set of forms). */
+/* The VALUE of `<member-array element> = rhs` / `OP= rhs` with the cursor ON the `=`/OP= token, for the element
+ * `f[idx]` of `v` (its element FIELD `sub` when `soa`): a STRIDED store at member_off (+ field_off) + idx*element-size
+ * with the index resolved ONCE, then the same slot re-read; a compound reads, operates, stores and re-reads a
+ * narrowing slot; an `_Atomic` slot is one atomic read-modify-write. The member-array (`s.arr[i]`) and the
+ * array-of-structs member-array (`a[i].m[j]`, CF-SMALL) value paths share it. */
+static uint32_t member_elem_assign_value(CC *c, venv *v, const field *fp, uint32_t idx, int soa, const field *subp){
+  const field f=*fp; field sub; if(soa) sub=*subp; else memset(&sub,0,sizeof sub);
+  const field *sf = soa ? &sub : &f;                 /* the stored slot: the element FIELD, or the array element */
+  const tok *aop=&c->t[c->i];
+  int a_eq = aop->k==T_PUN && aop->n==1 && aop->s[0]=='=';
+  if(a_eq){                                          /* plain: store rhs, then RELOAD the same strided slot */
+    c->i++; uint32_t rhs=p_assign(c);
+    uint32_t st=store_member_index(c,v,&f,idx,soa,sf,rhs);
+    if(sf->is_atomic){ bcir_ctype ft=field_slot(sf); return atomic_assign_value(c,st,&ft); }
+    return soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
+  }
+  char ach=aop->s[0]; c->i++;                         /* compound: read cur, binop, store, value = stored */
+  if(sf->is_atomic){                                  /* an `_Atomic` element/field: one atomic read-modify-write */
+    uint32_t rhs=p_assign(c); bcir_ctype ft=field_slot(sf);
+    const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc); (void)oc;
+    return emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,soa?f.size:0,
+                    sf->is_volatile||f.is_volatile,BCIR_BND_ASSUMED);
+  }
+  uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
+  uint32_t rhs=p_assign(c);
+  const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc);
+  uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+  bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
+  tmp=store_member_index(c,v,&f,idx,soa,sf,tmp);      /* the value as stored (converted) */
+  /* a sub-int element/field truncates on store -> RE-READ the same strided slot (#narrowcompound); a
+   * full-width element/field needs no re-read (oracle: lv.ct.size < rt.size). */
+  const bcir_resource *trr=res_of(c->fn,tmp);
+  return ((int)sf->size < (int)(trr?trr->elem_bytes:4))
+         ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : tmp;
+}
 static int lv_assign_value(CC *c, uint32_t *out){
   int save=c->i;
   /* --- a deref `*p = rhs` / `*(p + i) = rhs` / their `OP=` as a VALUE --- */
@@ -3818,6 +4663,7 @@ static int lv_assign_value(CC *c, uint32_t *out){
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
     if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile      /* a non-volatile pointer to a scalar pointee */
+       && !pv->type.ptr_to_struct                                  /* (a struct's is the oracle's follow-on too) */
        && pv->type.ptr_depth<=1 && (is_eq || is_compound_op(op))){
       int sz = pv->type.size?pv->type.size:4;
       bcir_ctype pst=pointee_slot(&pv->type);           /* `*p` stores a byte copy: C's conversion first */
@@ -3874,6 +4720,14 @@ static int lv_assign_value(CC *c, uint32_t *out){
   if(v->sidx>=0 && !v->type.is_volatile && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     int istart=c->i; c->i++; uint32_t idx=array_index(c,v);   /* resolve the index ONCE (Horner-flattened) */
+    { field af; uint32_t tot; int r=aos_member_array(c,v,idx,&af,&tot);   /* `a[i].m[j]` =/OP= (CF-SMALL) */
+      if(r<0) return 0;
+      if(r>0){ const tok *aop=&c->t[c->i];
+        if(!((aop->k==T_PUN && aop->n==1 && aop->s[0]=='=') || is_compound_op(aop))){   /* a read -> fall through */
+          c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc;
+          c->i=istart; c->i=save; return 0; }
+        *out=member_elem_assign_value(c,v,&af,tot,0,NULL);
+        return 1; } }
     field sub; int got = (is(c,".")||is(c,"->")) && aos_elem_field(c,v,&sub);
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
@@ -3913,6 +4767,16 @@ static int lv_assign_value(CC *c, uint32_t *out){
      * -- NOT an array-of-structs `a[i].f`, NOT a member-array (those are reached as a Member, not here). */
     if(v->type.kind!=0 || v->type.is_volatile){ c->i=save; return 0; }
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
+    { field gf; c->i++;                               /* `g[i][j] =`/OP= of a multi-dimensional global: the whole
+                                                       * object's element at offset 0, as it is read (CF-SMALL) */
+      if(global_md_field(c,v,&gf)){
+        uint32_t gix=member_arr_index(c,&gf); if(c->failed) return 0;
+        const tok *gop=&c->t[c->i];
+        if(!((gop->k==T_PUN && gop->n==1 && gop->s[0]=='=') || is_compound_op(gop))){   /* a read -> fall through */
+          c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+        *out=member_elem_assign_value(c,v,&gf,gix,0,NULL);
+        return 1; }
+      c->i--; }
     int istart=c->i; c->i++; uint32_t idx=array_index(c,v);   /* resolve the index ONCE (Horner-flattened) */
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
@@ -3966,38 +4830,13 @@ static int lv_assign_value(CC *c, uint32_t *out){
       uint32_t idx=member_arr_index(c,&f);             /* the row-major flattened element index, resolved once */
       field sub; int soa = (is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);   /* arr[i].field on AOS */
       if(c->failed) return 0;
-      const field *sf = soa ? &sub : &f;               /* the stored slot: the element FIELD, or the array element */
       const tok *aop=&c->t[c->i];
       int a_eq = aop->k==T_PUN && aop->n==1 && aop->s[0]=='=';
-      if(!(a_eq || is_compound_op(aop))){              /* a plain value, not an assignment -> undo + fall back */
+      if(!(a_eq || is_compound_op(aop)) || (!soa && f.elem_sidx>=0)){   /* a plain value, not an assignment -- or a
+                                                       * struct element, the oracle's follow-on -> undo + fall back */
         c->fn->n_res=m_res;c->fn->n_claims=m_cl;c->rid=m_rid;c->cid=m_cid;c->cl_ctr=m_clc;
         c->i=save; return 0; }
-      if(a_eq){                                        /* plain: store rhs, then RELOAD the same strided slot */
-        c->i++; uint32_t rhs=p_assign(c);
-        uint32_t st=store_member_index(c,v,&f,idx,soa,sf,rhs);
-        if(sf->is_atomic){ bcir_ctype ft=field_slot(sf); *out=atomic_assign_value(c,st,&ft); return 1; }
-        *out = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
-        return 1;
-      }
-      char ach=aop->s[0]; c->i++;                       /* compound: read cur, binop, store, value = stored */
-      if(sf->is_atomic){                                /* an `_Atomic` element/field: one atomic read-modify-write */
-        uint32_t rhs=p_assign(c); bcir_ctype ft=field_slot(sf);
-        const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc); (void)oc;
-        *out=emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,soa?f.size:0,
-                      sf->is_volatile||f.is_volatile,BCIR_BND_ASSUMED);
-        return 1;
-      }
-      uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
-      uint32_t rhs=p_assign(c);
-      const char *suf; bcir_opcode oc; compound_binop(ach,&suf,&oc);
-      uint32_t tmp=binop_result(c,suf,cur,rhs); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
-      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-      tmp=store_member_index(c,v,&f,idx,soa,sf,tmp);      /* the value as stored (converted) */
-      /* a sub-int element/field truncates on store -> RE-READ the same strided slot (#narrowcompound); a
-       * full-width element/field needs no re-read (oracle: lv.ct.size < rt.size). */
-      const bcir_resource *trr=res_of(c->fn,tmp);
-      *out = ((int)sf->size < (int)(trr?trr->elem_bytes:4))
-             ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : tmp;
+      *out=member_elem_assign_value(c,v,&f,idx,soa,&sub);
       return 1;
     }
     const tok *op=&c->t[c->i];
@@ -4080,6 +4919,30 @@ static uint32_t incdec_snapshot(CC *c, venv *v){
   bcir_claim *cl=new_claim(c,op,BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=old;}
   return old;
 }
+/* The VALUE of `++`/`--` (prefix or postfix, already settled) on the member-array element `f[idx]` of `v` (its
+ * element FIELD `sub` when `soa`): read, step by one, store back at the same strided slot; a prefix value re-reads
+ * a narrowing slot, a postfix one is the old value; an `_Atomic` slot is one atomic read-modify-write. The
+ * member-array (`s.arr[i]++`) and array-of-structs member-array (`a[i].m[j]++`, CF-SMALL) inc/dec paths share it. */
+static uint32_t member_elem_incdec(CC *c, venv *v, const field *fp, uint32_t idx, int soa, const field *subp,
+                                   int prefix, char ch){
+  const field f=*fp; field sub; if(soa) sub=*subp; else memset(&sub,0,sizeof sub);
+  const field *sf = soa ? &sub : &f;                  /* the stored slot: the element FIELD, or the element */
+  const char *suf = ch=='+'?"add":"sub"; bcir_opcode oc = ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB;
+  if(sf->is_atomic){                                  /* an `_Atomic` element/field: one atomic RMW */
+    bcir_ctype ft=field_slot(sf);
+    return emit_rmw(c,incdec_kind(prefix,ch),&ft,v->rid,1,idx,0,0,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,
+                    soa?f.size:0,sf->is_volatile||f.is_volatile,BCIR_BND_ASSUMED);
+  }
+  uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
+  uint32_t one=incdec_emit_const1(c);
+  uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
+  bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
+  store_member_index(c,v,&f,idx,soa,sf,nw);
+  if(!prefix) return cur;
+  const bcir_resource *nr=res_of(c->fn,nw);
+  return ((int)sf->size < (int)(nr?nr->elem_bytes:4))
+         ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : nw;
+}
 static int incdec_value(CC *c, uint32_t *out){
   int prefix=0; char ch=0;
   if(is(c,"++")||is(c,"--")){ prefix=1; ch=pk(c)->s[0]; }   /* a PREFIX `++`/`--` -- the operand follows */
@@ -4115,6 +4978,12 @@ static int incdec_value(CC *c, uint32_t *out){
      && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened) */
+    { field af; uint32_t tot; int r=aos_member_array(c,v,idx,&af,&tot);   /* `a[i].m[j]++` (CF-SMALL) */
+      if(r<0) return 0;
+      if(r>0){ if(!incdec_settle(c,prefix,save)){
+          c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+        *out=member_elem_incdec(c,v,&af,tot,0,NULL,prefix,ch);
+        return 1; } }
     field sub; int got=(is(c,".")||is(c,"->")) && aos_elem_field(c,v,&sub);
     if(c->failed) return 0;
     if(!got || !incdec_settle(c,prefix,save)){             /* not `a[i].field++` -> roll back, fall through */
@@ -4140,7 +5009,14 @@ static int incdec_value(CC *c, uint32_t *out){
   if(isk(c,T_ID) && v->type.kind==0 && !v->type.is_volatile && v->sidx<0
      && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
-    c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened) */
+    c->i++;
+    { field gf; if(global_md_field(c,v,&gf)){          /* `g[i][j]++` of a multi-dimensional global (CF-SMALL) */
+        uint32_t gix=member_arr_index(c,&gf); if(c->failed) return 0;
+        if(!incdec_settle(c,prefix,save)){
+          c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
+        *out=member_elem_incdec(c,v,&gf,gix,0,NULL,prefix,ch);
+        return 1; } }
+    uint32_t idx=array_index(c,v);                         /* resolve the index ONCE (Horner-flattened) */
     if(c->failed){ return 0; }
     if(!incdec_settle(c,prefix,save)){                     /* `a[i]` not stepped -> roll back, fall through */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
@@ -4175,28 +5051,13 @@ static int incdec_value(CC *c, uint32_t *out){
       uint32_t idx=member_arr_index(c,&f);
       field sub; int soa=(is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);
       if(c->failed) return 0;
-      const field *sf = soa ? &sub : &f;                  /* the stored slot: the element FIELD, or the element */
       if(!soa && f.elem_ptr){                             /* a pointer element steps by its pointee, as a pointer
         * member would: both rails refuse that form (the oracle's `_incdec` lvalue gate), so it is not stepped
         * here as an integer */
         fail(c,"inc/dec of this lvalue form is a follow-on"); return 0; }
       if(!incdec_settle(c,prefix,save)){
         c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
-      if(sf->is_atomic){                                  /* an `_Atomic` element/field: one atomic RMW */
-        bcir_ctype ft=field_slot(sf);
-        *out=emit_rmw(c,incdec_kind(prefix,ch),&ft,v->rid,1,idx,0,0,soa?f.byte_off+sub.byte_off:f.byte_off,sf->size,
-                      soa?f.size:0,sf->is_volatile||f.is_volatile,BCIR_BND_ASSUMED);
-        return 1;
-      }
-      uint32_t cur = soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx);
-      uint32_t one=incdec_emit_const1(c);
-      uint32_t nw=binop_result(c,suf,cur,one); char o[BCIR_CIR_NAME]; snprintf(o,sizeof o,"c.bin.%s",suf);
-      bcir_claim *b=new_claim(c,o,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=one;b->n_wr=1;b->wr[0]=nw;}
-      store_member_index(c,v,&f,idx,soa,sf,nw);
-      if(!prefix){ *out=cur; return 1; }
-      const bcir_resource *nr=res_of(c->fn,nw);
-      *out = ((int)sf->size < (int)(nr?nr->elem_bytes:4))
-             ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : nw;
+      *out=member_elem_incdec(c,v,&f,idx,soa,&sub,prefix,ch);
       return 1;
     }
     if(f.is_ptr || f.arr_count || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
@@ -4266,7 +5127,8 @@ static uint32_t p_assign(CC *c){
     if(v){
       const tok *op=tat(c,c->i+1);
       if(op->n==1 && op->s[0]=='='){                 /* name = rhs  (right-recursive: a = b = c) */
-        tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t rhs=p_assign(c); int ien=c->i;
+        tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t rhs=null_pointer(c,p_assign(c),&v->type); int ien=c->i;
+        if(!agg_value_ok(c,obj_sidx(c,v),rhs,agg_assigned)) return 0;   /* a struct takes its own type */
         bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=rhs;cl->n_wr=1;cl->wr[0]=v->rid;}
         mark_obj_write(c,cl,v);
         bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
@@ -4348,228 +5210,610 @@ static void marker(CC *c,const char *op,uint32_t cond,int has_cond){
   if(cl&&has_cond){cl->n_rd=1;cl->rd[0]=cond;}
 }
 static void p_stmt(CC *c);
-/* A braced aggregate initializer for a local struct/union (the C twin of lower._agg_init): the local
- * is declared with a `= {0}` zero baseline (emit), then each initialized member is a c.store, reusing
- * the member-store path. Positional entries advance a cursor; a `.field=` designator selects by name.
- * (Local arrays + `[i]=` designators need a local array declarator -- a follow-on.) */
-static uint32_t p_expr(CC *c);
-/* Parse a struct/union designator chain `.field (.field | [const-index] ...)*` -- the C twin of a nested
- * designator list (#designate). `.field` selects a member (descending into a nested value-struct/union),
- * `[i]` folds a constant index into a member array (Horner over its declared dims). Fills the cumulative
- * byte offset, the leaf store size + bitfield position (bit_w 0 if not a bitfield), and the TOP-LEVEL
- * field index (for the positional cursor). The cursor is left at the `=`. (An array-of-struct element --
- * nesting past `[i]` -- is a follow-on: the field model drops the element's struct index.) */
-static int designator_chain(CC *c, sdef *S, int *off, int *size, int *bit_w, int *bit_off, int *top_fi,
-                            const field **leaf){
-  *off=0; *size=4; *bit_w=0; *bit_off=0; *top_fi=0;
-  sdef *cur=S; field *F=NULL; int started=0;
-  for(;;){
-    if(is(c,".")){
-      if(!cur){ fail(c,"member designator into a non-aggregate"); return 1; }
-      c->i++; tok fld=adv(c); int fi=-1;
-      for(int k=0;k<cur->nf;k++) if((int)strlen(cur->f[k].name)==fld.n&&!strncmp(cur->f[k].name,fld.s,fld.n)) fi=k;
-      if(fi<0){ fail(c,"unknown field in designator"); return 1; }
-      F=&cur->f[fi]; *off+=F->byte_off; *size=F->size; *bit_w=F->bit_w; *bit_off=F->bit_off;
-      if(!started){ *top_fi=fi; started=1; }
-      cur = (F->sidx>=0) ? &c->s[F->sidx] : NULL;      /* descend a nested value-struct/union */
-    } else if(is(c,"[")){
-      if(!F || F->arr_count<=0){ fail(c,"array designator into a non-array member"); return 1; }
-      int idxs[3], ni=0;                               /* one or more `[i]` -> Horner-flatten via the dims */
-      while(is(c,"[")){ c->i++; long long ix=ce_expr(c,0); eat(c,"]"); if(ni<3) idxs[ni++]=(int)ix; }
-      int lin=ni?idxs[0]:0;
-      for(int d=1; d<ni; d++){ int dim=d<F->nadims?F->adims[d]:1; lin=lin*dim+idxs[d]; }
-      *off += lin*F->size; *size=F->size; *bit_w=0; *bit_off=0;   /* an element: never a bitfield */
-      cur=NULL;
-    } else break;
+/* --- a static's constant image (CF-STATICTAB; the oracle's `_static_init`) -----------------------------------
+ * A static's initializer runs once, before the program does -- never as stores at each call. So it is folded, not
+ * lowered into the body: the initializer walk runs in constant mode, each entry lowered speculatively (the rolled-back
+ * lowering `typeof` and `sizeof` use) and the claims it made evaluated as C evaluates an integer constant expression --
+ * each operation in its own type; each scalar the walk initializes is recorded in the static's image, which is
+ * rendered as its declaration's initializer (`kimage`). */
+#define KV_NOTCONST "a static initializer is not an integer constant expression"   /* the oracle's `_NOT_CONSTANT`: a
+  * variable, a load, a call, an address, a floating value -- or arithmetic C leaves undefined, no constant either */
+typedef struct { unsigned long long p; int bits, sgn, kind; } kval;   /* a folded constant: its value's 64-bit two's
+  * complement, and its type -- an integer (kind 0) of `bits` bits, signed or not, a _Bool (1), a null pointer (2) */
+static unsigned long long kmask(int bits){ return bits>=64 ? ~0ull : (1ull<<bits)-1; }
+/* `p` reduced to a `bits`-bit integer type: modulo 2^bits, a signed type's two's complement (the oracle's `_kwrap`). */
+static unsigned long long kwrap(unsigned long long p,int bits,int sgn){
+  p&=kmask(bits); if(sgn && bits<64 && ((p>>(bits-1))&1u)) p|=~kmask(bits); return p; }
+static long long kll(unsigned long long p){ return p>>63 ? -(long long)(~p)-1 : (long long)p; }   /* as signed */
+static kval kint(unsigned long long p,int bits,int sgn){ kval r; r.p=kwrap(p,bits,sgn); r.bits=bits; r.sgn=sgn; r.kind=0; return r; }
+/* An operand's integer promotion: a _Bool or a type narrower than int is an int; a pointer is no integer. */
+static int kpromote(const kval *a,kval *o){
+  if(a->kind==2) return 0;
+  *o=(a->kind==1 || a->bits<32) ? kint(a->p,32,1) : *a; return 1; }
+/* The usual arithmetic conversions of two promoted operands: the wider type; of a signed and an unsigned type, the
+ * unsigned one unless the signed one is wider (the oracle's `_kcommon`). */
+static void kcommon(const kval *a,const kval *b,int *bits,int *sgn){
+  if(a->sgn==b->sgn){ *bits=a->bits>b->bits?a->bits:b->bits; *sgn=a->sgn; return; }
+  const kval *u=a->sgn?b:a, *s=a->sgn?a:b;
+  *bits=u->bits>=s->bits?u->bits:s->bits; *sgn=u->bits<s->bits; }
+/* A signed 64-bit `x op y` into *r, or 0 when it overflows (a narrower one cannot overflow a long long). */
+static int ks64(char op,long long x,long long y,long long *r){
+  if(op=='+'){ if(y>0 ? x>LLONG_MAX-y : x<LLONG_MIN-y) return 0; *r=x+y; return 1; }
+  if(op=='-'){ if(y<0 ? x>LLONG_MAX+y : x<LLONG_MIN+y) return 0; *r=x-y; return 1; }
+  if(x && y && (x>0 ? (y>0 ? x>LLONG_MAX/y : y<LLONG_MIN/x) : (y>0 ? x<LLONG_MIN/y : y<LLONG_MAX/x))) return 0;
+  *r=x*y; return 1; }
+/* `a OP b` as C computes it (the oracle's `_kbin`): a comparison or a logical operator gives an int, a shift the
+ * promoted left operand's type, the rest the operands' common type -- an unsigned one wrapping, a signed one that
+ * overflows undefined. 0 when it is no constant. */
+static int kbin(const char *suf,const kval *ia,const kval *ib,kval *out){
+  kval a,b; if(!kpromote(ia,&a) || !kpromote(ib,&b)) return 0;
+  if(!strcmp(suf,"land") || !strcmp(suf,"lor")){
+    int x=a.p!=0, y=b.p!=0; *out=kint((unsigned long long)(suf[1]=='a' ? (x&&y) : (x||y)),32,1); return 1; }
+  if(!strcmp(suf,"shl") || !strcmp(suf,"shr")){
+    long long n=b.sgn ? kll(b.p) : (b.p>(unsigned long long)LLONG_MAX ? -1 : (long long)b.p);
+    if(n<0 || n>=a.bits || n>=64) return 0;                   /* a count outside the promoted width: undefined */
+    if(suf[2]=='r'){ *out=kint(a.sgn && (a.p>>63) ? ~(~a.p>>n) : a.p>>n,a.bits,a.sgn); return 1; }   /* arithmetic */
+    if(a.sgn && ((a.p>>63) || a.p>(kmask(a.bits-1)>>n))) return 0;   /* a negative or overflowing signed shift */
+    *out=kint(a.p<<n,a.bits,a.sgn); return 1; }
+  int bits,sgn; kcommon(&a,&b,&bits,&sgn);
+  unsigned long long x=kwrap(a.p,bits,sgn), y=kwrap(b.p,bits,sgn), r=0; int cmp=-1;
+  if(!strcmp(suf,"eq")) cmp=x==y; else if(!strcmp(suf,"ne")) cmp=x!=y;
+  else if(!strcmp(suf,"lt")) cmp=sgn?kll(x)<kll(y):x<y; else if(!strcmp(suf,"gt")) cmp=sgn?kll(x)>kll(y):x>y;
+  else if(!strcmp(suf,"le")) cmp=sgn?kll(x)<=kll(y):x<=y; else if(!strcmp(suf,"ge")) cmp=sgn?kll(x)>=kll(y):x>=y;
+  if(cmp>=0){ *out=kint((unsigned long long)cmp,32,1); return 1; }
+  if(!strcmp(suf,"and")) r=x&y; else if(!strcmp(suf,"or")) r=x|y; else if(!strcmp(suf,"xor")) r=x^y;
+  else if(!sgn){                                              /* unsigned: wraps modulo 2^bits */
+    if(!strcmp(suf,"add")) r=x+y; else if(!strcmp(suf,"sub")) r=x-y; else if(!strcmp(suf,"mul")) r=x*y;
+    else if(!strcmp(suf,"div") || !strcmp(suf,"mod")){ if(!y) return 0; r=suf[0]=='d'?x/y:x%y; }
+    else return 0; }
+  else { long long sx=kll(x), sy=kll(y), sr;                  /* signed: an overflow is undefined */
+    if(!strcmp(suf,"div") || !strcmp(suf,"mod")){             /* truncating; INT_MIN / -1 (and its remainder) */
+      if(!sy || (sx==LLONG_MIN && sy==-1)) return 0;
+      long long q=sx/sy; if(bits<64 && q>=(1LL<<(bits-1))) return 0;
+      sr=suf[0]=='d'?q:sx-q*sy; }
+    else { char op=!strcmp(suf,"add")?'+':!strcmp(suf,"sub")?'-':!strcmp(suf,"mul")?'*':0;
+      if(!op || (bits>=64 && !ks64(op,sx,sy,&sr))) return 0;
+      if(bits<64) sr=op=='+'?sx+sy:op=='-'?sx-sy:sx*sy; }
+    if(bits<64 && (sr<-(1LL<<(bits-1)) || sr>=(1LL<<(bits-1)))) return 0;
+    r=(unsigned long long)sr; }
+  *out=kint(r,bits,sgn); return 1;
+}
+/* `OP a` (the oracle's `_kun`): `!` gives an int; `-` and `~` the promoted operand's type (`-INT_MIN` overflows). */
+static int kun(const char *suf,const kval *ia,kval *out){
+  if(!strcmp(suf,"lnot")){ *out=kint(ia->p==0,32,1); return 1; }
+  kval a; if(!kpromote(ia,&a)) return 0;
+  if(!strcmp(suf,"bnot")){ *out=kint(~a.p,a.bits,a.sgn); return 1; }
+  if(strcmp(suf,"neg") || (a.sgn && a.p==kwrap(1ull<<(a.bits-1),a.bits,1))) return 0;
+  *out=kint(0ull-a.p,a.bits,a.sgn); return 1; }
+/* `c ? a : b` over arithmetic arms (the oracle's `_ksel`): the chosen arm, in the arms' common type. */
+static int ksel(const kval *c0,const kval *ia,const kval *ib,kval *out){
+  kval a,b; int bits,sgn; if(!kpromote(ia,&a) || !kpromote(ib,&b)) return 0;
+  kcommon(&a,&b,&bits,&sgn); *out=kint(c0->p?a.p:b.p,bits,sgn); return 1; }
+/* The type a constant claim's temp declares -- a literal's, sizeof's size_t, a cast's target -- as a zero of it (the
+ * oracle's `_ktype`); a floating or _BitInt one is no integer constant here. */
+static int ktype(const bcir_resource *r,kval *t){
+  memset(t,0,sizeof *t);
+  if(!r) return 0;
+  if(r->kind==BCIR_RK_POINTER || r->is_funcptr){ t->kind=2; return 1; }
+  if(r->kind!=BCIR_RK_SCALAR || r->is_float || r->bit_width>0 || r->elem_bytes<1 || r->elem_bytes>8) return 0;
+  if(r->is_bool){ t->kind=1; t->bits=1; return 1; }
+  t->bits=(int)r->elem_bytes*8; t->sgn=r->is_signed; return 1; }
+/* `a` converted to the type `t` (the oracle's `_kconvert`): an integer wraps to its width, a _Bool is whether `a` is
+ * nonzero, a pointer takes only the null pointer constant. */
+static int kconvert(const kval *a,const kval *t,kval *out){
+  *out=*t;
+  if(t->kind==1){ out->p=a->p!=0; return 1; }
+  if(t->kind==2) return a->p==0;
+  *out=kint(a->p,t->bits,t->sgn); return 1; }
+/* One claim of an entry, folded (the oracle's `_kfold`): 0 when it is no integer constant expression. */
+static int kclaim(CC *c,const bcir_claim *cl,const kval *a,kval *out){
+  const char *op=cl->op; kval t;
+  if(!strcmp(op,"c.const") && cl->n_rd==0 && cl->n_imm>=1){
+    kval x=kint((unsigned long long)cl->imm[0],64,1); return ktype(res_of(c->fn,cl->wr[0]),&t) && kconvert(&x,&t,out); }
+  if(!strncmp(op,"c.cast:",7) && cl->n_rd==1) return ktype(res_of(c->fn,cl->wr[0]),&t) && kconvert(&a[0],&t,out);
+  if(!strncmp(op,"c.bin.",6) && cl->n_rd==2) return kbin(op+6,&a[0],&a[1],out);
+  if(!strncmp(op,"c.un.",5) && cl->n_rd==1) return kun(op+5,&a[0],out);
+  if(!strcmp(op,"c.select") && cl->n_rd==3) return ksel(&a[0],&a[1],&a[2],out);
+  return 0; }
+/* One entry of a static's initializer, folded as C evaluates an integer constant expression (the oracle's
+ * `_const_value`): the claims its speculative lowering made from claim `from` on -- a constant (a literal, a sizeof,
+ * an enumerator) in its declared type, arithmetic, a cast, a select -- in order, each over values the entry itself
+ * produced. Any other claim, or a value produced elsewhere (a variable, a parameter, a string, a function), fails. */
+static kval kfold(CC *c,size_t from,uint32_t v){
+  kval z=kint(0,32,1); size_t n=c->fn->n_claims-from;
+  kval *kv=(kval*)bcir_host_arena_allocate(&c->scratch,(n?n:1)*sizeof *kv,sizeof(unsigned long long));
+  if(!kv){ cc_raise_oom(c); return z; }
+  for(size_t i=0;i<n;i++){ const bcir_claim *cl=&c->fn->claims[from+i]; kval a[3]; int ok=cl->n_wr==1 && cl->n_rd<=3;
+    memset(a,0,sizeof a);
+    for(int k=0;k<cl->n_rd && ok;k++){ ok=0;
+      for(size_t j=i;j-- > 0;) if(c->fn->claims[from+j].wr[0]==cl->rd[k]){ a[k]=kv[j]; ok=1; break; } }
+    if(!ok || !kclaim(c,cl,a,&kv[i])){ fail(c,KV_NOTCONST); return z; } }
+  for(size_t i=n;i-- > 0;) if(c->fn->claims[from+i].wr[0]==v) return kv[i];
+  fail(c,KV_NOTCONST); return z;
+}
+/* --- C11 6.7.9 initialization: the current-object walk (CF-BRACE; the oracle's `_init_list`) -----------
+ * A braced initializer lowers to the object's `= {0}` baseline plus one store per initialized scalar, in
+ * list order. Each brace list has a current object whose subobjects -- array elements, struct members in
+ * order, a union's first member -- the positional entries fill in turn, descending into a sub-aggregate whose
+ * initializer has no brace of its own (brace elision, 6.7.9p20: it takes only as many entries as it has
+ * scalars); a designator re-points the walk, and the entries after it continue from the subobject after the
+ * designated one (p17). A store is a typed `base[i]` when it writes a whole element of the declared array its
+ * own list initializes, else a store at its byte offset -- the claim shapes the fully braced forms had. */
+enum { IK_SCAL, IK_AGG, IK_ARR };
+typedef struct {            /* one object or subobject the walk initializes (the oracle's CType + offset) */
+  int k;                    /* IK_SCAL (a scalar or pointer), IK_AGG (a struct/union), IK_ARR (an array) */
+  int sidx;                 /* IK_AGG: its sdef; IK_ARR: the element struct (-1: a scalar element) */
+  int nd, dims[3];          /* IK_ARR: its dims, outer first */
+  int es;                   /* IK_ARR: its element's (scalar or struct) size */
+  int off, size;            /* its byte offset in the object, and its size */
+  int bit_w, bit_off, abytes;   /* IK_SCAL: a bit-field member's width, bit offset and storage-unit span */
+  int is_bool, is_atomic;   /* IK_SCAL (and IK_ARR's element): a `_Bool` / `_Atomic` slot */
+  bcir_ctype slot;          /* IK_SCAL (and IK_ARR's element): the declared type a stored value converts to */
+} iunit;
+typedef struct { iunit u; int idx, count, flat, top; } ifrm;   /* idx: the next subobject; count < 0: inferred */
+typedef struct { uint32_t rid; int top_array, top_n, inferred, rng0, un0;
+                 int konst; kval kv; } iwalk;   /* konst: a static's image -- its entries fold (into kv, each before it
+                                                 * is placed), its stores record their values (CF-STATICTAB) */
+#define IW_MAXFRAMES 64     /* the subobjects one list may nest into (the oracle's `_INIT_MAX_FRAMES`) */
+
+/* A member's subobject: an array, a struct/union, or a scalar (a bit-field keeps its unit). */
+static void iunit_of_field(CC *c, iunit *u, const field *F, int base_off){
+  memset(u,0,sizeof *u); u->off=base_off+F->byte_off; u->sidx=-1;
+  if(F->arr_count>0){ u->k=IK_ARR; u->sidx=F->elem_sidx; u->nd=F->nadims>0?F->nadims:1;
+    if(F->nadims>0){ for(int d=0;d<3;d++) u->dims[d]=F->adims[d]; } else u->dims[0]=F->arr_count;
+    u->es=F->size; u->size=F->arr_count*F->size; u->is_bool=F->is_bool; u->is_atomic=F->is_atomic;
+    u->slot=field_slot(F); return; }
+  if(F->sidx>=0){ u->k=IK_AGG; u->sidx=F->sidx; u->size=c->s[F->sidx].size; return; }
+  u->k=IK_SCAL; u->size=F->size; u->bit_w=F->bit_w; u->bit_off=F->bit_off; u->abytes=F->access_bytes;
+  u->is_bool=F->is_bool; u->is_atomic=F->is_atomic; u->slot=field_slot(F);
+}
+/* Element `i` of the array `a`: a row of a multi-dimensional array, else a struct or scalar element. */
+static void iunit_elem(iunit *e, const iunit *a, int i){
+  int stride=a->es; for(int d=1; d<a->nd; d++) stride*=a->dims[d];
+  *e=*a; e->off=a->off+i*stride;
+  if(a->nd>1){ e->nd=a->nd-1; for(int d=0;d<3;d++) e->dims[d]=d+1<a->nd?a->dims[d+1]:0; e->size=stride; return; }
+  e->nd=0; memset(e->dims,0,sizeof e->dims); e->size=a->es;
+  if(a->sidx>=0){ e->k=IK_AGG; return; }
+  e->k=IK_SCAL; e->bit_w=0; e->bit_off=0; e->abytes=0;
+}
+static int iunit_count(CC *c, const iunit *u){ return u->k==IK_ARR ? u->dims[0] : c->s[u->sidx].nf; }
+/* The subobject at the frame's position, and the position after it (the oracle's `_init_unit`). An anonymous
+ * struct/union member is one subobject over its promoted leaves; a union holds one. */
+static int iunit_at(CC *c, const ifrm *fr, iunit *u){
+  const iunit *o=&fr->u; int i=fr->idx;
+  if(o->k==IK_ARR){ iunit_elem(u,o,i); return i+1; }
+  const sdef *S=&c->s[o->sidx];
+  for(int g=0; g<S->nanon; g++) if(S->anon[g].first==i){
+    memset(u,0,sizeof *u); u->k=IK_AGG; u->sidx=S->anon[g].sidx; u->off=o->off+S->anon[g].off;
+    u->size=c->s[u->sidx].size; return S->is_union ? S->nf : i+S->anon[g].n; }
+  iunit_of_field(c,u,&S->f[i],o->off);
+  return S->is_union ? S->nf : i+1;
+}
+/* Consume the subobject at the frame's position (the oracle's `_init_take`). A union takes one member per
+ * object: giving an initialized union another member is refused, its other bytes would need re-zeroing. */
+static int init_take(CC *c, iwalk *W, ifrm *fr, iunit *u){
+  int nxt=iunit_at(c,fr,u);
+  if(fr->u.k==IK_AGG && c->s[fr->u.sidx].is_union){
+    int seen=0;
+    for(int k=W->un0; k<c->iw_nun; k++){ const iunion *r=&c->iw_un[k];
+      if(r->off==fr->u.off && r->sidx==fr->u.sidx){ seen=1;
+        if(r->member!=fr->idx){ fail(c,"an initializer overrides a prior initialization of a subobject"); return 0; } } }
+    if(!seen){ if(!CC_ENSURE(c,c->iw_un,c->iw_nun,c->iw_capun)) return 0;
+      c->iw_un[c->iw_nun].off=fr->u.off; c->iw_un[c->iw_nun].sidx=fr->u.sidx; c->iw_un[c->iw_nun].member=fr->idx;
+      c->iw_nun++; }
   }
-  if(!started){ fail(c,"empty designator"); return 1; }
-  *leaf=F;                                             /* the leaf: a member, or an array member's element */
+  fr->idx=nxt;
+  if(fr->top && nxt>W->top_n) W->top_n=nxt;
+  return 1;
+}
+/* Enter the sub-aggregate `u` of `frames[*nf-1]` (brace elision or a designator). */
+static ifrm *init_push(CC *c, ifrm *frames, int *nf, const iunit *u){
+  if(*nf>=IW_MAXFRAMES){ fail(c,"an initializer nested deeper than 64 subobjects"); return NULL; }
+  ifrm *p=&frames[*nf-1], *ch=&frames[*nf];
+  ch->u=*u; ch->idx=0; ch->count=iunit_count(c,u); ch->flat=p->flat && u->k==IK_ARR; ch->top=0;
+  (*nf)++; return ch;
+}
+/* The frame whose next subobject the next positional entry fills: filled sub-aggregates entered by elision are
+ * left for their parent; past the list's own object is an excess initializer, refused, never dropped. */
+static ifrm *init_next(CC *c, ifrm *frames, int *nf){
+  for(;;){ ifrm *fr=&frames[*nf-1];
+    if(fr->count<0 || fr->idx<fr->count) return fr;
+    if(*nf==1){ fail(c,"excess elements in an initializer"); return NULL; }
+    (*nf)--; }
+}
+/* Point the walk at the subobject a designator names (the oracle's `_init_designate`): back to the list's own
+ * object, then each `.m` / `[i]` step selects a member or an element, descending into it before the next step;
+ * a member of an anonymous struct/union is reached through that member. The cursor ends past the `=`. */
+static ifrm *init_designate(CC *c, iwalk *W, ifrm *frames, int *nf){
+  *nf=1;
+  for(;;){
+    ifrm *fr=&frames[*nf-1];
+    if(is(c,".")){
+      c->i++; tok fld=adv(c);
+      if(fr->u.k!=IK_AGG){ fail(c,"a member designator into a non-aggregate"); return NULL; }
+      const sdef *S=&c->s[fr->u.sidx]; int j=-1;
+      for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n && !strncmp(S->f[k].name,fld.s,(size_t)fld.n)){ j=k; break; }
+      if(fld.k!=T_ID || j<0){ fail(c,"no member of that name to designate"); return NULL; }
+      for(;;){ int g=-1;
+        for(int q=0;q<S->nanon;q++) if(S->anon[q].first<=j && j<S->anon[q].first+S->anon[q].n){ g=q; break; }
+        if(g<0){ fr->idx=j; break; }
+        int first=S->anon[g].first; iunit u;
+        fr->idx=first;                                  /* through the anonymous member that holds it */
+        if(!init_take(c,W,fr,&u) || !(fr=init_push(c,frames,nf,&u))) return NULL;
+        S=&c->s[fr->u.sidx]; j-=first; }
+    } else if(is(c,"[")){
+      c->i++; long long ix=ce_expr(c,0); if(!eat(c,"]")) return NULL;
+      if(fr->u.k!=IK_ARR){ fail(c,"an array designator into a non-array"); return NULL; }
+      if(ix<0 || ix>INT_MAX || (fr->count>=0 && ix>=fr->count)){ fail(c,"an array designator outside the array"); return NULL; }
+      fr->idx=(int)ix;
+    } else break;
+    if(is(c,".")||is(c,"[")){                           /* the next step names a subobject of this one */
+      iunit u; if(!init_take(c,W,fr,&u)) return NULL;
+      if(u.k==IK_SCAL){ fail(c,"a designator into a scalar"); return NULL; }
+      if(!init_push(c,frames,nf,&u)) return NULL; }
+  }
+  if(c->failed || !eat(c,"=")) return NULL;
+  return &frames[*nf-1];
+}
+/* A designator of exactly one `[i]` (the cursor is at its `[`): its entry's store may be a whole element. */
+static int desig_single_index(CC *c){
+  int j=c->i, d=0;
+  if(!tok_is(tat(c,j),"[")) return 0;
+  for(; tat(c,j)->k!=T_END; j++){
+    if(tok_is(tat(c,j),"[")) d++;
+    else if(tok_is(tat(c,j),"]") && --d==0) break; }
+  return tok_is(tat(c,j+1),"=");
+}
+/* A subobject initialized as a whole -- by a brace list or a string literal -- is zero wherever its initializer
+ * is silent, which the baseline gives only while nothing has stored into it yet: refuse an earlier store in
+ * [lo, hi) bits (the oracle's `_init_overrides`). */
+static int init_overrides(CC *c, const iwalk *W, long long lo, long long hi){
+  for(int k=W->rng0; k<c->iw_nrng; k++)
+    if(c->iw_rng[k].lo<hi && lo<c->iw_rng[k].hi){ fail(c,"an initializer overrides a prior initialization of a subobject"); return 1; }
   return 0;
 }
-static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit);   /* fwd: mutual recursion */
-/* A NESTED braced initializer for an array member inside a struct/union init -- `struct S s = { {e0,e1,
- * ..}, n };` (the C twin of lower._init_subagg). Stores each element with an OFFSET-based member c.store
- * at `base_off + idx*es` (so it composes through the enclosing struct's `= {0}` baseline); positional
- * entries advance a cursor, `[i]=` jumps it, gaps zero-fill. Each value converts to the element's declared
- * type `elem` (`store_conv`), exactly like a `s.arr[i] = v` element write. */
-static void subagg_init(CC *c, uint32_t rid, int base_off, int es, int is_bool, const bcir_ctype *elem) {
-  eat(c,"{");
-  int cursor=0;
-  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int idx=cursor;
-    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    uint32_t v=store_conv(c,p_expr(c),elem);
+/* The value the static's scalar subobject `u` holds from the constant `a` -- C's conversion as if by assignment --
+ * recorded on its store's range `r` (the oracle's `_kleaf`): a pointer holds only the null pointer, a floating one the
+ * integer itself, which the rendered initializer converts exactly as the source's does. */
+static int kleaf(CC *c,const kval *a,const iunit *u,irange *r){
+  const bcir_ctype *s=&u->slot; unsigned long long p=a->p; int neg=a->sgn && (p>>63);
+  if(u->k!=IK_SCAL || s->kind==1){ fail(c,KV_NOTCONST); return 0; }
+  if(s->kind==2 || s->kind==3){ if(p){ fail(c,KV_NOTCONST); return 0; } neg=0; }
+  else if(s->is_float){}                               /* the integer itself, signed as its own type */
+  else if(s->is_bool){ p=p!=0; neg=0; }
+  else { int bits=u->bit_w?u->bit_w:s->bit_width>0?s->bit_width:s->size*8;
+    p=kwrap(p,bits,s->signd); neg=s->signd && (p>>63); }
+  r->v=p; r->neg=neg; return 1;
+}
+/* Store `v` into the scalar (or whole struct/union) subobject `u` (the oracle's `_init_store`): a typed `base[i]`
+ * at its flat index when `indexed`, else a store at its byte offset (a bit-field's through its storage unit). In a
+ * static's image the folded W->kv is recorded as the value the subobject holds instead, and no claim is made. */
+static void init_store(CC *c, iwalk *W, const iunit *u, uint32_t v, int indexed){
+  long long lo=(long long)u->off*8+u->bit_off, hi=lo+(u->bit_w?u->bit_w:(long long)u->size*8);
+  if(!CC_ENSURE(c,c->iw_rng,c->iw_nrng,c->iw_caprng)) return;
+  c->iw_rng[c->iw_nrng].lo=lo; c->iw_rng[c->iw_nrng].hi=hi; c->iw_rng[c->iw_nrng].v=0; c->iw_rng[c->iw_nrng].neg=0;
+  if(W->konst){ if(kleaf(c,&W->kv,u,&c->iw_rng[c->iw_nrng])) c->iw_nrng++; return; }   /* a static's image: no claim */
+  c->iw_nrng++;
+  uint32_t rid=W->rid;
+  if(indexed){                                         /* a whole element of the declared array */
+    if(u->k==IK_SCAL){ bcir_ctype et=u->slot; v=null_pointer(c,v,&et); }   /* `T *a[] = {&x, 0}` */
+    uint32_t ic=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+    if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=u->size>0?u->off/u->size:0;}
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
-      if(is_bool){cl->imm[2]=1;cl->n_imm=3;}           /* a _Bool[] element init normalizes the value */
-      mark_atomic(cl,elem && elem->is_atomic);}        /* an `_Atomic` element: an atomic store, as the oracle's */
-    cursor=idx+1;
-    if(is(c,",")) c->i++;
-  }
-  eat(c,"}");
+    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=access_bnd(c,rid);   /* §5.12 */
+      const bcir_resource *ar=res_of(c->fn,rid); mark_atomic(cl,ar && ar->is_atomic);}   /* `_Atomic` elements */
+    return; }
+  uint32_t val=v;
+  if(u->k==IK_SCAL){ bcir_ctype ls=u->slot; v=store_conv(c,v,&ls); val=v; }   /* C's conversion to the slot */
+  if(u->bit_w){                                        /* a bitfield member: read unit, set bits, store */
+    int absz=u->abytes<=4?4:8;
+    uint32_t unit=temp(c,absz);
+    bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
+    if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=u->off;ld->imm[1]=u->abytes;ld->bounds=BCIR_BND_ASSUMED;}
+    uint32_t nu=temp(c,absz);
+    bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
+    if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=u->bit_off;bs->imm[1]=u->bit_w;}
+    val=nu; }
+  bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
+  if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=u->off;cl->imm[1]=u->bit_w?u->abytes:u->size;
+    cl->bounds=BCIR_BND_ASSUMED;
+    if(u->bit_w){cl->imm[2]=2;cl->n_imm=3;}           /* a bitfield UNIT store: `_v` takes the unit's full type */
+    else if(u->is_bool){cl->imm[2]=1;cl->n_imm=3;}     /* a _Bool slot normalizes the value */
+    mark_atomic(cl,u->is_atomic && !u->bit_w);}        /* an `_Atomic` slot: an atomic store */
 }
-/* A NESTED-brace initializer for a MULTI-dim local array `T a[d0][d1]... = { {..}, {..} }` (the C twin of
- * the oracle's _init_subagg multi-dim row descent). The flat resource keeps the same row-major memory layout
- * as `T a[d0][d1]`, so each outer brace descends by ROW: row `r` lands at `base_off + r*stride` where
- * `stride = product(dims[1:]) * es` (the leaf element size `es`). A nested brace recurses with the inner dims
- * (`dims+1`, `nd-1`); a scalar inside the innermost dim stores at its element offset (an OFFSET-based member
- * c.store at `base_off + idx*es`, exactly like subagg_init -- composing through the enclosing `= {0}`
- * baseline), converted to the element's declared type `elem`. Positional entries advance a cursor, `[i]=`
- * jumps it, gaps zero-fill (§6.7.10). */
-static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool,
-                                 const bcir_ctype *elem);
-/* Depth-guarded wrapper: subagg_init_md self-recurses per nested-row brace, so a deeply nested
- * multi-dim `{{{...}}}` initializer would exhaust the stack. Bump/check depth once per row level. */
-static void subagg_init_md(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool,
-                           const bcir_ctype *elem) {
-  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
-  subagg_init_md_inner(c, rid, base_off, dims, nd, es, is_bool, elem); LEAVE_REC(c);
+/* The code-unit width of a string-literal token's prefix: plain/u8 1, u 2, U 4, L the target's wchar_t. */
+static int str_tok_unit(CC *c, const tok *t){ return str_elem_size(c,t->s,t->n); }
+static int str_tok_prefix_len(const tok *t){ int k=0; while(k<t->n && t->s[k]!='"') k++; return k; }
+/* The array `u` a string literal whose units are `unit` bytes wide initializes (6.7.9p14-15): one-dimensional,
+ * of an integer element as wide as the unit (the oracle's `_init_char_array`). */
+static int init_char_array(const iunit *u, int unit){
+  return u->k==IK_ARR && u->nd==1 && u->sidx<0 && u->slot.kind==0 && !u->slot.is_float && !u->slot.is_bool &&
+         u->slot.bit_width==0 && u->es==unit;
 }
-static void subagg_init_md_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int is_bool,
-                                 const bcir_ctype *elem) {
-  eat(c,"{");
-  int stride=es;                                          /* row stride = product(dims[1:]) * es */
-  for(int d=1; d<nd; d++) stride*=dims[d];
-  int cursor=0;
-  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int idx=cursor;
-    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    if(nd>1 && is(c,"{")){                                /* an outer dim takes a nested ROW brace */
-      subagg_init_md(c, rid, base_off+idx*stride, dims+1, nd-1, es, is_bool, elem);
-    } else {                                              /* innermost dim: a scalar element store */
-      uint32_t v=store_conv(c,p_expr(c),elem);
-      bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-      if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=v;cl->n_imm=2;cl->imm[0]=base_off+idx*es;cl->imm[1]=es;cl->bounds=BCIR_BND_ASSUMED;
-        if(is_bool){cl->imm[2]=1;cl->n_imm=3;}            /* a _Bool[] element init normalizes the value */
-        mark_atomic(cl,elem && elem->is_atomic);}         /* an `_Atomic` element: an atomic store */
+/* A string-literal entry at the cursor that is its entry's whole initializer (the literal, then `,` or `}`). */
+static int str_entry(CC *c){
+  int j=c->i; if(tat(c,j)->k!=T_STR) return 0;
+  while(tat(c,j)->k==T_STR) j++;
+  return tok_is(tat(c,j),",") || tok_is(tat(c,j),"}");
+}
+/* Decode the (concatenated) string literal at the cursor into its code units, excluding the NUL (the oracle's
+ * `str_units`): each unit is a source character or one escape; pieces with different prefixes, a non-ASCII
+ * character, a universal character name, or an escape too wide for the unit are refused. Consumes the tokens. */
+static int str_units(CC *c, uint32_t **out, int *n_out, int *unit_out){
+  int j=c->i, total=0; const tok *first=tat(c,j);
+  int pl=str_tok_prefix_len(first), unit=str_tok_unit(c,first);
+  for(; tat(c,j)->k==T_STR; j++){ const tok *t=tat(c,j);
+    if(str_tok_prefix_len(t)!=pl || strncmp(t->s,first->s,(size_t)pl)){ fail(c,"a string initializer concatenating literals of different prefixes"); return 0; }
+    total+=t->n; }
+  uint32_t *u=(uint32_t*)bcir_host_arena_allocate(&c->scratch,(size_t)(total>0?total:1)*sizeof *u,sizeof *u);
+  if(!u){ cc_raise_oom(c); return 0; }
+  int n=0;
+  unsigned long long lim = unit>=4 ? 0x100000000ull : (1ull<<(8*unit));
+  while(isk(c,T_STR)){ tok t=adv(c); int i=pl+1, end=t.n-1;   /* inside the quotes */
+    while(i<end){ unsigned char ch=(unsigned char)t.s[i]; unsigned long long val;
+      if(ch>=128){ fail(c,"a non-ASCII character in a string initializer is not supported"); return 0; }
+      if(ch!='\\' || i+1>=end){ u[n++]=ch; i++; continue; }
+      char e=t.s[i+1];
+      if(e=='x'){ int nd=0; val=0; i+=2;
+        while(i<end && ((t.s[i]>='0'&&t.s[i]<='9')||((t.s[i]|0x20)>='a'&&(t.s[i]|0x20)<='f'))){
+          int h=t.s[i]<='9'?t.s[i]-'0':(t.s[i]|0x20)-'a'+10; if(val<lim) val=val*16+(unsigned)h; i++; nd++; }
+        if(!nd){ fail(c,"a \\x escape with no hex digit"); return 0; } }
+      else if(e>='0'&&e<='7'){ int k=0; val=0; i++; while(k<3 && i<end && t.s[i]>='0'&&t.s[i]<='7'){ val=val*8+(unsigned)(t.s[i]-'0'); i++; k++; } }
+      else if(e=='u'||e=='U'){ fail(c,"a universal character name in a string initializer is not supported"); return 0; }
+      else { switch(e){case 'n':val=10;break;case 't':val=9;break;case 'r':val=13;break;case '\\':val=92;break;
+               case '\'':val=39;break;case '"':val=34;break;case 'a':val=7;break;case 'b':val=8;break;
+               case 'f':val=12;break;case 'v':val=11;break;case '?':val=63;break;default:val=(unsigned char)e;}
+             i+=2; }
+      if(val>=lim){ fail(c,"an escape sequence out of range for its character type"); return 0; }
+      u[n++]=(uint32_t)val; } }
+  *out=u; *n_out=n; *unit_out=unit; return 1;
+}
+/* Initialize the character array `u` (of `count` elements; < 0: the declared array its literal sizes) from the
+ * string literal at the cursor: one store per code unit, the NUL and the rest left to the zero baseline (the
+ * oracle's `_init_string`); a literal longer than the array is refused. */
+static void init_string(CC *c, iwalk *W, const iunit *u, int indexed, int count){
+  uint32_t *units; int n, unit;
+  if(!str_units(c,&units,&n,&unit)) return;
+  if(count<0){ count=n+1; if(count>W->top_n) W->top_n=count; }
+  if(n>count){ fail(c,"an initializer-string for a character array is too long"); return; }
+  if(init_overrides(c,W,(long long)u->off*8,((long long)u->off+(long long)u->es*count)*8)) return;
+  for(int i=0;i<n && !c->failed;i++){
+    uint32_t cv=0;
+    if(W->konst) W->kv=kint(units[i],32,1);            /* a static's image: the code unit, an int constant */
+    else { cv=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
+      if(kc){kc->n_wr=1;kc->wr[0]=cv;kc->n_imm=1;kc->imm[0]=(int64_t)units[i];} }
+    iunit e; iunit_elem(&e,u,i); init_store(c,W,&e,cv,indexed); }
+}
+static void init_list(CC *c, iwalk *W, const iunit *obj, int top, int flat);
+/* An initializer entry's value (the cursor at it), evaluated once, before it is placed: lowered -- or, in a static's
+ * image, folded into W->kv (the oracle's `_init_value`). */
+static uint32_t init_value(CC *c, iwalk *W){
+  if(!W->konst) return p_expr(c);
+  size_t from=c->fn->n_claims; uint32_t v=p_expr(c);
+  if(!c->failed) W->kv=kfold(c,from,v);
+  return 0;
+}
+/* A nested brace list for the subobject `u`: it initializes the whole subobject, so no earlier store may lie in
+ * it; a scalar takes a braced single expression (6.7.9p11) -- the oracle's `_init_sublist`. */
+static void init_sublist(CC *c, iwalk *W, const ifrm *fr, const iunit *u){
+  long long lo=(long long)u->off*8+u->bit_off;
+  if(init_overrides(c,W,lo,lo+(u->bit_w?u->bit_w:(long long)u->size*8))) return;
+  if(u->k==IK_SCAL){
+    eat(c,"{");
+    if(is(c,"}")){ c->i++; return; }                  /* `{}` is zero, which the baseline already holds */
+    if(is(c,".")||is(c,"[")||is(c,"{")){ fail(c,"a braced scalar initializer holds one expression"); return; }
+    uint32_t v=init_value(c,W); if(is(c,",")) c->i++;
+    if(c->failed) return;
+    if(!is(c,"}")){ fail(c,"a braced scalar initializer holds one expression"); return; }
+    c->i++; init_store(c,W,u,v,0); return; }
+  init_list(c,W,u,0,fr->flat && u->k==IK_ARR);
+}
+static void init_list_inner(CC *c, iwalk *W, const iunit *obj, int top, int flat){
+  if(!eat(c,"{")) return;
+  ifrm frames[IW_MAXFRAMES]; int nf=1;
+  frames[0].u=*obj; frames[0].idx=0; frames[0].count=(top && W->inferred)?-1:iunit_count(c,obj);
+  frames[0].flat=flat; frames[0].top=top;
+  if(str_entry(c)){                                   /* `{"abc"}` for a character array: the whole array */
+    int j=c->i; while(tat(c,j)->k==T_STR) j++;
+    if(tok_is(tat(c,j),",")) j++;
+    if(tok_is(tat(c,j),"}") && init_char_array(obj,str_tok_unit(c,pk(c)))){
+      init_string(c,W,obj,top && flat,frames[0].count); if(is(c,",")) c->i++; eat(c,"}"); return; } }
+  while(!is(c,"}") && !isk(c,T_END) && !c->failed){
+    int keyed=is(c,".")||is(c,"[");
+    int indexed_ok=top && W->top_array && (!keyed || desig_single_index(c));
+    ifrm *fr=keyed ? init_designate(c,W,frames,&nf) : init_next(c,frames,&nf);
+    if(!fr) return;
+    iunit u;
+    if(is(c,"{")){ if(!init_take(c,W,fr,&u)) return; init_sublist(c,W,fr,&u); }
+    else if(str_entry(c)){                              /* a character array it initializes, found by elision */
+      int unit=str_tok_unit(c,pk(c));
+      for(;;){ iunit_at(c,fr,&u);
+        if(init_char_array(&u,unit)){ if(!init_take(c,W,fr,&u)) return; init_string(c,W,&u,indexed_ok && fr->flat,u.dims[0]); break; }
+        if(u.k==IK_SCAL){ ifrm *hold=fr; if(!init_take(c,W,fr,&u)) return;
+          uint32_t v=init_value(c,W); init_store(c,W,&u,v,indexed_ok && hold->flat); break; }
+        if(!init_take(c,W,fr,&u) || !init_push(c,frames,&nf,&u) || !(fr=init_next(c,frames,&nf))) return; }
+    } else {
+      uint32_t v=init_value(c,W);                      /* evaluated once, before it is placed */
+      if(c->failed) return;
+      for(;;){ iunit_at(c,fr,&u);
+        if(u.k==IK_AGG && !W->konst && value_is_struct(c,v,u.sidx)){   /* a struct/union value: the subobject whole
+                                                                        * (a folded constant never is one) */
+          int flat_here=fr->flat; if(!init_take(c,W,fr,&u)) return; init_store(c,W,&u,v,indexed_ok && flat_here); break; }
+        if(u.k==IK_SCAL){ int flat_here=fr->flat; if(!init_take(c,W,fr,&u)) return; init_store(c,W,&u,v,indexed_ok && flat_here); break; }
+        if(!init_take(c,W,fr,&u) || !init_push(c,frames,&nf,&u) || !(fr=init_next(c,frames,&nf))) return; }   /* brace elision */
     }
-    cursor=idx+1;
-    if(is(c,",")) c->i++;
+    if(c->failed) return;
+    if(is(c,",")) c->i++; else break;
   }
   eat(c,"}");
 }
-/* A nested braced initializer for an ARRAY-OF-STRUCTS member -- `{ {a,b}, {c,d}, ... }`: each element brace
- * recurses into the element struct's init at `base_off + idx*stride` (the C twin of the oracle's _init_subagg
- * array-of-struct branch). Composes through the enclosing `= {0}` baseline; `[i]=` jumps, gaps zero-fill.
- * Returns the element count reached (max index + 1), so an inferred-size `struct P a[] = {...}` sizes itself. */
-static int subagg_init_struct(CC *c, uint32_t rid, int base_off, int elem_sidx, int stride) {
-  eat(c,"{");
-  int cursor=0, n=0;
-  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int idx=cursor;
-    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    if(!is(c,"{")){ fail(c,"array-of-structs element needs a brace initializer"); return n; }
-    agg_init_at(c, rid, elem_sidx, base_off+idx*stride, 0);                   /* {a,b} -> the element struct */
-    cursor=idx+1; if(cursor>n) n=cursor;
-    if(is(c,",")) c->i++;
-  }
-  eat(c,"}");
-  return n;
-}
-/* A NESTED-brace initializer for a MULTI-dim AGGREGATE-element array `struct P a[d0][d1]... = { {..}, {..} }`
- * (the C twin of the oracle's _array_row / _init_subagg multi-dim struct descent). The flat resource keeps the
- * row-major `struct P a[d0][d1]` layout, so each OUTER brace descends by ROW: row `r` lands at `base_off +
- * r*stride` where `stride = product(dims[1:]) * es` (the struct element size `es`). The INNERMOST dim takes a
- * per-element STRUCT brace `{a,b}` -- routed through agg_init_at at `base_off + idx*es` (per-element field
- * stores at absolute offsets, exactly like subagg_init_struct), composing through the enclosing `= {0}`
- * baseline. Positional entries advance a cursor, `[i]=` jumps it, gaps zero-fill (§6.7.10). `elem_sidx` is the
- * element struct's sdef index. */
-static void subagg_init_md_struct_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx);
-/* Depth-guarded wrapper: subagg_init_md_struct self-recurses per nested-row brace. */
-static void subagg_init_md_struct(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx) {
+/* Depth-guarded: a nested brace list re-enters init_list (`{{{...}}}`). */
+static void init_list(CC *c, iwalk *W, const iunit *obj, int top, int flat){
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }
-  subagg_init_md_struct_inner(c, rid, base_off, dims, nd, es, elem_sidx); LEAVE_REC(c);
+  init_list_inner(c,W,obj,top,flat); LEAVE_REC(c);
 }
-static void subagg_init_md_struct_inner(CC *c, uint32_t rid, int base_off, const int *dims, int nd, int es, int elem_sidx) {
-  eat(c,"{");
-  int stride=es;                                          /* row stride = product(dims[1:]) * es */
-  for(int d=1; d<nd; d++) stride*=dims[d];
-  int cursor=0;
-  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int idx=cursor;
-    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    if(nd>1){                                             /* an outer dim takes a nested ROW brace */
-      if(!is(c,"{")){ fail(c,"multi-dim aggregate literal needs a row brace"); return; }
-      subagg_init_md_struct(c, rid, base_off+idx*stride, dims+1, nd-1, es, elem_sidx);
-    } else {                                              /* innermost dim: a per-element struct brace `{a,b}` */
-      if(!is(c,"{")){ fail(c,"array-of-structs element needs a brace initializer"); return; }
-      agg_init_at(c, rid, elem_sidx, base_off+idx*es, 0);
-    }
-    cursor=idx+1;
-    if(is(c,",")) c->i++;
-  }
-  eat(c,"}");
+/* Lower the initializer at the cursor -- a brace list, or a string literal for a character array -- of the local
+ * object `rid` that `obj` describes: the `= {0}` baseline plus the walk's stores (the oracle's `_agg_init`).
+ * Returns the number of top-level elements reached, which sizes an `inferred` array. */
+static int init_object(CC *c, uint32_t rid, const iunit *obj, int inferred){
+  iwalk W; memset(&W,0,sizeof W);
+  W.rid=rid; W.top_array=obj->k==IK_ARR; W.top_n=0; W.inferred=inferred; W.rng0=c->iw_nrng; W.un0=c->iw_nun;
+  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }   /* = {0} */
+  if(isk(c,T_STR)){                                    /* `char s[] = "ab"` is `char s[] = {"ab"}` (6.7.9p14) */
+    if(!init_char_array(obj,str_tok_unit(c,pk(c)))) fail(c,"an array is initialized by a brace list or a string literal");
+    else init_string(c,&W,obj,1,inferred?-1:obj->dims[0]); }
+  else init_list(c,&W,obj,1,obj->k==IK_ARR);
+  c->iw_nrng=W.rng0; c->iw_nun=W.un0;                  /* a nested initializer's records end with it */
+  return W.top_n;
 }
-static void agg_init_at_inner(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit);
-/* Depth-guarded wrapper: agg_init_at is the aggregate-initializer recursion entry (agg_init_at<->
- * subagg_init_struct/subagg_init_md/subagg_init_md_struct and the nested-brace re-entry), so a deeply
- * nested `{{{...}}}` initializer would exhaust the stack. Bump/check depth once per brace level. */
-static void agg_init_at(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
-  if(ENTER_REC(c)){ LEAVE_REC(c); return; }
-  agg_init_at_inner(c, rid, sidx, base_off, do_zinit); LEAVE_REC(c);
+/* The walk's description of a local struct/union of sdef `si`, or of a local array of `ty` elements (`es` bytes
+ * each; a struct element's sdef `si`) with dims `dims[0..nd)`. */
+static iunit iunit_struct(CC *c, int si){
+  iunit u; memset(&u,0,sizeof u); u.k=IK_AGG; u.sidx=si; u.size=si>=0?c->s[si].size:0; return u;
 }
-static void agg_init_at_inner(CC *c, uint32_t rid, int sidx, int base_off, int do_zinit) {
-  eat(c,"{");
-  sdef *S = sidx>=0 ? &c->s[sidx] : NULL;
-  if(!S){ fail(c,"aggregate initializer needs a struct/union type"); return; }
-  if(do_zinit) for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }  /* = {0} */
-  int cursor=0;
-  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int off=0, size=4, bit_w=0, bit_off=0, top_fi=cursor, skip=0, fbool=0, abytes=4;   /* store target (chain/positional) */
-    const field *leaf=NULL;                             /* the member the value lands in: its type, flag, unit */
-    if(is(c,".")||is(c,"[")){                           /* a (possibly nested) designator */
-      if(designator_chain(c,S,&off,&size,&bit_w,&bit_off,&top_fi,&leaf)) return;
-      eat(c,"=");
-    } else if(cursor<S->nf){ leaf=&S->f[cursor];        /* positional: the cursor-th member */
-      off=leaf->byte_off; size=leaf->size; bit_w=leaf->bit_w; bit_off=leaf->bit_off;
-    } else skip=1;                                      /* past the last member -> parse but do not store */
-    if(leaf){ fbool=leaf->is_bool; abytes=leaf->access_bytes; }   /* the LEAF's, through a nested designator */
-    off += base_off;                                   /* shift into the enclosing object (nested aggregate) */
-    if(!skip && is(c,"{")){                             /* a NESTED brace: an aggregate (array OR struct) member */
-      field *AF = (top_fi>=0 && top_fi<S->nf) ? &S->f[top_fi] : NULL;
-      if(AF && AF->arr_count>0 && AF->elem_sidx>=0){      /* an ARRAY-OF-STRUCTS member: `{ {a,b}, {c,d} }` */
-        subagg_init_struct(c, rid, off, AF->elem_sidx, AF->size); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
-      if(AF && AF->arr_count>0){ bcir_ctype afs=field_slot(AF);
-        subagg_init(c, rid, off, AF->size, AF->is_bool, &afs); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
-      if(AF && AF->sidx>=0){ agg_init_at(c, rid, AF->sidx, off, 0); cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
-      fail(c,"nested initializer for a non-aggregate member"); return;
-    }
-    uint32_t v=p_expr(c); uint32_t val=v;
-    if(skip){ cursor=top_fi+1; if(is(c,",")) c->i++; continue; }
-    if(leaf){ bcir_ctype ls=field_slot(leaf); v=store_conv(c,v,&ls); val=v; }   /* C's conversion to the leaf */
-    if(bit_w){                                          /* a bitfield member: read unit, set bits, store */
-      int absz=abytes<=4?4:8;
-      uint32_t unit=temp(c,absz);
-      bcir_claim *ld=new_claim(c,"c.load",BCIR_OP_LOAD);
-      if(ld){ld->n_rd=1;ld->rd[0]=rid;ld->n_wr=1;ld->wr[0]=unit;ld->n_imm=2;ld->imm[0]=off;ld->imm[1]=abytes;ld->bounds=BCIR_BND_ASSUMED;}
-      uint32_t nu=temp(c,absz);
-      bcir_claim *bs=new_claim(c,"c.bf.set",BCIR_OP_ADD);
-      if(bs){bs->n_rd=2;bs->rd[0]=unit;bs->rd[1]=v;bs->n_wr=1;bs->wr[0]=nu;bs->n_imm=2;bs->imm[0]=bit_off;bs->imm[1]=bit_w;}
-      val=nu; }
-    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=2;cl->rd[0]=rid;cl->rd[1]=val;cl->n_imm=2;cl->imm[0]=off;cl->imm[1]=bit_w?abytes:size;cl->bounds=BCIR_BND_ASSUMED;
-      if(bit_w){cl->imm[2]=2;cl->n_imm=3;}             /* a bitfield UNIT store: `_v` takes the unit's full type */
-      else if(fbool){cl->imm[2]=1;cl->n_imm=3;}        /* a _Bool member init normalizes the value */
-      mark_atomic(cl,leaf && leaf->is_atomic && !bit_w);}   /* an `_Atomic` member: an atomic store, as the
-                                                        * oracle's initializer writes through `_write` */
-    cursor=top_fi+1;
-    if(is(c,",")) c->i++;
-  }
-  eat(c,"}");
+static iunit iunit_array(const bcir_ctype *ty, int si, int es, const int *dims, int nd){
+  iunit u; memset(&u,0,sizeof u); u.k=IK_ARR; u.sidx=ty->kind==1?si:-1; u.nd=nd<1?1:nd;
+  for(int d=0;d<3 && d<u.nd;d++) u.dims[d]=dims[d];
+  u.es=es; u.slot=*ty; u.slot.nadims=0; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic;
+  u.size=es; for(int d=0; d<u.nd; d++) u.size*=u.dims[d];
+  return u;
 }
-static void agg_init(CC *c, uint32_t rid, int sidx) { agg_init_at(c, rid, sidx, 0, 1); }
-/* A C99 compound literal `(type){init}` -- an anonymous local of `type`, initialized exactly like a
- * braced local decl and yielded as an rvalue rid (a by-value struct arg, an assignment RHS, a scalar
- * value), or addressed under `&`. A struct/union reuses agg_init (the `= {0}` zero baseline + a c.store
- * per initialized member); a scalar `(int){v}` copies the single value in. (Direct postfix on a literal
- * `(struct P){...}.f` and array literals `(int[]){...}` are deferred follow-ons.) */
+/* ... of a local scalar, pointer or function pointer of type `ty`: one subobject (a static's). */
+static iunit iunit_scalar(CC *c, const bcir_ctype *ty){
+  iunit u; memset(&u,0,sizeof u); u.k=IK_SCAL; u.sidx=-1; u.slot=*ty; u.slot.nadims=0;
+  u.size=ty->kind==2?cc_abi(c)->pointer_size:ty->size; u.is_bool=ty->is_bool; u.is_atomic=ty->is_atomic;
+  return u;
+}
+/* A static's image rendered as its declaration's initializer (the oracle's `_render_image`) -- the brace list both
+ * rails render: each scalar the walk stored holds its last value, and a zero one is the static's own zero. An array
+ * lists the elements that hold a value, designating one after a gap (`[5] = v`); a struct its members in order, up to
+ * the last that holds one; a union the member the walk gave it (`.m = v` for any but the first); a multi-dimensional
+ * static its elements flat, as it is declared. */
+#define KV_ANONUNION "a static union initialized through an anonymous member other than its first"   /* the oracle's
+  * `_ANON_UNION`: C names that member only through its own leaves, which the brace list does not spell */
+typedef struct { long long lo, w; unsigned long long v; int neg; int at; } krec;   /* a stored scalar: its bit offset
+  * and width, its value, and the order it was stored in (the last store wins) */
+typedef struct { krec *r; int n; char *s; size_t len, cap; const iwalk *W; } kimg;   /* the image + the text so far */
+static int krec_cmp(const void *x,const void *y){
+  const krec *a=(const krec *)x, *b=(const krec *)y;
+  return a->lo!=b->lo ? (a->lo<b->lo?-1:1) : a->w!=b->w ? (a->w<b->w?-1:1) : a->at<b->at?-1:a->at>b->at; }
+static void kput(CC *c,kimg *m,const char *s,size_t n){   /* append to the text (scratch arena, doubled on growth) */
+  if(!m->s || m->cap-m->len<=n){ size_t cap=m->cap?m->cap:256;
+    while(cap-m->len<=n){ if(cap>SIZE_MAX/2){ cc_raise_oom(c); return; } cap*=2; }
+    char *ns=(char *)bcir_host_arena_allocate(&c->scratch,cap,1u); if(!ns){ cc_raise_oom(c); return; }
+    if(m->s && m->len) memcpy(ns,m->s,m->len);
+    m->s=ns; m->cap=cap; }
+  memcpy(m->s+m->len,s,n); m->len+=n; m->s[m->len]=0; }
+static int kfirst(const kimg *m,long long lo){   /* the first stored scalar at bit `lo` or after it */
+  int a=0,b=m->n; while(a<b){ int h=a+(b-a)/2; if(m->r[h].lo<lo) a=h+1; else b=h; } return a; }
+static void kspell(CC *c,kimg *m,const krec *r){   /* `Nu`, `-N`, and the one negative with no positive counterpart */
+  char d[48]; int l = !r->neg ? snprintf(d,sizeof d,"%lluu",r->v)
+    : r->v==(1ull<<63) ? snprintf(d,sizeof d,"(-9223372036854775807 - 1)") : snprintf(d,sizeof d,"-%llu",0ull-r->v);
+  kput(c,m,d,(size_t)l); }
+static int kzero(const char *s,size_t n){ return (n==2 && !memcmp(s,"0u",2)) || (n==3 && !memcmp(s,"{0}",3)); }
+/* The rendered initializer of one subobject of the image (the oracle's `_render_unit`). */
+static void kunit(CC *c,kimg *m,const iunit *u,int depth){
+  long long lo=(long long)u->off*8+u->bit_off;
+  if(u->k==IK_SCAL){ long long w=u->bit_w?u->bit_w:(long long)u->size*8;
+    for(int i=kfirst(m,lo); i<m->n && m->r[i].lo==lo; i++) if(m->r[i].w==w){ kspell(c,m,&m->r[i]); return; }
+    kput(c,m,"0u",2); return; }
+  long long hi=lo+(long long)u->size*8; int i=kfirst(m,lo);
+  if(i>=m->n || m->r[i].lo>=hi){ kput(c,m,"{0}",3); return; }
+  if(depth>=IW_MAXFRAMES){ fail(c,"an initializer nested deeper than 64 subobjects"); return; }
+  ifrm fr; memset(&fr,0,sizeof fr); fr.u=*u; fr.count=iunit_count(c,u);
+  kput(c,m,"{",1);
+  if(u->k==IK_ARR){                                       /* the elements holding a value; a gap is designated */
+    long long st=(long long)(u->size/(u->dims[0]>0?u->dims[0]:1))*8; int prev=-1;
+    while(i<m->n && m->r[i].lo<hi && !c->failed){ int k=(int)((m->r[i].lo-lo)/st); iunit e;
+      if(prev>=0) kput(c,m,", ",2);
+      if(k!=prev+1){ char d[32]; int l=snprintf(d,sizeof d,"[%d] = ",k); kput(c,m,d,(size_t)l); }
+      iunit_elem(&e,u,k); kunit(c,m,&e,depth+1); prev=k; i=kfirst(m,lo+(long long)(k+1)*st); } }
+  else if(c->s[u->sidx].is_union){                        /* the member the walk gave it */
+    const sdef *S=&c->s[u->sidx]; int k=0; iunit s;
+    for(int q=m->W->un0; q<c->iw_nun; q++) if(c->iw_un[q].off==u->off && c->iw_un[q].sidx==u->sidx){ k=c->iw_un[q].member; break; }
+    for(int g=0; g<S->nanon; g++) if(k && S->anon[g].first==k){ fail(c,KV_ANONUNION); return; }
+    if(k){ kput(c,m,".",1); kput(c,m,S->f[k].name,strlen(S->f[k].name)); kput(c,m," = ",3); }
+    fr.idx=k; iunit_at(c,&fr,&s); kunit(c,m,&s,depth+1); }
+  else { size_t keep=m->len; int first=1;                 /* every member in order, up to the last holding a value */
+    while(fr.idx<fr.count && !c->failed){ iunit s; fr.idx=iunit_at(c,&fr,&s);
+      if(!first) kput(c,m,", ",2);
+      first=0; size_t at=m->len; kunit(c,m,&s,depth+1);
+      if(!kzero(m->s+at,m->len-at)) keep=m->len; }
+    m->len=keep; if(m->s) m->s[keep]=0; }
+  kput(c,m,"}",1);
+}
+/* The rendered initializer of the static the walk `W` imaged, whose object `obj` is -- in the scratch arena; NULL when
+ * the image is zero (the declaration's own `{0}` / `0u`). */
+static char *kimage(CC *c,const iwalk *W,const iunit *obj){
+  int n=c->iw_nrng-W->rng0, m=0;
+  if(n<=0) return NULL;
+  krec *r=(krec *)bcir_host_arena_allocate(&c->scratch,(size_t)n*sizeof *r,sizeof(long long));
+  if(!r){ cc_raise_oom(c); return NULL; }
+  for(int k=0;k<n;k++){ const irange *g=&c->iw_rng[W->rng0+k];
+    r[k].lo=g->lo; r[k].w=g->hi-g->lo; r[k].v=g->v; r[k].neg=g->neg; r[k].at=k; }
+  qsort(r,(size_t)n,sizeof *r,krec_cmp);
+  for(int k=0;k<n;k++){                                   /* each scalar's last store, and only a nonzero one */
+    if(k+1<n && r[k+1].lo==r[k].lo && r[k+1].w==r[k].w) continue;
+    if(r[k].v) r[m++]=r[k]; }
+  if(!m) return NULL;
+  kimg im; memset(&im,0,sizeof im); im.r=r; im.n=m; im.W=W;
+  iunit top=*obj;
+  if(top.k==IK_ARR && top.nd>1){ top.dims[0]=top.size/(top.es>0?top.es:1); top.dims[1]=top.dims[2]=0; top.nd=1; }
+  kunit(c,&im,&top,0);
+  return c->failed ? NULL : im.s;
+}
+/* A static's initializer at the cursor (the oracle's `_static_init`): the initializer walk in constant mode -- each
+ * entry folded, each store recorded in the static's image, no claim left behind (C initializes a static once, before
+ * the program runs, never at a call) -- and the image rendered (`kimage`, into *text; NULL for a zero image). A scalar
+ * takes one value (`{e}` braced, `{}` zero); an aggregate or an array a brace list, a character array a string
+ * literal. Returns the top-level elements reached, which size an inferred array. */
+static int init_image(CC *c, const iunit *obj, int inferred, char **text){
+  iwalk W; memset(&W,0,sizeof W);
+  W.top_array=obj->k==IK_ARR; W.inferred=inferred; W.konst=1; W.rng0=c->iw_nrng; W.un0=c->iw_nun; *text=NULL;
+  spec_mark m; spec_begin(c,&m);                          /* the entries' claims: folded, then rolled back */
+  if(obj->k==IK_ARR && isk(c,T_STR)){                     /* `char s[] = "ab"` is `{"ab"}` (6.7.9p14) */
+    if(!init_char_array(obj,str_tok_unit(c,pk(c)))) fail(c,"an array is initialized by a brace list or a string literal");
+    else init_string(c,&W,obj,1,inferred?-1:obj->dims[0]); }
+  else if(obj->k!=IK_SCAL && is(c,"{")) init_list(c,&W,obj,1,obj->k==IK_ARR);
+  else if(obj->k==IK_ARR) fail(c,"an array is initialized by a brace list or a string literal");
+  else if(is(c,"{")){ ifrm fr; memset(&fr,0,sizeof fr); init_sublist(c,&W,&fr,obj); }
+  else { uint32_t v=init_value(c,&W); if(!c->failed) init_store(c,&W,obj,v,0); }   /* a scalar's value (a struct's
+                                                                                      * is never a constant) */
+  spec_end(c,&m);
+  if(!c->failed){ iunit sized=*obj;                       /* an inferred `[]`: the rows the walk reached */
+    if(inferred && sized.k==IK_ARR){ int n=W.top_n<1?1:W.top_n;
+      sized.size=sized.size/(sized.dims[0]>0?sized.dims[0]:1)*n; sized.dims[0]=n; }
+    *text=kimage(c,&W,&sized); }
+  c->iw_nrng=W.rng0; c->iw_nun=W.un0;                     /* its records end with it */
+  return W.top_n;
+}
+/* Record the static local `nm` (resource `rid`) with its rendered image `text` (NULL: zero); the function owns a copy. */
+static void add_static(CC *c, const tok *nm, uint32_t rid, const char *text){
+  bcir_func *f=c->fn; char *cp=NULL;
+  if(!CC_ENSURE(c,f->statics,f->n_statics,f->cap_statics)) return;
+  if(text){ size_t z=strlen(text)+1; cp=(char *)bcir_host_allocate(&c->allocator,z);
+    if(!cp){ cc_raise_oom(c); return; }
+    memcpy(cp,text,z); }
+  idcpy(f->statics[f->n_statics].name,nm); f->statics[f->n_statics].text=cp; f->statics[f->n_statics].rid=rid;
+  f->n_statics++;
+}
+/* Re-evaluate the bounds of the stores into `rid` from claim `from` on, once an inferred array has its count. */
+static void init_remask(CC *c, uint32_t rid, size_t from){
+  bcir_bounds bnd=access_bnd(c,rid);
+  for(size_t i=from; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
+    if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; }
+}
+/* A C99 compound literal `(type){init}` -- an anonymous local of `type`, initialized exactly like a braced local
+ * decl, and yielded as an rvalue rid or addressed under `&`. A struct/union takes the walk; a scalar `(int){v}`
+ * copies its one value (`{}` is zero). */
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si) {
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
   if(ty->kind==1){                                   /* a struct/union compound literal */
     uint32_t rid=add_res(c,BCIR_DOM_RAM, si>=0?c->s[si].size:ty->size, 1, 0, BCIR_RK_AGGREGATE, nm);
     if(c->fn->n_res) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",
                               ty->is_union?"union":"struct", ty->tag);
-    agg_init(c, rid, si);                            /* parses the `{...}`: zinit + a c.store per member */
+    iunit obj=iunit_struct(c,si);
+    (void)init_object(c, rid, &obj, 0);
     return rid;
   }
   /* a scalar compound literal `(int){v}` -- a named scalar local + a c.copy of the single value */
@@ -4579,147 +5823,40 @@ static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si) {
     rr->is_bool=(uint8_t)(ty->is_bool?1:0); rr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); }
   eat(c,"{");
   uint32_t v;
-  if(is(c,"}")){ v=temp(c, ty->size?ty->size:4);     /* `(int){}` (C23 empty) -> 0 */
+  if(is(c,"}")){ v=temp(c,4);                        /* `(int){}` (C23 empty) -> 0 */
     bcir_claim *k=new_claim(c,"c.const",BCIR_OP_LOAD); if(k){k->n_wr=1;k->wr[0]=v;k->n_imm=1;k->imm[0]=0;} }
+  else if(is(c,".")||is(c,"[")||is(c,"{")){ fail(c,"a braced scalar initializer holds one expression"); return temp(c,4); }
   else v=p_expr(c);
   if(is(c,",")) c->i++;                              /* a tolerated trailing comma */
+  if(!is(c,"}")){ fail(c,"a braced scalar initializer holds one expression"); return v; }
   eat(c,"}");
   bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);
   if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
   return rid;
 }
-/* A braced initializer for a local array `T a[N] = {...}` (the C twin of the oracle's array _agg_init):
- * a `= {0}` zero baseline (emit) + a c.store per initialized element. Positional entries advance a
- * cursor; a `[i]=` designator (a folded constant index) jumps it -- gaps zero-fill (§6.7.10). Returns
- * the element count reached (max index + 1), so an inferred-size literal `(T[]){...}` can size itself. */
-static int arr_init(CC *c, uint32_t rid) {
-  eat(c,"{");
-  for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
-  int cursor=0, n=0;
-  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-    int idx=cursor;
-    if(is(c,"[")){ c->i++; idx=(int)ce_expr(c,0); eat(c,"]"); eat(c,"="); }   /* [const-index] = */
-    uint32_t v=p_expr(c);
-    uint32_t ic=temp(c,4); bcir_claim *kc=new_claim(c,"c.const",BCIR_OP_LOAD);
-    if(kc){kc->n_wr=1;kc->wr[0]=ic;kc->n_imm=1;kc->imm[0]=idx;}
-    bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
-    if(cl){cl->n_rd=3;cl->rd[0]=rid;cl->rd[1]=ic;cl->rd[2]=v;cl->bounds=access_bnd(c,rid);  /* §5.12 promote a known-extent array */
-      const bcir_resource *ar=res_of(c->fn,rid); mark_atomic(cl,ar && ar->is_atomic);}   /* `_Atomic` elements */
-    cursor=idx+1; if(cursor>n) n=cursor;
-    if(is(c,",")) c->i++;
-  }
-  eat(c,"}");
-  return n;
-}
-/* Peek the OUTER dim of a braced initializer `{ e0, e1, ... }` (the count of top-level row entries) WITHOUT
- * consuming it -- the cursor must be at the opening `{`. Mirrors the oracle's outer-count inference (lower.py
- * ~1318-1327, max INDEX + 1): each TOP-LEVEL entry sits at a cursor; a positional entry advances it, a leading
- * `[const]=` designator JUMPS the cursor to that constant index; the result is `max(seen index)+1`. Nested
- * `{}` / `()` / `[]` are skipped by depth so a comma -- OR a designator `[..]` -- INSIDE an inner brace is not
- * counted at the top level (a `[k]=` designator is only honored at depth 0 AND at an entry start). */
-static int peek_top_entries(CC *c) {
-  int j=c->i; if(!tok_is(&c->t[j],"{")) return 0; j++;
-  int cursor=0, n=0, depth=0, at_entry_start=1;
-  while(c->t[j].k!=T_END){
-    if(depth==0 && tok_is(&c->t[j],"}")) break;
-    if(depth==0 && tok_is(&c->t[j],",")){            /* a top-level entry separator -> the next entry */
-      cursor++; at_entry_start=1; j++; continue;
-    }
-    if(depth==0 && at_entry_start && tok_is(&c->t[j],"[")
-       && c->t[j+1].k==T_INT && tok_is(&c->t[j+2],"]")){   /* a `[const]=` outer designator -> JUMP the cursor */
-      cursor=(int)c->t[j+1].v;                       /* the simple integer-literal outer index (a nested chain's */
-      j+=3; if(tok_is(&c->t[j],"=")) j++;            /* deeper `[..]` is inside the row, not a top-level designator) */
-      if(cursor+1>n) n=cursor+1;                     /* this entry sits at `cursor`, so max index+1 = cursor+1 */
-      at_entry_start=0; continue;
-    }
-    if(depth==0 && at_entry_start){ if(cursor+1>n) n=cursor+1; at_entry_start=0; }   /* a positional entry */
-    if(tok_is(&c->t[j],"{")||tok_is(&c->t[j],"(")||tok_is(&c->t[j],"[")) depth++;
-    else if(tok_is(&c->t[j],"}")||tok_is(&c->t[j],")")||tok_is(&c->t[j],"]")) depth--;
-    j++;
-  }
-  return n<1?1:n;
-}
-/* An array compound literal `(T[N]){...}` / `(T[]){...}` / `(T[A][B]){...}` -- an anonymous local array of
- * `T`, initialized exactly like a braced local-array decl (a `= {0}` baseline + a c.store per element) and
- * yielded as the array-object rid. The classic use is a direct subscript `(int[]){...}[i]` -- an inline
- * lookup table. An inferred size `[]` takes its length from the initializer (the max index + 1; gaps
- * zero-fill). A MULTI-dim `(T[A][B]){...}` routes its nested ROW braces through subagg_init_md (the same
- * proven path the regular multi-dim local decl uses), riding a `= {0}` baseline -- so the flat resource is
- * row-major `[A*B]` and `[i][j]` Horner-flattens with the right inner stride. An inferred OUTER dim
- * `(T[][N]){...}` infers the row count from the number of top-level braces. The element store emits real
- * typed `_cl[i] = v`, so any scalar element type converts correctly; a struct element is a deferred
- * follow-on. */
+/* An array compound literal `(T[N]){...}` / `(T[]){...}` / `(T[A][B]){...}` / `(struct P[]){...}` -- an anonymous
+ * local array of `T`, initialized exactly like a braced local-array decl (the walk), yielded as the array
+ * object. An inferred `[]` (or outer `[][B]`) takes its count from the rows the initializer reached, then its
+ * stores' bounds are re-evaluated against it. The element store emits real typed `_cl[i] = v`. */
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd) {
   char nm[BCIR_CIR_NAME]; snprintf(nm,sizeof nm,"_cl%u",++c->cl_ctr);
-  int es = ty->size ? ty->size : 4;
-  if(ty->kind==1){                                   /* an AGGREGATE-element literal `(struct P[]){...}` /
-    * `(struct P[N]){...}` (1-D) OR `(struct P[A][B]){...}` (multi-dim): a SCALAR-kind array of struct-sized
-    * elements (es == the struct size, the per-element stride), carrying the struct tag so the decl emits
-    * `struct P _cl[N]` and `_cl[i]...[k].field` strides by the element struct. Each innermost `{...}` element
-    * routes through agg_init_at (per-element field stores at absolute offsets, riding a `= {0}` baseline) --
-    * the C twin of the oracle's _init_subagg array-of-structs branch (and _array_row row descent for multi-dim).
-    * An inferred `[]` patches its count + re-masks the init stores, exactly like the scalar path below. */
-    if(la_nd>1){                                      /* a MULTI-dim AGGREGATE literal `(struct P[A][B]){...}` */
-      int dims[3]; for(int z=0;z<3;z++) dims[z]=la_dims[z];
-      int inner=1; for(int d=1; d<la_nd; d++) inner*=dims[d];   /* product of the FIXED inner dims */
-      int outer = dims[0];                            /* `(struct P[][N]){...}` infers the outer dim from the init */
-      if(outer<=0) outer = peek_top_entries(c);       /* the row-brace count (known up-front -> stores size right) */
-      dims[0]=outer;
-      int total = outer*inner;
-      uint32_t rid = add_res(c, BCIR_DOM_RAM, es, total>0?total:1, 0, BCIR_RK_SCALAR, nm);
-      int ari = (int)c->fn->n_res - 1;
-      snprintf(c->fn->res[ari].agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
-      c->fn->res[ari].zinit=1;                        /* a `= {0}` baseline -- unwritten fields/elements zero-fill */
-      subagg_init_md_struct(c, rid, 0, dims, la_nd, es, si);   /* descend nested ROW braces; innermost = a struct */
-      return rid;
-    }
-    uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
-    int ari = (int)c->fn->n_res - 1;
-    snprintf(c->fn->res[ari].agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
-    c->fn->res[ari].zinit=1;                          /* a `= {0}` baseline -- unwritten fields/elements zero-fill */
-    size_t s_nclaims = c->fn->n_claims;               /* the init stores begin here -- re-mask after sizing */
-    int nel = subagg_init_struct(c, rid, 0, si, es);  /* per-element struct store at `idx*es` */
-    if(count<=0){ c->fn->res[ari].count = (uint32_t)(nel<1?1:nel);   /* an inferred `[]`: size from the init, then
-      * re-evaluate access_bnd against the patched extent so the per-element stores mask exactly like a regular
-      * array init (matching the oracle's per-element BCIR_CHK). */
-      bcir_bounds bnd = access_bnd(c, rid);
-      for(size_t i=s_nclaims; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
-        if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; } }
-    return rid;
-  }
-  if(la_nd>1){                                       /* a MULTI-dim literal `(T[A][B]){...}` */
-    int dims[3]; for(int z=0;z<3;z++) dims[z]=la_dims[z];
-    int inner=1; for(int d=1; d<la_nd; d++) inner*=dims[d];   /* product of the FIXED inner dims */
-    int outer = dims[0];                             /* `(T[][N]){...}` infers the outer dim from the init */
-    if(outer<=0) outer = peek_top_entries(c);
-    dims[0]=outer;
-    int total = outer*inner;
-    uint32_t rid = add_res(c, BCIR_DOM_RAM, es, total>0?total:1, 0, BCIR_RK_SCALAR, nm);
-    int ari = (int)c->fn->n_res - 1;
-    if(ty->is_float) c->fn->res[ari].is_float=1;     /* element type flags -> the decl emits `float`/`char`/... */
-    else if(ty->kind==0){ c->fn->res[ari].is_signed=(uint8_t)(ty->signd?1:0);
-      if(ty->is_bool) c->fn->res[ari].is_bool=1;
-      if(ty->is_plain_char) c->fn->res[ari].is_plain_char=1; }
-    c->fn->res[ari].zinit=1;                         /* a `= {0}` baseline -- unwritten elements zero-fill */
-    subagg_init_md(c, rid, 0, dims, la_nd, es, ty->is_bool, ty);   /* descend the nested ROW braces */
-    return rid;
-  }
-  uint32_t rid = add_res(c, BCIR_DOM_RAM, es, count>0?count:1, 0, BCIR_RK_SCALAR, nm);
-  int ari = (int)c->fn->n_res - 1;                  /* the array resource (stable index; patch count below) */
-  if(ty->is_float) c->fn->res[ari].is_float=1;      /* element type flags -> the decl emits `float`/`char`/... */
+  int es = ty->kind==2 ? cc_abi(c)->pointer_size : (ty->size ? ty->size : 4);
+  int dims[3]={0,0,0}, nd=la_nd>1?(la_nd<3?la_nd:3):1, inner=1;   /* the caller caps at 3 dims */
+  if(la_nd>1){ for(int z=0;z<3;z++) dims[z]=la_dims[z]; } else dims[0]=count;
+  for(int d=1; d<nd; d++) inner*=dims[d];
+  int inferred = dims[0]<=0;
+  if(inferred) dims[0]=1;                            /* provisional: the walk counts the rows */
+  uint32_t rid = add_res(c, BCIR_DOM_RAM, es, dims[0]*inner, 0, BCIR_RK_SCALAR, nm);
+  int ari = (int)c->fn->n_res - 1;
+  if(ty->kind==1) snprintf(c->fn->res[ari].agg,BCIR_CIR_NAME,"%s %s",ty->is_union?"union":"struct",ty->tag);
+  else if(ty->is_float) c->fn->res[ari].is_float=1;  /* element type flags -> the decl emits `float`/`char`/... */
   else if(ty->kind==0){ c->fn->res[ari].is_signed=(uint8_t)(ty->signd?1:0);
     if(ty->is_bool) c->fn->res[ari].is_bool=1;
     if(ty->is_plain_char) c->fn->res[ari].is_plain_char=1; }
   size_t s_nclaims = c->fn->n_claims;                /* the init stores begin here -- re-mask after sizing */
-  int nel = arr_init(c, rid);                        /* note: temp()/new_claim may realloc res[]; re-index ari */
-  if(count<=0){ c->fn->res[ari].count = (uint32_t)(nel<1?1:nel);   /* an inferred `[]` size: the count is only
-    * KNOWN now (the resource was created count=1), so the per-element c.store claims arr_init already emitted
-    * saw count=1 and stayed `assumed`. Re-evaluate access_bnd against the patched extent so a known-extent
-    * (count>1) `_clN` masks its init writes exactly like a regular array init -- matching the oracle's per-
-    * element BCIR_CHK. (A sized `(T[N]){...}` already had the right count up front, so it is unaffected.) */
-    bcir_bounds bnd = access_bnd(c, rid);
-    for(size_t i=s_nclaims; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
-      if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; } }
+  iunit obj=iunit_array(ty,si,es,dims,nd);
+  int rows=init_object(c, rid, &obj, inferred);      /* note: temp()/new_claim may realloc res[]; re-index ari */
+  if(inferred){ c->fn->res[ari].count=(uint32_t)((rows<1?1:rows)*inner); init_remask(c,rid,s_nclaims); }
   return rid;
 }
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
@@ -4769,7 +5906,8 @@ static void p_simple(CC *c) {
     /* SNAPSHOT the env entry before the RHS p_expr below can realloc c->env[] (a stmt-expr / use_global). */
     venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
     if(v && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='='){      /* name = expr */
-      c->i+=2; uint32_t val=p_expr(c);
+      c->i+=2; uint32_t val=null_pointer(c,p_expr(c),&v->type);
+      if(!agg_value_ok(c,obj_sidx(c,v),val,agg_assigned)) return;   /* a struct takes its own type */
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
       mark_obj_write(c,cl,v);
       return; }
@@ -4810,6 +5948,15 @@ static void store_through_ptr(CC *c, uint32_t ptr, int psidx, field pfld) {
 static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) {
   if(is(c,"[")){                                        /* `...->p[i] = v` -- indexed store via the pointer */
     c->i++; uint32_t idx=p_expr(c); eat(c,"]");
+    if(psidx>=0 && (is(c,".")||is(c,"->"))){            /* `...->p[i].f = v`: a member of an element of a pointer
+                                                         * to structs, stored strided by the element */
+      venv e=ptr_elem_base(c,ptr,psidx,&pfld);
+      { field af; uint32_t tot; int r=aos_member_array(c,&e,idx,&af,&tot);   /* `...->p[i].m[j] = v` */
+        if(r<0) return;
+        if(r>0){ if(!store_member_elem_stmt(c,&e,&af,tot)) fail(c,"="); return; } }
+      field sub; if(!aos_elem_field(c,&e,&sub)) return;
+      if(!store_elem_field_stmt(c,&e,idx,&sub) && !c->failed) fail(c,"=");
+      return; }
     venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=-1;
     b.type.size=pfld.ptee_size?pfld.ptee_size:4; b.type.signd=pfld.signd; b.type.is_float=(uint8_t)pfld.ptee_float;
     b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);
@@ -4827,7 +5974,8 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
       uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
       bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
       val=tmp;
-    } else { if(!eat(c,"="))return; val=p_expr(c); }
+    } else { if(!eat(c,"="))return; val=p_expr(c);
+      if(!agg_value_ok(c,pfld.ptee_sidx>=0 && pfld.ptee_depth<=1 ? pfld.ptee_sidx : -1,val,agg_assigned)) return; }
     bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
     if(cl){cl->n_rd=3;cl->rd[0]=ptr;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=BCIR_BND_ASSUMED;
       mark_access(c,cl,pfld.ptee_volatile); mark_atomic(cl,pfld.ptee_atomic);}
@@ -4857,7 +6005,7 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
     uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
     bcir_claim *bb=new_claim(c,op,oc); if(bb){bb->n_rd=2;bb->rd[0]=cur;bb->rd[1]=rhs;bb->n_wr=1;bb->wr[0]=tmp;}
     val=tmp;
-  } else { if(!eat(c,"="))return; val=p_expr(c); }
+  } else { if(!eat(c,"="))return; val=p_expr(c); if(!agg_value_ok(c,f.sidx,val,agg_assigned)) return; }
   /* the member store every other path takes: C's conversion, a `_Bool` member's flag, a bitfield's unit */
   if(f.bit_w) store_member_bf(c,&b,&f,val); else store_member(c,&b,&f,val);
 }
@@ -4871,7 +6019,10 @@ static void p_stmt(CC *c) {
 static void p_stmt_inner(CC *c) {
   if(is(c,";")){c->i++;return;}          /* empty statement -> a no-op (`for(...);`, `if(c);`, `;;`) */
   if(is(c,"return")){c->i++;
-    if(!is(c,";")){uint32_t rv=p_expr(c);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}
+    if(!is(c,";")){uint32_t rv=p_expr(c);
+      if(void_value(c,rv)) marker(c,"c.return",0,0);   /* `return f();` of a void f: made for its effects, and the
+                                                         * function returns nothing (the oracle's `_VOID_RID`) */
+      else{rv=null_pointer(c,rv,&c->fn->ret);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}}
     else marker(c,"c.return",0,0);
     eat(c,";");return;}
   if(is(c,"if")){                      /* L6: if / else -> structured markers */
@@ -4946,22 +6097,19 @@ static void p_stmt_inner(CC *c) {
     return;
   }
   if(is(c,"{")){p_block(c);return;}
-  int looks_decl=0, is_static=is(c,"static");
-  if(isk(c,T_ID)){int sz=scalar_size(pk(c)->s,pk(c)->n);
-    looks_decl=sz>=0||is_static||is(c,"struct")||is(c,"union")||is(c,"enum")||is(c,"const")||is(c,"volatile")
-               ||is(c,"_Complex")||is(c,"complex")                      /* `double _Complex z;` -- a complex local */
-               ||is(c,"_BitInt")                                        /* `_BitInt(N) z;` -- a bit-precise local */
-               ||is(c,"_Atomic")                                        /* `_Atomic int a;` -- an atomic local */
-               ||is(c,"va_list")||is(c,"__builtin_va_list")              /* `va_list ap;` -- a variadic cursor local */
-               ||is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")
-               ||find_typedef(c,pk(c)->s,pk(c)->n)>=0;}
-  if(looks_decl){
+  if(decl_start_tok(c,pk(c))){
+    c->saw_static=0; c->saw_extern=0;              /* THIS declaration's own storage classes, wherever spelled */
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return;   /* the shared specifier (eats `static`, NOT `*`) */
+    if(c->saw_extern){ fail(c,"a block-scope extern declaration is not supported"); return; }   /* names an object
+      * defined elsewhere, never a new local: binding it as one read an uninitialized object (CF-STORAGE) */
+    int is_static = c->saw_static;                 /* `volatile static T n` / `T static n` are static (6.7p1) */
+    int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array specifier */
     /* one or more comma-separated declarators sharing this specifier: `T a = x, b, c = z;`. Each gets
      * its OWN declarator `*`/`[]` shape off a fresh copy of the base, so `int *p, q;` types p as `int*`
      * and q as int (per-declarator, matching the oracle), `int *p, *q;` types both as pointers, and a
      * per-declarator array (`int a[2], b;`) no longer leaks its dims onto the next declarator. */
     for(;;){
+      if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
       bcir_ctype ty=base; apply_stars(c,&ty);   /* this declarator's own leading `*`s (none -> base type) */
       if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
          && tat(c,c->i+2)->k==T_ID
@@ -5006,13 +6154,17 @@ static void p_stmt_inner(CC *c) {
         if(!eat(c,")"))return;                          /* past the parameter-type list */
         bcir_ctype fty; memset(&fty,0,sizeof fty); fty.kind=3; fty.size=cc_abi(c)->pointer_size; fty.signd=0;
         fty.fp_ret_size=ret.size; fty.fp_ret_signd=(uint8_t)(ret.signd?1:0); fty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
+        fty.fp_ret_agg=ret.kind==1 && si>=0 ? si+1 : 0;   /* a struct return (CF-STRUCTVAL) */
         snprintf(fty.tag,sizeof fty.tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
         char fnb[BCIR_CIR_NAME]; idcpy(fnb,&nm);
         uint32_t frid=add_res(c,BCIR_DOM_RAM,8,1,0,BCIR_RK_SCALAR,fnb);   /* a funcptr-wide scalar local */
         if(c->fn->n_res){ bcir_resource *fr=&c->fn->res[c->fn->n_res-1];
           fr->is_funcptr=1; snprintf(fr->agg,BCIR_CIR_NAME,"%s",fty.tag); }   /* emit `__bcir_fpN f;` up front */
         env_add(c,&nm,frid,&fty,-1);                    /* p_icall finds kind-3 -> a c.call.indirect dispatch */
-        if(is(c,"=")){ c->i++;                          /* an init: a function name -> a funcptr value (c.copy) */
+        if(is_static){ char *st=NULL;                   /* a static function pointer: its image, as any static's */
+          if(is(c,"=")){ c->i++; iunit obj=iunit_scalar(c,&fty); (void)init_image(c,&obj,0,&st); if(c->failed) return; }
+          add_static(c,&nm,frid,st); }
+        else if(is(c,"=")){ c->i++;                     /* an init: a function name -> a funcptr value (c.copy) */
           uint32_t v=p_expr(c);
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=frid;} }
         if(is(c,",")){ c->i++; continue; }              /* another declarator off the same specifier */
@@ -5037,6 +6189,9 @@ static void p_stmt_inner(CC *c) {
           if(dim_nd<8){ dim_is_lit[dim_nd]=1; dim_lit[dim_nd]=dim; }
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; }
         dim_nd++; }
+      for(int d=0; d<btd; d++){ int dim=btdd[d];   /* a typedef'd array's dims follow the declarator's own */
+        if(dim_nd<8){ dim_is_lit[dim_nd]=1; dim_lit[dim_nd]=dim; }
+        if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; dim_nd++; }
       int after_dims=c->i;                             /* the cursor past the last `]` (restored after re-parse) */
       if(any_vla){
         if(ty.kind!=0 || ty.is_float){ fail(c,"only an integer-element VLA is supported"); return; }
@@ -5056,11 +6211,13 @@ static void p_stmt_inner(CC *c) {
         uint32_t ext=add_res(c,BCIR_DOM_RAM,nbytes,1,0,BCIR_RK_SCALAR,en);   /* the snapshot: immutable extent */
         if(c->fn->n_res) c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)nsgn;
         { bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=vla_n;cp->n_wr=1;cp->wr[0]=ext;} }
-        uint32_t arid=add_res(c,BCIR_DOM_RAM,ty.size,1,0,BCIR_RK_SCALAR,nb);   /* the array (element type, count 0->1) */
+        int vmm=ty_mmio(c,&ty,si,1);                  /* volatile elements: a device region, as a sized local array */
+        uint32_t arid=add_res(c,vmm?BCIR_DOM_MMIO:BCIR_DOM_RAM,ty.size,1,ty.is_volatile,BCIR_RK_SCALAR,nb);   /* the array (element type, count 0->1) */
         { bcir_resource *ar=&c->fn->res[c->fn->n_res-1];
           ar->is_signed=(uint8_t)(ty.signd?1:0); ar->is_vla=1; ar->ext_var=ext;
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
-        { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;} }
+        { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;
+            if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
         ptrext_set(c,c->fn,arid,ext);   /* §5.12 mask `a[i]` against the recovered runtime extent */
         if(is(c,",")){ c->i++; continue; }
@@ -5095,12 +6252,14 @@ static void p_stmt_inner(CC *c) {
         char et[BCIR_CIR_NAME]; snprintf(et,sizeof et,"__bcir_ext%d",c->ext_ctr++);
         uint32_t ext_total=add_res(c,BCIR_DOM_RAM,4,1,0,BCIR_RK_SCALAR,et);   /* a stable name for the decl + mask */
         { bcir_claim *cp=new_claim(c,"c.copy",BCIR_OP_ADD); if(cp){cp->n_rd=1;cp->rd[0]=total;cp->n_wr=1;cp->wr[0]=ext_total;} }
-        uint32_t arid=add_res(c,BCIR_DOM_RAM,nbytes,1,0,BCIR_RK_SCALAR,nb);   /* 3. a FLAT runtime-extent array */
+        int vmm=ty_mmio(c,&ty,si,1);                  /* volatile elements: a device region, as a sized local array */
+        uint32_t arid=add_res(c,vmm?BCIR_DOM_MMIO:BCIR_DOM_RAM,nbytes,1,ty.is_volatile,BCIR_RK_SCALAR,nb);   /* 3. a FLAT runtime-extent array */
         { bcir_resource *ar=&c->fn->res[c->fn->n_res-1];
           ar->is_signed=(uint8_t)(nsgn?1:0); ar->is_vla=1; ar->ext_var=ext_total;
           ar->vla_ndims=(uint8_t)dim_nd; for(int d=0;d<dim_nd;d++) ar->vla_strides[d]=dim_exts[d];
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
-        { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext_total;vd->n_wr=1;vd->wr[0]=arid;} }
+        { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext_total;vd->n_wr=1;vd->wr[0]=arid;
+            if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i][j]` indexes via emit_index */
         ptrext_set(c,c->fn,arid,ext_total);   /* §5.12 mask `a[i][j]` against the recovered total runtime extent */
         if(is(c,",")){ c->i++; continue; }
@@ -5109,8 +6268,10 @@ static void p_stmt_inner(CC *c) {
       if(la_nd>3){ fail(c,"local array of more than 3 dimensions"); return; }   /* adims caps at 3 */
       if(la_nd>1){ for(int z=0;z<3;z++) ty.adims[z]=la_dims[z]; ty.nadims=la_nd; }   /* multi-dim flatten */
       int sized_inf=0;                        /* a brace initializer sized the inferred `[]` below */
-      int inferred = (la_nd>=1 && arr==0);   /* an inferred-size `[]` array (all dims 0): the count comes
-        * from the initializer (patched after the init, like p_array_literal). Created count=1 for now. */
+      int inferred = (la_nd>=1 && la_dims[0]==0);   /* an inferred-size `[]` (or `[][B]`) array: the count
+        * comes from the initializer (patched after the init, like p_array_literal). One row for now. */
+      if(inferred && !is(c,"=")){ fail(c,"an array of unknown size needs an initializer"); return; }   /* `T a[];`
+        * has no size and nothing to count (6.7.9p22) -- it was a zero-length array */
       int is_arr = (arr || inferred);         /* a (possibly inferred-size) ARRAY declarator -> a SCALAR-kind
         * array resource (count>1; a struct-element array carries the struct tag in `agg` for the decl) */
       int rk=is_arr?BCIR_RK_SCALAR:(ty.kind==2?BCIR_RK_POINTER:ty.kind==1?BCIR_RK_AGGREGATE:BCIR_RK_SCALAR);
@@ -5146,50 +6307,49 @@ static void p_stmt_inner(CC *c) {
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
         if(ty.bit_width>0) c->fn->res[c->fn->n_res-1].bit_width=ty.bit_width;   /* a C23 `_BitInt(N)` local */
         if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` local: emit `char` */
+      else if(ty.kind==3 && !is_arr){ bcir_resource *fr=&c->fn->res[c->fn->n_res-1];   /* a typedef'd function-pointer
+        * local `op_t f`: declared by its alias, as the inline declarator's `__bcir_fpN` is -- not the pointer-wide
+        * integer, which a call through it cannot compile */
+        fr->is_funcptr=1; snprintf(fr->agg,BCIR_CIR_NAME,"%s",ty.tag); }
       if(ty.kind==1&&!is_arr) snprintf(c->fn->res[c->fn->n_res-1].agg,BCIR_CIR_NAME,"%s %s",ty.is_union?"union":"struct",ty.tag);   /* L8 aggregate local (a NON-array struct/union; the array form set its agg above) */
       env_add(c,&nm,rid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
-      if(is_static){            /* static storage: a once-only constant init, baked into the decl */
-        long long init=0; if(is(c,"=")){c->i++;init=ce_expr(c,0);}
-        { bcir_func *f=c->fn;
-          CC_ENSURE(c,f->statics,f->n_statics,f->cap_statics);
-          if(f->n_statics<f->cap_statics){ idcpy(f->statics[f->n_statics].name,&nm);
-            f->statics[f->n_statics].init=init; f->statics[f->n_statics].rid=rid; f->n_statics++; } }
-      } else if(is(c,"=")){c->i++;
-        if(is(c,"{")){
-          int md_nested=0;                                  /* peek: does a MULTI-dim init use a nested ROW brace? */
-          if(arr && la_nd>1){ int j=c->i+1;                 /* (skip an optional leading `[const]=` designator) */
-            if(tok_is(&c->t[j],"[")){
-              int p=0; while(!(p==0 && tok_is(&c->t[j],"]")) && c->t[j].k!=T_END){
-                if(tok_is(&c->t[j],"[")) p++; else if(tok_is(&c->t[j],"]")) p--; j++; }
-              j++; if(tok_is(&c->t[j],"=")) j++; }
-            md_nested = tok_is(&c->t[j],"{"); }
-          if(md_nested){                                    /* a MULTI-dim array `T a[d0][d1] = {{..},{..}}`: the
-            * flat resource is row-major, so descend each outer brace by ROW (the C twin of the oracle's
-            * _agg_init multi-dim row descent). A `= {0}` baseline zero-fills any unwritten element. A FLAT
-            * `{e0,e1,..}` multi-dim init (no nested braces) keeps the idx-based arr_init path -- the oracle
-            * also flattens that form positionally, so the rails stay byte-identical. */
-            for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].zinit=1; break; }
-            subagg_init_md(c, rid, 0, la_dims, la_nd, ty.size, ty.is_bool, &ty);
-          }
-          else if(is_arr){                                  /* a 1-D local array init (the C twin of the oracle's
-            * array _agg_init). A struct/union ELEMENT array routes each `{...}` element to subagg_init_struct
-            * (per-element offset stores at `idx*stride`, riding a `= {0}` baseline) -- byte-identical to the
-            * oracle. An INFERRED-size `[]` array (scalar OR struct) infers its count from the initializer and
-            * patches the resource extent + re-masks the init stores, exactly as p_array_literal does. */
-            int ari=-1; for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ ari=(int)i; break; }
-            size_t s_nclaims=c->fn->n_claims;               /* the init stores begin here -- re-mask after sizing */
-            int nel;
-            if(ty.kind==1){                                 /* an ARRAY-OF-STRUCTS local: `{ {a,b}, {c,d}, .. }` */
-              if(ari>=0) c->fn->res[ari].zinit=1;           /* the `= {0}` baseline (composes the per-element stores) */
-              nel = subagg_init_struct(c, rid, 0, si, ty.size);   /* per-element struct store at `idx*ty.size` */
-            } else nel = arr_init(c,rid);                   /* a scalar-element 1-D array */
-            if(inferred && ari>=0){ c->fn->res[ari].count=(uint32_t)(nel<1?1:nel);   /* size the inferred `[]` */
-              sized_inf=1;
-              bcir_bounds bnd=access_bnd(c,rid);            /* re-mask the per-element stores vs the patched extent */
-              for(size_t i=s_nclaims; i<c->fn->n_claims; i++){ bcir_claim *cl=&c->fn->claims[i];
-                if(cl->opcode==BCIR_OP_STORE && cl->n_rd>=1 && cl->rd[0]==rid) cl->bounds=bnd; } }
-          } else agg_init(c,rid,si); }   /* {…} struct-union init */
-        else { int ist=c->i; uint32_t v=p_expr(c); int ien=c->i;
+      char *stext=NULL;          /* a static's rendered image (CF-STATICTAB) */
+      if(is(c,"=") && (is_static || is_arr || (ty.kind==1 && tok_is(tat(c,c->i+1),"{")))){ c->i++;
+        /* the C11 initializer walk (the C twin of the oracle's `_agg_init`) -- brace elision, designators, a string
+         * literal for a character array -- over an array or a braced struct/union, or, in constant mode, over a static
+         * of any type: its image is its declaration's initializer, never a store at a call (`init_image`). An
+         * INFERRED `[]` (or outer `[][B]`) takes its count from the rows the walk reached; then the resource extent
+         * is patched and the stores re-masked, as p_array_literal does. */
+        if(is_arr && !is(c,"{") && !isk(c,T_STR)){ fail(c,"an array is initialized by a brace list or a string literal"); return; }
+        int ari=-1; for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ ari=(int)i; break; }
+        size_t s_nclaims=c->fn->n_claims;                 /* the init stores begin here -- re-mask after sizing */
+        int dims[3]={0,0,0}, nd=la_nd>1?la_nd:1, inner=1;
+        if(la_nd>1){ for(int z=0;z<3;z++) dims[z]=la_dims[z]; } else dims[0]=arr;
+        for(int d=1; d<nd; d++) inner*=dims[d];
+        if(inferred) dims[0]=1;                           /* provisional: the walk counts the rows */
+        iunit obj = is_arr ? iunit_array(&ty,si,arr_elem,dims,nd) : ty.kind==1 ? iunit_struct(c,si) : iunit_scalar(c,&ty);
+        int rows = is_static ? init_image(c,&obj,inferred,&stext) : init_object(c,rid,&obj,inferred);
+        if(c->failed) return;
+        if(inferred && ari>=0){ int n=rows<1?1:rows;
+          c->fn->res[ari].count=(uint32_t)(n*inner); sized_inf=1; init_remask(c,rid,s_nclaims);
+          if(la_nd>1){ venv *dv=lookup(c,&nm); if(dv) dv->type.adims[0]=n; } } }   /* `m[][B]`: its row count */
+      if(is_static) add_static(c,&nm,rid,stext);   /* static storage: its image baked into the decl, the one place it
+                                                   * is initialized */
+      else if(is(c,"=")){c->i++;
+        if(is(c,"{")){                                    /* a braced scalar `T x = {e}` is `T x = e`, and `{}` is
+          * zero (6.7.9p11) -- the oracle's `_braced_scalar` */
+          c->i++; uint32_t v=0;
+          if(is(c,"}")){ v=temp(c,4);
+            bcir_claim *k=new_claim(c,"c.const",BCIR_OP_LOAD); if(k){k->n_wr=1;k->wr[0]=v;k->n_imm=1;k->imm[0]=0;} }
+          else if(is(c,".")||is(c,"[")||is(c,"{")){ fail(c,"a braced scalar initializer holds one expression"); return; }
+          else { v=p_expr(c); if(is(c,",")) c->i++; }
+          if(c->failed) return;
+          if(!is(c,"}")){ fail(c,"a braced scalar initializer holds one expression"); return; }
+          c->i++; v=null_pointer(c,v,&ty);
+          bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
+          { venv *dv=lookup(c,&nm); if(dv) mark_obj_write(c,cl,dv); } }
+        else { int ist=c->i; uint32_t v=null_pointer(c,p_expr(c),&ty); int ien=c->i;
+          if(!agg_value_ok(c,ty.kind==1?si:-1,v,agg_initialized)) return;   /* a struct: a list or its own type */
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
           { venv *dv=lookup(c,&nm); if(dv) mark_obj_write(c,cl,dv); }   /* `volatile T x = v;` */
           bind_extent(c,rid,res_of(c->fn,rid),&nm,ist,ien); } }   /* §5.12: `T *p = malloc(N*sizeof(T))` -> extent N */
@@ -5206,6 +6366,21 @@ static void p_stmt_inner(CC *c) {
    * [ptr, idx, val], like the array store). A compound `OP=` loads first (emit_deref / emit_index). */
   if(is(c,"*")){
     int save=c->i; c->i++;
+    spec_mark dm; spec_begin(c,&dm);                   /* a bare `*e;` falls through: every probe below rolls back */
+    /* CF-RTVOL: a store `*(volatile T *)((char *)p + K) = v` / `OP= v` at a byte offset of a device region */
+    { venv bb; field bf; spec_mark bm; spec_begin(c,&bm); int bns=c->ns, bnec=c->nec;
+      if(byte_off_access(c,&bb,&bf)){
+        const tok *aop=pk(c); int cmp=is_compound_op(aop);
+        if(cmp || tok_is(aop,"=")){ uint32_t val;
+          if(cmp){ char ch=aop->s[0]; c->i++;        /* `OP=`: load, the operation, store */
+            uint32_t cur=emit_member(c,&bb,&bf,0);
+            uint32_t rhs=p_expr(c);
+            const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
+            val=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
+            bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=val;} }
+          else { c->i++; val=p_expr(c); }
+          store_member(c,&bb,&bf,val); eat(c,";"); return; }
+        spec_end(c,&bm); c->ns=bns; c->nec=bnec; c->i=save+1; } }   /* a read: the expression statement lowers it */
     venv pvsnap; venv *pv=NULL; uint32_t idx=0; int has_idx=0, ok=0;
     /* SNAPSHOT the pointer's env entry: the `*(p + i)` index and the RHS p_expr below can declare locals
      * and realloc c->env[] -- a pointer into it dangles. The store/emit helpers only READ the venv. */
@@ -5241,7 +6416,8 @@ static void p_stmt_inner(CC *c) {
         uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
-      } else { c->i++; val=p_expr(c); }                 /* *p = expr */
+      } else { c->i++; val=p_expr(c);                   /* *p = expr: a struct pointee takes its own type */
+        if(!agg_value_ok(c,index_elem_sidx(c,pv),val,agg_assigned)) return; }
       if(!has_idx) val=store_conv(c,val,&pst);
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){
@@ -5265,6 +6441,7 @@ static void p_stmt_inner(CC *c) {
       int depth=br->ptr_depth?br->ptr_depth:1;
       int sz=(depth>1)?cc_abi(c)->pointer_size:(br->elem_bytes?(int)br->elem_bytes:4); uint32_t val;
       bcir_ctype pst=res_pointee_slot(br);              /* read before the value's parse can move res[] */
+      int psi=depth==1 ? agg_sidx(c,br->agg) : -1;      /* a struct pointee (CF-STRUCTINIT), read before it too */
       int at=(depth==1 && br->is_atomic), bvol=(depth==1 && br->is_volatile);   /* `_Atomic` / volatile pointee */
       if(at && is_compound_op(&c->t[c->i])){           /* on `_Atomic`: one atomic read-modify-write */
         char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c);
@@ -5279,7 +6456,8 @@ static void p_stmt_inner(CC *c) {
         uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
-      } else { c->i++; val=p_expr(c); }                /* **pp = expr */
+      } else { c->i++; val=p_expr(c);                  /* **pp = expr */
+        if(!agg_value_ok(c,psi,val,agg_assigned)) return; }
       val=store_conv(c,val,&pst);                      /* C's conversion to the pointee's type */
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){ cl->n_rd=2; cl->rd[0]=base; cl->rd[1]=val; cl->n_imm=2; cl->imm[0]=0; cl->imm[1]=sz; cl->bounds=BCIR_BND_ASSUMED;
@@ -5288,7 +6466,8 @@ static void p_stmt_inner(CC *c) {
         mark_atomic(cl,at); }
       eat(c,";"); return;
     }
-    c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement) */
+    spec_end(c,&dm); c->i=save;   /* not a deref-store -- fall through (e.g. a bare `*p;` expression statement),
+                                   * its operand's claims undone, as the oracle lowers the statement once */
   }
   if(isk(c,T_ID)){tok id=*pk(c);venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);   /* a writable file-scope global */
     /* SNAPSHOT the env entry: every assignment form below re-enters the expression grammar (p_expr /
@@ -5328,7 +6507,8 @@ static void p_stmt_inner(CC *c) {
           uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
           bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
           aval=tmp;
-        } else { if(!eat(c,"="))return; aval=p_expr(c); }
+        } else { if(!eat(c,"="))return; aval=p_expr(c);
+          if(!soa && !agg_value_ok(c,f.elem_sidx,aval,agg_assigned)) return; }   /* a struct element: its own type */
         store_member_index(c,v,&f,idx,soa,sf,aval);
         eat(c,";");return;
       }
@@ -5349,7 +6529,7 @@ static void p_stmt_inner(CC *c) {
         uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
-      } else { if(!eat(c,"="))return; val=p_expr(c); }
+      } else { if(!eat(c,"="))return; val=p_expr(c); if(!agg_value_ok(c,f.sidx,val,agg_assigned)) return; }
       /* a bitfield: read the storage unit, insert the masked bits (c.bf.set), store the unit's spanned bytes
        * back; a `_Bool` member normalizes; either converts the value to the member's type first */
       if(f.bit_w) store_member_bf(c,v,&f,val); else store_member(c,v,&f,val);
@@ -5358,29 +6538,31 @@ static void p_stmt_inner(CC *c) {
     if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='['){
       int as_start=c->i;                                /* roll-back point: `a[i]` may be a VALUE, not a store */
       size_t as_res=c->fn->n_res,as_cl=c->fn->n_claims; uint32_t as_rid=c->rid,as_cid=c->cid,as_clc=c->cl_ctr;
-      c->i++; uint32_t idx=index_chain(c,v); uint32_t val;   /* a[i] / m[i][j] (Horner) / q[j][i] (a chain) */
+      c->i++;
+      { field gf; if(global_md_field(c,v,&gf)){         /* g[i][j] = / OP= on a multi-dimensional global */
+          uint32_t gix=member_arr_index(c,&gf); if(c->failed) return;
+          if(store_member_elem_stmt(c,v,&gf,gix)){ eat(c,";"); return; }
+          if(c->failed) return;
+          c->fn->n_res=as_res; c->fn->n_claims=as_cl; c->rid=as_rid; c->cid=as_cid; c->cl_ctr=as_clc;
+          c->i=as_start; (void)p_expr(c); eat(c,";"); return; } }
+      uint32_t idx=index_chain(c,v); uint32_t val;   /* a[i] / m[i][j] (Horner) / q[j][i] (a chain) */
       if(c->failed) return;
       if(v->sidx>=0 && (is(c,".")||is(c,"->"))){        /* a[i].field on a DIRECT array-of-structs (strided store) */
+        { field af; uint32_t tot; int r=aos_member_array(c,v,idx,&af,&tot);   /* a[i].m[j] = / OP= (CF-SMALL) */
+          if(r<0) return;
+          if(r>0){ if(store_member_elem_stmt(c,v,&af,tot)){ eat(c,";"); return; }
+            if(c->failed) return;
+            c->fn->n_res=as_res; c->fn->n_claims=as_cl; c->rid=as_rid; c->cid=as_cid; c->cl_ctr=as_clc;
+            c->i=as_start; (void)p_expr(c); eat(c,";"); return; } }
         field sub; if(!aos_elem_field(c,v,&sub)){ if(c->failed) return;
           c->fn->n_res=as_res;c->fn->n_claims=as_cl;c->rid=as_rid;c->cid=as_cid;c->cl_ctr=as_clc;
           c->i=as_start;(void)p_expr(c);eat(c,";");return; }
-        uint32_t aval;
-        if(sub.is_atomic && is_compound_op(&c->t[c->i])){   /* an `_Atomic` field: one atomic read-modify-write */
-          char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(&sub);
-          const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
-          (void)emit_rmw(c,suf,&ft,v->rid,1,idx,1,rhs,sub.byte_off,sub.size,v->type.size,
-                         sub.is_volatile||v->type.is_volatile,BCIR_BND_ASSUMED);
-          eat(c,";"); return;
-        }
-        if(is_compound_op(&c->t[c->i])){               /* a[i].f OP= expr -> strided load, bin op, strided store */
-          char ch=c->t[c->i].s[0]; c->i++;
-          uint32_t cur=emit_index_field(c,v,idx,&sub); uint32_t rhs=p_expr(c);
-          const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
-          uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
-          bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
-          aval=tmp;
-        } else { if(!eat(c,"="))return; aval=p_expr(c); }
-        store_index_field(c,v,idx,&sub,aval); eat(c,";"); return;
+        if(store_elem_field_stmt(c,v,idx,&sub)){ eat(c,";"); return; }   /* a[i].f = / OP= (strided store) */
+        if(c->failed) return;
+        /* `a[i].f++;` / `a[i].m.k;` -- no `=`/OP=: a VALUE (the oracle's expression statement), not a store: undo
+         * the speculative index lowering and re-parse it as an expression statement */
+        c->fn->n_res=as_res; c->fn->n_claims=as_cl; c->rid=as_rid; c->cid=as_cid; c->cl_ctr=as_clc;
+        c->i=as_start; (void)p_expr(c); eat(c,";"); return;
       }
       if(index_elem_atomic(c,v) && is_compound_op(&c->t[c->i])){   /* `_Atomic` elements: one atomic RMW */
         char ch=c->t[c->i].s[0]; c->i++; uint32_t rhs=p_expr(c);
@@ -5396,17 +6578,23 @@ static void p_stmt_inner(CC *c) {
         uint32_t tmp=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_NAME]; snprintf(op,sizeof op,"c.bin.%s",suf);
         bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=tmp;}
         val=tmp;
-      } else if(c->t[c->i].k==T_PUN&&c->t[c->i].n==1&&c->t[c->i].s[0]=='='){ c->i++; val=p_expr(c); }
+      } else if(c->t[c->i].k==T_PUN&&c->t[c->i].n==1&&c->t[c->i].s[0]=='='){ c->i++; val=p_expr(c);
+        if(!agg_value_ok(c,index_elem_sidx(c,v),val,agg_assigned)) return; }   /* a struct element: its own type */
       else {        /* `a[i]` with no `=`/OP= is a VALUE (e.g. the last item of a `({...})`), not a store: undo
                      * the speculative index lowering and re-parse the whole thing as an expression statement. */
         c->fn->n_res=as_res; c->fn->n_claims=as_cl; c->rid=as_rid; c->cid=as_cid; c->cl_ctr=as_clc;
         c->i=as_start; (void)p_expr(c); eat(c,";"); return; }
+      { bcir_ctype et=v->type;                         /* the element: a pointer of an array of pointers, or the
+                                                        * pointee of a `T **` -- a null pointer constant's type */
+        if(!ptr_array(c,v)){ if(et.kind==2 && (et.ptr_depth?et.ptr_depth:1)>1) et.ptr_depth--; else et=index_elem_ctype(v); }
+        val=null_pointer(c,val,&et); }
       bcir_claim *cl=new_claim(c,"c.store",BCIR_OP_STORE);
       if(cl){cl->n_rd=3;cl->rd[0]=v->rid;cl->rd[1]=idx;cl->rd[2]=val;cl->bounds=access_bnd(c,v->rid);  /* §5.12 promote */
         mark_access(c,cl,index_elem_vol(c,v)); mark_atomic(cl,index_elem_atomic(c,v));}
       eat(c,";");return;}
     if(v&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]=='='){
-      tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t val=p_expr(c); int ien=c->i;
+      tok tnm=c->t[c->i]; c->i+=2; int ist=c->i; uint32_t val=null_pointer(c,p_expr(c),&v->type); int ien=c->i;
+      if(!agg_value_ok(c,obj_sidx(c,v),val,agg_assigned)) return;   /* a struct takes its own type */
       bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);if(cl){cl->n_rd=1;cl->rd[0]=val;cl->n_wr=1;cl->wr[0]=v->rid;}
       mark_obj_write(c,cl,v);
       bind_extent(c,v->rid,res_of(c->fn,v->rid),&tnm,ist,ien);   /* §5.12: `p = malloc(N*…)` -> N */
@@ -5494,7 +6682,7 @@ static uint32_t p_stmt_expr(CC *c){
             ||tok_is(lt,"const")||tok_is(lt,"volatile")||tok_is(lt,"_Atomic")||tok_is(lt,"static")||tok_is(lt,"_BitInt")
             ||find_typedef(c,lt->s,lt->n)>=0)) is_value=0; }
   uint32_t result;
-  if(!is_value){ result=temp(c,4); }      /* a void / empty statement expression: the last stmt (if any) is
+  if(!is_value){ result=void_temp(c); }   /* a void / empty statement expression: the last stmt (if any) is
                                            * already lowered; the value is unused (an unreferenced placeholder) */
   else {                                  /* a value: roll the LAST statement back and re-parse it as the expr */
     c->fn->n_res=snap_res; c->fn->n_claims=snap_cl; c->rid=snap_rid; c->cid=snap_cid; c->cl_ctr=snap_clctr;
@@ -5530,7 +6718,7 @@ static uint32_t p_stmt_expr(CC *c){
 }
 
 static int p_func(CC *c, bcir_func *fn) {
-  c->fn=fn; c->nenv=0; c->n_vlaext=0; c->n_unsized=0;
+  c->fn=fn; c->nenv=0; c->n_vlaext=0; c->n_unsized=0; c->npure=0;
   c->cl_ctr=0;                                     /* compound literals number per function (`_cl1` ...), as
                                                     * the oracle's _FuncLowerer.cl_ctr does -- they are
                                                     * function-local declarations, so the names never clash */
@@ -5544,6 +6732,7 @@ static int p_func(CC *c, bcir_func *fn) {
     if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){c->i++;break;}
     if(is(c,"...")){fn->variadic=1;c->i++;break;}   /* a trailing `...` -- the function is variadic */
     bcir_ctype ty;int si;if(p_type(c,&ty,&si))return 1;
+    int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array param */
     tok pn; int row_ptr=0;
     /* a direct function-pointer parameter `RET (*name)(PARAMS)`: unlike a typedef'd funcptr param there
      * is no alias to print, so capture the full signature as a synthesized prelude typedef `__bcir_fpN`
@@ -5580,6 +6769,7 @@ static int p_func(CC *c, bcir_func *fn) {
       memset(&ty,0,sizeof ty); ty.kind=3; ty.size=cc_abi(c)->pointer_size; ty.signd=0;
       ty.fp_ret_size=ret.size; ty.fp_ret_signd=(uint8_t)(ret.signd?1:0); ty.fp_ret_float=(uint8_t)(ret.is_float?1:0);
                                                        /* carry the funcptr param's RETURN type to type a c.call.indirect result */
+      ty.fp_ret_agg=ret.kind==1 && si>=0 ? si+1 : 0;   /* a struct return (CF-STRUCTVAL) */
       snprintf(ty.tag,sizeof ty.tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
       row_ptr=1;                                      /* skip the row-ptr + array-suffix handling below */
     }
@@ -5592,14 +6782,16 @@ static int p_func(CC *c, bcir_func *fn) {
           pn=cand; int nd=1; ty.adims[0]=0;        /* the outer (pointer) dim is unspecified */
           while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
             if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }
-          ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2; row_ptr=1;
+          ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;
+          else if(ty.kind==1){ ty.kind=2; ty.ptr_to_struct=1; ty.ptr_depth=1; }   /* rows of structs (CF-STRUCTVAL) */
+          row_ptr=1;
         } else c->i=save;
       } else c->i=save;
     }
     int vla_have=0; tok vla_tok; memset(&vla_tok,0,sizeof vla_tok);   /* §5.12 a VLA-param extent `a[n]` */
     if(!row_ptr){
     pn=adv(c);
-    if(is(c,"[")){              /* an array parameter `T name[A][B]...` decays to a flat element ptr */
+    if(is(c,"[") || btd){      /* an array parameter `T name[A][B]...` decays to a flat element ptr */
       int nd=0;
       while(is(c,"[")){ c->i++;
         long long d=0;
@@ -5611,7 +6803,11 @@ static int p_func(CC *c, bcir_func *fn) {
           if(lookup(c,&cand)){ vla_tok=cand; vla_have=1; adv(c); }
         }
         if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }   /* a non-int/non-id dim -> 0 today (fallback, no bind) */
+      for(int d=0; d<btd; d++){ if(nd<3)ty.adims[nd]=btdd[d]; nd++; }   /* a typedef'd array's dims follow */
+      if(nd>3){ fail(c,"an array parameter of more than 3 dimensions"); return 1; }
       ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;     /* T[..] -> T* (element size kept in ty.size) */
+      else if(ty.kind==1){ ty.kind=2; ty.ptr_to_struct=1; ty.ptr_depth=1; }   /* `struct T a[..]` -> `struct T *`
+                                                          * (CF-STRUCTVAL): it had stayed a struct by VALUE */
       else if(ty.kind==2) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);   /* T *a[..] -> T ** (`argv`):
                                                           * the decay is one more level, as for a scalar element */
     }
@@ -5659,7 +6855,15 @@ static int p_func(CC *c, bcir_func *fn) {
     c->i++;
     if(!CC_ENSURE(c,c->protos,c->n_protos,c->cap_protos)) return 1;
     snprintf(c->protos[c->n_protos].name,BCIR_CIR_NAME,"%s",fn->name);
-    c->protos[c->n_protos].ret=fn->ret; c->n_protos++;
+    c->protos[c->n_protos].ret=fn->ret;
+    { bcir_ctype *pt=NULL; size_t pbytes;         /* its parameter types, past the scratch fn (CF-NULLARG) */
+      if(fn->n_params>0){
+        if(!bcir_size_mul((size_t)fn->n_params,sizeof *pt,&pbytes) ||
+           !(pt=(bcir_ctype *)bcir_host_arena_allocate(&c->scratch,pbytes,_Alignof(bcir_ctype)))){
+          cc_raise_oom(c); return 1; }
+        for(int k=0;k<fn->n_params;k++) pt[k]=fn->params[k].type; }
+      c->protos[c->n_protos].params=pt; c->protos[c->n_protos].n_params=pt?fn->n_params:0; }
+    c->n_protos++;
     char rets[64]; ctype_str(&fn->ret,rets,sizeof rets);
     char sig[512]; size_t sw=0;                       /* the fpdefs clamped-offset idiom (see above) */
     #define TU_OFF (sw<sizeof sig?sw:sizeof sig)
@@ -5683,6 +6887,7 @@ static int p_func(CC *c, bcir_func *fn) {
     if(mut_body(c,&c->vlaext[k].cnt_tok)==0 && !mut_addr(c,&c->vlaext[k].cnt_tok))
       ptrext_set(c,c->fn,c->vlaext[k].ptr_rid,c->vlaext[k].cnt_rid);
   }
+  for(int pass=0; pass<8 && unparen_body(c,c->i); pass++){}   /* CF-PAREN: `(a)[i]` -> `a[i]`, before the body parses */
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed) p_stmt(c);
   eat(c,"}");
   order_device_claims(fn);   /* R3: every claim touching a device region is device-domain and ordered */
@@ -5730,10 +6935,15 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
  * are distinct resources with the same name; declaring both at function scope is a C redefinition. The
  * N-th occurrence of a name (params first, then resources in order) keeps the bare name for the first
  * and gets a `_N` suffix thereafter (`i`, `i_2`, ...) -- the same scheme as the oracle's emitter, used
- * for both the declaration and every reference. Unnamed temps stay `t<rid>`. */
+ * for both the declaration and every reference. An unnamed temp is `t<rid>` -- or, when a declared name
+ * spells that (a re-parsed emit's local, a source's parameter), the first free `t<rid>_<k>`: never a second
+ * declaration of the name (CF-RTVOL, the oracle's `_Names`). */
+static int declared_name(const bcir_func *f,const char *nm);
 static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
   const bcir_resource *r=res_of(f,rid);
-  if(!r||!r->name[0]){ snprintf(buf,BCIR_CIR_NAME,"t%u",rid); return buf; }
+  if(!r||!r->name[0]){ snprintf(buf,BCIR_CIR_NAME,"t%u",rid);
+    for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_CIR_NAME,"t%u_%d",rid,k);
+    return buf; }
   if(r->read_only){ snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf; }   /* a file-scope global */
   for(int p=0;p<f->n_params;p++)                                              /* a param: keep its name */
     if(f->params[p].rid==rid){ snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf; }
@@ -5753,6 +6963,14 @@ static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
     }
   }
   snprintf(buf,BCIR_CIR_NAME,"%s",r->name); return buf;
+}
+/* `nm` is the emitted name of a declared object -- a parameter, a named local or static, a global. Only a
+ * resource whose own name `nm` starts with can emit as `nm` (disambiguating appends `_N`). */
+static int declared_name(const bcir_func *f,const char *nm){
+  for(int p=0;p<f->n_params;p++) if(!strcmp(f->params[p].name,nm)) return 1;
+  for(size_t i=0;i<f->n_res;i++){ const bcir_resource *q=&f->res[i]; size_t n=strlen(q->name); char b[BCIR_CIR_NAME];
+    if(n && !strncmp(q->name,nm,n) && !strcmp(uniq_local(f,q->rid,b),nm)) return 1; }
+  return 0;
 }
 static const char *rname(const bcir_func *f,uint32_t rid,char *buf){
   const char *lit=strtab_lookup(f,rid);              /* a string literal -> its full spelling, inline */
@@ -5782,6 +7000,7 @@ static const char *tty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32
   if(r->is_float) return r->elem_bytes==4?"float":r->elem_bytes>8?"long double":"double";   /* 16/12 -> long double */
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
   if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
+  if(r->kind==BCIR_RK_AGGREGATE && r->agg[0]) return r->agg;   /* a struct/union value: `struct T` (CF-STRUCTVAL) */
   if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
     case 1: return r->is_signed?"int8_t":"uint8_t";
     case 2: return r->is_signed?"int16_t":"uint16_t";
@@ -5835,10 +7054,12 @@ static const char *atomic_ptr(const char *t,int vol,char *buf,size_t n){
   return buf;
 }
 /* The type a volatile LOAD reads into temp `trid`: the value's own type, at the slot's width `w` for an
- * integer (a bitfield's storage unit) -- the oracle reads `et`, or the unit's unsigned type. */
+ * integer (a bitfield's storage unit) -- the oracle reads `et`, or the unit's unsigned type. A struct or union
+ * is read whole, as itself (CF-STRUCTVAL). */
 static const char *vol_load_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32_t trid,long long w,char *buf,size_t n){
   const bcir_resource *r=res_of(f,trid);
-  if(!r || r->kind==BCIR_RK_POINTER || r->is_float || r->is_complex || r->bit_width>0 || r->is_bool || r->is_plain_char)
+  if(!r || r->kind==BCIR_RK_POINTER || r->kind==BCIR_RK_AGGREGATE || r->is_float || r->is_complex || r->bit_width>0
+     || r->is_bool || r->is_plain_char)
     return decl_ty(scratch,f,trid,buf,n);
   if(w==1||w==2||w==4||w==8){ snprintf(buf,n,"%sint%lld_t",r->is_signed?"":"u",w*8); return buf; }
   return decl_ty(scratch,f,trid,buf,n);
@@ -5971,7 +7192,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(r->is_vla) continue;   /* a stack VLA: declared IN-BODY by c.vladecl (size unknown until then), not up front */
     if(is_named_local(f,r->rid)){
       char un[BCIR_CIR_NAME]; const char *nm=uniq_local(f,r->rid,un);   /* unique vs same-named scopes */
-      int sx=-1; for(int k=0;k<f->n_statics;k++) if(!strcmp(f->statics[k].name,r->name)){sx=k;break;}
+      int sx=-1; for(int k=0;k<f->n_statics;k++) if(f->statics[k].rid==r->rid){sx=k;break;}
       /* a volatile OBJECT (scalar, array of scalars, struct) keeps its qualifier; a pointer's `volatile` is its
        * pointee's and rides in decl_ty; an array of pointers holds plain pointers */
       /* ... and an `_Atomic` object (a scalar, or an array's elements) is declared `_Atomic` (CF-ATOMIC): its reads
@@ -5980,25 +7201,26 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                              (r->is_volatile && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"volatile ":"",
                              (r->is_atomic && r->kind!=BCIR_RK_POINTER && !r->ptr_depth)?"_Atomic ":"");
       const char *vq=vqb;
-      /* a static takes its storage class; a static array or aggregate starts zeroed -- its initializer is 0, as
-       * both rails refuse any other -- while a static scalar's or pointer's value is baked in (the first arm) */
-      const char *sp=sx>=0?"static ":"", *zi=(sx>=0||r->zinit)?" = {0}":"";
-      if(sx>=0 && r->kind!=BCIR_RK_AGGREGATE && !decl_array(r)){   /* a static scalar or pointer: its own type
-                                                                   * (the oracle's `_cname`), not uint32 */
-        if(r->kind==BCIR_RK_POINTER) w+=snprintf(o+EO,on-EO,"  static %s%s = %lluu;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm,(unsigned long long)f->statics[sx].init);
-        else w+=snprintf(o+EO,on-EO,"  static %s%s %s = %lluu;\n",vq,tty(&type_scratch,f,r->rid),nm,(unsigned long long)f->statics[sx].init); }
-      else if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s %s;\n",r->agg,nm);   /* a funcptr local: `__bcir_fpN f;` */
-      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s;\n",sp,vq,r->agg,nm,zi);
-      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  %svoid *%s[%u]%s;\n",sp,nm,r->count,zi);  /* an array of `void *` */
-      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s;\n",sp,vq,r->agg,nm,r->count,zi);  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
+      /* a static takes its storage class and its constant image (CF-STATICTAB): the rendered initializer, or zero --
+       * `{0}` for an array or aggregate, `0u` for a scalar, pointer or function pointer -- in whichever declaration
+       * form its type takes (a pointer's extent is no array's: a static pointer is no scalar); a non-static array or
+       * aggregate its `= {0}` baseline */
+      const char *iv = sx>=0 ? (f->statics[sx].text ? f->statics[sx].text
+                                : (r->kind==BCIR_RK_AGGREGATE || (r->kind==BCIR_RK_SCALAR && decl_array(r))) ? "{0}" : "0u")
+                             : r->zinit ? "{0}" : "";
+      const char *sp=sx>=0?"static ":"", *eq=iv[0]?" = ":"";
+      if(r->is_funcptr&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s %s%s%s;\n",sp,r->agg,nm,eq,iv);   /* a funcptr local: `__bcir_fpN f;` */
+      else if(r->kind==BCIR_RK_AGGREGATE&&r->agg[0]) w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s%s;\n",sp,vq,r->agg,nm,eq,iv);
+      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->is_voidptr) w+=snprintf(o+EO,on-EO,"  %svoid *%s[%u]%s%s;\n",sp,nm,r->count,eq,iv);  /* an array of `void *` */
+      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->agg[0]&&!r->ptr_depth) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s%s;\n",sp,vq,r->agg,nm,r->count,eq,iv);  /* an ARRAY-OF-STRUCTS local `struct P a[N]` */
       else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)&&r->ptr_depth)   /* an ARRAY of pointers `T *a[N]`: each element
         * its pointer type (a pointer to volatile keeps the pointee's qualifier), never the pointer-wide integer */
-        w+=snprintf(o+EO,on-EO,"  %s%s%s[%u]%s;\n",sp,ptr_spelling(tb,sizeof tb,r->is_volatile,0,r->agg,r->ptee_float,
-                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char,r->is_atomic),nm,r->count,zi);
-      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s;\n",sp,vq,tty(&type_scratch,f,r->rid),nm,r->count,zi);  /* a local array */
+        w+=snprintf(o+EO,on-EO,"  %s%s%s[%u]%s%s;\n",sp,ptr_spelling(tb,sizeof tb,r->is_volatile,0,r->agg,r->ptee_float,
+                    r->ptee_bytes,r->ptee_signed,r->ptr_depth,0,0,r->ptee_plain_char,r->is_atomic),nm,r->count,eq,iv);
+      else if(r->kind==BCIR_RK_SCALAR&&decl_array(r)) w+=snprintf(o+EO,on-EO,"  %s%s%s %s[%u]%s%s;\n",sp,vq,tty(&type_scratch,f,r->rid),nm,r->count,eq,iv);  /* a local array */
       else if(r->kind==BCIR_RK_POINTER)               /* a pointer local: `T *p` (the pointee carries width/sign) */
-        w+=snprintf(o+EO,on-EO,"  %s%s;\n",decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm);
-      else w+=snprintf(o+EO,on-EO,"  %s%s %s;\n",vq,tty(&type_scratch,f,r->rid),nm);}}
+        w+=snprintf(o+EO,on-EO,"  %s%s%s%s%s;\n",sp,decl_ty(&type_scratch,f,r->rid,tb,sizeof tb),nm,eq,iv);
+      else w+=snprintf(o+EO,on-EO,"  %s%s%s %s%s%s;\n",sp,vq,tty(&type_scratch,f,r->rid),nm,eq,iv);}}
   int depth=1, lstk[BCIR_MAXDEPTH+1], nls=0, lctr=0;   /* loop-id stack + counter for the `continue` labels */
   #define IND() do{ for(int _k=0;_k<depth;_k++) w+=snprintf(o+EO,on-EO,"  "); }while(0)
   for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
@@ -6012,7 +7234,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.cont.tgt")){IND();w+=snprintf(o+EO,on-EO,"__cont_%d: ;\n",nls?lstk[nls-1]:0);continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
     if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
-      w+=snprintf(o+EO,on-EO,"%s %s[%s];\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b));continue;}
+      { const bcir_resource *vr=res_of(f,cl->wr[0]);   /* a volatile VLA keeps its qualifier (the oracle's decl) */
+        w+=snprintf(o+EO,on-EO,"%s%s %s[%s];\n",vr&&vr->is_volatile?"volatile ":"",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b)); }
+      continue;}
     if(!strcmp(cl->op,"c.ptradd")){IND();w+=snprintf(o+EO,on-EO,"%s += %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p += n */
     if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+EO,on-EO,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+EO,on-EO,"break;\n");continue;}
@@ -6055,8 +7279,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
        * `0` in `x < 0`) is signed (int), so emitting `uint32_t = 0u` made a signed comparison promote to
        * unsigned (`int32_t < uint32_t` -> unsigned) -- a miscompile. The literal's (width, signedness)
        * was already recorded on the temp (lit_int_type); render the matching type + suffix. */
-      const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;
-      w+=snprintf(o+EO,on-EO,"%s %s = %llu%s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),
+      const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;   /* a null pointer constant's
+                                                       * temp declares its pointer type (CF-NULLPTR) */
+      w+=snprintf(o+EO,on-EO,"%s %s = %llu%s;\n",cr&&cr->is_funcptr&&cr->agg[0]?cr->agg:decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),
                   (unsigned long long)cl->imm[0], cs?"":"u"); }
     else if(!strcmp(cl->op,"c.sizeof.vla"))                 /* runtime `sizeof a` of a VLA: extent × sizeof(elem).
                                                             * HARDCODE the literal `size_t` (NOT tty(), which
@@ -6115,6 +7340,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
         const char *vt=(cl->n_imm>2&&cl->imm[2])?"_Bool"   /* a _Bool element: `_Bool _v = x` normalizes to 0/1 */
                       :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(&type_scratch,f,cl->rd[2],tb,sizeof tb)   /* a pointer
                        * element (`T *arr[N]`) copies the whole pointer, never a truncating uint32 */
+                      :(vr&&(vr->is_array||vr->is_vla))?"const volatile void *"   /* an array decays to its
+                       * address (CF-MEMDECAY): the pointer is staged, never an integer holding the array */
                       :(vr&&vr->is_complex)?(es==8?"float _Complex":es>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(es==4?"float":es>8?"long double":"double")
                       :(es==1?"uint8_t":es==2?"uint16_t":es==8?"uint64_t":"uint32_t");
@@ -6122,6 +7349,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
           w+=snprintf(o+EO,on-EO,"*(%s)((volatile char *)%s%s + %lld + (size_t)%s * %lld) = %s;\n",
             vol_ptr(vol_slot_ty(&type_scratch,f,cl->rd[2],es,(int)(cl->n_imm>2?cl->imm[2]:0),st,sizeof st),vp,sizeof vp),
             amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,rname(f,cl->rd[2],d)); }
+        else if(vr && vr->kind==BCIR_RK_AGGREGATE)    /* a struct/union element set from a struct VALUE (`s.v[i] = q`):
+          * copy it whole, as the member store does -- a scalar `_v` of it does not compile (CF-STRUCTVAL) */
+          w+=snprintf(o+EO,on-EO,"memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &%s, %lld);\n",
+            amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,rname(f,cl->rd[2],d),es);
         else
         w+=snprintf(o+EO,on-EO,"{ %s _v = %s; memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &_v, %lld); }\n",
           vt,rname(f,cl->rd[2],d),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,es); }
@@ -6153,7 +7384,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
           * call site reads the member's real type, and function pointers round-trip through the cast. */
           w+=snprintf(o+EO,on-EO,"*(void (**)(void))((char *)%s%s + %lld) = (void (*)(void))%s;\n",
                       amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
-        } else if(vr && vr->kind==BCIR_RK_AGGREGATE){   /* a struct/union member set from a struct VALUE (a nested
+        } else if(vr && vr->kind==BCIR_RK_AGGREGATE && !vr->is_array){   /* a struct/union member set from a struct VALUE (a nested
           * `{ ... }` member, `o.p = q`): copy the whole object -- a scalar `uintN _v = <struct>` is a type
           * error, and a too-narrow `_v` would under-read it. memcpy `sz` bytes straight from the source. */
           w+=snprintf(o+EO,on-EO,"memcpy((char *)%s%s + %lld, &%s, %lld);\n",
@@ -6165,6 +7396,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                        * unit type (may be wider than the `sz` bytes written -- a packed field spans <= 8 bytes
                        * into a uint64 unit but only its `sz` spanned bytes are memcpy'd back) */
                       :(vr&&vr->kind==BCIR_RK_POINTER)?decl_ty(&type_scratch,f,cl->rd[1],tb,sizeof tb)
+                      :(vr&&(vr->is_array||vr->is_vla))?"const volatile void *"   /* an array decays to its address
+                       * (C11 6.3.2.1p3, CF-MEMDECAY): `uintN _v = arr` does not compile */
                       :(vr&&vr->is_complex)?(sz==8?"float _Complex":sz>16?"long double _Complex":"double _Complex")
                       :(vr&&vr->is_float)?(sz==4?"float":sz>8?"long double":"double")
                       :(sz==1?"uint8_t":sz==2?"uint16_t":sz==8?"uint64_t":"uint32_t");
@@ -6251,8 +7484,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     else if(!strncmp(cl->op,"c.call.tu:",10)){      /* a PROTOTYPED cross-TU callee (Phase 3 linking):
                                                      * verbatim, external linkage -- the prelude declares
                                                      * it; the host LINKER resolves it */
+      char cty[160];                                 /* a pointer result declares `T *` (decl_ty) */
       if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,"%s(",cl->op+10);
-      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),cl->op+10);
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty),
+                       rname(f,cl->wr[0],d),cl->op+10);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.builtin:",15)){  /* a GCC/Clang integer builtin -> emitted verbatim */
@@ -6271,8 +7506,11 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call:",7)){
-      const bcir_resource *rr=res_of(f,cl->wr[0]);   /* a struct/union RETURN declares `struct P t = bcir_..` */
-      const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg:tty(&type_scratch,f,cl->wr[0]);
+      const bcir_resource *rr=res_of(f,cl->wr[0]);   /* a struct/union RETURN declares `struct P t = bcir_..`,
+                                                      * a pointer return `T *t = bcir_..` (decl_ty) */
+      char cty[160];
+      const char *dty=(rr&&rr->kind==BCIR_RK_AGGREGATE&&rr->agg[0])?rr->agg
+                      :decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty);
       w+=snprintf(o+EO,on-EO,"%s %s = bcir_%s(",dty,rname(f,cl->wr[0],d),cl->op+7);
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",rname(f,cl->rd[k],a));
       w+=snprintf(o+EO,on-EO,");\n"); }
@@ -6312,6 +7550,9 @@ static int try_top_decl(CC *c){
     attrs(c,&pk_,&al_);
     int isdef = is(c,"{"); c->i=save;
     if(isdef){ p_struct_body(c); eat(c,";"); return 1; }
+    if(tat(c,c->i+1)->k==T_ID && tok_is(tat(c,c->i+2),";")){   /* `struct tag;` -- a forward declaration */
+      int isu=is(c,"union"); c->i++; tok tag=adv(c); if(declare_struct(c,&tag,isu)<0) return 1;
+      eat(c,";"); return 1; }
     return 0;                                        /* struct used as a type -> a function follows */
   }
   return 0;
@@ -6348,10 +7589,13 @@ static long long brace_init_extent(CC *c){
   return n;
 }
 static void p_global(CC *c){
-  bcir_ctype ty; int si; if(p_type(c,&ty,&si)) return; tok nm=adv(c);
+  bcir_ctype ty; int si; if(p_type(c,&ty,&si)) return;
+  int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
+  tok nm=adv(c);
   int count=1, is_arr=0, init_a=0, init_b=0, nd=0; long long dims[4]={0,0,0,0}, init_n=-1;
   while(is(c,"[")){ c->i++; count = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); is_arr=1;
     if(nd<4){ dims[nd]=count; } nd++; }
+  for(int d=0; d<btd; d++){ count=btdd[d]; is_arr=1; if(nd<4){ dims[nd]=count; } nd++; }   /* its dims follow */
   if(is(c,"=")){ c->i++; init_a=c->i;
     if(is(c,"{")) init_n=brace_init_extent(c);
     else (void)ce_expr(c,0);
@@ -6370,6 +7614,8 @@ static void cfront_free_func(const bcir_host_allocator *allocator, bcir_func *fn
   if(!fn) return;
   for(int i=0;i<fn->n_host_literals;i++)
     bcir_host_deallocate(allocator,fn->host_literals[i].spelling);
+  for(int i=0;i<fn->n_statics;i++)
+    bcir_host_deallocate(allocator,fn->statics[i].text);
   bcir_host_deallocate(allocator,fn->res);
   bcir_host_deallocate(allocator,fn->claims);
   bcir_host_deallocate(allocator,fn->params);
@@ -6405,8 +7651,8 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   CC *c;
   bcir_host_allocator allocator;
   bcir_host_arena scratch;
-  sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos;
-  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos;
+  sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos; irange *iw_rng; iunion *iw_un; int *pure_memo;
+  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure;
   if(!context||!context->state) return;
   c=(CC *)context->state;
   bcir_host_arena_reset(&c->scratch);
@@ -6414,11 +7660,15 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   s=c->s;cap_s=c->cap_s;td=c->td;cap_td=c->cap_td;ec=c->ec;cap_ec=c->cap_ec;
   gv=c->gv;cap_gv=c->cap_gv;env=c->env;cap_env=c->cap_env;
   protos=c->protos;cap_protos=c->cap_protos;
+  iw_rng=c->iw_rng;iw_caprng=c->iw_caprng;iw_un=c->iw_un;iw_capun=c->iw_capun;
+  pure_memo=c->pure_memo;cap_pure=c->cap_pure;
   memset(c,0,sizeof *c);
   c->allocator=allocator;c->scratch=scratch;
   c->s=s;c->cap_s=cap_s;c->td=td;c->cap_td=cap_td;c->ec=ec;c->cap_ec=cap_ec;
   c->gv=gv;c->cap_gv=cap_gv;c->env=env;c->cap_env=cap_env;
   c->protos=protos;c->cap_protos=cap_protos;
+  c->iw_rng=iw_rng;c->iw_caprng=iw_caprng;c->iw_un=iw_un;c->iw_capun=iw_capun;
+  c->pure_memo=pure_memo;c->cap_pure=cap_pure;
 }
 
 void bcir_cfront_context_destroy(bcir_cfront_context *context) {
@@ -6430,6 +7680,8 @@ void bcir_cfront_context_destroy(bcir_cfront_context *context) {
   bcir_host_deallocate(&allocator,c->s);bcir_host_deallocate(&allocator,c->td);
   bcir_host_deallocate(&allocator,c->ec);bcir_host_deallocate(&allocator,c->gv);
   bcir_host_deallocate(&allocator,c->env);bcir_host_deallocate(&allocator,c->protos);
+  bcir_host_deallocate(&allocator,c->iw_rng);bcir_host_deallocate(&allocator,c->iw_un);
+  bcir_host_deallocate(&allocator,c->pure_memo);
   memset(c,0,sizeof *c);bcir_host_deallocate(&allocator,c);
   memset(context,0,sizeof *context);
 }
@@ -6531,6 +7783,7 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
       snprintf(f->calls[f->n_calls++],BCIR_CIR_NAME,"%s",callee);
     }
   }
+  null_pointer_args(c,&out->unit);   /* a null pointer constant argument is its parameter's pointer (CF-NULLARG) */
   /* G10: a function a file-scope initializer names (an ops table `struct ops t = { handler };`) has its
    * address taken -- callers this unit cannot see may reach it. Every identifier in the initializer counts
    * except a designator's field name (`.fn = ...`); the oracle's twin is LoweredUnit.init_refs. */
@@ -6898,6 +8151,17 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     }
   }
   emit(ctx,anc.s?anc.s:"ret=void|stores=",anc.s?strlen(anc.s):16); emit(ctx,"\n",1);
+  /* A static's constant image (CF-STATICTAB): its initializer runs once, before the program, so no claim writes it (a
+   * static reads as an input) -- the initializer both rails render joins the canon instead, one line per static that
+   * has one, sorted. Two statics differing only in a value differ here. */
+  int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text) nsx++;
+  if(nsx){ char **sl=(char **)vn_alloc(arena,(size_t)nsx,sizeof *sl,1); int si=0;
+    if(!sl){ emit(ctx,"oom\n",4); return; }
+    for(int k=0;k<f->n_statics;k++) if(f->statics[k].text){ sbuf s=sbuf_for(arena);
+      sb_str(&s,"static "); sb_str(&s,f->statics[k].name); sb_str(&s," = "); sb_str(&s,f->statics[k].text);
+      sl[si++]=s.s?s.s:vn_strdup(arena,""); }
+    sort_strs(sl,si);
+    for(int k=0;k<si;k++){ const char *ln=sl[k]?sl[k]:""; emit(ctx,ln,strlen(ln)); emit(ctx,"\n",1); } }
 }
 
 /* The shared canonical serializer: invokes emit(ctx, bytes, len) for each byte of the canon (so the

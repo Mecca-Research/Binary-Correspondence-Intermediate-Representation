@@ -31,7 +31,9 @@ class TargetABI:
     `eight_byte_align` is the alignment of an 8-byte scalar -- `double`, `long long`, `int64_t`, a
     `_BitInt(33..64)`, and so a `double _Complex`'s element (Clang's `DoubleAlign` / `LongLongAlign`,
     in bytes): 8 on the 64-bit targets, 4 on i386, whose ABI aligns them to 4 inside a struct and in
-    `_Alignof` while their size stays 8."""
+    `_Alignof` while their size stays 8. `wchar_size`/`wchar_signed` are `wchar_t` (Clang's
+    `__WCHAR_TYPE__`): a signed 4-byte `int` on x86-64, RISC-V and i386 Linux, an `unsigned int` on
+    AArch64 Linux, an `unsigned short` on Windows -- the element of an `L"..."` literal too."""
 
     name: str  # short id, e.g. "x86_64-linux"
     triple: str  # the Clang target triple (for `-target` / provenance)
@@ -43,6 +45,15 @@ class TargetABI:
     atomic_promote_size: int
     eight_byte_align: int
     endian: str = "little"
+    wchar_size: int = 4
+    wchar_signed: bool = True
+
+    @property
+    def wchar_type(self) -> str:
+        """The integer type `wchar_t` names on this target (a typedef, so `_Generic` sees this type)."""
+        if self.wchar_size == 2:
+            return "unsigned short" if not self.wchar_signed else "short"
+        return "int" if self.wchar_signed else "unsigned int"
 
     def scalar_size(self, name: str, default: int) -> int:
         """The size of an integer scalar under this ABI: `long` and the pointer-tracking types follow
@@ -70,7 +81,9 @@ _LP64 = dict(
 # lays out.
 TARGETS: dict[str, TargetABI] = {
     "x86_64-linux": TargetABI("x86_64-linux", "x86_64-unknown-linux-gnu", **_LP64),
-    "aarch64-linux": TargetABI("aarch64-linux", "aarch64-unknown-linux-gnu", **_LP64),
+    "aarch64-linux": TargetABI(
+        "aarch64-linux", "aarch64-unknown-linux-gnu", **_LP64, wchar_signed=False
+    ),
     "riscv64-linux": TargetABI("riscv64-linux", "riscv64-unknown-linux-gnu", **_LP64),
     "x86_64-windows": TargetABI(
         "x86_64-windows",
@@ -82,6 +95,8 @@ TARGETS: dict[str, TargetABI] = {
         long_double_align=8,
         atomic_promote_size=16,
         eight_byte_align=8,
+        wchar_size=2,
+        wchar_signed=False,
     ),
     "i386-linux": TargetABI(
         "i386-linux",

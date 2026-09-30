@@ -1,0 +1,232 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_conditional_operands_evaluate_as_c_does_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_void_function_returns_a_void_expression_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_null_pointer_arguments_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_null_pointer_arguments_to_later_and_prototyped_callees",
+    "bcir.tests.test_cfront_roundtrip:test_branch_values_round_trip_as_a_fixed_point"
+  ],
+  "faults": [
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT1 the oracle computes every operand eagerly",
+      "new": "    \"\"\"Whether the operand `block` lowered to may be computed although C would not evaluate it.\"\"\"\n    return True\n",
+      "old": "    \"\"\"Whether the operand `block` lowered to may be computed although C would not evaluate it.\"\"\"\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT2 the oracle's predicate admits a division",
+      "new": "\"add sub mul and or xor shl shr lt gt le ge eq ne land lor div\".split()",
+      "old": "\"add sub mul and or xor shl shr lt gt le ge eq ne land lor\".split()",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT3 the oracle's predicate lets an operand write a declared variable",
+      "new": "        op = n.op\n",
+      "old": "        if any(w in declared for w in n.wr):  # an assignment, an increment\n            return False\n        op = n.op\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT4 the oracle's predicate lets a volatile read through",
+      "new": "",
+      "old": "        if n.volatile:  # a volatile access: reading one is a side effect\n            return False\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT5 a `?:` with one pure arm is computed eagerly on the oracle",
+      "new": "            if _operand_pure(blk_a, declared) or _operand_pure(blk_b, declared):\n                self.block_stack[-1].extend(blk_a)\n                self.block_stack[-1].extend(blk_b)\n                t = self._temp(rt, \"sel\")",
+      "old": "            if _operand_pure(blk_a, declared) and _operand_pure(blk_b, declared):\n                self.block_stack[-1].extend(blk_a)\n                self.block_stack[-1].extend(blk_b)\n                t = self._temp(rt, \"sel\")",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT6 the right operand of `&&` / `||` is computed eagerly on the oracle",
+      "new": "            if True:",
+      "old": "            if _operand_pure(blk_b, self._declared_rids()):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT7 the arm `&&` decides stores 1 on the oracle",
+      "new": "imm=(1 if node.op == \"&&\" else 0,)",
+      "old": "imm=(0 if node.op == \"&&\" else 1,)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT8 the else arm of the oracle's branch assigns nothing",
+      "new": "",
+      "old": "            self._assign_in(blk_b, self._null_pointer(b, rt), sel)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OT9 the oracle's branch local is a uint32_t whatever the arms",
+      "new": "            sel, node_if = self._branch_value(c, scalar(\"uint32_t\"), blk_a, blk_b)",
+      "old": "            sel, node_if = self._branch_value(c, rt, blk_a, blk_b)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OV1 a void conditional takes a value on the oracle",
+      "new": "            if False:\n                # a void conditional",
+      "old": "            if a == _VOID_RID or b == _VOID_RID:\n                # a void conditional",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "OV2 `(void)e` is a cast to uint32_t on the oracle",
+      "new": "            if False:  # `(void)e`: e for its effects, no value",
+      "old": "            if ct.kind == \"scalar\" and ct.name == \"void\":  # `(void)e`: e for its effects, no value",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT1 the twin computes every operand eagerly",
+      "new": "  pure=!c->failed;",
+      "old": "  pure=!c->failed && operand_pure(c,from);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT2 the twin's predicate admits a division",
+      "new": "\"land\",\"lor\",\"div\",0};   /* not `div` / `mod`: a zero divisor traps */",
+      "old": "\"land\",\"lor\",0};   /* not `div` / `mod`: a zero divisor traps */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT3 the twin's predicate lets an operand write a declared variable",
+      "new": "",
+      "old": "    for(int k=0;k<cl->n_wr;k++){ const bcir_resource *r=res_of(c->fn,cl->wr[k]); if(r && r->name[0]) return 0; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT4 the twin's predicate lets a volatile read through",
+      "new": "",
+      "old": "    if(cl->is_volatile) return 0;                               /* a volatile access: reading one is a side effect */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT5 the right operand of `&&` / `||` is computed eagerly on the twin",
+      "new": "  if(1){",
+      "old": "  if(operand_is_pure(c,p_binrhs_operand,prec)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT6 the twin's purity memo answers for another operand",
+      "new": "  for(int k=0;k<c->npure;k++) if(c->pure_memo[k]>>1==at || 1) return c->pure_memo[k]&1;",
+      "old": "  for(int k=0;k<c->npure;k++) if(c->pure_memo[k]>>1==at) return c->pure_memo[k]&1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT7 the arm `&&` decides stores 1 on the twin",
+      "new": "kc->imm[0]=is_and?1:0;",
+      "old": "kc->imm[0]=is_and?0:1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TT8 the twin's branch local is not typed as the select",
+      "new": "  if(va) return a;\n  return sel;",
+      "old": "  if(va) return a;\n  type_as_select(c,sel,a,b);\n  return sel;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TV1 the twin sees no void value",
+      "new": "static int void_value(CC *c, uint32_t v){ const bcir_resource *r=res_of(c->fn,v); return r && 0; }",
+      "old": "static int void_value(CC *c, uint32_t v){ const bcir_resource *r=res_of(c->fn,v); return r && r->is_void; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TV2 `(void)e` is a cast to uint32_t on the twin",
+      "new": "        if(0)\n          return void_temp(c);",
+      "old": "        if(ty.kind==0 && ty.size==0 && !ty.is_float && !ty.bit_width)\n          return void_temp(c);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_void_function_returns_a_void_expression_alike_on_both_rails",
+      "label": "TV3 the twin returns a void call's placeholder from a void function",
+      "new": "      if(0) marker(c,\"c.return\",0,0);",
+      "old": "      if(void_value(c,rv)) marker(c,\"c.return\",0,0);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_conditional_operands_evaluate_as_c_does_on_both_rails",
+      "label": "TV4 the twin's verifier refuses a function whose only effect is its calls",
+      "new": "(cl->n_wr||cl->opcode==BCIR_OP_STORE||cl->opcode==BCIR_OP_BARRIER)",
+      "old": "(cl->n_wr||cl->opcode==BCIR_OP_STORE||cl->opcode==BCIR_OP_BARRIER||cl->opcode==BCIR_OP_GEM_DISPATCH)",
+      "path": "runtime/c/bcir_verify.c"
+    },
+    {
+      "expects": "test_null_pointer_arguments_run_as_the_original_on_both_rails",
+      "label": "ON1 the oracle types no null pointer argument",
+      "new": "        for v, ct in zip(actuals, ()):\n            if ct is not None:\n                self._null_pointer(v, ct)",
+      "old": "        for v, ct in zip(actuals, params):\n            if ct is not None:\n                self._null_pointer(v, ct)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_arguments_run_as_the_original_on_both_rails",
+      "label": "ON2 the oracle types no argument of a same-unit callee",
+      "new": "",
+      "old": "        self._null_pointer_args(actuals, self.func_params.get(node.callee, ()))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_arguments_to_later_and_prototyped_callees",
+      "label": "ON3 the oracle types no argument of a prototyped callee",
+      "new": "",
+      "old": "            self._null_pointer_args(actuals, param_cts)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_arguments_to_later_and_prototyped_callees",
+      "label": "ON4 a prototype's array parameter is its element type on the oracle",
+      "new": "            tuple(_resolve_member_type(p, aggregates, abi) for p in params),",
+      "old": "            tuple(_param_type(p, aggregates, abi) for p in params),",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_arguments_run_as_the_original_on_both_rails",
+      "label": "ON5 an array parameter is typed as its element for a caller on the oracle",
+      "new": "        ct = elem\n    return ct",
+      "old": "        ct = replace(pointer(elem, abi), shape=tuple(dims))\n    return ct",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_arguments_run_as_the_original_on_both_rails",
+      "label": "TN1 the twin types no null pointer argument",
+      "new": "  (void)null_pointer_args;",
+      "old": "  null_pointer_args(c,&out->unit);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_arguments_run_as_the_original_on_both_rails",
+      "label": "TN2 the twin types no argument of a same-unit definition",
+      "new": "      if(def) np=0;",
+      "old": "      if(def) np=def->n_params;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_arguments_to_later_and_prototyped_callees",
+      "label": "TN3 the twin records no prototype's parameters",
+      "new": "c->protos[c->n_protos].n_params=0;",
+      "old": "c->protos[c->n_protos].n_params=pt?fn->n_params:0;",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}
