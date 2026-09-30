@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .clex import int_literal_parts
+
 # Scalar integer/base types -> (size in bytes, signed). C23 fixed-width names + the core set.
 _SCALAR = {
     "void": (0, False),
@@ -402,20 +404,9 @@ def int_literal_type(text: str) -> str:
     first type in the suffix-permitted candidate list that can hold the value. Decimal literals only
     pick an unsigned type when `u`-suffixed; hex/octal literals may at any rank. Returns a canonical
     scalar name (`int` / `unsigned int` / `long` / ... )."""
-    s = text.replace("'", "")  # strip C23 digit separators
-    i = len(s)
-    while i > 0 and s[i - 1] in "uUlL":
-        i -= 1
-    body, suf = s[:i], s[i:].lower()
+    val, decimal, suf = int_literal_parts(text)  # the value, as the lexer checked it
+    suf = suf.lower()
     u, lrank = ("u" in suf), suf.count("l")  # lrank: 0 none / 1 long / 2 long long
-    if body[:2] in ("0x", "0X"):
-        val, decimal = int(body, 16), False
-    elif body[:2] in ("0b", "0B"):
-        val, decimal = int(body, 2), False
-    elif len(body) > 1 and body[0] == "0":
-        val, decimal = int(body, 8), False
-    else:
-        val, decimal = int(body or "0", 10), True
     INT, UINT = ("int", 4, True), ("unsigned int", 4, False)
     LONG, ULONG = ("long", 8, True), ("unsigned long", 8, False)
     LL, ULL = ("long long", 8, True), ("unsigned long long", 8, False)

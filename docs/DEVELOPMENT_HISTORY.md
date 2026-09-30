@@ -1854,9 +1854,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     emit's flat `T *` parameter on both rails (an incompatible-pointer-types error); the twin refuses a
     file-scope `char buf[] = "..."` with a misleading "non-constant enum initializer", which the oracle
     lowers; both rails refuse a list of file-scope arrays in one declaration (`uint32_t a[3], b[2];`);
-  - the twin miscompiles an integer literal above `LLONG_MAX` (it saturates) and an octal literal (read as
-    decimal); the oracle's global-initializer fold ignores C types and floors a division
-    (`int32_t gq = -7 / 2;` renders `-4`), where the static fold's helpers would not;
   - the oracle refuses a global array of structs with nested braces (`{{1, 2}, {3, 4}}`), which the twin
     lowers;
   - both rails drop `_Thread_local` from a static local;
@@ -2143,6 +2140,39 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     then conflicts with the original;
   - a function designator of an external function, declared by its prototype and defined by another unit, is
     refused on both rails (`use of undeclared identifier`), which C allows.
+
+  File-scope constants, arrays and initializers (2026-09-30), on both rails, each slice closing an item of the
+  CF-NULLARG list above. RED was measured on the parent (`59740254`), with the new fixtures and tests copied in.
+  CF-INTCONST made an integer constant its exact value in its C11 6.4.4.1 type, and folded a file-scope
+  initializer in C's own types.
+  - The defect: the twin read a constant with `strtoll`, which saturates, so one past LLONG_MAX was LLONG_MAX
+    (`0xFFFFFFFFFFFFFFFFu` emitted as `9223372036854775807u`), and read an octal constant in base 10 (`017` was
+    17, and 10 as an array dimension or a `case` label written `010`); it typed a constant from a 63-character
+    copy of its spelling, which cuts 64 binary digits. The oracle folded a file-scope initializer, for its
+    linkable emit, with unbounded integers: `-7 / 2` rendered -4, `~0u` -1 and `-0x80000000` -2147483648, and
+    `7 % -2` raised a bare `ValueError` (the fold computed every operator's result, a shift by -2 among them).
+    Neither rail refused a constant no type can hold (the oracle lowered `18446744073709551616u`), and the oracle
+    read `0o17` through Python's `int`, as 15.
+  - RED: on the parent the fixture's functions alone digest apart on the four targets; the whole fixture raises
+    `ValueError: negative shift count` in the oracle and is refused by the twin (`non-constant enum
+    initializer`: it read a global's initializer with the enum evaluator, which takes no cast and no `sizeof`).
+    Both new tests fail.
+  - What landed: one reading of a constant per rail (`clex.int_literal_parts`, the twin's `int_literal`): the
+    separators dropped, the suffix split off, the base from the prefix, each digit checked against it, the value
+    exact. The twin keeps a constant past LLONG_MAX as its 64 bits, and its canon spells a constant of an
+    unsigned type unsigned (`vn_imm`), as the oracle's does. A constant past `unsigned long long`, or decimal
+    without `u` past `long long` (GCC types that one `__int128`, Clang `unsigned long long`), is refused on both
+    rails (`an integer constant too large for every type its base and suffix allow`), a malformed one for its
+    digits. The oracle's `_fold_const` is gone: a global's initializer is lowered on a lowerer whose scope is the
+    globals declared so far and folded by the fold a static's initializer takes (`_const_value`, CF-STATICTAB),
+    then spelled exactly (`_const_spelling`: `Nu` past LLONG_MAX, LLONG_MIN as an expression). The twin skips a
+    global's initializer instead of reading it with the enum evaluator, and refuses a call in it, as the oracle
+    does.
+  - Outcomes: `cfront_intconst.c` -- every base and suffix at the edges of its type, each constant's type read
+    through a comparison with -1 and through `sizeof`, octal and binary `case` labels and array dimensions --
+    lowers to one claim graph on the four targets and runs as the original on both emits under Clang and GCC, and
+    the oracle's linkable emit defines each of its globals with the value the original's holds. No other
+    fixture's digest moves on the four targets.
 
 ---
 

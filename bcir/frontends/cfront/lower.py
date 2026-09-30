@@ -18,6 +18,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 from bisect import bisect_left
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import NamedTuple
 
@@ -412,73 +413,14 @@ def _str_bytes(spelling: str) -> int:
     return n
 
 
-def _fold_const(node, resolve=None) -> int:
-    """A file-scope global's initializer must be a constant expression (it is baked into the C
-    declaration). The §5.9 integer constant-expression evaluator: literals, arithmetic/bit/shift,
-    comparisons, logical &&/|| (a constant expression has no side effects to short-circuit
-    away), unary +/-/~/!, and the ternary. Enumerators arrive pre-folded to IntLit by the parser.
-    `sizeof(type)` / `_Alignof(type)` fold ONLY when a `resolve` (TypeRef -> CType) callback is
-    passed -- the ABI is chosen at LOWER time, so the GLOBAL-initializer site (which has the
-    resolved ABI in hand) passes one (global rendering is oracle-side by design, so no parity is
-    at stake there). A `static` local's initializer folds on both rails through the initializer
-    walk's constant mode instead (`_FuncLowerer._const_value`, C's own types). A missing init
-    zero-initializes."""
-    if node is None:
-        return 0
-    if isinstance(node, cast.IntLit):
-        return node.value
-    if isinstance(node, cast.SizeOf) and resolve is not None:
-        if node.type is not None:
-            return resolve(node.type).size  # the CHOSEN ABI's answer (Part VII A4)
-        if isinstance(node.expr, cast.StringLit):
-            prefix, _ = split_lit_prefix(node.expr.value)
-            unit = (  # an `L` literal's unit is the chosen target's `wchar_t`
-                resolve(cast.TypeRef(base="wchar_t")).size
-                if prefix == "L"
-                else str_elem_size(prefix)
-            )
-            return (_str_bytes(node.expr.value) + 1) * unit
-        raise CLowerError(
-            "sizeof over a non-type operand is not a constant initializer "
-            "in this slice (no scope at global-init time)"
-        )
-    if isinstance(node, cast.AlignOf) and resolve is not None:
-        return resolve(node.type).align
-    if isinstance(node, cast.Unary) and node.op in ("-", "~", "!", "+"):
-        v = _fold_const(node.operand, resolve)
-        return {"-": -v, "~": ~v, "!": int(not v), "+": v}[node.op]
-    if isinstance(node, cast.Binary):
-        a, b = _fold_const(node.lhs, resolve), _fold_const(node.rhs, resolve)
-        ops = {
-            "+": a + b,
-            "-": a - b,
-            "*": a * b,
-            "/": a // b if b else 0,
-            "%": a % b if b else 0,
-            "&": a & b,
-            "|": a | b,
-            "^": a ^ b,
-            "<<": a << b,
-            ">>": a >> b,
-            "<": int(a < b),
-            "<=": int(a <= b),
-            ">": int(a > b),
-            ">=": int(a >= b),
-            "==": int(a == b),
-            "!=": int(a != b),
-            "&&": int(bool(a) and bool(b)),
-            "||": int(bool(a) or bool(b)),
-        }
-        if node.op not in ops:
-            raise CLowerError(f"non-constant operator {node.op!r} in a constant initializer")
-        return ops[node.op]
-    if isinstance(node, cast.Ternary):
-        return (
-            _fold_const(node.then, resolve)
-            if _fold_const(node.cond, resolve)
-            else _fold_const(node.els, resolve)
-        )
-    raise CLowerError("static initializer is not a constant expression")
+def _const_spelling(v: int) -> str:
+    """A folded integer constant as a file-scope initializer's rendering spells it: its value exactly, in a
+    type that holds it -- plain decimal (`int`, `long` or `long long`, whichever holds it first), `Nu` past
+    `long long`, and the one negative with no positive counterpart as an expression. The declaration
+    converts the value to the global's type, as C converts the source's initializer."""
+    if v > (1 << 63) - 1:
+        return f"{v}u"
+    return "(-9223372036854775807 - 1)" if v == -(1 << 63) else str(v)
 
 
 def _is_pure(node) -> bool:
@@ -3337,9 +3279,7 @@ class _FuncLowerer:
         if ct.kind == "array" and not isinstance(init, cast.AggInit):
             raise CLowerError("an array is initialized by a brace list or a string literal")
         w = _InitWalk(rid=-1, top_array=ct.kind == "array", const=True)
-        snap = self._snapshot()
-        self.block_stack.append([])  # the entries' claims: folded, then discarded
-        try:
+        with self._scratch():  # the entries' claims: folded, then discarded
             unit = (ct, 0, 0, 0, False)
             if isinstance(init, cast.AggInit) and ct.kind in ("struct", "union", "array"):
                 self._init_list(
@@ -3349,11 +3289,21 @@ class _FuncLowerer:
                 self._init_sublist(w, _IFrame(ct, 0), unit, init)
             else:  # an expression: a scalar's value (a struct's is never a constant)
                 self._init_store(w, unit, self._init_value(w, init), False)
-        finally:
-            self._restore(snap)
         if inferred:
             ct = self._sized_array(ct, w.top_n)
         return ct, self._render_image(ct, w)
+
+    @contextmanager
+    def _scratch(self):
+        """Lower only to fold: the claims go to a scratch block, and the lowerer is wound back after
+        (`_snapshot`) -- no claim, temp, literal or claim id is left behind. A static's initializer and a
+        file-scope initializer are lowered in one."""
+        snap = self._snapshot()
+        self.block_stack.append([])
+        try:
+            yield
+        finally:
+            self._restore(snap)
 
     def _snapshot(self) -> dict:
         """The lowerer's whole state, each container copied: a static's initializer lowers its entries only
@@ -4567,9 +4517,51 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             b.members.append((mname, mt, width, malign))
         aggregates[tag] = b.build()
 
+    # pre-scan every function's return type (forward references resolve too), so a call can be typed
+    # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
+    func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates, abi) for fn in unit.funcs}
+    # ... and their parameter types, so a null pointer constant a call passes to a pointer parameter is
+    # a null pointer of that type, whichever of the caller and the callee is defined first (CF-NULLARG)
+    func_params = {fn.name: _param_types(fn.params, aggregates, abi) for fn in unit.funcs}
+    # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
+    # just a forward declaration (the definition wins); the rest resolve at LINK time. A parameter is
+    # read as the definition binds it -- an array parameter is a pointer -- so the emit's `extern`
+    # declaration spells `T *` for `T a[]` (the element type alone conflicted with the prototype).
+    protos = {
+        name: (
+            _resolve_member_type(ret, aggregates, abi),
+            tuple(_param_type(p, aggregates, abi) for p in params),
+        )
+        for name, (ret, params) in unit.protos.items()
+        if name not in func_rets
+    }
+    # ... and whether each of a prototype's parameters points to `const` -- the base type's qualifier of a
+    # pointer or of an array, which decays to one -- for the emit's `extern` declaration of the callee
+    proto_consts = {
+        name: tuple(
+            "const" in p.quals and bool(p.ptr or p.array or p.vla is not None) for p in params
+        )
+        for name, (_ret, params) in unit.protos.items()
+        if name not in func_rets
+    }
     genv: dict[str, tuple] = {}  # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
     gdecls: list = []  # the linkable emit's global surface
+    # The file-scope initializers' lowerer: a function with no body, in whose scope a global's initializer
+    # is lowered only to be folded -- by the fold a static local's initializer takes (`_const_value`), each
+    # operation in C's own types -- and never kept. The globals declared so far are in its scope, a global
+    # in its own initializer as in C (`sizeof g` folds; a read of one is no constant).
+    ginit = _FuncLowerer(
+        cast.Func(ret=cast.TypeRef(base="void"), name="", params=(), body=()),
+        aggregates,
+        base_rid=0,
+        cid=[0],
+        strctr=[0],
+        func_rets=func_rets,
+        abi=abi,
+        protos=protos,
+        func_params=func_params,
+    )
     for gi, g in enumerate(unit.globals):
         # the declared type: an initialized scalar or struct keeps it -- it is one object, not a table of
         # its initializers -- and only an unsized array takes its extent from the initializer (CF-GINIT)
@@ -4606,49 +4598,38 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             name=g.name,
         )
         genv[g.name] = (rid, ct)
-        vals: list = []  # render CONSTANT inits (linkable emit):
-        for el in g.init:  # ints, signed ints, float/string spellings
-            if isinstance(el, cast.IntLit):
-                vals.append(str(el.value))
-            elif isinstance(el, cast.FloatLit):
-                vals.append(el.value)  # the source spelling, suffix included
-            elif (
-                isinstance(el, cast.Unary)
-                and el.op in ("-", "+")
-                and isinstance(el.operand, cast.IntLit)
-            ):
-                vals.append(str(-el.operand.value if el.op == "-" else el.operand.value))
-            elif (
-                isinstance(el, cast.Unary)
-                and el.op in ("-", "+")
-                and isinstance(el.operand, cast.FloatLit)
-            ):
-                vals.append(("-" if el.op == "-" else "") + el.operand.value)
-            elif isinstance(el, cast.StringLit) and is_string:
-                vals.append(el.value)  # spelling incl. quotes (char-array init)
-            elif (
-                isinstance(el, cast.Unary)
-                and el.op == "&"
-                and isinstance(el.operand, cast.Name)
-                and el.operand.ident in genv
-            ):
-                # Part VII A4: an ADDRESS CONSTANT (&x of a file-scope object declared
-                # earlier in the unit) -- the platform linker resolves the relocation;
-                # the rendering is just the name. Forward references stay refused
-                # (genv accumulates in declaration order -- conservative, recorded).
-                vals.append(f"&{el.operand.ident}")
-            else:
-                try:  # the §5.9 constant-expression evaluator
-                    vals.append(
-                        str(
-                            _fold_const(  # WITH the chosen ABI's layout oracle:
-                                el, lambda tr: _resolve_member_type(tr, aggregates, abi)
-                            )
-                        )
-                    )
-                except CLowerError:  # anything else: not renderable in this
-                    vals = None  # slice -- the linkable emit raises
-                    break
+        ginit.env[g.name] = (rid, ct)
+        ginit.rtypes[rid] = ct
+        vals: list | None = []  # render CONSTANT inits (linkable emit):
+        with ginit._scratch():  # ints, signed ints, float/string spellings
+            for el in g.init:
+                if isinstance(el, cast.FloatLit):
+                    vals.append(el.value)  # the source spelling, suffix included
+                elif (
+                    isinstance(el, cast.Unary)
+                    and el.op in ("-", "+")
+                    and isinstance(el.operand, cast.FloatLit)
+                ):
+                    vals.append(("-" if el.op == "-" else "") + el.operand.value)
+                elif isinstance(el, cast.StringLit) and is_string:
+                    vals.append(el.value)  # spelling incl. quotes (char-array init)
+                elif (
+                    isinstance(el, cast.Unary)
+                    and el.op == "&"
+                    and isinstance(el.operand, cast.Name)
+                    and el.operand.ident in genv
+                ):
+                    # Part VII A4: an ADDRESS CONSTANT (&x of a file-scope object declared
+                    # earlier in the unit) -- the platform linker resolves the relocation;
+                    # the rendering is just the name. Forward references stay refused
+                    # (genv accumulates in declaration order -- conservative, recorded).
+                    vals.append(f"&{el.operand.ident}")
+                else:
+                    try:  # an integer constant expression, folded as a static's entry is
+                        vals.append(_const_spelling(ginit._const_value(el).v))
+                    except CLowerError:  # anything else: not renderable in this
+                        vals = None  # slice -- the linkable emit raises
+                        break
         gdecls.append(
             (
                 g.name,
@@ -4664,33 +4645,6 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     resources: dict[int, Resource] = dict(gres)
     cid = [1000]
     strctr = [0]  # unit-wide string-literal counter (unique rids)
-    # pre-scan every function's return type (forward references resolve too), so a call can be typed
-    # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.
-    func_rets = {fn.name: _resolve_member_type(fn.ret, aggregates, abi) for fn in unit.funcs}
-    # ... and their parameter types, so a null pointer constant a call passes to a pointer parameter is
-    # a null pointer of that type, whichever of the caller and the callee is defined first (CF-NULLARG)
-    func_params = {fn.name: _param_types(fn.params, aggregates, abi) for fn in unit.funcs}
-    # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
-    # just a forward declaration (the definition wins); the rest resolve at LINK time. A parameter is
-    # read as the definition binds it -- an array parameter is a pointer -- so the emit's `extern`
-    # declaration spells `T *` for `T a[]` (the element type alone conflicted with the prototype).
-    protos = {
-        name: (
-            _resolve_member_type(ret, aggregates, abi),
-            tuple(_param_type(p, aggregates, abi) for p in params),
-        )
-        for name, (ret, params) in unit.protos.items()
-        if name not in func_rets
-    }
-    # ... and whether each of a prototype's parameters points to `const` -- the base type's qualifier of a
-    # pointer or of an array, which decays to one -- for the emit's `extern` declaration of the callee
-    proto_consts = {
-        name: tuple(
-            "const" in p.quals and bool(p.ptr or p.array or p.vla is not None) for p in params
-        )
-        for name, (_ret, params) in unit.protos.items()
-        if name not in func_rets
-    }
     for idx, fn in enumerate(unit.funcs):
         lf = _FuncLowerer(
             fn,

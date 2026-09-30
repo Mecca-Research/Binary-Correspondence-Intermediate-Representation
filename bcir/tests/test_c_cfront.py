@@ -270,6 +270,8 @@ _PTRVALUE = [
     #   declared by each emit ahead of its callers (CF-DECLS)
     "cfront_anonstruct.c",  # anonymous structs and unions named by a typedef, and a nested anonymous member,
     #   spelled as C names them (CF-ANON)
+    "cfront_intconst.c",  # every integer constant base and suffix at its type's edges, and file-scope
+    #   initializers folded in C's types (CF-INTCONST)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -10308,3 +10310,188 @@ def test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails(
         assert "$anon" not in emit and "struct  " not in emit, (label, emit)
         assert all(sp in emit for sp in spelled), (label, [sp for sp in spelled if sp not in emit])
     _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _ANON_DRIVER)
+
+
+# CF-INTCONST: an integer constant is its exact value in its C11 6.4.4.1 type on both rails. The C twin had kept a
+# constant past LLONG_MAX as LLONG_MAX and read an octal constant as decimal; the oracle had folded a file-scope
+# initializer with unbounded integers, where C evaluates each operation in its operands' types.
+_INTCONST_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(ic_hex, s); SAME(ic_octal, s); SAME(ic_binary, s); SAME(ic_decimal, s); SAME(ic_types, s);
+    SAME(ic_suffix, s); SAME(ic_edges, s); SAME(ic_edges, ((uint64_t)s << 32) | (uint32_t)~s);
+    SAME(ic_dims, s); SAME(ic_globals, s); SAME(ic_entry, s);
+  }
+  for (uint32_t i = 0; i < 40u; i++) SAME(ic_cases, i);
+  SAME(ic_edges, 0xFFFFFFFFFFFFFFFFu); SAME(ic_edges, 0x8000000000000000u); SAME(ic_edges, 0x7FFFFFFFFFFFFFFFu);
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+_PINNED_GLOBALS = {
+    "cfront_intconst.c": (
+        ("ic_gww", "18446744073709551615u"),
+        ("ic_gdiv", "6148914691236517205"),
+        ("ic_gmin", "(-9223372036854775807 - 1)"),
+        ("ic_gq", "-3"),
+        ("ic_gw", "4294967295"),
+    ),
+}
+
+
+def _global_values_driver(lowered) -> str:
+    """A `main` printing each file-scope object the unit defines -- an array element by element -- as a signed
+    and an unsigned 64-bit value, read out of the oracle's own record of the unit's globals."""
+    lines = []
+    for name, ct, _vals, is_extern, _static in lowered.globals_decl:
+        if is_extern:
+            continue
+        if ct.kind == "array":
+            lines += [f"P({name}[{i}]);" for i in range(ct.count)]
+        else:
+            lines.append(f"P({name});")
+    return (
+        '#define P(g) printf(#g " %lld %llu\\n", (long long)(g), (unsigned long long)(g))\n'
+        "int main(void) {\n  " + "\n  ".join(lines) + "\n  return 0;\n}\n"
+    )
+
+
+def _linkable_globals_are_the_originals(fx: str, src: str, r) -> None:
+    """The oracle's linkable emit defines the unit's globals with the initializers it folded: built beside
+    `_global_values_driver` (and the quarantine its bounds guards call), under every compiler at hand, each
+    global holds what the original's does."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    head = "#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+    driver = _global_values_driver(r.lowered)
+    linkable = emit_linkable(r.lowered, r.emitted)
+    # a value past LLONG_MAX is spelled unsigned and LLONG_MIN as an expression: a decimal constant past
+    # LLONG_MAX without `u` has no type both compilers agree on, and neither rail takes one back
+    for name, value in _PINNED_GLOBALS.get(fx, ()):
+        assert re.search(rf"\b{name}(\[\d+\])? = {re.escape(value)};", linkable), (fx, name, value)
+    quarantine = ("-I", _C, os.path.join(_C, "bcir_quarantine.c"))
+    compilers = [c for c in dict.fromkeys((_CC, shutil.which("clang"), shutil.which("gcc"))) if c]
+    with tempfile.TemporaryDirectory() as d:
+        for cc in compilers:
+            want = _build_run_c(d, cc, "original", f"{head}{src}\n{driver}")
+            got = _build_run_c(d, cc, "linkable", f"{head}{linkable}\n{driver}", quarantine)
+            assert want and got == want, (
+                f"{fx}: the linkable emit's globals are not the original's under {cc}\n"
+                + "\n".join(
+                    f"  {w!r} != {g!r}"
+                    for w, g in zip(want.splitlines(), got.splitlines())
+                    if w != g
+                )
+            )
+
+
+def test_integer_constants_are_exact_on_both_rails():
+    """CF-INTCONST: `cfront_intconst.c` -- integer constants in every base (hexadecimal, octal, binary, decimal)
+    and with every suffix, at the edges of their types (`0x8000000000000000`, 64 binary digits, `2^64 - 1` in
+    octal, the decimal constants that turn `long`), their types read through a comparison with -1 and `sizeof`,
+    octal case labels and array dimensions -- lowers to one claim graph on the four targets, and each function
+    of each emit returns what the original does. The twin had saturated a constant past LLONG_MAX
+    (`0xFFFFFFFFFFFFFFFFu` was 9223372036854775807) and read `017` as 17. The file-scope initializers -- a
+    signed division and remainder, shifts, `~` of an unsigned int, a cast, `sizeof`, a select -- fold in C's own
+    types through the fold a static's initializer takes: the oracle's linkable emit defines each global with
+    the value the original's holds (`-7 / 2` had rendered -4, `~0u` -1)."""
+    if not _CC:
+        return
+    fx = "cfront_intconst.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        for whole in ("18446744073709551615u", "9223372036854775808u", "9223372036854775809u"):
+            assert whole in emit, f"{rail}: the emit does not spell the constant {whole}"
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _INTCONST_DRIVER)
+    _linkable_globals_are_the_originals(fx, src, compile_unit(src, check_clang=False))
+
+
+# The integer constants no type in their list can hold (C11 6.4.4p2), and malformed ones: refused on both rails
+# where they are lexed. A decimal constant with no `u` past LLONG_MAX has a type C leaves to the implementation
+# -- GCC's `__int128`, Clang's `unsigned long long` -- so it is refused too.
+_INT_TOO_LARGE = "an integer constant too large for every type its base and suffix allow"
+_INT_INVALID = "invalid integer literal"
+_INTLIT_REFUSED = (
+    ("18446744073709551616u", _INT_TOO_LARGE),
+    ("0x10000000000000000", _INT_TOO_LARGE),
+    ("02000000000000000000000", _INT_TOO_LARGE),
+    ("0b1" + "0" * 64, _INT_TOO_LARGE),
+    ("9223372036854775808", _INT_TOO_LARGE),
+    ("18446744073709551615LL", _INT_TOO_LARGE),
+    ("08", _INT_INVALID),
+    ("0b102", _INT_INVALID),
+    ("0o17", _INT_INVALID),
+    ("0x", _INT_INVALID),
+    ("12ab", _INT_INVALID),
+)
+# ... and the largest constant of each form, which both rails take
+_INTLIT_LIMITS = (
+    "18446744073709551615u",
+    "0xFFFFFFFFFFFFFFFF",
+    "01777777777777777777777",
+    "0b" + "1" * 64,
+    "9223372036854775807",
+    "9223372036854775807LL",
+    "0777",
+    "0b101",
+)
+
+
+def test_an_integer_constant_no_type_holds_is_refused_on_both_rails():
+    """CF-INTCONST: a constant past ULLONG_MAX in any base, a decimal constant without `u` past LLONG_MAX, and a
+    malformed constant (a digit its base lacks, `0o17`, which Python's `int` read as octal, a bare `0x`) are
+    refused on both rails where they are lexed, each for its reason; the twin had saturated the large ones and
+    read `08` as 8. The largest constant of each form lowers to one claim graph on both rails. A call in a
+    file-scope initializer is refused on both too: the twin skips a global's initializer, and no longer reads
+    it with the enum evaluator, which had refused a cast or `sizeof` there."""
+    from bcir.frontends.cfront.clex import CLexError
+    from bcir.frontends.cfront.cparse import CParseError
+
+    head = "#include <stdint.h>\n"
+    shape = "uint64_t f(uint64_t s) {{ return s + {lit}; }}\n"
+    for lit, why in _INTLIT_REFUSED:
+        try:
+            compile_unit(head + shape.format(lit=lit), check_clang=False)
+        except CLexError as e:
+            assert why in str(e), (lit, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered the constant {lit}")
+    call = "static uint32_t k(void) { return 3u; }\nuint32_t g = k();\nuint32_t f(void) { return g; }\n"
+    try:
+        compile_unit(head + call, check_clang=False)
+    except CParseError as e:
+        assert "calls a function" in str(e), str(e)
+    else:
+        raise AssertionError("the oracle lowered a call in a file-scope initializer")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "lit.c")
+        for lit, why in _INTLIT_REFUSED + (("", "calls a function"),):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(head + (shape.format(lit=lit) if lit else call))
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and why in run.stdout, (
+                lit,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for lit in _INTLIT_LIMITS:
+            text = head + shape.format(lit=lit)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            oracle_summary, _r, _entry = _oracle(text)
+            c_summary, _emit = _c_run(exe, path)
+            assert c_summary == oracle_summary and "ok=1" in c_summary, (
+                lit,
+                c_summary,
+                oracle_summary,
+            )

@@ -384,14 +384,37 @@ static void type_layout(const CC *c, const bcir_ctype *ty, int si, int *sz, int 
 static int is_idc(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9');}
 static int is_id0(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z');}
 
-static long long parse_int(const char *s, int n) {
-  char buf[64]; int j=0;
-  for (int k=0;k<n&&j<63;k++) if (s[k]!='\'') buf[j++]=s[k];
-  buf[j]=0;
-  while (j>0&&(buf[j-1]=='u'||buf[j-1]=='U'||buf[j-1]=='l'||buf[j-1]=='L')) buf[--j]=0;
-  if (j>1&&buf[0]=='0'&&(buf[1]=='x'||buf[1]=='X')) return strtoll(buf,NULL,16);
-  if (j>1&&buf[0]=='0'&&(buf[1]=='b'||buf[1]=='B')) return strtoll(buf+2,NULL,2);
-  return strtoll(buf,NULL,10);
+/* An integer constant s[0..n) (C11 6.4.4.1), read as the oracle's `clex.int_literal_parts` reads it: the C23 `'`
+ * separators dropped, the trailing run of `u`/`U`/`l`/`L` its suffix, then `0x` hex, `0b` binary, a leading `0`
+ * octal, else decimal, each digit checked against its base. Its value exactly -- an unsigned constant past
+ * LLONG_MAX keeps its 64 bits (it had saturated at LLONG_MAX, and an octal constant was read as decimal) -- whether
+ * it is decimal, and its suffix's `u` and count of `l`. NULL, or the reason it is refused: a digit its base does not
+ * have, or a value no type in its list can hold -- past ULLONG_MAX, or a decimal one without `u` past LLONG_MAX,
+ * whose type C leaves to the implementation (GCC's `__int128`, Clang's `unsigned long long`). */
+typedef struct { unsigned long long v; int decimal, u, lr; } intlit;
+static const char int_bad[]="invalid integer literal",
+                  int_too_large[]="an integer constant too large for every type its base and suffix allow";
+static const char *int_literal(const char *s, int n, intlit *o){
+  int e=n, nb=0, base=10, skip=0, nd=0, over=0, k=0; char c0=0, c1=0;
+  memset(o,0,sizeof *o);
+  while(e>0 && (s[e-1]=='u'||s[e-1]=='U'||s[e-1]=='l'||s[e-1]=='L'||s[e-1]=='\'')){   /* the suffix */
+    if(s[e-1]=='u'||s[e-1]=='U') o->u=1; else if(s[e-1]!='\'') o->lr++;
+    e--; }
+  for(int i=0;i<e;i++) if(s[i]!='\''){ if(nb==0) c0=s[i]; else if(nb==1) c1=s[i]; nb++; }
+  if(c0=='0' && (c1=='x'||c1=='X')){ base=16; skip=2; }
+  else if(c0=='0' && (c1=='b'||c1=='B')){ base=2; skip=2; }
+  else if(c0=='0' && nb>1){ base=8; skip=1; }
+  o->decimal=base==10;
+  for(int i=0;i<e;i++){ char ch=s[i]; int d;
+    if(ch=='\'' || k++<skip) continue;
+    d = ch>='0'&&ch<='9' ? ch-'0' : (ch|0x20)>='a'&&(ch|0x20)<='f' ? (ch|0x20)-'a'+10 : base;
+    if(d>=base) return int_bad;
+    if(o->v > (ULLONG_MAX-(unsigned long long)d)/(unsigned long long)base) over=1;
+    else o->v=o->v*(unsigned long long)base+(unsigned long long)d;
+    nd++; }
+  if(!nd) return int_bad;
+  if(over || (o->decimal && !o->u && o->v>(unsigned long long)LLONG_MAX)) return int_too_large;
+  return NULL;
 }
 
 /* Decode a C character constant 'c' to its int value: a single char is its byte value sign-extended
@@ -555,7 +578,13 @@ static void lex(CC *c, const char *src) {
           c->nt++;continue; } }
     }
     if (*p>='0'&&*p<='9'){t->k=T_INT;t->s=p;while(is_idc(*p)||*p=='\'')p++;t->n=(int)(p-t->s);
-                          t->v=parse_int(t->s,t->n);c->nt++;continue;}
+      intlit L; const char *why=int_literal(t->s,t->n,&L);
+      if(why){ char m[96];                               /* refused where it is lexed (the oracle's `parse_int_literal`) */
+        if(why==int_bad) snprintf(m,sizeof m,"%s '%.*s'",why,t->n<48?t->n:48,t->s);
+        else snprintf(m,sizeof m,"%s",why);
+        fail(c,m); break; }
+      t->v = L.v>(unsigned long long)LLONG_MAX ? -(long long)(~L.v)-1 : (long long)L.v;   /* its 64 bits */
+      c->nt++;continue;}
     if (*p=='"'){t->k=T_STR;t->s=p;p++;                /* string literal (escapes consumed as a unit) */
                  while(*p&&*p!='"'){ if(*p=='\\'&&p[1]) p+=2; else p++; }
                  if(*p=='"')p++; t->n=(int)(p-t->s); c->nt++; continue;}
@@ -1353,15 +1382,9 @@ static void uac_i(int sa,int za,int sb,int zb,int *rs,int *rz){
 static void lit_int_type(const char *s,int n,int lsz,int *size,int *signd){
   *size=4; *signd=1;                                    /* default: int */
   if(n>0 && s[0]=='\'') return;                         /* a character constant is int */
-  char buf[64]; int j=0; for(int k=0;k<n&&j<63;k++) if(s[k]!='\'') buf[j++]=s[k]; buf[j]=0;
-  int u=0,lr=0,e=j;
-  while(e>0){ char ch=buf[e-1]; if(ch=='u'||ch=='U')u=1; else if(ch=='l'||ch=='L')lr++; else break; e--; }
-  buf[e]=0;
-  unsigned long long val; int decimal=1;
-  if(e>1&&buf[0]=='0'&&(buf[1]=='x'||buf[1]=='X')){ val=strtoull(buf,NULL,16); decimal=0; }
-  else if(e>1&&buf[0]=='0'&&(buf[1]=='b'||buf[1]=='B')){ val=strtoull(buf+2,NULL,2); decimal=0; }
-  else if(e>1&&buf[0]=='0'){ val=strtoull(buf,NULL,8); decimal=0; }
-  else { val=strtoull(buf[0]?buf:"0",NULL,10); decimal=1; }
+  intlit L; if(int_literal(s,n,&L)) return;            /* (a refused one never reaches here: the lexer refuses it) */
+  unsigned long long val=L.v; int u=L.u, lr=L.lr, decimal=L.decimal;   /* the exact value: a 63-character copy cut a
+                                                        * long one (`0b` and 64 digits), and with it its type */
   int cs[6],cz[6],nc=0;                                 /* candidate (size, signed) list, in order */
   if(u){ if(lr==0){cs[nc]=4;cz[nc++]=0;} if(lr<2){cs[nc]=lsz;cz[nc++]=0;} cs[nc]=8;cz[nc++]=0; }
   else if(decimal){ if(lr==0){cs[nc]=4;cz[nc++]=1;} if(lr<2){cs[nc]=lsz;cz[nc++]=1;} cs[nc]=8;cz[nc++]=1; }
@@ -8080,6 +8103,26 @@ static int looks_global(CC *c){
 /* Parse a file-scope global `[static][const] TYPE NAME [N] [= ...];` and register it.  The
  * initializer is skipped -- the emitter references the global by name (defined in the source), so
  * the claim graph needs only the name + element type + length. */
+/* Skip the file-scope initializer expression at the cursor -- to the `,`, `;` or `}` that ends it at its own depth
+ * -- without lowering it (the oracle folds it only for its linkable emit, which renders the globals). A constant
+ * expression it is in C (C11 6.7.9p4), of any form -- a cast, `sizeof`, a floating or string constant, an address;
+ * it had been read by the enum evaluator, which refused all of those (`non-constant enum initializer`). A call in it
+ * is refused, as the oracle refuses it: an identifier before `(` that is no type name, `sizeof`, `_Alignof` or
+ * `_Generic`. `nm` is the global. */
+static void skip_init_expr(CC *c, const tok *nm){
+  for(int d=0; !isk(c,T_END) && !c->failed; c->i++){
+    if(d==0 && (is(c,",")||is(c,";")||is(c,"}"))) break;
+    if(is(c,"(") && c->i>0){ const tok *pv=tat(c,c->i-1);
+      if(pv->k==T_ID && !tok_is(pv,"sizeof") && !tok_is(pv,"_Alignof") && !tok_is(pv,"alignof")
+         && !tok_is(pv,"_Generic") && !decl_type_tok(c,pv)){
+        char m[BCIR_CIR_NAME+80];
+        snprintf(m,sizeof m,"file-scope initializer of '%.*s' calls a function (not a constant expression)",
+                 nm->n<BCIR_CIR_IDENT_MAX?nm->n:BCIR_CIR_IDENT_MAX,nm->s);
+        fail(c,m); return; } }
+    if(is(c,"(")||is(c,"[")||is(c,"{")) d++;
+    else if(is(c,")")||is(c,"]")||is(c,"}")) d--;
+  }
+}
 /* The extent a flat brace initializer `{e0, e1, [k] = ek, ...}` gives an unsized array -- the highest index it
  * reaches, plus one -- read the way the oracle's global parser reads it (a `[k] =` designator moves the
  * cursor). The cursor is at the `{` and ends past the matching `}`; an element is skipped, not evaluated. */
@@ -8109,7 +8152,8 @@ static void p_global(CC *c){
   for(int d=0; d<btd; d++){ count=btdd[d]; is_arr=1; if(nd<4){ dims[nd]=count; } nd++; }   /* its dims follow */
   if(is(c,"=")){ c->i++; init_a=c->i;
     if(is(c,"{")) init_n=brace_init_extent(c);
-    else (void)ce_expr(c,0);
+    else if(is_arr && isk(c,T_STR)) (void)ce_expr(c,0);   /* a string sizes a character array: not yet */
+    else skip_init_expr(c,&nm);
     init_b=c->i;
   }
   eat(c,";");
@@ -8673,11 +8717,18 @@ static void sb_str(sbuf *b,const char *s){ if(s)sb_add(b,s,strlen(s)); }
  * trailing _Bool/stride flags) is dropped, preserving --canon byte-identity. Mirrors _vn_imm exactly:
  *   c.const/c.addrof/c.bf.get/c.bf.set/c.call.imember/c.sizeof.vla -> all imm;
  *   c.load -> imm[0] (member byte offset; 0 if absent);  c.store -> imm[0],imm[1] (offset, unit size). */
-static void vn_imm(const bcir_claim *cl, sbuf *rec){
+static void vn_imm(const bcir_func *f, const bcir_claim *cl, sbuf *rec){
   const char *op=cl->op; char nb[24]; int n=cl->n_imm;
   if(!strcmp(op,"c.const")||!strcmp(op,"c.addrof")||!strcmp(op,"c.bf.get")||!strcmp(op,"c.bf.set")||
      !strcmp(op,"c.call.imember")||!strcmp(op,"c.sizeof.vla")){
-    for(int k=0;k<n;k++){ if(k)sb_str(rec,","); int l=snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]); sb_add(rec,nb,(size_t)l); }
+    /* a constant of an unsigned type is its value in that type: an unsigned 64-bit one past LLONG_MAX keeps its
+     * bits in the imm, and the oracle's canon spells the value (`18446744073709551615`, never -1) */
+    const bcir_resource *kr=!strcmp(op,"c.const") && cl->n_wr ? res_of(f,cl->wr[0]) : NULL;
+    int unsig=kr && kr->kind==BCIR_RK_SCALAR && !kr->is_signed && !kr->is_float;
+    for(int k=0;k<n;k++){ if(k)sb_str(rec,",");
+      int l=unsig ? snprintf(nb,sizeof nb,"%llu",(unsigned long long)cl->imm[k])
+                  : snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]);
+      sb_add(rec,nb,(size_t)l); }
   } else if(!strcmp(op,"c.load")){
     long long off = n>0 ? (long long)cl->imm[0] : 0;   /* the member byte offset (0 if absent) */
     int l=snprintf(nb,sizeof nb,"%lld",off); sb_add(rec,nb,(size_t)l);
@@ -8772,7 +8823,7 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     int ol=snprintf(nb,sizeof nb,"%d",(int)cl->opcode); sb_add(&rec,nb,(size_t)ol); sb_str(&rec,"|");
     for(int k=0;k<np;k++){ if(k)sb_str(&rec,","); sb_str(&rec,parts[k]); }
     sb_str(&rec,"|");
-    vn_imm(cl,&rec);                                  /* the semantic imm (member offset / bitfield layout) */
+    vn_imm(f,cl,&rec);                                /* the semantic imm (member offset / bitfield layout) */
     sb_str(&rec,"|");
     int dl=snprintf(nb,sizeof nb,"%d",(int)cl->domain); sb_add(&rec,nb,(size_t)dl);
     recs[r]=rec.s?rec.s:vn_strdup(arena,"");

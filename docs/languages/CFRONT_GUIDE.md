@@ -302,6 +302,9 @@ _mm_sfence();                      //                   store (release) fence ->
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,
   arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`.
+- Integer constants in every base (`0x`, `0b`, a leading `0` octal, decimal) and with every suffix, each its
+  exact value in its C11 6.4.4.1 type on the target (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long`
+  where `long` is 64 bits and an `unsigned long long` where it is 32; `017` is 15).
 - Integer + IEEE-754 floating arithmetic and comparisons, casts and the usual arithmetic conversions,
   `sizeof`/`_Alignof`, bitfields, `<math.h>` library calls.
 - Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
@@ -348,6 +351,10 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - A function called, named as a value or used in a `sizeof` operand before any declaration of it -- C99 dropped
   the implicit declaration (C11 6.5.1p2): `call to undeclared function 'g'`, `use of undeclared identifier 'g'`.
   Declare it first with a prototype. A definition that leaves a parameter unnamed is refused as well.
+- An integer constant no type in its list can hold: one past `unsigned long long`, and a decimal constant
+  without `u` past `long long`, whose type C leaves to the implementation (GCC gives it `__int128`, Clang
+  `unsigned long long`). Both rails refuse it (`an integer constant too large for every type its base and suffix
+  allow`); write `9223372036854775808u`, or `INT64_MIN` as `-9223372036854775807 - 1`.
 - An identifier (a function, parameter, local, global, struct or union tag, member, typedef, enum constant or
   label) or a floating constant longer than 63 characters — C11 5.2.4.1's significant initial characters of an
   internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not

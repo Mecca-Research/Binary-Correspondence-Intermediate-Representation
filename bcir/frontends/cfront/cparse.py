@@ -1736,8 +1736,8 @@ class _Parser:
 
     def _primary(self):
         if self.at("INT"):
-            text = self.nxt().text  # type from the suffix + magnitude (§6.4.4.1)
-            return cast.IntLit(parse_int_literal(text), int_literal_type(text))
+            tk = self.nxt()  # type from the suffix + magnitude (§6.4.4.1)
+            return cast.IntLit(parse_int_literal(tk.text, tk.pos), int_literal_type(tk.text))
         if self.at("CHAR"):  # a character constant -> its int value
             return cast.IntLit(parse_char_literal(self.nxt().text))
         if self.at("FLOAT"):  # a floating-point literal (1.5 / 3.14f)

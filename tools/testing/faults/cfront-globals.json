@@ -1,0 +1,96 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_integer_constants_are_exact_on_both_rails",
+    "bcir.tests.test_c_cfront:test_an_integer_constant_no_type_holds_is_refused_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC1 the twin reads an octal constant as decimal",
+      "new": "  else if(0){ base=8; skip=1; }\n",
+      "old": "  else if(c0=='0' && nb>1){ base=8; skip=1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC2 the twin saturates a constant past LLONG_MAX",
+      "new": "      t->v = L.v>(unsigned long long)LLONG_MAX ? LLONG_MAX : (long long)L.v;",
+      "old": "      t->v = L.v>(unsigned long long)LLONG_MAX ? -(long long)(~L.v)-1 : (long long)L.v;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC3 the twin's canon spells an unsigned constant past LLONG_MAX as negative",
+      "new": "    int unsig=0; (void)kr;",
+      "old": "    int unsig=kr && kr->kind==BCIR_RK_SCALAR && !kr->is_signed && !kr->is_float;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
+      "label": "IC4 the twin takes a decimal constant without u past LLONG_MAX",
+      "new": "  if(over) return int_too_large;",
+      "old": "  if(over || (o->decimal && !o->u && o->v>(unsigned long long)LLONG_MAX)) return int_too_large;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
+      "label": "IC5 the twin takes a call in a file-scope initializer",
+      "new": "        (void)m; } }\n",
+      "old": "        fail(c,m); return; } }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC6 the twin reads a file-scope initializer with the enum evaluator",
+      "new": "    else (void)ce_expr(c,0);\n",
+      "old": "    else skip_init_expr(c,&nm);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
+      "label": "IC7 the oracle takes a decimal constant without u past LLONG_MAX",
+      "new": "    if value >> 64:",
+      "old": "    if value >> (64 if (\"u\" in suffix.lower() or not decimal) else 63):",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC8 the oracle reads an octal constant as decimal",
+      "new": "        base, digits = 10, body\n",
+      "old": "        base, digits = 8, body[1:]\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
+      "label": "IC9 the oracle reads `0o17` through Python's int",
+      "new": "    if not digits:",
+      "old": "    if not digits or any(ch not in _BASE_DIGITS[base] for ch in digits):",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC10 a constant division floors (a global's initializer)",
+      "new": "        q = x // y",
+      "old": "        q = abs(x) // abs(y) * (-1 if (x < 0) != (y < 0) else 1)  # C truncates toward zero",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC11 a constant `~` does not wrap to its type (a global's initializer)",
+      "new": "    r = -a.v if suf == \"neg\" else ~a.v\n    if a.signed and not _kfits(r, a.bits, True):\n        raise CLowerError(_NOT_CONSTANT)\n    return a._replace(v=r)\n",
+      "old": "    r = -a.v if suf == \"neg\" else ~a.v\n    if a.signed and not _kfits(r, a.bits, True):\n        raise CLowerError(_NOT_CONSTANT)\n    return a._replace(v=_kwrap(r, a.bits, a.signed))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_integer_constants_are_exact_on_both_rails",
+      "label": "IC12 a global's value past LLONG_MAX is rendered without `u`",
+      "new": "    if v > (1 << 63) - 1:\n        return str(v)\n",
+      "old": "    if v > (1 << 63) - 1:\n        return f\"{v}u\"\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    }
+  ]
+}

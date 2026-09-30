@@ -444,20 +444,48 @@ def parse_char_literal(text: str) -> int:
     return v - (1 << 32) if v >= (1 << 31) else v  # an int32 multi-character constant
 
 
-def parse_int_literal(text: str) -> int:
-    """Decode a C integer literal: strip C23 digit separators + the u/U/l/L suffix, honor 0x / 0b.
-    A malformed pp-number that the lexer tokenized as INT but is not a valid integer (e.g. `9a`) is a
-    clean CLexError, not a bare ValueError -- so the diagnostics / fallback paths report, not crash."""
+_BASE_DIGITS = {16: "0123456789abcdefABCDEF", 10: "0123456789", 8: "01234567", 2: "01"}
+
+
+def int_literal_parts(text: str) -> "tuple[int, bool, str]":
+    """An integer constant (C11 6.4.4.1) as (its value, whether it is decimal, its suffix): the C23 `'`
+    digit separators dropped, the trailing run of `u`/`U`/`l`/`L` its suffix, then `0x` hex, `0b` binary,
+    a leading `0` octal, else decimal. Each digit is checked against its base, so a malformed pp-number the
+    lexer took as INT (`9a`, `08`, `0b2`, and `0o17`, which Python's `int` would read as octal) is a clean
+    CLexError, never a value -- the twin's `int_literal` reads the constant the same way."""
     t = text.replace("'", "")
-    while t and t[-1] in "uUlL":
-        t = t[:-1]
+    end = len(t)
+    while end and t[end - 1] in "uUlL":
+        end -= 1
+    body, suffix = t[:end], t[end:]
+    if body[:2] in ("0x", "0X"):
+        base, digits = 16, body[2:]
+    elif body[:2] in ("0b", "0B"):
+        base, digits = 2, body[2:]
+    elif len(body) > 1 and body[0] == "0":
+        base, digits = 8, body[1:]
+    else:
+        base, digits = 10, body
+    if not digits or any(ch not in _BASE_DIGITS[base] for ch in digits):
+        raise CLexError(f"invalid integer literal {text!r}")
+    return int(digits, base), base == 10, suffix
+
+
+#: The one reason both rails give for an integer constant no type in its list can hold (C11 6.4.4p2): one
+#: past `unsigned long long`, or a decimal one with no `u` past `long long` -- whose type C leaves to the
+#: implementation (6.4.4.1p6: GCC gives it `__int128`, Clang `unsigned long long`). The twin had kept such a
+#: constant as `LLONG_MAX`.
+INT_TOO_LARGE = "an integer constant too large for every type its base and suffix allow"
+
+
+def parse_int_literal(text: str, pos: int | None = None) -> int:
+    """Decode a C integer literal's value (`int_literal_parts`), refusing one that is malformed or that no
+    type can hold (`INT_TOO_LARGE`) -- where the parser reads it, so a malformed token in a declarator's place
+    stays a parse error the recovering parser resumes after. The twin refuses both where it lexes them."""
     try:
-        if t[:2] in ("0x", "0X"):
-            return int(t, 16)
-        if t[:2] in ("0b", "0B"):
-            return int(t[2:], 2)
-        if len(t) > 1 and t[0] == "0":
-            return int(t, 8)
-        return int(t or "0", 10)
-    except ValueError as e:
-        raise CLexError(f"invalid integer literal {text!r}") from e
+        value, decimal, suffix = int_literal_parts(text)
+    except CLexError as e:
+        raise CLexError(str(e), pos=pos) from None
+    if value >> (64 if ("u" in suffix.lower() or not decimal) else 63):
+        raise CLexError(INT_TOO_LARGE, pos=pos)
+    return value
