@@ -177,8 +177,8 @@
       "label": "Oracle index: a dereference of a subscripted element `*q[j]` is refused",
       "expects": "volatile.refused",
       "path": "bcir/frontends/cfront/lower.py",
-      "old": "            if isinstance(operand, cast.Index):",
-      "new": "            if False:"
+      "old": "            if isinstance(operand, cast.Index):\n                el = self._lvalue(operand)",
+      "new": "            if isinstance(operand, cast.Index):\n                raise CLowerError(\"dereference of a subscripted element\")\n                el = self._lvalue(operand)"
     },
     {
       "label": "Twin index: a subscript chain is flattened into its base as a multi-dimensional index",

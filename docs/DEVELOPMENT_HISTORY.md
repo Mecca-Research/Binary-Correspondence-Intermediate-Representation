@@ -2367,6 +2367,11 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   size to an alignment of 0 (`core.DivideZero`). The alignment is read back from the struct table after calls
   that may move it, and nothing bounded it below, where every other reader of an alignment takes at least 1. It is
   bounded there now; the twin's output for every fixture, in each of its driver's four modes, is unchanged.
+  The fault sweeps of the final head then ran every cfront table and the G10 and volatile tables: 335 of 336
+  injected defects were caught. The one missed, the volatile table's fault making the oracle refuse `*q[j]`, had
+  become an equivalent mutation: it disabled the branch that lowers a dereference of a subscripted element, and
+  CF-SPLIT2's general dereference of a pointer value now lowers `*q[j]` the same way, so no check could fire. The
+  fault now injects the refusal it names, in that branch, and is caught.
 
 ---
 
