@@ -74,8 +74,8 @@
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T6 the twin takes no address through a loaded pointer (`&h.next->v` refused again)",
-      "new": "            fail(c,\"address-of through a loaded pointer\"); return 0;",
-      "old": "            return plv_addr(c,&lv);",
+      "new": "    return 0; }\n  fail(c,\"address-of through a loaded pointer\"); return 0;\n}",
+      "old": "    return 0; }\n  return plv_addr(c,&lv);\n}",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -109,8 +109,8 @@
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "T11 the twin reads `*q->a` of a member array through the array's address",
-      "new": "    { venv mb; field me; if(0 && deref_member_array(c,&mb,&me)) return emit_member(c,&mb,&me,0); }",
-      "old": "    { venv mb; field me; if(deref_member_array(c,&mb,&me)) return emit_member(c,&mb,&me,0); }   /* `*q->a` */",
+      "new": "  if(1 || !deref_member_array(c,&mb,&me)) return 0;",
+      "old": "  if(!deref_member_array(c,&mb,&me)) return 0;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

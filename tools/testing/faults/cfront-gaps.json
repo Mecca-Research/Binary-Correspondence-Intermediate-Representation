@@ -188,8 +188,8 @@
     {
       "expects": "test_multidimensional_globals_and_member_arrays_run_as_the_original_on_both_rails",
       "label": "T7 a postfix member-element step returns the new value",
-      "new": "  if(!prefix) return nw;\n",
-      "old": "  if(!prefix) return cur;\n",
+      "new": "  store_member_index(c,v,&f,idx,soa,sf,nw);\n  if(!prefix) return nw;\n",
+      "old": "  store_member_index(c,v,&f,idx,soa,sf,nw);\n  if(!prefix) return cur;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

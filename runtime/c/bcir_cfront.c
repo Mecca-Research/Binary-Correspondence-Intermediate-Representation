@@ -20,6 +20,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* A function kept out of its callers' frames. The address sanitizer gives every address-taken local its own stack
+ * slot, so a local of a rarely taken path that inlines into the recursive descent costs every level of it: the
+ * lvalue paths CF-SPLIT2 added grew each level by some 1.9 KiB under GCC's ASan, and the deepest nesting the depth
+ * guard admits (`cfront_sec_deepnest.c`) overflowed the stack before the guard refused it. */
+#if defined(__GNUC__) || defined(__clang__)
+#define BCIR_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define BCIR_NOINLINE __declspec(noinline)
+#else
+#define BCIR_NOINLINE
+#endif
+
 const char *bcir_opcode_name(bcir_opcode op) {
   static const char *N[] = {"nop","load","store","add","sub","mul","atomic_add","atomic_sub",
     "atomic_xor","cmpxchg","barrier","phase_enter","phase_leave","ggg_load","ggg_store","t_macc",
@@ -4161,6 +4173,27 @@ static uint32_t p_unary(CC *c) {
   if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }
   uint32_t r=p_unary_inner(c); LEAVE_REC(c); return r;
 }
+/* The paths of `p_unary_inner` whose locals would otherwise sit in every level of the recursive descent
+ * (BCIR_NOINLINE): the address of an object through the pointer member the lvalue loads (`&h.next->v`, CF-SPLIT2), a
+ * volatile load at a literal byte offset (CF-RTVOL) and the first element of a member array (`*q->a`, CF-SPLIT2).
+ * The loads return 1 with the value in `*out`, or 0 with the cursor unmoved. */
+static BCIR_NOINLINE uint32_t addr_through_loaded(CC *c, venv *v, const field *mf){
+  plv lv; uint32_t ptr=emit_member(c,v,mf,0);
+  if(!plv_chain(c,ptr,mf->ptee_sidx,*mf,&lv)){
+    if(!c->failed) fail(c,"address-of this lvalue through a loaded pointer is a follow-on");
+    return 0; }
+  return plv_addr(c,&lv);
+}
+static BCIR_NOINLINE int byte_off_load(CC *c, uint32_t *out){
+  venv bb; field bf;
+  if(!byte_off_access(c,&bb,&bf)) return 0;
+  *out=emit_member(c,&bb,&bf,0); return 1;
+}
+static BCIR_NOINLINE int member_array_first_load(CC *c, uint32_t *out){
+  venv mb; field me;
+  if(!deref_member_array(c,&mb,&me)) return 0;
+  *out=emit_member(c,&mb,&me,0); return 1;
+}
 static uint32_t p_unary_inner(CC *c) {
   { uint32_t v; if(incdec_value(c,&v)) return v; }   /* PREFIX ++a / POSTFIX a++ (member/array/pointer/scalar) */
   if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
@@ -4193,14 +4226,9 @@ static uint32_t p_unary_inner(CC *c) {
           if(fi<0){ fail(c,"unknown field"); return 0; }
           field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
           if(mf.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }   /* illegal in C */
-          if(mf.is_ptr && !mf.arr_count && (is(c,"->")||is(c,".")||is(c,"["))){   /* `&h.next->v`, `&n->next->p[i]`:
+          if(mf.is_ptr && !mf.arr_count && (is(c,"->")||is(c,".")||is(c,"[")))   /* `&h.next->v`, `&n->next->p[i]`:
                                                     * the object through the pointer member it loads (CF-SPLIT2) */
-            plv lv; uint32_t ptr=emit_member(c,v,&mf,0);
-            if(!plv_chain(c,ptr,mf.ptee_sidx,mf,&lv)){
-              if(!c->failed) fail(c,"address-of this lvalue through a loaded pointer is a follow-on");
-              return 0; }
-            return plv_addr(c,&lv);
-          }
+            return addr_through_loaded(c,v,&mf);
           if(mf.is_ptr && !mf.arr_count){          /* &s.ptr / &s->ptr -- address of a POINTER member -> a `T **` */
             uint32_t t=add_res(c,BCIR_DOM_RAM, mf.ptee_size?mf.ptee_size:4, 1,0,BCIR_RK_POINTER,"");
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];   /* pointee = the member's pointee */
@@ -4349,8 +4377,8 @@ static uint32_t p_unary_inner(CC *c) {
     bcir_claim *cl=new_claim(c,op,oc);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}return r;}
   if(is(c,"*")){                                   /* pointer dereference: *p / *(p + i) */
     c->i++;
-    { venv bb; field bf; if(byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */
-    { venv mb; field me; if(deref_member_array(c,&mb,&me)) return emit_member(c,&mb,&me,0); }   /* `*q->a` */
+    { uint32_t r; if(byte_off_load(c,&r)) return r; }   /* CF-RTVOL */
+    { uint32_t r; if(member_array_first_load(c,&r)) return r; }   /* `*q->a` */
     if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
       if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
         if(pvp){ c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
@@ -4905,7 +4933,7 @@ static uint32_t member_elem_assign_value(CC *c, venv *v, const field *fp, uint32
   return ((int)sf->size < (int)(trr?trr->elem_bytes:4))
          ? (soa ? emit_member_index_field(c,v,&f,idx,&sub) : emit_member_index(c,v,&f,idx)) : tmp;
 }
-static int lv_assign_value(CC *c, uint32_t *out){
+static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_assign's frame (BCIR_NOINLINE) */
   int save=c->i;
   /* --- a deref `*p = rhs` / `*(p + i) = rhs` / their `OP=` as a VALUE --- */
   if(is(c,"*")){
@@ -5315,7 +5343,7 @@ static int deref_incdec(CC *c, uint32_t *out){
   *out = (sz < (int)(nr?nr->elem_bytes:4)) ? (form==1 ? emit_deref(c,&pv) : emit_deref_rid(c,base)) : nw;
   return 1;
 }
-static int incdec_value(CC *c, uint32_t *out){
+static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary_inner's frame (BCIR_NOINLINE) */
   int prefix=0; char ch=0;
   if(deref_incdec(c,out)) return 1;                        /* `++*p` / `(*p)++` (CF-SPLIT2) */
   if(c->failed) return 0;

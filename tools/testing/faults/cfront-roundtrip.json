@@ -50,8 +50,8 @@
     {
       "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
       "label": "T41 a byte-offset volatile load not folded on the twin",
-      "new": "    { venv bb; field bf; if(0 && byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */",
-      "old": "    { venv bb; field bf; if(byte_off_access(c,&bb,&bf)) return emit_member(c,&bb,&bf,0); }   /* CF-RTVOL */",
+      "new": "  if(1 || !byte_off_access(c,&bb,&bf)) return 0;",
+      "old": "  if(!byte_off_access(c,&bb,&bf)) return 0;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

@@ -2034,6 +2034,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Outcomes: the fixture lowers to one claim graph on the four targets. Each emit runs as the original does under
     Clang and GCC, and the globals it touches are compared after every call. A device object stays refused on both
     rails (`test_split_forms_on_a_device_object_are_refused_on_both_rails`, a guard that already held on the parent).
+  - Stack (CF-SPLIT2.1): the twin's new lvalue paths first held their locals in the recursive descent's own frames.
+    The address sanitizer gives every address-taken local its own stack slot, so under GCC's ASan a level of
+    `p_unary_inner` grew from 7024 to 8016 bytes and one of `p_assign` from 6624 to 7552, and
+    `cfront_sec_deepnest.c`, whose nesting runs past the depth guard's cap, overflowed the stack before the guard
+    refused it; `tools/c/sanitize_cfront.sh` caught it. Five functions marked `BCIR_NOINLINE` now hold those
+    locals out of the descent, and the two frames are 6544 and 2832 bytes, smaller than on the parent. Three
+    fault anchors moved with the code (T6 and T11 of `cfront-splits.json`, T41 of `cfront-roundtrip.json`), and
+    T7 of `cfront-gaps.json` spans two lines: `plv_incdec` had repeated its one-line anchor.
   17 injected defects, 4 on the oracle and 13 on the twin, are each caught (`tools/testing/faults/cfront-splits.json`).
   Found, not fixed here (each a suggested follow-up):
   - both rails refuse a call through a dereferenced function pointer, `(*fp)(x)`: the oracle's parser takes a call
