@@ -5090,12 +5090,12 @@ _AGGINIT_SRC = (
 def test_local_aggregate_initializers_oracle():
     """Local aggregate initializers (§6.7.10), oracle prototype: a braced `struct P p = {…}` /
     `union U u = {…}` / `T a[N] = {…}` (positional + `.field=` / `[i]=` designators) lowers to a
-    `= {0}` zero baseline plus a store per initialized member/element (reusing the member/array store
-    path), so uninitialized members zero-fill. Behaviour-equivalent to Clang across struct/union/array
+    zero baseline (spelled `= {}`, CF-RTWIDE) plus a store per initialized member/element (reusing the
+    member/array store path), so uninitialized members zero-fill. Behaviour-equivalent to Clang across struct/union/array
     and positional/designated. (The C-twin port is the next segment.)"""
     r = compile_unit(_AGGINIT_SRC, check_clang=False)
     emit = "\n".join(r.emitted.values())
-    assert "= {0}" in emit  # the zero baseline (uninitialized members zero-fill)
+    assert "= {}" in emit  # the zero baseline (uninitialized members zero-fill; `= {}`, CF-RTWIDE)
     assert "[4]" in emit  # a local array is declared with its dimension
     if not _CC:
         return
