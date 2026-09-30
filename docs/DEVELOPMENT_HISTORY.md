@@ -2361,6 +2361,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - `void *vp = malloc(4u);` lowers to two claim graphs: the twin records an allocation extent for the
     `void *` (two claims), the oracle does not.
 
+  The final serialized gates, run once over the three change sets above together (2026-09-30), found two defects
+  that no slice's own gates had reached. One is CF-RTWIDE.2 (above). The other: the Clang analyzer, over the
+  combined twin -- each change set alone analyzes clean -- found a path on which `p_struct_body` rounds a struct's
+  size to an alignment of 0 (`core.DivideZero`). The alignment is read back from the struct table after calls
+  that may move it, and nothing bounded it below, where every other reader of an alignment takes at least 1. It is
+  bounded there now; the twin's output for every fixture, in each of its driver's four modes, is unchanged.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

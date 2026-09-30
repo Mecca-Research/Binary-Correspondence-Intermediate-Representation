@@ -1217,7 +1217,9 @@ static int p_struct_body(CC *c) {
   for(int k=0;k<S->nf;k++){ const field *mf=&S->f[k];
     if(mf->is_volatile || (mf->sidx>=0 && c->s[mf->sidx].vol_storage)
        || (mf->elem_sidx>=0 && c->s[mf->elem_sidx].vol_storage)) S->vol_storage=1; }
-  int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned; S->align=salign;
+  int salign = packed ? 1 : S->align; if(aligned>salign) salign=aligned;
+  if(salign<1) salign=1;               /* an alignment is at least 1: the size below is rounded to it */
+  S->align=salign;
   int total = is_union ? maxsz : (int)((dbits+7)/8);   /* union size = the widest member; struct: bits->bytes */
   if(total%salign)total+=salign-(total%salign); S->size=total;
   S->incomplete=0; complete_struct_refs(c,my);
