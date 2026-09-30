@@ -359,7 +359,7 @@ OPCODE_GEM_DISPATCH = 16
 DOMAIN_MMIO = 3
 LANE_MAX = 5
 CLAIM_MAX_RD, CLAIM_MAX_WR = 6, 2
-LABEL_MAX = 31
+LABEL_MAX = 127  # bcir_claim.op is BCIR_CIR_OP (128) bytes: a label and its terminator
 
 
 class FreezeError(ValueError):

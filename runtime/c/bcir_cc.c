@@ -131,7 +131,15 @@ static int cc_linkable_static_fn(const bcir_cfront_result *r, const char *line, 
   return 0;
 }
 
-static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
+static int cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
+  /* the renames below ping-pong between two copies of the emitted C; a rename never lengthens it (`bcir_X(` ->
+   * `X(`), so each copy is the emitted C's own size -- the emit has no fixed capacity to size them from (CF-BUF).
+   * Taken before anything is written, so a failed allocation writes nothing. */
+  bcir_host_allocator heap = bcir_host_allocator_default();
+  size_t cap = r->emitted_len + 1u;
+  char *ba = cap ? (char *)bcir_host_allocate(&heap, cap) : NULL;
+  char *bb = cap ? (char *)bcir_host_allocate(&heap, cap) : NULL;
+  if (!ba || !bb) { bcir_host_deallocate(&heap, ba); bcir_host_deallocate(&heap, bb); return 1; }
   int need_math = 0, need_stdlib = 0, need_stdio = 0;
   for (int f = 0; f < r->unit.n_funcs; f++)
     for (size_t k = 0; k < r->unit.funcs[f].n_claims; k++) {
@@ -148,14 +156,13 @@ static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
   if (need_stdlib) fputs("#include <stdlib.h>\n", outf);
   if (need_stdio) fputs("#include <stdio.h>\n", outf);
   if (need_math) fputs("#include <math.h>\n", outf);
-  static char ba[sizeof ((bcir_cfront_result *)0)->emitted], bb[sizeof ba];
   const char *cur = r->emitted;
   char *nxt = ba;
   for (int f = 0; f < r->unit.n_funcs; f++) {        /* unprefix every in-unit call/def name */
     char pat[BCIR_CIR_NAME + 8], rep[BCIR_CIR_NAME + 2];
     snprintf(pat, sizeof pat, "bcir_%s(", r->unit.funcs[f].name);
     snprintf(rep, sizeof rep, "%s(", r->unit.funcs[f].name);
-    cc_replace_all(cur, pat, rep, nxt, sizeof ba);
+    cc_replace_all(cur, pat, rep, nxt, cap);
     cur = nxt;
     nxt = (nxt == ba) ? bb : ba;
   }
@@ -176,6 +183,9 @@ static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
     } else fwrite(s, 1, len, outf);
     s += len;
   }
+  bcir_host_deallocate(&heap, ba);
+  bcir_host_deallocate(&heap, bb);
+  return 0;
 }
 
 static void dirof(const char *path, char *out, size_t cap) {
@@ -348,8 +358,8 @@ int main(int argc, char **argv) {
       fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue; }
-    if ((emit_c || linkable) && !r.emitted_ok) {
-      fprintf(stderr, "%s: emitted C exceeds %zu-byte result capacity\n", path, sizeof r.emitted);
+    if ((emit_c || linkable) && !r.emitted_ok) {   /* a successful compile always emits (CF-BUF): defensive */
+      fprintf(stderr, "%s: no emitted C\n", path);
       rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
 
@@ -376,7 +386,9 @@ int main(int argc, char **argv) {
       fprintf(outf, "%s\n", lflags);
       n_clean++;
     } else if (linkable) {
-      cc_emit_linkable(&r, outf);                    /* Phase 3: the externally-linkable artifact */
+      if (cc_emit_linkable(&r, outf)) {              /* Phase 3: the externally-linkable artifact */
+        fprintf(stderr, "%s: linkable: out of memory\n", path); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
+      }
       n_clean++;
     } else if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the

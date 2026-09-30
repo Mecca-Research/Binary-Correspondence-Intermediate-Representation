@@ -1,0 +1,115 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_long_names_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+    "bcir.tests.test_c_cfront:test_an_emit_past_64_kib_lowers_and_runs_as_the_original",
+    "bcir.tests.test_c_cfront:test_a_long_function_pointer_signature_emits_on_the_twin",
+    "bcir.tests.test_c_cfront:test_the_twin_formats_no_name_into_a_field_that_could_cut_it",
+    "bcir.tests.test_c_cfront:test_the_emit_grows_whole_under_a_failing_allocator",
+    "bcir.tests.test_c_cfront:test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B1 the oracle takes an identifier of any length",
+      "new": "",
+      "old": "            _too_long(\"an identifier\", src[i:j], i)\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B2 the oracle takes a decimal floating constant of any length",
+      "new": "            end = _scan_decimal_float(src, i, n)\n            if end is not None:\n",
+      "old": "            end = _scan_decimal_float(src, i, n)\n            if end is not None:\n                _too_long(\"a floating constant\", src[i:end], i)\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B3 the oracle refuses a name of exactly 63 characters",
+      "new": "    if len(text) >= IDENT_MAX:\n",
+      "old": "    if len(text) > IDENT_MAX:\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B4 the twin takes an identifier of any length",
+      "new": "",
+      "old": "      if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_ID); break; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B5 the twin takes a decimal floating constant of any length",
+      "new": "        t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;\n",
+      "old": "        t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;\n        if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B6 a claim's op holds a name, not a prefix and a name",
+      "new": "#define BCIR_CIR_OP (BCIR_CIR_NAME)",
+      "old": "#define BCIR_CIR_OP (2 * BCIR_CIR_NAME)",
+      "path": "runtime/c/bcir_cir.h"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B7 a resource's `struct T` spelling holds a name, not the keyword and a tag",
+      "new": "#define BCIR_CIR_AGG (BCIR_CIR_NAME)",
+      "old": "#define BCIR_CIR_AGG (BCIR_CIR_NAME + 8)",
+      "path": "runtime/c/bcir_cir.h"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B8 the emit's name for a shadowing local holds no room for its `_N`",
+      "new": "#define BCIR_EMIT_NAME (BCIR_CIR_NAME)",
+      "old": "#define BCIR_EMIT_NAME (BCIR_CIR_NAME + 16)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twin_formats_no_name_into_a_field_that_could_cut_it",
+      "label": "B9 a struct value's type is compared through a name-sized buffer",
+      "new": "  char want[BCIR_CIR_NAME];\n",
+      "old": "  char want[BCIR_CIR_AGG];\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B10 va_arg's type keeps only its first token",
+      "new": "    for(int k=k0;k<k0+1 && ow<sizeof op;k++){ const tok *tk=tat(c,k);",
+      "old": "    for(int k=k0;k<k1 && ow<sizeof op;k++){ const tok *tk=tat(c,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_emit_past_64_kib_lowers_and_runs_as_the_original",
+      "label": "B11 a grown emit keeps a function's first, cut rendering",
+      "new": "",
+      "old": "    if(emit_func(f,out->emitted+out->emitted_len,room)!=n) return emit_unrenderable;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_long_function_pointer_signature_emits_on_the_twin",
+      "label": "B12 the typedef prelude drops what runs past 512 bytes",
+      "new": "  if(need>=512u || !cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
+      "old": "  if(!cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "B13 a failed emit returns its partial text as a success",
+      "new": "  if(unemitted){ out->emitted_ok=1; c->jump_active=0; bcir_host_arena_reset(&c->scratch); return 0; }\n",
+      "old": "  if(unemitted)return cfront_failure(context,out,unemitted);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges",
+      "label": "B14 bcir-cc's linkable rename holds 32 KiB of the emit",
+      "new": "  size_t cap = 32768u;\n",
+      "old": "  size_t cap = r->emitted_len + 1u;\n",
+      "path": "runtime/c/bcir_cc.c"
+    }
+  ]
+}

@@ -26,12 +26,17 @@ extern "C" {
 typedef struct bcir_cfront_result {
   bcir_unit unit;          /* the lowered translation unit (functions + call graph) */
   int ok;                  /* R1-R8 + R18 verifier clean */
-  int emitted_ok;          /* emitted[] is complete; false means the graph is valid but its optional
-                            * verified-C text exceeded the fixed result capacity (never partial) */
+  int emitted_ok;          /* `emitted` holds the complete verified C: set by every successful compile, clear
+                            * on every failure and after free (the text is never partial) */
   char diag[256];          /* first diagnostic (empty when ok) */
-  char emitted[32768];     /* faithful emitted C for every bcir_<fn> (the C.2 output seam) */
+  char *emitted;           /* faithful emitted C for every bcir_<fn> (the C.2 output seam), NUL-terminated. The
+                            * result owns it: it grows through the result's allocator with no fixed capacity
+                            * (CF-BUF), an allocation failure fails the compile ("oom"), and bcir_cfront_free
+                            * releases it. NULL when emitted_ok is clear. */
+  size_t emitted_len;      /* strlen(emitted); 0 when there is none */
   bcir_host_allocator _allocator; /* private owner used by idempotent free */
   uint32_t _owner_tag;
+  size_t _emitted_cap;     /* private: the bytes the owned `emitted` block holds */
 } bcir_cfront_result;
 
 /* Re-entrant hosted compiler context. The context owns parser caches and a
@@ -63,9 +68,9 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
  * initializes `out` for legacy callers; release each returned result before
  * passing the same object to another compatibility call.
  * Compile one C translation unit (the L1-L5 + L3/L4 subset) into the claim graph,
- * verify it (R1-R8 + R18 call-graph), and emit faithful C when it fits. Returns 0 on
- * graph success, nonzero on a parse/lowering error (diag set). `ok` reflects the verifier;
- * `emitted_ok` must be checked before consuming `emitted` (a too-large artifact is empty). */
+ * verify it (R1-R8 + R18 call-graph), and emit faithful C. Returns 0 on graph success,
+ * nonzero on a parse/lowering error or an allocation failure (diag set). `ok` reflects the
+ * verifier; `emitted_ok` must be checked before consuming `emitted` (NULL without it). */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
 
 /* NON-THREAD-SAFE compatibility wrapper. As above, but lay the unit out for `target`'s data model (the C twin of frontends/cfront/abi.py:

@@ -56,8 +56,8 @@
     {
       "expects": "test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
       "label": "T43 a twin temp redeclares a declared name",
-      "new": "    for(int k=2; 0 && declared_name(f,buf); k++) snprintf(buf,BCIR_CIR_NAME,\"t%u_%d\",rid,k);",
-      "old": "    for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_CIR_NAME,\"t%u_%d\",rid,k);",
+      "new": "    for(int k=2; 0 && declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,\"t%u_%d\",rid,k);",
+      "old": "    for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,\"t%u_%d\",rid,k);",
       "path": "runtime/c/bcir_cfront.c"
     }
   ]

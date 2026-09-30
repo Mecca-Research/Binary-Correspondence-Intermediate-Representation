@@ -157,7 +157,27 @@ static const char cfront_source[]=
   "  return n + b;\n"
   "}\n";
 
-static int cfront_once(fault_state *state,size_t fail_at,size_t *attempts){
+/* CF-BUF: a unit whose verified C outgrows the emit's first block several times over, and whose function-pointer
+ * parameters grow the typedef prelude -- the emit and its prelude grow through the context's allocator, so the
+ * sweep below fails each of those growths in turn. `funcs` functions, written into `src`. */
+enum { WIDE_FUNCS = 64, WIDE_SOURCE = 32768 };
+static int cfront_wide_source(char *src,size_t cap){
+  size_t w=0;
+  for(int k=0;k<WIDE_FUNCS;k++){
+    int n=snprintf(src+w,cap-w,
+      "uint32_t wide_%d(uint32_t (*op_%d)(uint32_t, uint32_t), uint32_t a, uint32_t b) {\n"
+      "  uint32_t s = a * %du + b;\n  s ^= s >> 3;\n  s += b * %du;\n  return s + %du + op_%d(a, b);\n}\n",
+      k,k,k+3,k+5,k+7,k);
+    CHECK(n>0&&(size_t)n<cap-w);
+    w+=(size_t)n;
+  }
+  return 0;
+}
+
+/* One compile under the fault allocator (fail_at 0: none fails). A failure is the whole compile's: no unit, no
+ * emitted C -- never a partial text -- and every block released; a success emits `expect` whole. */
+static int cfront_once(const char *source,const char *expect,size_t min_emit,fault_state *state,
+                       size_t fail_at,size_t *attempts){
   bcir_host_allocator allocator=fault_allocator(state);
   bcir_cfront_context context;
   bcir_cfront_result result;
@@ -165,32 +185,43 @@ static int cfront_once(fault_state *state,size_t fail_at,size_t *attempts){
   bcir_cfront_result_init(&result);
   CHECK(!bcir_cfront_context_init(&context,&allocator));
   state->attempt=0;state->fail_at=fail_at;
-  int rc=bcir_cfront_compile_context(&context,cfront_source,&result);
+  int rc=bcir_cfront_compile_context(&context,source,&result);
   *attempts=state->attempt;
   if(fail_at){
     CHECK(rc!=0);CHECK(result.unit.funcs==NULL);CHECK(result.unit.n_funcs==0);
-    CHECK(!result.emitted_ok&&result.emitted[0]==0);
+    CHECK(!result.emitted_ok&&result.emitted==NULL&&result.emitted_len==0);
+    CHECK(!strcmp(result.diag,"oom"));
   }else{
-    CHECK(rc==0&&result.ok&&result.emitted_ok);
-    CHECK(result.unit.n_funcs==1&&strstr(result.emitted,"hi ")!=NULL);
+    CHECK(rc==0&&result.ok&&result.emitted_ok&&result.emitted!=NULL);
+    CHECK(result.emitted_len==strlen(result.emitted)&&result.emitted_len>=min_emit);
+    CHECK(strstr(result.emitted,expect)!=NULL);
   }
   bcir_cfront_free(&result);
   CHECK(result.unit.funcs==NULL&&result.unit.n_funcs==0&&result.ok==0);
-  CHECK(result.emitted_ok==0&&result.emitted[0]==0&&result.diag[0]==0);
+  CHECK(result.emitted_ok==0&&result.emitted==NULL&&result.emitted_len==0&&result.diag[0]==0);
   bcir_cfront_free(&result);
   bcir_cfront_context_destroy(&context);bcir_cfront_context_destroy(&context);
   CHECK(state->live==0u);
   return 0;
 }
 
-static int cfront_fault_test(void){
+static int cfront_sweep(const char *source,const char *expect,size_t min_emit,size_t min_attempts){
   fault_state state={0};size_t attempts=0,baseline;
-  CHECK(!cfront_once(&state,0,&attempts));
-  baseline=attempts;CHECK(baseline>5u);
+  CHECK(!cfront_once(source,expect,min_emit,&state,0,&attempts));
+  baseline=attempts;CHECK(baseline>=min_attempts);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
-    CHECK(!cfront_once(&state,fail,&attempts));
+    CHECK(!cfront_once(source,expect,min_emit,&state,fail,&attempts));
   }
+  return 0;
+}
+
+static int cfront_fault_test(void){
+  char wide[WIDE_SOURCE];
+  CHECK(!cfront_sweep(cfront_source,"hi ",1u,6u));
+  CHECK(!cfront_wide_source(wide,sizeof wide));
+  /* the emit's first block is 4 KiB: this one's verified C needs it grown at least three times */
+  CHECK(!cfront_sweep(wide,"typedef uint32_t (*__bcir_fp63)(uint32_t, uint32_t);",8u*4096u+1u,64u));
   return 0;
 }
 
@@ -411,9 +442,13 @@ static int channel_test(void){
 int main(int argc,char **argv){
   CHECK(argc==2&&argv[1]&&argv[1][0]);
   CHECK(!checked_growth_test());
-  CHECK(!cpp_fault_and_isolation_test());
   CHECK(!cfront_fault_test());
   CHECK(!cfront_analysis_fault_test());
+  if(!strcmp(argv[1],"--cfront")){      /* the C frontend's sweeps alone -- no model file (test_c_cfront.py) */
+    puts("memory-discipline: cfront ok");
+    return 0;
+  }
+  CHECK(!cpp_fault_and_isolation_test());
   CHECK(!q8_and_llama_fault_test(argv[1]));
   CHECK(!channel_test());
   puts("memory-discipline: ok");

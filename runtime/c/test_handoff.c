@@ -169,7 +169,7 @@ static int read_graph(rd *r, graph *g) {
     const uint8_t *label = take(r, ll);
     if (!label) return 0;
     memcpy(c->op, label, ll < sizeof c->op ? ll : sizeof c->op);
-    if (ll < sizeof c->op) c->op[ll] = '\0';  /* 32 bytes and up: no NUL, label_ok refuses */
+    if (ll < sizeof c->op) c->op[ll] = '\0';  /* sizeof op and up: no NUL, label_ok refuses */
   }
   g->f.claims = g->claims;
   g->f.n_claims = n;

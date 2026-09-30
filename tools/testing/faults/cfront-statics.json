@@ -84,7 +84,7 @@
       "expects": "test_static_tables_run_as_the_original_on_both_rails",
       "label": "ST5 a function-pointer local declared as an integer",
       "new": "        (void)fr; }",
-      "old": "        fr->is_funcptr=1; snprintf(fr->agg,BCIR_CIR_NAME,\"%s\",ty.tag); }",
+      "old": "        fr->is_funcptr=1; fits(c,fr->agg,BCIR_CIR_AGG,\"%s\",ty.tag); }",
       "path": "runtime/c/bcir_cfront.c"
     }
   ]

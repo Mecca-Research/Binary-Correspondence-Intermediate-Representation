@@ -65,7 +65,8 @@ int main(int argc, char **argv) {
     printf("%s\n", lf); bcir_cfront_free(&r); return 0; }
   if (canon) { static char cbuf[1 << 17]; bcir_cfront_canon(&r.unit, cbuf, sizeof cbuf);
     fputs(cbuf, stdout); bcir_cfront_free(&r); return 0; }
-  if (!r.emitted_ok) { printf("EMIT-ERR emitted C exceeds result capacity\n"); bcir_cfront_free(&r); return 1; }
+  /* defensive: a successful compile always emits, whole -- the emit grows with no fixed capacity (CF-BUF) */
+  if (!r.emitted_ok) { printf("EMIT-ERR no emitted C\n"); bcir_cfront_free(&r); return 1; }
   char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);
   printf("%s\n", sum);
   if (!r.ok) printf("diag: %s\n", r.diag);

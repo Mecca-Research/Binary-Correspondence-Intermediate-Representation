@@ -228,7 +228,7 @@
       "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
       "label": "T44 a null function pointer keeps its integer temp",
       "new": "  if(ty->kind==3){ return v; }   /* `op_t f = 0;` */",
-      "old": "  if(ty->kind==3){ r->is_funcptr=1; snprintf(r->agg,BCIR_CIR_NAME,\"%s\",ty->tag); return v; }   /* `op_t f = 0;` */",
+      "old": "  if(ty->kind==3){ r->is_funcptr=1; fits(c,r->agg,BCIR_CIR_AGG,\"%s\",ty->tag); return v; }   /* `op_t f = 0;` */",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

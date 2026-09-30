@@ -240,6 +240,8 @@ _PTRVALUE = [
     #   member-array bases, and the elements a pointer member points at (CF-NESTMEM)
     "cfront_parenpostfix.c",  # a postfix operator after `( ... )`: `(a)[i]`, `((T[N]){...})[i]`, `(p)->x`,
     #   `(x)++`, `(*p).x` as `p->x`, `(*p)[i]` as `p[0][i]` (CF-PAREN)
+    "cfront_longnames.c",  # a 63-character name everywhere the claim graph keeps one, and a 63-character
+    #   floating constant: the longest either rail accepts (CF-BUF)
     "cfront_addrof.c",  # general address-of `&`
     "cfront_addrofarr.c",  # member-array element address
     "cfront_addrofaos.c",  # array-of-structs element field address
@@ -292,6 +294,12 @@ def _includes_for(fx: str) -> dict:
 def _oracle(src: str, includes=None):
     r = compile_unit(src, check_clang=False, includes=includes)
     funcs = r.lowered.functions
+    return _summary_line(r), r, funcs[next(reversed(funcs))]
+
+
+def _summary_line(r) -> str:
+    """The oracle's parity summary of a compiled unit -- the line the twin's driver prints first."""
+    funcs = r.lowered.functions
     entry = funcs[next(reversed(funcs))]
     cl = entry.claims
     mmio = sum(1 for c in cl if c.op == "c.load" and c.domain == Domain.MMIO)
@@ -306,11 +314,10 @@ def _oracle(src: str, includes=None):
     # digest = the cross-rail per-claim STRUCTURAL digest (the count->structural parity fix): the C twin
     # appends the byte-identical `digest=<16-hex>` to its summary, so the gate now compares structure.
     digest = cfront_structural_digest(r.lowered)
-    summary = (
+    return (
         f"funcs={len(funcs)} claims={len(cl)} mmio={mmio} bf={bf} const={kn} "
         f"binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0} digest={digest:016x}"
     )
-    return summary, r, entry
 
 
 _BUILD_DIR = None
@@ -3605,9 +3612,21 @@ def test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges():
         # Fixed public result buffers now fail explicitly instead of returning omitted text/claims.
         r = run("pp_overflow.c", "x\n" * 40000, "-E")
         assert r.returncode == 1 and "preprocessed output too large" in r.stderr, r.stderr
+        # ...and the verified C has none (CF-BUF): a unit whose emit runs past the 32 KiB the result once held --
+        # refused then as `emitted C exceeds` -- emits whole, and its linkable form renames every call in it.
         body = "\n".join("x += 1;" for _ in range(700))
-        r = run("emit_overflow.c", f"int f(int x){{\n{body}\nreturn x;\n}}\n", "--emit-c")
-        assert r.returncode == 1 and "emitted C exceeds" in r.stderr, r.stderr
+        for mode, name in (
+            ("--emit-c", "bcir_f(int32_t x)"),
+            ("--linkable", "int32_t f(int32_t x)"),
+        ):
+            r = run("emit_large.c", f"int f(int x){{\n{body}\nreturn x;\n}}\n", mode)
+            assert r.returncode == 0 and len(r.stdout) > 1 << 15, (
+                mode,
+                r.returncode,
+                r.stderr[-300:],
+            )
+            assert name in r.stdout and r.stdout.count(" = x + ") == 700, (mode, r.stdout[:300])
+            assert r.stdout.rstrip().endswith("}"), (mode, r.stdout[-300:])
 
         # Empty units and unsupported pointer depth are clean errors, not funcs[-1] or truncated stars.
         r = run("empty.c", "", "--emit-pack")
@@ -9339,3 +9358,332 @@ int main(void) {
     )
     emits = (("twin", c_emit), ("oracle", oracle_emit))
     _run_against_original("void returns", _VOID_RETURN_UNIT, emits, driver)
+
+
+# CF-BUF: the C twin kept a name -- a callee, a parameter, a local, a tag, a member, an alias -- in 32 bytes, a
+# claim's op (a prefix and a name, a floating constant's spelling, a cast's type) in the same 32, and the verified C
+# it emits in 32 KiB, with each synthesized prelude line in 512 bytes. A name is now at most 63 characters on both
+# rails (C11 5.2.4.1's significant initial characters of an internal identifier; the twin's fields hold that and
+# every prefix), a longer identifier or floating constant is refused where it is lexed, and the emit grows.
+_BUF_TARGETS = ("x86_64-linux", "aarch64-linux", "x86_64-windows", "i386-linux")
+
+
+def _parity_on_targets(path: str, src: str) -> None:
+    """The twin's summary -- the claim counts and the structural digest -- is the oracle's on each of the four
+    targets, the unit at `path` holding `src`."""
+    exe = _build_frontend(_session_build_dir())
+    for t in _BUF_TARGETS:
+        oracle = _summary_line(compile_unit(src, check_clang=False, target=t))
+        run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+        twin = (run.stdout.partition("----EMIT----\n")[0].strip().splitlines() or [""])[0]
+        assert twin == oracle, f"{os.path.basename(path)} on {t}\n C: {twin}\nPY: {oracle}"
+
+
+_LONGNAMES_DRIVER = (
+    _GAPS_SAME
+    + r"""
+#define LN_TABLE file_scope_lookup_table_of_four_words_with_a_sixty_three_chars_
+int main(void) {
+  uint32_t init[4], after[4];
+  memcpy(init, LN_TABLE, sizeof init);
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(ln_struct, s); SAME(ln_typedef, s); SAME(ln_shadow, s); SAME(ln_goto, s); SAME(ln_imember, s);
+    SAME(ln_static, s); SAME(ln_entry, s);
+    memcpy(LN_TABLE, init, sizeof init);   /* each rail's call starts from the same table */
+    uint32_t a = ln_calls(s);
+    memcpy(after, LN_TABLE, sizeof after);
+    memcpy(LN_TABLE, init, sizeof init);
+    if (a != bcir_ln_calls(s) || memcmp(after, LN_TABLE, sizeof after)) return fail("ln_calls");
+    double x = (double)s + 0.5;
+    if (ln_float(x) != bcir_ln_float(x)) return fail("ln_float");
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+# A variadic callee of 63 characters whose `va_arg` type the twin's op had cut to 16 characters (`unsigned long lo`,
+# which does not compile) -- in a unit of its own, since the corpus harness does not include <stdarg.h>
+_LONGNAMES_VARIADIC = """#include <stdint.h>
+#include <stdarg.h>
+static uint64_t variadic_callee_summing_its_unsigned_long_long_extra_arguments_(uint32_t n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  uint64_t s = 0u;
+  for (uint32_t i = 0u; i < n; i++) s += va_arg(ap, unsigned long long);
+  va_end(ap);
+  return s;
+}
+uint64_t lnv_entry(uint32_t s) {
+  return variadic_callee_summing_its_unsigned_long_long_extra_arguments_(2u, (unsigned long long)s, 5ull);
+}
+"""
+
+
+def test_long_names_run_as_the_original_on_both_rails():
+    """CF-BUF: `cfront_longnames.c` holds a 63-character identifier wherever the claim graph keeps a name -- a
+    direct, a void and a prototyped callee (the op `c.call:` / `c.call.void:` carries it after its prefix), a
+    parameter, two same-named locals in disjoint blocks, a static local, a file-scope table, a struct tag and its
+    members, a function-pointer member (`c.call.imember:`), a typedef, an enum constant, a label -- and a
+    63-character floating constant, whose exponent the twin's 32-byte op had cut off (`1.000...e-300` became 1.0).
+    The twin kept 31 characters of every name, so it refused the unit (`undefined identifier`), and a callee named
+    past 24 characters digested apart from the oracle's and was called by its truncated name. Both rails now lower
+    the fixture to one claim graph on the four targets, and each emit returns what the original does, function by
+    function, under every compiler at hand; so does `_LONGNAMES_VARIADIC`, whose `va_arg(ap, unsigned long long)`
+    the twin had emitted as `va_arg(ap, unsigned long lo)`."""
+    if not _CC:
+        return
+    fx = "cfront_longnames.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        for whole in (
+            "bcir_static_callee_whose_name_fills_all_sixty_three_characters_here_(",
+            "bcir_void_callee_that_adds_its_argument_into_the_lookup_table_entry_(",
+            "local_variable_declared_twice_in_two_disjoint_blocks_of_scope___2",
+            "struct register_block_descriptor_with_a_tag_as_long_as_c_allows_here_1 *",
+            "1.00000000000000000000000000000000000000000000000000000000e-300",
+        ):
+            assert whole in emit, f"{rail}: the emit does not spell {whole!r} whole"
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _LONGNAMES_DRIVER)
+
+    src = _LONGNAMES_VARIADIC
+    oracle_summary, r, _entry = _oracle(src)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "longnames_va.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
+        assert c_summary == oracle_summary, f"parity\n C: {c_summary}\nPY: {oracle_summary}"
+        _parity_on_targets(path, src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        for whole in (
+            "bcir_variadic_callee_summing_its_unsigned_long_long_extra_arguments_(",
+            "va_arg(ap, unsigned long long)",
+        ):
+            assert whole in emit, f"{rail}: the emit does not spell {whole!r} whole"
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(lnv_entry, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original(
+        "longnames_va.c", src, (("twin", c_emit), ("oracle", oracle_emit)), driver
+    )
+
+
+# (a unit with one name at 64 characters -- `{n}` -- in each place a name can stand, and its twin at 63)
+_ID64 = "a_name_one_character_longer_than_the_sixty_three_both_rails_take"
+_FLT64, _FLT63 = "2." + "0" * 57 + "e-300", "2." + "0" * 56 + "e-300"
+_HEX64, _HEX63 = "0x1." + "0" * 55 + "p-900", "0x1." + "0" * 54 + "p-900"
+_LONG_ID_REFUSED = "an identifier longer than 63 characters is not supported"
+_LONG_FLT_REFUSED = "a floating constant longer than 63 characters is not supported"
+_LONG_NAME_UNITS = (
+    ("uint32_t {n}(uint32_t s) {{ return s + 1u; }}", _LONG_ID_REFUSED),
+    ("uint32_t lf(uint32_t {n}) {{ return {n} * 3u; }}", _LONG_ID_REFUSED),
+    ("uint32_t lf(uint32_t s) {{ uint32_t {n} = s; return {n} + 2u; }}", _LONG_ID_REFUSED),
+    (
+        "struct {n} {{ uint32_t v; }};\nuint32_t lf(struct {n} *p) {{ return p->v; }}",
+        _LONG_ID_REFUSED,
+    ),
+    (
+        "struct lt {{ uint32_t {n}; }};\nuint32_t lf(struct lt *p) {{ return p->{n}; }}",
+        _LONG_ID_REFUSED,
+    ),
+    ("typedef uint32_t {n};\nuint32_t lf(uint32_t s) {{ {n} w = s; return w; }}", _LONG_ID_REFUSED),
+    ("enum {{ {n} = 3 }};\nuint32_t lf(uint32_t s) {{ return s + {n}; }}", _LONG_ID_REFUSED),
+    (
+        "static uint32_t {n}[2];\nuint32_t lf(uint32_t s) {{ return {n}[s & 1u]; }}",
+        _LONG_ID_REFUSED,
+    ),
+    ("uint32_t lf(uint32_t s) {{ if (s) goto {n}; s++;\n{n}: return s; }}", _LONG_ID_REFUSED),
+    (
+        "static uint32_t {n}(uint32_t s) {{ return s; }}\nuint32_t lf(uint32_t s) {{ return {n}(s); }}",
+        _LONG_ID_REFUSED,
+    ),
+    ("double lf(double x) {{ return x * {f}; }}", _LONG_FLT_REFUSED),
+    ("double lf(double x) {{ return x * {h}; }}", _LONG_FLT_REFUSED),
+)
+
+
+def test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers():
+    """CF-BUF: an identifier of 64 characters -- a function, a parameter, a local, a struct tag, a member, a
+    typedef, an enum constant, a global, a label, a callee -- and a floating constant of 64 characters, decimal or
+    hexadecimal, are refused on both rails where they are lexed, each with its own reason: the twin's graph holds 63
+    and could only truncate the 64th (another callee, member or constant), and the oracle refuses what the twin
+    cannot hold. The same unit one character shorter lowers on both rails to one claim graph."""
+    from bcir.frontends.cfront.clex import CLexError
+
+    assert {len(_ID64), len(_FLT64), len(_HEX64)} == {64} and {len(_FLT63), len(_HEX63)} == {63}
+    head = "#include <stdint.h>\n"
+    units = []
+    for shape, why in _LONG_NAME_UNITS:
+        at64 = head + shape.format(n=_ID64, f=_FLT64, h=_HEX64) + "\n"
+        at63 = head + shape.format(n=_ID64[:-1], f=_FLT63, h=_HEX63) + "\n"
+        try:
+            compile_unit(at64, check_clang=False)
+        except CLexError as e:
+            assert why in str(e), (shape, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered a 64-character name: {shape!r}")
+        units.append((shape, why, at64, at63))
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for k, (shape, why, at64, at63) in enumerate(units):
+            path = os.path.join(d, f"long{k}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(at64)
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and why in run.stdout, (
+                shape,
+                run.returncode,
+                run.stdout[:200],
+            )
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(at63)
+            oracle_summary, _r, _entry = _oracle(at63)
+            c_summary, _emit = _c_run(exe, path)
+            assert c_summary == oracle_summary and "ok=1" in c_summary, (
+                shape,
+                c_summary,
+                oracle_summary,
+            )
+
+
+def _wide_unit(n: int) -> str:
+    """`n` small functions whose verified C together runs past 64 KiB on both rails."""
+    return "#include <stdint.h>\n" + "".join(
+        f"uint32_t wide_{k}(uint32_t a, uint32_t b) {{\n"
+        f"  uint32_t s = a * {k + 3}u + b;\n  s ^= s >> {k % 7 + 1}u;\n  s += b * {k + 5}u;\n"
+        f"  s = (s << 5u) | (s >> 27u);\n  s -= a ^ {k + 11}u;\n  return s + {k + 7}u;\n}}\n"
+        for k in range(n)
+    )
+
+
+def test_an_emit_past_64_kib_lowers_and_runs_as_the_original():
+    """CF-BUF: the twin's verified C had a fixed 32 KiB (`bcir_cfront_result.emitted`); a unit whose emit is larger
+    reported `EMIT-ERR` and printed no digest to compare, so corpus fixtures were trimmed to fit. The emit now grows
+    through the result's allocator: a unit of 140 functions -- past 64 KiB of emitted C on both rails -- lowers to
+    the oracle's claim graph on the four targets, and each function of each emit returns what the original does."""
+    if not _CC:
+        return
+    n = 140
+    src = _wide_unit(n)
+    oracle_summary, r, _entry = _oracle(src)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "wide.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary, f"parity\n C: {c_summary}\nPY: {oracle_summary}"
+        _parity_on_targets(path, src)
+    assert len(src) < 1 << 16 and len(c_emit) > 1 << 16 and len(oracle_emit) > 1 << 16, (
+        len(src),
+        len(c_emit),
+        len(oracle_emit),
+    )
+    calls = "".join(f"    SAME(wide_{k}, a, b);\n" for k in range(n))
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) {\n"
+        + "    uint32_t a = gaps_in[n], b = gaps_in[(n + 3u) % GAPS_N];\n"
+        + calls
+        + '  }\n  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original("wide", src, (("twin", c_emit), ("oracle", oracle_emit)), driver)
+
+
+_SIGOVERFLOW_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+int main(void) {
+  if (g_param(0) != bcir_g_param(0)) return fail("g_param");
+  if (g_local() != bcir_g_local()) return fail("g_local");
+  puts("MATCH");
+  return 0;
+}
+"""
+
+
+def test_a_long_function_pointer_signature_emits_on_the_twin():
+    """CF-BUF: `cfront_sec_sigoverflow.c` declares a function-pointer parameter and a local of sixty parameters,
+    whose synthesized `typedef RET (*__bcir_fpN)(PARAMS);` runs past 512 bytes. The twin rendered that line into a
+    fixed 512-byte buffer and, when it did not fit, marked the whole emit impossible: its driver printed `EMIT-ERR`
+    for a unit whose emit is under 4 KB, so the fixture's digest was never compared with the oracle's. The prelude
+    now grows: the twin emits the unit with the oracle's digest on the four targets, the typedef names all sixty
+    parameters, and the emit returns what the original does."""
+    if not _CC:
+        return
+    fx = "cfront_sec_sigoverflow.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    typedefs = [line for line in c_emit.splitlines() if line.startswith("typedef ")]
+    assert len(typedefs) == 2 and all(t.count("uint64_t") == 60 for t in typedefs), typedefs
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _SIGOVERFLOW_DRIVER)
+
+
+def test_the_twin_formats_no_name_into_a_field_that_could_cut_it():
+    """CF-BUF: GCC's format-truncation analysis (`-Wformat-truncation=1`, which bounds a `%s` by the array it
+    reads) finds no `snprintf` in the twin that could cut a name, a tag, an op or a type short: each field is sized
+    for the longest spelling it holds, now that a name is at most 63 characters. On the parent it found 32."""
+    gcc = shutil.which("gcc")
+    if not gcc:
+        return
+    b = subprocess.run(
+        [
+            gcc,
+            "-std=c11",
+            "-O1",
+            "-Wformat-truncation=1",
+            "-Werror=format-truncation",
+            "-I",
+            _C,
+            "-c",
+        ]
+        + [os.path.join(_C, "bcir_cfront.c"), "-o", os.devnull],
+        capture_output=True,
+        text=True,
+    )
+    assert b.returncode == 0, b.stderr[-3000:]
+
+
+def test_the_emit_grows_whole_under_a_failing_allocator():
+    """CF-BUF: the twin's allocation-failure sweep (`runtime/c/test_memory_discipline.c`, run here for the C
+    frontend alone) fails every allocation a compile makes, in turn, under an injected allocator -- now over a unit
+    whose verified C outgrows the emit's first block several times and whose function-pointer parameters grow the
+    typedef prelude. Each failure is the whole compile's (`oom`): no unit, no emitted C (never a partial text), every
+    block released; the fault-free run emits the whole unit."""
+    if not _CC:
+        return
+    srcs = (
+        "test_memory_discipline.c",
+        "bcir_runtime_channel.c",
+        "bcir_cfront.c",
+        "bcir_cpp.c",
+        "bcir_verify.c",
+        "bcir_runtime.c",
+        "bcir_q8_model.c",
+        "bcir_decode.c",
+        "bcir_ai_kernels.c",
+        "bcir_llama.c",
+    )
+    exe = os.path.join(_session_build_dir(), "memory_discipline")
+    b = subprocess.run(
+        [_CC, "-std=c11", "-O1", "-I", _C, *(os.path.join(_C, s) for s in srcs), "-o", exe, "-lm"],
+        capture_output=True,
+        text=True,
+    )
+    assert b.returncode == 0, b.stderr[-3000:]
+    run = subprocess.run([exe, "--cfront"], capture_output=True, text=True, timeout=600)
+    assert run.returncode == 0 and "memory-discipline: cfront ok" in run.stdout, (
+        run.returncode,
+        run.stdout[-2000:],
+        run.stderr[-2000:],
+    )

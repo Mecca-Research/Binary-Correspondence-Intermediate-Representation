@@ -49,7 +49,17 @@ typedef enum bcir_bounds { BCIR_BND_STRICT = 0, BCIR_BND_MASKED = 1, BCIR_BND_AS
 #define BCIR_CLAIM_MAX_RD 6
 #define BCIR_CLAIM_MAX_WR 2
 #define BCIR_CLAIM_MAX_IMM 4   /* off, size, flag, stride -- the array-of-structs `arr[i].field` store */
-#define BCIR_CIR_NAME 32
+/* Names in the graph are bounded (CF-BUF). An identifier -- a function, parameter, local, global, struct or
+ * union tag, member, typedef, enum constant, label -- and a floating constant's spelling are at most
+ * BCIR_CIR_IDENT_MAX characters: C11 5.2.4.1's 63 significant initial characters of an internal identifier.
+ * The frontend refuses a longer one on both rails (the oracle has no buffer; it refuses what this graph could
+ * only truncate), so every name, tag, op and alias below holds whatever the frontend accepts. */
+#define BCIR_CIR_IDENT_MAX 63
+#define BCIR_CIR_NAME (BCIR_CIR_IDENT_MAX + 1)   /* an identifier and its NUL */
+#define BCIR_CIR_AGG (BCIR_CIR_NAME + 8)         /* `struct ` or `union ` and a tag, or a function-pointer alias */
+#define BCIR_CIR_OP (2 * BCIR_CIR_NAME)          /* an op: a prefix and a name (`c.call.libm.void:` + 63), a floating
+                                                  * constant (`c.fconst:` + 63), a pointer cast's type (`c.cast:volatile
+                                                  * union <tag> ` and 16 `*`s: 102 characters) */
 
 /* shape kind of a resource (drives how the emitter takes its address). */
 typedef enum bcir_rkind { BCIR_RK_SCALAR = 0, BCIR_RK_AGGREGATE = 1, BCIR_RK_POINTER = 2 } bcir_rkind;
@@ -102,7 +112,8 @@ typedef struct bcir_resource {
                               * the declaration spells `T *a[N]` (0 == not one; a struct pointee rides in `agg`) */
   uint8_t  ptee_signed, ptee_float, ptee_plain_char;
   char     name[BCIR_CIR_NAME];
-  char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
+  char     agg[BCIR_CIR_AGG]; /* `struct T` / `union T` (aggregate resources and pointees, for emission), or a
+                               * function pointer's alias; else "" */
   uint8_t  is_atomic;        /* `_Atomic` storage, as `bcir_ctype.is_atomic` reads it: a named object (or an array's
                               * elements) is `_Atomic T`, and a POINTER's pointee is -- so a declaration spells it and
                               * an access through it is an atomic one (CF-ATOMIC). A value temp is never atomic. */
@@ -165,7 +176,7 @@ typedef struct bcir_claim {
                                * through a volatile lvalue of exactly the accessed type. A claim that only moves
                                * a pointer to volatile storage is device-domain (R3) without it. OPTIONAL
                                * annotation, digest-excluded, default 0; the oracle's `Claim.volatile`. */
-  char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
+  char     op[BCIR_CIR_OP]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" / "c.call:<callee>" */
 } bcir_claim;
 
 /* A static-local variable (static storage duration: a once-only constant init). */

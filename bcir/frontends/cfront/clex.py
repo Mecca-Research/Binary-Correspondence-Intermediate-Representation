@@ -173,6 +173,19 @@ def _scan_hex_float(src: str, i: int, n: int) -> int | None:
     return j
 
 
+#: The longest identifier or floating constant the frontend accepts (CF-BUF): C11 5.2.4.1's 63 significant
+#: initial characters of an internal identifier. The C twin's claim graph holds a name, a tag, an op and an
+#: alias of that many characters (`BCIR_CIR_IDENT_MAX`, runtime/c/bcir_cir.h) and a floating constant's
+#: spelling in its op, so a longer one could only be truncated there -- another callee, member or constant.
+#: The oracle has no such buffer; it refuses what the twin would truncate, with the twin's diagnostic.
+IDENT_MAX = 63
+
+
+def _too_long(kind: str, text: str, pos: int) -> None:
+    if len(text) > IDENT_MAX:
+        raise CLexError(f"{kind} longer than {IDENT_MAX} characters is not supported", pos=pos)
+
+
 def tokenize(src: str) -> list[Tok]:
     toks: list[Tok] = []
     i, n = 0, len(src)
@@ -219,6 +232,7 @@ def tokenize(src: str) -> list[Tok]:
             j = i
             while j < n and (src[j].isalnum() or src[j] == "_"):
                 j += 1
+            _too_long("an identifier", src[i:j], i)
             toks.append(Tok("IDENT", src[i:j], i))
             i = j
             continue
@@ -230,12 +244,14 @@ def tokenize(src: str) -> list[Tok]:
         ):  # (.5 / 1.5 / 1e10 / 3.14f)
             end = _scan_decimal_float(src, i, n)
             if end is not None:
+                _too_long("a floating constant", src[i:end], i)
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
         if src[i : i + 2] in ("0x", "0X"):  # hex float (0x1p4) vs hex int (0x1f)
             end = _scan_hex_float(src, i, n)  # only matches when a `p` exponent is present
             if end is not None:
+                _too_long("a floating constant", src[i:end], i)
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
