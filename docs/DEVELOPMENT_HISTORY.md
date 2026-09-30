@@ -2352,8 +2352,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     is emitted taking `uint32_t *`), so assigning it a function that takes `const uint32_t *` does not compile;
   - the twin refuses a postfix on the struct a call through a function pointer returns (`m(s).a`), which the
     oracle lowers; its reason is now the conversion refusal, since `return m(s)` is checked before `.a`;
-  - the twin refuses a designator of a function defined after its use ("undefined identifier"), which the
-    oracle lowers when a prototype declares it;
   - a variadic function's designator as an arm of `?:` is still an integer select on both rails, and both
     refuse a variadic function-pointer declarator (`uint32_t (*g)(uint32_t, ...)`);
   - an array compared with the constant 0 (`garr == 0`, `arr != 0`) compares it with an `int` temp in both
