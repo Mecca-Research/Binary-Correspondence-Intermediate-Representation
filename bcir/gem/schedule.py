@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 
 from ..model import Claim, Module
 from .async_tokens import async_plan
-from .concurrency import _is_sparse, _topo_phase_ids, hazard_predecessors
+from .concurrency import _is_sparse, _topo_phase_ids, hazard_frontier, hazard_predecessors
 
 TAIL_STREAM = -1  # the decoupled GGG/random tail executes on its own stream
 
@@ -343,11 +343,13 @@ def stream_geometry(target) -> tuple[int, int]:
 _streams = stream_geometry
 
 
-def phase_hazards(module: Module) -> dict[int, dict[int, list[int]]]:
+def phase_hazards(module: Module, *, frontier: bool = False) -> dict[int, dict[int, list[int]]]:
     """The intra-phase hazard DAG of every phase -- over main AND tail claims, in claim-id
     order, before any stream split -- keyed by phase id. A pure function of the module, so
     a caller placing many duration vectors of one module (the re-selection sweep) builds it
-    once and hands it to `schedule_eft`."""
+    once and hands it to `schedule_eft`. `frontier` builds each phase's `hazard_frontier`
+    instead: the same closure in O(resource touches) edges (`phase_frontiers`)."""
+    build = hazard_frontier if frontier else hazard_predecessors
     pmap = module.phase_map()
     out: dict[int, dict[int, list[int]]] = {}
     seen_claim_ids: set[int] = set()
@@ -357,8 +359,18 @@ def phase_hazards(module: Module) -> dict[int, dict[int, list[int]]]:
         if len(set(claim_ids)) != len(claim_ids) or seen_claim_ids & set(claim_ids):
             raise ValueError("GEM scheduling requires module-wide unique claim ids")
         seen_claim_ids.update(claim_ids)
-        out[pid] = hazard_predecessors(claims)
+        out[pid] = build(claims)
     return out
+
+
+def phase_frontiers(module: Module) -> dict[int, dict[int, list[int]]]:
+    """`phase_hazards` cut to each resource's frontier (`concurrency.hazard_frontier`): what
+    the EFT dispatch reads (G2 residual). Its placement is the full DAG's slot for slot --
+    the pop order and every release time are functions of the closure -- while a serial
+    chain of n claims hands it n - 1 edges instead of n(n - 1) / 2 to walk once per
+    placement. The exact solver keeps `phase_hazards`: its symmetry classes compare
+    predecessor sets literally."""
+    return phase_hazards(module, frontier=True)
 
 
 def schedule_eft(
@@ -375,8 +387,9 @@ def schedule_eft(
     placement + locality tie-breaks + the bandwidth-knee clamp, with the GGG/random
     tail on its own stream inside the same dispatch (an independent tail still
     overlaps the waves: phase span = max(main, tail); a dependent one waits).
-    Phases compose serially. `hazards` is `phase_hazards(module)`, precomputed by a
-    caller that places the same module many times.
+    Phases compose serially. `hazards` is `phase_frontiers(module)` (or `phase_hazards`,
+    which places identically), precomputed by a caller that places the same module many
+    times.
     """
     domains, knee = _streams(target)
     sched = GemSchedule(mode="eft", knee=knee)
@@ -384,7 +397,7 @@ def schedule_eft(
     pmap = module.phase_map()
     t0 = 0
     if hazards is None:
-        hazards = phase_hazards(module)
+        hazards = phase_frontiers(module)
 
     for pid in _topo_phase_ids(module):
         claims = sorted(pmap[pid].claims, key=lambda c: c.id)
@@ -468,7 +481,7 @@ class EftPlacer:
         self.durations = dict(durations)
         self.pops = 0  # claims re-placed by trials and adoptions (the delta work)
         if hazards is None:
-            hazards = phase_hazards(module)
+            hazards = phase_frontiers(module)
         pmap = module.phase_map()
         self.phase_of: dict[int, int] = {}
         self.records: list[_PhaseRecord] = []

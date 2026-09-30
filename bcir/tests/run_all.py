@@ -243,6 +243,7 @@ _MODULES = [
     "bcir.tests.test_handoff",
     "bcir.tests.test_static_memory",
     "bcir.tests.test_delta_pricing",
+    "bcir.tests.test_hazard_frontier",
     "bcir.tests.test_exact_schedule",
     "bcir.tests.test_dispatch_law",
     "bcir.tests.test_regions",

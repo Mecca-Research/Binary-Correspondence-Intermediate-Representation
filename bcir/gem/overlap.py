@@ -41,7 +41,7 @@ from ..kbcir.realize import (
 )
 from ..kbcir.weights import PERF, Policy, weights
 from .concurrency import _is_sparse, _topo_phase_ids, _wave_indices
-from .schedule import EftPlacer, GemSchedule, phase_hazards, schedule_eft, schedule_plan
+from .schedule import EftPlacer, GemSchedule, phase_frontiers, schedule_eft, schedule_plan
 
 
 @dataclass(frozen=True)
@@ -238,7 +238,9 @@ def optimize_scheduled(
 
     costs = [step_cost(i, cands[i], cands[i - 1] if i else None) for i in range(n)]
     durations = {ids[i]: max(0, costs[i]) for i in range(n)}
-    hazards = phase_hazards(module)
+    hazards = phase_frontiers(module)  # the closure in O(touches) edges (G2 residual)
+    if stats is not None:
+        stats["edges"] = sum(len(preds) for phase in hazards.values() for preds in phase.values())
     placer = EftPlacer(module, durations, h, hazards=hazards) if delta else None
 
     def price(changes: dict[int, int]) -> int:

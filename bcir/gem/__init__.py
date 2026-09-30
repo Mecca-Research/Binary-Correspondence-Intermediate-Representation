@@ -81,6 +81,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
     "concurrency": (
         "ConcurrentSchedule",
         "hazard_conflict",
+        "hazard_frontier",
         "hazard_predecessors",
         "is_fence",
         "schedule_concurrent",
@@ -96,6 +97,7 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
         "durations_from",
         "stream_geometry",
         "execute_tokens",
+        "phase_frontiers",
         "phase_hazards",
         "schedule_eft",
         "schedule_plan",

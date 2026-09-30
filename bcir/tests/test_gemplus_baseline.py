@@ -241,6 +241,9 @@ def test_the_general_case_rows_are_measured_through_the_sweep():
     assert out["optimize_scheduled.general.512"] > 0
     assert out["optimize_scheduled.general.slowdown.512"] > 0
     assert out["optimize_scheduled.slowdown.512"] > 0
+    # G2's residual: the §6.3 chain's dispatch reads its hazard frontier, n - 1 edges -- the
+    # row's proved floor -- where the parent read every one of its n(n - 1) / 2 conflicts.
+    assert out["optimize_scheduled.edges.512"] == 511
 
 
 def test_the_exact_rail_rows_are_measured_through_the_solver():

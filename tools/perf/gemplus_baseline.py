@@ -299,6 +299,23 @@ METRICS: tuple[Metric, ...] = (
         "16-phase fixture (a checkpointed replay can re-place less)",
         slice_owner="G2",
     ),
+    # --- G2's residual (S2-A left it named): the §6.3 fixture is one serial chain, and the
+    # dispatch read every RAW/WAR/WAW conflict of it -- all n(n - 1) / 2 pairs -- once to build
+    # its successors and again on every trial placement. The baseline is the parent's count
+    # (every conflict pair); `concurrency.hazard_frontier` keeps each resource's last writer
+    # and the readers since it, the same closure.
+    Metric(
+        "optimize_scheduled.edges.512",
+        "planner",
+        "hazard edges the sweep's dispatch reads per placement, the §6.3 chain at 512 claims",
+        130816,
+        "count",
+        "exact",
+        bound=511,
+        bound_source="n - 1: the chain's closure is a total order, and every covering pair "
+        "of it must be an edge of any DAG with that closure (its Hasse diagram)",
+        slice_owner="G2",
+    ),
     # --- §6.1: HEFT-lite against an exact branch-and-bound scheduler.
     Metric(
         "eft.suboptimal.2domains",
@@ -1878,11 +1895,17 @@ def measure_planner() -> dict[str, float]:
             )
         )
         for label, fn in (("optimize_scheduled", optimize_scheduled), ("serial", optimize)):
+            stats: dict = {}
             start = time.perf_counter()
-            fn(module, host, Theta.cool(), PERF)
+            if label == "optimize_scheduled":
+                fn(module, host, Theta.cool(), PERF, stats=stats)
+            else:
+                fn(module, host, Theta.cool(), PERF)
             elapsed = (time.perf_counter() - start) * 1e3
             if label == "optimize_scheduled":
                 out[f"optimize_scheduled.{count}"] = elapsed
+                if count == 512:
+                    out["optimize_scheduled.edges.512"] = stats["edges"]
             else:
                 out[f"_serial.{count}"] = elapsed
     if "optimize_scheduled.512" in out and out.get("_serial.512"):

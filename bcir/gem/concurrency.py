@@ -15,6 +15,8 @@ builds the dependency DAG the duration-aware scheduler (`gem.schedule`), the tok
 plan (`gem.async_tokens`) and the bundle reorderer (`kbcir.bundle`) all honor. The
 edges are built over EVERY claim of a phase, sparse tail included, BEFORE the
 stream split, so a gather that reads what a wave claim writes waits for it.
+`hazard_frontier` is the same DAG cut to each resource's frontier -- the same transitive
+closure in O(resource touches) edges -- which the EFT dispatch reads (G2 residual).
 """
 
 from __future__ import annotations
@@ -96,6 +98,43 @@ def _conflict_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
     return out
 
 
+def _frontier_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
+    """`_conflict_predecessors` reduced to each resource's frontier: the same transitive
+    closure in edges proportional to resource touches.
+
+    Of a claim's earlier RAW/WAR/WAW conflicts, the ones not already ordered before another
+    of them are, per resource: the LAST writer (every earlier writer of the resource is its
+    WAW predecessor) and, for a resource the claim writes, the readers SINCE that write
+    (every earlier reader is the last writer's WAR predecessor). Every other conflict edge
+    is implied by a path through those, so the closure -- which pairs are ordered -- is
+    exactly the full DAG's. A dense single-resource chain of n claims keeps n - 1 edges
+    instead of n(n - 1) / 2 (G2's residual: the dispatch read them all once per placement).
+    """
+    if len({claim.id for claim in claims}) != len(claims):
+        raise ValueError("GEM dependency planning requires unique claim ids")
+    last_writer: dict[int, int] = {}
+    readers_since: dict[int, list[int]] = {}  # per resource: readers since its last write
+    position: dict[int, int] = {}
+    out: dict[int, list[int]] = {}
+    for index, claim in enumerate(claims):
+        rd, wr = _claim_accesses(claim)
+        predecessors: set[int] = set()
+        for rid in rd | wr:
+            writer = last_writer.get(rid)
+            if writer is not None:
+                predecessors.add(writer)
+        for rid in wr:
+            predecessors.update(readers_since.get(rid, ()))
+        out[claim.id] = sorted(predecessors, key=position.__getitem__)
+        position[claim.id] = index
+        for rid in rd - wr:  # a claim that also writes the resource is its new last writer
+            readers_since.setdefault(rid, []).append(claim.id)
+        for rid in wr:
+            last_writer[rid] = claim.id
+            readers_since[rid] = []
+    return out
+
+
 def hazard_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
     """Every earlier claim a claim must wait for: its data hazards (`_conflict_predecessors`)
     plus the ordering fences (`is_fence`).
@@ -108,7 +147,26 @@ def hazard_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
     the caller passes a whole phase (or the whole module), sparse tail included, so the
     cross-stream RAW/WAR/WAW edges exist before any stream split (G1 / S1-A).
     """
-    out = _conflict_predecessors(claims)
+    return _with_fences(claims, _conflict_predecessors(claims))
+
+
+def hazard_frontier(claims: list[Claim]) -> dict[int, list[int]]:
+    """`hazard_predecessors` with its data edges cut to each resource's frontier
+    (`_frontier_predecessors`), the fences layered on the same way: the same transitive
+    closure, so the same admissible orders, in O(resource touches) edges.
+
+    A list scheduler that pushes a claim when its last predecessor is popped and releases
+    it at the latest predecessor finish decides identically on either DAG: every dropped
+    predecessor is an ancestor of a kept one, so it is popped earlier and (durations being
+    non-negative) finishes no later. The EFT dispatch reads this (`schedule.phase_frontiers`);
+    `hazard_predecessors` stays the published DAG -- the token plan's awaits, and the exact
+    solver, whose symmetry classes compare predecessor sets literally.
+    """
+    return _with_fences(claims, _frontier_predecessors(claims))
+
+
+def _with_fences(claims: list[Claim], out: dict[int, list[int]]) -> dict[int, list[int]]:
+    """Layer the ordering fences (`hazard_predecessors`) onto a data DAG, in place."""
     position = {claim.id: index for index, claim in enumerate(claims)}
     last_fence: int | None = None
     segment: list[int] = []  # claims since the last fence (non-fences)

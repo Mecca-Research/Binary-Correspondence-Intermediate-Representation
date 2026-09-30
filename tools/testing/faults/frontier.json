@@ -1,0 +1,57 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_hazard_frontier:test_the_frontier_is_a_subset_of_the_hazard_dag_with_the_same_closure",
+    "bcir.tests.test_hazard_frontier:test_a_resources_frontier_is_its_last_writer_and_the_readers_since",
+    "bcir.tests.test_hazard_frontier:test_a_serial_chain_keeps_n_minus_one_edges",
+    "bcir.tests.test_hazard_frontier:test_every_placement_on_the_frontier_is_the_full_dags_slot_for_slot",
+    "bcir.tests.test_hazard_frontier:test_every_trial_prices_the_same_on_the_frontier",
+    "bcir.tests.test_hazard_frontier:test_the_sweep_adopts_the_same_plan_and_reads_the_frontier",
+    "bcir.tests.test_gemplus_baseline:test_the_general_case_rows_are_measured_through_the_sweep"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_resources_frontier_is_its_last_writer_and_the_readers_since",
+      "label": "a write does not reset its resource's readers, so a later writer re-waits for readers the last writer already covers",
+      "new": "            last_writer[rid] = claim.id\n",
+      "old": "            last_writer[rid] = claim.id\n            readers_since[rid] = []\n",
+      "path": "bcir/gem/concurrency.py"
+    },
+    {
+      "expects": "test_the_sweep_adopts_the_same_plan_and_reads_the_frontier",
+      "label": "phase_hazards and phase_frontiers are swapped: the exact solver's symmetry classes read the frontier, the sweep the full DAG",
+      "new": "    build = hazard_predecessors if frontier else hazard_frontier\n",
+      "old": "    build = hazard_frontier if frontier else hazard_predecessors\n",
+      "path": "bcir/gem/schedule.py"
+    },
+    {
+      "expects": "test_the_frontier_is_a_subset_of_the_hazard_dag_with_the_same_closure",
+      "label": "the fences are not layered onto the frontier, so a claim overtakes a barrier",
+      "new": "    return _frontier_predecessors(claims)\n",
+      "old": "    return _with_fences(claims, _frontier_predecessors(claims))\n",
+      "path": "bcir/gem/concurrency.py"
+    },
+    {
+      "expects": "test_the_frontier_is_a_subset_of_the_hazard_dag_with_the_same_closure",
+      "label": "the frontier forgets the last writer, so a reader or writer overtakes it (RAW/WAW lost)",
+      "new": "            if writer is not None and not rd:\n                predecessors.add(writer)\n",
+      "old": "            if writer is not None:\n                predecessors.add(writer)\n",
+      "path": "bcir/gem/concurrency.py"
+    },
+    {
+      "expects": "test_the_frontier_is_a_subset_of_the_hazard_dag_with_the_same_closure",
+      "label": "the frontier forgets the readers since the last write, so a writer overtakes them (a WAR edge lost)",
+      "new": "        for rid in ():\n            predecessors.update(readers_since.get(rid, ()))\n",
+      "old": "        for rid in wr:\n            predecessors.update(readers_since.get(rid, ()))\n",
+      "path": "bcir/gem/concurrency.py"
+    },
+    {
+      "expects": "test_the_sweep_adopts_the_same_plan_and_reads_the_frontier",
+      "label": "the sweep's dispatch reads the full conflict DAG again (the parent's n(n - 1) / 2 edges)",
+      "new": "    return phase_hazards(module)\n",
+      "old": "    return phase_hazards(module, frontier=True)\n",
+      "path": "bcir/gem/schedule.py"
+    }
+  ]
+}
