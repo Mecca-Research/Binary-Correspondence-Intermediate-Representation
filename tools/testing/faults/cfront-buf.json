@@ -93,8 +93,8 @@
     {
       "expects": "test_a_long_function_pointer_signature_emits_on_the_twin",
       "label": "B12 the typedef prelude drops what runs past 512 bytes",
-      "new": "  if(need>=512u || !cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
-      "old": "  if(!cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
+      "new": "  if(k<0 || !bcir_size_add(t->w,(size_t)k,&need)){ cc_raise_oom(c); return; }\n  if(need>=512u || !cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
+      "old": "  if(k<0 || !bcir_size_add(t->w,(size_t)k,&need)){ cc_raise_oom(c); return; }\n  if(!cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

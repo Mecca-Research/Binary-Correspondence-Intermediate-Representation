@@ -152,6 +152,13 @@ class _Parser:
         )
         self._anon_ctr = 0  # synthesizes unique tags for tagless inline aggregates
         self._depth = 0  # recursive-descent nesting depth (see _MAX_DEPTH / _descend)
+        self._declared: set = set()  # the file-scope functions declared so far (`Func.declared`)
+        # how C names each anonymous aggregate (`$anonN`, `Unit.anon_spelling`): the file-scope typedef that
+        # names it (`typedef struct {...} P;`), else the named member it is the type of -- the aggregate that
+        # holds the member, the member's name, and its declarator's `*`s and array dimensions
+        self._anon_typedef: dict = {}
+        self._anon_member: dict = {}
+        self._anon_ptrdef: dict = {}  # ... else a typedef of a pointer to it: `typedef struct {...} *PP;`
 
     def _descend(self) -> "_Descend":
         """Enter one recursive-grammar level; raise CParseError on overflow (caught as a fallback phase so
@@ -303,7 +310,44 @@ class _Parser:
             except CParseError as e:
                 self._record(e)
                 self._sync_toplevel()
+        unit.anon_spelling = {
+            tag: sp for tag in unit.aggregates if (sp := self._anon_spell(tag, unit)) is not None
+        }
         return unit
+
+    def _anon_spell(self, tag: str, unit: cast.Unit) -> str | None:
+        """How C names the anonymous aggregate `tag`, or None when it cannot: the name a file-scope typedef
+        gives it (`typedef struct {...} P;` -> `P`; `typedef struct {...} *PP;` -> `__typeof__(*(PP)0)`, the
+        pointee of a null pointer of that type), or the type of the named member it is -- `struct {...}
+        m[N];` in `P` -> `__typeof__(((P *)0)->m[0])`, a `*` before the member for each pointer level --
+        through the spelling of the aggregate that holds the member, up to one a typedef names or that has a
+        tag. The emit spells an anonymous aggregate by its synthesized tag, which no compiler knows (CF-ANON);
+        the twin's `anon_spelling` walks the same chain."""
+        if not tag.startswith("$anon"):
+            return None
+        chain, top = [], tag
+        while (
+            top.startswith("$anon")
+            and top not in self._anon_typedef
+            and top not in self._anon_ptrdef
+        ):
+            if top not in self._anon_member:
+                return None
+            chain.append(top)
+            top = self._anon_member[top][0]
+        if not chain and tag not in self._anon_typedef and tag not in self._anon_ptrdef:
+            return None
+        if top in self._anon_typedef:
+            spelling = self._anon_typedef[top]
+        elif top in self._anon_ptrdef:  # only a pointer typedef names it: the pointee of a null one
+            pname, stars = self._anon_ptrdef[top]
+            spelling = f"__typeof__({'*' * stars}({pname})0)"
+        else:
+            spelling = f"{unit.aggregates[top].kind} {top}"
+        for x in reversed(chain):  # the innermost aggregate's member first
+            _parent, member, stars, dims = self._anon_member[x]
+            spelling = f"__typeof__({'*' * stars}(({spelling} *)0)->{member}{'[0]' * dims})"
+        return spelling
 
     def _toplevel_item(self, unit: cast.Unit) -> None:
         """Parse one top-level item (typedef / enum / aggregate definition / function / global)."""
@@ -376,6 +420,11 @@ class _Parser:
             attrs = self._attributes()
             tag = self.eat("IDENT").text if self.at("IDENT") else ""
             if self.at("PUNCT", "{"):
+                if not tag:
+                    # anonymous: a synthesized tag, unique as an inline member's is -- two of them had
+                    # shared the empty tag, and the second one's layout was lost
+                    tag = f"$anon{self._anon_ctr}"
+                    self._anon_ctr += 1
                 agg = self._aggregate_body(kind, tag, attrs)
                 unit.aggregates[agg.tag] = agg
                 self.tags.add(agg.tag)
@@ -387,16 +436,28 @@ class _Parser:
             tref, name = self._funcptr_declarator(base)  # typedef RET (*NAME)(PARAMS);
         else:
             tref, name = self._declarator(base)
+            if (
+                tref.aggregate
+                and tref.base.startswith("$anon")
+                and not tref.ptr
+                and not tref.array
+                and tref.base not in self._anon_member
+            ):  # `typedef struct {...} P;`: C names the aggregate `P`
+                self._anon_typedef.setdefault(tref.base, name)
+            elif tref.aggregate and tref.base.startswith("$anon") and tref.ptr and not tref.array:
+                # `typedef struct {...} *PP;`: C names the aggregate through the pointer
+                self._anon_ptrdef.setdefault(tref.base, (name, tref.ptr))
         self.typedefs[name] = tref
         self.eat("PUNCT", ";")
 
-    def _funcptr_declarator(self, ret: cast.TypeRef):
+    def _funcptr_declarator(self, ret: cast.TypeRef, abstract: bool = False):
         """`( * NAME ) ( param-type-list )` — a function-pointer declarator. Returns a funcptr TypeRef
         (carrying the return + parameter types for faithful emit) and the declared NAME. The name is
-        also stashed in ``base`` so a later use of the alias renders verbatim."""
+        also stashed in ``base`` so a later use of the alias renders verbatim. `abstract`: a parameter's,
+        `( * ) ( ... )`, whose name may be left out."""
         self.eat("PUNCT", "(")
         self.eat("OP", "*")
-        name = self.eat("IDENT").text
+        name = self.eat("IDENT").text if not abstract or self.at("IDENT") else ""
         self.eat("PUNCT", ")")
         self.eat("PUNCT", "(")
         params: list[cast.TypeRef] = []
@@ -423,9 +484,21 @@ class _Parser:
             name,
         )
 
-    def _is_funcptr_declarator(self) -> bool:
+    def _is_funcptr_declarator(self, abstract: bool = False) -> bool:
         """True if the cursor is at `( * NAME ) (` — a function-pointer declarator (`int (*g)(int)`),
-        as opposed to the row-pointer `( * NAME ) [` form that `_declarator` handles."""
+        as opposed to the row-pointer `( * NAME ) [` form that `_declarator` handles. `abstract`: a
+        parameter's, which may leave the name out -- `( * ) (`."""
+        if (
+            abstract
+            and self.at("PUNCT", "(")
+            and self.peek(1).kind == "OP"
+            and self.peek(1).text == "*"
+            and self.peek(2).kind == "PUNCT"
+            and self.peek(2).text == ")"
+            and self.peek(3).kind == "PUNCT"
+            and self.peek(3).text == "("
+        ):
+            return True
         return (
             self.at("PUNCT", "(")
             and self.peek(1).kind == "OP"
@@ -437,12 +510,14 @@ class _Parser:
             and self.peek(4).text == "("
         )
 
-    def _declarator_or_funcptr(self, base: cast.TypeRef):
+    def _declarator_or_funcptr(self, base: cast.TypeRef, abstract: bool = False):
         """A declarator (param or local position) that may be an inline function-pointer
-        `RET (*NAME)(PARAMS)` — for which there is no typedef name, so the full signature is captured."""
-        if self._is_funcptr_declarator():
-            return self._funcptr_declarator(base)
-        return self._declarator(base)
+        `RET (*NAME)(PARAMS)` — for which there is no typedef name, so the full signature is captured.
+        `abstract`: a parameter's, whose name may be left out (`uint32_t *`, `uint32_t (*)(uint32_t)`);
+        the name is then ""."""
+        if self._is_funcptr_declarator(abstract):
+            return self._funcptr_declarator(base, abstract)
+        return self._declarator(base, abstract)
 
     def _enum_body(self, tag: str) -> None:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
@@ -611,6 +686,10 @@ class _Parser:
                     tref, name = self._declarator(
                         base
                     )  #   `unsigned x, y, z;` / `unsigned a:3, b:5;`  `o->fn(a)`)
+                    if inline_agg and base.base.startswith("$anon"):
+                        # `struct {...} m;`: the anonymous type is m's, its first declarator's
+                        member = (tag, name, tref.ptr, len(tref.array))
+                        self._anon_member.setdefault(base.base, member)
                 width = 0
                 if self.at("PUNCT", ":"):  # bitfield:  type name : width;
                     self.nxt()
@@ -816,8 +895,9 @@ class _Parser:
         }
         return table.get(joined, words[-1] if len(words) == 1 else joined)
 
-    def _declarator(self, base: cast.TypeRef):
-        """Parse `*` pointer prefixes, the name, and `[N]` array suffixes onto `base`."""
+    def _declarator(self, base: cast.TypeRef, abstract: bool = False):
+        """Parse `*` pointer prefixes, the name, and `[N]` array suffixes onto `base`. `abstract`: a
+        parameter's, whose name may be left out (the name is then "")."""
         ptr = 0
         while self.at("OP", "*"):
             ptr += 1
@@ -875,7 +955,7 @@ class _Parser:
                         bit_width=base.bit_width,
                     ), nm
             self.i = save  # not `(*name)[..]` -> a normal declarator
-        name = self.eat("IDENT").text
+        name = self.eat("IDENT").text if not abstract or self.at("IDENT") else ""
         dims = []
         vla = None
         vla_dims: tuple = ()
@@ -937,7 +1017,9 @@ class _Parser:
                     variadic = True
                     break
                 ptype = self._type_spec()
-                ptype, pname = self._declarator_or_funcptr(ptype)
+                # a prototype may leave a parameter unnamed (`T g(uint32_t *, uint32_t);`); a definition
+                # names every one it binds, which the check below the list asks
+                ptype, pname = self._declarator_or_funcptr(ptype, abstract=True)
                 params.append(cast.Param(ptype, pname))
                 if self.at("PUNCT", ","):
                     self.nxt()
@@ -952,7 +1034,15 @@ class _Parser:
                 ret,
                 tuple(p.type for p in params),
             )  # or an in-unit forward decl
+            self._declared.add(name)
             return None
+        if any(not p.name for p in params):
+            raise CParseError(
+                f"a parameter of the definition of {name!r} has no name", pos=self.peek().pos
+            )
+        # the function is in scope from its declarator on, so its own body may name it (C11 6.2.1p7)
+        self._declared.add(name)
+        declared = frozenset(self._declared)
         body = self._block()
         return cast.Func(
             ret=ret,
@@ -962,6 +1052,7 @@ class _Parser:
             variadic=variadic,
             reproducible=reproducible,
             static_fn=static,
+            declared=declared,
         )
 
     # --- statements ---

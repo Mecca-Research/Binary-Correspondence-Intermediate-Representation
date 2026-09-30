@@ -1854,8 +1854,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     emit's flat `T *` parameter on both rails (an incompatible-pointer-types error); the twin refuses a
     file-scope `char buf[] = "..."` with a misleading "non-constant enum initializer", which the oracle
     lowers; both rails refuse a list of file-scope arrays in one declaration (`uint32_t a[3], b[2];`);
-  - an anonymous struct named by a typedef (`typedef struct { ... } P;`) is spelled as an unusable type in
-    both emits;
   - the twin miscompiles an integer literal above `LLONG_MAX` (it saturates) and an octal literal (read as
     decimal); the oracle's global-initializer fold ignores C types and floors a division
     (`int32_t gq = -7 / 2;` renders `-4`), where the static fold's helpers would not;
@@ -1869,17 +1867,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     emits, a constraint violation (C11 6.5.9p2) that Clang and GCC only warn about;
   - both rails accept a compound assignment or an increment of a struct (`a += 5`, `a++`) and a struct
     converted to an integer (`uint32_t k = a;`), which Clang rejects;
-  - both rails accept a call to a function the unit defines later with no declaration before the call,
-    which C99 does not (C11 6.5.1p2), and lower it as the prototyped unit; the twin then types the call's
-    result as `uint32_t` (`uint32_t t = bcir_g(s);` for a `uint64_t g`), the oracle as the callee's type, and
-    the digests are equal;
-  - neither rail's emit declares a function before its definition, so a call to a function defined after its
-    caller does not compile as emitted, even with a prototype before the call (the `cfront_nullarg_link.c`
-    test supplies the declarations);
-  - a prototyped callee's `extern` declaration drops `const` from a pointer parameter on both rails, which
-    conflicts with the original prototype in one translation unit, and the oracle spells a function-pointer
-    declarator parameter by its name (`extern uint32_t g(fn, uint32_t);`), which does not compile; both rails
-    refuse a prototype with unnamed parameters (`uint32_t g(uint32_t *, uint32_t);`);
   - a null pointer constant passed through a function pointer, or to `free` or `realloc`, is still an `int`
     temp in both emits, which Clang and GCC reject.
 
@@ -2082,7 +2069,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - Both emitters spell a loop whose condition is the constant 1 with no test, and name each loop's continue
       label clear of every label the function defines (`__cont_<id>_<k>`).
     - Both emitters spell the zero baseline as `= {}`, the C23 empty initializer, which GCC and Clang take in every
-      mode the harnesses use.
+      mode the harnesses use. `test_local_aggregate_initializers_oracle` still asserted `= {0}`, and failed on this
+      tree: only the slice's focused tests had run. CF-RTWIDE.1 asserts `= {}`.
     - The linkable emit includes `<string.h>` for a string routine and `<stdlib.h>` for `aligned_alloc`.
     - The classifier supplies the original's definitions, read whole from the preprocessed source, and the
       control-flow-not-idempotent exclusion is retired.
@@ -2099,6 +2087,62 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     size_t;`, common in freestanding code), which the twin accepts;
   - the twin refuses a braced initializer of a function-pointer local (`uint32_t (*fp)(uint32_t) = {g1};`), which
     the oracle lowers.
+
+  CF-DECLS and CF-ANON (2026-09-30) made the emits declare functions and name types as C does, on both rails.
+  RED was measured on the parent (`a8fa97fd`).
+  - The defects (CF-DECLS):
+    - Neither emit declared a function before its definition, so a call to a callee defined after its caller did
+      not compile as emitted, even with a prototype before the call.
+    - Both rails accepted a call made before any declaration of its callee, which C99 does not (C11 6.5.1p2), and
+      lowered it as if prototyped. The twin typed the result by its `uint32_t` default (`uint32_t t = bcir_g(s);`
+      for a `uint64_t g`) under the same claim graph as the oracle, so no digest showed the truncation. A
+      prototype after the call split the rails: the oracle typed the call by it, the twin lowered an undefined
+      callee.
+    - A prototyped callee's `extern` declaration dropped `const` from a pointer or array parameter on both rails,
+      which conflicts with the original prototype in one translation unit, and the oracle spelled a
+      function-pointer parameter by its name (`extern uint32_t g(fn, uint32_t);`). Both rails refused a prototype
+      that leaves its parameters unnamed.
+    - Found beside them: the oracle lowered a designator and a `sizeof` operand naming a function no declaration
+      precedes, which the twin refused; the twin refused a `sizeof` of a call through a prototype and a designator
+      of a function its prototype declares before its definition, which the oracle lowered.
+  - The defects (CF-ANON): both emits spelled a struct or union declared without a tag and named by a typedef as a
+    tag no compiler knows -- the oracle `struct  a` (the empty tag), the twin `struct $anon0 a` -- so no function
+    using one compiled; the digests agreed, so no gate noticed. The oracle registered each such aggregate under the
+    empty tag, so a unit with two of them refused the first's members ("no member named 'x' in struct ''"), where
+    the twin lowered it.
+  - RED: on the parent the oracle refuses `cfront_decls.c` and `cfront_decls_link.c` (an unnamed parameter) and
+    `cfront_anonstruct.c`; the twin's emit of `cfront_nullarg_link.c`, with the hand-supplied declarations gone,
+    does not build; the oracle lowers the undeclared calls; the twin refuses a `sizeof` through a prototype. The
+    six new or changed tests fail there.
+  - What landed, on both rails:
+    - One notion of a function declared here. The oracle's parser records the functions each definition can see
+      (`Func.declared`), and `_require_declared` refuses a call, a designator or a `sizeof` operand naming a unit
+      function outside them (`call to undeclared function 'g'`, `use of undeclared identifier 'g'`). The twin
+      records each call no earlier definition, prototype or the function itself declares (`undecl`), and refuses
+      it once the unit is parsed if the unit defines or prototypes the callee after it; `declared_ret` types a
+      `sizeof` of a call and a designator by an earlier prototype. A callee the unit never declares stays R18's
+      undefined edge.
+    - Each emit declares the unit's functions a function calls ahead of it, with the definition's own signature
+      (`emit_function(lf, unit)` and `_signature`; `emit_callee_decls` and `emit_sig`).
+    - A prototype's `extern` declaration keeps a pointer or array parameter's `const` (`proto_consts`;
+      `bcir_ctype.is_const`) and spells a function-pointer parameter `RET (*)(PARAMS)` (the twin keeps its
+      `__bcir_fpN` alias). A prototype may leave a parameter unnamed; a definition that does is refused.
+    - An anonymous aggregate keeps a synthesized tag inside each rail, and the emit spells it as C names it -- the
+      typedef's name, `__typeof__(*(PP)0)` when only a pointer typedef names it, or `__typeof__(((P *)0)->m[0])`
+      for the type of a nested member `m` -- by one pass over the finished emit that leaves literals and comments
+      alone (`respell_anon` on both rails; the chain is walked without recursion).
+    - The twin's diagnostic for an identifier nothing declares is the oracle's (`fail_undeclared`, out of the
+      recursive descent's frames).
+  - Outcomes: `cfront_decls.c` and `cfront_anonstruct.c` join the corpus; they and `cfront_decls_link.c` lower to
+    one claim graph on the four targets, and every emit runs as the original with no declaration supplied by hand.
+    The fault `B12` of `cfront-buf.json` anchored on a line `ctext_putn` repeats; it takes one more line of context.
+  32 injected defects, 16 on each rail, are each caught (`tools/testing/faults/cfront-decls.json`).
+  Found, not fixed here (each a suggested follow-up):
+  - a qualifier between the stars of a prototype's pointer parameter (`const char *const *argv`) and a qualifier in
+    a function-pointer parameter's own parameters are dropped from the `extern` declaration on both rails, which
+    then conflicts with the original;
+  - a function designator of an external function, declared by its prototype and defined by another unit, is
+    refused on both rails (`use of undeclared identifier`), which C allows.
 
 ---
 

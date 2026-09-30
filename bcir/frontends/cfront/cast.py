@@ -342,6 +342,11 @@ class Func:
     static_fn: bool = False  # source `static` on the definition (internal linkage). The default
     #   emit is static regardless; the LINKABLE emit keeps `static` only
     #   when this is set (source-static honoring).
+    declared: frozenset | None = (
+        None  # the file-scope functions declared -- defined or prototyped --
+    )
+    #   before the body, the function itself included: what its body may call or name (C11
+    #   6.5.1p2). None when no parser recorded it (nothing is checked)
 
 
 @dataclass(frozen=True)
@@ -375,3 +380,7 @@ class Unit:
     protos: dict = field(default_factory=dict)  # name -> (ret TypeRef, (param TypeRef, ...)) --
     #   file-scope function PROTOTYPES (Phase 3 linking:
     #   a cross-TU callee, or an in-unit forward decl)
+    anon_spelling: dict = field(
+        default_factory=dict
+    )  # a synthesized `$anonN` tag -> how C names the
+    #   anonymous aggregate: a file-scope typedef's name, or `__typeof__` of the member it is the type of

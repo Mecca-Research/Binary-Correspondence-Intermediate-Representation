@@ -1050,7 +1050,7 @@ class LoweredFunc:
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
     tu_protos: dict = field(
         default_factory=dict
-    )  # cross-TU callee -> (ret CType, (param CType, ...))
+    )  # cross-TU callee -> (ret CType, (param CType, ...), (param points to const, ...))
     #   -- prototyped, not defined here; the emit declares them
     variadic: bool = False  # a trailing `...` after the named params (variadic function)
     reproducible: bool = False  # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
@@ -1095,6 +1095,8 @@ class LoweredUnit:
     #   function among them has its address taken (an ops table
     #   `struct ops t = { handler };`) -- the escape analysis
     #   then assumes callers it cannot see
+    anon_spelling: dict = field(default_factory=dict)  # how C names each anonymous aggregate (the
+    #   parse's `Unit.anon_spelling`), which the emit's `respell_anon` spells it by
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -1143,6 +1145,7 @@ class _FuncLowerer:
         abi=None,
         protos: dict | None = None,
         func_params: dict | None = None,
+        proto_consts: dict | None = None,
     ):
         self.func = func
         self.abi = abi or HOST  # the target data model for laying out user types (long/ptr)
@@ -1154,6 +1157,9 @@ class _FuncLowerer:
         # (`_param_types`): what a null pointer constant argument becomes (CF-NULLARG)
         self.func_params = func_params or {}
         self.tu_used: dict = {}  # the tu callees THIS function actually calls (for the emit decl)
+        # a prototyped callee -> whether each parameter points to `const`, which its emitted `extern`
+        # declaration keeps (a `const T *` parameter is another type than a `T *` one)
+        self.proto_consts = proto_consts or {}
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid  # shared mutable [next_claim_id]
@@ -1803,11 +1809,21 @@ class _FuncLowerer:
         self.str_pool[spelling] = rid
         return rid
 
+    def _require_declared(self, name: str, what: str, pos: int | None = None) -> None:
+        """A function of the unit -- defined or prototyped -- named where no declaration of it precedes
+        the name is refused: C99 dropped the implicit declaration (C11 6.5.1p2), and a call lowered as if
+        prototyped typed its result by a declaration the call cannot see. The function's own body sees it.
+        `what` names the use: a call, or a designator or `sizeof` operand (the twin's `undecl` check)."""
+        declared = self.func.declared
+        if declared is not None and name not in declared:
+            raise CLowerError(f"{what} {name!r}", pos=pos)
+
     def _func_ptr_value(self, name: str) -> int:
         """A defined function used as a VALUE (function-to-pointer decay, `o->fn = g`): an anonymous funcptr
         'global' whose value is the function's address. The emitter renders the rid as the bare function name
         (C decays it to a pointer), so -- like a string literal -- no claim is emitted (parity-critical: the
         bare name must cost 0 claims on both rails)."""
+        self._require_declared(name, "use of undeclared identifier")
         existing = self.func_pool.get(name)
         if existing is not None:
             return existing
@@ -2144,6 +2160,7 @@ class _FuncLowerer:
                     and o.ident not in self.env
                     and (o.ident in self.func_rets or o.ident in self.protos)
                 ):  # `&f`: a pointer to the function, as wide as any pointer here
+                    self._require_declared(o.ident, "use of undeclared identifier", o.pos)
                     return funcptr(o.ident, self.func_rets.get(o.ident), (), self.abi)
                 return pointer(self._sizeof_type(o), self.abi)
             if node.op == "!":
@@ -2174,6 +2191,10 @@ class _FuncLowerer:
         if isinstance(node, cast.IncDec):
             return unqualified(self._sizeof_object(node.operand))
         if isinstance(node, cast.CallExpr):
+            if node.callee not in self.env and (
+                node.callee in self.func_rets or node.callee in self.protos
+            ):
+                self._require_declared(node.callee, "call to undeclared function")
             ret = self.func_rets.get(node.callee)
             if ret is None and node.callee in self.env:  # a call through a function-pointer object
                 fpt = self.env[node.callee][1]
@@ -3952,6 +3973,8 @@ class _FuncLowerer:
                 actuals,
                 (t,),
             )
+        if node.callee in self.func_rets or node.callee in self.protos:
+            self._require_declared(node.callee, "call to undeclared function")
         if node.callee in self.protos and node.callee not in self.func_rets:
             # Phase 3 LINKING: a PROTOTYPED cross-TU callee -- a TYPED external edge the host LINKER
             # resolves from a sibling object. Like a libm edge it is opaque to the in-unit R18 call
@@ -3960,7 +3983,8 @@ class _FuncLowerer:
             # The emit declares the recorded signature so the emitted TU compiles standalone.
             ret_ct, param_cts = self.protos[node.callee]
             self._null_pointer_args(actuals, param_cts)
-            self.tu_used[node.callee] = (ret_ct, param_cts)
+            consts = self.proto_consts.get(node.callee, (False,) * len(param_cts))
+            self.tu_used[node.callee] = (ret_ct, param_cts, consts)
             if ret_ct.name == "void":
                 self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
                 return _VOID_RID
@@ -4658,6 +4682,15 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         for name, (ret, params) in unit.protos.items()
         if name not in func_rets
     }
+    # ... and whether each of a prototype's parameters points to `const` -- the base type's qualifier of a
+    # pointer or of an array, which decays to one -- for the emit's `extern` declaration of the callee
+    proto_consts = {
+        name: tuple(
+            "const" in p.quals and bool(p.ptr or p.array or p.vla is not None) for p in params
+        )
+        for name, (_ret, params) in unit.protos.items()
+        if name not in func_rets
+    }
     for idx, fn in enumerate(unit.funcs):
         lf = _FuncLowerer(
             fn,
@@ -4671,6 +4704,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             abi=abi,
             protos=protos,
             func_params=func_params,
+            proto_consts=proto_consts,
         ).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
@@ -4686,6 +4720,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         resources=resources,
         globals_decl=tuple(gdecls),
         init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),
+        anon_spelling=dict(unit.anon_spelling),
     )
 
 

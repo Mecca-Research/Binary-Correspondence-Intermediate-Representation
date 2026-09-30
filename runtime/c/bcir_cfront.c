@@ -100,6 +100,11 @@ typedef struct { char tag[BCIR_CIR_NAME]; field f[MAXFLD]; int nf; int size; int
                  int incomplete;    /* named but not (yet) laid out -- `struct fwd;`, a pointer to a struct defined
                                      * later or never, the struct whose body is being parsed: a pointer to it is
                                      * complete, anything else needs its layout (the oracle's `CType.incomplete`) */
+                 /* how C names an ANONYMOUS aggregate (a synthesized `$anonN` tag no compiler knows; `anon_spelling`):
+                  * the file-scope typedef that names it (`typedef struct {...} P;`), else the named member it is the
+                  * type of -- `parent`'s member `member`, through `mstars` `*`s and `mdims` array dimensions */
+                 char tdname[BCIR_CIR_NAME]; int parent; char member[BCIR_CIR_NAME]; int mstars, mdims;
+                 char tdptr[BCIR_CIR_NAME]; int tdstars;   /* ... else a typedef of a pointer to it (`*PP`) */
                } sdef;
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx;
                  int nd, dims[3];   /* an array typedef's dims, outer first (`typedef T row_t[6];`): each declarator
@@ -191,6 +196,7 @@ typedef struct {
   const bcir_abi *abi;  /* the target data model the unit is laid out for (long/ptr widths) */
   uint32_t rid, cid;
   uint32_t cl_ctr;   /* unique anonymous compound-literal locals (`_cl<N>`) */
+  ctext anontext;                                    /* the emit with its anonymous aggregates spelled (respell_anon) */
   ctext fpdefs; int n_fpdef;                         /* synthesized `typedef RET (*__bcir_fpN)(PARAMS);`
                                                       * lines for direct funcptr-param declarators (which
                                                       * have no source typedef to print), emitted as a
@@ -213,6 +219,10 @@ typedef struct {
                                                       * scratch arena, which lasts the compile); grows
                                                       * geometrically */
   int n_protos, cap_protos;
+  struct cc_undecl { struct cc_undecl *next; char name[BCIR_CIR_NAME]; } *undecl, *undecl_last;
+                                                     /* the callees called before any declaration of theirs, in
+                                                      * call order (the scratch arena): the unit's end refuses
+                                                      * one the unit then defines or prototypes (C11 6.5.1p2) */
   /* §5.12 per-function mutation pre-pass (the C twin of _mut_assigned / _mut_addr): over the whole
    * function body, the number of assignments to each NAME and whether its address is ever taken (`&x`).
    * Drives extent-stability -- a recovered count / a bound pointer is trusted only when STABLE (assigned
@@ -319,6 +329,14 @@ static void ctext_putf(CC *c, ctext *t, const char *fmt, ...){
   if(!cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;
   va_start(ap,fmt); (void)vsnprintf(t->s+t->w,t->cap-t->w,fmt,ap); va_end(ap);
   t->w=need;
+}
+/* Append `k` bytes of `p` to `t` (a NUL follows them), as ctext_putf appends its formatted text. */
+static void ctext_putn(CC *c, ctext *t, const char *p, size_t k){
+  size_t need;
+  if(!bcir_size_add(t->w,k,&need)){ cc_raise_oom(c); return; }
+  if(!cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;
+  if(k) memcpy(t->s+t->w,p,k);
+  t->s[need]=0; t->w=need;
 }
 /* The active target ABI (defaults to the host LP64 model when the driver set none). */
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
@@ -654,12 +672,15 @@ static int find_global(CC *c,const char *s,int n){
 }
 /* A struct/union tag named before its definition (or never defined): an incomplete sdef slot, which the
  * definition completes in place (CF-SELFREF). An existing tag keeps its slot. */
+/* A tag the front end synthesized for an anonymous aggregate (`$anonN`), which no C compiler knows. */
+static int is_anon_tag(const char *tag){ return !strncmp(tag,"$anon",5); }
 static int declare_struct(CC *c, const tok *tag, int is_union){
   int si=find_struct(c,tag->s,tag->n);
   if(si>=0) return si;
   if(!CC_ENSURE(c, c->s, c->ns, c->cap_s)) return -1;
   si=c->ns++; sdef *S=&c->s[si];
   S->nf=0; S->size=0; S->align=1; S->is_union=is_union; S->vol_storage=0; S->nanon=0; S->incomplete=1;
+  S->tdname[0]=0; S->parent=-1; S->member[0]=0; S->mstars=S->mdims=0; S->tdptr[0]=0; S->tdstars=0;
   idcpy(c,S->tag,tag);
   return si;
 }
@@ -747,14 +768,16 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"_Atomic")){ c->i++;
       if(is(c,"(")){ c->i++; bcir_ctype inner; int isi;    /* `_Atomic ( type-name )` -- atomic type specifier */
         if(p_type(c,&inner,&isi)) return 1; if(!eat(c,")")) return 1;
-        int vol=ty->is_volatile; *ty=inner; ty->is_atomic=1; if(vol)ty->is_volatile=1; *sidx=isi; seen=1; break; }
+        int vol=ty->is_volatile, cn=ty->is_const; *ty=inner; ty->is_atomic=1; if(vol)ty->is_volatile=1;
+        ty->is_const=(uint8_t)(ty->is_const||cn); *sidx=isi; seen=1; break; }
       ty->is_atomic=1; continue; }
     if(is(c,"static")){c->saw_static=1;c->i++;continue;}   /* recorded: p_func captures it right after
                                                             * its return-type parse (source-static
                                                             * honoring in --linkable); block-scope
                                                             * statics peek the token BEFORE p_type. */
     if(is(c,"extern")){c->saw_extern=1;c->i++;continue;}
-    if(is(c,"const")||is(c,"inline")
+    if(is(c,"const")){ty->is_const=1;c->i++;continue;}   /* spelled by a prototype's pointer parameter */
+    if(is(c,"inline")
        ||is(c,"_Thread_local")||is(c,"thread_local")){c->i++;continue;}  /* storage class / qualifier */
     if(is(c,"typeof")||is(c,"__typeof__")||is(c,"typeof_unqual")){       /* typeof(type-name) / typeof(var) */
       c->i++; if(!eat(c,"(")) return 1;
@@ -797,8 +820,9 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"va_list")||is(c,"__builtin_va_list")){              /* the variadic cursor type (<stdarg.h>) -- */
       ty->kind=0;ty->is_valist=1;ty->size=cc_abi(c)->pointer_size;ty->signd=0;c->i++;seen=1;break;}  /* opaque, emit `va_list` */
     if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
-      if(ti>=0){int vol=ty->is_volatile, at=ty->is_atomic;*ty=c->td[ti].ty;
+      if(ti>=0){int vol=ty->is_volatile, at=ty->is_atomic, cn=ty->is_const;*ty=c->td[ti].ty;
         if(vol)ty->is_volatile=1;
+        if(cn)ty->is_const=1;                         /* `const T *` of a typedef T */
         if(at)ty->is_atomic=1;                        /* `_Atomic T` of a typedef stays atomic */
         *sidx=c->td[ti].sidx;c->i++;seen=1;
         c->td_nd=c->td[ti].nd; for(int d=0;d<3;d++) c->td_dims[d]=c->td[ti].dims[d];   /* an array typedef */
@@ -835,7 +859,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
     if(is(c,"volatile")){ ty->is_volatile=1; c->i++; continue; }
     if(is(c,"static")){ c->saw_static=1; c->i++; continue; }
     if(is(c,"extern")){ c->saw_extern=1; c->i++; continue; }
-    if(is(c,"const")||is(c,"inline")||is(c,"_Thread_local")||is(c,"thread_local")){ c->i++; continue; }
+    if(is(c,"const")){ ty->is_const=1; c->i++; continue; }
+    if(is(c,"inline")||is(c,"_Thread_local")||is(c,"thread_local")){ c->i++; continue; }
     break;
   }
   if(!seen){fail(c,"expected a type");return 1;}
@@ -927,6 +952,7 @@ static int p_struct_body(CC *c) {
     my=c->ns++; }                       /* claim our slot NOW: an inline aggregate member recurses into
                                          * p_struct_body and must take a LATER slot (and may realloc c->s). */
   sdef *S=&c->s[my]; S->nf=0; S->align=1; S->is_union=is_union; S->vol_storage=0; S->nanon=0; S->size=0;
+  S->tdname[0]=0; S->parent=-1; S->member[0]=0; S->mstars=S->mdims=0; S->tdptr[0]=0; S->tdstars=0;
   S->incomplete=1;                      /* until its closing brace: `struct node *next` is fine, a by-value
                                          * `struct node` member of itself is not */
   if(isk(c,T_ID)&&!is(c,"{")){tok tag=adv(c);idcpy(c,S->tag,&tag);}
@@ -1005,6 +1031,10 @@ static int p_struct_body(CC *c) {
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
       while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
+      if(inl && si>=0 && is_anon_tag(c->s[si].tag) && c->s[si].parent<0 && !c->s[si].tdname[0]){
+        sdef *A=&c->s[si];                              /* `struct {...} m;`: the anonymous type is m's -- its first
+                                                         * declarator's (`anon_spelling`) */
+        A->parent=my; idcpy(c,A->member,&nm); A->mstars=ty.kind==2?(ty.ptr_depth?ty.ptr_depth:1):0; A->mdims=nadims; }
       for(int d=0; d<btd; d++){ int dim=btdd[d];      /* a typedef'd array's dims follow the declarator's own */
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
@@ -1164,9 +1194,12 @@ static void p_typedef(CC *c){
       if(si<0 && tag.k==T_ID) si=declare_struct(c,&tag,isu);   /* `typedef struct node node_t;` ahead of it */
       if(si<0){fail(c,"unknown struct in typedef");return;} ty.kind=1;ty.size=c->s[si].size;sidx=si;
       ty.is_union=(uint8_t)c->s[si].is_union;idcpy(c,ty.tag,&tag);}
-    while(is(c,"*")){c->i++;
+    int stars=0;
+    while(is(c,"*")){c->i++; stars++;
       while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
       ty.ptr_to_struct=(ty.kind==1);ty.kind=2;}
+    if(stars && sidx>=0 && is_anon_tag(c->s[sidx].tag) && !c->s[sidx].tdptr[0] && isk(c,T_ID) && !tok_is(tat(c,c->i+1),"[")){
+      idcpy(c,c->s[sidx].tdptr,pk(c)); c->s[sidx].tdstars=stars; }   /* `typedef struct {...} *PP;` (anon_spelling) */
   } else if(is(c,"enum")){                            /* alias an enum -> an int scalar */
     c->i++; if(isk(c,T_ID)&&!is(c,"{"))c->i++; if(is(c,"{"))p_enum_body(c);
     ty.kind=0; ty.size=4; ty.signd=1;
@@ -1201,6 +1234,8 @@ static void p_typedef(CC *c){
     if(d<=0 || d>INT_MAX){ fail(c,"an array typedef needs a positive constant size"); return; }
     if(tnd>=3){ fail(c,"an array typedef of more than 3 dimensions"); return; }
     tdims[tnd++]=(int)d; }
+  if(ty.kind==1 && sidx>=0 && !tnd && !bnd && is_anon_tag(c->s[sidx].tag) && !c->s[sidx].tdname[0] && c->s[sidx].parent<0)
+    idcpy(c,c->s[sidx].tdname,&nm);                   /* `typedef struct {...} P;`: C names the aggregate `P` */
   for(int d=0; d<bnd; d++){ if(tnd>=3){ fail(c,"an array typedef of more than 3 dimensions"); return; }
     tdims[tnd++]=bdims[d]; }
   CC_ENSURE(c,c->td,c->ntd,c->cap_td);
@@ -3235,6 +3270,26 @@ static const bcir_ctype *callee_ret(CC *c, const tok *name) {
   return NULL;
 }
 
+/* An identifier nothing in scope declares -- the oracle's `_lookup` diagnostic, the name quoted (CF-DECLS). Out of
+ * the recursive descent's frames (BCIR_NOINLINE), as its buffer would sit in every level. */
+static BCIR_NOINLINE void fail_undeclared(CC *c, const tok *id){
+  char msg[BCIR_CIR_NAME+40];
+  snprintf(msg,sizeof msg,"use of undeclared identifier '%.*s'",id->n<BCIR_CIR_NAME?id->n:BCIR_CIR_NAME,id->s);
+  fail(c,msg);
+}
+/* The return type of the function `name` as a declaration before this point gives it -- an earlier definition
+ * (`callee_ret`) or prototype -- or NULL: a later declaration does not declare it here (C11 6.5.1p2; the oracle's
+ * `_require_declared`). What a `sizeof` of a call and a function designator are typed by. */
+static const bcir_ctype *declared_ret(CC *c, const tok *name) {
+  const bcir_ctype *r=callee_ret(c,name);
+  if(r) return r;
+  for(int k=0;k<c->n_protos;k++)
+    if((int)strlen(c->protos[k].name)==name->n && !strncmp(c->protos[k].name,name->s,(size_t)name->n))
+      return &c->protos[k].ret;
+  return NULL;
+}
+static int unit_defines(CC *c, const tok *name);   /* fwd: every definition of the unit (below) */
+
 /* Nonzero if the unit DEFINES a function named `name` anywhere -- a file-scope `name ( ... ) {`: the oracle's
  * `func_rets`, which every definition of the unit fills before any body lowers. A library name the unit defines
  * is the unit's own function, never the library's edge; the twin parses in one pass, so `callee_ret` sees only
@@ -3396,6 +3451,16 @@ static uint32_t p_call(CC *c, const tok *name) {
       if(cl){cl->n_rd=(uint8_t)na;for(int k=0;k<na;k++)cl->rd[k]=args[k];cl->n_wr=1;cl->wr[0]=t;}
       return t;
     }
+  }
+  if(!rt && !(c->fn && (int)strlen(c->fn->name)==name->n && !strncmp(c->fn->name,name->s,(size_t)name->n))){
+    /* no definition or prototype of the callee precedes the call, and it is not the function itself: the
+     * unit's end refuses it if the unit declares it later (the oracle's `_require_declared`); a callee the
+     * unit never declares stays R18's undefined edge */
+    struct cc_undecl *u=(struct cc_undecl *)bcir_host_arena_allocate(&c->scratch,sizeof *u,_Alignof(struct cc_undecl));
+    if(!u){ cc_raise_oom(c); return temp(c,4); }
+    u->next=NULL; idcpy(c,u->name,name);
+    if(c->undecl_last) c->undecl_last->next=u; else c->undecl=u;
+    c->undecl_last=u;
   }
   uint32_t t;
   if(rt && rt->kind==1){                              /* a struct/union RETURN: a by-value aggregate temp
@@ -3770,7 +3835,7 @@ static int sz_name(CC *c, szt *t){
       memset(&rt,0,sizeof rt); rt.size=oty->fp_ret_size; rt.signd=oty->fp_ret_signd; rt.is_float=oty->fp_ret_float;
     } else if(oty) return 0;                         /* a call of an object that is no function: lowered (and refused) */
     else {
-      const bcir_ctype *cr=callee_ret(c,&id);
+      const bcir_ctype *cr=declared_ret(c,&id);     /* a prototype declares it as a definition does */
       if(!cr){ fail(c,"sizeof of a call to a function whose return type is unknown"); return -1; }
       rt=*cr;
     }
@@ -4036,9 +4101,12 @@ static uint32_t p_primary(CC *c) {
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
     if(!v){
-      if(callee_ret(c,&id)){                             /* a defined FUNCTION used as a VALUE (function-to-pointer
+      if(callee_ret(c,&id) || (declared_ret(c,&id) && unit_defines(c,&id))){
+                                                         /* a defined FUNCTION used as a VALUE (function-to-pointer
                                                           * decay, e.g. `o->fn = g`): a funcptr value emitted as the
-                                                          * bare function name (C decays it). No claim. */
+                                                          * bare function name (C decays it). No claim. One defined
+                                                          * later is declared here by its prototype, as the oracle's
+                                                          * `func_rets` and `_require_declared` hold it. */
         char fnm[BCIR_CIR_NAME]; idcpy(c,fnm,&id);
         uint32_t r=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_SCALAR,fnm);
         if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1]; rr->read_only=1; rr->is_funcptr=1; }
@@ -4062,7 +4130,7 @@ static uint32_t p_primary(CC *c) {
         if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=mo;}
         return r;
       }
-      fail(c,"undefined identifier");return 0;
+      fail_undeclared(c,&id);return 0;
     }
     return postfix_lvalue(c,v);
   }
@@ -7141,6 +7209,7 @@ static int p_func(CC *c, bcir_func *fn) {
   fn->static_fn=(uint8_t)(c->saw_static!=0);       /* source `static` on the definition (linkable emit) */
   tok nm=adv(c); fits(c,fn->name,sizeof fn->name,"%.*s",nm.n,nm.s);
   if(!eat(c,"("))return 1;
+  int unnamed=0;                                   /* a parameter left unnamed: a prototype's (`T g(T *, T);`) */
   if(!is(c,")")) for(;;){
     if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){c->i++;break;}
     if(is(c,"...")){fn->variadic=1;c->i++;break;}   /* a trailing `...` -- the function is variadic */
@@ -7151,12 +7220,15 @@ static int p_func(CC *c, bcir_func *fn) {
      * is no alias to print, so capture the full signature as a synthesized prelude typedef `__bcir_fpN`
      * and type the param kind-3 with that tag. The indirect-call dispatch (p_icall) + the param/emit path
      * then reuse the typedef-funcptr machinery verbatim (ctype_str prints the tag). Scalar ret + params. */
-    if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
+    int fp_abstract = is(c,"(") && tok_is(tat(c,c->i+1),"*") && tok_is(tat(c,c->i+2),")")
+                      && tok_is(tat(c,c->i+3),"(");   /* `RET (*)(PARAMS)`: a prototype's, unnamed */
+    if(fp_abstract || (is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
        && tat(c,c->i+2)->k==T_ID
        && tat(c,c->i+3)->k==T_PUN && tat(c,c->i+3)->n==1 && tat(c,c->i+3)->s[0]==')'
-       && tat(c,c->i+4)->k==T_PUN && tat(c,c->i+4)->n==1 && tat(c,c->i+4)->s[0]=='('){
+       && tat(c,c->i+4)->k==T_PUN && tat(c,c->i+4)->n==1 && tat(c,c->i+4)->s[0]=='(')){
       bcir_ctype ret=ty;                            /* the already-parsed return type */
-      c->i+=2; pn=adv(c);                            /* `( *` then the parameter NAME */
+      c->i+=2;                                       /* `( *` then the parameter NAME, if any */
+      if(fp_abstract){ memset(&pn,0,sizeof pn); pn.s=""; unnamed=1; } else pn=adv(c);
       if(!eat(c,")")||!eat(c,"("))return 1;          /* `) (` -- into the parameter-type list */
       char rets[BCIR_EMIT_TYPE]; ctype_str(&ret,rets,sizeof rets);   /* the growable prelude, as for a local */
       size_t line=c->fpdefs.w; int np=0;
@@ -7194,7 +7266,8 @@ static int p_func(CC *c, bcir_func *fn) {
     }
     int vla_have=0; tok vla_tok; memset(&vla_tok,0,sizeof vla_tok);   /* §5.12 a VLA-param extent `a[n]` */
     if(!row_ptr){
-    pn=adv(c);
+    if(is(c,",") || is(c,")") || is(c,"[")){ memset(&pn,0,sizeof pn); pn.s=""; unnamed=1; }   /* no name */
+    else pn=adv(c);
     if(is(c,"[") || btd){      /* an array parameter `T name[A][B]...` decays to a flat element ptr */
       int nd=0;
       while(is(c,"[")){ c->i++;
@@ -7252,6 +7325,7 @@ static int p_func(CC *c, bcir_func *fn) {
     if(is(c,",")){c->i++;continue;} break;
   }
   if(!eat(c,")"))return 1;
+  if(unnamed && !is(c,";")){ fail(c,"a parameter of the function's definition has no name"); return 1; }
   if(is(c,";")){                       /* a PROTOTYPE `T name(params);` (Phase 3 linking): record the
     * signature for call typing + render the extern declaration -- a cross-TU callee the host LINKER
     * resolves. A same-unit definition WINS: the unit-end rewrite in bcir_cfront_compile_target turns
@@ -7270,8 +7344,9 @@ static int p_func(CC *c, bcir_func *fn) {
     c->n_protos++;
     char rets[BCIR_EMIT_TYPE]; ctype_str(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */
     ctext_putf(c,&c->tudefs,"extern %s %s(",rets,fn->name);
-    for(int k=0;k<fn->n_params;k++){ char ps[BCIR_EMIT_TYPE]; ctype_str(&fn->params[k].type,ps,sizeof ps);
-      ctext_putf(c,&c->tudefs,"%s%s",k?", ":"",ps); }
+    for(int k=0;k<fn->n_params;k++){ const bcir_ctype *pt=&fn->params[k].type; char ps[BCIR_EMIT_TYPE];
+      ctype_str(pt,ps,sizeof ps);   /* a pointer to const keeps it: without, the declaration's type conflicts */
+      ctext_putf(c,&c->tudefs,"%s%s%s",k?", ":"",pt->kind==2&&pt->is_const?"const ":"",ps); }
     if(fn->variadic) ctext_putf(c,&c->tudefs,"%s...",fn->n_params?", ":"");
     ctext_putf(c,&c->tudefs,"%s);\n",(fn->n_params||fn->variadic)?"":"void");
     return 2;
@@ -7583,6 +7658,22 @@ static const char *cont_label(const bcir_func *f, int own, int n, char *buf, siz
   for(int k=2; own && label_taken(f,buf); k++) snprintf(buf,cap,"__cont_%d_%d",n,k);
   return buf;
 }
+/* A function's signature as its definition spells it -- `static RET bcir_NAME(PARAMS)` -- into `o` (at most `on`
+ * bytes; nothing past them) with the whole length returned: the definition's head, and the forward declaration of
+ * the function a caller's emit makes. */
+static size_t emit_sig(const bcir_func *f,char *o,size_t on){
+  size_t w=0; char ty[BCIR_EMIT_TYPE];
+  #define SO (w<on?w:on)
+  ctype_str(&f->ret,ty,sizeof ty);
+  w+=snprintf(o+SO,on-SO,"static %s bcir_%s(",ty,f->name);
+  if(f->n_params==0&&!f->variadic) w+=snprintf(o+SO,on-SO,"void");
+  for(int i=0;i<f->n_params;i++){char pt[BCIR_EMIT_TYPE];ctype_str(&f->params[i].type,pt,sizeof pt);
+    w+=snprintf(o+SO,on-SO,"%s%s %s",i?", ":"",pt,f->params[i].name);}
+  if(f->variadic) w+=snprintf(o+SO,on-SO,"%s...",f->n_params?", ":"");   /* a trailing variadic ellipsis */
+  w+=snprintf(o+SO,on-SO,")");
+  #undef SO
+  return w;
+}
 static size_t emit_func(const bcir_func *f,char *o,size_t on){
   size_t w=0; char a[BCIR_EMIT_NAME],b[BCIR_EMIT_NAME],d[BCIR_EMIT_NAME],e[BCIR_EMIT_NAME],ty[BCIR_EMIT_TYPE],tb[BCIR_EMIT_TYPE],gb[BCIR_EMIT_EXPR];
   bcir_emit_type_scratch type_scratch={0};
@@ -7594,12 +7685,8 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
    * underflow `on-w` to a huge size_t, writing out of bounds. Output is byte-identical whenever it fits. */
   #define EO (w<on?w:on)
   ctype_str(&f->ret,ty,sizeof ty);
-  w+=snprintf(o+EO,on-EO,"static %s bcir_%s(",ty,f->name);
-  if(f->n_params==0&&!f->variadic) w+=snprintf(o+EO,on-EO,"void");
-  for(int i=0;i<f->n_params;i++){char pt[BCIR_EMIT_TYPE];ctype_str(&f->params[i].type,pt,sizeof pt);
-    w+=snprintf(o+EO,on-EO,"%s%s %s",i?", ":"",pt,f->params[i].name);}
-  if(f->variadic) w+=snprintf(o+EO,on-EO,"%s...",f->n_params?", ":"");   /* a trailing variadic ellipsis */
-  w+=snprintf(o+EO,on-EO,")\n{\n");
+  w+=emit_sig(f,o+EO,on-EO);
+  w+=snprintf(o+EO,on-EO,"\n{\n");
   /* declare named locals up front (mutable storage -- branch merges + loop accumulators) */
   for(size_t i=0;i<f->n_res;i++){const bcir_resource *r=&f->res[i];
     if(r->is_vla) continue;   /* a stack VLA: declared IN-BODY by c.vladecl (size unknown until then), not up front */
@@ -8077,7 +8164,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   bcir_host_arena scratch;
   sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos; irange *iw_rng; iunion *iw_un; int *pure_memo;
   int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure;
-  ctext fpdefs,tudefs;
+  ctext fpdefs,tudefs,anontext;
   if(!context||!context->state) return;
   c=(CC *)context->state;
   bcir_host_arena_reset(&c->scratch);
@@ -8087,7 +8174,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   protos=c->protos;cap_protos=c->cap_protos;
   iw_rng=c->iw_rng;iw_caprng=c->iw_caprng;iw_un=c->iw_un;iw_capun=c->iw_capun;
   pure_memo=c->pure_memo;cap_pure=c->cap_pure;
-  fpdefs=c->fpdefs;tudefs=c->tudefs;
+  fpdefs=c->fpdefs;tudefs=c->tudefs;anontext=c->anontext;
   memset(c,0,sizeof *c);
   c->allocator=allocator;c->scratch=scratch;
   c->s=s;c->cap_s=cap_s;c->td=td;c->cap_td=cap_td;c->ec=ec;c->cap_ec=cap_ec;
@@ -8096,6 +8183,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   c->iw_rng=iw_rng;c->iw_caprng=iw_caprng;c->iw_un=iw_un;c->iw_capun=iw_capun;
   c->pure_memo=pure_memo;c->cap_pure=cap_pure;
   c->fpdefs.s=fpdefs.s;c->fpdefs.cap=fpdefs.cap;c->tudefs.s=tudefs.s;c->tudefs.cap=tudefs.cap;   /* kept, emptied */
+  c->anontext.s=anontext.s;c->anontext.cap=anontext.cap;
   if(c->fpdefs.s) c->fpdefs.s[0]=0;
   if(c->tudefs.s) c->tudefs.s[0]=0;
 }
@@ -8112,6 +8200,7 @@ void bcir_cfront_context_destroy(bcir_cfront_context *context) {
   bcir_host_deallocate(&allocator,c->iw_rng);bcir_host_deallocate(&allocator,c->iw_un);
   bcir_host_deallocate(&allocator,c->pure_memo);
   bcir_host_deallocate(&allocator,c->fpdefs.s);bcir_host_deallocate(&allocator,c->tudefs.s);
+  bcir_host_deallocate(&allocator,c->anontext.s);
   memset(c,0,sizeof *c);bcir_host_deallocate(&allocator,c);
   memset(context,0,sizeof *context);
 }
@@ -8158,9 +8247,109 @@ static const char *emit_function(bcir_cfront_result *out, const bcir_func *f){
   out->emitted_len+=n;
   return NULL;
 }
+/* The forward declaration of each function of the unit `f` calls, before `f`: a callee defined after its caller is
+ * otherwise undeclared at the call, which does not compile (the oracle's `emit_function`, given the unit). Each
+ * callee once, in the order of its first call; `f` itself and a callee the unit does not define are not declared. */
+static const char *emit_callee_decls(bcir_cfront_result *out, const bcir_func *f){
+  for(int k=0;k<f->n_calls;k++){
+    const char *nm=f->calls[k]; int seen=!strcmp(nm,f->name);
+    for(int j=0;j<k && !seen;j++) seen=!strcmp(f->calls[j],nm);
+    const bcir_func *g=NULL;
+    for(int j=0;j<out->unit.n_funcs && !seen && !g;j++) if(!strcmp(out->unit.funcs[j].name,nm)) g=&out->unit.funcs[j];
+    if(!g) continue;
+    size_t room=out->_emitted_cap-out->emitted_len;
+    size_t n=emit_sig(g,out->emitted+out->emitted_len,room);   /* as emit_function renders: whole, or again */
+    if(n>=room){
+      if(!emit_room(out,n)) return emit_oom;
+      room=out->_emitted_cap-out->emitted_len;
+      if(emit_sig(g,out->emitted+out->emitted_len,room)!=n) return emit_unrenderable;
+    }
+    out->emitted_len+=n;
+    const char *e=emit_putf(out,";\n");
+    if(e) return e;
+  }
+  return NULL;
+}
+/* The C spelling of the anonymous aggregate `si` appended to `t` -- 1, or 0 (nothing appended) when C cannot name
+ * it: the name a file-scope typedef gives it (`typedef struct {...} P;`, spelled `P`; `typedef struct {...} *PP;`,
+ * spelled `__typeof__(*(PP)0)`, a null pointer's pointee), or the type of the named
+ * member it is -- `struct {...} m[N];` in `P`, spelled `__typeof__(((P *)0)->m[0])`, a `*` before the member for each
+ * pointer level -- through the spelling of the aggregate that holds the member, up to one a typedef names or that
+ * has a tag. The chain is walked without recursion (the oracle's `anon_spelling`). */
+static int anon_spelling(CC *c, int si, ctext *t){
+  int top=si, k=0;
+  while(!c->s[top].tdname[0] && !c->s[top].tdptr[0] && is_anon_tag(c->s[top].tag)){   /* up to a named one */
+    if(c->s[top].parent<0) return 0;
+    top=c->s[top].parent; k++;
+  }
+  if(!k && !c->s[si].tdname[0] && !c->s[si].tdptr[0]) return 0;   /* a tagged aggregate: `struct tag` names it */
+  for(int x=si; x!=top; x=c->s[x].parent){
+    ctext_putf(c,t,"__typeof__(");
+    for(int st=0; st<c->s[x].mstars; st++) ctext_putf(c,t,"*");
+    ctext_putf(c,t,"((");
+  }
+  if(c->s[top].tdname[0]) ctext_putf(c,t,"%s",c->s[top].tdname);
+  else if(c->s[top].tdptr[0]){                           /* only a pointer typedef names it: a null one's pointee */
+    ctext_putf(c,t,"__typeof__(");
+    for(int st=0; st<c->s[top].tdstars; st++) ctext_putf(c,t,"*");
+    ctext_putf(c,t,"(%s)0)",c->s[top].tdptr); }
+  else ctext_putf(c,t,"%s %s",c->s[top].is_union?"union":"struct",c->s[top].tag);
+  for(int d=k-1; d>=0; d--){                             /* the members, innermost aggregate first */
+    int x=si; for(int j=0;j<d;j++) x=c->s[x].parent;
+    ctext_putf(c,t," *)0)->%s",c->s[x].member);
+    for(int dd=0; dd<c->s[x].mdims; dd++) ctext_putf(c,t,"[0]");
+    ctext_putf(c,t,")");
+  }
+  return 1;
+}
+/* The anonymous aggregate a `struct $anonN` / `union $anonN` at `p` (of `n` bytes) names, its end in `*end`; -1 if
+ * none starts there. */
+static int anon_ref_at(CC *c, const char *p, size_t n, size_t *end){
+  size_t kw = n>=7 && !memcmp(p,"struct ",7) ? 7 : n>=6 && !memcmp(p,"union ",6) ? 6 : 0;
+  if(!kw || n-kw<6 || memcmp(p+kw,"$anon",5)) return -1;
+  size_t j=kw+5; while(j<n && p[j]>='0' && p[j]<='9') j++;
+  if(j==kw+5 || (j<n && (is_idc((unsigned char)p[j]) || p[j]=='$'))) return -1;
+  int si=find_struct(c,p+kw,(int)(j-kw));
+  if(si<0) return -1;
+  *end=j; return si;
+}
+/* Every `struct $anonN` / `union $anonN` of the emitted unit -- outside a string or character literal and a comment
+ * -- spelled as C names it (`anon_spelling`): the synthesized tag is no compiler's, so an emit using a typedef'd
+ * anonymous struct did not compile (CF-ANON; the oracle's `respell_anon`). One C cannot name stays as it was. */
+static const char *respell_anon(CC *c, bcir_cfront_result *out){
+  int any=0;
+  for(int i=0;i<c->ns && !any;i++)
+    any = is_anon_tag(c->s[i].tag) && (c->s[i].tdname[0] || c->s[i].tdptr[0] || c->s[i].parent>=0);
+  if(!any || !out->emitted) return NULL;
+  ctext *t=&c->anontext; t->w=0;
+  const char *src=out->emitted; size_t n=out->emitted_len, run=0;
+  for(size_t i=0;i<n;){
+    if(src[i]=='"' || src[i]=='\''){                    /* a literal: part of the run, untouched */
+      size_t j=i+1; while(j<n && src[j]!=src[i]) j += (src[j]=='\\' && j+1<n) ? 2 : 1;
+      i = j<n ? j+1 : n; continue; }
+    if(src[i]=='/' && i+1<n && src[i+1]=='*'){         /* a comment: likewise */
+      size_t j=i+2; while(j+1<n && !(src[j]=='*' && src[j+1]=='/')) j++;
+      i = j+1<n ? j+2 : n; continue; }
+    if(src[i]=='/' && i+1<n && src[i+1]=='/'){
+      while(i<n && src[i]!='\n') i++;
+      continue; }
+    size_t e; int si;
+    if((i==0 || !(is_idc((unsigned char)src[i-1]) || src[i-1]=='$')) && (si=anon_ref_at(c,src+i,n-i,&e))>=0){
+      size_t w0=t->w;
+      ctext_putn(c,t,src+run,i-run);
+      if(anon_spelling(c,si,t)){ i+=e; run=i; continue; }
+      t->w=w0;                                          /* C cannot name it: the run goes on */
+    }
+    i++;
+  }
+  ctext_putn(c,t,src+run,n-run);
+  if(t->w>out->emitted_len && !emit_room(out,t->w-out->emitted_len)) return emit_oom;
+  memcpy(out->emitted,t->s,t->w); out->emitted_len=t->w; out->emitted[t->w]=0;
+  return NULL;
+}
 /* The whole unit's verified C: the C.2 attestation, the preludes, then every function. NULL on success, else
  * the failure's diagnostic. */
-static const char *emit_unit(const CC *c, bcir_cfront_result *out, const bcir_func *entry, const char *lflags){
+static const char *emit_unit(CC *c, bcir_cfront_result *out, const bcir_func *entry, const char *lflags){
   const char *e;
   /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest + the unit's derived
    * link flags (B1; so --emit-c is self-describing about what it links -- a comment, stripped on re-parse).
@@ -8178,10 +8367,11 @@ static const char *emit_unit(const CC *c, bcir_cfront_result *out, const bcir_fu
   if(c->fpdefs.w && (e=emit_putf(out,"%s",c->fpdefs.s))) return e;   /* synthesized funcptr-param typedefs */
   if(c->tudefs.w && (e=emit_putf(out,"%s",c->tudefs.s))) return e;   /* extern declarations, cross-TU callees */
   for(int i=0;i<out->unit.n_funcs;i++){
+    if((e=emit_callee_decls(out,&out->unit.funcs[i]))) return e;
     if((e=emit_function(out,&out->unit.funcs[i]))) return e;
     if(i+1<out->unit.n_funcs && (e=emit_putf(out,"\n"))) return e;
   }
-  return NULL;
+  return respell_anon(c,out);
 }
 
 static int cfront_failure(bcir_cfront_context *context, bcir_cfront_result *out,
@@ -8262,6 +8452,18 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
     out->unit.n_funcs++;
   }
   if(c->failed)return cfront_failure(context,out,c->err);
+  /* A call made before any declaration of its callee: C99 dropped the implicit declaration (C11 6.5.1p2), and
+   * the call was typed by a default no declaration gives -- a `uint64_t` callee's result read as `uint32_t`. A
+   * callee the unit defines or prototypes after the call is refused, in call order (the oracle refuses the
+   * first such call it lowers); one the unit never declares stays R18's undefined edge. */
+  for(const struct cc_undecl *u=c->undecl; u; u=u->next){
+    int later=0;
+    for(int j=0;j<out->unit.n_funcs && !later;j++) later=!strcmp(out->unit.funcs[j].name,u->name);
+    for(int k=0;k<c->n_protos && !later;k++) later=!strcmp(c->protos[k].name,u->name);
+    if(later){ char msg[BCIR_CIR_NAME+40];
+      snprintf(msg,sizeof msg,"call to undeclared function '%s'",u->name);
+      return cfront_failure(context,out,msg); }
+  }
   /* Phase 3 linking, DEFINITION WINS: a call lowered `c.call.tu:` (its callee was only a prototype at
    * the call site -- the parser is single-pass) whose callee IS defined in this unit is an ordinary
    * in-unit call after all: rewrite the op back (`c.call:` / `c.call.void:` by result arity) and record

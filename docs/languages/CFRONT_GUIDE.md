@@ -329,6 +329,13 @@ _mm_sfence();                      //                   store (release) fence ->
   `malloc`/`calloc`/`realloc`/`aligned_alloc`/`free` and `<string.h>`'s `memcpy`/`memmove`/`memset`, each string
   routine returning its destination. A unit that defines one of these names -- before its call or after it --
   calls its own function.
+- Functions declared by a prototype and defined later, or only prototyped (another unit defines them): a
+  prototype may leave its parameters unnamed (`uint32_t g(uint32_t *, uint32_t);`). Each emit declares the unit's
+  functions a function calls ahead of it, and a prototyped callee's `extern` declaration keeps a pointer
+  parameter's `const` and spells a function-pointer parameter as C does.
+- Structs and unions declared without a tag and named by a typedef (`typedef struct { ... } P;`, or only through a
+  pointer, `typedef struct { ... } *PP;`), with nested anonymous members: the emit names each as C does -- by the
+  typedef's name, `__typeof__(*(PP)0)`, or `__typeof__` of the member whose type it is.
 - String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
@@ -338,6 +345,9 @@ _mm_sfence();                      //                   store (release) fence ->
 These are reported as diagnostics, or — with `--fallback` — as a fallback-to-LLVM signal:
 
 - Non-constant `static`/global initializers; constructs beyond the L1–L6 statement subset.
+- A function called, named as a value or used in a `sizeof` operand before any declaration of it -- C99 dropped
+  the implicit declaration (C11 6.5.1p2): `call to undeclared function 'g'`, `use of undeclared identifier 'g'`.
+  Declare it first with a prototype. A definition that leaves a parameter unnamed is refused as well.
 - An identifier (a function, parameter, local, global, struct or union tag, member, typedef, enum constant or
   label) or a floating constant longer than 63 characters — C11 5.2.4.1's significant initial characters of an
   internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not

@@ -266,6 +266,10 @@ _PTRVALUE = [
     "cfront_stdlibmem.c",
     "cfront_strmem.c",  # <string.h> memcpy/memmove/memset as external libc edges, each returning its
     #   destination (CF-RTWIDE)
+    "cfront_decls.c",  # callees defined after their callers behind prototypes leaving parameters unnamed,
+    #   declared by each emit ahead of its callers (CF-DECLS)
+    "cfront_anonstruct.c",  # anonymous structs and unions named by a typedef, and a nested anonymous member,
+    #   spelled as C names them (CF-ANON)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -8045,13 +8049,6 @@ def test_null_pointer_arguments_run_as_the_original_on_both_rails():
     )
 
 
-# The callees `cfront_nullarg_link.c` defines after their callers: the emit does not declare a function
-# before its definition (neither rail's), so these declarations precede each emit in the harness.
-_NULLARG_LATE = (
-    "static uint32_t bcir_nl_later(uint32_t *p, uint32_t s);\n"
-    "static uint32_t bcir_nl_later_node(struct nl_node *n, nl_op fn, uint32_t *a, uint32_t s);\n"
-    "static uint32_t bcir_nl_sum(uint32_t *p, uint32_t n, ...);\n"
-)
 _NULLARG_LINK_DRIVER = (
     _GAPS_SAME
     + r"""
@@ -8098,12 +8095,12 @@ def test_null_pointer_arguments_to_later_and_prototyped_callees():
     cannot see: one defined after its caller (declared first by a static or an external prototype, variadic
     or not) and one only prototyped, which another unit defines (the driver here). The C twin parses in one
     pass, so it types these arguments once the unit is parsed; the oracle reads every definition and prototype
-    before it lowers. The unit lowers to one claim graph on both rails, and each emit -- given the declarations
-    of the callees defined late, which no emit makes -- declares the constants as the parameters' pointers,
-    keeps a variadic callee's extra `0` the `int` it reads, and returns what the original does (a prototype's
-    array parameter is declared `T *`, as the definition binds it). Both rails also accept a call to a later
-    definition with no prototype before it, which C99 does not: it lowers as the prototyped unit does, and its
-    emit runs as the prototyped original."""
+    before it lowers. The unit lowers to one claim graph on both rails, and each emit -- which declares the
+    callees defined late (CF-DECLS; they were supplied by hand) -- declares the constants as the parameters'
+    pointers, keeps a variadic callee's extra `0` the `int` it reads, and returns what the original does (a
+    prototype's array parameter is declared `T *`, as the definition binds it). A call to a later definition
+    with no prototype before it, which C99 does not allow, is refused on both rails (CF-DECLS; both had lowered
+    it as the prototyped unit), and the prototyped unit's emit runs as the original."""
     if not _CC:
         return
     fx = "cfront_nullarg_link.c"
@@ -8112,35 +8109,30 @@ def test_null_pointer_arguments_to_later_and_prototyped_callees():
         first = _actual_types(emit, "nl_sum")[0]  # `nl_sum(0, 2u, 0, 5)`, defined after the call
         assert None not in (first[0], first[2]), (label, first)
         assert first[0].endswith("*") and "*" not in first[2], (label, first)
-    emits = (("twin", _NULLARG_LATE + c_emit), ("oracle", _NULLARG_LATE + oracle_emit))
+    emits = (("twin", c_emit), ("oracle", oracle_emit))
     _run_against_original(fx, src, emits, _NULLARG_LINK_DRIVER, ("-Werror=int-conversion",))
 
     proto = _NULLARG_BARE.replace(
         "#include <stdint.h>\n", "#include <stdint.h>\nuint32_t nl_g(uint32_t *p, uint32_t s);\n"
     )
     exe = _build_frontend(_session_build_dir())
+    _refused_on_both_rails(exe, _NULLARG_BARE, "call to undeclared function 'nl_g'")
     with tempfile.TemporaryDirectory() as d:
-        summaries, runs = [], []
-        for label, text in (("bare", _NULLARG_BARE), ("proto", proto)):
-            path = os.path.join(d, f"{label}.c")
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(text)
-            oracle_summary, r, _entry = _oracle(text)
-            c_summary, emit = _c_run(exe, path)
-            assert c_summary == oracle_summary and "ok=1" in c_summary, (label, c_summary)
-            summaries.append(c_summary)
-            runs += [(f"{label}-twin", emit), (f"{label}-oracle", "\n".join(r.emitted.values()))]
-        assert summaries[0] == summaries[1], summaries  # the prototyped unit's claim graph
+        path = os.path.join(d, "proto.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(proto)
+        oracle_summary, r, _entry = _oracle(proto)
+        c_summary, emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, c_summary
     driver = (
         _GAPS_SAME
         + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) { SAME(nl_f, gaps_in[n]); }\n"
         + '  puts("MATCH");\n  return 0;\n}\n'
     )
-    late = "static uint32_t bcir_nl_g(uint32_t *p, uint32_t s);\n"
     _run_against_original(
-        "no-prototype",
+        "prototype",
         proto,
-        tuple((label, late + emit) for label, emit in runs),
+        (("twin", emit), ("oracle", "\n".join(r.emitted.values()))),
         driver,
         ("-Werror=int-conversion",),
     )
@@ -10060,3 +10052,259 @@ def test_the_linkable_emit_includes_the_header_of_each_libc_edge():
                 timeout=120,
             )
             assert cp.returncode == 0, (label, cp.stderr, text)
+
+
+def _refused_on_both_rails(exe, src: str, why: str) -> None:
+    """Neither rail lowers `src`: the oracle raises its parse or lowering error, naming `why`, and the twin (when
+    it is built, `exe`) prints its PARSE-ERR, naming it too."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    try:
+        compile_unit(src, check_clang=False)
+        raise AssertionError(f"the oracle lowered:\n{src}")
+    except (CParseError, CLowerError) as e:
+        assert why in str(e), (why, str(e), src)
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "refused.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        run = subprocess.run([exe, path], capture_output=True, text=True)
+        assert run.returncode != 0 and run.stdout.startswith("PARSE-ERR"), (src, run.stdout)
+        assert why in run.stdout, (why, run.stdout, src)
+
+
+_DECLS_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(dc_entry, s); SAME(dc_wide, s); SAME(dc_later, 0, s); SAME(dc_later, &s, s); SAME(dc_big, dc_tab, s);
+    SAME(dc_apply, dc_twice, s); SAME(dc_sum, dc_tab, 3u); SAME(dc_twice, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails():
+    """CF-DECLS: `cfront_decls.c` -- callees defined after their callers, `static` or not, behind prototypes
+    leaving parameters unnamed (a pointer to `const`, an array, a function pointer), a function named as a value
+    and a call in a `sizeof` operand before the definition. Each rail's emit declares the unit's functions a
+    function calls ahead of it -- neither emit declared one, so a call to a later definition did not compile.
+    Both rails refused an unnamed prototype parameter, and the twin refused the designator and the `sizeof`
+    through a prototype. The unit lowers to one claim graph on the four targets, and every emit, with no
+    declaration supplied by hand, runs as the original."""
+    if not _CC:
+        return
+    fx = "cfront_decls.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        decls = [ln for ln in emit.splitlines() if ln.startswith("static ") and ln.endswith(");")]
+        assert any("bcir_dc_later(" in ln for ln in decls), (label, decls)  # ahead of `dc_entry`
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _DECLS_DRIVER)
+
+
+_DECLS_LINK_DRIVER = (
+    _GAPS_SAME
+    + r"""
+uint32_t dl_read(const uint32_t *p, uint32_t (*fn)(uint32_t), uint32_t s) { return p[0] + p[1] * 3u + fn(s); }
+uint64_t dl_mix(const uint8_t *b, uint32_t s) { return ((uint64_t)b[3] << 40) | (uint64_t)(b[0] + s); }
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) { SAME(dl_entry, gaps_in[n]); }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails():
+    """CF-DECLS: `cfront_decls_link.c` -- callees another unit defines (the driver), prototyped with a pointer
+    and an array parameter to `const` and an unnamed function-pointer parameter. Each rail's `extern` declaration
+    keeps the `const` -- both dropped it, a declaration that conflicts with the original prototype in one
+    translation unit -- and spells the function-pointer parameter as C does (`RET (*)(PARAMS)`, or the twin's
+    `__bcir_fpN` alias), where the oracle spelled it by its name. The unit lowers to one claim graph on the four
+    targets, and each emit runs as the original."""
+    if not _CC:
+        return
+    fx = "cfront_decls_link.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        ext = {
+            ln.split("(", 1)[0].split()[-1]: ln
+            for ln in emit.splitlines()
+            if ln.startswith("extern ")
+        }
+        assert ext["dl_read"].split("(", 1)[1].startswith("const uint32_t *, "), (label, ext)
+        assert ext["dl_mix"].split("(", 1)[1].startswith("const uint8_t *, "), (label, ext)
+    want = "extern uint32_t dl_read(const uint32_t *, uint32_t (*)(uint32_t), uint32_t);"
+    assert want in oracle_emit, oracle_emit
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _DECLS_LINK_DRIVER)
+
+
+# A call, a function designator and a `sizeof` operand naming a function no declaration precedes: each unit
+# is refused on both rails (C11 6.5.1p2), and the same unit with the declaration first lowers alike on both.
+_UNDECLARED = {
+    "a later static definition": (
+        "uint32_t f(uint32_t s) { return g(s) + 1u; }\nstatic uint32_t g(uint32_t s) { return s * 3u; }\n",
+        "static uint32_t g(uint32_t s);\n",
+        "call to undeclared function 'g'",
+    ),
+    "a later wide definition": (
+        "uint64_t f(uint32_t s) { return g(s) + 1u; }\nuint64_t g(uint32_t s) { return (uint64_t)s << 40; }\n",
+        "uint64_t g(uint32_t s);\n",
+        "call to undeclared function 'g'",
+    ),
+    "a later prototype": (
+        "uint32_t f(uint32_t s) { return g(s) + 1u; }\nuint32_t g(uint32_t s);\n",
+        "uint32_t g(uint32_t s);\n",
+        "call to undeclared function 'g'",
+    ),
+    "a call in a later function's body": (
+        "uint32_t h(uint32_t s) { return s + 2u; }\nuint32_t f(uint32_t s) { return g(s) + h(s); }\n"
+        "uint32_t g(uint32_t s) { return h(s) ^ 5u; }\n",
+        "uint32_t g(uint32_t s);\n",
+        "call to undeclared function 'g'",
+    ),
+}
+# ... and forms both rails refuse either way -- a function designator before any declaration, a `sizeof` of a
+# call to a function defined later -- where the oracle had lowered them (the twin refused them already)
+_UNDECLARED_REFUSED = {
+    "a designator before the definition": (
+        "typedef uint32_t (*op_t)(uint32_t);\n"
+        "static uint32_t apply(op_t fn, uint32_t s) { return fn(s); }\n"
+        "uint32_t f(uint32_t s) { return apply(later, s); }\n"
+        "static uint32_t later(uint32_t v) { return v + 7u; }\n",
+        "use of undeclared identifier 'later'",
+    ),
+    "a sizeof of a later call": (
+        "uint32_t f(uint32_t s) { return (uint32_t)sizeof(g(s)) + s; }\nuint64_t g(uint32_t s) { return s; }\n",
+        "",
+    ),
+    "a definition leaving a parameter unnamed": (
+        "uint32_t f(uint32_t *, uint32_t s) { return s; }\n",
+        "has no name",
+    ),
+}
+
+
+def test_a_function_named_before_its_declaration_is_refused_on_both_rails():
+    """CF-DECLS: a call to a function the unit defines or prototypes only after the call is refused on both
+    rails -- C99 dropped the implicit declaration (C11 6.5.1p2) -- where both lowered it as if prototyped and the
+    twin typed its result by the `uint32_t` default: a `uint64_t` callee's result truncated, with the same claim
+    graph on both rails, so no digest showed it. A later prototype declares nothing either, where the oracle had
+    typed the call by it and the twin had lowered an undefined callee. With the declaration first, each unit
+    lowers to one claim graph on both rails. A function designator or a `sizeof` operand before any declaration,
+    and a definition leaving a parameter unnamed, are refused on both rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#include <stdint.h>\n"
+    for label, (body, decl, why) in _UNDECLARED.items():
+        _refused_on_both_rails(exe, head + body, why)
+        src = head + decl + body
+        summary, _r, _entry = _oracle(src)
+        if exe is None:
+            continue
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "declared.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            c_summary, emit = _c_run(exe, path)
+            assert c_summary == summary, (label, c_summary, summary)
+            if "uint64_t g" in decl:  # the call's result keeps the callee's width on the twin too
+                assert "uint64_t t" in emit.split("bcir_f(", 1)[1].split("}", 1)[0], (label, emit)
+    for label, (body, why) in _UNDECLARED_REFUSED.items():
+        _refused_on_both_rails(exe, head + body, why)
+
+
+_DECLARED_LATER = {
+    "a sizeof of a prototyped call": (
+        "uint64_t g(uint32_t s);\nuint32_t f(uint32_t s) { return (uint32_t)sizeof(g(s)) + s; }\n"
+        "uint64_t g(uint32_t s) { return s; }\n"
+    ),
+    "a sizeof of an external call": (
+        "uint64_t g(uint32_t s);\nuint32_t f(uint32_t s) { return (uint32_t)sizeof(g(s)) + s; }\n"
+    ),
+    "a designator of a prototyped function": (
+        "typedef uint32_t (*op_t)(uint32_t);\nstatic uint32_t later(uint32_t v);\n"
+        "static uint32_t apply(op_t fn, uint32_t s) { return fn(s); }\n"
+        "uint32_t f(uint32_t s) { return apply(later, s); }\n"
+        "static uint32_t later(uint32_t v) { return v + 7u; }\n"
+    ),
+    "an unnamed prototype": (
+        "uint32_t g(uint32_t *, uint32_t);\nuint32_t f(uint32_t s) { uint32_t a = s; return g(&a, s); }\n"
+        "uint32_t g(uint32_t *p, uint32_t s) { return *p + s; }\n"
+    ),
+}
+
+
+def test_a_prototype_declares_its_function_alike_on_both_rails():
+    """CF-DECLS: a function a prototype declares -- before its definition, or with no definition in the unit --
+    is typed by the prototype on both rails: a `sizeof` of a call to it (the twin refused one, typing only by a
+    definition before the call), a designator of it before its definition (the twin refused one as an undefined
+    identifier), and a prototype leaving its parameters unnamed (both rails refused one). Each unit lowers to one
+    claim graph on the four targets."""
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        for label, body in _DECLARED_LATER.items():
+            src = "#include <stdint.h>\n" + body
+            path = os.path.join(d, "declared.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            summary, _r, _entry = _oracle(src)
+            assert "ok=1" in summary, (label, summary)
+            _parity_on_targets(path, src)
+
+
+_ANON_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    an_pt p = {(uint16_t)s, 9u}, p1 = p, p2 = p;
+    __typeof__(*(an_ref)0) o1 = {s ^ 3u, 7u}, o2 = o1;
+    SAME(an_local, s); SAME(an_array, s); SAME(an_nested, s); SAME(an_union, s); SAME(an_global, s);
+    SAME(an_len, p); SAME(an_entry, s);
+    if (an_bump(&p1, s) != bcir_an_bump(&p2, s) || p1.x != p2.x || p1.y != p2.y) return fail("an_bump");
+    if (an_deref(&o1, s) != bcir_an_deref(&o2, s) || o1.k != o2.k) return fail("an_deref");
+    if (an_make(s).x != bcir_an_make(s).x || an_make(s).y != bcir_an_make(s).y) return fail("an_make");
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails():
+    """CF-ANON: `cfront_anonstruct.c` -- structs and a union declared without a tag and named by a typedef, as
+    a local, a parameter, a returned value, a member, an array element, a pointer's target, a global and a
+    `sizeof` operand; nested anonymous members, one an array; one named only through a pointer typedef. Each
+    rail's emit names such a type as C does -- the typedef's name, `__typeof__(*(an_ref)0)`, or `__typeof__` of
+    the member whose type it is -- where both spelled a tag no compiler knows (the oracle `struct ` with no tag,
+    the twin `struct $anon0`), and the oracle refused the unit outright: its anonymous structs shared the empty
+    tag, so every one past the first had no layout. The unit lowers to one claim graph on the four targets, and
+    every emit runs as the original."""
+    if not _CC:
+        return
+    fx = "cfront_anonstruct.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    spelled = (
+        "__typeof__(((an_box *)0)->span)",  # `c.span = b.span`, by value
+        "__typeof__(((an_box *)0)->pair[0])",  # an element of the member array `pair`
+        "__typeof__(*(an_ref)0) *",  # the pointer typedef's pointee
+    )
+    for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        assert "$anon" not in emit and "struct  " not in emit, (label, emit)
+        assert all(sp in emit for sp in spelled), (label, [sp for sp in spelled if sp not in emit])
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _ANON_DRIVER)

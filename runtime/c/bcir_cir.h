@@ -125,6 +125,9 @@ typedef struct bcir_resource {
 /* a C type descriptor (for signatures + faithful emission). */
 typedef struct bcir_ctype {
   uint8_t  kind;             /* 0 scalar, 1 struct-by-value, 2 pointer, 3 function-pointer */
+  uint8_t  is_const;         /* `const`-qualified: a pointer's pointee (`const T *`), which a prototype's `extern`
+                              * declaration keeps -- a parameter of a pointer to const is a different type. It sits
+                              * in the padding after `kind`: a ctype is no larger */
   int      size;             /* scalar size, pointee size for a pointer, or 8 for a funcptr */
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */

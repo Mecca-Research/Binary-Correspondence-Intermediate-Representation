@@ -9,6 +9,8 @@ an *arbitrary* straight-line scalar claim graph, not a fixed kernel template.
 
 from __future__ import annotations
 
+import re
+
 from ...model import Claim
 from .ctype_model import CType, unqualified
 from .lower import (
@@ -203,6 +205,30 @@ def _funcptr_decl(ct: CType, name: str) -> str:
     return f"{ret} (*{name})({plist})"
 
 
+_ANON_REF = re.compile(r"(?<![A-Za-z0-9_$])(?:struct|union) (\$anon\d+)(?![A-Za-z0-9_$])")
+_LITERAL_OR_COMMENT = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|/\*.*?\*/|//[^\n]*', re.S)
+
+
+def respell_anon(text: str, spelling: dict) -> str:
+    """Every `struct $anonN` / `union $anonN` of emitted C -- outside a string or character literal and a
+    comment -- spelled as C names it (`Unit.anon_spelling`: a typedef's name, or `__typeof__` of the member
+    whose type it is): the synthesized tag is no compiler's, so an emit using a typedef'd anonymous struct
+    did not compile (CF-ANON). One C cannot name stays as it was. The twin rewrites its emit alike
+    (`bcir_cfront.c`, `respell_anon`)."""
+    if not spelling:
+        return text
+
+    def _code(part: str) -> str:
+        return _ANON_REF.sub(lambda m: spelling.get(m.group(1), m.group(0)), part)
+
+    out, at = [], 0
+    for m in _LITERAL_OR_COMMENT.finditer(text):
+        out += [_code(text[at : m.start()]), m.group(0)]
+        at = m.end()
+    out.append(_code(text[at:]))
+    return "".join(out)
+
+
 def emit_linkable(lowered, emitted: dict) -> str:
     """The LINKABLE artifact (Phase 3 linking): the unit's emitted functions re-rendered with
     EXTERNAL linkage -- definitions non-static under their REAL names, in-unit calls unprefixed
@@ -310,11 +336,35 @@ class _Names:
         return rid not in self.named
 
 
-def emit_function(lf: LoweredFunc) -> str:
+def _signature(lf: LoweredFunc) -> str:
+    """The function's signature as its definition spells it, `static RET bcir_NAME(PARAMS)`: the
+    definition's head, and the forward declaration of it that a caller's emit makes."""
+    parts = [
+        _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
+        for pname, _rid, ct in lf.params
+    ]
+    if lf.variadic:  # a trailing `...` after the named params
+        parts.append("...")
+    return f"static {_cname(lf.ret_type)} bcir_{lf.name}({', '.join(parts) or 'void'})"
+
+
+def _proto_param(ct: CType, const_pointee: bool) -> str:
+    """A prototyped callee's parameter in its `extern` declaration: a function pointer as its declarator
+    with no name, `RET (*)(PARAMS)` (its name alone does not compile), and a pointer to `const` keeps the
+    qualifier -- a parameter of `const T *` is another type than one of `T *`, and the two declarations of
+    the callee would conflict. The twin spells both alike (`bcir_cfront.c`, the prototype's `tudefs`)."""
+    if ct.kind == "funcptr":
+        return _funcptr_decl(ct, "")
+    return ("const " if const_pointee and ct.kind == "pointer" else "") + _cname(ct)
+
+
+def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
     locals are declared up front and assigned (so branch merges + loop accumulators reproduce the
-    source); intermediate expression results stay single-assignment temporaries."""
+    source); intermediate expression results stay single-assignment temporaries. `unit` -- the unit's
+    lowered functions by name -- declares each one the function calls before it: a callee defined after
+    its caller is otherwise undeclared at the call, which does not compile."""
     nm: dict[int, str] = {rid: pname for pname, rid, _ct in lf.params}
     # Each local needs a *unique* C identifier: the lowering flattens scopes, so two source locals that
     # shared a name in disjoint scopes (e.g. `i` in two separate `for` loops, or a block local shadowing
@@ -367,24 +417,19 @@ def emit_function(lf: LoweredFunc) -> str:
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
     decls += [_static_decl(nm[rid], ct, init) for rid, _name, ct, init in lf.statics]
     body = _walk(lf, lf.body, ref, 1, cont=_cont_labels(lf))
-    parts = [
-        _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
-        for pname, _rid, ct in lf.params
-    ]
-    if lf.variadic:  # a trailing `...` after the named params
-        parts.append("...")
-    sig_params = ", ".join(parts) or "void"
-    ret = _cname(lf.ret_type)
     # Phase 3 linking: declare every PROTOTYPED cross-TU callee this function calls, so the
     # emitted TU compiles standalone and the host LINKER resolves the symbol from a sibling object.
     tu_decls = [
-        f"extern {_cname(rct)} {callee}(" + (", ".join(_cname(p) for p in pcts) or "void") + ");"
-        for callee, (rct, pcts) in sorted(lf.tu_protos.items())
+        f"extern {_cname(rct)} {callee}("
+        + (", ".join(_proto_param(p, k) for p, k in zip(pcts, consts)) or "void")
+        + ");"
+        for callee, (rct, pcts, consts) in sorted(lf.tu_protos.items())
     ]
-    head = "\n".join(tu_decls) + "\n" if tu_decls else ""
-    return (
-        head + f"static {ret} bcir_{lf.name}({sig_params})\n{{\n" + "\n".join(decls + body) + "\n}"
-    )
+    # ... and every function of the unit it calls, in the order of the first call (not itself)
+    callees = dict.fromkeys(c for c, _a in lf.calls if c != lf.name and c in (unit or {}))
+    fwd = [_signature(unit[c]) + ";" for c in callees]
+    head = "\n".join(tu_decls + fwd) + "\n" if tu_decls or fwd else ""
+    return head + _signature(lf) + "\n{\n" + "\n".join(decls + body) + "\n}"
 
 
 def _labels(block: list, out: set) -> set:
