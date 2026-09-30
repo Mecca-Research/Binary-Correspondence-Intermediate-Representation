@@ -329,6 +329,11 @@ _mm_sfence();                      //                   store (release) fence ->
 These are reported as diagnostics, or — with `--fallback` — as a fallback-to-LLVM signal:
 
 - Non-constant `static`/global initializers; constructs beyond the L1–L6 statement subset.
+- An identifier (a function, parameter, local, global, struct or union tag, member, typedef, enum constant or
+  label) or a floating constant longer than 63 characters — C11 5.2.4.1's significant initial characters of an
+  internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not
+  supported`, `a floating constant longer than 63 characters is not supported`): the C twin's claim graph holds
+  63, and would otherwise have to cut the rest. The emitted C itself has no size limit.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18

@@ -1865,7 +1865,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - the oracle refuses a global array of structs with nested braces (`{{1, 2}, {3, 4}}`), which the twin
     lowers;
   - both rails drop `_Thread_local` from a static local;
-  - the twin's emit buffer is 32 KiB, and `cfront_braceelide.c`'s emit is within 1 KiB of it;
   - the round trip's second emit of a control-flow fixture redeclares its `__cont_<N>` labels, and a
     non-volatile struct fixture stays excluded because its `memcpy` re-parses as a call to an undefined
     function;
@@ -1883,9 +1882,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - neither rail's emit declares a function before its definition, so a call to a function defined after its
     caller does not compile as emitted, even with a prototype before the call (the `cfront_nullarg_link.c`
     test supplies the declarations);
-  - the twin's claim op holds 31 characters, so a callee name longer than 24 is truncated in `c.call:` (19 in
-    `c.call.void:`, 21 in `c.call.tu:`): the digest differs from the oracle's and the emit calls the
-    truncated name;
   - a prototyped callee's `extern` declaration drops `const` from a pointer parameter on both rails, which
     conflicts with the original prototype in one translation unit, and the oracle spells a function-pointer
     declarator parameter by its name (`extern uint32_t g(fn, uint32_t);`), which does not compile; both rails
@@ -1945,6 +1941,70 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     §8 had stopped at Stage 3 and called the `verify.*` rows unmeasured; it now carries every stage's
     rows. The earlier plan to bound the audit rows with G4's lower-bound stack was wrong, and §0.3
     says why: that stack bounds a schedule's makespan, not the time to compute it.
+
+  CF-BUF (2026-09-30) lifted the C twin's fixed name and emit buffers, two items the list above had recorded --
+  the claim op of 31 characters and the emit of 32 KiB -- with the truncations an audit of every fixed field found
+  beside them. RED was measured on the parent (`916d3e3a`).
+  - The defect: the twin kept every name in 32 bytes -- a function, a parameter, a local, a global, a struct tag, a
+    member, an alias -- and a claim's op in the same 32, and cut what did not fit, silently. A callee past 24
+    characters became another `c.call:` op (19 in `c.call.void:`, 21 in `c.call.tu:`), so the digest differed from
+    the oracle's and the emit called the cut name: one nothing defines, or another function. A floating constant's
+    spelling rides in its op, so one past 22 characters lost its tail, digest apart and with another value:
+    `1.0000000000000000000000000e-300` was emitted as `1.00000000000000000000`. `va_arg`'s type was cut to 16
+    characters (`unsigned long long` emitted as `unsigned long lo`, which does not compile). A `struct <tag>`
+    spelling, a pointer cast's op, a shadowing local's emitted name (`<name>_2`) and the emitter's type spellings
+    were cut the same way; GCC's format-truncation analysis finds 32 such writes in the parent. The emitted C was a
+    fixed 32 KiB, so corpus fixtures were trimmed to fit it, and each synthesized `typedef RET (*__bcir_fpN)(...)`
+    line was rendered into 512 bytes, past which the whole emit was marked impossible: `cfront_sec_sigoverflow.c`,
+    whose emit is 1.8 KB, printed `EMIT-ERR`, so its digest was never compared with the oracle's.
+  - RED: on the parent the twin refuses `cfront_longnames.c` (`undefined identifier`) and cuts the variadic unit's
+    `va_arg` type. The oracle lowers each of the twelve 64-character units; the twin lowers five of them with the
+    name or the constant cut (a function, a label, a callee, both constants) and refuses the other seven for another
+    reason (`undefined identifier`, `unknown field`). A unit of 140 functions and `cfront_sec_sigoverflow.c` print
+    `EMIT-ERR`; `bcir-cc --emit-c` refuses a 700-statement function (`emitted C exceeds 32768-byte result
+    capacity`); GCC's analysis reports the 32 writes. The six new tests and the three this change extends (the
+    capacity-edge test, and the corpus parity and GCC/Clang groups that now hold the fixture) fail. The extended
+    allocation-failure sweep does not build against the parent's result type; a variant written for that type fails
+    at the sweep's fault-free run, whose emit does not fit.
+  - What landed: a limit on both rails, and fields sized for it on the twin. An identifier or a floating constant is
+    at most 63 characters -- C11 5.2.4.1's significant initial characters of an internal identifier -- and a longer
+    one is refused where it is lexed, with one reason per kind (`clex._too_long`; the twin's `lex`). The twin's name
+    holds 63 and a NUL (`BCIR_CIR_NAME`), a `struct <tag>` spelling 71 (`BCIR_CIR_AGG`), an op a prefix and a name,
+    a floating constant or a pointer cast's type (`BCIR_CIR_OP`), and the emitter's scratch a suffixed name, a type
+    and an expression of several (`BCIR_EMIT_*`); every write into a field goes through `fits` or `idcpy`, which
+    fail the compile where they would cut. `va_arg`'s type is its tokens, one space apart, or, when they do not fit
+    the op, the type's own spelling. The emitted C (`bcir_cfront_result.emitted`, with `emitted_len`) is owned by the
+    result and grows through its allocator: each piece is measured, the block grown two-phase, then the piece
+    rendered, and a function rendered into too little room is rendered again once the block holds it.
+    `bcir_cfront_free` releases it; an allocation failure fails the compile (`oom`), so the text is whole or absent.
+    The two preludes grow the same way (`ctext_putf`), and `bcir-cc --linkable` sizes its rename scratch from the
+    emit. The claim op is also the data-plane hand-off's segment label, and the freeze refuses a label that does
+    not end inside the op (G16), so the oracle's bound (`LABEL_MAX` in `bcir/gem/handoff.py`) follows the op from
+    31 to 127 characters; the law graphs sit at 127 and 128 characters, and
+    `docs/kernel/BCIR_DATA_PLANE_HANDOFF.md` states the new bound.
+  - Outcomes: `cfront_longnames.c` -- a 63-character name in each place the graph keeps one, and a 63-character
+    constant -- and a unit with a 63-character variadic callee lower digest-equal on the four targets and run
+    equivalent function by function under Clang and GCC. At 64 characters, ten name positions and both constant
+    forms are refused on both rails for the same reason; at 63 they lower digest-equal. The 140-function unit (103 KB
+    of emitted C on the twin, 190 KB on the oracle) and `cfront_sec_sigoverflow.c` lower to the oracle's digest on
+    the four targets and run as the original. No other fixture's summary, emit or canon moves on the twin, on the
+    four targets; the G10 and volatile rows are unchanged. GCC's analysis finds no write that could cut. The
+    allocation-failure sweep fails each allocation of a unit whose emit grows four times, and each failure is the
+    compile's, with every block released. The sanitizer script now requires `cfront_sec_envrealloc.c` and
+    `cfront_sec_sigoverflow.c` to compile clean, as its comment said. The G16 rows stay zero on the oracle, the C
+    twin and the C++ seam.
+  14 injected defects, on both rails, are each caught (`tools/testing/faults/cfront-buf.json`), and a hand-off
+  oracle that keeps the old 31-character label bound is caught by the G16 rows (`tools/testing/faults/handoff.json`).
+  Three faults of the earlier tables anchored into lines this change rewrote; they were re-anchored, and each is
+  still caught.
+  Found, not fixed here (each a suggested follow-up):
+  - the preprocessors split on a macro name past 63 characters: the twin's refuses it (`macro name is too long`),
+    the oracle's expands it, and the unit lowers on the oracle;
+  - `bcir_cfront_canon` writes into the caller's buffer and cuts at its capacity without saying so: the twin
+    driver's `--canon` holds 128 KiB, and the 140-function unit's canon (239 KB) comes back as its first 128 KiB.
+    The digest is unaffected, since it hashes the canon as it is produced;
+  - the twin's test driver (`runtime/c/test_cfront.c`) reads at most 64 KiB of a source file and does not say
+    when it cuts one (`bcir-cc` reads a file of any size).
 
 ---
 
