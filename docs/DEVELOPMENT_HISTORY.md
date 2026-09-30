@@ -1548,6 +1548,351 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     (`struct node { ...; struct node *next; }`), which the twin lays out;
   - both rails refuse `sizeof &g`, the size of a function's address.
 
+  CF-GAPS (2026-09-29) closed those seven items on both rails, and three defect families found while
+  measuring them. RED for each was measured on the parent (`05e182c5`), whose probe groups fail 39 of
+  43 forms.
+  CF-BRACE walked an initializer as C walks the current object (C11 6.7.9p17-21).
+  - The defect: neither rail elided braces; each gave a list's values to whole members in its own way.
+    `struct { uint8_t a[2]; uint8_t c; } l = {1, 2}` returned another value on both emits, a union took a
+    value for every member, and the entries after a designator did not continue past it. The oracle
+    crashed on a nested struct's elided list (`tuple index out of range`), where the twin lowered it to
+    another value. An excess or overriding initializer, a string too long for its array, a non-character
+    array given a string, a designator past the array (a store one past a 4-element local) and a 65-deep
+    nesting were lowered, not refused: the oracle lowered 15 and the twin 14 of 18 such units.
+  - RED: 14 of 16 brace forms fail on the parent -- 11 return another value on at least one emit (both,
+    on 2), 4 oracle emits do not compile, and the oracle crashes on 4.
+  - What landed: one walk per rail over a stack of frames (`lower._init_list`, `_init_next`,
+    `_init_designate`; the twin's `init_list` over an `iwalk`). A positional entry fills the next scalar
+    subobject, descending through unbraced sub-aggregates; a designator resets the walk to the list's
+    object, and the entries after it continue past the designated subobject at the innermost level. An
+    anonymous member is one subobject, a union takes one value, a string literal fills the character array
+    it meets, a struct value fills its subobject whole, and `{e}`/`{}` fill a scalar. The walk records the
+    bits each store covers, so an override of an initialized subobject and a union's change of member are
+    refused, as is an excess entry; 64 nested subobjects and an `int` designator bound it on both rails. A
+    store is an indexed `base[i]` store only when it writes a whole element of the declared array its own
+    list initializes, else a byte-offset store.
+  - Outcomes: the 16 forms lower digest-equal and run equivalent on both emits, and `cfront_braceelide.c`
+    runs equivalent function by function under Clang and GCC.
+  CF-STRLOCAL sized a character array by its string literal.
+  - The defect: both rails declared `char s[] = "abc"` one element long, its emit and a sized
+    `char s[8] = "hi"`'s did not compile, and `sizeof s` was refused as an incomplete type.
+  - RED: all 8 string-initialized forms fail on the parent.
+  - What landed: a literal's code units after concatenation (an escape is one unit) size an unsized
+    array with its NUL and fill it unit by unit, the rest zero; a wide literal fills an array of its unit
+    (`u` 2, `U` 4, `L` the target's `wchar_t`); a literal exactly as long as a sized array drops its NUL,
+    a longer one is refused; rows of strings take their count from the list (`clex.str_units`, the twin's
+    `str_units`). A non-ASCII character and a universal character name in a string initializer are refused
+    on both rails.
+  - Outcomes: the 8 forms and `cfront_strlocal.c` run equivalent on both emits.
+  CF-SELFREF laid out self-referential and forward-referenced structs, on the oracle.
+  - The defect: the oracle refused a pointer to any struct it had not laid out -- the struct being
+    defined, one defined later, one only declared (`struct t;`), an opaque handle. The twin laid out the
+    self-reference and refused the forward and opaque ones at their declaration.
+  - RED: all 6 forms fail on the parent, 3 on both rails.
+  - What landed: an incomplete struct type (C11 6.2.5p22, `ctype_model.incomplete_aggregate`), completed
+    by its tag when, and if, it is defined (`lower._complete`; the twin's `declare_struct` and
+    `complete_struct_refs`); `struct t;` declares the tag; a pointer-returning call is a pointer on both
+    rails, dereferenced in place (`f()->v`). A member access through, `sizeof`, a local or a parameter of
+    a struct still incomplete is refused on both rails.
+  - Outcomes: the 6 forms and `cfront_selfref.c` run equivalent on both emits.
+  CF-SMALL closed the four smaller gaps.
+  - `wchar_t` and an `L"..."` literal's unit are the target's own integer type (Clang's `__WCHAR_TYPE__`):
+    4-byte signed on x86-64, RISC-V and i386 Linux, 4-byte unsigned on AArch64 Linux, 2-byte unsigned on
+    Windows (`TargetABI.wchar_size`, `wchar_signed`). Both rails had made it a 4-byte `int` on every
+    target. `sizeof &f` is a pointer's size.
+  - The twin keeps a typedef'd array's dimensions inner to a declarator's own (`row_t rw[2]` is two rows)
+    in a local, a member, a parameter, a global, `sizeof`, a type-name and a typedef of it; the oracle's
+    parser had put them outer. A pointer to such a type is refused on both rails.
+  - A 2-D/3-D global indexed in full is one row-major element of the whole object at its byte offset, for
+    a read, a store, `OP=`, `++`/`--` and `&` (`lower`'s `whole` index, the twin's `global_md_field`).
+    `a[i].m[j]` of an array of structs folds the element index with the member's -- `i*K + j`, K the struct
+    size in `m`'s elements -- in every access form (`aos_member_array`, and the value and increment paths
+    now share `member_elem_assign_value` and `member_elem_incdec` with `s.m[j]`). `&m[i][j]` of a local, a
+    VLA or a `T m[][N]` parameter flattens every subscript on the twin, as the oracle did.
+  - RED: 11 of 13 forms fail on the parent. Beside them, all 11 `a[i].m[j]` access forms and all 8
+    multi-dimensional global value and increment forms were refused on both rails, and the twin refused 10
+    of 12 multi-dimensional address forms -- and took a row's address as an element's.
+  - Outcomes: every accepted form lowers digest-equal and runs equivalent on both emits;
+    `cfront_typedefarr.c` and `cfront_mdglobal.c` run equivalent function by function, and the sizeof
+    table holds `wchar_t`, `L"ab"`, `u"ab"`, `U"ab"` and `&hfun` against Clang on all five targets.
+  CF-STORAGE honored a storage class wherever a declaration spells it (C11 6.7p1).
+  - The defect: both rails kept only a leading `static`. `volatile static uint32_t n` and `unsigned static
+    n` were uninitialized locals on both rails, digest-equal, so a second call returned another value;
+    `uint32_t static n` was one on the oracle. The twin refused a qualifier or storage class after a
+    typedef name or a struct tag. A block-scope `extern T g;` bound a new uninitialized local in place of
+    the global on the oracle (and `const extern T g;` on both).
+  - RED: of 14 storage and qualifier forms, the parent oracle returns another value on 7 and the twin on
+    3, and the twin refuses 7 more.
+  - What landed: a qualifier or storage class after the type specifier is the one before it
+    (`cparse._TRAILING_SPEC`, the twin's trailing scan in `p_type_base`); a block-scope declaration reads
+    its own storage classes; a block-scope `extern` and a local array with no size and nothing to count
+    are refused on both rails.
+  - Outcomes: 9 forms lower digest-equal and run equivalent on both emits over three rounds of calls, and
+    both rails refuse the other 5: the three `extern`s and the two static arrays with a brace initializer
+    (refused before on both, and now in either specifier order, until CF-STATICTAB below lowered them).
+  Found and fixed on the way:
+  - the twin's speculative `a[i].f` value and increment paths refused a member array after `a[i].`, before
+    the read path could take it;
+  - the round-trip gate classified "the emit names a struct only the original defines" by the parser's
+    refusal of the undefined struct; once such a pointer lowered, three fixtures' emits re-parsed and their
+    signatures drifted. The gate now names the undefined tags itself, and its included set is the parent's
+    64.
+  The ten new or extended tests fail on the parent, and 36 injected defects, on both rails, are each
+  caught.
+  The same measurement queued six follow-ups, each closed here with the defects found while closing it.
+  CF-STRUCTVAL typed a struct or union value as the struct, on both rails.
+  - The defect: a struct-valued load -- an element of an array of structs (`ps[i]`, a global's, `pp[i]`
+    through a pointer parameter), a member (`g.b`), `*p`, a struct returned through a function pointer,
+    `va_arg(ap, struct T)` -- was emitted into an integer temp on both rails (`uint32_t t = ps[i];`), so
+    neither emit compiled, and the twin refused a member access on such a value. A select of two structs in
+    a brace list gave the whole value to the first member on both rails, digest-equal
+    (`{c ? ps[0] : g.p, 9u}` put `9u` into `.y`): a silent miscompile.
+  - RED: every form's emit fails to build on both rails on the parent, and the twin refuses the fixture
+    (`member access on an object that is not a struct or union`).
+  - What landed: an aggregate temp spelled `struct T` on both rails (`emit._load_ctype`; the twin's
+    `tempagg` on every value path, a function pointer's struct return carried as `bcir_ctype.fp_ret_agg`);
+    a select of two arms of one struct type is that struct, and any other pairing with a struct arm is
+    refused on both rails. Four twin-only defects on the way: an array parameter of structs was a struct by
+    value (it decays to `struct T *`), `&ps[i]` was an `int32_t *`, a struct global's type went unrecorded
+    so the brace walk missed it (a runtime mismatch), and a struct assignment used as a value lowered where
+    the oracle refuses it.
+  - Outcomes: `cfront_structvalue.c` lowers digest-equal on the four targets and runs equivalent function
+    by function under Clang and GCC; `typeof(ps[0])` and `_Generic(ps[i], ...)` agree (the twin had picked
+    `default:`).
+  CF-STRUCTINIT refused a struct or union given a value of another type (C11 6.5.16.1p1, 6.7.9p13).
+  - The defect: `struct s x = 5;`, `= "a"`, `h.inner = 5`, `*p = 5`, `ps[0] = 5` and 13 more such units
+    lowered on both rails, digest-equal, where Clang rejects each.
+  - What landed: a struct or union takes a value of its own type only, compared by kind and tag with
+    qualifiers ignored, at every declaration and store site (`lower._struct_value`; the twin's
+    `agg_value_ok`), refused with one reason per context on both rails; a cast to a struct type is refused.
+  - Outcomes: the 18 units are refused, each reason asserted on each rail, and the valid same-type copies
+    and stores run equivalent to the original.
+  CF-NESTMEM lowered a member of a member of an array element (`a[i].m.k`, `a[i].m.arr[j]`).
+  - The defect: both rails refused it (the oracle: `unsupported base expression Index`).
+  - What landed: one load or store at the element's stride plus the member's flattened offset, each hop
+    adding its offset and, through a volatile member, its qualifier -- which the twin's emit had dropped
+    for `o.in.v` (`lower._aos_member`; the twin's `sdef_elem_field` through `member_descend`). The elements
+    a pointer member points at (`h.next[i].v`) read and store on the twin as on the oracle, and a statement
+    `a[i].f++;` lowers on the twin.
+  - Outcomes: `cfront_aosnest.c` -- local, global and parameter arrays, member arrays of structs, unions,
+    three levels, 1-D and 2-D member arrays, volatile and `_Atomic` leaves, in every access form -- runs
+    equivalent on both emits, and its volatile function keeps its five volatile accesses on each rail.
+  CF-PAREN let the twin take a postfix after parentheses (`(a)[1]`, `((T[N]){...})[i]`, `(*p).x`).
+  - The defect: the twin refused each (`PARSE-ERR ;`). The oracle lowered them, two wrongly: `(*p).m` read
+    the whole struct into a 4-byte temp -- a wrong value past its first word, and a lost store -- and
+    `(*p)[i]` through a row pointer emitted a subscript of a scalar, which does not compile.
+  - What landed: the twin drops an operand's redundant parentheses before a postfix, after the mutation
+    scan has read the source spelling and before the body parses (`unparen_body`), never around a call, a
+    condition, a cast's type name or a declarator. Both rails read `(*X).f` as `X->f` and `(*X)[i]` as
+    `X[0][i]` (`cparse._postfix_tail`).
+  - Outcomes: `cfront_parenpostfix.c` runs equivalent on both emits, and the 11 forms both rails still
+    refuse (a parenthesized declarator among them) assert their own reason on each rail.
+  CF-STATICTAB folded a static local's initializer into its declaration, on both rails.
+  - The defect: a static local array, struct or union with a brace initializer -- a lookup or CRC table --
+    was refused on both rails. Beside it, statics miscompiled with parity intact, because the canon read no
+    static's value: the oracle declared `static int64_t n = -5;` as `-5u`; the twin folded `~0u` into a
+    `uint64_t` as `18446744073709551615u`, gave a second scope's same-name static the first's value, and
+    dropped `static` and the initializer of a static pointer (CF-STATICPTR: `static uint32_t *sp = 0;`
+    became an uninitialized automatic pointer). The oracle declared two scopes' same-name statics twice. An
+    integer literal's type ignored the target's `long`: `3000000000` was a 4-byte `long` on the oracle for
+    LLP64 and ILP32, and `5L` 8 bytes on the twin.
+  - RED: the four new tests fail on the parent.
+  - What landed: a static's initializer runs through the initializer walk in constant mode
+    (`lower._static_init`, `_kfold`; the twin's `init_image`, `kfold`): each entry is lowered speculatively
+    and its claims folded as C evaluates an integer constant expression, each operation in its own type --
+    promotions, the usual arithmetic conversions, unsigned wrap; signed overflow, an out-of-range shift and
+    a division by zero refused (C11 6.6p4) -- and each value converted for its subobject. The image is
+    rendered once, as the declaration's initializer, never as stores at each call; an inferred `[]` takes
+    its count from the list. The image is no claim: the canon gains one sorted `static NAME = INIT` line
+    per static with a nonzero image, identical on both rails, so two tables one value apart digest apart. A
+    typedef'd function-pointer local is declared by its alias on the twin, and an integer literal's type
+    follows the target's `long` on both rails.
+  - Outcomes: `cfront_statictab.c` runs equivalent to the original over four rounds of calls on both emits,
+    and 15 initializers that are no integer constant expression -- an address, a float constant, another
+    static -- are refused with one reason on both rails. `cfront_storage.c`'s digest moves on both rails in
+    lockstep: its nonzero statics gain canon lines.
+  CF-RTVOL made the round trip idempotent for a volatile access at a byte offset.
+  - The defect: the emit spells a volatile member access as one access at its byte offset,
+    `*(volatile T *)((const volatile char *)p + K)`, and the oracle re-lowered that as a pointer
+    computation and an access at offset 0, so each round added a cast and an add per access. A re-parsed
+    emit names its locals `t<rid>`, the emitter's own spelling for a temporary, so the next emit redeclared
+    them.
+  - RED: the new round-trip tests fail on the parent
+    (`cfront_rmw.c: e1 re-lowers to other accesses than the original's`; `unsigned int t103 = 3u;` inside
+    `bcir_f(uint32_t t101, uint32_t t103)`).
+  - What landed: both rails fold `*(volatile T *)((char *)p + K)` -- T a volatile, non-atomic integer or
+    floating type, K an integer literal, p a declared pointer, an array or `&s` whose region holds volatile
+    storage -- into the one load or store at offset K from p that the member access lowers to
+    (`lower._byte_offset_access`; the twin's `byte_off_access`, over the tokens, rolled back on a miss). A
+    temporary is `t<rid>` only while no declared name spells it, on both rails (`emit._Names`,
+    `uniq_local`).
+  - Outcomes: the three volatile register maps (`cfront_rmw.c`, `cfront_bitfield.c`,
+    `cfront_bfcompound.c`), given their definitions, reach a fixed point over three rounds with the
+    original's accesses, and `cfront_bitint.c` now round-trips, so the included set is re-pinned at 65. No
+    fixture's digest or emitted C moves on either rail.
+  CF-MEMDECAY stored an array's address, not its bytes, into a pointer slot.
+  - The defect: an array stored into a pointer the emit writes by `memcpy` -- a member (`h.p = arr`,
+    `{7u, arr}`, `{.p = arr}`, `hp->p = arr`, a compound literal's), a dereference (`*pp = arr`), an
+    element of a member array of pointers (`r.slot[i] = arr`) -- lowered to one claim graph on both rails,
+    which read the array. The oracle's emit copied the array's first bytes into the pointer
+    (`memcpy(&h.p, &arr, 8)`), a wild pointer the next access dereferenced; the twin's did not compile
+    (`uint64_t _v = arr`).
+  - RED: 11 of 17 decay forms fail on the parent -- the oracle's emit crashes or reads another value on 10,
+    and the twin's does not build on 9.
+  - What landed: an array source is staged in a pointer object on both rails -- `emit._store_conv`'s array
+    case, the twin's member and member-array element store emits (`const volatile void *`, which any array
+    converts to). The claim graph is unchanged: no fixture's digest moves on the four targets, on either
+    rail.
+  - Outcomes: the forms, and `cfront_memdecay.c` function by function, run equivalent on both emits.
+  CF-NULLPTR typed a null pointer constant as the pointer that takes it.
+  - The defect: `T *p = 0;`, `p = 0;` (a local, a parameter or a global), `return 0;` from a function
+    returning a pointer, and `ps[i] = 0` or `{&v, 0}` for an array of pointers lowered to the same claim
+    graph on both rails, and each emit assigned an `int` temp to the pointer (`int t = 0u; p = t;`), which
+    C forbids and Clang and GCC reject; a null function pointer failed the same way.
+  - RED: 15 of 20 null-pointer forms fail to build on the parent's oracle emit and 14 on the twin's.
+  - What landed: a `c.const 0` taken by a pointer -- a declaration's initializer (braced or not), an
+    assignment to a named pointer, a typed element store, a `return` -- types its temp as that pointer
+    (`lower._null_pointer` over the zero constants `_emit` records; the twin's `null_pointer`), so the emit
+    declares `T *t = 0u;`, a null pointer, and a function-pointer temp by its type. Only a temp's C type
+    moves, so no digest does.
+  - Outcomes: the forms, and `cfront_nullptr.c`, run equivalent on both emits.
+  CF-UAF: the twin's `tempptr` read its source resource through a pointer into the resource table after
+  `add_res` had grown it -- a heap use-after-free in the compiler, which the sanitized twin found over a
+  probe corpus. It now reads the source first, as `temp_like` already did. `cfront_resgrow.c` makes a
+  pointer temporary at every count across the table's first growth, so `tools/c/sanitize_cfront.sh`, which
+  runs every fixture through the sanitized twin, holds it; a scan of every resource or claim pointer held
+  across a call that can grow its table found no other.
+  CF-RAILSPLIT closed four splits the slices above found, each an accepted form no fixture held, where the
+  rails lowered one function to two claim graphs.
+  - The defect: the twin gave a logical not the ADD opcode where the oracle's `_UN` gives SUB; the twin's
+    probe of a bare `*e;` as a store kept the operand's claims, and the statement then lowered it again;
+    the twin counted `&p[i]` as taking `p`'s address, so it did not recover an allocated buffer's extent,
+    which the oracle does; and the twin laid a VLA of volatile elements out as ordinary memory, failed R3
+    on it and declared it without `volatile`.
+  - RED: `cfront_railsplit.c` digests apart on the four targets on the parent, and the twin's lowering of
+    it fails verification.
+  - What landed: `!` takes SUB on the twin; the store probe rolls back (`spec_begin`, `spec_end`); `&`
+    marks a name's address taken only when no subscript or member follows the name; a volatile VLA is a
+    device object, declared `volatile`.
+  - Outcomes: the fixture lowers to one claim graph on both rails, and each emit declares its VLAs
+    `volatile` and runs equivalent to the original.
+  The twin's test driver (`runtime/c/test_cfront.c`) now builds under `gcc -Wall -Werror`, where one
+  misleadingly indented line had failed it.
+  The G10 escape gate caught three of these fixtures' first cut: `cfront_memdecay.c` stored eight local
+  arrays into pointer slots, and `cfront_nullptr.c` and `cfront_parenpostfix.c` each lent one to a call,
+  which the analysis reports escaping, rightly, and `escape.unproved` counts (10). The fixtures hold those
+  forms on file-scope arrays, and the local forms run inline in their tests; every G10 row is back at the
+  parent's value.
+  The follow-ups' 16 new tests fail on the parent, and with CF-GAPS's, 86 injected defects, on both rails,
+  are each caught. The campaign is committed as four fault tables (`tools/testing/faults/cfront-*.json`),
+  run by `red_sweep` through a gate that names each failing test as a finding
+  (`tools/testing/check_tests.py`, itself driven into its refusals by `test_red_sweep.py`). One fault
+  needed a new witness first: the pointee size a struct's completion back-fills into a pointer member
+  (`complete_struct_refs`) changed no digest and no run until a function took `typeof` of such a member and
+  subscripted through it (`sr_typeof_next` in `cfront_selfref.c`).
+  CF-TERNARY evaluated the operands C may leave unevaluated only when C does.
+  - The defect: both rails computed both arms of `?:`, and the right operand of `&&` and `||`, and chose
+    after (C11 6.5.15p4, 6.5.13p4, 6.5.14p4) -- `d ? n / d : 0u` divided by zero, `p ? *p : s` and
+    `p && *p` read through a null `p`, and a call in the operand C skips ran. A conditional whose arms are
+    void (`c ? f() : g();`, an `assert`'s `c ? (void)0 : fail()`) assigned a void call's non-value and did
+    not compile, `(void)e` was a cast of `e` to `uint32_t`, and the twin returned a void call's placeholder
+    from a void function (`return t;`) and refused a void function whose only effect is the calls it
+    makes, which the oracle verifies clean.
+  - RED: on the base below this change both rails lower `cfront_condeval.c` with no branch where an arm
+    divides, and neither verifies it: the oracle's void conditional copies the void sentinel (R2, an
+    undeclared RID), and the twin's R12 refuses `ce_twice`, which only calls. Without the void forms, the
+    fixture's first cut built on both rails, and both emits crashed on the driver's first zero divisor.
+    The void-return unit splits the rails.
+  - What landed: an operand is still computed eagerly -- a `c.select`, `c.bin.land` or `c.bin.lor`, so
+    a pure conditional's digest does not move -- when it can neither trap nor change state: every claim it
+    made is on a short list of arithmetic, comparison, address and constant ops, none volatile, none
+    writing a declared variable (`lower._operand_pure`, the twin's `operand_pure`; `div` and `mod` are
+    off the list). Any other lowers as a branch that assigns one named local of the select's type in each
+    arm; the arm the left operand of `&&` or `||` decides stores 0 or 1. The twin decides by lowering the
+    operand speculatively, memoized by its first token so a chain of conditionals stays quadratic. A void
+    value is the oracle's `_VOID_RID` and a resource marked `is_void` on the twin: two void arms branch
+    with no local (both pure, they run in place), one void arm is refused, `(void)e` is `e` for its
+    effects, a void function returns a void value as `return;`, and the twin's R12 counts a call as an
+    effect.
+  - Outcomes: `cfront_condeval.c` runs function by function on both emits with every guard false as well
+    as true -- a zero divisor, `INT32_MIN / -1`, a null pointer, a bounds guard at the array's end, a
+    device register at an address nothing maps -- counting the calls each makes; a unit of typed branch
+    values round-trips as a fixed point. Five corpus fixtures with a guarded arm and two with
+    `(void)b;` move their digests in lockstep on the four targets; the `(void)cb;` of
+    `cfront_sec_sigoverflow.c` moves the oracle's, and the twin, whose driver reports that fixture's emit
+    over its 32 KiB capacity before and after this change, prints no digest to compare.
+  CF-NULLARG typed a null pointer constant passed to a pointer parameter as that parameter's pointer.
+  - The defect: `g(0, s)` for a callee taking a pointer -- to a scalar, to `const`, to `void`, to a pointer
+    or to a struct, a function pointer, an array parameter `T a[]`, `T a[N]` or `T m[][N]`, a VLA -- lowered
+    to one claim graph on both rails, and each emit passed an `int` temp where the callee takes a pointer
+    (`int t = 0u; bcir_g(t, s);`), which Clang and GCC reject. Neither rail carried a callee's parameter
+    types to its calls, and the twin, which parses in one pass, cannot see a callee defined after its
+    caller. The oracle also declared a prototype's array parameter by its element type, which conflicted
+    with the prototype.
+  - RED: on the base below this change both rails pass each fixture's `0` arguments as `int` temps, and both
+    fixtures' tests fail; on the parent the fixtures do not lower at all, since they hold self-referential
+    structs (CF-SELFREF).
+  - What landed: an argument converts to its parameter's type as if by assignment (C11 6.5.2.2p7). The
+    oracle reads every function's and prototype's parameter types before it lowers (`_param_types`) and
+    types each direct or prototyped call's constant-0 arguments by them (`_null_pointer_args`); the twin
+    does the same once the unit is parsed (`null_pointer_args`), from the callee's definition or its
+    prototype. A variadic callee's extra `0` keeps the `int` it is read as. Only temps' C types move, so
+    no digest does.
+  - Outcomes: `cfront_nullarg.c`, and `cfront_nullarg_link.c` (callees defined late, only prototyped, or
+    variadic), run function by function on both emits, built with `-Werror=int-conversion`. The G10 escape
+    gate caught the fixtures' first cut: three local arrays lent to calls (`escape.unproved` 3) and three
+    calls through a function-pointer parameter of a callee another unit may call (`icall.unknown` 18, over
+    its open-world floor of 15). The arrays are at file scope, the two callees that call through a pointer
+    are `static` -- so both calls narrow to the one function the unit passes -- and `nl_later_node`, the
+    external callee defined late, tests its pointer rather than calling it.
+  The five new tests of these two slices fail on the base below them, and 31 injected defects, on both rails,
+  are each caught (`tools/testing/faults/cfront-operands.json`). Of the 34 tests this whole change set adds or
+  extends, 33 fail on the parent; the 34th, an existing refusal test it extends, already held there.
+  Found, not fixed here (each a suggested follow-up):
+  - a call through a function pointer returning void (`fp();`, `o.step();`) emits `uint32_t t = fp();` on
+    both rails, which does not compile; the twin records "returns void" and "return not captured" alike;
+  - a conditional whose arms are function designators (`s ? f : g`) is typed `uint32_t` on both rails;
+  - a file-scope multi-dimensional array passed for a `T (*p)[N]` parameter is passed unflattened to the
+    emit's flat `T *` parameter on both rails (an incompatible-pointer-types error); the twin refuses a
+    file-scope `char buf[] = "..."` with a misleading "non-constant enum initializer", which the oracle
+    lowers; both rails refuse a list of file-scope arrays in one declaration (`uint32_t a[3], b[2];`);
+  - an anonymous struct named by a typedef (`typedef struct { ... } P;`) is spelled as an unusable type in
+    both emits;
+  - the twin miscompiles an integer literal above `LLONG_MAX` (it saturates) and an octal literal (read as
+    decimal); the oracle's global-initializer fold ignores C types and floors a division
+    (`int32_t gq = -7 / 2;` renders `-4`), where the static fold's helpers would not;
+  - `p = p + 1` lowers to `c.ptradd` on the oracle and to an add and a copy on the twin;
+  - the oracle refuses a global array of structs with nested braces (`{{1, 2}, {3, 4}}`), which the twin
+    lowers;
+  - both rails drop `_Thread_local` from a static local;
+  - the twin's emit buffer is 32 KiB, and `cfront_braceelide.c`'s emit is within 1 KiB of it;
+  - the round trip's second emit of a control-flow fixture redeclares its `__cont_<N>` labels, and a
+    non-volatile struct fixture stays excluded because its `memcpy` re-parses as a call to an undefined
+    function;
+  - the twin refuses a value or an increment through a loaded pointer chain (`h.next->v++`), `p[i]++`
+    through a pointer and `(fp)(x)`, which the oracle lowers; the oracle refuses `*&a` and
+    `*(c ? &a : &b)`, which the twin lowers;
+  - a comparison with a null pointer constant (`p == 0`) compares the pointer with an `int` temp in both
+    emits, a constraint violation (C11 6.5.9p2) that Clang and GCC only warn about;
+  - both rails accept a compound assignment or an increment of a struct (`a += 5`, `a++`) and a struct
+    converted to an integer (`uint32_t k = a;`), which Clang rejects;
+  - both rails accept a call to a function the unit defines later with no declaration before the call,
+    which C99 does not (C11 6.5.1p2), and lower it as the prototyped unit; the twin then types the call's
+    result as `uint32_t` (`uint32_t t = bcir_g(s);` for a `uint64_t g`), the oracle as the callee's type, and
+    the digests are equal;
+  - neither rail's emit declares a function before its definition, so a call to a function defined after its
+    caller does not compile as emitted, even with a prototype before the call (the `cfront_nullarg_link.c`
+    test supplies the declarations);
+  - the twin's claim op holds 31 characters, so a callee name longer than 24 is truncated in `c.call:` (19 in
+    `c.call.void:`, 21 in `c.call.tu:`): the digest differs from the oracle's and the emit calls the
+    truncated name;
+  - a prototyped callee's `extern` declaration drops `const` from a pointer parameter on both rails, which
+    conflicts with the original prototype in one translation unit, and the oracle spells a function-pointer
+    declarator parameter by its name (`extern uint32_t g(fn, uint32_t);`), which does not compile; both rails
+    refuse a prototype with unnamed parameters (`uint32_t g(uint32_t *, uint32_t);`);
+  - a null pointer constant passed through a function pointer, or to `free` or `realloc`, is still an `int`
+    temp in both emits, which Clang and GCC reject.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

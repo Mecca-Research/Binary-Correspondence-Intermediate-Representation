@@ -90,7 +90,7 @@ rejecting stage + reason — the signal for a driver to route the unit to the LL
 fail. Without `--fallback`, an unsupported construct is a normal diagnostic.
 
 ```
-fb.c: fallback to LLVM backend: lower: static initializer is not a constant expression
+fb.c: fallback to LLVM backend: lower: a static initializer is not an integer constant expression
 ```
 
 ## Pointer-bounds policy (LangRef §4)
@@ -314,6 +314,12 @@ _mm_sfence();                      //                   store (release) fence ->
 - Local array declarations with initializers, including nested-brace multi-dim (`T a[A][B]={{..},{..}}`),
   inferred-size (`T a[]={..}`), and array-of-structs (`struct P a[N]={{..},{..}}`).
 - **Computed goto** — the GNU label-as-value `&&L` (a `void *`) and the indirect `goto *p`.
+- The conditional operators as C evaluates them: `?:` evaluates one arm, and `&&`/`||` their right operand
+  only when the left one does not decide. An operand that can trap or change state (a division, a
+  dereference, a call, a volatile read, an assignment) lowers as a branch, a pure one as a select; a
+  conditional whose arms are void (`c ? f() : (void)0`, an `assert`) runs its arm for its effects.
+- Members of array elements in every access form (read, store, compound assignment, increment, `&`):
+  `a[i].m[j]`, `a[i].m.k`, `a[i].m.arr[j]`, on a local, global or pointer base.
 - String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
@@ -325,13 +331,9 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - Non-constant `static`/global initializers; constructs beyond the L1–L6 statement subset.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
-- The i386 in-struct `double`-alignment quirk is not modelled (the `long`/pointer/`long double` data
-  axes are).
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18
   cannot compile `_Decimal`, so the form is un-validatable under the Clang-equivalence methodology and
   is gated out until a `_Decimal`-capable reference compiler is available.
-- An `Index`-base array-member access (`x[i].v[j]`, a member array indexed off an indexed base) stays a
-  general limitation; the array-compound-literal `[i][j].field` form is fully supported.
 - Cross-target builds are layout-only here; running them needs a cross toolchain.
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.

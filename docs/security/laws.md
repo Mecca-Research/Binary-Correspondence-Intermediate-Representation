@@ -154,8 +154,9 @@ member access on a scalar (`x.n`) died on SIGSEGV. The oracle raised a bare `Key
 struct index once for both of its consumers, and refuses a member access on a non-struct; the oracle's
 two type resolvers share one total lookup (`_aggregate`, L14). Witnesses:
 `test_a_member_access_on_a_non_struct_is_refused_on_both_rails` (the refusal, never a signal),
-`test_a_pointer_to_an_undefined_struct_is_a_refusal_not_a_crash`. Faults: `twin: a member access on a
-non-struct reads c->s[-1]`, `oracle: an undefined struct is a bare KeyError`.
+`test_a_pointer_to_an_incomplete_struct_lowers_and_only_its_layout_is_refused` (since CF-SELFREF the
+pointer lowers on both rails; a use that needs the layout is the refusal). Faults: `twin: a member access
+on a non-struct reads c->s[-1]`, `oracle: an undefined struct is a bare KeyError`.
 **Port note:** every C gate function returns a status enum on every path;
 `abort()`/uncaught exceptions in gate code are defects by definition.
 
@@ -848,6 +849,61 @@ CF-SIZEOF and CF-DECAY instances (2026-09-29):
   path looked the name up first, and the check was unreachable. Each refusal now asserts its own reason
   on each rail (`_SIZEOF_REFUSED`). Faults: `oracle: a function designator is looked up as an object`,
   `oracle: the VLA fast path looks a function designator up as an object`.
+CF-GAPS instances (2026-09-29):
+- Parity is a witness for divergence, not for a lowering, once more: both rails kept only a leading
+  `static`, so `volatile static uint32_t n` and `const extern uint32_t g` lowered to the same claim graph
+  on both, and both emits read an uninitialized local. The digest does not read an object's storage
+  duration. The witness that hits the law runs each function repeatedly in lockstep with its emit
+  (`test_storage_classes_in_any_position_run_as_the_original_on_both_rails`, three rounds), where a
+  local in place of a static diverges. Faults: `O12 only a leading static honored`, `T9 only a leading
+  static honored`.
+- A differential over state must fix the state and the order, or it measures the harness. A probe that
+  ran the original and then its emit against one set of globals reported every non-idempotent update
+  (`g[i][j] += 7`) as a mismatch by construction. The fixture's first entry summed calls that write the
+  globals the next call reads, an order C leaves unspecified, so GCC and Clang disagreed on the original
+  itself -- and the differential excluded the fixture as `xcc-divergent`, silently. The driver now resets
+  every global before each call, and the entry sequences its calls in statements.
+- An exclusion must be decided by the property it names, never by a neighbor's refusal. The round-trip
+  gate classified an emit that names a struct only the original defines as "not re-parseable" because the
+  parser refused a pointer to an undefined struct. When CF-SELFREF made that pointer legal, three
+  fixtures' emits re-parsed, and the gate reported drift in a volatile-load asymmetry it had never
+  examined. It now names the undefined tags itself (`_reparse`), and its included set is the parent's.
+- The digest reads a claim's operands, never how an emit spells them, so the same claim can be spelled
+  wrong two ways at once. An array stored into a pointer member is one claim graph on both rails, and
+  the oracle's emit copied the array's first bytes into the pointer (`memcpy(&h.p, &arr, 8)`: a wild
+  pointer, read back as one) while the twin's did not compile (`uint64_t _v = arr`); `T *p = 0;` was
+  digest-equal on both and neither emit compiled (`int t = 0u; p = t;`). The witnesses build and run each
+  emit against the original (`test_arrays_stored_into_pointer_slots_decay_on_both_rails`,
+  `test_null_pointer_constants_run_as_the_original_on_both_rails`). Faults: `O19 an array stored through
+  memcpy copies its bytes`, `T19`/`T20` (the twin's two store paths), and one per site that takes a null
+  pointer constant, `O20`-`O22`, `T21`-`T25`.
+CF-GAPS follow-up instances (2026-09-30):
+- A digest witnesses what its canon reads, and the canon read no static's value. The oracle declared
+  `static int64_t n = -5;` with `-5u`; the twin folded `~0u` into a `uint64_t` untyped, gave a second
+  scope's same-name static the first's value, and dropped a static pointer's `static`: each
+  digest-equal on both rails. The canon now carries one `static NAME = INIT` line per static with a
+  nonzero image, and two witnesses hit it: repeated calls in lockstep with each emit
+  (`test_static_tables_run_as_the_original_on_both_rails`), and two tables one value apart digesting
+  apart on both rails (`test_static_table_image_is_in_the_canon_not_the_body_on_both_rails`). Faults:
+  `SO2`/`ST3` (a canon drops the image), `SO1b`/`ST1b` (an image loses its leaves).
+- A fold landed on one rail is a split on accepted input. The byte-offset volatile fold first landed on
+  the oracle alone, so a source that writes the emit's own spelling,
+  `*(volatile T *)((char *)p + K)`, lowered to one claim on the oracle and five on the twin -- a form
+  no fixture held and no generator produces. It folds on both rails now, and the witness digests the
+  folding forms and the near misses alike on both
+  (`test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails`). Faults: `O28`,
+  `T40`-`T42`.
+CF-TERNARY instance (2026-09-30): the twin decides an operand's purity once, by a speculative
+lowering memoized by the operand's first token. A memo that answered every lookup with its first
+entry is invisible to a fixture whose functions' conditionals are all pure or all guarded, and every
+function first written for `cfront_condeval.c` was one or the other. `ce_mixed` puts a pure and a
+guarded conditional in one function, in both orders, so a stale answer computes a division eagerly
+or branches where the oracle selects. Fault: `TT6`.
+CF-NULLARG instance (2026-09-30): a null pointer constant argument takes its parameter's type, and
+the twin parses in one pass, so it types calls once the unit is parsed. A fixture whose callees are all
+defined before their callers passes a twin that types from earlier definitions alone, and so would
+not witness that pass. `cfront_nullarg_link.c` calls callees defined after the call, prototyped
+only, and variadic. Faults: `TN1`-`TN3`, `ON3`, `ON4`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1239,6 +1295,22 @@ Five cfront instances (2026-09-29):
   words. It is still one predicate per rail (`_pastes`, `pastes`), asked at every site that writes
   a token, and exact where the text is final: the last pass, and a gathered argument, which `#`
   keeps. Faults: thirteen, one per rule per rail, and each site guessing where it must be exact.
+CF-GAPS follow-up instance (2026-09-30):
+- "Copy the source before the table grows" was a step taken by hand at each twin site that makes a
+  temporary from another resource: `temp_like` and `atomic_value_temp` copied it before `add_res`,
+  and `tempptr` read it through a pointer into the table afterwards -- a heap use-after-free that only
+  the sanitized twin saw. The three now ask one function (`res_copy`), and the rule is written into
+  `docs/languages/C_MEMORY_DISCIPLINE.md`. Witness: `cfront_resgrow.c` makes a pointer temporary at
+  every count across the table's first growth, and `tools/c/sanitize_cfront.sh` runs every fixture
+  through the sanitized twin.
+CF-TERNARY instance (2026-09-30): the twin returned the same bare placeholder temp from each of its
+void-valued sites -- a void call, a cross-TU void call, `free`, the `va_*` builtins, a statement
+expression ending in a statement -- so nothing downstream could tell a void value from a value: a void
+conditional assigned it, a void function returned it (`return t;`), and `(void)e` cast `e` to
+`uint32_t`. The sites now make it through one function (`void_temp`, which marks the resource
+`is_void`), and every reader asks one predicate (`void_value`), the twin of the oracle's `_VOID_RID`.
+Witnesses: `ce_void` in `cfront_condeval.c`,
+`test_a_void_function_returns_a_void_expression_alike_on_both_rails`. Faults: `TV1`-`TV3`, `OV1`, `OV2`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes
@@ -1513,6 +1585,14 @@ an array-of-pointers member, or `packed` written after the closing brace. And no
 tokens that run together, `a + ++g` or `-NEG(a)`. Each rail was wrong alike on the i386 layouts and
 on the paste, so parity agreed. Witnesses: `cfront_atomicaccess.c`, the i386 layout test,
 `cfront_ptrmember.c`, `cfront_trailpacked.c`, `cfront_paste.c` and `cfront_pp_avoidpaste.c`.
+CF-TERNARY instance (2026-09-30): the predicate that lets an operand C may leave unevaluated be
+computed anyway first refused a claim that was volatile, in the device domain, or atomic. Only the
+first test could decide. When the predicate runs, the lowering has already marked a device access
+volatile as it made it (R3's pass gives the rest their device domain later), and an atomic access
+is a load, a store or a read-modify-write, none of them on the predicate's list. No input made the
+other two fire, so no fault in them could be caught; they were removed on both rails rather than kept
+as defense no witness reaches, and no digest moved. The volatile test's witness is `ce_volatile` in
+`cfront_condeval.c`, a volatile local and a volatile global read in an arm. Faults: `OT4`, `TT4`.
 **Port note:** identical everywhere; in C the shape is a range check whose
 lower bound another check has already raised past its upper bound, or an
 `enum` value no `switch` arm admits.
@@ -1676,6 +1756,16 @@ that is the control. The slice's own mutation campaign first ran from a scratch
 script with no bytecode discipline; it is committed as
 `tools/testing/faults/ring.json` and run by the one harness that proves each
 injection landed.
+CF-GAPS instance (2026-09-30): with the control green and every anchor landing, one
+fault still came back NOT CAUGHT against the whole test list -- `T15`, the pointee size
+the twin back-fills into a pointer member when its struct is completed
+(`complete_struct_refs`). The injection landed; nothing observable read it, because every
+stride through such a member took the struct's own size. `typeof` of the member does read
+it: `sr_typeof_next` in `cfront_selfref.c` subscripts through that type, and T15 now
+diverges the twin's emit from the original. A NOT CAUGHT is a question about the witness
+before it is one about the check. The campaign first ran from a scratch script; it is
+committed as `tools/testing/faults/cfront-*.json`, run by `red_sweep` through
+`tools/testing/check_tests.py`, which names each failing test as a finding.
 **Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
 same-size source edit, and any build system whose staleness test is coarser than
 content — timestamps, sizes, or a hash of the command line rather than of the
