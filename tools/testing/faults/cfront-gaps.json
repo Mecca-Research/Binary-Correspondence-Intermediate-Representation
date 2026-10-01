@@ -223,8 +223,8 @@
     {
       "expects": "test_sizeof_measures_the_operand_type_on_every_target",
       "label": "T12 an L literal 4 bytes on every target",
-      "new": "             if (s[0]=='L') return 4; }",
-      "old": "             if (s[0]=='L') return cc_abi(c)->wchar_size; }",
+      "new": "  return p=='u' ? 2 : p=='U' ? 4 : p=='L' ? 4 : 1;",
+      "old": "  return p=='u' ? 2 : p=='U' ? 4 : p=='L' ? cc_abi(c)->wchar_size : 1;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

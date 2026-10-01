@@ -180,7 +180,9 @@ def _atomic_object(lf: LoweredFunc, c: Claim, ref, t: str, naddr: int, *, stride
     Never a byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears."""
     ptr = _atomic_ptr(t, c.volatile)
     if naddr == 2 and not c.imm:
-        return f"(*({ptr})&{ref(c.rd[0])}[{_idx(lf, c, ref, write=c.op != 'c.load')}])"
+        return (
+            f"(*({ptr})&{_elem_base(lf, c.rd[0], ref)}[{_idx(lf, c, ref, write=c.op != 'c.load')}])"
+        )
     bp = _base_ptr(lf, c.rd[0], ref)
     off = c.imm[0] if c.imm else 0
     if naddr == 2:
@@ -281,6 +283,22 @@ def _qual_type(ct: CType, sig: tuple) -> str:
 
 
 _ANON_REF = re.compile(r"(?<![A-Za-z0-9_$])(?:struct|union) (\$anon\d+)(?![A-Za-z0-9_$])")
+# The headers declaring what the linkable emit's own text names -- read outside literals and comments
+# (`_code_only`) -- where no claim names it as a callee: a `size_t` temp (CF-SIZEOF) and a `wchar_t` element
+# (CF-STRELEM), the copies the emit makes, a variadic function's `va_list`, the C11 atomics and the complex
+# functions and `_Complex_I` it spells (CF-LINKEMIT)
+_STDDEF_NAME = re.compile(r"\b(?:size_t|ptrdiff_t|wchar_t|max_align_t)\b")
+_MEM_CALL = re.compile(r"\b(?:memcpy|memmove|memset)\s*\(")
+_OWN_HEADERS = (
+    ("<stdarg.h>", re.compile(r"\b(?:va_list|va_start|va_arg|va_end|va_copy)\b")),
+    ("<stdatomic.h>", re.compile(r"\b(?:atomic_[a-z_]+\s*\(|memory_order_[a-z_]+\b)")),
+    (
+        "<complex.h>",
+        re.compile(
+            r"\b(?:_Complex_I\b|(?:c(?:abs|arg|imag|real|proj|exp|log|pow|sqrt|a?sinh?|a?cosh?|a?tanh?)|conj)[fl]?\s*\()"
+        ),
+    ),
+)
 _LITERAL_OR_COMMENT = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|/\*.*?\*/|//[^\n]*', re.S)
 
 
@@ -304,9 +322,16 @@ def respell_anon(text: str, spelling: dict) -> str:
     return "".join(out)
 
 
-def _object_declarator(ct: CType, name: str) -> str:
+def _code_only(text: str) -> str:
+    """`text` without its string and character literals and its comments: what it names as code."""
+    return _LITERAL_OR_COMMENT.sub(" ", text)
+
+
+def _object_declarator(ct: CType, name: str, quals: tuple = ()) -> str:
     """An object's declaration without its initializer: `T name`, an array's every dimension after its name
-    (`T name[2][3]`, the element type the innermost; an unsized one `[]`)."""
+    (`T name[2][3]`, the element type the innermost; an unsized one `[]`). `quals` are the qualifiers of its type
+    level by level from the base type out (`lower._object_quals`), which the linkable emit's globals keep:
+    `const char *const names[2]` (CF-LINKEMIT)."""
     # a function pointer, a table of them: the declarator around the name (CF-FPTAB)
     if _has_fp(ct):
         return _funcptr_decl(ct, name)
@@ -314,7 +339,7 @@ def _object_declarator(ct: CType, name: str) -> str:
     while ct.kind == "array":
         dims.append(f"[{ct.count}]" if ct.count else "[]")
         ct = ct.of
-    return f"{_cname(ct)} {name}{''.join(dims)}"
+    return f"{_qual_type(ct, quals)} {name}{''.join(dims)}"
 
 
 def emit_linkable(lowered, emitted: dict) -> str:
@@ -329,7 +354,14 @@ def emit_linkable(lowered, emitted: dict) -> str:
     (`--linkable`). A non-renderable initializer (&x, arithmetic, sizeof) raises rather than
     mislowers."""
     names = list(lowered.functions)
+    defs = list(getattr(lowered, "type_defs", ()))
+    spelling = getattr(lowered, "anon_spelling", {})
+    # what the artifact itself names
+    code = _code_only("\n".join([emitted[n] for n in names] + defs))
     parts: list[str] = ["#include <stdint.h>"]  # the emitted temps are int32_t/uint32_t/...
+    # a `size_t` temp (CF-SIZEOF), a `wchar_t` literal element (CF-STRELEM)
+    if _STDDEF_NAME.search(code):
+        parts.append("#include <stddef.h>")
     if any("BCIR_CHK" in emitted[n] for n in names):  # a masked (bounds-promoted) access references
         parts.append('#include "bcir_quarantine.h"')  # the quarantine ABI -- link bcir_quarantine.c
     ops = [c.op for lf in lowered.functions.values() for c in lf.claims]
@@ -341,19 +373,42 @@ def emit_linkable(lowered, emitted: dict) -> str:
     libc = {"malloc", "calloc", "realloc", "aligned_alloc", "free"}
     if callees & libc:
         parts.append("#include <stdlib.h>")
-    if callees & _STRING_MEM:
-        parts.append("#include <string.h>")  # the memcpy/memmove/memset edges
+    # the memcpy/memmove/memset edges, and the emit's own copies
+    if callees & _STRING_MEM or _MEM_CALL.search(code):
+        parts.append("#include <string.h>")
+    parts += [f"#include {h}" for h, names_re in _OWN_HEADERS if names_re.search(code)]
+    # `I`, which the lowering read as <complex.h>'s imaginary unit
+    if any(op.startswith("c.cconst:") for op in ops) and "#include <complex.h>" not in parts:
+        parts.append("#include <complex.h>")
     if any(op.startswith("c.call.extern:") for op in ops):
         parts.append("#include <stdio.h>")  # the printf/scanf-family edges
     if callees - libc - _STRING_MEM and any(
         op.startswith(("c.call.libm:", "c.call.libm.void:")) for op in ops
     ):
         parts.append("#include <math.h>")  # the remaining libm edges
+    # the types the artifact names, as the source defines them, in its order (CF-LINKEMIT)
+    parts += defs
+    # every function declared before the globals: a static one may be DEFINED after its caller (the C
+    # static-forward-declaration idiom), and a global's initializer may name any (an ops table, CF-LINKEMIT); a
+    # function pointer parameter is its declarator with no name
+    for name in names:
+        lf = lowered.functions[name]
+        ps = ", ".join(_proto_param(p[2]) for p in lf.params) or "void"
+        if lf.variadic:
+            ps = (ps + ", ...") if ps != "void" else "..."
+        kw = "static " if lf.static_fn else ""
+        parts.append(respell_anon(f"{kw}{_cname(lf.ret_type)} {name}({ps});", spelling))
     threads = getattr(lowered, "thread_globals", frozenset())
+    quals = getattr(lowered, "global_quals", {})
     for gname, ct, vals, is_extern, is_static in lowered.globals_decl:
         tls = "_Thread_local " if gname in threads else ""  # each thread's own object (CF-TLS)
+        decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)
+        if _ANON_REF.search(decl):  # an untagged aggregate no typedef names: C names no type of it
+            raise ValueError(
+                f"linkable emit: global {gname!r} has a type C cannot name (an untagged aggregate)"
+            )
         if is_extern:
-            parts.append(f"extern {tls}{_object_declarator(ct, gname)};")
+            parts.append(f"extern {tls}{decl};")
             continue
         if vals is None:
             raise ValueError(
@@ -364,15 +419,7 @@ def emit_linkable(lowered, emitted: dict) -> str:
         # the initializer as the source spells it, re-spelled (`lower._file_scope_rendering`); none: a
         # tentative definition (zero-init)
         init = f" = {vals[0]}" if vals else ""
-        parts.append(f"{kw}{tls}{_object_declarator(ct, gname)}{init};")
-    for name in names:  # forward-declare every kept-static
-        lf = lowered.functions[name]  # function: a static callee may be
-        if not lf.static_fn:  # DEFINED after its caller (the C
-            continue  # static-forward-declaration idiom)
-        ps = ", ".join(_cname(p[2]) for p in lf.params) or "void"
-        if lf.variadic:
-            ps = (ps + ", ...") if ps != "void" else "..."
-        parts.append(f"static {_cname(lf.ret_type)} {name}({ps});")
+        parts.append(f"{kw}{tls}{decl}{init};")
     for name in names:
         text = emitted[name]
         for fn in names:  # unprefix every in-unit call site
@@ -396,8 +443,9 @@ class _Names:
     -- never a second declaration of the name (CF-RTVOL). Whether a rid is a temporary is `named`
     membership, never its spelling: a local re-parsed from `t103` may be rid 103 again."""
 
-    def __init__(self, named: dict, used: set):
+    def __init__(self, named: dict, used: set, labels: dict | None = None):
         self.named, self.used, self.temps = named, used, {}
+        self.labels = labels or {}  # rid -> the declared name where `named` spells an expression
 
     def __call__(self, rid: int) -> str:
         if rid in self.named:
@@ -408,6 +456,11 @@ class _Names:
                 name, k = f"t{rid}_{k}", k + 1
             self.temps[rid] = name
         return self.temps[rid]
+
+    def label(self, rid: int) -> str:
+        """The rid's name as a source-site handle names it: a global's own, where the code reaches it through an
+        expression (`_unqualified_global`)."""
+        return self.labels.get(rid) or self(rid)
 
     def is_temp(self, rid: int) -> bool:
         """An intermediate, declared where it is written, not a named object declared up front."""
@@ -488,6 +541,23 @@ def _qual_result(call: str, ret: "CType | None", fquals: tuple) -> str:
     return f"({_cname(ret)}){call}" if _below_top(ret, rsig, depth) else call
 
 
+def _unqualified_global(name: str, ct: CType) -> str:
+    """A global whose type is qualified at some level -- `const uint32_t k`, `const char *const names[2]` -- as
+    the emit reaches it: an lvalue of its type with no qualifier, `(*(char *(*)[2])&names)`. The emit spells its
+    own objects without qualifiers (`_cname`), so a pointer read out of a `const char *` table into its temp, or
+    `&k` into a pointer, discarded a qualifier C diagnoses (6.5.16.1p1); through the cast it meets the object as
+    a call meets a qualified parameter (`_qual_args`). A volatile or `_Atomic` object keeps its own name: each
+    access of it must stay one access of its own type (CF-LINKEMIT)."""
+    at, dims = ct, []
+    while at.kind == "array":
+        dims.append(f"[{at.count}]" if at.count else "[]")
+        at = at.of
+    if at.volatile or at.atomic or ct.volatile or _has_fp(at):
+        return name
+    ptr = f"{_cname(at)} (*){''.join(dims)}" if dims else f"{_cname(at)} *"
+    return f"(*({ptr})&{name})"
+
+
 def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
@@ -520,7 +590,10 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
         # never in the up-front `decls` -- its runtime size isn't known until execution reaches the decl
         local_name[rid] = nm[rid] = _uniq(name)
     nm.update(lf.globals_used)  # file-scope globals (defined in the source)
-    ref = _Names(nm, used)
+    for rid, quals in lf.global_quals.items():  # a qualified global: an unqualified lvalue
+        if (ct := lf.rid_types.get(rid)) is not None and quals:
+            nm[rid] = _unqualified_global(nm[rid], ct)
+    ref = _Names(nm, used, labels=dict(lf.globals_used))
 
     def _local_decl(rid, name, ct):
         # the zero baseline as the empty initializer: `= {0}` re-lowers as the baseline AND a store of 0 to the
@@ -825,7 +898,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 )
             return deftmp(
                 c.wr[0],
-                f"{ref(c.rd[0])}[{_idx(lf, c, ref)}]",
+                f"{_elem_base(lf, c.rd[0], ref)}[{_idx(lf, c, ref)}]",
                 None if _has_fp(lf.rid_types.get(c.wr[0])) else et,
             )  # typed array (masked -> guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
@@ -885,7 +958,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 if conv:  # convert the source to the element type first (a
                     return f"{{ {conv} _sv = {ref(c.rd[2])}; memcpy({dst}, &_sv, {es}); }}"  # _Bool normalizes), else
                 return f"memcpy({dst}, &{ref(c.rd[2])}, {es});"  # `es` bytes of a narrower/float source corrupts it
-            return f"{ref(c.rd[0])}[{_idx(lf, c, ref, write=True)}] = {ref(c.rd[2])};"  # typed array (masked -> WRITE-guarded)
+            return f"{_elem_base(lf, c.rd[0], ref)}[{_idx(lf, c, ref, write=True)}] = {ref(c.rd[2])};"  # typed array (masked -> WRITE-guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
         size = c.imm[1] if len(c.imm) > 1 else 4
         if c.volatile:
@@ -1172,6 +1245,26 @@ def _base_ptr(lf: LoweredFunc, rid: int, ref) -> str:
     return f"&{name}"
 
 
+def _array_dims(ct) -> list:
+    """The dimensions of a nested array type, outermost first (`T g[A][B]` -> [A, B]); [] for any other."""
+    dims = []
+    while ct is not None and ct.kind == "array" and not ct.shape:
+        dims.append(ct.count)
+        ct = ct.of
+    return dims
+
+
+def _elem_base(lf: LoweredFunc, rid: int, ref) -> str:
+    """The base an element access `B[i]` indexes. A file-scope multi-dimensional array is declared nested, as its
+    source declares it, so `g[i]` would be a row; its flat index (Horner-flattened, bounded by the whole array)
+    indexes its first element, `(&g[0][0])[i]`, as a local array declared flat is indexed (CF-AOS2D). The twin's
+    `elem_base`."""
+    dims = _array_dims(lf.rid_types.get(rid))
+    if rid in lf.globals_used and len(dims) > 1:
+        return f"(&{ref(rid)}" + "[0]" * len(dims) + ")"
+    return ref(rid)
+
+
 def _idx(lf: LoweredFunc, c, ref, *, write: bool = False) -> str:
     """The index expression for a `base[idx]` access. A `masked` access (§5.12 bounds-promotion) into a
     known-extent local/static array is wrapped in a bounds guard: in-bounds returns idx (transparent ->
@@ -1188,9 +1281,14 @@ def _idx(lf: LoweredFunc, c, ref, *, write: bool = False) -> str:
     if c.bounds == "masked":
         ext = lf.ptr_extent.get(c.rd[0])
         if ext is not None:  # a naked pointer with a RECOVERED runtime extent
-            return f'{chk}({c.rd[0]}, {idx}, {ref(ext)}, "{lf.name}:{ref(c.rd[0])}")'
+            return f'{chk}({c.rd[0]}, {idx}, {ref(ext)}, "{lf.name}:{ref.label(c.rd[0])}")'
         rt = lf.rid_types.get(c.rd[0])
         n = getattr(rt, "count", 0) if rt is not None else 0
+        dims = _array_dims(rt)
+        if len(dims) > 1:  # a nested (file-scope) array: the whole array bounds its flat index
+            n = 1
+            for d in dims:
+                n *= d
         if n:  # a known-extent local/static array (constant N)
-            return f'{chk}({c.rd[0]}, {idx}, {n}u, "{lf.name}:{ref(c.rd[0])}")'
+            return f'{chk}({c.rd[0]}, {idx}, {n}u, "{lf.name}:{ref.label(c.rd[0])}")'
     return idx

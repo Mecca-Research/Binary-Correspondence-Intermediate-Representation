@@ -948,6 +948,19 @@ Witnesses: `cfront_unaryops.c` in
 `+`, part, bit-field and control-only units in
 `test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike`. Faults
 (`cfront-unary.json`): `UO1`, `UO17`-`UO21`, `UO29`, `UO30`, `UT22`.
+CF-LINKEMIT instance (2026-10-01): a witness that supplies what the artifact lacks tests itself. The
+check that the oracle's linkable emit defines each global with the original's bytes built the emit after
+the source's own struct definitions, which the emit did not carry, so an artifact that named every struct
+undefined passed it; and a second test pinned the emit's refusal of `const char *tab[] = {"a"}` as the
+expected outcome. The emit is held now as a user meets it: built alone, then built with another unit's
+`extern` declarations of what it defines after it -- a global defined without its `const` is another
+type (C11 6.2.7p2) -- then linked with a driver and run against the original, under Clang and GCC. Of the
+236 fixtures' linkable emits, 94 had built alone; 218 do. The second step found one more definition of
+another type, an `enum` global defined as `int`, which is recorded rather than fixed here.
+Witnesses: `test_linkable_emit_defines_what_the_source_defines`,
+`test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original`, and the globals' bytes
+check of `test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails`, now given
+nothing of the source. Faults (`cfront-filescope.json`): `FS7`-`FS14`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -977,6 +990,15 @@ platform here exposed; each is now defined. Witnesses:
 `test_unary_operators_controlling_expressions_and_void_values_run_as_the_original`
 and `test_elements_that_are_pointers_run_as_the_original`, on the native
 AArch64 job.
+CF-CHARELEM instance (2026-10-01): a divergence a compiler flag selects is
+witnessed on every host. A plain `char` is signed on x86-64 and unsigned on
+AArch64 Linux; the twin declared a `char` element's temp `int8_t`, which agreed
+with the original on every x86-64 job and would not where `char` is unsigned.
+The fixture's emits now run against the original under `-funsigned-char` as
+well, which gives an x86-64 host AArch64's `char` -- a flag of the compiler,
+not an emulation of the target -- and the twin spells the element `char`.
+Witnesses: `test_file_scope_objects_run_as_the_original_with_either_char`.
+Faults (`cfront-filescope.json`): `FS18`, `FS19`.
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 
@@ -1444,6 +1466,17 @@ statement's end).
 Witnesses: `_CARD5_REFUSED`'s `sizeof`, `typeof` and `_Generic` forms in
 `test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike`. Faults
 (`cfront-unary.json`): `UO4`, `UO5`, `UO12`, `UO31`, `UO32`, `UT4`, `UT5`, `UT14`, `UT24`-`UT26`.
+CF-SUFFIX instance (2026-10-01): two readers of one constant are two languages. The twin's lexer read an
+integer constant through `int_literal` and its `#if` through `strtol`, so `0777` was 511 in code and 777 in
+a `#if`, and a malformed digit or suffix stopped `strtol` short of it; the oracle's `#if` read through
+Python's `int` past any run of `u`s and `l`s; and both lexers took any such run as a suffix (`1lL`, `1uu`,
+`1lll`, which raised a bare `KeyError` in the oracle). Each rail now has one reader, shared by its lexer
+and its `#if` -- `clex.int_literal_parts`, which `cpp._int_lit` reads through, and the twin's
+header-only `bcir_intlit.h`, which keeps the preprocessor from linking the front end -- and it holds
+the suffix C spells.
+Witnesses: `_CARD4_REFUSED`'s suffixes and `_CARD4_LOWERED`'s `#if` units in
+`test_malformed_constants_refused_and_file_scope_forms_lowered_alike`. Faults (`cfront-filescope.json`):
+`FS1`, `FS2`, `FS15`, `FS16`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

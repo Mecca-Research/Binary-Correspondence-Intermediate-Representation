@@ -1,6 +1,7 @@
 /*===- bcir_cpp.c - the BCIR C preprocessor (L7) ---------------------------===*/
 #include "bcir_cpp.h"
 #include "bcir_host_alloc.h"
+#include "bcir_intlit.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -36,6 +37,7 @@ typedef struct CppState {
   Macro macros[1024];
   int macro_count;
   const char *limit_error;
+  char constant_error[96];   /* the text of a malformed `#if` constant's refusal (`lit`), which limit_error names */
   const char *current_file;
   int current_line;
   int constant_expression_suppression;
@@ -405,13 +407,22 @@ static void ce_limit(CE *expression, const char *message){
     cpp_limit(expression->state, message);
 }
 static long ce_expr(CE *c);
+/* An integer constant of a `#if`, read as the lexer reads one (`int_literal`, bcir_intlit.h; the oracle's `_int_lit`
+ * reads `clex.int_literal_parts`): its digits checked against its base, an octal one read as octal -- `strtol` had read
+ * `0777` as 777 where the oracle's `#if` and both lexers read 511, and a malformed digit or suffix (`08`, `1lL`)
+ * stopped it short -- refused as the lexer refuses it, in an operand C leaves unevaluated too, for it is no constant
+ * at all (CF-SUFFIX). Past LONG_MAX it is the overflow it was. */
 static long lit(CE *expression, const char *s) {
-  long value;errno=0;
-  if (s[0]=='0'&&(s[1]=='x'||s[1]=='X')) value=strtol(s,0,16);
-  else if (s[0]=='0'&&(s[1]=='b'||s[1]=='B')) value=strtol(s+2,0,2);
-  else value=strtol(s,0,10);
-  if(errno==ERANGE)ce_limit(expression, "integer overflow in #if expression");
-  return value;
+  intlit L; const char *why=int_literal(s,(int)strlen(s),&L);
+  CppState *state=expression->state;
+  if(why==int_bad || why==int_bad_suffix){
+    if(!state->limit_error){
+      if(why==int_bad) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.48s'",why,s);
+      else snprintf(state->constant_error,sizeof state->constant_error,"%s '%.*s' on integer constant",why,L.nsuf,L.suf);
+      cpp_limit(state,state->constant_error); }
+    return 0; }
+  if(why || L.v>(unsigned long long)LONG_MAX){ ce_limit(expression, "integer overflow in #if expression"); return 0; }
+  return (long)L.v;
 }
 static long ce_prim(CE *c){
   const char *t;

@@ -302,9 +302,11 @@ _mm_sfence();                      //                   store (release) fence ->
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,
   arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`.
-- Integer constants in every base (`0x`, `0b`, a leading `0` octal, decimal) and with every suffix, each its
-  exact value in its C11 6.4.4.1 type on the target (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long`
-  where `long` is 64 bits and an `unsigned long long` where it is 32; `017` is 15).
+- Integer constants in every base (`0x`, `0b`, a leading `0` octal, decimal) and with every suffix C spells -- a
+  `u` before or after an `l`, `L`, `ll` or `LL` -- each its exact value in its C11 6.4.4.1 type on the target
+  (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long` where `long` is 64 bits and an `unsigned long long` where
+  it is 32; `017` is 15, in a `#if` too). Any other run of `u`s and `l`s (`1lL`, `1uu`, `1lul`) is refused in
+  Clang's words, in code and in a `#if` (`invalid suffix 'lL' on integer constant`).
 - Integer constant expressions -- an enumerator's value, a case label, an array dimension, a designator --
   folded where they are parsed, in C's own types on the target, by the predicate a static's initializer folds
   with: the integer promotions and the usual arithmetic conversions (`~0u > 5` is 1, `-1 < 0u` is 0, `-1L < 1u`
@@ -411,10 +413,24 @@ _mm_sfence();                      //                   store (release) fence ->
 - Structs and unions declared without a tag and named by a typedef (`typedef struct { ... } P;`, or only through a
   pointer, `typedef struct { ... } *PP;`), with nested anonymous members: the emit names each as C does -- by the
   typedef's name, `__typeof__(*(PP)0)`, or `__typeof__` of the member whose type it is.
-- String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
+- String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO). A string
+  literal's element has its prefix's type (`char`, `char16_t`, `char32_t`, the target's `wchar_t`), read by `"ab"[i]`
+  and `*("ab" + i)` alike; the pieces of one literal take the one prefix they carry (`"a" L"b"` is a wide literal),
+  and pieces of two encodings (`u"a" U"b"`) are refused, as Clang refuses them. A plain `char` element, and
+  `(char)v`, are `char` in both emits -- signed or not as the target's `char` is.
 - File-scope declarations of several objects (`uint32_t a[3], b[2], *p;`, `static struct t { ... } x, y;`),
-  character tables sized by their string literals (`char name[] = "bcir";`), and a multi-dimensional global
-  passed to a row-pointer parameter (`T (*p)[N]`, `T m[][N]`).
+  character tables sized by their string literals (`char name[] = "bcir";`, `char name[] = ("bcir");` too), and a
+  multi-dimensional global passed to a row-pointer parameter (`T (*p)[N]`, `T m[][N]`). A member of an element of a
+  2-D or 3-D file-scope array of structs or unions (`gm[i][j].x`: read, stored, stepped, copied, its address
+  taken) and an element of a 2-D table of pointers (`*gp[i][j]`, `gp[i][j][k]`). `*(p + i - j)` is the element
+  `p + i - j` points at. A `const` global at any level (`const uint32_t k[3]`, `const char *const names[2]`), which
+  both emits name through an lvalue of its unqualified type -- the emit's own objects carry no qualifiers.
+- The linkable emit (`--linkable`) of the Python reference: the unit as one standalone translation unit -- its
+  struct, union, enum and typedef definitions as the source spells them, in its order; every function declared
+  before the globals; each global with its qualifiers and its initializer, a pointer's string literal, `&g[k]`, an
+  array and a function among them as the address constants they are; and the headers its own text names (its
+  copies' `<string.h>`, `<stdarg.h>`, `<stdatomic.h>`, `<complex.h>`). A global whose type is an untagged
+  aggregate no typedef names is refused by name.
 - File-scope initializers as a local's: nested braces, brace elision and designators for arrays of structs, rows
   and character tables, an unsized global sized by what its initializer reaches (`struct pt g[] = {1u, 2u, 3u,
   4u};` is two elements).
@@ -492,6 +508,20 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   rails; take the element first (`struct ops *e = &a[i]; e->fn(s)`). Two splits recorded for follow-up: reading
   that member as a value (`op_t g = a[i].fn;`), and `__typeof__` of a call, of `?:` or of a function designator,
   are refused by the Python reference as not yet supported and lowered by the C twin.
+- An object of an enumerated type none of whose enumerators is negative is `unsigned int` under GCC and Clang
+  (C11 6.7.2.2p4 leaves the type to the implementation) and `int` on both rails, so `c - 5 < 0` and `_Generic(c -
+  5, ...)` of such an object differ from the original -- a recorded follow-up; convert the object to the type
+  you mean first (`(int)c - 5`). The linkable emit defines a global of such a type as `int` for the same reason.
+- `#if` evaluates in each rail's own integers, not in C's `intmax_t` and `uintmax_t`: an unsigned operand does not
+  make a comparison unsigned (`#if -1 > 0u` takes the `#else` branch), a character constant is 0 there, and the
+  Python reference refuses `#if 0xFFFFFFFFFFFFFFFF == -1` with an internal error -- a recorded follow-up.
+- The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
+  *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
+  through a cast; and the C twin's `--linkable` emits the unit's functions alone. Both are recorded follow-ups.
+- A subscript of a pointer member of an element of an array of structs (`gt[i].name[1]`), a pointer to an array of
+  structs (`struct pt (*q)[3] = gm;`), a member through the address of an element (`(&gm[0][1])->y`), a bit-field
+  of a 2-D array of structs and an element of a string literal plus an offset (`("ab" + 1)[i]`): refused on both
+  rails; read the element, or the member, into a local first.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18

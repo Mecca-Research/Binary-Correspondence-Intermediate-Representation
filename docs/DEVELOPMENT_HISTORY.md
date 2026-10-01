@@ -2232,17 +2232,19 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   Found, not fixed here (each a suggested follow-up; one more, an enumerator and a `case` label folding `/`, `%`
   and a comparison apart from C, is closed by CF-ENUMFOLD, below):
   - the twin types a plain `char` element of an array `int8_t` in its emit, where the oracle and the source say
-    `char`: on a target whose `char` is unsigned (AArch64 Linux), an element past 0x7F reads back negative;
+    `char`: on a target whose `char` is unsigned (AArch64 Linux), an element past 0x7F reads back negative (closed
+    by CF-CHARELEM, below);
   - a member of an element of a 2-D array of structs (`gm[i][j].x`) is refused on both rails (`a subscript of an
-    element that is not a pointer`);
+    element that is not a pointer`; closed by CF-AOS2D, below);
   - the oracle's linkable emit names the unit's structs and unions without defining them, and drops `const` from
     a global (`const uint32_t g = 5u;` renders `uint32_t g = 5;`); it still refuses a pointer table's string
-    (`const char *tab[] = {"a"};`) by name;
+    (`const char *tab[] = {"a"};`) by name (closed by CF-LINKEMIT, below);
   - a parenthesized string literal initializing a character array (`char s[] = ("abc");`, at file scope, at
     block scope or `static`) lowers on the oracle, whose parser drops the parentheses, and is refused by the twin
-    (`an array is initialized by a brace list or a string literal`);
+    (`an array is initialized by a brace list or a string literal`; closed by CF-PARENSTR, below);
   - both rails accept a malformed integer suffix (`1lL`), and the twin names a designator's unknown member
-    without its name (`no member of that name to designate`, the oracle's `no member named 'z' to designate`).
+    without its name (`no member of that name to designate`, the oracle's `no member named 'z' to designate`;
+    closed by CF-SUFFIX, below).
 
   CF-VOIDCB, CF-FNSEL, CF-NULLCALL and CF-STRUCTARITH (2026-09-30) typed what goes through a function pointer --
   its call, the arms of `?:` that point to functions, the null pointer constants passed or compared -- and refused
@@ -2677,7 +2679,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a function declared at block scope (`uint32_t f(uint32_t s) { uint32_t g(uint32_t); ... }`) is refused on both
     rails with parse errors of their own;
   - the oracle's linkable emit refuses a file-scope initializer that names a function (`static op_t t[2] = {f, g};`:
-    `non-renderable constant initializer`), where each function's emit takes it;
+    `non-renderable constant initializer`), where each function's emit takes it (closed by CF-LINKEMIT, below);
   - a function-pointer type with a `const` parameter (`uint32_t (*g)(const uint32_t *)`) is spelled without it on both
     rails, so a prototyped function taking `const uint32_t *` does not convert to it in the emit (CF-DECLS's first
     item; closed by CF-QUALS, below).
@@ -2997,6 +2999,131 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   `cfront_signed.c`, `cfront_paste.c`, `cfront_structcall.c` and `cfront_assignexpr.c` -- overflow `int` in the
   original under the shared corpus's full-width random arguments (`_equiv`), so their equivalence runs are undefined;
   each passes on every platform CI runs today.
+
+  CF-CHARELEM, CF-STRELEM, CF-AOS2D, CF-DEREFSUM, CF-PARENSTR, CF-SUFFIX and CF-LINKEMIT (2026-10-01) closed the five
+  file-scope items CF-GLOBALS found and CF-EXTDESIG's linkable refusal of a function named in an initializer, and the
+  defects found closing them. RED was measured on the parent (`4f55b1a5`).
+  - The defects: the twin declared a plain `char` element's temp, and `(char)v`'s, `int8_t` -- right where `char` is
+    signed, and reading an element past 0x7F back negative where it is not (AArch64 Linux) -- and read a string
+    literal's element as an `unsigned char` (`*"\xf0"` was 240 where `char` reads -16, a wide literal's element one
+    byte of it); the oracle typed an `L` literal's element an unsigned integer of its width, where `wchar_t` is `int`
+    on x86-64, i386 and RISC-V Linux. Both rails typed a concatenated literal by its first piece's prefix (`"a" U"b"`
+    was a `char[3]`, where C11 6.4.5p5 makes it a `char32_t[3]`) and took the pieces of two encodings (`u"a" U"b"`)
+    that Clang refuses. A member of an element of a 2-D or 3-D file-scope array of structs or unions, `gm[i][j].x`
+    -- read, stored, compounded, stepped, addressed -- and an element of a 2-D file-scope table of pointers were
+    refused on both rails (`a subscript of an element that is not a pointer`). The twin read `*(p + i - j)` as
+    `p[i - j]`, the index computed in the unsigned type of `i - j`, which wraps where `p + i - j` steps back -- a
+    silent miscompile -- and the oracle refused `*("abc" + 1 + i)` (`unsupported base expression Binary`). The twin
+    refused `char s[] = ("abc");` at file scope, at block scope and `static` (`an array is initialized by a brace list
+    or a string literal`), which the oracle lowered. Both rails took any run of `u`s and `l`s as a suffix -- `1lL`,
+    `1uu`, `1lul`; `1lll` raised a bare `KeyError` in the oracle -- in code and in a `#if`, where the twin read its
+    constants with `strtol` (`0777` was 777), and the twin refused a designator naming no member without naming it.
+    The oracle's linkable emit (`--linkable`) named the unit's structs, unions and typedefs without defining them,
+    spelled a typedef'd anonymous struct `struct $anon0`, dropped `const` from a global (`const uint32_t k = 5u;`
+    rendered `uint32_t k = 5;`, another type than the `extern const uint32_t k;` another unit declares, C11 6.2.7p2),
+    refused a pointer's string literal (`const char *tab[] = {"a"};`), `&g[k]`, a decayed array and a function in an
+    initializer, declared its static functions only after its globals, and called memcpy, `va_start`,
+    `atomic_fetch_add` and `creal` undeclared: of the 236 fixtures' linkable emits, 94 built alone under Clang and
+    GCC, 63 of them under `-Wall -Werror`.
+  - Found by running the emits against the original, and closed: both default emits read a `const` global into a temp
+    of their own, unqualified, type -- `char *t = names[i];` of `const char *names[2]`, `uint32_t *p = gk;` of `const
+    uint32_t gk[3]` -- which discards a qualifier: a constraint violation (6.5.16.1p1) that Clang refuses under
+    `-Werror=incompatible-pointer-types` and GCC warns about.
+  - RED: on the parent the four new tests fail, as does
+    `test_linkable_static_forward_declaration_and_pointer_string_table`, which pinned the string table's refusal.
+    Both rails refuse `runtime/c/cfront_filescope.c`: the oracle at `*("abc" + 1 + (s & 1u))` (`unsupported base
+    expression Binary`), the twin at its first parenthesized string and, past it, at `gm[i][j]`. Of the 16 units
+    `_CARD4_REFUSED` holds, the parent oracle lowers 12 and raises a bare `KeyError` on 2, and the twin lowers 14 and
+    refuses 2 without naming the member; of the 13 `_CARD4_LOWERED` holds, 9 fail -- 4 (a member of a 2-D array of
+    structs) refused on both rails, `*("abc" + 1 + i)` by the oracle and `char t[] = ("xyz")` by the twin, `#if 0777 ==
+    511` and `*(q[i] + 1u - 1u)` on two claim graphs, and `("a" L"b")[i]` with a twin emit that returns what the
+    original does not. The
+    other 4 -- every suffix C spells, in code and in a `#if`, designators out of order, and a `const` global under
+    `_Generic` -- lower alike there too: they hold what the new refusals and records must leave alone.
+  - What landed: the twin's temp of a plain `char` element, and of `(char)v`, is a `char` (`elem_temp`,
+    `emit_cast`). One reading of a literal's prefix on each rail (`clex.lit_prefix`, the twin's `str_prefix`): the
+    one prefix its pieces carry, a piece without one taking the others', two different ones refused
+    (`string literals with different encoding prefixes are concatenated`); the element's type follows it
+    (`lower._LIT_ELEM`, `str_elem_type`: `char`, `char16_t`, `char32_t`, the target's `wchar_t`), read by `"ab"[i]`
+    and `*("ab" + i)` alike (`lit_venv`, `deref_lit_index`). The oracle's `_addr` takes the subscripts of a 2-D or
+    3-D file-scope array of structs, unions or pointers as the element `i*B + j` of a flat array, as a local's
+    (`nest_shape`, `nest_elem`); the twin binds such a global with its dimensions (`global_md_elems`); each emit
+    indexes it from its first element, `(&g[0][0])[i]`, bounded by the whole array (`emit._elem_base`, `elem_base`).
+    The twin reads `*(E + i)` as `E[i]` only when `i` is the whole right operand of that `+` (`deref_sum_index`, the
+    operand `+` takes at its precedence), and past it a pointer value, dereferenced (`deref_paren_fast`,
+    `deref_rvalue_assign_value`, `deref_incdec`); the oracle bases no subscript on a sum's inner sum (`_lvalue`). The
+    twin drops a string literal's redundant parentheses where an initializer or an argument begins (`str_unparen`).
+    One reader of an integer constant per rail, shared by its lexer and its `#if` -- `clex.int_literal_parts`, which
+    `cpp._int_lit` now reads through, and the twin's header-only `bcir_intlit.h`, which `bcir_cpp.c`'s `lit` now
+    reads through in place of `strtol` -- takes the suffix C spells (a `u` before or after an `l`, `L`, `ll` or `LL`)
+    and refuses any other run in Clang's words (`invalid suffix 'lL' on integer constant`); the twin names the member a
+    designator does not find (`no member named 'z' to designate`). The oracle's parser records the unit's file-scope
+    type definitions as their tokens spell them (`Unit.type_defs`, `cparse._spelled`: a struct, union or enum
+    definition, a tag's forward declaration, a typedef), which the linkable emit defines first, in source order --
+    copied, never re-rendered from a layout, so a `packed` or `aligned` attribute stays; each global keeps its
+    qualifiers level by level (`lower._object_quals`, `emit._object_declarator`); a typedef'd anonymous aggregate is
+    spelled by its name and a global of an untagged one no typedef names refused by name; every function is declared
+    before the globals (`_proto_param`); `_spell_init` renders a pointer's string literal, `&g[k]`, a decayed array and
+    a function designator as the address constants they are (C11 6.6p9); the headers follow what the artifact's own
+    text names outside its literals and comments (`_code_only`: `<stddef.h>`, `<string.h>` for its own memcpy,
+    `<stdarg.h>`, `<stdatomic.h>`, `<complex.h>`). Both default emits name a global `const` at any level through an
+    lvalue of its unqualified type, `(*(char * (*)[2])&names)`, as a call meets a qualified parameter
+    (`emit._unqualified_global` over `LoweredFunc.global_quals`; the twin's `qglobal_add`, recorded per function in
+    `bcir_func.qglobals` and rolled back with a speculative lowering); a volatile, `_Atomic` or function-pointer
+    global keeps its name, and a bounds guard's label the plain one.
+  - Two earlier tests pinned what this changes: `test_linkable_static_forward_declaration_and_pointer_string_table`
+    asserted the string table's refusal and now asserts its rendering, built under `-Wall -Werror`; and
+    `test_register_driver_composes_register_map_surface` looked for `QUANTA[` in the twin's emit, which reads the
+    `const` table through its cast now (`&QUANTA)[`). The globals' bytes check
+    (`_linkable_bytes_are_the_originals`) no longer builds the emit after the source's struct definitions.
+  - Outcomes: `runtime/c/cfront_filescope.c` -- `char` elements and casts, string literal elements, `gm[i][j].x` of
+    2-D and 3-D arrays of structs and unions read, stored, stepped, copied, addressed and passed, 2-D tables of
+    pointers, `*(p + i - j)`, parenthesized string initializers and `const` globals of every level -- lowers to one
+    claim graph on the four targets, and both emits run as the original under Clang and GCC with a signed and with an
+    unsigned `char`, the mixes `_QUALS_WERROR` names made errors, and clean under UBSan; its linkable emit builds alone
+    under `-Wall -Werror` (Clang's `-Wstring-plus-int` aside, which names the source's own `"ab" + 1`) and, linked
+    with a driver, prints what the original prints. `_CARD4_REFUSED` (16) is refused on both rails for the reason each
+    names; `_CARD4_LOWERED` (13) lowers alike, each emit the original. Each of `_LINKEMIT_UNITS`' 15 linkable emits
+    builds alone under `-Wall -Werror`, builds with another unit's declarations of what it defines after it, and
+    prints what the original prints, under Clang and GCC. Of the same 236 fixtures, the linkable emit now builds
+    alone for 218, 148 under `-Wall -Werror`, and every emit that built on the parent still builds. Beyond the
+    tests, 75 probe forms agree on both rails: 47 lower alike, each emit run as the original under Clang and GCC
+    with either `char`; 5 more lower alike; 21 are refused in the same words and 2 for reasons of their own
+    (below). Every other unit of the corpus (236) keeps the parent's summary and digest on both rails. The round
+    trip's count stays 123 (the fixture's emit names its file-scope objects, which the standalone re-parse never
+    declares); the fixture's local arrays are only indexed, so every G10 row stays at its bound.
+  - Faults: `tools/testing/faults/cfront-filescope.json`, 26 -- 14 on the oracle, 12 on the twin -- each caught by
+    its own test. The first sweep caught 25: FS19, the twin's `(char)v` typed `int8_t`, reached no test, as the
+    fixture stored the cast only into a `char` local, which converts it back; two uses of the cast's own value
+    joined `fs_chars`, and the re-sweep caught FS19, and FS18 again. Five older faults anchored in code this card
+    moved, which the anchor test (`test_red_sweep`) caught before the gates ran: `cfront-gaps.json` T12 (an `L`
+    literal's element size, now read through `str_prefix`), `cfront-globals.json` IC1 and IC4 (the twin's constant
+    reader, now `bcir_intlit.h`, which its `#if` shares), `cfront-roundtrip.json` O38 (the linkable emit's
+    `<string.h>`, now included for its own memcpy too) and `volatile.json`'s `*q[j]` fault (the name read under `*`,
+    now after `deref_paren_fast`) were re-anchored to the new code, and each re-swept caught by its own check.
+  Found, not fixed here (each a suggested follow-up):
+  - an object of an enumerated type none of whose enumerators is negative is `unsigned int` under GCC and Clang (C11
+    6.7.2.2p4 leaves the type to the implementation) and `int` on both rails: `c - 5 < 0` and `_Generic(c - 5, ...)`
+    of `enum col { RED, GREEN = 4 } c` differ from the original, digest-equal on both rails (a silent miscompile),
+    and the linkable emit defines an `enum col` global as `int`, which another unit's `extern enum col g;` conflicts
+    with;
+  - `#if` evaluates outside C's arithmetic on both rails: `#if -1 > 0u` and `#if 'a' == 97` take the `#else` branch
+    on both, digest-equal (a silent miscompile; C reads -1 as `UINTMAX_MAX` there, and `'a'` as 97), and `#if
+    0xFFFFFFFFFFFFFFFF == -1` raises a bare `ValueError` in the oracle where the twin refuses it as an overflow;
+  - the linkable emit's definitions drop a parameter's qualifiers below its top level, so a function pointer of the
+    source's type takes such a function only through a cast (`cfront_quals_link.c` under Clang: `incompatible function
+    pointer types assigning to 'uint32_t (*)(const uint32_t *)'`); with the four `_BitInt` fixtures GCC 13 cannot
+    build, it is the one fixture that lowers whose linkable emit does not build alone;
+  - of the 219 linkable emits that build alone, 71 draw a `-Wall` warning: a loop's `continue` label its body never
+    takes (46), a temp declared and never read (17), a bit-field's storage unit read before its first store (4), and
+    four the source's own spelling carries;
+  - the twin's `--linkable` emits the unit's functions alone, without its type definitions and globals;
+  - a `u8` string literal's element is `char` on both rails, as Clang 18 reads it under C23, where GCC 13 reads
+    `char8_t` (`unsigned char`) under `-std=c2x`, so the two compilers disagree about such an element's sign;
+  - a subscript of a pointer member of an element of an array of structs (`gt[i].name[1]`), a pointer to an array of
+    structs (`struct pt (*q)[3] = gm;`), a member through the address of an element (`(&gm[0][1])->y`), a bit-field of
+    a 2-D array of structs and an element of a string literal plus an offset (`("ab" + 1)[i]`) are refused on both
+    rails, each for reasons of its own.
 
 ---
 

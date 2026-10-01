@@ -125,7 +125,7 @@
       "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
       "label": "O38 the linkable emit includes <math.h> for a string routine",
       "new": "",
-      "old": "    if callees & _STRING_MEM:\n        parts.append(\"#include <string.h>\")  # the memcpy/memmove/memset edges\n",
+      "old": "    if callees & _STRING_MEM or _MEM_CALL.search(code):\n        parts.append(\"#include <string.h>\")\n",
       "path": "bcir/frontends/cfront/emit.py"
     },
     {

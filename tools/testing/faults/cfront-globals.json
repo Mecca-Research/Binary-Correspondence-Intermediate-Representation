@@ -16,7 +16,7 @@
       "label": "IC1 the twin reads an octal constant as decimal",
       "new": "  else if(0){ base=8; skip=1; }\n",
       "old": "  else if(c0=='0' && nb>1){ base=8; skip=1; }\n",
-      "path": "runtime/c/bcir_cfront.c"
+      "path": "runtime/c/bcir_intlit.h"
     },
     {
       "expects": "test_integer_constants_are_exact_on_both_rails",
@@ -37,7 +37,7 @@
       "label": "IC4 the twin takes a decimal constant without u past LLONG_MAX",
       "new": "  if(over) return int_too_large;",
       "old": "  if(over || (o->decimal && !o->u && o->v>(unsigned long long)LLONG_MAX)) return int_too_large;",
-      "path": "runtime/c/bcir_cfront.c"
+      "path": "runtime/c/bcir_intlit.h"
     },
     {
       "expects": "test_an_integer_constant_no_type_holds_is_refused_on_both_rails",

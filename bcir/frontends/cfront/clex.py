@@ -327,6 +327,35 @@ def split_lit_prefix(text: str) -> tuple[str, str]:
     return "", text
 
 
+def lit_prefix(spelling: str) -> str:
+    """The encoding prefix of a (possibly concatenated) string literal -- its pieces joined by a space, as the
+    parser keeps them: the one prefix its pieces carry. A piece without one takes the others' (C11 6.4.5p5:
+    `"a" L"b"` is a wide literal); two different prefixes are a ValueError, as Clang refuses them. The twin's
+    `str_prefix` (CF-STRELEM)."""
+    found, i, n = "", 0, len(spelling)
+    while i < n:
+        if spelling[i] == " ":
+            i += 1
+            continue
+        j = spelling.find('"', i)
+        if j < 0:
+            break
+        p = spelling[i:j]
+        if p:
+            if found and found != p:
+                raise ValueError(STR_PREFIXES)
+            found = p
+        k = j + 1
+        while k < n and spelling[k] != '"':
+            k += 2 if spelling[k] == "\\" else 1
+        i = k + 1
+    return found
+
+
+#: two pieces of one string literal with different encoding prefixes (`L"a" u"b"`): Clang refuses them
+STR_PREFIXES = "string literals with different encoding prefixes are concatenated"
+
+
 def str_elem_size(prefix: str, abi=None) -> int:
     """The element size of a string literal with this prefix: plain/`u8` = 1 (`char`), `u` = 2
     (`char16_t`), `U` = 4 (`char32_t`), `L` the target's `wchar_t` (4, or 2 on Windows)."""
@@ -447,6 +476,19 @@ def parse_char_literal(text: str) -> int:
 _BASE_DIGITS = {16: "0123456789abcdefABCDEF", 10: "0123456789", 8: "01234567", 2: "01"}
 
 
+def int_suffix_ok(suffix: str) -> bool:
+    """Whether `suffix` -- an integer constant's trailing run of `u`/`U`/`l`/`L` -- is one C spells (C11 6.4.4.1p1):
+    at most one `u` or `U`, first or last, around nothing, one `l` or `L`, or `ll` or `LL` -- never `lL`, `uu` or
+    `lul`. Clang and GCC refuse any other (`invalid suffix 'lL' on integer constant`), and `int_literal_type` reads
+    a long rank only up to `ll` (`1lll` had raised a bare `KeyError`) -- the twin's `int_suffix_ok` (CF-SUFFIX)."""
+    rest = suffix
+    if rest[:1] in ("u", "U"):
+        rest = rest[1:]
+    elif rest[-1:] in ("u", "U"):
+        rest = rest[:-1]
+    return rest in ("", "l", "L", "ll", "LL")
+
+
 def int_literal_parts(text: str) -> "tuple[int, bool, str]":
     """An integer constant (C11 6.4.4.1) as (its value, whether it is decimal, its suffix): the C23 `'`
     digit separators dropped, the trailing run of `u`/`U`/`l`/`L` its suffix, then `0x` hex, `0b` binary,
@@ -458,6 +500,8 @@ def int_literal_parts(text: str) -> "tuple[int, bool, str]":
     while end and t[end - 1] in "uUlL":
         end -= 1
     body, suffix = t[:end], t[end:]
+    if not int_suffix_ok(suffix):
+        raise CLexError(f"invalid suffix '{suffix[:48]}' on integer constant")
     if body[:2] in ("0x", "0X"):
         base, digits = 16, body[2:]
     elif body[:2] in ("0b", "0B"):

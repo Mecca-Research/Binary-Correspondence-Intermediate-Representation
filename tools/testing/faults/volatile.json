@@ -198,8 +198,8 @@
       "label": "Twin index: `*q[j]` dereferences the table's first element, then subscripts what it loaded",
       "expects": "volatile.refused",
       "path": "runtime/c/bcir_cfront.c",
-      "old": "    } else if(isk(c,T_ID) && !postfix_follows(c,c->i+1)){",
-      "new": "    } else if(isk(c,T_ID)){"
+      "old": "    else if(isk(c,T_ID) && !postfix_follows(c,c->i+1)){",
+      "new": "    else if(isk(c,T_ID)){"
     },
     {
       "label": "Twin index: a `T *rows[]` parameter decays one level short, to `T *`",

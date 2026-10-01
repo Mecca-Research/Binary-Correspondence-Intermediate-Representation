@@ -219,6 +219,16 @@ typedef struct bcir_qcast {
   char     type[BCIR_QCAST_TYPE];   /* the operand's cast, spelled; "" for the result, cast to its own type */
 } bcir_qcast;
 
+/* A file-scope object whose type is `const` at some level -- `const uint32_t k[3]`, `const char *tab[2]`, `char *const
+ * p` -- as the emit names it (CF-LINKEMIT): an lvalue of its type with no qualifier, `(*(char * (*)[2])&tab)`, which the
+ * emit's own objects, spelled without qualifiers, meet as a call meets a qualified parameter. An OPTIONAL emit
+ * annotation: it adds no claim and the digest does not read it; the oracle names such a global alike. */
+#define BCIR_QGLOBAL_SPELL 384
+typedef struct bcir_qglobal {
+  uint32_t rid;               /* the function's resource of the global */
+  char     spelling[BCIR_QGLOBAL_SPELL];   /* the whole lvalue, spelled */
+} bcir_qglobal;
+
 /* A static-local variable (static storage duration: a once-only constant init). */
 typedef struct bcir_static {
   char name[BCIR_CIR_NAME];
@@ -268,6 +278,8 @@ typedef struct bcir_func {
   bcir_host_literal *host_literals; int n_host_literals, cap_host_literals;
   bcir_ptr_extent *ptr_extents; int n_ptr_extents, cap_ptr_extents;
   bcir_qcast *qcasts; int n_qcasts, cap_qcasts;           /* the casts its calls' operands take (CF-QUALS) */
+  bcir_qglobal *qglobals; int n_qglobals, cap_qglobals;   /* its qualified globals, as the emit names them
+                                                           * (CF-LINKEMIT) */
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */

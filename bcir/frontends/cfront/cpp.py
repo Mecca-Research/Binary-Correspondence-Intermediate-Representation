@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 
 from ..._artifact_json import read_bounded_text
-from .clex import IDENT_MAX
+from .clex import IDENT_MAX, CLexError, int_literal_parts
 
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
 # dynamic predefined macros: expanded per source position, not stored as static bodies.
@@ -807,16 +807,15 @@ class _ConstEval:
 
 
 def _int_lit(t: str) -> int:
-    t = t.replace("'", "")
-    while t and t[-1] in "uUlL":
-        t = t[:-1]
-    if t[:2] in ("0x", "0X"):
-        return int(t, 16)
-    if t[:2] in ("0b", "0B"):
-        return int(t[2:], 2)
-    if len(t) > 1 and t[0] == "0" and t.isdigit():
-        return int(t, 8)
-    return int(t or "0", 10)
+    """An integer constant of a `#if`, read as the lexer reads one (`clex.int_literal_parts`): its digits checked
+    against its base and its suffix checked, a malformed one (`08`, `1lL`) refused as the lexer refuses it -- it had
+    been read through Python's `int` past whatever it did not know. The twin's `#if` reads through the lexer's
+    `int_literal` too, which had read `0777` as 777 with `strtol` (CF-SUFFIX)."""
+    try:
+        value, _decimal, _suffix = int_literal_parts(t)
+    except CLexError as e:
+        raise CPPError(str(e)) from None
+    return value
 
 
 def _apply(op: str, a: int, b: int) -> int:

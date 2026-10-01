@@ -402,6 +402,11 @@ class _Parser:
             spelling = f"__typeof__({'*' * stars}(({spelling} *)0)->{member}{'[0]' * dims})"
         return spelling
 
+    def _spelled(self, start: int, end: int) -> str:
+        """The tokens `start` to `end` as C text, one space apart -- what they spell, their own spellings (a
+        literal's prefix and quotes, an attribute) kept: the linkable emit's copy of a type definition."""
+        return " ".join(t.text for t in self.t[start:end])
+
     def _toplevel_item(self, unit: cast.Unit) -> None:
         """Parse one top-level item (typedef / enum / aggregate definition / function / global)."""
         # A C23 `[[unsequenced]]`/`[[reproducible]]` (or any leading attribute) may precede a function /
@@ -410,7 +415,9 @@ class _Parser:
         lead = self._attributes()
         self.storage = set()  # per-item storage-class record (see _type_spec)
         if self.at("IDENT", "typedef"):  # a type alias (resolved at parse time)
+            start = self.i
             self._typedef(unit)
+            unit.type_defs.append(self._spelled(start, self.i))
             return
         if self.at("IDENT", "enum"):
             save = self.i
@@ -419,6 +426,7 @@ class _Parser:
             if self.at("PUNCT", "{"):  # an enum definition: register the values
                 self._enum_body(tag)
                 self.eat("PUNCT", ";")
+                unit.type_defs.append(self._spelled(save, self.i))
                 return
             self.i = save  # `enum tag` used as a type
         if self._aggregate_definition(unit):  # `[static] struct t { ... } [a, b];`
@@ -432,6 +440,7 @@ class _Parser:
             # (unless) it is defined (CF-SELFREF)
             if tag and self.at("PUNCT", ";"):
                 self.nxt()
+                unit.type_defs.append(self._spelled(save, self.i))
                 return
             self.i = save  # a struct *type* (func ret / global)
         base = self._type_spec()
@@ -478,6 +487,7 @@ class _Parser:
         if not (self.at("IDENT", "struct") or self.at("IDENT", "union")):
             self.i = save
             return False
+        head = self.i
         kind = self.nxt().text
         attrs = self._attributes()
         tag = self.eat("IDENT").text if self.at("IDENT") else ""
@@ -487,6 +497,8 @@ class _Parser:
         agg = self._aggregate_body(kind, tag, attrs)
         unit.aggregates[agg.tag] = agg
         self.tags.add(agg.tag)
+        if tag:  # the definition alone -- its storage class and declarators are the globals' (CF-LINKEMIT)
+            unit.type_defs.append(self._spelled(head, self.i) + " ;")
         if self.at("PUNCT", ";"):
             self.nxt()
             return True

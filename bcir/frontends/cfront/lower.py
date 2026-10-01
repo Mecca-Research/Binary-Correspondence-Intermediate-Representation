@@ -26,7 +26,7 @@ from ...kbcir import compose
 from ...model import Claim, Domain, Lane, Lifetime, Module, Opcode, Phase, Resource, StrideClass
 from . import cast
 from .abi import HOST
-from .clex import split_lit_prefix, str_elem_size, str_units
+from .clex import lit_prefix, split_lit_prefix, str_elem_size, str_units
 from .ctype_model import (
     AggregateBuilder,
     BitIntMix,
@@ -387,6 +387,14 @@ def _libm_type(name: str) -> CType | None:
     return None
 
 
+#: The type of a string literal's element by its prefix (C11 6.4.5p6, 7.28): a plain or `u8` literal's is `char` --
+#: C23 makes a `u8` one's `char8_t` (`unsigned char`), which GCC reads under -std=c2x and Clang does not; both rails
+#: read Clang's -- a `u` one's `char16_t`, a `U` one's `char32_t`, an `L` one's the target's `wchar_t`. The oracle had
+#: typed an `L` element an unsigned integer of its width, where `wchar_t` is `int` on x86-64, i386 and RISC-V Linux
+#: (CF-STRELEM; the twin's `str_elem_type`).
+_LIT_ELEM = {"": "char", "u8": "char", "u": "unsigned short", "U": "unsigned int", "L": "wchar_t"}
+
+
 def _str_bytes(spelling: str) -> int:
     """The number of bytes a (possibly concatenated) string literal's value occupies *excluding* the
     terminating NUL, decoding escape sequences (a simple `\\c`, an octal `\\NNN`, or a hex `\\xHH..`
@@ -441,9 +449,11 @@ def _file_scope_rendering(
     initializer re-spelled as the source spells it -- its braces and designators kept, which C walks the same way
     in the emit (CF-GBRACE) -- each entry rendered: an integer constant expression folded as a static's entry is,
     in C's own types (`_const_value`, `_const_spelling`; CF-INTCONST), a floating constant by its spelling, a
-    string literal that initializes a character array (`strings`, the ids the shape walk recorded) by its own, the
-    address of a global declared before it by its name. None when an entry is none of these: the linkable emit
-    then refuses the global by name."""
+    string literal by its own -- a character array's initializer (`strings`, the ids the shape walk recorded) or a
+    pointer's, the address of its array (CF-LINKEMIT) -- the address of a global declared before it by its name, as
+    an array declared before it that decays to one and an element of one at constant subscripts, and a function's
+    by the function's (CF-LINKEMIT).
+    None when an entry is none of these: the linkable emit then refuses the global by name."""
     if g.init is None:
         return ()
     with ginit._scratch():
@@ -475,9 +485,31 @@ def _spell_init(ginit: "_FuncLowerer", node, genv: dict, strings: frozenset) -> 
     ):
         return ("-" if node.op == "-" else "") + node.operand.value
     if isinstance(node, cast.StringLit):
-        if id(node) not in strings:  # a pointer's string: not rendered in this slice
-            raise CLowerError(_NOT_CONSTANT)
-        return node.value  # spelling incl. quotes (a character array's initializer)
+        # a character array's initializer, or -- not among `strings` -- a pointer's: the address of the literal's
+        # array, an address constant (C11 6.6p9), which C spells as the literal itself (CF-LINKEMIT)
+        return node.value  # spelling incl. prefix and quotes
+    if isinstance(node, cast.Unary) and node.op == "&" and isinstance(node.operand, cast.Index):
+        # `&g[k]` of an array declared before it, at constant subscripts: an address constant (C11 6.6p9)
+        subs, at = [], node.operand
+        while isinstance(at, cast.Index):
+            subs.append(_const_spelling(ginit._const_value(at.index).v))
+            at = at.base
+        if isinstance(at, cast.Name) and at.ident in genv and genv[at.ident][1].kind == "array":
+            return f"&{at.ident}" + "".join(f"[{k}]" for k in reversed(subs))
+    if isinstance(node, cast.Name) and node.ident in genv and genv[node.ident][1].kind == "array":
+        # an array declared before it, used as a value: the address of its first element, an address constant
+        # (C11 6.6p9), which C spells by the array's name (CF-LINKEMIT)
+        return node.ident
+    fn = node.operand if isinstance(node, cast.Unary) and node.op == "&" else node
+    if (
+        isinstance(fn, cast.Name)
+        and fn.ident not in genv
+        and (fn.ident in ginit.func_rets or fn.ident in ginit.protos)
+    ):
+        # a function designator, or `&` of one: the function's address, an address constant (C11 6.6p9), spelled
+        # as the source spells it -- the linkable emit declares every function of the unit before its globals
+        # (CF-LINKEMIT)
+        return ("&" if fn is not node else "") + fn.ident
     if (
         isinstance(node, cast.Unary)
         and node.op == "&"
@@ -1238,6 +1270,9 @@ class LoweredFunc:
     thread_statics: frozenset = frozenset()  # the statics of thread storage duration, each
     #   thread's own object, declared `static _Thread_local` (CF-TLS)
     globals_used: dict = field(default_factory=dict)  # rid -> name (file-scope globals referenced)
+    global_quals: dict = field(default_factory=dict)  # rid -> its global's type qualifier levels
+    #   (`_object_quals`), which the emit's own objects carry none of: the emit names such a global through an
+    #   lvalue of its unqualified type (`emit._unqualified_global`; CF-LINKEMIT)
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
     tu_protos: dict = field(
         default_factory=dict
@@ -1293,6 +1328,10 @@ class LoweredUnit:
     #   then assumes callers it cannot see
     anon_spelling: dict = field(default_factory=dict)  # how C names each anonymous aggregate (the
     #   parse's `Unit.anon_spelling`), which the emit's `respell_anon` spells it by
+    type_defs: tuple = ()  # the unit's file-scope type definitions as the source spells them, in order (the
+    #   parse's `Unit.type_defs`): the linkable emit defines the types it names with them (CF-LINKEMIT)
+    global_quals: dict = field(default_factory=dict)  # global name -> its type's qualifier levels
+    #   (`_object_quals`), which the linkable emit spells: the emit's own objects carry none (CF-LINKEMIT)
 
 
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
@@ -1769,6 +1808,8 @@ class _FuncLowerer:
                 None  # `a[i].m[j]`: the element's index and its stride in `m`'s elements
             )
             whole = False  # a multi-dimensional global indexed like a member array at offset 0
+            # a multi-dimensional global of structs or pointers (CF-AOS2D)
+            nest_shape = nest_elem = None
             if isinstance(n, cast.Member) and self._aos_rooted(n):
                 # `a[i].m[j]` -- a member ARRAY of an array-of-structs element (CF-SMALL), at any depth of
                 # nested struct/union members (`a[i].s.m[j]`, CF-NESTMEM): the element's index, scaled to the
@@ -1861,10 +1902,25 @@ class _FuncLowerer:
                             "indexing an array of more than 3 dimensions is not yet supported"
                         )
                     mem_shape, mem_elem, whole = tuple(dims), t, True
+                elif len(dims) > 1 and t.kind in ("struct", "union", "pointer"):
+                    # a multi-dimensional file-scope array of structs or of pointers `T g[A][B]`: its
+                    # subscripts take the element `i*B + j`, as a local array's do, and a pointer element
+                    # is then indexed in turn (CF-AOS2D; the twin binds the global with its dimensions)
+                    if len(dims) > 3:
+                        raise CLowerError(
+                            "indexing an array of more than 3 dimensions is not yet supported"
+                        )
+                    nest_shape, nest_elem = tuple(dims), t
             idx_rids = [self._rvalue(ix) for ix in idx_nodes]
             member = (isinstance(n, cast.Member) and not ptr_member) or whole
             while True:
-                shape = mem_shape if mem_shape is not None else base_ct.shape
+                shape = (
+                    mem_shape
+                    if mem_shape is not None
+                    else nest_shape
+                    if nest_shape is not None
+                    else base_ct.shape
+                )
                 # a multi-dim VLA -> runtime dim multipliers
                 vla_str = self.vla_strides.get(base_rid)
                 # the subscripts this base takes: one per dimension of a declared multi-dimensional
@@ -1908,6 +1964,8 @@ class _FuncLowerer:
                 elem = (
                     mem_elem
                     if mem_elem is not None
+                    else nest_elem
+                    if nest_elem is not None
                     else (base_ct.of if base_ct.of else scalar("uint32_t"))
                 )
                 lv = _LV("mem", base_rid, elem, idx=lin, byte_off=byte_off, member=member)
@@ -1920,6 +1978,7 @@ class _FuncLowerer:
                     raise CLowerError("a subscript of an element that is not a pointer")
                 base_rid, base_ct, idx_rids = self._read(lv), elem, rest
                 byte_off, mem_shape, mem_elem, member = 0, None, None, False
+                nest_shape = nest_elem = None
         if isinstance(node, cast.Member):
             # `arr[i].field` / `arr[i].m.k` -- a member of an ARRAY-OF-STRUCTS element (nested members at any
             # depth, CF-NESTMEM): keep the element's runtime index, stride by the element size, and land at the
@@ -1966,7 +2025,9 @@ class _FuncLowerer:
                 raise CLowerError(FN_NOT_LVALUE)
             if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
                 lt = self._static_type(operand.lhs)
-                if lt is None or self._indexable(lt):
+                # `*(p + i + j)`, `*(p - 1u + i)`: the left operand is itself a sum, which no subscript
+                # bases -- the pointer value it is, dereferenced below (CF-DEREFSUM)
+                if not isinstance(operand.lhs, cast.Binary) and (lt is None or self._indexable(lt)):
                     return self._lvalue(cast.Index(operand.lhs, operand.rhs))
                 if not self._indexable(self._static_type(operand)):  # `*(s + 1u)`: no pointer in it
                     raise CLowerError(DEREF_NOT)
@@ -2064,6 +2125,14 @@ class _FuncLowerer:
             return None  # a volatile one, `_Atomic` or not, only of a device region (CF-RTVOL)
         return _LV("mem", rid, el, byte_off=add.rhs.value)
 
+    @staticmethod
+    def _lit_prefix(spelling: str) -> str:
+        """`lit_prefix`, its refusal a CLowerError (CF-STRELEM)."""
+        try:
+            return lit_prefix(spelling)
+        except ValueError as e:
+            raise CLowerError(str(e)) from None
+
     def _string_ptr(self, spelling: str) -> int:
         """A string literal -> an anonymous read-only `char[]` global (NUL-terminated); the value is a
         pointer to it (decay). The emitter renders references to it as the inline literal, which is
@@ -2072,7 +2141,7 @@ class _FuncLowerer:
         existing = self.str_pool.get(spelling)  # dedup: identical literals share a global
         if existing is not None:
             return existing
-        prefix, _ = split_lit_prefix(spelling)
+        prefix = self._lit_prefix(spelling)
         elem = str_elem_size(prefix, self.abi)  # 1 (char/u8) / 2 (u) / 4 (U) / wchar_t (L)
         nunits = _str_bytes(spelling) + 1  # the decoded code units + the NUL
         idx = self.strctr[0]
@@ -2087,7 +2156,7 @@ class _FuncLowerer:
             data_gen=1,
             name=f"__str{idx}",
         )
-        self.rtypes[rid] = array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), nunits)
+        self.rtypes[rid] = array(scalar(_LIT_ELEM[prefix], self.abi), nunits)
         self.str_globals[rid] = spelling  # rid -> the literal spelling (for emit)
         self.str_pool[spelling] = rid
         return rid
@@ -2462,10 +2531,9 @@ class _FuncLowerer:
         if isinstance(node, cast.Name):
             return self._lookup(node.ident, node.pos)[1]
         if isinstance(node, cast.StringLit):  # a string literal has type `char[N]` (not char*)
-            prefix, _ = split_lit_prefix(node.value)
-            elem = str_elem_size(prefix, self.abi)
+            prefix = self._lit_prefix(node.value)
             n = _str_bytes(node.value) + 1  # decoded code units + the NUL
-            return array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), n)
+            return array(scalar(_LIT_ELEM[prefix], self.abi), n)
         if isinstance(node, cast.Binary):
             return self._bin_result_type_ct(
                 node.op, self._operand_type(node.lhs), self._operand_type(node.rhs)
@@ -5444,9 +5512,11 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         ).lower()
         functions[fn.name] = lf
         resources.update(lf.resources)
+    gquals = {g.name: q for g in unit.globals if (q := _object_quals(g.type))}
     for lf in functions.values():  # regions need every callee's param rids
         lf.region = _region_for(lf, functions)
         compose_functions[lf.name] = compose.Function(lf.name, lf.region)
+        lf.global_quals = {rid: gquals[n] for rid, n in lf.globals_used.items() if n in gquals}
     entry = unit.funcs[-1].name if unit.funcs else ""
     return LoweredUnit(
         functions=functions,
@@ -5458,6 +5528,8 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         thread_globals=frozenset(g.name for g in unit.globals if g.thread_storage),
         init_refs=frozenset(n for g in unit.globals for n in _names_in(g.init)),
         anon_spelling=dict(unit.anon_spelling),
+        type_defs=tuple(unit.type_defs),
+        global_quals=gquals,
     )
 
 
@@ -5497,6 +5569,20 @@ def _aggregate(aggregates: dict, tag: str, kind: str = "", pointee: bool = False
     if pointee and kind in ("struct", "union"):
         return incomplete_aggregate(kind, tag)
     raise CLowerError(f"the incomplete struct or union {tag!r} has no layout here")
+
+
+def _object_quals(tref) -> tuple:
+    """The qualifiers of an object's type level by level, from its base type out to its own top level --
+    `const char *const names[2]` is `(("const",), ("const",))`, `const uint32_t k` is `(("const",),)` -- which the
+    linkable emit spells on the global it defines (`emit._object_declarator`), where the emit's own objects carry
+    none: a global the emit declares without its `const` is another type than the one another unit declares it
+    with (C11 6.2.7p2; CF-LINKEMIT). A function pointer keeps its declarator as it is. () when no level is."""
+    if tref is None or tref.funcptr:
+        return ()
+    levels = (("const",) if "const" in tref.quals else (),) + tuple(
+        tref.ptr_quals or ((),) * tref.ptr
+    )
+    return levels if any(levels) else ()
 
 
 def _qual_sig(tref) -> tuple:

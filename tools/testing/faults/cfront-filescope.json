@@ -1,0 +1,197 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_file_scope_objects_run_as_the_original_with_either_char",
+    "bcir.tests.test_c_cfront:test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original",
+    "bcir.tests.test_c_cfront:test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+    "bcir.tests.test_cfront_link:test_linkable_emit_defines_what_the_source_defines",
+    "bcir.tests.test_cfront_link:test_linkable_static_forward_declaration_and_pointer_string_table"
+  ],
+  "faults": [
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS1 the oracle's lexer takes any suffix of `u`s and `l`s (`1lL`, `1uu`, `1lul`)",
+      "new": "    if False and not int_suffix_ok(suffix):\n",
+      "old": "    if not int_suffix_ok(suffix):\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS2 the oracle's `#if` reads a constant through Python's `int`, past any suffix",
+      "new": "    t = t.replace(\"'\", \"\")\n    while t and t[-1] in \"uUlL\":\n        t = t[:-1]\n    if t[:2] in (\"0x\", \"0X\"):\n        return int(t, 16)\n    if t[:2] in (\"0b\", \"0B\"):\n        return int(t[2:], 2)\n    if len(t) > 1 and t[0] == \"0\" and t.isdigit():\n        return int(t, 8)\n    return int(t or \"0\", 10)\n",
+      "old": "    try:\n        value, _decimal, _suffix = int_literal_parts(t)\n    except CLexError as e:\n        raise CPPError(str(e)) from None\n    return value\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS3 the oracle types a concatenated string literal by its first piece's prefix (`\"a\" U\"b\"` a `char[3]`)",
+      "new": "            prefix, _ = split_lit_prefix(node.value)\n            n = _str_bytes(node.value) + 1  # decoded code units + the NUL\n",
+      "old": "            prefix = self._lit_prefix(node.value)\n            n = _str_bytes(node.value) + 1  # decoded code units + the NUL\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS4 the oracle refuses `gm[i][j].x` of a file-scope array of structs or pointers",
+      "new": "                elif False and len(dims) > 1 and t.kind in (\"struct\", \"union\", \"pointer\"):\n",
+      "old": "                elif len(dims) > 1 and t.kind in (\"struct\", \"union\", \"pointer\"):\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS5 the oracle bases a subscript on `*(p + i + j)`'s inner sum (`*(\"abc\" + 1 + i)` refused)",
+      "new": "                if lt is None or self._indexable(lt):\n",
+      "old": "                if not isinstance(operand.lhs, cast.Binary) and (lt is None or self._indexable(lt)):\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS6 the oracle's default emit takes a `const` global into its own unqualified temps",
+      "new": "        if (ct := lf.rid_types.get(rid)) is not None and quals and False:\n",
+      "old": "        if (ct := lf.rid_types.get(rid)) is not None and quals:\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS7 the oracle's linkable emit defines none of the types it names",
+      "new": "    parts += []\n",
+      "old": "    parts += defs\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS8 the oracle's linkable emit defines a `const` global without its `const`",
+      "new": "        decl = respell_anon(_object_declarator(ct, gname), spelling)\n",
+      "old": "        decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS9 the oracle's linkable emit spells a typedef'd anonymous struct `struct $anon0`",
+      "new": "        decl = _object_declarator(ct, gname, quals.get(gname, ()))\n",
+      "old": "        decl = respell_anon(_object_declarator(ct, gname, quals.get(gname, ())), spelling)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS10 the oracle's linkable emit refuses a pointer's string literal (`const char *tab[] = {\"a\"}`)",
+      "new": "        if id(node) not in strings:\n            raise CLowerError(_NOT_CONSTANT)\n        return node.value  # spelling incl. prefix and quotes\n",
+      "old": "        return node.value  # spelling incl. prefix and quotes\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS11 the oracle's linkable emit refuses `&g[k]` of an array",
+      "new": "        if False:\n            return f\"&{at.ident}\"",
+      "old": "        if isinstance(at, cast.Name) and at.ident in genv and genv[at.ident][1].kind == \"array\":\n            return f\"&{at.ident}\"",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS12 the oracle's linkable emit refuses a function designator in an initializer",
+      "new": "        and False\n",
+      "old": "        and (fn.ident in ginit.func_rets or fn.ident in ginit.protos)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS13 the oracle's linkable emit calls its own memcpy with no `<string.h>`",
+      "new": "    if callees & _STRING_MEM:\n",
+      "old": "    if callees & _STRING_MEM or _MEM_CALL.search(code):\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_linkable_emit_defines_what_the_source_defines",
+      "label": "FS14 the oracle's linkable emit names `va_list`, `atomic_fetch_add` and `creal` with no header",
+      "new": "    parts += [f\"#include {h}\" for h, names_re in _OWN_HEADERS if False]\n",
+      "old": "    parts += [f\"#include {h}\" for h, names_re in _OWN_HEADERS if names_re.search(code)]\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS15 the twin's lexer takes any suffix of `u`s and `l`s, and so does its `#if`",
+      "new": "  if(0) return int_bad_suffix;",
+      "old": "  if(ns>3 || !int_suffix_ok(o->suf,ns)) return int_bad_suffix;",
+      "path": "runtime/c/bcir_intlit.h"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS16 the twin's `#if` reads a constant with `strtol` (`0777` is 777, `1lL` is 1)",
+      "new": "  { long value; errno=0;\n    if (s[0]=='0'&&(s[1]=='x'||s[1]=='X')) value=strtol(s,0,16);\n    else if (s[0]=='0'&&(s[1]=='b'||s[1]=='B')) value=strtol(s+2,0,2);\n    else value=strtol(s,0,10);\n    if(errno==ERANGE) ce_limit(expression, \"integer overflow in #if expression\");\n    return value; }\n  intlit L; const char *why=int_literal(s,(int)strlen(s),&L);\n  CppState *state=expression->state;\n",
+      "old": "  intlit L; const char *why=int_literal(s,(int)strlen(s),&L);\n  CppState *state=expression->state;\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS17 the twin names no member in a designator's refusal",
+      "new": "fail(c,\"no member of that name to designate\"); return NULL; }",
+      "old": "char m[96]; snprintf(m,sizeof m,\"no member named '%.*s' to designate\",fld.n<48?fld.n:48,fld.s); fail(c,m); return NULL; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS18 the twin types a plain `char` element `int8_t`",
+      "new": "    if(0 && base->type.is_plain_char && !base->type.is_float && c->fn->n_res)",
+      "old": "    if(base->type.is_plain_char && !base->type.is_float && c->fn->n_res)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS19 the twin types `(char)v` an `int8_t`",
+      "new": "  if(0 && ty.is_plain_char && !ty.is_float && !ty.is_complex && ty.kind==0 && ty.bit_width==0 && c->fn->n_res)",
+      "old": "  if(ty.is_plain_char && !ty.is_float && !ty.is_complex && ty.kind==0 && ty.bit_width==0 && c->fn->n_res)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS20 the twin reads a string literal's element as an `unsigned char`",
+      "new": "    lr->is_signed=0; lr->is_plain_char=0; (void)et; }",
+      "old": "    lr->is_signed=(uint8_t)(et.signd?1:0); lr->is_plain_char=(uint8_t)(et.is_plain_char?1:0); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS21 the twin takes the pieces of a string literal of two encodings",
+      "new": "  sv->rid=",
+      "old": "  if(str_prefix(sp,sn)<0){ fail(c,CC_STR_PREFIXES); return 0; }\n  sv->rid=",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS22 the twin refuses `gm[i][j].x` of a file-scope array of structs or pointers",
+      "new": "  if(!g->is_arr || g->nd<2 || g->nd>3 || !(g->ty.kind==1 || g->ty.kind==2) || 1) return 0;",
+      "old": "  if(!g->is_arr || g->nd<2 || g->nd>3 || !(g->ty.kind==1 || g->ty.kind==2)) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS23 the twin reads `*(p + i - j)` as `p[i - j]`",
+      "new": "  *idx=p_expr(c);",
+      "old": "  *idx=p_binrhs_operand(c,9);                         /* `+`'s precedence (`prec_of`) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS24 the twin refuses `char s[] = (\"abc\");`",
+      "new": "  (void)str_unparen;",
+      "old": "  str_unparen(c);                          /* `= (\"abc\")` is `= \"abc\"` (CF-PARENSTR) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_file_scope_objects_run_as_the_original_with_either_char",
+      "label": "FS25 the twin's emit takes a `const` global into its own unqualified temps",
+      "new": "    if(0 && f->qglobals[k].rid==rid) return f->qglobals[k].spelling;",
+      "old": "    if(f->qglobals[k].rid==rid) return f->qglobals[k].spelling;   /* (CF-LINKEMIT; `qglobal_add`) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
+      "label": "FS26 the twin keeps a rolled-back speculative lowering's `const` global, and names a temp by it",
+      "new": "c->fn->n_calls=m->ncalls; c->nenv=m->nenv;",
+      "old": "c->fn->n_calls=m->ncalls; c->nenv=m->nenv; c->fn->n_qglobals=m->nqg;",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

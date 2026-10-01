@@ -402,3 +402,7 @@ class Unit:
         default_factory=dict
     )  # a synthesized `$anonN` tag -> how C names the
     #   anonymous aggregate: a file-scope typedef's name, or `__typeof__` of the member it is the type of
+    # the file-scope declarations that define or name a type -- a struct, union or enum definition, a tag's forward
+    # declaration, a typedef -- each as its tokens spell it, in source order: the linkable emit defines the
+    # types its functions and globals name with them (CF-LINKEMIT)
+    type_defs: list = field(default_factory=list)

@@ -296,6 +296,8 @@ _PTRVALUE = [
     #   typedef'd table of function pointers, a compound literal of one, `sizeof` of one, `( E ) = v;` (CF-RTFP)
     "cfront_unaryops.c",  # `+a` promoted, `-z` of a complex, `__real__` a part, bit-field and `&x` operand types, an
     #   array compared with 0, `void *` of malloc, `++(x)`, void values where C reads none (CF-UNARY, CF-STRUCTCOND)
+    "cfront_filescope.c",  # plain `char` and string literal elements, `gm[i][j].x`, 2-D pointer tables, `*(p + i -
+    #   j)`, `char s[] = ("abc");` and `const` globals read into the emit's temps (CF-CHARELEM, CF-AOS2D, CF-LINKEMIT)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -2851,7 +2853,7 @@ def test_register_driver_composes_register_map_surface():
         # now renders as a real C `switch`, not an if/else-if desugar).
         for needle in (
             "volatile uint32_t *",
-            "QUANTA[",
+            "&QUANTA)[",  # the `const` table, read through the unqualified lvalue the emit names it by (CF-LINKEMIT)
             "static uint32_t halts",
             "switch (",
             "case ",
@@ -10983,12 +10985,12 @@ int main(void) {
 def _linkable_bytes_are_the_originals(fx: str, src: str, r) -> None:
     """The oracle's linkable emit defines each of the unit's globals as the original does: built beside a `main`
     that dumps every global's bytes -- a static-storage object's padding is zero too (C11 6.7.9p10) -- under every
-    compiler at hand, each holds the original's bytes. The linkable emit names the unit's structs and unions without
-    defining them, so both builds take the source's definitions. Where pthreads are, `main` then overwrites each
-    thread-local global and a new thread dumps it: it holds its initial bytes again, as the original's does."""
+    compiler at hand, each holds the original's bytes. The linkable emit defines the unit's structs and unions as
+    the source does (CF-LINKEMIT), so its build takes nothing of the source. Where pthreads are, `main` then
+    overwrites each thread-local global and a new thread dumps it: it holds its initial bytes again, as the
+    original's does."""
     from bcir.frontends.cfront.emit import emit_linkable
 
-    types = "\n".join(re.findall(r"^(?:struct|union) \w+ \{[^}]*\};$", src, re.M))
     linkable = emit_linkable(r.lowered, r.emitted)
     names = [g[0] for g in r.lowered.globals_decl if not g[3]]
     tls = sorted(r.lowered.thread_globals) if os.name == "posix" else []
@@ -11024,7 +11026,7 @@ def _linkable_bytes_are_the_originals(fx: str, src: str, r) -> None:
         for cc in compilers:
             want = _build_run_c(d, cc, "original", f"{head}{src}\n{driver}", threads)
             got = _build_run_c(
-                d, cc, "linkable", f"{head}{types}\n{linkable}\n{driver}", quarantine + threads
+                d, cc, "linkable", f"{head}{linkable}\n{driver}", quarantine + threads
             )
             assert want and got == want, (
                 f"{fx}: the linkable emit's globals are not the original's under {cc}\n"
@@ -13758,3 +13760,249 @@ def test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_al
             _run_against_original_werror(
                 f"b{n}", unit, (("twin", c_emit), ("oracle", oracle_emit)), driver, clang
             )
+
+
+# CF-CHARELEM, CF-STRELEM, CF-AOS2D, CF-DEREFSUM, CF-PARENSTR, CF-LINKEMIT (card 4): file-scope objects as C types them
+# and the emits name them. Each emit runs with AArch64's `char` too, which is unsigned: an `int8_t` temp of a `char`
+# element reads 200 as -56 there.
+_FILESCOPE_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(fs_chars, s); SAME(fs_strelem, s); SAME(fs_aos2d, s); SAME(fs_aos3d, s); SAME(fs_aoscopy, s);
+    SAME(fs_ptr2d, s); SAME(fs_derefsum, s); SAME(fs_parenstr, s); SAME(fs_consts, s); SAME(fs_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+_FILESCOPE_CALLS = (
+    "fs_chars",
+    "fs_strelem",
+    "fs_aos2d",
+    "fs_aos3d",
+    "fs_aoscopy",
+    "fs_ptr2d",
+    "fs_derefsum",
+    "fs_parenstr",
+    "fs_consts",
+    "fs_entry",
+)
+_UNSIGNED_CHAR_WERROR = {cc: (*flags, "-funsigned-char") for cc, flags in _QUALS_WERROR.items()}
+
+
+def test_file_scope_objects_run_as_the_original_with_either_char():
+    """CF-CHARELEM, CF-STRELEM, CF-AOS2D, CF-DEREFSUM, CF-PARENSTR, CF-LINKEMIT: `cfront_filescope.c` -- plain `char`
+    elements and casts; string literal elements under `*`, `+` and `_Generic`; `gm[i][j].x` of 2-D and 3-D file-scope
+    arrays of structs and unions read, stored, compounded, stepped, copied, addressed and passed; 2-D tables of
+    pointers; `*(p + i - j)`; `char s[] = ("abc");` at file and block scope and static; `const` globals of every level
+    read into the emit's own temps. The twin had typed a `char` element `int8_t` and a string literal's element `int`;
+    both rails refused `gm[i][j].x`; the twin read `*(p + i - j)` as `p[i - j]` with the index computed unsigned -- a
+    silent miscompile -- and refused the parenthesized string; both emits took a `const` global into an unqualified
+    temp, which Clang refuses. Both rails lower the fixture to one claim graph on the four targets, and each emit, with
+    the mixes `_QUALS_WERROR` names made errors, returns what the original does under Clang and GCC with a signed and
+    with an unsigned `char`, function by function."""
+    if not _CC:
+        return
+    fx = "cfront_filescope.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    emits = (("twin", c_emit), ("oracle", oracle_emit))
+    _run_against_original_werror(fx, src, emits, _FILESCOPE_DRIVER, _QUALS_WERROR)
+    _run_against_original_werror(fx, src, emits, _FILESCOPE_DRIVER, _UNSIGNED_CHAR_WERROR)
+
+
+def test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original():
+    """CF-LINKEMIT: the oracle's linkable emit of `cfront_filescope.c` stands alone -- its struct, union and typedef
+    definitions as the source spells them, its `const` globals `const`, its tables of string pointers and its address
+    constants (C11 6.6p9) rendered, `<string.h>` for the memcpy it calls -- and builds under `-Wall -Werror` with Clang
+    and GCC (Clang's `-Wstring-plus-int` aside: it names the source's own `"ab" + 1`); linked with a driver that calls
+    each function, it prints what the original prints. It had named each struct undefined, dropped `const`, refused
+    `const char *tab[] = {"a"}` and called memcpy undeclared."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    if not _CC:
+        return
+    fx = "cfront_filescope.c"
+    src = open(os.path.join(_C, fx), encoding="utf-8").read()
+    r = compile_unit(src, check_clang=False)
+    linkable = emit_linkable(r.lowered, r.emitted)
+    printed = " ".join(f'printf(" %u", (unsigned){f}(s));' for f in _FILESCOPE_CALLS)
+    driver = (
+        "#include <stdint.h>\n#include <stdio.h>\n"
+        + "".join(f"uint32_t {f}(uint32_t s);\n" for f in _FILESCOPE_CALLS)
+        + "static const uint32_t gaps_in[] = {0u, 1u, 2u, 3u, 7u, 255u, 256u, 65535u, 65536u, 0x12345678u,"
+        + " 0xFFFFFFFFu};\n"
+        + "int main(void) {\n  for (unsigned n = 0; n < sizeof gaps_in / sizeof gaps_in[0]; n++) {\n"
+        + f"    uint32_t s = gaps_in[n];\n    {printed}\n    putchar('\\n');\n  }}\n  return 0;\n}}\n"
+    )
+    ran = 0
+    with tempfile.TemporaryDirectory() as d:
+        paths = {}
+        for name, text in (("linkable", linkable), ("original", src), ("driver", driver)):
+            paths[name] = os.path.join(d, f"{name}.c")
+            with open(paths[name], "w", encoding="utf-8") as fh:
+                fh.write(text)
+        for cc in ("clang", "gcc"):
+            exe = shutil.which(cc)
+            if not exe:
+                continue
+            quiet = ("-Wno-string-plus-int",) if cc == "clang" else ()
+            alone = subprocess.run(
+                [exe, "-std=c11", "-Wall", "-Werror", *quiet, "-I", _C, "-c", paths["linkable"]]
+                + ["-o", os.path.join(d, "linkable.o")],
+                capture_output=True,
+                text=True,
+            )
+            assert alone.returncode == 0, (
+                f"{cc}: the linkable emit does not build alone\n{alone.stderr}"
+            )
+            outs = []
+            for label, parts in (
+                ("original", [paths["original"]]),
+                ("linkable", ["-I", _C, paths["linkable"], os.path.join(_C, "bcir_quarantine.c")]),
+            ):
+                prog = os.path.join(d, f"{label}_{cc}")
+                b = subprocess.run(
+                    host_link_args([exe, "-std=c11", "-O2", *parts, paths["driver"], "-o", prog]),
+                    capture_output=True,
+                    text=True,
+                )
+                assert b.returncode == 0, f"{cc}: the {label} program does not build\n{b.stderr}"
+                outs.append(
+                    subprocess.run([prog], capture_output=True, text=True, timeout=300).stdout
+                )
+            assert outs[0] and outs[1] == outs[0], f"{cc}: the linkable emit is not the original"
+            ran += 1
+    assert ran, "no compiler of the pair"
+
+
+def _card4_refusal(src: str) -> str:
+    """The oracle's refusal of `src` -- its lexer's and its `#if`'s too -- or "" when it lowers."""
+    from bcir.frontends.cfront.clex import CLexError
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.cpp import CPPError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    try:
+        compile_unit(src, check_clang=False)
+    except (CLexError, CPPError, CParseError, CLowerError) as e:
+        return str(e)
+    return ""
+
+
+# CF-SUFFIX, CF-STRELEM (card 4): an integer constant whose suffix C does not spell, a designator naming no member and
+# the pieces of a string literal of two encodings -- refused on both rails in the same words, Clang's own for a suffix.
+_SUFFIX = "invalid suffix '{}' on integer constant"
+_STR_PREFIXES = "string literals with different encoding prefixes are concatenated"
+_CARD4_HEAD = """#include <stdint.h>
+struct q { uint32_t x; uint32_t y; };
+struct pt { uint32_t x, y; };
+static struct pt gm[2][3] = {{{1u, 2u}, {3u, 4u}}, {{5u, 6u}}};
+static uint32_t ga[8] = {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u};
+"""
+# Refused on both rails for the reason each names (the unit, the reason)
+_CARD4_REFUSED = (
+    # a suffix C does not spell (C11 6.4.4.1p1) -- `lL`, `uu`, `lul`, three `l`s -- in an expression, an initializer
+    # and a `#if`, of a decimal, hexadecimal and octal constant
+    ("uint32_t f(uint32_t s) { return (uint32_t)1lL + s; }", _SUFFIX.format("lL")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)1Ll + s; }", _SUFFIX.format("Ll")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)1uu + s; }", _SUFFIX.format("uu")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)1lul + s; }", _SUFFIX.format("lul")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)1lll + s; }", _SUFFIX.format("lll")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)1LLL + s; }", _SUFFIX.format("LLL")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)0x1lL + s; }", _SUFFIX.format("lL")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)017lLu + s; }", _SUFFIX.format("lLu")),
+    ("uint32_t f(uint32_t s) { return (uint32_t)1uLl + s; }", _SUFFIX.format("uLl")),
+    (
+        "static const uint32_t g = 1lL;\nuint32_t f(uint32_t s) { return g + s; }",
+        _SUFFIX.format("lL"),
+    ),
+    ("#if 1lL\nuint32_t f(uint32_t s) { return s; }\n#endif", _SUFFIX.format("lL")),
+    ("#if 0x1uu\nuint32_t f(uint32_t s) { return s; }\n#endif", _SUFFIX.format("uu")),
+    # a designator naming no member of its type, named as the oracle names it
+    (
+        "uint32_t f(uint32_t s) { struct q v = { .z = 1u }; return v.x + s; }",
+        "no member named 'z' to designate",
+    ),
+    (
+        "static struct q g = { .y = 1u, .k = 2u };\nuint32_t f(uint32_t s) { return g.x + s; }",
+        "no member named 'k' to designate",
+    ),
+    # two pieces of one string literal with different encoding prefixes (Clang: a non-standard concatenation)
+    ('uint32_t f(uint32_t s) { return (uint32_t)sizeof(u"a" U"b") + s; }', _STR_PREFIXES),
+    ('uint32_t f(uint32_t s) { return (uint32_t)(L"a" u8"b")[s & 1u] + s; }', _STR_PREFIXES),
+)
+# Lowered alike on the four targets, each emit the original
+_CARD4_LOWERED = (
+    # every suffix C spells, in an expression and in a `#if`; octal and hexadecimal constants in a `#if`
+    "uint32_t f(uint32_t s) { return (uint32_t)(1ull + 2LLu + 3uLL + 4lu + 5Ul + 6LU + 7llu + 8ULL + 9uL + 10Lu) + s; }",
+    "#if 1ull && 2LLu && 0x3uLL && 07lu\nuint32_t f(uint32_t s) { return s + 1u; }\n#else\n"
+    "uint32_t f(uint32_t s) { return s; }\n#endif",
+    "#if 0777 == 511 && 0x1F == 31\nuint32_t f(uint32_t s) { return s + 1u; }\n#else\n"
+    "uint32_t f(uint32_t s) { return s; }\n#endif",
+    # designators in any order; pieces of one string literal, one of them prefixed
+    "uint32_t f(uint32_t s) { struct q v = { .y = 1u, .x = 2u }; return v.x + v.y * 3u + s; }",
+    'uint32_t f(uint32_t s) { return (uint32_t)sizeof(u"a" "b") + (uint32_t)sizeof("a" U"b") * 3u'
+    ' + (uint32_t)("a" L"b")[s & 1u] * 5u; }',
+    # `&gm[i][j].y` held and written through; a volatile and an `_Atomic` member of a 2-D array of structs; a loop over
+    # every element
+    "uint32_t f(uint32_t s) { uint32_t *p = &gm[1][2].y; uint32_t old = *p; *p = s; uint32_t r = gm[1][2].y; *p = old;"
+    " return r; }",
+    "static volatile struct pt gv[2][2];\n"
+    "uint32_t f(uint32_t s) { gv[s & 1u][1].x = s; gv[1][0].y = 2u; return gv[s & 1u][1].x + gv[1][0].y; }",
+    "struct at { _Atomic uint32_t x; uint32_t y; };\nstatic struct at gt[2][2];\n"
+    "uint32_t f(uint32_t s) { gt[s & 1u][1].x = s; gt[s & 1u][1].x += 2u; return gt[s & 1u][1].x + gt[1][0].y; }",
+    "uint32_t f(uint32_t s) { uint32_t r = 0u; for (uint32_t i = 0u; i < 2u; i++) for (uint32_t j = 0u; j < 3u; j++)"
+    " { gm[i][j].x += s; r += gm[i][j].x; gm[i][j].x -= s; } return r; }",
+    # a `const` global under `_Generic` and `typeof`, which the twin lowers and rolls back: the rid it took is a
+    # temp's next, which its cast must not name
+    "static const uint32_t gk[2] = {1u, 2u};\n"
+    "uint32_t f(uint32_t s) { uint32_t r = _Generic(gk[s & 1u], uint32_t: 3u, default: 5u) + s;"
+    " return r + gk[1] + (uint32_t)sizeof(__typeof__(gk[0])) * 7u; }",
+    # `*(p + i - j)` through a table of pointers; a parenthesized string's element; a parenthesized string initializer
+    "uint32_t f(uint32_t s) { uint32_t *q[2] = {&ga[2], &ga[5]};"
+    " return *(q[s & 1u] + 1u - 1u) + *(q[1] + (s & 1u) - 1u) * 3u; }",
+    'uint32_t f(uint32_t s) { return (uint32_t)(int)*("abc" + 1 + (s & 1u))'
+    ' + (uint32_t)(int)*(("ab\\xf1") + (s & 2u)) * 3u; }',
+    'uint32_t f(uint32_t s) { char t[] = ("xyz"); static char u[] = ("pq");'
+    " return (uint32_t)t[s % 3u] + (uint32_t)u[s & 1u] * 3u + (uint32_t)sizeof t * 5u; }",
+)
+
+
+def test_malformed_constants_refused_and_file_scope_forms_lowered_alike():
+    """CF-SUFFIX, CF-STRELEM, CF-AOS2D, CF-DEREFSUM, CF-PARENSTR: every unit of `_CARD4_REFUSED` is refused on both
+    rails in the same words -- an integer constant whose suffix C does not spell (C11 6.4.4.1p1), in an expression, an
+    initializer and a `#if`, in Clang's words; a designator naming no member, which the twin now names; two pieces of a
+    string literal with different encoding prefixes. Both rails had taken every malformed suffix -- the oracle raised a
+    bare `KeyError` on `1lll` -- and the twin's `#if` had read `0777` as 777. Every unit of `_CARD4_LOWERED` lowers to
+    one claim graph on the four targets, each emit the original under Clang and GCC."""
+    from bcir.frontends.cfront.clex import STR_PREFIXES
+
+    assert _STR_PREFIXES == STR_PREFIXES
+    for body, why in _CARD4_REFUSED:
+        got = _card4_refusal(_CARD4_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _CARD4_LOWERED:
+        got = _card4_refusal(_CARD4_HEAD + body + "\n")
+        assert got == "", (body, got)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_CARD4_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_CARD4_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            stage = "CPP-ERR" if body.startswith("#") else "PARSE-ERR"
+            assert run.returncode == 1 and run.stdout.strip() == f"{stage} {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_CARD4_LOWERED):
+            _rtfp_run_unit(f"l{n}", _CARD4_HEAD + body + "\n", exe, d)
