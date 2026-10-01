@@ -376,7 +376,12 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   label) or a floating constant longer than 63 characters — C11 5.2.4.1's significant initial characters of an
   internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not
   supported`, `a floating constant longer than 63 characters is not supported`): the C twin's claim graph holds
-  63, and would otherwise have to cut the rest. The emitted C itself has no size limit.
+  63, and would otherwise have to cut the rest. The emitted C itself has no size limit. A macro name never
+  reaches a lexer, so both preprocessors bound it where a directive reads it: a name `#define`, `-D` or `#undef`
+  names, one `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef` or `defined` tests, or one an evaluated `#if` or `#elif`
+  looks up, past 63 characters is refused (`macro name is too long`), and so is a macro parameter (`macro
+  parameter is too long`). A directive in a skipped group, or an `#elif` after a group was taken, is read only
+  through its name (C11 6.10.1p6).
 - An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
   struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
   rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.

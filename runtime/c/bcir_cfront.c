@@ -9210,17 +9210,34 @@ typedef struct { char *buf; size_t cap, w; } buf_ctx;
 static void buf_emit(void *vc, const char *b, size_t n){
   buf_ctx *c=vc; for(size_t i=0;i<n;i++){ if(c->w+1<c->cap) c->buf[c->w]=b[i]; c->w++; }
 }
-/* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof
- * (the Python cfront_structural_canon must equal this byte-for-byte on the corpus). */
-void bcir_cfront_canon_with_allocator(const bcir_unit *u,char *buf,size_t n,
-                                      const bcir_host_allocator *allocator){
-  if(!buf||!n)return;
-  buf_ctx c={buf,n,0};canon_walk(u,buf_emit,&c,allocator);
-  if(n) buf[c.w<n?c.w:n-1]=0;
+/* The canon's allocator: the caller's, noting an allocation it refused -- a canon built past one is not whole (its
+ * walk writes `oom` where the work went undone, as the digest hashes it). The arena never reallocates; were it to,
+ * the canon would be refused, never cut. */
+typedef struct { bcir_host_allocator inner; int refused; } canon_alloc;
+static void *canon_allocate(void *vc,size_t size){
+  canon_alloc *a=vc; void *p=bcir_host_allocate(&a->inner,size); if(!p) a->refused=1; return p;
 }
-void bcir_cfront_canon(const bcir_unit *u,char *buf,size_t n){
+static void *canon_reallocate(void *vc,void *p,size_t size){
+  (void)p; (void)size; ((canon_alloc *)vc)->refused=1; return NULL;
+}
+static void canon_deallocate(void *vc,void *p){ canon_alloc *a=vc; bcir_host_deallocate(&a->inner,p); }
+/* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof
+ * (the Python cfront_structural_canon must equal this byte-for-byte on the corpus). Its whole length, as snprintf
+ * counts it: a canon longer than the buffer is cut there and the length says so -- the twin's driver held 128 KiB
+ * and printed the first 128 KiB of a longer canon, unsaid (CF-LIMITS) -- and one an allocation failed in is
+ * SIZE_MAX, with nothing written. */
+size_t bcir_cfront_canon_with_allocator(const bcir_unit *u,char *buf,size_t n,
+                                        const bcir_host_allocator *allocator){
+  canon_alloc a={bcir_host_allocator_or_default(allocator),0};
+  bcir_host_allocator noting={&a,canon_allocate,canon_reallocate,canon_deallocate};
+  buf_ctx c={buf,buf?n:0,0};canon_walk(u,buf_emit,&c,&noting);
+  if(a.refused){ if(buf&&n) buf[0]=0; return SIZE_MAX; }
+  if(buf&&n) buf[c.w<n?c.w:n-1]=0;
+  return c.w;
+}
+size_t bcir_cfront_canon(const bcir_unit *u,char *buf,size_t n){
   bcir_host_allocator allocator=bcir_host_allocator_default();
-  bcir_cfront_canon_with_allocator(u,buf,n,&allocator);
+  return bcir_cfront_canon_with_allocator(u,buf,n,&allocator);
 }
 
 /* --- G10: escape analysis, indirect-call narrowing and the effect footprint -------------------------

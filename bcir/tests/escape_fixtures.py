@@ -70,8 +70,10 @@ CC_ROWS = ("effects.commute.unsound", "effects.parity.mismatch", "escape.parity.
 SEEDS = tuple(range(24))
 #: The corpus units the twin's preprocessor does not take, so only the oracle reports on them. The
 #: set is exact: any other unit the twin refuses is a parity failure, and the parity test fails when
-#: one of these starts to compile (the pin is then stale).
-TWIN_PREPROCESSOR_LIMITS = frozenset({"cfront_sec_cppmacro.c"})
+#: one of these starts to compile (the pin is then stale). It is empty: its one unit,
+#: `cfront_sec_cppmacro.c` (an overlong macro parameter), left the corpus when CF-LIMITS bounded a
+#: macro parameter on the oracle as the twin bounds it, so both preprocessors refuse it now.
+TWIN_PREPROCESSOR_LIMITS: frozenset = frozenset()
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CORPUS_DIR = os.path.join(_ROOT, "runtime", "c")

@@ -16,10 +16,17 @@
 #define BCIR_CPP_MAX_DEFINES 1024
 
 /* --- macro table --------------------------------------------------------- */
+/* A macro name or parameter is at most BCIR_CPP_NAME_MAX characters (CF-LIMITS): C11 5.2.4.1's 63 significant
+ * initial characters, the bound both lexers hold an identifier to (CF-BUF; `IDENT_MAX` in cfront/clex.py). A macro
+ * name never reaches a lexer -- it is replaced here -- so a longer one is refused wherever a directive reads it, for
+ * one reason, as the oracle's `cpp.py` refuses it. */
+#define BCIR_CPP_NAME_MAX 63
+#define BCIR_CPP_NAME (BCIR_CPP_NAME_MAX + 1)
+#define BCIR_CPP_LONG_NAME "macro name is too long"
 typedef struct {
-  char name[64];
+  char name[BCIR_CPP_NAME];
   int isfunc;
-  int np; char params[16][64]; int variadic;
+  int np; char params[16][BCIR_CPP_NAME]; int variadic;
   char body[1024];
 } Macro;
 
@@ -88,6 +95,26 @@ static int has_attribute(const char *n) {
 static int idc(int c) { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                                (c >= '0' && c <= '9'); }
 static int id0(int c) { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+/* The length of the identifier at s[*i], past the spaces before it (*i is moved past them); 0 when none starts there. */
+static int ident_at(const char *s, int *i) {
+  int n = 0;
+  while (s[*i] == ' ' || s[*i] == '\t') (*i)++;
+  if (id0((unsigned char)s[*i])) while (idc((unsigned char)s[*i + n])) n++;
+  return n;
+}
+/* A macro name a directive reads -- the one #define or -D defines, #undef removes, #ifdef/#ifndef/#elifdef/#elifndef
+ * or defined tests: the identifier at s[*i] into `out` (BCIR_CPP_NAME bytes), *i past it. 0, with the refusal
+ * recorded, when none starts there (`why`, the directive's own reason) or when it is longer than BCIR_CPP_NAME_MAX,
+ * at any length (CF-LIMITS; the oracle's `_macro_name`). */
+static int macro_name(CppState *state, const char *s, int *i, char *out, const char *why) {
+  int n = ident_at(s, i);
+  if (!n) { cpp_limit(state, why); return 0; }
+  *i += n;
+  if (n > BCIR_CPP_NAME_MAX) { cpp_limit(state, BCIR_CPP_LONG_NAME); return 0; }
+  memcpy(out, s + *i - n, (size_t)n); out[n] = 0;
+  return 1;
+}
 
 /* Every multi-character punctuator (C 6.4.6), longest first: `++` is one token, never two `+`. */
 static const char *const punct_ops[] = {"<<=", ">>=", "...", "->", "##", "<<", ">>", "<=", ">=", "==", "!=",
@@ -488,16 +515,17 @@ static long eval_if(CppState *state, const char *expr, const char *const *dirs, 
   /* replace `defined X` / `defined(X)` and the __has_* operators first, then expand, then evaluate. */
   char *buf=state->conditional_buffer; size_t w=0; buf[0]=0; int i=0; char t[256];
   state->constant_expression_suppression=0;
-  while(1){int k=ntok(state,expr,&i,t,sizeof t); if(!k)break;
-    if(k=='i'&&!strcmp(t,"defined")){char p[256]={0}; int j=i; int pk=ntok(state,expr,&j,p,sizeof p);
-      int has=0; char nm[256]={0};
-      if(pk&&!strcmp(p,"(")){char cl[8]={0};
-        if(ntok(state,expr,&j,nm,sizeof nm)!='i'||ntok(state,expr,&j,cl,sizeof cl)!='p'||strcmp(cl,")"))
-          cpp_limit(state, "malformed defined operator");
-        i=j;
-      } else if(pk=='i'){strcpy(nm,p);i=j;}
-      else {cpp_limit(state, "malformed defined operator");i=j;}
-      has = is_defined(state, nm);
+  while(1){{ int q=i; if(ident_at(expr,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME); }   /* a name
+                                                        * it looks up is a macro name: bounded here and after expansion */
+    int k=ntok(state,expr,&i,t,sizeof t); if(!k)break;
+    if(k=='i'&&!strcmp(t,"defined")){int has, j=i; char nm[BCIR_CPP_NAME]="", cl[8]="";   /* its operand is a
+                                                        * macro name, read as #ifdef reads one */
+      while(expr[j]==' '||expr[j]=='\t')j++;
+      if(expr[j]=='('){ j++;
+        has=macro_name(state,expr,&j,nm,"malformed defined operator");
+        if(has&&(ntok(state,expr,&j,cl,sizeof cl)!='p'||strcmp(cl,")"))){cpp_limit(state, "malformed defined operator");has=0;}
+      } else has=macro_name(state,expr,&j,nm,"malformed defined operator");
+      i=j; has=has&&is_defined(state, nm);
       { char bit[2]={(char)(has?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     if(k=='i'&&(!strcmp(t,"__has_attribute")||!strcmp(t,"__has_builtin")||
                 !strcmp(t,"__has_c_attribute"))){
@@ -524,7 +552,8 @@ static long eval_if(CppState *state, const char *expr, const char *const *dirs, 
     app(state,buf,sizeof state->conditional_buffer,&w,t);}
   expand_line(state,buf,state->conditional_expanded,sizeof state->conditional_expanded);
   CE c; c.n=0;c.i=0;c.state=state; int j=0; char tk[64];
-  while(1){int k=ntok(state,state->conditional_expanded,&j,tk,sizeof tk); if(!k)break;
+  while(1){int q=j; if(ident_at(state->conditional_expanded,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME);
+    int k=ntok(state,state->conditional_expanded,&j,tk,sizeof tk); if(!k)break;
     if(c.n>=512){cpp_limit(state, "too many tokens in #if expression");break;}
     strncpy(c.t[c.n++],tk,63);c.t[c.n-1][63]=0;}
   return ce_expr(&c);
@@ -532,12 +561,8 @@ static long eval_if(CppState *state, const char *expr, const char *const *dirs, 
 
 /* --- directive processing ------------------------------------------------ */
 static void define_macro(CppState *state, const char *rest) {
-  int i=0; while(rest[i]==' '||rest[i]=='\t')i++; int s=i;
-  if(!id0((unsigned char)rest[i])){cpp_limit(state, "macro name must be an identifier");return;}
-  while(idc((unsigned char)rest[i]))i++;
-  Macro m; memset(&m,0,sizeof m); int L=i-s;
-  if(L>63){cpp_limit(state, "macro name is too long");return;}
-  memcpy(m.name,rest+s,(size_t)L);m.name[L]=0;
+  int i=0; Macro m; memset(&m,0,sizeof m);
+  if(!macro_name(state,rest,&i,m.name,"macro name must be an identifier"))return;
   if(rest[i]=='('){m.isfunc=1;i++; for(;;){
       while(rest[i]==' '||rest[i]=='\t')i++;
       if(rest[i]==')'){i++;break;}
@@ -558,7 +583,7 @@ static void define_macro(CppState *state, const char *rest) {
       int pl;
       while(idc((unsigned char)rest[i]))i++;
       pl=i-ps;
-      if(pl>63){cpp_limit(state, "macro parameter is too long");return;}
+      if(pl>BCIR_CPP_NAME_MAX){cpp_limit(state, "macro parameter is too long");return;}
       for(int p=0;p<m.np;p++)if((int)strlen(m.params[p])==pl&&!strncmp(m.params[p],rest+ps,(size_t)pl)){
         cpp_limit(state, "duplicate macro parameter");return;}
       memcpy(m.params[m.np],rest+ps,(size_t)pl);m.params[m.np][pl]=0;m.np++;
@@ -687,10 +712,10 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
       int parent=1; for(int k=0;k<ncs;k++) if(!cs[k].active){parent=0;break;}
       if(!strcmp(dir,"ifdef")||!strcmp(dir,"ifndef")||!strcmp(dir,"if")){
         int tk=0;
-        if(!strcmp(dir,"ifdef")||!strcmp(dir,"ifndef")){
-          char n[64]={0};int j=0;
-          if(ntok(state,rest,&j,n,sizeof n)!='i')cpp_limit(state, "conditional directive requires an identifier");
-          else if(parent)tk=!strcmp(dir,"ifdef")?is_defined(state,n):!is_defined(state,n);
+        if(!strcmp(dir,"ifdef")||!strcmp(dir,"ifndef")){   /* a skipped group's operand is never read (C11 6.10.1p6) */
+          char n[BCIR_CPP_NAME];int j=0;
+          if(parent&&macro_name(state,rest,&j,n,"conditional directive requires an identifier"))
+            tk=!strcmp(dir,"ifdef")?is_defined(state,n):!is_defined(state,n);
         } else if(parent)tk=eval_if(state,rest,dirs,ndirs)!=0;
         if(ncs>=64){if(err&&errcap)snprintf(err,errcap,"conditional nesting too deep");return 1;}
         cs[ncs].active=parent&&tk;cs[ncs].taken=tk;cs[ncs].parent=parent;cs[ncs].seen_else=0;ncs++;
@@ -703,18 +728,18 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
         if(!strcmp(dir,"else"))cs[ncs-1].seen_else=1;
         { int par=cs[ncs-1].parent; int take;
         if(!strcmp(dir,"else")) take=!cs[ncs-1].taken;
-        else if(!strcmp(dir,"elifdef")||!strcmp(dir,"elifndef")){
-          char n[64]={0};int j=0;
-          if(ntok(state,rest,&j,n,sizeof n)!='i'){cpp_limit(state, "conditional directive requires an identifier");take=0;}
-          else take=!cs[ncs-1].taken&&par&&(!strcmp(dir,"elifdef")?is_defined(state,n):!is_defined(state,n));
+        else if(!strcmp(dir,"elifdef")||!strcmp(dir,"elifndef")){   /* read only where no group was taken */
+          char n[BCIR_CPP_NAME];int j=0;
+          take=!cs[ncs-1].taken&&par&&macro_name(state,rest,&j,n,"conditional directive requires an identifier")&&
+               (!strcmp(dir,"elifdef")?is_defined(state,n):!is_defined(state,n));
         }
         else take=!cs[ncs-1].taken&&par&&(eval_if(state,rest,dirs,ndirs)!=0);
         cs[ncs-1].active=par&&take; cs[ncs-1].taken=cs[ncs-1].taken||take; }
       }
       else if(parent){                              /* parent == every enclosing frame is active */
         if(!strcmp(dir,"define")) define_macro(state,rest);
-        else if(!strcmp(dir,"undef")){char n[64]={0};int j=0;
-          if(ntok(state,rest,&j,n,sizeof n)!='i')cpp_limit(state, "#undef requires an identifier");else undef_macro(state,n);}
+        else if(!strcmp(dir,"undef")){char n[BCIR_CPP_NAME];int j=0;
+          if(macro_name(state,rest,&j,n,"#undef requires an identifier"))undef_macro(state,n);}
         else if(!strcmp(dir,"include")){
           int sys=(rest[0]=='<');char close=sys?'>':'"';char nm[1024];int j=0;
           if(rest[0]!='<'&&rest[0]!='"'){if(err&&errcap)snprintf(err,errcap,"malformed #include");return 1;}

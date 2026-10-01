@@ -27,6 +27,45 @@ static void dirof(const char *path, char *out, size_t cap) {
   else snprintf(out, cap, ".");
 }
 
+/* The whole source, NUL-terminated, in a block the caller releases (CF-LIMITS): the driver kept the first 64 KiB of
+ * a file and lowered that prefix without saying so. The block grows two-phase through the host allocator, each size
+ * checked, to the bound `bcir-cc` holds a source to (as its `cc_read_file` does); a file that cannot be handed on
+ * whole -- past that bound, unreadable, or holding a NUL a C string would stop at -- is refused, never cut. NULL on
+ * success, else the reason. */
+#define TEST_CFRONT_MAX_SOURCE ((size_t)64u << 20)
+static const char *read_source(FILE *fp, const bcir_host_allocator *heap, char **out) {
+  size_t cap = (size_t)1u << 16, n = 0;
+  char *buf = (char *)bcir_host_allocate(heap, cap);
+  *out = NULL;
+  if (!buf) return "out of memory";
+  for (;;) {
+    if (n == cap - 1u) {                    /* full: past the bound one byte more is refused, else the block grows */
+      size_t want, grown;
+      if (cap >= TEST_CFRONT_MAX_SOURCE + 1u) {
+        int extra = fgetc(fp);
+        if (extra == EOF && !ferror(fp)) break;
+        bcir_host_deallocate(heap, buf);
+        return extra == EOF ? "cannot read the source" : "the source is larger than 64 MiB";
+      }
+      if (!bcir_size_add(cap, 1u, &want) || !bcir_host_grow_capacity(cap, want, 1u, &grown)) {
+        bcir_host_deallocate(heap, buf); return "out of memory"; }
+      if (grown > TEST_CFRONT_MAX_SOURCE + 1u) grown = TEST_CFRONT_MAX_SOURCE + 1u;
+      if (!bcir_host_realloc_array(heap, (void **)&buf, cap, grown, 1u, 0)) {
+        bcir_host_deallocate(heap, buf); return "out of memory"; }
+      cap = grown;
+    }
+    size_t avail = cap - 1u - n, got = fread(buf + n, 1, avail, fp);
+    n += got;
+    if (got < avail) {
+      if (ferror(fp) || (!feof(fp) && !got)) { bcir_host_deallocate(heap, buf); return "cannot read the source"; }
+      if (feof(fp)) break;
+    }
+  }
+  if (memchr(buf, 0, n)) { bcir_host_deallocate(heap, buf); return "the source holds a NUL byte"; }
+  buf[n] = 0; *out = buf;
+  return NULL;
+}
+
 int main(int argc, char **argv) {
   /* args: [--target <abi>] [--canon] <c-source>. --target selects the data model (x86_64-linux
    * default); --canon prints the raw cross-rail canonical serialization (the byte-identity proof). */
@@ -42,13 +81,19 @@ int main(int argc, char **argv) {
   if (!path) { fprintf(stderr, "usage: %s [--target <abi>] [--emit-cpp] <c-source>\n", argv[0]); return 2; }
   FILE *fp = fopen(path, "rb");
   if (!fp) { perror("fopen"); return 2; }
-  static char raw[1 << 16];
-  size_t n = fread(raw, 1, sizeof raw - 1, fp); raw[n] = 0; fclose(fp);
+  bcir_host_allocator heap = bcir_host_allocator_default();
+  char *raw = NULL;
+  const char *why = read_source(fp, &heap, &raw);
+  if (fclose(fp) && !why) why = "cannot read the source";
+  if (why) { bcir_host_deallocate(&heap, raw); printf("READ-ERR %s\n", why); return 1; }
 
-  /* L7: preprocess (macros / conditionals / #include / #embed) before the frontend. */
+  /* L7: preprocess (macros / conditionals / #include / #embed) before the frontend. The preprocessed text is held in
+   * 64 KiB, as `bcir-cc` holds it; a unit that runs past it is refused (`preprocessed output too large`), never cut. */
   static char src[1 << 16], cpperr[256], base[1024];
   dirof(path, base, sizeof base);
-  if (bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr)) { printf("CPP-ERR %s\n", cpperr); return 1; }
+  int cpp_rc = bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr);
+  bcir_host_deallocate(&heap, raw);
+  if (cpp_rc) { printf("CPP-ERR %s\n", cpperr); return 1; }
   /* --emit-cpp: the C-twin preprocessor's expansion verbatim, so the Python differential can compare the
    * C rail against the reference compiler (catching a Python<->C preprocessor divergence). No frontend. */
   if (emit_cpp) { fputs(src, stdout); return 0; }
@@ -63,8 +108,13 @@ int main(int argc, char **argv) {
    * the oracle's linkflags.derive_link_flags -- the dual-rail parity gate. */
   if (emit_lf) { static char lf[256]; bcir_cfront_link_flags(&r.unit, lf, sizeof lf);
     printf("%s\n", lf); bcir_cfront_free(&r); return 0; }
-  if (canon) { static char cbuf[1 << 17]; bcir_cfront_canon(&r.unit, cbuf, sizeof cbuf);
-    fputs(cbuf, stdout); bcir_cfront_free(&r); return 0; }
+  if (canon) {   /* the whole canon, however long (CF-LIMITS): measured, held, then printed -- never a cut prefix */
+    size_t need = bcir_cfront_canon(&r.unit, NULL, 0), cap = 0, got = SIZE_MAX;
+    char *cbuf = need != SIZE_MAX && bcir_size_add(need, 1u, &cap) ? (char *)bcir_host_allocate(&heap, cap) : NULL;
+    if (cbuf) got = bcir_cfront_canon(&r.unit, cbuf, cap);
+    if (!cbuf || got != need) {
+      printf("CANON-ERR no whole canon\n"); bcir_host_deallocate(&heap, cbuf); bcir_cfront_free(&r); return 1; }
+    fwrite(cbuf, 1, need, stdout); bcir_host_deallocate(&heap, cbuf); bcir_cfront_free(&r); return 0; }
   /* defensive: a successful compile always emits, whole -- the emit grows with no fixed capacity (CF-BUF) */
   if (!r.emitted_ok) { printf("EMIT-ERR no emitted C\n"); bcir_cfront_free(&r); return 1; }
   char sum[256]; bcir_cfront_summary(&r.unit, r.ok, sum, sizeof sum);

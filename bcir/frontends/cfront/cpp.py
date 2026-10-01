@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 
 from ..._artifact_json import read_bounded_text
+from .clex import IDENT_MAX
 
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
 # dynamic predefined macros: expanded per source position, not stored as static bodies.
@@ -117,6 +118,44 @@ def _is_id(t: str) -> bool:
     return bool(t) and (t[0].isalpha() or t[0] == "_")
 
 
+#: The one reason each rail gives for a macro name, and for a macro parameter, longer than
+#: `IDENT_MAX` (CF-LIMITS): C11 5.2.4.1's 63 significant initial characters, the bound both lexers
+#: hold an identifier to (CF-BUF). A macro name never reaches a lexer -- the preprocessor replaces
+#: it -- so it is bounded where a directive reads it. The twin's preprocessor (`bcir_cpp.c`) holds a
+#: name in 64 bytes and gives these reasons.
+MACRO_NAME_TOO_LONG = "macro name is too long"
+MACRO_PARAM_TOO_LONG = "macro parameter is too long"
+_NEEDS_NAME = "conditional directive requires an identifier"
+#: A name as the tokenizer reads one (`_TOKEN_RE`), so a directive reads the name its text spells; an
+#: ASCII name is the one the twin's `macro_name` reads.
+_NAME_RE = re.compile(r"[ \t]*([A-Za-z_]\w*)")
+
+
+def _macro_name(text: str, why: str) -> tuple[str, int]:
+    """The macro name a directive reads at the start of `text` -- the one `#define` or `-D` defines,
+    `#undef` removes, `#ifdef`/`#ifndef`/`#elifdef`/`#elifndef`/`defined` tests -- and the index just
+    past it: the identifier there (`_NAME_RE`). A CPPError with `why`, the directive's own reason
+    (the twin's), when none starts there, and with MACRO_NAME_TOO_LONG when it is longer than
+    IDENT_MAX."""
+    m = _NAME_RE.match(text)
+    if m is None:
+        raise CPPError(why)
+    if len(m.group(1)) > IDENT_MAX:
+        raise CPPError(MACRO_NAME_TOO_LONG)
+    return m.group(1), m.end()
+
+
+def _bound_names(toks: list[str]) -> list[str]:
+    """`toks`, the tokens of an evaluated `#if`/`#elif`, refused when a name it looks up -- a macro
+    name, though one too long to have been defined -- is longer than IDENT_MAX (the twin reads them
+    before and after expansion)."""
+    for t in toks:
+        m = _NAME_RE.match(t)
+        if m is not None and len(m.group(1)) > IDENT_MAX:
+            raise CPPError(MACRO_NAME_TOO_LONG)
+    return toks
+
+
 class Preprocessor:
     def __init__(
         self,
@@ -134,6 +173,7 @@ class Preprocessor:
         self.macros["__DATE__"] = Macro("__DATE__", _tokens(f'"{date}"'))
         self.macros["__TIME__"] = Macro("__TIME__", _tokens(f'"{clock}"'))
         for n, v in (defines or {}).items():  # -D name[=value]  (value "" -> defined as 1)
+            _macro_name(n, "macro name must be an identifier")  # read as `#define` reads it
             self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
         self._cur_file = "<source>"  # __FILE__: the file currently being processed
@@ -228,7 +268,7 @@ class Preprocessor:
         if op == "define":
             self._define(rest)
         elif op == "undef":
-            self.macros.pop(rest.split()[0], None) if rest else None
+            self.macros.pop(_macro_name(rest, "#undef requires an identifier")[0], None)
         elif op == "include":
             self._include(rest, out, name)
         elif op == "embed":
@@ -243,13 +283,16 @@ class Preprocessor:
             raise CPPError(f"unknown directive #{op} in {name}")
 
     def _conditional(self, op, rest, cond, parent) -> None:
+        # A directive in a skipped group is processed only through its name (C11 6.10.1p6), as is
+        # an `#elif...` after a group was taken: its operand is never read, so no macro name or
+        # expression in it can refuse the unit.
         if op in ("ifdef", "ifndef", "if"):
             if op == "ifdef":
-                taken = self._defined(rest.split()[0])
+                taken = parent and self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             elif op == "ifndef":
-                taken = not self._defined(rest.split()[0])
+                taken = parent and not self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             else:
-                taken = self._eval(rest) != 0
+                taken = parent and self._eval(rest) != 0
             cond.append([parent and taken, taken, parent])
         elif op == "endif":
             if not cond:
@@ -263,9 +306,9 @@ class Preprocessor:
             if op == "else":
                 take = not top[1]
             elif op == "elifdef":
-                take = (not top[1]) and self._defined(rest.split()[0])
+                take = (not top[1]) and par and self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             elif op == "elifndef":
-                take = (not top[1]) and not self._defined(rest.split()[0])
+                take = (not top[1]) and par and not self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             else:  # elif
                 take = (not top[1]) and (par and self._eval(rest) != 0)
             top[0] = par and take
@@ -273,11 +316,7 @@ class Preprocessor:
 
     # --- #define ---
     def _define(self, rest: str) -> None:
-        m = re.match(r"(\w+)", rest)
-        if not m:
-            return
-        nameend = m.end()
-        nm = m.group(1)
+        nm, nameend = _macro_name(rest, "macro name must be an identifier")
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
             depth, i = 0, nameend
             while i < len(rest):
@@ -291,6 +330,10 @@ class Preprocessor:
             params_src = rest[nameend + 1 : i]
             body = rest[i + 1 :].strip()
             params = [p.strip() for p in params_src.split(",") if p.strip()]
+            for p in params:  # bounded as a macro name is, for its own reason (the twin's)
+                m = _NAME_RE.match(p)
+                if m is not None and len(m.group(1)) > IDENT_MAX:
+                    raise CPPError(MACRO_PARAM_TOO_LONG)
             variadic = bool(params) and params[-1] == "..."
             if variadic:
                 params[-1] = "__VA_ARGS__"
@@ -492,15 +535,15 @@ class Preprocessor:
 
     # --- constant-expression evaluation (#if / #elif) ---
     def _eval(self, expr: str) -> int:
-        # handle defined / the __has_* operators BEFORE macro expansion, then expand.
-        expr = re.sub(
-            r"\bdefined\s*\(\s*(\w+)\s*\)",
-            lambda m: "1" if self._defined(m.group(1)) else "0",
-            expr,
-        )
-        expr = re.sub(
-            r"\bdefined\s+(\w+)", lambda m: "1" if self._defined(m.group(1)) else "0", expr
-        )
+        # handle defined / the __has_* operators BEFORE macro expansion, then expand. A `defined`
+        # operand and every name the expression looks up, before and after expansion, are macro
+        # names: each is bounded (CF-LIMITS).
+        def defined(m) -> str:
+            name = _macro_name(m.group(1), "malformed defined operator")[0]
+            return "1" if self._defined(name) else "0"
+
+        expr = re.sub(r"\bdefined\s*\(\s*(\w+)\s*\)", defined, expr)
+        expr = re.sub(r"\bdefined\s+(\w+)", defined, expr)
         expr = re.sub(
             r"\b__has_include\s*\(([^)]*)\)",
             lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None else "0",
@@ -520,8 +563,8 @@ class Preprocessor:
         )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
         expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
-        toks = self._expand(_tokens(expr), set())
-        return _ConstEval(toks).parse()
+        toks = self._expand(_bound_names(_tokens(expr)), set())
+        return _ConstEval(_bound_names(toks)).parse()
 
 
 def _translation_datetime() -> tuple[str, str]:

@@ -247,9 +247,10 @@ Each of the checks below is held to the same standard.
   leaves them out; a member of a file-scope struct and `**` through a file-scope pointer are forms
   the twin does not lower. The list is pinned, so a frontend that stops lowering a form fails its
   unit.
-- **Refusals count.** A unit the twin refuses is a parity failure, except the one pinned
-  preprocessor limit (`cfront_sec_cppmacro.c`). A twin that reported on nothing used to pass both
-  parity rows.
+- **Refusals count.** A unit the twin refuses is a parity failure, except a pinned preprocessor
+  limit. The pin is empty: its one unit, `cfront_sec_cppmacro.c` (an overlong macro parameter), is
+  refused by both preprocessors since CF-LIMITS and is no longer in the corpus. A twin that
+  reported on nothing used to pass both parity rows.
 - **Rail parity beyond the rows.** The rows compare 200 units. On top of those, 300 programs from
   the rich `tools/c/fuzz_cfront.py` generator produced 600 reports, byte-identical on both rails.
 - **Memory safety of the twin's analysis.** It is clean under ASan and UBSan over every fixture,

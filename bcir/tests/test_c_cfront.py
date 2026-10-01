@@ -5476,6 +5476,7 @@ def test_r21_does_not_disturb_the_corpus():
     import glob
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.cpp import CPPError
 
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
         fx = os.path.basename(path)
@@ -5483,9 +5484,10 @@ def test_r21_does_not_disturb_the_corpus():
             r = compile_unit(
                 open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx)
             )
-        except CParseError:
+        except (CParseError, CPPError):
             if fx.startswith(("cfront_sec_", "cfront_pp_")):
-                continue  # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) or a
+                continue  # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail, and
+                # cfront_sec_cppmacro's overlong macro parameter both preprocessors refuse) or a
                 # PREPROCESSOR-only adversarial fixture (cfront_pp_*: macro definitions + bare
                 # expansions, not a complete translation unit -- consumed only by the L7 reference
                 # differential, never lowered) -- out of scope for this corpus check.
@@ -5646,6 +5648,7 @@ def test_masked_claims_are_discharged_by_a_runtime_guard():
     import glob
     from bcir.frontends.cfront import compile_unit
     from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.cpp import CPPError
 
     seen_masked = 0
     for path in sorted(glob.glob(os.path.join(_C, "cfront_*.c"))):
@@ -5654,9 +5657,10 @@ def test_masked_claims_are_discharged_by_a_runtime_guard():
             r = compile_unit(
                 open(path, encoding="utf-8").read(), check_clang=False, includes=_includes_for(fx)
             )
-        except CParseError:
+        except (CParseError, CPPError):
             if fx.startswith(("cfront_sec_", "cfront_pp_")):
-                continue  # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail) or a
+                continue  # a deliberately-malformed adversarial fixture (cfront_sec_deepnest/lextail, and
+                # cfront_sec_cppmacro's overlong macro parameter both preprocessors refuse) or a
                 # PREPROCESSOR-only adversarial fixture (cfront_pp_*, not a complete translation
                 # unit -- consumed only by the L7 reference differential) -- out of scope here.
             raise  # a REAL fixture must still parse: a regression to CParseError is a hard failure.
@@ -9702,6 +9706,291 @@ def test_the_emit_grows_whole_under_a_failing_allocator():
         run.stdout[-2000:],
         run.stderr[-2000:],
     )
+
+
+# CF-LIMITS: the bound CF-BUF set where the lexers read a name, held where the text enters before them -- the
+# preprocessors and the twin's driver. A macro name or a macro parameter is at most 63 characters on both rails
+# (`IDENT_MAX`, C11 5.2.4.1) and a longer one is refused for one reason wherever a directive reads one; the twin's
+# canonical serialization returns its whole length, so its driver prints all of it; and the driver reads the whole
+# source, as `bcir-cc` does.
+_MACRO_NAME_REFUSED = "macro name is too long"
+_MACRO_PARAM_REFUSED = "macro parameter is too long"
+_UNIT_F = "int f(int a) {{ return a; }}\n"
+_LONG_MACRO_UNITS = (
+    # (where the name stands, the unit with `{n}` there, the reason past 63 characters, whether the name is written
+    # in the directive itself -- one a macro's replacement list holds is read only at 64: the twin's preprocessor
+    # refuses a replacement-list token of 256 characters or more for its length before any directive reads it)
+    ("#define", "#define {n} 7\nint f(void) {{ return {n}; }}\n", _MACRO_NAME_REFUSED, True),
+    (
+        "#define (",
+        "#define {n}(x) ((x) + 1)\nint f(int a) {{ return {n}(a); }}\n",
+        _MACRO_NAME_REFUSED,
+        True,
+    ),
+    (
+        "a parameter",
+        "#define F({n}) ({n} + 1)\nint f(int a) {{ return F(a); }}\n",
+        _MACRO_PARAM_REFUSED,
+        True,
+    ),
+    (
+        "a parameter before ...",
+        "#define F({n}, ...) ({n})\nint f(int a) {{ return F(a, 2); }}\n",
+        _MACRO_PARAM_REFUSED,
+        True,
+    ),
+    ("#undef", "#undef {n}\n" + _UNIT_F, _MACRO_NAME_REFUSED, True),
+    (
+        "#ifdef",
+        "#ifdef {n}\nint g(void) {{ return 0; }}\n#endif\n" + _UNIT_F,
+        _MACRO_NAME_REFUSED,
+        True,
+    ),
+    ("#ifndef", "#ifndef {n}\n" + _UNIT_F + "#endif\n", _MACRO_NAME_REFUSED, True),
+    ("#elifdef", "#if 0\n#elifdef {n}\n#else\n" + _UNIT_F + "#endif\n", _MACRO_NAME_REFUSED, True),
+    ("#elifndef", "#if 0\n#elifndef {n}\n" + _UNIT_F + "#endif\n", _MACRO_NAME_REFUSED, True),
+    ("defined", "#if defined {n}\n#else\n" + _UNIT_F + "#endif\n", _MACRO_NAME_REFUSED, True),
+    ("defined (", "#if !defined({n})\n" + _UNIT_F + "#endif\n", _MACRO_NAME_REFUSED, True),
+    (
+        "#elif defined (",
+        "#if 0\n#elif defined({n})\n#else\n" + _UNIT_F + "#endif\n",
+        _MACRO_NAME_REFUSED,
+        True,
+    ),
+    ("a name #if looks up", "#if {n} == 0\n" + _UNIT_F + "#endif\n", _MACRO_NAME_REFUSED, True),
+    (
+        "an argument #if drops",
+        "#define K(x) 0\n#if K({n}) == 0\n" + _UNIT_F + "#endif\n",
+        _MACRO_NAME_REFUSED,
+        True,
+    ),
+    (
+        "a name #if expands to",
+        "#define M {n}\n#if M == 0\n" + _UNIT_F + "#endif\n",
+        _MACRO_NAME_REFUSED,
+        False,
+    ),
+)
+
+
+def _twin_line(exe: str, src: str, *args: str) -> tuple:
+    """The twin driver's exit status and first line of output for the unit `src` (written as bytes, so a NUL in it
+    reaches the file)."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "u.c")
+        with open(path, "wb") as fh:
+            fh.write(src.encode("utf-8"))
+        run = subprocess.run([exe, *args, path], capture_output=True, text=True)
+    return run.returncode, (run.stdout.splitlines() or [""])[0]
+
+
+def test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands():
+    """CF-LIMITS: CF-BUF bounded an identifier at 63 characters where the lexers read one, but a macro name never
+    reaches a lexer -- the preprocessor replaces it. The twin's preprocessor kept a macro name in 64 bytes and refused
+    a longer one at `#define` and `-D` (`macro name is too long`); at `#undef`, `#ifdef`, `#ifndef`, `#elifdef`,
+    `#elifndef` and in a `#if` it refused one for the length of a token buffer (`preprocessor token too long`), and
+    as the operand of `defined` only past 255 characters, for the same reason. The oracle's took every one, so a unit
+    naming a 64-character macro lowered on the oracle and was refused on the twin. Now a macro name -- the one
+    `#define` or `-D` defines, `#undef` removes, `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef` or `defined` tests, or
+    any name an evaluated `#if` or `#elif` looks up -- past 63 characters is refused on both rails with `macro name is
+    too long`, at any length, and a parameter with `macro parameter is too long`. At 63 characters each unit lowers
+    to one claim graph on both rails."""
+    from bcir.frontends.cfront.cpp import CPPError
+
+    n63, n64, n300 = "q" * 63, "q" * 64, "q" * 300
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for where, shape, why, written in _LONG_MACRO_UNITS:
+        for name in (n64, n300) if written else (n64,):
+            src = shape.format(n=name)
+            try:
+                compile_unit(src, check_clang=False)
+            except CPPError as e:
+                assert str(e) == why, (where, len(name), str(e))
+            else:
+                raise AssertionError(f"the oracle took a {len(name)}-character name at {where}")
+            if exe:
+                got = _twin_line(exe, src)
+                assert got == (1, f"CPP-ERR {why}"), (where, len(name), got)
+        oracle_summary, _r, _entry = _oracle(shape.format(n=n63))
+        assert "ok=1" in oracle_summary, (where, oracle_summary)
+        if exe:
+            assert _twin_line(exe, shape.format(n=n63)) == (0, oracle_summary), where
+    # the corpus's adversarial unit, a parameter of 3 000 characters: the oracle had lowered it, and the escape
+    # tests pinned it as a limit of the twin's alone (`escape_fixtures.TWIN_PREPROCESSOR_LIMITS`, now empty)
+    fx = os.path.join(_C, "cfront_sec_cppmacro.c")
+    try:
+        compile_unit(open(fx, encoding="utf-8").read(), check_clang=False)
+    except CPPError as e:
+        assert str(e) == _MACRO_PARAM_REFUSED, str(e)
+    else:
+        raise AssertionError("the oracle lowered cfront_sec_cppmacro.c")
+    if exe:
+        run = subprocess.run([exe, fx], capture_output=True, text=True)
+        assert (run.returncode, run.stdout.strip()) == (1, f"CPP-ERR {_MACRO_PARAM_REFUSED}"), (
+            run.stdout
+        )
+    # a definition a driver seeds (`-D`): the oracle's `defines`, the twin's `bcir-cc -D` (whose own spec buffer
+    # refuses a definition past 255 characters before the preprocessor sees it, so 64 is the length read here)
+    unit = "int f(void) {{ return {n}; }}\n"
+    try:
+        compile_unit(unit.format(n=n64), check_clang=False, defines={n64: "7"})
+    except CPPError as e:
+        assert str(e) == _MACRO_NAME_REFUSED, str(e)
+    else:
+        raise AssertionError("the oracle took a 64-character -D name")
+    oracle_summary, _r, _entry = _oracle_defines(unit.format(n=n63), {n63: "7"})
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        for name, ok in ((n64, False), (n63, True)):
+            path = os.path.join(d, "d.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit.format(n=name))
+            run = subprocess.run([cc, "-D", f"{name}=7", path], capture_output=True, text=True)
+            if ok:
+                assert run.returncode == 0 and oracle_summary in run.stdout, (
+                    run.stdout,
+                    run.stderr,
+                )
+            else:
+                assert run.returncode == 1, (run.returncode, run.stderr)
+                assert f"preprocessor error: {_MACRO_NAME_REFUSED}" in run.stderr, run.stderr
+
+
+def _oracle_defines(src: str, defines: dict):
+    r = compile_unit(src, check_clang=False, defines=defines)
+    return _summary_line(r), r, r.lowered.functions[next(reversed(r.lowered.functions))]
+
+
+_SKIPPED_DIRECTIVES = (
+    "#if 0\n#ifdef {n}\n#endif\n#endif\n",
+    "#if 0\n#ifndef {n}\n#endif\n#endif\n",
+    "#if 1\n#elifdef {n}\n#endif\n",
+    "#if 1\n#elifndef {n}\n#endif\n",
+    "#if 0\n#if defined({n}) || {n}\n#endif\n#endif\n",
+    "#if 1\n#elif defined {n}\n#endif\n",
+    "#if 0\n#define {n} 1\n#undef {n}\n#endif\n",
+    # no name where one would be read, and an expression C never evaluates
+    "#if 0\n#ifdef\n#elifndef 9\n#endif\n#if 0x\n#endif\n#endif\n",
+)
+
+
+def test_a_skipped_group_reads_no_macro_name_on_either_rail():
+    """CF-LIMITS: a directive in a skipped group is processed only through its name (C11 6.10.1p6), as is one
+    after a group was taken, so nothing past the name is read. The twin read the operand of `#ifdef`, `#ifndef`,
+    `#elifdef` and `#elifndef` there all the same and refused one it could not hold (`preprocessor token too long`,
+    or `conditional directive requires an identifier` for none), while the oracle evaluated a skipped `#if` (`#if
+    0x` raised `ValueError`) and indexed a skipped `#ifdef`'s missing operand (`IndexError`). Neither rail reads a
+    skipped directive's operand now, so a name of any length, or none, in a skipped group lowers the unit to one
+    claim graph on both rails."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for shape in _SKIPPED_DIRECTIVES:
+        for name in ("q" * 64, "q" * 300):
+            src = shape.format(n=name) + _UNIT_F.format()
+            oracle_summary, _r, _entry = _oracle(src)
+            assert "ok=1" in oracle_summary, (shape, oracle_summary)
+            if exe:
+                assert _twin_line(exe, src) == (0, oracle_summary), (shape, len(name))
+
+
+_NAMELESS_DIRECTIVES = (
+    # (a directive with no macro name where it reads one, the reason both rails give)
+    ("#define\n", "macro name must be an identifier"),
+    ("#define 9x 1\n", "macro name must be an identifier"),
+    ("#undef\n", "#undef requires an identifier"),
+    ("#undef 9x\n", "#undef requires an identifier"),
+    ("#ifdef\n#endif\n", "conditional directive requires an identifier"),
+    ("#ifndef (X)\n#endif\n", "conditional directive requires an identifier"),
+    ("#if 0\n#elifdef\n#endif\n", "conditional directive requires an identifier"),
+    ("#if 0\n#elifndef 9\n#endif\n", "conditional directive requires an identifier"),
+    ("#if defined 9x\n#endif\n", "malformed defined operator"),
+    ("#if defined(9x)\n#endif\n", "malformed defined operator"),
+)
+
+
+def test_a_directive_that_reads_no_macro_name_is_refused_on_both_rails():
+    """CF-LIMITS: each rail reads a directive's macro name through one predicate (the twin's `macro_name`, the
+    oracle's `_macro_name`), the one that bounds its length -- so a directive with no name where it reads one is
+    refused on both rails, for the twin's reasons. The oracle had defined a macro named `9x`, ignored a bare
+    `#define` and `#undef`, taken `defined 9x` as 0, and raised `IndexError` on a bare `#ifdef`."""
+    from bcir.frontends.cfront.cpp import CPPError
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for directive, why in _NAMELESS_DIRECTIVES:
+        src = directive + _UNIT_F.format()
+        try:
+            compile_unit(src, check_clang=False)
+        except CPPError as e:
+            assert str(e) == why, (directive, str(e))
+        else:
+            raise AssertionError(f"the oracle took {directive!r}")
+        if exe:
+            assert _twin_line(exe, src) == (1, f"CPP-ERR {why}"), directive
+
+
+def _fnv1a(data: bytes) -> int:
+    h = 1469598103934665603
+    for b in data:
+        h = ((h ^ b) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def test_the_twin_driver_prints_a_canon_past_128_kib_whole():
+    """CF-LIMITS: `bcir_cfront_canon` wrote the canonical serialization into its caller's buffer and stopped at its
+    end without saying so, and the twin's driver held 128 KiB: the 140-function unit's canon (239 KB) came back as
+    its first 131071 bytes, exit 0. The canon now returns its whole length (snprintf semantics; `SIZE_MAX` when an
+    allocation failed), and the driver measures it, holds it and prints all of it -- byte for byte the oracle's
+    `cfront_structural_canon`, whose FNV-1a is the digest both rails' summaries print: the digest hashes the canon as
+    it is produced, and is unmoved."""
+    if not _CC:
+        return
+    from bcir.verify import cfront_structural_canon
+
+    src = _wide_unit(140)
+    r = compile_unit(src, check_clang=False)
+    canon = cfront_structural_canon(r.lowered)
+    digest = cfront_structural_digest(r.lowered)
+    assert len(canon) > 1 << 17 and _fnv1a(canon.encode()) == digest, len(canon)
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "wide.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        run = subprocess.run([exe, "--canon", path], capture_output=True, text=True)
+        assert run.returncode == 0 and len(run.stdout) == len(canon), (
+            run.returncode,
+            len(run.stdout),
+        )
+        assert run.stdout == canon
+        c_summary, _emit = _c_run(exe, path)
+    assert c_summary == _summary_line(r) and f"digest={digest:016x}" in c_summary, c_summary
+
+
+def test_the_twin_driver_reads_a_source_past_64_kib_whole():
+    """CF-LIMITS: the twin's driver (`runtime/c/test_cfront.c`) read the first 64 KiB of a source and lowered that
+    prefix without saying so: a function after 70 000 bytes of comment was dropped (`funcs=1`, exit 0, against the
+    oracle's two), and so was one after a NUL, where the text stopped. The driver now reads the whole file through
+    the host allocator, as `bcir-cc` does: the unit lowers to the oracle's claim graph. A file it cannot hand on
+    whole -- one holding a NUL -- is refused, and a unit whose preprocessed text runs past the 64 KiB the driver
+    holds it in is refused by the preprocessor (`preprocessed output too large`): loudly, never cut."""
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    src = (
+        "int f(int a) { return a + 1; }\n/*" + "x" * 70000 + "*/\nint g(int a) { return a * 3; }\n"
+    )
+    oracle_summary, r, _entry = _oracle(src)
+    assert len(src) > 1 << 16 and list(r.lowered.functions) == ["f", "g"]
+    got = _twin_line(exe, src)
+    assert got == (0, oracle_summary), (got, oracle_summary)
+    nul = "int f(int a) { return a + 1; }\n\0int g(int a) { return a * 3; }\n"
+    got = _twin_line(exe, nul)
+    assert got == (1, "READ-ERR the source holds a NUL byte"), got
+    wide = "".join(f"int v{k} = {k};\n" for k in range(6000))
+    assert len(wide) > 1 << 16
+    got = _twin_line(exe, wide)
+    assert got == (1, "CPP-ERR preprocessed output too large"), got
 
 
 _SPLITS_DRIVER = (

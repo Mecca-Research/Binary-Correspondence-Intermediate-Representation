@@ -108,10 +108,13 @@ uint64_t bcir_cfront_digest_with_allocator(const bcir_unit *u,
 
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof:
  * the Python cfront_structural_canon must equal this byte-for-byte on the corpus, so the digests
- * match. Writes the per-function sorted records, '@'-separated. */
-void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
-void bcir_cfront_canon_with_allocator(const bcir_unit *u, char *buf, size_t n,
-                                      const bcir_host_allocator *allocator);
+ * match. Writes the per-function sorted records, '@'-separated. Returns the complete canon's length
+ * (snprintf semantics: at most n-1 bytes plus a NUL are written, so a canon longer than buf is cut and
+ * the length says so; buf may be NULL to measure), or SIZE_MAX when an allocation failed (buf is then
+ * empty). */
+size_t bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
+size_t bcir_cfront_canon_with_allocator(const bcir_unit *u, char *buf, size_t n,
+                                        const bcir_host_allocator *allocator);
 
 /* G10 -- the escape analysis, indirect-call narrowing and effect footprint of a unit (the C twin of
  * bcir/frontends/cfront/escape.py: the same Andersen analysis and the same reports, byte for byte).
