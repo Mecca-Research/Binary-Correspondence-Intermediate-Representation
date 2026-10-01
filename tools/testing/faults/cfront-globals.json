@@ -49,7 +49,7 @@
     {
       "expects": "test_integer_constants_are_exact_on_both_rails",
       "label": "IC6 the twin reads a file-scope initializer with the enum evaluator",
-      "new": "  int start=c->i; (void)ce_expr(c,0);\n",
+      "new": "  int start=c->i; (void)ce_value(c);\n",
       "old": "  int start=c->i; skip_init_expr(c,nm);                /* to the initializer's end: a call in it is refused */\n",
       "path": "runtime/c/bcir_cfront.c"
     },

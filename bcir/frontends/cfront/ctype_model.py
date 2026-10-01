@@ -399,16 +399,18 @@ def usual_arith_int(a: CType, b: CType, abi=None) -> CType:
     return int_type(pa.size, pa.signed and pb.signed, abi)
 
 
-def int_literal_type(text: str) -> str:
+def int_literal_type(text: str, long_size: int = 8) -> str:
     """The type of an integer constant (§6.4.4.1): from its `u`/`l`/`ll` suffix and magnitude, the
     first type in the suffix-permitted candidate list that can hold the value. Decimal literals only
     pick an unsigned type when `u`-suffixed; hex/octal literals may at any rank. Returns a canonical
-    scalar name (`int` / `unsigned int` / `long` / ... )."""
+    scalar name (`int` / `unsigned int` / `long` / ... ). `long_size`: the target's `long`, in bytes --
+    where it is 4 (LLP64, ILP32) `0xFFFFFFFFL` is an `unsigned long`, as the twin's `lit_int_type` has it,
+    and a value past it the next type the list gives (CF-ENUMFOLD)."""
     val, decimal, suf = int_literal_parts(text)  # the value, as the lexer checked it
     suf = suf.lower()
     u, lrank = ("u" in suf), suf.count("l")  # lrank: 0 none / 1 long / 2 long long
     INT, UINT = ("int", 4, True), ("unsigned int", 4, False)
-    LONG, ULONG = ("long", 8, True), ("unsigned long", 8, False)
+    LONG, ULONG = ("long", long_size, True), ("unsigned long", long_size, False)
     LL, ULL = ("long long", 8, True), ("unsigned long long", 8, False)
     if u:
         cands = {0: [UINT, ULONG, ULL], 1: [ULONG, ULL], 2: [ULL]}[lrank]

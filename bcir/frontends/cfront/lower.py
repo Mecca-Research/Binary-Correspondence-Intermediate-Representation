@@ -804,6 +804,69 @@ def _kspell(v: int) -> str:
     return "(-9223372036854775807 - 1)" if v == -(1 << 63) else str(v)
 
 
+# --- an integer constant expression the parser folds (CF-ENUMFOLD) ------------------------------------------------
+# An enumerator's value, a case label, an array dimension and a designator are needed where they are parsed, so the
+# parser folds them on the target's data model, each operation by the predicate a static's initializer folds with
+# (`_kbin`, `_kun`, `_ksel`, `_kconvert`) -- over the expression's nodes, as `_kfold` goes over its claims. The
+# twin's `ce_fold`.
+
+# the one reason both rails give for one that is no integer constant expression (C11 6.6p6: an object, a call,
+# `sizeof`, the comma, a floating constant, a pointer) or whose arithmetic C leaves undefined (a division by zero, a
+# signed overflow, a shift past the width or of a negative value: 6.5p5, 6.5.7p4, 6.6p4), which is no constant either
+ICE_NOT = "not an integer constant expression"
+# ... an enumerator whose value no int holds, stated or counted on from INT_MAX (6.7.2.2p2): C23 gives one a wider
+# type, which neither rail models -- an enumeration constant is an int on both
+ENUM_NOT_INT = "an enumerator value not representable as int"
+# ... and an array dimension that folds negative (6.7.6.2p1) or past INT_MAX, the twin holding a dimension in an int
+DIM_RANGE = "an array dimension outside 0..INT_MAX"
+
+
+def fold_constant(node, abi, live: bool = True) -> _KVal:
+    """`node`, an integer constant expression, folded in C's types on the target `abi`: an integer constant in its C11
+    6.4.4.1 type (the parser types it for the target), a character or enumeration constant an `int` (the parser
+    substitutes an enumerator's value), `-`, `+`, `~`, `!`, every binary operator but the comma, `?:` and a cast to an
+    integer type. An operand C does not evaluate (`live` False: the right one of `0 && e`, the arm `?:` does not take)
+    is typed but never refused for its arithmetic -- the predicate runs on a zero and a one of its operands' types --
+    as C evaluates it (6.5.13p4, 6.5.15p4). Raises `CLowerError(ICE_NOT)` for anything else."""
+    try:
+        return _kfold_node(node, abi, live)
+    except (CLowerError, KeyError):  # a predicate's refusal, or an unknown type-name
+        raise CLowerError(ICE_NOT) from None
+
+
+def _kfold_node(node, abi, live: bool) -> _KVal:
+    """One node of `fold_constant`'s expression."""
+    if isinstance(node, cast.IntLit):
+        ct = scalar(node.ctype if is_scalar_name(node.ctype) else "int", abi)
+        return _kconvert(_KVal(node.value), _ktype(ct))
+    if isinstance(node, cast.Unary) and node.op in ("-", "~", "!", "+"):
+        a = _kfold_node(node.operand, abi, live)
+        if node.op == "+":
+            return _kpromote(a)
+        r = _kun(_UN[node.op][1], a if live else a._replace(v=0))
+        return r if live else r._replace(v=0)
+    if isinstance(node, cast.Binary) and node.op in _BIN:
+        a = _kfold_node(node.lhs, abi, live)
+        if node.op in ("&&", "||"):  # the right one evaluates only when the left does not decide
+            b = _kfold_node(node.rhs, abi, live and (a.v != 0) == (node.op == "&&"))
+        else:
+            b = _kfold_node(node.rhs, abi, live)
+        if live:
+            return _kbin(_BIN[node.op][1], a, b)
+        return _kbin(_BIN[node.op][1], a._replace(v=0), b._replace(v=1))._replace(v=0)
+    if isinstance(node, cast.Ternary):
+        c = _kfold_node(node.cond, abi, live)
+        a = _kfold_node(node.then, abi, live and c.v != 0)
+        b = _kfold_node(node.els, abi, live and c.v == 0)
+        return _ksel(c, a, b)
+    if isinstance(node, cast.Cast):
+        t = _ktype(_resolve_member_type(node.type, {}, abi))
+        if t.kind == "p":  # it converts only to an integer type (6.6p6)
+            raise CLowerError(ICE_NOT)
+        return _kconvert(_kfold_node(node.operand, abi, live), t)
+    raise CLowerError(ICE_NOT)
+
+
 def _arith_class(ct: CType) -> int:
     """An arithmetic type's class for C's assignment conversion: 0 integer, 1 real floating, 2 complex
     (a complex type is floating too). A store between classes converts the value; within one it is a

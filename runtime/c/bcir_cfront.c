@@ -1030,6 +1030,7 @@ static void trailing_attrs(CC *c, int open, int *packed, int *aligned){
   }
   int save=c->i; c->i=k+1; attrs(c,packed,aligned); c->i=save;
 }
+static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension, an integer constant expression (CF-ENUMFOLD) */
 /* Parse `struct|union [tag] [attrs] { members } [attrs]` (NO trailing `;`). Registers an sdef and
  * returns its index (-1 on error). An anonymous aggregate (no tag, e.g. `typedef struct {...} N;`)
  * gets a synthesized internal tag so a typedef can alias it. */
@@ -1123,7 +1124,9 @@ static int p_struct_body(CC *c) {
         nm=adv(c);
       }
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
-      while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+      while(is(c,"[")){ c->i++; long long d=is(c,"]") ? 0 : ce_dim(c,0);   /* an integer constant expression */
+        if(d<0) return -1;
+        int dim=(int)d; eat(c,"]");
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(inl && si>=0 && is_anon_tag(c->s[si].tag) && c->s[si].parent<0 && !c->s[si].tdname[0]){
         sdef *A=&c->s[si];                              /* `struct {...} m;`: the anonymous type is m's -- its first
@@ -1227,49 +1230,127 @@ static int p_struct_body(CC *c) {
 }
 
 /* --- enum + typedef (resolved at parse time so the claim graph carries the folded result) --- */
-static long long ce_expr(CC *c,int minp);
-static long long ce_primary(CC *c){
-  if(isk(c,T_INT))return adv(c).v;
-  if(is(c,"(")){c->i++;long long v=ce_expr(c,0);eat(c,")");return v;}
-  if(is(c,"-")){c->i++;return -ce_primary(c);}
-  if(is(c,"+")){c->i++;return ce_primary(c);}
-  if(is(c,"~")){c->i++;return ~ce_primary(c);}
-  if(is(c,"!")){c->i++;return !ce_primary(c);}
-  if(isk(c,T_ID)){int e=find_enum(c,pk(c)->s,pk(c)->n);if(e>=0){c->i++;return c->ec[e].val;}}
-  fail(c,"non-constant enum initializer");return 0;
+/* An integer constant expression -- an enumerator's value, a case label, an array dimension, a designator -- folded
+ * where it is parsed, in C's own types on the target (the oracle's `lower.fold_constant`; CF-ENUMFOLD): each operation
+ * by the predicate a static's initializer folds with (`kbin`, `kun`, `ksel`, `kconvert`), over its tokens where `kfold`
+ * reads claims. Its leaves are an integer constant in its C11 6.4.4.1 type, a character or enumeration constant (an
+ * int) and a cast to an integer type; an operand C does not evaluate (`live` 0: the right one of `0 && e`, the arm `?:`
+ * does not take) is typed, the predicate run on a zero and a one of its operands' types, never refused for its
+ * arithmetic. Anything else -- an object, a call, `sizeof`, the comma, a floating constant, a pointer -- is no integer
+ * constant expression (6.6p6), and neither is arithmetic C leaves undefined: `long long` arithmetic had folded `-1 > 5`
+ * for `~0u > 5`, and a division by zero to 0. */
+typedef struct { unsigned long long p; int bits, sgn, kind; } kval;   /* a folded constant: its value's 64-bit two's
+  * complement, and its type -- an integer (kind 0) of `bits` bits, signed or not, a _Bool (1), a null pointer (2) */
+static kval kint(unsigned long long p,int bits,int sgn);
+static long long kll(unsigned long long p);
+static int kpromote(const kval *a,kval *o);
+static int kbin(const char *suf,const kval *ia,const kval *ib,kval *out);
+static int kun(const char *suf,const kval *ia,kval *out);
+static int ksel(const kval *c0,const kval *ia,const kval *ib,kval *out);
+static int kconvert(const kval *a,const kval *t,kval *out);
+static void lit_int_type(const char *s,int n,int lsz,int *size,int *signd);
+#define CE_NOTCONST "not an integer constant expression"   /* the oracle's `ICE_NOT` */
+#define CE_NOTINT "an enumerator value not representable as int"   /* the oracle's `ENUM_NOT_INT` (6.7.2.2p2) */
+#define CE_DIMRANGE "an array dimension outside 0..INT_MAX"   /* the oracle's `DIM_RANGE` */
+/* `a OP b` (`kbin`), or `OP a` (`kun`, `b` NULL), of operands C evaluates (`live`) -- else the operation's type alone,
+ * on a zero and a one of its operands' types, its value 0. 0 when it is no constant. */
+static int ce_op(const char *suf,int live,const kval *a,const kval *b,kval *out){
+  if(live) return b ? kbin(suf,a,b,out) : kun(suf,a,out);
+  kval z=*a, o=b?*b:*a; z.p=0; o.p=1;
+  if(!(b ? kbin(suf,&z,&o,out) : kun(suf,&z,out))) return 0;
+  out->p=0; return 1; }
+/* A folded constant's value -- an unsigned one past LLONG_MAX held at LLONG_MAX, past every range a caller takes, as
+ * its value is (the oracle reads the value itself). */
+static long long kvalue(const kval *v){
+  return v->sgn ? kll(v->p) : v->p>(unsigned long long)LLONG_MAX ? LLONG_MAX : (long long)v->p; }
+/* A constant spelled exactly in its own type, as both emits spell one (the oracle's `_const_spelling`): `N`, `-N`, `Nu`
+ * past LLONG_MAX, and the one negative with no positive counterpart as an expression. `neg`: `v` is a negative value's
+ * two's complement. */
+static int kdigits(char *d,size_t n,unsigned long long v,int neg){
+  return !neg ? snprintf(d,n,v>(unsigned long long)LLONG_MAX ? "%lluu" : "%llu",v)
+       : v==(1ull<<63) ? snprintf(d,n,"(-9223372036854775807 - 1)") : snprintf(d,n,"-%llu",0ull-v); }
+/* A cast's type-name, the cursor past its `(`, as the type `kconvert` takes (the oracle's `_ktype` of
+ * `_resolve_member_type`): an integer type only, the one an integer constant expression converts to (6.6p6).
+ * BCIR_NOINLINE: its bcir_ctype stays out of the recursive frames (docs/languages/C_MEMORY_DISCIPLINE.md). */
+static BCIR_NOINLINE int ce_cast_type(CC *c,kval *t){
+  bcir_ctype ty; int si=-1; memset(t,0,sizeof *t);
+  if(p_type(c,&ty,&si) || c->td_nd || !is(c,")")) return 0;
+  c->i++;
+  if(ty.kind!=0 || ty.is_float || ty.is_valist || ty.bit_width || ty.size<1 || ty.size>8) return 0;
+  if(ty.is_bool){ t->kind=1; t->bits=1; return 1; }
+  t->bits=ty.size*8; t->sgn=ty.signd; return 1; }
+static int ce_expr(CC *c,int minp,int live,kval *out);
+/* An operand of `ce_expr` -- a unary operator's, a cast, a parenthesized expression, an integer or character constant,
+ * an enumerator -- or 0 when it is none of these. */
+static int ce_primary(CC *c,int live,kval *out){
+  if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }   /* depth guard: a unary operator's or a cast's operand nests here */
+  int ok=0; kval a, t;
+  const char *suf = is(c,"-") ? "neg" : is(c,"~") ? "bnot" : is(c,"!") ? "lnot" : is(c,"+") ? "" : NULL;
+  if(isk(c,T_INT)){ tok k=adv(c); int sz,sg; lit_int_type(k.s,k.n,cc_abi(c)->long_size,&sz,&sg);
+    *out=kint((unsigned long long)k.v,sz*8,sg); ok=1; }
+  else if(isk(c,T_ID)){ int e=find_enum(c,pk(c)->s,pk(c)->n);
+    if(e>=0){ c->i++; *out=kint((unsigned long long)c->ec[e].val,32,1); ok=1; } }
+  else if(is(c,"(")){ c->i++;
+    if(type_name_tok(c,pk(c))) ok = ce_cast_type(c,&t) && ce_primary(c,live,&a) && kconvert(&a,&t,out);
+    else if(ce_expr(c,0,live,out) && is(c,")")){ c->i++; ok=1; } }
+  else if(suf){ c->i++;
+    ok = ce_primary(c,live,&a) && (*suf ? ce_op(suf,live,&a,NULL,out) : kpromote(&a,out)); }
+  LEAVE_REC(c); return ok;
 }
-static long long ce_expr(CC *c,int minp){
+static int ce_expr(CC *c,int minp,int live,kval *out){
   if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }   /* depth guard: ce_expr<->ce_primary `(...)` cycle */
-  /* the SS5.9 integer constant-expression evaluator (the oracle's _const_eval twin): full C
-   * precedence over ||, &&, bit ops, equality, relational, shift, arithmetic -- both sides of
-   * a logical op evaluate (a constant expression has no side effects to short-circuit away). */
-  struct{const char*t;int p;}P[]={{"||",1},{"&&",2},{"|",3},{"^",4},{"&",5},
-    {"==",6},{"!=",6},{"<=",7},{">=",7},{"<",7},{">",7},{"<<",8},{">>",8},
-    {"+",9},{"-",9},{"*",10},{"/",10},{"%",10},{0,0}};
-  long long lhs=ce_primary(c);
-  for(;;){int p=-1;const char*op=0;
-    for(int i=0;P[i].t;i++) if(is(c,P[i].t)){p=P[i].p;op=P[i].t;break;}
-    if(p<minp||p<0)break; c->i++; long long rhs=ce_expr(c,p+1);
-    lhs = !strcmp(op,"+")?lhs+rhs:!strcmp(op,"-")?lhs-rhs:!strcmp(op,"*")?lhs*rhs:
-          !strcmp(op,"/")?(rhs?lhs/rhs:0):!strcmp(op,"%")?(rhs?lhs%rhs:0):
-          !strcmp(op,"&")?lhs&rhs:!strcmp(op,"|")?lhs|rhs:!strcmp(op,"^")?lhs^rhs:
-          !strcmp(op,"<<")?lhs<<rhs:!strcmp(op,">>")?lhs>>rhs:
-          !strcmp(op,"==")?lhs==rhs:!strcmp(op,"!=")?lhs!=rhs:
-          !strcmp(op,"<=")?lhs<=rhs:!strcmp(op,">=")?lhs>=rhs:
-          !strcmp(op,"<")?lhs<rhs:!strcmp(op,">")?lhs>rhs:
-          !strcmp(op,"&&")?(lhs&&rhs):(lhs||rhs);
+  /* C's precedence over ||, &&, bit ops, equality, relational, shift, arithmetic; the right operand of `&&` (2) and `||`
+   * (1) evaluates only when the left one does not decide, and `?:` evaluates one arm (6.5.13-15) */
+  static const struct { const char *t, *s; int p; } P[]={{"||","lor",1},{"&&","land",2},{"|","or",3},{"^","xor",4},
+    {"&","and",5},{"==","eq",6},{"!=","ne",6},{"<=","le",7},{">=","ge",7},{"<","lt",7},{">","gt",7},{"<<","shl",8},
+    {">>","shr",8},{"+","add",9},{"-","sub",9},{"*","mul",10},{"/","div",10},{"%","mod",10},{0,0,0}};
+  int ok=ce_primary(c,live,out);
+  while(ok){ int k=-1; kval r;
+    for(int i=0;P[i].t;i++) if(is(c,P[i].t)){ k=i; break; }
+    if(k<0 || P[k].p<minp) break;
+    c->i++;
+    ok = ce_expr(c,P[k].p+1,live && (P[k].p>2 || (out->p!=0)==(P[k].p==2)),&r) && ce_op(P[k].s,live,out,&r,out);
   }
-  if(minp==0&&is(c,"?")){                        /* the ternary (right-assoc, lowest precedence) */
-    c->i++; long long a=ce_expr(c,0); if(!eat(c,":")){LEAVE_REC(c);return 0;}
-    long long b=ce_expr(c,0); lhs = lhs?a:b;
+  if(ok && minp==0 && is(c,"?")){                 /* the conditional (right-assoc, lowest precedence) */
+    kval a, b; c->i++;
+    ok = ce_expr(c,0,live && out->p!=0,&a) && is(c,":");
+    if(ok){ c->i++; ok = ce_expr(c,0,live && out->p==0,&b) && ksel(out,&a,&b,out); }
   }
-  LEAVE_REC(c); return lhs;
+  LEAVE_REC(c); return ok;
 }
+/* The integer constant expression at the cursor, folded: 1 with its value and type; 0 when it is none -- refused
+ * (`CE_NOTCONST`) unless `probe`, which leaves the cursor, the failure state and every struct or enumerator the attempt
+ * declared as they were, for the caller to read a runtime dimension instead. */
+static int ce_fold(CC *c,int probe,kval *out){
+  int save=c->i, failed=c->failed, ns=c->ns, nec=c->nec;
+  if(ce_expr(c,0,1,out)) return 1;
+  if(probe){ c->i=save; c->failed=failed; c->ns=ns; c->nec=nec; return 0; }
+  fail(c,CE_NOTCONST); return 0;
+}
+/* ... its value (`kvalue`) where a designator or a type-name's dimension takes one, 0 with it refused. */
+static long long ce_value(CC *c){ kval v; return ce_fold(c,0,&v) ? kvalue(&v) : 0; }
+/* An array declarator's dimension, the cursor past its `[` (the oracle's `cparse._dim`): its value when it is an integer
+ * constant expression ending at the `]` -- the array then a fixed one, whatever the expression's form (6.7.6.2p4) --
+ * refused outside 0..INT_MAX (`CE_DIMRANGE`). -1 when it is none: refused (`CE_NOTCONST`), or with `probe` the cursor
+ * left at the dimension, for a block scope's caller to read a runtime one. BCIR_NOINLINE: its locals stay out of the
+ * recursive statement parser's frame. */
+static BCIR_NOINLINE long long ce_dim(CC *c,int probe){
+  int save=c->i; kval v;
+  if(!ce_fold(c,probe,&v)) return -1;
+  if(!is(c,"]")){ if(probe){ c->i=save; return -1; } fail(c,CE_NOTCONST); return -1; }
+  long long d=kvalue(&v);
+  if(d<0 || d>INT_MAX){ fail(c,CE_DIMRANGE); return -1; }
+  return d;
+}
+/* `{ A, B = expr, C }`: each enumerator its C value -- the previous one's plus one, or its integer constant expression
+ * folded (`ce_fold`) -- registered so a later use reads that constant. An enumeration constant is an int (6.4.4.3): a
+ * value no int holds, given or counted on from INT_MAX, is refused (`CE_NOTINT`, 6.7.2.2p2), never cut to one. */
 static void p_enum_body(CC *c){
   eat(c,"{"); long long val=0;
   while(!is(c,"}")&&!c->failed){
     tok nm=adv(c);
-    if(is(c,"=")){c->i++;val=ce_expr(c,0);}
+    if(is(c,"=")){ kval v; c->i++; if(!ce_fold(c,0,&v)) return; val=kvalue(&v); }
+    if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return; }
     CC_ENSURE(c,c->ec,c->nec,c->cap_ec);
     if(c->nec<c->cap_ec){idcpy(c,c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->nec++;}
     val++;
@@ -1323,8 +1404,8 @@ static void p_typedef(CC *c){
   }
   tok nm=adv(c);                                      /* the alias name */
   int tnd=0, tdims[3]={0,0,0};                        /* `typedef T row_t[6];`: its own dims, then its base's */
-  while(is(c,"[") && !c->failed){ c->i++; long long d=ce_expr(c,0); if(!eat(c,"]")) return;
-    if(d<=0 || d>INT_MAX){ fail(c,"an array typedef needs a positive constant size"); return; }
+  while(is(c,"[") && !c->failed){ c->i++; long long d=ce_dim(c,0); if(d<0 || !eat(c,"]")) return;
+    if(d==0){ fail(c,"an array typedef needs a positive constant size"); return; }
     if(tnd>=3){ fail(c,"an array typedef of more than 3 dimensions"); return; }
     tdims[tnd++]=(int)d; }
   if(ty.kind==1 && sidx>=0 && !tnd && !bnd && is_anon_tag(c->s[sidx].tag) && !c->s[sidx].tdname[0] && c->s[sidx].parent<0)
@@ -4148,7 +4229,7 @@ static uint32_t size_result(CC *c, long long v){
  * an array of what precedes them (`sizeof(uint32_t[10])`, `sizeof(uint8_t *[5])`). */
 static int type_name_dims(CC *c, szt *t){
   while(is(c,"[")){
-    c->i++; long long d=ce_expr(c,0);
+    c->i++; long long d=ce_value(c);
     if(!eat(c,"]")) return 1;
     if(t->nd>=4){ fail(c,"a type-name of more than four array dimensions"); return 1; }
     t->dims[t->nd++]=d;
@@ -5934,8 +6015,6 @@ static void p_stmt(CC *c);
  * rendered as its declaration's initializer (`kimage`). */
 #define KV_NOTCONST "a static initializer is not an integer constant expression"   /* the oracle's `_NOT_CONSTANT`: a
   * variable, a load, a call, an address, a floating value -- or arithmetic C leaves undefined, no constant either */
-typedef struct { unsigned long long p; int bits, sgn, kind; } kval;   /* a folded constant: its value's 64-bit two's
-  * complement, and its type -- an integer (kind 0) of `bits` bits, signed or not, a _Bool (1), a null pointer (2) */
 static unsigned long long kmask(int bits){ return bits>=64 ? ~0ull : (1ull<<bits)-1; }
 /* `p` reduced to a `bits`-bit integer type: modulo 2^bits, a signed type's two's complement (the oracle's `_kwrap`). */
 static unsigned long long kwrap(unsigned long long p,int bits,int sgn){
@@ -6161,7 +6240,7 @@ static ifrm *init_designate(CC *c, iwalk *W, ifrm *frames, int *nf){
         if(!init_take(c,W,fr,&u) || !(fr=init_push(c,frames,nf,&u))) return NULL;
         S=&c->s[fr->u.sidx]; j-=first; }
     } else if(is(c,"[")){
-      c->i++; long long ix=ce_expr(c,0); if(!eat(c,"]")) return NULL;
+      c->i++; long long ix=ce_value(c); if(!eat(c,"]")) return NULL;
       if(fr->u.k!=IK_ARR){ fail(c,"an array designator into a non-array"); return NULL; }
       if(ix<0 || ix>INT_MAX || (fr->count>=0 && ix>=fr->count)){ fail(c,"an array designator outside the array"); return NULL; }
       fr->idx=(int)ix;
@@ -6736,6 +6815,15 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
   /* the member store every other path takes: C's conversion, a `_Bool` member's flag, a bitfield's unit */
   if(f.bit_w) store_member_bf(c,&b,&f,val); else store_member(c,&b,&f,val);
 }
+/* A case label, the cursor past `case`: its integer constant expression folded (`ce_fold`) and its marker spelled the
+ * value exactly in its type (`kdigits`, the oracle's `_const_spelling`) -- `%lld` had spelled 0xFFFFFFFFFFFFFFFFu as
+ * -1. BCIR_NOINLINE: its buffers stay out of the recursive statement parser's frame. */
+static BCIR_NOINLINE void case_label(CC *c){
+  kval v; char d[32], op[BCIR_CIR_OP];
+  if(!ce_fold(c,0,&v)) return;
+  kdigits(d,sizeof d,v.p,v.sgn && (v.p>>63));
+  eat(c,":"); fits(c,op,sizeof op,"c.case:%s",d); marker(c,op,0,0);
+}
 static void p_stmt_inner(CC *c);
 /* Depth-guarded wrapper: p_stmt is a recursive-cycle entry (p_stmt->p_block->p_stmt, and the stmt-expr
  * `({...})` path p_stmt_expr->p_stmt). Bump/check depth once per statement nesting level. */
@@ -6816,8 +6904,7 @@ static void p_stmt_inner(CC *c) {
     eat(c,")"); eat(c,"{");
     marker(c,"c.switch",disc,1);
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-      if(is(c,"case")){ c->i++; long long v=ce_expr(c,0); eat(c,":");   /* case <const>: */
-        char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.case:%lld",v); marker(c,op,0,0); }
+      if(is(c,"case")){ c->i++; case_label(c); }   /* case <const>: */
       else if(is(c,"default")){ c->i++; eat(c,":"); marker(c,"c.default",0,0); }
       else p_stmt(c);                  /* body statements (break -> c.break, no implicit break) */
     }
@@ -6891,12 +6978,14 @@ static void p_stmt_inner(CC *c) {
        * then snapshotted, in turn) -- the byte-parity contract with the oracle's Decl branch. */
       int dim_nd=0; int dim_is_lit[8]; int dim_lit[8]; int dim_tok[8]; int any_vla=0;
       while(is(c,"[")){ c->i++;
-        if(!isk(c,T_INT) && !is(c,"]")){               /* a non-constant dim -> a runtime VLA dim */
+        long long cd=is(c,"]") ? 0 : ce_dim(c,1);    /* an integer constant expression: a fixed dim (6.7.6.2p4) */
+        if(c->failed) return;
+        if(cd<0){                                       /* any other dim -> a runtime VLA dim */
           if(dim_nd<8){ dim_is_lit[dim_nd]=0; dim_tok[dim_nd]=c->i; } any_vla=1;
           int paren=0; while(!(paren==0 && is(c,"]")) && !isk(c,T_END)){   /* skip to the matching `]` */
             if(is(c,"[")||is(c,"(")) paren++; else if(is(c,")")) paren--; c->i++; }
           eat(c,"]"); }
-        else { int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+        else { int dim=(int)cd; eat(c,"]");
           if(dim_nd<8){ dim_is_lit[dim_nd]=1; dim_lit[dim_nd]=dim; }
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; }
         dim_nd++; }
@@ -7507,14 +7596,15 @@ static int p_func(CC *c, bcir_func *fn) {
     if(is(c,"[") || btd){      /* an array parameter `T name[A][B]...` decays to a flat element ptr */
       int nd=0;
       while(is(c,"[")){ c->i++;
-        long long d=0;
-        if(isk(c,T_INT)) d=(long long)adv(c).v;          /* a static dim `[A]` -- the byte count is recorded */
+        long long d=is(c,"]") ? 0 : ce_dim(c,1);       /* a static dim `[A]`, `[N + 1]` -- the byte count is recorded */
+        if(c->failed) return 1;
         /* §5.12 a VLA-param extent `[n]`: `n` must be a BARE identifier naming a PRIOR in-scope param (source
          * order -- a later param is not yet in env). Capture it for the post-scan stability gate. */
-        else if(!is(c,"]") && isk(c,T_ID) && tok_is(tat(c,c->i+1),"]")){
-          tok cand=*pk(c);
-          if(lookup(c,&cand)){ vla_tok=cand; vla_have=1; adv(c); }
-        }
+        if(d<0){ d=0;
+          if(isk(c,T_ID) && tok_is(tat(c,c->i+1),"]")){
+            tok cand=*pk(c);
+            if(lookup(c,&cand)){ vla_tok=cand; vla_have=1; adv(c); }
+          } }
         if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }   /* a non-int/non-id dim -> 0 today (fallback, no bind) */
       for(int d=0; d<btd; d++){ if(nd<3)ty.adims[nd]=btdd[d]; nd++; }   /* a typedef'd array's dims follow */
       if(nd>3){ fail(c,"an array parameter of more than 3 dimensions"); return 1; }
@@ -8041,8 +8131,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
        * was already recorded on the temp (lit_int_type); render the matching type + suffix. */
       const bcir_resource *cr=res_of(f,cl->wr[0]); int cs=cr&&cr->is_signed;   /* a null pointer constant's
                                                        * temp declares its pointer type (CF-NULLPTR) */
-      w+=snprintf(o+EO,on-EO,"%s %s = %llu%s;\n",cr&&cr->is_funcptr&&cr->agg[0]?cr->agg:decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),
-                  (unsigned long long)cl->imm[0], cs?"":"u"); }
+      char kd[32];                                     /* a negative one (an enumerator, a character) signed, not its
+                                                        * 64-bit two's complement, which C reads back with a warning */
+      if(cs && cl->imm[0]<0) kdigits(kd,sizeof kd,(unsigned long long)cl->imm[0],1);
+      else snprintf(kd,sizeof kd,"%llu%s",(unsigned long long)cl->imm[0],cs?"":"u");
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",cr&&cr->is_funcptr&&cr->agg[0]?cr->agg:decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),
+                  kd); }
     else if(!strcmp(cl->op,"c.sizeof.vla"))                 /* runtime `sizeof a` of a VLA: extent × sizeof(elem).
                                                             * HARDCODE the literal `size_t` (NOT tty(), which
                                                             * returns "uint64_t" for an 8-byte unsigned scalar):
@@ -8425,7 +8519,9 @@ static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, 
   if(!isk(c,T_ID)){ fail(c,"expected a declarator"); return; }
   tok nm=adv(c);
   int count=1, is_arr=0, init_a=0, init_b=0, nd=0; long long dims[4]={0,0,0,0}, init_n=-1;
-  while(is(c,"[")){ c->i++; count = isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]"); is_arr=1;
+  while(is(c,"[")){ c->i++; long long d=is(c,"]") ? 0 : ce_dim(c,0);   /* an integer constant expression */
+    if(d<0) return;
+    count=(int)d; eat(c,"]"); is_arr=1;
     if(nd<4){ dims[nd]=count; } nd++; }
   for(int d=0; d<btd; d++){ count=btdd[d]; is_arr=1; if(nd<4){ dims[nd]=count; } nd++; }   /* its dims follow */
   if(is(c,"=")){ c->i++; init_a=c->i;

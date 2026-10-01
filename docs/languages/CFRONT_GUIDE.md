@@ -305,6 +305,15 @@ _mm_sfence();                      //                   store (release) fence ->
 - Integer constants in every base (`0x`, `0b`, a leading `0` octal, decimal) and with every suffix, each its
   exact value in its C11 6.4.4.1 type on the target (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long`
   where `long` is 64 bits and an `unsigned long long` where it is 32; `017` is 15).
+- Integer constant expressions -- an enumerator's value, a case label, an array dimension, a designator --
+  folded where they are parsed, in C's own types on the target, by the predicate a static's initializer folds
+  with: the integer promotions and the usual arithmetic conversions (`~0u > 5` is 1, `-1 < 0u` is 0, `-1L < 1u`
+  is 1 where `long` is 64 bits and 0 where it is 32), `/` and `%` truncating toward zero (`-7 / 2` is -3, `-7 % 2`
+  is -1), shifts, a cast to an integer type (`(uint8_t)300` is 44), `?:` in its arms' common type, and an
+  operand C does not evaluate left unevaluated (`0 && 1 / 0` is 0). A dimension that is an integer constant
+  expression (`N * 2`, `2 + 1`) makes a fixed array (C11 6.7.6.2p4) for a local, a member, a typedef, a
+  parameter and a global. Both emits spell a negative constant signed (`-3`, not `-3u` or its 64-bit two's
+  complement) and a case label past `LLONG_MAX` with `u`.
 - Integer + IEEE-754 floating arithmetic and comparisons, casts and the usual arithmetic conversions,
   `sizeof`/`_Alignof`, bitfields, `<math.h>` library calls.
 - Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
@@ -369,6 +378,15 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   without `u` past `long long`, whose type C leaves to the implementation (GCC gives it `__int128`, Clang
   `unsigned long long`). Both rails refuse it (`an integer constant too large for every type its base and suffix
   allow`); write `9223372036854775808u`, or `INT64_MIN` as `-9223372036854775807 - 1`.
+- An integer constant expression C requires a diagnostic for, or that is none. An enumerator no `int` holds,
+  stated or counted on from `INT_MAX` (C11 6.7.2.2p2; C23 gives one a wider type, which neither rail models):
+  `an enumerator value not representable as int`. A division or a remainder by zero, a signed overflow
+  (`INT_MAX + 1`, `INT_MIN / -1`), a shift by the width or more, by a negative count, of a negative value or
+  past its signed type (`-1 << 1` and `1 << 31`, which Clang folds without a word), and `sizeof`, `_Alignof`, the
+  comma operator, a floating constant (`(int)1.5`), an object or a pointer in one: `not an integer constant
+  expression`. A constant array dimension outside 0..`INT_MAX`: `an array dimension outside 0..INT_MAX`. Both
+  rails refuse each for that one reason. A compound literal's dimension `(T[N]){...}` and a row pointer's
+  `(*p)[N]` take an integer literal only, and an `enum` defined at block scope is refused.
 - A file-scope initializer C refuses (an excess entry, a string too long for its array, a designator outside its
   object) or that overrides a subobject a brace list or a string initialized, and an initialized file-scope array
   of more than three dimensions. A block-scope `_Thread_local` object that is not `static` (C11 6.7.1p3).

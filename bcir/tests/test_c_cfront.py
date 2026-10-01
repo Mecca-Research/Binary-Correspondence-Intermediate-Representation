@@ -282,6 +282,8 @@ _PTRVALUE = [
     #   select is a pointer to their function type, a null pointer arm that pointer (CF-FNSEL)
     "cfront_nullconst.c",  # the constant 0 compared with a pointer, passed through a function pointer, given to
     #   `free` and `realloc`: a null pointer; `p -= 1` of a pointer to a struct on the twin (CF-NULLCALL)
+    "cfront_enumfold.c",  # enumerators, case labels and array dimensions folded in C's types and the target's
+    #   data model; a dimension that is an integer constant expression a fixed array (CF-ENUMFOLD)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -11577,3 +11579,301 @@ def test_struct_arithmetic_and_conversion_are_refused_on_both_rails():
                 run.returncode,
                 run.stdout[:200],
             )
+
+
+# CF-ENUMFOLD: an enumerator, a case label and an array dimension are integer constant expressions, folded where they
+# are parsed, in C's own types and the target's data model, by the predicate a static's initializer folds with. The
+# oracle had folded them with unbounded integers (`-7 / 2` was -4, `-7 % 2` 1) and the twin in `long long`, and
+# neither compared an unsigned int operand as unsigned (`~0u > 5` was 0). The twin had spelled a negative enumerator
+# as its 64-bit two's complement (`int32_t t = 18446744073709551613;`) and the oracle as an unsigned int (`-3u`); the
+# oracle had spelled a case label past LLONG_MAX without `u`, which Clang and GCC read back with a warning.
+_ENUMFOLD_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(ef_values, s); SAME(ef_signed, (int32_t)s); SAME(ef_uswitch, s); SAME(ef_dims, s); SAME(ef_entry, s);
+    SAME(ef_wswitch, (uint64_t)s << 31); SAME(ef_wswitch, (uint64_t)s * 0x9E3779B97F4A7C15u);
+  }
+  for (int32_t v = -80; v < 80; v++) SAME(ef_switch, v);
+  SAME(ef_switch, INT32_MIN); SAME(ef_switch, INT32_MAX); SAME(ef_signed, INT32_MIN); SAME(ef_signed, INT32_MAX);
+  SAME(ef_uswitch, 0xFFFFFFFFu); SAME(ef_uswitch, 0xFFFFFFFDu); SAME(ef_uswitch, 2147483644u);
+  SAME(ef_wswitch, 0xFFFFFFFFFFFFFFFFu); SAME(ef_wswitch, 0x8000000000000000u);
+  SAME(ef_wswitch, 0xFFFFFFFFFFFFFFFEu); SAME(ef_wswitch, 0xFFFFFFFF80000000u);
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# a constant C converts back, which Clang and GCC warn about, made an error: an integer constant past LLONG_MAX
+# spelled without `u` (the twin's negative enumerator, the oracle's case label)
+_ENUMFOLD_WERROR = {"clang": ("-Werror=implicitly-unsigned-literal",), "gcc": ("-Werror",)}
+
+
+def _assert_signed_spellings(rail: str, emit: str) -> None:
+    """A negative constant is spelled as one, signed, and a case label past LLONG_MAX with `u`."""
+    assert re.search(r" = -3;", emit) and re.search(r" = -2147483648;", emit), rail
+    assert re.search(r"\bcase -3:", emit) and "case 18446744073709551615u:" in emit, rail
+    assert not re.search(r" = -\d+u;", emit), (rail, re.findall(r".* = -\d+u;", emit)[:3])
+    assert not re.search(r"[ (]1844674407370955\d{4}[;:]", emit), (
+        rail,
+        "a 64-bit two's complement",
+    )
+
+
+def test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails():
+    """CF-ENUMFOLD: `cfront_enumfold.c` -- enumerators that divide and take the remainder of negatives, compare an
+    unsigned int operand, a long long and a type narrower than int, shift in every direction and width, cast to
+    every width and to `_Bool`, select through nested `?:` in the arms' common type and leave an operand C does not
+    evaluate unfolded (`0 && 1 / 0`), count on from INT_MIN and to INT_MAX; case labels of a signed, an unsigned and
+    a 64-bit switch from the same expressions; enumerators as the dimensions of a local, a member, a typedef and a
+    global, and as designators -- lowers to one claim graph on the four targets, and each function of each emit,
+    built with a constant C converts back made an error, returns what the original does under Clang and GCC. Both
+    emits spell a negative enumerator as a signed constant and a case label past LLONG_MAX with `u`."""
+    if not _CC:
+        return
+    fx = "cfront_enumfold.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        _assert_signed_spellings(rail, emit)
+        assert "__bcir_ext" not in emit, f"{rail}: a dimension that is a constant made a VLA"
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _ENUMFOLD_DRIVER, _ENUMFOLD_WERROR
+    )
+
+
+# The unit the CF-GLOBALS triage found: the oracle folded its enumerators to -4, 1 and 0 and its case label to -4, the
+# twin to -3, -1 and 0, and C gives -3, -1 and 1.
+_ENUMFOLD_FOUND = """#include <stdint.h>
+enum { ED_Q = -7 / 2, ED_R = -7 % 2, ED_N = ~0u > 5 };
+int32_t ed_found(int32_t v)
+{
+    switch (v) {
+    case -7 / 2:
+        return 1000;
+    default:
+        return ED_Q * 100 + ED_R * 10 + ED_N + v;
+    }
+}
+"""
+
+
+def test_the_enumerators_the_triage_found_fold_as_c_does_on_both_rails():
+    """CF-ENUMFOLD: `enum { ED_Q = -7 / 2, ED_R = -7 % 2, ED_N = ~0u > 5 };` and `case -7 / 2:` -- -3, -1, 1 and -3
+    in C -- lower to one claim graph on the four targets, both emits spell -3 signed, and each returns what the
+    original does for every value the switch tells apart."""
+    oracle_summary, r, _entry = _oracle(_ENUMFOLD_FOUND)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    assert re.search(r"\bcase -3:", oracle_emit) and re.search(r" = -3;", oracle_emit), oracle_emit
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "found.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_ENUMFOLD_FOUND)
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _ENUMFOLD_FOUND)
+    assert re.search(r"\bcase -3:", c_emit) and re.search(r" = -3;", c_emit), c_emit
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (int32_t v = -9; v < 9; v++) SAME(ed_found, v);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        "found.c",
+        _ENUMFOLD_FOUND,
+        (("twin", c_emit), ("oracle", oracle_emit)),
+        driver,
+        _ENUMFOLD_WERROR,
+    )
+
+
+def _enumerator_names(src: str) -> list:
+    """Every enumerator the `enum` definitions of `src` declare, in order (its comments dropped first)."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    names = []
+    for body in re.findall(r"\benum\b[^{;]*\{(.*?)\}", src, re.S):
+        for part in body.split(","):
+            m = re.match(r"\s*([A-Za-z_]\w*)", part)
+            if m:
+                names.append(m.group(1))
+    return names
+
+
+# the four targets, by their Clang triples
+_ENUMFOLD_TRIPLES = {
+    "x86_64-linux": "x86_64-unknown-linux-gnu",
+    "aarch64-linux": "aarch64-unknown-linux-gnu",
+    "x86_64-windows": "x86_64-pc-windows-msvc",
+    "i386-linux": "i386-unknown-linux-gnu",
+}
+
+
+def test_every_enumerator_folds_to_clangs_value_on_each_target():
+    """CF-ENUMFOLD: each enumerator of `cfront_enumfold.c`, read back through a function returning it, is the
+    constant the oracle folds on each of the four targets, which Clang, compiling the unit for that target, holds
+    it to (`_Static_assert`) -- a comparison of `-1L` with `1u`, a `long` of `0xFFFFFFFFL` and a cast to `unsigned
+    long` are 1 where `long` is 64 bits and 0 where it is 32, while `2147483648` and `0xFFFFFFFFL`, a `long` or
+    the next type of their lists, are positive on all four -- and the twin folds to the same claim graph."""
+    clang = shutil.which("clang")
+    if not clang:
+        return
+    src = open(os.path.join(_C, "cfront_enumfold.c"), encoding="utf-8").read()
+    names = _enumerator_names(src)
+    assert len(names) == len(set(names)) == 51, names
+    unit = src + "".join(f"int64_t ev_{n}(void) {{ return {n}; }}\n" for n in names)
+    with tempfile.TemporaryDirectory() as d:
+        for target, triple in _ENUMFOLD_TRIPLES.items():
+            r = compile_unit(unit, check_clang=False, target=target)
+            values = {}
+            for n in names:
+                (k,) = [c for c in r.lowered.functions[f"ev_{n}"].claims if c.op == "c.const"]
+                values[n] = int(k.imm[0])
+            checks = "".join(f'_Static_assert({n} == {v}LL, "{n}");\n' for n, v in values.items())
+            path = os.path.join(d, f"values_{target}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src + checks)
+            run = subprocess.run(
+                [clang, f"--target={triple}", "-ffreestanding", "-std=c11", "-fsyntax-only", path],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode == 0, (
+                f"{target}: the oracle's values are not Clang's\n{run.stderr[:2000]}"
+            )
+        if not _CC:
+            return
+        path = os.path.join(d, "getters.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(unit)
+        _parity_on_targets(path, unit)
+
+
+# Where C requires a diagnostic -- an enumerator value no int holds (C11 6.7.2.2p2), a division or a remainder by
+# zero, a signed overflow, a shift past the width or of a negative value (6.5.7p4, 6.6p4), an array dimension that
+# is negative (6.7.6.2p1) -- or the expression is not an integer constant expression (6.6p6), both rails refuse for
+# one reason, never picking a value.
+_ICE_NOT = "not an integer constant expression"
+_ENUM_NOT_INT = "an enumerator value not representable as int"
+_DIM_RANGE = "an array dimension outside 0..INT_MAX"
+_ENUMFOLD_HEAD = "#include <stdint.h>\nuint32_t g_x;\n"
+_ENUMFOLD_REFUSED = (
+    ("enum { N = 0x80000000 };", _ENUM_NOT_INT),
+    ("enum { N = 0x100000000 };", _ENUM_NOT_INT),
+    ("enum { N = 0xFFFFFFFFFFFFFFFFu };", _ENUM_NOT_INT),
+    ("enum { N = -2147483649LL };", _ENUM_NOT_INT),
+    ("enum { N = 2147483647u + 1u };", _ENUM_NOT_INT),
+    ("enum { A = 2147483647, B };", _ENUM_NOT_INT),
+    ("enum { N = 1 / 0 };", _ICE_NOT),
+    ("enum { N = 1 % 0 };", _ICE_NOT),
+    ("enum { N = 2147483647 + 1 };", _ICE_NOT),
+    ("enum { N = 65536 * 65536 };", _ICE_NOT),
+    ("enum { N = -(-2147483647 - 1) };", _ICE_NOT),
+    ("enum { N = (-2147483647 - 1) / -1 };", _ICE_NOT),
+    ("enum { N = (-2147483647 - 1) % -1 };", _ICE_NOT),
+    ("enum { N = 1 << 31 };", _ICE_NOT),
+    ("enum { N = 1 << 32 };", _ICE_NOT),
+    ("enum { N = 1u << 32 };", _ICE_NOT),
+    ("enum { N = -1 << 1 };", _ICE_NOT),
+    ("enum { N = 8 >> -1 };", _ICE_NOT),
+    ("enum { N = g_x };", _ICE_NOT),
+    ("enum { N = 0 && g_x };", _ICE_NOT),
+    ("enum { N = sizeof(int) };", _ICE_NOT),
+    ("enum { N = (1, 2) };", _ICE_NOT),
+    ("enum { N = (int)1.5 };", _ICE_NOT),
+    ("enum { N = (uint8_t *)0 == 0 };", _ICE_NOT),
+    ("int32_t f(int32_t v) { switch (v) { case 1 / 0: return 1; default: return 0; } }", _ICE_NOT),
+    (
+        "int32_t f(int32_t v) { switch (v) { case 2147483647 + 1: return 1; default: return 0; } }",
+        _ICE_NOT,
+    ),
+    (
+        "int32_t f(int32_t v) { switch (v) { case 1 << 31: return 1; default: return 0; } }",
+        _ICE_NOT,
+    ),
+    ("int32_t f(int32_t v) { switch (v) { case v: return 1; default: return 0; } }", _ICE_NOT),
+    ("uint32_t f(uint32_t s) { uint32_t a[4] = {[1 / 0] = s}; return a[0]; }", _ICE_NOT),
+    ("uint32_t f(uint32_t s) { uint32_t a[-1]; a[0] = s; return a[0]; }", _DIM_RANGE),
+    ("struct r { uint8_t b[1 - 3]; uint32_t k; };", _DIM_RANGE),
+    ("uint8_t g_big[0x80000000];", _DIM_RANGE),
+)
+# ... and a dimension that is an integer constant expression makes a fixed array (C11 6.7.6.2p4) on both rails --
+# no runtime extent -- while one that is not makes a VLA, as before
+_ENUMFOLD_DIMS = (
+    (
+        "uint32_t f(uint32_t s) { uint32_t a[2 + 1]; a[2] = s; return a[2] + (uint32_t)sizeof a; }",
+        False,
+    ),
+    (
+        "enum { N = 3 };\nuint32_t f(uint32_t s) { uint8_t a[N * 2]; a[5] = (uint8_t)s; return a[5] + "
+        "(uint32_t)sizeof a; }",
+        False,
+    ),
+    (
+        "enum { N = 3 };\nstruct r { uint8_t b[N + 1]; uint32_t k; };\nuint32_t g[N << 1];\n"
+        "uint32_t f(uint32_t s) { struct r v; v.b[N] = (uint8_t)s; v.k = s; g[5] = s; "
+        "return v.b[N] + v.k + g[5] + (uint32_t)sizeof v + (uint32_t)sizeof g; }",
+        False,
+    ),
+    ("enum { N = 3 };\nuint32_t f(uint32_t a[N], uint32_t s) { return a[N - 1] + s; }", False),
+    (
+        "uint32_t f(uint32_t s) { uint32_t n = (s & 3u) + 1u; uint32_t a[n + 1u]; a[0] = s; "
+        "return a[0] + (uint32_t)sizeof a; }",
+        True,
+    ),
+)
+
+
+def test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails():
+    """CF-ENUMFOLD: every unit of `_ENUMFOLD_REFUSED` -- an enumerator past int's range (stated, an unsigned one
+    past LLONG_MAX among them, or counted on from INT_MAX), a division or a remainder by zero, a signed overflow
+    (`+`, `*`, `-`, `/` and `%` of INT_MIN by -1), a shift by the width or more, by a negative count or of a
+    negative value, an object, `sizeof`, the comma operator, a floating constant and a pointer in an enumerator, the
+    same in a case label, a designator that divides by zero, and the constant dimension of a local, a member or a
+    global outside 0..INT_MAX -- is refused on both rails for the one reason it witnesses, where both had picked a
+    value or refused for reasons of their own. Every unit of `_ENUMFOLD_DIMS` lowers to one claim graph on both rails, a
+    dimension that is an integer constant expression -- `2 + 1`, `N * 2` of a local, `N + 1` of a member, `N << 1`
+    of a global, `N` of a parameter -- a fixed array, a runtime one a VLA."""
+    from bcir.frontends.cfront.cparse import CParseError
+
+    for body, why in _ENUMFOLD_REFUSED:
+        try:
+            compile_unit(_ENUMFOLD_HEAD + body + "\n", check_clang=False)
+        except CParseError as e:
+            assert str(e) == why, (body, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+    summaries = {}
+    for body, vla in _ENUMFOLD_DIMS:
+        summaries[body], r, _e = _oracle(_ENUMFOLD_HEAD + body + "\n")
+        emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+        assert ("__bcir_ext" in emit) == vla, (body, emit)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_ENUMFOLD_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_ENUMFOLD_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, (body, vla) in enumerate(_ENUMFOLD_DIMS):
+            path = os.path.join(d, f"d{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_ENUMFOLD_HEAD + body + "\n")
+            c_summary, c_emit = _c_run(exe, path)
+            assert c_summary == summaries[body] and "ok=1" in c_summary, (
+                body,
+                c_summary,
+                summaries[body],
+            )
+            assert ("__bcir_ext" in c_emit) == vla, (body, c_emit)

@@ -234,8 +234,8 @@
     {
       "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
       "label": "T45 a null function pointer constant declared as an integer",
-      "new": "\"%s %s = %llu%s;\\n\",0?cr->agg:decl_ty(",
-      "old": "\"%s %s = %llu%s;\\n\",cr&&cr->is_funcptr&&cr->agg[0]?cr->agg:decl_ty(",
+      "new": "\"%s %s = %s;\\n\",0?cr->agg:decl_ty(",
+      "old": "\"%s %s = %s;\\n\",cr&&cr->is_funcptr&&cr->agg[0]?cr->agg:decl_ty(",
       "path": "runtime/c/bcir_cfront.c"
     }
   ]

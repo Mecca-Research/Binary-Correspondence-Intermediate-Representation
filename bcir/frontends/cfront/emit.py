@@ -29,6 +29,8 @@ from .lower import (
     SwitchNode,
     WhileNode,
     _STRING_MEM,
+    _const_spelling,
+    _kspell,
 )
 
 # ASM2 -- the x86 targets that have port-mapped I/O (`in`/`out` instructions). ARM/RISC-V have no port I/O
@@ -538,8 +540,8 @@ def _walk(
         elif isinstance(node, SwitchNode):  # a real C switch (fallthrough preserved)
             out.append(f"{ind}switch ({ref(node.disc)}) {{")
             for item in node.body:
-                if isinstance(item, CaseLabel):
-                    out.append(f"{ind}case {item.value}:")
+                if isinstance(item, CaseLabel):  # exact: `Nu` past LLONG_MAX (CF-ENUMFOLD)
+                    out.append(f"{ind}case {_const_spelling(item.value)}:")
                 elif isinstance(item, DefaultLabel):
                     out.append(f"{ind}default:")
                 else:
@@ -618,8 +620,8 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return f"{ref(c.wr[0])} += {ref(c.rd[1])};"
     if c.op == "c.ptrsub":  # pointer p -= n
         return f"{ref(c.wr[0])} -= {ref(c.rd[1])};"
-    if c.op == "c.const":
-        return deftmp(c.wr[0], f"{c.imm[0]}u")
+    if c.op == "c.const":  # a negative one signed, not `-Nu` (CF-ENUMFOLD)
+        return deftmp(c.wr[0], _kspell(c.imm[0]))
     if c.op == "c.sizeof.vla":  # runtime `sizeof a` of a VLA: extent × sizeof(elem)
         return deftmp(c.wr[0], f"(size_t)((size_t){ref(c.rd[0])} * {c.imm[0]})")
     if c.op.startswith("c.labeladdr:"):  # `&&L` -- a label's address as a `void *` (GNU)

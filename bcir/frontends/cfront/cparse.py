@@ -11,10 +11,12 @@ from __future__ import annotations
 import dataclasses
 
 from . import cast
+from .abi import HOST
 from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
+from .lower import DIM_RANGE, ENUM_NOT_INT, CLowerError, fold_constant
 
 
 class CParseError(Exception):
@@ -143,10 +145,14 @@ class _Descend:
 
 
 class _Parser:
-    def __init__(self, toks: list[Tok], tags: set):
+    def __init__(self, toks: list[Tok], tags: set, abi=None):
         self.t = toks
         self.i = 0
         self.tags = tags  # known struct/union tags (for type detection)
+        # the target's data model: an integer constant's type and the integer constant expressions folded here (an
+        # enumerator, a case label, an array dimension, a designator) take its `long` and pointer widths, as the
+        # twin's single pass does (CF-ENUMFOLD)
+        self.abi = abi or HOST
         self.typedefs: dict[str, cast.TypeRef] = {}  # typedef name -> the aliased type
         self.enums: dict[str, int] = {}  # enumerator name -> its integer value
         self.recover = False  # panic-mode recovery: collect diagnostics, don't raise
@@ -567,69 +573,50 @@ class _Parser:
 
     def _enum_body(self, tag: str) -> None:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
-        constant) and register it so a later use resolves to that integer literal."""
+        constant, folded in C's types: `_const_eval`) and register it so a later use resolves to that
+        integer literal. An enumeration constant is an `int` (C11 6.4.4.3): a value no int holds, given or
+        counted on from INT_MAX, is refused (`ENUM_NOT_INT`, 6.7.2.2p2), never cut to one."""
         self.eat("PUNCT", "{")
         value = 0
         while not self.at("PUNCT", "}"):
-            name = self.eat("IDENT").text
+            tk = self.eat("IDENT")
             if self.at("OP", "="):
                 self.nxt()
                 value = self._const_eval(self._ternary())  # the full conditional-expression
                 # level (C 6.7.2.2: an enum value
                 # is a constant-expression)
-            self.enums[name] = value
+            if not -(1 << 31) <= value < 1 << 31:
+                raise CParseError(ENUM_NOT_INT, pos=tk.pos)
+            self.enums[tk.text] = value
             value += 1
             if self.at("PUNCT", ","):
                 self.nxt()
         self.eat("PUNCT", "}")
 
+    def _dim(self, e):
+        """An array declarator's dimension: its value when it is an integer constant expression -- the array is
+        then no variable-length one, whatever the expression's form (`N`, `2 + 1`, `N * 2`; C11 6.7.6.2p4) --
+        else the expression, a runtime dimension. A constant outside 0..INT_MAX is refused (`DIM_RANGE`), as the
+        twin's `ce_dim` refuses one (CF-ENUMFOLD)."""
+        try:
+            v = fold_constant(e, self.abi).v
+        except CLowerError:
+            return e
+        if not 0 <= v < 1 << 31:
+            raise CParseError(DIM_RANGE, pos=self.peek().pos)
+        return v
+
     def _const_eval(self, node) -> int:
-        """Fold an integer constant expression (the §5.9 evaluator): integer literals, prior
-        enumerators, arithmetic/bit/shift, COMPARISONS, logical &&/|| (both sides evaluate --
-        a constant expression has no side effects to short-circuit away), and the ternary.
-        `sizeof` stays out ON PURPOSE: the target ABI is chosen at LOWER time, so folding it
-        at parse would bake the wrong data model into the enum/global value."""
-        if isinstance(node, cast.IntLit):
-            return node.value
-        if isinstance(node, cast.Name):
-            if node.ident in self.enums:
-                return self.enums[node.ident]
-            raise CParseError(f"non-constant initializer {node.ident!r}")
-        if isinstance(node, cast.Unary):
-            v = self._const_eval(node.operand)
-            return {"-": -v, "~": ~v, "!": int(not v), "+": v}.get(node.op, v)
-        if isinstance(node, cast.Binary):
-            a, b = self._const_eval(node.lhs), self._const_eval(node.rhs)
-            ops = {
-                "+": a + b,
-                "-": a - b,
-                "*": a * b,
-                "/": a // b if b else 0,
-                "%": a % b if b else 0,
-                "&": a & b,
-                "|": a | b,
-                "^": a ^ b,
-                "<<": a << b,
-                ">>": a >> b,
-                "<": int(a < b),
-                "<=": int(a <= b),
-                ">": int(a > b),
-                ">=": int(a >= b),
-                "==": int(a == b),
-                "!=": int(a != b),
-                "&&": int(bool(a) and bool(b)),
-                "||": int(bool(a) or bool(b)),
-            }
-            if node.op not in ops:
-                raise CParseError(f"unsupported constant-expression operator {node.op!r}")
-            return ops[node.op]
-        if isinstance(node, cast.Ternary):
-            return (
-                self._const_eval(node.then)
-                if self._const_eval(node.cond)
-                else self._const_eval(node.els)
-            )
-        raise CParseError("unsupported constant initializer")
+        """Fold an integer constant expression -- an enumerator's value, a case label, a designator, a
+        type-name's dimension -- in C's own types on the target, as C evaluates one (`lower.fold_constant`,
+        the predicate a static's initializer folds with; CF-ENUMFOLD): an operand C does not evaluate (`0 &&
+        e`, the arm `?:` does not take) is not folded. One that is no integer constant expression, or whose
+        arithmetic C leaves undefined (a division by zero, a signed overflow), is refused for that one reason
+        (`ICE_NOT`). `sizeof` stays out: no aggregate is laid out at parse."""
+        try:
+            return fold_constant(node, self.abi).v
+        except CLowerError as e:
+            raise CParseError(str(e), pos=self.peek().pos) from None
 
     def _global(
         self, tref: cast.TypeRef, name: str, extern: bool = False, static: bool = False
@@ -997,10 +984,7 @@ class _Parser:
             if self.at("PUNCT", "]"):
                 raw.append(0)  # an incomplete `[]` dimension
             else:
-                e = self._assign()  # the dim expression
-                raw.append(
-                    e.value if isinstance(e, cast.IntLit) else e
-                )  # a single int literal -> a static dim
+                raw.append(self._dim(self._assign()))  # a constant: a static dim, else a runtime
             self.eat("PUNCT", "]")
         if any(not isinstance(d, int) for d in raw):  # at least one RUNTIME dim -> a VLA
             if len(raw) > 3:
@@ -1777,8 +1761,10 @@ class _Parser:
 
     def _primary(self):
         if self.at("INT"):
-            tk = self.nxt()  # type from the suffix + magnitude (§6.4.4.1)
-            return cast.IntLit(parse_int_literal(tk.text, tk.pos), int_literal_type(tk.text))
+            tk = self.nxt()  # type from the suffix + magnitude (§6.4.4.1), with the target's `long`
+            return cast.IntLit(
+                parse_int_literal(tk.text, tk.pos), int_literal_type(tk.text, self.abi.long_size)
+            )
         if self.at("CHAR"):  # a character constant -> its int value
             return cast.IntLit(parse_char_literal(self.nxt().text))
         if self.at("FLOAT"):  # a floating-point literal (1.5 / 3.14f)
@@ -1817,18 +1803,20 @@ class _Parser:
         raise CParseError(f"unexpected {tk.kind} {tk.text!r}", pos=tk.pos)
 
 
-def parse_unit(src: str) -> cast.Unit:
+def parse_unit(src: str, abi=None) -> cast.Unit:
     """Parse one C translation unit (the L1–L4 subset) into the `cast` AST, raising on the first
-    error (the compile path needs a well-formed AST)."""
+    error (the compile path needs a well-formed AST). `abi`: the target the unit is lowered for (the
+    host's by default) -- its integer constants and the constant expressions folded at parse take its
+    data model."""
     toks = tokenize(src)
-    return _Parser(toks, set()).parse_unit()
+    return _Parser(toks, set(), abi).parse_unit()
 
 
-def parse_with_recovery(src: str) -> tuple[cast.Unit, list]:
+def parse_with_recovery(src: str, abi=None) -> tuple[cast.Unit, list]:
     """Parse with panic-mode recovery, returning the (partial) AST and *every* parse diagnostic the
     run found -- the diagnostics entry uses this so one invocation reports several errors. A CLexError
     still propagates (lexer recovery is a separate concern)."""
-    p = _Parser(tokenize(src), set())
+    p = _Parser(tokenize(src), set(), abi)
     p.recover = True
     unit = p.parse_unit()
     return unit, p.diags

@@ -200,7 +200,7 @@ def compile_unit(
         defines=defines,
         name=filename,
     )
-    unit = parse_unit(source)
+    unit = parse_unit(source, abi)  # the constants folded at parse take the target's data model
     lowered = lower_unit(unit, abi)
     explicit_target = (
         target is not None
