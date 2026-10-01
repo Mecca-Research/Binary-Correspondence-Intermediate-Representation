@@ -335,6 +335,17 @@ _mm_sfence();                      //                   store (release) fence ->
   for one reason on both rails (`called object is not a function or function pointer`, `dereference of a
   non-pointer`, `subscripted value is not an array or a pointer to an object`, ...), as is storing to or stepping a
   function (`a function designator is not an lvalue`) and `sizeof` of one.
+- The unary operators as C types them, under `sizeof`, `typeof` and `_Generic` too: `+a` is `a` promoted (`sizeof(+c)`
+  of a `char` is 4), `-z` and `~z` of a complex are complex, `__real__` and `__imag__` of a complex its element type
+  and of a real operand its own, a bit-field operand the type of its value (`int` when narrower), `&x` a pointer to
+  `x`'s type. Each takes only the operand C gives it -- `+` and `-` an arithmetic one, `~` an integer one or a complex,
+  `!` a scalar -- and anything else is refused (`invalid argument type to unary expression`; a struct or union for
+  the reason every operator gives). `if`, `while`, `for`, `do` and `?:` take a scalar, `switch` an integer
+  (`statement requires expression of integer type`); `++` and `--` of a struct are refused as any operator's operand;
+  `++(x)` is `++x`, and an array compared with 0 is the pointer it decays to. A void expression is used only where C
+  discards its value -- an expression statement, `(void)e`, an operand of `,`, an arm of `?:`, a `_Generic`
+  association, a statement expression's last statement, `return f();` in a void function -- and its value used
+  anywhere else is refused (`the value of a void expression is used`).
 - A function returning a function pointer, declared with a typedef for its return type (`op_t pick(uint32_t s);`):
   its call is that function pointer -- held, compared, selected, returned, or called at once (`pick(s)(x)`,
   `(*pick(s))(x)`) -- whether the function is defined, declared by a prototype, or reached through a pointer to it.

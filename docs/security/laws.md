@@ -934,6 +934,20 @@ literal and Clang's rejection of the `_Atomic` cast, none of which a digest reco
 `_RTFP_LOWERED` in `test_function_pointer_types_refused_and_lowered_alike_on_both_rails`, each emit run
 at -O2 under both compilers; `test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails`.
 Faults (`cfront-roundtrip.json`): `O54`, `O58`, `O59`, `T77`, `T78`.
+CF-UNARY instance (2026-10-01): two rails that agree are a witness that they agree, not that either
+reads C. Both parsers dropped a unary `+`, so `sizeof(+c)` of a `char` was 1 and `_Generic(+h, int:
+...)` chose by `h`'s own type on each rail, digest-equal -- and the twin's byte-offset reader skipped a
+`+` *because* the oracle's parser dropped it, so the parity gate certified the misreading on both. The
+oracle's emit named a global that only a condition, a `switch` or an early `return` read as its raw rid
+temp, which nothing declared; the digest hashes claims, not names, so no parity row saw that either.
+Each was found by running the emit against the original: on the parent, both emits of `uo_plus` and
+`uo_parts` return values the original does not, and the oracle's `uo_gconds` does not build. A rule
+the two rails share is held to C itself, by the compilers, not by each other.
+Witnesses: `cfront_unaryops.c` in
+`test_unary_operators_controlling_expressions_and_void_values_run_as_the_original`; `_CARD5_LOWERED`'s
+`+`, part, bit-field and control-only units in
+`test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike`. Faults
+(`cfront-unary.json`): `UO1`, `UO17`-`UO21`, `UO29`, `UO30`, `UT22`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1404,6 +1418,22 @@ Witnesses: `cfront_rtfp.c` and `_RTFP_CALLS` in
 and `_RTFP_UNITS` in `test_function_pointer_types_refused_and_lowered_alike_on_both_rails`; the round
 trip's `test_function_pointer_and_atomic_emits_reach_a_fixed_point`. Faults (`cfront-roundtrip.json`):
 `O39`, `O52`, `T51`, `T62`, `T63`, `T64`.
+CF-UNARY and CF-STRUCTCOND instance (2026-10-01): "may this operand take this operator" was answered
+per path. The oracle's value path refused a struct under `-`, `~` and `!` (CF-STRUCTARITH) while its
+`sizeof`, `typeof` and `_Generic` typing asked its own question, so `sizeof(-a)` of a struct and
+`sizeof(-p)` of a pointer were refused for reasons of their own, `_Generic(+a, ...)` and
+`__typeof__(-a)` lowered, and `-p` of a pointer lowered as a value; the twin asked in a pass over the
+claims the unit ended with (`agg_unary_operands`), which never saw the claims a speculative lowering
+under `sizeof`, `typeof` or `_Generic` makes and discards. The precondition held outside the check --
+"the claims a unit ends with are every claim it made" -- is false wherever a lowering is speculative.
+One predicate per rail now answers for every operator, read as each lowers and by every typing path
+(`_unary_operand`, `unary_operand_ok`); one for every controlling expression (`_condition`,
+`cond_value_ok`, a `switch`'s on top); and one split of a value from a void one (`_rvalue` refuses what
+`_rvalue_void` returns, read only where C discards the value; the twin's `void_read` at each
+statement's end).
+Witnesses: `_CARD5_REFUSED`'s `sizeof`, `typeof` and `_Generic` forms in
+`test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike`. Faults
+(`cfront-unary.json`): `UO4`, `UO5`, `UO12`, `UO31`, `UO32`, `UT4`, `UT5`, `UT14`, `UT24`-`UT26`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

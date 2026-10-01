@@ -1731,9 +1731,6 @@ class _Parser:
             return self._unary_inner()
 
     def _unary_inner(self):
-        if self.at("OP", "+"):  # unary plus is a no-op
-            self.nxt()
-            return self._unary()
         if self.at("IDENT", "__real__") or self.at(
             "IDENT", "__imag__"
         ):  # GNU complex part extraction
@@ -1748,7 +1745,9 @@ class _Parser:
         ):  # PREFIX ++a / --a -> yields the NEW value
             op = self.nxt().text[0]
             return cast.IncDec(op, self._unary(), prefix=True)
-        if self.peek().kind == "OP" and self.peek().text in ("-", "~", "!", "*", "&"):
+        # `+` included: it promotes its operand (C11 6.5.3.3p2), which the parser had dropped -- so `sizeof(+c)`
+        # was `sizeof(c)` and `_Generic(+c, ...)` chose by `c`'s type, on both rails (CF-UNARY)
+        if self.peek().kind == "OP" and self.peek().text in ("+", "-", "~", "!", "*", "&"):
             op = self.nxt().text
             return cast.Unary(op, self._unary())
         if self._is_cast():  # (type)operand — a cast binds at the unary level

@@ -2326,13 +2326,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a void value used as a value -- `uint32_t k = f();`, `f() + 1u`, `!f()`, `(uint32_t)f()` of a void function,
     called directly or, now, through a pointer -- lowers digest-equal on both rails, and neither emit compiles;
     the oracle's verifier fails the unit and the twin's passes it; `if (f())` and `return f();` from a non-void
-    function lower on both;
+    function lower on both (closed by CF-VOIDVAL, below);
   - a struct or union as a controlling expression (`if (a)`, `while (a)`, `for (; a;)`, `a ? x : y`,
     `switch (a)`), as the operand of unary `+` (`struct s b = +a;`) or of `__real__` lowers on both rails, which
-    Clang rejects;
+    Clang rejects (closed by CF-STRUCTCOND and CF-UNARY, below);
   - an increment of a struct in memory (`(*p)++`, `p[0]++`, `p->in++`, `h.in++`, `g_a[1]++`) is refused on both
     rails with different reasons (the oracle: "inc/dec of this lvalue form is a follow-on"; the twin: a parse
-    error);
+    error) (closed by CF-STRUCTCOND, below);
   - a function pointer read from a member as a value (`op_t g = o.fn;`) is a `uint32_t` temp in the oracle's
     emit and a `uint64_t` in the twin's, neither of which compiles, and as an arm of `?:` it is compared on
     neither rail, so a member arm beside a function of another type is not refused (closed by CF-FPTAB, below);
@@ -2348,9 +2348,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a variadic function's designator as an arm of `?:` is still an integer select on both rails, and both
     refuse a variadic function-pointer declarator (`uint32_t (*g)(uint32_t, ...)`) (closed by CF-FPRET, below);
   - an array compared with the constant 0 (`garr == 0`, `arr != 0`) compares it with an `int` temp in both
-    emits;
+    emits (closed by CF-STRUCTCOND, below);
   - `void *vp = malloc(4u);` lowers to two claim graphs: the twin records an allocation extent for the
-    `void *` (two claims), the oracle does not.
+    `void *` (two claims), the oracle does not (closed by CF-STRUCTCOND, below).
 
   The final serialized gates, run once over the three change sets above together (2026-09-30), found two defects
   that no slice's own gates had reached. One is CF-RTWIDE.2 (above). The other: the Clang analyzer, over the
@@ -2546,7 +2546,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   Found, not fixed here (each a suggested follow-up):
   - arithmetic on a function pointer -- `fp++`, `fp + 1`, `fp += 1` -- lowers on both rails, digest-equal (C11 6.5.6p2
     requires a pointer to an object type; GNU's extension), and an increment of a table's element (`(*t)++`, `t[0]++`)
-    is refused on both rails for different reasons;
+    is refused on both rails for different reasons (the increment closed by CF-STRUCTCOND, below: one reason);
   - a static local table of function pointers (`static op_t t[2] = {f, g};`) is refused on both rails as no integer
     constant expression, where a function designator is an address constant (C11 6.6p9);
   - a call to a function returning a function pointer is still typed `uint32_t` on both rails (`uint32_t t =
@@ -2869,6 +2869,109 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     where C sizes it;
   - an assignment to an expression that is no lvalue -- `(a, b) = s`, `(s ? a : b) = 1u`, `(x + 1u) = s`, `(x++) = s`
     -- is refused on both rails for reasons of their own.
+
+  CF-VOIDVAL, CF-STRUCTCOND and CF-UNARY (2026-10-01) closed CF-CALLS's void value and struct items and CF-FPTAB's
+  step of a table's element -- the value of a void expression, a struct as a controlling expression or as the operand
+  of unary `+` or `__real__`, an increment of a struct in memory, an array compared with 0, `void *` of `malloc` --
+  and the defects found closing them, CF-GCOND among them. RED was measured on the parent (`601ca6f0`).
+  - The defects: the value of a void expression (C11 6.3.2.2) -- `uint32_t k = f();`, `f() + 1u`, `!f()`,
+    `(uint32_t)f()`, `if (f())`, `switch (f())`, `garr[f()]`, `s && f()`, `k = ({ f(); })`, `return f();` from a
+    function that returns a value, of a void function called directly, through a pointer or prototyped -- lowered on
+    both rails, digest-equal, and neither emit compiled. A struct or union as a controlling expression (`if (a)`,
+    `while (a)`, `for (; a;)`, `do ... while (a)`, `a ? x : y`, `switch (a)`; 6.8.4.1p1, 6.8.5p2, 6.5.15p2) or as the
+    operand of `+`, `__real__` or `__imag__` lowered on both rails, as did `+p`, `-p` and `~p` of a pointer, `-f` of a
+    function, `~d` of a real floating value and `__real__ p` (6.5.3.3p1), and `switch` of a pointer, a floating value,
+    an array or a function (6.8.4.2p1) -- emits Clang rejects; under `sizeof`, `typeof` and `_Generic` the oracle
+    refused some for reasons of its own (``sizeof of `-` applied to a struct``) and lowered the rest. An increment of a
+    struct in memory (`(*p)++`, `p[0]++`, `p->in++`, `++*p`, `g_a[1]++`) was refused for two different reasons (the
+    oracle's follow-on reason, the twin's parse error), as was a step of a table's function pointer (`(*t)++`).
+  - Found beside them, and closed -- silent miscompiles, digest-equal on both rails unless named: both parsers dropped a
+    unary `+`, which promotes its operand (6.5.3.3p2), so `sizeof(+c)` of a `char` was 1, `_Generic(+h, int: ...)` of a
+    `uint16_t` chose by `h`'s type and `__typeof__(+h) k = -1;` declared a `uint16_t` -- and the twin's byte-offset
+    reader skipped a unary `+` because the oracle's parser dropped it; `+x = 1u` lowered on the oracle as `x = 1u`. The
+    twin gave `-z` and `~z` of a complex a real temp, losing the imaginary part, promoted a `_BitInt` under `-` and `~`
+    (C23 6.3.1.1p2 promotes none) and typed `__real__ c` of an integer a `double`; the oracle typed `__real__ z` under
+    `sizeof` and `_Generic` as the complex itself, a bit-field operand by its declared type (`_Generic(x.a - 1, int: 1,
+    unsigned: 2)` of an `unsigned a : 3` chose 2, where its value is an `int`) and `&g` as `g` (`_Generic(&g, uint32_t
+    *: ...)` chose `default`, and `__typeof__(&g) p = &g;` made `*p` a dereference of a non-pointer). An array compared
+    with 0 (`garr == 0`, `arr != 0`, a VLA) compared with an `int` temp in both emits, which neither compiler takes;
+    `void *vp = malloc(4u);` lowered to two claim graphs (the twin bound a bounds extent to the `void *`, two claims
+    nothing read); `++(x)` and `++(a[1])` were parse errors on the twin.
+  - Found by running the emits against the original, and closed (CF-GCOND): the oracle spelled a file-scope object
+    that only a control node reads -- `if (g)`, `switch (g)`, `while (g)`, `for (; g;)`, `do ... while (g)`, an early
+    `return g;` -- as its raw rid temp (`if (t900000)`), which nothing declares: no claim touched it, so the function
+    neither took its resource nor named it, and the emit did not compile. The digest hashes claims, not names, so
+    parity never saw it; the twin names a global wherever it reads one.
+  - RED: on the parent the two new tests fail, as do the port-I/O red team's two `outb` tests this
+    changes and the two shared-corpus tests that hold the new fixture
+    (`test_python_c_parity_and_equivalence_across_fixtures_g0`,
+    `test_emitted_c_is_equivalent_under_both_gcc_and_clang_g0`). The twin refuses `runtime/c/cfront_unaryops.c`
+    (`++(x)`) and the oracle two of its functions (`sizeof(+x.a)`: `sizeof of a bit-field`; `__typeof__(&uo_g) p =
+    &uo_g;`: a dereference of a non-pointer); of the rest, each alone, both emits of `uo_plus` and `uo_parts` return
+    what the original does not (`uo_parts` on two claim graphs), neither emit of `uo_null` compiles and the oracle's
+    `uo_gconds` does not -- while `uo_conds` and `uo_voids`, which hold only forms C allows, run as the original there
+    too. Of the 72 forms `_CARD5_REFUSED` holds, the parent oracle gives 70 another verdict (it lowers 60) and the twin
+    72; of the 38 `_CARD5_LOWERED` and `_CARD5_BITINT` hold, each rail refuses 2, and of the ones both lower 21 fail:
+    6 lower to two claim graphs, in 7 an emit returns what the original does not, and in 8 an emit does not compile
+    (6 the oracle's, 2 the twin's).
+  - What landed: the value of a void expression is refused on both rails (`VOID_VALUE`, `CC_VOID_VALUE`): the oracle's
+    `_rvalue` refuses what `_rvalue_void` returns, read only where C discards the value -- an expression statement,
+    `(void)e`, the operands of `,`, an arm of `?:`, a `_Generic` association, a statement expression's last statement,
+    `return f();` in a void function; the twin, which parses and lowers in one pass, refuses a statement whose claims
+    read a void value at the statement's end (`void_read`, over the `n_void` void values the unit made) and `return
+    f();` from a function that returns a value where it is read. One predicate per rail answers whether an operand
+    takes a unary operator (`_unary_operand`, `unary_operand_ok`), read as each operator lowers and by `sizeof`,
+    `typeof` and `_Generic`: a struct or union for CF-STRUCTARITH's reason, and a pointer, a function, an array or `~`
+    of a real floating value as `invalid argument type to unary expression` (`UNARY_NOT`) -- the twin's pass over the
+    unit's final claims (`agg_unary_operands`), which never saw a speculative lowering's, is gone. One predicate per
+    rail for every controlling expression (`_condition`, `cond_value_ok`): a scalar, and for `switch` an integer
+    (`SWITCH_NOT`). An increment of a struct is refused for that reason on both (`_incdec_value`; the twin's
+    `incdec_rest`, the prefix or postfix step `incdec_value` did not take), a table's function pointer for the
+    follow-on reason on both. Both parsers keep `+`: its operand integer-promoted, by a `c.cast` to `int` where that
+    changes its type (the twin's `unary_plus`), its promoted type under `sizeof`, `typeof` and `_Generic`, a fence's
+    order under it its constant (`_fence_order_kind`, `fence_order_op`). `-z` and `~z` of a complex are complex
+    (`tempc`), `-b` and `~b` of a `_BitInt` keep its type (`tempbi`), `__real__` and `__imag__` take a complex's
+    element type and a real operand's own (`_part_type`, `part_temp`); a bit-field operand has its value's type
+    (`_operand_type`, over the `_bitfield_value_type` `sizeof` shares); `&x` is a pointer to x's type. An array
+    compared with 0 compares with a `void *` null pointer (the oracle's `==`/`!=`; `null_compared`); a `void *` takes
+    no bounds extent (`bind_extent`: R21 reads the lifetime events alone, which both rails record); the twin reads
+    `++(P)` as `(++P)` (`unparen_body`), the expression the oracle reads. The oracle takes and names every global a
+    control node reads (`_control_rids`: a condition, a `switch` discriminant, a computed `goto` target, a returned
+    value).
+  - One earlier test pinned what CF-VOIDVAL changes: the port-I/O red team's `unsigned y = outb(v, 0x60);` lowered,
+    failing verification, where C refuses the value of the void `outb`; it and `outb(v, 0x60) + 1` are refused now.
+  - Outcomes: `runtime/c/cfront_unaryops.c` (`+`, the parts, bit-field and `&x` operands, arrays compared with 0,
+    controlling expressions, a global only control nodes read, `++(x)`, void values where C reads none) lowers to one
+    claim graph on the four targets and both emits run as the original under Clang and GCC with the mixes
+    `_QUALS_WERROR` names made errors; the round trip excludes it (its emit names its file-scope objects, which the
+    standalone re-parse never declares), so the round trip's count stays 123. `_CARD5_REFUSED` (72) is refused on
+    both rails for the one reason each names, `_CARD5_LOWERED` (36) lowers alike, each emit the original, and
+    `_CARD5_BITINT` (2) the same under Clang, the one compiler here that builds a `_BitInt`. Beyond the tests, 62
+    probe forms lower or are refused alike on both rails; every other unit of the corpus (235) keeps the parent's
+    summary and digest on both rails, on the four targets. G10: the fixture compares only file-scope arrays with 0 --
+    a local array compared with one is an escape candidate the analysis does not prove (its first cut raised
+    `escape.unproved` to 1) -- and the local and VLA forms are `_CARD5_LOWERED`'s own units, so every row stays at
+    its bound.
+  - Faults: `tools/testing/faults/cfront-unary.json`, 62 -- 33 on the oracle, 29 on the twin -- each caught by its
+    own test. The first sweep caught 61: the oracle's `typeof` and `_Generic` typing of `!`, `__real__` and
+    `__imag__` checking no operand (UO31) reached no test, as `_CARD5_REFUSED` held those operators only under
+    `sizeof`; three such forms joined it, and the re-sweep caught UO31. Seven units joined `_CARD5_LOWERED` before the
+    sweep so that each of CF-GCOND's control reads, a fence's order under `+` and the byte-offset reader's `+` reach a
+    test of their own. Two older faults anchored in code this card replaced, which the quick tier's anchor test
+    caught: `cfront-calls.json` CL36 (the post-parse struct-operand walk, now `unary_operand_ok`) and
+    `cfront-operands.json` TV3 (the void `return`, now refusing a void value from a non-void function) were
+    re-anchored to the new code, and each re-swept caught by its own test.
+  Found, not fixed here (each a suggested follow-up):
+  - an assignment to, a step of or the address of an expression that is no lvalue -- `+x = 1u`, `(+x)++`, `&+x`,
+    `x++++`, `++x++`, `(s, x)++`, `((uint32_t)x)++` -- is refused on both rails for reasons of their own (the oracle:
+    `not an lvalue`; the twin: a parse error or the follow-on reason), with CF-RTFP's `(a, b) = s` family;
+  - a `_Generic` association naming a pointer to an array or to a function (`uint32_t (*)[2]: ...`,
+    `uint32_t (*)(uint32_t): ...`) is refused on both rails with parse errors of their own;
+  - on the Windows target, where `long double` has `double`'s representation, `_Generic(x, double: 1, long double:
+    2)` of a `long double` chooses 1 on both rails, digest-equal, where Clang chooses 2 (a silent miscompile; the two
+    are distinct types whatever their representation, 6.2.5p14);
+  - `_Generic` of a 40-bit bit-field declared `uint64_t` is typed differently by GCC and Clang, so neither rail can be
+    held to one compiler there.
 
 ---
 

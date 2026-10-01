@@ -294,6 +294,8 @@ _PTRVALUE = [
     #   `&arr[i]`, a file-scope array of pointers decayed (CF-IDXARROW)
     "cfront_rtfp.c",  # casts to function-pointer and `_Atomic` types and the emit's stores of them at a byte offset; a
     #   typedef'd table of function pointers, a compound literal of one, `sizeof` of one, `( E ) = v;` (CF-RTFP)
+    "cfront_unaryops.c",  # `+a` promoted, `-z` of a complex, `__real__` a part, bit-field and `&x` operand types, an
+    #   array compared with 0, `void *` of malloc, `++(x)`, void values where C reads none (CF-UNARY, CF-STRUCTCOND)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -13413,3 +13415,344 @@ def test_function_pointer_types_refused_and_lowered_alike_on_both_rails():
             _rtfp_run_unit(f"l{n}", _RTFP_HEAD + body + "\n", exe, d)
         for n, unit in enumerate(_RTFP_UNITS):
             _rtfp_run_unit(f"u{n}", unit, exe, d)
+
+
+# CF-VOIDVAL, CF-STRUCTCOND, CF-UNARY (card 5): a void expression's value used, a struct or union where C requires a
+# scalar -- a controlling expression, the operand of `+`, `__real__`, `++` -- and the operands C gives each unary
+# operator. Both rails had lowered each refused form below to one claim graph and an emit no compiler takes, or refused
+# it for reasons of their own; the lowered forms had split the rails, or lowered alike to an emit that ran wrong.
+_VOID_VALUE = "the value of a void expression is used"
+_UNARY_NOT = "invalid argument type to unary expression"
+_SWITCH_NOT = "statement requires expression of integer type"
+_INCDEC_FOLLOW = "inc/dec of this lvalue form is a follow-on"
+_CARD5_HEAD = """#include <stdint.h>
+#include <stdlib.h>
+#include <complex.h>
+struct s { uint32_t in; uint32_t o; };
+struct h { struct s in; uint32_t k; };
+union u { uint32_t w; float f; };
+struct bf { unsigned a : 3; signed b : 4; };
+typedef void (*vcb_t)(uint32_t);
+typedef uint32_t (*op_t)(uint32_t);
+static uint32_t g_n;
+static uint32_t gv = 5u;
+static void vd(uint32_t x) { g_n += x; }
+static uint32_t inc(uint32_t v) { return v + 1u; }
+void vext(uint32_t x);
+static struct s g_a[2];
+static uint32_t garr[4];
+"""
+_UNARYOPS_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(uo_plus, s); SAME(uo_parts, s); SAME(uo_bitfields, s); SAME(uo_addr, s); SAME(uo_null, s);
+    SAME(uo_conds, s); SAME(uo_gconds, s); SAME(uo_steps, s); SAME(uo_voids, s); SAME(uo_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# Refused on both rails for the reason each names (the unit, the reason)
+_CARD5_REFUSED = (
+    # a void expression's value used (C11 6.3.2.2): an initializer, an assignment, an operand, a cast, a condition, an
+    # argument, an index, the value of `,`, of `?:` and of a statement expression, a `return` from a function that
+    # returns one -- of a void function called directly, through a pointer or prototyped
+    ("uint32_t f(uint32_t s) { uint32_t k = vd(s); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { uint32_t k = 1u; k = vd(s); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return vd(s) + 1u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return !vd(s); }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return -vd(s); }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return (uint32_t)vd(s); }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { vcb_t p = vd; uint32_t k = p(s); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { vcb_t p = vd; return (*p)(s) + 1u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return vext(s) * 2u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { if (vd(s)) return 1u; return 0u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { while (vd(s)) return 1u; return 0u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { for (; vd(s);) return 1u; return 0u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { do { s++; } while (vd(s)); return s; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { switch (vd(s)) { default: return 1u; } }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return vd(s) ? 1u : 2u; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { uint32_t k = s ? vd(s) : vd(1u); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return s && vd(s); }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return vd(s) || s; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return vd(s); }", _VOID_VALUE),
+    (
+        "static uint32_t id(uint32_t v) { return v; }\nuint32_t f(uint32_t s) { return id(vd(s)); }",
+        _VOID_VALUE,
+    ),
+    ("uint32_t f(uint32_t s) { return garr[vd(s)]; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { uint32_t k = (s++, vd(s)); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return vd(s) == 0; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { uint32_t k = 1u; k += vd(s); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { uint32_t k = ({ vd(s); }); return k; }", _VOID_VALUE),
+    ("uint32_t f(uint32_t s) { return (uint32_t)(void)s; }", _VOID_VALUE),
+    # a struct or union as a controlling expression (6.8.4.1p1, 6.8.5p2, 6.5.15p2) or the operand of `+`, `__real__`,
+    # `__imag__`, `++` and `--` (6.5.3.3p1, 6.5.2.4p1) -- in memory too, and under `sizeof`, `typeof` and `_Generic`
+    ("uint32_t f(struct s a) { if (a) return 1u; return 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { while (a) return 1u; return 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { for (; a;) return 1u; return 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { do { a.in++; } while (a); return a.in; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { return a ? 1u : 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { switch (a) { default: return 1u; } }", _STRUCT_OPERAND),
+    ("uint32_t f(union u a) { if (a) return 1u; return 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct h a) { if (a.in) return 1u; return 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s *p) { if (*p) return 1u; return 0u; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { struct s b = +a; return b.in; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { return (uint32_t)__real__ a; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s a) { return (uint32_t)__imag__ a; }", _STRUCT_OPERAND),
+    ("void f(struct s *p) { (*p)++; }", _STRUCT_OPERAND),
+    ("void f(struct s *p) { p[0]++; }", _STRUCT_OPERAND),
+    ("void f(struct h *p) { p->in++; }", _STRUCT_OPERAND),
+    ("void f(struct h *q) { struct h h = *q; h.in++; *q = h; }", _STRUCT_OPERAND),
+    ("void f(void) { g_a[1]++; }", _STRUCT_OPERAND),
+    ("void f(struct s *p) { ++*p; }", _STRUCT_OPERAND),
+    ("void f(struct s *p) { p[1]--; }", _STRUCT_OPERAND),
+    ("uint32_t f(struct s *p) { return (uint32_t)sizeof((*p)++); }", _STRUCT_OPERAND),
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; return (uint32_t)sizeof(-a); }",
+        _STRUCT_OPERAND,
+    ),
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; return (uint32_t)sizeof(!a); }",
+        _STRUCT_OPERAND,
+    ),
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; return _Generic(+a, int: 1u, default: 2u); }",
+        _STRUCT_OPERAND,
+    ),
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; __typeof__(-a) k = 0; return (uint32_t)k; }",
+        _STRUCT_OPERAND,
+    ),
+    # ... and `!`, `__real__` and `__imag__`, whose `typeof` and `_Generic` typing asks the same predicate
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; return _Generic(!a, int: 1u, default: 2u); }",
+        _STRUCT_OPERAND,
+    ),
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; return _Generic(__imag__ a, int: 1u, default: 2u); }",
+        _STRUCT_OPERAND,
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &gv; __typeof__(__real__ p) k = 0; return (uint32_t)k + s; }",
+        _UNARY_NOT,
+    ),
+    (
+        "uint32_t f(uint32_t s) { struct s a = {s, 1u}; return (uint32_t)sizeof(__real__ a); }",
+        _STRUCT_OPERAND,
+    ),
+    # a pointer, a function or an array as the operand of `+`, `-`, `~`, `__real__`; a real floating value under `~`
+    # (6.5.3.3p1) -- under `sizeof`, `typeof` and `_Generic` too
+    ("uint32_t f(uint32_t s) { uint32_t *p = &gv; uint32_t *q = +p; return *q + s; }", _UNARY_NOT),
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &gv; return (uint32_t)(uintptr_t)-p + s; }",
+        _UNARY_NOT,
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &gv; return (uint32_t)(uintptr_t)~p + s; }",
+        _UNARY_NOT,
+    ),
+    ("uint32_t f(uint32_t s) { return (uint32_t)(uintptr_t)+inc + s; }", _UNARY_NOT),
+    ("uint32_t f(uint32_t s) { return (uint32_t)(uintptr_t)-inc + s; }", _UNARY_NOT),
+    ("uint32_t f(uint32_t s) { return (uint32_t)(uintptr_t)-garr + s; }", _UNARY_NOT),
+    ("uint32_t f(uint32_t s) { double d = s; return (uint32_t)~d; }", _UNARY_NOT),
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &gv; double r = __real__ p; return (uint32_t)r + s; }",
+        _UNARY_NOT,
+    ),
+    ("uint32_t f(uint32_t s) { uint32_t *p = &gv; return (uint32_t)sizeof(-p) + s; }", _UNARY_NOT),
+    ("uint32_t f(uint32_t s) { double d = s; return (uint32_t)sizeof(~d) + s; }", _UNARY_NOT),
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &gv; return _Generic(+p, int: 1u, default: 2u) + s; }",
+        _UNARY_NOT,
+    ),
+    (
+        "uint32_t f(uint32_t s) { double d = s; __typeof__(~d) k = 0; return (uint32_t)k + s; }",
+        _UNARY_NOT,
+    ),
+    # a `switch` of no integer: a pointer, a floating value, an array, a function (6.8.4.2p1)
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &gv; switch (p) { default: return s; } }",
+        _SWITCH_NOT,
+    ),
+    (
+        "uint32_t f(uint32_t s) { double d = s; switch (d) { case 1: return 2u; default: return 1u; } }",
+        _SWITCH_NOT,
+    ),
+    ("uint32_t f(uint32_t s) { switch (garr) { default: return s; } }", _SWITCH_NOT),
+    ("uint32_t f(uint32_t s) { switch (inc) { default: return s; } }", _SWITCH_NOT),
+    # a step of an element of a table of function pointers (6.5.6p2), which the rails had refused for reasons of their
+    # own (CF-FPTAB): the twin, as the oracle, refuses a step it does not take
+    ("uint32_t f(uint32_t s) { op_t t[2] = {inc, inc}; (*t)++; return t[0](s); }", _INCDEC_FOLLOW),
+    ("uint32_t f(uint32_t s) { op_t t[2] = {inc, inc}; t[0]++; return t[0](s); }", _INCDEC_FOLLOW),
+)
+# Lowered alike on the four targets, each emit the original
+_CARD5_LOWERED = (
+    # a void expression where C reads no value: a statement, `(void)e`, the left of `,`, the arms of a statement
+    # `?:`, a `for`'s initializer and step, a statement expression's last statement, `return f();` of a void function,
+    # a call through a pointer
+    "uint32_t f(uint32_t s) { g_n = 0u; vd(s); (void)vd(1u); uint32_t k = (vd(2u), s + 1u); return k + g_n; }",
+    "uint32_t f(uint32_t s) { g_n = 0u; s ? vd(s) : vd(1u); s ? vd(3u) : (void)0; return g_n; }",
+    "uint32_t f(uint32_t s) { uint32_t i = 0u; g_n = 0u; for (vd(s); i < 2u; i++) { vd(i); } return g_n; }",
+    "uint32_t f(uint32_t s) { uint32_t i; g_n = 0u; for (i = s & 1u; i < 3u; vd(i)) { i++; } return g_n + i; }",
+    "static void w(uint32_t s) { return vd(s); }\n"
+    "uint32_t f(uint32_t s) { g_n = 0u; w(s); ({ vd(1u); }); return g_n; }",
+    "uint32_t f(uint32_t s) { vcb_t p = vd; g_n = 0u; p(s); (*p)(s); return g_n; }",
+    # `+a`: the promoted operand, which `sizeof`, `_Generic` and `typeof` read
+    "uint32_t f(uint32_t s) { uint8_t c = (uint8_t)s; return (uint32_t)sizeof(+c) + (uint32_t)(+c << 24 >> 24); }",
+    "uint32_t f(uint32_t s) { _Bool b = s & 1u; return (uint32_t)sizeof(+b) * 7u + (uint32_t)+b; }",
+    "uint32_t f(uint32_t s) { uint16_t h = (uint16_t)s; return _Generic(+h, int: 1u, unsigned: 2u, default: 3u); }",
+    "uint32_t f(uint32_t s) { uint16_t h = (uint16_t)s; __typeof__(+h) k = -1; return (uint32_t)(k < 0) + s; }",
+    "uint32_t f(uint32_t s) {\n"
+    "  char c = (char)s; return (uint32_t)sizeof(+c) + (uint32_t)(+c) + (uint32_t)sizeof(+ +c);\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  uint64_t v = s; double d = s; float x = (float)s;\n"
+    "  return (uint32_t)(+v >> 1) + (uint32_t)(+d * 2.5) + (uint32_t)sizeof(+x);\n}",
+    "uint32_t f(uint32_t s) { __atomic_thread_fence(+(__ATOMIC_ACQUIRE)); return +5u + s; }",
+    # `-z` and `~z` of a complex are complex; `__real__` and `__imag__` are a part
+    "uint32_t f(uint32_t s) { double _Complex z = s + (2.0 * s) * I; z = -z; return (uint32_t)(__imag__ z + 1000.0); }",
+    "uint32_t f(uint32_t s) {\n"
+    "  float _Complex z = s + (3.0f * s) * I; z = ~z;\n"
+    "  return (uint32_t)(__imag__ z + 1000.0f) + (uint32_t)sizeof(-z);\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  double _Complex z = s; float _Complex fz = s;\n"
+    "  return (uint32_t)sizeof(__real__ z) * 3u + (uint32_t)sizeof(__imag__ fz) + s;\n}",
+    "uint32_t f(uint32_t s) { double _Complex z = s; return _Generic(__real__ z, double: 1u, default: 2u) + s; }",
+    "uint32_t f(uint32_t s) {\n"
+    "  uint8_t c = (uint8_t)s;\n"
+    "  return (uint32_t)sizeof(__real__ c) + (uint32_t)(__real__ c) + (uint32_t)(__imag__ c)\n"
+    "         + _Generic(__real__ c, int: 1u, uint8_t: 2u, default: 3u);\n}",
+    # a bit-field operand has the type of its value
+    "uint32_t f(uint32_t s) {\n"
+    "  struct bf x = {5u, -3}; x.a = s;\n"
+    "  return _Generic(x.a - 1, int: 1u, unsigned: 2u, default: 3u) + _Generic(-x.a, int: 4u, unsigned: 8u, default: 16u);\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  struct bf x = {5u, -3}; x.a = s;\n"
+    "  return _Generic(x.a << 1, int: 1u, unsigned: 2u, default: 3u) + (uint32_t)sizeof(+x.a) + (uint32_t)(+x.b);\n}",
+    # `&x` is a pointer to x
+    "uint32_t f(uint32_t s) {\n"
+    "  struct s a = {s, 1u};\n"
+    "  return _Generic(&gv, uint32_t *: 1u, default: 2u) + _Generic(&a, struct s *: 4u, default: 8u)\n"
+    "         + _Generic(&a.o, uint32_t *: 16u, default: 32u) + _Generic(&garr[1], uint32_t *: 64u, default: 128u);\n}",
+    "uint32_t f(uint32_t s) { __typeof__(&gv) p = &gv; struct s a = {s, 2u}; __typeof__(&a) q = &a; return *p + q->o; }",
+    # scalar controlling expressions; a `switch` of `_Bool` and of `char`
+    "uint32_t f(uint32_t s) {\n"
+    "  uint32_t *p = &gv; double d = s; uint32_t r = 0u;\n"
+    "  if (p) r += 1u; if (d) r += 2u; if (garr) r += 8u; return r + (d ? 16u : 32u);\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  _Bool b = s & 1u; char c = (char)(s & 7u); uint32_t r = 0u;\n"
+    "  switch (b) { case 1: r += 1u; break; default: r += 2u; }\n"
+    "  switch (c) { case 3: return r + 4u; default: return r; }\n}",
+    # `++(x)`: a parenthesized lvalue steps as itself
+    "uint32_t f(uint32_t s) {\n"
+    "  uint32_t x = s; struct s a = {s, 2u};\n"
+    "  ++(x); --(a.o); ++((x)); uint32_t y = ++(x) * 2u; return x + y + a.o;\n}",
+    "uint32_t f(uint32_t s) { uint32_t a[2] = {1u, s}; uint32_t *p = &gv; ++(a[1]); ++(p[0]); --(*p); return a[1] + *p; }",
+    # an array compared with 0; `malloc` into a `void *`
+    "uint32_t f(uint32_t s) {\n"
+    "  uint32_t arr[2] = {1u, 2u}; uint32_t m[2][2] = {{1u}, {2u}};\n"
+    "  return (garr == 0) + (garr != 0) * 2u + (arr != 0) * 4u + (0 == arr) * 8u + (m != 0) * 16u + s;\n}",
+    "uint32_t f(uint32_t s) { uint32_t v[(s & 3u) + 1u]; v[0] = s; return (v != 0) + v[0]; }",
+    "uint32_t f(uint32_t s) { void *vp = malloc(4u); uint32_t r = vp != 0; free(vp); return r + s; }",
+    # a file-scope object read only by a control node -- an early `return`, a `switch`, a `while`, a `do`, a `for` --
+    # touched by no claim, named in the emit all the same (CF-GCOND); a void `_Generic` association as a statement
+    "uint32_t f(uint32_t s) { if (s & 1u) return gv; return 0u; }",
+    "uint32_t f(uint32_t s) { switch (gv) { case 5: return s; default: return 0u; } }",
+    "uint32_t f(uint32_t s) { uint32_t r = s; while (gv) { r++; break; } return r; }",
+    "uint32_t f(uint32_t s) { uint32_t r = 0u; do { r++; if (r > 2u) break; } while (gv); return r + s; }",
+    "uint32_t f(uint32_t s) { uint32_t r = 0u; for (; gv;) { r += s; break; } return r; }",
+    "uint32_t f(uint32_t s) { g_n = 0u; _Generic(s, uint32_t: vd(s), default: vd(1u)); return g_n; }",
+    # `+4` is no literal byte offset: the access is no member access at 4, on either rail (the twin's reader had
+    # skipped the `+` the oracle's parser dropped)
+    "struct ua { uint32_t k; _Atomic uint32_t v; };\n"
+    "static struct ua g_ua = {1u, 2u};\n"
+    "uint32_t f(uint32_t s) { struct ua *a = &g_ua; *(_Atomic uint32_t *)((char *)a + +4) = s; return a->v; }",
+)
+# ... and a `_BitInt` keeps its type under `+`, `-` and `~` (C23 6.3.1.1p2), the original built by Clang alone
+_CARD5_BITINT = (
+    "uint32_t f(uint32_t s) {\n"
+    "  _BitInt(7) b = (_BitInt(7))(s & 31u);\n"
+    "  return (uint32_t)(-b < 0) + (uint32_t)sizeof(-b) * 3u + (uint32_t)sizeof(+b) * 5u;\n}",
+    "uint32_t f(uint32_t s) { unsigned _BitInt(12) b = (unsigned _BitInt(12))s; return (uint32_t)(~b) + (uint32_t)sizeof(~b); }",
+)
+
+
+def test_unary_operators_controlling_expressions_and_void_values_run_as_the_original():
+    """CF-UNARY, CF-STRUCTCOND, CF-VOIDVAL: `cfront_unaryops.c` -- `+a` promotes its operand under `sizeof`, `_Generic`
+    and `typeof`; `-z` and `~z` of a complex are complex, `__real__` and `__imag__` a part, of a complex its element
+    type and of an integer the integer; a bit-field operand has the type of its value; `&x` is a pointer to x; an array
+    compared with 0 is the pointer it decays to; `void *vp = malloc(4u)`; scalar controlling expressions and a
+    `switch` of `_Bool` and `char`; `++(x)`; a void expression where C reads no value. Both parsers had dropped the `+`
+    and each rail mistyped some of the rest -- silent miscompiles, digest-equal where both rails agreed. Both lower the
+    unit to one claim graph on the four targets and each emit, with the mixes `_QUALS_WERROR` names made errors,
+    returns what the original does under Clang and GCC, function by function."""
+    if not _CC:
+        return
+    fx = "cfront_unaryops.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _UNARYOPS_DRIVER, _QUALS_WERROR
+    )
+
+
+def test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike():
+    """CF-VOIDVAL, CF-STRUCTCOND, CF-UNARY: every unit of `_CARD5_REFUSED` is refused on both rails for the reason it
+    names -- a void expression's value used (C11 6.3.2.2), a struct or union as a controlling expression or as the
+    operand of `+`, `__real__`, `__imag__`, `++` or `--` (in memory too), a pointer, a function or an array as the
+    operand of a unary arithmetic operator and a real floating value under `~` (6.5.3.3p1), under `sizeof`, `typeof`
+    and `_Generic` as well, a `switch` of no integer (6.8.4.2p1), a step of a table's function pointer. Both rails
+    had lowered most of them to an emit no compiler takes, or refused them for reasons of their own. Every unit of
+    `_CARD5_LOWERED` lowers to one claim graph on the four targets, each emit the original under Clang and GCC; those
+    of `_CARD5_BITINT` under Clang, which alone builds a `_BitInt` here."""
+    for body, why in _CARD5_REFUSED:
+        got = _fptab_refusal(_CARD5_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _CARD5_LOWERED + _CARD5_BITINT:
+        got = _fptab_refusal(_CARD5_HEAD + body + "\n")
+        assert got == "", (body, got)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_CARD5_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_CARD5_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_CARD5_LOWERED):
+            _rtfp_run_unit(f"l{n}", _CARD5_HEAD + body + "\n", exe, d)
+        clang = {"clang": _QUALS_WERROR["clang"]} if shutil.which("clang") else {}
+        for n, body in enumerate(_CARD5_BITINT):
+            unit = _CARD5_HEAD + body + "\n"
+            path = os.path.join(d, f"b{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            _parity_on_targets(path, unit)
+            if not clang:
+                continue
+            oracle_summary, r, _entry = _oracle(unit)
+            c_summary, c_emit = _c_run(exe, path)
+            assert c_summary == oracle_summary and "ok=1" in c_summary, (
+                body,
+                c_summary,
+                oracle_summary,
+            )
+            oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+            driver = (
+                _GAPS_SAME
+                + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(f, gaps_in[n]);\n"
+                + '  puts("MATCH");\n  return 0;\n}\n'
+            )
+            _run_against_original_werror(
+                f"b{n}", unit, (("twin", c_emit), ("oracle", oracle_emit)), driver, clang
+            )

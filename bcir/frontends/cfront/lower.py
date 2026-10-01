@@ -878,6 +878,17 @@ ATOMIC_LITERAL = "a compound literal of `_Atomic` type is not supported"
 # again or added to another -- so its emit could not be held to the original. Both rails refuse it, as CF-CALIGN did
 # (CF-RTFP; the twin's `CC_CAST_ATOMIC`). A cast to a pointer to an `_Atomic` object, `(_Atomic T *)p`, lowers.
 CAST_ATOMIC = "a cast to an `_Atomic` type is not supported"
+# `+p`, `-p`, `~p` of a pointer, `-f` of a function, `~d` of a real floating value, `__real__ p` (C11 6.5.3.3p1: the
+# operand of unary `+` and `-` has arithmetic type, of `~` integer type, of `!` scalar type; GNU `__real__` and
+# `__imag__` take an arithmetic one): Clang rejects each ("invalid argument type ... to unary expression"), and both
+# rails had lowered them -- under `sizeof`, `typeof` and `_Generic` a struct too, which every operator refuses for
+# CF-STRUCTARITH's reason (CF-UNARY; the twin's `CC_UNARY_NOT`).
+UNARY_NOT = "invalid argument type to unary expression"
+# `switch (p)` of a pointer, `switch (d)` of a double, of an array or a function: the controlling expression of a
+# `switch` has an integer type (C11 6.8.4.2p1), and Clang rejects any other; both rails had lowered them. A struct or
+# union there, as in every controlling expression, is refused as an operator's operand is (`_STRUCT_OPERAND`)
+# (CF-STRUCTCOND; the twin's `CC_SWITCH_NOT`).
+SWITCH_NOT = "statement requires expression of integer type"
 
 
 def fold_constant(node, abi, live: bool = True) -> _KVal:
@@ -1108,6 +1119,30 @@ def _flatten_block(block: list) -> list:
     return out
 
 
+def _control_rids(block: list) -> set:
+    """The rids a body tree's control nodes read outside any claim: a condition, a `switch` discriminant, a
+    computed `goto` target, a returned value. A file-scope object read only there -- `if (g)`, `switch (g)`, an
+    early `return g;` -- is touched by no claim, yet the function must still pull its resource in and name it,
+    or the emit spells it as its raw rid temp, which nothing declares (CF-GCOND)."""
+    out: set = set()
+    for node in block:
+        if isinstance(node, IfNode):
+            out.add(node.cond)
+            out |= _control_rids(node.then) | _control_rids(node.els)
+        elif isinstance(node, WhileNode):
+            out.add(node.cond)
+            for part in (node.cond_block, node.body, node.step):
+                out |= _control_rids(part)
+        elif isinstance(node, SwitchNode):
+            out.add(node.disc)
+            out |= _control_rids(node.body)
+        elif isinstance(node, ComputedGotoNode):
+            out.add(node.target)
+        elif isinstance(node, ReturnNode) and node.rid is not None:
+            out.add(node.rid)
+    return out
+
+
 # --- the operands C may leave unevaluated (CF-TERNARY) ---
 # C evaluates exactly one arm of `c ? a : b` (C11 6.5.15p4) and the right operand of `&&` / `||` only when
 # the left one does not decide the result (6.5.13p4, 6.5.14p4). An operand may still be computed eagerly --
@@ -1263,6 +1298,12 @@ class LoweredUnit:
 # the rid `_call` returns for a void callee -- never read as a value (a void call is a statement); the
 # Return lowering maps it back to a bare `return;`.
 _VOID_RID = -1
+# The (nonexistent) value of a void expression used as a value (C11 6.3.2.2) -- an initializer, an operand, a
+# condition, an argument, a `return` from a non-void function: `_rvalue` refuses it. Only the contexts that discard
+# a value read one, through `_rvalue_void`: an expression statement, `(void)e`, a comma's operands, a `?:` arm, a
+# `_Generic` association, a statement expression's last statement and `return f();` in a void function
+# (CF-VOIDVAL; the twin's `CC_VOID_VALUE`). Both rails had lowered it, and neither emit compiled.
+VOID_VALUE = "the value of a void expression is used"
 
 # ASM2 -- the RESERVED rid of the I/O-port "address space" resource (`__ioport`), the single MMIO-domain
 # resource ALL port accesses share so they alias each other (ordered) but never normal memory (isolation
@@ -1598,13 +1639,14 @@ class _FuncLowerer:
         rids.update(rid for rid, _ct in self.genv.values())
         return rids
 
-    def _lower_apart(self, expr) -> tuple:
+    def _lower_apart(self, expr, void_ok: bool = False) -> tuple:
         """An operand C may leave unevaluated, lowered into a block of its own -- (the block, its value) --
-        so the caller can compute it eagerly (splice the block in place) or under a branch (CF-TERNARY)."""
+        so the caller can compute it eagerly (splice the block in place) or under a branch (CF-TERNARY). A
+        `?:` arm may be void (`void_ok`); an operand of `&&` or `||` may not (`VOID_VALUE`)."""
         block: list = []
         self.block_stack.append(block)
         try:
-            v = self._rvalue(expr)
+            v = self._rvalue_void(expr) if void_ok else self._rvalue(expr)
         finally:
             self.block_stack.pop()
         return block, v
@@ -2393,6 +2435,18 @@ class _FuncLowerer:
         # the element's qualifiers ride on the pointee (`t.of`), as a pointer to volatile storage's do
         return pointer(t.of, self.abi) if t.of is not None else t
 
+    def _operand_type(self, node) -> CType:
+        """`node`'s type as an operand of an arithmetic operator, before the operator's own conversions: its
+        `_type_of`, but a bit-field takes the type its value has (`_bitfield_value_type`) -- `_Generic(s.u - 1, int:
+        1, unsigned: 2)` of an `unsigned u : 3` is 1, as `_read` computes it (CF-UNARY: the declared `unsigned`)."""
+        if isinstance(node, cast.Member):
+            ft, _off, _bit, width = self._field(
+                self._member_agg(self._type_of(node.base), node.arrow), node.field
+            )
+            if width:
+                return self._bitfield_value_type(ft, width)
+        return self._type_of(node)
+
     def _type_of(self, node) -> CType:
         """The static C type of an expression, computed WITHOUT evaluating or emitting it -- the operand
         of `typeof` is unevaluated (like `sizeof`). Mirrors the result types `_rvalue` assigns its temps,
@@ -2414,7 +2468,7 @@ class _FuncLowerer:
             return array(scalar("char" if elem == 1 else f"uint{elem * 8}_t"), n)
         if isinstance(node, cast.Binary):
             return self._bin_result_type_ct(
-                node.op, self._type_of(node.lhs), self._type_of(node.rhs)
+                node.op, self._operand_type(node.lhs), self._operand_type(node.rhs)
             )
         if isinstance(node, cast.Unary):
             if node.op == "*":  # deref -> the pointee / element type
@@ -2424,14 +2478,25 @@ class _FuncLowerer:
                 if not self._indexable(t):  # (CF-FPTAB: typed `uint32_t`, so `struct S t = *s;` was
                     raise CLowerError(DEREF_NOT)  # refused as a wrongly typed initializer instead)
                 return t.of if t.of is not None else scalar("uint32_t")
-            if node.op == "!":  # logical not -> int (0/1)
-                return scalar("int", self.abi)
-            t = self._type_of(node.operand)  # `-` / `~`: the integer-promoted operand
+            if node.op == "&":
+                # `&x`: a pointer to x (CF-UNARY: typed as x, so `_Generic(&g, uint32_t *: 1, default: 2)` chose 2);
+                # `&f`, as `typeof(f)`: a function's parameters are not typed here (a follow-on)
+                o = node.operand
+                if self._designator(o) is not None:
+                    raise CLowerError(
+                        f"typeof of this expression form ({type(node).__name__}) is not yet supported"
+                    )
+                return pointer(self._type_of(o), self.abi)
+            if node.op in ("!", "__real__", "__imag__"):
+                t = self._type_of(node.operand)
+                self._unary_operand(node.op, t)
+                # `!a` is an int (0/1); `__real__` / `__imag__` a part (CF-UNARY: the complex itself)
+                return scalar("int", self.abi) if node.op == "!" else self._part_type(t)
+            t = self._operand_type(node.operand)  # `-` / `~` / `+`: the integer-promoted operand
+            self._unary_operand(node.op, t)
             if t.is_float:  # (a float stays float -- floats don't promote)
                 return t
-            if t.is_integer:
-                return promote_int(t, self.abi)
-            return scalar("uint32_t")
+            return promote_int(t, self.abi)
         if isinstance(node, (cast.Cast, cast.CompoundLiteral)):
             ct = self._resolve_type(node.type)
             # a cast to an `_Atomic` type, under `sizeof` and `typeof` too (`CAST_ATOMIC`)
@@ -2510,13 +2575,19 @@ class _FuncLowerer:
             ft, width = self._sizeof_member(node)
             if not width:
                 return self._sizeof_decay(ft)
-            int_bits = scalar("int", self.abi).size * 8
-            if width < int_bits:
-                return scalar("int", self.abi)
-            if width == int_bits:
-                return scalar("int" if ft.signed else "unsigned int", self.abi)
-            return unqualified(ft)
+            return self._bitfield_value_type(ft, width)
         return self._sizeof_decay(self._sizeof_type(node))
+
+    def _bitfield_value_type(self, ft: CType, width: int) -> CType:
+        """The type of a bit-field's value, as Clang gives it (C11 6.3.1.1p2): `int` when narrower than `int`, at
+        `int`'s width `int` or `unsigned int` by its signedness, and wider its declared type, to which no promotion
+        applies. `sizeof` and `typeof` read it (`_sizeof_operand`, `_operand_type`)."""
+        int_bits = scalar("int", self.abi).size * 8
+        if width < int_bits:
+            return scalar("int", self.abi)
+        if width == int_bits:
+            return scalar("int" if ft.signed else "unsigned int", self.abi)
+        return unqualified(ft)
 
     def _sizeof_type(self, node) -> CType:
         """The type `sizeof` measures (CF-SIZEOF): the operand's own type, with neither the lvalue
@@ -2564,14 +2635,16 @@ class _FuncLowerer:
                     self._require_declared(o.ident, "use of undeclared identifier", o.pos)
                     return funcptr(o.ident, self.func_rets.get(o.ident), (), self.abi)
                 return pointer(self._sizeof_type(o), self.abi)
+            t = self._sizeof_operand(node.operand)
+            # refused of a struct, a pointer, a function, `~` of a float (CF-UNARY)
+            self._unary_operand(node.op, t)
             if node.op == "!":
                 return scalar("int", self.abi)
-            t = self._sizeof_operand(node.operand)
+            if node.op in ("__real__", "__imag__"):
+                return self._part_type(t)  # a complex's element, a real operand itself (CF-UNARY)
             if t.is_float:  # `-` / `~` / `+`: the promoted operand (a float does not promote)
                 return t
-            if t.is_integer:
-                return promote_int(t, self.abi)
-            raise CLowerError(f"sizeof of `{node.op}` applied to a {t.kind}")
+            return promote_int(t, self.abi)
         if isinstance(node, cast.Binary):
             if node.op == ",":
                 # the comma operator yields its right operand's value, unpromoted (C11 6.5.17p2)
@@ -2590,7 +2663,9 @@ class _FuncLowerer:
             # an assignment has its left operand's type (C11 6.5.16p3)
             return unqualified(self._sizeof_object(node.target))
         if isinstance(node, cast.IncDec):
-            return unqualified(self._sizeof_object(node.operand))
+            t = unqualified(self._sizeof_object(node.operand))
+            self._scalar_operands(t)  # `sizeof((*p)++)` of a struct (CF-STRUCTCOND)
+            return t
         if isinstance(node, cast.CallExpr):
             if node.callee not in self.env and (
                 node.callee in self.func_rets or node.callee in self.protos
@@ -2664,6 +2739,14 @@ class _FuncLowerer:
         return ct
 
     def _rvalue(self, node) -> int:
+        """The value of `node`, which has one: a void expression's is refused (`VOID_VALUE`)."""
+        v = self._rvalue_void(node)
+        if v == _VOID_RID:
+            raise CLowerError(VOID_VALUE)
+        return v
+
+    def _rvalue_void(self, node) -> int:
+        """The value of `node`, or `_VOID_RID` for a void expression -- read only where C discards the value."""
         if isinstance(node, cast.IntLit):
             ct = self._lit_type(node)
             t = self._temp(ct, f"k{node.value}")
@@ -2708,8 +2791,8 @@ class _FuncLowerer:
         if isinstance(node, cast.StringLit):  # a string value -> the global pointer
             return self._string_ptr(node.value)
         if isinstance(node, cast.Binary) and node.op == ",":
-            self._rvalue(node.lhs)  # the comma operator: evaluate the left operand for
-            return self._rvalue(node.rhs)  # its side effects, discard it, yield the right value
+            self._rvalue_void(node.lhs)  # the comma operator: evaluate the left operand for
+            return self._rvalue_void(node.rhs)  # its side effects, discard it, yield the right one
         if isinstance(node, cast.IncDec):
             return self._incdec_value(node)
         if isinstance(node, cast.LabelAddr):  # `&&L` -- a label's address as a `void *` value (GNU)
@@ -2764,6 +2847,13 @@ class _FuncLowerer:
                     ta = self._fn_type(a) or ta
                 if b in self.func_globals:
                     tb = self._fn_type(b) or tb
+                # an array compared with 0 is the pointer it decays to, so the 0 is a null pointer too: typed `void
+                # *`, which any object pointer compares with (6.5.9p2) whatever the array's rank -- an `int` temp was
+                # an emit neither compiler takes (CF-STRUCTCOND; the twin's `null_compared`)
+                ta, tb = (
+                    pointer(scalar("void"), self.abi) if t is not None and t.kind == "array" else t
+                    for t in (ta, tb)
+                )
                 if ta is not None:
                     self._null_pointer(b, ta)
                 if tb is not None:
@@ -2778,14 +2868,9 @@ class _FuncLowerer:
             if node.op in ("__real__", "__imag__"):  # GNU complex part -> the real element float
                 v = self._rvalue(node.operand)
                 vt = self.rtypes.get(v)
-                if vt is not None and vt.is_complex:
-                    rt = scalar(
-                        {4: "float", 8: "double", 16: "long double"}.get(vt.size // 2, "double")
-                    )
-                elif vt is not None and vt.is_float:  # __real__ of a real float is the value itself
-                    rt = vt
-                else:
-                    rt = scalar("double")
+                self._unary_operand(node.op, vt)  # of a struct, a pointer (CF-UNARY)
+                # a complex's element type; a real operand's own type -- an integer was typed `double` (CF-UNARY)
+                rt = self._part_type(vt) if vt is not None else scalar("double")
                 suf = "creal" if node.op == "__real__" else "cimag"
                 t = self._temp(rt, f"u_{suf}")  # emitted `__real__ x` -- not integer-computed
                 return self._emit(f"c.un.{suf}", Opcode.GEM_DISPATCH, (v,), (t,))
@@ -2843,13 +2928,18 @@ class _FuncLowerer:
                     "c.addrof", Opcode.ADD, (lv.rid,), (t,), imm=(lv.byte_off,)
                 )  # &base.member
             v = self._rvalue(node.operand)
-            # `-a`, `~a`, `!a` of a struct (CF-STRUCTARITH)
-            self._scalar_operands(self.rtypes.get(v))
+            vt = self.rtypes.get(v)
+            # `-a`, `~a`, `!a`, `+a` of a struct (CF-STRUCTARITH); of a pointer or a function, `~` of a float (CF-UNARY)
+            self._unary_operand(node.op, vt)
+            if node.op == "+":
+                # `+a`: a's value, integer-promoted (C11 6.5.3.3p2) -- converted when the promotion changes its
+                # type, as `(int)a` is (the twin's `unary_plus`); else a's value itself, no claim
+                pt = promote_int(vt, self.abi) if vt is not None else None
+                return v if pt is None or pt is vt else self._cast_value(v, pt)
             opcode, suf = _UN[node.op]
             if node.op == "!":  # logical not -> int (0/1)
                 rt = scalar("int", self.abi)
-            else:  # `-` / `~`: the promoted operand type, so
-                vt = self.rtypes.get(v)  # negating a `long` stays 64-bit, and `-x` on
+            else:  # `-` / `~`: the promoted operand type, so negating a `long` stays 64-bit, and `-x` on
                 if vt is not None and vt.is_float:  # a float stays float (floats don't promote --
                     rt = vt  # was forced to uint32, truncating -2.5 -> 4.29e9)
                 elif vt is not None and vt.is_integer:  # integer promotion: a sub-int operand (e.g.
@@ -2861,12 +2951,13 @@ class _FuncLowerer:
             t = self._temp(rt, f"u_{suf}")
             return self._emit(f"c.un.{suf}", opcode, (v,), (t,))
         if isinstance(node, cast.Cast):
-            v = self._rvalue(node.operand)
-            ct = self._resolve_type(node.type)
+            ct = self._resolve_type(node.type)  # the type name first, as the twin reads it
             if ct.atomic:  # `(_Atomic T)v`, which Clang does not convert (`CAST_ATOMIC`)
                 raise CLowerError(CAST_ATOMIC)
             if ct.kind == "scalar" and ct.name == "void":  # `(void)e`: e for its effects, no value
-                return _VOID_RID  # (C11 6.3.2.2) -- a cast of it to uint32 did not compile
+                self._rvalue_void(node.operand)  # (C11 6.3.2.2) -- a void `e` included
+                return _VOID_RID
+            v = self._rvalue(node.operand)
             self._scalar_value(ct, v)  # `(uint32_t)a` of a struct (C11 6.5.4p2, CF-STRUCTARITH)
             # `(T *)0`, `(op_t)0`: a null pointer constant converts to the pointer (C11 6.3.2.3p3), so its temp is
             # typed as one -- an `int` temp cast to a pointer of another width is a cast GCC rejects (CF-RTFP)
@@ -2888,9 +2979,8 @@ class _FuncLowerer:
             t = self._temp(vt, "vaarg")
             return self._emit("c.call.vaarg", Opcode.GEM_DISPATCH, (ap,), (t,))
         if isinstance(node, cast.Generic):  # _Generic(ctrl, T: e, ..., default: e) -- select on
-            return self._rvalue(
-                self._generic_select(node)
-            )  # ctrl's static type; only the chosen e is lowered
+            # ctrl's static type; only the chosen e is lowered, its value -- or none -- the selection's
+            return self._rvalue_void(self._generic_select(node))
         if isinstance(node, cast.StmtExpr):  # `({ s1; ...; e; })` -> lower the prefix stmts inline
             if not node.stmts:  # (its own scope), then yield the last expr's value
                 raise CLowerError("empty statement expression")
@@ -2907,7 +2997,7 @@ class _FuncLowerer:
                 if isinstance(last.expr, cast.Member):
                     val = self._read(self._lvalue(last.expr), declared_bitfield_type=True)
                 else:
-                    val = self._rvalue(last.expr)
+                    val = self._rvalue_void(last.expr)
             else:  # a non-expression last stmt -> void (rarely used)
                 self._stmt(last)
                 val = _VOID_RID
@@ -2954,9 +3044,9 @@ class _FuncLowerer:
             # change state are computed eagerly and chosen by a select -- the emitter renders the real C
             # `(cond ? a : b)`; any other pair lowers as a branch that evaluates only the arm C evaluates
             # (CF-TERNARY: `d ? n / d : 0` divided by zero and `p ? *p : s` read through NULL eagerly).
-            c = self._rvalue(node.cond)
-            blk_a, a = self._lower_apart(node.then)
-            blk_b, b = self._lower_apart(node.els)
+            c = self._condition(node.cond)
+            blk_a, a = self._lower_apart(node.then, void_ok=True)
+            blk_b, b = self._lower_apart(node.els, void_ok=True)
             if a == _VOID_RID or b == _VOID_RID:
                 # a void conditional (C11 6.5.15p3: both arms void -- `c ? f() : g();`, an `assert`'s
                 # `c ? (void)0 : fail()`) runs the arm C evaluates for its effects alone: no local, no value
@@ -3386,6 +3476,47 @@ class _FuncLowerer:
         `agg_operand`)."""
         if any(t is not None and t.is_aggregate for t in types):
             raise CLowerError(_STRUCT_OPERAND)
+
+    def _unary_operand(self, op: str, t: "CType | None") -> None:
+        """Refuse an operand of the unary operator `op` that C does not give it (C11 6.5.3.3p1): `+` and `-` take an
+        arithmetic operand, `~` an integer one -- or a complex, whose conjugate GCC and Clang take it for -- `!` a
+        scalar, GNU `__real__` and `__imag__` an arithmetic one. A struct or union is refused as every operator's
+        operand (`_scalar_operands`), anything else as Clang refuses it (`UNARY_NOT`). One predicate for the value,
+        `sizeof`, `typeof` and `_Generic` (CF-UNARY; the twin's `unary_operand_ok`)."""
+        if t is None:
+            return
+        self._scalar_operands(t)
+        if op == "!":
+            return
+        # a scalar of a value type: no pointer, function, array or void
+        arith = t.is_integer or t.is_float
+        if not arith or (op == "~" and t.is_float and not t.is_complex):
+            raise CLowerError(UNARY_NOT)
+
+    def _condition(self, node) -> int:
+        """The value of a controlling expression -- of `if`, `while`, `for`, `do` and `?:`, which C requires to be a
+        scalar (C11 6.8.4.1p1, 6.8.5p2, 6.5.15p2): a struct or union is refused as an operator's operand is
+        (`_STRUCT_OPERAND`), a void value as every use of one (`_rvalue`). Both rails had lowered `if (a)` of a
+        struct, an emit no compiler takes (CF-STRUCTCOND; the twin's `cond_value_ok`)."""
+        v = self._rvalue(node)
+        self._scalar_operands(self.rtypes.get(v))
+        return v
+
+    def _switch_value(self, node) -> int:
+        """`switch`'s controlling expression, of an integer type (C11 6.8.4.2p1): beyond `_condition`'s refusals, a
+        pointer, a floating value, an array or a function as Clang refuses it (`SWITCH_NOT`, CF-STRUCTCOND)."""
+        v = self._condition(node)
+        t = self.rtypes.get(v)
+        if t is not None and not t.is_integer:
+            raise CLowerError(SWITCH_NOT)
+        return v
+
+    def _part_type(self, t: CType) -> CType:
+        """The type of GNU `__real__ x` / `__imag__ x`: a complex operand's element type; a real operand's own,
+        unqualified and not promoted -- `sizeof(__real__ c)` of a `uint8_t c` is 1 under Clang (CF-UNARY)."""
+        if t.is_complex:
+            return scalar(t.name.replace(" _Complex", ""), self.abi)
+        return unqualified(t)
 
     def _write(self, lv: "_LV", v: int) -> int:
         """Store `v` through `lv`; returns the value stored -- after C's conversion, before a
@@ -4047,6 +4178,10 @@ class _FuncLowerer:
         the store would then clobber. A volatile/MMIO target (an extra access) and a non-scalar memory lvalue
         stay a both-rails fallback."""
         lv = self._lvalue(node.operand)
+        # `(*p)++`, `p->in++`, `g_a[1]++` of a struct: the operand of `++` and `--` is a real or a pointer (C11
+        # 6.5.2.4p1, 6.5.3.1p1), refused as an operator's operand is (CF-STRUCTCOND; was the follow-on below, and
+        # a parse error on the twin)
+        self._scalar_operands(lv.ct)
         if lv.bit_width and lv.kind == "mem" and self._mmio(lv.rid):
             raise CLowerError("inc/dec of a volatile/MMIO bitfield is a follow-on")
         if lv.kind != "var" and not (
@@ -4354,7 +4489,10 @@ class _FuncLowerer:
         """Resolve a `memory_order` ARGUMENT AST node to a fence-kind op string (SEG6.1). An integer literal
         uses its value; a named `memory_order_*` / `__ATOMIC_*` constant uses its mapped value; anything else
         (a runtime variable, an unrecognized name, a non-constant expression) folds conservatively to the
-        FULL fence (`c.fence`) -- sound (a stronger fence never under-synchronizes) and never crashes."""
+        FULL fence (`c.fence`) -- sound (a stronger fence never under-synchronizes) and never crashes. A unary `+`
+        keeps the constant's value (`+(memory_order_acquire)`), as the twin's `fence_order_op` reads it."""
+        while isinstance(arg_node, cast.Unary) and arg_node.op == "+":
+            arg_node = arg_node.operand
         if isinstance(arg_node, cast.IntLit):
             order = arg_node.value
         elif (
@@ -4904,9 +5042,14 @@ class _FuncLowerer:
                     st.expr, stmt=True
                 )  # (the value is unused -- no named-local restriction)
             else:
-                self._rvalue(st.expr)
+                self._rvalue_void(st.expr)  # its value, if any, is discarded
         elif isinstance(st, cast.Return):
-            rid = None if st.value is None else self._rvalue(st.value)
+            # `return f();` of a void `f` returns nothing from a void function; from any other it uses the value
+            # it has none of (`VOID_VALUE`)
+            ret = self._resolve_type(self.func.ret)
+            void_fn = ret.kind == "scalar" and ret.name == "void"
+            value = self._rvalue_void if void_fn else self._rvalue
+            rid = None if st.value is None else value(st.value)
             if rid == _VOID_RID:  # `return void_call();` -> the call stmt is
                 rid = None  # already emitted; a void function `return;`s
             elif rid is not None:  # `return 0;` from a function returning a pointer
@@ -4917,19 +5060,19 @@ class _FuncLowerer:
             if rid is not None:
                 self.last_return = rid
         elif isinstance(st, cast.If):
-            cond = self._rvalue(st.cond)  # condition claims -> current block
+            cond = self._condition(st.cond)  # condition claims -> current block
             node = IfNode(cond, self._block(st.then), self._block(st.els))
             self.block_stack[-1].append(node)
         elif isinstance(st, cast.While):
             cond_block: list = []
             self.block_stack.append(cond_block)
-            cond = self._rvalue(st.cond)
+            cond = self._condition(st.cond)
             self.block_stack.pop()
             self.block_stack[-1].append(
                 WhileNode(cond_block, cond, self._block(st.body), loop_id=self._next_loop_id())
             )
         elif isinstance(st, cast.Switch):
-            disc = self._rvalue(st.disc)  # the discriminant, lowered once
+            disc = self._switch_value(st.disc)  # the discriminant, lowered once
             block: list = []
             self.block_stack.append(block)
             for item in st.body:
@@ -4947,7 +5090,7 @@ class _FuncLowerer:
                 self._stmt(st.init)  # must not leak `i` past the loop (where it
             cond_block2: list = []  # would shadow a same-named param / outer)
             self.block_stack.append(cond_block2)
-            cond = self._rvalue(st.cond)
+            cond = self._condition(st.cond)
             self.block_stack.pop()
             body = self._block(st.body)
             step: list = []
@@ -4963,7 +5106,7 @@ class _FuncLowerer:
             body = self._block(st.body)
             cond_block3: list = []
             self.block_stack.append(cond_block3)
-            cond = self._rvalue(st.cond)
+            cond = self._condition(st.cond)
             self.block_stack.pop()
             self.block_stack[-1].append(
                 WhileNode(cond_block3, cond, body, test_at_end=True, loop_id=self._next_loop_id())
@@ -5039,6 +5182,7 @@ class _FuncLowerer:
         body = self.block_stack[0]
         claims = _flatten_block(body)
         touched = {r for c in claims for r in (tuple(c.rd) + tuple(c.wr))}
+        touched |= _control_rids(body)  # a global read only by a condition or a return (CF-GCOND)
         if self.last_return is not None:
             touched.add(self.last_return)  # a BARE `return g;` reaches a global
             # with ZERO claims -- it must still be

@@ -161,8 +161,8 @@
     {
       "expects": "test_a_void_function_returns_a_void_expression_alike_on_both_rails",
       "label": "TV3 the twin returns a void call's placeholder from a void function",
-      "new": "      if(0) marker(c,\"c.return\",0,0);",
-      "old": "      if(void_value(c,rv)) marker(c,\"c.return\",0,0);",
+      "new": "      if(0){",
+      "old": "      if(void_value(c,rv)){",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

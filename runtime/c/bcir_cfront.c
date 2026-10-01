@@ -280,6 +280,8 @@ typedef struct {
                                              * about, and whether the unit defines it (zeroed per compile) */
   fsig *sigs; int nsig, cap_sig;            /* the function types function pointers point at, in the scratch arena
                                              * (a reset of the context drops them with it) */
+  unsigned n_void;                          /* void values made in the unit -- a statement reading one is refused
+                                             * (`void_read`; none made, none read) */
   char err[256]; int failed;
 } CC;
 /* The recursion-depth cap for the recursive-descent parser. Comfortably below the real native-stack
@@ -795,6 +797,19 @@ static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the con
  * as an operand, so the emit could not be held to the original -- refused, as CF-CALIGN refused it (CF-RTFP; the
  * oracle's `CAST_ATOMIC`). A cast to a pointer to an `_Atomic` object lowers. */
 #define CC_CAST_ATOMIC "a cast to an `_Atomic` type is not supported"
+/* `+p`, `-p`, `~p` of a pointer, `-f` of a function, `~d` of a real floating value, `__real__ p`: an operand C does not
+ * give the unary operator (C11 6.5.3.3p1), which Clang rejects; both rails had lowered them (CF-UNARY; the oracle's
+ * `UNARY_NOT`, `unary_operand_ok`). */
+#define CC_UNARY_NOT "invalid argument type to unary expression"
+/* `switch (p)` of a pointer, a floating value, an array or a function: `switch` takes an integer (C11 6.8.4.2p1), and
+ * Clang rejects any other; both rails had lowered them (CF-STRUCTCOND; the oracle's `SWITCH_NOT`, `cond_value_ok`). */
+#define CC_SWITCH_NOT "statement requires expression of integer type"
+/* The (nonexistent) value of a void expression used as a value (C11 6.3.2.2) -- an initializer, an operand, a
+ * condition, an argument, a `return` from a non-void function. The twin parses and lowers in one pass, so a void
+ * value is a placeholder no claim writes, and a claim of a statement that reads one is the use: refused at the
+ * statement's end (`void_read`), and `return f();` from a function returning a value where it is read (CF-VOIDVAL;
+ * the oracle's `VOID_VALUE`, which `_rvalue` raises). */
+#define CC_VOID_VALUE "the value of a void expression is used"
 /* The qualifiers after a `*` (C11 6.7.6.1p1), consumed: `const` and `restrict` into `*cst` / `*rst`, which a function
  * type spells and compares (CF-QUALS). A `volatile` one is refused (`CC_VOLATILE_PTR`), as the oracle's `_star_quals`
  * refuses it. 1 after a failure. */
@@ -1690,7 +1705,7 @@ static uint32_t temp(CC *c,int size){return add_res(c,BCIR_DOM_RAM,size?size:4,1
  * value (the oracle's `_VOID_RID`). */
 static uint32_t void_temp(CC *c){
   uint32_t t=temp(c,4);
-  if(c->fn->n_res && c->fn->res[c->fn->n_res-1].rid==t) c->fn->res[c->fn->n_res-1].is_void=1;
+  if(c->fn->n_res && c->fn->res[c->fn->n_res-1].rid==t){ c->fn->res[c->fn->n_res-1].is_void=1; c->n_void++; }
   return t;
 }
 /* An integer temporary of a given (width, signedness) -- the emit renders the true fixed-width type
@@ -2138,18 +2153,6 @@ static void null_pointer_args(CC *c, bcir_unit *u){
   }
   c->fn=cur;
 }
-/* A struct or union operand of `-`, `~` or `!` (C11 6.5.3.3p1), refused once the unit is parsed, with the reason
- * `agg_operand` gives any other operator (the oracle's `_scalar_operands`, CF-STRUCTARITH). The check is not made in
- * p_unary_inner: that frame recurs at every level of a nested expression, and the deep-nesting fixture holds the
- * recursion to its native stack only while the frame stays as it is (tools/c/sanitize_cfront.sh, GCC ASan). */
-static void agg_unary_operands(CC *c, bcir_unit *u){
-  bcir_func *cur=c->fn;
-  for(int i=0;i<u->n_funcs && !c->failed;i++){ c->fn=&u->funcs[i];
-    for(size_t k=0;k<c->fn->n_claims && !c->failed;k++){ const bcir_claim *cl=&c->fn->claims[k];
-      if(cl->n_rd==1 && (!strcmp(cl->op,"c.un.neg") || !strcmp(cl->op,"c.un.bnot") || !strcmp(cl->op,"c.un.lnot")))
-        agg_operand(c,cl->rd[0]); } }
-  c->fn=cur;
-}
 /* The actuals of a call through a function pointer whose function type is `sig` (1 + its index in `sigs`; 0: none
  * captured): an argument converts to its parameter's type as if by assignment (C11 6.5.2.2p7), through a pointer as
  * in a direct call, so a null pointer constant passed to a pointer parameter is that parameter's pointer (the
@@ -2183,6 +2186,11 @@ static void null_as(CC *c, const bcir_resource *res, uint32_t v){
  * temp's C type moves (the oracle's `_null_pointer` over both operands, CF-NULLCALL). */
 static int designator_sig(CC *c, const char *name);   /* fwd: a designator's function type (CF-FNSEL) */
 static void null_compared(CC *c, uint32_t v, uint32_t p){
+  { const bcir_resource *pa=res_of(c->fn,p);   /* an array is the pointer it decays to: the 0 a `void *`, which any
+                                                  * object pointer compares with (6.5.9p2), whatever the array's rank --
+                                                  * an `int` temp was an emit no compiler took (CF-STRUCTCOND) */
+    if(pa && (pa->is_array || pa->is_vla)){ bcir_ctype t; memset(&t,0,sizeof t); t.kind=2; t.ptr_depth=1;
+      null_pointer(c,v,&t); return; } }
   for(int i=c->nenv;i-- > 0;) if(c->env[i].rid==p){
     const bcir_resource *pr=res_of(c->fn,p); bcir_ctype t=c->env[i].type;
     if((t.kind==2 || t.kind==3) && !(pr && (pr->is_array || pr->is_vla))) null_pointer(c,v,&t);
@@ -2544,6 +2552,67 @@ static int res_arith_class(const bcir_resource *r){
   if(!r || r->kind!=BCIR_RK_SCALAR || r->is_funcptr || r->is_pointer || r->count>1 || r->is_array || r->is_vla)
     return -1;
   return r->is_complex?2:r->is_float?1:0;
+}
+/* Whether `a` is an operand C gives the unary operator whose claim suffix is `suf` (C11 6.5.3.3p1; the oracle's
+ * `_unary_operand`): `+` ("plus") and `-` take an arithmetic operand, `~` an integer one -- or a complex, whose conjugate
+ * GCC and Clang take it for -- `!` a scalar, GNU `__real__` / `__imag__` an arithmetic one. A struct or union is refused
+ * as every operator's operand (`agg_operand`), anything else as Clang refuses it (`CC_UNARY_NOT`). Checked as each
+ * operator lowers, so a speculative lowering -- `sizeof`, `typeof`, `_Generic` -- refuses it too, where a check over the
+ * unit's claims once it was parsed never saw them (CF-UNARY). NOINLINE: it stays out of p_unary_inner's frame, which
+ * recurs at every level of a nested expression (CF-SPLIT2.1). */
+static BCIR_NOINLINE int unary_operand_ok(CC *c, uint32_t a, const char *suf){
+  if(c->failed || agg_operand(c,a)) return 0;
+  const bcir_resource *r=res_of(c->fn,a);
+  if(!r || !strcmp(suf,"lnot")) return 1;
+  int k=res_arith_class(r);                         /* -1: a pointer, a function, an array */
+  if(k<0 || (k==1 && !strcmp(suf,"bnot"))){ fail(c,CC_UNARY_NOT); return 0; }
+  return 1;
+}
+/* Whether `v` may control `if`, `while`, `for`, `do` or `?:`, which C requires to be a scalar (C11 6.8.4.1p1, 6.8.5p2,
+ * 6.5.15p2), or with `sw` a `switch`, an integer (6.8.4.2p1): a struct or union is refused as an operator's operand is
+ * (`agg_operand`), a `switch` of a pointer, a floating value, an array or a function as Clang refuses it
+ * (`CC_SWITCH_NOT`); a void value at the statement's end, as every use of one (`void_read`). Both rails had lowered `if
+ * (a)` of a struct, an emit no compiler takes (the oracle's `_condition` and `_switch_value`, CF-STRUCTCOND). */
+static BCIR_NOINLINE int cond_value_ok(CC *c, uint32_t v, int sw){
+  if(c->failed || agg_operand(c,v)) return 0;
+  const bcir_resource *r=res_of(c->fn,v);
+  if(sw && r && !r->is_void && res_arith_class(r)!=0){ fail(c,CC_SWITCH_NOT); return 0; }
+  return 1;
+}
+/* A `++` or `--` the increment's own reading (`incdec_value`) did not take -- after its operand, `rest` the operand's
+ * value, or before it (`rest` 0, the cursor on the operator): a struct or union, `(*p)++`, `p->in++`, `g_a[1]++`, `++*p`
+ * of a struct (C11 6.5.2.4p1, 6.5.3.1p1), is refused as an operator's operand is (`agg_operand`), any other lvalue form
+ * as the oracle's `_incdec_value` refuses those it does not step. Each had been a parse error for want of a `;` or of
+ * an expression (CF-STRUCTCOND). NOINLINE beside p_unary_inner, whose frame recurs at every level. */
+static uint32_t p_unary(CC *c);   /* fwd: the operand of a prefix step */
+static BCIR_NOINLINE uint32_t incdec_rest(CC *c, int prefix, uint32_t rest){
+  if(c->failed) return 0;
+  if(prefix){ c->i++; rest=p_unary(c); if(c->failed) return 0; }
+  else if(!is(c,"++") && !is(c,"--")) return rest;
+  if(!agg_operand(c,rest)) fail(c,"inc/dec of this lvalue form is a follow-on");
+  return 0;
+}
+/* `+a` (C11 6.5.3.3p2): a's value, integer-promoted -- a `c.cast` to `int` when the promotion changes its type, as
+ * `(int)a` lowers, else `a` itself with no claim (the oracle's `+`). The parser had dropped the `+`, so `sizeof(+c)`,
+ * `_Generic(+c, ...)` and `typeof(+c)` read `c`'s own type on both rails (CF-UNARY). */
+static BCIR_NOINLINE uint32_t unary_plus(CC *c, uint32_t a){
+  if(!unary_operand_ok(c,a,"plus")) return 0;
+  const bcir_resource *r=res_of(c->fn,a);
+  if(!r || r->is_float || r->bit_width>0 || r->elem_bytes>=4) return a;   /* a float, a `_BitInt`, an `int` or wider */
+  bcir_ctype t; memset(&t,0,sizeof t); t.size=4; t.signd=1;
+  return emit_cast(c,a,&t,-1);
+}
+/* The temp of GNU `__real__ a` / `__imag__ a` (the oracle's `_part_type`): a complex's element float; a real operand's
+ * own type, not promoted -- an integer one was a `double`, so `sizeof(__real__ c)` of a `uint8_t c` was 8 where Clang
+ * gives 1 (CF-UNARY). */
+static BCIR_NOINLINE uint32_t part_temp(CC *c, uint32_t a){
+  bcir_resource ar;
+  if(!res_copy(c,a,&ar)) return tempf(c,8);
+  if(ar.is_complex) return tempf(c,(int)ar.elem_bytes/2);
+  if(ar.is_float) return tempf(c,(int)ar.elem_bytes);
+  uint32_t r = ar.bit_width>0 ? tempbi(c,ar.bit_width,ar.is_signed) : tempi(c,(int)ar.elem_bytes,ar.is_signed);
+  if(c->fn->n_res){ bcir_resource *t=&c->fn->res[c->fn->n_res-1]; t->is_bool=ar.is_bool; t->is_plain_char=ar.is_plain_char; }
+  return r;
 }
 /* C's assignment conversion (C23 6.5.17.2) at a store the emit spells as a byte copy -- a member, a
  * member-array element, a field of an array of structs, a bitfield, a store through a pointer, an
@@ -2934,6 +3003,13 @@ static int unparen_body(CC *c, int start){
         pend[np].pos=pe; pend[np].n=n; pend[np].zero=z; np++; r+=n+1; changed=1; continue; }
       if(!star && is_name && (tok_is(op,"++")||tok_is(op,"--"))){   /* (^n P )^n ++  ->  (^n P ++ )^n */
         tok s=c->t[pe+n]; memmove(&c->t[pe+1],&c->t[pe],(size_t)n*sizeof(tok)); c->t[pe]=s; changed=1; }
+      else if(!star && is_name && w>start && (tok_is(&c->t[w-1],"++")||tok_is(&c->t[w-1],"--"))
+              && !tok_is(op,"(")){                         /* ++ (^n P )^n  ->  (^n ++ P )^n : a prefix step of a
+        * parenthesized lvalue, `++(x)`, the expression the oracle reads (CF-STRUCTCOND): the step written at w-1
+        * becomes the first `(`, and moves past the others to just before P, which the loop then reads */
+        tok pp=c->t[w-1]; c->t[w-1]=c->t[r];
+        memmove(&c->t[r],&c->t[r+1],(size_t)(n-1)*sizeof(tok)); c->t[r+n-1]=pp;
+        up_track(c,fr,&nf,&deep,w-1); cand=-1; changed=1; continue; }
     }
     c->t[w++]=t; r++;
     up_track(c,fr,&nf,&deep,w-1);
@@ -3105,10 +3181,13 @@ static uint32_t snapshot_extent(CC *c, int cstart, int cend) {
  * the resource `pr`, name `p_name`), so its `p[i]` accesses promote to `masked`. Only when p is a POINTER
  * and STABLE -- assigned exactly once (this binding) and never address-taken -- so it still points at that
  * allocation at every access (a `p = realloc(...)` reassigns it, count 2, left unmanaged). The init call
- * is the token range [init_start, init_end). */
+ * is the token range [init_start, init_end). A `void *` takes none: no access through it is subscripted or
+ * dereferenced (C11 6.5.2.1p1, 6.5.3.2p4), so there is nothing to bound, and the oracle reads `void` as size 0
+ * (`_alloc_count_node`) -- the twin had snapshotted `malloc(4u)`'s 4 as a byte count, two claims nothing read, while
+ * R21 reads the allocation's lifetime events alone, which both rails record (CF-STRUCTCOND). */
 static void bind_extent(CC *c, uint32_t p_rid, const bcir_resource *pr, const tok *p_name,
                         int init_start, int init_end) {
-  if (!pr || pr->kind != BCIR_RK_POINTER) return;
+  if (!pr || pr->kind != BCIR_RK_POINTER || pr->is_voidptr) return;
   if (mut_assigned(c, p_name) != 1 || mut_addr(c, p_name)) return;
   int pointee = (int)pr->elem_bytes;                        /* the pointee element size (`p_ct.of.size`) */
   int cstart, cend;
@@ -4313,9 +4392,9 @@ static int atomic_kind(const tok *t,const char **op,bcir_opcode *oc,int *kind){
  * identical to the rvalue widening, so the kind rail never disagrees with the value rail. Side-effect-free:
  * it only PEEKS (no claim, no cursor move). */
 static const char *fence_order_op(CC *c){
-  /* strip the oracle parser's TRANSPARENT prefixes: balanced redundant parens AND a leading unary `+` (the
-   * parser drops `+x` to `x`, but keeps `-`/`~`/`!`/a cast as a node -> those fold to the full fence). Only
-   * a `(` needs a matching `)`; a `+` is closer-less. */
+  /* strip the TRANSPARENT prefixes: balanced redundant parens, which the oracle's parser drops, AND a leading unary
+   * `+`, which keeps the constant's value and which the oracle's `_fence_order_kind` peels (`-`/`~`/`!`/a cast fold
+   * to the full fence). Only a `(` needs a matching `)`; a `+` is closer-less. */
   int p=0, i=c->i;
   while(tok_is(tat(c,i),"(") || tok_is(tat(c,i),"+")){ if(tok_is(tat(c,i),"(")) p++; i++; }
   const tok *core=tat(c,i);
@@ -5036,11 +5115,10 @@ static int postfix_follows(CC *c, int k){
  * volatile, non-`_Atomic` integer or floating `T`, the byte pointer's a pointer to plain `char`, whatever its
  * qualifiers; `K` an integer literal or an enumerator, no wider than an `int`; `p` a declared pointer or array,
  * or `&s` of a struct or union, whose region holds volatile storage. The oracle matches its AST, so this match
- * skips what the oracle's parser drops: a redundant parenthesis anywhere, a unary `+`. */
-static int bo_open(CC *c){                          /* unary `+`s and `(`s opening no type-name: the count of `(` */
+ * skips what the oracle's parser drops: a redundant parenthesis anywhere (a unary `+` it keeps, CF-UNARY). */
+static int bo_open(CC *c){                          /* `(`s opening no type-name: the count of `(` */
   int n=0;
   for(;;){
-    if(is(c,"+")){ c->i++; continue; }
     if(!is(c,"(") || tok_is(tat(c,c->i+1),"{")) return n;   /* `({ ... })` is a statement expression */
     c->i++;
     if(starts_type_name(c)){ c->i--; return n; }    /* a cast's own `(` */
@@ -5172,12 +5250,11 @@ static BCIR_NOINLINE int member_array_first_load(CC *c, uint32_t *out){
 }
 static uint32_t p_unary_inner(CC *c) {
   { uint32_t v; if(incdec_value(c,&v)) return v; }   /* PREFIX ++a / POSTFIX a++ (member/array/pointer/scalar) */
-  if(is(c,"+")){ c->i++; return p_unary(c); }    /* unary plus is a no-op */
+  if(is(c,"+")){ c->i++; return unary_plus(c,p_unary(c)); }   /* `+a`: a, promoted (CF-UNARY) */
   if(is(c,"__real__")||is(c,"__imag__")){        /* GNU complex part -> the real element float */
     const char *suf=is(c,"__real__")?"creal":"cimag"; c->i++;
-    uint32_t a=p_unary(c); const bcir_resource *ar=res_of(c->fn,a);
-    int es = (ar&&ar->is_complex)?(int)ar->elem_bytes/2 : (ar&&ar->is_float)?(int)ar->elem_bytes : 8;
-    uint32_t r=tempf(c,es);                       /* not integer-computed; emitted `__real__ x` */
+    uint32_t a=p_unary(c); if(!unary_operand_ok(c,a,suf)) return 0;   /* of a struct, a pointer (CF-UNARY) */
+    uint32_t r=part_temp(c,a);                    /* not integer-computed; emitted `__real__ x` */
     char op[BCIR_CIR_OP];fits(c,op,sizeof op,"c.un.%s",suf);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);if(cl){cl->n_rd=1;cl->rd[0]=a;cl->n_wr=1;cl->wr[0]=r;}
     return r; }
@@ -5340,7 +5417,8 @@ static uint32_t p_unary_inner(CC *c) {
   if(is(c,"-")||is(c,"~")||is(c,"!")){
     const char *suf=is(c,"-")?"neg":is(c,"~")?"bnot":"lnot"; int is_lnot=is(c,"!");
     bcir_opcode oc=(is(c,"-")||is(c,"!"))?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;   /* the oracle's `_UN`: `-` and `!` SUB, `~` ADD */
-    uint32_t a=p_unary(c);                        /* a struct operand is refused once the unit is parsed */
+    uint32_t a=p_unary(c);
+    if(!unary_operand_ok(c,a,suf)) return 0;      /* of a struct (CF-STRUCTARITH), a pointer, `~` of a float (CF-UNARY) */
     /* `-`/`~` take the promoted operand type (so negating a `long` stays 64-bit, not a truncated
      * uint32 that widens back to a positive long); `-x` on a float stays float (floats don't promote,
      * and a uint32 temp would truncate -2.5 to a huge integer); a sub-int integer operand promotes to
@@ -5348,7 +5426,11 @@ static uint32_t p_unary_inner(CC *c) {
     uint32_t r;
     if(is_lnot) r=tempi(c,4,1);
     else { const bcir_resource *ar=res_of(c->fn,a);
-           if(ar&&ar->is_float) r=tempf(c,(int)ar->elem_bytes);          /* `-x` on a float is float */
+           if(ar&&ar->is_complex) r=tempc(c,(int)ar->elem_bytes);        /* `-z`, `~z` of a complex is complex (CF-UNARY:
+                                                                         * a real float temp kept only its real part) */
+           else if(ar&&ar->is_float) r=tempf(c,(int)ar->elem_bytes);     /* `-x` on a float is float */
+           else if(ar&&ar->bit_width>0) r=tempbi(c,ar->bit_width,ar->is_signed);   /* a `_BitInt` does not promote
+                                                                         * (C23 6.3.1.1p2; CF-UNARY: it was an `int`) */
            else { int sz=ar?(int)ar->elem_bytes:4, sg=ar?ar->is_signed:1;
                   promote_i(&sz,&sg);                                    /* sub-int -> signed int */
                   r=tempi(c,sz,sg); } }
@@ -5425,7 +5507,8 @@ static uint32_t p_unary_inner(CC *c) {
     }
     c->i=save;                                     /* not a cast -> a parenthesized expression */
   }
-  return p_primary(c);
+  if(is(c,"++")||is(c,"--")) return incdec_rest(c,1,0);   /* a prefix step `incdec_value` did not take */
+  return incdec_rest(c,0,p_primary(c));            /* ... or a postfix one (CF-STRUCTCOND) */
 }
 static int bin_op(CC *c,char *suf,bcir_opcode *oc) {
   struct {const char *t,*s;bcir_opcode o;} B[]={{"*","mul",BCIR_OP_MUL},{"/","div",BCIR_OP_MUL},
@@ -5777,6 +5860,7 @@ static uint32_t p_cond(CC *c){
   uint32_t cond=p_binexpr(c);
   if(!is(c,"?")) return cond;
   c->i++;
+  if(!cond_value_ok(c,cond,0)) return 0;   /* `a ? x : y` of a struct (CF-STRUCTCOND) */
   if(operand_is_pure(c,cond_arms,0)){
     uint32_t a=p_expr(c); eat(c,":"); uint32_t b=p_expr(c);
     int va=void_value(c,a);
@@ -7539,16 +7623,31 @@ static BCIR_NOINLINE void case_label(CC *c){
 static void p_stmt_inner(CC *c);
 /* Depth-guarded wrapper: p_stmt is a recursive-cycle entry (p_stmt->p_block->p_stmt, and the stmt-expr
  * `({...})` path p_stmt_expr->p_stmt). Bump/check depth once per statement nesting level. */
+/* A claim from `from` on -- those of the statement just parsed -- that reads a void value: refused, and 1 (CF-VOIDVAL). A
+ * void value is never written, so any read of one is a use of it; a unit that made none skips the walk. */
+static int void_read(CC *c,size_t from){
+  if(!c->n_void || !c->fn) return 0;
+  for(size_t i=from;i<c->fn->n_claims;i++){ const bcir_claim *cl=&c->fn->claims[i];
+    for(int k=0;k<cl->n_rd;k++) if(void_value(c,cl->rd[k])){ fail(c,CC_VOID_VALUE); return 1; } }
+  return 0;
+}
 static void p_stmt(CC *c) {
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }
-  p_stmt_inner(c); LEAVE_REC(c);
+  size_t from=c->fn?c->fn->n_claims:0;
+  p_stmt_inner(c);
+  if(!c->failed) (void)void_read(c,from);
+  LEAVE_REC(c);
 }
 static void p_stmt_inner(CC *c) {
   if(is(c,";")){c->i++;return;}          /* empty statement -> a no-op (`for(...);`, `if(c);`, `;;`) */
   if(is(c,"return")){c->i++;
     if(!is(c,";")){uint32_t rv=p_expr(c);
-      if(void_value(c,rv)) marker(c,"c.return",0,0);   /* `return f();` of a void f: made for its effects, and the
-                                                         * function returns nothing (the oracle's `_VOID_RID`) */
+      if(void_value(c,rv)){                            /* `return f();` of a void f: made for its effects, and a void
+                                                         * function returns nothing (the oracle's `_VOID_RID`); any
+                                                         * other would return the value it has none of */
+        const bcir_ctype *rt=&c->fn->ret;
+        if(!(rt->kind==0 && rt->size==0 && !rt->is_float && !rt->is_valist && rt->bit_width==0)){ fail(c,CC_VOID_VALUE); return; }
+        marker(c,"c.return",0,0); }
       else if(c->fn->ret.kind!=1 && !scalar_value_ok(c,rv)) return;   /* `return a;` of a struct from a function
                                                                         * returning a scalar (CF-STRUCTARITH) */
       else{rv=null_pointer(c,rv,&c->fn->ret);c->fn->return_rid=rv;c->fn->has_return=1;marker(c,"c.return",rv,1);}}
@@ -7556,6 +7655,7 @@ static void p_stmt_inner(CC *c) {
     eat(c,";");return;}
   if(is(c,"if")){                      /* L6: if / else -> structured markers */
     c->i++;eat(c,"(");uint32_t cond=p_expr(c);eat(c,")");
+    if(!cond_value_ok(c,cond,0)) return;   /* `if (a)` of a struct (CF-STRUCTCOND) */
     marker(c,"c.if",cond,1); p_block(c);
     if(is(c,"else")){c->i++;marker(c,"c.else",0,0);p_block(c);}
     marker(c,"c.endif",0,0); return;
@@ -7563,6 +7663,7 @@ static void p_stmt_inner(CC *c) {
   if(is(c,"while")){                   /* L6: a bounded while loop (cond re-evaluated each iter) */
     c->i++;marker(c,"c.loop",0,0);
     eat(c,"(");uint32_t cond=p_expr(c);eat(c,")");
+    if(!cond_value_ok(c,cond,0)) return;
     marker(c,"c.loop.test",cond,1); p_block(c);
     marker(c,"c.cont.tgt",0,0); marker(c,"c.endloop",0,0); return;   /* continue -> re-test (top) */
   }
@@ -7577,6 +7678,7 @@ static void p_stmt_inner(CC *c) {
       if(cl){cl->n_wr=1;cl->wr[0]=cond;cl->n_imm=1;cl->imm[0]=1;} }   /* empty cond -> 1 */
     else cond=p_expr(c);
     eat(c,";");
+    if(!cond_value_ok(c,cond,0)) return;
     marker(c,"c.loop.test",cond,1);
     int step_start=c->i,pd=1;          /* record the step tokens; skip to the matching `)` */
     while(!isk(c,T_END)&&pd){ if(is(c,"("))pd++; else if(is(c,")")){pd--; if(!pd)break;} c->i++; }
@@ -7596,6 +7698,7 @@ static void p_stmt_inner(CC *c) {
     marker(c,"c.cont.tgt",0,0);        /* continue -> the bottom test */
     eat(c,"while"); eat(c,"(");
     uint32_t cond=p_expr(c); eat(c,")"); eat(c,";");
+    if(!cond_value_ok(c,cond,0)) return;
     marker(c,"c.loop.test",cond,1);    /* the test is at the bottom */
     marker(c,"c.endloop",0,0); return;
   }
@@ -7613,6 +7716,7 @@ static void p_stmt_inner(CC *c) {
   if(is(c,"switch")){                  /* a real C switch: case labels + fallthrough preserved */
     c->i++; eat(c,"(");
     uint32_t disc=p_expr(c);           /* the discriminant, lowered once */
+    if(!cond_value_ok(c,disc,1)) return;   /* an integer (CF-STRUCTCOND) */
     eat(c,")"); eat(c,"{");
     marker(c,"c.switch",disc,1);
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
@@ -9771,7 +9875,6 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
     }
   }
   null_pointer_args(c,&out->unit);   /* a null pointer constant argument is its parameter's pointer (CF-NULLARG) */
-  agg_unary_operands(c,&out->unit);  /* `-a`, `~a`, `!a` of a struct refused (CF-STRUCTARITH) */
   if(c->failed) return cfront_failure(context,out,c->err);   /* ... and a struct argument refused (CF-STRUCTARITH) */
   /* G10: a function a file-scope initializer names (an ops table `struct ops t = { handler };`) has its
    * address taken -- callers this unit cannot see may reach it. Every identifier in the initializer counts

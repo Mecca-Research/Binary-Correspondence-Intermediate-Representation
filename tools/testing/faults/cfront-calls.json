@@ -258,8 +258,8 @@
     {
       "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
       "label": "CL36 the twin lets a struct be a unary operand",
-      "new": "        (void)0; } }",
-      "old": "        agg_operand(c,cl->rd[0]); } }",
+      "new": "  if(c->failed) return 0;",
+      "old": "  if(c->failed || agg_operand(c,a)) return 0;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

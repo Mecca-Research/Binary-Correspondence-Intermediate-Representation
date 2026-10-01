@@ -1,0 +1,448 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+    "bcir.tests.test_cfront_asm_portio_redteam:test_portio_outb_result_used_as_a_value_is_clean",
+    "bcir.tests.test_cfront_asm_portio_redteam:test_portio_outb_result_in_arithmetic_is_clean"
+  ],
+  "faults": [
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO1 the oracle's parser drops a unary `+` again",
+      "new": "        if self.at(\"OP\", \"+\"):\n            self.nxt()\n            return self._unary()\n        if self.peek().kind == \"OP\" and self.peek().text in (\"-\", \"~\", \"!\", \"*\", \"&\"):\n",
+      "old": "        if self.peek().kind == \"OP\" and self.peek().text in (\"+\", \"-\", \"~\", \"!\", \"*\", \"&\"):\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO2 the oracle takes a pointer or a function as an arithmetic operand",
+      "new": "        if arith and op == \"~\" and t.is_float and not t.is_complex:\n            raise CLowerError(UNARY_NOT)\n",
+      "old": "        if not arith or (op == \"~\" and t.is_float and not t.is_complex):\n            raise CLowerError(UNARY_NOT)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO3 the oracle takes `~` of a real floating value",
+      "new": "        if not arith:\n            raise CLowerError(UNARY_NOT)\n",
+      "old": "        if not arith or (op == \"~\" and t.is_float and not t.is_complex):\n            raise CLowerError(UNARY_NOT)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO4 the oracle's unary operand predicate gives a struct no reason of its own",
+      "new": "        if t is None:\n            return\n        if op == \"!\":\n            return\n",
+      "old": "        if t is None:\n            return\n        self._scalar_operands(t)\n        if op == \"!\":\n            return\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO5 the oracle takes a struct as a controlling expression",
+      "new": "        v = self._rvalue(node)\n        return v\n",
+      "old": "        v = self._rvalue(node)\n        self._scalar_operands(self.rtypes.get(v))\n        return v\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO6 the oracle takes a `switch` of no integer",
+      "new": "        if False:\n            raise CLowerError(SWITCH_NOT)\n",
+      "old": "        if t is not None and not t.is_integer:\n            raise CLowerError(SWITCH_NOT)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO7 the oracle types `__real__`/`__imag__` of a complex as the complex",
+      "new": "        return unqualified(t)\n",
+      "old": "        if t.is_complex:\n            return scalar(t.name.replace(\" _Complex\", \"\"), self.abi)\n        return unqualified(t)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO8 the oracle types `__real__` of an integer a `double` again",
+      "new": "            return scalar(t.name.replace(\" _Complex\", \"\"), self.abi)\n        return unqualified(t) if t.is_float else scalar(\"double\", self.abi)\n",
+      "old": "            return scalar(t.name.replace(\" _Complex\", \"\"), self.abi)\n        return unqualified(t)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO9 the oracle types a bit-field operand by its declared type",
+      "new": "        return self._type_of(node)\n",
+      "old": "            if width:\n                return self._bitfield_value_type(ft, width)\n        return self._type_of(node)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO10 the oracle types `&x` as `x`",
+      "new": "                return self._type_of(o)\n",
+      "old": "                return pointer(self._type_of(o), self.abi)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO11 the oracle's `+` converts nothing",
+      "new": "                return v\n",
+      "old": "                return v if pt is None or pt is vt else self._cast_value(v, pt)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO12 the oracle reads a void expression's value",
+      "new": "        return self._rvalue_void(node)\n",
+      "old": "        v = self._rvalue_void(node)\n        if v == _VOID_RID:\n            raise CLowerError(VOID_VALUE)\n        return v\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO13 the oracle returns a void call's value from a function that returns one",
+      "new": "            value = self._rvalue_void\n",
+      "old": "            value = self._rvalue_void if void_fn else self._rvalue\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO14 the oracle steps a struct as a follow-on",
+      "new": "        # a parse error on the twin)\n",
+      "old": "        # a parse error on the twin)\n        self._scalar_operands(lv.ct)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO15 the oracle sizes `(*p)++` of a struct",
+      "new": "",
+      "old": "            self._scalar_operands(t)  # `sizeof((*p)++)` of a struct (CF-STRUCTCOND)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO16 the oracle compares an array with an `int` 0",
+      "new": "                    t\n",
+      "old": "                    pointer(scalar(\"void\"), self.abi) if t is not None and t.kind == \"array\" else t\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO17 the oracle names no global that a control node alone reads",
+      "new": "",
+      "old": "        touched |= _control_rids(body)  # a global read only by a condition or a return (CF-GCOND)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO18 the oracle's control reads skip an early `return`",
+      "new": "    return out\n",
+      "old": "        elif isinstance(node, ReturnNode) and node.rid is not None:\n            out.add(node.rid)\n    return out\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO19 the oracle's control reads skip a `switch`",
+      "new": "            out |= _control_rids(node.body)\n",
+      "old": "            out.add(node.disc)\n            out |= _control_rids(node.body)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO20 the oracle's control reads skip a loop's condition",
+      "new": "            for part in (node.cond_block, node.body, node.step):\n",
+      "old": "            out.add(node.cond)\n            for part in (node.cond_block, node.body, node.step):\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO21 the oracle's control reads skip an `if`",
+      "new": "            out |= _control_rids(node.then) | _control_rids(node.els)\n",
+      "old": "            out.add(node.cond)\n            out |= _control_rids(node.then) | _control_rids(node.els)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO22 the oracle's fence reads `+order` as no order",
+      "new": "",
+      "old": "        while isinstance(arg_node, cast.Unary) and arg_node.op == \"+\":\n            arg_node = arg_node.operand\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO23 the oracle refuses a void arm of `?:`",
+      "new": "            blk_a, a = self._lower_apart(node.then)\n",
+      "old": "            blk_a, a = self._lower_apart(node.then, void_ok=True)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO24 the oracle refuses a void left operand of `,`",
+      "new": "            self._rvalue(node.lhs)  # the comma operator: evaluate the left operand for\n",
+      "old": "            self._rvalue_void(node.lhs)  # the comma operator: evaluate the left operand for\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO25 the oracle refuses a void expression statement",
+      "new": "                self._rvalue(st.expr)  # its value, if any, is discarded\n",
+      "old": "                self._rvalue_void(st.expr)  # its value, if any, is discarded\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO26 the oracle refuses `(void)e` of a void `e`",
+      "new": "                self._rvalue(node.operand)  # (C11 6.3.2.2) -- a void `e` included\n",
+      "old": "                self._rvalue_void(node.operand)  # (C11 6.3.2.2) -- a void `e` included\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO27 the oracle refuses a void statement expression",
+      "new": "                    val = self._rvalue(last.expr)\n",
+      "old": "                    val = self._rvalue_void(last.expr)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO28 the oracle refuses a void `_Generic` association",
+      "new": "            return self._rvalue(self._generic_select(node))\n",
+      "old": "            return self._rvalue_void(self._generic_select(node))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO29 the oracle sizes `-`, `~` and `+` of a narrow integer unpromoted",
+      "new": "            return t\n",
+      "old": "            if t.is_float:  # `-` / `~` / `+`: the promoted operand (a float does not promote)\n                return t\n            return promote_int(t, self.abi)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UO30 the oracle types `-`, `~` and `+` of a narrow integer unpromoted under `typeof` and `_Generic`",
+      "new": "            return t\n",
+      "old": "            if t.is_float:  # (a float stays float -- floats don't promote)\n                return t\n            return promote_int(t, self.abi)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO31 the oracle's `typeof` of `!`, `__real__` and `__imag__` checks no operand",
+      "new": "                t = self._type_of(node.operand)\n",
+      "old": "                t = self._type_of(node.operand)\n                self._unary_operand(node.op, t)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UO32 the oracle's `sizeof` of a unary operator checks no operand",
+      "new": "            # refused of a struct, a pointer, a function, `~` of a float (CF-UNARY)\n",
+      "old": "            # refused of a struct, a pointer, a function, `~` of a float (CF-UNARY)\n            self._unary_operand(node.op, t)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_portio_outb_result_used_as_a_value_is_clean",
+      "label": "UO33 the oracle lowers `outb`'s void result as a value",
+      "new": "        v = self._rvalue_void(node)\n        return v\n",
+      "old": "        v = self._rvalue_void(node)\n        if v == _VOID_RID:\n            raise CLowerError(VOID_VALUE)\n        return v\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT1 the twin's `+` converts nothing",
+      "new": "  return a;\n",
+      "old": "  bcir_ctype t; memset(&t,0,sizeof t); t.size=4; t.signd=1;\n  return emit_cast(c,a,&t,-1);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT2 the twin takes a pointer or a function as an arithmetic operand",
+      "new": "  if(k==1 && !strcmp(suf,\"bnot\")){ fail(c,CC_UNARY_NOT); return 0; }\n",
+      "old": "  if(k<0 || (k==1 && !strcmp(suf,\"bnot\"))){ fail(c,CC_UNARY_NOT); return 0; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT3 the twin takes `~` of a real floating value",
+      "new": "  if(k<0){ fail(c,CC_UNARY_NOT); return 0; }\n",
+      "old": "  if(k<0 || (k==1 && !strcmp(suf,\"bnot\"))){ fail(c,CC_UNARY_NOT); return 0; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT4 the twin's unary operand predicate refuses no struct",
+      "new": "  if(c->failed) return 0;\n  const bcir_resource *r=res_of(c->fn,a);\n  if(!r || !strcmp(suf,\"lnot\")) return 1;\n",
+      "old": "  if(c->failed || agg_operand(c,a)) return 0;\n  const bcir_resource *r=res_of(c->fn,a);\n  if(!r || !strcmp(suf,\"lnot\")) return 1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT5 the twin's condition predicate refuses no struct",
+      "new": "  if(c->failed) return 0;\n  const bcir_resource *r=res_of(c->fn,v);\n",
+      "old": "  if(c->failed || agg_operand(c,v)) return 0;\n  const bcir_resource *r=res_of(c->fn,v);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT6 the twin takes a `switch` of no integer",
+      "new": "",
+      "old": "  if(sw && r && !r->is_void && res_arith_class(r)!=0){ fail(c,CC_SWITCH_NOT); return 0; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT7 the twin gives `__real__` of a complex the complex's size",
+      "new": "  if(ar.is_complex) return tempf(c,(int)ar.elem_bytes);\n",
+      "old": "  if(ar.is_complex) return tempf(c,(int)ar.elem_bytes/2);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT8 the twin types `__real__` of an integer a `double` again",
+      "new": "  uint32_t r = tempf(c,8);\n",
+      "old": "  uint32_t r = ar.bit_width>0 ? tempbi(c,ar.bit_width,ar.is_signed) : tempi(c,(int)ar.elem_bytes,ar.is_signed);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT9 the twin gives `-z` of a complex a real temp",
+      "new": "           if(0) r=0;",
+      "old": "           if(ar&&ar->is_complex) r=tempc(c,(int)ar->elem_bytes);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT10 the twin promotes a `_BitInt` under `-` and `~`",
+      "new": "           else if(0) r=0;",
+      "old": "           else if(ar&&ar->bit_width>0) r=tempbi(c,ar->bit_width,ar->is_signed);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT11 the twin refuses `++(x)`",
+      "new": "      else if(0 && !star && is_name && w>start && (tok_is(&c->t[w-1],\"++\")||tok_is(&c->t[w-1],\"--\"))",
+      "old": "      else if(!star && is_name && w>start && (tok_is(&c->t[w-1],\"++\")||tok_is(&c->t[w-1],\"--\"))",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT12 the twin bounds a `void *` by its allocation",
+      "new": "  if (!pr || pr->kind != BCIR_RK_POINTER) return;\n",
+      "old": "  if (!pr || pr->kind != BCIR_RK_POINTER || pr->is_voidptr) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
+      "label": "UT13 the twin compares an array with an `int` 0",
+      "new": "    if(pa && (pa->is_array || pa->is_vla) && 0){ bcir_ctype t;",
+      "old": "    if(pa && (pa->is_array || pa->is_vla)){ bcir_ctype t;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT14 the twin reads a void value in a statement",
+      "new": "    for(int k=0;k<cl->n_rd;k++) if(0 && void_value(c,cl->rd[k])){ fail(c,CC_VOID_VALUE); return 1; } }\n",
+      "old": "    for(int k=0;k<cl->n_rd;k++) if(void_value(c,cl->rd[k])){ fail(c,CC_VOID_VALUE); return 1; } }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT15 the twin counts no void value",
+      "new": "c->fn->res[c->fn->n_res-1].is_void=1; }",
+      "old": "c->fn->res[c->fn->n_res-1].is_void=1; c->n_void++; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT16 the twin returns a void call's value from a function that returns one",
+      "new": "        (void)rt;\n",
+      "old": "        if(!(rt->kind==0 && rt->size==0 && !rt->is_float && !rt->is_valist && rt->bit_width==0)){ fail(c,CC_VOID_VALUE); return; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT17 the twin steps a struct as a follow-on",
+      "new": "  fail(c,\"inc/dec of this lvalue form is a follow-on\");\n",
+      "old": "  if(!agg_operand(c,rest)) fail(c,\"inc/dec of this lvalue form is a follow-on\");\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT18 the twin reads no prefix step `incdec_value` did not take",
+      "new": "",
+      "old": "  if(is(c,\"++\")||is(c,\"--\")) return incdec_rest(c,1,0);   /* a prefix step `incdec_value` did not take */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT19 the twin takes a struct as the condition of `?:`",
+      "new": "",
+      "old": "  if(!cond_value_ok(c,cond,0)) return 0;   /* `a ? x : y` of a struct (CF-STRUCTCOND) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT20 the twin takes a struct as the condition of `if`",
+      "new": "",
+      "old": "    if(!cond_value_ok(c,cond,0)) return;   /* `if (a)` of a struct (CF-STRUCTCOND) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT21 the twin takes a `switch` of anything",
+      "new": "",
+      "old": "    if(!cond_value_ok(c,disc,1)) return;   /* an integer (CF-STRUCTCOND) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT22 the twin's byte-offset reader skips a unary `+` again",
+      "new": "    if(is(c,\"+\")){ c->i++; continue; }\n    if(!is(c,\"(\") || tok_is(tat(c,c->i+1),\"{\")) return n;   /* `({ ... })` is a statement expression */\n",
+      "old": "    if(!is(c,\"(\") || tok_is(tat(c,c->i+1),\"{\")) return n;   /* `({ ... })` is a statement expression */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT23 the twin's fence reads `+order` as no order",
+      "new": "  while(tok_is(tat(c,i),\"(\")){ p++; i++; }\n",
+      "old": "  while(tok_is(tat(c,i),\"(\") || tok_is(tat(c,i),\"+\")){ if(tok_is(tat(c,i),\"(\")) p++; i++; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT24 the twin's `__real__` and `__imag__` check no operand",
+      "new": "    uint32_t a=p_unary(c);\n",
+      "old": "    uint32_t a=p_unary(c); if(!unary_operand_ok(c,a,suf)) return 0;   /* of a struct, a pointer (CF-UNARY) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT25 the twin's `-`, `~` and `!` check no operand",
+      "new": "",
+      "old": "    if(!unary_operand_ok(c,a,suf)) return 0;      /* of a struct (CF-STRUCTARITH), a pointer, `~` of a float (CF-UNARY) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT26 the twin's `+` checks no operand",
+      "new": "",
+      "old": "  if(!unary_operand_ok(c,a,\"plus\")) return 0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT27 the twin takes a struct as the condition of `while`",
+      "new": "    eat(c,\"(\");uint32_t cond=p_expr(c);eat(c,\")\");\n",
+      "old": "    eat(c,\"(\");uint32_t cond=p_expr(c);eat(c,\")\");\n    if(!cond_value_ok(c,cond,0)) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT28 the twin takes a struct as the condition of `for`",
+      "new": "    else cond=p_expr(c);\n    eat(c,\";\");\n",
+      "old": "    else cond=p_expr(c);\n    eat(c,\";\");\n    if(!cond_value_ok(c,cond,0)) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
+      "label": "UT29 the twin takes a struct as the condition of `do`",
+      "new": "    uint32_t cond=p_expr(c); eat(c,\")\"); eat(c,\";\");\n",
+      "old": "    uint32_t cond=p_expr(c); eat(c,\")\"); eat(c,\";\");\n    if(!cond_value_ok(c,cond,0)) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

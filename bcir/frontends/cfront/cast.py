@@ -91,7 +91,7 @@ class Name:
 
 @dataclass(frozen=True)
 class Unary:
-    op: str  # - ~ ! * & (deref / address-of)
+    op: str  # + - ~ ! * & (deref / address-of), GNU __real__ / __imag__
     operand: object
 
 
