@@ -781,6 +781,20 @@ static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the con
 #define CC_VOLATILE_PTR "a volatile-qualified pointer is not supported"
 /* a qualified `*` past the eighth from the base, which `ptr_const` / `ptr_restrict` have no bit for (CF-QUALS) */
 #define CC_QUAL_DEEP "a qualified pointer nested more than 8 deep is not supported"
+/* `(uint32_t (*p)(uint32_t))f`, `sizeof(uint32_t (*p)(uint32_t))`: a type name declares no identifier (C11 6.7.7p1) -- the
+ * function-pointer type name a cast, `sizeof` and `_Alignof` take is abstract on both rails (CF-RTFP; the oracle's
+ * `TYPE_NAME_NAMED`) */
+#define CC_TYPE_NAME_NAMED "a type name names an identifier"
+/* `(uint32_t[2])s`, `(row_t)p`, `(uint32_t (*[2])(uint32_t))f`: a cast names a scalar type or `void` (C11 6.5.4p2), so a
+ * type name of an array type is a cast only as a compound literal's, `(T[N]){...}` (CF-RTFP; the oracle's `CAST_ARRAY`) */
+#define CC_CAST_ARRAY "a cast to an array type"
+/* `(_Atomic uint32_t){x}`: a compound literal of an `_Atomic` type is an `_Atomic` object, which neither rail models
+ * (CF-RTFP; the oracle's `ATOMIC_LITERAL`) */
+#define CC_ATOMIC_LITERAL "a compound literal of `_Atomic` type is not supported"
+/* `(_Atomic uint32_t)x`: C17 6.5.4p5 gives the cast the unqualified type, Clang the `_Atomic` one, which it then rejects
+ * as an operand, so the emit could not be held to the original -- refused, as CF-CALIGN refused it (CF-RTFP; the
+ * oracle's `CAST_ATOMIC`). A cast to a pointer to an `_Atomic` object lowers. */
+#define CC_CAST_ATOMIC "a cast to an `_Atomic` type is not supported"
 /* The qualifiers after a `*` (C11 6.7.6.1p1), consumed: `const` and `restrict` into `*cst` / `*rst`, which a function
  * type spells and compares (CF-QUALS). A `volatile` one is refused (`CC_VOLATILE_PTR`), as the oracle's `_star_quals`
  * refuses it. 1 after a failure. */
@@ -828,22 +842,26 @@ static void apply_stars(CC *c, bcir_ctype *ty) {
  * fixups), WITHOUT the declarator `*`s. p_type folds the stars on top; the multi-declarator paths call
  * this and apply_stars per declarator instead. */
 static int p_type(CC *c, bcir_ctype *ty, int *sidx);          /* fwd: typeof(type-name) parses recursively */
+static int p_cast_type(CC *c, bcir_ctype *ty, int *si);       /* fwd: a type name, a function pointer's too (CF-RTFP) */
+static int fp_name_dims(CC *c, bcir_ctype *ty, long long *dims, int *n, int cap);   /* fwd: its dimensions (CF-RTFP) */
 static venv *lookup(CC *c, const tok *t);                     /* fwd: typeof(variable) resolves its type */
 static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx);   /* fwd: typeof(expression) -- speculative lower */
+static int res_sig(CC *c, uint32_t rid);   /* fwd: the function type a function-pointer value points at */
 /* Does a cast's type-name start at the cursor -- `( type-name )` rather than `( expression )`? The oracle's
  * `_is_cast`: the answer for a cast and a compound literal. Each of the five sites that asks kept its own
- * copy of this list. A cast to an `_Atomic` type is refused on both rails. */
+ * copy of this list. `(_Atomic T *)p` is a cast to a pointer to an atomic object, and `(_Atomic T)v` one to `T`
+ * (CF-RTFP). */
 static int type_name_tok(CC *c, const tok *t){
   return scalar_size(t->s,t->n)>=0 || tok_is(t,"struct")||tok_is(t,"union")||tok_is(t,"enum")
       || tok_is(t,"_Complex")||tok_is(t,"complex")||tok_is(t,"_BitInt")
-      || tok_is(t,"const")||tok_is(t,"volatile")
+      || tok_is(t,"const")||tok_is(t,"volatile")||tok_is(t,"_Atomic")
       || tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
       || find_typedef(c,t->s,t->n)>=0;
 }
 static int starts_type_name(CC *c){ return type_name_tok(c,pk(c)); }
 /* ... and where a declaration's type may start (the oracle's `_is_decl_start`): `sizeof`, a size operand
- * and `typeof` take `_Atomic T` too, as the oracle folds `sizeof(_Atomic T)`; the twin refused it. */
-static int decl_type_tok(CC *c, const tok *t){ return type_name_tok(c,t) || tok_is(t,"_Atomic"); }
+ * and `typeof` take `_Atomic T`, as the oracle folds `sizeof(_Atomic T)`. */
+static int decl_type_tok(CC *c, const tok *t){ return type_name_tok(c,t); }
 static int starts_decl_type(CC *c){ return decl_type_tok(c,pk(c)); }
 /* A block statement that starts with token `t` is a declaration (p_stmt_inner; the CF-PAREN pass). */
 static int decl_start_tok(CC *c, const tok *t){
@@ -1547,7 +1565,7 @@ static void p_typedef(CC *c){
   int bdims[3], bnd=td_dims_of(c,bdims);   /* a typedef'd array base */
   if(is(c,"(")){                                       /* typedef RET (*NAME)(PARAMS); -- a funcptr */
     int save=c->i; c->i++;
-    if(is(c,"*")){
+    if(is(c,"*") && tat(c,c->i+1)->k==T_ID && tok_is(tat(c,c->i+2),")")){
       c->i++; tok nm=adv(c); eat(c,")"); eat(c,"(");
       const bcir_ctype *ps; int np, va;                  /* the parameter-type list: its types ride the typedef too */
       if(fp_param_list(c,0,&ps,&np,&va)) return;
@@ -1562,6 +1580,20 @@ static void p_typedef(CC *c){
       return;
     }
     c->i=save;                                         /* not a funcptr declarator */
+    if(fp_decl_at(c,0)){                               /* `typedef R (*NAME[N])(P);`, `(**NAME)(P)`: a table of function
+                                                        * pointers, a pointer to one -- its element spelled by a synthesized
+                                                        * alias, as an inline declarator's is (CF-RTFP) */
+      bcir_ctype fp; int stars, dims[3], nd; tok nm;
+      if(fp_inline_decl(c,&ty,sidx,&fp,&stars,dims,&nd,&nm)) return;
+      for(int k=0;k<stars;k++) fp_star(c,&fp);
+      if(bnd){ fail(c,"an array typedef of more than 3 dimensions"); return; }   /* a typedef'd array's function pointers */
+      CC_ENSURE(c,c->td,c->ntd,c->cap_td);
+      if(c->ntd<c->cap_td){memset(&c->td[c->ntd],0,sizeof c->td[c->ntd]);
+        idcpy(c,c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;
+        c->td[c->ntd].nd=nd; for(int d=0;d<3;d++) c->td[c->ntd].dims[d]=d<nd?dims[d]:0; c->ntd++;}
+      eat(c,";");
+      return;
+    }
   }
   tok nm=adv(c);                                      /* the alias name */
   int tnd=0, tdims[3]={0,0,0};                        /* `typedef T row_t[6];`: its own dims, then its base's */
@@ -2027,6 +2059,23 @@ static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si){
     else if(ty->size==0 && !ty->is_float) pr->is_voidptr=1; }
   return t;
 }
+/* A pointer to an object of type `ty` -- `&v` of a named object, `&(T){...}` of a compound literal -- one level deeper
+ * than it, carrying its type: its sign, float, complex, `_Bool`, plain `char` and `_Atomic`, a struct's tag, a function
+ * pointer's alias (`&fp`, `&p` of `op_t *p`, CF-FPTAB). The compound literal's had kept one level and no pointee of a
+ * pointer, so `&(T *){p}` was a `T *` (CF-RTFP). 0, refused, past BCIR_MAX_PTR_DEPTH. */
+static uint32_t addr_temp(CC *c,const bcir_ctype *ty){
+  if(ty->kind==2 && (ty->ptr_depth?ty->ptr_depth:1)>=BCIR_MAX_PTR_DEPTH){ fail(c,"pointer nesting too deep"); return 0; }
+  uint32_t t=add_res(c,BCIR_DOM_RAM, ty->size?ty->size:4, 1,0,BCIR_RK_POINTER,"");
+  if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
+    tr->is_signed=(uint8_t)(ty->signd?1:0); tr->is_float=(uint8_t)(ty->is_float?1:0);
+    tr->is_complex=(uint8_t)(ty->is_complex?1:0); tr->is_bool=(uint8_t)(ty->is_bool?1:0);
+    tr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0);
+    tr->is_atomic=(uint8_t)(ty->is_atomic?1:0);         /* `&a` of an `_Atomic` object: `_Atomic T *` */
+    tr->ptr_depth=(uint8_t)((ty->kind==2?(ty->ptr_depth?ty->ptr_depth:1):0)+1);
+    if(ty->kind==1||ty->ptr_to_struct) fits(c,tr->agg,sizeof tr->agg,"%s %s",ty->is_union?"union":"struct",ty->tag);
+    else if(ty->kind==3||ty->ptr_to_fp) ptee_fp(c,tr,ty); }
+  return t;
+}
 /* A fresh ordinary temp of `rid`'s value type -- the value a volatile object's read yields (lvalue
  * conversion drops the qualifier). */
 static uint32_t temp_like(CC *c,uint32_t rid){
@@ -2265,6 +2314,12 @@ static int p_typeof_expr(CC *c, bcir_ctype *ty, int *sidx){
       fits(c,ty->tag,sizeof ty->tag,"%s",tg);
       int si=find_struct(c,tg,(int)strlen(tg)); if(si>=0){ *sidx=si; ty->size=c->s[si].size;
         ty->is_union=(uint8_t)c->s[si].is_union; }
+    } else if(r->is_funcptr && res_sig(c,v)){           /* a function-pointer value -- `t[0]` of a table, a member --
+                                                         * its function type, as the oracle types it (CF-RTFP) */
+      int s=res_sig(c,v); const bcir_ctype *rt=&c->sigs[s-1].ret;
+      ty->kind=3; ty->size=cc_abi(c)->pointer_size; ty->signd=0; ty->fp_sig=(uint16_t)s;
+      fits(c,ty->tag,sizeof ty->tag,"%s",c->sigs[s-1].alias);
+      fp_capture_ret(ty,rt,rt->kind==1 ? find_struct(c,rt->tag,(int)strlen(rt->tag)) : -1);
     } else {                                             /* a scalar (integer / float / _Bool / plain char) */
       ty->kind=0; ty->size=r->elem_bytes?(int)r->elem_bytes:4; ty->signd=r->is_signed;
       ty->is_float=r->is_float; ty->is_bool=r->is_bool; ty->is_plain_char=r->is_plain_char;
@@ -2459,6 +2514,8 @@ static void cast_name(CC *c,const bcir_ctype *ty,int signed_int,char *o,size_t n
  * conversion at a store (`store_conv`). The oracle's `_cast_value`. */
 static uint32_t emit_cast(CC *c, uint32_t v, const bcir_ctype *tyin, int si){
   bcir_ctype ty=*tyin;
+  v=null_pointer(c,v,&ty);   /* `(T *)0`, `(op_t)0`: the constant is a null pointer of the type (C11 6.3.2.3p3) -- an
+                              * `int` temp cast to a pointer of another width is a cast GCC rejects (CF-RTFP) */
   const bcir_resource *vr=res_of(c->fn,v);
   /* The result temp carries the target's signedness, so a signed (sub-int) target keeps its sign
    * even when the cast value is used directly -- `(signed char)(-5)` stays -5, and `(int)u` reads
@@ -2466,7 +2523,8 @@ static uint32_t emit_cast(CC *c, uint32_t v, const bcir_ctype *tyin, int si){
    * cast operator (float -> unsigned is UB / target-divergent). */
   int f2s = vr && vr->is_float && !ty.is_float && ty.kind!=2 && ty.signd && ty.size>0
             && ty.bit_width==0;                                  /* a `_BitInt` keeps its exact spelling */
-  uint32_t r = ty.kind==2 ? temp_ptr(c, &ty, si)                /* a pointer cast: a `T *` of the target (first:
+  uint32_t r = ty.kind==3 ? fp_value_temp(c, ty.tag)            /* a function pointer of the target type (CF-RTFP) */
+             : ty.kind==2 ? temp_ptr(c, &ty, si)                /* a pointer cast: a `T *` of the target (first:
                                                                   * a `float *` target is a pointer, not a float) */
              : ty.is_complex ? tempc(c, ty.size)                /* a _Complex cast -> a complex temp */
              : ty.is_float ? tempf(c, ty.size)                  /* a float cast -> a float temp */
@@ -2811,6 +2869,27 @@ static void up_track(CC *c, upframe *fr, int *nf, int *deep, int w){
     default: break;
   }
 }
+/* `( E ) OP v` where a statement begins (CF-RTFP): E an lvalue of unary `*`s and postfix operators alone -- a name and
+ * its `.m`, `->m`, `[i]`, `++`, `--` and calls, parenthesized groups -- and OP an assignment: the parentheses are
+ * redundant (C11 6.5.1p5), and the statement forms read E bare, as the oracle reads `(E) = v`. The emit spells an
+ * `_Atomic` member store so, `(*(_Atomic T *)((char *)p + K)) = v;`. The index of the `)` closing the `(` at `r`, else
+ * -1. */
+static int up_paren_lvalue(CC *c, int r){
+  int q=up_group_end(c,r)-1;                         /* the `)`: up_group_end gives the token after it */
+  if(q<=r+1) return -1;
+  const tok *op=tat(c,q+1);
+  if(!tok_is(op,"=") && !is_compound_op(op)) return -1;
+  int k=r+1;
+  while(tok_is(tat(c,k),"*")) k++;
+  if(k>=q) return -1;
+  while(k<q){
+    const tok *t=tat(c,k);
+    if(t->k==T_ID || tok_is(t,".") || tok_is(t,"->") || tok_is(t,"++") || tok_is(t,"--")){ k++; continue; }
+    if(tok_is(t,"(") || tok_is(t,"[")){ int e=up_group_end(c,k); if(e<0 || e>q) return -1; k=e; continue; }
+    return -1;
+  }
+  return q;
+}
 /* One pass over the body at `start` (just past its `{`), compacting it in place; 1 when it rewrote something. Of a
  * run of `(`, only the one whose closers directly follow P can open P's parentheses: it is found once per run. */
 static int unparen_body(CC *c, int start){
@@ -2823,12 +2902,16 @@ static int unparen_body(CC *c, int start){
     if(np && pend[np-1].pos==r){                           /* P's closers */
       if(pend[np-1].zero){ c->t[w++]=lb; c->t[w++]=zero; c->t[w++]=rb; }
       r+=pend[--np].n; continue; }
-    tok t=c->t[r]; upframe *f=&fr[nf-1];
+    tok t=c->t[r]; upframe *f=&fr[nf-1]; int first=0;
     if(f->blk && f->pd==0 && f->start){                    /* a statement starts: a label, or a declaration? */
       f->start=0;
       if(tok_is(&t,"case")||tok_is(&t,"default")||(t.k==T_ID && tok_is(tat(c,r+1),":"))) f->lab=1;
-      else { f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=0; f->init=0; f->xpd=-1; f->forhdr=(uint8_t)tok_is(&t,"for"); } }
+      else { f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=0; f->init=0; f->xpd=-1; f->forhdr=(uint8_t)tok_is(&t,"for");
+        first=!f->decl; } }
     else if(f->fstart){ f->fstart=0; f->decl=(uint8_t)decl_start_tok(c,&t); f->dpd=f->pd; f->init=0; f->xpd=-1; }
+    if(first && tok_is(&t,"(") && np<UP_FRAMES && !deep){   /* `( E ) = v;` -> `E = v;` (CF-RTFP) */
+      int q=up_paren_lvalue(c,r);
+      if(q>0){ pend[np].pos=q; pend[np].n=1; pend[np].zero=0; np++; r++; changed=1; continue; } }
     if(tok_is(&t,"(") && r>=run_end){                      /* a run of `(` starts: P after it, and its closers */
       run_end=r; while(tok_is(tat(c,run_end),"(")) run_end++;
       int ps=run_end;                                      /* P's first token -- the run's last `(` when it opens */
@@ -4143,7 +4226,6 @@ static uint32_t p_icall(CC *c, const venv *fv) {
   return vd?void_temp(c):t;                 /* the void value, as a direct void call's (`return cb();`, `c ? cb() : ...`) */
 }
 #define CC_NOT_CALLABLE "called object is not a function or function pointer"   /* the oracle's `NOT_CALLABLE` */
-static int res_sig(CC *c, uint32_t rid);   /* fwd: the function type a function-pointer value points at */
 /* A call through the function-pointer VALUE in `fv` (CF-FPTAB) -- an element of a table, a read through a pointer to one
  * or from a member, a select of them -- with the cursor on its `(`: a `c.call.indirect` like a call through a
  * function-pointer object's (p_icall), its result typed by the value's function type (`res_sig`). The oracle's
@@ -4569,6 +4651,44 @@ static int is_assign_op(CC *c){
   return t->k==T_PUN && ((t->n==1 && t->s[0]=='=') || is_compound_op(t));
 }
 static int sz_unary(CC *c, szt *t);
+/* Whether the parenthesized type name whose first token is at `k` is a compound literal's: the index of its `)` when a
+ * `{` follows it, else 0 (CF-RTFP). Nothing is consumed. */
+static int literal_close(CC *c, int k){
+  for(int d=0; tat(c,k)->k!=T_END; k++){
+    const tok *tk=tat(c,k);
+    if(tok_is(tk,"(") || tok_is(tk,"[")) d++;
+    else if(tok_is(tk,")") || tok_is(tk,"]")){ if(!d) break; d--; }
+  }
+  return tok_is(tat(c,k),")") && tok_is(tat(c,k+1),"{") ? k : 0;
+}
+/* `(type-name){...}` at the cursor, past its `(`, under `sizeof`: a compound literal, of the type name's type -- an
+ * array's whole, as `sizeof` reads an array object (C11 6.5.2.5p4, 6.3.2.1p3), where the lowered literal had given the
+ * size of the pointer it decays to (CF-RTFP). Its initializer is skipped, never lowered; one whose size the initializer
+ * gives, `(T[]){...}`, keeps its unsized dimension, which `sizeof` refuses as the oracle refuses it. 0 for a cast, which
+ * is lowered (nothing consumed); 1 with `*t`, the cursor past the `}`; -1 after a failure. */
+static BCIR_NOINLINE int sz_literal(CC *c, szt *t){
+  int k=literal_close(c,c->i);                       /* the type name's own `)`: a literal when a `{` follows it */
+  if(!k) return 0;
+  memset(t,0,sizeof *t); t->si=-1;
+  if(p_cast_type(c,&t->ty,&t->si) || fp_name_dims(c,&t->ty,t->dims,&t->nd,4)) return -1;
+  int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array: its dims follow the type name's own */
+  while(is(c,"[")){                                  /* `[N]`, or `[]` the initializer sizes (kept unsized: 0) */
+    c->i++; long long d=0;
+    if(!is(c,"]")){ d=ce_value(c); if(c->failed) return -1; }
+    if(!eat(c,"]")) return -1;
+    if(t->nd>=4){ fail(c,"a type-name of more than four array dimensions"); return -1; }
+    t->dims[t->nd++]=d; }
+  for(int d=0; d<btd; d++){ if(t->nd>=4){ fail(c,"a type-name of more than four array dimensions"); return -1; }
+    t->dims[t->nd++]=btdd[d]; }
+  if(c->i!=k) return 0;
+  if(t->ty.is_atomic && t->ty.kind!=2){ fail(c,CC_ATOMIC_LITERAL); return -1; }   /* an `_Atomic` object */
+  c->i=k+1;                                          /* past the `)`: the initializer, unevaluated */
+  for(int d=0; !isk(c,T_END); c->i++){
+    if(is(c,"{")) d++;
+    else if(is(c,"}") && --d==0){ c->i++; break; }
+  }
+  return c->failed ? -1 : 1;
+}
 static int sz_postfix(CC *c, szt *t){
   int r;
   if(isk(c,T_ID)) r=sz_name(c,t);
@@ -4579,7 +4699,9 @@ static int sz_postfix(CC *c, szt *t){
     t->nd=1; t->dims[0]=(long long)str_bytes(sp,sn)+1; r=1;
   } else if(is(c,"(")){
     c->i++;
-    if(starts_type_name(c) || is(c,"{")) return 0;   /* a cast, a compound literal, a statement expression */
+    if(is(c,"{")) return 0;                          /* a statement expression */
+    if(starts_type_name(c)) r=sz_literal(c,t);       /* a compound literal; a cast is lowered (CF-RTFP) */
+    else {
     int last=-1;                                     /* a comma expression: its value is the last operand's */
     for(int k=c->i, d=0; tat(c,k)->k!=T_END; k++){
       const tok *tk=tat(c,k);
@@ -4603,6 +4725,7 @@ static int sz_postfix(CC *c, szt *t){
     if(last>=0){                                     /* the comma's value: unpromoted, an array decayed */
       t->bf=0; t->ty.is_atomic=0; t->vla=0;
       if(t->nd && !t->addr){ for(int d=1; d<t->nd; d++) t->dims[d-1]=t->dims[d]; t->nd--; t->addr=1; }
+    }
     }
   } else return 0;
   if(r!=1) return r;
@@ -4691,8 +4814,10 @@ static uint32_t p_sizeof(CC *c){
   memset(&t,0,sizeof t); t.si=-1;
   if(is(c,"(")){
     int save=c->i; c->i++;
-    if(starts_decl_type(c)){                            /* sizeof ( type-name ) */
-      if(p_type(c,&t.ty,&t.si)) return 0;
+    if(starts_decl_type(c) && !literal_close(c,c->i)){  /* sizeof ( type-name ) -- not `sizeof (T[N]){...}`, a compound
+                                                         * literal's unary-expression form (CF-RTFP) */
+      if(p_cast_type(c,&t.ty,&t.si) || fp_name_dims(c,&t.ty,t.dims,&t.nd,4)) return 0;   /* `sizeof(R (*)(P))`, and
+                                                         * of an array of them (CF-RTFP) */
       int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array */
       if(type_name_dims(c,&t)) return 0;
       for(int d=0; d<btd; d++){ if(t.nd>=4){ fail(c,"a type-name of more than four array dimensions"); return 0; }
@@ -4740,7 +4865,8 @@ static uint32_t p_alignof(CC *c){
   c->i++;
   if(!eat(c,"(")) return 0;
   szt t; memset(&t,0,sizeof t); t.si=-1;
-  if(p_type(c,&t.ty,&t.si) || type_name_dims(c,&t) || !eat(c,")")) return 0;
+  if(p_cast_type(c,&t.ty,&t.si) || fp_name_dims(c,&t.ty,t.dims,&t.nd,4) || type_name_dims(c,&t) || !eat(c,")"))
+    return 0;                                           /* `_Alignof(R (*)(P))`, `_Alignof(R (*[N])(P))` (CF-RTFP) */
   int sz, al; type_layout(c,&t.ty,t.si,&sz,&al);
   return size_result(c,al);
 }
@@ -4871,7 +4997,7 @@ static void cast_name(CC *c,const bcir_ctype *ty,int signed_int,char *o,size_t n
                       * its `volatile`, then one `*` per level; the cast yields a real `T *` of that type */
     char base[BCIR_CIR_AGG];
     if(ty->ptr_to_struct) fits(c,base,sizeof base,"%s %s",ty->is_union?"union":"struct",ty->tag);
-    else if(ty->ptr_to_fp) fits(c,base,sizeof base,"%s",ty->tag);   /* a pointer to a function pointer: its alias */
+    else if(ty->ptr_to_fp) snprintf(base,sizeof base,"fnptr");   /* a pointer to a function pointer (CF-RTFP) */
     else if(ty->size==0 && !ty->is_float) snprintf(base,sizeof base,"void");
     else if(ty->bit_width>0) snprintf(base,sizeof base,"%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width);
     else if(ty->is_complex) snprintf(base,sizeof base,"%s",ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex");
@@ -4882,7 +5008,8 @@ static void cast_name(CC *c,const bcir_ctype *ty,int signed_int,char *o,size_t n
                                               :(ty->size==1?"uint8_t":ty->size==2?"uint16_t":ty->size==8?"uint64_t":"uint32_t"));
     int d=ty->ptr_depth?ty->ptr_depth:1; if(d>BCIR_MAX_PTR_DEPTH) d=BCIR_MAX_PTR_DEPTH;
     char stars[BCIR_MAX_PTR_DEPTH+1]; for(int k=0;k<d;k++) stars[k]='*'; stars[d]=0;
-    fits(c,o,n,"c.cast:%s%s %s",ty->is_volatile?"volatile ":"",base,stars); return; }
+    fits(c,o,n,"c.cast:%s%s%s %s",ty->is_volatile?"volatile ":"",ty->is_atomic?"_Atomic ":"",base,stars); return; }
+  if(ty->kind==3){ fits(c,o,n,"c.cast:fnptr"); return; }   /* a function pointer: its temp carries the type (CF-RTFP) */
   if(ty->kind==0 && ty->bit_width>0){               /* a `_BitInt(N)` cast target -- the exact spelling (faithful) */
     fits(c,o,n,"c.cast:%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width); return; }
   const char *nm=ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
@@ -4923,13 +5050,15 @@ static int bo_open(CC *c){                          /* unary `+`s and `(`s openi
 static int bo_close(CC *c,int n){ for(int k=0;k<n;k++){ if(!is(c,")")) return 0; c->i++; } return 1; }
 static int bo_cast(CC *c,bcir_ctype *ty){           /* `( type-name )`: the type, resolved, the cursor past it */
   int si; if(!is(c,"(")) return 0; c->i++;
-  if(!starts_type_name(c) || p_type(c,ty,&si) || c->td_nd || !is(c,")")) return 0;
+  if(!starts_type_name(c) || p_cast_type(c,ty,&si) || c->td_nd || !is(c,")")) return 0;
   c->i++; return 1;
 }
 static int bo_match(CC *c,venv *base,field *f){
   bcir_ctype to, tb; int k1=bo_open(c);             /* around the cast expression */
-  if(!bo_cast(c,&to) || to.kind!=2 || (to.ptr_depth?to.ptr_depth:1)!=1 || to.ptr_to_struct || !to.is_volatile
-     || to.is_atomic || to.is_valist || to.size<=0) return 0;   /* a pointer to a volatile, non-atomic scalar */
+  if(!bo_cast(c,&to) || to.kind!=2 || (to.ptr_depth?to.ptr_depth:1)!=1 || to.ptr_to_struct || to.is_valist) return 0;
+  int fpslot=to.ptr_to_fp && !to.is_volatile;      /* `*(R (**)(P))(...)`: a function-pointer slot (CF-RTFP) */
+  if(!fpslot && (to.ptr_to_fp || to.size<=0 || !(to.is_volatile || to.is_atomic)))
+    return 0;                                       /* else a pointer to a volatile or `_Atomic` scalar */
   int k2=bo_open(c); if(k2<1) return 0;            /* around the operand, and the byte pointer's own */
   if(!bo_cast(c,&tb) || tb.kind!=2 || (tb.ptr_depth?tb.ptr_depth:1)!=1 || tb.ptr_to_struct || tb.size!=1
      || !tb.is_plain_char || tb.is_atomic) return 0;          /* a pointer to plain `char` */
@@ -4938,7 +5067,8 @@ static int bo_match(CC *c,venv *base,field *f){
   if(!isk(c,T_ID) || visible_enum(c,pk(c)->s,pk(c)->n)>=0) return 0;
   { tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id); if(!vp) return 0; *base=*vp; c->i++; }
   const bcir_resource *br=res_of(c->fn,base->rid); int arr=br && (br->is_array || br->is_vla);
-  if(!br || br->domain!=BCIR_DOM_MMIO || (addr ? base->type.kind!=1 || arr : base->type.kind!=2 && !arr)) return 0;
+  if(!br || (to.is_volatile && br->domain!=BCIR_DOM_MMIO)   /* a volatile access only of a device region */
+     || (addr ? base->type.kind!=1 || arr : base->type.kind!=2 && !arr)) return 0;
   int cl=0; while(is(c,")")){ c->i++; cl++; }       /* the base's parens, then the byte pointer's own */
   if(cl<p || cl-p>=k2 || !is(c,"+")) return 0;
   c->i++; k2-=cl-p;
@@ -4948,10 +5078,34 @@ static int bo_match(CC *c,venv *base,field *f){
   else return 0;
   if(k<0 || k>INT_MAX || !bo_close(c,r+k2+k1) || postfix_follows(c,c->i)) return 0;
   memset(f,0,sizeof *f);                            /* a volatile member of T's layout at offset K */
+  f->byte_off=(int)k; f->sidx=f->elem_sidx=f->ptee_sidx=-1;
+  if(fpslot){                                       /* ... a function pointer of the cast's type (CF-RTFP) */
+    f->size=f->access_bytes=cc_abi(c)->pointer_size; f->fp_sig=to.fp_sig; f->fp_ret_size=to.fp_ret_size;
+    f->fp_ret_signd=to.fp_ret_signd; f->fp_ret_float=to.fp_ret_float; f->fp_ret_void=to.fp_ret_void;
+    f->fp_ret_agg=to.fp_ret_agg; return 1; }
   f->size=f->access_bytes=to.size; f->signd=to.signd; f->is_float=to.is_float; f->is_complex=to.is_complex;
-  f->is_bool=to.is_bool; f->is_plain_char=to.is_plain_char; f->bit_width=to.bit_width; f->byte_off=(int)k;
-  f->is_volatile=1; f->sidx=f->elem_sidx=f->ptee_sidx=-1;
+  f->is_bool=to.is_bool; f->is_plain_char=to.is_plain_char; f->bit_width=to.bit_width;
+  f->is_volatile=to.is_volatile; f->is_atomic=to.is_atomic;   /* ... or an `_Atomic` one (CF-RTFP) */
   return 1;
+}
+/* `*(R (**)(P))((char *)p + K) = (R2 (*)(P2))f;` -- the emit's store of a function pointer through a generic slot is the
+ * member store it was emitted from, `p->m = f` (CF-RTFP; the oracle's `_assign`): its cast spells the slot, no conversion
+ * of its own, so a function or a function-pointer object, named, is stored as it is. 1 with the value in `*out`, the
+ * cursor on the `;`; else 0, the cursor unmoved and every speculative effect rolled back. */
+static BCIR_NOINLINE int fp_slot_value(CC *c, uint32_t *out){
+  int save=c->i, failed=c->failed, ns=c->ns, nec=c->nec; spec_mark m; spec_begin(c,&m);
+  bcir_ctype ty; int si;
+  if(is(c,"(")){ c->i++;
+    if(starts_type_name(c) && !p_cast_type(c,&ty,&si) && ty.kind==3 && !ty.nadims && is(c,")")){
+      c->i++;
+      const tok *nt=pk(c);
+      if(nt->k==T_ID && tok_is(tat(c,c->i+1),";")){
+        const venv *lv=lookup(c,nt); int gi=lv ? -1 : find_global(c,nt->s,nt->n);
+        int fnv = lv ? lv->type.kind==3 && !names_object_ptr(c,lv)
+                : gi>=0 ? c->gv[gi].ty.kind==3 && !c->gv[gi].is_arr
+                : declared_ret(c,nt)!=NULL;
+        if(fnv){ *out=p_unary(c); return 1; } } } }
+  spec_end(c,&m); c->i=save; c->failed=failed; c->ns=ns; c->nec=nec; return 0;
 }
 /* Called with the cursor just past the `*`. On a match: *base (p's env entry) and *f, the cursor past the
  * operand. Else every speculative effect -- a global bound, a struct or an enumerator a type-name declared, a
@@ -4960,6 +5114,33 @@ static int byte_off_access(CC *c,venv *base,field *f){
   int save=c->i, failed=c->failed, ns=c->ns, nec=c->nec; spec_mark m; spec_begin(c,&m);
   if(bo_match(c,base,f)) return 1;
   spec_end(c,&m); c->i=save; c->failed=failed; c->ns=ns; c->nec=nec; return 0;
+}
+/* A cast's type name at the cursor (CF-RTFP): the specifier and its `*`s, then -- `(R (*)(P))f`, `(R (**)(P))p`,
+ * `(T *(*)(P))f` -- an abstract function-pointer declarator, as a parameter's is read (`fp_inline_decl`), whose `*`s
+ * past the first are a pointer to one. A type name declares no identifier (C11 6.7.7p1): a named one is refused,
+ * as the oracle refuses it (`TYPE_NAME_NAMED`). An array of them, `(R (*[N])(P))`, comes back with its dimensions in
+ * `nadims`/`adims`, outermost first, which each caller takes as the type name's own (`fp_name_dims`). 1 after a
+ * failure. */
+static int p_cast_type(CC *c, bcir_ctype *ty, int *si){
+  if(p_type(c,ty,si)) return 1;
+  if(!fp_decl_at(c,1)) return 0;
+  bcir_ctype fp; int stars, dims[3], nd; tok nm;
+  if(fp_inline_decl(c,ty,*si,&fp,&stars,dims,&nd,&nm)) return 1;
+  if(nm.n){ fail(c,CC_TYPE_NAME_NAMED); return 1; }
+  for(int k=0;k<stars;k++) fp_star(c,&fp);
+  if(nd){ fp.nadims=(uint8_t)nd; for(int k=0;k<nd;k++) fp.adims[k]=dims[k]; }
+  *ty=fp; *si=-1; return 0;
+}
+/* The dimensions of an array of function pointers `p_cast_type` read, `(R (*[2][3])(P))`, moved off the element type
+ * `ty` into `dims` after the `*n` there (outermost first), as the type name's own: the element is the function pointer,
+ * the array the type name's (CF-RTFP). 1 after a failure (more than `cap`). */
+static int fp_name_dims(CC *c, bcir_ctype *ty, long long *dims, int *n, int cap){
+  if(ty->kind!=3) return 0;
+  for(int k=0; k<ty->nadims && k<3; k++){
+    if(*n>=cap){ fail(c,"a type-name of more than four array dimensions"); return 1; }
+    dims[(*n)++]=ty->adims[k]; }
+  ty->nadims=0; memset(ty->adims,0,sizeof ty->adims);
+  return 0;
 }
 /* Depth-guarded wrapper: p_unary is a recursive-cycle entry point (p_unary->p_primary->`(`->p_expr->
  * ...->p_unary), so a deeply-nested expression would exhaust the native stack. Bump/check depth once
@@ -5141,18 +5322,7 @@ static uint32_t p_unary_inner(CC *c) {
           if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=stride;}
           return t;
         }
-        /* a pointer one level deeper than the addressed object: */
-        if(v->type.kind==2 && (v->type.ptr_depth?v->type.ptr_depth:1)>=BCIR_MAX_PTR_DEPTH){
-          fail(c,"pointer nesting too deep");return 0;}
-        uint32_t t=add_res(c,BCIR_DOM_RAM, v->type.size?v->type.size:4, 1,0,BCIR_RK_POINTER,"");  /* &p (T*) -> T** */
-        if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
-          tr->is_signed=(uint8_t)(v->type.signd?1:0); tr->is_float=(uint8_t)(v->type.is_float?1:0);
-          tr->is_complex=(uint8_t)(v->type.is_complex?1:0); tr->is_bool=(uint8_t)(v->type.is_bool?1:0);
-          tr->is_plain_char=(uint8_t)(v->type.is_plain_char?1:0);
-          tr->is_atomic=(uint8_t)(v->type.is_atomic?1:0);     /* `&a` of an `_Atomic` object: `_Atomic T *` */
-          tr->ptr_depth=(uint8_t)((v->type.kind==2?(v->type.ptr_depth?v->type.ptr_depth:1):0)+1);
-          if(v->type.kind==1||v->type.ptr_to_struct) fits(c,tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag);
-          else if(v->type.kind==3||v->type.ptr_to_fp) ptee_fp(c,tr,&v->type); }   /* `&fp`, `&p` of `op_t *p` (CF-FPTAB) */
+        uint32_t t=addr_temp(c,&v->type); if(c->failed) return 0;   /* a pointer one level deeper: &p (T*) -> T** */
         last_ptr_to_volatile(c,v->type.is_volatile,v->sidx>=0 && sdef_vol(c,v->sidx));   /* &x of volatile storage */
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
@@ -5160,12 +5330,9 @@ static uint32_t p_unary_inner(CC *c) {
       int is_type = starts_type_name(c);
       bcir_ctype ty; int si;
       if(is_type && !p_type(c,&ty,&si) && is(c,")")){ c->i++;
+        if(is(c,"{") && ty.is_atomic && ty.kind!=2){ fail(c,CC_ATOMIC_LITERAL); return 0; }   /* CF-RTFP */
         if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* materialize the anonymous object */
-          uint32_t t=add_res(c,BCIR_DOM_RAM, ty.size?ty.size:4, 1,0,BCIR_RK_POINTER,"");   /* a `T *` to it */
-          if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
-            tr->is_signed=(uint8_t)(ty.signd?1:0); tr->is_float=(uint8_t)(ty.is_float?1:0); tr->ptr_depth=1;
-            tr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0); tr->is_atomic=(uint8_t)(ty.is_atomic?1:0);
-            if(ty.kind==1) fits(c,tr->agg,sizeof tr->agg,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+          uint32_t t=addr_temp(c,&ty); if(c->failed) return 0;   /* a `T *` to it -- `T **` of a pointer one (CF-RTFP) */
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=1;cl->rd[0]=rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
       c->i=save; }
@@ -5215,9 +5382,12 @@ static uint32_t p_unary_inner(CC *c) {
     int save=c->i; c->i++;
     int is_type = starts_type_name(c);
     if(is_type){ bcir_ctype ty;int si;
-      if(!p_type(c,&ty,&si)){
+      if(!p_cast_type(c,&ty,&si)){
         int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array type */
         int la_count=0,la_nd=0,la_dims[3]={0,0,0};   /* a `(T[N]...)` array type-name -> an array compound literal */
+        if(ty.kind==3){ long long fd[3]; int nf=0;   /* `(R (*[N])(P))`: an array of function pointers (CF-RTFP) */
+          if(fp_name_dims(c,&ty,fd,&nf,3)) return 0;
+          for(int d=0; d<nf; d++){ int dim=(int)fd[d]; la_dims[la_nd++]=dim; la_count=la_count?la_count*dim:dim; } }
         while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
         for(int d=0; d<btd; d++){ int dim=btdd[d];     /* its dims follow the type-name's own */
@@ -5227,6 +5397,8 @@ static uint32_t p_unary_inner(CC *c) {
          * the initializer walk (init_object) fills every element, and the indexing venv carries BOTH `sidx`
          * (so `[...].field` descends the element struct via emit_index_field, striding by the struct size)
          * AND `adims`/`nadims` (so `[i][j]` Horner-flattens the outer dims). */
+        if(ty.is_atomic && ty.kind!=2 && is(c,")")){   /* an `_Atomic` object, or a cast Clang does not convert */
+          fail(c,tok_is(tat(c,c->i+1),"{") ? CC_ATOMIC_LITERAL : CC_CAST_ATOMIC); return 0; }
         if(la_nd && la_nd<=3 && is(c,")") &&
            tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='{'){   /* `(T[...]){...}` */
           c->i++;                                  /* ')' -- p_array_literal/arr_init eats the following `{` */
@@ -5234,14 +5406,16 @@ static uint32_t p_unary_inner(CC *c) {
           for(size_t z=c->fn->n_res;z-->0;) if(c->fn->res[z].rid==rid){ c->fn->res[z].is_array=1; break; }
           if(is(c,"[")){ venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=ty.kind==1?si:-1;
             if(la_nd>1){ for(int z=0;z<3;z++) sv.type.adims[z]=la_dims[z]; sv.type.nadims=la_nd; }
-            return postfix_lvalue(c,&sv); }       /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` / `(struct P[A][B]){...}[i][j].f` */
+            return call_value(c,postfix_lvalue(c,&sv)); }   /* `(int[]){...}[i]` / `(int[A][B]){...}[i][j]` /
+                                                   * `(struct P[A][B]){...}[i][j].f`; `(op_t[2]){f, g}[i](x)` (CF-RTFP) */
           return rid; }
+      if(la_nd && is(c,")") && !tok_is(tat(c,c->i+1),"{")){ fail(c,CC_CAST_ARRAY); return 0; }   /* C11 6.5.4p2 */
       if(!la_nd && is(c,")")){
         c->i++;                                    /* ')' */
         if(is(c,"{")){ uint32_t rid=p_compound_literal(c,&ty,si);   /* `(type){init}` -- a compound literal, not a cast */
           if(is(c,".")||is(c,"->")||is(c,"[")){      /* direct postfix on the literal: `(struct P){...}.field` */
             venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type=ty; sv.sidx=si; return postfix_lvalue(c,&sv); }
-          return rid; }
+          return call_value(c,rid); }              /* `(op_t){f}(x)`: a call through it (CF-RTFP) */
         uint32_t v=p_unary(c);                     /* the operand (right-associative) */
         if(ty.kind==0 && ty.size==0 && !ty.is_float && !ty.bit_width)
           return void_temp(c);                     /* `(void)e`: e for its effects, no value (C11 6.3.2.2) */
@@ -6190,9 +6364,15 @@ static int deref_incdec(CC *c, uint32_t *out){
   int form=0; venv pv; memset(&pv,0,sizeof pv); uint32_t base=0, idx=0;
   const tok *t1=tat(c,k+1);
   plv mlv; memset(&mlv,0,sizeof mlv);
+  venv ab; field af; memset(&ab,0,sizeof ab); memset(&af,0,sizeof af);
   c->i=k+1;
   if(deref_member_array(c,&mlv.b,&mlv.f)){ mlv.kind=1; form=4; }   /* `*q->a`: its first element */
   else c->i=save;
+  if(!form){ c->i=k+1;                                           /* `(*(_Atomic T *)((char *)p + K))++`: the atomic slot */
+    if(byte_off_access(c,&ab,&af)){                              /* the emit spells an atomic member's step so (CF-RTFP) */
+      if(af.is_atomic) form=5;
+      else { spec_end(c,&m); spec_begin(c,&m); c->i=save; } }
+    else c->i=save; }
   if(form){}
   else if(t1->k==T_ID && !deref_tail(tat(c,k+2))){               /* `*p` */
     venv *vp=lookup(c,t1); if(!vp) vp=use_global(c,t1);
@@ -6213,6 +6393,9 @@ static int deref_incdec(CC *c, uint32_t *out){
   if(form && !prefix){ const tok *t=pk(c); if(tok_is(t,"++")||tok_is(t,"--")){ ch=t->s[0]; c->i++; } else form=0; }
   if(!form || c->failed){ if(c->failed) return 0; spec_end(c,&m); c->i=save; return 0; }
   if(form==4){ *out=plv_incdec(c,&mlv,prefix,ch); return 1; }   /* a member array's first element */
+  if(form==5){ bcir_ctype ft=field_slot(&af);                    /* an `_Atomic` slot: one atomic read-modify-write */
+    *out=emit_rmw(c,incdec_kind(prefix,ch),&ft,ab.rid,0,0,0,0,af.byte_off,af.size,0,af.is_volatile,BCIR_BND_ASSUMED);
+    return 1; }
   const char *suf = ch=='+'?"add":"sub"; bcir_opcode oc = ch=='+'?BCIR_OP_ADD:BCIR_OP_SUB;
   if(form==2){                                                   /* an element: the scalar array path's step */
     if(index_elem_atomic(c,&pv)){ bcir_ctype et=index_elem_ctype(&pv);
@@ -7141,11 +7324,15 @@ static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si) {
     (void)init_object(c, rid, &obj, 0);
     return rid;
   }
-  /* a scalar compound literal `(int){v}` -- a named scalar local + a c.copy of the single value */
-  uint32_t rid=add_res(c,BCIR_DOM_RAM, ty->size?ty->size:4, 1, 0, BCIR_RK_SCALAR, nm);
+  /* a scalar compound literal `(int){v}` -- a named local of its type + a c.copy of the single value: a pointer one a
+   * pointer local, as the oracle's (a `uint32_t` one cut the pointer it held, and `*(T *){p}` read no pointer), a
+   * function-pointer one declared by its alias (CF-RTFP) */
+  uint32_t rid=ty->kind==2 ? temp_ptr(c,ty,si) : add_res(c,BCIR_DOM_RAM, ty->size?ty->size:4, 1, 0, BCIR_RK_SCALAR, nm);
   if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1];
-    rr->is_signed=(uint8_t)(ty->signd?1:0); rr->is_float=(uint8_t)(ty->is_float?1:0);
-    rr->is_bool=(uint8_t)(ty->is_bool?1:0); rr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); }
+    if(ty->kind==2) fits(c,rr->name,sizeof rr->name,"%s",nm);
+    else { rr->is_signed=(uint8_t)(ty->signd?1:0); rr->is_float=(uint8_t)(ty->is_float?1:0);
+      rr->is_bool=(uint8_t)(ty->is_bool?1:0); rr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0);
+      if(ty->kind==3 && ty->tag[0]){ rr->is_funcptr=1; fits(c,rr->agg,BCIR_CIR_AGG,"%s",ty->tag); } } }
   eat(c,"{");
   uint32_t v;
   if(is(c,"}")){ v=temp(c,4);                        /* `(int){}` (C23 empty) -> 0 */
@@ -7155,6 +7342,7 @@ static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si) {
   if(is(c,",")) c->i++;                              /* a tolerated trailing comma */
   if(!is(c,"}")){ fail(c,"a braced scalar initializer holds one expression"); return v; }
   eat(c,"}");
+  v=null_pointer(c,v,ty);                            /* `(T *){0}`: a null pointer of the literal's type */
   bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD);
   if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=rid;}
   return rid;
@@ -7174,6 +7362,8 @@ static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, 
   uint32_t rid = add_res(c, BCIR_DOM_RAM, es, dims[0]*inner, 0, BCIR_RK_SCALAR, nm);
   int ari = (int)c->fn->n_res - 1;
   if(ty->kind==1) fits(c,c->fn->res[ari].agg,BCIR_CIR_AGG,"%s %s",ty->is_union?"union":"struct",ty->tag);
+  else if(ty->kind==3) ptee_fp(c,&c->fn->res[ari],ty);   /* `(op_t[N]){f, g}`: a table of function pointers, declared
+                                                         * by its alias as a local table is (CF-RTFP) */
   else if(ty->is_float) c->fn->res[ari].is_float=1;  /* element type flags -> the decl emits `float`/`char`/... */
   else if(ty->kind==0){ c->fn->res[ari].is_signed=(uint8_t)(ty->signd?1:0);
     if(ty->is_bool) c->fn->res[ari].is_bool=1;
@@ -7494,7 +7684,18 @@ static void p_stmt_inner(CC *c) {
           if(is(c,"=")){ c->i++; iunit obj=iunit_scalar(c,&fty); (void)init_image(c,&obj,0,&st); if(c->failed) return; }
           add_static(c,&nm,frid,st,is_thread); }
         else if(is(c,"=")){ c->i++;                     /* an init: a function name -> a funcptr value (c.copy) */
-          uint32_t v=p_expr(c);
+          uint32_t v=0;
+          if(is(c,"{")){ c->i++;                        /* `= {f}`, `= {f,}` is `= f`, and `= {}` a null pointer (6.7.9p11,
+                                                         * CF-RTFP) -- as a typedef'd one's and the oracle's `_braced_scalar` */
+            if(is(c,"}")){ v=temp(c,4);
+              bcir_claim *k=new_claim(c,"c.const",BCIR_OP_LOAD); if(k){k->n_wr=1;k->wr[0]=v;k->n_imm=1;k->imm[0]=0;} }
+            else if(is(c,".")||is(c,"[")||is(c,"{")){ fail(c,"a braced scalar initializer holds one expression"); return; }
+            else { v=p_expr(c); if(is(c,",")) c->i++; }
+            if(c->failed) return;
+            if(!is(c,"}")){ fail(c,"a braced scalar initializer holds one expression"); return; }
+            c->i++; }
+          else v=p_expr(c);
+          v=null_pointer(c,v,&fty);                     /* `= 0`: a null function pointer, not an `int` (CF-NULLPTR; CF-RTFP) */
           bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=frid;} }
         if(is(c,",")){ c->i++; continue; }              /* another declarator off the same specifier */
         break;
@@ -7716,13 +7917,19 @@ static void p_stmt_inner(CC *c) {
       if(byte_off_access(c,&bb,&bf)){
         const tok *aop=pk(c); int cmp=is_compound_op(aop);
         if(cmp || tok_is(aop,"=")){ uint32_t val;
+          if(cmp && bf.is_atomic){ char ch=aop->s[0]; c->i++;   /* an `_Atomic` slot: one atomic read-modify-write, as
+                                                     * an `_Atomic` member's (CF-RTFP) */
+            uint32_t rhs=p_expr(c); bcir_ctype ft=field_slot(&bf);
+            const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc); (void)oc;
+            (void)emit_rmw(c,suf,&ft,bb.rid,0,0,1,rhs,bf.byte_off,bf.size,0,bf.is_volatile,BCIR_BND_ASSUMED);
+            eat(c,";"); return; }
           if(cmp){ char ch=aop->s[0]; c->i++;        /* `OP=`: load, the operation, store */
             uint32_t cur=emit_member(c,&bb,&bf,0);
             uint32_t rhs=p_expr(c);
             const char *suf; bcir_opcode oc; compound_binop(ch,&suf,&oc);
             val=binop_result(c,suf,cur,rhs); char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.bin.%s",suf);
             bcir_claim *b=new_claim(c,op,oc); if(b){b->n_rd=2;b->rd[0]=cur;b->rd[1]=rhs;b->n_wr=1;b->wr[0]=val;} }
-          else { c->i++; val=p_expr(c); }
+          else { c->i++; if(!bf.fp_sig || !fp_slot_value(c,&val)) val=p_expr(c); }
           store_member(c,&bb,&bf,val); eat(c,";"); return; }
         spec_end(c,&bm); c->ns=bns; c->nec=bnec; c->i=save+1; } }   /* a read: the expression statement lowers it */
     { plv lv; memset(&lv,0,sizeof lv);                /* `*q->a = v` / `OP= v`: its first element (CF-SPLIT2) */
@@ -8439,6 +8646,14 @@ static const char *decl_ty(bcir_emit_type_scratch *scratch,const bcir_func *f,ui
   snprintf(buf,n,"%s",tty(scratch,f,rid));
   return buf;
 }
+/* The type a function pointer `vr`, spelled `nm`, is stored through at a byte address (CF-RTFP; the oracle's
+ * `_fp_store`): a pointer to its own type -- its alias, or, for a function's name, which has none, `__typeof__(&*f)`, a
+ * pointer to the function whether `f` names it or holds one (C11 6.5.3.2p3). A store through a generic
+ * `void (**)(void)` slot, read back as the member's type, is undefined, and GCC at -O2 dropped it. */
+static const char *fp_slot_ty(const bcir_resource *vr,const char *nm,char *buf,size_t n){
+  if(vr->agg[0]) snprintf(buf,n,"%s *",vr->agg); else snprintf(buf,n,"__typeof__(&*%s) *",nm);
+  return buf;
+}
 /* A pointer to a volatile slot of C type `t`: the conventional `volatile T *`, or `T volatile *` when `t` is
  * itself a pointer type (a qualifier in front would qualify its pointee, not the slot). The oracle's
  * `_volatile_ptr`, byte-identical. */
@@ -8717,8 +8932,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       w+=snprintf(o+EO,on-EO,"%s %s = __imag__ %s;\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));
     else if(!strncmp(cl->op,"c.un.",5))                    /* `-`/`~` keep the operand width (long stays 64) */
       w+=snprintf(o+EO,on-EO,"%s %s = (%s%s);\n",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),unop_c(cl->op+5),rname(f,cl->rd[0],a));
-    else if(!strncmp(cl->op,"c.cast:",7))                  /* (type)operand -- width / float / pointer cast */
-      w+=snprintf(o+EO,on-EO,"%s %s = (%s)%s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),cl->op+7,rname(f,cl->rd[0],a));  /* decl_ty: a pointer-snapshot cast keeps `T *` */
+    else if(!strncmp(cl->op,"c.cast:",7)){                 /* (type)operand -- width / float / pointer cast */
+      const char *dt=decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb);   /* decl_ty: a pointer-snapshot cast keeps `T *` */
+      const char *to=cl->op+7;
+      while(!strncmp(to,"volatile ",9) || !strncmp(to,"_Atomic ",8)) to+=to[0]=='v' ? 9 : 8;
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s)%s;\n",dt,rname(f,cl->wr[0],d),
+                  strncmp(to,"fnptr",5) ? cl->op+7 : dt,   /* a function pointer, or a pointer to one: the temp's own
+                                                            * type, its alias -- `fnptr` names no C type (CF-RTFP) */
+                  rname(f,cl->rd[0],a)); }
     else if(!strcmp(cl->op,"c.select"))                    /* ternary: cond ? then : els -- the select's own
                                                             * (signed/unsigned) type, not a hardcoded
                                                             * uint32_t (see the c.const note below); a pointer
@@ -8806,6 +9027,12 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
           w+=snprintf(o+EO,on-EO,"*(%s)((volatile char *)%s%s + %lld + (size_t)%s * %lld) = %s;\n",
             vol_ptr(vol_slot_ty(&type_scratch,f,cl->rd[2],es,(int)(cl->n_imm>2?cl->imm[2]:0),st,sizeof st),vp,sizeof vp),
             amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,rname(f,cl->rd[2],d)); }
+        else if(vr && vr->is_funcptr){ char fs[BCIR_EMIT_TYPE+32];   /* an element of a member table of function pointers
+          * (`o.t[i] = f`, CF-FPTAB): through a pointer to its own type, as a member's store -- `uint64_t _v = f` does
+          * not compile (CF-RTFP; `fp_slot_ty`) */
+          w+=snprintf(o+EO,on-EO,"*(%s)((char *)%s%s + %lld + (size_t)%s * %lld) = %s;\n",
+            fp_slot_ty(vr,rname(f,cl->rd[2],d),fs,sizeof fs),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b),stride,
+            rname(f,cl->rd[2],d)); }
         else if(vr && vr->kind==BCIR_RK_AGGREGATE)    /* a struct/union element set from a struct VALUE (`s.v[i] = q`):
           * copy it whole, as the member store does -- a scalar `_v` of it does not compile (CF-STRUCTVAL) */
           w+=snprintf(o+EO,on-EO,"memcpy((char *)%s%s + %lld + (size_t)%s * %lld, &%s, %lld);\n",
@@ -8836,11 +9063,14 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
          * not over-reads a 4-byte temp; a float member keeps its float type; a pointer its `T *`. */
         const bcir_resource *vr=res_of(f,cl->rd[1]);
         if(vr && vr->is_funcptr){   /* a FUNCTION-POINTER member set from a funcptr value (`o->fn = g` /
-          * `o->fn = g_func`): store through a GENERIC funcptr lvalue so a function NAME decays to its address
-          * (a plain `memcpy(&g_func,8)` would copy the function's CODE; `void *` cannot hold a funcptr). The
-          * call site reads the member's real type, and function pointers round-trip through the cast. */
-          w+=snprintf(o+EO,on-EO,"*(void (**)(void))((char *)%s%s + %lld) = (void (*)(void))%s;\n",
-                      amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
+          * `o->fn = g_func`): store through a pointer to its own type, its alias, so a function NAME decays to its
+          * address (a plain `memcpy(&g_func,8)` would copy the function's CODE; `void *` cannot hold a funcptr) and
+          * the call site reads the member as the type it was stored as -- a store through a generic
+          * `void (**)(void)` read back as the member's type is undefined, and GCC at -O2 drops it (CF-RTFP; the
+          * oracle's `_fp_store`; `fp_slot_ty`). */
+          char fs[BCIR_EMIT_TYPE+32];
+          w+=snprintf(o+EO,on-EO,"*(%s)((char *)%s%s + %lld) = %s;\n",
+                      fp_slot_ty(vr,rname(f,cl->rd[1],b),fs,sizeof fs),amp,rname(f,cl->rd[0],a),off,rname(f,cl->rd[1],b));
         } else if(vr && vr->kind==BCIR_RK_AGGREGATE && !vr->is_array){   /* a struct/union member set from a struct VALUE (a nested
           * `{ ... }` member, `o.p = q`): copy the whole object -- a scalar `uintN _v = <struct>` is a type
           * error, and a too-narrow `_v` would under-read it. memcpy `sz` bytes straight from the source. */

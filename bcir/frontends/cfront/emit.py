@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from ...model import Claim
-from .ctype_model import CType, unqualified
+from .ctype_model import CType, pointer, unqualified
 from .lower import (
     AsmInfo,
     BreakNode,
@@ -247,6 +247,19 @@ def _funcptr_decl(ct: CType, name: str, sig: tuple = ()) -> str:
     # the function pointer's own qualifiers, below a `*` around it
     own = sig[0] if sig and depth else ()
     return f"{ret} (*{_qual_word(own)}{inner})({params})"
+
+
+def _fp_store(lf, dst: str, rid: int, ref) -> str:
+    """A function pointer stored at `dst`, a byte address: through a pointer to the value's own function-pointer
+    type, `*(RET (**)(PARAMS))(dst) = v;` -- the member's, so the store and a read of the member through its
+    declared type access one object as one type (C11 6.5p7). A store through a generic `void (**)(void)` slot,
+    read back as the member's `op_t`, is undefined, and GCC at -O2 dropped it: the emitted function called a null
+    pointer (CF-RTFP). A function's name decays to its address, as in any assignment, and is typed by its whole
+    function type (`LoweredFunc.fn_types`); one whose parameters are not yet typed keeps the generic slot."""
+    vt = lf.fn_types[rid] if rid in lf.fn_types else lf.rid_types.get(rid)
+    if vt is None:
+        return f"*(void (**)(void))({dst}) = (void (*)(void)){ref(rid)};"
+    return f"*({_funcptr_decl(pointer(vt), '')})({dst}) = {ref(rid)};"
 
 
 def _qual_type(ct: CType, sig: tuple) -> str:
@@ -756,7 +769,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     if c.op.startswith("c.un."):
         return deftmp(c.wr[0], f"({_UNOP[suf]}{ref(c.rd[0])})")
     if c.op.startswith("c.cast:"):  # (type)operand — width cast / reinterpret
-        return deftmp(c.wr[0], f"({c.op.split(':', 1)[1]}){ref(c.rd[0])}")
+        rt = lf.rid_types.get(c.wr[0])
+        # a function pointer, a pointer to one: spelled from the temp's type, which carries it whole (CF-RTFP)
+        to = _qual_type(rt, ()) if _has_fp(rt) else c.op.split(":", 1)[1]
+        return deftmp(c.wr[0], f"({to}){ref(c.rd[0])}")
     if c.op == "c.addrof":  # &lvalue -> a pointer value (T *t = &x;)
         rt = lf.rid_types.get(c.wr[0])
         ty = _cname(rt) if rt is not None else None
@@ -858,9 +874,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                 vt = lf.rid_types.get(c.rd[2])
                 if (
                     vt is not None and vt.kind == "funcptr"
-                ):  # into a member table (CF-FPTAB): through a
-                    # generic funcptr lvalue, as a member's store below (a memcpy of a designator copies code)
-                    return f"*(void (**)(void))({dst}) = (void (*)(void)){ref(c.rd[2])};"
+                ):  # into a member table (CF-FPTAB): through a pointer to
+                    # its own type, as a member's store below (a memcpy of a designator copies code)
+                    return _fp_store(lf, dst, c.rd[2], ref)
                 conv = (
                     "_Bool"
                     if (len(c.imm) > 2 and c.imm[2])
@@ -889,10 +905,10 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         # memcpy 4 bytes into 8, nor copy float bits into a double slot).
         vt = lf.rid_types.get(c.rd[1])
         if vt is not None and vt.kind == "funcptr":  # a funcptr member set from a funcptr value / a
-            # function NAME: store through a GENERIC funcptr lvalue so the name decays to its address (a plain
-            # `memcpy(&g_func,8)` copies the function's CODE; `void *` can't hold a funcptr). The call site reads
-            # the member's real type, and function pointers round-trip through the cast.
-            return f"*(void (**)(void))((char *){ptr} + {off}) = (void (*)(void)){ref(c.rd[1])};"
+            # function NAME: store through a pointer to its own type so the name decays to its address (a plain
+            # `memcpy(&g_func,8)` copies the function's CODE; `void *` can't hold a funcptr), and the call site
+            # reads the member as the type it was stored as (`_fp_store`)
+            return _fp_store(lf, f"(char *){ptr} + {off}", c.rd[1], ref)
         conv = (
             "_Bool"
             if (len(c.imm) > 2 and c.imm[2])
@@ -923,9 +939,19 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         sfx = "ull" if wide else "u"
         mask = (1 << width) - 1
         clear = ~(mask << bit_off) & ((1 << 64) - 1 if wide else 0xFFFFFFFF)
+        # a `_BitInt` value converts to the unit's type first: `v & 31u` of an `unsigned _BitInt(12)` is an
+        # `unsigned int` in C23, `_BitInt` arithmetic whose result is a standard type, which neither rail lowers --
+        # the emit re-parsed was refused (CF-RTFP; C converts it so anyway, so the twin's emit, never re-parsed, does
+        # without)
+        vt = lf.rid_types.get(c.rd[1])
+        val = (
+            f"({'uint64_t' if wide else 'uint32_t'}){ref(c.rd[1])}"
+            if vt is not None and vt.is_bitint
+            else ref(c.rd[1])
+        )
         return deftmp(
             c.wr[0],
-            f"({ref(c.rd[0])} & {clear}{sfx}) | (({ref(c.rd[1])} & {mask}{sfx}) << {bit_off})",
+            f"({ref(c.rd[0])} & {clear}{sfx}) | (({val} & {mask}{sfx}) << {bit_off})",
         )
     if c.op.startswith("c.call.libm:"):  # a <math.h> / <stdlib.h> call -> the real function
         callee = c.op.split(":", 1)[1]  # (no bcir_ twin; the harness links -lm/libc)

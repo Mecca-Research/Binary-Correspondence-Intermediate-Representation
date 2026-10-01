@@ -34,8 +34,9 @@ label addresses). On that projection the round trip IS a genuine fixed point -- 
 property, since the parser + emitter run a SECOND time on the emitter's own output and any op-graph
 asymmetry (an op dropped, doubled, or retyped on re-lowering) breaks it.
 
-The emit names the original's struct, union and enum types by their tags without defining them, so the
-classifier supplies the original's definitions (`_aggregate_defs`, read from the preprocessed source) ahead
+The emit names the original's struct, union and enum types by their tags without defining them, and its
+functions by their source names where it takes one as a value, so the classifier supplies the original's
+definitions, typedefs and function prototypes (`_aggregate_defs`, read from the preprocessed source) ahead
 of every emit it re-parses. Three idioms of the emit are fixed points of their own re-lowering (CF-RTWIDE):
   * a plain memory access emits as a `memcpy`, which re-lowers as the `<string.h>` libc edge
     (`c.call.libm:memcpy`) -- it had been a call to an undefined function (R18), which excluded every emit
@@ -52,11 +53,10 @@ of every emit it re-parses. Three idioms of the emit are fixed points of their o
 EXCLUDED fixtures (classified + pinned, exactly like a fairness gate -- a regression that GROWS the set
 is visible).  A fixture is excluded, never forced, when its emit legitimately leaves the re-parseable /
 idempotent subset:
-  * "emit-not-reparseable": the standalone emit, with the original's definitions, references a name only
-    the ORIGINAL source declared -- a file-scope object, a function it names by its source name, a struct
-    only ever declared (`struct opaque;`) -- or holds a form the standalone lowering refuses (a cast to a
-    function-pointer type, say). The emit is faithful C in context but not a self-contained translation
-    unit, so cfront cannot re-lower it.
+  * "emit-not-reparseable": the standalone emit, with the original's definitions and prototypes, references
+    a name only the ORIGINAL source declared -- a file-scope object, a struct only ever declared (`struct
+    opaque;`) -- or holds a form the standalone lowering refuses. The emit is faithful C in context but not
+    a self-contained translation unit, so cfront cannot re-lower it.
   * "masked-guard-not-idempotent": the emit of a `masked` (§5.12 bounds-promoted) access is
     `a[BCIR_CHK(rid, i, n, "site")]`. `BCIR_CHK` is a runtime macro absent from the standalone emit, so a
     re-parse reads it as a `c.call:BCIR_CHK`, and a re-emit re-wraps the index -- the guard count grows
@@ -136,28 +136,49 @@ _TAG_HEAD = re.compile(r"\b(?:struct|union|enum)\s*\w*\s*$")
 # What the definition scan reads: a brace, a semicolon, or a string or character literal, whose braces and
 # semicolons are no punctuation.
 _SCAN = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|[{};]')
+# The declarator of a function at the end of a declaration's head: a name, then its parameter list, whose
+# parameters may hold one more level of parentheses (a function-pointer parameter `uint32_t (*fn)(uint32_t)`).
+# An object's declarator -- `uint32_t (*gp)(uint32_t)` -- has no name before its first `(`.
+_FN_HEAD = re.compile(r"\b\w+\s*\([^()]*(?:\([^()]*\)[^()]*)*\)\s*$")
+# The function specifiers and storage class a prototype the classifier supplies drops: the emit defines the
+# function under another name, so the original's is declared, external, and defined in no unit the re-parse sees.
+_FN_LINKAGE = re.compile(r"\b(?:static|inline|__inline__|__inline)\b\s*")
+
+
+def _prototype(head: str) -> str:
+    """A function's declaration from the head of its definition or prototype, external (CF-RTFP)."""
+    return _FN_LINKAGE.sub("", head).strip() + ";"
 
 
 def _aggregate_defs(src: str, includes: dict | None = None) -> str:
-    """The original's file-scope struct, union and enum definitions, each the whole declaration that defines
-    one -- nested members, attributes and a typedef's names with it (`struct __attribute__((packed)) hdr
-    {...};`, `typedef struct t {...} __attribute__((packed)) T;`) -- read from the preprocessed source (its
-    macros expanded, its comments gone), for its emit, which names the tags without defining them."""
+    """The original's file-scope declarations its emit names without making: each struct, union and enum
+    definition, the whole declaration that defines one -- nested members, attributes and a typedef's names with
+    it (`struct __attribute__((packed)) hdr {...};`, `typedef struct t {...} __attribute__((packed)) T;`); each
+    typedef, which a definition may name (`typedef float _Complex cf;`); and each function the original defines
+    or prototypes, as an external prototype -- the emit names a function as a value by its source name
+    (`(void (*)(void))op_add`, CF-RTFP), where it defines and calls `bcir_op_add`. Read in order from the
+    preprocessed source (its macros expanded, its comments gone)."""
     text = preprocess(src, includes=includes)
     out, depth, start, tagged = [], 0, 0, False
     for m in _SCAN.finditer(text):
         ch, i = m.group(), m.start()
         if ch == "{":
             if depth == 0:
-                tagged = _TAG_HEAD.search(_ATTRIBUTE.sub(" ", text[start:i])) is not None
+                head = _ATTRIBUTE.sub(" ", text[start:i])
+                tagged = _TAG_HEAD.search(head) is not None
+                if not tagged and "=" not in head and _FN_HEAD.search(head):
+                    out.append(_prototype(text[start:i]))  # a function's definition: its prototype
             depth += 1
         elif ch == "}":
             depth -= 1
             if depth == 0 and not tagged:
                 start = i + 1  # a function body ends its declaration
         elif ch == ";" and depth == 0:
-            if tagged:
+            head = _ATTRIBUTE.sub(" ", text[start:i])
+            if tagged or head.split()[:1] == ["typedef"]:
                 out.append(text[start : i + 1].strip())
+            elif "=" not in head and _FN_HEAD.search(head):
+                out.append(_prototype(text[start:i]))  # a prototype
             start, tagged = i + 1, False
     return "\n".join(out)
 
@@ -385,8 +406,14 @@ def test_roundtrip_smoke_and_exclusion_set_is_pinned():
     # edge, the loop scaffold and the `= {}` zero baseline re-lower as themselves -- 52 fixtures joined (51 of the
     # corpus and the new `cfront_strmem.c`), and the control-flow-not-idempotent reason retired (of its 37
     # fixtures, 17 joined, 18 hold a masked guard as well and two name what only the original declares).
-    assert len(included) == 117, (
-        f"included-set size changed from the pinned 117 to {len(included)} -- a "
+    # 123 since CF-RTFP: both rails read the emit's casts to a function-pointer type and to a pointer to an
+    # `_Atomic` object, and its function-pointer and atomic stores at a byte offset, as the member accesses they
+    # were emitted from; the classifier supplies the original's typedefs and its functions' prototypes, which the
+    # emit names; a `_BitInt` stored to a bit-field converts to the unit's type -- `cfront_fnptrmember.c`,
+    # `cfront_signedfnptr.c`, `cfront_complexalign.c`, `cfront_bitint_bitfield.c`, `cfront_fnptrlocal.c` and
+    # `cfront_fpret.c` joined.
+    assert len(included) == 123, (
+        f"included-set size changed from the pinned 123 to {len(included)} -- a "
         f"fixture moved across the round-trip boundary; re-classify + re-pin. "
         f"included={sorted(included)}"
     )
@@ -680,17 +707,22 @@ def test_definitions_are_read_whole_from_the_preprocessed_source():
     """CF-RTWIDE: the classifier supplies each file-scope struct, union and enum definition whole -- nested and
     anonymous members, `__attribute__((...))` before the tag or after the brace, a typedef's names, a macro in
     an extent -- from the preprocessed source, so a comment inside a definition (which once read as a tag named
-    by `struct align ...`) and a brace in a string literal cost nothing; a function, a prototype and a table
-    definition are no definitions of a type."""
+    by `struct align ...`) and a brace in a string literal cost nothing; a table definition is no declaration
+    it supplies. CF-RTFP: and each typedef, which a definition may name, and each function the original defines
+    or prototypes, as an external prototype -- `static` and `inline` dropped, as the emit defines the function
+    under its own name -- but no object, a function pointer's among them."""
     src = r"""#include <stdint.h>
 #define N 3
 /* struct commented { int x; }; */
 struct __attribute__((packed)) hdr { uint8_t c; uint32_t n; };  // struct align 1
 struct outer { union { uint32_t w; struct { uint16_t lo, hi; }; }; struct { int x; } pt; uint8_t b[N]; };
 typedef struct tp { uint8_t c; } __attribute__((packed, aligned(4))) TP;
+typedef float _Complex cf;
 enum mode { M_A, M_B = 4 };
 static const uint32_t tab[2] = { 1u, 2u };
+static uint32_t (*gp)(uint32_t);
 uint32_t g(const char *s);
+static inline uint32_t h(uint32_t (*fn)(uint32_t), uint32_t v) { return fn(v); }
 uint32_t f(struct hdr *h) { const char *s = "}{;"; return h->n + g(s) + tab[1]; }
 struct later { struct outer o; };
 """
@@ -698,10 +730,56 @@ struct later { struct outer o; };
         "struct __attribute__((packed)) hdr { uint8_t c; uint32_t n; };",
         "struct outer { union { uint32_t w; struct { uint16_t lo, hi; }; }; struct { int x; } pt; uint8_t b[3]; };",
         "typedef struct tp { uint8_t c; } __attribute__((packed, aligned(4))) TP;",
+        "typedef float _Complex cf;",
         "enum mode { M_A, M_B = 4 };",
+        "uint32_t g(const char *s);",
+        "uint32_t h(uint32_t (*fn)(uint32_t), uint32_t v);",
+        "uint32_t f(struct hdr *h);",
         "struct later { struct outer o; };",
     ]
     unspaced = [
         re.sub(r"\s", "", d) for d in _aggregate_defs(src).splitlines()
     ]  # the preprocessor's spacing
     assert unspaced == [re.sub(r"\s", "", d) for d in want], unspaced
+
+
+# CF-RTFP: the fixtures whose emits the re-parse had refused -- a store of a function pointer through a generic slot
+# at a byte offset, `*(void (**)(void))((char *)p + K) = (void (*)(void))f;` (`fnptrmember`, `signedfnptr`); an
+# `_Atomic` member at one, `(*(_Atomic T *)((char *)p + K))`, beside a typedef only the original declares
+# (`complexalign`); a `_BitInt` stored to a bit-field (`bitint_bitfield`); a function named as a value by its source
+# name, which only the original declares (`fnptrlocal`, `fpret`).
+_RTFP_JOINED = (
+    "cfront_fnptrmember.c",
+    "cfront_signedfnptr.c",
+    "cfront_complexalign.c",
+    "cfront_bitint_bitfield.c",
+    "cfront_fnptrlocal.c",
+    "cfront_fpret.c",
+)
+
+
+def test_function_pointer_and_atomic_emits_reach_a_fixed_point():
+    """CF-RTFP. The emit spells a function-pointer member store as a store through a generic slot at its byte offset,
+    `*(void (**)(void))((char *)p + K) = (void (*)(void))f;`, an `_Atomic` member access as one through a pointer to
+    the `_Atomic` type, and a function taken as a value by its source name; it converts a `_BitInt` stored to a
+    bit-field to the unit's type. Both rails had refused the casts and the slots, the re-parse had refused a typedef
+    and a function only the original declared, and `_BitInt` beside a bit-field's type. Supplied with the original's
+    definitions, typedefs and prototypes (as the classifier supplies them: each fixture is in the gate's included
+    set), over three rounds every emit compiles with the original's system headers where a C compiler is visible
+    and re-lowers cleanly, and the observable signature is a fixed point."""
+    for fx in _RTFP_JOINED:
+        assert _classify(fx) == ("included", ""), fx
+        src = open(f"{_C}/{fx}", encoding="utf-8").read()
+        headers = "".join(f"{line}\n" for line in src.splitlines() if line.startswith("#include <"))
+        defs = _aggregate_defs(src, _includes_for(fx))
+        rounds = [compile_unit(src, check_clang=False, includes=_includes_for(fx))]
+        for n in range(1, 4):
+            e = defs + "\n" + _emit_joined(rounds[-1])
+            if _CC:
+                err = _c_errors(headers + e)
+                assert not err, f"{fx}: e{n} does not compile:\n{err}\n{e}"
+            g = _reparse(e)
+            assert g is not None, f"{fx}: e{n} with its definitions did not re-lower cleanly:\n{e}"
+            rounds.append(g)
+        sigs = [_observable_signature(g) for g in rounds[1:]]
+        assert sigs[0] == sigs[1] == sigs[2], f"{fx}: observable signature drifted: {sigs}"

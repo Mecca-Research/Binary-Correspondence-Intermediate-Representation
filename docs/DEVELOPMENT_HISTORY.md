@@ -2060,11 +2060,11 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   Found, not fixed here (each a suggested follow-up):
   - the re-parse refuses three forms the emit writes: a cast to a function-pointer type (`cfront_fnptrmember.c`,
     `cfront_signedfnptr.c`), a `_Complex` type in a cast (`cfront_complexalign.c`), and `_BitInt` arithmetic beside
-    a bit-field's standard type (`cfront_bitint_bitfield.c`);
+    a bit-field's standard type (`cfront_bitint_bitfield.c`) (closed by CF-RTFP, below);
   - the oracle refuses a unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long
-    size_t;`, common in freestanding code), which the twin accepts;
+    size_t;`, common in freestanding code), which the twin accepts (closed by CF-RTFP, below);
   - the twin refuses a braced initializer of a function-pointer local (`uint32_t (*fp)(uint32_t) = {g1};`), which
-    the oracle lowers.
+    the oracle lowers (closed by CF-RTFP, below).
 
   CF-DECLS and CF-ANON (2026-09-30) made the emits declare functions and name types as C does, on both rails.
   RED was measured on the parent (`a8fa97fd`).
@@ -2616,7 +2616,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a function pointer initialized or assigned with a function of another type (`op_t g = two;` of a two-parameter
     function, `op_t g = va;` of a variadic one) lowers on both rails, which C forbids (6.5.16.1p1) and Clang rejects;
   - a cast to a function-pointer typedef (`(op_t)inc`, `(op_t)0`) lowers on the twin and is `unknown type 'op_t'` on
-    the oracle -- beside CF-RTWIDE's cast to an inline function-pointer type, which the round trip refuses;
+    the oracle -- beside CF-RTWIDE's cast to an inline function-pointer type, which the round trip refuses (closed
+    by CF-RTFP, below);
   - a function declared to return a function pointer by a nested declarator (`T (*f(P))(Q)`) is refused on both rails,
     now for one reason; a typedef for its return type is the spelling both take.
 
@@ -2752,6 +2753,122 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     lowered by the oracle, and `(pp + 1)[0][0]` is refused on both rails for reasons of their own;
   - `x[i]->m` of an element that is a struct, and `p[i]->m` through a pointer to one, are invalid C that both rails
     lower as `x[i].m`.
+
+  CF-RTFP (2026-10-01) closed CF-RTWIDE's three follow-ups -- the round trip's re-parse of a cast to a function-pointer
+  type, of an `_Atomic` member access beside a typedef only the original declares, and of `_BitInt` beside a
+  bit-field's type; a unit that declares `size_t` itself; a braced function-pointer initializer on the twin -- with
+  CF-FPRET's cast to a function-pointer typedef, and the defects found beside them. RED was measured on the parent
+  (`e4424bdf`).
+  - The defects: the emit stores a function-pointer member through a generic slot at its byte offset, `*(void
+    (**)(void))((char *)p + K) = (void (*)(void))f;`, and reaches an `_Atomic` member as `(*(_Atomic T *)((char *)p +
+    K))`. Both rails refused every cast to a function-pointer type (`(R (*)(P))f`, `(R (**)(P))p`) and to a pointer to
+    an `_Atomic` type; the oracle refused `(op_t)f` of a function-pointer typedef as an unknown type (its cast path
+    rebuilt the type from its base, dropping the function type) where the twin lowered it as an integer temp. The emit
+    names a function it takes as a value by its source name (`op_add`) and a typedef the original declares (`typedef
+    float _Complex cf;`), and the classifier supplied neither; it stored a `_BitInt` into a bit-field as `(v & 31u)`,
+    `_BitInt` arithmetic beside a standard type, which the oracle refuses. The oracle read `size_t` in `typedef unsigned
+    long size_t;` as a keyword of the specifier before it -- its builtin scalar names ran into the keyword run -- and
+    refused every unit declaring a standard type itself. The twin refused `uint32_t (*fp)(uint32_t) = {g1};` (6.7.9p11
+    allows the braces) and declared `uint32_t (*fp)(uint32_t) = 0;` through an `int` temp, which GCC rejects.
+  - Found beside them, and closed: both rails cast the null pointer constant through an `int` temp, `int t = 0; T *q =
+    (T *)t;`, which GCC rejects (a pointer from an integer of another size), for any pointer type; a cast to an array
+    type (C11 6.5.4p2) lowered on the oracle as the pointer the array decays to (`(uint32_t[2])s`), was refused on the
+    twin as an undeclared name, and lowered on both to two claim graphs for an array of function pointers; `sizeof` of
+    an array compound literal was the size of a pointer on the twin (`sizeof((uint32_t[3]){1u, 2u, 3u})` 8 where C
+    says 12, a silent miscompile), and `sizeof (T[N]){...}` without parentheses was refused on both; `sizeof` of an
+    array of function pointers counted one pointer on the twin; the twin refused a typedef of a table of function
+    pointers (`typedef uint32_t (*tab_t[2])(uint32_t);`) and of a pointer to one, which the oracle lowers, typed
+    `__typeof__(t[0])` of a table's element and `__typeof__(o.fn)` as integers (its emit failing its verification),
+    and refused `( E ) = v;` and `( E ) OP= v;` where a statement begins -- the emit's own spelling of an atomic member
+    store -- which the oracle lowers. Reading `_Atomic` as a cast's type name opened a compound literal of `_Atomic`
+    type, an `_Atomic` object, on both rails, which CF-ATOMIC had refused as a parse error; and the casts opened a
+    compound literal of function pointers on the oracle (`(op_t[2]){f, g}[i](x)`), which the twin refused.
+  - Found by running every probe's emits against the original under both compilers, and closed -- each on the parent
+    too: each emit stored a function pointer into a member through a generic slot, `*(void (**)(void))((char *)p + K)
+    = (void (*)(void))f;`, and read it back as the member's own type, which C leaves undefined (6.5p7); GCC at -O2
+    dropped the store, so a unit that fills an array of structs of function pointers and calls through one called a
+    null pointer -- under both rails' emits, digest-equal, a silent miscompile. The twin stored a function into an
+    element of a member table through `uint64_t _v = f`, which does not compile. A compound literal of a pointer type
+    was a `uint32_t` on the twin, the pointer cut into it -- `*(T *){p}` refused as a dereference of a non-pointer,
+    `&(T *){p}` a `T *`, `(op_t){f}(x)` refused -- and its `{0}` an `int` on both rails. And Clang (18, 22 and 23)
+    rejects a cast to an `_Atomic` scalar type wherever its value is taken -- `uint32_t y = (_Atomic uint32_t)x;` --
+    typing it `_Atomic` where C17 6.5.4p5 and GCC drop the qualifier, so the lowering of it this slice had added could
+    not be held to the original.
+  - RED: on the parent the three new tests fail, and so do the three this changes -- the round trip's pin and its
+    definitions test, against the parent's classifier, and CF-ATOMIC's refusal test, whose `_Atomic` casts and
+    literals the parent refuses as parse errors (`expected ')', got IDENT 'uint32_t'`). Both rails refuse
+    `runtime/c/cfront_rtfp.c` and `_RTFP_CALLS` (the oracle: `expected ')', got PUNCT '('`; the twin: `)` expected).
+    Of the 12 forms `_RTFP_REFUSED` holds, the parent oracle gives 8 another verdict and the twin 12; of the 33
+    `_RTFP_LOWERED` and `_RTFP_UNITS` hold, the oracle refuses 16 and the twin 31, and of the ones both lower there,
+    the emits of an array of structs filled with functions and called through crash under GCC at -O2 on both rails,
+    and the twin's emit of a store to a member table's element does not compile.
+    `cfront_fnptrmember.c` is excluded from the round trip, whose pinned count is 119 on the parent with the new
+    classifier -- which alone brings `cfront_fnptrlocal.c` and `cfront_fpret.c` in.
+  - What landed: one reading of a type name per rail -- the oracle's `_fp_type_name`, the twin's `p_cast_type` -- read
+    by casts, `sizeof`, `_Alignof`, the byte-offset fold's cast and the slot store, takes an abstract function-pointer
+    declarator and a typedef'd function pointer whole and refuses a named one (`TYPE_NAME_NAMED`); `_Atomic` starts a
+    type name on both. A cast to a function pointer is `c.cast:fnptr`, a pointer to one `fnptr *`, a pointer to an
+    `_Atomic` object `_Atomic T *`; the emit spells the cast by the temp's own type, the alias. The byte-offset fold
+    (the oracle's `_byte_offset_access`, the twin's `bo_match`) takes a function-pointer slot, stored as the member
+    store it was emitted from with its cast dropped (`_assign`, `fp_slot_value`), and an `_Atomic` integer or floating
+    access -- a volatile one only of a device region, as before -- as one atomic operation, a compound and a step
+    included (`emit_rmw`; the twin's `deref_incdec` form 5). A cast of an array type is refused as `CAST_ARRAY`, a
+    compound literal of an `_Atomic` type as `ATOMIC_LITERAL`, and a cast to an `_Atomic` type as `CAST_ATOMIC` --
+    spelled, `_Atomic(T)`, a typedef of one, under `sizeof` and `typeof` -- which CF-CALIGN had refused as a parse
+    error; a cast to a pointer to an `_Atomic` object, the emit's own, lowers. A null pointer constant cast to a pointer
+    is a null pointer of that type (`_null_pointer`, `null_pointer`). The oracle's keyword run ends at a builtin
+    scalar name after a type, which is then the declarator. On the twin: the braced function-pointer initializer
+    (`{f}`, `{f,}`, `{}`; two expressions refused as the oracle refuses them) and a null one; a typedef through
+    `fp_inline_decl`, its element spelled by a synthesized alias; a compound literal of function pointers, called
+    through (`call_value`); `sizeof` of a compound literal from its type name (`sz_literal`, `literal_close`; the
+    oracle's `_literal_follows`), one whose initializer sizes it refused as the oracle refuses it; `typeof` of a
+    function-pointer value by its function type (`res_sig`); and `( E ) = v;` read as `E = v;` when E is an lvalue of
+    unary `*`s and postfix operators (`up_paren_lvalue` in `unparen_body`). The emit converts a `_BitInt` stored to a
+    bit-field to the unit's type, and the classifier supplies the original's typedefs and each function it defines or
+    prototypes, as an external prototype. Each emit stores a function pointer at a byte offset -- a member, an element
+    of a member table -- through a pointer to its own type, `*(R (**)(P))((char *)p + K) = f;`, which a read of the
+    member's type may alias: the oracle's `_fp_store`, a function's name typed whole by `LoweredFunc.fn_types` (its rid
+    type carries the return alone), and the twin's `fp_slot_ty`, a value by its alias and a function's name by
+    `__typeof__(&*f)`. A compound literal of a pointer type is a pointer local of its type on the twin, its `{0}` a null
+    pointer on both, `&` of one a pointer one level deeper (`addr_temp`, the one predicate `&v` shares now), and one
+    of a function-pointer type is called through.
+  - Two earlier tests pinned what CF-RTFP changes: CF-RTVOL's near miss `*(volatile _Atomic uint32_t *)((char *)d +
+    4)` now folds as one atomic access (it moved to the folded forms, each emit run against the original), and
+    CF-ATOMIC's refusal of `(_Atomic uint32_t)x`, a parse error on both rails, names its reason now (`CAST_ATOMIC`)
+    and holds the other spellings of the cast.
+  - G10: the shared fixture keeps each indirect call on one function of the unit; calls through a table or a select of
+    two functions and through a function pointer read from memory are `_RTFP_CALLS`, the test's own unit, so the rows
+    stay at their bounds.
+  - Outcomes: the round trip reaches its fixed point for 123 fixtures (117 before): `cfront_fnptrmember.c`,
+    `cfront_signedfnptr.c`, `cfront_complexalign.c`, `cfront_bitint_bitfield.c`, `cfront_fnptrlocal.c` and
+    `cfront_fpret.c` joined, each emit compiling with the original's headers over three rounds; the new
+    `runtime/c/cfront_rtfp.c` is excluded for its masked guards. It and `_RTFP_CALLS` lower to one claim graph on the
+    four targets and both emits run as the original under Clang and GCC with the mixes `_QUALS_WERROR` names made
+    errors. `_RTFP_REFUSED` (12) is refused on both rails for the one reason each names, and `_RTFP_LOWERED` (31) and
+    `_RTFP_UNITS` (2) lower alike, each emit the original where `f` takes a `uint32_t` -- at -O2, where GCC exploits
+    what the generic slot left undefined. Beyond the tests, 207 probe forms were compared on the four targets: 151
+    lower to one claim graph, 43 are refused on both rails for one reason, and the 13 that split are the follow-ups
+    below; every emit of the ones that lower built and ran against the original under both compilers (604 builds,
+    436 runs). Every other fixture's summary and digest is the parent's on both rails.
+  - Faults: `tools/testing/faults/cfront-roundtrip.json` takes 54 more -- 20 on the oracle, 2 on the classifier, 32 on
+    the twin -- each caught by its own test (the table now holds 76). The first sweep caught 42 of the first 43: an
+    `_Atomic` cast that kept its qualifier (O54) left the claim graph as it was and declared the emit's temp `_Atomic`,
+    so the witness, comparing claim graphs, could not see it. Holding the emit to the original instead -- the cast's
+    and every probe's, under both compilers -- is what found Clang rejecting the cast, the slot store GCC dropped and
+    the pointer compound literal; O54 now injects the cast's lowering, and the 11 faults of those three are caught with
+    it. Three faults of `volatile.json` whose anchors this change rewrote were re-anchored and are caught again.
+  Found, not fixed here (each a suggested follow-up):
+  - a step of a volatile access at a byte offset, `(*(volatile uint32_t *)((char *)p + 4))++`, is refused on both
+    rails for reasons of their own;
+  - a call through a function-pointer member of an indexed struct element, `a[i].fn(s)`, is refused on both rails
+    for reasons of their own (the oracle has no subscript base), and reading that member as a value, `op_t g =
+    a[i].fn;`, is refused by the oracle (`array-of-structs non-scalar element field`) and lowered by the twin;
+  - `typeof` of a call, of `?:` and of a function designator is refused by the oracle as not yet supported and lowered
+    by the twin, whose `typeof(f)` fails its own verification;
+  - `sizeof` of a compound literal its initializer sizes, `sizeof((uint32_t[]){1u, 2u})`, is refused on both rails,
+    where C sizes it;
+  - an assignment to an expression that is no lvalue -- `(a, b) = s`, `(s ? a : b) = 1u`, `(x + 1u) = s`, `(x++) = s`
+    -- is refused on both rails for reasons of their own.
 
 ---
 

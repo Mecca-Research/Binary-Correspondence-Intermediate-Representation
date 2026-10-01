@@ -353,10 +353,28 @@ _mm_sfence();                      //                   store (release) fence ->
   prototype's, and two function types that differ only in a qualifier are two types (`?:` of them is refused). The
   emit spells its own objects without qualifiers, so where C converts none -- `char **` passed to `const char *const
   *`, a `const T *` result -- a call casts.
+- Casts to a function-pointer type -- spelled inline (`(uint32_t (*)(uint32_t))f`), through a typedef (`(op_t)f`),
+  or a pointer to one (`(uint32_t (**)(uint32_t))p`) -- and `0` cast to any pointer type, the null pointer of that
+  type. `_Atomic` starts a type name, and a pointer to an `_Atomic` member at its byte offset,
+  `*(_Atomic T *)((char *)p + K)`, reaches the member as one atomic operation, a compound assignment and a step
+  included. With the function-pointer store through a pointer to its own type, `*(R (**)(P))((char *)p + K) = f;`
+  (a generic `*(void (**)(void))((char *)p + K) = (void (*)(void))f;` reads too), these are the forms each emit
+  writes for a member it reaches at its byte offset, so the emit of a unit with a function-pointer or `_Atomic`
+  member reads back.
+- A typedef of a table of function pointers or of a pointer to one (`typedef uint32_t (*tab_t[2])(uint32_t);`, `pp_t`
+  of `uint32_t (**)(uint32_t)`) as a local, a global, a parameter or a member; a compound literal of function
+  pointers, called through (`(op_t[2]){f, g}[i](x)`); `__typeof__` of an element or a member that is a function
+  pointer (`__typeof__(t[0])`, `__typeof__(o.fn)`); a braced function-pointer initializer (`op_t g = {f};`, `= {}`,
+  C11 6.7.9p11). `( E ) = v;` and `( E ) OP= v;` of an lvalue `E`: the parentheses change nothing (6.5.1p5).
+- A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`), as freestanding
+  code does.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
   `(struct P[]){...}[i].field`, and **multi-dimensional aggregate-element** `(struct P[A][B]){...}[i][j].field`.
+  `sizeof` of a sized one is the array's size (C11 6.5.2.5p4), parenthesized or not (`sizeof (T[3]){...}`). A
+  compound literal of a pointer or function-pointer type (`(uint32_t *){&g}`, `&(uint32_t *){&g}`, `(op_t){f}(x)`)
+  is an object of its type, and `0` or `{}` in one is a null pointer.
 - Local array declarations with initializers, including nested-brace multi-dim (`T a[A][B]={{..},{..}}`),
   inferred-size (`T a[]={..}`), and array-of-structs (`struct P a[N]={{..},{..}}`).
 - **Computed goto** — the GNU label-as-value `&&L` (a `void *`) and the indirect `goto *p`.
@@ -448,8 +466,21 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   `*` past the eighth from the base: refused (`a qualified pointer nested more than 8 deep is not supported`).
 - A member access straight through an element that is a pointer (`arr[i]->m`, `pp[i]->m`, `o.p[i]->m`): refused on
   both rails (`unsupported base expression Index`); read the element first (`T *e = arr[i]; e->m`).
-- A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`): the Python
-  reference refuses the declaration, which the C twin accepts -- a split recorded for follow-up.
+- A cast to an array type, which C forbids (6.5.4p2) -- `(uint32_t[2])s`, `(tab_t)f` of a table typedef: refused on
+  both rails (`a cast to an array type`). A type name that names an identifier (`(uint32_t (*p)(uint32_t))f`,
+  6.7.7p1): refused (`a type name names an identifier`). A compound literal of an `_Atomic` type, an `_Atomic`
+  object (`&(_Atomic uint32_t){x}`): refused (`a compound literal of \`_Atomic\` type is not supported`). A cast to an
+  `_Atomic` type (`(_Atomic uint32_t)x`, a typedef of one, under `sizeof` or `typeof` too): refused (`a cast to an
+  \`_Atomic\` type is not supported`) -- C17 6.5.4p5 gives it the unqualified type, as GCC does, but Clang types it
+  `_Atomic` and rejects it as an operand; a cast to a pointer to an `_Atomic` object lowers. A braced
+  scalar or function-pointer initializer of more than one expression, or nested braces: refused (`a braced scalar
+  initializer holds one expression`).
+- `sizeof` of a compound literal its initializer sizes (`sizeof((uint32_t[]){1u, 2u})`, which C sizes as two
+  elements): refused on both rails (`sizeof of an incomplete type`) -- a recorded follow-up; give the literal its
+  dimension. A call through a function-pointer member of an indexed struct element (`a[i].fn(s)`): refused on both
+  rails; take the element first (`struct ops *e = &a[i]; e->fn(s)`). Two splits recorded for follow-up: reading
+  that member as a value (`op_t g = a[i].fn;`), and `__typeof__` of a call, of `?:` or of a function designator,
+  are refused by the Python reference as not yet supported and lowered by the C twin.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18

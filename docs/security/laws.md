@@ -922,6 +922,18 @@ digest or the grammar still refused each case, for another reason. Each case now
 resealed log (`_reseal` recomputes the count and the digest after the tamper) reaches the grammar
 and report laws alone, and a forged record the intake decides exactly as the original reaches only
 the digest. Faults: `replay.json`, 7 of 7.
+CF-RTFP instance (2026-10-01): a witness that compares claim graphs cannot see a defect that leaves
+them as they are. An `_Atomic` cast that kept its qualifier (`O54` as first written) declared the
+emit's temp `_Atomic` and changed no claim, so the test comparing the cast's graph with the plain
+cast's passed with it in place; and both rails' emits stored a function pointer through a generic
+`void (**)(void)` slot and read it back as the member's type -- digest-equal, undefined (C11 6.5p7),
+and turned by GCC at -O2 into a call through a null pointer. The witness for an emit is the emit run
+against the original, under each compiler and at the optimization level a user builds with: holding
+every probe's emit to the original under Clang and GCC found the slot store, the pointer compound
+literal and Clang's rejection of the `_Atomic` cast, none of which a digest records. Witnesses:
+`_RTFP_LOWERED` in `test_function_pointer_types_refused_and_lowered_alike_on_both_rails`, each emit run
+at -O2 under both compilers; `test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails`.
+Faults (`cfront-roundtrip.json`): `O54`, `O58`, `O59`, `T77`, `T78`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 
@@ -1376,6 +1388,22 @@ pointers read the pointer's bytes as the struct -- a silent miscompile the oracl
 flattened every subscript of `pp[i][j].f` to one index walk the chain as the rest do (`index_chain`).
 Witnesses: `_IDXARROW_REFUSED`, `cfront_idxarrow.c` and `_IDXARROW_LOCALS` in
 `test_elements_that_are_pointers_run_as_the_original`. Faults (`cfront-quals.json`): `IT1`-`IT5`.
+CF-RTFP instance (2026-10-01): "what does this type name name" was read by each site on its own. The
+oracle's cast path rebuilt the type from its base and its `*`s, so a function-pointer typedef's
+function type was dropped (`(op_t)f`, an unknown type) and an abstract function-pointer declarator
+was a parse error, while `sizeof` read its operand another way; the twin's cast branch, `sizeof`,
+`_Alignof` and the byte-offset fold's cast each called `p_type`, which reads no declarator, and
+`sizeof` of a compound literal answered from the lowered value -- the pointer the array decays to,
+a silent miscompile. One reader per rail answers now (the oracle's `_fp_type_name`, the twin's
+`p_cast_type` with `fp_name_dims`), read by every cast, `sizeof`, `_Alignof`, the fold's cast and the
+slot store, and a compound literal under `sizeof` is read by its type name (`_literal_follows`,
+`literal_close`, `sz_literal`). The precondition held outside the reader was "a type name is a
+specifier and `*`s", which the emit's own casts break.
+Witnesses: `cfront_rtfp.c` and `_RTFP_CALLS` in
+`test_casts_to_function_pointer_and_atomic_types_run_as_the_original`; `_RTFP_REFUSED`, `_RTFP_LOWERED`
+and `_RTFP_UNITS` in `test_function_pointer_types_refused_and_lowered_alike_on_both_rails`; the round
+trip's `test_function_pointer_and_atomic_emits_reach_a_fixed_point`. Faults (`cfront-roundtrip.json`):
+`O39`, `O52`, `T51`, `T62`, `T63`, `T64`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

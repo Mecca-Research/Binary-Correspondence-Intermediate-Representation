@@ -23,6 +23,9 @@ from .lower import (
     GENERIC_QUALIFIED,
     QUAL_DEEP,
     QUAL_LEVELS,
+    TYPE_NAME_NAMED,
+    CAST_ARRAY,
+    ATOMIC_LITERAL,
     VOLATILE_PTR,
     CLowerError,
     fold_constant,
@@ -941,8 +944,15 @@ class _Parser:
                 self.nxt()
                 break
             elif w in _TYPE_KW or is_scalar_name(w):
+                if w not in _TYPE_KW and words:
+                    # `typedef unsigned long size_t;`: a <stdint.h> or <stddef.h> name is a typedef name, no keyword,
+                    # so after a type it is the declarator, as any name is -- a unit may declare it itself (CF-RTFP;
+                    # the twin's `p_type`), and its typedef then names the type, as the twin's does
+                    break
                 words.append(w)
                 self.nxt()
+                if w not in _TYPE_KW:  # ... and alone it is the whole type
+                    break
             else:
                 break
         # declaration specifiers come in any order (C11 6.7p1): a qualifier or storage class after a
@@ -1743,7 +1753,7 @@ class _Parser:
             return cast.Unary(op, self._unary())
         if self._is_cast():  # (type)operand — a cast binds at the unary level
             self.eat("PUNCT", "(")
-            tref = self._type_spec()
+            tref = self._fp_type_name(self._type_spec())
             ptr, pq = (
                 self._stars()
             )  # `(uint32_t *)p` — a pointer cast; `(char *const *)p` (CF-QUALS)
@@ -1758,17 +1768,22 @@ class _Parser:
                     "a pointer to a typedef'd array is not supported", pos=self.peek().pos
                 )
             # the type-name keeps a typedef's pointer and array shape (`(ip)v` of `typedef T *ip`, a
-            # `(row_t){...}` literal of `typedef T row_t[N]`), which rebuilding it from its base dropped
-            tref = cast.TypeRef(
-                base=tref.base,
+            # `(row_t){...}` literal of `typedef T row_t[N]`), which rebuilding it from its base dropped -- and a
+            # function pointer's return and parameters (`(op_t)f`, CF-RTFP), which rebuilding it dropped too
+            tref = dataclasses.replace(
+                tref,
                 ptr=tref.ptr + ptr,
                 array=tuple(dims) + tuple(tref.array),
-                aggregate=tref.aggregate,
-                quals=tref.quals,
-                bit_width=tref.bit_width,
                 ptr_quals=_join_levels(tref, ptr, pq),
             )
-            if self.at("PUNCT", "{"):  # `(type){ init }` — a C99 compound literal, not a cast
+            literal = self.at("PUNCT", "{")
+            # a cast names no array type (C11 6.5.4p2), and no rail models an `_Atomic` object a compound literal
+            # would make (CF-RTFP)
+            if tref.array and not literal:
+                raise CParseError(CAST_ARRAY, pos=self.peek().pos)
+            if literal and "_Atomic" in tref.quals and not tref.ptr:
+                raise CParseError(ATOMIC_LITERAL, pos=self.peek().pos)
+            if literal:  # `(type){ init }` — a C99 compound literal, not a cast
                 # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`), under `&`
                 # (`&(int){v}`), and now with direct postfix on the literal (`(struct P){...}.field`,
                 # including nested `.a.b` -- the literal is an lvalue, so it reads like any struct base).
@@ -1787,7 +1802,15 @@ class _Parser:
         return (
             w in _TYPE_KW
             or w in _TYPEOF_KW
-            or w in ("struct", "union", "enum", "const", "volatile")
+            or w
+            in (
+                "struct",
+                "union",
+                "enum",
+                "const",
+                "volatile",
+                "_Atomic",
+            )  # `(_Atomic T *)p` (CF-RTFP)
             or is_scalar_name(w)
             or w in self.typedefs
         )
@@ -1871,12 +1894,41 @@ class _Parser:
         if self.at("PUNCT", "("):
             save = self.i
             self.nxt()
-            if self._is_decl_start():  # sizeof ( type-name )
+            if self._is_decl_start() and not self._literal_follows():  # sizeof ( type-name )
+                # -- not `sizeof (T[N]){...}`, a compound literal's unary-expression form (CF-RTFP)
                 tref = self._abstract_type_name()
                 self.eat("PUNCT", ")")
                 return cast.SizeOf(type=tref)
             self.i = save  # not a type -> `sizeof ( expr )`
         return cast.SizeOf(expr=self._unary())  # sizeof expr / sizeof (expr)
+
+    def _literal_follows(self) -> bool:
+        """Whether the parenthesized type name starting at the cursor (past its `(`) is a compound literal's: a `{`
+        follows its `)` (CF-RTFP; the twin's `literal_close`). Nothing is consumed."""
+        k, depth = 0, 0
+        while self.peek(k).kind != "EOF":
+            t = self.peek(k)
+            if t.kind == "PUNCT" and t.text in ("(", "["):
+                depth += 1
+            elif t.kind == "PUNCT" and t.text in (")", "]"):
+                if not depth:
+                    break
+                depth -= 1
+            k += 1
+        nxt = self.peek(k + 1)
+        return self.peek(k).text == ")" and nxt.kind == "PUNCT" and nxt.text == "{"
+
+    def _fp_type_name(self, tref: cast.TypeRef) -> cast.TypeRef:
+        """The rest of a type name whose specifier is `tref`, where it is a function pointer -- `(R (*)(P))f`,
+        `(R (**)(P))p`, `(T *(*)(P))f`, `sizeof(R (*)(P))`: its abstract declarator, read as a parameter's is
+        (CF-RTFP; the twin's `p_cast_type`) -- else `tref` as it was. A type name declares no identifier (C11
+        6.7.7p1)."""
+        if not self._is_funcptr_declarator(True, at=self._skip_stars(0)):
+            return tref
+        tref, name = self._declarator_or_funcptr(tref, abstract=True)
+        if name:
+            raise CParseError(TYPE_NAME_NAMED, pos=self.peek().pos)
+        return tref
 
     def _abstract_type_name(self) -> cast.TypeRef:
         """A type-name as `sizeof ( ... )` and `_Alignof ( ... )` take it (C11 6.7.7): the specifier, then
@@ -1885,7 +1937,7 @@ class _Parser:
         where rebuilding it from its base and qualifiers alone had dropped them (`sizeof(row_t)` of
         `typedef uint16_t row_t[6]` was 2, not 12). A pointer to an array type (`T (*)[N]`, or `*` after
         an array typedef) has no TypeRef spelling and is refused (CF-SIZEOF)."""
-        tref = self._type_spec()
+        tref = self._fp_type_name(self._type_spec())  # `sizeof(uint32_t (*)(uint32_t))` (CF-RTFP)
         ptr, pq = self._stars()  # `sizeof(uint32_t *)` etc.
         dims = []
         while self.at("PUNCT", "["):  # `sizeof(uint32_t[10])`: an array of what precedes

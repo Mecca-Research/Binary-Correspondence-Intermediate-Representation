@@ -95,7 +95,11 @@ def _pointer_spelling(ct: CType) -> str:
     depth, b = 0, ct
     while b is not None and b.kind == "pointer":
         depth, b = depth + 1, b.of
-    if b is None or b.name == "void":
+    if (
+        b is not None and b.kind == "funcptr"
+    ):  # a pointer to a function pointer: one spelling on both rails (CF-RTFP)
+        base = "fnptr"
+    elif b is None or b.name == "void":
         base = "void"
     elif b.is_aggregate:
         base = f"{b.kind} {b.name}"
@@ -109,10 +113,17 @@ def _pointer_spelling(ct: CType) -> str:
         base = _CAST_W_SIGNED.get(b.size, "int32_t")
     else:
         base = _CAST_W.get(b.size, "uint32_t")
-    return ("volatile " if b is not None and b.volatile else "") + base + " " + "*" * depth
+    quals = "volatile " if b is not None and b.volatile else ""
+    if b is not None and b.atomic:  # `(_Atomic T *)p`: a pointer to an atomic object (CF-RTFP)
+        quals += "_Atomic "
+    return quals + base + " " + "*" * depth
 
 
 def _cast_name(ct: CType) -> str:
+    if (
+        ct.kind == "funcptr"
+    ):  # a function pointer: the temp carries its type, the op one spelling (CF-RTFP)
+        return "fnptr"
     if ct.kind == "pointer":
         return _pointer_spelling(ct)
     if ct.is_bitint:
@@ -848,6 +859,25 @@ GENERIC_QUALIFIED = "a `_Generic` association of a qualified type is not support
 # twin's `CC_QUAL_DEEP`)
 QUAL_DEEP = "a qualified pointer nested more than 8 deep is not supported"
 QUAL_LEVELS = 8
+# `(uint32_t (*p)(uint32_t))f`, `sizeof(uint32_t (*p)(uint32_t))`: a type name declares no identifier (C11 6.7.7p1) --
+# the function-pointer type name a cast, `sizeof` and `_Alignof` take is abstract on both rails (CF-RTFP; the twin's
+# `CC_TYPE_NAME_NAMED`)
+TYPE_NAME_NAMED = "a type name names an identifier"
+# `(uint32_t[2])s`, `(row_t)p`, `(uint32_t (*[2])(uint32_t))f`: a cast names a scalar type or `void` (C11 6.5.4p2), so a
+# type name of an array type is a cast only as a compound literal's, `(T[N]){...}` -- refused on both rails, where the
+# oracle had lowered it as the pointer the array decays to and the twin had refused it as an undeclared name (CF-RTFP;
+# the twin's `CC_CAST_ARRAY`)
+CAST_ARRAY = "a cast to an array type"
+# `(_Atomic uint32_t){x}`, `(_Atomic uint32_t[2]){...}`: a compound literal of an `_Atomic` type is an `_Atomic` object,
+# whose every access would have to be one atomic operation -- neither rail models it, so both refuse it (CF-ATOMIC
+# refused it as a parse error; reading `_Atomic` as a cast's type name, CF-RTFP keeps it refused for one reason; the
+# twin's `CC_ATOMIC_LITERAL`).
+ATOMIC_LITERAL = "a compound literal of `_Atomic` type is not supported"
+# `(_Atomic uint32_t)x`, `(au32_t)x` of an `_Atomic` typedef: C17 6.5.4p5 gives the cast the unqualified type, as GCC
+# does, but Clang gives it the `_Atomic` one and rejects it as an operand -- initialized from, assigned, returned, cast
+# again or added to another -- so its emit could not be held to the original. Both rails refuse it, as CF-CALIGN did
+# (CF-RTFP; the twin's `CC_CAST_ATOMIC`). A cast to a pointer to an `_Atomic` object, `(_Atomic T *)p`, lowers.
+CAST_ATOMIC = "a cast to an `_Atomic` type is not supported"
 
 
 def fold_constant(node, abi, live: bool = True) -> _KVal:
@@ -1188,6 +1218,9 @@ class LoweredFunc:
     ptr_extent: dict = field(
         default_factory=dict
     )  # §5.12: pointer rid -> recovered extent (count) variable rid
+    fn_types: dict = field(default_factory=dict)  # a function named as a value: its rid -> its
+    #   function's whole pointer type (`_fn_type`; its rid type carries the return alone), or None while
+    #   its parameters are untyped -- the emit stores it through a pointer to that type (CF-RTFP)
     asm_meta: dict = field(
         default_factory=dict
     )  # ASM1: claim id -> AsmInfo (the verbatim inline-asm payload
@@ -1948,7 +1981,12 @@ class _FuncLowerer:
         an integer literal (an enumerator or a character constant is one) no wider than an `int`; and `p` is
         a declared pointer or array, or `&s` of a struct or union -- the two bases `_base_ptr` spells --
         whose region holds volatile storage, so the access stays a device access every refusal still sees
-        (an inc/dec, a re-read as a value), as it was through the cast pointer."""
+        (an inc/dec, a re-read as a value), as it was through the cast pointer.
+
+        Two more element types fold so on any such base, as the emit spells them (CF-RTFP): a function
+        pointer, `*(void (**)(void))((char *)p + K)` -- a function-pointer member's store -- and an `_Atomic`
+        integer or floating `T`, `*(_Atomic T *)((char *)p + K)` -- an atomic member's access, of a device
+        region where it is `volatile` too. Each is the member access it was emitted from."""
         add = node.operand
         if (
             not isinstance(add, cast.Binary)
@@ -1966,18 +2004,22 @@ class _FuncLowerer:
         rid, pct = self.env[name.ident]
         if not (pct.is_aggregate if addr else pct.kind in ("pointer", "array")):
             return None
-        if not self._mmio(rid):
-            return None
         try:
             to, tb = self._resolve_type(node.type), self._resolve_type(add.lhs.type)
         except CLowerError:
             return None
         el = to.of if to.kind == "pointer" else None
-        if el is None or not el.volatile or el.atomic or not (el.is_integer or el.is_float):
-            return None
         by = tb.of if tb.kind == "pointer" else None
-        if by is None or by.kind != "scalar" or by.name != "char" or by.atomic:
+        if el is None or by is None or by.kind != "scalar" or by.name != "char" or by.atomic:
             return None
+        if el.kind == "funcptr" and not el.volatile:  # a function-pointer slot (CF-RTFP)
+            return _LV("mem", rid, el, byte_off=add.rhs.value)
+        if not (el.is_integer or el.is_float):
+            return None
+        if not (el.volatile or el.atomic):
+            return None  # a plain object: the cast pointer's own access
+        if el.volatile and not self._mmio(rid):
+            return None  # a volatile one, `_Atomic` or not, only of a device region (CF-RTVOL)
         return _LV("mem", rid, el, byte_off=add.rhs.value)
 
     def _string_ptr(self, spelling: str) -> int:
@@ -2391,7 +2433,11 @@ class _FuncLowerer:
                 return promote_int(t, self.abi)
             return scalar("uint32_t")
         if isinstance(node, (cast.Cast, cast.CompoundLiteral)):
-            return self._resolve_type(node.type)
+            ct = self._resolve_type(node.type)
+            # a cast to an `_Atomic` type, under `sizeof` and `typeof` too (`CAST_ATOMIC`)
+            if ct.atomic and isinstance(node, cast.Cast):
+                raise CLowerError(CAST_ATOMIC)
+            return ct
         if isinstance(node, cast.Member):  # `s.f` / `p->f` -> the field's type
             base_t = self._type_of(node.base)
             return self._field(self._member_agg(base_t, node.arrow), node.field)[0]
@@ -2817,10 +2863,14 @@ class _FuncLowerer:
         if isinstance(node, cast.Cast):
             v = self._rvalue(node.operand)
             ct = self._resolve_type(node.type)
+            if ct.atomic:  # `(_Atomic T)v`, which Clang does not convert (`CAST_ATOMIC`)
+                raise CLowerError(CAST_ATOMIC)
             if ct.kind == "scalar" and ct.name == "void":  # `(void)e`: e for its effects, no value
                 return _VOID_RID  # (C11 6.3.2.2) -- a cast of it to uint32 did not compile
             self._scalar_value(ct, v)  # `(uint32_t)a` of a struct (C11 6.5.4p2, CF-STRUCTARITH)
-            return self._cast_value(v, ct)
+            # `(T *)0`, `(op_t)0`: a null pointer constant converts to the pointer (C11 6.3.2.3p3), so its temp is
+            # typed as one -- an `int` temp cast to a pointer of another width is a cast GCC rejects (CF-RTFP)
+            return self._cast_value(self._null_pointer(v, ct), ct)
         if isinstance(node, (cast.Index, cast.Member)):
             lv = self._lvalue(node)
             if lv.ct.kind == "array" and not lv.bit_width:
@@ -3280,7 +3330,8 @@ class _FuncLowerer:
         # narrowing cast masks/zero-extends back), so either way the result matches Clang.
         # a pointer cast yields a pointer of the target type (its pointee, and whether that pointee
         # is volatile, ride on the temp): a uint32 temp truncated the address
-        typed = ct.is_integer or ct.is_float or ct.kind == "pointer"
+        # a function-pointer cast yields a function pointer of the target type (CF-RTFP): a uint32 temp cut it
+        typed = ct.is_integer or ct.is_float or ct.kind in ("pointer", "funcptr")
         t = self._temp(ct if typed else scalar("uint32_t"), "cast")
         # A float -> signed-integer conversion needs a SIGNED cast operator: the canonical unsigned
         # name (uint32_t / uint8_t) makes it float -> unsigned, which is UB for a negative value and
@@ -3443,6 +3494,8 @@ class _FuncLowerer:
         else:  # a scalar compound literal `(int){v}`: its one value (`{}` is zero)
             expr = self._braced_scalar(node.init)
             v = self._rvalue(expr) if expr is not None else self._zero_int("clz")
+            # `(T *){0}`: a null pointer of the literal's type (CF-RTFP)
+            v = self._null_pointer(v, ct)
             self._emit("c.copy", Opcode.ADD, (v,), (rid,))
         return rid, ct
 
@@ -4111,7 +4164,26 @@ class _FuncLowerer:
             # re-read it too. A full-width non-bitfield target needs no re-read (res == the stored value).
             narrows = lv.bit_width or lv.ct.size < self.rtypes.get(res, rt).size
             return res if (stmt or not narrows) else self._read(lv)
-        v = self._rvalue(node.value)
+        value = node.value
+        # `*(void (**)(void))((char *)p + K) = (void (*)(void))f`: the emit's store of a function pointer through a
+        # generic slot is the member store it was emitted from, `p->m = f` (CF-RTFP) -- its cast spells the slot,
+        # no conversion of its own, so a function or a function-pointer object, named, is stored as it is (the
+        # twin's `fp_slot_value`)
+        if (
+            isinstance(node.target, cast.Unary)
+            and node.target.op == "*"
+            and isinstance(node.target.operand, cast.Cast)
+            and isinstance(value, cast.Cast)
+            and value.type.funcptr
+            and not value.type.ptr
+            and not value.type.array
+            and isinstance(value.operand, cast.Name)
+            and self._fn_valued(value.operand)
+        ):
+            slot = self._byte_offset_access(node.target.operand)
+            if slot is not None and slot.ct.kind == "funcptr":
+                value = value.operand
+        v = self._rvalue(value)
         if named_local:
             rid, _ct = self._lookup(
                 node.target.ident, node.target.pos
@@ -5013,6 +5085,7 @@ class _FuncLowerer:
             reproducible=getattr(self.func, "reproducible", False),
             static_fn=getattr(self.func, "static_fn", False),
             ptr_extent=dict(self.ptr_extent),
+            fn_types={rid: self._fn_type(rid) for rid in self.func_globals},
             asm_meta=dict(self.asm_meta),
             target=self.abi.name,
         )

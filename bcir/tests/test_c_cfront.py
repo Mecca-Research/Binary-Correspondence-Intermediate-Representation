@@ -292,6 +292,8 @@ _PTRVALUE = [
     #   function pointer; pointers to variadic functions (CF-FPRET)
     "cfront_idxarrow.c",  # elements that are pointers: `pp[i][j].f` as a value, `pp + 1` and `arr + 1` of `T **`,
     #   `&arr[i]`, a file-scope array of pointers decayed (CF-IDXARROW)
+    "cfront_rtfp.c",  # casts to function-pointer and `_Atomic` types and the emit's stores of them at a byte offset; a
+    #   typedef'd table of function pointers, a compound literal of one, `sizeof` of one, `( E ) = v;` (CF-RTFP)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -4138,9 +4140,11 @@ def test_a_trailing_packed_attribute_packs_the_members_on_both_rails():
 
 
 # An `_Atomic` struct or union -- a member, a `sizeof` operand, a pointee -- refused on both rails with the
-# one reason; and a cast or compound literal of an `_Atomic` type, which neither rail parses as one.
+# one reason; and a cast to or compound literal of an `_Atomic` type, each for one reason of its own.
 _ATOMIC_AGGREGATE = "an `_Atomic` struct or union is not supported"
 _ATOMIC_BITFIELD = "a bit-field of `_Atomic` type is not supported"
+_ATOMIC_LITERAL = "a compound literal of `_Atomic` type is not supported"
+_CAST_ATOMIC = "a cast to an `_Atomic` type is not supported"
 _ATOMIC_REFUSED = (
     (
         "struct P3 { uint8_t c[3]; };\nstruct W { uint8_t k; _Atomic struct P3 p; uint8_t t; };\n"
@@ -4155,8 +4159,50 @@ _ATOMIC_REFUSED = (
         "struct P3 { uint8_t c[3]; };\nuint32_t f(_Atomic struct P3 *p) { return 1u; }\n",
         _ATOMIC_AGGREGATE,
     ),
-    ("uint32_t f(uint32_t x) { uint32_t y = (_Atomic uint32_t)x; return y + 1u; }\n", None),
-    ("uint32_t f(uint32_t x) { uint32_t *p = &(_Atomic uint32_t){x}; return *p; }\n", None),
+    # CF-RTFP: a compound literal of an `_Atomic` type, an `_Atomic` object -- under `&`, of an array, under `sizeof`
+    (
+        "uint32_t f(uint32_t x) { uint32_t *p = &(_Atomic uint32_t){x}; return *p; }\n",
+        _ATOMIC_LITERAL,
+    ),
+    (
+        "uint32_t f(uint32_t x) { _Atomic uint32_t *q = (_Atomic uint32_t[2]){1u, x}; return q[1]; }\n",
+        _ATOMIC_LITERAL,
+    ),
+    (
+        "uint32_t f(uint32_t x) { return (uint32_t)sizeof((_Atomic uint32_t){x}); }\n",
+        _ATOMIC_LITERAL,
+    ),
+    (
+        "uint32_t f(uint32_t x) { return (uint32_t)sizeof (_Atomic uint32_t){x}; }\n",
+        _ATOMIC_LITERAL,
+    ),
+    (
+        "typedef _Atomic uint32_t au32_t;\nuint32_t f(uint32_t x) { uint32_t *p = &(au32_t){x}; return *p; }\n",
+        _ATOMIC_LITERAL,
+    ),
+    # CF-RTFP: a cast to an `_Atomic` type -- spelled, `_Atomic(T)`, qualified, a typedef of one, a `?:` arm, under
+    # `sizeof` and `typeof` -- which Clang types `_Atomic` and rejects as an operand (where C17 6.5.4p5 and GCC drop
+    # the qualifier); a cast to a pointer to an `_Atomic` object lowers
+    ("uint32_t f(uint32_t x) { uint32_t y = (_Atomic uint32_t)x; return y + 1u; }\n", _CAST_ATOMIC),
+    (
+        "uint32_t f(uint32_t x) { return (_Atomic(uint32_t))x + (const _Atomic uint32_t)x; }\n",
+        _CAST_ATOMIC,
+    ),
+    (
+        "typedef _Atomic uint32_t au32_t;\nuint32_t f(uint32_t x) { return (au32_t)x; }\n",
+        _CAST_ATOMIC,
+    ),
+    ("uint32_t f(uint32_t x) { return x ? (_Atomic uint32_t)x : 2u; }\n", _CAST_ATOMIC),
+    (
+        "uint32_t f(uint32_t x) { double d = (_Atomic double)x; return (uint32_t)d; }\n",
+        _CAST_ATOMIC,
+    ),
+    ("uint32_t f(uint32_t x) { return (uint32_t)sizeof((_Atomic uint32_t)x); }\n", _CAST_ATOMIC),
+    (
+        "typedef _Atomic uint32_t au32_t;\nuint32_t f(uint32_t x) { return (uint32_t)sizeof((au32_t)x) + x; }\n",
+        _CAST_ATOMIC,
+    ),
+    ("uint32_t f(uint32_t x) { __typeof__((_Atomic uint32_t)x) y = x; return y; }\n", _CAST_ATOMIC),
     # CF-ATOMIC: a bit-field of `_Atomic` type -- named, unnamed or `_Atomic(T)` -- which GCC and Clang
     # reject too; no atomic operation reaches a bit-field
     (
@@ -4176,14 +4222,18 @@ _ATOMIC_REFUSED = (
 )
 
 
-def test_an_atomic_aggregate_or_cast_is_refused_on_both_rails():
+def test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails():
     """CF-CALIGN: the ABI's atomic promotion would lay out an `_Atomic` struct at a rounded-up size (a
     3-byte one occupies 4), which every declaration, copy and extent would then have to carry, and each
     access to it would have to be one atomic operation on the whole object. Neither rail models that, so
     both refuse it, wherever it is spelled. The oracle had laid it out as the plain struct, and the twin
-    had placed it as a member but refused `sizeof(_Atomic struct P3)`. A cast or compound literal of an
-    `_Atomic` type is refused on both rails too (the oracle's `_is_cast`, the twin's
-    `starts_type_name`); `sizeof`, `_Alignof` and `typeof` of one fold identically on both."""
+    had placed it as a member but refused `sizeof(_Atomic struct P3)`. A compound literal of an `_Atomic`
+    type, an `_Atomic` object too, is refused on both rails for one reason, and so is a cast to an `_Atomic` type:
+    C17 6.5.4p5 gives the cast the unqualified type, as GCC does, but Clang types it `_Atomic` and rejects it as an
+    operand -- initialized from, assigned, returned, cast again or added to another -- so no emit of it could be
+    held to the original (CF-RTFP; refused as parse errors until both read `_Atomic` as a cast's type name, which a
+    cast to a pointer to an `_Atomic` object, the emit's own spelling, needs); `sizeof`, `_Alignof` and `typeof` of
+    an `_Atomic` type fold identically on both."""
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
 
@@ -8903,14 +8953,15 @@ _BYTEOFF_FOLD = {
     ),
     "float": ("return *(volatile float *)((const volatile char *)d + 12) > 1.5f;", 12),
     "or_assign": ("*(volatile uint32_t *)((volatile char *)d + 0) |= v; return 0u;", 0),
+    # an `_Atomic` one too, one atomic access: the emit's own spelling of an `_Atomic` member (CF-RTFP)
+    "atomic": ("return *(volatile _Atomic uint32_t *)((char *)d + 4);", 4),
 }
 # the near misses, which fold on neither rail: an offset that is no literal, a byte pointer that is not a
-# plain `char` one, an access that is not volatile, and one that is `_Atomic`
+# plain `char` one, an access that is neither volatile nor `_Atomic`
 _BYTEOFF_NEAR = {
     "var_offset": "return *(volatile uint32_t *)((char *)d + (v & 4u));",
     "uchar_cast": "return *(volatile uint32_t *)((volatile unsigned char *)d + 4);",
     "nonvolatile": "return *(uint32_t *)((char *)d + 4);",
-    "atomic": "return *(volatile _Atomic uint32_t *)((char *)d + 4);",
 }
 # runs the original and an emit from the same seeded image -- register block, by-value struct, global array
 # -- and compares the value each returns and every byte each leaves
@@ -8973,7 +9024,8 @@ def test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails():
     its graph -- and ordinary driver code spells it too, so the rails must agree on it: the oracle alone
     had folded it, 1 claim against the twin's 5. Each form digests alike on both rails, and each rail's emit
     returns and leaves what the original does. A near miss -- an offset no literal, a byte pointer no plain
-    `char` one, an access not volatile, or `_Atomic` -- folds on neither rail and digests alike too."""
+    `char` one, an access neither volatile nor `_Atomic` -- folds on neither rail and digests alike too. CF-RTFP:
+    a volatile `_Atomic` access folds as one atomic access, as the emit spells an `_Atomic` member."""
     exe = _build_frontend(_session_build_dir()) if _CC else None
     forms = [(n, b, k) for n, (b, k) in _BYTEOFF_FOLD.items()]
     forms += [(n, b, None) for n, b in _BYTEOFF_NEAR.items()]
@@ -13080,3 +13132,284 @@ def test_elements_that_are_pointers_run_as_the_original():
         driver,
         _QUALS_WERROR,
     )
+
+
+# CF-RTFP: casts to function-pointer and `_Atomic` types, and the forms the emit writes for them -- a function pointer
+# stored through a generic slot at a byte offset, an `_Atomic` member reached at one; a typedef'd table of function
+# pointers, a compound literal of one, `sizeof` of an array compound literal, `( E ) = v;`, a braced function-pointer
+# initializer.
+_RTFP_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(rf_casts, s); SAME(rf_slots, s); SAME(rf_tables, s); SAME(rf_sizes, s); SAME(rf_braced, s);
+    SAME(rf_parens, s); SAME(rf_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# ... and its calls through a table or a select of two functions, through a function pointer read from memory and a
+# null one guarded, which the G10 rows would count: the test's own unit
+_RTFP_CALLS = """#include <stdint.h>
+typedef uint32_t (*rc_op)(uint32_t);
+typedef uint32_t (*rc_tab[2])(uint32_t);
+struct rc_slot { rc_op fn; uint32_t tag; };
+static uint32_t rc_inc(uint32_t v) { return v + 1u; }
+static uint32_t rc_dbl(uint32_t v) { return v * 2u; }
+uint32_t rc_tables(uint32_t s) {
+  rc_tab t = {rc_inc, rc_dbl};
+  __typeof__(t[0]) g = t[1];
+  uint32_t r = t[s & 1u](s) + g(s) * 3u;
+  r += (rc_op[2]){rc_dbl, rc_inc}[s & 1u](s) * 5u;
+  r += (uint32_t (*[2])(uint32_t)){rc_inc, rc_dbl}[(s >> 1) & 1u](s) * 7u;
+  rc_op *q = (rc_op[2]){rc_inc, rc_dbl};
+  return r + q[s & 1u](s) * 11u;
+}
+uint32_t rc_selects(uint32_t s) {
+  rc_op k = (s & 1u) ? (rc_op)rc_inc : (uint32_t (*)(uint32_t))rc_dbl;
+  uint32_t (*f)(uint32_t) = {rc_inc};
+  rc_op g = {rc_dbl,};
+  rc_op w = (s & 2u) ? f : g;
+  uint32_t (*z)(uint32_t) = 0;
+  return k(s) + w(s) * 3u + (z ? z(s) : 5u) * 5u;
+}
+uint32_t rc_slots(uint32_t s) {
+  struct rc_slot o = {rc_inc, 1u};
+  *(void (**)(void))((char *)&o + 0) = (void (*)(void))rc_dbl;
+  rc_op f = o.fn;
+  uint32_t r = f(s) + o.fn(s) * 3u;
+  struct rc_slot *p = &o;
+  *(void (**)(void))((char *)p + 0) = (void (*)(void))rc_inc;
+  return r + p->fn(s) * 5u + o.tag;
+}
+"""
+# The shared head of the units the two rails refuse alike, and of those they lower alike.
+_RTFP_HEAD = """#include <stdint.h>
+static uint32_t inc(uint32_t v) { return v + 1u; }
+static uint32_t dbl(uint32_t v) { return v * 2u; }
+typedef uint32_t (*op_t)(uint32_t);
+typedef uint32_t row_t[2];
+typedef uint32_t (*tab_t[2])(uint32_t);
+struct am { uint32_t k; _Atomic uint32_t v; };
+static row_t grow = {3u, 4u};
+"""
+_TYPE_NAME_NAMED = "a type name names an identifier"
+_CAST_ARRAY = "a cast to an array type"
+_BRACED_SCALAR = "a braced scalar initializer holds one expression"
+_SIZEOF_UNSIZED = "sizeof of an incomplete type"
+_NOT_CALLABLE = "called object is not a function or function pointer"
+# Refused on both rails for one reason each: a type name that names an identifier (C11 6.7.7p1); a cast to an array
+# type (6.5.4p2), which the oracle had lowered as the pointer the array decays to and the twin had refused as an
+# undeclared name, and both had lowered for an array of function pointers, to two claim graphs; a braced
+# function-pointer initializer of more than one expression (6.7.9p11); `sizeof` of a compound literal its initializer
+# sizes, which the twin had given the size of a pointer; a call through an element that is no function pointer.
+_RTFP_REFUSED = (
+    (
+        "uint32_t f(uint32_t s) { op_t g = (uint32_t (*p)(uint32_t))inc; return g(s); }",
+        _TYPE_NAME_NAMED,
+    ),
+    (
+        "uint32_t f(uint32_t s) { return (uint32_t)sizeof(uint32_t (*p)(uint32_t)) + s; }",
+        _TYPE_NAME_NAMED,
+    ),
+    ("uint32_t f(uint32_t s) { uint32_t *p = (uint32_t[2])s; return p ? s : 0u; }", _CAST_ARRAY),
+    ("uint32_t f(uint32_t s) { uint32_t *p = (row_t)grow; return p[0] + s; }", _CAST_ARRAY),
+    (
+        "uint32_t f(uint32_t s) { op_t g = (uint32_t (*[2])(uint32_t))inc; return g(s); }",
+        _CAST_ARRAY,
+    ),
+    ("uint32_t f(uint32_t s) { op_t g = (tab_t)inc; return g(s); }", _CAST_ARRAY),
+    ("uint32_t f(uint32_t s) { uint32_t **p = (uint32_t *[2])0; return p ? s : 0u; }", _CAST_ARRAY),
+    ("uint32_t f(uint32_t s) { op_t g = {{inc}}; return g(s); }", _BRACED_SCALAR),
+    (
+        "uint32_t f(uint32_t s) { uint32_t (*g)(uint32_t) = {inc, dbl}; return g(s); }",
+        _BRACED_SCALAR,
+    ),
+    (
+        "uint32_t f(uint32_t s) { return (uint32_t)sizeof((uint32_t[]){1u, 2u}) + s; }",
+        _SIZEOF_UNSIZED,
+    ),
+    (
+        "uint32_t f(uint32_t s) { return (uint32_t)sizeof (uint32_t[]){1u, 2u} + s; }",
+        _SIZEOF_UNSIZED,
+    ),
+    ("uint32_t f(uint32_t s) { return (uint32_t[2]){1u, 2u}[s & 1u](s); }", _NOT_CALLABLE),
+)
+# Lowered alike on the four targets, each emit the original where `f` takes a `uint32_t`: casts to function-pointer
+# types and to pointers to `_Atomic` objects; braced and empty function-pointer initializers; typedefs of a table of function pointers -- a
+# local, a global, a parameter, a member, two dimensions -- and of a pointer to one; compound literals of function
+# pointers; `typeof` of an element and a member that are function pointers; `sizeof` of arrays of function pointers
+# and of compound literals; `( E ) = v;`; a unit that declares a standard type itself.
+_RTFP_LOWERED = (
+    "uint32_t f(uint32_t s) { op_t g = (op_t)inc; op_t z = (op_t)0; return g(s) + (z == 0); }",
+    "uint32_t f(uint32_t s) { void (*g)(void) = (void (*)(void))dbl; op_t p = (uint32_t (*)(uint32_t))g; return p(s); }",
+    "static op_t gp = inc;\n"
+    "uint32_t f(uint32_t s) { void *v = &gp; uint32_t (**pp)(uint32_t) = (uint32_t (**)(uint32_t))v; return (*pp)(s); }",
+    "uint32_t f(uint32_t s) {\n"
+    "  uint32_t *q = (uint32_t *)0; _Atomic uint32_t *r = (_Atomic uint32_t *)0; return s + (q == 0) + (r == 0);\n}",
+    "uint32_t f(uint32_t s) { struct am a; a.k = s; *(_Atomic(uint32_t) *)((char *)&a + 4) = s + 2u; return a.v + a.k; }",
+    "uint32_t f(uint32_t s) { uint32_t (*fp)(uint32_t) = {}; op_t g = {}; return (fp ? fp(s) : 1u) + (g ? g(s) : 2u); }",
+    "uint32_t f(uint32_t s) { uint32_t k = {s}; uint32_t *p = {0}; return k + (p == 0); }",
+    "uint32_t f(uint32_t s) { tab_t t = {inc, dbl}; return t[s & 1u](s) + (uint32_t)sizeof t; }",
+    "static tab_t gt = {inc, dbl};\nuint32_t f(uint32_t s) { return gt[s & 1u](s) + (uint32_t)sizeof gt; }",
+    "static uint32_t ap(tab_t t, uint32_t s) { return t[s & 1u](s); }\n"
+    "uint32_t f(uint32_t s) { tab_t t = {inc, dbl}; return ap(t, s); }",
+    "struct ops2 { tab_t t; uint32_t k; };\n"
+    "uint32_t f(uint32_t s) { struct ops2 o = {{inc, dbl}, 3u}; return o.t[s & 1u](s) + o.k; }",
+    "typedef uint32_t (**pp_t)(uint32_t);\nuint32_t f(uint32_t s) { op_t g = inc; pp_t p = &g; return (*p)(s); }",
+    "typedef uint32_t (*tab2_t[2][2])(uint32_t);\n"
+    "uint32_t f(uint32_t s) { tab2_t t = {{inc, dbl}, {dbl, inc}}; return t[s & 1u][1](s); }",
+    "uint32_t f(uint32_t s) { return (tab_t){inc, dbl}[s & 1u](s); }",
+    "uint32_t f(uint32_t s) { return (op_t[2][2]){{inc, dbl}, {dbl, inc}}[s & 1u][1](s); }",
+    "uint32_t f(uint32_t s) { return (op_t[]){inc, dbl, inc}[s % 3u](s); }",
+    "uint32_t f(uint32_t s) { op_t t[2] = {inc, dbl}; __typeof__(t[0]) g = t[1]; return g(s); }",
+    "struct ops3 { op_t fn; uint32_t k; };\n"
+    "uint32_t f(uint32_t s) { struct ops3 o = {inc, 1u}; __typeof__(o.fn) g = o.fn; return g(s) + o.k; }",
+    "uint32_t f(uint32_t s) {\n"
+    "  return (uint32_t)sizeof(uint32_t (*[2][3])(uint32_t)) + (uint32_t)_Alignof(uint32_t (*[3])(uint32_t)) + s;\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  return (uint32_t)sizeof((op_t[3]){inc, dbl, inc}) + (uint32_t)sizeof (op_t[2]){inc, dbl} + s;\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  return (uint32_t)sizeof(0, (uint32_t[]){1u, 2u, 3u}) + (uint32_t)sizeof((uint32_t[]){1u, 2u}[1]) + s;\n}",
+    "uint32_t f(uint32_t s) { return (uint32_t)sizeof((struct am[2]){{1u, 2u}}[1].v) + (uint32_t)sizeof grow + s; }",
+    "uint32_t f(uint32_t *q, uint32_t s) { (*q++) = s; ((*q)) += s; (q[-1]) <<= 1u; return *q; }",
+    "uint32_t f(struct am *p, uint32_t s) {\n"
+    "  (*(_Atomic uint32_t *)((char *)p + 4)) = s; (*(_Atomic uint32_t *)((char *)p + 4)) += s; return p->k;\n}",
+    "typedef unsigned int uint32_t;\nuint32_t f(uint32_t s) { return s + 1u; }",
+    # a function pointer stored to a member -- an initializer's, a statement's, an element of a member table's --
+    # then read back through the member: each emit stores it through a pointer to its own type, which a read of the
+    # member's type may alias (C11 6.5p7); through `void (**)(void)`, GCC at -O2 dropped the store and the emit
+    # called a null pointer, and the twin's store into a member table did not compile
+    "struct fsl { op_t fn; uint32_t k; };\n"
+    "uint32_t f(uint32_t s) {\n"
+    "  struct fsl a[2] = {{inc, 1u}, {dbl, 2u}}; struct fsl *e = &a[s & 1u]; return e->fn(s) + a[1].k;\n}",
+    "struct fsl { op_t fn; uint32_t k; };\n"
+    "uint32_t f(uint32_t s) {\n"
+    "  struct fsl o; o.k = 1u; o.fn = inc; op_t g = dbl; struct fsl *p = &o;\n"
+    "  if (s & 1u) p->fn = g;\n  return p->fn(s) + o.k;\n}",
+    "struct tb { op_t t[2]; uint32_t k; };\n"
+    "uint32_t f(uint32_t s) { struct tb o = {{inc, inc}, 1u}; o.t[1] = dbl; return o.t[s & 1u](s) + o.k; }",
+    # a compound literal of a pointer or function-pointer type: a pointer of its type -- the twin's had been a
+    # `uint32_t` the pointer was cut into, so `*(T *){p}` read no pointer and `&(T *){p}` was a `T *` -- and `0` or
+    # `{}` in one a null pointer, which both rails had held in an `int`
+    "static uint32_t gv = 7u;\n"
+    "uint32_t f(uint32_t s) {\n"
+    "  uint32_t *q = (uint32_t *){&gv}; uint32_t **pp = &(uint32_t *){&gv}; return *q + **pp + *(uint32_t *){&gv} + s;\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  _Atomic uint32_t *q = (_Atomic uint32_t *){0}; uint32_t *p = (uint32_t *){}; op_t z = (op_t){0};\n"
+    "  return (q == 0) + (p == 0) + (z == 0) + s;\n}",
+    "uint32_t f(uint32_t s) { op_t h = (op_t){dbl}; return h(s) + (op_t){inc}(s); }",
+)
+# ... and units that declare `size_t` themselves, which the oracle had refused (it read `size_t` as a keyword of the
+# specifier before it, `unsigned long size_t`)
+_RTFP_UNITS = (
+    "typedef unsigned long size_t;\ntypedef unsigned int uint32_t;\n"
+    "uint32_t f(uint32_t s) { size_t n = s; return (uint32_t)(n + sizeof n); }\n",
+    "typedef unsigned long size_t;\nsize_t f(size_t n) { return n * 2u; }\n",
+)
+
+
+def _rtfp_run_unit(name: str, unit: str, exe: str, d: str) -> None:
+    """A unit both rails lower alike on the four targets; where its `f` takes a `uint32_t`, each emit returns what
+    the original does under Clang and GCC, with the mixes `_QUALS_WERROR` names made errors."""
+    path = os.path.join(d, f"{name}.c")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(unit)
+    _parity_on_targets(path, unit)
+    if not re.search(r"^uint32_t f\(uint32_t s\)", unit, re.M):
+        return
+    oracle_summary, r, _entry = _oracle(unit)
+    c_summary, c_emit = _c_run(exe, path)
+    assert c_summary == oracle_summary and "ok=1" in c_summary, (name, c_summary, oracle_summary)
+    oracle_emit = "\n".join(r.emitted[n] for n in r.lowered.functions)
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(f, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        name, unit, (("twin", c_emit), ("oracle", oracle_emit)), driver, _QUALS_WERROR
+    )
+
+
+def test_casts_to_function_pointer_and_atomic_types_run_as_the_original():
+    """CF-RTFP: `cfront_rtfp.c` -- casts to a function-pointer type, `(R (*)(P))f`, `(op_t)f`, `(op_t)0`, in a select;
+    the emit's own forms for a function-pointer member and an `_Atomic` one, a store through a generic slot at a byte
+    offset, `*(void (**)(void))((char *)p + 0) = (void (*)(void))f;`, and `(*(_Atomic uint32_t *)((char *)a + 4))`
+    stored, compounded, stepped and read; a typedef of a table of function pointers, its `sizeof`, a compound literal
+    of one and `typeof` its element; `sizeof` of array compound literals; braced and null function-pointer
+    initializers; `( E ) = v;` and `( E ) OP= v;`. Both rails had refused the casts and the slot store; the twin had
+    refused the typedef, the parenthesized targets and the braced initializer, given `sizeof` of an array compound
+    literal the size of a pointer, and emitted `op_t t = 0` as an integer. Both rails lower the unit to one claim graph
+    on the four targets and each emit, built with Clang's and GCC's mixes made errors, returns what the original does,
+    function by function. `_RTFP_CALLS` does the same for calls through tables and selects of two functions and
+    through a function pointer read from memory."""
+    if not _CC:
+        return
+    fx = "cfront_rtfp.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _RTFP_DRIVER, _QUALS_WERROR
+    )
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_RTFP_CALLS)
+    calls_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "rtfp_calls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_RTFP_CALLS)
+        c_summary, c_calls_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _RTFP_CALLS)
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) {\n"
+        + "    SAME(rc_tables, gaps_in[n]); SAME(rc_selects, gaps_in[n]); SAME(rc_slots, gaps_in[n]);\n  }\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        "rtfp_calls.c",
+        _RTFP_CALLS,
+        (("twin", c_calls_emit), ("oracle", calls_emit)),
+        driver,
+        _QUALS_WERROR,
+    )
+
+
+def test_function_pointer_types_refused_and_lowered_alike_on_both_rails():
+    """CF-RTFP: the forms neither rail lowers are refused on both for one reason each (`_RTFP_REFUSED`): a type name
+    that names an identifier, a cast to an array type, a braced function-pointer initializer of two expressions,
+    `sizeof` of a compound literal its initializer sizes, a call through an element that is no function pointer. Every
+    other form of the slice lowers to one claim graph on the four targets, each emit the original where it runs
+    (`_RTFP_LOWERED`, `_RTFP_UNITS`)."""
+    for body, why in _RTFP_REFUSED:
+        got = _fptab_refusal(_RTFP_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _RTFP_LOWERED:
+        got = _fptab_refusal(_RTFP_HEAD + body + "\n")
+        assert got == "", (body, got)
+    for unit in _RTFP_UNITS:
+        assert _fptab_refusal(unit) == "", unit
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_RTFP_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_RTFP_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_RTFP_LOWERED):
+            _rtfp_run_unit(f"l{n}", _RTFP_HEAD + body + "\n", exe, d)
+        for n, unit in enumerate(_RTFP_UNITS):
+            _rtfp_run_unit(f"u{n}", unit, exe, d)
