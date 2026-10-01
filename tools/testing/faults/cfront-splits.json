@@ -25,8 +25,8 @@
     {
       "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
       "label": "S3 the oracle dereferences only a name, a member or a call (`*&a` refused again)",
-      "new": "                raise CLowerError(\"dereference of a value that is not a pointer\")",
-      "old": "                if ct is not None and ct.kind == \"pointer\":\n                    return _LV(\"mem\", rid, ct.of or scalar(\"uint32_t\"), byte_off=0)\n                raise CLowerError(\"dereference of a value that is not a pointer\")",
+      "new": "            ) and not (isinstance(operand, cast.Unary) and operand.op == \"*\"):\n                rid = self._rvalue(operand)\n                ct = self.rtypes.get(rid)\n                raise CLowerError(DEREF_NOT)",
+      "old": "            ) and not (isinstance(operand, cast.Unary) and operand.op == \"*\"):\n                rid = self._rvalue(operand)\n                ct = self.rtypes.get(rid)\n                if ct is not None and ct.kind == \"pointer\":\n                    return _LV(\"mem\", rid, ct.of or scalar(\"uint32_t\"), byte_off=0)\n                raise CLowerError(DEREF_NOT)",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {

@@ -189,6 +189,16 @@ class CallMember:
     args: tuple  # function-pointer struct member (HAL dispatch table)
 
 
+@dataclass(frozen=True)
+class CallPtr:
+    """A call through any other postfix expression (C11 6.5.2.2p1): `(*fp)(x)`, `ops[i](x)`,
+    `(*p)(x)`. Lowering calls the function the expression names -- a function-pointer value, or a
+    function designator a `*` of it names (6.5.3.2p4) -- and refuses anything else."""
+
+    callee: object
+    args: tuple
+
+
 # --- statements ---
 @dataclass(frozen=True)
 class Decl:

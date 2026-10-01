@@ -286,6 +286,8 @@ _PTRVALUE = [
     #   data model; a dimension that is an integer constant expression a fixed array (CF-ENUMFOLD)
     "cfront_enumscope.c",  # a local, a parameter and a loop's declaration hide an enumerator of their name to
     #   the end of their block; file scope after a function reads the enumerator again (CF-ENUMSCOPE)
+    "cfront_fptab.c",  # tables of function pointers -- typedef'd and inline, local, file-scope, 2-D, members,
+    #   pointers to them, parameters of them -- and calls through `(*fp)`, `(**fp)` and `(*f)` (CF-FPTAB)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -602,9 +604,12 @@ def _array_extents(emit: str) -> tuple:
     `_parity_check_fixture` misses it -- a multi-dim compound literal once sized `_cl[10]` vs `_cl[6]` and
     slipped through parity + Clang-equivalence undetected (#arrcomplit md). Normalizing to the dim PRODUCT
     makes a flat `[4]` and a nested `[2][2]` compare equal, so the check is robust to decl-form differences
-    between the rails."""
+    between the rails -- a table of function pointers spelled inline (`RET (*t[N])(P) = ...;`, the oracle's) as one
+    spelled by its alias (`op_t t[N] = ...;`, the twin's; CF-FPTAB)."""
     sizes = []
-    for dims in re.findall(r"[A-Za-z_]\w*(?:\s+\w+)?\s+\w+((?:\[\d+\])+)\s*[=;]", emit):
+    decls = re.findall(r"[A-Za-z_]\w*(?:\s+\w+)?\s+\w+((?:\[\d+\])+)\s*[=;]", emit)
+    decls += re.findall(r"\(\*+\s*\w+((?:\[\d+\])+)\)\s*\([^;={]*\)\s*[=;]", emit)
+    for dims in decls:
         total = 1
         for n in re.findall(r"\[(\d+)\]", dims):
             total *= int(n)
@@ -7166,7 +7171,7 @@ _SIZEOF_REFUSED = (
     ),
     (
         "uint32_t g(uint32_t v) { return v; }\nuint64_t f(void) { return sizeof g; }",
-        "sizeof of the function 'g'",
+        "sizeof of a function designator",  # the twin's reason on both rails (CF-FPTAB)
         "sizeof of a function designator",
     ),
     (
@@ -7590,28 +7595,37 @@ def test_a_member_access_on_a_non_struct_is_refused_on_both_rails():
     from bcir.frontends.cfront.cparse import CParseError
     from bcir.frontends.cfront.lower import CLowerError
 
-    bodies = (
-        "uint32_t f(uint32_t x) { return x.n; }",
-        "uint32_t g;\nuint32_t f(void) { return g.n; }",
-        "uint32_t *g;\nuint32_t f(void) { return g->n; }",
+    from bcir.frontends.cfront.lower import ARROW_NOT, DOT_NOT
+
+    bodies = (  # each refused for its operator's reason on both rails (CF-FPTAB)
+        ("uint32_t f(uint32_t x) { return x.n; }", DOT_NOT),
+        ("uint32_t g;\nuint32_t f(void) { return g.n; }", DOT_NOT),
+        ("uint32_t *g;\nuint32_t f(void) { return g->n; }", ARROW_NOT),
+        # `.` of a pointer to a struct: the twin read it as `->` (CF-FPTAB)
+        ("struct S { uint32_t n; };\nuint32_t f(struct S *p) { return p.n; }", DOT_NOT),
+        ("struct S { uint32_t n; };\nstruct S *g;\nuint32_t f(void) { return g.n; }", DOT_NOT),
     )
-    for body in bodies:
+    for body, why in bodies:
         try:
             compile_unit("#include <stdint.h>\n" + body + "\n", check_clang=False)
-        except (CLowerError, CParseError, KeyError, AttributeError):
-            pass
+        except (CLowerError, CParseError) as e:
+            assert str(e) == why, (body, str(e))
         else:
             raise AssertionError(f"the oracle lowered {body!r}")
     if not _CC:
         return
     exe = _build_frontend(_session_build_dir())
     with tempfile.TemporaryDirectory() as d:
-        for n, body in enumerate(bodies):
+        for n, (body, why) in enumerate(bodies):
             path = os.path.join(d, f"m{n}.c")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write("#include <stdint.h>\n" + body + "\n")
             run = subprocess.run([exe, path], capture_output=True, text=True)
-            assert run.returncode > 0, (body, run.returncode, run.stdout[:200])
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
 
 
 # CF-GAPS: the eight gaps closed on both rails -- brace elision (CF-BRACE), string-sized locals
@@ -11263,15 +11277,20 @@ _FNSEL_REFUSED = (
     "uint32_t f(uint32_t s) { op_t h = tw; op_t g = s ? (s > 1u ? h : tw) : wide; return g(s); }",
     "uint32_t f(uint32_t s) { return (s ? two : tyw) != 0; }",
     "uint32_t f(uint32_t s) { return (s ? vl : vw) != 0; }",
+    # a function pointer read from a member, typed as one since CF-FPTAB -- an integer on both rails before it
+    "struct ops { op_t run; };\n"
+    "uint32_t f(uint32_t s) { struct ops o = {tw}; return (s ? o.run : wide) != 0; }",
 )
-# ... while the same function type spelled another way, and a designator beside a null pointer, lower alike; a pointer
-# read from a member, which the twin loads as an integer, has a function type on neither rail, so neither compares it
+# ... while the same function type spelled another way, a designator beside a null pointer, and a member read beside a
+# function of its own type, read as it is or through `*` (CF-FPTAB), lower alike
 _FNSEL_LOWERED = (
     "static uint32_t same(unsigned int x) { return x + 1u; }\n"
     "uint32_t f(uint32_t s) { op_t h = same; op_t g = s ? tw : h; return g(s); }",
     "uint32_t f(uint32_t s) { op_t g = s ? 0 : tw; return g ? g(s) : 1u; }",
     "struct ops { op_t run; };\n"
-    "uint32_t f(uint32_t s) { struct ops o = {tw}; return (s ? o.run : wide) != 0; }",
+    "uint32_t f(uint32_t s) { struct ops o = {tw}; op_t g = s ? o.run : tw; return g(s); }",
+    "struct ops { op_t run; };\n"
+    "uint32_t f(uint32_t s) { struct ops o = {tw}; op_t g = s ? *o.run : tw; return g(s); }",
 )
 
 
@@ -11283,8 +11302,9 @@ def test_function_designator_arms_select_a_function_pointer_on_both_rails():
     compile. The select is now a pointer to the arms' function type on both rails -- and a null pointer arm that
     pointer -- which lower the fixture and `_FNSEL_CALLS` (calls through a select in place) to one claim graph on the
     four targets; each emit returns what the original does, and the pointers it returns are the original's. Arms
-    that point to functions of different types (`_FNSEL_REFUSED`) are refused on both rails; the same type spelled
-    another way, and an arm neither rail types (`_FNSEL_LOWERED`), lower alike on both."""
+    that point to functions of different types (`_FNSEL_REFUSED`) are refused on both rails -- a member read among them
+    since CF-FPTAB typed it; the same type spelled another way, a null pointer arm and a member read of the arms' own
+    type (`_FNSEL_LOWERED`) lower alike on both."""
     from bcir.frontends.cfront.lower import CLowerError
 
     for body in _FNSEL_REFUSED:
@@ -11957,3 +11977,304 @@ def test_a_block_scope_name_hides_an_enumerator_on_both_rails():
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(unit)
             _parity_on_targets(path, unit)
+
+
+# CF-FPTAB: a call through any postfix expression whose value is a function pointer (C11 6.5.2.2p1) -- `(*fp)(x)`,
+# `(**fp)(x)` and `(*f)(x)` of a function, whose `*` names it again (6.5.3.2p4, 6.3.2.1p4), `t[i](x)` and
+# `(*t[i])(x)` of a table -- and the tables themselves. `cfront_fptab.c` returns the elements it picks, and the
+# functions `*fp` names as a value; they are compared with the original's and called here.
+_FPTAB_DRIVER = (
+    _GAPS_SAME
+    + r"""
+#define SAME_PICK(f) do { if (f(s) != bcir_##f(s) || f(s)(s) != bcir_##f(s)(s)) return fail(#f); } while (0)
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME_PICK(ft_pick_global); SAME_PICK(ft_pick_raw); SAME_PICK(ft_pick_local); SAME_PICK(ft_pick_grid);
+    SAME_PICK(ft_pick_member); SAME_PICK(ft_pick_ptr); SAME_PICK(ft_pick_deref);
+    SAME(ft_params, s); SAME(ft_call_deref, s); SAME(ft_call_one, s); SAME(ft_compare, s); SAME(ft_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# ... and a call through a table in place: a pointer the escape rows count as resolved to no one function, which a
+# corpus fixture keeps out (local, file-scope and 2-D tables by a runtime index, through a pointer, a parameter of
+# every spelling and a member, under `*` and `**`, a generic selection's and a select's function)
+_FPTAB_CALLS = """#include <stdint.h>
+typedef uint32_t (*op_t)(uint32_t);
+struct dev { uint32_t id; op_t fn[2]; uint32_t (*raw[2])(uint32_t); op_t one; };
+static uint32_t tw(uint32_t x) { return x * 2u + 1u; }
+static uint32_t th(uint32_t x) { return x * 3u + 5u; }
+static uint32_t ng(uint32_t x) { return 0u - x; }
+static uint32_t mx(uint32_t x) { return (x ^ 0x5Au) * 7u; }
+static op_t g_ops[4] = {tw, th, ng, mx};
+static uint32_t (*g_raw[2])(uint32_t) = {mx, tw};
+static op_t g_grid[2][2] = {{ng, tw}, {mx, th}};
+static struct dev g_dev = {3u, {th, ng}, {mx, tw}, th};
+static uint32_t via_ptr(op_t *p, uint32_t s) { return (*p)(s) + p[1](s) * 3u + (**p)(s + 1u) * 5u + (*(p + 2))(s) * 7u; }
+static uint32_t via_arr(op_t t[], uint32_t s) { return t[s & 3u](s) + (*t[(s >> 1) & 3u])(s) * 3u; }
+static uint32_t via_grid(uint32_t (*t[2][2])(uint32_t), uint32_t s) { return t[s & 1u][(s >> 1) & 1u](s) + (*t[1][s & 1u])(s); }
+static uint32_t via_pp(uint32_t (**pp)(uint32_t), uint32_t s) { return (**pp)(s) + (*pp)(s + 2u) * 3u; }
+static uint32_t via_dev(struct dev *d, uint32_t s) {
+  return d->fn[s & 1u](s) + (*d->fn[(s >> 1) & 1u])(s) * 3u + d->raw[s & 1u](s) * 5u + (*d->one)(s) * 7u + (**d->raw)(s) * 11u;
+}
+uint32_t fpt_calls(uint32_t s) {
+  op_t t[4] = {mx, ng, th, tw};
+  uint32_t (*u[2])(uint32_t) = {th, mx};
+  uint32_t (*h[2][2])(uint32_t) = {{tw, th}, {ng, mx}};
+  op_t fp = s & 1u ? tw : ng;
+  op_t *p = t;
+  uint32_t (**q)(uint32_t) = u;
+  struct dev d = {1u, {ng, mx}, {th, tw}, mx};
+  uint32_t k = t[s & 3u](s) + (t[(s >> 2) & 3u])(s) * 3u + (*t[(s + 1u) & 3u])(s) * 5u + u[s & 1u](s) * 7u;
+  k += h[s & 1u][(s >> 1) & 1u](s) * 11u + (*h[(s >> 1) & 1u][s & 1u])(s) * 13u;
+  k += g_ops[s & 3u](s) * 17u + (*g_raw[s & 1u])(s) * 19u + g_grid[1][s & 1u](s) * 23u + (**g_ops)(s) * 29u;
+  k += (*fp)(s) * 31u + (**fp)(s) * 37u + p[(s >> 1) & 3u](s) * 41u + (*q)(s) * 43u + q[1](s) * 47u;
+  k += d.fn[s & 1u](s) * 53u + (*d.raw[(s >> 1) & 1u])(s) * 59u + (*d.one)(s) * 61u;
+  k += g_dev.fn[(s >> 2) & 1u](s) * 67u + g_dev.raw[s & 1u](s) * 71u;
+  k += via_ptr(g_ops, s) * 73u + via_arr(t, s) * 79u + via_grid(h, s) * 83u + via_pp(&fp, s) * 89u + via_dev(&d, s) * 97u;
+  k += _Generic(s, uint32_t: tw, default: th)(s) * 101u + (s & 1u ? tw : th)(s) * 103u + (*(s & 2u ? ng : mx))(s) * 107u;
+  return k;
+}
+"""
+# The operand kinds C requires of a call, `*`, `[]`, `.` and `->` (C11 6.5.2.2p1, 6.5.3.2p2, 6.5.2.1p1,
+# 6.5.2.3p1-2) and of what `sizeof` measures (6.5.3.4p1): each wrong operand refused on both rails for one reason.
+# On the parent the oracle read `*s`, `(*s)++` and `*s += 1u` of an integer through memory at `s` as a `uint32_t`;
+# both rails lowered `*s = 1u`, `*(s + 1u)`, `&*s`, `s[1]`, `&s[1]` and `s[1]++`, the twin `s->x` of a struct as
+# `s.x`, `p.x` of a pointer as `p->x`, `o[1].v` and `fp[0](s)`, and both `*fp = 1u`; the rest were refused for
+# reasons that differed between the rails.
+_FPTAB_HEAD = (
+    "#include <stdint.h>\ntypedef uint32_t (*op_t)(uint32_t);\nstruct S { uint32_t x; };\n"
+    "static uint32_t inc(uint32_t x) { return x + 1u; }\nuint32_t g;\n"
+)
+_FPTAB_REFUSED = (
+    ("uint32_t f(uint32_t s) { uint32_t x = s; return (*x)(1u); }", "dereference of a non-pointer"),
+    (
+        "uint32_t f(uint32_t *p) { return (*p)(1u); }",
+        "called object is not a function or function pointer",
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t a[2] = {s, s}; return a[0](1u); }",
+        "called object is not a function or function pointer",
+    ),
+    (
+        "uint32_t f(uint32_t s) { return inc(s)(1u); }",
+        "called object is not a function or function pointer",
+    ),
+    (
+        "uint32_t f(uint32_t s) { (void)s; return 1(2); }",
+        "called object is not a function or function pointer",
+    ),
+    (
+        'uint32_t f(uint32_t s) { (void)s; return "ab"(1u); }',
+        "called object is not a function or function pointer",
+    ),
+    ("uint32_t f(uint32_t s) { return *s; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { *s = 1u; return s; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { return *(s + 1u); }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { *g = s; return g; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { (*s)++; return s; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { ++*s; return s; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { *s += 1u; return s; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { uint32_t *p = &*s; return *p; }", "dereference of a non-pointer"),
+    (
+        "uint32_t f(uint32_t s) { uint32_t x = (*s = 3u); return x; }",
+        "dereference of a non-pointer",
+    ),
+    ("uint32_t f(struct S s) { struct S t = *s; return t.x; }", "dereference of a non-pointer"),
+    ("uint32_t f(uint32_t s) { return (uint32_t)sizeof *s; }", "dereference of a non-pointer"),
+    (
+        "uint32_t f(uint32_t s) { uint32_t a[2] = {s, s}; return *a[0]; }",
+        "dereference of a non-pointer",
+    ),
+    ("uint32_t f(uint32_t s) { return *(uint32_t)s; }", "dereference of a non-pointer"),
+    (
+        "uint32_t f(uint32_t s) { return s[1]; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(uint32_t s) { s[1] = 2u; return s; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(uint32_t s) { s[1]++; return s; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t *p = &s[1]; return *p; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(uint32_t s) { return (uint32_t)sizeof s[1]; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(uint32_t s) { op_t fp = inc; return fp[0](s); }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "struct V { uint32_t v; };\nuint32_t f(struct V *o) { return o->v[1]; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(struct S o) { return o[1].x; }",
+        "subscripted value is not an array or a pointer to an object",
+    ),
+    (
+        "uint32_t f(uint32_t *p) { return 1[p]; }",
+        "a subscript of an integer constant is not supported",
+    ),
+    (
+        "uint32_t f(struct S s) { return s->x; }",
+        "member access `->` through a value that is not a pointer to a struct or union",
+    ),
+    (
+        "uint32_t f(struct S s) { s->x = 1u; return s.x; }",
+        "member access `->` through a value that is not a pointer to a struct or union",
+    ),
+    (
+        "uint32_t f(struct S s) { return (*s).x; }",
+        "member access `->` through a value that is not a pointer to a struct or union",
+    ),
+    (
+        "uint32_t f(uint32_t s) { return s->x; }",
+        "member access `->` through a value that is not a pointer to a struct or union",
+    ),
+    (
+        "uint32_t f(struct S *p) { return p.x; }",
+        "member access on an object that is not a struct or union",
+    ),
+    (
+        "uint32_t f(struct S *p) { p.x = 1u; return p->x; }",
+        "member access on an object that is not a struct or union",
+    ),
+    (
+        "uint32_t f(uint32_t s) { return s.x; }",
+        "member access on an object that is not a struct or union",
+    ),
+    (
+        "uint32_t f(uint32_t s) { op_t fp = inc; *fp = 1u; return s; }",
+        "a function designator is not an lvalue",
+    ),
+    (
+        "uint32_t f(uint32_t s) { op_t fp = inc; (*fp)++; return s; }",
+        "a function designator is not an lvalue",
+    ),
+    (
+        "uint32_t f(uint32_t s) { op_t fp = inc; return (uint32_t)sizeof *fp + s; }",
+        "sizeof of a function designator",
+    ),
+    (
+        "uint32_t f(uint32_t s) { op_t t[s]; (void)t; return s; }",
+        "a variable-length array of function pointers is not supported",
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t (*t[s])(uint32_t); (void)t; return s; }",
+        "a variable-length array of function pointers is not supported",
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t (*t[1][1][1][1])(uint32_t); (void)t; return s; }",
+        "an array of function pointers of more than 3 dimensions is not supported",
+    ),
+)
+# ... while the valid forms beside them lower alike: `*(1 + p)`, a table's `*t` and `**t`, an element stored, a
+# table's `sizeof`, `&*fp`, a pointer to a pointer to a function pointer, a select of member reads compared with a
+# function of their type, a 3-D table
+_FPTAB_LOWERED = (
+    "uint32_t f(uint32_t *p) { return *(1 + p); }",
+    "uint32_t f(uint32_t *p) { *(1 + p) = 3u; return p[1]; }",
+    "uint32_t f(uint32_t s) { op_t t[2] = {inc, inc}; return (*t)(s) + (**t)(s) + (*(t + 1))(s); }",
+    "static op_t gt[2] = {inc, inc};\nuint32_t f(uint32_t s) { return (*gt)(s) + (**gt)(s) + (*(gt + 1))(s); }",
+    "uint32_t f(uint32_t s) { op_t t[2] = {inc, inc}; *t = inc; t[s & 1u] = inc; return t[0](s) + (uint32_t)sizeof *t; }",
+    "uint32_t f(uint32_t s) { op_t fp = inc; op_t q = &*fp; return q(s) + (**inc)(s); }",
+    "uint32_t f(uint32_t s) { op_t fp = inc; op_t *pp = &fp; op_t **ppp = &pp; return (***ppp)(s) + (*pp)(s); }",
+    "struct ops { op_t run; };\nuint32_t f(uint32_t s) { struct ops o = {inc}; op_t g2 = s ? o.run : inc; return g2(s); }",
+    "uint32_t f(uint32_t s) { op_t t[2][2][2] = {{{inc, inc}, {inc, inc}}, {{inc, inc}, {inc, inc}}}; return t[1][s & 1u][1](s); }",
+)
+
+
+def _fptab_refusal(src: str) -> str:
+    """The oracle's refusal of `src`, or "" when it lowers."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    try:
+        compile_unit(src, check_clang=False)
+    except (CParseError, CLowerError) as e:
+        return str(e)
+    return ""
+
+
+def test_tables_of_function_pointers_and_calls_through_them_run_as_the_original():
+    """CF-FPTAB: `cfront_fptab.c` -- tables of function pointers, typedef'd and spelled inline (`uint32_t
+    (*t[N])(uint32_t)`), local and file-scope, of two dimensions, struct members, pointers to them (`op_t *`,
+    `uint32_t (**p)(uint32_t)`) and parameters of them; their elements read through `t[i]`, `*(t + i)` and `*p` and
+    compared; calls through `(*fp)(x)`, `(**fp)(x)` and `(*f)(x)` of a function, and `*fp` as a value -- held,
+    selected and returned (`ft_pick_deref`). Both rails refused `(*fp)(x)` and a call through an element, the twin
+    every inline declarator and a typedef'd table parameter (declared as one function pointer), and both typed a
+    member read as an integer. The fixture and `_FPTAB_CALLS` -- every call in place: through local, file-scope and
+    2-D tables by a runtime index, a pointer, a parameter of every spelling, a member, under `*` and `**`, a generic
+    selection and a select -- lower to one claim graph on the four targets, and each emit returns what the original
+    does and the pointers the original's."""
+    if not _CC:
+        return
+    fx = "cfront_fptab.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _FPTAB_DRIVER)
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_FPTAB_CALLS)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "fptab_calls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_FPTAB_CALLS)
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _FPTAB_CALLS)
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(fpt_calls, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original(
+        "fptab_calls.c", _FPTAB_CALLS, (("twin", c_emit), ("oracle", oracle_emit)), driver
+    )
+
+
+def test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails():
+    """CF-FPTAB: the operand kinds C requires of a call, `*`, `[]`, `.` and `->` and of what `sizeof` measures --
+    a call of a value that is no function pointer, a dereference of a non-pointer, a subscript of a value that is
+    neither an array nor a pointer to an object (a function pointer included), `.` of a pointer and `->` of a
+    struct, a function designator stored to or stepped, `sizeof` of a function, a table of variable length or of
+    more than three dimensions (`_FPTAB_REFUSED`) -- each refused on both rails for its one reason. On the parent
+    the oracle read `*s` of an integer through memory at `s`, both rails lowered `*s = 1u`, `s[1]`, `&*s` and
+    `*fp = 1u`, and the twin `s->x` of a struct and `p.x` of a pointer. The valid forms beside them
+    (`_FPTAB_LOWERED`) lower to one claim graph on the four targets."""
+    for body, why in _FPTAB_REFUSED:
+        got = _fptab_refusal(_FPTAB_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _FPTAB_LOWERED:
+        got = _fptab_refusal(_FPTAB_HEAD + body + "\n")
+        assert got == "", (body, got)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_FPTAB_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_FPTAB_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_FPTAB_LOWERED):
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_FPTAB_HEAD + body + "\n")
+            _parity_on_targets(path, _FPTAB_HEAD + body + "\n")

@@ -198,13 +198,34 @@ def _elem_ctype(lf: LoweredFunc, rid: int) -> str:
     return _cname(unqualified(el)) if el is not None else "uint32_t"
 
 
+def _has_fp(ct: "CType | None") -> bool:
+    """Whether a function pointer is inside `ct` -- it is one, or a pointer to or an array of one at any
+    depth (CF-FPTAB) -- so that only a declarator around a name spells it (`_funcptr_decl`), never a type
+    name before it."""
+    while ct is not None and ct.kind in ("pointer", "array"):
+        ct = ct.of
+    return ct is not None and ct.kind == "funcptr"
+
+
 def _funcptr_decl(ct: CType, name: str) -> str:
-    """Render an inline function-pointer declarator `RET (*name)(PARAMS)`. Used in param + local
-    position, where (unlike a typedef alias) there is no spelling to print and the full signature
-    must be reconstructed from the carried return + parameter types — `int (*g)(int)`."""
+    """Render an inline function-pointer declarator `RET (*name)(PARAMS)` -- and around it the pointers and
+    dimensions of a type that holds one (CF-FPTAB): an array of them `RET (*name[N])(PARAMS)`, a pointer to
+    one `RET (**name)(PARAMS)`. Used in param, local and temp position, where (unlike a typedef alias)
+    there is no spelling to print and the full signature must be reconstructed from the carried return +
+    parameter types -- `int (*g)(int)`. With no name it is the type's own spelling (a prototype's)."""
+    inner, ptr_last = name, False
+    while ct.kind in ("pointer", "array"):
+        if ct.kind == "pointer":
+            inner, ptr_last = f"*{inner}", True
+        else:  # a dimension binds tighter than a `*`: a pointer to an array keeps its parentheses
+            inner, ptr_last = (
+                (f"({inner})[{ct.count}]" if ptr_last else f"{inner}[{ct.count}]"),
+                False,
+            )
+        ct = ct.of
     ret = _cname(ct.of) if ct.of is not None else "void"
     plist = ", ".join(_cname(p) for p in ct.params) or "void"
-    return f"{ret} (*{name})({plist})"
+    return f"{ret} (*{inner})({plist})"
 
 
 _ANON_REF = re.compile(r"(?<![A-Za-z0-9_$])(?:struct|union) (\$anon\d+)(?![A-Za-z0-9_$])")
@@ -234,6 +255,9 @@ def respell_anon(text: str, spelling: dict) -> str:
 def _object_declarator(ct: CType, name: str) -> str:
     """An object's declaration without its initializer: `T name`, an array's every dimension after its name
     (`T name[2][3]`, the element type the innermost; an unsized one `[]`)."""
+    # a function pointer, a table of them: the declarator around the name (CF-FPTAB)
+    if _has_fp(ct):
+        return _funcptr_decl(ct, name)
     dims = []
     while ct.kind == "array":
         dims.append(f"[{ct.count}]" if ct.count else "[]")
@@ -342,7 +366,7 @@ def _signature(lf: LoweredFunc) -> str:
     """The function's signature as its definition spells it, `static RET bcir_NAME(PARAMS)`: the
     definition's head, and the forward declaration of it that a caller's emit makes."""
     parts = [
-        _funcptr_decl(ct, pname) if ct.kind == "funcptr" else f"{_cname(ct)} {pname}"
+        _funcptr_decl(ct, pname) if _has_fp(ct) else f"{_cname(ct)} {pname}"
         for pname, _rid, ct in lf.params
     ]
     if lf.variadic:  # a trailing `...` after the named params
@@ -355,7 +379,7 @@ def _proto_param(ct: CType, const_pointee: bool) -> str:
     with no name, `RET (*)(PARAMS)` (its name alone does not compile), and a pointer to `const` keeps the
     qualifier -- a parameter of `const T *` is another type than one of `T *`, and the two declarations of
     the callee would conflict. The twin spells both alike (`bcir_cfront.c`, the prototype's `tudefs`)."""
-    if ct.kind == "funcptr":
+    if _has_fp(ct):
         return _funcptr_decl(ct, "")
     return ("const " if const_pointee and ct.kind == "pointer" else "") + _cname(ct)
 
@@ -398,7 +422,9 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
         # the zero baseline as the empty initializer: `= {0}` re-lowers as the baseline AND a store of 0 to the
         # first scalar, which the next emit spells as a store -- one more each round (CF-RTWIDE)
         zi = " = {}" if rid in lf.zero_init_locals else ""
-        if ct.kind == "funcptr":  # `RET (*name)(PARAMS)` (no typedef alias)
+        if _has_fp(
+            ct
+        ):  # `RET (*name)(PARAMS)` (no typedef alias), a table `RET (*name[N])(PARAMS)`
             return f"    {_funcptr_decl(ct, name)}{zi};"
         if ct.kind == "array":  # `T name[N]` (the dims follow the name)
             return f"    {_cname(ct.of)} {name}[{ct.count}]{zi};"
@@ -414,8 +440,9 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
             return f"    {sc} {_cname(ct.of)} {name}[{ct.count}] = {init or '{0}'};"
         if ct.kind in ("struct", "union"):
             return f"    {sc} {_cname(ct)} {name} = {init or '{0}'};"
-        if ct.kind == "funcptr":  # `RET (*name)(PARAMS)`, as a local's
-            return f"    {sc} {_funcptr_decl(ct, name)} = {init or '0u'};"
+        if _has_fp(ct):  # `RET (*name)(PARAMS)`, as a local's -- a table's `RET (*name[N])(PARAMS)`
+            zero = "{0}" if ct.kind == "array" else "0u"
+            return f"    {sc} {_funcptr_decl(ct, name)} = {init or zero};"
         return f"    {sc} {_cname(ct)} {name} = {init or '0u'};"
 
     decls = [_local_decl(rid, local_name[rid], ct) for rid, _name, ct in lf.locals]
@@ -602,8 +629,9 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
     suf = c.op.split(".", 2)[-1] if "." in c.op else c.op
 
     def deftmp(rid: int, expr: str, ty: str | None = None) -> str:
-        if ty is None and getattr(lf.rid_types.get(rid), "kind", None) == "funcptr":
-            # a null function pointer (CF-NULLPTR): `RET (*t)(PARAMS) = 0u;`
+        if _has_fp(lf.rid_types.get(rid)):
+            # a function pointer, a pointer to one (`&fp`, CF-FPTAB) or a null one (CF-NULLPTR) is declared by its
+            # declarator, whatever spelling the caller made of its type: `RET (*t)(PARAMS) = 0u;`
             return f"{_funcptr_decl(lf.rid_types[rid], ref(rid))} = {expr};"
         if ty is None:  # a temp renders its true C type (`_load_ctype`): float/double, the
             ty = _load_ctype(lf, rid)  # (width, signedness) integer, `T *`, a struct/union
@@ -659,6 +687,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"({ref(c.rd[0])} ? {ref(c.rd[1])} : {ref(c.rd[2])})")
     if c.op == "c.load":
         et = _load_ctype(lf, c.wr[0])
+        # the temp a load declares: a function pointer read from a table or a member is declared as one
+        # (CF-FPTAB) -- a `uint32_t` of it did not compile
+        decl = (
+            _funcptr_decl(lf.rid_types[c.wr[0]], ref(c.wr[0]))
+            if _has_fp(lf.rid_types.get(c.wr[0]))
+            else f"{et} {ref(c.wr[0])}"
+        )
         if c.hazard == "atomic":  # a read of an `_Atomic` object (CF-ATOMIC): one atomic load
             return deftmp(c.wr[0], _atomic_object(lf, c, ref, et, len(c.rd), stride_at=2), et)
         off = c.imm[0] if c.imm else 0
@@ -680,11 +715,13 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                         et,
                     )
                 return (
-                    f"{et} {t}; memcpy(&{t}, (const char *){bp} + {off} + "
+                    f"{decl}; memcpy(&{t}, (const char *){bp} + {off} + "
                     f"(size_t){ref(c.rd[1])} * {stride}, {es});"
                 )
             return deftmp(
-                c.wr[0], f"{ref(c.rd[0])}[{_idx(lf, c, ref)}]", et
+                c.wr[0],
+                f"{ref(c.rd[0])}[{_idx(lf, c, ref)}]",
+                None if _has_fp(lf.rid_types.get(c.wr[0])) else et,
             )  # typed array (masked -> guarded)
         ptr = _base_ptr(lf, c.rd[0], ref)
         if c.volatile:
@@ -697,7 +734,7 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         if len(c.imm) > 1:  # a (non-MMIO) BITFIELD unit: read only `imm[1]`
             return f"{et} {t} = 0; memcpy(&{t}, (const char *){ptr} + {off}, {c.imm[1]});"  # spanned bytes (zeroed)
         # plain RAM member/deref: memcpy is alignment-safe (handles packed) — Clang folds it to a load.
-        return f"{et} {t}; memcpy(&{t}, (const char *){ptr} + {off}, sizeof {t});"
+        return f"{decl}; memcpy(&{t}, (const char *){ptr} + {off}, sizeof {t});"
     if c.op == "c.store":
         # a write of an `_Atomic` object (CF-ATOMIC): one atomic store of exactly its slot's type (a
         # typed element: the element's own type)
@@ -729,6 +766,12 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
                         f"(size_t){ref(c.rd[1])} * {stride}) = {ref(c.rd[2])};"
                     )
                 dst = f"(char *){bp} + {off} + (size_t){ref(c.rd[1])} * {stride}"
+                vt = lf.rid_types.get(c.rd[2])
+                if (
+                    vt is not None and vt.kind == "funcptr"
+                ):  # into a member table (CF-FPTAB): through a
+                    # generic funcptr lvalue, as a member's store below (a memcpy of a designator copies code)
+                    return f"*(void (**)(void))({dst}) = (void (*)(void)){ref(c.rd[2])};"
                 conv = (
                     "_Bool"
                     if (len(c.imm) > 2 and c.imm[2])

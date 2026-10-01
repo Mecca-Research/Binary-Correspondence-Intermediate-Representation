@@ -325,6 +325,16 @@ _mm_sfence();                      //                   store (release) fence ->
   point to functions of different types are refused. The constant `0` compared with a pointer by `==`
   or `!=`, passed through a function pointer to a pointer parameter, or given to `free` and as
   `realloc`'s pointer is a null pointer of that type.
+- Tables of function pointers, typedef'd or spelled inline (`uint32_t (*t[N])(uint32_t)`, up to three
+  dimensions), local or file-scope, struct members, pointers to them (`op_t *p`, `uint32_t (**p)(uint32_t)`) and
+  parameters of them; their elements read through `t[i]`, `*(t + i)` and `*p` as the function pointers they are, and
+  a member read as one. A call takes any expression whose value is a function pointer: `t[i](x)`, `(*t[i])(x)`,
+  `p->fn[i](x)`, `(c ? f : g)(x)`, `_Generic(...)(x)`, and `(*fp)(x)`, `(**fp)(x)` or `(*f)(x)`, whose `*` names the
+  function again (C11 6.5.3.2p4). Each operator takes only the operand C allows -- a call a function pointer, `*` and
+  `[]` a pointer to an object or an array, `.` a struct or union, `->` a pointer to one -- and anything else is refused
+  for one reason on both rails (`called object is not a function or function pointer`, `dereference of a
+  non-pointer`, `subscripted value is not an array or a pointer to an object`, ...), as is storing to or stepping a
+  function (`a function designator is not an lvalue`) and `sizeof` of one.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
@@ -403,8 +413,10 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
   struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
   rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.
-- A call through a dereferenced function pointer (`(*fp)(x)`) or an element of an array of function pointers
-  (`(ops[i])(x)`); call through the pointer itself (`fp(x)`).
+- A `static` table of function pointers in a block (`static op_t t[2] = {f, g};`): refused on both rails as no integer
+  constant expression; a file-scope table holds the same designators. Arithmetic on a function pointer (`fp + 1`,
+  `fp++`), which C does not define, lowers today and is a recorded follow-up; `i[p]` (the pointer as the index) is
+  refused -- write `p[i]`.
 - A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`): the Python
   reference refuses the declaration, which the C twin accepts -- a split recorded for follow-up.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a

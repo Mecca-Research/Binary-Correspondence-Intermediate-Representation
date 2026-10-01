@@ -396,7 +396,8 @@ class _Parser:
                 return
             self.i = save  # a struct *type* (func ret / global)
         base = self._type_spec()
-        tref, name = self._declarator(base)
+        # a global may be a function pointer, an array of them or a pointer to one (CF-FPTAB)
+        tref, name = self._declarator_or_funcptr(base)
         if self.at("PUNCT", "("):  # a function definition (or a prototype)
             fn = self._func_body(
                 tref,
@@ -419,7 +420,7 @@ class _Parser:
             if not self.at("PUNCT", ","):
                 break
             self.nxt()
-            tref, name = self._declarator(base)
+            tref, name = self._declarator_or_funcptr(base)
         self.eat("PUNCT", ";")
 
     def _aggregate_definition(self, unit: cast.Unit) -> bool:
@@ -513,7 +514,27 @@ class _Parser:
         `( * ) ( ... )`, whose name may be left out."""
         self.eat("PUNCT", "(")
         self.eat("OP", "*")
+        ptr = 0  # `(**pp)(...)`: a pointer to a function pointer (CF-FPTAB)
+        while self.at("OP", "*"):
+            self.nxt()
+            ptr += 1
         name = self.eat("IDENT").text if not abstract or self.at("IDENT") else ""
+        dims = []  # `(*t[2])(...)`: an array of function pointers, each dimension a constant
+        while self.at("PUNCT", "["):
+            self.nxt()
+            dim = 0 if self.at("PUNCT", "]") else self._dim(self._assign())
+            if not isinstance(dim, int):
+                raise CParseError(
+                    "a variable-length array of function pointers is not supported",
+                    pos=self.peek().pos,
+                )
+            if len(dims) == 3:  # at most three, as for any array here (the twin's `fp_inline_decl`)
+                raise CParseError(
+                    "an array of function pointers of more than 3 dimensions is not supported",
+                    pos=self.peek().pos,
+                )
+            dims.append(dim)
+            self.eat("PUNCT", "]")
         self.eat("PUNCT", ")")
         self.eat("PUNCT", "(")
         params: list[cast.TypeRef] = []
@@ -535,35 +556,42 @@ class _Parser:
                     continue
                 break
         self.eat("PUNCT", ")")
-        return (
-            cast.TypeRef(base=name, funcptr=True, func_ret=ret, func_params=tuple(params)),
-            name,
-        )
+        fp = cast.TypeRef(base=name, funcptr=True, func_ret=ret, func_params=tuple(params))
+        return dataclasses.replace(fp, ptr=ptr, array=tuple(dims)), name
 
     def _is_funcptr_declarator(self, abstract: bool = False) -> bool:
         """True if the cursor is at `( * NAME ) (` — a function-pointer declarator (`int (*g)(int)`),
-        as opposed to the row-pointer `( * NAME ) [` form that `_declarator` handles. `abstract`: a
+        as opposed to the row-pointer `( * NAME ) [` form that `_declarator` handles -- or at a pointer to
+        one, `( * * NAME ) (`, or an array of them, `( * NAME [ N ] ) (` (CF-FPTAB). `abstract`: a
         parameter's, which may leave the name out -- `( * ) (`."""
-        if (
-            abstract
-            and self.at("PUNCT", "(")
-            and self.peek(1).kind == "OP"
-            and self.peek(1).text == "*"
-            and self.peek(2).kind == "PUNCT"
-            and self.peek(2).text == ")"
-            and self.peek(3).kind == "PUNCT"
-            and self.peek(3).text == "("
-        ):
-            return True
+        if not (self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"):
+            return False
+        k = 2
+        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
+            k += 1
+        if self.peek(k).kind == "IDENT":
+            k += 1
+        elif not abstract:
+            return False
+        while self.peek(k).kind == "PUNCT" and self.peek(k).text == "[":  # a dimension's tokens
+            depth = 0
+            while True:
+                tk = self.peek(k)
+                if tk.kind == "EOF":
+                    return False
+                if tk.kind == "PUNCT" and tk.text == "[":
+                    depth += 1
+                elif tk.kind == "PUNCT" and tk.text == "]":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                k += 1
+            k += 1
         return (
-            self.at("PUNCT", "(")
-            and self.peek(1).kind == "OP"
-            and self.peek(1).text == "*"
-            and self.peek(2).kind == "IDENT"
-            and self.peek(3).kind == "PUNCT"
-            and self.peek(3).text == ")"
-            and self.peek(4).kind == "PUNCT"
-            and self.peek(4).text == "("
+            self.peek(k).kind == "PUNCT"
+            and self.peek(k).text == ")"
+            and self.peek(k + 1).kind == "PUNCT"
+            and self.peek(k + 1).text == "("
         )
 
     def _declarator_or_funcptr(self, base: cast.TypeRef, abstract: bool = False):
@@ -638,7 +666,7 @@ class _Parser:
             # `T k(void);` line was a parse error); now the prototype parses, so guard the
             # construct itself. Routes to fallback under --fallback like any rejected form.
             for node in ast_walk(init):
-                if isinstance(node, (cast.CallExpr, cast.CallMember)):
+                if isinstance(node, (cast.CallExpr, cast.CallMember, cast.CallPtr)):
                     raise CParseError(
                         f"file-scope initializer of {name!r} calls a "
                         f"function (not a constant expression)",
@@ -1003,8 +1031,20 @@ class _Parser:
                 dims = [0] * len(raw)
         else:
             dims = raw  # all-literal -> a static (possibly multi-dim) array
-        if base.funcptr and ptr == 0 and not dims:  # `binop_fn fn` — keep the funcptr shape
-            return base, name
+        if (
+            base.funcptr
+        ):  # `binop_fn fn` -- the funcptr shape, and the pointers to it and the arrays of it
+            if vla is not None or vla_dims:  # (`op_t *p`, `op_t ops[3]`) keep it too (CF-FPTAB)
+                raise CParseError(
+                    "a variable-length array of function pointers is not supported",
+                    pos=self.peek().pos,
+                )
+            if ptr == 0 and not dims:
+                return base, name
+            shaped = dataclasses.replace(
+                base, ptr=base.ptr + ptr, array=tuple(dims) + tuple(base.array)
+            )
+            return shaped, name
         if ptr and base.array:  # `row_t *p` of `typedef T row_t[N]`: a pointer to an array has no
             raise CParseError(  # TypeRef spelling (it would read as an array of pointers)
                 "a pointer to a typedef'd array is not supported", pos=self.peek().pos
@@ -1686,7 +1726,7 @@ class _Parser:
                 )
                 self.eat("PUNCT", ")")
                 node = cast.VaArg(ap, tref)
-            elif self.at("PUNCT", "(") and isinstance(node, (cast.Name, cast.Member)):
+            elif self.at("PUNCT", "("):
                 self.nxt()
                 args = []
                 if not self.at("PUNCT", ")"):
@@ -1697,11 +1737,12 @@ class _Parser:
                             continue
                         break
                 self.eat("PUNCT", ")")
-                node = (
-                    cast.CallExpr(node.ident, tuple(args))
-                    if isinstance(node, cast.Name)
-                    else cast.CallMember(node, tuple(args))
-                )  # o->fnptr(args): dispatch table
+                if isinstance(node, cast.Name):
+                    node = cast.CallExpr(node.ident, tuple(args))
+                elif isinstance(node, cast.Member):  # o->fnptr(args): dispatch table
+                    node = cast.CallMember(node, tuple(args))
+                else:  # `(*fp)(x)`, `ops[i](x)`: a call through the expression's value (CF-FPTAB)
+                    node = cast.CallPtr(node, tuple(args))
             elif self.peek().kind == "OP" and self.peek().text in (
                 "++",
                 "--",

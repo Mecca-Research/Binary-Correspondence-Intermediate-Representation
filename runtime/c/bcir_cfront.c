@@ -765,6 +765,7 @@ static void complete_struct_refs(CC *c, int si){
     if(t->kind==2 && t->ptr_to_struct && (t->ptr_depth?t->ptr_depth:1)==1 && !strcmp(t->tag,S->tag)) t->size=sz; }
 }
 static venv *use_global(CC *c,const tok *id);   /* fwd: materialize a global's resource on first use */
+static uint32_t fp_value_temp(CC *c, const char *alias);   /* fwd: a function-pointer value temp (CF-FPTAB) */
 static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
 
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
@@ -775,7 +776,10 @@ static void apply_stars(CC *c, bcir_ctype *ty) {
   while(is(c,"*")){c->i++;
     while(is(c,"const")||is(c,"volatile")||is(c,"restrict")||is(c,"__restrict")||is(c,"__restrict__"))c->i++;
     if(ty->ptr_depth>=BCIR_MAX_PTR_DEPTH){fail(c,"pointer nesting too deep");return;}
-    if(ty->kind==1){ty->ptr_to_struct=1;} ty->kind=2; ty->ptr_depth++;}   /* count `*`s: `T**` -> depth 2 */
+    if(ty->kind==1){ty->ptr_to_struct=1;}
+    if(ty->kind==3){ty->ptr_to_fp=1; ty->size=cc_abi(c)->pointer_size;}   /* `op_t *p`: its pointee is the function
+      * pointer -- its alias, signature and return ride on, and it is pointer-wide on the target (CF-FPTAB) */
+    ty->kind=2; ty->ptr_depth++;}   /* count `*`s: `T**` -> depth 2 */
 }
 /* Parse a type SPECIFIER (the base scalar/struct/union/enum/typedef + qualifiers + the data-model size
  * fixups), WITHOUT the declarator `*`s. p_type folds the stars on top; the multi-declarator paths call
@@ -991,6 +995,60 @@ static int fp_param_list(CC *c, int spell, const bcir_ctype **out, int *n){
   *out=v; *n=np; return 0;
 }
 
+static long long ce_dim(CC *c,int probe);   /* fwd: an array dimension (CF-ENUMFOLD) */
+/* Whether the cursor is at an inline function-pointer declarator (CF-FPTAB): `( * NAME ) (`, a pointer to one
+ * `( * * NAME ) (`, an array of them `( * NAME [N] ) (` -- one or more `*`, the name (it may be left out where
+ * `abstract`), any dimensions, then the parameter list's `(`. 0 if not; else the index of the declarator's `)`.
+ * Nothing is consumed. */
+static int fp_decl_at(CC *c, int abstract){
+  if(!is(c,"(") || !tok_is(tat(c,c->i+1),"*")) return 0;
+  int k=c->i+2; while(tok_is(tat(c,k),"*")) k++;
+  if(tat(c,k)->k==T_ID) k++; else if(!abstract) return 0;
+  while(tok_is(tat(c,k),"[")){ int d=0;
+    do{ if(tok_is(tat(c,k),"[")) d++; else if(tok_is(tat(c,k),"]")) d--; k++; }while(d>0 && tat(c,k)->k!=T_END);
+    if(d>0) return 0; }
+  if(!tok_is(tat(c,k),")") || !tok_is(tat(c,k+1),"(")) return 0;
+  return k;
+}
+/* One `*` more on the function-pointer type `ty` (CF-FPTAB): a pointer to a function pointer, whose pointee rides on --
+ * the declarator's own `*`s, as `apply_stars` applies a specifier's. */
+static void fp_star(CC *c, bcir_ctype *ty){
+  if(ty->kind==3){ ty->ptr_to_fp=1; ty->size=cc_abi(c)->pointer_size; }
+  ty->kind=2; ty->ptr_depth++;
+}
+/* The inline function-pointer declarator at the cursor (`fp_decl_at` said it is one), parsed whole (CF-FPTAB): `ret` is
+ * the return type the specifier gave (`ret_si` its struct, else -1). Its function type is given a synthesized prelude
+ * typedef `__bcir_fpN` to be spelled by, as a plain declarator's is, and comes back in `*fp` (kind 3); `*stars` counts
+ * its `*`s past the first (the caller applies them with `fp_star`), `dims`/`*nd` its dimensions (at most three, as for
+ * any array here; each an integer constant expression -- a runtime one is refused, as the oracle refuses an array of
+ * function pointers of variable length) and
+ * `*nm` its name (none where it was left out). 1 after a failure. */
+static int fp_inline_decl(CC *c, const bcir_ctype *ret, int ret_si, bcir_ctype *fp, int *stars, int dims[3], int *nd, tok *nm){
+  c->i+=2;                                           /* `( *` */
+  *stars=0; while(is(c,"*")){ c->i++; (*stars)++; }
+  memset(nm,0,sizeof *nm); nm->s="";
+  if(isk(c,T_ID)) *nm=adv(c);
+  *nd=0;
+  while(is(c,"[")){ c->i++;
+    long long d=is(c,"]") ? 0 : ce_dim(c,1);
+    if(c->failed) return 1;
+    if(d<0){ fail(c,"a variable-length array of function pointers is not supported"); return 1; }
+    if(*nd>=3){ fail(c,"an array of function pointers of more than 3 dimensions is not supported"); return 1; }
+    dims[(*nd)++]=(int)d;
+    if(!eat(c,"]")) return 1; }
+  if(!eat(c,")")||!eat(c,"(")) return 1;
+  char rets[BCIR_EMIT_TYPE]; ctype_str(ret,rets,sizeof rets);
+  size_t line=c->fpdefs.w; const bcir_ctype *ps; int np;
+  ctext_putf(c,&c->fpdefs,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
+  if(fp_param_list(c,1,&ps,&np)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return 1; }
+  if(!eat(c,")")) return 1;
+  memset(fp,0,sizeof *fp); fp->kind=3; fp->size=cc_abi(c)->pointer_size;
+  fp_capture_ret(fp,ret,ret_si);
+  snprintf(fp->tag,sizeof fp->tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
+  fp->fp_sig=(uint16_t)sig_add(c,ret,ps,np,fp->tag,"");
+  return c->failed;
+}
+
 /* --- struct layout (Clang-compatible; bitfields LSB-first; packed/aligned, L8) --- */
 static void attrs(CC *c,int *packed,int *aligned){
   for(;;){
@@ -1114,7 +1172,14 @@ static int p_struct_body(CC *c) {
         }
         if(is(c,",")){c->i++;continue;} break;
       }
-      tok nm;
+      tok nm; int mpre_nd=0, mpre_dims[3]={0,0,0};
+      int mk=fp_decl_at(c,0);
+      if(mk && mk!=c->i+3){               /* `RET (*fn[N])(P)`, `RET (**pp)(P)`: a member table of, or pointer to,
+                                          * function pointers (CF-FPTAB), parsed whole; its dims are the member's */
+        bcir_ctype rty=ty, fty; int stars;
+        if(fp_inline_decl(c,&rty,si,&fty,&stars,mpre_dims,&mpre_nd,&nm)) return -1;
+        ty=fty; for(int s=0;s<stars;s++) fp_star(c,&ty);
+      } else
       if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
          && tat(c,c->i+2)->k==T_ID){       /* a function-pointer member `RET (*name)(params)` -> a kind-3 (8-byte)
                                           * field. The struct definition comes from the source (not emitted), so
@@ -1134,6 +1199,9 @@ static int p_struct_body(CC *c) {
         nm=adv(c);
       }
       int arr_count=0,nadims=0,adims[3]={0,0,0};        /* T arr[N] / T m[A][B] -- one or more dims */
+      for(int d=0; d<mpre_nd; d++){ int dim=mpre_dims[d];   /* an inline table's own dims (CF-FPTAB) */
+        if(nadims<3){ adims[nadims]=dim; }
+        nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       while(is(c,"[")){ c->i++; long long d=is(c,"]") ? 0 : ce_dim(c,0);   /* an integer constant expression */
         if(d<0) return -1;
         int dim=(int)d; eat(c,"]");
@@ -1754,6 +1822,29 @@ static int obj_sidx(CC *c,const venv *v){
   const bcir_resource *r=res_of(c->fn,v->rid);
   return v->type.kind==1 && !(r && (r->is_array || r->is_vla)) ? v->sidx : -1;
 }
+/* The function-pointer pointee of the pointer resource `r` of type `ty` (CF-FPTAB): its alias, so the emit spells
+ * `op_t *p`, and the mark that a read through it is a function-pointer value -- never an integer of its width, whose
+ * `uint64_t *` did not compile and was 8 bytes on a 4-byte-pointer target. */
+static void ptee_fp(CC *c, bcir_resource *r, const bcir_ctype *ty){
+  fits(c,r->agg,BCIR_CIR_AGG,"%s",ty->tag); r->ptee_funcptr=1;
+}
+/* The alias of the function type `sig` (1 + its index in `sigs`), given one on first use (CF-FPTAB): a member a struct
+ * declares by an inline declarator `RET (*fn)(PARAMS)` has none -- the source declares the struct -- so a read of it as
+ * a value gets a synthesized `typedef RET (*__bcir_fpN)(PARAMS);` to be declared by, as an inline local's has. "" for
+ * no type. */
+static const char *sig_alias(CC *c, int sig){
+  if(sig<=0 || sig>c->nsig) return "";
+  if(!c->sigs[sig-1].alias[0]){
+    char al[BCIR_CIR_NAME], rets[BCIR_EMIT_TYPE];
+    snprintf(al,sizeof al,"__bcir_fp%d",c->n_fpdef++);
+    ctype_str(&c->sigs[sig-1].ret,rets,sizeof rets);
+    ctext_putf(c,&c->fpdefs,"typedef %s (*%s)(",rets,al);
+    for(int k=0;k<c->sigs[sig-1].n_params;k++){ char pt[BCIR_EMIT_TYPE]; ctype_str(&c->sigs[sig-1].params[k],pt,sizeof pt);
+      ctext_putf(c,&c->fpdefs,"%s%s",k?", ":"",pt); }
+    ctext_putf(c,&c->fpdefs,"%s);\n",c->sigs[sig-1].n_params?"":"void");
+    fits(c,c->sigs[sig-1].alias,sizeof c->sigs[sig-1].alias,"%s",al); }
+  return c->sigs[sig-1].alias;
+}
 /* A pointer temp of pointer type `ty` (the oracle's `_temp(pointer)`): it carries the pointee -- width, sign,
  * float, plain char, _Bool, struct tag, void, depth and volatility -- and is an MMIO resource when it points
  * at volatile storage, so what is read through it is typed and marked as through a declared pointer. */
@@ -1766,6 +1857,7 @@ static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si){
     pr->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); pr->ptr_depth=ty->ptr_depth;
     pr->is_atomic=(uint8_t)(ty->is_atomic?1:0);          /* a pointer to `_Atomic` storage (CF-ATOMIC) */
     if(ty->ptr_to_struct) fits(c,pr->agg,BCIR_CIR_AGG,"%s %s",ty->is_union?"union":"struct",ty->tag);
+    else if(ty->ptr_to_fp) ptee_fp(c,pr,ty);
     else if(ty->size==0 && !ty->is_float) pr->is_voidptr=1; }
   return t;
 }
@@ -1800,6 +1892,7 @@ static uint32_t null_pointer(CC *c, uint32_t v, const bcir_ctype *ty){
   r->is_plain_char=(uint8_t)(ty->is_plain_char?1:0); r->is_bool=(uint8_t)(ty->is_bool?1:0);
   r->is_volatile=(uint8_t)(ty->is_volatile?1:0); r->is_atomic=(uint8_t)(ty->is_atomic?1:0);
   if(ty->ptr_to_struct) fits(c,r->agg,BCIR_CIR_AGG,"%s %s",ty->is_union?"union":"struct",ty->tag);
+  else if(ty->ptr_to_fp) ptee_fp(c,r,ty);
   else if(ty->size==0 && !ty->is_float) r->is_voidptr=1;
   return v;
 }
@@ -2047,6 +2140,9 @@ static uint32_t tempptr_field(CC *c, const field *fld){
     t->is_atomic=(uint8_t)(fld->ptee_atomic?1:0);          /* a pointer to `_Atomic` storage (CF-ATOMIC) */
     if(fld->ptee_sidx>=0) fits(c,t->agg,sizeof t->agg,"%s %s",
       c->s[fld->ptee_sidx].is_union?"union":"struct", c->s[fld->ptee_sidx].tag); }
+  if(fld->fp_sig && c->fn->n_res){                       /* `op_t *tab`: a pointer to function pointers (CF-FPTAB) */
+    const char *al=sig_alias(c,fld->fp_sig); bcir_resource *t=&c->fn->res[c->fn->n_res-1];
+    fits(c,t->agg,sizeof t->agg,"%s",al); t->ptee_funcptr=1; }
   return r;
 }
 
@@ -2054,7 +2150,9 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
   /* the BITFIELD unit temp is sized to a power of 2 >= its byte span (a packed field that straddles into
    * bits >= 32 needs a 64-bit unit); the load reads only `access_bytes` (the spanned bytes). */
   int usz = fld->bit_w ? (fld->access_bytes<=4?4:8) : fld->size;
-  uint32_t t=fld->is_ptr?tempptr_field(c,fld):fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size)
+  uint32_t t=(fld->fp_sig && !fld->is_ptr)?fp_value_temp(c,sig_alias(c,fld->fp_sig))   /* a function pointer read from a
+                                          * member: a function-pointer value of its type (CF-FPTAB) */
+            :fld->is_ptr?tempptr_field(c,fld):fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size)
             :fld->bit_w?tempi(c,usz,0)   /* a BITFIELD storage unit: a plain unsigned load (bf.get extracts below),
                                           * even a `_BitInt(N)` bitfield -- its unit is read raw, then masked. */
             :fld->bit_width>0?tempbi(c,fld->bit_width,fld->signd)   /* a PLAIN C23 `_BitInt(N)` member: load at the
@@ -2087,7 +2185,9 @@ static uint32_t emit_member(CC *c, venv *base, const field *fld, int declared_bf
 /* `s.arr[idx]` -- a load from a struct member array: the element lands at `&s + member_off + idx*elem`,
  * so the claim carries the base, the index, and (member byte offset, element size) in imm. */
 static uint32_t emit_member_index(CC *c, venv *base, const field *fld, uint32_t idx) {
-  uint32_t t=fld->elem_ptr?tempptr_field(c,fld)        /* an array-of-pointers element: a `T *` temp */
+  uint32_t t=(fld->fp_sig && !fld->elem_ptr)?fp_value_temp(c,sig_alias(c,fld->fp_sig))   /* an element of a member
+                                                        * table of function pointers (CF-FPTAB) */
+            :fld->elem_ptr?tempptr_field(c,fld)        /* an array-of-pointers element: a `T *` temp */
             :fld->elem_sidx>=0?tempagg(c,fld->elem_sidx)   /* an array-of-structs element: the aggregate (CF-STRUCTVAL) */
             :fld->is_complex?tempc(c,fld->size):fld->is_float?tempf(c,fld->size):tempi(c,fld->size,fld->signd);
   if(fld->is_plain_char && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_plain_char=1;   /* `char[]` element: `char` */
@@ -2762,9 +2862,22 @@ static bcir_bounds access_bnd(CC *c, uint32_t rid) {
 }
 /* The temp an element of `base` loads into: an ARRAY of pointers yields a pointer typed as the element,
  * anything else a value of the element's type. Shared by `a[i]` and `*a`. */
+/* A temp holding a function-pointer VALUE whose alias is `alias` (CF-FPTAB): pointer-wide on the target and spelled by
+ * the alias, so the emit declares `op_t t` and a call through it compiles -- a `uint64_t` of it did not, and was 8
+ * bytes on a 4-byte-pointer target. `res_sig` finds its function type by the alias, as a select's (CF-FNSEL). */
+static uint32_t fp_value_temp(CC *c, const char *alias){
+  uint32_t t=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_SCALAR,"");
+  if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1]; tr->is_funcptr=1; fits(c,tr->agg,BCIR_CIR_AGG,"%s",alias); }
+  return t;
+}
 static uint32_t elem_temp(CC *c, venv *base) {
   uint32_t t;
-  if(ptr_array(c,base)){                          /* an ARRAY of pointers `T *a[N]`
+  if(base->type.kind==3 || (base->type.kind==2 && base->type.ptr_to_fp && (base->type.ptr_depth?base->type.ptr_depth:1)==1
+                            && !ptr_array(c,base))){
+    /* an element of a table of function pointers -- an array of them, or through a pointer to one: a function-pointer
+     * value of the table's type (CF-FPTAB) */
+    t=fp_value_temp(c,base->type.tag);
+  } else if(ptr_array(c,base)){                          /* an ARRAY of pointers `T *a[N]`
     * (a SCALAR array with pointer-wide elements, NOT a pointer variable `T *p`): `a[i]` loads a pointer, typed
     * as the element (its pointee's width, sign and volatility), so indexing it lands on the right objects */
     t=add_res(c,BCIR_DOM_RAM,base->type.size?base->type.size:4,1,0,BCIR_RK_POINTER,"");
@@ -2774,6 +2887,7 @@ static uint32_t elem_temp(CC *c, venv *base) {
       tr->is_plain_char=(uint8_t)(base->type.is_plain_char?1:0);
       tr->is_atomic=(uint8_t)(base->type.is_atomic?1:0);   /* a pointer to `_Atomic` storage (CF-ATOMIC) */
       if(base->type.ptr_to_struct) fits(c,tr->agg,sizeof tr->agg,"%s %s",base->type.is_union?"union":"struct",base->type.tag);
+      else if(base->type.ptr_to_fp) ptee_fp(c,tr,&base->type);
       else if(base->type.size==0 && !base->type.is_float) tr->is_voidptr=1; }   /* a `void *` element */
     last_ptr_to_volatile(c,base->type.is_volatile,base->type.ptr_to_struct && sdef_vol(c,base->sidx));
   } else if(base->type.kind==2 && (base->type.ptr_depth?base->type.ptr_depth:1)>1){   /* `pp[i]` through a
@@ -2788,6 +2902,49 @@ static uint32_t elem_temp(CC *c, venv *base) {
     if(base->type.is_bool && index_elem_atomic(c,base) && c->fn->n_res)   /* an `_Atomic _Bool` element */
       c->fn->res[c->fn->n_res-1].is_bool=1; }
   return t;
+}
+static const bcir_ctype *callee_ret(CC *c, const tok *id);     /* fwd: a defined function's return type */
+static const bcir_ctype *declared_ret(CC *c, const tok *id);   /* fwd: a prototype's */
+/* The operand kinds C requires of `*`, `[]`, `.` and `->` (C11 6.5.3.2p2, 6.5.2.1p1, 6.5.2.3p1-2) and of what
+ * `sizeof` measures (6.5.3.4p1), each wrong operand refused for one reason on both rails -- the oracle's
+ * `DEREF_NOT`, `SUBSCRIPT_NOT`, `DOT_NOT`, `ARROW_NOT`, `FN_NOT_LVALUE` and `SIZEOF_FN` (CF-FPTAB). */
+#define CC_DEREF_NOT "dereference of a non-pointer"
+#define CC_SUBSCRIPT_NOT "subscripted value is not an array or a pointer to an object"
+#define CC_DOT_NOT "member access on an object that is not a struct or union"
+#define CC_ARROW_NOT "member access `->` through a value that is not a pointer to a struct or union"
+#define CC_FN_NOT_LVALUE "a function designator is not an lvalue"
+#define CC_SIZEOF_FN "sizeof of a function designator"
+/* Whether the object `v` names is an address `*` or `[]` takes (C11 6.5.3.2p2, 6.5.2.1p1): a pointer to an object --
+ * a declared one, or a file-scope one whose slot is a scalar -- or an array of any length, a VLA's too. A function
+ * pointer is none (a `*` of one names the function), nor is any other object. Every fast path that reads or writes
+ * through a NAMED operand asks this, as `emit_deref_rid` asks it of a value (CF-FPTAB: `*s = 1u`, `*(s + 1u)` and
+ * `s[1]` of an integer lowered on both rails). The oracle's `_indexable`. */
+static int names_object_ptr(CC *c, const venv *v){
+  if(v->type.kind==2) return 1;
+  const bcir_resource *r=res_of(c->fn,v->rid);
+  return r && (r->kind==BCIR_RK_POINTER || r->is_array || r->is_vla || r->is_pointer);
+}
+/* The refusal a `*` of the name `nm` -- its object `v`, NULL for none -- gets as an assignment's or an increment's
+ * operand (CF-FPTAB): a function pointer or a function names a function, no object (C11 6.3.2.1p1); an object that is
+ * neither a pointer nor an array, no address (6.5.3.2p2). 1 after failing for the oracle's reason, else 0. */
+static int deref_lvalue_refused(CC *c, const venv *v, const tok *nm){
+  if(v ? (v->type.kind==3 && !names_object_ptr(c,v)) : (callee_ret(c,nm) || declared_ret(c,nm))){   /* (a table's */
+    fail(c,CC_FN_NOT_LVALUE); return 1; }                                   /* `*t` is its element, an object) */
+  if(v && !names_object_ptr(c,v)){ fail(c,CC_DEREF_NOT); return 1; }
+  return 0;
+}
+/* Whether the token at `k` assigns (`=`, a compound `OP=`): what follows an lvalue a store writes. */
+static int assign_tok_at(CC *c, int k){ const tok *t=tat(c,k); return tok_is(t,"=") || is_compound_op(t); }
+/* Whether `v` is the base its member access takes (C11 6.5.2.3p1-2): `.` a struct or union object, `->` a pointer to
+ * one or an array of them, which converts to one (CF-FPTAB: the twin read `s->x` of a struct as `s.x` and `p.x` of a
+ * pointer as `p->x`, where the oracle refused both for a third reason). The oracle's `_member_agg`. */
+static int member_base_ok(CC *c, const venv *v, int arrow){
+  if(v->sidx<0) return 0;
+  const bcir_resource *r=res_of(c->fn,v->rid);
+  int arr = r && (r->is_array || r->is_vla);
+  if(arrow) return v->type.nadims<=1 && ((v->type.kind==2 && v->type.ptr_to_struct && (v->type.ptr_depth?v->type.ptr_depth:1)==1)
+                                         || (v->type.kind==1 && arr));
+  return v->type.kind==1 && !arr;
 }
 static uint32_t emit_index(CC *c, venv *base, uint32_t idx) {     /* base[idx] -- GEP load */
   uint32_t t=elem_temp(c,base);
@@ -2804,6 +2961,7 @@ static uint32_t array_index_n(CC *c, venv *v, int maxd) {
    * c->env[] -- the incoming `v`, a pointer into that array, would dangle after the move. Reading from the
    * by-value copy is byte-identical (only v->rid / v->type are read). */
   venv vsnap=*v; v=&vsnap;
+  if(!names_object_ptr(c,v)){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `s[1]` of an integer, `fp[0]` (CF-FPTAB) */
   uint32_t idxs[3]; int ni=0, taken=0;
   while(taken<maxd && is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]"); if(ni<3)idxs[ni++]=ix; taken++; }
   const bcir_resource *vr=res_of(c->fn,v->rid);    /* a multi-dim VLA -> RUNTIME dim strides (no c.const) */
@@ -2884,7 +3042,8 @@ static uint32_t index_chain(CC *c, venv *v){
  * the global's own nested declaration does not care about (CF-SMALL). The cursor is at the first `[`. */
 static int global_md_field(CC *c, const venv *v, field *gf){
   const bcir_resource *r=res_of(c->fn,v->rid);
-  if(!r || !r->read_only || !r->name[0] || v->type.kind!=0) return 0;
+  if(!r || !r->read_only || !r->name[0] || (v->type.kind!=0 && v->type.kind!=3)) return 0;   /* scalars, and function
+                                                       * pointers: `g[i][j](x)` of a 2-D table (CF-FPTAB) */
   int gi=find_global(c,r->name,(int)strlen(r->name));
   if(gi<0 || !c->gv[gi].is_arr || c->gv[gi].nd<2 || c->gv[gi].nd>3) return 0;
   const gvar *g=&c->gv[gi];
@@ -2894,6 +3053,7 @@ static int global_md_field(CC *c, const venv *v, field *gf){
   gf->size=v->type.size; gf->signd=v->type.signd; gf->is_float=v->type.is_float; gf->is_complex=v->type.is_complex;
   gf->is_bool=v->type.is_bool; gf->is_plain_char=v->type.is_plain_char; gf->bit_width=v->type.bit_width;
   gf->is_volatile=v->type.is_volatile; gf->is_atomic=v->type.is_atomic; gf->access_bytes=gf->size;
+  gf->fp_sig=v->type.kind==3 ? v->type.fp_sig : 0;   /* an element read as the function pointer it is */
   gf->nadims=g->nd; gf->arr_count=1;
   for(int d=0; d<g->nd; d++){ gf->adims[d]=(int)g->dims[d]; gf->arr_count*=(int)g->dims[d]; }
   return 1;
@@ -3007,23 +3167,27 @@ static venv ptr_elem_base(CC *c, uint32_t ptr, int psidx, const field *pfld){
  * general form powers `**pp` (deref the result of `*pp`) and `*(<expr>)`. */
 static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
   const bcir_resource *r=res_of(c->fn,rid);
-  if(!r || r->kind!=BCIR_RK_POINTER){ fail(c,"dereference of a non-pointer"); return rid; }
+  if(r && r->is_funcptr && r->kind==BCIR_RK_SCALAR) return rid;   /* `*fp`, `*inc`: the function, which converts back
+    * to the pointer to it -- no read (C11 6.5.3.2p4, 6.3.2.1p4; CF-FPTAB) */
+  if(!r || r->kind!=BCIR_RK_POINTER){ fail(c,CC_DEREF_NOT); return rid; }
   int depth=r->ptr_depth?r->ptr_depth:1, base=r->elem_bytes?(int)r->elem_bytes:4;
   /* SNAPSHOT every field of `r` we still need: the add_res/tempi/tempf calls below allocate a
    * NEW resource, which may realloc (and thus MOVE+free) c->fn->res -- so `r`, a pointer INTO that
    * array, dangles after the first allocation. Reading through it afterward is a use-after-free. */
   uint8_t r_signd=r->is_signed, r_float=r->is_float, r_plain_char=r->is_plain_char, r_vol=r->is_volatile;
-  uint8_t r_atom=r->is_atomic, r_bool=r->is_bool;
+  uint8_t r_atom=r->is_atomic, r_bool=r->is_bool, r_fp=r->ptee_funcptr;
   bcir_domain r_dom=r->domain;
   char r_agg[sizeof r->agg]; snprintf(r_agg,sizeof r_agg,"%s",r->agg);
-  int r_si=agg_sidx(c,r_agg);                      /* the pointee struct/union (a pointer's `agg`), else -1 */
+  int r_si=r_fp ? -1 : agg_sidx(c,r_agg);          /* the pointee struct/union (a pointer's `agg`), else -1 */
   uint32_t t;
-  if(depth==1 && r_si>=0) t=tempagg(c,r_si);       /* `*p` of a pointer to a struct: its value (CF-STRUCTVAL) */
+  if(depth==1 && r_fp) t=fp_value_temp(c,r_agg);   /* `*p` of `op_t *p`: a function-pointer value (CF-FPTAB) */
+  else if(depth==1 && r_si>=0) t=tempagg(c,r_si);  /* `*p` of a pointer to a struct: its value (CF-STRUCTVAL) */
   else if(depth>1){                                /* the pointee is itself a pointer (read pointer_size) */
     t=add_res(c,r_dom,base,1,r_vol,BCIR_RK_POINTER,"");   /* still pointing at the same (device) storage */
     if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];
       tr->is_signed=r_signd; tr->is_float=r_float; tr->ptr_depth=(uint8_t)(depth-1);
       tr->is_atomic=r_atom;                          /* one level down, still pointing at `_Atomic` storage */
+      tr->ptee_funcptr=r_fp;                         /* ... and at function pointers */
       fits(c,tr->agg,sizeof tr->agg,"%s",r_agg); }
   } else { t = r_float ? tempf(c,base) : tempi(c,base,r_signd);
     if(depth==1 && r_plain_char && c->fn->n_res)   /* a `char *` deref loads a plain `char` value */
@@ -3039,6 +3203,8 @@ static uint32_t emit_deref_rid(CC *c, uint32_t rid) {
 }
 static uint32_t emit_deref(CC *c, venv *pv) {     /* *p -- a one-read dereference load (named pointer or array) */
   const bcir_resource *r=res_of(c->fn,pv->rid);
+  if(pv->type.kind==3 && !(r && (r->is_array || r->ptee_funcptr))) return named_read(c,pv);   /* `*fp`: the
+    * function, which converts back to the pointer (C11 6.5.3.2p4) -- the object's value, never a read through it */
   if(r && r->kind!=BCIR_RK_POINTER && r->is_array && pv->type.kind!=1){   /* `*a` on an ARRAY: its first element,
     * one load at offset 0 (the oracle's `mem` lvalue of the element type); volatile when the element is */
     int es = pv->type.kind==2 ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4);
@@ -3128,6 +3294,9 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       b.type.is_atomic=(uint8_t)(pfld.ptee_atomic?1:0);       /* ... and `s->ap[i]` through an `_Atomic T *ap` */
       if(pfld.ptee_sidx>=0 && pfld.ptee_depth<=1){ b.type.kind=1; b.sidx=pfld.ptee_sidx; }   /* `s->ps[i]` through a
                                                                * `struct T *ps`: a struct element (CF-STRUCTVAL) */
+      else if(pfld.fp_sig && pfld.ptee_depth<=1){           /* `s->tab[i]` through an `op_t *tab`: a function-pointer
+                                                             * element (CF-FPTAB) */
+        b.type.kind=3; b.type.fp_sig=(uint16_t)pfld.fp_sig; fits(c,b.type.tag,sizeof b.type.tag,"%s",sig_alias(c,pfld.fp_sig)); }
       return emit_index(c,&b,ix);
     }
     if(is(c,"->")||is(c,".")){
@@ -3584,7 +3753,8 @@ static uint32_t p_call(CC *c, const tok *name) {
     else if(ty.kind==2){ t=temp(c,cc_abi(c)->pointer_size); bcir_resource *pr=&c->fn->res[c->fn->n_res-1];
       pr->is_signed=(uint8_t)(ty.signd?1:0); pr->is_float=(uint8_t)(ty.is_float?1:0);
       pr->ptr_depth=ty.ptr_depth?ty.ptr_depth:1; pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);
-      if(ty.ptr_to_struct) fits(c,pr->agg,sizeof pr->agg,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+      if(ty.ptr_to_struct) fits(c,pr->agg,sizeof pr->agg,"%s %s",ty.is_union?"union":"struct",ty.tag);
+      else if(ty.ptr_to_fp) ptee_fp(c,pr,&ty); }
     else t=tempi(c,ty.size?ty.size:4, ty.signd?1:0);
     /* T rides in the op (the digest strips it: the oracle's op is bare) for the emit's `va_arg(ap, T)`: its tokens,
      * one space apart, or -- when they would not fit -- the spelling of the type they parsed to, which always does.
@@ -3769,6 +3939,33 @@ static uint32_t p_icall(CC *c, const venv *fv) {
     cl->n_wr=(uint8_t)(vd?0:1);cl->wr[0]=t;cl->truncated=(uint8_t)dropped;}
   return vd?void_temp(c):t;                 /* the void value, as a direct void call's (`return cb();`, `c ? cb() : ...`) */
 }
+#define CC_NOT_CALLABLE "called object is not a function or function pointer"   /* the oracle's `NOT_CALLABLE` */
+static int res_sig(CC *c, uint32_t rid);   /* fwd: the function type a function-pointer value points at */
+/* A call through the function-pointer VALUE in `fv` (CF-FPTAB) -- an element of a table, a read through a pointer to one
+ * or from a member, a select of them -- with the cursor on its `(`: a `c.call.indirect` like a call through a
+ * function-pointer object's (p_icall), its result typed by the value's function type (`res_sig`). The oracle's
+ * `_call_ptr` through `_call_through`. */
+static uint32_t p_icall_rid(CC *c, uint32_t fv){
+  int s=res_sig(c,fv);
+  if(!s){ fail(c,CC_NOT_CALLABLE); return 0; }
+  venv v; memset(&v,0,sizeof v); v.rid=fv; v.sidx=-1;
+  v.type.kind=3; v.type.size=cc_abi(c)->pointer_size; v.type.fp_sig=(uint16_t)s;
+  fits(c,v.type.tag,sizeof v.type.tag,"%s",c->sigs[s-1].alias);
+  { const bcir_ctype *rt=&c->sigs[s-1].ret;
+    fp_capture_ret(&v.type,rt,rt->kind==1 ? find_struct(c,rt->tag,(int)strlen(rt->tag)) : -1); }
+  return p_icall(c,&v);
+}
+/* A postfix call on the value `r` (CF-FPTAB): `ops[i](x)`, `(*p)(x)`, `(ops[i])(x)`, `(c ? f : g)(x)` -- while a `(`
+ * follows, `r` is called through and the call's value is the next `r`. A value that is no function pointer is refused,
+ * as C refuses it (6.5.2.2p1), for the oracle's one reason. */
+static uint32_t call_value(CC *c, uint32_t r){
+  while(is(c,"(") && !c->failed){
+    const bcir_resource *rr=res_of(c->fn,r);
+    if(!rr || !rr->is_funcptr || rr->kind!=BCIR_RK_SCALAR){ fail(c,CC_NOT_CALLABLE); return 0; }
+    r=p_icall_rid(c,r);
+  }
+  return r;
+}
 
 /* §5.8: GCC/Clang atomic + fence + CAS builtins -> the BCIR ATOMIC_x / BARRIER / CMPXCHG opcodes.
  * kind: 0 = RMW (ptr,val), 1 = fence (no operands), 2 = cmpxchg (ptr,expected,desired). */
@@ -3915,8 +4112,9 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
    * `v`, a pointer into that array, would dangle. The emit/store helpers only READ the venv (by-value identical). */
   venv vsnap=*v; v=&vsnap;
   if(is(c,".")||is(c,"->")){
-    if(v->sidx<0){ fail(c,"member access on an object that is not a struct or union"); return 0; }
-    int arrow=is(c,"->"); c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
+    int arrow=is(c,"->");
+    if(!member_base_ok(c,v,arrow)){ fail(c,arrow?CC_ARROW_NOT:CC_DOT_NOT); return 0; }   /* (CF-FPTAB) */
+    c->i++; tok fn=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
     if(fi<0){fail(c,"unknown field");return 0;}
     if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
@@ -3939,6 +4137,8 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       return ff.fp_ret_void ? void_temp(c) : t;
     }
     field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
+    if(is(c,"[") && !mf.arr_count && !mf.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `o->v[1]` (CF-FPTAB) */
+    if(mf.is_ptr && is(c,".")){ fail(c,CC_DOT_NOT); return 0; }   /* `o.p.x` through a pointer member */
     if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* deref-through a loaded pointer field (#fieldderef) */
       uint32_t ptr=emit_member(c,v,&mf,0);      /* load the pointer field, then chain through the loaded ptr */
       return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
@@ -4124,7 +4324,7 @@ static int sz_name(CC *c, szt *t){
     return 1;
   }
   if(gi<0){
-    if(callee_ret(c,&id)){ fail(c,"sizeof of a function designator"); return -1; }
+    if(callee_ret(c,&id)){ fail(c,CC_SIZEOF_FN); return -1; }
     return 0;
   }
   const gvar *g=&c->gv[gi];
@@ -4197,6 +4397,16 @@ static int sz_postfix(CC *c, szt *t){
     t->vla=0;
   }
 }
+/* Whether the `*`s at `k` name a function -- a function pointer object or a function, no postfix after it: `*fp`,
+ * `**inc` (C11 6.5.3.2p4). */
+static int star_names_fn(CC *c, int k){
+  while(tok_is(tat(c,k),"*")) k++;
+  const tok *nm=tat(c,k), *nx=tat(c,k+1);
+  if(nm->k!=T_ID || tok_is(nx,"(") || tok_is(nx,"[") || tok_is(nx,".") || tok_is(nx,"->")) return 0;
+  const venv *v=lookup(c,nm); int gi=v ? -1 : find_global(c,nm->s,nm->n);
+  return v ? (v->type.kind==3 && !names_object_ptr(c,v)) : gi>=0 ? (c->gv[gi].ty.kind==3 && !c->gv[gi].is_arr)
+           : callee_ret(c,nm)!=NULL;
+}
 static int sz_unary(CC *c, szt *t){
   if(ENTER_REC(c)){ LEAVE_REC(c); return -1; }
   int r;
@@ -4205,6 +4415,7 @@ static int sz_unary(CC *c, szt *t){
     if(r==1 && (t->nd || t->addr || t->ty.kind==1)) r=0;
     if(r==1){ t->bf=0; t->ty.is_atomic=0; t->vla=0; }
   }
+  else if(is(c,"*") && star_names_fn(c,c->i)){ fail(c,CC_SIZEOF_FN); r=-1; }   /* `sizeof *fp` (CF-FPTAB) */
   else if(is(c,"*")){ c->i++; r=sz_unary(c,t); if(r==1 && !szt_elem(t)) r=0; if(r==1) t->vla=0; }
   else if(is(c,"&") && tat(c,c->i+1)->k==T_ID && !lookup(c,tat(c,c->i+1)) &&
           find_global(c,tat(c,c->i+1)->s,tat(c,c->i+1)->n)<0 && callee_ret(c,tat(c,c->i+1)) &&
@@ -4305,44 +4516,18 @@ static uint32_t p_alignof(CC *c){
   int sz, al; type_layout(c,&t.ty,t.si,&sz,&al);
   return size_result(c,al);
 }
-static uint32_t p_primary(CC *c) {
-  if(is(c,"_Generic")) return p_generic(c);
-  if(isk(c,T_INT)){tok t=adv(c);
-    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c)->long_size,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */
-    uint32_t r=tempi(c,lsz,lsg);
-    bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
-    cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return r;}
-  if(isk(c,T_FLT)){tok t=adv(c);                       /* a floating constant -> a typed c.fconst */
-    int isf = t.n>0 && (t.s[t.n-1]=='f'||t.s[t.n-1]=='F');   /* f/F -> float(4) */
-    int isl = t.n>0 && (t.s[t.n-1]=='l'||t.s[t.n-1]=='L');   /* l/L -> long double, else double(8) */
-    uint32_t r=tempf(c, isf?4:isl?cc_abi(c)->long_double_size:8);
-    char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.fconst:%.*s",t.n,t.s);
-    bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;} return r;}
-  if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
-    tok st=adv(c); uint32_t rid;
-    if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn);   /* adjacent literals concatenate */
-      rid=intern_string(c, cb?cb:st.s, cb?cn:st.n); }
-    else rid=intern_string(c,st.s,st.n);   /* full spelling kept in result-owned metadata; dedup; cap lifted */
-    if(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
-      venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type.size=1; sv.sidx=-1;
-      return emit_index(c,&sv,ix); }
-    return rid;
-  }
-  if(is(c,"_Alignof")||is(c,"alignof")) return p_alignof(c);   /* the type's alignment, a folded size_t */
-  if(is(c,"sizeof")) return p_sizeof(c);   /* the operand's own type (CF-SIZEOF), a folded size_t */
-  if(is(c,"(")){c->i++;uint32_t r=p_expr(c);
-    while(is(c,",")){c->i++;r=p_expr(c);}    /* the comma OPERATOR (lowest prec): lower each operand for its */
-    eat(c,")");return r;}                    /* side effects, DISCARD all but the last, yield the last rid */
-  if(isk(c,T_ID)){
-    tok id=adv(c);
+/* A call of the name `id`, the cursor on its `(`: an atomic builtin, a call through a function-pointer object (p_icall)
+ * or a direct named call (p_call), a struct or pointer result taking its postfix. `id(x)` -- and `(*id)(x)`, whose `*`
+ * of a function names it again (CF-FPTAB). */
+static uint32_t p_named_call(CC *c, tok id){
     const char *aop;bcir_opcode aoc;int akind;
-    if(is(c,"(")&&atomic_kind(&id,&aop,&aoc,&akind)){    /* atomics/fences/CAS */
+    if(atomic_kind(&id,&aop,&aoc,&akind)){    /* atomics/fences/CAS */
       int ordered = (id.n==21 && !strncmp("__atomic_thread_fence",id.s,21))   /* SEG6.1/SEG7: the order-taking */
                  || (id.n==19 && !strncmp("atomic_thread_fence",id.s,19));    /* fence forms route by their arg */
       return p_atomic(c,aop,aoc,akind,ordered);
     }
-    if(is(c,"(")){ venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
-      if(fv&&fv->type.kind==3) return p_icall(c,fv);
+    { venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
+      if(fv&&fv->type.kind==3) return call_value(c,p_icall(c,fv));   /* `fp(x)(y)`: through its value (CF-FPTAB) */
       const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
       int drop_save=c->call_dropped; c->call_dropped=0;   /* a call nested in an argument restores it */
       uint32_t r=p_call(c,&id);
@@ -4351,14 +4536,64 @@ static uint32_t p_primary(CC *c) {
       if(rt && rt->kind==1 && (is(c,".")||is(c,"->")||is(c,"["))){   /* the by-value struct result is addressable */
         venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
         sv.sidx=find_struct(c,rt->tag,(int)strlen(rt->tag));
-        if(sv.sidx>=0) return postfix_lvalue(c,&sv);
+        if(sv.sidx>=0) return call_value(c,postfix_lvalue(c,&sv));
       }
       if(rt && rt->kind==2 && (is(c,"->")||is(c,"["))){   /* a returned pointer: `f()->v` / `f()[i]` */
         venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
         sv.sidx=rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1;
-        return postfix_lvalue(c,&sv);
+        return call_value(c,postfix_lvalue(c,&sv));
       }
-      return r; }
+      return call_value(c,r); }                     /* `g(x)(y)`: through the result, which must be a function pointer */
+}
+/* `( *... NAME ) (` at the cursor, NAME a function-pointer object (a local, a parameter, a global) or a function: the `*`s
+ * name the function again (C11 6.5.3.2p4), so the call is `NAME(...)` -- the oracle's `_call_ptr`, which strips them.
+ * The token after the `)` (the call's `(`) on success, else 0. Nothing is consumed or lowered. */
+static int deref_named_callee(CC *c, tok *nm){
+  int k=c->i+1; while(tok_is(tat(c,k),"*")) k++;
+  const tok *nt=tat(c,k);
+  if(k==c->i+1 || nt->k!=T_ID || !tok_is(tat(c,k+1),")") || !tok_is(tat(c,k+2),"(")) return 0;
+  const venv *lv=lookup(c,nt); int gi=lv ? -1 : find_global(c,nt->s,nt->n);
+  int fnv = lv ? (lv->type.kind==3 && !names_object_ptr(c,lv))   /* a table's `*t` is its first element */
+          : gi>=0 ? (c->gv[gi].ty.kind==3 && !c->gv[gi].is_arr)
+          : (callee_ret(c,nt) || declared_ret(c,nt)) ? 1 : 0;
+  if(!fnv) return 0;
+  *nm=*nt; return k+2;
+}
+static uint32_t p_primary(CC *c) {
+  if(is(c,"_Generic")) return call_value(c,p_generic(c));   /* `_Generic(x, T: f, ...)(y)` (CF-FPTAB) */
+  if(isk(c,T_INT)){tok t=adv(c);
+    if(is(c,"[")){ fail(c,"a subscript of an integer constant is not supported"); return 0; }   /* `1[p]` (CF-FPTAB) */
+    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c)->long_size,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */
+    uint32_t r=tempi(c,lsz,lsg);
+    bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
+    cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return call_value(c,r);}   /* `1(2)`: refused (CF-FPTAB) */
+  if(isk(c,T_FLT)){tok t=adv(c);                       /* a floating constant -> a typed c.fconst */
+    int isf = t.n>0 && (t.s[t.n-1]=='f'||t.s[t.n-1]=='F');   /* f/F -> float(4) */
+    int isl = t.n>0 && (t.s[t.n-1]=='l'||t.s[t.n-1]=='L');   /* l/L -> long double, else double(8) */
+    uint32_t r=tempf(c, isf?4:isl?cc_abi(c)->long_double_size:8);
+    char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.fconst:%.*s",t.n,t.s);
+    bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=r;} return call_value(c,r);}
+  if(isk(c,T_STR)){     /* a string literal -> an anonymous read-only char[] global; value is a ptr */
+    tok st=adv(c); uint32_t rid;
+    if(isk(c,T_STR)){ int cn; char *cb=gather_strings(c,st,&cn);   /* adjacent literals concatenate */
+      rid=intern_string(c, cb?cb:st.s, cb?cn:st.n); }
+    else rid=intern_string(c,st.s,st.n);   /* full spelling kept in result-owned metadata; dedup; cap lifted */
+    if(is(c,"[")){ c->i++; uint32_t ix=p_expr(c); eat(c,"]");
+      venv sv; memset(&sv,0,sizeof sv); sv.rid=rid; sv.type.size=1; sv.sidx=-1;
+      return emit_index(c,&sv,ix); }
+    return call_value(c,rid);                   /* `"ab"(1)`: refused (CF-FPTAB) */
+  }
+  if(is(c,"_Alignof")||is(c,"alignof")) return p_alignof(c);   /* the type's alignment, a folded size_t */
+  if(is(c,"sizeof")) return p_sizeof(c);   /* the operand's own type (CF-SIZEOF), a folded size_t */
+  if(is(c,"(")){
+    { tok nm; int at=deref_named_callee(c,&nm); if(at){ c->i=at; return p_named_call(c,nm); } }   /* `(*fp)(x)` */
+    c->i++;uint32_t r=p_expr(c);
+    while(is(c,",")){c->i++;r=p_expr(c);}    /* the comma OPERATOR (lowest prec): lower each operand for its */
+    eat(c,")");return call_value(c,r);}      /* side effects, DISCARD all but the last, yield the last rid; a `(`
+                                              * after it calls through the value (CF-FPTAB) */
+  if(isk(c,T_ID)){
+    tok id=adv(c);
+    if(is(c,"(")) return p_named_call(c,id);
     int ec=visible_enum(c,id.s,id.n);             /* an enumerator in scope -> its folded constant (type int) */
     if(ec>=0){uint32_t r=tempi(c,4,1);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
@@ -4395,7 +4630,7 @@ static uint32_t p_primary(CC *c) {
       }
       fail_undeclared(c,&id);return 0;
     }
-    return postfix_lvalue(c,v);
+    return call_value(c,postfix_lvalue(c,v));     /* `ops[i](x)`, `t->fn[i](x)`: through the value (CF-FPTAB) */
   }
   fail(c,"expected expression");return 0;
 }
@@ -4408,6 +4643,7 @@ static void cast_name(CC *c,const bcir_ctype *ty,int signed_int,char *o,size_t n
                       * its `volatile`, then one `*` per level; the cast yields a real `T *` of that type */
     char base[BCIR_CIR_AGG];
     if(ty->ptr_to_struct) fits(c,base,sizeof base,"%s %s",ty->is_union?"union":"struct",ty->tag);
+    else if(ty->ptr_to_fp) fits(c,base,sizeof base,"%s",ty->tag);   /* a pointer to a function pointer: its alias */
     else if(ty->size==0 && !ty->is_float) snprintf(base,sizeof base,"void");
     else if(ty->bit_width>0) snprintf(base,sizeof base,"%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width);
     else if(ty->is_complex) snprintf(base,sizeof base,"%s",ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex");
@@ -4545,7 +4781,11 @@ static uint32_t p_unary_inner(CC *c) {
     bcir_claim *cl=new_claim(c,op,BCIR_OP_LOAD); if(cl){cl->n_wr=1;cl->wr[0]=t;}   /* a LOAD claim, no reads */
     return t; }
   if(is(c,"&")){ c->i++;                          /* address-of: &lvalue -> a pointer value (c.addrof) */
-    if(is(c,"*")){ c->i++; return p_unary(c); }    /* &*p == p (the pointer itself; &*(p+i) == p+i) */
+    if(is(c,"*")){ c->i++; uint32_t r=p_unary(c);  /* &*p == p (the pointer itself; &*(p+i) == p+i) -- but `*` */
+      const bcir_resource *rr=c->failed?NULL:res_of(c->fn,r);   /* still takes a pointer, an array or a function */
+      if(!c->failed && !(rr && (rr->kind==BCIR_RK_POINTER || rr->is_array || rr->is_vla || rr->is_pointer
+                                || rr->is_funcptr || rr->is_voidptr))) fail(c,CC_DEREF_NOT);   /* (6.5.3.2p3, CF-FPTAB) */
+      return r; }
     if(isk(c,T_ID)){ tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);
       /* SNAPSHOT the env entry: &s.arr[i] / &arr[i] resolve the index via member_arr_index / p_expr, which
        * can declare locals and realloc c->env[] -- a pointer into it would dangle (the helpers only READ). */
@@ -4616,6 +4856,7 @@ static uint32_t p_unary_inner(CC *c) {
             if(is(c,".")||is(c,"->")||is(c,"[")){ fail(c,"address-of a nested element is a follow-on"); return 0; }
             return addr_member_elem(c,v,&gf,ix); } }
         if(is(c,"[")){                             /* &arr[i] / &p[i] -- a plain element address `(char*)base + i*es` */
+          if(!names_object_ptr(c,v)){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `&s[1]` of an integer (CF-FPTAB) */
           int want=subscript_dims(c,v); uint32_t ix;
           if(want>1){                              /* &m[i][j] of a multi-dimensional array (local, VLA, `T m[][N]`
                                                     * parameter): every subscript, Horner-flattened -- the oracle's
@@ -4656,7 +4897,8 @@ static uint32_t p_unary_inner(CC *c) {
             tr->is_atomic=(uint8_t)(v->type.is_atomic?1:0);   /* an element of `_Atomic` storage (CF-ATOMIC) */
             if(v->type.kind==1||v->type.ptr_to_struct)        /* `&ps[i]` of an array of structs too: `struct T *`,
                                                               * never the `int32_t *` it had been (CF-STRUCTVAL) */
-              fits(c,tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
+              fits(c,tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag);
+            else if(v->type.kind==3) ptee_fp(c,tr,&v->type); }   /* `&ops[i]`: a pointer to a function pointer */
           bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
           if(cl){cl->n_rd=2;cl->rd[0]=v->rid;cl->rd[1]=ix;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=2;cl->imm[0]=0;cl->imm[1]=es;}
           return t;
@@ -4671,7 +4913,8 @@ static uint32_t p_unary_inner(CC *c) {
           tr->is_plain_char=(uint8_t)(v->type.is_plain_char?1:0);
           tr->is_atomic=(uint8_t)(v->type.is_atomic?1:0);     /* `&a` of an `_Atomic` object: `_Atomic T *` */
           tr->ptr_depth=(uint8_t)((v->type.kind==2?(v->type.ptr_depth?v->type.ptr_depth:1):0)+1);
-          if(v->type.kind==1||v->type.ptr_to_struct) fits(c,tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag); }
+          if(v->type.kind==1||v->type.ptr_to_struct) fits(c,tr->agg,sizeof tr->agg,"%s %s",v->type.is_union?"union":"struct",v->type.tag);
+          else if(v->type.kind==3||v->type.ptr_to_fp) ptee_fp(c,tr,&v->type); }   /* `&fp`, `&p` of `op_t *p` (CF-FPTAB) */
         last_ptr_to_volatile(c,v->type.is_volatile,v->sidx>=0 && sdef_vol(c,v->sidx));   /* &x of volatile storage */
         bcir_claim *cl=new_claim(c,"c.addrof",BCIR_OP_ADD);
         if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;} return t; } }
@@ -4712,7 +4955,8 @@ static uint32_t p_unary_inner(CC *c) {
     { uint32_t r; if(member_array_first_load(c,&r)) return r; }   /* `*q->a` */
     if(is(c,"(")){ int save=c->i; c->i++;          /* *(p) or *(p + i) */
       if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
-        if(pvp){ c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
+        if(pvp && names_object_ptr(c,pvp)){   /* `*(s + 1u)` of an integer: the general path refuses it (CF-FPTAB) */
+          c->i++; venv pvsnap=*pvp; venv *pv=&pvsnap;   /* SNAPSHOT: the `+ i` index p_expr below can realloc c->env[] */
           size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
           int through=1;                                /* `*(q[j] ...)`: through the loaded pointer element */
           if(is(c,"[")){ uint32_t lin=index_chain(c,pv); if(c->failed) return 0; through=step_to_elem_ptr(c,pv,lin); }
@@ -5168,6 +5412,8 @@ static venv *use_global(CC *c,const tok *id){
     gr->ndims=(uint8_t)(g->is_arr && g->nd>1 ? (g->nd<255?g->nd:255) : 0);   /* passed as `&m[0][0]` (CF-GARRAY) */
     gr->is_atomic=(uint8_t)(g->ty.is_atomic?1:0);     /* `_Atomic` storage, or a pointer to it (CF-ATOMIC) */
     gr->is_pointer=(uint8_t)(!g->is_arr&&(g->ty.kind==2||g->ty.kind==3)?1:0);
+    if(g->is_arr && g->ty.kind==3) ptee_fp(c,gr,&g->ty);   /* a table of function pointers: its element's alias, as a
+                                                         * local table's -- `*g` read an integer of its width (CF-FPTAB) */
     /* the value type rides on the resource, as a local's does: every temp typed from it (a deref of the
      * array, `-g`, the usual arithmetic conversions, a volatile read) is the global's type, not uint32 */
     if(g->ty.kind==0 && kind==BCIR_RK_POINTER){       /* an array: its element, as a pointer local's pointee */
@@ -5346,7 +5592,9 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
         if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap;
           if(is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
           else if(is(c,")")){ c->i++; ok=1; } } } }
-    else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; } }   /* *p */
+    else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid);
+      if(pvp && names_object_ptr(c,pvp)){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; }   /* *p */
+      else if(assign_tok_at(c,c->i+1) && deref_lvalue_refused(c,pvp,&pid)) return 0; }   /* `x = (*fp = v)` (CF-FPTAB) */
     const tok *op=&c->t[c->i];
     int is_eq = op->k==T_PUN && op->n==1 && op->s[0]=='=';
     if(ok && pv && pv->type.kind==2 && !pv->type.is_volatile      /* a non-volatile pointer to a scalar pointee */
@@ -5611,7 +5859,8 @@ static uint32_t incdec_snapshot(CC *c, venv *v){
     if(c->fn->n_res){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* carry the pointee (width/sign/struct) */
       pr->is_signed=(uint8_t)(st.signd?1:0); pr->is_float=(uint8_t)(st.is_float?1:0); pr->ptr_depth=st.ptr_depth;
       pr->is_plain_char=(uint8_t)(st.is_plain_char?1:0);
-      if(st.ptr_to_struct) fits(c,pr->agg,BCIR_CIR_AGG,"%s %s",st.is_union?"union":"struct",st.tag); }
+      if(st.ptr_to_struct) fits(c,pr->agg,BCIR_CIR_AGG,"%s %s",st.is_union?"union":"struct",st.tag);
+      else if(st.ptr_to_fp) ptee_fp(c,pr,&st); }
   } else {
     old = st.is_float ? tempf(c,sz) : tempi(c,sz,st.signd?1:0);
     if(c->fn->n_res && st.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1;
@@ -5691,6 +5940,8 @@ static int deref_incdec(CC *c, uint32_t *out){
   else if(t1->k==T_ID && !deref_tail(tat(c,k+2))){               /* `*p` */
     venv *vp=lookup(c,t1); if(!vp) vp=use_global(c,t1);
     if(vp && deref_ptr_ok(vp)){ pv=*vp; form=1; c->i=k+2; }
+    else if((prefix || (tok_is(tat(c,k+2),")") && (tok_is(tat(c,k+3),"++") || tok_is(tat(c,k+3),"--"))))
+            && deref_lvalue_refused(c,vp,t1)) return 0;         /* `++*s`, `(*fp)++` -- not `(*fp)(x)` (CF-FPTAB) */
   } else if(tok_is(t1,"(") && tat(c,k+2)->k==T_ID && tok_is(tat(c,k+3),"+")){   /* `*(p + i)`: `p[i]` */
     venv *vp=lookup(c,tat(c,k+2)); if(!vp) vp=use_global(c,tat(c,k+2));
     if(vp && deref_ptr_ok(vp) && !ptr_array(c,vp)){ pv=*vp; c->i=k+4; idx=p_expr(c);
@@ -6940,7 +7191,15 @@ static void p_stmt_inner(CC *c) {
     for(;;){
       if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
       bcir_ctype ty=base; apply_stars(c,&ty);   /* this declarator's own leading `*`s (none -> base type) */
-      if(is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
+      int fpre=0, fpre_nd=0, fpre_dims[3]={0,0,0}; tok fpre_nm; memset(&fpre_nm,0,sizeof fpre_nm);
+      { int k=fp_decl_at(c,0);
+        if(k && k!=c->i+3){   /* `RET (*t[N])(P)`, `RET (**pp)(P)`: an array of, or a pointer to, function pointers
+                               * (CF-FPTAB) -- parsed whole, then declared as `ALIAS t[N]` / `ALIAS *pp` are */
+          bcir_ctype fty; int stars;
+          if(fp_inline_decl(c,&ty,si,&fty,&stars,fpre_dims,&fpre_nd,&fpre_nm)) return;
+          ty=fty; for(int s=0;s<stars;s++) fp_star(c,&ty);
+          fpre=1; } }
+      if(!fpre && is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
          && tat(c,c->i+2)->k==T_ID
          && tat(c,c->i+3)->k==T_PUN && tat(c,c->i+3)->n==1 && tat(c,c->i+3)->s[0]==')'
          && tat(c,c->i+4)->k==T_PUN && tat(c,c->i+4)->n==1 && tat(c,c->i+4)->s[0]=='('){
@@ -6978,8 +7237,10 @@ static void p_stmt_inner(CC *c) {
         if(is(c,",")){ c->i++; continue; }              /* another declarator off the same specifier */
         break;
       }
-      if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; }
-      tok nm=adv(c); char nb[BCIR_CIR_NAME]; idcpy(c,nb,&nm);
+      tok nm;
+      if(fpre) nm=fpre_nm;
+      else { if(!isk(c,T_ID)){ fail(c,"expected declarator name"); return; } nm=adv(c); }
+      char nb[BCIR_CIR_NAME]; idcpy(c,nb,&nm);
       int arr=0,la_nd=0,la_dims[3]={0,0,0};            /* T name[N] / T m[A][B] -- a (multi-dim) local array */
       /* scan ALL `[...]` dims WITHOUT lowering, recording each as either a literal value or a runtime-expr
        * token range; then classify (oracle order): all-literal -> a static array (unchanged); >=1 runtime
@@ -6987,6 +7248,10 @@ static void p_stmt_inner(CC *c) {
        * VLA. Deferring the lowering keeps the dim snapshots in canonical dim order (each dim is evaluated
        * then snapshotted, in turn) -- the byte-parity contract with the oracle's Decl branch. */
       int dim_nd=0; int dim_is_lit[8]; int dim_lit[8]; int dim_tok[8]; int any_vla=0;
+      for(int d=0; d<fpre_nd; d++){ int dim=fpre_dims[d];   /* an inline table's own dims (CF-FPTAB), all fixed */
+        if(dim_nd<8){ dim_is_lit[dim_nd]=1; dim_lit[dim_nd]=dim; }
+        if(la_nd<3){ la_dims[la_nd]=dim; }
+        la_nd++; arr = arr?arr*dim:dim; dim_nd++; }
       while(is(c,"[")){ c->i++;
         long long cd=is(c,"]") ? 0 : ce_dim(c,1);    /* an integer constant expression: a fixed dim (6.7.6.2p4) */
         if(c->failed) return;
@@ -7004,6 +7269,7 @@ static void p_stmt_inner(CC *c) {
         if(la_nd<3)la_dims[la_nd]=dim; la_nd++; arr = arr?arr*dim:dim; dim_nd++; }
       int after_dims=c->i;                             /* the cursor past the last `]` (restored after re-parse) */
       if(any_vla){
+        if(ty.kind==3){ fail(c,"a variable-length array of function pointers is not supported"); return; }   /* the oracle's */
         if(ty.kind!=0 || ty.is_float){ fail(c,"only an integer-element VLA is supported"); return; }
         if(is_static || is(c,"=")){ fail(c,"a VLA cannot have static storage or an initializer"); return; }
         if(dim_nd>3){ fail(c,"a variable-length array of more than 3 dimensions is not supported"); return; }
@@ -7102,6 +7368,7 @@ static void p_stmt_inner(CC *c) {
         ar->ptee_bytes=(uint32_t)(ty.size>0?ty.size:0); ar->ptee_signed=(uint8_t)(ty.signd?1:0);   /* the decl's `T` */
         ar->ptee_float=(uint8_t)(ty.is_float?1:0); ar->ptee_plain_char=(uint8_t)(ty.is_plain_char?1:0);
         if(ty.ptr_to_struct) fits(c,ar->agg,BCIR_CIR_AGG,"%s %s",ty.is_union?"union":"struct",ty.tag);
+        else if(ty.ptr_to_fp) fits(c,ar->agg,BCIR_CIR_AGG,"%s",ty.tag);   /* `op_t *a[N]`: spelled by the alias */
         else if(ty.size==0 && !ty.is_float) ar->is_voidptr=1; }
       else if(ty.kind==2&&!arr){ bcir_resource *pr=&c->fn->res[c->fn->n_res-1];   /* a pointer local: carry the
         * pointee type (elem_bytes already = pointee size) so the decl emits `T *p`, not a truncating uint32 */
@@ -7109,6 +7376,7 @@ static void p_stmt_inner(CC *c) {
         pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
         pr->is_bool=(uint8_t)(ty.is_bool?1:0);   /* a `_Bool *` pointee: its element is `_Bool` (CF-ATOMIC) */
         if(ty.ptr_to_struct) fits(c,pr->agg,BCIR_CIR_AGG,"%s %s",ty.is_union?"union":"struct",ty.tag);
+        else if(ty.ptr_to_fp) ptee_fp(c,pr,&ty);   /* `op_t *p`: a pointer to function pointers (CF-FPTAB) */
         else if(ty.size==0 && !ty.is_float) pr->is_voidptr=1; }   /* a `void *` local (void pointee) -> emit `void *` */
       else if(ty.is_valist) c->fn->res[c->fn->n_res-1].is_valist=1;     /* a `va_list ap;` local -> emit `va_list` */
       else if(ty.is_float){ c->fn->res[c->fn->n_res-1].is_float=1;      /* a float/double (element) local */
@@ -7117,6 +7385,9 @@ static void p_stmt_inner(CC *c) {
         if(ty.is_bool) c->fn->res[c->fn->n_res-1].is_bool=1;       /* a _Bool local: emit `_Bool`, store normalizes */
         if(ty.bit_width>0) c->fn->res[c->fn->n_res-1].bit_width=ty.bit_width;   /* a C23 `_BitInt(N)` local */
         if(ty.is_plain_char) c->fn->res[c->fn->n_res-1].is_plain_char=1; }   /* a plain `char` local: emit `char` */
+      else if(ty.kind==3 && is_arr){ bcir_resource *ar=&c->fn->res[c->fn->n_res-1];   /* a TABLE of function pointers
+        * `op_t ops[N]`: declared by its alias, pointer-wide elements, each read a function-pointer value (CF-FPTAB) */
+        ptee_fp(c,ar,&ty); }
       else if(ty.kind==3 && !is_arr){ bcir_resource *fr=&c->fn->res[c->fn->n_res-1];   /* a typedef'd function-pointer
         * local `op_t f`: declared by its alias, as the inline declarator's `__bcir_fpN` is -- not the pointer-wide
         * integer, which a call through it cannot compile */
@@ -7210,14 +7481,15 @@ static void p_stmt_inner(CC *c) {
     size_t s_res=c->fn->n_res,s_cl=c->fn->n_claims; uint32_t s_rid=c->rid,s_cid=c->cid,s_clc=c->cl_ctr;
     if(is(c,"(")){ c->i++;                              /* *(p) or *(p + i) */
       if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);
-        if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap;
+        if(pvp && names_object_ptr(c,pvp)){ c->i++; pvsnap=*pvp; pv=&pvsnap;   /* (else the general path: CF-FPTAB) */
           if(is(c,"[")){ uint32_t lin=index_chain(c,pv);   /* `*(q[j] ...)`: through the loaded pointer element */
             if(c->failed) return;
             if(!step_to_elem_ptr(c,pv,lin)) pv=NULL; }
           if(pv && is(c,"+")){ c->i++; idx=p_expr(c); has_idx=1; if(eat(c,")")) ok=1; }
           else if(pv && is(c,")")){ c->i++; ok=1; } } } }
     else if(isk(c,T_ID)){ tok pid=*pk(c); venv *pvp=lookup(c,&pid); if(!pvp) pvp=use_global(c,&pid);   /* *p, *g */
-      if(pvp){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; } }
+      if(pvp && names_object_ptr(c,pvp)){ c->i++; pvsnap=*pvp; pv=&pvsnap; ok=1; }
+      else if(assign_tok_at(c,c->i+1) && deref_lvalue_refused(c,pvp,&pid)) return; }   /* `*fp = v`, `*s = v` */
     if(ok && pv && (is_compound_op(&c->t[c->i]) ||
                     (c->t[c->i].k==T_PUN && c->t[c->i].n==1 && c->t[c->i].s[0]=='='))){
       int sz = (pv->type.ptr_depth>1) ? cc_abi(c)->pointer_size : (pv->type.size?pv->type.size:4); uint32_t val;
@@ -7304,10 +7576,14 @@ static void p_stmt_inner(CC *c) {
     if(v&&v->sidx>=0&&tat(c,c->i+1)->k==T_PUN&&(tat(c,c->i+1)->s[0]=='.'
         ||(tat(c,c->i+1)->n==2&&tat(c,c->i+1)->s[0]=='-'&&tat(c,c->i+1)->s[1]=='>'))   /* `->`, never `-=` or `--` */
         && member_is_store(c,c->i+1)){
+      { int arw=tat(c,c->i+1)->n==2;                 /* `s->x = v` of a struct, `p.x = v` of a pointer (CF-FPTAB) */
+        if(!member_base_ok(c,v,arw)){ fail(c,arw?CC_ARROW_NOT:CC_DOT_NOT); return; } }
       c->i+=2; tok fld=adv(c); sdef *S=&c->s[v->sidx]; int fi=-1;
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
       field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
+      if(is(c,"[") && !f.arr_count && !f.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return; }   /* `o->v[1] = x` (CF-FPTAB) */
+      if(f.is_ptr && is(c,".")){ fail(c,CC_DOT_NOT); return; }   /* `o.p.x = v` through a pointer member */
       if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* store deref-through a loaded pointer field (#fieldderef) */
         uint32_t ptr=emit_member(c,v,&f,0);       /* load the pointer field, then store through the loaded ptr */
         store_through_ptr(c,ptr,f.ptee_sidx,f); eat(c,";"); return; }
@@ -7563,9 +7839,19 @@ static int p_func(CC *c, bcir_func *fn) {
      * is no alias to print, so capture the full signature as a synthesized prelude typedef `__bcir_fpN`
      * and type the param kind-3 with that tag. The indirect-call dispatch (p_icall) + the param/emit path
      * then reuse the typedef-funcptr machinery verbatim (ctype_str prints the tag). Scalar ret + params. */
-    int fp_abstract = is(c,"(") && tok_is(tat(c,c->i+1),"*") && tok_is(tat(c,c->i+2),")")
+    { int k=fp_decl_at(c,1);
+      if(k && k!=c->i+2 && !(k==c->i+3 && tat(c,c->i+2)->k==T_ID)){   /* `RET (**pp)(P)`, `RET (*t[])(P)` (CF-FPTAB): a
+        * pointer to function pointers -- an array parameter is a pointer to its element -- parsed whole */
+        bcir_ctype fty; int stars, nd, dims[3];
+        if(fp_inline_decl(c,&ty,si,&fty,&stars,dims,&nd,&pn)) return 1;
+        ty=fty; for(int s=0;s<stars+(nd?1:0);s++) fp_star(c,&ty);
+        for(int d=0; d<nd; d++) ty.adims[d]=dims[d];   /* its dims, as a typedef'd table's are kept: a 2-D one */
+        ty.nadims=(uint8_t)nd;                         /* indexes its rows flat, as `T m[A][B]` does */
+        if(!pn.n) unnamed=1;
+        row_ptr=1; } }
+    int fp_abstract = !row_ptr && is(c,"(") && tok_is(tat(c,c->i+1),"*") && tok_is(tat(c,c->i+2),")")
                       && tok_is(tat(c,c->i+3),"(");   /* `RET (*)(PARAMS)`: a prototype's, unnamed */
-    if(fp_abstract || (is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
+    if(fp_abstract || (!row_ptr && is(c,"(") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='*'
        && tat(c,c->i+2)->k==T_ID
        && tat(c,c->i+3)->k==T_PUN && tat(c,c->i+3)->n==1 && tat(c,c->i+3)->s[0]==')'
        && tat(c,c->i+4)->k==T_PUN && tat(c,c->i+4)->n==1 && tat(c,c->i+4)->s[0]=='(')){
@@ -7623,6 +7909,9 @@ static int p_func(CC *c, bcir_func *fn) {
                                                           * (CF-STRUCTVAL): it had stayed a struct by VALUE */
       else if(ty.kind==2) ty.ptr_depth=(uint8_t)((ty.ptr_depth?ty.ptr_depth:1)+1);   /* T *a[..] -> T ** (`argv`):
                                                           * the decay is one more level, as for a scalar element */
+      else if(ty.kind==3) fp_star(c,&ty);               /* `op_t t[N]` -> `op_t *t`: a pointer to function pointers,
+                                                          * as the inline `RET (*t[N])(P)` is (CF-FPTAB) -- it had
+                                                          * stayed ONE function pointer, an emit no compiler takes */
     }
     }
     char pb[BCIR_CIR_NAME]; idcpy(c,pb,&pn);
@@ -7637,7 +7926,8 @@ static int p_func(CC *c, bcir_func *fn) {
       pr->is_plain_char=(uint8_t)(ty.is_plain_char?1:0);   /* a `char *` pointee: the deref load emits `char` */
       pr->is_bool=(uint8_t)(ty.is_bool?1:0);   /* a `_Bool *` pointee: its element is `_Bool` (a typed store
                                                 * through `_Atomic _Bool *` converts, never a byte copy) */
-      if(ty.ptr_to_struct) fits(c,pr->agg,BCIR_CIR_AGG,"%s %s",ty.is_union?"union":"struct",ty.tag); }
+      if(ty.ptr_to_struct) fits(c,pr->agg,BCIR_CIR_AGG,"%s %s",ty.is_union?"union":"struct",ty.tag);
+      else if(ty.ptr_to_fp) ptee_fp(c,pr,&ty); }   /* `op_t *ops`: a pointer to function pointers (CF-FPTAB) */
     else if(ty.is_float){ c->fn->res[c->fn->n_res-1].is_float=1;       /* a float/double parameter */
       if(ty.is_complex) c->fn->res[c->fn->n_res-1].is_complex=1; }     /* a _Complex parameter (a float pair) */
     else if(ty.kind==0){ c->fn->res[c->fn->n_res-1].is_signed=(uint8_t)(ty.signd?1:0);  /* signedness */
@@ -7723,7 +8013,7 @@ static void ctype_str(const bcir_ctype *ty,char *o,size_t n){
     snprintf(o,n,"%s_BitInt(%d)",ty->signd?"":"unsigned ",ty->bit_width); return; }
   int is_struct = (ty->kind==1) || ty->ptr_to_struct;
   const char *kw = ty->is_union ? "union" : "struct";
-  const char *base = is_struct ? ty->tag
+  const char *base = is_struct || ty->ptr_to_fp ? ty->tag   /* a pointer to a function pointer: its alias */
                    : ty->is_bool ? "_Bool"
                    : ty->is_plain_char ? "char"   /* plain `char`: impl-defined sign (not int8_t -> ARM) */
                    : ty->is_complex ? (ty->size==8?"float _Complex":ty->size>16?"long double _Complex":"double _Complex")
@@ -7810,6 +8100,8 @@ static const char *tty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32
   if(r->is_bool) return "_Bool";   /* a store into a bool object normalizes any nonzero to 1 (§6.3.1.2) */
   if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
   if(r->kind==BCIR_RK_AGGREGATE && r->agg[0]) return r->agg;   /* a struct/union value: `struct T` (CF-STRUCTVAL) */
+  if(r->kind==BCIR_RK_SCALAR && r->is_funcptr && r->agg[0] && !r->is_array) return r->agg;   /* a function-pointer
+    * value -- an element of a table, a read through a pointer to one -- by its alias (CF-FPTAB) */
   if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
     case 1: return r->is_signed?"int8_t":"uint8_t";
     case 2: return r->is_signed?"int16_t":"uint16_t";
@@ -8445,7 +8737,9 @@ static int try_top_decl(CC *c){
  * NOT followed by `(`) rather than a function?  Restores the cursor so the caller re-parses. */
 static int looks_global(CC *c){
   int save=c->i, sf=c->failed; bcir_ctype ty; int si; int global=0;
-  if(!p_type(c,&ty,&si) && isk(c,T_ID)){ c->i++; if(!is(c,"(")) global=1; }
+  if(!p_type(c,&ty,&si)){
+    if(isk(c,T_ID)){ c->i++; if(!is(c,"(")) global=1; }
+    else if(fp_decl_at(c,0)) global=1; }   /* `RET (*g)(P) ...;`: a function-pointer global (CF-FPTAB) */
   c->i=save; c->failed=sf; c->err[0]=0;
   return global;
 }
@@ -8526,9 +8820,14 @@ static void p_global_declarator(CC *c, const bcir_ctype *base, int si, int btd, 
   if(btd && is(c,"*")){ fail(c,"a pointer to a typedef'd array is not supported"); return; }
   bcir_ctype ty=*base; apply_stars(c,&ty);
   if(c->failed) return;
-  if(!isk(c,T_ID)){ fail(c,"expected a declarator"); return; }
-  tok nm=adv(c);
+  tok nm; int gpre_nd=0, gpre_dims[3]={0,0,0};
+  if(fp_decl_at(c,0)){                /* `RET (*g)(P)`, a table `RET (*t[N])(P)`, `RET (**pp)(P)` (CF-FPTAB) */
+    bcir_ctype fty; int stars;
+    if(fp_inline_decl(c,&ty,si,&fty,&stars,gpre_dims,&gpre_nd,&nm)) return;
+    ty=fty; for(int s=0;s<stars;s++) fp_star(c,&ty); }
+  else { if(!isk(c,T_ID)){ fail(c,"expected a declarator"); return; } nm=adv(c); }
   int count=1, is_arr=0, init_a=0, init_b=0, nd=0; long long dims[4]={0,0,0,0}, init_n=-1;
+  for(int d=0; d<gpre_nd; d++){ count=gpre_dims[d]; is_arr=1; if(nd<4){ dims[nd]=count; } nd++; }   /* its own dims */
   while(is(c,"[")){ c->i++; long long d=is(c,"]") ? 0 : ce_dim(c,0);   /* an integer constant expression */
     if(d<0) return;
     count=(int)d; eat(c,"]"); is_arr=1;

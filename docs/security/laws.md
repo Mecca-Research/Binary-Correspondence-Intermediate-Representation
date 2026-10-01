@@ -1329,6 +1329,18 @@ conditional assigned it, a void function returned it (`return t;`), and `(void)e
 `is_void`), and every reader asks one predicate (`void_value`), the twin of the oracle's `_VOID_RID`.
 Witnesses: `ce_void` in `cfront_condeval.c`,
 `test_a_void_function_returns_a_void_expression_alike_on_both_rails`. Faults: `TV1`-`TV3`, `OV1`, `OV2`.
+CF-FPTAB instance (2026-10-01): the kind of operand `*`, `[]`, `.` and `->` take was checked at some
+sites and defaulted at the rest. The oracle's `_addr` path typed the pointee of anything `uint32_t`
+(`base_ct.of or scalar("uint32_t")`), so `*s` of an integer read memory at `s`; the twin's statement
+store, `*(NAME + e)` and subscript fast paths took any named object, and its member path read `s->x`
+of a struct as `s.x`. The same invalid form lowered through one path and was refused through the
+next, for a different reason on each rail. One predicate per operator decides it now, at every site
+and with one reason string: `_indexable` / `names_object_ptr` for `*` and `[]` (the twin's checked
+where every named subscript is parsed, `array_index_n`), `_member_agg` / `member_base_ok` for `.` and
+`->`. The default was the unstated precondition: a type named where none applies.
+Witnesses: `_FPTAB_REFUSED` in
+`test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails`. Faults: `FO4`,
+`FO5`, `FO15`, `FT4`, `FT5`, `FT10`, `FT16`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

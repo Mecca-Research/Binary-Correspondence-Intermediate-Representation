@@ -814,6 +814,19 @@ def _kspell(v: int) -> str:
 # `sizeof`, the comma, a floating constant, a pointer) or whose arithmetic C leaves undefined (a division by zero, a
 # signed overflow, a shift past the width or of a negative value: 6.5p5, 6.5.7p4, 6.6p4), which is no constant either
 ICE_NOT = "not an integer constant expression"
+#: A call whose callee is neither a function nor a function pointer (C11 6.5.2.2p1): refused on both rails
+#: for this one reason (CF-FPTAB; the twin's `NOT_CALLABLE`).
+NOT_CALLABLE = "called object is not a function or function pointer"
+#: The operand kinds C requires of `*`, `[]`, `.` and `->` (C11 6.5.3.2p2, 6.5.2.1p1, 6.5.2.3p1-2) and of an
+#: object `sizeof` measures (6.5.3.4p1): each wrong operand refused for one reason on both rails (CF-FPTAB),
+#: where a default typed it -- `*s` of an integer read memory at `s` as a `uint32_t`, `p.x` read through the
+#: pointer's own type, `s[1]` of an integer and `*fp = v` lowered on both rails.
+DEREF_NOT = "dereference of a non-pointer"
+SUBSCRIPT_NOT = "subscripted value is not an array or a pointer to an object"
+DOT_NOT = "member access on an object that is not a struct or union"
+ARROW_NOT = "member access `->` through a value that is not a pointer to a struct or union"
+FN_NOT_LVALUE = "a function designator is not an lvalue"
+SIZEOF_FN = "sizeof of a function designator"
 # ... an enumerator whose value no int holds, stated or counted on from INT_MAX (6.7.2.2p2): C23 gives one a wider
 # type, which neither rail models -- an enumeration constant is an int on both
 ENUM_NOT_INT = "an enumerator value not representable as int"
@@ -1258,9 +1271,6 @@ class _FuncLowerer:
         self.func_variadic = func_variadic
         # the unit's functions lowered before this one: name -> LoweredFunc (`_fn_type`)
         self.lowered = lowered if lowered is not None else {}
-        # the function pointers read from a member or an element, which the twin loads as integers: `_fn_type`
-        # gives them no function type
-        self.fn_loaded: set[int] = set()
         self.tu_used: dict = {}  # the tu callees THIS function actually calls (for the emit decl)
         # a prototyped callee -> whether each parameter points to `const`, which its emitted `extern`
         # declaration keeps (a `const T *` parameter is another type than a `T *` one)
@@ -1342,6 +1352,36 @@ class _FuncLowerer:
                 return replace(ct, of=of)
         return ct
 
+    @staticmethod
+    def _indexable(ct: "CType | None") -> bool:
+        """Whether `*` or `[]` takes a value of type `ct` as the address of an object (C11 6.5.3.2p2,
+        6.5.2.1p1): a pointer to an object, or an array, which converts to one. A function pointer is no
+        such pointer -- a `*` of one names the function (`_fn_valued`) -- nor is any other value."""
+        return ct is not None and ct.kind in ("pointer", "array")
+
+    def _static_type(self, node) -> "CType | None":
+        """`_type_of(node)`, or None for a form it cannot type (a call, an assignment) -- a type read
+        before `node` is lowered, so that a refusal can name the operator C refuses (CF-FPTAB)."""
+        try:
+            return self._type_of(node)
+        except CLowerError:
+            return None
+
+    def _member_agg(self, base_ct: "CType | None", arrow: bool) -> "CType":
+        """The struct or union a member access reads into (C11 6.5.2.3p1-2): `.` takes a struct or union
+        object, `->` a pointer to one, or an array of them, which converts to one -- any other operand is
+        refused for one reason per operator on both rails, where `p.x` read through the pointer's own type
+        and the twin read `s->x` as `s.x` (CF-FPTAB). An incomplete or undefined struct is `_field`'s."""
+        if arrow:
+            of = base_ct.of if self._indexable(base_ct) else None
+            # (a multi-dimensional array converts to a row pointer, not to a struct)
+            if of is None or of.kind not in ("struct", "union") or len(base_ct.shape) > 1:
+                raise CLowerError(ARROW_NOT)
+            return of
+        if base_ct is None or base_ct.kind not in ("struct", "union"):
+            raise CLowerError(DOT_NOT)
+        return base_ct
+
     def _field(self, agg: "CType | None", name: str) -> tuple:
         """Member `name` of the struct or union `agg` -- (type, byte offset, bit offset, bit width) -- its
         type's incomplete pointee completed. A member of a non-aggregate, of a struct never defined, or
@@ -1367,10 +1407,12 @@ class _FuncLowerer:
             raise CLowerError(  # follow-on (the emitter's up-front local declaration
                 "variable-length array native lowering is a follow-on"
             )  # can't size it) -- route to fallback
-        if tref.funcptr:  # a function-pointer alias (HAL dispatch)
+        if (
+            tref.funcptr
+        ):  # a function-pointer alias (HAL dispatch), a pointer to one, an array of them
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)
-            return funcptr(tref.base, ret, params, self.abi)
+            return _fp_shaped(funcptr(tref.base, ret, params, self.abi), tref, self.abi)
         if tref.typeof_var:  # `typeof(var)` -> the in-scope variable's type
             if tref.typeof_var not in self.env:
                 raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
@@ -1657,7 +1699,7 @@ class _FuncLowerer:
                 # the row-major flattened index is scaled by the element, so the element lands at
                 # `&s + member_off + lin*elem_size` -- never the enclosing struct's offset 0.
                 base_rid, struct_ct, base_off = self._addr(n.base)
-                agg = self._complete(struct_ct.of if n.arrow else struct_ct)
+                agg = self._complete(self._member_agg(struct_ct, n.arrow))
                 ftype, byte_off, _bo, _bw = self._field(agg, n.field)
                 ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
                 byte_off += (
@@ -1685,19 +1727,26 @@ class _FuncLowerer:
                             f"partial indexing of a struct member array ('{n.field}') is not yet supported"
                         )
                     base_ct, mem_shape, mem_elem = ftype, tuple(dims), t
-                else:
-                    raise CLowerError(
-                        f"indexing a non-array struct member ('{n.field}[...]') is not yet supported"
-                    )
+                else:  # `o->v[1]` of a scalar, struct or function-pointer member (CF-FPTAB)
+                    raise CLowerError(SUBSCRIPT_NOT)
             else:
+                # `1[p]`: C allows the pointer as the index, neither rail (CF-FPTAB)
+                if isinstance(n, cast.IntLit):
+                    raise CLowerError("a subscript of an integer constant is not supported")
                 base_rid, base_ct, byte_off = self._addr(
                     n
                 )  # a non-Member base: its accumulated offset
+                # `s[1]` of an integer, a struct, a function pointer (CF-FPTAB: its element was read
+                # as a `uint32_t` at `s`)
+                if not self._indexable(base_ct):
+                    raise CLowerError(SUBSCRIPT_NOT)
                 dims, t = [], base_ct
                 while t.kind == "array" and not t.shape:
                     dims.append(t.count)
                     t = t.of if t.of is not None else scalar("uint32_t")
-                if len(dims) > 1 and len(dims) == len(idx_nodes) and t.kind == "scalar":
+                # a whole multi-dimensional table of function pointers too (CF-FPTAB)
+                whole_ok = t.kind in ("scalar", "funcptr")
+                if len(dims) > 1 and len(dims) == len(idx_nodes) and whole_ok:
                     # a MULTI-dimensional global `T g[A][B]` (declared nested, by its own source) indexed in
                     # full: row-major like a member array of the whole object at offset 0, so the access is
                     # a byte offset its declaration's shape does not matter to (CF-SMALL)
@@ -1789,7 +1838,7 @@ class _FuncLowerer:
                     packed=agg.packed,
                 )
             base_rid, base_ct, base_off = self._addr(node.base)
-            agg = self._complete(base_ct.of if node.arrow else base_ct)
+            agg = self._complete(self._member_agg(base_ct, node.arrow))
             ftype, byte_off, bit_off, bit_w = self._field(agg, node.field)
             ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off = (
@@ -1806,14 +1855,22 @@ class _FuncLowerer:
             )
         if isinstance(node, cast.Unary) and node.op == "*":
             operand = node.operand
+            # `*fp = v`, `(*fp)++`: a function is no object (6.3.2.1p1)
+            if self._fn_valued(operand):
+                raise CLowerError(FN_NOT_LVALUE)
             if isinstance(operand, cast.Binary) and operand.op == "+":  # *(p + i) == p[i]
-                return self._lvalue(cast.Index(operand.lhs, operand.rhs))
+                lt = self._static_type(operand.lhs)
+                if lt is None or self._indexable(lt):
+                    return self._lvalue(cast.Index(operand.lhs, operand.rhs))
+                if not self._indexable(self._static_type(operand)):  # `*(s + 1u)`: no pointer in it
+                    raise CLowerError(DEREF_NOT)
+                # `*(1 + p)`: the pointer on the right -- dereferenced as the value it is, below
             # `*q[j]`: the element is a pointer, loaded, and dereferenced (the twin's general deref of
             # a pointer rvalue); `_addr` knows no subscripted base
             if isinstance(operand, cast.Index):
                 el = self._lvalue(operand)
                 if el.ct.kind != "pointer":
-                    raise CLowerError("dereference of an element that is not a pointer")
+                    raise CLowerError(DEREF_NOT)
                 return _LV("mem", self._read(el), el.ct.of or scalar("uint32_t"), byte_off=0)
             # `*(volatile uint32_t *)ADDR`: the cast yields a real `T *` (the twin's general deref of
             # a pointer rvalue) -- unless it is a volatile access at a constant byte offset of a device
@@ -1826,7 +1883,7 @@ class _FuncLowerer:
                 ct = self.rtypes.get(rid)
                 if ct is not None and ct.kind == "pointer":
                     return _LV("mem", rid, ct.of or scalar("uint32_t"), byte_off=0)
-                raise CLowerError("dereference of a non-pointer cast")
+                raise CLowerError(DEREF_NOT)
             # any other pointer VALUE -- `*&a`, `*(c ? &a : &b)`, `*p++`, `*(p - 1)` -- is dereferenced at
             # offset 0, as the cast above is and the twin's general deref of a pointer rvalue is (CF-SPLIT2:
             # `_addr` knows only the bases below, so these were refused while the twin lowered them)
@@ -1838,8 +1895,12 @@ class _FuncLowerer:
                 ct = self.rtypes.get(rid)
                 if ct is not None and ct.kind == "pointer":
                     return _LV("mem", rid, ct.of or scalar("uint32_t"), byte_off=0)
-                raise CLowerError("dereference of a value that is not a pointer")
+                raise CLowerError(DEREF_NOT)
             base_rid, base_ct, base_off = self._addr(operand)
+            # `*s` of an integer or a struct: no object at `s` (CF-FPTAB; the oracle read one as a
+            # `uint32_t`, the twin refused it)
+            if not self._indexable(base_ct):
+                raise CLowerError(DEREF_NOT)
             return _LV("mem", base_rid, base_ct.of or scalar("uint32_t"), byte_off=base_off)
         raise CLowerError(f"not an lvalue: {type(node).__name__}")
 
@@ -1955,11 +2016,12 @@ class _FuncLowerer:
         """The function-pointer type of the value `v` when its function type -- return and parameter types -- is
         known here: a designator (a function the unit defines, named as a value, C11 6.3.2.1p4) has its
         definition's; a function-pointer object -- a local, a parameter, a global, a select of them, a null
-        pointer typed as one -- its declaration's. None otherwise: a pointer read from a member or an element
-        (`fn_loaded`), a designator of a variadic function (a declarator here spells no `...`) or of one whose
-        parameters only its own scope types while it has not lowered (CF-FNSEL; the twin's `res_sig`)."""
+        pointer typed as one -- and a function pointer read from a member, from an element of a table or
+        through a pointer to one (CF-FPTAB), its declaration's. None otherwise: a designator of a variadic
+        function (a declarator here spells no `...`) or of one whose parameters only its own scope types while
+        it has not lowered (CF-FNSEL; the twin's `res_sig`)."""
         ct = self.rtypes.get(v)
-        if ct is None or ct.kind != "funcptr" or v in self.fn_loaded:
+        if ct is None or ct.kind != "funcptr":
             return None
         name = self.func_globals.get(v)
         if name is None:
@@ -1972,6 +2034,42 @@ class _FuncLowerer:
         if params is None or None in params or name in self.func_variadic:
             return None
         return funcptr(name, self.func_rets[name], params, self.abi)
+
+    def _fn_valued(self, node) -> bool:
+        """Whether the value of `node` is a function pointer (CF-FPTAB): a function designator, which converts
+        to one (C11 6.3.2.1p4); a function-pointer object, element or member; a `*` of any of those, which
+        names the function again (6.5.3.2p4); or a `*` of a pointer to a function pointer, the function
+        pointer it points at. Decided on the types alone -- nothing is evaluated."""
+        if isinstance(node, cast.Unary) and node.op == "*" and self._fn_valued(node.operand):
+            return True
+        if isinstance(node, cast.Name) and node.ident not in self.env:
+            return node.ident in self.func_rets or node.ident in self.protos
+        # `c ? f : g`, `c ? f : 0`: a pointer to the arms' function type (CF-FNSEL)
+        if isinstance(node, cast.Ternary):
+            return self._fn_valued(node.then) or self._fn_valued(node.els)
+        if isinstance(node, cast.Generic):  # `_Generic(x, T: f, ...)`: the arm it selects
+            try:
+                return self._fn_valued(self._generic_select(node))
+            except CLowerError:
+                return False
+        try:
+            return self._type_of(node).kind == "funcptr"
+        except CLowerError:
+            return False
+
+    def _fn_value_type(self, node) -> CType:
+        """The function-pointer type of a node `_fn_valued` accepts: a designator's, a `*` of one's operand's,
+        any other its static type."""
+        while isinstance(node, cast.Unary) and node.op == "*" and self._fn_valued(node.operand):
+            node = node.operand
+        if isinstance(node, cast.Name) and node.ident not in self.env:
+            return funcptr(node.ident, self.func_rets.get(node.ident), (), self.abi)
+        # a select: the arm that names a function (the other may be a null pointer)
+        if isinstance(node, cast.Ternary):
+            return self._fn_value_type(node.then if self._fn_valued(node.then) else node.els)
+        if isinstance(node, cast.Generic):
+            return self._fn_value_type(self._generic_select(node))
+        return self._type_of(node)
 
     def _fn_key(self, fct: CType) -> tuple:
         """A function type's identity: its return and its parameters as `_Generic` tells types apart,
@@ -1996,7 +2094,7 @@ class _FuncLowerer:
             return rid, self.rtypes[rid], 0
         if isinstance(node, cast.Member):
             base_rid, base_ct, base_off = self._addr(node.base)
-            agg = self._complete(base_ct.of if node.arrow else base_ct)
+            agg = self._complete(self._member_agg(base_ct, node.arrow))
             ftype, byte_off, bit_off, bit_w = self._field(agg, node.field)
             ftype = qualified(ftype, agg.volatile)  # a member of a volatile aggregate
             off = (
@@ -2176,7 +2274,11 @@ class _FuncLowerer:
             )
         if isinstance(node, cast.Unary):
             if node.op == "*":  # deref -> the pointee / element type
+                if self._fn_valued(node.operand):  # `*fp` names the function, a pointer to it again
+                    return self._fn_value_type(node.operand)
                 t = self._type_of(node.operand)
+                if not self._indexable(t):  # (CF-FPTAB: typed `uint32_t`, so `struct S t = *s;` was
+                    raise CLowerError(DEREF_NOT)  # refused as a wrongly typed initializer instead)
                 return t.of if t.of is not None else scalar("uint32_t")
             if node.op == "!":  # logical not -> int (0/1)
                 return scalar("int", self.abi)
@@ -2190,10 +2292,21 @@ class _FuncLowerer:
             return self._resolve_type(node.type)
         if isinstance(node, cast.Member):  # `s.f` / `p->f` -> the field's type
             base_t = self._type_of(node.base)
-            return self._field(base_t.of if node.arrow else base_t, node.field)[0]
+            return self._field(self._member_agg(base_t, node.arrow), node.field)[0]
         if isinstance(node, cast.Index):  # `a[i]` -> the element (pointee) type
-            base_t = self._type_of(node.base)
-            return base_t.of if base_t.of is not None else scalar("uint32_t")
+            # the subscripts, as `_lvalue` takes them: a declared multi-dimensional array one per
+            # dimension of its `shape` (`h[i][j]` of `T h[2][2]` is one element), else one
+            depth, base = 0, node
+            while isinstance(base, cast.Index):
+                depth, base = depth + 1, base.base
+            t = self._type_of(base)
+            while depth:
+                if not self._indexable(t):  # `fp[0]` was typed by the function's return (CF-FPTAB)
+                    raise CLowerError(SUBSCRIPT_NOT)
+                # (a row of fewer subscripts than its dimensions: its element, as before)
+                depth -= min(depth, max(1, len(t.shape)))
+                t = t.of if t.of is not None else scalar("uint32_t")
+            return t
         if isinstance(node, cast.Generic):  # _Generic -> the selected association's type
             return self._type_of(self._generic_select(node))
         if isinstance(node, cast.StmtExpr):  # `({ ...; e; })` -> the type of the last expr
@@ -2204,17 +2317,18 @@ class _FuncLowerer:
             f"typeof of this expression form ({type(node).__name__}) is not yet supported"
         )
 
-    def _sizeof_elem(self, t: CType) -> CType:
+    def _sizeof_elem(self, t: CType, why: str) -> CType:
         """One subscript or `*` of `t` as `sizeof` sees it (CF-SIZEOF): an array's element -- a whole row
         of a multi-dimensional one, flattened (`shape`) or nested alike -- or a pointer's pointee, which is
-        a row again for a decayed `T m[][N]` / `T (*m)[N]` parameter (its `shape`)."""
+        a row again for a decayed `T m[][N]` / `T (*m)[N]` parameter (its `shape`). Any other `t` is
+        refused for `why`, the operator's own reason (`DEREF_NOT`, `SUBSCRIPT_NOT`; CF-FPTAB)."""
         if t.kind == "array":
             return self._array_row(t)[0]
         if t.kind == "pointer" and t.of is not None:
             if len(t.shape) > 1:  # the pointee of a decayed multi-dim array parameter is a row
                 return self._array_row(replace(array(t.of, 1), shape=t.shape))[0]
             return t.of
-        raise CLowerError("sizeof of a subscript of a type that is neither an array nor a pointer")
+        raise CLowerError(why)
 
     def _sizeof_decay(self, t: CType) -> CType:
         """The array-to-pointer conversion every operand but `sizeof`'s, `&`'s and a member access's
@@ -2225,7 +2339,7 @@ class _FuncLowerer:
         """A member access as `sizeof` sees it: the member's declared type and its bit-field width (0 for
         an ordinary member). `.` names a member of its operand, `->` of what its operand points at."""
         base_t = self._sizeof_type(node.base)
-        agg = self._complete(self._sizeof_elem(base_t) if node.arrow else base_t)
+        agg = self._complete(self._member_agg(base_t, node.arrow))
         if not agg.is_aggregate:
             raise CLowerError(f"sizeof of a member of a {agg.kind}")
         ft, _off, _bit, width = self._field(agg, node.field)
@@ -2269,7 +2383,7 @@ class _FuncLowerer:
                 # not an object: a function designator is a constraint violation (C11 6.5.3.4p1), and the
                 # constants `_rvalue` resolves after the environment keep the types it gives them
                 if node.ident in self.func_rets or node.ident in self.protos:
-                    raise CLowerError(f"sizeof of the function {node.ident!r}", pos=node.pos)
+                    raise CLowerError(SIZEOF_FN, pos=node.pos)  # the twin's reason (CF-FPTAB)
                 if node.ident in _IMAG_UNIT:
                     return scalar("float _Complex", self.abi)
                 if node.ident in self._MEMORDER:
@@ -2281,7 +2395,7 @@ class _FuncLowerer:
                 return replace(ct, shape=(0,) * len(self.vla_strides[rid]))
             return ct
         if isinstance(node, cast.Index):
-            return self._sizeof_elem(self._sizeof_type(node.base))
+            return self._sizeof_elem(self._sizeof_type(node.base), SUBSCRIPT_NOT)
         if isinstance(node, cast.Member):
             ft, width = self._sizeof_member(node)
             if width:
@@ -2289,7 +2403,9 @@ class _FuncLowerer:
             return ft
         if isinstance(node, cast.Unary):
             if node.op == "*":
-                return self._sizeof_elem(self._sizeof_type(node.operand))
+                if self._fn_valued(node.operand):  # `sizeof *fp`: a function (C11 6.5.3.4p1)
+                    raise CLowerError(SIZEOF_FN)
+                return self._sizeof_elem(self._sizeof_type(node.operand), DEREF_NOT)
             if node.op == "&":
                 o = node.operand
                 if (
@@ -2521,6 +2637,12 @@ class _FuncLowerer:
                 t = self._temp(rt, f"u_{suf}")  # emitted `__real__ x` -- not integer-computed
                 return self._emit(f"c.un.{suf}", Opcode.GEM_DISPATCH, (v,), (t,))
             if node.op == "*":
+                if self._fn_valued(
+                    node.operand
+                ):  # `*fp`, `*inc`: the function, converted back to the
+                    return self._rvalue(
+                        node.operand
+                    )  # pointer -- no read (C11 6.5.3.2p4, 6.3.2.1p4)
                 return self._read(self._lvalue(node))
             if node.op == "&":
                 # `&lvalue` as a *value* (a call argument, a pointer initializer, an out-param): a pointer
@@ -2533,8 +2655,15 @@ class _FuncLowerer:
                 operand = node.operand
                 if (
                     isinstance(operand, cast.Unary) and operand.op == "*"
-                ):  # &*p == p (the pointer itself;
-                    return self._rvalue(operand.operand)  # &*(p+i) == p+i) -- 0 claims, both rails
+                ):  # &*p == p (the pointer itself; &*(p+i) == p+i) -- 0 claims, both rails
+                    # -- but `*`'s operand is still a pointer, a function or an array: the
+                    # constraints apply (C11 6.5.3.2p3, CF-FPTAB)
+                    rid = self._rvalue(operand.operand)
+                    if not (
+                        self._indexable(self.rtypes.get(rid)) or self._fn_valued(operand.operand)
+                    ):
+                        raise CLowerError(DEREF_NOT)
+                    return rid
                 lv = self._lvalue(operand)
                 if lv.bit_width:  # &bitfield is illegal in C (no addressable unit)
                     raise CLowerError("cannot take the address of a bit-field")
@@ -2584,11 +2713,9 @@ class _FuncLowerer:
             lv = self._lvalue(node)
             if lv.ct.kind == "array" and not lv.bit_width:
                 return self._array_value(node, lv)
-            v = self._read(lv)
-            # a function pointer read from a member or an element: `?:` gives it no function type
-            if lv.ct.kind == "funcptr":
-                self.fn_loaded.add(v)
-            return v
+            # a function pointer read from a member or from an element of a table has its declaration's
+            # function type, which `?:` compares as any other function pointer's (CF-FPTAB)
+            return self._read(lv)
         if isinstance(
             node, cast.CompoundLiteral
         ):  # `(struct P){a,b}` by value / `(int){v}` as a value
@@ -2736,7 +2863,31 @@ class _FuncLowerer:
             return self._call(node)
         if isinstance(node, cast.CallMember):
             return self._call_member(node)
+        if isinstance(node, cast.CallPtr):
+            return self._call_ptr(node)
         raise CLowerError(f"cannot lower expression {type(node).__name__}")
+
+    def _call_ptr(self, node: cast.CallPtr) -> int:
+        """A call through any other postfix expression (CF-FPTAB): `(*fp)(x)`, `ops[i](x)`, `(*p)(x)`. A `*`
+        of a function pointer or of a function designator names the function, which converts back to a
+        pointer to it (C11 6.5.3.2p4, 6.3.2.1p4), so `(*fp)(x)` and `(**fp)(x)` are `fp(x)` and `(*inc)(x)` the
+        direct call `inc(x)`. Any other callee is evaluated -- before the arguments, in the order the twin
+        reads its tokens -- and called through its value, a `c.call.indirect` like a call through a
+        function-pointer object: an element of a table, a function pointer read through a pointer. A callee
+        whose value is no function pointer is refused (6.5.2.2p1), as the twin refuses it."""
+        callee = node.callee
+        while (
+            isinstance(callee, cast.Unary) and callee.op == "*" and self._fn_valued(callee.operand)
+        ):
+            callee = callee.operand
+        if isinstance(callee, cast.Name):
+            return self._call(cast.CallExpr(callee.ident, node.args))
+        fptr = self._rvalue(callee)
+        fpct = self.rtypes.get(fptr)
+        if fpct is None or fpct.kind != "funcptr":
+            raise CLowerError(NOT_CALLABLE)
+        actuals = tuple(self._rvalue(a) for a in node.args)
+        return self._call_through(fptr, fpct, actuals, "icall")
 
     def _call_member(self, node: cast.CallMember) -> int:
         """`o->fn(args)` / `o.fn(args)` — an indirect call through a function-pointer struct member
@@ -2746,9 +2897,8 @@ class _FuncLowerer:
         m = node.callee
         base_rid, base_ct, _base_off = self._addr(m.base)  # a dispatch base is a pointer (offset 0)
         actuals = tuple(self._rvalue(a) for a in node.args)
-        agg = self._complete(
-            base_ct.of if m.arrow else base_ct
-        )  # the struct with the funcptr field
+        # the struct with the funcptr field
+        agg = self._complete(self._member_agg(base_ct, m.arrow))
         try:  # the member's funcptr CType -> its return type
             fct = self._field(agg, m.field)[0] if agg is not None else None
         except CLowerError:
@@ -4051,6 +4201,33 @@ class _FuncLowerer:
             return scalar("uint32_t")
         return unqualified(el)
 
+    def _call_through(self, fptr: int, fpct: CType, actuals: tuple, label: str) -> int:
+        """A `c.call.indirect` through the function-pointer value `fptr` of type `fpct` (reads: the pointer,
+        then the actuals): a function-pointer object's (`fp(x)`) or any value's (`ops[i](x)`, CF-FPTAB)."""
+        # an argument converts to its parameter's type (C11 6.5.2.2p7), through a pointer as in a direct
+        # call: a null pointer constant is the parameter's pointer (CF-NULLCALL; CF-NULLARG's direct calls)
+        self._null_pointer_args(actuals, fpct.params)
+        if _returns_void(fpct):
+            # a pointer to a void function: the call has no value -- no result temp (whose emit
+            # `uint32_t t = fp();` did not compile), and `c ? cb() : (void)0` / `return cb();` take
+            # the void value as a direct void call's (CF-VOIDCB)
+            self._emit(
+                "c.call.indirect",
+                Opcode.GEM_DISPATCH,
+                (fptr, *actuals),
+                (),
+                callee_sig=callee_signature(fpct),
+            )
+            return _VOID_RID
+        t = self._temp(self._call_result_ct(fpct.of), label)  # a signed return reads back signed
+        return self._emit(
+            "c.call.indirect",
+            Opcode.GEM_DISPATCH,
+            (fptr, *actuals),
+            (t,),
+            callee_sig=callee_signature(fpct),
+        )
+
     def _call(self, node: cast.CallExpr) -> int:
         actuals = tuple(self._rvalue(a) for a in node.args)
         # Indirect call through a function-pointer local/param (HAL dispatch): the target is dynamic,
@@ -4059,31 +4236,7 @@ class _FuncLowerer:
         # opaque external edge (no recursion / callee-resolution constraint can apply).
         if node.callee in self.env and self.env[node.callee][1].kind == "funcptr":
             fptr, fpct = self.env[node.callee]  # the funcptr CType carries its return type in `.of`
-            # an argument converts to its parameter's type (C11 6.5.2.2p7), through a pointer as in a direct
-            # call: a null pointer constant is the parameter's pointer (CF-NULLCALL; CF-NULLARG's direct calls)
-            self._null_pointer_args(actuals, fpct.params)
-            if _returns_void(fpct):
-                # a pointer to a void function: the call has no value -- no result temp (whose emit
-                # `uint32_t t = fp();` did not compile), and `c ? cb() : (void)0` / `return cb();` take
-                # the void value as a direct void call's (CF-VOIDCB)
-                self._emit(
-                    "c.call.indirect",
-                    Opcode.GEM_DISPATCH,
-                    (fptr, *actuals),
-                    (),
-                    callee_sig=callee_signature(fpct),
-                )
-                return _VOID_RID
-            t = self._temp(
-                self._call_result_ct(fpct.of), f"icall_{node.callee}"
-            )  # a signed return reads back signed
-            return self._emit(
-                "c.call.indirect",
-                Opcode.GEM_DISPATCH,
-                (fptr, *actuals),
-                (t,),
-                callee_sig=callee_signature(fpct),
-            )
+            return self._call_through(fptr, fpct, actuals, f"icall_{node.callee}")
         # Atomics run on the A lane. A scalar atomic counter is a single-location RMW (not on
         # the decoupled GGG/scatter tail), so it stays SCALAR-shaped -- the lane law (R6) admits
         # lane A for SCALAR, and the atomic/barriered hazard discharges R5.
@@ -4994,12 +5147,26 @@ def _aggregate(aggregates: dict, tag: str, kind: str = "", pointee: bool = False
     raise CLowerError(f"the incomplete struct or union {tag!r} has no layout here")
 
 
+def _fp_shaped(fct: CType, tref: cast.TypeRef, abi) -> CType:
+    """A function-pointer type under its declarator's `*`s and dimensions (CF-FPTAB): `op_t *p` points at
+    a function pointer and `op_t ops[3]` holds three, each as wide as a pointer on the target -- not the
+    one function pointer the alias names, whose size and element had stood for both."""
+    t = fct
+    for _ in range(tref.ptr):
+        t = pointer(t, abi)
+    for dim in reversed(tref.array):
+        t = array(t, dim)
+    return t
+
+
 def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CType:
     abi = abi or HOST
-    if tref.funcptr:  # a function-pointer member (dispatch table)
+    if (
+        tref.funcptr
+    ):  # a function-pointer member (dispatch table), a pointer to one, an array of them
         ret = _resolve_member_type(tref.func_ret, aggregates, abi)
         params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
-        return funcptr(tref.base, ret, params, abi)
+        return _fp_shaped(funcptr(tref.base, ret, params, abi), tref, abi)
     if tref.aggregate:  # a pointer member may name a struct not laid out yet (or ever)
         base = _aggregate(aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)

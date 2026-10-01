@@ -113,8 +113,8 @@
     {
       "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
       "label": "DT5 the twin refuses an unnamed function-pointer parameter",
-      "new": "    int fp_abstract = 0 && is(c,\"(\") && tok_is(tat(c,c->i+1),\"*\")",
-      "old": "    int fp_abstract = is(c,\"(\") && tok_is(tat(c,c->i+1),\"*\")",
+      "new": "    int fp_abstract = 0 && !row_ptr && is(c,\"(\") && tok_is(tat(c,c->i+1),\"*\")",
+      "old": "    int fp_abstract = !row_ptr && is(c,\"(\") && tok_is(tat(c,c->i+1),\"*\")",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

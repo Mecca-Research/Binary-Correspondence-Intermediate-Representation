@@ -120,6 +120,10 @@ typedef struct bcir_resource {
   uint8_t  is_void;          /* the value of a void expression -- a call to a void function, `(void)e`, a statement
                               * expression ending in a statement: a placeholder no claim writes and nothing reads, so
                               * `c ? f() : g()` is known to have no value (CF-TERNARY; the oracle's `_VOID_RID`) */
+  uint8_t  ptee_funcptr;     /* a POINTER whose pointee is a function pointer (`op_t *p`), or an ARRAY of function
+                              * pointers (`op_t ops[3]`), whose `agg` is the function pointer's alias (CF-FPTAB): the
+                              * declaration spells `op_t *p` / `op_t ops[3]`, and an element read is a function-pointer
+                              * value, never an integer of its width. Not `is_funcptr`: the object is no function */
   uint8_t  ndims;            /* a file-scope array's dimensions, when it has more than one; else 0. It is declared nested,
                               * as the source declares it, so a call passes it as its first element's address,
                               * `&m[0][0]` -- the flat `T *` an emitted parameter is (CF-GARRAY). Emit-only: the claim
@@ -132,6 +136,9 @@ typedef struct bcir_ctype {
   uint8_t  is_const;         /* `const`-qualified: a pointer's pointee (`const T *`), which a prototype's `extern`
                               * declaration keeps -- a parameter of a pointer to const is a different type. It sits
                               * in the padding after `kind`: a ctype is no larger */
+  uint8_t  ptr_to_fp;        /* a pointer (kind 2) whose pointee is a function pointer, `op_t *p` (CF-FPTAB): `tag`,
+                              * `fp_sig` and the `fp_ret_*` fields describe the pointee, so a read through it is a
+                              * function-pointer value and the emit spells `op_t *`. In the same padding */
   int      size;             /* scalar size, pointee size for a pointer, or 8 for a funcptr */
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */

@@ -2006,7 +2006,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     fault anchors moved with the code (T6 and T11 of `cfront-splits.json`, T41 of `cfront-roundtrip.json`), and
     T7 of `cfront-gaps.json` spans two lines: `plv_incdec` had repeated its one-line anchor.
   17 injected defects, 4 on the oracle and 13 on the twin, are each caught (`tools/testing/faults/cfront-splits.json`).
-  Found, not fixed here (each a suggested follow-up):
+  Found, not fixed here (each a suggested follow-up; both are closed by CF-FPTAB, below):
   - both rails refuse a call through a dereferenced function pointer, `(*fp)(x)`: the oracle's parser takes a call
     only after a name or a member, and the twin's `*` of a function pointer is "dereference of a non-pointer";
   - both rails refuse a call through an element of an array of function pointers (`(ops[i])(x)`), and the twin
@@ -2335,7 +2335,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     error);
   - a function pointer read from a member as a value (`op_t g = o.fn;`) is a `uint32_t` temp in the oracle's
     emit and a `uint64_t` in the twin's, neither of which compiles, and as an arm of `?:` it is compared on
-    neither rail, so a member arm beside a function of another type is not refused;
+    neither rail, so a member arm beside a function of another type is not refused (closed by CF-FPTAB, below);
   - a call to a function returning a function pointer types its result `uint32_t` on both rails
     (`uint32_t t = bcir_pick(s);`), which Clang rejects; the oracle refuses a `typedef T *(*pf)(T *)`, and the
     twin types a call through one as an integer;
@@ -2477,6 +2477,81 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   Found, not fixed here (a suggested follow-up): a local that hides a typedef name is refused on both rails where a
   statement begins with it (`typedef uint32_t T; ... uint32_t T = s; T = T * 3u;` -- the twin: `expected declarator
   name`, the oracle: `expected 'IDENT', got OP '='`), where C reads the statement as an expression.
+
+  CF-FPTAB (2026-10-01) closed the calls through `(*fp)` and through tables CF-SPLIT2 recorded, and the member reads
+  CF-CALLS recorded (the first item of its list), and made both rails refuse, for one reason each, the operands C
+  refuses to the operators those calls are built from. RED was measured on the parent (`c0680c87`).
+  - The defects: a call took only a name or a member as its callee on the oracle's parser, so `(*fp)(x)`, `(**fp)(x)`,
+    `ops[i](x)` and `(ops[i])(x)` were refused there, and on the twin `*` of a function pointer was `dereference of a
+    non-pointer` and a call after a subscript a missing `;`. The twin refused every inline declarator of a table or a
+    pointer to one (`uint32_t (*t[2])(uint32_t)`: `expected declarator name`), and declared a typedef'd table parameter
+    (`op_t t[2]`) as one function pointer -- an emit no compiler takes -- where the oracle refused it as `unknown type
+    'op_t'`. Both rails typed a function pointer read from a member as an integer, so `op_t g = o.fn;` emitted an
+    integer temp that does not compile, and a member arm beside a function of another type was compared on neither.
+    Beside them, the operand kinds of `*`, `[]`, `.` and `->` (C11 6.5.3.2p2, 6.5.2.1p1, 6.5.2.3p1-2): the oracle read
+    `*s` of an integer through memory at `s` as a `uint32_t` (`*s`, `*g`, `(*s)++`, `++*s` and `*s += 1u` lowered on the
+    oracle alone); both rails lowered `*s = 1u`, `*(s + 1u)`, `&*s`, `s[1]`, `s[1] = 2u`, `s[1]++`, `&s[1]`, `fp[0]` (a
+    subscript of a function pointer) and `*fp = 1u`; the twin lowered `s->x` of a struct as `s.x`, `p.x` of a pointer
+    as `p->x`, `o[1].x` of a struct, `sizeof s[1]` and `sizeof *fp`; and the forms both refused, each rail refused for
+    a reason of its own.
+  - RED: on the parent all five tests fail. Both rails refuse `runtime/c/cfront_fptab.c` (the oracle at its first
+    inline declarator, the twin at a call through an element) and `_FPTAB_CALLS`; of the 41 forms `_FPTAB_REFUSED`
+    holds, the oracle gives 41 another verdict and lowers 15 of them, and the twin gives 31 another verdict and lowers
+    16; of the nine `_FPTAB_LOWERED` holds, the oracle refuses eight and the twin six; the oracle lowers CF-FNSEL's
+    member arm beside a function of another type, and refuses `sizeof` of a function, and a member access on a
+    non-struct, for reasons of its own.
+  - What landed: on the oracle, the parser takes a call after any postfix expression (`cast.CallPtr`) and an inline
+    declarator of a table of up to three dimensions or a pointer to one (`_funcptr_declarator`, `_declarator` keeping
+    the shape of a typedef'd one); lowering calls through `_call_ptr`, which names the function a `*` of a function
+    designates (`_fn_valued`, which sees through a conditional and a generic selection) and calls any other value that
+    is a function pointer through `_call_through`, refusing the rest as `NOT_CALLABLE`; a member and an element read
+    are typed (`fn_loaded` is gone); `_type_of` takes a subscript chain as `_lvalue` does, one subscript per dimension
+    of a multi-dimensional array's shape; and a 2-D file-scope table is indexed whole as a 2-D scalar global is. One
+    predicate per operator decides the operand: `_indexable` for `*` and `[]` (at the lvalue, the value, `&*`, the
+    type and `sizeof`), `_member_agg` for `.` and `->`, and a function designator is no lvalue (`FN_NOT_LVALUE`). On
+    the twin, `fp_inline_decl` parses the inline declarators at every site (a local, a parameter, a member, a global)
+    with up to three dimensions; `call_value` calls through any value that is a function pointer -- a parenthesized
+    expression, a postfix chain, a call's result, a literal, a generic selection -- and refuses the rest for the
+    oracle's reason; `deref_named_callee` takes `(*NAME)(x)` of a function or a function-pointer object, never of a
+    table, whose `*t` is its first element; a table's element, a member read and a pointer to a table's pointee are
+    function-pointer values typed by their alias (`fp_value_temp`, `ptee_fp`, `bcir_ctype.ptr_to_fp` and
+    `bcir_resource.ptee_funcptr`, both in padding: `bcir_ctype` stays 120 bytes); a typedef'd table parameter decays to
+    a pointer to its element; `use_global` gives a file-scope table its element's alias; and `global_md_field` takes a
+    2-D table of function pointers. Its predicates mirror the oracle's: `names_object_ptr` at every fast path that
+    reads or writes through a named operand and in `array_index_n`, where every named subscript is parsed;
+    `member_base_ok` at the member read and store; `deref_lvalue_refused` at a store and a step through `*`;
+    `star_names_fn` in `sizeof`. Each reason is one string on both rails (`DEREF_NOT`, `SUBSCRIPT_NOT`, `DOT_NOT`,
+    `ARROW_NOT`, `FN_NOT_LVALUE`, `SIZEOF_FN`, `NOT_CALLABLE`).
+  - Outcomes: `runtime/c/cfront_fptab.c` -- tables typedef'd and inline, local and file-scope, 2-D, members, pointers to
+    them and parameters of them, their elements picked and compared, calls through `(*fp)`, `(**fp)` and `(*f)`, and
+    `*fp` as a value, held, selected and returned -- lowers to one claim graph on the four targets and both emits run as
+    the original; every call it makes in place goes through a pointer that holds one function, so the G10 rows are
+    unchanged, and a call through a table in place is `_FPTAB_CALLS` (local, file-scope and 2-D tables by a runtime
+    index, a pointer, a parameter of every spelling, a member, under `*` and `**`, a generic selection and a select),
+    which lowers alike and runs as the original on both emits. The 41 refusals of `_FPTAB_REFUSED` hold on both rails
+    for the one reason each names, the nine valid forms of `_FPTAB_LOWERED` lower alike on the four targets, and
+    CF-FNSEL's member arm beside a function of another type is refused on both. CF-SIZEOF's `sizeof` of a function has
+    one reason on both rails.
+  - Faults: `tools/testing/faults/cfront-fptab.json` holds 34 injected defects, 16 on the oracle and 18 on the twin,
+    and each is caught by its own test. The first sweep caught 31: `*fp` read as a value was in no test, so the oracle
+    reading it through memory survived; the twin reading `p.x` of a pointer as `p->x` was caught only by the refusal
+    table, not by the member test; and the oracle typing a member read as no function pointer only by the fixture, not
+    by CF-FNSEL's test. The fixture now returns `*fp` as a value (`ft_pick_deref`), the member test refuses `.` of a
+    pointer, and CF-FNSEL's lowered set holds a member read through `*`. Four faults of earlier tables whose anchors
+    this change rewrote were re-anchored -- `cfront-splits.json` S3, `cfront-calls.json` CL18, `cfront-decls.json`
+    DT5 and `cfront-globals.json` GA7 -- and each is caught again; `cfront-calls.json` CL46, which injected the oracle
+    typing a member read as a function pointer, describes what both rails now do and is retired.
+  Found, not fixed here (each a suggested follow-up):
+  - arithmetic on a function pointer -- `fp++`, `fp + 1`, `fp += 1` -- lowers on both rails, digest-equal (C11 6.5.6p2
+    requires a pointer to an object type; GNU's extension), and an increment of a table's element (`(*t)++`, `t[0]++`)
+    is refused on both rails for different reasons;
+  - a static local table of function pointers (`static op_t t[2] = {f, g};`) is refused on both rails as no integer
+    constant expression, where a function designator is an address constant (C11 6.6p9);
+  - a call to a function returning a function pointer is still typed `uint32_t` on both rails (`uint32_t t =
+    bcir_pick(s);`, an emit no compiler takes) -- the second item of CF-CALLS's list -- so the fixture's table
+    parameters compare the element they pick rather than return it;
+  - `i[p]` -- the pointer as the index (C11 6.5.2.1p2) -- is refused on both rails, an integer constant base for one
+    reason (`a subscript of an integer constant is not supported`) and any other integer as a subscript of no array.
 
 ---
 

@@ -133,7 +133,7 @@
       "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
       "label": "CL18 the oracle leaves the 0 passed through a pointer an int",
       "new": "",
-      "old": "            self._null_pointer_args(actuals, fpct.params)\n",
+      "old": "        self._null_pointer_args(actuals, fpct.params)\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -324,13 +324,6 @@
       "new": "    if(!ctype_generic_eq(&x->params[k],&y->params[k])) return 0;",
       "old": "    if(x->params[k].is_valist!=y->params[k].is_valist || !ctype_generic_eq(&x->params[k],&y->params[k])) return 0;",
       "path": "runtime/c/bcir_cfront.c"
-    },
-    {
-      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
-      "label": "CL46 the oracle types a function pointer read from a member, which the twin does not",
-      "new": "        if ct is None or ct.kind != \"funcptr\":",
-      "old": "        if ct is None or ct.kind != \"funcptr\" or v in self.fn_loaded:",
-      "path": "bcir/frontends/cfront/lower.py"
     }
   ]
 }
