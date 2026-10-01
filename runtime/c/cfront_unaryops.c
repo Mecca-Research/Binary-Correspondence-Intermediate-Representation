@@ -32,8 +32,11 @@ uint32_t uo_plus(uint32_t s) {           /* `+a` promotes: `sizeof`, `_Generic` 
   return r + (uint32_t)sizeof(+ +c) * 23u + (uint32_t)(+c - 300) * 29u;
 }
 uint32_t uo_parts(uint32_t s) {          /* `-` and `~` of a complex are complex; `__real__` and `__imag__` a part */
-  double _Complex z = s + (2.0 * s) * I;
-  float _Complex fz = s + (3.0f * s) * I;
+  uint32_t t = s & 255u;                 /* (a byte keeps each part converted below in `uint32_t`'s range: converting
+                                          * a negative one is undefined, C11 6.3.1.4p1 -- AArch64 saturates it, x86-64
+                                          * wraps it) */
+  double _Complex z = t + (2.0 * t) * I;
+  float _Complex fz = t + (3.0f * t) * I;
   uint8_t c = (uint8_t)s;
   z = -z;
   fz = ~fz;

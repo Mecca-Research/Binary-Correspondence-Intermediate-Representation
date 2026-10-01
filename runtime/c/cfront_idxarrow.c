@@ -6,7 +6,8 @@
  * emit returns what the original does. A member access straight through such an element, `arr[i]->f`, is refused on
  * both (the oracle has no subscript base; the twin had read the pointer's slot as the struct). The objects pointed
  * at live at file scope -- the G10 escape rows count a local whose address is stored -- and a function that writes
- * one sets it first, so the original and the emit read the same. */
+ * one sets it first, so the original and the emit read the same; it stores `s` there, so what is read is summed as
+ * `uint32_t`, which wraps where an `int32_t` sum overflows (undefined, C11 6.5p5). */
 #include <stdint.h>
 
 struct ix_s { uint32_t v; uint32_t w; };
@@ -41,7 +42,7 @@ uint32_t ix_steps(uint32_t s) {          /* `pp + 1`, `pp++`, `pp += 0` of a `T 
   int32_t **t = (s & 1u) ? q : arr;
   pp++;
   pp += 0;
-  return (uint32_t)(**q + **r * 3 + **t * 5 + **pp * 7);
+  return (uint32_t)**q + (uint32_t)**r * 3u + (uint32_t)**t * 5u + (uint32_t)**pp * 7u;
 }
 uint32_t ix_addresses(uint32_t s) {      /* `&arr[i]` of an array of pointers: a `T **`, a pointer apart */
   ix_gx = (int32_t)s;
@@ -75,7 +76,7 @@ uint32_t ix_globals(uint32_t s) {        /* a file-scope array of pointers decay
   struct ix_s *z = *ix_gsp;
   struct ix_s **zz = &ix_gsp[1];
   struct ix_s *zb = *zz;
-  return (uint32_t)(**pp + *p0 * 3 + **ix_garr * 5) + z->v + zb->w * 7u + s;
+  return (uint32_t)**pp + (uint32_t)*p0 * 3u + (uint32_t)**ix_garr * 5u + z->v + zb->w * 7u + s;
 }
 uint32_t ix_entry(uint32_t s) {
   return ix_chain_values(s) + ix_steps(s) * 3u + ix_addresses(s) * 5u + ix_kinds(s) * 7u + ix_typedefs(s) * 11u

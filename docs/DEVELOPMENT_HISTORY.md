@@ -2973,6 +2973,31 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - `_Generic` of a 40-bit bit-field declared `uint64_t` is typed differently by GCC and Clang, so neither rail can be
     held to one compiler there.
 
+  CI-ARM (2026-10-01): on CF-UNARY's commit (`2a76a01e`) the native AArch64 job failed two tests that passed on every
+  x86-64 job -- the fixture's emits run against the original
+  (`test_unary_operators_controlling_expressions_and_void_values_run_as_the_original`) and the shared corpus's
+  equivalence run (`test_python_c_parity_and_equivalence_across_fixtures_g0`). The witness was undefined, not the
+  emit: `uo_parts` converted a negative `double` to `uint32_t` once `s` passed 500 (C11 6.3.1.4p1), a conversion
+  x86-64 wraps and AArch64 saturates, so on AArch64 the original and the emit computed one undefined value two ways.
+  - Reproduced on x86-64 under UBSan (`-fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all`): `-130070
+    is outside the range of representable values of type 'unsigned int'`, in the original's `uo_parts`.
+  - The sweep: each test that runs an emit against the original, its builds under Clang and GCC made that way, and
+    then each unit of a test that stops at its first failing unit one at a time. Five more of this branch's witnesses
+    ran undefined behaviour no platform here exposed: `cfront_idxarrow.c` summed what `ix_steps` and `ix_globals`
+    read through its pointers as `int32_t` after a function stored `s` there (signed overflow, 6.5p5); of
+    `_CARD5_LOWERED`, one unit shifted a promoted byte left by 24 (`255 << 24` is no `int`, 6.5.7p4), two converted
+    a negative complex part to `uint32_t` as `uo_parts` did, and one converted `s * 2.5` past `UINT32_MAX`.
+  - What landed: `uo_parts` and the two part units read a byte of `s`, which keeps each part they convert in range;
+    `cfront_idxarrow.c` sums what it reads as `uint32_t`; the shift is by 23, beside a comparison of `+c - 256` with
+    0 that still tells an `int` from an `unsigned` operand; the scale is 0.5. RED holds unchanged on each parent: on
+    `601ca6f0` both emits of `uo_parts` still return what the original does not and `_CARD5_REFUSED` and
+    `_CARD5_LOWERED` count as above; on `b27c37e1` the twin still refuses `cfront_idxarrow.c` for the same reason.
+    Under the sweep every witness this branch added runs clean.
+  Found, not fixed here (a suggested follow-up): five fixtures older than this branch -- `cfront_aostruct.c`,
+  `cfront_signed.c`, `cfront_paste.c`, `cfront_structcall.c` and `cfront_assignexpr.c` -- overflow `int` in the
+  original under the shared corpus's full-width random arguments (`_equiv`), so their equivalence runs are undefined;
+  each passes on every platform CI runs today.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

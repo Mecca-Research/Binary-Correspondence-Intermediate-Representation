@@ -967,6 +967,16 @@ a strict one on its sibling is the gate disagreeing with itself),
 worktree path of one gate are two paths, and must agree),
 `test_staged_symlinks_are_not_classified_by_suffix` (the same divergence
 on the second rail, one round later).
+CI-ARM instance (2026-10-01): a witness that runs undefined behaviour has no
+verdict of its own -- the platform supplies one. `cfront_unaryops.c`'s
+`uo_parts` converted a negative `double` to `uint32_t` (C11 6.3.1.4p1), which
+x86-64 wraps and AArch64 saturates, so its emits ran as the original on every
+x86-64 job and not on the native AArch64 one. A UBSan sweep of the tests that
+run an emit against the original found five more such witnesses that no
+platform here exposed; each is now defined. Witnesses:
+`test_unary_operators_controlling_expressions_and_void_values_run_as_the_original`
+and `test_elements_that_are_pointers_run_as_the_original`, on the native
+AArch64 job.
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 

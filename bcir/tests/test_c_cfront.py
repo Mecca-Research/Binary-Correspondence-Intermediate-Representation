@@ -13603,7 +13603,7 @@ _CARD5_LOWERED = (
     "uint32_t f(uint32_t s) { g_n = 0u; w(s); ({ vd(1u); }); return g_n; }",
     "uint32_t f(uint32_t s) { vcb_t p = vd; g_n = 0u; p(s); (*p)(s); return g_n; }",
     # `+a`: the promoted operand, which `sizeof`, `_Generic` and `typeof` read
-    "uint32_t f(uint32_t s) { uint8_t c = (uint8_t)s; return (uint32_t)sizeof(+c) + (uint32_t)(+c << 24 >> 24); }",
+    "uint32_t f(uint32_t s) { uint8_t c = (uint8_t)s; return (uint32_t)sizeof(+c) + (uint32_t)(+c << 23 >> 23) + (uint32_t)(+c - 256 < 0); }",
     "uint32_t f(uint32_t s) { _Bool b = s & 1u; return (uint32_t)sizeof(+b) * 7u + (uint32_t)+b; }",
     "uint32_t f(uint32_t s) { uint16_t h = (uint16_t)s; return _Generic(+h, int: 1u, unsigned: 2u, default: 3u); }",
     "uint32_t f(uint32_t s) { uint16_t h = (uint16_t)s; __typeof__(+h) k = -1; return (uint32_t)(k < 0) + s; }",
@@ -13611,12 +13611,14 @@ _CARD5_LOWERED = (
     "  char c = (char)s; return (uint32_t)sizeof(+c) + (uint32_t)(+c) + (uint32_t)sizeof(+ +c);\n}",
     "uint32_t f(uint32_t s) {\n"
     "  uint64_t v = s; double d = s; float x = (float)s;\n"
-    "  return (uint32_t)(+v >> 1) + (uint32_t)(+d * 2.5) + (uint32_t)sizeof(+x);\n}",
+    "  return (uint32_t)(+v >> 1) + (uint32_t)(+d * 0.5) + (uint32_t)sizeof(+x);\n}",
     "uint32_t f(uint32_t s) { __atomic_thread_fence(+(__ATOMIC_ACQUIRE)); return +5u + s; }",
-    # `-z` and `~z` of a complex are complex; `__real__` and `__imag__` are a part
-    "uint32_t f(uint32_t s) { double _Complex z = s + (2.0 * s) * I; z = -z; return (uint32_t)(__imag__ z + 1000.0); }",
+    # `-z` and `~z` of a complex are complex; `__real__` and `__imag__` are a part (of a byte of `s`: a part converted
+    # to `uint32_t` stays in its range, where a negative one is undefined -- AArch64 saturates it, x86-64 wraps it)
     "uint32_t f(uint32_t s) {\n"
-    "  float _Complex z = s + (3.0f * s) * I; z = ~z;\n"
+    "  uint32_t t = s & 255u; double _Complex z = t + (2.0 * t) * I; z = -z; return (uint32_t)(__imag__ z + 1000.0);\n}",
+    "uint32_t f(uint32_t s) {\n"
+    "  uint32_t t = s & 255u; float _Complex z = t + (3.0f * t) * I; z = ~z;\n"
     "  return (uint32_t)(__imag__ z + 1000.0f) + (uint32_t)sizeof(-z);\n}",
     "uint32_t f(uint32_t s) {\n"
     "  double _Complex z = s; float _Complex fz = s;\n"
