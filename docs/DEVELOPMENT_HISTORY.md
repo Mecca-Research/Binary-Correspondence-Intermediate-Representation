@@ -1960,15 +1960,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   14 injected defects, on both rails, are each caught (`tools/testing/faults/cfront-buf.json`), and a hand-off
   oracle that keeps the old 31-character label bound is caught by the G16 rows (`tools/testing/faults/handoff.json`).
   Three faults of the earlier tables anchored into lines this change rewrote; they were re-anchored, and each is
-  still caught.
-  Found, not fixed here (each a suggested follow-up):
-  - the preprocessors split on a macro name past 63 characters: the twin's refuses it (`macro name is too long`),
-    the oracle's expands it, and the unit lowers on the oracle;
-  - `bcir_cfront_canon` writes into the caller's buffer and cuts at its capacity without saying so: the twin
-    driver's `--canon` holds 128 KiB, and the 140-function unit's canon (239 KB) comes back as its first 128 KiB.
-    The digest is unaffected, since it hashes the canon as it is produced;
-  - the twin's test driver (`runtime/c/test_cfront.c`) reads at most 64 KiB of a source file and does not say
-    when it cuts one (`bcir-cc` reads a file of any size).
+  still caught. The three items it found but did not fix -- a macro name past 63 characters, the canon cut at
+  its caller's buffer, the driver's 64 KiB source -- are closed by CF-LIMITS (below).
 
   CF-SPLIT2 (2026-09-30) closed the rail splits the CF-NULLARG list recorded and those found beside them: forms the
   cfront rails lowered to two claim graphs, or that one rail lowered and the other refused. RED was measured on the
@@ -2236,12 +2229,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   (`tools/testing/faults/cfront-globals.json`). One fault of an earlier table, ST3 of `cfront-statics.json`,
   anchored into a line CF-TLS rewrote; it was re-anchored, and is still caught. The G10 and volatile rows are
   unchanged.
-  Found, not fixed here (each a suggested follow-up):
-  - an enumerator and a `case` label fold `/`, `%` and a comparison differently on the two rails and from C:
-    `enum { ED_Q = -7 / 2, ED_R = -7 % 2, ED_N = ~0u > 5 };` is -4, 1 and 0 on the oracle, -3, -1 and 0 on the
-    twin, and -3, -1 and 1 in C, and the unit digests apart (a `case -7 / 2:` label with it); the twin's emit
-    spells a negative enumerator as its 64-bit two's complement (`int32_t t = 18446744073709551613;`), which Clang
-    and GCC convert back with a warning;
+  Found, not fixed here (each a suggested follow-up; one more, an enumerator and a `case` label folding `/`, `%`
+  and a comparison apart from C, is closed by CF-ENUMFOLD, below):
   - the twin types a plain `char` element of an array `int8_t` in its emit, where the oracle and the source say
     `char`: on a target whose `char` is unsigned (AArch64 Linux), an element past 0x7F reads back negative;
   - a member of an element of a 2-D array of structs (`gm[i][j].x`) is refused on both rails (`a subscript of an
@@ -2372,6 +2361,122 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   become an equivalent mutation: it disabled the branch that lowers a dereference of a subscripted element, and
   CF-SPLIT2's general dereference of a pointer value now lowers `*q[j]` the same way, so no check could fire. The
   fault now injects the refusal it names, in that branch, and is caught.
+
+  CF-LIMITS (2026-10-01) closed the three items CF-BUF's list recorded: the bound CF-BUF set where the lexers read a
+  name now holds where the text enters before them, in the preprocessors and the twin's driver. RED was measured on
+  the parent (`6d6ed7cc`).
+  - The defect: the twin's preprocessor kept a macro name in 64 bytes and refused a longer one inconsistently -- at
+    `#define` and `-D` as `macro name is too long`, at `#undef`, `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef` and in
+    a `#if` for its 64-byte token buffer (`preprocessor token too long`), and as a `defined` operand only past 255
+    characters; it also read `#ifdef` and `#elifdef` operands in groups C skips. The oracle's took a name of any
+    length, so a unit naming a 64-character macro lowered on the oracle alone. The oracle also defined a macro
+    named `9x`, ignored a bare `#define` or `#undef`, raised `IndexError` on a bare `#ifdef` and evaluated a skipped
+    group's `#if`. `bcir_cfront_canon` cut the canon at its caller's capacity without saying so: the twin driver's
+    `--canon` held 128 KiB, and the 140-function unit's 239 291-byte canon came back as its first 131 071 bytes,
+    exit 0. The same driver read the first 64 KiB of a source and lowered that prefix (a 70 067-byte unit of two
+    functions lowered one), and handed a source holding a NUL on as a string that stopped there.
+  - RED: the five new tests fail on the parent's rails (5 run, 5 findings).
+  - What landed: each rail reads every macro name a directive reads through one predicate (the twin's `macro_name`,
+    the oracle's `_macro_name`) -- the name `#define` or `-D` defines and `#undef` removes, the operand of `#ifdef`,
+    `#ifndef`, `#elifdef`, `#elifndef` and `defined`, and each name an evaluated `#if` or `#elif` looks up, before
+    and after expansion. Past 63 characters (C11 5.2.4.1) it is refused as `macro name is too long`, a parameter as
+    `macro parameter is too long`, and a directive with no name where it reads one for the twin's reasons. A
+    directive in a skipped group, or an `#elif...` after a taken one, is read only through its name (6.10.1p6) on
+    both rails. `bcir_cfront_canon` and `bcir_cfront_canon_with_allocator` return the whole canon's length with
+    snprintf semantics (a NULL buffer measures), and `SIZE_MAX` with an empty buffer when an allocation failed; the
+    driver measures, allocates and prints all of it, and `test_memory_discipline.c` holds the whole, measured and
+    cut canon under every injected allocation failure. The driver reads the whole source, growing two-phase through
+    the host allocator to `bcir-cc`'s 64 MiB bound, and refuses a file it cannot hand on whole as `READ-ERR`.
+  - Outcomes: the twin driver's output over the corpus (227 fixtures, four targets, `--canon`, `--emit-cpp`; 1 589
+    runs) is byte-identical to the parent's, and the oracle's preprocessed output and lowering unchanged but for
+    `cfront_sec_cppmacro.c`, an overlong macro parameter both preprocessors now refuse, so the escape tests' pin of it
+    as the twin's limit alone (`TWIN_PREPROCESSOR_LIMITS`) is empty. The canon's FNV-1a still equals the digest.
+  16 injected defects, one per defect per rail, are each caught (`tools/testing/faults/cfront-buf.json`, now 30).
+  Found, not fixed here (each a suggested follow-up):
+  - the loop driver (`runtime/c/test_cfront_loop.c`) still reads the first 64 KiB of a source silently, and both
+    twin drivers hold the preprocessed text in 64 KiB (a 6 000-global unit is refused there, loudly, and lowers on
+    the oracle);
+  - the twin's preprocessor refuses any token of 256 characters or more (a string literal, a stringize argument, a
+    `__has_attribute` operand, a long number in `#if`), which the oracle takes;
+  - a malformed `defined` (`#if defined(X`, `#if defined +`) lowers on the oracle and is refused by the twin; the
+    oracle drops a NUL between tokens and lowers what surrounds it;
+  - `bcir-cc -DXQ=1 -UXQ` fails (`macro name must be an identifier`): an undefined `-D` becomes an empty
+    definition `define_macro` refuses;
+  - `bcir_cfront_digest_with_allocator` returns a digest of a canon that ran out of memory as an ordinary value;
+  - the twin reads only the ASCII start of a macro name: beside `#define caf 5`, `#ifdef café` keeps its group on
+    the twin and skips it on the oracle.
+
+  CF-ENUMFOLD (2026-10-01) folded every integer constant expression the parsers fold -- an enumerator, a `case`
+  label, an array dimension, a designator -- in C's own types on both rails, closing the item the file-scope
+  slices recorded. RED was measured on the parent (`66dce62d`).
+  - The defect: the oracle folded with unbounded Python integers (`-7 / 2` was -4, `-7 % 2` 1, `~0u > 5` 0) and,
+    computing every operator's result for each node, raised a bare `ValueError` on any negative right operand
+    (`enum { N = 7 / -2 };`); the twin folded in `long long` (`~0u > 5` was 0), itself undefined on `LLONG_MIN /
+    -1` and wide shifts. Both picked a value where C requires a diagnostic (`1 / 0` folded to 0, `enum { N =
+    0x100000000 }` became 2^32 in an int). The twin spelled a negative enumerator as its 64-bit two's complement
+    (`int32_t t = 18446744073709551613;`), the oracle as `-3u`, and the oracle a case label past LLONG_MAX without
+    `u`. An enumerator as an array dimension split the rails: the twin made `uint32_t a[N]` a VLA and refused it as
+    a global, member or parameter dimension, the oracle made `a[2 + 1]` a VLA. Both refused a cast in an
+    enumerator, and the oracle typed `0xFFFFFFFFL` with a 64-bit `long` on every target.
+  - RED: the four new tests fail on the parent (4 run, 4 findings).
+  - What landed: both rails fold through one parse-time driver over the predicates a static's initializer already
+    folds with (the oracle's `_kbin`/`_kun`/`_ksel`/`_kconvert`, the twin's `kbin`/`kun`/`ksel`/`kconvert`): the
+    integer promotions and the usual arithmetic conversions, `/` and `%` truncating toward zero, shifts, a cast to an
+    integer type, `?:` in its arms' common type, and an operand C does not evaluate typed but not folded (`0 && 1 /
+    0` is 0). The oracle's parser takes the target's ABI, so a constant's type follows the target's `long`. A
+    dimension that is an integer constant expression makes a fixed array on every declarator (6.7.6.2p4). Each rail
+    refuses, for one shared reason, an enumerator no int holds (6.7.2.2p2), a division or remainder by zero, a
+    signed overflow, a shift C leaves undefined and an operand no integer constant expression has (6.6), and a
+    constant dimension outside 0..INT_MAX. Both emits spell a negative constant signed and a case label past
+    LLONG_MAX with `u`. Clang folds some of what both rails refuse (`1 << 31`, `-1 << 1`, `INT_MIN / -1`, `0 && g`,
+    `INT_MAX + 1` with a warning) and C23 gives a non-int enumerator a wider type; these divergences are recorded in
+    `docs/languages/CFRONT_GUIDE.md`.
+  - Outcomes: `runtime/c/cfront_enumfold.c` (51 enumerators, case labels of a signed, an unsigned and a 64-bit
+    switch, constant dimensions of a local, a member, a typedef and a global) lowers to one claim graph on the four
+    targets, each emit runs as the original, and every enumerator equals Clang's value on each target. Over the
+    corpus (176 fixtures, four targets) only the new fixture changed. The new `c.const` spelling moved T45 of
+    `cfront-values.json`, and the evaluator's new signature broke the replacement of IC6 of `cfront-globals.json`;
+    both were re-pointed and are each caught.
+  24 injected defects, on both rails, are each caught (`tools/testing/faults/cfront-consts.json`).
+  Found, not fixed here (each a suggested follow-up):
+  - a duplicate case value after conversion (`case -1:` beside `case 4294967295u:` in a `uint32_t` switch) is
+    accepted by both rails, where C requires a diagnostic (6.8.4.2p3) and the emit does not compile;
+  - a character constant `'\xff'` is -1 on every target on both rails; where plain `char` is unsigned (AArch64
+    Linux) C gives 255;
+  - an `enum` defined at block scope is refused by both rails, for different reasons, and so are an enumerator in
+    a compound literal's dimension `(T[N]){...}` and a row pointer's `(*p)[N]`, where each rail reads a literal
+    only;
+  - `sizeof`, `_Alignof` and `(int)1.5` in an enumerator are refused on both rails (6.6p6 allows them);
+  - a 3000-term `1 + 1 + ...` chain raises `RecursionError` in the oracle's parser, which the twin lowers;
+  - the twin refuses `typedef T row[0];`, which the oracle takes.
+
+  CF-ENUMSCOPE (2026-10-01) made a block-scope name hide an enumerator on both rails, a silent miscompile the
+  CF-ENUMFOLD triage found. RED was measured on the parent (`04d575dc`).
+  - The defect: both rails read a name as an enumerator before anything else, wherever it stood, so a local, a
+    parameter or a loop's own declaration of the same name never hid it (C11 6.2.1p4). Beside `enum { N = 4 }`,
+    `uint32_t N = (s & 1u) + 1u; uint32_t a[N]; ... return a[0] + sizeof a + N;` lowered on both rails as `a[4]` and
+    `+ 4`, digest-equal: `f(1)` returned 21 where C gives 11. A parameter or a loop variable named for an enumerator
+    was refused on both rails, for different reasons (the oracle read `K++` as `3++`), and the twin's `env` kept a
+    function's parameters bound at file scope after its body.
+  - RED: on the parent the twin refuses `runtime/c/cfront_enumscope.c` (`PARSE-ERR ;`), the oracle raises
+    `unsupported base expression IntLit`, and the new test fails at the oracle's case label (`case N:` naming the
+    local folded to `case 4:`).
+  - What landed: the oracle's parser keeps the names the function declares, one set per block scope (the
+    parameters around the body, a block, a `for`'s own declaration), each in scope from the end of its declarator,
+    its own initializer included (6.2.1p7), and `_enumerator` reads a name as an enumerator only where none of them
+    is in scope. The twin reads every enumerator through one predicate, `visible_enum`, which hides one a name in
+    `env` binds -- an expression's primary, an integer constant expression (so `case N:` naming the local is refused
+    as no constant on both rails), `sizeof` of a name, a fence's memory order and a volatile access's byte offset --
+    and its unit loop clears `env` at file scope.
+  - Outcomes: the fixture (a local as a VLA's extent and under `sizeof`, a parameter, an inner block, a loop's
+    declaration, `uint64_t N = sizeof N;`, a local array under `sizeof`, and file scope after a function whose
+    parameter hid the name) lowers to one claim graph on the four targets and each emit runs as the original; the
+    fence and byte-offset readers hold parity on the four targets. Over the corpus the twin's output in its four
+    modes (916 runs) and the oracle's summaries and emits (229 fixtures) are unchanged but for the new fixture.
+  13 injected defects, 6 on the oracle and 7 on the twin, are each caught (`tools/testing/faults/cfront-enumscope.json`).
+  Found, not fixed here (a suggested follow-up): a local that hides a typedef name is refused on both rails where a
+  statement begins with it (`typedef uint32_t T; ... uint32_t T = s; T = T * 3u;` -- the twin: `expected declarator
+  name`, the oracle: `expected 'IDENT', got OP '='`), where C reads the statement as an expression.
 
 ---
 

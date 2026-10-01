@@ -407,6 +407,8 @@ refused. A twin whose every report failed therefore compared nothing, and both r
 read 0. A refusal now counts on the row whose report failed. The one exception is
 the pinned preprocessor limit (`escape_fixtures.TWIN_PREPROCESSOR_LIMITS`), and the
 parity test holds that pin exact: a pinned unit that starts to compile fails it.
+CF-LIMITS (2026-10-01) closed that limit on the twin, so the pin is now empty and the same
+test holds it empty: every corpus unit is compared.
 Fault: `Twin driver: every report fails, so the twin reports on nothing`.
 CF-VOL instance (2026-09-25): `tools/testing/faults/volatile.json` injects 23 defects, on
 both rails, into the device-region type rule, a global's domain, R3's ordering pass, the
