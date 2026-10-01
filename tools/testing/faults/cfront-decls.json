@@ -22,8 +22,8 @@
     {
       "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
       "label": "DO2 a prototype declares nothing on the oracle",
-      "new": "            )  # or an in-unit forward decl\n            return None\n",
-      "old": "            )  # or an in-unit forward decl\n            self._declared.add(name)\n            return None\n",
+      "new": "                self.unit.variadic_protos.add(name)\n            return None\n",
+      "old": "                self.unit.variadic_protos.add(name)\n            self._declared.add(name)\n            return None\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
@@ -155,8 +155,8 @@
     {
       "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
       "label": "DT11 the twin refuses a designator its prototype declares",
-      "new": "      if(callee_ret(c,&id)){",
-      "old": "      if(callee_ret(c,&id) || (declared_ret(c,&id) && unit_defines(c,&id))){",
+      "new": "      if(callee_ret(c,&id) || (declared_ret(c,&id) && !unit_defines(c,&id))){   /* a FUNCTION used as a VALUE (CF-EXTDESIG) */",
+      "old": "      if(declared_ret(c,&id)){                          /* a FUNCTION used as a VALUE (CF-EXTDESIG) */",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

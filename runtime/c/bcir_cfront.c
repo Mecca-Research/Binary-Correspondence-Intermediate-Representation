@@ -225,7 +225,8 @@ typedef struct {
   int saw_thread;                                    /* ... a `_Thread_local` / `thread_local`: a block-scope
                                                       * static of thread storage duration (CF-TLS) */
   struct { char name[BCIR_CIR_NAME]; bcir_ctype ret;
-           const bcir_ctype *params; int n_params; } *protos;   /* prototype table: callee -> return
+           const bcir_ctype *params; int n_params;
+           int variadic; } *protos;                  /* prototype table: callee -> return
                                                       * type (for call-result typing) and parameter types (a
                                                       * null pointer argument's, CF-NULLARG -- held in the
                                                       * scratch arena, which lasts the compile); grows
@@ -2011,12 +2012,20 @@ static void null_as(CC *c, const bcir_resource *res, uint32_t v){
  * integer, a constraint violation (6.5.9p2) Clang and GCC only warn about. A named pointer -- a local, a parameter, a
  * global -- by its declared type (an array is no pointer here), any other pointer value by its resource. Only the
  * temp's C type moves (the oracle's `_null_pointer` over both operands, CF-NULLCALL). */
+static int designator_sig(CC *c, const char *name);   /* fwd: a designator's function type (CF-FNSEL) */
 static void null_compared(CC *c, uint32_t v, uint32_t p){
   for(int i=c->nenv;i-- > 0;) if(c->env[i].rid==p){
     const bcir_resource *pr=res_of(c->fn,p); bcir_ctype t=c->env[i].type;
     if((t.kind==2 || t.kind==3) && !(pr && (pr->is_array || pr->is_vla))) null_pointer(c,v,&t);
     return; }
   const bcir_resource *pr=res_of(c->fn,p);
+  if(pr && pr->read_only && pr->is_funcptr && pr->name[0]){   /* `f != 0` of a designator: a pointer to its
+                                                    * function type, as the oracle's `_fn_type` (CF-EXTDESIG) */
+    char fnm[BCIR_CIR_NAME]; snprintf(fnm,sizeof fnm,"%s",pr->name);   /* `pr` may move as the table grows */
+    int s=designator_sig(c,fnm);
+    if(s>0 && s<=c->nsig && c->sigs[s-1].alias[0]){ bcir_ctype t; memset(&t,0,sizeof t); t.kind=3;
+      fits(c,t.tag,sizeof t.tag,"%s",c->sigs[s-1].alias); null_pointer(c,v,&t); }
+    return; }
   if(pr && !pr->name[0]) null_as(c,pr,v);
 }
 static uint32_t named_read(CC *c,const venv *v){
@@ -4382,7 +4391,7 @@ static int sz_name(CC *c, szt *t){
     return 1;
   }
   if(gi<0){
-    if(callee_ret(c,&id)){ fail(c,CC_SIZEOF_FN); return -1; }
+    if(declared_ret(c,&id)){ fail(c,CC_SIZEOF_FN); return -1; }   /* a prototyped one too (CF-EXTDESIG) */
     return 0;
   }
   const gvar *g=&c->gv[gi];
@@ -4459,11 +4468,13 @@ static int sz_postfix(CC *c, szt *t){
  * `**inc` (C11 6.5.3.2p4). */
 static int star_names_fn(CC *c, int k){
   while(tok_is(tat(c,k),"*")) k++;
+  int amp=tok_is(tat(c,k),"&"); if(amp) k++;        /* `sizeof *&f`: the function again (CF-EXTDESIG) */
   const tok *nm=tat(c,k), *nx=tat(c,k+1);
   if(nm->k!=T_ID || tok_is(nx,"(") || tok_is(nx,"[") || tok_is(nx,".") || tok_is(nx,"->")) return 0;
   const venv *v=lookup(c,nm); int gi=v ? -1 : find_global(c,nm->s,nm->n);
+  if(amp) return !v && gi<0 && declared_ret(c,nm)!=NULL;   /* `&` of an object is a pointer to it, no function */
   return v ? (v->type.kind==3 && !names_object_ptr(c,v)) : gi>=0 ? (c->gv[gi].ty.kind==3 && !c->gv[gi].is_arr)
-           : callee_ret(c,nm)!=NULL;
+           : declared_ret(c,nm)!=NULL;              /* a function a prototype declares too (CF-EXTDESIG) */
 }
 static int sz_unary(CC *c, szt *t){
   if(ENTER_REC(c)){ LEAVE_REC(c); return -1; }
@@ -4476,7 +4487,7 @@ static int sz_unary(CC *c, szt *t){
   else if(is(c,"*") && star_names_fn(c,c->i)){ fail(c,CC_SIZEOF_FN); r=-1; }   /* `sizeof *fp` (CF-FPTAB) */
   else if(is(c,"*")){ c->i++; r=sz_unary(c,t); if(r==1 && !szt_elem(t)) r=0; if(r==1) t->vla=0; }
   else if(is(c,"&") && tat(c,c->i+1)->k==T_ID && !lookup(c,tat(c,c->i+1)) &&
-          find_global(c,tat(c,c->i+1)->s,tat(c,c->i+1)->n)<0 && callee_ret(c,tat(c,c->i+1)) &&
+          find_global(c,tat(c,c->i+1)->s,tat(c,c->i+1)->n)<0 && declared_ret(c,tat(c,c->i+1)) &&
           !tok_is(tat(c,c->i+2),"(") && !tok_is(tat(c,c->i+2),"[")){   /* `&f`: a pointer to the function */
     c->i+=2; memset(t,0,sizeof *t); t->si=-1; t->addr=1; r=1; }
   else if(is(c,"&")){ c->i++; r=sz_unary(c,t); if(r==1 && t->bf) r=0; if(r==1){ t->addr++; t->vla=0; } }
@@ -4603,14 +4614,27 @@ static uint32_t p_named_call(CC *c, tok id){
  * The token after the `)` (the call's `(`) on success, else 0. Nothing is consumed or lowered. */
 static int deref_named_callee(CC *c, tok *nm){
   int k=c->i+1; while(tok_is(tat(c,k),"*")) k++;
+  int amp=tok_is(tat(c,k),"&"); if(amp) k++;        /* `(&f)(x)`, `(*&f)(x)`: the function's address, called --
+                                                     * `f(x)` (CF-EXTDESIG) */
   const tok *nt=tat(c,k);
   if(k==c->i+1 || nt->k!=T_ID || !tok_is(tat(c,k+1),")") || !tok_is(tat(c,k+2),"(")) return 0;
   const venv *lv=lookup(c,nt); int gi=lv ? -1 : find_global(c,nt->s,nt->n);
-  int fnv = lv ? (lv->type.kind==3 && !names_object_ptr(c,lv))   /* a table's `*t` is its first element */
+  int fnv = amp ? (!lv && gi<0 && declared_ret(c,nt))   /* `&` of an object is a pointer to it, no function */
+          : lv ? (lv->type.kind==3 && !names_object_ptr(c,lv))   /* a table's `*t` is its first element */
           : gi>=0 ? (c->gv[gi].ty.kind==3 && !c->gv[gi].is_arr)
-          : (callee_ret(c,nt) || declared_ret(c,nt)) ? 1 : 0;
+          : declared_ret(c,nt) ? 1 : 0;
   if(!fnv) return 0;
   *nm=*nt; return k+2;
+}
+/* A function used as a VALUE (function-to-pointer decay, `o->fn = g`; `&g`, C11 6.3.2.1p4, 6.5.3.2p3): a funcptr value
+ * emitted as the bare function name (C decays it). No claim. A function declared here by an earlier definition or a
+ * prototype -- one this unit defines further on, or one another unit defines, which the emit declares `extern` as it
+ * declares every prototype (CF-EXTDESIG) -- as the oracle's `func_rets`, `protos` and `_require_declared` hold it. */
+static uint32_t fn_value(CC *c, const tok *id){
+  char fnm[BCIR_CIR_NAME]; idcpy(c,fnm,id);
+  uint32_t r=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_SCALAR,fnm);
+  if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1]; rr->read_only=1; rr->is_funcptr=1; }
+  return r;
 }
 static uint32_t p_primary(CC *c) {
   if(is(c,"_Generic")) return call_value(c,p_generic(c));   /* `_Generic(x, T: f, ...)(y)` (CF-FPTAB) */
@@ -4652,17 +4676,9 @@ static uint32_t p_primary(CC *c) {
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
     if(!v){
-      if(callee_ret(c,&id) || (declared_ret(c,&id) && unit_defines(c,&id))){
-                                                         /* a defined FUNCTION used as a VALUE (function-to-pointer
-                                                          * decay, e.g. `o->fn = g`): a funcptr value emitted as the
-                                                          * bare function name (C decays it). No claim. One defined
-                                                          * later is declared here by its prototype, as the oracle's
-                                                          * `func_rets` and `_require_declared` hold it. */
-        char fnm[BCIR_CIR_NAME]; idcpy(c,fnm,&id);
-        uint32_t r=add_res(c,BCIR_DOM_RAM,cc_abi(c)->pointer_size,1,0,BCIR_RK_SCALAR,fnm);
-        if(c->fn->n_res){ bcir_resource *rr=&c->fn->res[c->fn->n_res-1]; rr->read_only=1; rr->is_funcptr=1; }
-        return r;
-      }
+      if(declared_ret(c,&id)){                          /* a FUNCTION used as a VALUE (CF-EXTDESIG) */
+        if(is_assign_op(c) || is(c,"++") || is(c,"--")){ fail(c,CC_FN_NOT_LVALUE); return 0; }   /* `f = g`, `f++` */
+        return fn_value(c,&id); }
       if(is_imag_unit(&id)){                            /* <complex.h> imaginary unit (unless shadowed) */
         uint32_t r=tempc(c,8);                          /* `float _Complex` (value i), emitted verbatim */
         char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.cconst:%.*s",id.n,id.s);
@@ -4840,6 +4856,9 @@ static uint32_t p_unary_inner(CC *c) {
                                 || rr->is_funcptr || rr->is_voidptr))) fail(c,CC_DEREF_NOT);   /* (6.5.3.2p3, CF-FPTAB) */
       return r; }
     if(isk(c,T_ID)){ tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);
+      if(!vp && declared_ret(c,&id) && !tok_is(tat(c,c->i+1),"(")){   /* `&f`: the function's address, the value its
+                                                    * designator converts to -- no claim (CF-EXTDESIG) */
+        c->i++; return fn_value(c,&id); }
       /* SNAPSHOT the env entry: &s.arr[i] / &arr[i] resolve the index via member_arr_index / p_expr, which
        * can declare locals and realloc c->env[] -- a pointer into it would dangle (the helpers only READ). */
       venv vsnap; venv *v=NULL; if(vp){ vsnap=*vp; v=&vsnap; }
@@ -5250,20 +5269,25 @@ static int designator_sig(CC *c, const char *name){
   for(int k=0;k<c->nsig;k++) if(!strcmp(c->sigs[k].fn,name)) return k+1;
   const bcir_func *df=NULL;
   for(int i=0;c->unit && i<c->unit->n_funcs && !df;i++) if(!strcmp(c->unit->funcs[i].name,name)) df=&c->unit->funcs[i];
-  if(!df) return 0;
+  int pk=-1;                                /* else its prototype's: a function another unit defines, or this one
+                                             * further on -- the oracle's `func_rets` and `protos` (CF-EXTDESIG) */
+  for(int k=0;!df && k<c->n_protos && pk<0;k++) if(!strcmp(c->protos[k].name,name)) pk=k;
+  if(!df && pk<0) return 0;
+  bcir_ctype ret=df ? df->ret : c->protos[pk].ret;
+  int np=df ? df->n_params : c->protos[pk].n_params, va=df ? df->variadic : c->protos[pk].variadic;
   bcir_ctype *ps=NULL; size_t bytes;
-  if(df->n_params>0){
-    if(!bcir_size_mul((size_t)df->n_params,sizeof *ps,&bytes) ||
+  if(np>0){
+    if(!bcir_size_mul((size_t)np,sizeof *ps,&bytes) ||
        !(ps=(bcir_ctype *)bcir_host_arena_allocate(&c->scratch,bytes,_Alignof(bcir_ctype)))){ cc_raise_oom(c); return 0; }
-    for(int k=0;k<df->n_params;k++) ps[k]=df->params[k].type; }
+    for(int k=0;k<np;k++) ps[k]=df ? df->params[k].type : c->protos[pk].params[k]; }
   char al[BCIR_CIR_NAME], rets[BCIR_EMIT_TYPE];
   snprintf(al,sizeof al,"__bcir_fp%d",c->n_fpdef++);
-  ctype_str(&df->ret,rets,sizeof rets);
+  ctype_str(&ret,rets,sizeof rets);
   ctext_putf(c,&c->fpdefs,"typedef %s (*%s)(",rets,al);
-  for(int k=0;k<df->n_params;k++){ char pt[BCIR_EMIT_TYPE]; ctype_str(&ps[k],pt,sizeof pt);
+  for(int k=0;k<np;k++){ char pt[BCIR_EMIT_TYPE]; ctype_str(&ps[k],pt,sizeof pt);
     ctext_putf(c,&c->fpdefs,"%s%s",k?", ":"",pt); }
-  ctext_putf(c,&c->fpdefs,"%s);\n",df->variadic?(df->n_params?", ...":"..."):df->n_params?"":"void");
-  return sig_addv(c,&df->ret,ps,df->n_params,al,name,df->variadic);
+  ctext_putf(c,&c->fpdefs,"%s);\n",va?(np?", ...":"..."):np?"":"void");
+  return sig_addv(c,&ret,ps,np,al,name,va);
 }
 /* The function type the function-pointer value in `rid` points at, as 1 + its index in `sigs`, when a typedef spells
  * a pointer to it -- 0 otherwise: a function-pointer object (a local, a parameter, a global) has its declaration's; a
@@ -6067,6 +6091,8 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
   if(prefix) c->i++;                                       /* consume the leading `++`/`--` */
   if(!isk(c,T_ID)){ c->i=save; return 0; }                 /* only a named-rooted lvalue is supported */
   tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id);
+  if(!vp && prefix && declared_ret(c,&id) && !postfix_follows(c,c->i+1)){   /* `++f`: a function is no object */
+    fail(c,CC_FN_NOT_LVALUE); return 0; }                                 /* (CF-EXTDESIG) */
   if(!vp){ c->i=save; return 0; }
   /* SNAPSHOT the env entry: the indexed inc/dec paths below resolve the index via array_index (a p_expr
    * sub-parse) before reading v->rid/sidx/type -- a stmt-expr index can realloc c->env[] and dangle a
@@ -8031,6 +8057,7 @@ static int p_func(CC *c, bcir_func *fn) {
           cc_raise_oom(c); return 1; }
         for(int k=0;k<fn->n_params;k++) pt[k]=fn->params[k].type; }
       c->protos[c->n_protos].params=pt; c->protos[c->n_protos].n_params=pt?fn->n_params:0; }
+    c->protos[c->n_protos].variadic=fn->variadic;  /* `T f(P, ...);`: a designator's type keeps it (CF-EXTDESIG) */
     c->n_protos++;
     char rets[BCIR_EMIT_TYPE]; ctype_str(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */
     ctext_putf(c,&c->tudefs,"extern %s %s(",rets,fn->name);

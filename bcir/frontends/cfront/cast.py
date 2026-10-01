@@ -393,6 +393,8 @@ class Unit:
     protos: dict = field(default_factory=dict)  # name -> (ret TypeRef, (param TypeRef, ...)) --
     #   file-scope function PROTOTYPES (Phase 3 linking:
     #   a cross-TU callee, or an in-unit forward decl)
+    # the prototypes ending in `...`, which their `extern` declarations keep (CF-EXTDESIG)
+    variadic_protos: set = field(default_factory=set)
     anon_spelling: dict = field(
         default_factory=dict
     )  # a synthesized `$anonN` tag -> how C names the

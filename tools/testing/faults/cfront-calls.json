@@ -97,8 +97,8 @@
     {
       "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
       "label": "CL13 the twin gives a designator no function type",
-      "new": "  if(df || !df) return 0;",
-      "old": "  if(!df) return 0;",
+      "new": "  if(1) return 0;",
+      "old": "  if(!df && pk<0) return 0;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

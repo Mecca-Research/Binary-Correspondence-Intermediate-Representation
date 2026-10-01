@@ -2120,7 +2120,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     a function-pointer parameter's own parameters are dropped from the `extern` declaration on both rails, which
     then conflicts with the original;
   - a function designator of an external function, declared by its prototype and defined by another unit, is
-    refused on both rails (`use of undeclared identifier`), which C allows.
+    refused on both rails (`use of undeclared identifier`), which C allows (closed by CF-EXTDESIG, below).
 
   File-scope constants, arrays and initializers (2026-09-30), on both rails, each slice closing an item of the
   CF-NULLARG list above. RED was measured on the parent (`59740254`), with the new fixtures and tests copied in.
@@ -2618,6 +2618,67 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     the oracle -- beside CF-RTWIDE's cast to an inline function-pointer type, which the round trip refuses;
   - a function declared to return a function pointer by a nested declarator (`T (*f(P))(Q)`) is refused on both rails,
     now for one reason; a typedef for its return type is the spelling both take.
+
+  CF-EXTDESIG (2026-10-01) let a function the unit only prototypes -- another unit defines it -- be named as a value
+  on both rails, the second item of CF-DECLS's list, and made both rails take the address of any function and refuse
+  storing to one alike. RED was measured on the parent (`bcf225d4`).
+  - The defects: a designator of a function declared by a prototype and defined by another unit (`apply(ext, s)`,
+    `op_t g = ext;`, `s ? ext : inc`, `{ext}`) was refused on both rails (`use of undeclared identifier 'ext'`), though
+    a call to it lowered as an external edge (CF-DECLS). `&f` of any function -- defined or prototyped -- was refused
+    on both rails for reasons of their own (the oracle: `use of undeclared identifier`, the twin: `unsupported
+    address-of`); `sizeof &f` of a prototyped function lowered on the oracle alone, and `sizeof f` was a function on
+    the oracle and an undeclared name on the twin. The oracle's `extern` declaration of a variadic prototype dropped
+    its `...` (`extern uint32_t vext(uint32_t);`), so a call passing more arguments, `vext(s, 2u, 3u)`, did not
+    compile; the twin spelled it. Storing to a function or stepping one -- `f = g`, `f++`, `++f`, `f += 1` -- was
+    refused for reasons of each rail's own, the oracle's naming the function an undeclared identifier. And a `0`
+    compared with a designator (`f != 0`) was an `int` temp in the twin's emit, a pointer to a function of no
+    parameters in the oracle's, each a comparison Clang or GCC warns about.
+  - RED: on the parent both new tests fail. Both rails refuse `runtime/c/cfront_extdesig_link.c` and `_EXTDESIG_CALLS`
+    (`use of undeclared identifier 'ed_ext'`); of the 13 forms `_EXTDESIG_REFUSED` holds, the oracle gives 10 another
+    verdict and the twin 12; of the 8 `_EXTDESIG_LOWERED` holds, the oracle refuses 7 and the twin all 8.
+  - What landed: on the oracle, one predicate names the function a node designates -- a name no object hides, of a
+    function the unit defines or prototypes, under `&` too (`_designator`) -- and `_fn_valued`, `_fn_value_type`,
+    `_call_ptr` (`(&f)(x)` is the direct call `f(x)`), the address-of and `_lvalue` (`FN_NOT_LVALUE`) read it; a
+    prototyped function's value has its prototype's type (`_func_ptr_value`, `_fn_type`) and is declared `extern` as
+    a called one is (`_tu_declare`, which the call path shares); the parser keeps a prototype's `...`
+    (`Unit.variadic_protos`), which `func_variadic`, the function type and the `extern` declaration carry; and `f !=
+    0` types the 0 by the designator's whole function type. On the twin, one function makes the value of a function
+    declared at that point -- by an earlier definition or a prototype -- for a designator and for `&f` alike
+    (`fn_value`, read where `declared_ret` answers); `designator_sig` reads a prototype's type when the unit has not
+    defined the function, with the `...` the prototype table now records; `sizeof f` and `sizeof &f` read
+    `declared_ret`, and `star_names_fn` reads `sizeof *f` and `sizeof *&f` as the function; `deref_named_callee`
+    takes `(&f)(x)` and `(*&f)(x)` as `f(x)`; `f = g`, `f++` and `++f` are refused with
+    `CC_FN_NOT_LVALUE`; and `null_compared` types a 0 compared with a designator by the designator's function type.
+  - G10 and R18: a function the unit does not define is code no analysis sees. An indirect call whose pointer may
+    hold one is an external edge -- its targets are not narrowed, it counts as `icall.unknown`, its actuals escape and
+    it returns unknown pointers -- as a direct call to it is (`c.call.tu`); both rails' analyses already said so
+    (`targets`, the twin's `esc_targets`: a function of another unit). R18 sees no edge to it, as for a call. The
+    fixture makes no indirect call, so the G10 rows stay at their bounds (15 and 18); the 8 indirect calls of
+    `_EXTDESIG_CALLS` are each an external edge, and both rails' effects and escape reports for it are byte-identical.
+  - Outcomes: `runtime/c/cfront_extdesig_link.c` -- prototyped functions passed to a function of this unit and of
+    another, held, selected, stored in a member and a table, compared with a pointer, a designator and 0, their
+    addresses taken, called directly, through `*f` and `(&f)`, and a variadic one called with more arguments than it
+    names -- lowers to one claim graph on the four targets, each emit declares every function it names as the
+    prototype does, and both emits run as the original with the driver defining the functions, built with a pointer
+    compared with or converted to an integer made an error under Clang and GCC. `_EXTDESIG_CALLS` lowers alike and
+    runs as the original; `_EXTDESIG_REFUSED` is refused on both rails for the one reason each names, and
+    `_EXTDESIG_LOWERED` lowers alike on the four targets.
+  - Faults: `tools/testing/faults/cfront-extdesig.json` holds 22 injected defects, 11 on the oracle and 11 on the twin,
+    and each is caught by its own test. The first sweep caught 20 of 21: XO8, the oracle's `_fn_valued` blind to
+    `&f`, reached no test, because `*&f` was in none -- and probing it found the twin calling `(*&f)(x)` through a
+    pointer (another digest) and refusing `sizeof(*&f)` for a reason of its own. Both are fixed (`deref_named_callee`,
+    `star_names_fn`), `_EXTDESIG_LOWERED` and `_EXTDESIG_REFUSED` hold the forms, XT11 injects the second, and the
+    re-sweep caught 22 of 22. Six faults of earlier tables whose anchors this change rewrote were re-anchored --
+    `cfront-calls.json` CL13, `cfront-decls.json` DO2 and DT11, `cfront-fpret.json` FT8 and FT11, `cfront-fptab.json`
+    FT2 -- and each is caught again.
+  Found, not fixed here (each a suggested follow-up):
+  - a function declared at block scope (`uint32_t f(uint32_t s) { uint32_t g(uint32_t); ... }`) is refused on both
+    rails with parse errors of their own;
+  - the oracle's linkable emit refuses a file-scope initializer that names a function (`static op_t t[2] = {f, g};`:
+    `non-renderable constant initializer`), where each function's emit takes it;
+  - a function-pointer type with a `const` parameter (`uint32_t (*g)(const uint32_t *)`) is spelled without it on both
+    rails, so a prototyped function taking `const uint32_t *` does not convert to it in the emit (CF-DECLS's first
+    item).
 
 ---
 

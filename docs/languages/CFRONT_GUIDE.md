@@ -342,6 +342,11 @@ _mm_sfence();                      //                   store (release) fence ->
   `*h(&v)` and `h(s)->v`), a struct whose member is read (`m(s).a`, `(*m)(s).b`, `o.mk(s).a`), or a function pointer.
   A pointer to a variadic function (`uint32_t (*g)(uint32_t, ...)`, a typedef, a member, a table of them) is declared
   and called, and a variadic function named as an arm of `?:` is a pointer to it.
+- A function the unit only prototypes -- another unit defines it -- is a value as a defined one is: passed, held,
+  selected, stored in a member or a table, compared, its address taken. `&f` of any function is the same pointer
+  as `f`, `*&f` and `&*f` name it again, and `(&f)(x)` is the call `f(x)`. Each emit declares every function it
+  names `extern` as its prototype does, a variadic one with its `...`. A function is no object: `f = g`, `f++`,
+  `++f` and `f += 1` are refused (`a function designator is not an lvalue`), as `*f = v` is.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
@@ -428,6 +433,8 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   refused on both rails (`a function returning a function pointer is not supported without a typedef`); declare
   its return type with a typedef. A function pointer given a function of another type (`op_t g = va;`), which C
   forbids, lowers today and is a recorded follow-up.
+- A function declared inside a block (`uint32_t f(uint32_t s) { uint32_t g(uint32_t); ... }`): refused on both
+  rails; declare it at file scope.
 - A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`): the Python
   reference refuses the declaration, which the C twin accepts -- a split recorded for follow-up.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a

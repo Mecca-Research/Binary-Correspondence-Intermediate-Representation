@@ -1,0 +1,166 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_designators_of_functions_another_unit_defines_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XO1 the oracle refuses a prototyped function as a value",
+      "new": "                if node.ident in self.func_rets:\n                    return self._func_ptr_value(node.ident)\n",
+      "old": "                if node.ident in self.func_rets or node.ident in self.protos:\n                    return self._func_ptr_value(node.ident)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XO2 the oracle declares no prototyped function it names `extern`",
+      "new": "",
+      "old": "        if name not in self.func_rets:\n            self._tu_declare(name)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XO3 the oracle's parser drops a prototype's `...`",
+      "new": "",
+      "old": "            if variadic:\n                self.unit.variadic_protos.add(name)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XO4 the oracle's `extern` declaration drops a prototype's `...`",
+      "new": "",
+      "old": " + ([\"...\"] if va else [])",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XO5 the oracle gives a prototyped designator no function type",
+      "new": "        if name not in self.func_rets:\n            return None\n",
+      "old": "        if name not in self.func_rets:\n            ret, params = self.protos[name]\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XO6 the oracle reads `&f` as the address of an object",
+      "new": "",
+      "old": "                if name is not None and not isinstance(operand, cast.Unary):\n                    return self._func_ptr_value(name)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XO7 the oracle calls `(&f)(x)` through a pointer",
+      "new": "",
+      "old": "        name = self._designator(callee)\n        if name is not None:\n            return self._call(cast.CallExpr(name, node.args))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XO8 the oracle's `_fn_valued` does not see `&f`",
+      "new": "        if isinstance(node, cast.Name) and self._designator(node) is not None:\n",
+      "old": "        if self._designator(node) is not None:  # `f`, `&f` (CF-EXTDESIG)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XO9 the oracle refuses storing to a function as an undeclared name",
+      "new": "                self._require_declared(node.ident, \"use of undeclared identifier\", node.pos)\n",
+      "old": "                self._require_declared(node.ident, \"use of undeclared identifier\", node.pos)\n                raise CLowerError(FN_NOT_LVALUE)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XO10 the oracle compares 0 with a designator as a function of no parameters",
+      "new": "",
+      "old": "                if a in self.func_globals:\n                    ta = self._fn_type(a) or ta\n                if b in self.func_globals:\n                    tb = self._fn_type(b) or tb\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XO11 the oracle's variadic functions leave out the prototypes",
+      "new": "    func_variadic &= frozenset(\n",
+      "old": "    func_variadic |= frozenset(\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XT1 the twin refuses a prototyped function as a value",
+      "new": "      if(callee_ret(c,&id)){                            /* a FUNCTION used as a VALUE (CF-EXTDESIG) */",
+      "old": "      if(declared_ret(c,&id)){                          /* a FUNCTION used as a VALUE (CF-EXTDESIG) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XT2 the twin refuses `&f` of a function",
+      "new": "      if(0){",
+      "old": "      if(!vp && declared_ret(c,&id) && !tok_is(tat(c,c->i+1),\"(\")){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT3 the twin gives a prototyped designator no function type",
+      "new": "",
+      "old": "  for(int k=0;!df && k<c->n_protos && pk<0;k++) if(!strcmp(c->protos[k].name,name)) pk=k;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT4 the twin's prototypes drop their `...`",
+      "new": "    c->protos[c->n_protos].variadic=0;",
+      "old": "    c->protos[c->n_protos].variadic=fn->variadic;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT5 the twin's `sizeof f` names no prototyped function",
+      "new": "    if(callee_ret(c,&id)){ fail(c,CC_SIZEOF_FN); return -1; }",
+      "old": "    if(declared_ret(c,&id)){ fail(c,CC_SIZEOF_FN); return -1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT6 the twin's `sizeof &f` names no prototyped function",
+      "new": "find_global(c,tat(c,c->i+1)->s,tat(c,c->i+1)->n)<0 && callee_ret(c,tat(c,c->i+1)) &&",
+      "old": "find_global(c,tat(c,c->i+1)->s,tat(c,c->i+1)->n)<0 && declared_ret(c,tat(c,c->i+1)) &&",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT7 the twin calls `(&f)(x)` through a pointer",
+      "new": "  int amp=0;        /* `(&f)(x)`, `(*&f)(x)`",
+      "old": "  int amp=tok_is(tat(c,k),\"&\"); if(amp) k++;        /* `(&f)(x)`, `(*&f)(x)`",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT8 the twin reads `f = g` and `f++` as no statement",
+      "new": "        if(0){ fail(c,CC_FN_NOT_LVALUE); return 0; }",
+      "old": "        if(is_assign_op(c) || is(c,\"++\") || is(c,\"--\")){ fail(c,CC_FN_NOT_LVALUE); return 0; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT9 the twin reads `++f` as no expression",
+      "new": "  if(0){",
+      "old": "  if(!vp && prefix && declared_ret(c,&id) && !postfix_follows(c,c->i+1)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
+      "label": "XT10 the twin compares 0 with a designator as an `int`",
+      "new": "  if(0 && pr && pr->read_only && pr->is_funcptr && pr->name[0]){",
+      "old": "  if(pr && pr->read_only && pr->is_funcptr && pr->name[0]){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails",
+      "label": "XT11 the twin's `sizeof *&f` measures no function",
+      "new": "  int amp=0;        /* `sizeof *&f`",
+      "old": "  int amp=tok_is(tat(c,k),\"&\"); if(amp) k++;        /* `sizeof *&f`",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

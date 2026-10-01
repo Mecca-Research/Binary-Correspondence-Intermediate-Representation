@@ -1353,6 +1353,18 @@ of it (`_call_ret`, for `_fn_valued`, `_fn_value_type` and `_call_ptr`). The cop
 unstated precondition: a type known where the copy was made.
 Witnesses: `_FPRET_CALLS` in `test_function_pointers_returned_by_calls_run_as_the_original`.
 Faults (`cfront-fpret.json`): `FO2`, `FO7`, `FO11`, `FT4`, `FT5`, `FT6`, `FT15`.
+CF-EXTDESIG instance (2026-10-01): "is this name a function" was asked at five sites per rail with
+two answers. The oracle's `sizeof` and `_fn_valued` counted a prototyped function, its value path
+and `_fn_type` only a defined one, and the address-of and `_lvalue` none, so `sizeof &ext` lowered
+while `ext`, `&ext` and `ext = g` were each an undeclared identifier; the twin asked `callee_ret` (an
+earlier definition) at `sizeof`, a definition-or-defined-later prototype at the designator, and
+nothing at `&` or a store. One predicate per rail answers now -- the oracle's `_designator` and the
+twin's `declared_ret` -- at the value, the address, `sizeof`, a call through `(&f)` and every store
+or step, each refused for one reason (`FN_NOT_LVALUE`). The precondition held outside the predicate
+was "the unit defines it", where the question each site asked was "a declaration declares it here".
+Witnesses: `_EXTDESIG_REFUSED` and `_EXTDESIG_LOWERED` in
+`test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails`. Faults
+(`cfront-extdesig.json`): `XO1`, `XO6`, `XO8`, `XO9`, `XT1`, `XT2`, `XT5`, `XT6`, `XT8`, `XT9`, `XT11`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

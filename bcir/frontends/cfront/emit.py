@@ -455,9 +455,12 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     # emitted TU compiles standalone and the host LINKER resolves the symbol from a sibling object.
     tu_decls = [
         f"extern {_cname(rct)} {callee}("
-        + (", ".join(_proto_param(p, k) for p, k in zip(pcts, consts)) or "void")
+        + (
+            ", ".join([_proto_param(p, k) for p, k in zip(pcts, consts)] + (["..."] if va else []))
+            or "void"
+        )
         + ");"
-        for callee, (rct, pcts, consts) in sorted(lf.tu_protos.items())
+        for callee, (rct, pcts, consts, va) in sorted(lf.tu_protos.items())
     ]
     # ... and every function of the unit it calls, in the order of the first call (not itself)
     callees = dict.fromkeys(c for c, _a in lf.calls if c != lf.name and c in (unit or {}))

@@ -151,8 +151,8 @@
   {
    "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
    "label": "FT8 the twin gives a variadic designator no function type",
-   "new": "  if(!df || df->variadic) return 0;\n",
-   "old": "  if(!df) return 0;\n",
+   "new": "  bcir_ctype *ps=NULL; size_t bytes;\n  if(va) return 0;\n  if(np>0){",
+   "old": "  bcir_ctype *ps=NULL; size_t bytes;\n  if(np>0){",
    "path": "runtime/c/bcir_cfront.c"
   },
   {
@@ -172,8 +172,8 @@
   {
    "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
    "label": "FT11 the twin spells a variadic designator's alias without `...`",
-   "new": "df->n_params?\"\":\"void\"",
-   "old": "df->variadic?(df->n_params?\", ...\":\"...\"):df->n_params?\"\":\"void\"",
+   "new": "np?\"\":\"void\"",
+   "old": "va?(np?\", ...\":\"...\"):np?\"\":\"void\"",
    "path": "runtime/c/bcir_cfront.c"
   },
   {

@@ -12456,3 +12456,215 @@ def test_function_pointer_returns_refused_and_lowered_alike_on_both_rails():
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(_FPRET_HEAD + body + "\n")
             _parity_on_targets(path, _FPRET_HEAD + body + "\n")
+
+
+# CF-EXTDESIG: a function the unit only prototypes -- another unit defines it -- named as a value, its address taken, and
+# called through every spelling. `cfront_extdesig_link.c` returns the pointers it makes; the driver defines the
+# external functions, compares the pointers with the original's and calls them.
+_EXTDESIG_DEFS = r"""
+#include <stdarg.h>
+uint32_t ed_ext(uint32_t v) { return v * 7u + 3u; }
+uint32_t ed_ext2(uint32_t v) { return v ^ 0x5Au; }
+uint32_t ed_vext(uint32_t n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  uint32_t r = n + va_arg(ap, uint32_t) * 3u;
+  va_end(ap);
+  return r;
+}
+uint32_t ed_apply(ed_op f, uint32_t s) { return f(s) + 1u; }
+"""
+_EXTDESIG_DRIVER = (
+    _GAPS_SAME
+    + _EXTDESIG_DEFS
+    + r"""
+#define SAME_PICK(f) do { if (f(s) != bcir_##f(s) || f(s)(s) != bcir_##f(s)(s)) return fail(#f); } while (0)
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME_PICK(ed_pick); SAME_PICK(ed_held); SAME_PICK(ed_member); SAME_PICK(ed_table);
+    if (ed_pick_va(s) != bcir_ed_pick_va(s)) return fail("ed_pick_va");
+    if (ed_pick_va(s) && ed_pick_va(s)(s, 4u) != bcir_ed_pick_va(s)(s, 4u)) return fail("ed_pick_va call");
+    SAME(ed_compare, s); SAME(ed_pass, s); SAME(ed_calls, s); SAME(ed_sizes, s); SAME(ed_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# The emits built with a pointer compared with an integer, or converted to one, made an error under both compilers --
+# a `0` compared with a designator is a null pointer of its type
+_EXTDESIG_WERROR = {
+    "clang": (
+        "-Werror=int-conversion",
+        "-Werror=pointer-integer-compare",
+        "-Werror=incompatible-pointer-types",
+    ),
+    "gcc": ("-Werror=int-conversion", "-Werror"),
+}
+# ... and calls in place through a pointer that may hold a function another unit defines: through a local, a select,
+# a member, a table, a pointer to a variadic one and the result of a call -- each an external edge, which the G10
+# rows count as reaching unknown code, so the corpus fixture keeps them out
+_EXTDESIG_CALLS = """#include <stdint.h>
+typedef uint32_t (*ed_op)(uint32_t);
+typedef uint32_t (*ed_vop)(uint32_t, ...);
+struct ed_ops { ed_op fn; ed_op alt; };
+uint32_t ed_ext(uint32_t v);
+uint32_t ed_ext2(uint32_t v);
+uint32_t ed_vext(uint32_t n, ...);
+uint32_t ed_apply(ed_op f, uint32_t s);
+static uint32_t ed_inc(uint32_t v) { return v + 1u; }
+static ed_op ed_choose(uint32_t s) { return s & 1u ? ed_ext : &ed_ext2; }
+uint32_t edc_calls(uint32_t s) {
+  ed_op g = ed_ext;
+  ed_op h = s & 2u ? &ed_ext2 : ed_inc;
+  struct ed_ops o = {ed_ext2, &ed_ext};
+  ed_op t[2] = {ed_ext, ed_inc};
+  ed_vop v = ed_vext;
+  uint32_t k = g(s) + h(s) * 3u + o.fn(s) * 5u + o.alt(s) * 7u + t[s & 1u](s) * 11u;
+  k += v(s, 2u) * 13u + (s & 4u ? ed_ext : ed_ext2)(s) * 17u + ed_choose(s)(s) * 19u;
+  return k;
+}
+"""
+#: the indirect calls `_EXTDESIG_CALLS` makes, each an external edge
+_EXTDESIG_SITES = 8
+
+
+def test_designators_of_functions_another_unit_defines_run_as_the_original():
+    """CF-EXTDESIG: `cfront_extdesig_link.c` -- functions the unit only prototypes, named as values (passed to a
+    function of this unit and to one of another, held, selected, stored in a member and a table, compared with a
+    pointer, another designator and 0), their addresses taken (`&f`), called directly, through `*f` and `(&f)`, and a
+    variadic one called with more arguments than it names. Both rails refused every such designator, and `&f` of any
+    function; the oracle declared a variadic prototype without its `...`, so its emit did not compile. Each emit now
+    declares every function it names as its prototype does, lowers to one claim graph on the four targets, and runs as
+    the original with the driver defining the functions. `_EXTDESIG_CALLS` calls through those pointers in place: it
+    lowers alike and runs as the original, each of its indirect calls is an external edge on both rails, and both
+    rails report its effects and escapes byte for byte."""
+    if not _CC:
+        return
+    fx = "cfront_extdesig_link.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        ext = {
+            ln.split("(", 1)[0].split()[-1]: ln
+            for ln in emit.splitlines()
+            if ln.startswith("extern ")
+        }
+        assert {"ed_ext", "ed_ext2", "ed_vext", "ed_apply"} <= set(ext), (label, ext)
+        assert ext["ed_vext"] == "extern uint32_t ed_vext(uint32_t, ...);", (label, ext)
+    # ... each function the oracle emits declares the functions it names, not only those it calls: it compiles
+    # standalone (the twin's prelude declares every prototype)
+    _s, r_fx, _e = _oracle(src)
+    for name in ("ed_pick", "ed_held", "ed_member", "ed_table", "ed_compare", "ed_pass"):
+        decls = {ln for ln in r_fx.emitted[name].splitlines() if ln.startswith("extern ")}
+        assert "extern uint32_t ed_ext(uint32_t);" in decls, (name, decls)
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _EXTDESIG_DRIVER, _EXTDESIG_WERROR
+    )
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_EXTDESIG_CALLS)
+    counts = r.escape.counts()
+    assert (counts["indirect"], counts["known"]) == (_EXTDESIG_SITES, 0), counts
+    calls_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    from bcir.tests import escape_fixtures as ef  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "extdesig_calls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_EXTDESIG_CALLS)
+        c_summary, c_calls_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _EXTDESIG_CALLS)
+        assert ef.rail_parity(_build_bcir_cc(d), [(path, r)]) == (0, 0, 1)
+    driver = (
+        _GAPS_SAME
+        + _EXTDESIG_DEFS
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(edc_calls, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        "extdesig_calls.c",
+        _EXTDESIG_CALLS,
+        (("twin", c_calls_emit), ("oracle", calls_emit)),
+        driver,
+        _EXTDESIG_WERROR,
+    )
+
+
+_FN_NOT_LVALUE = "a function designator is not an lvalue"
+_SIZEOF_FN = "sizeof of a function designator"
+_EXTDESIG_HEAD = (
+    "#include <stdint.h>\ntypedef uint32_t (*op_t)(uint32_t);\n"
+    "uint32_t ext(uint32_t v);\n"
+    "uint32_t ext3(uint32_t a, uint32_t b);\n"
+    "uint32_t vext(uint32_t n, ...);\n"
+    "static uint32_t inc(uint32_t v) { return v + 1u; }\n"
+)
+# A function no object can stand for, refused as `*f = v` is: stored to, stepped, measured; a designator before any
+# declaration of it; arms of `?:` that point to functions of two types, a prototyped one among them
+_EXTDESIG_REFUSED = (
+    ("uint32_t f(uint32_t s) { ext = inc; return s; }", _FN_NOT_LVALUE),
+    ("uint32_t f(uint32_t s) { ext++; return s; }", _FN_NOT_LVALUE),
+    ("uint32_t f(uint32_t s) { --ext; return s; }", _FN_NOT_LVALUE),
+    ("uint32_t f(uint32_t s) { ext += 1; return s; }", _FN_NOT_LVALUE),
+    ("uint32_t f(uint32_t s) { inc = ext; return s; }", _FN_NOT_LVALUE),
+    ("uint32_t f(uint32_t s) { ++inc; return s; }", _FN_NOT_LVALUE),
+    ("uint32_t f(uint32_t s) { return (uint32_t)sizeof ext + s; }", _SIZEOF_FN),
+    ("uint32_t f(uint32_t s) { return (uint32_t)sizeof(*&ext) + s; }", _SIZEOF_FN),
+    ("uint32_t f(uint32_t s) { return (uint32_t)sizeof *ext + s; }", _SIZEOF_FN),
+    (
+        "uint32_t f(uint32_t s) { op_t g = late; return g(s); }\nuint32_t late(uint32_t v);",
+        "use of undeclared identifier 'late'",
+    ),
+    ("uint32_t f(uint32_t s) { return (s ? ext3 : ext) != 0; }", _FN_SELECTED),
+    ("uint32_t f(uint32_t s) { return (s ? vext : ext) != 0; }", _FN_SELECTED),
+    ("uint32_t f(uint32_t s) { return (s ? &ext3 : inc) != 0; }", _FN_SELECTED),
+)
+# ... while every other spelling of a prototyped function's value and address lowers alike
+_EXTDESIG_LOWERED = (
+    "uint32_t f(uint32_t s) { op_t g = &ext; op_t h = &inc; return (g == h) + (&ext == ext) + s; }",
+    "uint32_t f(uint32_t s) { return (uint32_t)sizeof(&ext) + (uint32_t)sizeof(&inc) + s; }",
+    "uint32_t f(uint32_t s) { return (*ext)(s) + (&ext)(s) + (&inc)(s); }",
+    "uint32_t f(uint32_t s) { op_t p = inc; return (*&ext)(s) + (*&p)(s) + (**&ext)(s) + (&*inc)(s); }",
+    "uint32_t f(uint32_t s) { op_t g = *&ext; op_t h = &*inc; return (g == h) + (*&ext == &*ext) + s; }",
+    "uint32_t f(uint32_t s) { uint32_t (*g)(uint32_t, ...) = s ? vext : 0; return g != 0; }",
+    "static op_t pick(uint32_t s) { return s ? ext : &inc; }\nuint32_t f(uint32_t s) { return pick(s) == ext; }",
+    "uint32_t later(uint32_t v);\nuint32_t f(uint32_t s) { op_t g = &later; return g == later; }\n"
+    "uint32_t later(uint32_t v) { return v * 3u; }",
+)
+
+
+def test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails():
+    """CF-EXTDESIG: a function -- defined or only prototyped -- is no object, so storing to it, stepping it and `sizeof`
+    of it are refused on both rails for one reason each, where the oracle had refused `f = g` and `f++` as an
+    undeclared identifier and the twin as a parse error; a designator before any declaration of its function is
+    undeclared; and arms of `?:` of two function types, a prototyped function's among them, are refused as CF-FNSEL
+    refuses any (`_EXTDESIG_REFUSED`). Every other spelling -- `&f` compared, measured and called, `*&f` and `&*f`
+    as values and callees, a variadic one beside a null pointer, a prototyped function returned, a function
+    prototyped before its definition -- lowers to one claim graph on the four targets (`_EXTDESIG_LOWERED`)."""
+    for body, why in _EXTDESIG_REFUSED:
+        got = _fptab_refusal(_EXTDESIG_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _EXTDESIG_LOWERED:
+        got = _fptab_refusal(_EXTDESIG_HEAD + body + "\n")
+        assert got == "", (body, got)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_EXTDESIG_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_EXTDESIG_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_EXTDESIG_LOWERED):
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_EXTDESIG_HEAD + body + "\n")
+            _parity_on_targets(path, _EXTDESIG_HEAD + body + "\n")

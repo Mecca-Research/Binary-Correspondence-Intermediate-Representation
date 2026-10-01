@@ -1139,6 +1139,9 @@ class _Parser:
                 ret,
                 tuple(p.type for p in params),
             )  # or an in-unit forward decl
+            # `T name(P, ...);`: its `extern` declaration keeps the `...` (CF-EXTDESIG)
+            if variadic:
+                self.unit.variadic_protos.add(name)
             self._declared.add(name)
             return None
         if any(not p.name for p in params):

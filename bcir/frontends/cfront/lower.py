@@ -1160,8 +1160,8 @@ class LoweredFunc:
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
     tu_protos: dict = field(
         default_factory=dict
-    )  # cross-TU callee -> (ret CType, (param CType, ...), (param points to const, ...))
-    #   -- prototyped, not defined here; the emit declares them
+    )  # cross-TU callee -> (ret CType, (param CType, ...), (param points to const, ...), variadic)
+    #   -- prototyped, not defined here, called or named as a value; the emit declares them
     variadic: bool = False  # a trailing `...` after the named params (variadic function)
     reproducible: bool = False  # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
     #   definition -- a fusion-legality signal (the hint is value-
@@ -1646,6 +1646,11 @@ class _FuncLowerer:
     # --- lvalue resolution ---
     def _lvalue(self, node) -> "_LV":
         if isinstance(node, cast.Name):
+            # `f = g`, `f++` of a function the unit defines or prototypes: a function is no object (C11
+            # 6.3.2.1p1), refused as `*f = v` is (CF-EXTDESIG)
+            if self._designator(node) is not None:
+                self._require_declared(node.ident, "use of undeclared identifier", node.pos)
+                raise CLowerError(FN_NOT_LVALUE)
             rid, ct = self._lookup(node.ident, node.pos)
             return _LV("var", rid, ct)
         if isinstance(
@@ -1992,11 +1997,15 @@ class _FuncLowerer:
             raise CLowerError(f"{what} {name!r}", pos=pos)
 
     def _func_ptr_value(self, name: str) -> int:
-        """A defined function used as a VALUE (function-to-pointer decay, `o->fn = g`): an anonymous funcptr
+        """A function used as a VALUE (function-to-pointer decay, `o->fn = g`; `&g`): an anonymous funcptr
         'global' whose value is the function's address. The emitter renders the rid as the bare function name
         (C decays it to a pointer), so -- like a string literal -- no claim is emitted (parity-critical: the
-        bare name must cost 0 claims on both rails)."""
+        bare name must cost 0 claims on both rails). A function the unit only prototypes -- another unit
+        defines it (C11 6.3.2.1p4) -- has its prototype's type, and the emit declares it `extern` as it
+        declares a called one (CF-EXTDESIG)."""
         self._require_declared(name, "use of undeclared identifier")
+        if name not in self.func_rets:
+            self._tu_declare(name)
         existing = self.func_pool.get(name)
         if existing is not None:
             return existing
@@ -2012,10 +2021,32 @@ class _FuncLowerer:
             data_gen=1,
             name=name,
         )
-        self.rtypes[rid] = funcptr(name, self.func_rets[name], (), self.abi)
+        self.rtypes[rid] = funcptr(name, self._designator_ret(name), (), self.abi)
         self.func_globals[rid] = name  # rid -> the function name (rendered verbatim by emit)
         self.func_pool[name] = rid
         return rid
+
+    def _designator_ret(self, name: str) -> CType:
+        """The return type of the function `name` the unit defines or prototypes."""
+        return self.func_rets[name] if name in self.func_rets else self.protos[name][0]
+
+    def _tu_declare(self, name: str) -> None:
+        """Record the prototyped function `name`, which another unit defines, for the emit's `extern`
+        declaration: its return, its parameters, which of them point to `const`, and its `...`."""
+        ret_ct, param_cts = self.protos[name]
+        consts = self.proto_consts.get(name, (False,) * len(param_cts))
+        self.tu_used[name] = (ret_ct, param_cts, consts, name in self.func_variadic)
+
+    def _designator(self, node) -> "str | None":
+        """The function `node` designates -- a name no object in scope hides, of a function the unit
+        defines or prototypes -- or None. `&f` is the same function's address (C11 6.5.3.2p3), so a
+        designator under `&` is one too (CF-EXTDESIG)."""
+        if isinstance(node, cast.Unary) and node.op == "&":
+            node = node.operand
+        if isinstance(node, cast.Name) and node.ident not in self.env:
+            if node.ident in self.func_rets or node.ident in self.protos:
+                return node.ident
+        return None
 
     def _fn_type(self, v: int) -> "CType | None":
         """The function-pointer type of the value `v` when its function type -- return and parameter types -- is
@@ -2031,6 +2062,13 @@ class _FuncLowerer:
         name = self.func_globals.get(v)
         if name is None:
             return ct
+        # another unit defines it: its prototype's type (CF-EXTDESIG)
+        if name not in self.func_rets:
+            ret, params = self.protos[name]
+            if None in params:
+                return None
+            variadic = name in self.func_variadic
+            return funcptr(name, ret, params, self.abi, variadic=variadic)
         params = self.func_params.get(name)
         if params is not None and None in params and name in self.lowered:
             # a `typeof` or `va_list` parameter the pre-scan leaves untyped: the definition's own, once it has
@@ -2048,8 +2086,10 @@ class _FuncLowerer:
         pointer it points at. Decided on the types alone -- nothing is evaluated."""
         if isinstance(node, cast.Unary) and node.op == "*" and self._fn_valued(node.operand):
             return True
+        if self._designator(node) is not None:  # `f`, `&f` (CF-EXTDESIG)
+            return True
         if isinstance(node, cast.Name) and node.ident not in self.env:
-            return node.ident in self.func_rets or node.ident in self.protos
+            return False
         # `c ? f : g`, `c ? f : 0`: a pointer to the arms' function type (CF-FNSEL)
         if isinstance(node, cast.Ternary):
             return self._fn_valued(node.then) or self._fn_valued(node.els)
@@ -2071,8 +2111,9 @@ class _FuncLowerer:
         any other its static type."""
         while isinstance(node, cast.Unary) and node.op == "*" and self._fn_valued(node.operand):
             node = node.operand
-        if isinstance(node, cast.Name) and node.ident not in self.env:
-            return funcptr(node.ident, self.func_rets.get(node.ident), (), self.abi)
+        name = self._designator(node)  # `f`, `&f` (CF-EXTDESIG)
+        if name is not None:
+            return funcptr(name, self._designator_ret(name), (), self.abi)
         # a select: the arm that names a function (the other may be a null pointer)
         if isinstance(node, cast.Ternary):
             return self._fn_value_type(node.then if self._fn_valued(node.then) else node.els)
@@ -2563,10 +2604,9 @@ class _FuncLowerer:
             return self._emit(f"c.fconst:{node.value}", Opcode.LOAD, (), (t,))
         if isinstance(node, cast.Name):
             if node.ident not in self.env:
-                if node.ident in self.func_rets:
-                    return self._func_ptr_value(
-                        node.ident
-                    )  # a function NAME as a value -> its funcptr
+                # a function NAME as a value -> its funcptr; one another unit defines too (CF-EXTDESIG)
+                if node.ident in self.func_rets or node.ident in self.protos:
+                    return self._func_ptr_value(node.ident)
                 if node.ident in _IMAG_UNIT:  # <complex.h> imaginary unit (unless shadowed)
                     t = self._temp(scalar("float _Complex"), "imag_unit")
                     return self._emit(f"c.cconst:{node.ident}", Opcode.LOAD, (), (t,))
@@ -2646,6 +2686,12 @@ class _FuncLowerer:
                 # temp is the pointer, where an `int` temp compared with it was a constraint violation (6.5.9p2)
                 # Clang and GCC only warn about. Only the temp's C type moves (CF-NULLCALL).
                 ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+                # a designator's whole function type: `f != 0` makes the 0 a pointer to f's type, not to a
+                # function of no parameters (CF-EXTDESIG; the twin's `null_compared`)
+                if a in self.func_globals:
+                    ta = self._fn_type(a) or ta
+                if b in self.func_globals:
+                    tb = self._fn_type(b) or tb
                 if ta is not None:
                     self._null_pointer(b, ta)
                 if tb is not None:
@@ -2688,6 +2734,11 @@ class _FuncLowerer:
                 # pointer VARIABLE). The emit uses `_base_ptr` (decays a pointer/array base, addresses a value
                 # base), so every form lands the right byte address.
                 operand = node.operand
+                # `&f`: the function's address, the value its designator converts to (C11 6.5.3.2p3,
+                # 6.3.2.1p4) -- 0 claims, as the designator's (CF-EXTDESIG)
+                name = self._designator(operand)
+                if name is not None and not isinstance(operand, cast.Unary):
+                    return self._func_ptr_value(name)
                 if (
                     isinstance(operand, cast.Unary) and operand.op == "*"
                 ):  # &*p == p (the pointer itself; &*(p+i) == p+i) -- 0 claims, both rails
@@ -2915,6 +2966,10 @@ class _FuncLowerer:
             isinstance(callee, cast.Unary) and callee.op == "*" and self._fn_valued(callee.operand)
         ):
             callee = callee.operand
+        # `(&f)(x)`: the function's address, called -- the direct call `f(x)` (CF-EXTDESIG)
+        name = self._designator(callee)
+        if name is not None:
+            return self._call(cast.CallExpr(name, node.args))
         if isinstance(callee, cast.Name):
             return self._call(cast.CallExpr(callee.ident, node.args))
         fptr = self._rvalue(callee)
@@ -4430,8 +4485,7 @@ class _FuncLowerer:
             # The emit declares the recorded signature so the emitted TU compiles standalone.
             ret_ct, param_cts = self.protos[node.callee]
             self._null_pointer_args(actuals, param_cts)
-            consts = self.proto_consts.get(node.callee, (False,) * len(param_cts))
-            self.tu_used[node.callee] = (ret_ct, param_cts, consts)
+            self._tu_declare(node.callee)
             if ret_ct.name == "void":
                 self._emit(f"c.call.tu:{node.callee}", Opcode.GEM_DISPATCH, actuals, ())
                 return _VOID_RID
@@ -5031,6 +5085,10 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
     # a null pointer of that type, whichever of the caller and the callee is defined first (CF-NULLARG)
     func_params = {fn.name: _param_types(fn.params, aggregates, abi) for fn in unit.funcs}
     func_variadic = frozenset(fn.name for fn in unit.funcs if fn.variadic)
+    # ... and the prototypes of functions another unit defines that end in `...` (CF-EXTDESIG)
+    func_variadic |= frozenset(
+        name for name in getattr(unit, "variadic_protos", ()) if name not in func_rets
+    )
     # PROTOTYPED cross-TU callees (Phase 3 linking): a prototype whose definition is in this unit is
     # just a forward declaration (the definition wins); the rest resolve at LINK time. A parameter is
     # read as the definition binds it -- an array parameter is a pointer -- so the emit's `extern`

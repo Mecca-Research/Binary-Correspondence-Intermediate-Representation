@@ -126,8 +126,8 @@
   {
    "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
    "label": "FT2 the twin calls `(**t)(x)` through the table itself",
-   "new": "  int fnv = lv ? lv->type.kind==3\n",
-   "old": "  int fnv = lv ? (lv->type.kind==3 && !names_object_ptr(c,lv))   /* a table's `*t` is its first element */\n",
+   "new": "          : lv ? lv->type.kind==3\n",
+   "old": "          : lv ? (lv->type.kind==3 && !names_object_ptr(c,lv))   /* a table's `*t` is its first element */\n",
    "path": "runtime/c/bcir_cfront.c"
   },
   {
