@@ -16,7 +16,17 @@ from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
-from .lower import DIM_RANGE, ENUM_NOT_INT, FN_RET_FP, CLowerError, fold_constant
+from .lower import (
+    DIM_RANGE,
+    ENUM_NOT_INT,
+    FN_RET_FP,
+    GENERIC_QUALIFIED,
+    QUAL_DEEP,
+    QUAL_LEVELS,
+    VOLATILE_PTR,
+    CLowerError,
+    fold_constant,
+)
 
 
 class CParseError(Exception):
@@ -89,6 +99,32 @@ _TYPE_KW = frozenset(
         "_BitInt",
     }
 )  # C23 bit-precise integer `_BitInt(N)` (a type-start keyword)
+# the qualifiers a `*` may carry (C11 6.7.6.1p1), by the name a function type spells each with
+_PTR_QUAL = {
+    "const": "const",
+    "volatile": "volatile",
+    "restrict": "restrict",
+    "__restrict": "restrict",
+    "__restrict__": "restrict",
+}
+
+
+def _qual_levels(levels: tuple, pos: int | None = None) -> tuple:
+    """`levels`, the qualifiers of each `*` from the base out, refused when one past the eighth is qualified
+    (`QUAL_DEEP`, as the twin's per-level masks refuse it, CF-QUALS)."""
+    if any(levels[QUAL_LEVELS:]):
+        raise CParseError(QUAL_DEEP, pos=pos)
+    return levels
+
+
+def _join_levels(inner: cast.TypeRef, n: int, outer: tuple) -> tuple:
+    """The qualifiers of each `*` of `inner`'s pointer levels, then of `n` more around them (`outer`, one tuple
+    per `*`): the `ptr_quals` of a declarator over a type that is a pointer already -- `typedef char *str_t;
+    str_t *const *p` is `char **const *` (CF-QUALS). () when none is qualified."""
+    levels = tuple(inner.ptr_quals or ((),) * inner.ptr) + tuple(outer or ((),) * n)
+    return _qual_levels(levels) if any(levels) else ()
+
+
 # the qualifiers and storage classes a declaration may spell after its type specifier (C11 6.7p1)
 _TRAILING_SPEC = frozenset(
     {"const", "volatile", "static", "extern", "inline", "_Thread_local", "thread_local"}
@@ -518,10 +554,10 @@ class _Parser:
         `( * ) ( ... )`, whose name may be left out."""
         self.eat("PUNCT", "(")
         self.eat("OP", "*")
-        ptr = 0  # `(**pp)(...)`: a pointer to a function pointer (CF-FPTAB)
-        while self.at("OP", "*"):
-            self.nxt()
-            ptr += 1
+        # the function pointer's own qualifiers (`(*const fp)`), then the `*`s of a pointer to one -- `(**pp)(...)`
+        # (CF-FPTAB) -- each with its own (CF-QUALS)
+        own = self._star_quals()
+        ptr, pq = self._stars()
         name = self.eat("IDENT").text if not abstract or self.at("IDENT") else ""
         dims = []  # `(*t[2])(...)`: an array of function pointers, each dimension a constant
         while self.at("PUNCT", "["):
@@ -552,11 +588,15 @@ class _Parser:
                     variadic = True
                     break
                 pt = self._type_spec()
-                while self.at("OP", "*"):  # pointer parameter
+                n, levels = self._stars()  # a pointer parameter, each `*` with its qualifiers
+                if n:
                     pt = cast.TypeRef(
-                        base=pt.base, ptr=pt.ptr + 1, aggregate=pt.aggregate, quals=pt.quals
+                        base=pt.base,
+                        ptr=pt.ptr + n,
+                        aggregate=pt.aggregate,
+                        quals=pt.quals,
+                        ptr_quals=_join_levels(pt, n, levels),
                     )
-                    self.nxt()
                 if self.at("IDENT"):  # an optional parameter name (ignored)
                     self.nxt()
                 params.append(pt)
@@ -568,7 +608,8 @@ class _Parser:
         fp = cast.TypeRef(
             base=name, funcptr=True, func_ret=ret, func_params=tuple(params), func_variadic=variadic
         )
-        return dataclasses.replace(fp, ptr=ptr, array=tuple(dims)), name
+        # a function pointer's `quals` are its own, the pointee of a `*` around it (CF-QUALS)
+        return dataclasses.replace(fp, ptr=ptr, array=tuple(dims), quals=own, ptr_quals=pq), name
 
     def _is_funcptr_declarator(self, abstract: bool = False, at: int = 0) -> bool:
         """True if the cursor is at `( * NAME ) (` — a function-pointer declarator (`int (*g)(int)`),
@@ -582,9 +623,7 @@ class _Parser:
             and self.peek(at + 1).text == "*"
         ):
             return False
-        k = at + 2
-        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
-            k += 1
+        k = self._skip_stars(at + 1)
         if self.peek(k).kind == "IDENT":
             k += 1
         elif not abstract:
@@ -625,9 +664,7 @@ class _Parser:
         `T (*f(P))(Q)`, which neither rail parses (`FN_RET_FP`)."""
         if not (self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"):
             return False
-        k = 2
-        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
-            k += 1
+        k = self._skip_stars(1)
         return (
             self.peek(k).kind == "IDENT"
             and self.peek(k + 1).kind == "PUNCT"
@@ -638,14 +675,11 @@ class _Parser:
         """The `*`s between a specifier and a function-pointer declarator, `T *(*pf)(T *)`, belong to the
         function's return type -- a pointer (CF-FPRET): taken into `base`, the cursor left on the
         declarator's `(`. Anything else is left for the declarator, `base` unchanged."""
-        k = 0
-        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
-            k += 1
+        k = self._skip_stars(0)
         if not k or not self._is_funcptr_declarator(abstract, at=k):
             return base
-        for _ in range(k):
-            self.nxt()
-        return dataclasses.replace(base, ptr=base.ptr + k)
+        n, levels = self._stars()  # each `*` of the return with its qualifiers (CF-QUALS)
+        return dataclasses.replace(base, ptr=base.ptr + n, ptr_quals=_join_levels(base, n, levels))
 
     def _enum_body(self, tag: str) -> None:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
@@ -845,10 +879,7 @@ class _Parser:
                 self.nxt()
                 self.eat("PUNCT", "(")
                 inner = self._type_spec()
-                ip = 0
-                while self.at("OP", "*"):
-                    ip += 1
-                    self.nxt()
+                ip, ipq = self._stars()
                 self.eat("PUNCT", ")")
                 return cast.TypeRef(
                     base=inner.base,
@@ -856,6 +887,7 @@ class _Parser:
                     array=inner.array,
                     aggregate=inner.aggregate,
                     quals=tuple(quals) + ("_Atomic",) + inner.quals,
+                    ptr_quals=ipq,
                 )
             if w in ("const", "volatile", "_Atomic"):
                 quals.append(w)
@@ -883,10 +915,7 @@ class _Parser:
                 self.eat("PUNCT", "(")
                 if self._is_decl_start():  # typeof ( type-name ), incl. `typeof(int*)`
                     inner = self._type_spec()
-                    ip = 0
-                    while self.at("OP", "*"):
-                        ip += 1
-                        self.nxt()
+                    ip, ipq = self._stars()
                     self.eat("PUNCT", ")")
                     return cast.TypeRef(
                         base=inner.base,
@@ -894,6 +923,7 @@ class _Parser:
                         array=inner.array,
                         aggregate=inner.aggregate,
                         quals=tuple(quals) + inner.quals,
+                        ptr_quals=ipq,
                     )
                 expr = self._expr()  # typeof ( expression ) -- a general operand
                 self.eat("PUNCT", ")")
@@ -925,14 +955,32 @@ class _Parser:
             else:
                 self.storage.add(w)
         if td is not None:  # merge the alias with any leading quals
+            # a qualifier of a pointer typedef qualifies the pointer, not what it points to (C11 6.7.8p3: a
+            # typedef is the type it names): `const str_t p` of `typedef char *str_t` is `char *const p`, and a
+            # `volatile` one is a volatile pointer (CF-QUALS)
+            if "volatile" in quals and (td.ptr or td.funcptr):
+                raise CParseError(VOLATILE_PTR, pos=self.peek().pos)
             if td.funcptr:  # a function-pointer alias carries its own shape
+                if "const" in quals and not td.ptr and not td.array:
+                    return dataclasses.replace(td, quals=tuple(sorted({"const", *td.quals})))
+                if "const" in quals:  # `const opp_t pp` of `typedef op_t *opp_t`: its outer `*`
+                    levels = list(td.ptr_quals or ((),) * td.ptr)
+                    if levels:
+                        levels[-1] = tuple(sorted({"const", *levels[-1]}))
+                        return dataclasses.replace(td, ptr_quals=_qual_levels(tuple(levels)))
                 return td
+            levels = td.ptr_quals
+            if td.ptr and "const" in quals:
+                outer = list(td.ptr_quals or ((),) * td.ptr)
+                outer[-1] = tuple(sorted({"const", *outer[-1]}))
+                levels, quals = _qual_levels(tuple(outer)), [q for q in quals if q != "const"]
             return cast.TypeRef(
                 base=td.base,
                 ptr=td.ptr,
                 array=td.array,
                 aggregate=td.aggregate,
                 quals=tuple(quals) + td.quals,
+                ptr_quals=levels,
             )
         if saw_bitint:  # C23 `_BitInt(N)`: the spelling carries N + signedness;
             return self._bitint_typeref(
@@ -991,39 +1039,49 @@ class _Parser:
         }
         return table.get(joined, words[-1] if len(words) == 1 else joined)
 
+    def _star_quals(self) -> tuple:
+        """The qualifiers after a `*` (C11 6.7.6.1p1), consumed: `const` and `restrict`, which a function type
+        spells and compares (CF-QUALS). A `volatile` one makes the pointer object volatile, every access of which
+        C performs as written (6.7.3p7) and no lowering here does -- refused, as the twin refuses it."""
+        quals = set()
+        while self.at("IDENT") and self.peek().text in _PTR_QUAL:
+            q = _PTR_QUAL[self.peek().text]
+            if q == "volatile":
+                raise CParseError(VOLATILE_PTR, pos=self.peek().pos)
+            quals.add(q)
+            self.nxt()
+        return tuple(sorted(quals))
+
+    def _stars(self) -> tuple:
+        """The `*`s at the cursor and each one's qualifiers, consumed: their count and their `ptr_quals` (one
+        tuple per `*`, from the base out; () when none is qualified)."""
+        levels, pos = [], self.peek().pos
+        while self.at("OP", "*"):
+            self.nxt()
+            levels.append(self._star_quals())
+        return len(levels), (_qual_levels(tuple(levels), pos) if any(levels) else ())
+
+    def _skip_stars(self, k: int) -> int:
+        """Past the `*`s at `k` tokens from the cursor and their qualifiers (a lookahead; nothing consumed)."""
+        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
+            k += 1
+            while self.peek(k).kind == "IDENT" and self.peek(k).text in _PTR_QUAL:
+                k += 1
+        return k
+
     def _declarator(self, base: cast.TypeRef, abstract: bool = False):
         """Parse `*` pointer prefixes, the name, and `[N]` array suffixes onto `base`. `abstract`: a
-        parameter's, whose name may be left out (the name is then "")."""
-        ptr = 0
-        while self.at("OP", "*"):
-            ptr += 1
-            self.nxt()
-            while (
-                self.at("IDENT", "const")
-                or self.at("IDENT", "volatile")
-                or self.at("IDENT", "restrict")
-                or self.at("IDENT", "__restrict")
-                or self.at("IDENT", "__restrict__")
-            ):  # `restrict` is an aliasing hint -- consumed
-                self.nxt()  # pointer qualifier (ignored for layout)
+        parameter's, whose name may be left out (the name is then ""). Each `*` keeps its qualifiers
+        (`ptr_quals`, CF-QUALS); `restrict` is an aliasing hint no layout reads."""
+        ptr, pq = self._stars()
         # pointer-to-array declarator `(*name)[N]...` -- a "row pointer" (what `T m[][N]` decays to);
         # modeled as the equivalent multi-dim array param (outer dim unspecified) so `m[i][j]` flattens
         # row-major exactly as for `T m[A][N]`. The remaining vendor-header declarator form.
         if ptr == 0 and self.at("PUNCT", "("):
             save = self.i
             self.nxt()  # (
-            inner = 0
-            while self.at("OP", "*"):
-                inner += 1
-                self.nxt()
-                while (
-                    self.at("IDENT", "const")
-                    or self.at("IDENT", "volatile")
-                    or self.at("IDENT", "restrict")
-                    or self.at("IDENT", "__restrict")
-                    or self.at("IDENT", "__restrict__")
-                ):
-                    self.nxt()
+            # the row pointer's own qualifiers: a top-level `const` or `restrict` of the parameter
+            inner, _quals = self._stars()
             if (
                 inner == 1
                 and self.at("IDENT")
@@ -1087,7 +1145,10 @@ class _Parser:
             if ptr == 0 and not dims:
                 return base, name
             shaped = dataclasses.replace(
-                base, ptr=base.ptr + ptr, array=tuple(dims) + tuple(base.array)
+                base,
+                ptr=base.ptr + ptr,
+                array=tuple(dims) + tuple(base.array),
+                ptr_quals=_join_levels(base, ptr, pq),
             )
             return shaped, name
         if ptr and base.array:  # `row_t *p` of `typedef T row_t[N]`: a pointer to an array has no
@@ -1106,6 +1167,7 @@ class _Parser:
             typeof_var=base.typeof_var,
             typeof_expr=base.typeof_expr,
             bit_width=base.bit_width,
+            ptr_quals=_join_levels(base, ptr, pq),
         ), name
 
     # --- functions ---
@@ -1682,10 +1744,9 @@ class _Parser:
         if self._is_cast():  # (type)operand — a cast binds at the unary level
             self.eat("PUNCT", "(")
             tref = self._type_spec()
-            ptr = 0
-            while self.at("OP", "*"):  # `(uint32_t *)p` — a pointer cast
-                ptr += 1
-                self.nxt()
+            ptr, pq = (
+                self._stars()
+            )  # `(uint32_t *)p` — a pointer cast; `(char *const *)p` (CF-QUALS)
             dims = []
             while self.at("PUNCT", "["):  # `(int[N]){...}` / `(int[]){...}` — an array type-name
                 self.nxt()
@@ -1705,6 +1766,7 @@ class _Parser:
                 aggregate=tref.aggregate,
                 quals=tref.quals,
                 bit_width=tref.bit_width,
+                ptr_quals=_join_levels(tref, ptr, pq),
             )
             if self.at("PUNCT", "{"):  # `(type){ init }` — a C99 compound literal, not a cast
                 # supported in rvalue position (`f((struct P){...})`, `x = (struct P){...}`), under `&`
@@ -1765,12 +1827,13 @@ class _Parser:
                 ap = self._expr()
                 self.eat("PUNCT", ",")
                 tref = self._type_spec()
-                ptr = 0
-                while self.at("OP", "*"):
-                    ptr += 1
-                    self.nxt()
+                ptr, pq = self._stars()
                 tref = cast.TypeRef(
-                    base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals
+                    base=tref.base,
+                    ptr=ptr,
+                    aggregate=tref.aggregate,
+                    quals=tref.quals,
+                    ptr_quals=pq,
                 )
                 self.eat("PUNCT", ")")
                 node = cast.VaArg(ap, tref)
@@ -1823,10 +1886,7 @@ class _Parser:
         `typedef uint16_t row_t[6]` was 2, not 12). A pointer to an array type (`T (*)[N]`, or `*` after
         an array typedef) has no TypeRef spelling and is refused (CF-SIZEOF)."""
         tref = self._type_spec()
-        ptr = 0
-        while self.at("OP", "*"):  # `sizeof(uint32_t *)` etc.
-            ptr += 1
-            self.nxt()
+        ptr, pq = self._stars()  # `sizeof(uint32_t *)` etc.
         dims = []
         while self.at("PUNCT", "["):  # `sizeof(uint32_t[10])`: an array of what precedes
             self.nxt()
@@ -1836,7 +1896,12 @@ class _Parser:
             raise CParseError(
                 "a pointer to an array type-name is not supported", pos=self.peek().pos
             )
-        return dataclasses.replace(tref, ptr=tref.ptr + ptr, array=tuple(dims) + tuple(tref.array))
+        return dataclasses.replace(
+            tref,
+            ptr=tref.ptr + ptr,
+            array=tuple(dims) + tuple(tref.array),
+            ptr_quals=_join_levels(tref, ptr, pq),
+        )
 
     def _alignof(self):
         """`_Alignof ( type-name )` / `alignof(...)` -> a constant: the type's alignment (folded in
@@ -1861,11 +1926,13 @@ class _Parser:
                 self.nxt()
                 tref = None
             else:
+                at = self.peek().pos
                 tref = self._type_spec()
-                ptr = 0
-                while self.at("OP", "*"):  # a pointer type-name label, e.g. `int *`
-                    ptr += 1
-                    self.nxt()
+                ptr, pq = self._stars()  # a pointer type-name label, e.g. `int *`
+                # a qualified one -- `const char *`, `char *const *`, `const int` -- neither rail tells from
+                # the unqualified one, the controlling expression's type carrying no qualifier (CF-QUALS)
+                if tref.quals or pq or tref.ptr_quals:
+                    raise CParseError(GENERIC_QUALIFIED, pos=at)
                 tref = cast.TypeRef(
                     base=tref.base, ptr=ptr, aggregate=tref.aggregate, quals=tref.quals
                 )

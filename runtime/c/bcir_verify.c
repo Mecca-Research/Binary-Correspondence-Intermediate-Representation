@@ -19,17 +19,20 @@ static int unit_shape_valid(const bcir_unit *u,char *diag,size_t dn){
     const bcir_func *f=&u->funcs[i];
     if(!fixed_string(f->name,sizeof f->name)||(f->n_res&&!f->res)||
        (f->n_claims&&!f->claims)||f->n_params<0||f->n_calls<0||f->n_statics<0||
-       f->n_host_literals<0||f->n_ptr_extents<0||
+       f->n_host_literals<0||f->n_ptr_extents<0||f->n_qcasts<0||
        (f->n_params&&!f->params)||(f->n_calls&&!f->calls)||
        (f->n_statics&&!f->statics)||(f->n_host_literals&&!f->host_literals)||
-       (f->n_ptr_extents&&!f->ptr_extents)){
+       (f->n_ptr_extents&&!f->ptr_extents)||(f->n_qcasts&&!f->qcasts)){
       snprintf(diag,dn,"invalid function shape");return 0;}
     for(int k=0;k<f->n_calls;k++) if(!fixed_string(f->calls[k],BCIR_CIR_NAME)){
       snprintf(diag,dn,"unterminated call name");return 0;}
+    for(int k=0;k<f->n_qcasts;k++) if(!fixed_string(f->qcasts[k].type,sizeof f->qcasts[k].type)){
+      snprintf(diag,dn,"unterminated cast");return 0;}
     for(size_t k=0;k<f->n_claims;k++){
       const bcir_claim *cl=&f->claims[k];
       if(cl->n_rd>BCIR_CLAIM_MAX_RD||cl->n_wr>BCIR_CLAIM_MAX_WR||
-         cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op)){
+         cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op)||
+         cl->qcast>(uint32_t)f->n_qcasts){
         snprintf(diag,dn,"invalid claim shape");return 0;}
     }
   }

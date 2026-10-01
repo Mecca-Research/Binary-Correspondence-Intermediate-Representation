@@ -1,0 +1,279 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_qualifiers_below_the_top_level_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_elements_that_are_pointers_run_as_the_original"
+  ],
+  "faults": [
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO1 the oracle casts no argument to a parameter qualified below its top",
+      "new": "",
+      "old": "            if _below_top(pct, sig, depth - 1):\n                out[k] = f\"({_qual_type(pct, sig)}){arg}\"\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO2 the oracle casts no qualified result to its temp",
+      "new": "    return call\n",
+      "old": "    return f\"({_cname(ret)}){call}\" if _below_top(ret, rsig, depth) else call\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO3 the oracle's `extern` declaration drops the qualifiers below each parameter's top",
+      "new": "    params = [_proto_param(p) for p in pcts]\n",
+      "old": "    params = [_proto_param(p, psigs[k] if k < len(psigs) else ()) for k, p in enumerate(pcts)]\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO4 the oracle's function pointer type drops its parameters' qualifiers",
+      "new": "    plist = [_proto_param(p) for p in ct.params]\n",
+      "old": "    plist = [_proto_param(p, psigs[k] if k < len(psigs) else ()) for k, p in enumerate(ct.params)]\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QO5 the oracle lowers a volatile pointer, its qualifier dropped",
+      "new": "            if q == \"volatile\":\n                self.nxt()\n                continue\n",
+      "old": "            if q == \"volatile\":\n                raise CParseError(VOLATILE_PTR, pos=self.peek().pos)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QO6 the oracle matches a qualified `_Generic` association as the unqualified type",
+      "new": "",
+      "old": "                if tref.quals or pq or tref.ptr_quals:\n                    raise CParseError(GENERIC_QUALIFIED, pos=at)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QO7 the oracle keeps a qualified `*` past the eighth",
+      "new": "",
+      "old": "    if any(levels[QUAL_LEVELS:]):\n        raise CParseError(QUAL_DEEP, pos=pos)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QO8 the oracle's function type identity ignores the qualifiers",
+      "new": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic\n",
+      "old": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic, fct.fquals\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO9 the oracle casts nothing at a call through a member",
+      "new": "            pass\n",
+      "old": "            self.member_calls[self.cid[0]] = fct\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO10 the oracle's `const` of a pointer typedef qualifies what it points to",
+      "new": "            if False:\n",
+      "old": "            if td.ptr and \"const\" in quals:\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QO11 the oracle's `const` of a function-pointer typedef is dropped",
+      "new": "",
+      "old": "                if \"const\" in quals and not td.ptr and not td.array:\n                    return dataclasses.replace(td, quals=tuple(sorted({\"const\", *td.quals})))\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT1 the twin casts no argument to a parameter qualified below its top",
+      "new": "    (void)ty; }\n",
+      "old": "    qcast_add(c,cl,first+k,ty); }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT2 the twin casts no qualified result to its temp",
+      "new": "",
+      "old": "  if(ret && cl->n_wr && qual_key(ret)) qcast_add(c,cl,-1,\"\");\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT3 the twin's `extern` declaration drops the qualifiers below each parameter's top",
+      "new": "      ctype_str(pt,ps,sizeof ps);\n      ctext_putf(c,&c->tudefs,",
+      "old": "      ctype_qstr(pt,ps,sizeof ps);\n      ctext_putf(c,&c->tudefs,",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT4 the twin's `extern` declaration drops its return's qualifiers",
+      "new": "    char rets[BCIR_EMIT_TYPE]; ctype_str(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */\n",
+      "old": "    char rets[BCIR_EMIT_TYPE]; ctype_qstr(&fn->ret,rets,sizeof rets);   /* the growable prelude (CF-BUF) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT5 the twin's function pointer type drops its parameters' qualifiers",
+      "new": "    if(spell){ char ps[BCIR_EMIT_TYPE]; ctype_str(&pt,ps,sizeof ps);",
+      "old": "    if(spell){ char ps[BCIR_EMIT_TYPE]; ctype_qstr(&pt,ps,sizeof ps);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QT6 the twin lowers a volatile pointer, its qualifier dropped",
+      "new": "    if(is(c,\"volatile\")){ c->i++; continue; }\n",
+      "old": "    if(is(c,\"volatile\")){ fail(c,CC_VOLATILE_PTR); return 1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QT7 the twin matches a qualified `_Generic` association as the unqualified type",
+      "new": "      }\n",
+      "old": "      fail(c,CC_GENERIC_QUALIFIED); return 0; }        /* a qualified one (CF-QUALS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QT8 the twin keeps a qualified `*` past the eighth",
+      "new": "  if(level<1 || level>8) return 0;\n",
+      "old": "  if(level<1 || level>8){ fail(c,CC_QUAL_DEEP); return 1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QT9 the twin keeps a qualified `*` past the eighth around a function pointer",
+      "new": "    if((cst||rst) && *stars>8) continue;\n",
+      "old": "    if((cst||rst) && *stars>8){ fail(c,CC_QUAL_DEEP); return 1; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualified_pointers_refused_and_lowered_alike_on_both_rails",
+      "label": "QT10 the twin's function type identity ignores its parameters' qualifiers",
+      "new": "       ) return 0;",
+      "old": "       || qual_key(&x->params[k])!=qual_key(&y->params[k])) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT11 the twin casts nothing at a call through a member",
+      "new": "",
+      "old": "      qcast_sig_call(c,cl,ff.fp_sig,na);          /* its qualified parameters and return (CF-QUALS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT12 the twin casts nothing at a call through a member of a loaded pointer",
+      "new": "",
+      "old": "        qcast_sig_call(c,cl,ff.fp_sig,na);               /* its qualified parameters and return (CF-QUALS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT13 the twin casts nothing at a call through a function pointer value",
+      "new": "",
+      "old": "  qcast_sig_call(c,cl,fv->type.fp_sig,na);   /* its qualified parameters and return (CF-QUALS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT14 the twin casts nothing at a call to a function another unit defines",
+      "new": "",
+      "old": "      qcast_call(c,cl,0,na,c->protos[pk].params,c->protos[pk].n_params,ptt);   /* (CF-QUALS) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT15 the twin's emit writes no cast it recorded",
+      "new": "",
+      "old": "    if(f->qcasts[i].operand==k) return f->qcasts[i].type;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT16 the twin's `const` of a pointer typedef qualifies what it points to",
+      "new": "  ty->is_const=1; return 0;\n",
+      "old": "  return star_level(c,ty,ptr_levels(ty),1,0);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_qualifiers_below_the_top_level_run_as_the_original",
+      "label": "QT17 the twin's `const` of a function-pointer typedef is dropped",
+      "new": "  if(ty->kind==3) return 0;\n",
+      "old": "  if(ty->kind==3){ ty->is_const=1; return 0; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT1 the twin reads a pointer element's slot as the struct it points to",
+      "new": "  (void)index_elem_sidx(c,base); return 1;\n",
+      "old": "  if(index_elem_sidx(c,base)>=0) return 1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT2 the twin refuses `o.p[i]->m` of a member array of pointers for another reason",
+      "new": "",
+      "old": "  if(arr->elem_ptr && arr->ptee_sidx>=0 && (is(c,\".\")||is(c,\"->\"))){ fail(c,CC_INDEX_BASE); return 0; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT3 the twin reads an element through a `T **` member as a struct",
+      "new": "  b.type.ptr_depth=1;",
+      "old": "  b.type.ptr_depth=(uint8_t)(pfld->ptee_depth>1 ? pfld->ptee_depth : 1);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT4 the twin flattens `pp[i][j].f =` to one index of `pp`",
+      "new": "    uint32_t idx=array_index(c,v);                   /* an element that is a pointer",
+      "old": "    uint32_t idx=index_chain(c,v);                   /* an element that is a pointer",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT5 the twin flattens `pp[i][j].f++` to one index of `pp`",
+      "new": "    c->i++; uint32_t idx=array_index(c,v);                 /* resolve the index ONCE (Horner-flattened), and through",
+      "old": "    c->i++; uint32_t idx=index_chain(c,v);                 /* resolve the index ONCE (Horner-flattened), and through",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT6 the twin types `pp + 1` of a `T **` as a `T *`",
+      "new": "",
+      "old": "      t->ptr_depth=(uint8_t)((snap.ptr_depth?snap.ptr_depth:1)+(parr?1:0));\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT7 the twin strides `&arr[i]` of an array of pointers by the pointee",
+      "new": "          int stride=es;\n",
+      "old": "          int stride=pel ? cc_abi(c)->pointer_size : es;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT8 the twin types `&arr[i]` of an array of pointers as a `T *`",
+      "new": "            tr->ptr_depth=1;\n",
+      "old": "            tr->ptr_depth=(uint8_t)(pel ? ptr_levels(&v->type)+(parr?1:0) : 1);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT9 the twin reads a file-scope array of pointers as integers",
+      "new": "",
+      "old": "      gr->ptr_depth=(uint8_t)(ptr_levels(&g->ty)+1);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_elements_that_are_pointers_run_as_the_original",
+      "label": "IT10 the twin's typedef of struct pointers keeps no depth",
+      "new": "      ty.kind=2;\n",
+      "old": "      ty.kind=2; ty.ptr_depth=(uint8_t)stars;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

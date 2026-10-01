@@ -290,6 +290,8 @@ _PTRVALUE = [
     #   pointers to them, parameters of them -- and calls through `(*fp)`, `(**fp)` and `(*f)` (CF-FPTAB)
     "cfront_fpret.c",  # function pointers calls return; pointers, structs and function pointers returned through a
     #   function pointer; pointers to variadic functions (CF-FPRET)
+    "cfront_idxarrow.c",  # elements that are pointers: `pp[i][j].f` as a value, `pp + 1` and `arr + 1` of `T **`,
+    #   `&arr[i]`, a file-scope array of pointers decayed (CF-IDXARROW)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -12668,3 +12670,413 @@ def test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_r
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(_EXTDESIG_HEAD + body + "\n")
             _parity_on_targets(path, _EXTDESIG_HEAD + body + "\n")
+
+
+# CF-QUALS: the qualifiers below a type's top level -- what a pointer points to, each `*` under the outermost, a function
+# pointer's own parameters' and return's -- kept in every function type both rails spell. `cfront_quals_link.c` names
+# functions another unit defines, prototyped with them; the driver defines those functions.
+_QUALS_DEFS = r"""
+uint32_t ql_count(const char *const *v, uint32_t n) {
+  uint32_t k = 0u;
+  for (uint32_t i = 0u; i < n; i++) k += (uint32_t)v[i][0] * (i + 1u);
+  return k;
+}
+uint32_t ql_first(char *const *v) { return (uint32_t)v[0][0]; }
+uint32_t ql_cpp(const char **v) { return (uint32_t)v[0][0] * 2u; }
+uint32_t ql_pp(const uint32_t *const *const pp, uint32_t n) { return *pp[0] + *pp[n - 1u] * 3u; }
+uint32_t ql_set(char *restrict *pp, uint32_t n) { return (uint32_t)pp[0][0] + n; }
+uint32_t ql_apply(uint32_t (*fn)(const uint32_t *), const uint32_t *p) { return fn(p) * 2u + 1u; }
+static const uint32_t ql_ext_t[2] = {9u, 4u};
+const uint32_t *ql_tab(uint32_t i) { return &ql_ext_t[i & 1u]; }
+static const char *const ql_ext_v[2] = {"hi", "yo"};
+const char *const *ql_names(uint32_t i) { return &ql_ext_v[i & 1u]; }
+uint32_t ql_strs(char *const *v) { return (uint32_t)v[0][0] * 3u; }
+uint32_t ql_ops(uint32_t (*const *pp)(uint32_t), uint32_t n) { return pp[0](n) + pp[n - 1u](n * 2u); }
+"""
+_QUALS_DRIVER = (
+    _GAPS_SAME
+    + _QUALS_DEFS
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(ql_externs, s); SAME(ql_results, s); SAME(ql_fnptrs, s); SAME(ql_typedefs, s); SAME(ql_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# A declaration whose type differs from its prototype's is an error under both compilers; a qualifier dropped from an
+# argument, a result or a function pointer is one too under these flags
+_QUALS_WERROR = {
+    "clang": (
+        "-Werror=int-conversion",
+        "-Werror=incompatible-pointer-types",
+        "-Werror=incompatible-function-pointer-types",
+        "-Werror=pointer-integer-compare",
+    ),
+    "gcc": ("-Werror=int-conversion", "-Werror"),
+}
+# ... and the forms whose objects the G10 escape rows would count, the test's own unit: locals lent to the functions
+# another unit defines, a call through a member by `.`, `->` and a chain, through a call's result and through a pointer
+# to a variadic function
+_QUALS_CALLS = """#include <stdint.h>
+typedef uint32_t (*ql_cnt)(const char *const *, uint32_t);
+struct ql_ops { uint32_t (*cnt)(const char *const *v, uint32_t n); const uint32_t *(*get)(uint32_t i); };
+struct ql_dev { struct ql_ops *ops; };
+uint32_t ql_count(const char *const *v, uint32_t n);
+uint32_t ql_first(char *const *v);
+uint32_t ql_cpp(const char **v);
+uint32_t ql_pp(const uint32_t *const *const pp, uint32_t n);
+uint32_t ql_set(char *restrict *pp, uint32_t n);
+static const uint32_t qc_k[2] = {5u, 7u};
+static uint32_t qc_cnt(const char *const *v, uint32_t n) {
+  uint32_t k = 0u;
+  for (uint32_t i = 0u; i < n; i++) k += (uint32_t)v[i][0];
+  return k;
+}
+static const uint32_t *qc_pick(uint32_t i) { return &qc_k[i & 1u]; }
+static ql_cnt qc_choose(uint32_t s) { return s & 1u ? qc_cnt : &qc_cnt; }
+static uint32_t qc_va(const char *const *v, uint32_t n, ...) { return (uint32_t)v[0][0] + n; }
+uint32_t qc_calls(uint32_t s) {
+  const char *names[2] = {"ab", "c"};
+  char a[2] = {'x', 0};
+  char *v[1] = {a};
+  const char *w[1] = {"r"};
+  uint32_t b[2] = {s, 1u};
+  const uint32_t *p[2] = {b, b + 1};
+  struct ql_ops o = {qc_cnt, qc_pick};
+  struct ql_ops *po = &o;
+  struct ql_dev d = {&o};
+  struct ql_dev *pd = &d;
+  uint32_t (*vf)(const char *const *, uint32_t, ...) = qc_va;
+  uint32_t k = ql_count(names, 2u) + ql_first(v) * 3u + ql_cpp(w) * 5u + ql_pp(p, 2u) * 7u + ql_set(v, 1u) * 11u;
+  k += o.cnt(names, 2u) * 13u + po->cnt(names, 1u) * 17u + pd->ops->cnt(names, 2u) * 19u;
+  k += *o.get(s) * 23u + *po->get(s + 1u) * 29u + qc_choose(s)(names, 1u) * 31u + vf(names, 1u, s) * 37u;
+  return k;
+}
+"""
+#: what each emit's `extern` declarations of `cfront_quals_link.c`'s callees spell, spaces aside
+_QUALS_EXTERNS = (
+    "externuint32_tql_count(constchar*const*,uint32_t);",
+    "externuint32_tql_first(char*const*);",
+    "externuint32_tql_cpp(constchar**);",
+    "externuint32_tql_pp(constuint32_t*const*,uint32_t);",
+    "externuint32_tql_set(char*restrict*,uint32_t);",
+    "externconstuint32_t*ql_tab(uint32_t);",
+    "externconstchar*const*ql_names(uint32_t);",
+    "externuint32_tql_strs(char*const*);",
+)
+
+
+def test_qualifiers_below_the_top_level_run_as_the_original():
+    """CF-QUALS: `cfront_quals_link.c` -- functions another unit defines, prototyped with qualifiers below each
+    parameter's and return's top level (`const char *const *`, `char *restrict *`, `const uint32_t *const *const`, a
+    qualified result), and function pointers -- typedef'd, inline, a table, a `const` one -- whose parameters keep
+    theirs. Both rails had declared each callee with every qualifier past the first level dropped -- a type that
+    conflicts with its prototype, so no emit compiled beside the original -- and the oracle refused a qualifier after
+    a `*` in a function pointer's parameter list. Each emit now declares every callee as its prototype does (the same
+    tokens on both rails), lowers to one claim graph on the four targets, and runs as the original under Clang and
+    GCC with a qualifier mismatch an error; an argument C converts to no qualified parameter by itself, and a
+    qualified result, are cast at the call. `_QUALS_CALLS` passes locals and calls through members, a call's result
+    and a variadic pointer: it lowers alike, runs as the original, and both rails report its effects and escapes
+    byte for byte."""
+    if not _CC:
+        return
+    fx = "cfront_quals_link.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for label, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        ext = {ln.replace(" ", "") for ln in emit.splitlines() if ln.startswith("extern ")}
+        missing = [d for d in _QUALS_EXTERNS if d not in ext]
+        assert not missing, (label, missing, sorted(ext))
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _QUALS_DRIVER, _QUALS_WERROR
+    )
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_QUALS_CALLS)
+    calls_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    from bcir.tests import escape_fixtures as ef  # noqa: PLC0415
+
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "quals_calls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_QUALS_CALLS)
+        c_summary, c_calls_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _QUALS_CALLS)
+        assert ef.rail_parity(_build_bcir_cc(d), [(path, r)]) == (0, 0, 1)
+    driver = (
+        _GAPS_SAME
+        + _QUALS_DEFS
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(qc_calls, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        "quals_calls.c",
+        _QUALS_CALLS,
+        (("twin", c_calls_emit), ("oracle", calls_emit)),
+        driver,
+        _QUALS_WERROR,
+    )
+
+
+_VOLATILE_PTR = "a volatile-qualified pointer is not supported"
+_GENERIC_QUALIFIED = "a `_Generic` association of a qualified type is not supported"
+_QUAL_DEEP = "a qualified pointer nested more than 8 deep is not supported"
+_INDEX_BASE = "unsupported base expression Index"
+# The qualified pointers neither rail lowers, each refused for one reason on both: an object that is itself a
+# volatile pointer, whose accesses C performs as written and neither rail does; a `_Generic` association of a
+# qualified type, which the type of no controlling expression has (an rvalue drops its qualifiers, C11 6.5.1.1p2) and
+# which both rails had matched as the unqualified type -- `p` of `char *` selected `const char *:`, a silent
+# miscompile; arms of `?:` of function types that differ in a parameter's qualifier; and a qualified `*` past the
+# eighth from the base, which the twin's per-level masks have no bit for
+_QUALS_HEAD = (
+    "#include <stdint.h>\n#include <stdarg.h>\ntypedef char *q_str;\ntypedef uint32_t (*q_op)(uint32_t);\n"
+    "typedef uint32_t (*q_cop)(const uint32_t *);\n"
+    "static uint32_t q_inc(uint32_t v) { return v + 1u; }\n"
+    "static uint32_t q_sum_c(const uint32_t *p) { return p[0] + 1u; }\n"
+    "static uint32_t q_sum_m(uint32_t *p) { return p[0] + 2u; }\n"
+)
+_QUALS_REFUSED = (
+    (
+        "uint32_t f(uint32_t s) { uint32_t a = s; uint32_t *volatile p = &a; return *p; }",
+        _VOLATILE_PTR,
+    ),
+    ("uint32_t f(uint32_t *volatile *pp) { return **pp; }", _VOLATILE_PTR),
+    (
+        "uint32_t f(uint32_t s) { char c = (char)s; volatile q_str p = &c; return (uint32_t)*p; }",
+        _VOLATILE_PTR,
+    ),
+    ("uint32_t f(uint32_t s) { q_str volatile p = 0; return p ? 1u : s; }", _VOLATILE_PTR),
+    ("uint32_t f(uint32_t s) { volatile q_op g = q_inc; return g(s); }", _VOLATILE_PTR),
+    ("uint32_t g(uint32_t *volatile p);\nuint32_t f(uint32_t s) { return s; }", _VOLATILE_PTR),
+    ("uint32_t f(uint32_t s) { uint32_t a = s; return *(uint32_t *volatile)&a; }", _VOLATILE_PTR),
+    (
+        "uint32_t f(uint32_t s) { uint32_t (*volatile g)(uint32_t) = q_inc; return g(s); }",
+        _VOLATILE_PTR,
+    ),
+    (
+        "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c;\n"
+        "  return (uint32_t)_Generic(p, const char *: 1u, char *: 2u, default: 3u) + s; }",
+        _GENERIC_QUALIFIED,
+    ),
+    (
+        "uint32_t f(uint32_t s) { char c = (char)s; const char *p = &c;\n"
+        "  return (uint32_t)_Generic(p, char *: 1u, const char *: 2u, default: 3u) + s; }",
+        _GENERIC_QUALIFIED,
+    ),
+    (
+        "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c;\n"
+        "  return (uint32_t)_Generic(p, char *const: 1u, default: 3u) + s; }",
+        _GENERIC_QUALIFIED,
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t x = s;\n"
+        "  return (uint32_t)_Generic(x, const uint32_t: 1u, default: 3u) + s; }",
+        _GENERIC_QUALIFIED,
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t a[1] = {s}; return (s ? q_sum_c : q_sum_m)(a); }",
+        _FN_SELECTED,
+    ),
+    ("uint32_t f(uint32_t s) { uint32_t ********* const p9 = 0; return p9 ? 1u : s; }", _QUAL_DEEP),
+    (
+        "typedef uint32_t *********q_p9;\nuint32_t f(uint32_t s) { const q_p9 p = 0; return p ? 1u : s; }",
+        _QUAL_DEEP,
+    ),
+    (
+        "uint32_t f(uint32_t s) { uint32_t (**********const fp)(uint32_t) = 0; return fp ? 1u : s; }",
+        _QUAL_DEEP,
+    ),
+    (
+        "uint32_t g(uint32_t ********* restrict *v);\nuint32_t f(uint32_t s) { return s; }",
+        _QUAL_DEEP,
+    ),
+)
+# ... while every other qualified pointer lowers to one claim graph on the four targets
+_QUALS_LOWERED = (
+    "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c; char *const *q = &p; return (uint32_t)**q; }",
+    "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c; const q_str *q = &p; return (uint32_t)**q; }",
+    "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c; return (uint32_t)**(char *const *)&p; }",
+    "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c; return (uint32_t)**(const char *const *)&p; }",
+    "uint32_t f(uint32_t s) { uint32_t a[1] = {s}; q_cop g = q_sum_c;\n"
+    "  uint32_t (*h)(const uint32_t *const) = q_sum_c; return g(a) + h(a); }",
+    "uint32_t f(int *restrict *pp) { return (uint32_t)**pp; }",
+    "uint32_t f(uint32_t s) { q_op const g = q_inc; uint32_t (*const h)(uint32_t) = q_inc; return g(s) + h(s); }",
+    "uint32_t f(uint32_t s) { uint32_t a[1] = {s}; return (s ? q_sum_c : q_sum_c)(a) + (s ? q_sum_m : q_sum_m)(a); }",
+    "uint32_t f(uint32_t s) { uint32_t ******** const p8 = 0; return p8 ? 1u : s; }",
+    "uint32_t f(uint32_t s) { uint32_t (*********const fp)(uint32_t) = 0; return fp ? 1u : s; }",
+    "uint32_t f(uint32_t s) { return (uint32_t)sizeof(const char *const *) + (uint32_t)sizeof(q_str const) + s; }",
+    "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c; typeof(char *const *) q = &p; return (uint32_t)**q; }",
+    "static uint32_t q_va(uint32_t n, ...) { va_list ap; va_start(ap, n);\n"
+    "  const char *const *v = va_arg(ap, const char *const *); va_end(ap); return (uint32_t)v[0][0] + n; }\n"
+    'uint32_t f(uint32_t s) { const char *names[1] = {"z"}; return q_va(s, names); }',
+    "uint32_t f(uint32_t s) { char c = (char)s; char *p = &c;\n"
+    "  return (uint32_t)_Generic(p, char *: 2u, default: 3u) + s; }",
+    "static uint32_t q_cnt(const char *const *v) { return (uint32_t)v[0][0]; }\n"
+    'uint32_t f(uint32_t s) { const char *names[1] = {"q"}; return q_cnt(names) + s; }',
+)
+# CF-IDXARROW: a member access straight through an element that is a pointer -- of an array of pointers, through a
+# `T **`, a typedef of one, a file-scope array of them, a member array of them, read, stored, stepped, compounded,
+# addressed, parenthesized, used as a value -- is refused on both rails for the oracle's reason (it has no subscript
+# base). The twin had read the pointer's own slot as the struct it points to, a silent miscompile, and had taken
+# `arr[i].m` of such an element alike
+_IDX_HEAD = (
+    "#include <stdint.h>\nstruct ix { uint32_t v; uint32_t w; };\ntypedef struct ix *ix_p;\n"
+    "struct ixh { struct ix *p[2]; struct ix **pp; };\n"
+    "static struct ix ix_a = {1u, 2u}, ix_b = {3u, 4u};\n"
+    "static struct ix *ix_g[2] = {&ix_a, &ix_b};\n"
+)
+_IDXARROW_REFUSED = (
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; return arr[1]->w + s; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; return arr[s & 1u]->v; }",
+    "uint32_t f(struct ix **pp) { return pp[1]->w; }",
+    "uint32_t f(uint32_t s) { return ix_g[s & 1u]->w; }",
+    "uint32_t f(uint32_t s) { ix_p arr[2] = {&ix_a, &ix_b}; return arr[1]->w + s; }",
+    "uint32_t f(ix_p *pp, uint32_t i) { return pp[i]->w + pp[i]->v; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; arr[1]->w = s; return ix_b.w; }",
+    "void f(struct ix **pp, uint32_t x) { pp[1]->v = x; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; arr[1]->w++; return ix_b.w + s; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; arr[1]->w += s; return ix_b.w; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; uint32_t *q = &arr[1]->w; return *q + s; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; return (arr[1])->w + s; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; uint32_t r = (arr[1]->w = s); return r; }",
+    "uint32_t f(uint32_t s) { struct ix *arr[2] = {&ix_a, &ix_b}; return arr[1].w + s; }",
+    "uint32_t f(struct ixh *h) { return h->pp[1]->w; }",
+    "uint32_t f(uint32_t s) { struct ixh h = {{&ix_a, &ix_b}, ix_g}; return h.p[1]->w + s; }",
+    "uint32_t f(uint32_t s) { struct ixh h = {{&ix_a, &ix_b}, ix_g}; struct ixh *hp = &h; hp->pp[1]->w = s; return ix_b.w; }",
+)
+
+
+def test_qualified_pointers_refused_and_lowered_alike_on_both_rails():
+    """CF-QUALS: the qualified pointers neither rail lowers are refused on both for one reason each
+    (`_QUALS_REFUSED`): a volatile pointer object -- a declarator, a parameter, a prototype's, a typedef'd pointer or
+    function pointer, a cast -- both rails had lowered with its qualifier dropped; a `_Generic` association of a
+    qualified type, which both rails had matched as the unqualified one, so `p` of `char *` selected `const char *:`;
+    arms of `?:` of function types that differ only in a parameter's qualifier, which both rails had selected
+    between; a qualified `*` past the eighth. Every other qualified pointer lowers to one claim graph on the four
+    targets (`_QUALS_LOWERED`): a pointer to `const` pointers, a `const` pointer typedef, casts, `typeof`, `sizeof`
+    and `va_arg` of qualified types, `restrict` below the top, `const` function pointers, the eighth level."""
+    for body, why in _QUALS_REFUSED:
+        got = _fptab_refusal(_QUALS_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _QUALS_LOWERED:
+        got = _fptab_refusal(_QUALS_HEAD + body + "\n")
+        assert got == "", (body, got)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_QUALS_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_QUALS_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_QUALS_LOWERED):
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_QUALS_HEAD + body + "\n")
+            _parity_on_targets(path, _QUALS_HEAD + body + "\n")
+
+
+_IDXARROW_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(ix_chain_values, s); SAME(ix_steps, s); SAME(ix_addresses, s); SAME(ix_kinds, s); SAME(ix_typedefs, s);
+    SAME(ix_globals, s); SAME(ix_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# ... and its forms over locals, whose stored addresses the G10 escape rows would count: the test's own unit
+_IDXARROW_LOCALS = """#include <stdint.h>
+struct ixl { uint32_t v; uint32_t w; };
+uint32_t ixl_addresses(uint32_t s) {
+  int32_t x = (int32_t)s, y = 2;
+  int32_t *arr[2] = {&x, &y};
+  void *va[2] = {&x, &y};
+  int32_t **q = &arr[1];
+  void **vq = &va[s & 1u];
+  int32_t **pp = arr;
+  int32_t **r = pp + 1;
+  return (uint32_t)**q + (q == arr + 1) * 3u + (vq == &va[s & 1u]) * 5u + (uint32_t)*(int32_t *)*vq * 7u
+         + (uint32_t)(r - pp) * 11u;
+}
+uint32_t ixl_chain(uint32_t s) {
+  struct ixl a = {s, 1u}, b = {s + 7u, 2u};
+  struct ixl *arr[2] = {&a, &b};
+  struct ixl **pp = arr;
+  uint32_t r = (pp[1][0].w = s + 9u);
+  r += (pp[0][0].v += 3u);
+  r += pp[1][0].w++;
+  r += ++pp[0][0].v;
+  return r + a.v + b.w;
+}
+"""
+
+
+def test_elements_that_are_pointers_run_as_the_original():
+    """CF-IDXARROW: `cfront_idxarrow.c` -- elements that are pointers: `pp[i][j].f` assigned, compounded and stepped as
+    a value through a `T **`; `pp + 1`, `pp++`, `arr + 1` and a select of `T **`; `&arr[i]` of an array of pointers; a
+    `char **`, a `double **`, a pointer to a struct-pointer typedef; a file-scope array of pointers read through. The
+    twin had read `pp[1][0].f` at the flat index `1*1+0` of `pp`, typed `pp + 1` and `arr + 1` as one pointer level
+    less and `&arr[i]` as an element of the pointee's width, and read a file-scope array of pointers as integers;
+    both rails now lower the unit to one claim graph on the four targets and each emit returns what the original
+    does, function by function. `_IDXARROW_LOCALS` does the same over locals. A member access straight through such
+    an element is refused on both rails for one reason (`_IDXARROW_REFUSED`)."""
+    for body in _IDXARROW_REFUSED:
+        got = _fptab_refusal(_IDX_HEAD + body + "\n")
+        assert got == _INDEX_BASE, (body, got)
+    if not _CC:
+        return
+    fx = "cfront_idxarrow.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _IDXARROW_DRIVER, _QUALS_WERROR
+    )
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_IDXARROW_LOCALS)
+    locals_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "idxarrow_locals.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_IDXARROW_LOCALS)
+        c_summary, c_locals_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _IDXARROW_LOCALS)
+        for n, body in enumerate(_IDXARROW_REFUSED):
+            rpath = os.path.join(d, f"r{n}.c")
+            with open(rpath, "w", encoding="utf-8") as fh:
+                fh.write(_IDX_HEAD + body + "\n")
+            run = subprocess.run([exe, rpath], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {_INDEX_BASE}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) {\n"
+        + "    SAME(ixl_addresses, gaps_in[n]); SAME(ixl_chain, gaps_in[n]);\n  }\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        "idxarrow_locals.c",
+        _IDXARROW_LOCALS,
+        (("twin", c_locals_emit), ("oracle", locals_emit)),
+        driver,
+        _QUALS_WERROR,
+    )

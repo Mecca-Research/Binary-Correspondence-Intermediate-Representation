@@ -347,6 +347,12 @@ _mm_sfence();                      //                   store (release) fence ->
   as `f`, `*&f` and `&*f` name it again, and `(&f)(x)` is the call `f(x)`. Each emit declares every function it
   names `extern` as its prototype does, a variadic one with its `...`. A function is no object: `f = g`, `f++`,
   `++f` and `f += 1` are refused (`a function designator is not an lvalue`), as `*f = v` is.
+- Qualifiers below a type's top level -- what a pointer points to and each `*` under the outermost (`const char *const
+  *v`, `char *restrict *`), a `const` pointer typedef (`const str_t *`), and the qualifiers of a function pointer's
+  own parameters and return -- are kept: every `extern` declaration and function-pointer type the emit spells is the
+  prototype's, and two function types that differ only in a qualifier are two types (`?:` of them is refused). The
+  emit spells its own objects without qualifiers, so where C converts none -- `char **` passed to `const char *const
+  *`, a `const T *` result -- a call casts.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
@@ -435,6 +441,13 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   forbids, lowers today and is a recorded follow-up.
 - A function declared inside a block (`uint32_t f(uint32_t s) { uint32_t g(uint32_t); ... }`): refused on both
   rails; declare it at file scope.
+- A pointer object that is itself `volatile` (`T *volatile p`, `volatile str_t p` of a pointer typedef), whose every
+  access C performs as written: refused on both rails (`a volatile-qualified pointer is not supported`); a pointer
+  to volatile storage (`volatile T *p`) lowers. A `_Generic` association of a qualified type, which no controlling
+  expression's type has: refused (`a \`_Generic\` association of a qualified type is not supported`). A qualifier on a
+  `*` past the eighth from the base: refused (`a qualified pointer nested more than 8 deep is not supported`).
+- A member access straight through an element that is a pointer (`arr[i]->m`, `pp[i]->m`, `o.p[i]->m`): refused on
+  both rails (`unsupported base expression Index`); read the element first (`T *e = arr[i]; e->m`).
 - A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`): the Python
   reference refuses the declaration, which the C twin accepts -- a split recorded for follow-up.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a

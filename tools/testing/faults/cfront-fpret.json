@@ -46,8 +46,8 @@
   {
    "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
    "label": "FO6 the oracle's function-type identity ignores `...`",
-   "new": "        return ret, tuple(self._type_key(p) for p in fct.params)\n",
-   "old": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic\n",
+   "new": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.fquals\n",
+   "old": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic, fct.fquals\n",
    "path": "bcir/frontends/cfront/lower.py"
   },
   {
@@ -74,8 +74,8 @@
   {
    "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
    "label": "FO10 the oracle parses a function returning a function pointer as a declarator",
-   "new": "        if True:\n            return False\n        k = 2\n        while self.peek(k).kind == \"OP\" and self.peek(k).text == \"*\":\n            k += 1\n        return (\n            self.peek(k).kind == \"IDENT\"",
-   "old": "        if not (self.at(\"PUNCT\", \"(\") and self.peek(1).kind == \"OP\" and self.peek(1).text == \"*\"):\n            return False\n        k = 2\n        while self.peek(k).kind == \"OP\" and self.peek(k).text == \"*\":\n            k += 1\n        return (\n            self.peek(k).kind == \"IDENT\"",
+   "new": "        if True:\n            return False\n        k = self._skip_stars(1)\n",
+   "old": "        if not (self.at(\"PUNCT\", \"(\") and self.peek(1).kind == \"OP\" and self.peek(1).text == \"*\"):\n            return False\n        k = self._skip_stars(1)\n",
    "path": "bcir/frontends/cfront/cparse.py"
   },
   {
@@ -186,15 +186,15 @@
   {
    "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
    "label": "FT13 the twin declares a call through a function pointer's result as a scalar",
-   "new": "\"%s %s = %s(\",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by",
-   "old": "\"%s %s = %s(\",decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by",
+   "new": "      else{ const char *dt=tty(&type_scratch,f,cl->wr[0]);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),rname(f,cl->rd[0],a)); }\n",
+   "old": "      else{ const char *dt=decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),rname(f,cl->rd[0],a)); }\n",
    "path": "runtime/c/bcir_cfront.c"
   },
   {
    "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
    "label": "FT14 the twin declares a member call's result as a scalar",
-   "new": "\"%s %s = %s%s%s(\",tty(&type_scratch,f,cl->wr[0]),",
-   "old": "\"%s %s = %s%s%s(\",decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty),",
+   "new": "      else{ const char *dt=tty(&type_scratch,f,cl->wr[0]);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s%s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),\n",
+   "old": "      else{ const char *dt=decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s%s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),\n",
    "path": "runtime/c/bcir_cfront.c"
   },
   {

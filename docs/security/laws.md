@@ -1365,6 +1365,17 @@ was "the unit defines it", where the question each site asked was "a declaration
 Witnesses: `_EXTDESIG_REFUSED` and `_EXTDESIG_LOWERED` in
 `test_designators_of_prototyped_functions_refused_and_lowered_alike_on_both_rails`. Faults
 (`cfront-extdesig.json`): `XO1`, `XO6`, `XO8`, `XO9`, `XT1`, `XT2`, `XT5`, `XT6`, `XT8`, `XT9`, `XT11`.
+CF-IDXARROW instance (2026-10-01): "is the element of `base[i]` the struct a member is read from" was
+answered at six twin sites, none of them asking it: the read, the store, the step, the compound
+assignment, the address and the assignment-as-value each took `->` after a subscript as `.` over the
+element's own slot whenever the base pointed at structs at any depth, so `arr[i]->m` of an array of
+pointers read the pointer's bytes as the struct -- a silent miscompile the oracle never had, its one
+`_addr` having no subscript base. One predicate, `index_member_ok`, now answers it for every site
+(`aos_elem_field`, `aos_member_array`, `elem_field`), and the precondition the sites held outside it --
+"a subscript lands on the struct" -- is the predicate's own (`index_elem_sidx`). Two sites that had
+flattened every subscript of `pp[i][j].f` to one index walk the chain as the rest do (`index_chain`).
+Witnesses: `_IDXARROW_REFUSED`, `cfront_idxarrow.c` and `_IDXARROW_LOCALS` in
+`test_elements_that_are_pointers_run_as_the_original`. Faults (`cfront-quals.json`): `IT1`-`IT5`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

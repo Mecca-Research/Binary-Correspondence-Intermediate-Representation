@@ -2118,7 +2118,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   Found, not fixed here (each a suggested follow-up):
   - a qualifier between the stars of a prototype's pointer parameter (`const char *const *argv`) and a qualifier in
     a function-pointer parameter's own parameters are dropped from the `extern` declaration on both rails, which
-    then conflicts with the original;
+    then conflicts with the original (closed by CF-QUALS, below);
   - a function designator of an external function, declared by its prototype and defined by another unit, is
     refused on both rails (`use of undeclared identifier`), which C allows (closed by CF-EXTDESIG, below).
 
@@ -2340,7 +2340,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     (`uint32_t t = bcir_pick(s);`), which Clang rejects; the oracle refuses a `typedef T *(*pf)(T *)`, and the
     twin types a call through one as an integer (closed by CF-FPRET, below);
   - both rails drop `const` from a function-pointer declarator's parameter (`uint32_t (*fn)(const uint32_t *)`
-    is emitted taking `uint32_t *`), so assigning it a function that takes `const uint32_t *` does not compile;
+    is emitted taking `uint32_t *`), so assigning it a function that takes `const uint32_t *` does not compile
+    (closed by CF-QUALS, below);
   - the twin refuses a postfix on the struct a call through a function pointer returns (`m(s).a`), which the
     oracle lowers; its reason is now the conversion refusal, since `return m(s)` is checked before `.a` (closed
     by CF-FPRET, below);
@@ -2678,7 +2679,79 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `non-renderable constant initializer`), where each function's emit takes it;
   - a function-pointer type with a `const` parameter (`uint32_t (*g)(const uint32_t *)`) is spelled without it on both
     rails, so a prototyped function taking `const uint32_t *` does not convert to it in the emit (CF-DECLS's first
-    item).
+    item; closed by CF-QUALS, below).
+
+  CF-QUALS (2026-10-01) kept every qualifier level of a function type on both rails -- CF-DECLS's first item and the
+  `const` parameter item of the CF-FNSEL and CF-EXTDESIG lists -- and closed, beside it, the twin's reading of an
+  element that is a pointer (CF-IDXARROW). RED was measured on the parent (`b27c37e1`).
+  - The defects: what a pointer points to and each `*` under the outermost (`const char *const *v`, `char *restrict
+    *`), and the qualifiers of a function pointer's own parameters and return, are part of a function type (C11
+    6.7.6.1p2, 6.7.6.3p15). Both rails dropped every qualifier past the first level: an `extern` declaration of a
+    prototype taking `const char *const *` read `const char **` (the oracle, `const char * *`), which conflicts with
+    the prototype it repeats, and a function pointer of a function taking `const uint32_t *` -- a typedef, a
+    declarator, a member, a table -- took `uint32_t *`, which the function does not convert to. The oracle refused a
+    qualifier after a `*` in a function pointer's parameter list outright. A pointer object that is itself volatile
+    (`T *volatile p`, `volatile str_t p`) lowered on both rails with its qualifier dropped. And `_Generic` matched an
+    association of a qualified type as the unqualified one on both rails -- `_Generic(p, const char *: 1, char *: 2)`
+    of a `char *p` gave 1 -- a silent miscompile.
+  - The twin's typedef of a struct pointer (`typedef struct S *SP;`) kept no pointer depth, so `SP *pp` was one level
+    shallow; making it the level the qualifiers count by exposed CF-IDXARROW: the twin read a member straight through
+    an element that is a pointer -- `arr[i]->m` of an array of pointers, `pp[i]->m` through a `T **`, read, stored,
+    stepped, compounded, addressed -- as a member of the pointer's own slot, a silent miscompile the oracle refuses
+    (`unsupported base expression Index`); flattened `pp[i][j].f`, assigned, compounded or stepped as a value, to the
+    index `i*1+j` of `pp`, another; typed `pp + 1` and `arr + 1` of a `T **` as a `T *` and `&arr[i]` of an array of
+    pointers as a `T *` four bytes apart, so their emits did not compile or compared unequal pointers; and read a
+    file-scope array of pointers as integers.
+  - RED: on the parent all three new tests fail. Both rails refuse `runtime/c/cfront_quals_link.c` (the oracle:
+    `expected ')', got OP '*'`; the twin: `expected declarator name`); the oracle refuses `_QUALS_CALLS` and the twin's
+    emit of it conflicts with the prototypes. Of the 17 forms `_QUALS_REFUSED` holds, the parent oracle lowers 13 and
+    the twin 15; of the 15 `_QUALS_LOWERED` holds, the oracle refuses 7 and the twin 2; of the 17 `_IDXARROW_REFUSED`
+    holds, the parent twin lowers 16. The twin refuses `runtime/c/cfront_idxarrow.c` (`a struct or union is
+    converted to a scalar type`), and its claim graph of `_IDXARROW_LOCALS` differs from the oracle's, its emit not
+    compiling.
+  - What landed: the parsers keep each `*`'s qualifiers -- `TypeRef.ptr_quals` on the oracle, a byte per kind
+    (`ptr_const`, `ptr_restrict`) in two padding bytes of `bcir_ctype` on the twin, which stays 120 bytes -- through
+    declarators, casts, `sizeof`, `typeof`, `va_arg`, function-pointer declarators and a qualifier on a pointer
+    typedef, which qualifies the pointer (6.7.8p3). A function type carries them: the oracle's `fquals` (`_fn_quals`,
+    `_qual_sig`), the twin's parameter and return ctypes; the type's identity compares them (`_fn_key`, `sig_same`'s
+    `qual_key`), so arms of `?:` of two function types that differ in a qualifier are refused as CF-FNSEL refuses
+    any; and every function type the emit spells keeps them (`_extern_decl`, `_funcptr_decl`, `_qual_type`; the
+    twin's `ctype_qstr`). The emit spells its own objects without qualifiers, so where C converts none -- an
+    argument to a parameter qualified more than one level down, a qualified result -- a call casts: the oracle's
+    `_qual_args` and `_qual_result`, the twin's cast table (`bcir_func.qcasts`, which `bcir_claim.qcast` names, in the
+    claim's tail padding so a rolled-back lowering takes its casts with it). A volatile pointer object
+    (`VOLATILE_PTR`), a qualified `_Generic` association (`GENERIC_QUALIFIED`) and a qualified `*` past the eighth
+    (`QUAL_DEEP`, the masks' width) are refused on both rails for one reason each. For CF-IDXARROW, one predicate on
+    the twin, `index_member_ok`, refuses a member access through an element that is not the struct itself, read by
+    `aos_elem_field`, `aos_member_array` and `elem_field`; the assignment-as-value and step paths walk subscripts with
+    `index_chain`, as the read and store paths do; `tempptr`, `&a[i]` and a file-scope array of pointers keep the
+    pointer's depth and its pointee's spelling.
+  - G10: both fixtures keep their objects at file scope and their indirect calls on functions of the unit, so the
+    rows stay at their bounds (`escape.unproved=0 icall.unknown=15 icall.unresolved=18`); a local lent to an
+    external function, a call through a member and the local forms of CF-IDXARROW are the tests' own units.
+  - Outcomes: `runtime/c/cfront_quals_link.c` -- prototypes taking and returning pointers qualified below the top,
+    a `const` pointer typedef and a pointer to `const` function pointers among them, function pointers whose
+    parameters keep theirs, typedef'd, inline, in a table and `const` -- lowers to one claim graph on the four
+    targets, each emit declares every callee as its prototype does, and both emits run as the original under Clang
+    and GCC with a qualifier mismatch an error, the driver defining the callees. `_QUALS_CALLS` -- locals passed to
+    those parameters, calls through a member by `.`, `->` and a chain, through a call's result and through a pointer
+    to a variadic function -- lowers alike, runs as the original, and both rails' effects and escape reports are
+    byte-identical. `runtime/c/cfront_idxarrow.c` joins the corpus and `_IDXARROW_LOCALS` runs beside it; both run as
+    the original function by function. `_QUALS_REFUSED` (17) and `_IDXARROW_REFUSED` (17) are refused on both rails
+    for the one reason each names and `_QUALS_LOWERED` (15) lowers alike on the four targets. The corpus is unmoved:
+    every other fixture's summary and digest is the parent's on both rails.
+  - Faults: `tools/testing/faults/cfront-quals.json` holds 38 injected defects -- 11 on the oracle, 17 on the twin
+    for CF-QUALS, 10 on the twin for CF-IDXARROW -- each caught by its own test. Fourteen faults of earlier tables
+    whose anchors this change rewrote were re-anchored -- `cfront-calls.json` CL2, CL7, CL8 and CL45,
+    `cfront-decls.json` DO6, DO7, DO8 and DT7, `cfront-fpret.json` FO6, FO10, FT13 and FT14, `cfront-fptab.json`
+    FO3, `cfront-gaps.json` O15 -- and each is caught again.
+  Found, not fixed here (each a suggested follow-up):
+  - a member access through a subscripted pointer element, `arr[i]->m`, is refused on both rails (the oracle has no
+    subscript base); C allows it, and driver code spells it often (`devs[i]->ops`);
+  - a member access through a parenthesized dereference, `(*pp)->m`, is refused on the twin (`;` expected) and
+    lowered by the oracle, and `(pp + 1)[0][0]` is refused on both rails for reasons of their own;
+  - `x[i]->m` of an element that is a struct, and `p[i]->m` through a pointer to one, are invalid C that both rails
+    lower as `x[i].m`.
 
 ---
 

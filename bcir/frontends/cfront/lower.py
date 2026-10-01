@@ -835,6 +835,19 @@ DIM_RANGE = "an array dimension outside 0..INT_MAX"
 # `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --
 # the same function with a typedef for its return type lowers (CF-FPRET; the twin's `CC_FN_RET_FP`)
 FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
+# `T *volatile p`, `volatile ptr_t p`: a pointer object that is itself volatile, every access of which C performs as
+# written (C11 6.7.3p7) -- which neither rail's accesses do, so it is refused rather than dropped (CF-QUALS; the
+# twin's `CC_VOLATILE_PTR`)
+VOLATILE_PTR = "a volatile-qualified pointer is not supported"
+# `_Generic(p, const char *: a, char *: b)`: an association of a qualified type, which neither rail tells from the
+# unqualified one -- the type of the controlling expression carries no qualifier on either -- so `p` of `char *`
+# selected `a` on both (CF-QUALS; the twin's `CC_GENERIC_QUALIFIED`)
+GENERIC_QUALIFIED = "a `_Generic` association of a qualified type is not supported"
+# `char *********const p`: a qualifier on a `*` past the eighth from the base, which the twin's per-level masks
+# (`bcir_ctype.ptr_const` / `ptr_restrict`, one byte each) have no bit for -- refused on both rails (CF-QUALS; the
+# twin's `CC_QUAL_DEEP`)
+QUAL_DEEP = "a qualified pointer nested more than 8 deep is not supported"
+QUAL_LEVELS = 8
 
 
 def fold_constant(node, abi, live: bool = True) -> _KVal:
@@ -1145,6 +1158,9 @@ class LoweredFunc:
     claims: list  # all claims, flat (== the single phase) for verify/plan
     resources: dict  # rid -> Resource
     rid_types: dict = field(default_factory=dict)  # rid -> CType (for faithful C emission)
+    # a `c.call.imember` claim's id -> the member's function-pointer CType, when its function type keeps a
+    # qualifier the emit's casts restore (CF-QUALS; the twin's `qcast` table)
+    member_calls: dict = field(default_factory=dict)
     calls: list = field(default_factory=list)  # (callee, (actual_rids...))
     region: object = None  # compose.Region
     body: list = field(default_factory=list)  # the structured body tree (for emission)
@@ -1160,7 +1176,7 @@ class LoweredFunc:
     zero_init_locals: set = field(default_factory=set)  # aggregate-local rids declared `= {}`
     tu_protos: dict = field(
         default_factory=dict
-    )  # cross-TU callee -> (ret CType, (param CType, ...), (param points to const, ...), variadic)
+    )  # cross-TU callee -> (ret CType, (param CType, ...), its qualifiers `_fn_quals`, variadic)
     #   -- prototyped, not defined here, called or named as a value; the emit declares them
     variadic: bool = False  # a trailing `...` after the named params (variadic function)
     reproducible: bool = False  # a C23 `[[reproducible]]`/`[[unsequenced]]` hint is on the
@@ -1257,7 +1273,7 @@ class _FuncLowerer:
         abi=None,
         protos: dict | None = None,
         func_params: dict | None = None,
-        proto_consts: dict | None = None,
+        fn_quals: dict | None = None,
         func_variadic: frozenset = frozenset(),
         lowered: dict | None = None,
     ):
@@ -1276,9 +1292,11 @@ class _FuncLowerer:
         # the unit's functions lowered before this one: name -> LoweredFunc (`_fn_type`)
         self.lowered = lowered if lowered is not None else {}
         self.tu_used: dict = {}  # the tu callees THIS function actually calls (for the emit decl)
-        # a prototyped callee -> whether each parameter points to `const`, which its emitted `extern`
-        # declaration keeps (a `const T *` parameter is another type than a `T *` one)
-        self.proto_consts = proto_consts or {}
+        self.member_calls: dict = {}  # `LoweredFunc.member_calls`
+        # a function the unit defines or prototypes -> its function type's qualifiers (`_fn_quals`), which
+        # its type compares and its emitted `extern` declaration keeps: a `const T *` parameter is another
+        # type than a `T *` one, at every level (CF-QUALS)
+        self.fn_quals = fn_quals or {}
         self.aggregates = aggregates
         self.rid = base_rid
         self.cid = cid  # shared mutable [next_claim_id]
@@ -1416,7 +1434,10 @@ class _FuncLowerer:
         ):  # a function-pointer alias (HAL dispatch), a pointer to one, an array of them
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)
-            fct = funcptr(tref.base, ret, params, self.abi, variadic=tref.func_variadic)
+            fquals = _fn_quals(tref.func_ret, tref.func_params)  # CF-QUALS
+            fct = funcptr(
+                tref.base, ret, params, self.abi, variadic=tref.func_variadic, fquals=fquals
+            )
             return _fp_shaped(fct, tref, self.abi)
         if tref.typeof_var:  # `typeof(var)` -> the in-scope variable's type
             if tref.typeof_var not in self.env:
@@ -2032,10 +2053,10 @@ class _FuncLowerer:
 
     def _tu_declare(self, name: str) -> None:
         """Record the prototyped function `name`, which another unit defines, for the emit's `extern`
-        declaration: its return, its parameters, which of them point to `const`, and its `...`."""
+        declaration: its return, its parameters, their qualifiers (CF-QUALS), and its `...`."""
         ret_ct, param_cts = self.protos[name]
-        consts = self.proto_consts.get(name, (False,) * len(param_cts))
-        self.tu_used[name] = (ret_ct, param_cts, consts, name in self.func_variadic)
+        quals = self.fn_quals.get(name, ())
+        self.tu_used[name] = (ret_ct, param_cts, quals, name in self.func_variadic)
 
     def _designator(self, node) -> "str | None":
         """The function `node` designates -- a name no object in scope hides, of a function the unit
@@ -2068,7 +2089,8 @@ class _FuncLowerer:
             if None in params:
                 return None
             variadic = name in self.func_variadic
-            return funcptr(name, ret, params, self.abi, variadic=variadic)
+            fquals = self.fn_quals.get(name, ())
+            return funcptr(name, ret, params, self.abi, variadic=variadic, fquals=fquals)
         params = self.func_params.get(name)
         if params is not None and None in params and name in self.lowered:
             # a `typeof` or `va_list` parameter the pre-scan leaves untyped: the definition's own, once it has
@@ -2077,7 +2099,10 @@ class _FuncLowerer:
         if params is None or None in params:
             return None
         variadic = name in self.func_variadic  # its named parameters, then `...` (CF-FPRET)
-        return funcptr(name, self.func_rets[name], params, self.abi, variadic=variadic)
+        fquals = self.fn_quals.get(name, ())  # and their qualifiers (CF-QUALS)
+        return funcptr(
+            name, self.func_rets[name], params, self.abi, variadic=variadic, fquals=fquals
+        )
 
     def _fn_valued(self, node) -> bool:
         """Whether the value of `node` is a function pointer (CF-FPTAB): a function designator, which converts
@@ -2143,10 +2168,11 @@ class _FuncLowerer:
         return None
 
     def _fn_key(self, fct: CType) -> tuple:
-        """A function type's identity: its return and its parameters as `_Generic` tells types apart,
-        qualifiers aside (the twin's `sig_same`)."""
+        """A function type's identity: its return and its parameters as `_Generic` tells types apart, and
+        the qualifiers each keeps below its top level -- a `const T *` parameter is another type than a
+        `T *` one (C11 6.7.6.3p15, CF-QUALS) -- as the twin's `sig_same`."""
         ret = self._type_key(fct.of) if fct.of is not None else ("void",)
-        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic
+        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic, fct.fquals
 
     def _addr(self, node):
         """The (rid, type, byte_offset) of an aggregate/pointer base used by member/index access. The
@@ -3005,12 +3031,13 @@ class _FuncLowerer:
                 imm=(1 if m.arrow else 0,),
                 callee_sig=callee_signature(fct),
             )
+            self._member_call(fct)
             return _VOID_RID
         ret_ct = fct.of if (fct is not None and fct.kind == "funcptr") else None
         t = self._temp(
             self._call_result_ct(ret_ct), f"icall_{m.field}"
         )  # a signed member return reads back signed
-        return self._emit(
+        self._emit(
             f"c.call.imember:{m.field}",
             Opcode.GEM_DISPATCH,
             (base_rid, *actuals),
@@ -3018,6 +3045,14 @@ class _FuncLowerer:
             imm=(1 if m.arrow else 0,),
             callee_sig=callee_signature(fct),
         )
+        self._member_call(fct)
+        return t
+
+    def _member_call(self, fct) -> None:
+        """Record the function type of the `c.call.imember` claim just emitted when it keeps a qualifier below
+        a parameter's or its return's top level, which the emit restores by casts (CF-QUALS)."""
+        if fct is not None and fct.kind == "funcptr" and fct.fquals:
+            self.member_calls[self.cid[0]] = fct
 
     # --- memory read/write, with bitfield (mask/shift) + MMIO (ordered) handling ---
     def _read(self, lv: "_LV", *, declared_bitfield_type: bool = False) -> int:
@@ -4963,6 +4998,7 @@ class _FuncLowerer:
             claims=list(claims),
             resources=dict(self.resources),
             rid_types=dict(self.rtypes),
+            member_calls=dict(self.member_calls),
             calls=list(self.calls),
             region=None,
             body=body,
@@ -5101,15 +5137,17 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
         for name, (ret, params) in unit.protos.items()
         if name not in func_rets
     }
-    # ... and whether each of a prototype's parameters points to `const` -- the base type's qualifier of a
-    # pointer or of an array, which decays to one -- for the emit's `extern` declaration of the callee
-    proto_consts = {
-        name: tuple(
-            "const" in p.quals and bool(p.ptr or p.array or p.vla is not None) for p in params
-        )
-        for name, (_ret, params) in unit.protos.items()
+    # ... and the qualifiers of every function type the unit declares -- a definition's, else its
+    # prototype's -- below each parameter's and the return's top level, which the type compares and the
+    # emit's `extern` declaration spells (CF-QUALS)
+    fn_quals = {
+        name: _fn_quals(ret, params)
+        for name, (ret, params) in unit.protos.items()
         if name not in func_rets
     }
+    fn_quals.update(
+        {fn.name: _fn_quals(fn.ret, tuple(p.type for p in fn.params)) for fn in unit.funcs}
+    )
     genv: dict[str, tuple] = {}  # file-scope globals: name -> (rid, CType)
     gres: dict[int, Resource] = {}
     gdecls: list = []  # the linkable emit's global surface
@@ -5183,7 +5221,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             abi=abi,
             protos=protos,
             func_params=func_params,
-            proto_consts=proto_consts,
+            fn_quals=fn_quals,
             func_variadic=func_variadic,
             lowered=functions,
         ).lower()
@@ -5244,6 +5282,33 @@ def _aggregate(aggregates: dict, tag: str, kind: str = "", pointee: bool = False
     raise CLowerError(f"the incomplete struct or union {tag!r} has no layout here")
 
 
+def _qual_sig(tref) -> tuple:
+    """The qualifiers a function type keeps of a parameter or return of type `tref`, level by level from what it
+    points to out to below its own top level, which no function type reads (C11 6.7.6.3p15): `const` of the
+    base type, then each `*`'s own -- `const char *const *argv` is `(("const",), ("const",))`. An array
+    parameter decays to a pointer of its own, so each of its `*`s is below the top. A function pointer's
+    first level is its own `const` (`op_t const *p`), its parameters' are its `fquals` (CF-QUALS). () when
+    nothing below the top is qualified."""
+    if tref is None:
+        return ()
+    if tref.funcptr:
+        first = tuple(q for q in tref.quals if q == "const")
+    else:
+        first = ("const",) if "const" in tref.quals else ()
+    levels = (first,) + tuple(tref.ptr_quals or ((),) * tref.ptr)
+    if not (tref.array or tref.vla is not None or tref.vla_dims):
+        levels = levels[
+            : tref.ptr
+        ]  # the parameter's own level -- its top -- is no part of the type
+    return levels if any(levels) else ()
+
+
+def _fn_quals(ret, params) -> tuple:
+    """A function type's qualifiers: its return's and each parameter's (`_qual_sig`), () when none has any."""
+    sigs = (_qual_sig(ret), tuple(_qual_sig(p) for p in params))
+    return sigs if sigs[0] or any(sigs[1]) else ()
+
+
 def _fp_shaped(fct: CType, tref: cast.TypeRef, abi) -> CType:
     """A function-pointer type under its declarator's `*`s and dimensions (CF-FPTAB): `op_t *p` points at
     a function pointer and `op_t ops[3]` holds three, each as wide as a pointer on the target -- not the
@@ -5263,8 +5328,11 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
     ):  # a function-pointer member (dispatch table), a pointer to one, an array of them
         ret = _resolve_member_type(tref.func_ret, aggregates, abi)
         params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
+        fquals = _fn_quals(tref.func_ret, tref.func_params)
         return _fp_shaped(
-            funcptr(tref.base, ret, params, abi, variadic=tref.func_variadic), tref, abi
+            funcptr(tref.base, ret, params, abi, variadic=tref.func_variadic, fquals=fquals),
+            tref,
+            abi,
         )
     if tref.aggregate:  # a pointer member may name a struct not laid out yet (or ever)
         base = _aggregate(aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)

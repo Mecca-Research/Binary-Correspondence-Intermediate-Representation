@@ -33,6 +33,9 @@ class TypeRef:
     #   the verbatim spelling (`_BitInt(N)` / `unsigned _BitInt(N)`) lowering builds
     #   the `bitint` CType from. Carried on the TypeRef so the no-promotion +
     #   faithful-emit width survives parse -> lower.
+    ptr_quals: tuple = ()  # the qualifiers after each `*`, from the base out -- `const char *const *`
+    #   has `(("const",), ())` -- each a tuple of `const` and `restrict`; () when no `*` is qualified.
+    #   A function type spells and compares them (CF-QUALS)
 
 
 # --- expressions ---

@@ -28,8 +28,8 @@
   {
    "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
    "label": "FO3 the oracle drops an inline table's dimensions",
-   "new": "        return dataclasses.replace(fp, ptr=ptr), name\n",
-   "old": "        return dataclasses.replace(fp, ptr=ptr, array=tuple(dims)), name\n",
+   "new": "        return dataclasses.replace(fp, ptr=ptr, quals=own, ptr_quals=pq), name\n",
+   "old": "        return dataclasses.replace(fp, ptr=ptr, array=tuple(dims), quals=own, ptr_quals=pq), name\n",
    "path": "bcir/frontends/cfront/cparse.py"
   },
   {

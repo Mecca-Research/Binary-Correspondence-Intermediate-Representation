@@ -72,6 +72,10 @@ class CType:
     #   packs bit-by-bit and its access unit spans only the bytes it covers)
     params: tuple = ()  # parameter CTypes (funcptr only) — for faithful emit
     variadic: bool = False  # funcptr only: the function takes a trailing `...` (CF-FPRET)
+    fquals: tuple = ()  # funcptr only: the qualifiers its return and parameters keep below their top level --
+    #   (return levels, (parameter levels, ...)), each level a tuple of `const` / `restrict` from what it points
+    #   to out (`lower._qual_sig`); () when none is qualified. Part of the function type's identity, and
+    #   spelled wherever the type is (CF-QUALS)
     shape: tuple = ()  # array dims of a decayed multi-dim array param (m[i][j])
     bit_width: int = 0  # a C23 `_BitInt(N)` type's EXACT width N (0 == a normal type; >0 ==
     #   `_BitInt(N)`). A distinct integer type that does NOT promote and does
@@ -439,10 +443,13 @@ def valist(abi=None) -> CType:
     return CType("valist", name="va_list", size=size, align=size)
 
 
-def funcptr(name: str, ret: CType, params: tuple = (), abi=None, variadic: bool = False) -> CType:
+def funcptr(
+    name: str, ret: CType, params: tuple = (), abi=None, variadic: bool = False, fquals: tuple = ()
+) -> CType:
     """A function-pointer type — pointer-sized (per the target ABI), carrying its return + parameter
-    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim), and
-    whether the function is variadic (CF-FPRET)."""
+    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim),
+    whether the function is variadic (CF-FPRET), and the qualifiers of its return and parameters
+    (CF-QUALS)."""
     size = abi.pointer_size if abi is not None else PTR_SIZE
     return CType(
         "funcptr",
@@ -453,6 +460,7 @@ def funcptr(name: str, ret: CType, params: tuple = (), abi=None, variadic: bool 
         of=ret,
         params=tuple(params),
         variadic=variadic,
+        fquals=fquals,
     )
 
 

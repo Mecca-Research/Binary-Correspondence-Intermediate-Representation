@@ -207,25 +207,64 @@ def _has_fp(ct: "CType | None") -> bool:
     return ct is not None and ct.kind == "funcptr"
 
 
-def _funcptr_decl(ct: CType, name: str) -> str:
+def _qual_word(quals: tuple) -> str:
+    """The qualifiers of one level of a declarator, as written after its `*` (`const `), or nothing."""
+    return " ".join(quals) + " " if quals else ""
+
+
+def _funcptr_decl(ct: CType, name: str, sig: tuple = ()) -> str:
     """Render an inline function-pointer declarator `RET (*name)(PARAMS)` -- and around it the pointers and
     dimensions of a type that holds one (CF-FPTAB): an array of them `RET (*name[N])(PARAMS)`, a pointer to
     one `RET (**name)(PARAMS)`. Used in param, local and temp position, where (unlike a typedef alias)
     there is no spelling to print and the full signature must be reconstructed from the carried return +
-    parameter types -- `int (*g)(int)`. With no name it is the type's own spelling (a prototype's)."""
-    inner, ptr_last = name, False
+    parameter types -- `int (*g)(int)`. With no name it is the type's own spelling (a prototype's). Its
+    return and parameters keep their qualifiers (the function type's `fquals`), and `sig` gives the
+    qualifiers of the function pointer and of the `*`s around it below their top level, `RET (**const
+    *pp)(PARAMS)` (`lower._qual_sig`, CF-QUALS)."""
+    depth, at = 0, ct
+    while at.kind in ("pointer", "array"):
+        depth += at.kind == "pointer"
+        at = at.of
+    inner, ptr_last, level = name, False, depth
     while ct.kind in ("pointer", "array"):
         if ct.kind == "pointer":
-            inner, ptr_last = f"*{inner}", True
+            # the outermost `*` is the object's own level; each one inside keeps its qualifiers
+            quals = sig[level] if level < len(sig) else ()
+            inner, ptr_last, level = f"*{_qual_word(quals)}{inner}", True, level - 1
         else:  # a dimension binds tighter than a `*`: a pointer to an array keeps its parentheses
             inner, ptr_last = (
                 (f"({inner})[{ct.count}]" if ptr_last else f"{inner}[{ct.count}]"),
                 False,
             )
         ct = ct.of
-    ret = _cname(ct.of) if ct.of is not None else "void"
-    plist = ", ".join([_cname(p) for p in ct.params] + (["..."] if ct.variadic else [])) or "void"
-    return f"{ret} (*{inner})({plist})"
+    rsig, psigs = ct.fquals or ((), ())
+    if ct.of is None:
+        ret = "void"
+    else:  # a function pointer it returns is spelled by its typedef (CF-FPRET)
+        ret = _cname(ct.of) if _has_fp(ct.of) else _qual_type(ct.of, rsig)
+    plist = [_proto_param(p, psigs[k] if k < len(psigs) else ()) for k, p in enumerate(ct.params)]
+    params = ", ".join(plist + (["..."] if ct.variadic else [])) or "void"
+    # the function pointer's own qualifiers, below a `*` around it
+    own = sig[0] if sig and depth else ()
+    return f"{ret} (*{_qual_word(own)}{inner})({params})"
+
+
+def _qual_type(ct: CType, sig: tuple) -> str:
+    """The type `ct` as a function type spells a parameter or return of it: with the qualifiers `sig` keeps at
+    each level below its top (`lower._qual_sig`) -- `const char *const *` -- where the emit's own objects
+    are spelled without them (`_cname`) and meet it through a cast (`_qual_arg`, `_qual_result`). A function
+    pointer's own `RET (*)(PARAMS)`, its parameters qualified as its type says (CF-QUALS)."""
+    if _has_fp(ct):
+        return _funcptr_decl(ct, "", sig)
+    if not sig:
+        return _cname(ct)
+    stars, at = 0, ct
+    while at.kind == "pointer":
+        stars, at = stars + 1, at.of
+    out = ("const " if "const" in sig[0] else "") + _cname(at)
+    for level in range(1, stars + 1):
+        out += " *" + (" " + " ".join(sig[level]) if level < len(sig) and sig[level] else "")
+    return out
 
 
 _ANON_REF = re.compile(r"(?<![A-Za-z0-9_$])(?:struct|union) (\$anon\d+)(?![A-Za-z0-9_$])")
@@ -374,14 +413,66 @@ def _signature(lf: LoweredFunc) -> str:
     return f"static {_cname(lf.ret_type)} bcir_{lf.name}({', '.join(parts) or 'void'})"
 
 
-def _proto_param(ct: CType, const_pointee: bool) -> str:
-    """A prototyped callee's parameter in its `extern` declaration: a function pointer as its declarator
-    with no name, `RET (*)(PARAMS)` (its name alone does not compile), and a pointer to `const` keeps the
-    qualifier -- a parameter of `const T *` is another type than one of `T *`, and the two declarations of
-    the callee would conflict. The twin spells both alike (`bcir_cfront.c`, the prototype's `tudefs`)."""
-    if _has_fp(ct):
-        return _funcptr_decl(ct, "")
-    return ("const " if const_pointee and ct.kind == "pointer" else "") + _cname(ct)
+def _proto_param(ct: CType, sig: tuple = ()) -> str:
+    """A parameter of a function type as it spells it: a function pointer as its declarator with no name,
+    `RET (*)(PARAMS)` (its name alone does not compile), and every qualifier below its top level kept
+    (`_qual_type`) -- a parameter of `const T *` or `T *const *` is another type than one of `T *` or `T **`,
+    and two declarations of the callee would conflict (CF-QUALS). The twin spells it alike (`bcir_cfront.c`,
+    `ctype_qstr`)."""
+    return _qual_type(ct, sig)
+
+
+def _extern_decl(callee: str, rct: CType, pcts: tuple, quals: tuple, va: bool) -> str:
+    """The `extern` declaration of a function another unit defines, as its prototype declares it: its
+    return and every parameter with the qualifiers each keeps below its top level (CF-QUALS), a variadic
+    one with its `...` (CF-EXTDESIG). A function pointer it returns is spelled by its typedef (CF-FPRET)."""
+    rsig, psigs = quals or ((), ())
+    params = [_proto_param(p, psigs[k] if k < len(psigs) else ()) for k, p in enumerate(pcts)]
+    ret = _cname(rct) if _has_fp(rct) else _qual_type(rct, rsig)
+    return (
+        f"extern {ret} {callee}(" + (", ".join(params + (["..."] if va else [])) or "void") + ");"
+    )
+
+
+def _below_top(ct: "CType | None", sig: tuple, top: int) -> bool:
+    """Whether the type `ct` of a function type's parameter or return keeps a qualifier the emit's own
+    objects do not spell, below its level `top`: an argument passed to it, or a result taken from it, meets
+    the emit's unqualified type through a cast (`_qual_arg`, `_qual_result`). A function pointer's type is
+    spelled whole wherever it is, so it never needs one."""
+    if ct is None or not sig or _has_fp(ct):
+        return False
+    return any(sig[k] for k in range(min(top, len(sig))))
+
+
+def _qual_args(lf: LoweredFunc, ref, rids, params: tuple, fquals: tuple) -> str:
+    """A call's arguments (`_args`), each passed to a parameter whose type keeps a qualifier more than one level
+    below its top -- `const char **`, `const char *const *`, which C converts no `char **` to (6.5.16.1p1) --
+    cast to that parameter's type: the emit's own objects are spelled without qualifiers (CF-QUALS). One level
+    down C adds them itself (`const T *` from a `T *`)."""
+    psigs = fquals[1] if fquals else ()
+    out = _arg_list(lf, ref, rids)
+    for k, arg in enumerate(out):
+        if k < len(params) and k < len(psigs):
+            pct, sig = params[k], psigs[k]
+            depth = 0
+            at = pct
+            while at is not None and at.kind == "pointer":
+                depth, at = depth + 1, at.of
+            if _below_top(pct, sig, depth - 1):
+                out[k] = f"({_qual_type(pct, sig)}){arg}"
+    return ", ".join(out)
+
+
+def _qual_result(call: str, ret: "CType | None", fquals: tuple) -> str:
+    """A call whose function type returns a pointer to a qualified type, `const T *`, taken by the emit's own
+    unqualified temp through a cast (CF-QUALS)."""
+    rsig = fquals[0] if fquals else ()
+    if ret is None or not rsig or _has_fp(ret) or ret.kind != "pointer":
+        return call
+    depth, at = 0, ret
+    while at.kind == "pointer":
+        depth, at = depth + 1, at.of
+    return f"({_cname(ret)}){call}" if _below_top(ret, rsig, depth) else call
 
 
 def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
@@ -454,13 +545,8 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     # Phase 3 linking: declare every PROTOTYPED cross-TU callee this function calls, so the
     # emitted TU compiles standalone and the host LINKER resolves the symbol from a sibling object.
     tu_decls = [
-        f"extern {_cname(rct)} {callee}("
-        + (
-            ", ".join([_proto_param(p, k) for p, k in zip(pcts, consts)] + (["..."] if va else []))
-            or "void"
-        )
-        + ");"
-        for callee, (rct, pcts, consts, va) in sorted(lf.tu_protos.items())
+        _extern_decl(callee, rct, pcts, quals, va)
+        for callee, (rct, pcts, quals, va) in sorted(lf.tu_protos.items())
     ]
     # ... and every function of the unit it calls, in the order of the first call (not itself)
     callees = dict.fromkeys(c for c, _a in lf.calls if c != lf.name and c in (unit or {}))
@@ -860,12 +946,16 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         return deftmp(c.wr[0], f"{callee}({', '.join(ref(r) for r in c.rd)})", "int")
     if c.op.startswith("c.call.tu:"):  # a PROTOTYPED cross-TU callee (Phase 3 linking):
         callee = c.op.split(":", 1)[1]  # verbatim, external linkage -- the emitted TU
-        if not c.wr:  # declares it; the host LINKER resolves it
-            return f"{callee}({_args(lf, ref, c.rd)});"
+        # declares it; the host LINKER resolves it. Its qualified parameters and return meet the emit's
+        # unqualified objects through casts (CF-QUALS)
+        pret, pcts, quals, _va = lf.tu_protos.get(callee, (None, (), (), False))
+        call = f"{callee}({_qual_args(lf, ref, c.rd, pcts, quals)})"
+        if not c.wr:
+            return f"{call};"
         rt = lf.rid_types.get(c.wr[0])
         return deftmp(
             c.wr[0],
-            f"{callee}({_args(lf, ref, c.rd)})",
+            _qual_result(call, pret, quals),
             _cname(rt) if rt is not None else None,
         )
     if c.op.startswith("c.call.builtin:"):  # a GCC/Clang integer builtin -> verbatim
@@ -902,13 +992,25 @@ def _claim_stmt(lf: LoweredFunc, c: Claim, ref) -> str:
         )  # mk(x);`), not uint32
         return deftmp(c.wr[0], f"bcir_{callee}({_args(lf, ref, c.rd)})", ty)
     if c.op == "c.call.indirect":  # rd[0] is the function pointer; rd[1:] args
-        call = f"{ref(c.rd[0])}({_args(lf, ref, c.rd[1:])})"
-        return deftmp(c.wr[0], call) if c.wr else f"{call};"  # a void function: a bare call
+        # its qualified parameters and return meet the emit's unqualified objects through casts (CF-QUALS)
+        fct = lf.rid_types.get(c.rd[0])
+        if fct is None or fct.kind != "funcptr":
+            fct = None
+        params, quals = (fct.params, fct.fquals) if fct is not None else ((), ())
+        call = f"{ref(c.rd[0])}({_qual_args(lf, ref, c.rd[1:], params, quals)})"
+        if not c.wr:  # a void function: a bare call
+            return f"{call};"
+        return deftmp(c.wr[0], _qual_result(call, fct.of if fct is not None else None, quals))
     if c.op.startswith("c.call.imember:"):  # o->fn(args): funcptr struct member
         field = c.op.split(":", 1)[1]
         sep = "->" if c.imm and c.imm[0] else "."
-        call = f"{ref(c.rd[0])}{sep}{field}({_args(lf, ref, c.rd[1:])})"
-        return deftmp(c.wr[0], call) if c.wr else f"{call};"
+        # its qualified parameters and return meet the emit's unqualified objects through casts (CF-QUALS)
+        fct = lf.member_calls.get(c.id)
+        params, quals = (fct.params, fct.fquals) if fct is not None else ((), ())
+        call = f"{ref(c.rd[0])}{sep}{field}({_qual_args(lf, ref, c.rd[1:], params, quals)})"
+        if not c.wr:
+            return f"{call};"
+        return deftmp(c.wr[0], _qual_result(call, fct.of if fct is not None else None, quals))
     if c.op.startswith("c.atomic."):  # atomic RMW -> the matching builtin (§5.8)
         return deftmp(
             c.wr[0],
@@ -955,6 +1057,11 @@ def _args(lf: LoweredFunc, ref, rids) -> str:
     that takes an array is the flat `T *` (a local array is declared flat already). Such an argument is spelled
     as its first element's address, `&m[0][0]` -- the same address, of the parameter's type. The twin spells
     it the same (`bcir_cfront.c`, `emit_arg`)."""
+    return ", ".join(_arg_list(lf, ref, rids))
+
+
+def _arg_list(lf: LoweredFunc, ref, rids) -> list:
+    """`_args`, one argument per entry."""
     out = []
     for r in rids:
         ct = lf.rid_types.get(r)
@@ -962,7 +1069,7 @@ def _args(lf: LoweredFunc, ref, rids) -> str:
         while ct is not None and ct.kind == "array":
             dims, ct = dims + 1, ct.of
         out.append(f"&{ref(r)}" + "[0]" * dims if r in lf.globals_used and dims > 1 else ref(r))
-    return ", ".join(out)
+    return out
 
 
 def _unit_ctype(size: int) -> str:

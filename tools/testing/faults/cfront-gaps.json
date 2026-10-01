@@ -118,8 +118,8 @@
     {
       "expects": "test_typedef_arrays_run_as_the_original_on_both_rails",
       "label": "O15 a typedef'd array's dims outer, not inner",
-      "new": "            array=tuple(base.array) + tuple(dims),",
-      "old": "            array=tuple(dims) + tuple(base.array),",
+      "new": "            # the declarator's own dims are the outer ones: `row_t rw[2]` is two `row_t`s\n            array=tuple(base.array) + tuple(dims),\n",
+      "old": "            # the declarator's own dims are the outer ones: `row_t rw[2]` is two `row_t`s\n            array=tuple(dims) + tuple(base.array),\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {

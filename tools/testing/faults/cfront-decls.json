@@ -50,22 +50,22 @@
     {
       "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
       "label": "DO6 the oracle's extern drops a pointer parameter's const",
-      "new": "    return _cname(ct)\n",
-      "old": "    return (\"const \" if const_pointee and ct.kind == \"pointer\" else \"\") + _cname(ct)\n",
+      "new": "    out = _cname(at)\n",
+      "old": "    out = (\"const \" if \"const\" in sig[0] else \"\") + _cname(at)\n",
       "path": "bcir/frontends/cfront/emit.py"
     },
     {
       "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
       "label": "DO7 the oracle's extern spells a function-pointer parameter by its name",
       "new": "        return _cname(ct)\n",
-      "old": "        return _funcptr_decl(ct, \"\")\n",
+      "old": "        return _funcptr_decl(ct, \"\", sig)\n",
       "path": "bcir/frontends/cfront/emit.py"
     },
     {
       "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
       "label": "DO8 the oracle's extern drops an array parameter's const",
-      "new": "            \"const\" in p.quals and bool(p.ptr) for p in params\n",
-      "old": "            \"const\" in p.quals and bool(p.ptr or p.array or p.vla is not None) for p in params\n",
+      "new": "    if True:\n",
+      "old": "    if not (tref.array or tref.vla is not None or tref.vla_dims):\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -127,8 +127,8 @@
     {
       "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
       "label": "DT7 the twin's extern drops a pointer parameter's const",
-      "new": "0&&pt->is_const?\"const \":\"\"",
-      "old": "pt->kind==2&&pt->is_const?\"const \":\"\"",
+      "new": "  int w=snprintf(o,n,\"%s%s \",0?\"const \":\"\",b);\n",
+      "old": "  int w=snprintf(o,n,\"%s%s \",ty->is_const?\"const \":\"\",b);\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

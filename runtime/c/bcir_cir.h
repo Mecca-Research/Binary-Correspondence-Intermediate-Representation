@@ -139,6 +139,9 @@ typedef struct bcir_ctype {
   uint8_t  ptr_to_fp;        /* a pointer (kind 2) whose pointee is a function pointer, `op_t *p` (CF-FPTAB): `tag`,
                               * `fp_sig` and the `fp_ret_*` fields describe the pointee, so a read through it is a
                               * function-pointer value and the emit spells `op_t *`. In the same padding */
+  uint8_t  ptr_const;        /* the `*`s that are `const` (kind 2): bit k-1 for the k-th from the base, `char *const *`
+                              * bit 0 (CF-QUALS). A function type spells and compares those below a parameter's or the
+                              * return's top level; a qualified `*` past the eighth is refused. In the same padding */
   int      size;             /* scalar size, pointee size for a pointer, or 8 for a funcptr */
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
@@ -165,6 +168,7 @@ typedef struct bcir_ctype {
                               * and writes no result (CF-VOIDCB). Set where the return type is captured; a zero
                               * fp_ret_size alone cannot tell `void` from a return that was not captured. It and
                               * fp_sig sit in padding: a ctype is no larger, and every parser frame holds several */
+  uint8_t  ptr_restrict;     /* the `*`s that are `restrict`, as `ptr_const` (CF-QUALS). In padding too */
   int      fp_ret_agg;       /* kind-3 funcptr: a struct/union RETURN, as 1 + the front end's index of its
                               * definition (0: not one) -- the call's result is that aggregate value */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
@@ -198,7 +202,22 @@ typedef struct bcir_claim {
                                * a pointer to volatile storage is device-domain (R3) without it. OPTIONAL
                                * annotation, digest-excluded, default 0; the oracle's `Claim.volatile`. */
   char     op[BCIR_CIR_OP]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" / "c.call:<callee>" */
+  uint32_t qcast;             /* a call whose operands or result the emit casts (CF-QUALS): 1 + the index in its
+                               * function's `qcasts` of the first of its casts, which follow one another; 0 for
+                               * none. Held on the claim so that a lowering rolled back takes its casts with it.
+                               * OPTIONAL annotation, digest-excluded, default 0. In the struct's tail padding. */
 } bcir_claim;
+
+/* A cast the emit puts on an operand of a call, or on its result (CF-QUALS): the callee's function type keeps a
+ * qualifier below a parameter's top level, or below its return's, that the emit's own objects -- spelled without
+ * qualifiers -- lack, where C converts neither way by itself (`char **` to `const char *const *`). An OPTIONAL emit
+ * annotation: it adds no claim and the digest does not read it; the oracle casts in its emit alike. */
+#define BCIR_QCAST_TYPE 256
+typedef struct bcir_qcast {
+  uint32_t claim_id;          /* the call's claim, whose `qcast` names its first */
+  int      operand;           /* the operand, an index of its rd[]; -1 for the result */
+  char     type[BCIR_QCAST_TYPE];   /* the operand's cast, spelled; "" for the result, cast to its own type */
+} bcir_qcast;
 
 /* A static-local variable (static storage duration: a once-only constant init). */
 typedef struct bcir_static {
@@ -248,6 +267,7 @@ typedef struct bcir_func {
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */
   bcir_host_literal *host_literals; int n_host_literals, cap_host_literals;
   bcir_ptr_extent *ptr_extents; int n_ptr_extents, cap_ptr_extents;
+  bcir_qcast *qcasts; int n_qcasts, cap_qcasts;           /* the casts its calls' operands take (CF-QUALS) */
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */
