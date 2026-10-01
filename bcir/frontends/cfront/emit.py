@@ -224,7 +224,7 @@ def _funcptr_decl(ct: CType, name: str) -> str:
             )
         ct = ct.of
     ret = _cname(ct.of) if ct.of is not None else "void"
-    plist = ", ".join(_cname(p) for p in ct.params) or "void"
+    plist = ", ".join([_cname(p) for p in ct.params] + (["..."] if ct.variadic else [])) or "void"
     return f"{ret} (*{inner})({plist})"
 
 

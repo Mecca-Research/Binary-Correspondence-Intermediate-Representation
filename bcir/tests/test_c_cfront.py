@@ -288,6 +288,8 @@ _PTRVALUE = [
     #   the end of their block; file scope after a function reads the enumerator again (CF-ENUMSCOPE)
     "cfront_fptab.c",  # tables of function pointers -- typedef'd and inline, local, file-scope, 2-D, members,
     #   pointers to them, parameters of them -- and calls through `(*fp)`, `(**fp)` and `(*f)` (CF-FPTAB)
+    "cfront_fpret.c",  # function pointers calls return; pointers, structs and function pointers returned through a
+    #   function pointer; pointers to variadic functions (CF-FPRET)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -491,10 +493,13 @@ def _equiv(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
             f"    if({entry.name}({call})!=bcir_{entry.name}({call}))"
             f'{{printf("MISMATCH@%d\\n",i);return 1;}}'
         )
+    # (`source` is preprocessed, its `#include`s gone: what a fixture includes, the harness does -- <stdarg.h> for a
+    # variadic function's `va_list`, CF-FPRET)
     harness = f"""#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <math.h>
 #include <complex.h>
@@ -12278,3 +12283,176 @@ def test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_ra
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(_FPTAB_HEAD + body + "\n")
             _parity_on_targets(path, _FPTAB_HEAD + body + "\n")
+
+
+# CF-FPRET: a function pointer a call returns -- held, compared, selected, returned and called through -- and what a
+# call through a function pointer returns: a pointer, a struct whose member is read, a function pointer; and pointers
+# to variadic functions, declared, selected and called. `cfront_fpret.c` returns the pointers it picks; they are
+# compared with the original's and called here.
+_FPRET_DRIVER = (
+    _GAPS_SAME
+    + r"""
+#define SAME_PICK(f) do { if (f(s) != bcir_##f(s) || f(s)(s) != bcir_##f(s)(s)) return fail(#f); } while (0)
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME_PICK(fr_pick); SAME_PICK(fr_pick_held); SAME_PICK(fr_pick_late);
+    if (fr_pick_va(s) != bcir_fr_pick_va(s) || fr_pick_va(s)(s, 3u) != bcir_fr_pick_va(s)(s, 3u)) return fail("va");
+    SAME(fr_compare, s); SAME(fr_ptr_ret, s); SAME(fr_struct_ret, s); SAME(fr_variadic, s); SAME(fr_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+# ... and a call through a returned pointer, or through a pointer to a variadic function, in place: a pointer the
+# escape rows count as resolved to no one function, which a corpus fixture keeps out -- through a direct call's
+# result, under `*`, through a pointer to a function returning one and a member of that type, a struct and a pointer
+# returned through a member, a select of variadic functions
+_FPRET_CALLS = """#include <stdint.h>
+#include <stdarg.h>
+typedef uint32_t (*op_t)(uint32_t);
+typedef op_t (*mk_t)(uint32_t);
+typedef uint32_t (*vop_t)(uint32_t, ...);
+struct pair { uint32_t a, b; };
+struct ops { mk_t mk; struct pair (*mp)(uint32_t); uint32_t *(*get)(uint32_t *); vop_t v; };
+struct vs { uint32_t (*f)(uint32_t, ...); };
+static uint32_t tw(uint32_t x) { return x * 2u + 1u; }
+static uint32_t th(uint32_t x) { return x * 3u + 5u; }
+static op_t pick(uint32_t s) { return s & 1u ? tw : th; }
+static op_t pick2(uint32_t s) { return pick(s + 1u); }
+static struct pair mkp(uint32_t s) { struct pair p = {s + 1u, s + 2u}; return p; }
+static struct pair mkq(uint32_t s) { struct pair p = {s * 3u, s * 5u}; return p; }
+static uint32_t *id(uint32_t *p) { return p; }
+static uint32_t va(uint32_t n, ...) { va_list ap; va_start(ap, n); uint32_t r = n + va_arg(ap, uint32_t); va_end(ap); return r; }
+static uint32_t vb(uint32_t n, ...) { va_list ap; va_start(ap, n); uint32_t r = n ^ va_arg(ap, uint32_t); va_end(ap); return r; }
+uint32_t fpr_calls(uint32_t s) {
+  mk_t m = s & 2u ? pick : pick2;
+  struct ops o = {pick, mkp, id, va};
+  struct pair (*mp)(uint32_t) = s & 4u ? mkp : mkq;
+  vop_t g = s & 8u ? va : vb;
+  uint32_t v = s;
+  uint32_t k = pick(s)(s) + (*pick(s))(s) * 3u + m(s)(s) * 5u + (*m)(s)(s) * 7u + (*m(s))(s) * 11u;
+  k += o.mk(s)(s) * 13u + mp(s).a * 17u + (*mp)(s).b * 19u + o.mp(s).b * 23u + *o.get(&v) * 29u;
+  k += (s & 1u ? va : vb)(s, 3u) * 31u + o.v(s, 4u) * 37u + g(s, 6u) * 41u + pick2(s)(s + 1u) * 43u;
+  struct vs o2 = {vb};
+  uint32_t (*q)(uint32_t, ...) = o2.f;
+  struct pair (*pt[2])(uint32_t) = {mkp, mkq};
+  k += q(s, 2u) * 47u + (*(*m)(s))(s) * 53u + pt[s & 1u](s).a * 59u;
+  return k;
+}
+"""
+_FPRET_HEAD = (
+    "#include <stdint.h>\n#include <stdarg.h>\ntypedef uint32_t (*op_t)(uint32_t);\n"
+    "struct P { uint32_t a, b; };\n"
+    "static uint32_t inc(uint32_t v) { return v + 1u; }\n"
+    "static uint32_t *id(uint32_t *p) { return p; }\n"
+    "static uint32_t va(uint32_t n, ...) { return n; }\n"
+    "static uint32_t vb(uint32_t n, ...) { return n + 1u; }\n"
+    "static uint32_t vc(uint64_t n, ...) { return (uint32_t)n; }\n"
+    "static struct P gp = {3u, 4u};\n"
+    "static struct P *getp(uint32_t s) { (void)s; return &gp; }\n"
+)
+_FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
+# A function declared to return a function pointer by a nested declarator, which neither rail parses, is refused for
+# one reason (the same function with a typedef for its return type lowers); arms of `?:` that are functions of two
+# types, a variadic one among them, are refused as CF-FNSEL refuses any (C11 6.5.15p3).
+_FPRET_REFUSED = (
+    ("uint32_t (*pk(uint32_t s))(uint32_t) { (void)s; return inc; }", _FN_RET_FP),
+    ("uint32_t (*pk(uint32_t s))(uint32_t);\nuint32_t f(uint32_t s) { return s; }", _FN_RET_FP),
+    ("static uint32_t (**pk2(void))(uint32_t);\nuint32_t f(uint32_t s) { return s; }", _FN_RET_FP),
+    ("uint32_t f(uint32_t s) { return (s ? va : inc) != 0; }", _FN_SELECTED),
+    ("uint32_t f(uint32_t s) { return (s ? va : vc) != 0; }", _FN_SELECTED),
+)
+# ... while a pointer return spelled in every declarator -- a typedef, a local, a member, a parameter, a pointer to a
+# struct -- a function-pointer return declared by a prototype, and a table of pointers to variadic functions lower
+# alike
+_FPRET_LOWERED = (
+    "typedef uint32_t *(*pf)(uint32_t *);\nuint32_t f(uint32_t s) { pf h = id; uint32_t v = s; return *h(&v); }",
+    "uint32_t f(uint32_t s) { uint32_t *(*h)(uint32_t *) = id; uint32_t v = s; return *h(&v) + 1u; }",
+    "struct G { uint32_t *(*get)(uint32_t *); };\n"
+    "uint32_t f(uint32_t s) { struct G g = {id}; uint32_t v = s; return *g.get(&v); }",
+    "static uint32_t ap2(uint32_t *(*h)(uint32_t *), uint32_t s) { uint32_t v = s; return *h(&v); }\n"
+    "uint32_t f(uint32_t s) { return ap2(id, s); }",
+    "uint32_t f(uint32_t s) { struct P *(*h)(uint32_t) = getp; return h(s)->a + h(s)->b; }",
+    "op_t pickp(uint32_t s);\nuint32_t f(uint32_t s) { op_t g = pickp(s); return g(s); }\n"
+    "op_t pickp(uint32_t s) { (void)s; return inc; }",
+    "uint32_t f(uint32_t s) { uint32_t (*t[2])(uint32_t, ...) = {va, vb}; return t[s & 1u](s, 1u) + (*t)(s, 0); }",
+)
+
+
+def test_function_pointers_returned_by_calls_run_as_the_original():
+    """CF-FPRET: `cfront_fpret.c` -- a function pointer a call returns, held, compared and returned; one returned
+    through a pointer to a function that returns one; a pointer and a struct returned through a function pointer, the
+    struct's member read; a pointer to a variadic function, declared inline and by a typedef, selected among variadic
+    functions and called. On the parent both rails typed a call's function pointer `uint32_t` (no emit compiled, and a
+    comparison read a pointer cut to 32 bits), the oracle refused `typedef T *(*pf)(T *)` and the twin typed what it
+    returns as an integer, the twin refused `m(s).a`, and both refused a variadic function-pointer declarator. The
+    fixture and `_FPRET_CALLS` -- every call through a returned pointer in place -- lower to one claim graph on the
+    four targets, and each emit returns what the original does and the pointers the original's."""
+    if not _CC:
+        return
+    fx = "cfront_fpret.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _FPRET_DRIVER)
+    exe = _build_frontend(_session_build_dir())
+    oracle_summary, r, _entry = _oracle(_FPRET_CALLS)
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "fpret_calls.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_FPRET_CALLS)
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        _parity_on_targets(path, _FPRET_CALLS)
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(fpr_calls, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original(
+        "fpret_calls.c", _FPRET_CALLS, (("twin", c_emit), ("oracle", oracle_emit)), driver
+    )
+
+
+def test_function_pointer_returns_refused_and_lowered_alike_on_both_rails():
+    """CF-FPRET: a function declared to return a function pointer by a nested declarator -- defined, prototyped,
+    returning a pointer to one -- is refused on both rails for one reason, where each refused it with a parse error of
+    its own; arms of `?:` that are a variadic function and a function of another type are refused as CF-FNSEL refuses
+    any (`_FPRET_REFUSED`). A pointer return spelled in every declarator, a function-pointer return declared by a
+    prototype and a table of pointers to variadic functions (`_FPRET_LOWERED`) lower to one claim graph on the four
+    targets."""
+    for body, why in _FPRET_REFUSED:
+        got = _fptab_refusal(_FPRET_HEAD + body + "\n")
+        assert got == why, (body, got, why)
+    for body in _FPRET_LOWERED:
+        got = _fptab_refusal(_FPRET_HEAD + body + "\n")
+        assert got == "", (body, got)
+    # the claim of a call through a pointer to a variadic function declares its signature with its `...`
+    src = (
+        _FPRET_HEAD
+        + "uint32_t f(uint32_t s) { uint32_t (*g)(uint32_t, ...) = va; return g(s, 1u); }\n"
+    )
+    claims = compile_unit(src, check_clang=False).lowered.functions["f"].claims
+    sigs = {c.callee_sig for c in claims if c.op == "c.call.indirect"}
+    assert sigs == {"uint32_t(uint32_t, ...)"}, sigs
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_FPRET_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_FPRET_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_FPRET_LOWERED):
+            path = os.path.join(d, f"l{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_FPRET_HEAD + body + "\n")
+            _parity_on_targets(path, _FPRET_HEAD + body + "\n")

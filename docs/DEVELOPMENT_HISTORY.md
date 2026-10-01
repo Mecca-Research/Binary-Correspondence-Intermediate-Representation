@@ -2338,13 +2338,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     neither rail, so a member arm beside a function of another type is not refused (closed by CF-FPTAB, below);
   - a call to a function returning a function pointer types its result `uint32_t` on both rails
     (`uint32_t t = bcir_pick(s);`), which Clang rejects; the oracle refuses a `typedef T *(*pf)(T *)`, and the
-    twin types a call through one as an integer;
+    twin types a call through one as an integer (closed by CF-FPRET, below);
   - both rails drop `const` from a function-pointer declarator's parameter (`uint32_t (*fn)(const uint32_t *)`
     is emitted taking `uint32_t *`), so assigning it a function that takes `const uint32_t *` does not compile;
   - the twin refuses a postfix on the struct a call through a function pointer returns (`m(s).a`), which the
-    oracle lowers; its reason is now the conversion refusal, since `return m(s)` is checked before `.a`;
+    oracle lowers; its reason is now the conversion refusal, since `return m(s)` is checked before `.a` (closed
+    by CF-FPRET, below);
   - a variadic function's designator as an arm of `?:` is still an integer select on both rails, and both
-    refuse a variadic function-pointer declarator (`uint32_t (*g)(uint32_t, ...)`);
+    refuse a variadic function-pointer declarator (`uint32_t (*g)(uint32_t, ...)`) (closed by CF-FPRET, below);
   - an array compared with the constant 0 (`garr == 0`, `arr != 0`) compares it with an `int` temp in both
     emits;
   - `void *vp = malloc(4u);` lowers to two claim graphs: the twin records an allocation extent for the
@@ -2548,10 +2549,75 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - a static local table of function pointers (`static op_t t[2] = {f, g};`) is refused on both rails as no integer
     constant expression, where a function designator is an address constant (C11 6.6p9);
   - a call to a function returning a function pointer is still typed `uint32_t` on both rails (`uint32_t t =
-    bcir_pick(s);`, an emit no compiler takes) -- the second item of CF-CALLS's list -- so the fixture's table
-    parameters compare the element they pick rather than return it;
+    bcir_pick(s);`, an emit no compiler takes) -- an item of CF-CALLS's list -- so the fixture's table parameters
+    compare the element they pick rather than return it (closed by CF-FPRET, below);
   - `i[p]` -- the pointer as the index (C11 6.5.2.1p2) -- is refused on both rails, an integer constant base for one
     reason (`a subscript of an integer constant is not supported`) and any other integer as a subscript of no array.
+
+  CF-FPRET (2026-10-01) typed a function pointer a call returns, and what a call through a function pointer returns, on
+  both rails, and declared pointers to variadic functions: three items of CF-CALLS's list and the one CF-FPTAB recorded
+  beside them. RED was measured on the parent (`b831ba78`).
+  - The defects: a call to a function returning a function pointer -- directly, through its prototype or through a
+    pointer to such a function (`op_t g = pick(s);`, `mk_t m = pick; op_t g = m(s);`) -- typed its result as an integer
+    on both rails (`uint32_t`, or on the twin a `uint64_t` through a pointer), and Clang rejects the emit. Built by
+    GCC, which only warns, both rails' `op_t g = pick(s); return g(s);` called a pointer cut to 32 bits and crashed, and
+    `pick(s) == inc` returned 0 where the original returns 1; a call through the result (`pick(s)(s)`) was refused on
+    both as calling no function pointer. A function pointer whose function returns a pointer (`typedef uint32_t
+    *(*pf)(uint32_t *);`, and a local, member or parameter so declared) was a parse error on the oracle, and the twin
+    typed a call through one as an integer, refusing `*h(&v)` as a dereference of a non-pointer and `h(s)->a` as a
+    missing `;`. The twin refused the member of a struct a call through a function pointer returns (`m(s).a`, as a
+    struct converted to a scalar), and the oracle refused `(*m)(s).b` (`unsupported base expression CallPtr`). Both
+    rails refused every declarator of a pointer to a variadic function (`uint32_t (*g)(uint32_t, ...)`: `expected a
+    type`), and lowered a variadic function's designator as an arm of `?:` to an integer select Clang rejects -- one
+    beside a function of another type included. A function declared to return a function pointer by a nested
+    declarator (`uint32_t (*pk(uint32_t s))(uint32_t)`) was a parse error of each rail's own.
+  - RED: on the parent both new tests fail. Both rails refuse `runtime/c/cfront_fpret.c` (the oracle at its
+    pointer-returning typedef, the twin at its variadic one) and `_FPRET_CALLS`; each rail gives each of the five forms
+    `_FPRET_REFUSED` holds another verdict, lowering the two variadic arms, and refuses six of the seven
+    `_FPRET_LOWERED` holds -- the seventh, a function-pointer return declared by a prototype, lowers to an integer.
+  - What landed: on the oracle, a call's function-pointer return is that function pointer (`_call_result_ct`), and
+    `_call_ret` reads what a call returns off the declarations alone -- a function-pointer object's function's, a
+    definition's or a prototype's, and through any callee whose value is a function pointer, its function's -- so
+    `_fn_valued` and `_fn_value_type` see a call that returns a function pointer and `_call_ptr` calls through it; the
+    result of a call through a function pointer or a member is addressable as a direct call's (`_addr`: `(*m)(x).f`,
+    `o.mk(x).f`); the parser takes the `*`s before a function-pointer declarator into its function's return type
+    (`_fp_return_stars`, at every declarator, a typedef and a member) and a trailing `...` into its parameter list
+    (`TypeRef.func_variadic`, `CType.variadic`); and a variadic function's designator has its named parameters and
+    `...` for its function type (`_fn_type`, `_fn_key`), which the emit (`_funcptr_decl`) and a claim's callee
+    signature spell. On the twin, the function-type table records `...` (`fsig.variadic`, `sig_addv`), which
+    `fp_param_list` parses at every capture site, `sig_alias` and `designator_sig` spell and `sig_same` compares; a call
+    returning a function pointer -- direct, through a prototype, through a function pointer or a member -- yields a
+    function-pointer value of its type (`fp_ret_temp`), and one through a function pointer returning a pointer a
+    pointer (`fp_result_temp`, and `field_call_temp` at both member-call sites); one predicate, `call_result`, takes the
+    postfix on any call's value -- `.` of a struct, `->` and `[` of a pointer, a call through a function pointer -- at a
+    direct call, through a function-pointer object, through any value (`call_value`) and through a member
+    (`member_call_result`); and the indirect and member call emits declare a pointer result by its type. A function
+    declared to return a function pointer by a nested declarator is refused on both rails for one reason (`FN_RET_FP`,
+    the twin's `CC_FN_RET_FP`); with a typedef for its return type it lowers.
+  - Outcomes: `runtime/c/cfront_fpret.c` -- function pointers returned by calls, held, compared, selected and returned,
+    through a definition, a prototype and a pointer to a function that returns one; a pointer and a struct returned
+    through a function pointer, the struct's members read; pointers to variadic functions declared inline and by a
+    typedef, selected and called -- lowers to one claim graph on the four targets, and both emits run as the original,
+    the driver calling every pointer the fixture returns and comparing it with the original's. Each call it makes in
+    place goes through a pointer that holds one function, so the G10 rows are unchanged; the calls through a returned
+    pointer in place are `_FPRET_CALLS` -- a call's result called directly, under `*` and through a pointer to a
+    function that returns one, a member's, a struct's member and a pointer returned through a member or a table, a
+    select of variadic functions, a variadic member -- which lowers alike and runs as the original on both emits. The
+    five refusals of `_FPRET_REFUSED` hold on both rails for the one reason each names, the seven forms of
+    `_FPRET_LOWERED` lower alike on the four targets, and a call through a pointer to a variadic function carries
+    `uint32_t(uint32_t, ...)` as its callee signature. The corpus harness includes `<stdarg.h>`, which a variadic
+    fixture's preprocessed source needs.
+  - Faults: `tools/testing/faults/cfront-fpret.json` holds 28 injected defects, 13 on the oracle and 15 on the twin,
+    and each is caught by its own test. Seven faults of earlier tables whose anchors this change rewrote were
+    re-anchored -- `cfront-calls.json` CL8, CL13, CL16, CL25, CL26 and CL27 and `cfront-fptab.json` FT17 -- and each
+    is caught again.
+  Found, not fixed here (each a suggested follow-up):
+  - a function pointer initialized or assigned with a function of another type (`op_t g = two;` of a two-parameter
+    function, `op_t g = va;` of a variadic one) lowers on both rails, which C forbids (6.5.16.1p1) and Clang rejects;
+  - a cast to a function-pointer typedef (`(op_t)inc`, `(op_t)0`) lowers on the twin and is `unknown type 'op_t'` on
+    the oracle -- beside CF-RTWIDE's cast to an inline function-pointer type, which the round trip refuses;
+  - a function declared to return a function pointer by a nested declarator (`T (*f(P))(Q)`) is refused on both rails,
+    now for one reason; a typedef for its return type is the spelling both take.
 
 ---
 

@@ -335,6 +335,13 @@ _mm_sfence();                      //                   store (release) fence ->
   for one reason on both rails (`called object is not a function or function pointer`, `dereference of a
   non-pointer`, `subscripted value is not an array or a pointer to an object`, ...), as is storing to or stepping a
   function (`a function designator is not an lvalue`) and `sizeof` of one.
+- A function returning a function pointer, declared with a typedef for its return type (`op_t pick(uint32_t s);`):
+  its call is that function pointer -- held, compared, selected, returned, or called at once (`pick(s)(x)`,
+  `(*pick(s))(x)`) -- whether the function is defined, declared by a prototype, or reached through a pointer to it.
+  A call through a function pointer returns what the function's type says: a pointer (`T *(*pf)(T *)`, so
+  `*h(&v)` and `h(s)->v`), a struct whose member is read (`m(s).a`, `(*m)(s).b`, `o.mk(s).a`), or a function pointer.
+  A pointer to a variadic function (`uint32_t (*g)(uint32_t, ...)`, a typedef, a member, a table of them) is declared
+  and called, and a variadic function named as an arm of `?:` is a pointer to it.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
@@ -417,6 +424,10 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   constant expression; a file-scope table holds the same designators. Arithmetic on a function pointer (`fp + 1`,
   `fp++`), which C does not define, lowers today and is a recorded follow-up; `i[p]` (the pointer as the index) is
   refused -- write `p[i]`.
+- A function declared to return a function pointer without a typedef (`uint32_t (*pick(uint32_t s))(uint32_t)`):
+  refused on both rails (`a function returning a function pointer is not supported without a typedef`); declare
+  its return type with a typedef. A function pointer given a function of another type (`op_t g = va;`), which C
+  forbids, lowers today and is a recorded follow-up.
 - A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`): the Python
   reference refuses the declaration, which the C twin accepts -- a split recorded for follow-up.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a

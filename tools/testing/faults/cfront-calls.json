@@ -63,7 +63,7 @@
       "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
       "label": "CL8 the oracle gives a designator no function type",
       "new": "        return None",
-      "old": "        return funcptr(name, self.func_rets[name], params, self.abi)",
+      "old": "        return funcptr(name, self.func_rets[name], params, self.abi, variadic=variadic)",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -98,7 +98,7 @@
       "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
       "label": "CL13 the twin gives a designator no function type",
       "new": "  if(df || !df) return 0;",
-      "old": "  if(!df || df->variadic) return 0;",
+      "old": "  if(!df) return 0;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -118,8 +118,8 @@
     {
       "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
       "label": "CL16 the twin's typedef records no function type",
-      "new": "      fp.fp_sig=0*np+0*(ps!=NULL);",
-      "old": "      fp.fp_sig=sig_add(c,&ty,ps,np,fp.tag,\"\");         /* spelled by the source's own alias */",
+      "new": "      fp.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "      fp.fp_sig=sig_addv(c,&ty,ps,np,fp.tag,\"\",va);     /* spelled by the source's own alias */",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -181,22 +181,22 @@
     {
       "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
       "label": "CL25 the twin's member declarator records no parameters",
-      "new": "        ty.fp_sig=0*np+0*(ps!=NULL);",
-      "old": "        ty.fp_sig=sig_add(c,&rty,ps,np,\"\",\"\");",
+      "new": "        ty.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "        ty.fp_sig=sig_addv(c,&rty,ps,np,\"\",\"\",va);",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
       "label": "CL26 the twin's local declarator records no parameters",
-      "new": "        fty.fp_sig=0*np+0*(ps!=NULL);",
-      "old": "        fty.fp_sig=sig_add(c,&ret,ps,np,fty.tag,\"\");   /* ... and its parameters, a null pointer argument */",
+      "new": "        fty.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "        fty.fp_sig=sig_addv(c,&ret,ps,np,fty.tag,\"\",va);   /* ... and its parameters, a null pointer argument */",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
       "label": "CL27 the twin's parameter declarator records no parameters",
-      "new": "      ty.fp_sig=0*np+0*(ps!=NULL);",
-      "old": "      ty.fp_sig=sig_add(c,&ret,ps,np,ty.tag,\"\");      /* ... and its parameters, a null pointer argument */",
+      "new": "      ty.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "      ty.fp_sig=sig_addv(c,&ret,ps,np,ty.tag,\"\",va);  /* ... and its parameters, a null pointer argument */",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

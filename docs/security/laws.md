@@ -1341,6 +1341,18 @@ where every named subscript is parsed, `array_index_n`), `_member_agg` / `member
 Witnesses: `_FPTAB_REFUSED` in
 `test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails`. Faults: `FO4`,
 `FO5`, `FO15`, `FT4`, `FT5`, `FT10`, `FT16`.
+CF-FPRET instance (2026-10-01): what a call's value takes after it -- `.` of a struct, `->` and `[`
+of a pointer, a call through a function pointer -- was decided at one call site of the twin's four:
+a direct call took `mk(x).f`, while a call through a function-pointer object, through a value and
+through a member took nothing, so `m(s).a` was refused where the oracle lowered it. The member
+calls' two sites each kept a copy of the result-type ladder, which typed a pointer or a function
+pointer by its width alone. One predicate now takes the postfix at every site (`call_result`, by
+the function type's return), and one typing serves both member sites (`field_call_temp`, over
+`fp_result_temp`); on the oracle, one reader answers what a call returns for every question asked
+of it (`_call_ret`, for `_fn_valued`, `_fn_value_type` and `_call_ptr`). The copied ladder was the
+unstated precondition: a type known where the copy was made.
+Witnesses: `_FPRET_CALLS` in `test_function_pointers_returned_by_calls_run_as_the_original`.
+Faults (`cfront-fpret.json`): `FO2`, `FO7`, `FO11`, `FT4`, `FT5`, `FT6`, `FT15`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

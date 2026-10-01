@@ -71,6 +71,7 @@ class CType:
     packed: bool = False  # an __attribute__((packed)) struct/union (no padding; a bitfield
     #   packs bit-by-bit and its access unit spans only the bytes it covers)
     params: tuple = ()  # parameter CTypes (funcptr only) — for faithful emit
+    variadic: bool = False  # funcptr only: the function takes a trailing `...` (CF-FPRET)
     shape: tuple = ()  # array dims of a decayed multi-dim array param (m[i][j])
     bit_width: int = 0  # a C23 `_BitInt(N)` type's EXACT width N (0 == a normal type; >0 ==
     #   `_BitInt(N)`). A distinct integer type that does NOT promote and does
@@ -438,12 +439,20 @@ def valist(abi=None) -> CType:
     return CType("valist", name="va_list", size=size, align=size)
 
 
-def funcptr(name: str, ret: CType, params: tuple = (), abi=None) -> CType:
+def funcptr(name: str, ret: CType, params: tuple = (), abi=None, variadic: bool = False) -> CType:
     """A function-pointer type — pointer-sized (per the target ABI), carrying its return + parameter
-    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim)."""
+    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim), and
+    whether the function is variadic (CF-FPRET)."""
     size = abi.pointer_size if abi is not None else PTR_SIZE
     return CType(
-        "funcptr", name=name, size=size, align=size, signed=False, of=ret, params=tuple(params)
+        "funcptr",
+        name=name,
+        size=size,
+        align=size,
+        signed=False,
+        of=ret,
+        params=tuple(params),
+        variadic=variadic,
     )
 
 

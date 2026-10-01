@@ -832,6 +832,9 @@ SIZEOF_FN = "sizeof of a function designator"
 ENUM_NOT_INT = "an enumerator value not representable as int"
 # ... and an array dimension that folds negative (6.7.6.2p1) or past INT_MAX, the twin holding a dimension in an int
 DIM_RANGE = "an array dimension outside 0..INT_MAX"
+# `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --
+# the same function with a typedef for its return type lowers (CF-FPRET; the twin's `CC_FN_RET_FP`)
+FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
 
 
 def fold_constant(node, abi, live: bool = True) -> _KVal:
@@ -1112,7 +1115,8 @@ def callee_signature(fct) -> str:
     def nm(ct):
         return "void" if ct is None else (ct.name or ct.kind)
 
-    return f"{nm(fct.of)}({', '.join(nm(p) for p in fct.params)})"
+    params = [nm(p) for p in fct.params] + (["..."] if fct.variadic else [])
+    return f"{nm(fct.of)}({', '.join(params)})"
 
 
 def _returns_void(fct) -> bool:
@@ -1266,8 +1270,8 @@ class _FuncLowerer:
         # same-unit callee -> its parameters' types, None where the pre-scan cannot type one
         # (`_param_types`): what a null pointer constant argument becomes (CF-NULLARG)
         self.func_params = func_params or {}
-        # the same-unit functions declared with a trailing `...`: a designator of one has no function type a
-        # declarator here can spell (`_fn_type`, CF-FNSEL)
+        # the same-unit functions declared with a trailing `...`: a designator of one is a pointer to a
+        # variadic function (`_fn_type`, CF-FPRET)
         self.func_variadic = func_variadic
         # the unit's functions lowered before this one: name -> LoweredFunc (`_fn_type`)
         self.lowered = lowered if lowered is not None else {}
@@ -1412,7 +1416,8 @@ class _FuncLowerer:
         ):  # a function-pointer alias (HAL dispatch), a pointer to one, an array of them
             ret = self._resolve_type(tref.func_ret)
             params = tuple(self._resolve_type(p) for p in tref.func_params)
-            return _fp_shaped(funcptr(tref.base, ret, params, self.abi), tref, self.abi)
+            fct = funcptr(tref.base, ret, params, self.abi, variadic=tref.func_variadic)
+            return _fp_shaped(fct, tref, self.abi)
         if tref.typeof_var:  # `typeof(var)` -> the in-scope variable's type
             if tref.typeof_var not in self.env:
                 raise CLowerError(f"typeof of unknown variable {tref.typeof_var!r}")
@@ -2017,9 +2022,9 @@ class _FuncLowerer:
         known here: a designator (a function the unit defines, named as a value, C11 6.3.2.1p4) has its
         definition's; a function-pointer object -- a local, a parameter, a global, a select of them, a null
         pointer typed as one -- and a function pointer read from a member, from an element of a table or
-        through a pointer to one (CF-FPTAB), its declaration's. None otherwise: a designator of a variadic
-        function (a declarator here spells no `...`) or of one whose parameters only its own scope types while
-        it has not lowered (CF-FNSEL; the twin's `res_sig`)."""
+        through a pointer to one (CF-FPTAB), its declaration's; a designator of a variadic function its named
+        parameters and `...` (CF-FPRET). None otherwise: a designator of a function whose parameters only its
+        own scope types while it has not lowered (CF-FNSEL; the twin's `res_sig`)."""
         ct = self.rtypes.get(v)
         if ct is None or ct.kind != "funcptr":
             return None
@@ -2031,9 +2036,10 @@ class _FuncLowerer:
             # a `typeof` or `va_list` parameter the pre-scan leaves untyped: the definition's own, once it has
             # lowered, as the twin types a designator of a function it has parsed
             params = tuple(p[2] for p in self.lowered[name].params)
-        if params is None or None in params or name in self.func_variadic:
+        if params is None or None in params:
             return None
-        return funcptr(name, self.func_rets[name], params, self.abi)
+        variadic = name in self.func_variadic  # its named parameters, then `...` (CF-FPRET)
+        return funcptr(name, self.func_rets[name], params, self.abi, variadic=variadic)
 
     def _fn_valued(self, node) -> bool:
         """Whether the value of `node` is a function pointer (CF-FPTAB): a function designator, which converts
@@ -2047,6 +2053,9 @@ class _FuncLowerer:
         # `c ? f : g`, `c ? f : 0`: a pointer to the arms' function type (CF-FNSEL)
         if isinstance(node, cast.Ternary):
             return self._fn_valued(node.then) or self._fn_valued(node.els)
+        if isinstance(node, (cast.CallExpr, cast.CallPtr)):  # a call returning one (CF-FPRET)
+            ret = self._call_ret(node)
+            return ret is not None and ret.kind == "funcptr"
         if isinstance(node, cast.Generic):  # `_Generic(x, T: f, ...)`: the arm it selects
             try:
                 return self._fn_valued(self._generic_select(node))
@@ -2069,13 +2078,34 @@ class _FuncLowerer:
             return self._fn_value_type(node.then if self._fn_valued(node.then) else node.els)
         if isinstance(node, cast.Generic):
             return self._fn_value_type(self._generic_select(node))
+        if isinstance(node, (cast.CallExpr, cast.CallPtr)):
+            return self._call_ret(node)
         return self._type_of(node)
+
+    def _call_ret(self, node) -> "CType | None":
+        """The type a call returns, read off the declarations alone -- nothing is lowered (CF-FPRET): a
+        function-pointer object's function's, a defined function's or a prototype's, and through any other
+        callee whose value is a function pointer, the return of the function it points at. None where it is
+        unknown."""
+        if isinstance(node, cast.CallExpr):
+            if node.callee in self.env:  # a local or global hides a function of its name
+                fpt = self.env[node.callee][1]
+                return fpt.of if fpt.kind == "funcptr" else None
+            if node.callee in self.func_rets:
+                return self.func_rets[node.callee]
+            if node.callee in self.protos:
+                return self.protos[node.callee][0]
+            return None
+        if isinstance(node, cast.CallPtr) and self._fn_valued(node.callee):
+            fct = self._fn_value_type(node.callee)
+            return fct.of if fct is not None and fct.kind == "funcptr" else None
+        return None
 
     def _fn_key(self, fct: CType) -> tuple:
         """A function type's identity: its return and its parameters as `_Generic` tells types apart,
         qualifiers aside (the twin's `sig_same`)."""
         ret = self._type_key(fct.of) if fct.of is not None else ("void",)
-        return ret, tuple(self._type_key(p) for p in fct.params)
+        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic
 
     def _addr(self, node):
         """The (rid, type, byte_offset) of an aggregate/pointer base used by member/index access. The
@@ -2122,6 +2152,11 @@ class _FuncLowerer:
             return rid, self.rtypes.get(rid, pointer(scalar("uint32_t"))), 0
         if isinstance(node, cast.CallExpr):  # `mk(x).field` -- a struct-returning call's result is
             rid = self._call(node)  # a by-value struct temp; address it for member access
+            return rid, self.rtypes.get(rid, scalar("uint32_t")), 0
+        # `(*m)(x).field`, `o.mk(x).field`: the result of a call through a function pointer, as a direct
+        # call's (CF-FPRET)
+        if isinstance(node, (cast.CallPtr, cast.CallMember)):
+            rid = self._rvalue(node)
             return rid, self.rtypes.get(rid, scalar("uint32_t")), 0
         raise CLowerError(f"unsupported base expression {type(node).__name__}")
 
@@ -4544,6 +4579,10 @@ class _FuncLowerer:
         # a pointer return stays a pointer -- `f()->v`, `*f()`, `T *p = f()` (a 4-byte unit truncated it)
         if ret_ct is not None and ret_ct.kind == "pointer":
             return self._complete_ptr(ret_ct)
+        # a function-pointer return is that function pointer (CF-FPRET): a `uint32_t` of it did not compile,
+        # and compared a pointer cut to 32 bits
+        if ret_ct is not None and ret_ct.kind == "funcptr":
+            return ret_ct
         if (
             ret_ct is not None and ret_ct.is_bitint
         ):  # a C23 `_BitInt(N)` return keeps its exact width
@@ -5166,7 +5205,9 @@ def _resolve_member_type(tref: cast.TypeRef, aggregates: dict, abi=None) -> CTyp
     ):  # a function-pointer member (dispatch table), a pointer to one, an array of them
         ret = _resolve_member_type(tref.func_ret, aggregates, abi)
         params = tuple(_resolve_member_type(p, aggregates, abi) for p in tref.func_params)
-        return _fp_shaped(funcptr(tref.base, ret, params, abi), tref, abi)
+        return _fp_shaped(
+            funcptr(tref.base, ret, params, abi, variadic=tref.func_variadic), tref, abi
+        )
     if tref.aggregate:  # a pointer member may name a struct not laid out yet (or ever)
         base = _aggregate(aggregates, tref.base, tref.aggregate, pointee=tref.ptr > 0)
     elif tref.bit_width:  # C23 `_BitInt(N)` (e.g. a function return type)

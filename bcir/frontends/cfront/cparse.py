@@ -16,7 +16,7 @@ from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
-from .lower import DIM_RANGE, ENUM_NOT_INT, CLowerError, fold_constant
+from .lower import DIM_RANGE, ENUM_NOT_INT, FN_RET_FP, CLowerError, fold_constant
 
 
 class CParseError(Exception):
@@ -396,6 +396,8 @@ class _Parser:
                 return
             self.i = save  # a struct *type* (func ret / global)
         base = self._type_spec()
+        if self._fn_returning_fp_at():  # `T (*f(P))(Q)` (CF-FPRET)
+            raise CParseError(FN_RET_FP, pos=self.peek().pos)
         # a global may be a function pointer, an array of them or a pointer to one (CF-FPTAB)
         tref, name = self._declarator_or_funcptr(base)
         if self.at("PUNCT", "("):  # a function definition (or a prototype)
@@ -489,6 +491,8 @@ class _Parser:
             base = cast.TypeRef(base=tag, aggregate=kind)
         else:
             base = self._type_spec()
+        # `typedef T *(*NAME)(PARAMS);`: a pointer return (CF-FPRET)
+        base = self._fp_return_stars(base)
         if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
             tref, name = self._funcptr_declarator(base)  # typedef RET (*NAME)(PARAMS);
         else:
@@ -538,10 +542,15 @@ class _Parser:
         self.eat("PUNCT", ")")
         self.eat("PUNCT", "(")
         params: list[cast.TypeRef] = []
+        variadic = False
         if self.at("IDENT", "void") and self.peek(1).text == ")":
             self.nxt()
         elif not self.at("PUNCT", ")"):
             while True:
+                if params and self.at("PUNCT", "..."):  # `(T, ...)`: a variadic function (CF-FPRET)
+                    self.nxt()
+                    variadic = True
+                    break
                 pt = self._type_spec()
                 while self.at("OP", "*"):  # pointer parameter
                     pt = cast.TypeRef(
@@ -556,17 +565,24 @@ class _Parser:
                     continue
                 break
         self.eat("PUNCT", ")")
-        fp = cast.TypeRef(base=name, funcptr=True, func_ret=ret, func_params=tuple(params))
+        fp = cast.TypeRef(
+            base=name, funcptr=True, func_ret=ret, func_params=tuple(params), func_variadic=variadic
+        )
         return dataclasses.replace(fp, ptr=ptr, array=tuple(dims)), name
 
-    def _is_funcptr_declarator(self, abstract: bool = False) -> bool:
+    def _is_funcptr_declarator(self, abstract: bool = False, at: int = 0) -> bool:
         """True if the cursor is at `( * NAME ) (` — a function-pointer declarator (`int (*g)(int)`),
         as opposed to the row-pointer `( * NAME ) [` form that `_declarator` handles -- or at a pointer to
         one, `( * * NAME ) (`, or an array of them, `( * NAME [ N ] ) (` (CF-FPTAB). `abstract`: a
-        parameter's, which may leave the name out -- `( * ) (`."""
-        if not (self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"):
+        parameter's, which may leave the name out -- `( * ) (`. `at`: tokens past the cursor."""
+        if not (
+            self.peek(at).kind == "PUNCT"
+            and self.peek(at).text == "("
+            and self.peek(at + 1).kind == "OP"
+            and self.peek(at + 1).text == "*"
+        ):
             return False
-        k = 2
+        k = at + 2
         while self.peek(k).kind == "OP" and self.peek(k).text == "*":
             k += 1
         if self.peek(k).kind == "IDENT":
@@ -599,9 +615,37 @@ class _Parser:
         `RET (*NAME)(PARAMS)` — for which there is no typedef name, so the full signature is captured.
         `abstract`: a parameter's, whose name may be left out (`uint32_t *`, `uint32_t (*)(uint32_t)`);
         the name is then ""."""
+        base = self._fp_return_stars(base, abstract)
         if self._is_funcptr_declarator(abstract):
             return self._funcptr_declarator(base, abstract)
         return self._declarator(base, abstract)
+
+    def _fn_returning_fp_at(self) -> bool:
+        """Whether the cursor is at `( * NAME (` -- the declarator of a function that returns a function pointer,
+        `T (*f(P))(Q)`, which neither rail parses (`FN_RET_FP`)."""
+        if not (self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*"):
+            return False
+        k = 2
+        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
+            k += 1
+        return (
+            self.peek(k).kind == "IDENT"
+            and self.peek(k + 1).kind == "PUNCT"
+            and self.peek(k + 1).text == "("
+        )
+
+    def _fp_return_stars(self, base: cast.TypeRef, abstract: bool = False) -> cast.TypeRef:
+        """The `*`s between a specifier and a function-pointer declarator, `T *(*pf)(T *)`, belong to the
+        function's return type -- a pointer (CF-FPRET): taken into `base`, the cursor left on the
+        declarator's `(`. Anything else is left for the declarator, `base` unchanged."""
+        k = 0
+        while self.peek(k).kind == "OP" and self.peek(k).text == "*":
+            k += 1
+        if not k or not self._is_funcptr_declarator(abstract, at=k):
+            return base
+        for _ in range(k):
+            self.nxt()
+        return dataclasses.replace(base, ptr=base.ptr + k)
 
     def _enum_body(self, tag: str) -> None:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
@@ -729,9 +773,10 @@ class _Parser:
                         self.nxt()
                         continue
                     break
+                fbase = self._fp_return_stars(base)  # `T *(*name)(params)` (CF-FPRET)
                 if self.at("PUNCT", "(") and self.peek(1).kind == "OP" and self.peek(1).text == "*":
                     tref, name = self._funcptr_declarator(
-                        base
+                        fbase
                     )  # `RET (*name)(params)` -- a funcptr member
                 else:  # (8-byte; set from a funcptr value, called
                     tref, name = self._declarator(

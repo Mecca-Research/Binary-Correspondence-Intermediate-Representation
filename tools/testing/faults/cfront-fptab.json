@@ -231,8 +231,8 @@
   {
    "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
    "label": "FT17 the twin refuses a call through a call's result for a missing `;`",
-   "new": "      return r; }                     /* `g(x)(y)`: through the result, which must be a function pointer */\n",
-   "old": "      return call_value(c,r); }                     /* `g(x)(y)`: through the result, which must be a function pointer */\n",
+   "new": "      return r; }",
+   "old": "      return call_result(c,r,rt); }",
    "path": "runtime/c/bcir_cfront.c"
   },
   {

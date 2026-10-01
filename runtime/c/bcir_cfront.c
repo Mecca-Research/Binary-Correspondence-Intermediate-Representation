@@ -188,6 +188,7 @@ typedef struct { char *s; size_t w, cap; } ctext;
  * of a declarator or of a function designator named `fn` -- and "" for a struct member's, whose struct the source
  * declares. Held in the scratch arena for the compile; a kind-3 ctype names its entry as 1 + its index (`fp_sig`). */
 typedef struct { bcir_ctype ret; const bcir_ctype *params; int n_params;
+                 int variadic;                       /* a trailing `...`: the named parameters are `params` (CF-FPRET) */
                  char alias[BCIR_CIR_NAME]; char fn[BCIR_CIR_NAME]; } fsig;
 typedef struct {
   bcir_host_allocator allocator;
@@ -766,6 +767,8 @@ static void complete_struct_refs(CC *c, int si){
 }
 static venv *use_global(CC *c,const tok *id);   /* fwd: materialize a global's resource on first use */
 static uint32_t fp_value_temp(CC *c, const char *alias);   /* fwd: a function-pointer value temp (CF-FPTAB) */
+static const char *sig_alias(CC *c, int sig);              /* fwd: a function type's alias (CF-FPTAB) */
+static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si);  /* fwd: a pointer temp of a pointer type */
 static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
 
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
@@ -972,15 +975,26 @@ static int sig_add(CC *c, const bcir_ctype *ret, const bcir_ctype *params, int n
   if(!fits(c,s->alias,sizeof s->alias,"%s",alias) || !fits(c,s->fn,sizeof s->fn,"%s",fn)) return 0;
   return ++c->nsig;
 }
+/* `sig_add` of a function type that is `variadic` -- its parameters `params` and then `...` (CF-FPRET). */
+static int sig_addv(CC *c, const bcir_ctype *ret, const bcir_ctype *params, int np, const char *alias, const char *fn,
+                    int variadic){
+  int s=sig_add(c,ret,params,np,alias,fn);
+  if(s) c->sigs[s-1].variadic=variadic;
+  return s;
+}
 /* The parameter-type list of a function-pointer declarator or typedef -- the cursor just past its `(`, left on its
- * `)`: `(void)`, or each parameter's type and an optional name -- into the scratch arena (`*out`, `*n`). With
- * `spell`, each type is also appended to the prelude line a synthesized `__bcir_fpN` typedef is being written on,
- * and the line closed. 1 on a parse failure: the caller takes its partial line back out. */
-static int fp_param_list(CC *c, int spell, const bcir_ctype **out, int *n){
+ * `)`: `(void)`, or each parameter's type and an optional name, and a trailing `...` after one (`*variadic`,
+ * CF-FPRET) -- into the scratch arena (`*out`, `*n`). With `spell`, each type is also appended to the prelude line a
+ * synthesized `__bcir_fpN` typedef is being written on, and the line closed. 1 on a parse failure: the caller takes
+ * its partial line back out. */
+static int fp_param_list(CC *c, int spell, const bcir_ctype **out, int *n, int *variadic){
   bcir_ctype *v=NULL; int np=0, cap=0;
-  *out=NULL; *n=0;
+  *out=NULL; *n=0; *variadic=0;
   if(is(c,"void")&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==')'){ c->i++; }   /* `(void)` */
   else if(!is(c,")")) for(;;){ bcir_ctype pt; int psi;
+    if(np && is(c,"...")){ c->i++; *variadic=1;           /* `(T, ...)`: a variadic function */
+      if(spell) ctext_putf(c,&c->fpdefs,", ...");
+      break; }
     if(p_type(c,&pt,&psi)) return 1;
     if(isk(c,T_ID)) c->i++;                                                /* an optional parameter name (ignored) */
     if(spell){ char ps[BCIR_EMIT_TYPE]; ctype_str(&pt,ps,sizeof ps); ctext_putf(c,&c->fpdefs,"%s%s",np?", ":"",ps); }
@@ -1040,12 +1054,13 @@ static int fp_inline_decl(CC *c, const bcir_ctype *ret, int ret_si, bcir_ctype *
   char rets[BCIR_EMIT_TYPE]; ctype_str(ret,rets,sizeof rets);
   size_t line=c->fpdefs.w; const bcir_ctype *ps; int np;
   ctext_putf(c,&c->fpdefs,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
-  if(fp_param_list(c,1,&ps,&np)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return 1; }
+  int va;
+  if(fp_param_list(c,1,&ps,&np,&va)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return 1; }
   if(!eat(c,")")) return 1;
   memset(fp,0,sizeof *fp); fp->kind=3; fp->size=cc_abi(c)->pointer_size;
   fp_capture_ret(fp,ret,ret_si);
   snprintf(fp->tag,sizeof fp->tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
-  fp->fp_sig=(uint16_t)sig_add(c,ret,ps,np,fp->tag,"");
+  fp->fp_sig=(uint16_t)sig_addv(c,ret,ps,np,fp->tag,"",va);
   return c->failed;
 }
 
@@ -1188,12 +1203,12 @@ static int p_struct_body(CC *c) {
         bcir_ctype rty=ty;                                   /* snapshot the parsed RETURN type before the memset */
         c->i+=2; nm=adv(c);                                  /* `( *` then the name */
         if(!eat(c,")")||!eat(c,"("))return -1;
-        const bcir_ctype *ps; int np;                        /* its parameters type a null pointer argument */
-        if(fp_param_list(c,0,&ps,&np)) return -1;
+        const bcir_ctype *ps; int np, va;                    /* its parameters type a null pointer argument */
+        if(fp_param_list(c,0,&ps,&np,&va)) return -1;
         eat(c,")");                                          /* past the parameter-type list */
         memset(&ty,0,sizeof ty); ty.kind=3; ty.size=cc_abi(c)->pointer_size; ty.signd=0;
         fp_capture_ret(&ty,&rty,si);                         /* its return type types a c.call.imember result */
-        ty.fp_sig=sig_add(c,&rty,ps,np,"","");
+        ty.fp_sig=sig_addv(c,&rty,ps,np,"","",va);
       } else {
         if(!isk(c,T_ID)){ fail(c,"expected member name"); return -1; }   /* `unsigned x, y, z;` etc. */
         nm=adv(c);
@@ -1466,12 +1481,12 @@ static void p_typedef(CC *c){
     int save=c->i; c->i++;
     if(is(c,"*")){
       c->i++; tok nm=adv(c); eat(c,")"); eat(c,"(");
-      const bcir_ctype *ps; int np;                      /* the parameter-type list: its types ride the typedef too */
-      if(fp_param_list(c,0,&ps,&np)) return;
+      const bcir_ctype *ps; int np, va;                  /* the parameter-type list: its types ride the typedef too */
+      if(fp_param_list(c,0,&ps,&np,&va)) return;
       eat(c,")");
       bcir_ctype fp; memset(&fp,0,sizeof fp); fp.kind=3; fp.size=cc_abi(c)->pointer_size; fp.signd=0; idcpy(c,fp.tag,&nm);
       fp_capture_ret(&fp,&ty,sidx);                      /* its RETURN type rides the typedef to every use */
-      fp.fp_sig=sig_add(c,&ty,ps,np,fp.tag,"");         /* spelled by the source's own alias */
+      fp.fp_sig=sig_addv(c,&ty,ps,np,fp.tag,"",va);     /* spelled by the source's own alias */
       CC_ENSURE(c,c->td,c->ntd,c->cap_td);
       if(c->ntd<c->cap_td){memset(&c->td[c->ntd],0,sizeof c->td[c->ntd]);
         idcpy(c,c->td[c->ntd].name,&nm);c->td[c->ntd].ty=fp;c->td[c->ntd].sidx=-1;c->ntd++;}
@@ -1560,6 +1575,12 @@ static int rid_bitint(CC *c,uint32_t rid,int *signd){
     if(c->fn->res[i].bit_width>0){ if(signd)*signd=c->fn->res[i].is_signed; return c->fn->res[i].bit_width; }
     return 0; }
   return 0; }
+/* The temp a call returning the function pointer `rt` (kind 3) yields (CF-FPRET): a function-pointer value of its type,
+ * spelled by its alias -- the oracle's `_call_result_ct`. A `uint32_t` of it did not compile, and a comparison read a
+ * pointer cut to 32 bits. */
+static uint32_t fp_ret_temp(CC *c, const bcir_ctype *rt){
+  return fp_value_temp(c, rt->fp_sig ? sig_alias(c,rt->fp_sig) : rt->tag);
+}
 /* The result-temp for a call THROUGH a funcptr (c.call.indirect / c.call.imember), by the funcptr's
  * captured RETURN type -- the C twin of the oracle's _call_result_ct ladder: a float keeps its width;
  * a wide (>4-byte) integer keeps its (width, sign); a SIGNED sub-int return promotes to `int` (so a
@@ -1567,11 +1588,34 @@ static int rid_bitint(CC *c,uint32_t rid,int *signd){
  * wasn't captured (carriers all 0) -> uint32, today's behaviour. A struct or union return is that aggregate
  * value, as the oracle keeps it (CF-STRUCTVAL): a uint32 of it did not compile. */
 static uint32_t fp_result_temp(CC *c, const bcir_ctype *fp){
+  if(fp->fp_sig>0 && fp->fp_sig<=c->nsig){            /* the function type is known: a pointer or a function-pointer
+                                                       * return is that pointer, never an integer of its width (CF-FPRET) */
+    const bcir_ctype *rt=&c->sigs[fp->fp_sig-1].ret;
+    if(rt->kind==3) return fp_ret_temp(c,rt);
+    if(rt->kind==2) return temp_ptr(c,rt,rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1); }
   if(fp->fp_ret_agg) return tempagg(c, fp->fp_ret_agg-1);
   if(fp->fp_ret_float) return tempf(c, fp->fp_ret_size?fp->fp_ret_size:4);
   if(fp->fp_ret_size>4) return tempi(c, fp->fp_ret_size, fp->fp_ret_signd);
   if(fp->fp_ret_signd && fp->fp_ret_size && fp->fp_ret_size<=4) return tempi(c,4,1);
   return temp(c,4);
+}
+/* The result-temp of a call through the function-pointer member `ff` (`o->fn(x)`, a `c.call.imember`), as through any
+ * function pointer of its type (`fp_result_temp`) -- a pointer or function-pointer return that pointer (CF-FPRET). 0 for
+ * a void function, which has no result (CF-VOIDCB). */
+static uint32_t call_result(CC *c, uint32_t r, const bcir_ctype *rt);   /* fwd: a postfix on a call's value */
+/* The postfix on the value `t` a call through the function-pointer member `ff` returned (CF-FPRET): `o.mk(x).a`,
+ * `o->get(p)->v`, `o.mk(x)(y)` -- as on any call's value, by the member's function type (`call_result`). */
+static uint32_t member_call_result(CC *c, const field *ff, uint32_t t){
+  if(ff->fp_sig<=0 || ff->fp_sig>c->nsig) return t;
+  bcir_ctype rt=c->sigs[ff->fp_sig-1].ret;          /* a copy: what follows may grow the table */
+  return call_result(c,t,&rt);
+}
+static uint32_t field_call_temp(CC *c, const field *ff){
+  if(ff->fp_ret_void) return 0;
+  bcir_ctype fp; memset(&fp,0,sizeof fp); fp.kind=3; fp.fp_sig=(uint16_t)ff->fp_sig;
+  fp.fp_ret_agg=ff->fp_ret_agg; fp.fp_ret_float=(uint8_t)ff->fp_ret_float; fp.fp_ret_size=ff->fp_ret_size;
+  fp.fp_ret_signd=(uint8_t)ff->fp_ret_signd;
+  return fp_result_temp(c,&fp);
 }
 static int rid_complex(CC *c,uint32_t rid){
   for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid) return c->fn->res[i].is_complex; return 0; }
@@ -1841,7 +1885,8 @@ static const char *sig_alias(CC *c, int sig){
     ctext_putf(c,&c->fpdefs,"typedef %s (*%s)(",rets,al);
     for(int k=0;k<c->sigs[sig-1].n_params;k++){ char pt[BCIR_EMIT_TYPE]; ctype_str(&c->sigs[sig-1].params[k],pt,sizeof pt);
       ctext_putf(c,&c->fpdefs,"%s%s",k?", ":"",pt); }
-    ctext_putf(c,&c->fpdefs,"%s);\n",c->sigs[sig-1].n_params?"":"void");
+    ctext_putf(c,&c->fpdefs,"%s);\n",c->sigs[sig-1].variadic?(c->sigs[sig-1].n_params?", ...":"..."):
+                                       c->sigs[sig-1].n_params?"":"void");
     fits(c,c->sigs[sig-1].alias,sizeof c->sigs[sig-1].alias,"%s",al); }
   return c->sigs[sig-1].alias;
 }
@@ -3314,17 +3359,12 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
         eat(c,")");
         field ff=S->f[fi];                               /* the funcptr field carries its captured return type */
         null_pointer_sig(c,ff.fp_sig,args,na);           /* a null pointer argument: its parameter's pointer */
-        uint32_t t = ff.fp_ret_void ? 0                  /* a void member function: no result (CF-VOIDCB) */
-                   : ff.fp_ret_agg ? tempagg(c, ff.fp_ret_agg-1)   /* a struct return (CF-STRUCTVAL) */
-                   : ff.fp_ret_float ? tempf(c, ff.fp_ret_size?ff.fp_ret_size:4)
-                   : ff.fp_ret_size>4 ? tempi(c, ff.fp_ret_size, ff.fp_ret_signd)
-                   : (ff.fp_ret_signd && ff.fp_ret_size && ff.fp_ret_size<=4) ? tempi(c,4,1)
-                   : temp(c,4);                           /* a signed member return reads back signed (mirrors the oracle) */
+        uint32_t t = field_call_temp(c,&ff);             /* typed by the member's function type (CF-FPRET) */
         char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.imember:%s",S->f[fi].name);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
         if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=ptr;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
           cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;cl->truncated=(uint8_t)dropped;}   /* imm0=1: `ptr->fn(args)` */
-        return ff.fp_ret_void ? void_temp(c) : t;
+        return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
       }
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
         ptr=emit_member(c,&b,&mf,0); psidx=mf.ptee_sidx; pfld=mf; continue;
@@ -3870,6 +3910,7 @@ static uint32_t p_call(CC *c, const tok *name) {
         return void_temp(c);                          /* a void result -- never read */
       }
       uint32_t t = ptt->kind==2 ? temp_ptr(c,ptt,ptt->ptr_to_struct?find_struct(c,ptt->tag,(int)strlen(ptt->tag)):-1)
+                 : ptt->kind==3 ? fp_ret_temp(c,ptt)
                  : ptt->is_complex ? tempc(c,ptt->size)
                  : ptt->is_float   ? tempf(c,ptt->size)
                  : (ptt->kind==0 && ptt->bit_width>0) ? tempbi(c,ptt->bit_width,ptt->signd)
@@ -3902,6 +3943,7 @@ static uint32_t p_call(CC *c, const tok *name) {
     t = (rt && rt->kind==2)             ? temp_ptr(c,rt,rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1)
                                                             /* a pointer return stays a pointer (`f()->v`, `*f()`):
                                                             * a 4-byte unit truncated it (the oracle's _call_result_ct) */
+      : (rt && rt->kind==3)             ? fp_ret_temp(c,rt)   /* a function pointer: that pointer (CF-FPRET) */
       : (rt && rt->is_complex)          ? tempc(c,rt->size)   /* _Complex user return (a float pair) */
       : (rt && rt->is_float)            ? tempf(c,rt->size)   /* float/double user return */
       : (rt && rt->kind==0 && rt->bit_width>0) ? tempbi(c,rt->bit_width,rt->signd)  /* a C23 `_BitInt(N)` return:
@@ -3958,13 +4000,34 @@ static uint32_t p_icall_rid(CC *c, uint32_t fv){
 /* A postfix call on the value `r` (CF-FPTAB): `ops[i](x)`, `(*p)(x)`, `(ops[i])(x)`, `(c ? f : g)(x)` -- while a `(`
  * follows, `r` is called through and the call's value is the next `r`. A value that is no function pointer is refused,
  * as C refuses it (6.5.2.2p1), for the oracle's one reason. */
+static uint32_t postfix_lvalue(CC *c, venv *v);                         /* fwd: `.`, `->`, `[` on a value */
 static uint32_t call_value(CC *c, uint32_t r){
   while(is(c,"(") && !c->failed){
     const bcir_resource *rr=res_of(c->fn,r);
     if(!rr || !rr->is_funcptr || rr->kind!=BCIR_RK_SCALAR){ fail(c,CC_NOT_CALLABLE); return 0; }
+    int s=res_sig(c,r);
     r=p_icall_rid(c,r);
+    if(s && !c->failed && (is(c,".")||is(c,"->")||is(c,"["))){   /* `m(x).a`, `g(x)->v` (CF-FPRET) */
+      bcir_ctype rt=c->sigs[s-1].ret;                 /* a copy: what follows may grow the table */
+      return call_result(c,r,&rt); }
   }
   return r;
+}
+/* The postfix on the value `r` a call returned, the function's return type `rt` (CF-FPRET): a struct or union value is
+ * addressable -- `mk(x).f`, and `m(x).f` through a function pointer, which the twin refused -- and a pointer takes `->`
+ * and `[`; then any call through what that yields. Anything else goes on as `call_value`. */
+static uint32_t call_result(CC *c, uint32_t r, const bcir_ctype *rt){
+  if(rt && rt->kind==1 && (is(c,".")||is(c,"->")||is(c,"["))){   /* the by-value struct result is addressable */
+    venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
+    sv.sidx=find_struct(c,rt->tag,(int)strlen(rt->tag));
+    if(sv.sidx>=0) return call_value(c,postfix_lvalue(c,&sv));
+  }
+  if(rt && rt->kind==2 && (is(c,"->")||is(c,"["))){   /* a returned pointer: `f()->v` / `f()[i]` */
+    venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
+    sv.sidx=rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1;
+    return call_value(c,postfix_lvalue(c,&sv));
+  }
+  return call_value(c,r);
 }
 
 /* §5.8: GCC/Clang atomic + fence + CAS builtins -> the BCIR ATOMIC_x / BARRIER / CMPXCHG opcodes.
@@ -4124,17 +4187,12 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       eat(c,")");
       field ff=S->f[fi];                          /* the funcptr field carries its captured return type */
       null_pointer_sig(c,ff.fp_sig,args,na);      /* a null pointer argument: its parameter's pointer */
-      uint32_t t = ff.fp_ret_void ? 0             /* a void member function: no result (CF-VOIDCB) */
-                 : ff.fp_ret_agg ? tempagg(c, ff.fp_ret_agg-1)   /* a struct return (CF-STRUCTVAL) */
-                 : ff.fp_ret_float ? tempf(c, ff.fp_ret_size?ff.fp_ret_size:4)
-                 : ff.fp_ret_size>4 ? tempi(c, ff.fp_ret_size, ff.fp_ret_signd)
-                 : (ff.fp_ret_signd && ff.fp_ret_size && ff.fp_ret_size<=4) ? tempi(c,4,1)
-                 : temp(c,4);                      /* a signed member return reads back signed (mirrors the oracle) */
+      uint32_t t = field_call_temp(c,&ff);        /* typed by the member's function type (CF-FPRET) */
       char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.imember:%s",S->f[fi].name);
       bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
       if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
         cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;cl->truncated=(uint8_t)dropped;}
-      return ff.fp_ret_void ? void_temp(c) : t;
+      return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
     }
     field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
     if(is(c,"[") && !mf.arr_count && !mf.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `o->v[1]` (CF-FPTAB) */
@@ -4527,23 +4585,18 @@ static uint32_t p_named_call(CC *c, tok id){
       return p_atomic(c,aop,aoc,akind,ordered);
     }
     { venv *fv=lookup(c,&id);        /* indirect call (funcptr var) vs. direct named call */
-      if(fv&&fv->type.kind==3) return call_value(c,p_icall(c,fv));   /* `fp(x)(y)`: through its value (CF-FPTAB) */
+      if(fv&&fv->type.kind==3){       /* `fp(x)(y)`: through its value (CF-FPTAB); `fp(x).f`, `fp(x)->v` (CF-FPRET) */
+        int s=fv->type.fp_sig;        /* read before the call: its arguments may grow `env` */
+        uint32_t r=p_icall(c,fv);
+        if(s>0 && s<=c->nsig && !c->failed){ bcir_ctype rt=c->sigs[s-1].ret; return call_result(c,r,&rt); }
+        return call_value(c,r); }
       const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
       int drop_save=c->call_dropped; c->call_dropped=0;   /* a call nested in an argument restores it */
       uint32_t r=p_call(c,&id);
       if(c->call_dropped && c->fn->n_claims) c->fn->claims[c->fn->n_claims-1].truncated=1;
       c->call_dropped=drop_save;
-      if(rt && rt->kind==1 && (is(c,".")||is(c,"->")||is(c,"["))){   /* the by-value struct result is addressable */
-        venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
-        sv.sidx=find_struct(c,rt->tag,(int)strlen(rt->tag));
-        if(sv.sidx>=0) return call_value(c,postfix_lvalue(c,&sv));
-      }
-      if(rt && rt->kind==2 && (is(c,"->")||is(c,"["))){   /* a returned pointer: `f()->v` / `f()[i]` */
-        venv sv; memset(&sv,0,sizeof sv); sv.rid=r; sv.type=*rt;
-        sv.sidx=rt->ptr_to_struct?find_struct(c,rt->tag,(int)strlen(rt->tag)):-1;
-        return call_value(c,postfix_lvalue(c,&sv));
-      }
-      return call_value(c,r); }                     /* `g(x)(y)`: through the result, which must be a function pointer */
+      return call_result(c,r,rt); }                 /* `mk(x).f`, `f()->v`; `g(x)(y)` through the result, which must be
+                                                     * a function pointer */
 }
 /* `( *... NAME ) (` at the cursor, NAME a function-pointer object (a local, a parameter, a global) or a function: the `*`s
  * name the function again (C11 6.5.3.2p4), so the call is `NAME(...)` -- the oracle's `_call_ptr`, which strips them.
@@ -5190,14 +5243,14 @@ static void assign_local(CC *c, uint32_t v, uint32_t sel){
   bcir_claim *cl=new_claim(c,"c.copy",BCIR_OP_ADD); if(cl){cl->n_rd=1;cl->rd[0]=v;cl->n_wr=1;cl->wr[0]=sel;}
 }
 /* The function type of the function `name` the unit defines, used as a value (a designator decays to a pointer to
- * it, C11 6.3.2.1p4), as 1 + its index in `sigs`: its definition's return and parameter types, recorded the first time
- * with a synthesized `typedef RET (*__bcir_fpN)(PARAMS);` that spells a pointer to it. 0 for a variadic function (a
- * function-pointer declarator here spells no `...`) or a name the unit has not defined. */
+ * it, C11 6.3.2.1p4), as 1 + its index in `sigs`: its definition's return and parameter types -- a variadic one's named
+ * parameters and `...` (CF-FPRET) -- recorded the first time with a synthesized `typedef RET (*__bcir_fpN)(PARAMS);`
+ * that spells a pointer to it. 0 for a name the unit has not defined. */
 static int designator_sig(CC *c, const char *name){
   for(int k=0;k<c->nsig;k++) if(!strcmp(c->sigs[k].fn,name)) return k+1;
   const bcir_func *df=NULL;
   for(int i=0;c->unit && i<c->unit->n_funcs && !df;i++) if(!strcmp(c->unit->funcs[i].name,name)) df=&c->unit->funcs[i];
-  if(!df || df->variadic) return 0;
+  if(!df) return 0;
   bcir_ctype *ps=NULL; size_t bytes;
   if(df->n_params>0){
     if(!bcir_size_mul((size_t)df->n_params,sizeof *ps,&bytes) ||
@@ -5209,8 +5262,8 @@ static int designator_sig(CC *c, const char *name){
   ctext_putf(c,&c->fpdefs,"typedef %s (*%s)(",rets,al);
   for(int k=0;k<df->n_params;k++){ char pt[BCIR_EMIT_TYPE]; ctype_str(&ps[k],pt,sizeof pt);
     ctext_putf(c,&c->fpdefs,"%s%s",k?", ":"",pt); }
-  ctext_putf(c,&c->fpdefs,"%s);\n",df->n_params?"":"void");
-  return sig_add(c,&df->ret,ps,df->n_params,al,name);
+  ctext_putf(c,&c->fpdefs,"%s);\n",df->variadic?(df->n_params?", ...":"..."):df->n_params?"":"void");
+  return sig_addv(c,&df->ret,ps,df->n_params,al,name,df->variadic);
 }
 /* The function type the function-pointer value in `rid` points at, as 1 + its index in `sigs`, when a typedef spells
  * a pointer to it -- 0 otherwise: a function-pointer object (a local, a parameter, a global) has its declaration's; a
@@ -5231,7 +5284,7 @@ static int res_sig(CC *c, uint32_t rid){
 static int sig_same(const CC *c, int a, int b){
   if(a==b) return 1;
   const fsig *x=&c->sigs[a-1], *y=&c->sigs[b-1];
-  if(x->n_params!=y->n_params || !ctype_generic_eq(&x->ret,&y->ret)) return 0;
+  if(x->n_params!=y->n_params || x->variadic!=y->variadic || !ctype_generic_eq(&x->ret,&y->ret)) return 0;
   for(int k=0;k<x->n_params;k++)
     if(x->params[k].is_valist!=y->params[k].is_valist || !ctype_generic_eq(&x->params[k],&y->params[k])) return 0;
   return 1;
@@ -7217,12 +7270,13 @@ static void p_stmt_inner(CC *c) {
         char rets[BCIR_EMIT_TYPE]; ctype_str(&ret,rets,sizeof rets);
         size_t line=c->fpdefs.w; const bcir_ctype *ps; int np;
         ctext_putf(c,&c->fpdefs,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
-        if(fp_param_list(c,1,&ps,&np)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return; }
+        int va;
+        if(fp_param_list(c,1,&ps,&np,&va)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return; }
         if(!eat(c,")"))return;                          /* past the parameter-type list */
         bcir_ctype fty; memset(&fty,0,sizeof fty); fty.kind=3; fty.size=cc_abi(c)->pointer_size; fty.signd=0;
         fp_capture_ret(&fty,&ret,si);                   /* its return type types a c.call.indirect result */
         snprintf(fty.tag,sizeof fty.tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
-        fty.fp_sig=sig_add(c,&ret,ps,np,fty.tag,"");   /* ... and its parameters, a null pointer argument */
+        fty.fp_sig=sig_addv(c,&ret,ps,np,fty.tag,"",va);   /* ... and its parameters, a null pointer argument */
         char fnb[BCIR_CIR_NAME]; idcpy(c,fnb,&nm);
         uint32_t frid=add_res(c,BCIR_DOM_RAM,8,1,0,BCIR_RK_SCALAR,fnb);   /* a funcptr-wide scalar local */
         if(c->fn->n_res){ bcir_resource *fr=&c->fn->res[c->fn->n_res-1];
@@ -7817,6 +7871,14 @@ static uint32_t p_stmt_expr(CC *c){
   return result;
 }
 
+/* `T (*f(P))(Q)`: the declarator of a function that returns a function pointer, which neither rail parses -- the same
+ * function with a typedef for its return type lowers (CF-FPRET). The oracle's `FN_RET_FP`. */
+#define CC_FN_RET_FP "a function returning a function pointer is not supported without a typedef"
+static int fn_ret_fp_at(CC *c){
+  if(!is(c,"(") || !tok_is(tat(c,c->i+1),"*")) return 0;
+  int k=c->i+2; while(tok_is(tat(c,k),"*")) k++;
+  return tat(c,k)->k==T_ID && tok_is(tat(c,k+1),"(");
+}
 static int p_func(CC *c, bcir_func *fn) {
   c->fn=fn; c->nenv=0; c->n_vlaext=0; c->n_unsized=0; c->npure=0;
   c->cl_ctr=0;                                     /* compound literals number per function (`_cl1` ...), as
@@ -7825,6 +7887,7 @@ static int p_func(CC *c, bcir_func *fn) {
   c->saw_static=0;                                 /* fresh for THIS definition's return type (a prior
                                                     * body's block-static must not leak into the flag) */
   bcir_ctype rt;int rsi;if(p_type(c,&rt,&rsi))return 1; fn->ret=rt;
+  if(fn_ret_fp_at(c)){ fail(c,CC_FN_RET_FP); return 1; }   /* `T (*f(P))(Q)` (CF-FPRET) */
   fn->static_fn=(uint8_t)(c->saw_static!=0);       /* source `static` on the definition (linkable emit) */
   tok nm=adv(c); fits(c,fn->name,sizeof fn->name,"%.*s",nm.n,nm.s);
   if(!eat(c,"("))return 1;
@@ -7862,12 +7925,13 @@ static int p_func(CC *c, bcir_func *fn) {
       char rets[BCIR_EMIT_TYPE]; ctype_str(&ret,rets,sizeof rets);   /* the growable prelude, as for a local */
       size_t line=c->fpdefs.w; const bcir_ctype *ps; int np;
       ctext_putf(c,&c->fpdefs,"typedef %s (*__bcir_fp%d)(",rets,c->n_fpdef);
-      if(fp_param_list(c,1,&ps,&np)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return 1; }
+      int va;
+      if(fp_param_list(c,1,&ps,&np,&va)){ c->fpdefs.w=line; if(c->fpdefs.s) c->fpdefs.s[line]=0; return 1; }
       if(!eat(c,")"))return 1;                        /* past the parameter-type list */
       memset(&ty,0,sizeof ty); ty.kind=3; ty.size=cc_abi(c)->pointer_size; ty.signd=0;
       fp_capture_ret(&ty,&ret,si);                     /* its RETURN type types a c.call.indirect result */
       snprintf(ty.tag,sizeof ty.tag,"__bcir_fp%d",c->n_fpdef); c->n_fpdef++;
-      ty.fp_sig=sig_add(c,&ret,ps,np,ty.tag,"");      /* ... and its parameters, a null pointer argument */
+      ty.fp_sig=sig_addv(c,&ret,ps,np,ty.tag,"",va);  /* ... and its parameters, a null pointer argument */
       row_ptr=1;                                      /* skip the row-ptr + array-suffix handling below */
     }
     if(!row_ptr && is(c,"(")){    /* (*name)[N]... -- a pointer-to-array "row pointer" (vendor headers); */
@@ -8671,14 +8735,16 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
       for(int k=0;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k?", ":"",emit_arg(f,cl->rd[k],a,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strcmp(cl->op,"c.call.indirect")){    /* rd[0] is the function pointer; rd[1..] the args */
+      char cty[BCIR_EMIT_TYPE];                     /* the result declared by its type -- a pointer return `T *t` (CF-FPRET) */
       if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,"%s(",rname(f,cl->rd[0],a));   /* a void function: a bare call (CF-VOIDCB) */
-      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s(",decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a));  /* result typed by the funcptr's return */
       for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",emit_arg(f,cl->rd[k],b,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
     else if(!strncmp(cl->op,"c.call.imember:",15)){   /* o->fn(args): funcptr struct member */
       const char *sep=(cl->n_imm&&cl->imm[0])?"->":".";
+      char cty[BCIR_EMIT_TYPE];
       if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,"%s%s%s(",rname(f,cl->rd[0],a),sep,cl->op+15);   /* a void member function */
-      else w+=snprintf(o+EO,on-EO,"%s %s = %s%s%s(",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
+      else w+=snprintf(o+EO,on-EO,"%s %s = %s%s%s(",decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty),rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),sep,cl->op+15);  /* result typed by the funcptr's return */
       for(int k=1;k<cl->n_rd;k++) w+=snprintf(o+EO,on-EO,"%s%s",k>1?", ":"",emit_arg(f,cl->rd[k],b,gb,sizeof gb));
       w+=snprintf(o+EO,on-EO,");\n"); }
   }
