@@ -90,16 +90,24 @@ def test_nonconstant_initializers_still_refuse_loudly():
         assert "q" in str(e)
 
 
-def test_division_by_zero_folds_to_zero_on_both_vocabularies():
-    """The documented guard: a constant `x / 0` folds to 0 (both rails' evaluators use the
-    same rule instead of dying), pinned so the vocabularies cannot drift apart silently."""
-    r = compile_unit(
-        "enum { Z = 5 / 0, M = 5 % 0 };\nint f(void) { return Z + M; }\n", check_clang=False
-    )
-    assert r.is_clean
-    from bcir.frontends.cfront.emit import emit_linkable  # Z and M folded to 0 at parse
+def test_division_by_zero_is_no_constant_in_either_vocabulary():
+    """A constant `x / 0` or `x % 0` is no integer constant expression (C11 6.5.5p5, 6.6p4), and
+    Clang and GCC reject it: an enumerator and a case label that divide by zero are refused for that
+    one reason (CF-ENUMFOLD), where both rails' evaluators had folded them to 0 by a shared guard.
+    The twin's refusal is pinned beside the oracle's in `test_c_cfront`'s `_ENUMFOLD_REFUSED`."""
+    from bcir.frontends.cfront.cparse import CParseError
 
-    assert "return" in r.emitted["f"]
+    for src in (
+        "enum { Z = 5 / 0 };\nint f(void) { return Z; }\n",
+        "enum { M = 5 % 0 };\nint f(void) { return M; }\n",
+        "int f(int v) { switch (v) { case 5 % 0: return 1; default: return 0; } }\n",
+    ):
+        try:
+            compile_unit(src, check_clang=False)
+        except CParseError as e:
+            assert str(e) == "not an integer constant expression", (src, str(e))
+        else:
+            raise AssertionError(f"the oracle folded {src!r}")
 
 
 if __name__ == "__main__":
