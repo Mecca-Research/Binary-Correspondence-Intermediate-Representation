@@ -708,6 +708,16 @@ static int find_enum(CC *c,const char *s,int n){
   for(int i=0;i<c->nec;i++) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
   return -1;
 }
+/* The enumerator a name denotes where it is read, or -1: a name the function binds in an enclosing block scope -- a
+ * local, a parameter, a loop's own declaration, all in `env` -- hides a file-scope enumerator of its name (C11 6.2.1p4),
+ * which is then no constant (CF-ENUMSCOPE; the oracle's `_enumerator`). Reading the enumerator first had folded it in
+ * place of the object: `uint32_t N = s + 1u; uint32_t a[N];` became `a[4]` beside an `enum { N = 4 }`. `env` is empty
+ * at file scope (the unit loop clears it). */
+static int visible_enum(CC *c,const char *s,int n){
+  int e=find_enum(c,s,n);
+  if(e>=0) for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n)) return -1;
+  return e;
+}
 static int find_global(CC *c,const char *s,int n){
   for(int i=0;i<c->ngv;i++) if((int)strlen(c->gv[i].name)==n&&!strncmp(c->gv[i].name,s,n)) return i;
   return -1;
@@ -1288,7 +1298,7 @@ static int ce_primary(CC *c,int live,kval *out){
   const char *suf = is(c,"-") ? "neg" : is(c,"~") ? "bnot" : is(c,"!") ? "lnot" : is(c,"+") ? "" : NULL;
   if(isk(c,T_INT)){ tok k=adv(c); int sz,sg; lit_int_type(k.s,k.n,cc_abi(c)->long_size,&sz,&sg);
     *out=kint((unsigned long long)k.v,sz*8,sg); ok=1; }
-  else if(isk(c,T_ID)){ int e=find_enum(c,pk(c)->s,pk(c)->n);
+  else if(isk(c,T_ID)){ int e=visible_enum(c,pk(c)->s,pk(c)->n);   /* a hidden one is an object: no constant */
     if(e>=0){ c->i++; *out=kint((unsigned long long)c->ec[e].val,32,1); ok=1; } }
   else if(is(c,"(")){ c->i++;
     if(type_name_tok(c,pk(c))) ok = ce_cast_type(c,&t) && ce_primary(c,live,&a) && kconvert(&a,&t,out);
@@ -3818,7 +3828,7 @@ static const char *fence_order_op(CC *c){
      * so the kind rail never disagrees with the value rail or the oracle: an ENUM constant folds to its own
      * value (like the oracle parser's IntLit), a local/param/global/function is a runtime value (-> full),
      * and only THEN does the builtin memory_order name map. */
-    int ec=find_enum(c,core->s,core->n);
+    int ec=visible_enum(c,core->s,core->n);
     if(ec>=0) return order_kind(c->ec[ec].val);
     if(lookup(c,core) || find_global(c,core->s,core->n)>=0 || callee_ret(c,core)) return "c.fence";
     long long mo;
@@ -4077,7 +4087,7 @@ static int szt_elem(szt *t){
 static int sz_name(CC *c, szt *t){
   tok id=*pk(c);
   if(tok_is(&id,"sizeof") || tok_is(&id,"_Alignof") || tok_is(&id,"alignof") || tok_is(&id,"_Generic")
-     || find_enum(c,id.s,id.n)>=0) return 0;       /* an operator or an enumerator: lowered */
+     || visible_enum(c,id.s,id.n)>=0) return 0;    /* an operator or an enumerator: lowered */
   venv *v=lookup(c,&id);
   const bcir_resource *r=v?res_of(c->fn,v->rid):NULL;
   int gi=(v && !(r && r->read_only)) ? -1 : find_global(c,id.s,id.n);
@@ -4349,7 +4359,7 @@ static uint32_t p_primary(CC *c) {
         return postfix_lvalue(c,&sv);
       }
       return r; }
-    int ec=find_enum(c,id.s,id.n);                /* an enumerator -> its folded constant (type int) */
+    int ec=visible_enum(c,id.s,id.n);             /* an enumerator in scope -> its folded constant (type int) */
     if(ec>=0){uint32_t r=tempi(c,4,1);bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);
       if(cl){cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=c->ec[ec].val;}return r;}
     venv *v=lookup(c,&id); if(!v) v=use_global(c,&id);   /* a file-scope global (lookup table)? */
@@ -4461,7 +4471,7 @@ static int bo_match(CC *c,venv *base,field *f){
      || !tb.is_plain_char || tb.is_atomic) return 0;          /* a pointer to plain `char` */
   int p=bo_open(c), addr=is(c,"&");
   if(addr){ c->i++; p+=bo_open(c); }               /* `&s`: the struct's own storage */
-  if(!isk(c,T_ID) || find_enum(c,pk(c)->s,pk(c)->n)>=0) return 0;
+  if(!isk(c,T_ID) || visible_enum(c,pk(c)->s,pk(c)->n)>=0) return 0;
   { tok id=*pk(c); venv *vp=lookup(c,&id); if(!vp) vp=use_global(c,&id); if(!vp) return 0; *base=*vp; c->i++; }
   const bcir_resource *br=res_of(c->fn,base->rid); int arr=br && (br->is_array || br->is_vla);
   if(!br || br->domain!=BCIR_DOM_MMIO || (addr ? base->type.kind!=1 || arr : base->type.kind!=2 && !arr)) return 0;
@@ -4470,7 +4480,7 @@ static int bo_match(CC *c,venv *base,field *f){
   c->i++; k2-=cl-p;
   int r=bo_open(c), e; long long k;
   if(isk(c,T_INT)) k=adv(c).v;
-  else if(isk(c,T_ID) && (e=find_enum(c,pk(c)->s,pk(c)->n))>=0){ k=c->ec[e].val; c->i++; }
+  else if(isk(c,T_ID) && (e=visible_enum(c,pk(c)->s,pk(c)->n))>=0){ k=c->ec[e].val; c->i++; }
   else return 0;
   if(k<0 || k>INT_MAX || !bo_close(c,r+k2+k1) || postfix_follows(c,c->i)) return 0;
   memset(f,0,sizeof *f);                            /* a volatile member of T's layout at offset K */
@@ -8856,6 +8866,9 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
                                            * input to fallback, so both rails agree (neither mis-compiles). */
     return cfront_failure(context,out,"input too large"); }
   while(!isk(c,T_END)&&!c->failed){       /* no fixed function ceiling -- the unit list grows */
+    c->nenv=0;                              /* file scope binds no block-scope name: a function's parameters, left in
+                                             * `env` after its body, must not hide an enumerator a later file-scope
+                                             * declaration reads (`visible_enum`, CF-ENUMSCOPE) */
     /* A1.3: a leading C23 `[[unsequenced]]`/`[[reproducible]]` (or any `[[...]]`) attribute precedes a
      * function/global. Consume it here and carry the value-neutral hint flag into the next p_func (the
      * emit drops it). No run -> repro stays 0, every existing item undisturbed. */

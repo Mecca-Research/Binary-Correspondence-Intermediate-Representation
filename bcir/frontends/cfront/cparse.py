@@ -155,6 +155,10 @@ class _Parser:
         self.abi = abi or HOST
         self.typedefs: dict[str, cast.TypeRef] = {}  # typedef name -> the aliased type
         self.enums: dict[str, int] = {}  # enumerator name -> its integer value
+        # the names the function being parsed declares, one set per block scope, innermost last (its parameters
+        # first): each hides a file-scope enumerator of its name to the end of its block (C11 6.2.1p4), so a
+        # name is read as an enumerator only where none of them is in scope (`_enumerator`; CF-ENUMSCOPE)
+        self.scopes: list[set] = []
         self.recover = False  # panic-mode recovery: collect diagnostics, don't raise
         self.diags: list = []  # list[SourceDiagnostic] accumulated when recover is on
         self.unit: cast.Unit | None = (
@@ -1059,7 +1063,12 @@ class _Parser:
         # the function is in scope from its declarator on, so its own body may name it (C11 6.2.1p7)
         self._declared.add(name)
         declared = frozenset(self._declared)
-        body = self._block()
+        # the parameters' scope encloses the body's block
+        self.scopes.append({p.name for p in params})
+        try:
+            body = self._block()
+        finally:
+            self.scopes.pop()
         return cast.Func(
             ret=ret,
             name=name,
@@ -1076,18 +1085,31 @@ class _Parser:
         with self._descend():  # depth guard: _block<->_stmt nesting (`{{{...}}}`) cycle
             self.eat("PUNCT", "{")
             stmts = []
-            while not self.at("PUNCT", "}"):
-                if not self.recover:
-                    stmts.append(self._stmt())
-                    continue
-                try:  # statement-level recovery: a bad
-                    stmts.append(self._stmt())  # statement doesn't abandon the block
-                except CParseError as e:
-                    self._record(e)
-                    if not self._sync_stmt():  # hit the block's `}` / EOF -> stop
-                        break
+            self.scopes.append(set())  # a block is a scope: the names it declares end with it
+            try:
+                while not self.at("PUNCT", "}"):
+                    if not self.recover:
+                        stmts.append(self._stmt())
+                        continue
+                    try:  # statement-level recovery: a bad
+                        stmts.append(self._stmt())  # statement doesn't abandon the block
+                    except CParseError as e:
+                        self._record(e)
+                        if not self._sync_stmt():  # hit the block's `}` / EOF -> stop
+                            break
+            finally:
+                self.scopes.pop()
             self.eat("PUNCT", "}")
             return tuple(stmts)
+
+    def _enumerator(self, w: str):
+        """The value of the enumerator `w` names where it is read, or None: a name the function declares in a
+        block scope enclosing this point -- a local, a parameter, a loop's own declaration -- hides a file-scope
+        enumerator of its name (C11 6.2.1p4), which is then no constant (CF-ENUMSCOPE; the twin's
+        `visible_enum`). Reading the enumerator there had folded it in place of the object."""
+        if w not in self.enums or any(w in s for s in self.scopes):
+            return None
+        return self.enums[w]
 
     def _is_decl_start(self) -> bool:
         """A declaration starts with a type: a keyword, a scalar or typedef name. A struct tag alone is
@@ -1172,19 +1194,24 @@ class _Parser:
         `init; while(cond){ body; step }` (no `break`/`continue` yet, so this is exact)."""
         self.eat("IDENT", "for")
         self.eat("PUNCT", "(")
-        if self.at("PUNCT", ";"):  # empty init
-            init = None
-            self.nxt()
-        elif self._is_decl_start():
-            init = self._decl_stmt()  # a declaration (consumes its `;`)
-        else:
-            init = cast.ExprStmt(self._incdec() or self._expr())
+        # the loop's own declaration is in scope to the end of its body (6.8.5p5)
+        self.scopes.append(set())
+        try:
+            if self.at("PUNCT", ";"):  # empty init
+                init = None
+                self.nxt()
+            elif self._is_decl_start():
+                init = self._decl_stmt()  # a declaration (consumes its `;`)
+            else:
+                init = cast.ExprStmt(self._incdec() or self._expr())
+                self.eat("PUNCT", ";")
+            cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
             self.eat("PUNCT", ";")
-        cond = cast.IntLit(1) if self.at("PUNCT", ";") else self._expr()
-        self.eat("PUNCT", ";")
-        step = None if self.at("PUNCT", ")") else self._for_step()
-        self.eat("PUNCT", ")")
-        body = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
+            step = None if self.at("PUNCT", ")") else self._for_step()
+            self.eat("PUNCT", ")")
+            body = self._block() if self.at("PUNCT", "{") else (self._stmt(),)
+        finally:
+            self.scopes.pop()
         return cast.For(init, cond, step, body)
 
     def _for_step(self):
@@ -1434,6 +1461,9 @@ class _Parser:
         decls = []
         while True:
             tref, name = self._declarator_or_funcptr(base)
+            # in scope from the end of its declarator, its own initializer included (6.2.1p7)
+            if self.scopes:
+                self.scopes[-1].add(name)
             init = None
             if self.at("OP", "="):
                 self.nxt()
@@ -1776,9 +1806,10 @@ class _Parser:
             return cast.StringLit(text)
         if self.at("IDENT"):
             w = self.peek().text
-            if w in self.enums:  # an enumerator -> its integer literal
+            k = self._enumerator(w)
+            if k is not None:  # an enumerator in scope -> its integer literal
                 self.nxt()
-                return cast.IntLit(self.enums[w])
+                return cast.IntLit(k)
             if w == "sizeof":
                 return self._sizeof()
             if w in ("_Alignof", "alignof"):

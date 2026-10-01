@@ -284,6 +284,8 @@ _PTRVALUE = [
     #   `free` and `realloc`: a null pointer; `p -= 1` of a pointer to a struct on the twin (CF-NULLCALL)
     "cfront_enumfold.c",  # enumerators, case labels and array dimensions folded in C's types and the target's
     #   data model; a dimension that is an integer constant expression a fixed array (CF-ENUMFOLD)
+    "cfront_enumscope.c",  # a local, a parameter and a loop's declaration hide an enumerator of their name to
+    #   the end of their block; file scope after a function reads the enumerator again (CF-ENUMSCOPE)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -11877,3 +11879,81 @@ def test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixe
                 summaries[body],
             )
             assert ("__bcir_ext" in c_emit) == vla, (body, c_emit)
+
+
+# CF-ENUMSCOPE: a name a block declares -- a local, a parameter, a loop's own declaration -- hides a file-scope
+# enumerator of its name (C11 6.2.1p4) from the end of its declarator (6.2.1p7) to the end of its block. Both rails
+# read an enumerator first, wherever its name stood: `uint32_t N = (s & 1u) + 1u; uint32_t a[N];` beside an
+# `enum { N = 4 }` became `a[4]` and `+ 4` -- a silent miscompile, digest-equal on both rails. Each rail now reads an
+# enumerator through one visibility rule (the oracle's `_enumerator`, the twin's `visible_enum`).
+_ENUMSCOPE_DRIVER = r"""
+static int fail(const char *what) { puts(what); return 1; }
+#define SAME(f, ...) do { if (f(__VA_ARGS__) != bcir_##f(__VA_ARGS__)) return fail(#f); } while (0)
+int main(void) {
+  for (uint32_t i = 0; i < 40u; i++) {
+    SAME(es_local, i); SAME(es_param, i, i * 3u + 1u); SAME(es_block, i); SAME(es_loop, i); SAME(es_self, i);
+    SAME(es_sizeof, i); SAME(es_pn, i); SAME(es_after, i); SAME(enumscope, i, i ^ 9u);
+  }
+  /* the values C gives -- reading the enumerator in place of the object gives 21, 21, 6, 4 and 12 */
+  if (bcir_es_local(1u) != 11u || bcir_es_block(0u) != 13u || bcir_es_loop(3u) != 6u || bcir_es_self(0u) != 8u ||
+      bcir_es_sizeof(0u) != 11u || bcir_es_after(4u) != 12u)
+    return fail("values");
+  puts("MATCH");
+  return 0;
+}
+"""
+
+# A case label naming a local that hides an enumerator is no integer constant expression (6.8.4.2p3, 6.6p6).
+_ENUMSCOPE_CASE = (
+    "#include <stdint.h>\nenum { N = 4 };\n"
+    "uint32_t f(uint32_t s) { uint32_t N = s; switch (s) { case N: return 1u; default: return 0u; } }\n"
+)
+# The two readers of a name besides an expression's, each a unit whose claim graph names what it read: a fence's
+# order (an acquire enumerator would make an acquire fence; the local makes a full one) and a volatile access at a
+# byte offset (an enumerator offset is folded into the access; the local's is an address computed at run time).
+_ENUMSCOPE_READERS = (
+    "#include <stdint.h>\n#include <stdatomic.h>\nenum { MO = 2 };\n"
+    "uint32_t f(uint32_t *p, uint32_t s) { int MO = (int)(s & 1u) * 2; *p = s; atomic_thread_fence(MO); "
+    "return *p; }\n",
+    "#include <stdint.h>\nstruct dev { uint32_t a, b, c; };\nenum { K = 4 };\n"
+    "uint32_t f(volatile struct dev *d, uint32_t s) { uint32_t K = (s & 1u) * 8u; "
+    "return *(volatile uint32_t *)((volatile char *)d + K); }\n",
+)
+
+
+def test_a_block_scope_name_hides_an_enumerator_on_both_rails():
+    """CF-ENUMSCOPE: `cfront_enumscope.c` -- a local hiding an enumerator as a VLA's extent and its `sizeof`, a
+    parameter, an inner block's local and a loop's declaration whose scope ends, a local's own initializer
+    (`uint64_t N = sizeof N;` is 8), a local array under `sizeof`, and file scope reading the enumerator again after a
+    function whose parameter hid it (an enumerator's value, a table's dimension) -- lowers to one claim graph on both
+    rails, and each emit returns what the original does. On the parent both rails refused the unit, and the one
+    function they took, `es_local`, both lowered with `a[4]` and `+ 4`. A case label naming the local is refused on
+    both rails as no integer constant expression."""
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import ICE_NOT
+
+    try:
+        compile_unit(_ENUMSCOPE_CASE, check_clang=False)
+    except CParseError as e:
+        assert str(e) == ICE_NOT, str(e)
+    else:
+        raise AssertionError("the oracle took a case label naming a local")
+    if not _CC:
+        return
+    fx = "cfront_enumscope.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _ENUMSCOPE_DRIVER)
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "case.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_ENUMSCOPE_CASE)
+        run = subprocess.run([exe, path], capture_output=True, text=True)
+        out = run.stdout.strip()
+        assert run.returncode == 1 and out == f"PARSE-ERR {ICE_NOT}", out[:200]
+        for n, unit in enumerate(_ENUMSCOPE_READERS):
+            path = os.path.join(d, f"reader{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            _parity_on_targets(path, unit)

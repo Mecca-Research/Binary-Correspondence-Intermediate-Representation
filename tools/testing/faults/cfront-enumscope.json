@@ -1,0 +1,102 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_block_scope_name_hides_an_enumerator_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ES1 the oracle reads an enumerator a block-scope name hides",
+      "new": "        if w not in self.enums:\n",
+      "old": "        if w not in self.enums or any(w in s for s in self.scopes):\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ES2 the oracle puts a local in no scope",
+      "new": "            if self.scopes:\n                pass\n",
+      "old": "            if self.scopes:\n                self.scopes[-1].add(name)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ES3 the oracle puts a local in scope only after its initializer",
+      "new": "            init = None\n            if self.at(\"OP\", \"=\"):\n                self.nxt()\n                init = self._init_value()\n            if self.scopes:\n                self.scopes[-1].add(name)\n",
+      "old": "            if self.scopes:\n                self.scopes[-1].add(name)\n            init = None\n            if self.at(\"OP\", \"=\"):\n                self.nxt()\n                init = self._init_value()\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ES4 the oracle puts a function's parameters in no scope",
+      "new": "        self.scopes.append(set())\n",
+      "old": "        self.scopes.append({p.name for p in params})\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ES5 the oracle lets a loop's declaration outlive the loop",
+      "new": "        # the loop's own declaration is in scope to the end of its body (6.8.5p5)\n        self.scopes.append(self.scopes[-1] if self.scopes else set())\n",
+      "old": "        # the loop's own declaration is in scope to the end of its body (6.8.5p5)\n        self.scopes.append(set())\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ES6 the oracle lets a block's names outlive the block",
+      "new": "            self.scopes.append(self.scopes[-1] if self.scopes else set())  # a block is a scope: the names it declares end with it\n",
+      "old": "            self.scopes.append(set())  # a block is a scope: the names it declares end with it\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET1 the twin reads an enumerator a block-scope name hides",
+      "new": "  (void)0;\n",
+      "old": "  if(e>=0) for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n)) return -1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET2 the twin keeps a function's parameters bound at file scope",
+      "new": "    /*c->nenv=0;*/                          /* file scope binds no block-scope name",
+      "old": "    c->nenv=0;                              /* file scope binds no block-scope name",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET3 the twin's integer constant expressions read a hidden enumerator",
+      "new": "  else if(isk(c,T_ID)){ int e=find_enum(c,pk(c)->s,pk(c)->n);   /* a hidden one is an object: no constant */\n",
+      "old": "  else if(isk(c,T_ID)){ int e=visible_enum(c,pk(c)->s,pk(c)->n);   /* a hidden one is an object: no constant */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET4 the twin's expressions read a hidden enumerator",
+      "new": "    int ec=find_enum(c,id.s,id.n);             /* an enumerator in scope -> its folded constant (type int) */\n",
+      "old": "    int ec=visible_enum(c,id.s,id.n);             /* an enumerator in scope -> its folded constant (type int) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET5 the twin's sizeof of a name reads a hidden enumerator",
+      "new": "     || find_enum(c,id.s,id.n)>=0) return 0;    /* an operator or an enumerator: lowered */\n",
+      "old": "     || visible_enum(c,id.s,id.n)>=0) return 0;    /* an operator or an enumerator: lowered */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET6 the twin's fence order reads a hidden enumerator",
+      "new": "    int ec=find_enum(c,core->s,core->n);\n    if(ec>=0) return order_kind(c->ec[ec].val);\n",
+      "old": "    int ec=visible_enum(c,core->s,core->n);\n    if(ec>=0) return order_kind(c->ec[ec].val);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
+      "label": "ET7 the twin's volatile byte offset reads a hidden enumerator",
+      "new": "  else if(isk(c,T_ID) && (e=find_enum(c,pk(c)->s,pk(c)->n))>=0){ k=c->ec[e].val; c->i++; }\n",
+      "old": "  else if(isk(c,T_ID) && (e=visible_enum(c,pk(c)->s,pk(c)->n))>=0){ k=c->ec[e].val; c->i++; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}
