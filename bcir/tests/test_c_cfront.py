@@ -723,8 +723,8 @@ def _original_xcc_verdict(source: str, entry, compilers) -> str:
     elif entry.ret_type.is_complex:
         fold = (
             f"    {rt} rr={entry.name}({call});\n"
-            f"    h=h*1099511628211u + (uint64_t)(int64_t)creall(rr);\n"
-            f"    h=h*1099511628211u + (uint64_t)(int64_t)cimagl(rr);"
+            f"    h=h*1099511628211u + (uint64_t)xcc_fp_i64(creall(rr));\n"
+            f"    h=h*1099511628211u + (uint64_t)xcc_fp_i64(cimagl(rr));"
         )
     elif entry.ret_type.is_aggregate:
         fold = (
@@ -743,6 +743,10 @@ def _original_xcc_verdict(source: str, entry, compilers) -> str:
 {_BOUNDS_GUARD}
 {source}
 {chr(10).join(prelude)}
+/* a complex part's fingerprint: truncated toward zero, saturated past int64_t and 0 for a NaN -- a conversion out
+   of range is undefined (C11 6.3.1.4p1), and the part of an overflowing complex result is often one (CF-UBGATE) */
+static int64_t xcc_fp_i64(long double v){{
+  return v != v ? 0 : v >= 9223372036854775807.0L ? INT64_MAX : v <= -9223372036854775808.0L ? INT64_MIN : (int64_t)v;}}
 static uint64_t S=0x9E3779B97F4A7C15u;
 static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
 int main(void){{
@@ -5140,7 +5144,7 @@ static uint64_t S=0x9E3779B97F4A7C15u;
 static uint64_t nx(void){{S=S*6364136223846793005u+1442695040888963407u;return S>>32;}}
 int main(void){{
   for(int i=0;i<300000;i++){{
-    int a=(int)nx(), b=(int)nx(); long lb=(long)nx()<<3 | (long)nx();
+    int a=(int)nx(), b=(int)nx(); long lb=(long)(nx()>>2);  /* 30 bits: umix's a*lb is a long (CF-UBGATE) */
     if(sdiv(a,b)!=bcir_sdiv(a,b)){{printf("sdiv@%d a=%d b=%d\\n",i,a,b);return 1;}}
     if(smod(a,b)!=bcir_smod(a,b)){{printf("smod@%d\\n",i);return 1;}}
     if(sshr(a)!=bcir_sshr(a)){{printf("sshr@%d a=%d\\n",i,a);return 1;}}
@@ -5791,7 +5795,7 @@ def test_native_vla_lowering_and_unsupported_forms():
     for src in (
         "unsigned f(unsigned n){ unsigned m=(n&7u)+1u; unsigned a[m]; unsigned s=0u;"
         "  for(unsigned i=0u;i<m;i++){a[i]=i+n;s+=a[i];} return s; }",
-        "int g(int n){ int m=(n&7)+1; int a[m]; int s=0;"
+        "int g(int n){ int m=(n&7)+1; int a[m]; int s=0; n%=100000;"  # its sums are ints (CF-UBGATE)
         "  for(int i=0;i<m;i++){a[i]=i*2-n;s+=a[i];} return s; }",
         "unsigned h(unsigned n){ unsigned a[(n&3u)+2u]; unsigned k=(n&3u)+2u; unsigned s=0u;"
         "  for(unsigned i=0u;i<k;i++){a[i]=i^n;s+=a[i];} return s; }",
@@ -6110,7 +6114,7 @@ def test_incdec_as_expression_value():
     for src in (
         "unsigned f(unsigned a){ unsigned x=a++; return x*100u+a; }",
         "unsigned f(unsigned a){ unsigned x=++a; return x*100u+a; }",
-        "int f(int a){ int x=a--; return x*100+a; }",
+        "int f(int a){ a %= 1000; int x=a--; return x*100+a; }",  # in range: x*100 is an int (CF-UBGATE)
         "struct S{unsigned x;}; unsigned f(unsigned v){ struct S s; s.x=v; unsigned r=s.x++; return r*100u+s.x; }",
         "unsigned f(unsigned i, unsigned v){ unsigned a[4]; a[i&3u]=v; unsigned r=a[i&3u]++; return r*100u+a[i&3u]; }",
         "struct B{unsigned x:5;}; unsigned f(unsigned v){ struct B b; b.x=v&31u; unsigned r=b.x++; return r*100u+b.x; }",

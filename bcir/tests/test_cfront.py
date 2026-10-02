@@ -392,7 +392,10 @@ def test_user_call_returns_typed_by_callee():
     assert "long t" in emit_function(rl.lowered.functions["f"]) and rl.is_clean and eqok(rl)
     # a signed `int` return keeps its SIGN on the result temp -- else a downstream `>>` / comparison on the
     # call result would go unsigned (a logical shift / unsigned compare). `(g(x) >> k)` must stay arithmetic.
-    ri = compile_unit("int g(int x){ return x*100000; } int f(int x){ return g(x) >> 4; }\n")
+    # (`x % 20000` keeps `* 100000` an int: the clang-equivalence run passes full-width arguments; CF-UBGATE)
+    ri = compile_unit(
+        "int g(int x){ return (x % 20000) * 100000; } int f(int x){ return g(x) >> 4; }\n"
+    )
     iem = emit_function(ri.lowered.functions["f"])
     callln = next(l for l in iem.splitlines() if "bcir_g(x)" in l)
     assert callln.strip().startswith("int ") and ">> " in iem and ri.is_clean and eqok(ri)

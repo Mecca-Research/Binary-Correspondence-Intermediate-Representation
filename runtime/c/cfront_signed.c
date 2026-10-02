@@ -10,7 +10,7 @@ unsigned signed_roundtrip(unsigned a) {
   return (unsigned)(int)sc + (unsigned)si + (unsigned)sl;   /* ... and widen back (sign-extend) */
 }
 unsigned signed_scale(unsigned a, unsigned b) {
-  signed int x = (signed int)a;
-  signed int y = (signed int)(b + 1u);
-  return (unsigned)(x * y - x + y);            /* signed wrapping arithmetic (no sign-dependent branch) */
+  signed int x = (signed int)(a & 0xFFFFu) - 32768;   /* in [-32768, 32767]: negative and positive operands, */
+  signed int y = (signed int)(b & 0xFFFFu) - 32767;   /* and no product that overflows `int` (CF-UBGATE)     */
+  return (unsigned)(x * y - x + y);            /* signed arithmetic (no sign-dependent branch) */
 }

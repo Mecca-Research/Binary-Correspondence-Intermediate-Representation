@@ -93,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     findings = 0
     for spec, fn in tests:
         name = spec.partition(":")[2]
+        # the test running now, for a program it starts to name it (`ubsan_witnesses.py`'s reports)
+        os.environ["BCIR_CHECK_TEST"] = spec
         try:
             fn()
         except (Exception, SystemExit) as exc:  # a test that ends the process has not passed

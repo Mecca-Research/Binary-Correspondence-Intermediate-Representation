@@ -30,6 +30,6 @@ uint32_t ps_deref(uint32_t y, uint32_t *p) {
   return y / *p + ID(y) / ID(*p);
 }
 
-int32_t ps_unary(int32_t a, int32_t b) {
+uint32_t ps_unary(uint32_t a, uint32_t b) {   /* unsigned: the spelling is the point, and it wraps defined (CF-UBGATE) */
   return a + +b - -b + (a - -1);
 }

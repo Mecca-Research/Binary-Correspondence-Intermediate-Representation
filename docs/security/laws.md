@@ -1023,6 +1023,36 @@ well, which gives an x86-64 host AArch64's `char` -- a flag of the compiler,
 not an emulation of the target -- and the twin spells the element `char`.
 Witnesses: `test_file_scope_objects_run_as_the_original_with_either_char`.
 Faults (`cfront-filescope.json`): `FS18`, `FS19`.
+CF-UBGATE instance (2026-10-02): the definedness of a witness is a gate, not a
+sweep someone remembers to run -- and a gate placed where every witness is
+built, not at the harness paths someone knows. CI-ARM's sweep patched
+`_build_run_c` and `host_link_args` and found five older fixtures whose
+originals overflow `int`; `tools/testing/ubsan_witnesses.py` instead puts a
+compiler shim first on `PATH`, so every program a cfront test links from
+sources outside the runtime is built once more under UBSan and run first,
+whichever harness built it. Its first run found seven more the sweep's paths
+never reached: three units of `compile_unit(check_clang=True)` and the
+integer-promotion test's driver overflowing a signed type, two fixtures
+shifting a negative `long` left under their tests' drivers, and the
+differential's own fairness fingerprint converting an overflowing complex part
+to `int64_t` -- a defect of the harness, not of any fixture. Each is defined now, each
+keeping what it tests; a report fails the `cfront-ubsan` CI job, which
+installs the runtime and so passes `--require-ubsan` (L2: there an absent
+runtime fails instead of skipping). Witnesses:
+`test_the_gate_fires_on_a_witness_whose_original_runs_undefined_behaviour`,
+`test_a_shimmed_witness_fails_on_undefined_behaviour_and_runs_a_defined_one_unchanged`,
+`test_the_ci_job_that_installs_the_runtime_requires_it`.
+Faults (`cfront-ubgate.json`): `UB1`-`UB5`, each fixture made undefined again;
+(`cfront-ubtests.json`): `UB6`-`UB13`, each of the seven again;
+(`ubsan-witnesses.json`): `UW1`-`UW22`, the gate's own -- `UW17` GCC's
+sanitized twin built at `-O1`, where GCC, comparing an original with an emit
+that overflows alike, folds the comparison and deletes both checks: the gate's
+own fault sweep found six of the thirteen faults running clean under GCC's
+runtime so. GCC's check is a pure function of its operands, deleted with any
+value nothing reads; Clang's is a call no optimizer deletes. So Clang's UBSan
+is the gate's instrument, at `-O2` (`UW19`, `UW20`, `UW22`), and GCC's builds
+unoptimized only what Clang cannot (`UW17`, `UW21`) -- an instrument an
+optimizer can fold away is no instrument (L9).
 **Port note:** substitute endianness, ABI, and libc variance for the same
 discipline.
 

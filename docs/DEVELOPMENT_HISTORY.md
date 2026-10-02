@@ -2995,10 +2995,6 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `601ca6f0` both emits of `uo_parts` still return what the original does not and `_CARD5_REFUSED` and
     `_CARD5_LOWERED` count as above; on `b27c37e1` the twin still refuses `cfront_idxarrow.c` for the same reason.
     Under the sweep every witness this branch added runs clean.
-  Found, not fixed here (a suggested follow-up): five fixtures older than this branch -- `cfront_aostruct.c`,
-  `cfront_signed.c`, `cfront_paste.c`, `cfront_structcall.c` and `cfront_assignexpr.c` -- overflow `int` in the
-  original under the shared corpus's full-width random arguments (`_equiv`), so their equivalence runs are undefined;
-  each passes on every platform CI runs today.
 
   CF-CHARELEM, CF-STRELEM, CF-AOS2D, CF-DEREFSUM, CF-PARENSTR, CF-SUFFIX and CF-LINKEMIT (2026-10-01) closed the five
   file-scope items CF-GLOBALS found and CF-EXTDESIG's linkable refusal of a function named in an initializer, and the
@@ -3238,6 +3234,80 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   AArch64's `wchar_t` is `unsigned int`, so `L'a' - 98 < 0` is false there. The GCC comparison now takes the host's
   own ABI (`platform.machine()`) with the `char` each flag gives it, which also holds the wide forms under
   `-funsigned-char` on x86-64, where the test had skipped them.
+
+  CF-UBGATE (2026-10-02) gates every cfront run-as-the-original witness against undefined behaviour in its original,
+  closing CI-ARM's found-not-fixed item. RED was measured on the parent (`5475a6ad`).
+  - The defect: a witness compiles the original C beside an emit into one program and compares them; where the
+    original runs undefined behaviour, the platform supplies the verdict (CI-ARM's `uo_parts`). CI-ARM's one-off
+    sweep, through `_build_run_c` and `host_link_args`, had found five older fixtures whose originals overflow `int`
+    under `_equiv`'s full-width random arguments -- `signed_scale` (`x * y - x + y` of two full-width `int`s),
+    `ps_unary` (`a + +b - -b + (a - -1)` in `int32_t`), `aostruct_init`, `structcall` and `assign_expr` (sums of a
+    full-width `int` parameter) -- and no gate would have said so again, nor of the next one.
+  - The gate: `tools/testing/ubsan_witnesses.py` runs the 17 cfront test modules with compiler shims first on `PATH`. A
+    shim runs the real compiler as asked -- the witness's own `-O2` build, unchanged -- and, where the build links an
+    executable from C sources outside the repository or among its `cfront_*.c` fixtures (the declared scope: the twin
+    and the harness drivers belong to `sanitize_cfront.sh`), builds the same sources once more with
+    `-fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all` (Clang's runtime at `-O2`, GCC's unoptimized
+    where Clang cannot build the program, or the one `--engine` names; C23 by its draft name where the engine knows it
+    so, as GCC 13 does) and puts a launcher at the output: the sanitized program runs first, a report fails the run (exit 125, the report on
+    stderr and in the gate's log, naming the test that ran it -- `check_tests.py` exports it -- with a copy of the
+    witness's source), else the unsanitized program runs and the test sees what it always saw. Every exit is a verdict:
+    a report or a failing test is a finding; a run that sanitized nothing, a shard that could not run its tests or
+    `-j 0` is INVALID; no UBSan runtime that reports here -- the probe runs signed overflow and must see the report --
+    is an honest skip, and a failure under `--require-ubsan`, which CI's own `cfront-ubsan` job passes because it
+    installs the runtime. The shim sits where every witness is built, so it reaches harnesses the sweep's two paths
+    never did.
+  - The instrument, measured under GCC 13 and Clang 18: Clang's check is a branch to a call of its handler, which no
+    optimizer deletes while the branch can be taken -- an overflow folded into a comparison, stored where nothing reads
+    it, or discarded as a statement (`x * x;`) reported at every level. GCC's check of signed arithmetic is a pure
+    function of its operands, deleted with any value nothing reads at `-O1`, `-Og` and `-O2`: a witness comparing an
+    original with an emit that overflows alike folds the comparison and both checks with it (`cfront_signed.c` with its
+    overflow restored ran clean under GCC at `-O1` and `-O2`), and even at `-O0` GCC's front end drops a discarded
+    statement unchecked. The gate first built every witness at `-O1`, GCC's runtime first, and its own fault sweep
+    found six of its thirteen fixture faults (`UB1`-`UB3`, `UB7`, `UB9`, `UB10`) running clean so; built at `-O0`
+    instead, one witness's loop of up to 2**31 trips, which `-O2` folds to its closed form, ran past 20 minutes before
+    the run was stopped. So Clang's UBSan is the gate's instrument, at `-O2`; GCC's, unoptimized, builds only a
+    program Clang cannot; and `--require-ubsan` with no engine named requires Clang's.
+  - What the gate found beyond the five, on its first full run (Clang's UBSan): seven witnesses of the suite's own
+    harnesses and units. `compile_unit(check_clang=True)` runs a unit against Clang over full-width arguments, and
+    three units overflowed `int` there: `incdec`'s `x*100` of `int x=a--`, the signed VLA unit's `i*2-n` and its
+    sum, the user-call unit's `g` returning `x*100000`. The integer-promotion test's driver passed `umix` a 35-bit
+    `long`, so `a * b` overflowed `long`. `cfront_compoundwide.c`'s `l_array` and `l_ptr`, and
+    `cfront_atomiclocal.c`'s `a_long`, shifted a negative `long` left under their tests' drivers (Clang's UBSan cannot
+    even print the `_Atomic long` one: its runtime fails its own `CHECK`). And the differential's fairness
+    fingerprint, `_original_xcc_verdict`, converted each complex part to `int64_t`, which for
+    `cfront_complextrans.c`, `cfront_complexlong.c` and `cfront_complexmember.c` is infinite or past `INT64_MAX` --
+    undefined in the harness itself, so the fixture was charged `xcc-divergent` for what its fingerprint did. Six of
+    the seven passed on every platform CI runs; the seventh only excluded three fixtures from the differential.
+  - RED: on the parent (`5475a6ad`), this gate's tool alone copied in, the whole cfront suite under Clang's UBSan
+    sanitizes 2 672 witnesses and fails with 32 UBSan reports in 12 failing tests: the five fixtures and the seven
+    witnesses above, each reported where its original overflows, shifts or converts.
+  - What landed: each witness keeps what it tests. `signed_scale` still multiplies negative and positive signed
+    operands, read from the low 16 bits of each argument and biased into `[-32768, 32767]`, so no product overflows;
+    `ps_unary`, whose spelling (`a + +b - -b`) is the point, computes in `uint32_t`; `aostruct_init`, `structcall`
+    and `assign_expr` keep their parameters to 16 bits at entry. The three units reduce their operand at entry (`a %=
+    1000`, `n %= 100000`, `x % 20000`), negative values kept; the promotion driver passes a 30-bit `long`; the two
+    fixtures shift right, an `OP=` on a wide lvalue still (implementation-defined for a negative value, arithmetic on
+    both compilers, never undefined); the fingerprint saturates a complex part to `int64_t` and reads a NaN as 0.
+    GREEN: the 17 modules under the gate build all 2 689 witnesses under Clang's UBSan -- none fell back to GCC's --
+    and each runs clean: 0 reports, 0 unsanitized, 0 failing tests, in 810 s at two workers.
+  - Faults: `tools/testing/faults/cfront-ubgate.json`, 5 -- each fixture made undefined again, each caught by the gate's
+    report over the three equivalence groups that hold the five; `cfront-ubtests.json`, 8 -- each of the seven again
+    (`cfront_compoundwide.c` twice), over the six tests and one differential group; and `ubsan-witnesses.json`, 22, the
+    gate's own: a build from the runtime's sources or an object build taken for a witness, a sanitized twin that keeps
+    `-O2` or loses `float-cast-overflow`, GCC's built at `-O1`, Clang's unoptimized, an engine the gate does not know
+    built optimized, GCC's runtime tried first, a launcher that reads no report, never runs the sanitized program or
+    runs a reported one on, an engine that failed taken as having built, a probe that takes a mute engine,
+    `--require-ubsan` passing an absent runtime or GCC's alone, a run that sanitized nothing or a shard that could not
+    run passing, the CI step dropping `--require-ubsan`, C23 not tried by its draft name, a report that keeps no source
+    or names no test, an unsanitized witness's reason read from its diagnostic's caret line; each caught by its own
+    test. Swept on the final tree: 5 of 5, 8 of 8 and 22 of 22 caught. The first sweep, of the `-O1` gate with GCC's
+    runtime first, had caught 2 of the 5 and 5 of the 8 -- `UB1`-`UB3`, `UB7`, `UB9` and `UB10` ran clean, each an
+    original and an emit overflowing alike, the comparison folded -- and 15 of its own 16, `UW14` never reached because
+    the table's command named no C23 test; the table names every test of the module now. A later sweep stalled on one
+    fault: with the Clang requirement removed, a test that named no test to run ran the whole cfront suite under GCC's
+    unoptimized UBSan, for hours. Every driver call in the tests names one helper now, so a gate that no longer refuses
+    runs that helper alone.
 
 ---
 

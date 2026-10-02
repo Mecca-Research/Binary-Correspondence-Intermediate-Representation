@@ -1,0 +1,74 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/ubsan_witnesses.py",
+    "--require-ubsan",
+    "-j",
+    "2",
+    "bcir.tests.test_c_cfront:test_atomic_local_dual_rail",
+    "bcir.tests.test_c_cfront:test_compound_wide_dual_rail",
+    "bcir.tests.test_c_cfront:test_incdec_as_expression_value",
+    "bcir.tests.test_c_cfront:test_integer_promotions_and_uac_oracle",
+    "bcir.tests.test_c_cfront:test_native_vla_lowering_and_unsupported_forms",
+    "bcir.tests.test_cfront:test_user_call_returns_typed_by_callee",
+    "bcir.tests.test_c_cfront:test_emitted_c_is_equivalent_under_both_gcc_and_clang_g0"
+  ],
+  "faults": [
+    {
+      "expects": "ubsan",
+      "label": "UB6 the differential's fingerprint converts an overflowing complex part to `int64_t`",
+      "new": "            f\"    h=h*1099511628211u + (uint64_t)(int64_t)creall(rr);\\n\"\n",
+      "old": "            f\"    h=h*1099511628211u + (uint64_t)xcc_fp_i64(creall(rr));\\n\"\n",
+      "path": "bcir/tests/test_c_cfront.py"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB7 `test_integer_promotions_and_uac_oracle` passes `umix` a 35-bit `long`",
+      "new": "long lb=(long)nx()<<3 | (long)nx();",
+      "old": "long lb=(long)(nx()>>2);",
+      "path": "bcir/tests/test_c_cfront.py"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB8 the signed VLA unit sums a full-width `n`",
+      "new": "int s=0;\"",
+      "old": "int s=0; n%=100000;\"",
+      "path": "bcir/tests/test_c_cfront.py"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB9 the signed `a--` unit multiplies a full-width `int`",
+      "new": "\"int f(int a){ int x=a--; return x*100+a; }\",",
+      "old": "\"int f(int a){ a %= 1000; int x=a--; return x*100+a; }\",",
+      "path": "bcir/tests/test_c_cfront.py"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB10 `g` of the user-call unit multiplies a full-width `int`",
+      "new": "\"int g(int x){ return x * 100000; }",
+      "old": "\"int g(int x){ return (x % 20000) * 100000; }",
+      "path": "bcir/tests/test_cfront.py"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB11 `l_array` shifts a negative `long` left",
+      "new": "a[1] = a[0] << 1;",
+      "old": "a[1] = a[0] >> 1;",
+      "path": "runtime/c/cfront_compoundwide.c"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB12 `l_ptr` shifts a negative `long` left",
+      "new": "*p <<= 1;",
+      "old": "*p >>= 1;",
+      "path": "runtime/c/cfront_compoundwide.c"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB13 `a_long` shifts a negative `_Atomic long` left",
+      "new": "a <<= 1;",
+      "old": "a >>= 1;",
+      "path": "runtime/c/cfront_atomiclocal.c"
+    }
+  ]
+}
