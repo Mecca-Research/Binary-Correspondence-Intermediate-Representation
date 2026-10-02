@@ -9193,7 +9193,8 @@ static const char *tty(bcir_emit_type_scratch *scratch,const bcir_func *f,uint32
   if(r->is_plain_char) return "char";   /* plain `char`: impl-defined sign (not int8_t -> wrong on ARM) */
   if(r->kind==BCIR_RK_AGGREGATE && r->agg[0]) return r->agg;   /* a struct/union value: `struct T` (CF-STRUCTVAL) */
   if(r->kind==BCIR_RK_SCALAR && r->is_funcptr && r->agg[0] && !r->is_array) return r->agg;   /* a function-pointer
-    * value -- an element of a table, a read through a pointer to one -- by its alias (CF-FPTAB) */
+    * value -- an element of a table, a read through a pointer to one, a select, a null pointer constant -- by its
+    * alias (CF-FPTAB): the one place an emit learns a function pointer's type */
   if(r->kind==BCIR_RK_SCALAR) switch(r->elem_bytes){
     case 1: return r->is_signed?"int8_t":"uint8_t";
     case 2: return r->is_signed?"int16_t":"uint16_t";
@@ -9542,10 +9543,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                                                             * (signed/unsigned) type, not a hardcoded
                                                             * uint32_t (see the c.const note below); a pointer
                                                             * select is its `T *` (decl_ty, CF-DECAY), a function-
-                                                            * pointer select its alias (CF-FNSEL) */
-    { const bcir_resource *sr=res_of(f,cl->wr[0]);
-      w+=snprintf(o+EO,on-EO,"%s %s = (%s ? %s : %s);\n",sr&&sr->is_funcptr&&sr->agg[0]?sr->agg:decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
-                  rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e)); }
+                                                            * pointer select its alias (CF-FNSEL, through tty) */
+      w+=snprintf(o+EO,on-EO,"%s %s = (%s ? %s : %s);\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),
+                  rname(f,cl->wr[0],d),rname(f,cl->rd[0],a),rname(f,cl->rd[1],b),rname(f,cl->rd[2],e));
     else if(!strcmp(cl->op,"c.const")){
       /* declare the constant with its OWN type, not a hardcoded uint32_t: a bare integer literal (e.g.
        * `0` in `x < 0`) is signed (int), so emitting `uint32_t = 0u` made a signed comparison promote to
@@ -9557,7 +9557,7 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
                                                         * 64-bit two's complement, which C reads back with a warning */
       if(cs && cl->imm[0]<0) kdigits(kd,sizeof kd,(unsigned long long)cl->imm[0],1);
       else snprintf(kd,sizeof kd,"%llu%s",(unsigned long long)cl->imm[0],cs?"":"u");
-      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",cr&&cr->is_funcptr&&cr->agg[0]?cr->agg:decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),
+      w+=snprintf(o+EO,on-EO,"%s %s = %s;\n",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),
                   kd); }
     else if(!strcmp(cl->op,"c.sizeof.vla"))                 /* runtime `sizeof a` of a VLA: extent × sizeof(elem).
                                                             * HARDCODE the literal `size_t` (NOT tty(), which

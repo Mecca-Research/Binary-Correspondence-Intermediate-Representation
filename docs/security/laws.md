@@ -2059,6 +2059,23 @@ diverges the twin's emit from the original. A NOT CAUGHT is a question about the
 before it is one about the check. The campaign first ran from a scratch script; it is
 committed as `tools/testing/faults/cfront-*.json`, run by `red_sweep` through
 `tools/testing/check_tests.py`, which names each failing test as a finding.
+Final-sweep instance (2026-10-02): a fault goes equivalent under a change to another line, and only a sweep of its
+whole table on the final head sees it. Each cfront slice swept its own table and the faults whose anchors it moved;
+the last serialized sweep of every table, on CF-PPLIMITS's commit, came back with three NOT CAUGHT whose lines no
+slice had touched. T45 (`cfront-values.json`) and CL15 (`cfront-calls.json`) cut the alias branches the twin's
+`c.const` and `c.select` emits had taken for a function-pointer temp; CF-FPTAB then taught `tty` to spell every
+function-pointer value by its alias, so the branches chose what `decl_ty` already chose -- three places deciding one
+type (L14) -- and the cut reached nothing. GB8 (`cfront-globals.json`) dropped a literal from the oracle's record of
+character-array initializers, which the linkable emit read to refuse every other literal; CF-LINKEMIT rendered a
+pointer's literal too, and the record stopped deciding anything outside FS10, the fault that re-injects the old
+refusal. The branches are gone and `tty` is the one place, which a new fault (FT19) cuts; T45 and CL15 cut the alias
+where each temp takes it, and GB8 refuses a literal the record holds, FS10's mirror. Each changes the output its test
+reads, and is caught.
+Witnesses: `test_null_pointer_constants_run_as_the_original_on_both_rails`,
+`test_function_designator_arms_select_a_function_pointer_on_both_rails`,
+`test_tables_of_function_pointers_and_calls_through_them_run_as_the_original`,
+`test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails`. Faults: `cfront-values.json`
+`T45`, `cfront-calls.json` `CL15`, `cfront-globals.json` `GB8`, `cfront-fptab.json` `FT19`.
 **Port note:** the C/C++ shape is a stale object file or a `ccache` hit after a
 same-size source edit, and any build system whose staleness test is coarser than
 content — timestamps, sizes, or a hash of the command line rather than of the

@@ -248,6 +248,13 @@
    "new": "  uint32_t t=(0)?fp_value_temp(c,sig_alias(c,fld->fp_sig))",
    "old": "  uint32_t t=(fld->fp_sig && !fld->is_ptr)?fp_value_temp(c,sig_alias(c,fld->fp_sig))",
    "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT19 the twin spells a function-pointer value by its width",
+   "new": "  if(0) return r->agg;   /* a function-pointer",
+   "old": "  if(r->kind==BCIR_RK_SCALAR && r->is_funcptr && r->agg[0] && !r->is_array) return r->agg;   /* a function-pointer",
+   "path": "runtime/c/bcir_cfront.c"
   }
  ]
 }

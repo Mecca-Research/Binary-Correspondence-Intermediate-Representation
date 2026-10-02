@@ -203,8 +203,8 @@
     {
       "expects": "test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
       "label": "GB8 the linkable emit refuses a character array's string in a brace list",
-      "new": "        pass\n",
-      "old": "        w.strings.add(id(lit))\n",
+      "new": "        if id(node) in strings:\n            raise CLowerError(_NOT_CONSTANT)\n        return node.value  # spelling incl. prefix and quotes\n",
+      "old": "        return node.value  # spelling incl. prefix and quotes\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {

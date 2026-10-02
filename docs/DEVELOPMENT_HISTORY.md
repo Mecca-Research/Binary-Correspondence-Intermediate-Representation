@@ -3579,6 +3579,23 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - `@` and `$` outside a literal are refused on both rails for different reasons (the oracle's `unexpected
     character '@'`, the twin's `;`).
 
+  The final serialized sweep (2026-10-02) ran every fault table that injects into cfront code -- the 25
+  `cfront-*.json`, `ubsan-witnesses.json`, `escape.json` and `volatile.json`, 905 faults -- each whole, on
+  CF-PPLIMITS's commit (`b233b7d5`), two workers in clean worktrees, and caught 902. Each fault it missed had gone
+  equivalent under a later slice's change to another line, which that slice's own sweep -- its table and the faults
+  whose anchors it moved -- could not see. T45 of `cfront-values.json` and CL15 of `cfront-calls.json` cut the alias
+  branches CF-NULLPTR and CF-FNSEL had given the twin's `c.const` and `c.select` emits; CF-FPTAB then taught `tty` to
+  spell every function-pointer value by its alias, and the branches chose what `decl_ty` already chose. They are gone
+  -- `tty` is the one place an emit learns a function pointer's type, and the twin's output, summaries and digests are
+  its parent's on every fixture of the corpus on the four targets -- T45 and CL15 now drop the alias where the null
+  constant's and the select's temps take it, T22 follows the `c.const` line it mutates, and a new fault, FT19
+  (`cfront-fptab.json`), cuts `tty`'s. GB8 of `cfront-globals.json` dropped a character array's literal from
+  `strings`, the oracle's record of the literals that initialize a character array, which the linkable emit read to
+  refuse every other literal; card 4's CF-LINKEMIT rendered a pointer's literal too, and since then nothing reads the
+  record but FS10, which injects the old refusal of a literal outside it. GB8 is FS10's mirror now: it refuses a
+  literal the record holds. Swept again on the change: `cfront-values.json` 32 of 32, `cfront-calls.json` 45 of 45,
+  `cfront-globals.json` 37 of 37, `cfront-fptab.json` 35 of 35.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

@@ -111,8 +111,8 @@
     {
       "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
       "label": "CL15 the twin's emit spells a function-pointer select as an integer",
-      "new": "sr?decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb):\"\",",
-      "old": "sr&&sr->is_funcptr&&sr->agg[0]?sr->agg:decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),",
+      "new": "tr->is_funcptr=1; }",
+      "old": "tr->is_funcptr=1; fits(c,tr->agg,BCIR_CIR_AGG,\"%s\",al); }",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
