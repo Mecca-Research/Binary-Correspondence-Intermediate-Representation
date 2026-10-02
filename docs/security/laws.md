@@ -961,6 +961,19 @@ Witnesses: `test_linkable_emit_defines_what_the_source_defines`,
 `test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original`, and the globals' bytes
 check of `test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails`, now given
 nothing of the source. Faults (`cfront-filescope.json`): `FS7`-`FS14`.
+CF-ENUMOBJ instance (2026-10-02): a rule that differs by target needs a witness on each target, the ones
+nothing here can run included. Both rails typed every enum object `int`, digest-equal -- the shared
+misreading of the CF-UNARY instance -- where GCC and Clang make an enumeration with no negative enumerator
+`unsigned int` on System V and the MSVC ABI keeps `int`. Running the emit against the original holds the
+System V rule on this x86-64 Linux host; it cannot hold the MSVC one. So each unit of
+`_ENUMOBJ_TARGET_UNITS` is lowered by both rails for each target and compiled beside the original by Clang
+for that target, to IR at `-O1`, and the two functions' folded constants compared: the target's rule
+witnessed by the compiler that defines it, without running it. A fault on one rail's MSVC table breaks
+parity on that target, but the same misreading on both rails -- EO8 and ET8 injected together -- passes
+every other test, parity included; only this witness fires. On the parent, 36 of the 64
+rail-target-unit triples folded otherwise. Witnesses: `test_enum_objects_fold_as_clang_folds_them_on_each_target`,
+`test_enum_objects_take_their_compatible_type_on_both_rails`. Faults (`cfront-enumobj.json`): `EO2`, `EO8`,
+`ET2`, `ET8`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 

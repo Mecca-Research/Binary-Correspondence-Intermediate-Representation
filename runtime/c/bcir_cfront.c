@@ -114,7 +114,9 @@ typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx;
                  int nd, dims[3];   /* an array typedef's dims, outer first (`typedef T row_t[6];`): each declarator
                                      * of the alias appends them after its own (CF-SMALL) */
                } tdef;   /* a typedef alias */
-typedef struct { char name[BCIR_CIR_NAME]; long long val; } econst;           /* an enum constant */
+typedef struct { char name[BCIR_CIR_NAME]; long long val; int tag; } econst;   /* an enum constant; or (`tag`) an enum
+     * tag, `val` its enumeration's compatible type -- 1 `int`, 0 `unsigned int` -- kept in the constants' table so a
+     * speculative parse that rolls the constants back rolls its tags back with them (CF-ENUMOBJ) */
 
 typedef struct {
   char name[BCIR_CIR_NAME];
@@ -151,6 +153,8 @@ typedef struct {
   int wchar_size, wchar_signed;   /* `wchar_t` (Clang's __WCHAR_TYPE__), an `L"..."` literal's unit too: a signed
                               * 4-byte `int` on x86-64, RISC-V and i386 Linux, `unsigned int` on AArch64 Linux,
                               * `unsigned short` on Windows */
+  int enum_unsigned;         /* an enumeration with no negative enumerator is compatible with `unsigned int` (GCC and
+                              * Clang on System V), not `int` (the MSVC ABI); 6.7.2.2p4 (CF-ENUMOBJ) */
 } bcir_abi;
 
 /* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
@@ -158,11 +162,11 @@ typedef struct {
  * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
  * --target-less compilation is byte-identical to the layout used before --target existed. */
 static const bcir_abi g_targets[] = {
-  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8, 4, 1},
-  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 0},
-  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 1},
-  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8, 2, 0},
-  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4, 4, 1},
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8, 4, 1, 1},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 0, 1},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 1, 1},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8, 2, 0, 0},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4, 4, 1, 1},
 };
 #define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
 static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
@@ -730,8 +734,12 @@ static int find_typedef(CC *c,const char *s,int n){
   for(int i=0;i<c->ntd;i++) if((int)strlen(c->td[i].name)==n&&!strncmp(c->td[i].name,s,n)) return i;
   return -1;
 }
-static int find_enum(CC *c,const char *s,int n){
-  for(int i=0;i<c->nec;i++) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
+static int find_enum(CC *c,const char *s,int n){   /* an enumerator: a tag is in another name space (6.2.3p1) */
+  for(int i=0;i<c->nec;i++) if(!c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
+  return -1;
+}
+static int find_enum_tag(CC *c,const char *s,int n){
+  for(int i=c->nec-1;i>=0;i--) if(c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
   return -1;
 }
 /* The enumerator a name denotes where it is read, or -1: a name the function binds in an enclosing block scope -- a
@@ -794,7 +802,8 @@ static venv *use_global(CC *c,const tok *id);   /* fwd: materialize a global's r
 static uint32_t fp_value_temp(CC *c, const char *alias);   /* fwd: a function-pointer value temp (CF-FPTAB) */
 static const char *sig_alias(CC *c, int sig);              /* fwd: a function type's alias (CF-FPTAB) */
 static uint32_t temp_ptr(CC *c,const bcir_ctype *ty,int si);  /* fwd: a pointer temp of a pointer type */
-static void p_enum_body(CC *c);   /* fwd: `{ A, B=expr, C }` -> register the constants */
+static int p_enum_body(CC *c, const tok *tag);   /* fwd: `{ A, B=expr, C }` -> register the constants */
+static int enum_spec(CC *c, bcir_ctype *ty);     /* fwd: `enum [tag] [{...}]` -> its compatible type */
 
 /* a parsed type: fills a bcir_ctype + the struct index (sidx, or -1). */
 /* `T *volatile p`, `volatile ptr_t p`: a pointer object that is itself volatile, every access of which C performs as
@@ -979,8 +988,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       if(c->s[si].incomplete && !ptr){fail(c,"the incomplete struct or union has no layout here");return 1;}
       ty->kind=1;ty->size=c->s[si].size;*sidx=si;
       ty->is_union=(uint8_t)c->s[si].is_union;idcpy(c,ty->tag,&tag);seen=1;break;}
-    if(is(c,"enum")){c->i++;if(isk(c,T_ID)&&!is(c,"{"))c->i++;   /* `enum [tag] [{...}]` -> int */
-      if(is(c,"{"))p_enum_body(c); ty->kind=0;ty->size=4;ty->signd=1;seen=1;break;}
+    if(is(c,"enum")){ if(enum_spec(c,ty)) return 1;   /* `enum [tag] [{...}]` -> its compatible type (CF-ENUMOBJ) */
+      seen=1;break;}
     if(is(c,"va_list")||is(c,"__builtin_va_list")){              /* the variadic cursor type (<stdarg.h>) -- */
       ty->kind=0;ty->is_valist=1;ty->size=cc_abi(c)->pointer_size;ty->signd=0;c->i++;seen=1;break;}  /* opaque, emit `va_list` */
     if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
@@ -1463,6 +1472,7 @@ static int kconvert(const kval *a,const kval *t,kval *out);
 static void lit_int_type(const char *s,int n,int lsz,int *size,int *signd);
 #define CE_NOTCONST "not an integer constant expression"   /* the oracle's `ICE_NOT` */
 #define CE_NOTINT "an enumerator value not representable as int"   /* the oracle's `ENUM_NOT_INT` (6.7.2.2p2) */
+#define CE_ENUM_INCOMPLETE "an enumerated type with no definition"  /* the oracle's `ENUM_INCOMPLETE` (CF-ENUMOBJ) */
 #define CE_DIMRANGE "an array dimension outside 0..INT_MAX"   /* the oracle's `DIM_RANGE` */
 /* `a OP b` (`kbin`), or `OP a` (`kun`, `b` NULL), of operands C evaluates (`live`) -- else the operation's type alone,
  * on a zero and a one of its operands' types, its value 0. 0 when it is no constant. */
@@ -1556,19 +1566,42 @@ static BCIR_NOINLINE long long ce_dim(CC *c,int probe){
 }
 /* `{ A, B = expr, C }`: each enumerator its C value -- the previous one's plus one, or its integer constant expression
  * folded (`ce_fold`) -- registered so a later use reads that constant. An enumeration constant is an int (6.4.4.3): a
- * value no int holds, given or counted on from INT_MAX, is refused (`CE_NOTINT`, 6.7.2.2p2), never cut to one. */
-static void p_enum_body(CC *c){
-  eat(c,"{"); long long val=0;
+ * value no int holds, given or counted on from INT_MAX, is refused (`CE_NOTINT`, 6.7.2.2p2), never cut to one.
+ * Returns the signedness of the integer type the enumerated type is compatible with (6.7.2.2p4) -- `unsigned int` (0)
+ * where no enumerator is negative on a target that makes it so (`bcir_abi.enum_unsigned`: GCC and Clang on System V),
+ * else `int` (1) -- and records it for `tag` (CF-ENUMOBJ: both rails had typed every enum object `int`; the oracle's
+ * `_enum_body`). */
+static int p_enum_body(CC *c, const tok *tag){
+  eat(c,"{"); long long val=0; int neg=0;
   while(!is(c,"}")&&!c->failed){
     tok nm=adv(c);
-    if(is(c,"=")){ kval v; c->i++; if(!ce_fold(c,0,&v)) return; val=kvalue(&v); }
-    if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return; }
+    if(is(c,"=")){ kval v; c->i++; if(!ce_fold(c,0,&v)) return 1; val=kvalue(&v); }
+    if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return 1; }
+    if(val<0) neg=1;
     CC_ENSURE(c,c->ec,c->nec,c->cap_ec);
-    if(c->nec<c->cap_ec){idcpy(c,c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->nec++;}
+    if(c->nec<c->cap_ec){idcpy(c,c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->ec[c->nec].tag=0;c->nec++;}
     val++;
     if(is(c,","))c->i++;
   }
   eat(c,"}");
+  int sg=(cc_abi(c)->enum_unsigned && !neg) ? 0 : 1;
+  if(tag && tag->k==T_ID && CC_ENSURE(c,c->ec,c->nec,c->cap_ec)){
+    idcpy(c,c->ec[c->nec].name,tag); c->ec[c->nec].val=sg; c->ec[c->nec].tag=1; c->nec++; }
+  return sg;
+}
+/* `enum [tag] [{...}]` at `c->i`: the integer type the enumeration is compatible with, as `p_enum_body` decides it --
+ * a tag without a body names the one its definition gave; one no definition has given is refused
+ * (`CE_ENUM_INCOMPLETE`), never read as an `int` (CF-ENUMOBJ; the oracle's `_enum_spec`). 1 on a refusal. */
+static int enum_spec(CC *c, bcir_ctype *ty){
+  c->i++;                                            /* `enum` */
+  tok tag={T_END,"",0,0}; if(isk(c,T_ID)&&!is(c,"{")) tag=adv(c);
+  int sg;
+  if(is(c,"{")){ sg=p_enum_body(c,&tag); if(c->failed) return 1; }
+  else { int e=tag.k==T_ID ? find_enum_tag(c,tag.s,tag.n) : -1;
+         if(e<0){ fail(c,CE_ENUM_INCOMPLETE); return 1; }
+         sg=(int)c->ec[e].val; }
+  ty->kind=0; ty->size=4; ty->signd=(uint8_t)sg;
+  return 0;
 }
 static void p_typedef(CC *c){
   c->i++;                                            /* `typedef` */
@@ -1591,9 +1624,8 @@ static void p_typedef(CC *c){
       if(star_level(c,&ty,stars,cst,rst)) return;}
     if(stars && sidx>=0 && is_anon_tag(c->s[sidx].tag) && !c->s[sidx].tdptr[0] && isk(c,T_ID) && !tok_is(tat(c,c->i+1),"[")){
       idcpy(c,c->s[sidx].tdptr,pk(c)); c->s[sidx].tdstars=stars; }   /* `typedef struct {...} *PP;` (anon_spelling) */
-  } else if(is(c,"enum")){                            /* alias an enum -> an int scalar */
-    c->i++; if(isk(c,T_ID)&&!is(c,"{"))c->i++; if(is(c,"{"))p_enum_body(c);
-    ty.kind=0; ty.size=4; ty.signd=1;
+  } else if(is(c,"enum")){                            /* alias an enum -> its compatible type (CF-ENUMOBJ) */
+    if(enum_spec(c,&ty)) return;
   } else {
     if(p_type(c,&ty,&sidx))return;                    /* scalar / pointer / typedef-of-typedef */
   }
@@ -9527,8 +9559,8 @@ static int try_top_decl(CC *c){
   if(c->failed) return 0;
   if(is(c,"typedef")){ p_typedef(c); return 1; }
   if(is(c,"enum")){
-    int save=c->i; c->i++; if(isk(c,T_ID)&&!is(c,"{")) c->i++;
-    if(is(c,"{")){ p_enum_body(c); eat(c,";"); return 1; }
+    int save=c->i; c->i++; tok tag={T_END,"",0,0}; if(isk(c,T_ID)&&!is(c,"{")) tag=adv(c);
+    if(is(c,"{")){ p_enum_body(c,&tag); eat(c,";"); return 1; }
     c->i=save; return 0;                             /* `enum tag` as a type -> a function follows */
   }
   { /* a struct *definition*?  [storage/qualifiers] struct [attrs] [TAG] [attrs] {  -- lookahead past them. A

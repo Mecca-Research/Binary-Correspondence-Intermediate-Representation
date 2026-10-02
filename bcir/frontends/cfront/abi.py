@@ -33,7 +33,10 @@ class TargetABI:
     in bytes): 8 on the 64-bit targets, 4 on i386, whose ABI aligns them to 4 inside a struct and in
     `_Alignof` while their size stays 8. `wchar_size`/`wchar_signed` are `wchar_t` (Clang's
     `__WCHAR_TYPE__`): a signed 4-byte `int` on x86-64, RISC-V and i386 Linux, an `unsigned int` on
-    AArch64 Linux, an `unsigned short` on Windows -- the element of an `L"..."` literal too."""
+    AArch64 Linux, an `unsigned short` on Windows -- the element of an `L"..."` literal too. `enum_unsigned`: the
+    type an enumeration with no negative enumerator is compatible with (C11 6.7.2.2p4 leaves it to the
+    implementation) is `unsigned int` -- GCC and Clang on the System V targets; the MSVC ABI makes every one `int`.
+    One with a negative enumerator is `int` everywhere (CF-ENUMOBJ)."""
 
     name: str  # short id, e.g. "x86_64-linux"
     triple: str  # the Clang target triple (for `-target` / provenance)
@@ -47,6 +50,7 @@ class TargetABI:
     endian: str = "little"
     wchar_size: int = 4
     wchar_signed: bool = True
+    enum_unsigned: bool = True
 
     @property
     def wchar_type(self) -> str:
@@ -97,6 +101,7 @@ TARGETS: dict[str, TargetABI] = {
         eight_byte_align=8,
         wchar_size=2,
         wchar_signed=False,
+        enum_unsigned=False,
     ),
     "i386-linux": TargetABI(
         "i386-linux",

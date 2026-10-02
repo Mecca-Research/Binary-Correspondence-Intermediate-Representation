@@ -1,0 +1,140 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_enum_objects_take_their_compatible_type_on_both_rails",
+    "bcir.tests.test_c_cfront:test_enum_objects_fold_as_clang_folds_them_on_each_target",
+    "bcir.tests.test_c_cfront:test_linkable_emit_spells_an_enum_global_by_its_compatible_type",
+    "bcir.tests.test_c_cfront:test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike"
+  ],
+  "faults": [
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "EO1 the oracle types every enumeration `int`",
+      "new": "        compatible = \"int\"\n",
+      "old": "        compatible = \"unsigned int\" if self.abi.enum_unsigned and not negative else \"int\"\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enum_objects_fold_as_clang_folds_them_on_each_target",
+      "label": "EO2 the oracle makes an enumeration with no negative enumerator `unsigned int` on MSVC too",
+      "new": "        compatible = \"unsigned int\" if not negative else \"int\"\n",
+      "old": "        compatible = \"unsigned int\" if self.abi.enum_unsigned and not negative else \"int\"\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "EO3 the oracle makes an enumeration with a negative enumerator `unsigned int`",
+      "new": "        compatible = \"unsigned int\" if self.abi.enum_unsigned else \"int\"\n",
+      "old": "        compatible = \"unsigned int\" if self.abi.enum_unsigned and not negative else \"int\"\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike",
+      "label": "EO4 the oracle reads an enum tag no definition gave as `int`",
+      "new": "        return self.enum_tags.get(tag, \"int\")\n",
+      "old": "        if tag not in self.enum_tags:\n            raise CParseError(ENUM_INCOMPLETE, pos=tk.pos)\n        return self.enum_tags[tag]\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "EO5 the oracle records no enum tag (`enum col c` refused)",
+      "new": "",
+      "old": "        if tag:\n            self.enum_tags[tag] = compatible\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "EO6 the oracle types a typedef of an enumeration `int`",
+      "new": "            self._enum_spec()\n            base = cast.TypeRef(base=\"int\")\n",
+      "old": "            base = cast.TypeRef(base=self._enum_spec())  # its compatible integer type (CF-ENUMOBJ)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "EO7 the oracle types an enum specifier in a declaration `int`",
+      "new": "                self._enum_spec()\n                base = \"int\"\n                break\n",
+      "old": "                base = self._enum_spec()\n                break\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enum_objects_fold_as_clang_folds_them_on_each_target",
+      "label": "EO8 the oracle's MSVC target makes an enumeration with no negative enumerator `unsigned int`",
+      "new": "        wchar_signed=False,\n",
+      "old": "        wchar_signed=False,\n        enum_unsigned=False,\n",
+      "path": "bcir/frontends/cfront/abi.py"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET1 the twin types every enumeration `int`",
+      "new": "  int sg=1;",
+      "old": "  int sg=(cc_abi(c)->enum_unsigned && !neg) ? 0 : 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_fold_as_clang_folds_them_on_each_target",
+      "label": "ET2 the twin makes an enumeration with no negative enumerator `unsigned int` on MSVC too",
+      "new": "  int sg=!neg ? 0 : 1;",
+      "old": "  int sg=(cc_abi(c)->enum_unsigned && !neg) ? 0 : 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET3 the twin makes an enumeration with a negative enumerator `unsigned int`",
+      "new": "  int sg=cc_abi(c)->enum_unsigned ? 0 : 1;",
+      "old": "  int sg=(cc_abi(c)->enum_unsigned && !neg) ? 0 : 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike",
+      "label": "ET4 the twin reads an enum tag no definition gave as `int`",
+      "new": "         if(e<0){ ty->kind=0; ty->size=4; ty->signd=1; return 0; }",
+      "old": "         if(e<0){ fail(c,CE_ENUM_INCOMPLETE); return 1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET5 the twin records no enum tag (`enum col c` refused)",
+      "new": "  if(0 && tag && tag->k==T_ID && CC_ENSURE(c,c->ec,c->nec,c->cap_ec)){",
+      "old": "  if(tag && tag->k==T_ID && CC_ENSURE(c,c->ec,c->nec,c->cap_ec)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET6 the twin reads a tag as an enumerator (an object named as a tag folds to its record)",
+      "new": "  for(int i=0;i<c->nec;i++) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
+      "old": "  for(int i=0;i<c->nec;i++) if(!c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET7 the twin reads an enumerator as a tag (`enum shade` typed by the enumerator `shade`)",
+      "new": "  for(int i=c->nec-1;i>=0;i--) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
+      "old": "  for(int i=c->nec-1;i>=0;i--) if(c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_fold_as_clang_folds_them_on_each_target",
+      "label": "ET8 the twin's MSVC target makes an enumeration with no negative enumerator `unsigned int`",
+      "new": "\"LLP64\", 4, 8,  8,  8, 16, 8, 2, 0, 1},",
+      "old": "\"LLP64\", 4, 8,  8,  8, 16, 8, 2, 0, 0},",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET9 the twin types an enum specifier in a declaration `int`",
+      "new": "    if(is(c,\"enum\")){ if(enum_spec(c,ty)) return 1; ty->signd=1;",
+      "old": "    if(is(c,\"enum\")){ if(enum_spec(c,ty)) return 1;   /* `enum [tag] [{...}]` -> its compatible type (CF-ENUMOBJ) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "label": "ET10 the twin types a typedef of an enumeration `int`",
+      "new": "    if(enum_spec(c,&ty)) return;\n    ty.signd=1;\n",
+      "old": "    if(enum_spec(c,&ty)) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

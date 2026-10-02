@@ -873,6 +873,10 @@ SIZEOF_FN = "sizeof of a function designator"
 # ... an enumerator whose value no int holds, stated or counted on from INT_MAX (6.7.2.2p2): C23 gives one a wider
 # type, which neither rail models -- an enumeration constant is an int on both
 ENUM_NOT_INT = "an enumerator value not representable as int"
+# ... and an object of an enumerated type before (or without) the enumeration's definition: its type -- which integer
+# type it is compatible with -- is not known until the enumerator list is (6.7.2.2p4); neither rail guesses `int`
+# (CF-ENUMOBJ)
+ENUM_INCOMPLETE = "an enumerated type with no definition"
 # ... and an array dimension that folds negative (6.7.6.2p1) or past INT_MAX, the twin holding a dimension in an int
 DIM_RANGE = "an array dimension outside 0..INT_MAX"
 # `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --

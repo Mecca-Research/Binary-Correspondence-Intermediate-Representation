@@ -3106,7 +3106,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     6.7.2.2p4 leaves the type to the implementation) and `int` on both rails: `c - 5 < 0` and `_Generic(c - 5, ...)`
     of `enum col { RED, GREEN = 4 } c` differ from the original, digest-equal on both rails (a silent miscompile),
     and the linkable emit defines an `enum col` global as `int`, which another unit's `extern enum col g;` conflicts
-    with;
+    with (closed by CF-ENUMOBJ, below);
   - `#if` evaluates outside C's arithmetic on both rails: `#if -1 > 0u` and `#if 'a' == 97` take the `#else` branch
     on both, digest-equal (a silent miscompile; C reads -1 as `UINTMAX_MAX` there, and `'a'` as 97), and `#if
     0xFFFFFFFFFFFFFFFF == -1` raises a bare `ValueError` in the oracle where the twin refuses it as an overflow;
@@ -3124,6 +3124,52 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     structs (`struct pt (*q)[3] = gm;`), a member through the address of an element (`(&gm[0][1])->y`), a bit-field of
     a 2-D array of structs and an element of a string literal plus an offset (`("ab" + 1)[i]`) are refused on both
     rails, each for reasons of its own.
+
+  CF-ENUMOBJ (2026-10-02) types an object of an enumerated type by the integer type its enumeration is compatible
+  with, closing card 4's first found-not-fixed item. RED was measured on the parent (`83e53595`).
+  - The defect: C11 6.7.2.2p4 leaves an enumerated type's compatible integer type to the implementation. GCC and Clang
+    make one with no negative enumerator `unsigned int` on the System V targets (x86-64, AArch64 and i386 Linux, and
+    MinGW) and one with a negative enumerator `int`; the MSVC ABI makes every one `int` -- each measured by Clang's own
+    fold for the target. Both rails typed every enum object `int` (the oracle mapped `enum [tag]` to `int`, the twin
+    to a signed 4-byte scalar): `(c - 5) < 0` of `enum col { RED, GREEN = 4 } c` was 1 where Clang and GCC give 0,
+    `_Generic(c - 5, ...)` chose `int`, `(int64_t)c` sign-extended, `c -= 1` of `RED` read back as -1 and a 3-bit
+    bit-field of the type read 4 as -4 -- the same claim graph on both rails, so parity never saw it (a silent
+    miscompile). The oracle's linkable emit defined such a global `int`, which another unit's `extern enum col g;`
+    conflicts with (6.2.7p2). Both rails also read `enum nope` -- a tag no definition gave, or one used before its
+    enumerator list -- as `int`, where C requires the list first (6.7.2.3p3).
+  - RED: on the parent the four new tests fail. Of the fixture's ten driven functions, eight return what the original
+    does not on both rails (`eo_switch` and `eo_signed`, which `int` and `unsigned int` answer alike, hold); each of
+    the eight units of `_ENUMOBJ_LOWERED` returns another value; the six of `_ENUMOBJ_REFUSED` lower on both rails; of
+    the eight units of `_ENUMOBJ_TARGET_UNITS`, six fold otherwise than Clang on each System V target on both rails (36
+    of the 64 rail-target-unit triples; the enumeration with a negative enumerator and the enumeration constant hold,
+    and every unit holds on the MSVC target); and the fixture's linkable emit redeclared `extern enum col gcol;` does
+    not compile (`conflicting types`).
+  - What landed: an ABI field per rail, `TargetABI.enum_unsigned` and `bcir_abi.enum_unsigned`, false on the MSVC
+    target. The enumerator list decides the type (`cparse._enum_body`, the twin's `p_enum_body`: `unsigned int` where
+    no enumerator is negative on a target that makes it so, else `int`) and records it for its tag (`enum_tags`; on
+    the twin a tag entry in the enumerator table, so a speculative parse that rolls the enumerators back rolls the tag
+    back with them, and the enumerator and tag lookups each skip the other's entries -- tags are a name space of their
+    own, 6.2.3p1). One reader of an `enum` specifier per rail (`_enum_spec`, `enum_spec`) serves a declaration, a
+    typedef, a cast, `sizeof`, a parameter and `_Generic`, and refuses a tag no definition gave (`an enumerated type
+    with no definition`). The enumeration constants stay `int` (6.4.4.3).
+  - Outcomes: `runtime/c/cfront_enumobj.c` -- enum objects as locals, a static and an external global, a parameter, a
+    return, members, a 3-bit bit-field and typedef names of a tagged and an untagged enumeration, read by comparisons,
+    widening conversions, `_Generic`, division, shifts, compound assignment and a switch, beside an object and an
+    enumerator named as tags -- lowers to one claim graph on the four targets, and both emits run as the original under
+    Clang and GCC. Each unit of `_ENUMOBJ_TARGET_UNITS`, lowered by both rails for each target, folds under Clang for
+    that target to the original's constant, so the MSVC rule holds where nothing here can run it. `_ENUMOBJ_REFUSED`
+    (6) is refused on both rails in the same words; `_ENUMOBJ_LOWERED` (8) lowers alike, each emit the original. The
+    linkable emit declares an enum global by its compatible type: the fixture's, redeclared `extern enum col gcol;`
+    and `extern enum sg gsg;`, builds under Clang and GCC. Every other unit of the corpus keeps the parent's summary
+    and digest on both rails on the four targets: none reads an enum object where the two types part.
+  - Faults: `tools/testing/faults/cfront-enumobj.json`, 18 -- 8 on the oracle, 10 on the twin -- each caught by its
+    own test. EO8 and ET8 injected together -- both rails reading the MSVC enumeration as `unsigned int` -- pass every
+    test but the cross-target fold, parity included: a shared misreading is invisible to parity, so the fold against
+    Clang is the witness that hits the MSVC rule (L11). Two older faults anchored in lines this changed were
+    re-anchored and caught again: `cfront-consts.json` EF17 (the enumerator range check, whose body now returns the
+    type's signedness) and `cfront-gaps.json` T11 (the twin's AArch64 target row, which carries `enum_unsigned` now).
+  Found, not fixed here: a pointer to an enumerated type before its definition (`enum later *p;`, which C allows while
+  the type is incomplete) is refused on both rails with the rest.
 
 ---
 

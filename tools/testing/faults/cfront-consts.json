@@ -125,8 +125,8 @@
     {
       "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
       "label": "EF17 the twin takes an enumerator no int holds",
-      "new": "    if(0){ fail(c,CE_NOTINT); return; }",
-      "old": "    if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return; }",
+      "new": "    if(0){ fail(c,CE_NOTINT); return 1; }",
+      "old": "    if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return 1; }",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

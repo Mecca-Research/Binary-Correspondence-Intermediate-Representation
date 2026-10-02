@@ -18,6 +18,7 @@ from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
 from .lower import (
     DIM_RANGE,
+    ENUM_INCOMPLETE,
     ENUM_NOT_INT,
     FN_RET_FP,
     GENERIC_QUALIFIED,
@@ -194,6 +195,8 @@ class _Parser:
         self.abi = abi or HOST
         self.typedefs: dict[str, cast.TypeRef] = {}  # typedef name -> the aliased type
         self.enums: dict[str, int] = {}  # enumerator name -> its integer value
+        # enum tag -> the integer type its enumeration is compatible with (`_enum_body`; CF-ENUMOBJ)
+        self.enum_tags: dict[str, str] = {}
         # the names the function being parsed declares, one set per block scope, innermost last (its parameters
         # first): each hides a file-scope enumerator of its name to the end of its block (C11 6.2.1p4), so a
         # name is read as an enumerator only where none of them is in scope (`_enumerator`; CF-ENUMSCOPE)
@@ -520,11 +523,7 @@ class _Parser:
         Name;`."""
         self.eat("IDENT", "typedef")
         if self.at("IDENT", "enum"):
-            self.nxt()
-            tag = self.eat("IDENT").text if self.at("IDENT") and not self.at("PUNCT", "{") else ""
-            if self.at("PUNCT", "{"):
-                self._enum_body(tag)
-            base = cast.TypeRef(base="int")  # an enum is an int-sized scalar
+            base = cast.TypeRef(base=self._enum_spec())  # its compatible integer type (CF-ENUMOBJ)
         elif self.at("IDENT", "struct") or self.at("IDENT", "union"):
             kind = self.nxt().text
             attrs = self._attributes()
@@ -696,13 +695,29 @@ class _Parser:
         n, levels = self._stars()  # each `*` of the return with its qualifiers (CF-QUALS)
         return dataclasses.replace(base, ptr=base.ptr + n, ptr_quals=_join_levels(base, n, levels))
 
-    def _enum_body(self, tag: str) -> None:
+    def _enum_spec(self) -> str:
+        """`enum [tag] [{...}]` at the parser's position: the integer type the enumeration is compatible with, as
+        `_enum_body` decides it -- a tag without a body names the one its definition gave; one no definition has
+        given is refused (`ENUM_INCOMPLETE`), never read as an `int`."""
+        tk = self.eat("IDENT", "enum")
+        tag = self.eat("IDENT").text if self.at("IDENT") and not self.at("PUNCT", "{") else ""
+        if self.at("PUNCT", "{"):
+            return self._enum_body(tag)
+        if tag not in self.enum_tags:
+            raise CParseError(ENUM_INCOMPLETE, pos=tk.pos)
+        return self.enum_tags[tag]
+
+    def _enum_body(self, tag: str) -> str:
         """Parse `{ A, B = expr, C }` -- assign each enumerator its C value (prev+1, or the given
         constant, folded in C's types: `_const_eval`) and register it so a later use resolves to that
         integer literal. An enumeration constant is an `int` (C11 6.4.4.3): a value no int holds, given or
-        counted on from INT_MAX, is refused (`ENUM_NOT_INT`, 6.7.2.2p2), never cut to one."""
+        counted on from INT_MAX, is refused (`ENUM_NOT_INT`, 6.7.2.2p2), never cut to one. Returns the integer
+        type the enumerated type is compatible with (6.7.2.2p4) -- `unsigned int` where no enumerator is negative
+        on a target that makes it so (`TargetABI.enum_unsigned`: GCC and Clang on System V), else `int` -- and
+        records it for the tag (CF-ENUMOBJ: both rails had typed every enum object `int`)."""
         self.eat("PUNCT", "{")
         value = 0
+        negative = False
         while not self.at("PUNCT", "}"):
             tk = self.eat("IDENT")
             if self.at("OP", "="):
@@ -713,10 +728,15 @@ class _Parser:
             if not -(1 << 31) <= value < 1 << 31:
                 raise CParseError(ENUM_NOT_INT, pos=tk.pos)
             self.enums[tk.text] = value
+            negative = negative or value < 0
             value += 1
             if self.at("PUNCT", ","):
                 self.nxt()
         self.eat("PUNCT", "}")
+        compatible = "unsigned int" if self.abi.enum_unsigned and not negative else "int"
+        if tag:
+            self.enum_tags[tag] = compatible
+        return compatible
 
     def _dim(self, e):
         """An array declarator's dimension: its value when it is an integer constant expression -- the array is
@@ -915,13 +935,8 @@ class _Parser:
                 self.nxt()
                 base = self.eat("IDENT").text  # the tag
                 break
-            elif w == "enum":  # `enum [tag] [{...}]` -> an int scalar
-                self.nxt()
-                if self.at("IDENT") and not self.at("PUNCT", "{"):
-                    self.nxt()  # the tag (ignored; enum is int-sized)
-                if self.at("PUNCT", "{"):
-                    self._enum_body("")
-                base = "int"
+            elif w == "enum":  # `enum [tag] [{...}]` -> its compatible integer type (CF-ENUMOBJ)
+                base = self._enum_spec()
                 break
             elif (
                 w in _TYPEOF_KW and not words and not aggregate

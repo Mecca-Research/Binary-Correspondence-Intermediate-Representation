@@ -301,7 +301,10 @@ _mm_sfence();                      //                   store (release) fence ->
 ## What's supported
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,
-  arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`.
+  arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`. An object of an enumerated type
+  has the integer type its enumeration is compatible with, as Clang gives it on the target: `unsigned int` when no
+  enumerator is negative on the System V targets, `int` otherwise and on the MSVC target; the enumeration constants
+  are `int` (C11 6.7.2.2p4, 6.4.4.3).
 - Integer constants in every base (`0x`, `0b`, a leading `0` octal, decimal) and with every suffix C spells -- a
   `u` before or after an `l`, `L`, `ll` or `LL` -- each its exact value in its C11 6.4.4.1 type on the target
   (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long` where `long` is 64 bits and an `unsigned long long` where
@@ -508,10 +511,9 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   rails; take the element first (`struct ops *e = &a[i]; e->fn(s)`). Two splits recorded for follow-up: reading
   that member as a value (`op_t g = a[i].fn;`), and `__typeof__` of a call, of `?:` or of a function designator,
   are refused by the Python reference as not yet supported and lowered by the C twin.
-- An object of an enumerated type none of whose enumerators is negative is `unsigned int` under GCC and Clang
-  (C11 6.7.2.2p4 leaves the type to the implementation) and `int` on both rails, so `c - 5 < 0` and `_Generic(c -
-  5, ...)` of such an object differ from the original -- a recorded follow-up; convert the object to the type
-  you mean first (`(int)c - 5`). The linkable emit defines a global of such a type as `int` for the same reason.
+- An `enum` tag used before its enumerator list, or with none -- an object, a cast, `sizeof`, a typedef, a parameter,
+  and a pointer to the incomplete type too, which C allows -- is refused on both rails (`an enumerated type with no
+  definition`); define the enumeration first.
 - `#if` evaluates in each rail's own integers, not in C's `intmax_t` and `uintmax_t`: an unsigned operand does not
   make a comparison unsigned (`#if -1 > 0u` takes the `#else` branch), a character constant is 0 there, and the
   Python reference refuses `#if 0xFFFFFFFFFFFFFFFF == -1` with an internal error -- a recorded follow-up.

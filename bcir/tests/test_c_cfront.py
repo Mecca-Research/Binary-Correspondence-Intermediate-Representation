@@ -298,6 +298,9 @@ _PTRVALUE = [
     #   array compared with 0, `void *` of malloc, `++(x)`, void values where C reads none (CF-UNARY, CF-STRUCTCOND)
     "cfront_filescope.c",  # plain `char` and string literal elements, `gm[i][j].x`, 2-D pointer tables, `*(p + i -
     #   j)`, `char s[] = ("abc");` and `const` globals read into the emit's temps (CF-CHARELEM, CF-AOS2D, CF-LINKEMIT)
+    "cfront_enumobj.c",  # objects of an enumerated type -- locals, globals, parameters, returns, members, a bit-field,
+    #   typedef names -- typed as the enumeration's compatible type: `unsigned int` with no negative enumerator on System
+    #   V, `int` otherwise and on MSVC (CF-ENUMOBJ)
 ]  # + <stdlib.h> malloc/calloc/realloc/free as external libc edges (#stdlibmem)   # + address-of an array-of-structs element field in a member (#addrofaos)   # + address-of a member-array element (#addrofarr): &s.arr[i] / &s.m[i][j]   # + general address-of `&` of an lvalue (#addrof): &s->m / &*p / &arr[i]   # + a pointer stored into / loaded from a struct field (#ptrfield):
 #   the member occupies pointer_size (8) bytes -- a correct layout (an adjacent field no longer overlaps
 #   the high half of the pointer) and an untruncated 8-byte store/load that carries the real `T *` type.
@@ -13878,6 +13881,223 @@ def test_file_scope_fixture_linkable_emit_builds_alone_and_runs_as_the_original(
             assert outs[0] and outs[1] == outs[0], f"{cc}: the linkable emit is not the original"
             ran += 1
     assert ran, "no compiler of the pair"
+
+
+# CF-ENUMOBJ: an object of an enumerated type has the type the enumeration is compatible with (C11 6.7.2.2p4): on the
+# System V targets `unsigned int` when no enumerator is negative and `int` otherwise, on MSVC `int`. Both rails had typed
+# every one `int` -- the same claim graph, so only an emit run against the original showed it.
+_ENUMOBJ_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(eo_local, s); SAME(eo_global, s); SAME(eo_calls, s); SAME(eo_member, s); SAME(eo_typedef, s);
+    SAME(eo_conv, s); SAME(eo_compound, s); SAME(eo_switch, s); SAME(eo_signed, s); SAME(eo_names, s);
+    SAME(eo_entry, s);
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_enum_objects_take_their_compatible_type_on_both_rails():
+    """CF-ENUMOBJ: `cfront_enumobj.c` -- objects of an enumerated type as locals, a static and an external global,
+    a parameter, a return, members, a 3-bit bit-field and typedef names of a tagged and an untagged enum, read where
+    `int` and `unsigned int` part: `(c - 5) < 0`, a widening conversion, `_Generic`, a division, a shift, `c -= 1` of
+    `RED`, `c--`, a switch. Both rails had typed each `int`, so the comparison was 1 and `_Generic` chose `int` where
+    Clang and GCC, making an enumeration with no negative enumerator `unsigned int`, give 0 and `unsigned int`. Both
+    rails lower the fixture to one claim graph on the four targets, and each emit returns what the original does under
+    Clang and GCC, function by function; the enumeration with a negative enumerator stays `int`."""
+    if not _CC:
+        return
+    fx = "cfront_enumobj.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _ENUMOBJ_DRIVER, _QUALS_WERROR
+    )
+
+
+# Units whose `f` folds to a constant the enumeration's type decides, held to Clang's own fold on each target (the
+# MSVC one makes every enumeration `int`), and the enumeration constants that stay `int` everywhere.
+_ENUMOBJ_TARGET_UNITS = (
+    "enum col { RED, GREEN = 4 };\nuint32_t f(void) { enum col c = RED; return _Generic(c, unsigned int: 1u, "
+    "int: 2u, default: 3u); }",
+    "enum col { RED, GREEN = 4 };\nuint32_t f(void) { enum col c = RED; return (uint32_t)((int64_t)(c - 5) < 0); }",
+    "enum sg { NEG = -1, POS };\nuint32_t f(void) { enum sg g = POS; return _Generic(g, unsigned int: 1u, "
+    "int: 2u, default: 3u); }",
+    "typedef enum { A, B } e_t;\nuint32_t f(void) { e_t x = B; return (uint32_t)((int64_t)(x - 2) >> 40); }",
+    "enum col { RED, GREEN = 4 };\nuint32_t f(void) { return _Generic(GREEN, unsigned int: 1u, int: 2u, "
+    "default: 3u); }",
+    "enum col { RED, GREEN = 4 };\nstruct h { enum col b : 3; };\nuint32_t f(void) { struct h v = {GREEN}; "
+    "return (uint32_t)((int64_t)v.b < 0); }",
+    "enum col { RED, GREEN = 4 };\nstatic const enum col g = RED;\nuint32_t f(void) { return (uint32_t)"
+    "((int64_t)(g - 1) >> 40); }",
+    "enum col { RED, GREEN = 4 };\nenum col pick(void) { return GREEN; }\nuint32_t f(void) { return "
+    "(uint32_t)((int64_t)(pick() - 5) < 0); }",
+)
+
+
+def _folded_return(ir: str, name: str):
+    """The constant `name` returns in LLVM IR `ir` that folded it to one, else None."""
+    m = re.search(r"^define [^\n]*@" + re.escape(name) + r"\(.*?^\}", ir, re.M | re.S)
+    if not m:
+        return None
+    rets = re.findall(r"ret i32 (-?\d+)", m.group(0))
+    return rets[0] if len(rets) == 1 else None
+
+
+def test_enum_objects_fold_as_clang_folds_them_on_each_target():
+    """CF-ENUMOBJ: each unit of `_ENUMOBJ_TARGET_UNITS`, lowered by both rails for each of the four targets, folds
+    under Clang for that target (`-O1`) to the constant the original folds to -- `unsigned int` for an enumeration with
+    no negative enumerator on the System V targets, `int` on MSVC's -- so the MSVC rule holds where nothing here can run
+    it. Both rails had folded each as `int` on every target."""
+    clang = shutil.which("clang")
+    if not clang:
+        return
+    from bcir.frontends.cfront import abi as abi_mod
+
+    exe = _build_frontend(_session_build_dir())
+    # freestanding, so no target's libc headers are needed: an emit's own `memcpy` is the builtin
+    head = "#include <stdint.h>\n#include <stddef.h>\n#define memcpy __builtin_memcpy\n"
+    with tempfile.TemporaryDirectory() as d:
+        for k, unit in enumerate(_ENUMOBJ_TARGET_UNITS):
+            unit = "#include <stdint.h>\n" + unit + "\n"
+            path = os.path.join(d, f"u{k}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            for t in _BUF_TARGETS:
+                r = compile_unit(unit, check_clang=False, target=t)
+                oracle_emit = "\n".join(r.emitted[n] for n in r.lowered.functions)
+                run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+                summary, _, twin_emit = run.stdout.partition("----EMIT----\n")
+                assert _summary_line(r) == (summary.strip().splitlines() or [""])[0], (k, t)
+                for label, emit in (("oracle", oracle_emit), ("twin", twin_emit)):
+                    # the emit's `bcir_f` is static: each is read through a function that keeps it
+                    keep = "uint32_t f_kept(void) { return f(); }\nuint32_t bcir_f_kept(void) { return bcir_f(); }\n"
+                    text = head + unit + emit + keep
+                    c = os.path.join(d, f"u{k}_{t}_{label}.c")
+                    with open(c, "w", encoding="utf-8") as fh:
+                        fh.write(text)
+                    b = subprocess.run(
+                        [
+                            clang,
+                            "-target",
+                            abi_mod.target(t).triple,
+                            "-std=c11",
+                            "-ffreestanding",
+                            "-O1",
+                        ]
+                        + ["-S", "-emit-llvm", "-o", "-", c],
+                        capture_output=True,
+                        text=True,
+                    )
+                    assert b.returncode == 0, (k, t, label, b.stderr[-2000:])
+                    want = _folded_return(b.stdout, "f_kept")
+                    got = _folded_return(b.stdout, "bcir_f_kept")
+                    assert want is not None and got == want, (k, t, label, want, got)
+
+
+def test_linkable_emit_spells_an_enum_global_by_its_compatible_type():
+    """CF-ENUMOBJ: the oracle's linkable emit of `cfront_enumobj.c` declares its enum-typed globals by the integer type
+    each enumeration is compatible with, so another unit's `extern enum col gcol2;` and `extern enum sg gsg;` -- here
+    in the same translation unit, where Clang and GCC refuse two incompatible declarations of one object (C11 6.2.7p2)
+    -- name the same object. It had declared each `int`: `conflicting types` for the `enum col` one."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    src = open(os.path.join(_C, "cfront_enumobj.c"), encoding="utf-8").read()
+    # the fixture's static global made external, beside the one already external
+    src = src.replace("static enum col gcol = GREEN;", "enum col gcol = GREEN;")
+    r = compile_unit(src, check_clang=False)
+    linkable = emit_linkable(r.lowered, r.emitted)
+    assert "int gsg" in linkable and "gcol" in linkable, linkable
+    redeclared = linkable + "\nextern enum col gcol;\nextern enum sg gsg;\n"
+    ran = 0
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "linkable.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(redeclared)
+        for cc in ("clang", "gcc"):
+            exe = shutil.which(cc)
+            if not exe:
+                continue
+            b = subprocess.run(
+                [exe, "-std=c11", "-I", _C, "-c", path, "-o", os.devnull],
+                capture_output=True,
+                text=True,
+            )
+            assert b.returncode == 0, (
+                f"{cc}: an enum global's declaration conflicts\n{b.stderr[-2000:]}"
+            )
+            ran += 1
+    assert ran, "no compiler of the pair"
+
+
+# CF-ENUMOBJ: an enumerated type is known only after its enumerator list (C11 6.7.2.3p3) -- before it, or with none,
+# which integer type it is compatible with is not known; both rails refuse an object, a cast, a `sizeof` or a typedef of
+# one for one reason (they had read it as `int`). And forms that read an enum object where `int` and `unsigned int`
+# part -- through a pointer, an element, a division, a shift, a remainder, `?:`, a compound literal -- lowered alike, each
+# emit the original.
+_ENUMOBJ_HEAD = "#include <stdint.h>\nenum col { RED, GREEN = 4 };\n"
+_ENUMOBJ_INCOMPLETE = "an enumerated type with no definition"
+_ENUMOBJ_REFUSED = (
+    "uint32_t f(uint32_t s) { enum nope c = s; return c; }",
+    "enum nope gn;\nuint32_t f(uint32_t s) { return s; }",
+    "typedef enum later later_t;\nenum later { L0, L1 };\nuint32_t f(uint32_t s) { later_t x = L1; return x + s; }",
+    "uint32_t f(uint32_t s) { return (uint32_t)sizeof(enum nope) + s; }",
+    "uint32_t f(uint32_t s) { return (uint32_t)(enum nope)s; }",
+    "uint32_t f(enum nope p) { return 1u; }",
+)
+_ENUMOBJ_LOWERED = (
+    "uint32_t f(uint32_t s) { enum col c = (enum col)s; enum col *p = &c; *p -= 1u; "
+    "return (uint32_t)((int64_t)*p >> 40); }",
+    "uint32_t f(uint32_t s) { enum col a[2] = {RED, GREEN}; a[0] -= 1; "
+    "return (uint32_t)((int64_t)a[s & 1u] >> 40) + (uint32_t)a[1]; }",
+    "uint32_t f(uint32_t s) { enum col a = (enum col)(0u - (s & 1u)); return (uint32_t)(a / 3); }",
+    "uint32_t f(uint32_t s) { enum col a = (enum col)(0u - (s & 1u)); return (uint32_t)(a >> 1); }",
+    "uint32_t f(uint32_t s) { enum col a = (enum col)(0u - 7u * (s & 1u)); return (uint32_t)(a % 3); }",
+    "uint32_t f(uint32_t s) { enum col a = RED, b = GREEN; "
+    "return (uint32_t)((int64_t)((s & 1u) ? a - 1 : b - 1) >> 40); }",
+    "uint32_t f(uint32_t s) { return (uint32_t)((int64_t)((enum col){RED} - 1) >> 40) + s; }",
+    "uint32_t f(uint32_t s) { enum col a = (enum col)s, b = GREEN; return (uint32_t)(a - b > 0) + "
+    "(uint32_t)(a < b); }",
+)
+
+
+def test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike():
+    """CF-ENUMOBJ: each unit of `_ENUMOBJ_REFUSED` -- an object, a file-scope object, a typedef, a `sizeof`, a cast and
+    a parameter of an enumerated type before or without its definition -- is refused on both rails as `an enumerated
+    type with no definition` (C11 6.7.2.3p3); both had read each as `int`. Each unit of `_ENUMOBJ_LOWERED` lowers to one
+    claim graph on the four targets, each emit the original under Clang and GCC."""
+    for body in _ENUMOBJ_REFUSED:
+        got = _card4_refusal(_ENUMOBJ_HEAD + body + "\n")
+        assert got == _ENUMOBJ_INCOMPLETE, (body, got)
+    for body in _ENUMOBJ_LOWERED:
+        got = _card4_refusal(_ENUMOBJ_HEAD + body + "\n")
+        assert got == "", (body, got)
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_ENUMOBJ_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_ENUMOBJ_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert (
+                run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {_ENUMOBJ_INCOMPLETE}"
+            ), (
+                body,
+                run.returncode,
+                run.stdout[:200],
+            )
+        for n, body in enumerate(_ENUMOBJ_LOWERED):
+            _rtfp_run_unit(f"l{n}", _ENUMOBJ_HEAD + body + "\n", exe, d)
 
 
 def _card4_refusal(src: str) -> str:
