@@ -128,6 +128,9 @@ typedef struct bcir_resource {
                               * as the source declares it, so a call passes it as its first element's address,
                               * `&m[0][0]` -- the flat `T *` an emitted parameter is (CF-GARRAY). Emit-only: the claim
                               * graph and its digest do not read it. */
+  uint8_t  typedef_named;    /* a named local whose name is one of the unit's typedef names, which the emitted function
+                              * may spell: its hoisted declaration may not take the name (CF-TYPEDEFSCOPE; the oracle's
+                              * `_uniq`). Emit-only. */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */
@@ -273,6 +276,9 @@ typedef struct bcir_func {
                                * its address is taken, so callers the unit cannot see may reach it (the
                                * oracle's LoweredUnit.init_refs twin; read by the escape analysis) */
   uint32_t return_rid; uint8_t has_return;
+  uint8_t  named_calls;       /* a claim calls a function by name, `c.call<kind>:X` -- a libc routine, a function another
+                               * unit defines, as well as one in `calls`: the emit's naming reads the claims for the
+                               * names they spell only then (CF-TYPEDEFSCOPE, `spelled_scan`). Emit-only. */
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */
   bcir_host_literal *host_literals; int n_host_literals, cap_host_literals;

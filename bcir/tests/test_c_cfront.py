@@ -288,6 +288,8 @@ _PTRVALUE = [
     #   the end of their block; file scope after a function reads the enumerator again (CF-ENUMSCOPE)
     "cfront_constexpr2.c",  # case labels in the promoted type, prefixed character constants, block enumerations,
     #   constant widths and dimensions, sizeof and float casts in enumerators, zero-length members (CF-CONSTEXPR2)
+    "cfront_typedefscope.c",  # a local, a parameter, a loop's declaration and a block's enumerator hide a typedef
+    #   name to the end of their block: no declaration, cast or sizeof type-name there (CF-TYPEDEFSCOPE)
     "cfront_fptab.c",  # tables of function pointers -- typedef'd and inline, local, file-scope, 2-D, members,
     #   pointers to them, parameters of them -- and calls through `(*fp)`, `(**fp)` and `(*f)` (CF-FPTAB)
     "cfront_fpret.c",  # function pointers calls return; pointers, structs and function pointers returned through a
@@ -422,6 +424,16 @@ def _cname(ct) -> str:
     return ("_Atomic " if getattr(ct, "atomic", False) else "") + ct.name
 
 
+# The corpus harnesses' seeded generator. They set the original source and its emits beside their own file-scope names,
+# so those are named as no fixture spells one: `cfront_typedefscope.c`'s `typedef struct { ... } S;` met a generator
+# state named `S` and the harness did not build (CF-TYPEDEFSCOPE).
+_HARNESS_RNG = (
+    "static uint64_t bcir_h_seed=0x9E3779B97F4A7C15u;\n"
+    "static uint32_t bcir_h_rng(void){bcir_h_seed=bcir_h_seed*6364136223846793005u+1442695040888963407u;"
+    "return (uint32_t)(bcir_h_seed>>32);}"
+)
+
+
 def _seed_params(entry):
     """The seeded-input harness fragments shared by `_equiv` and the cross-compiler original-fairness
     fingerprint (`_original_xcc_fingerprint`): `(decls, setup, args, prelude)` -- the per-parameter
@@ -440,7 +452,7 @@ def _seed_params(entry):
         if ct.kind in ("pointer", "array"):
             decls.append(f"  static {_cname(ct.of)} buf{i}[256];")
             setup.append(
-                f"    for(unsigned k=0;k<sizeof buf{i}/4;k++) ((uint32_t*)buf{i})[k]=rng();"
+                f"    for(unsigned k=0;k<sizeof buf{i}/4;k++) ((uint32_t*)buf{i})[k]=bcir_h_rng();"
             )
             # The original multidimensional-array parameter adjusts to a pointer-to-row
             # (for example ``uint32_t (*)[8]``), while the verified-C rail deliberately
@@ -451,9 +463,9 @@ def _seed_params(entry):
         elif ct.is_aggregate:
             decls.append(f"  {ct.kind} {ct.name} a{i};")
             inits = "".join(
-                f"    a{i}.{fn}=(rng()&{(1 << bw) - 1}u);\n"
+                f"    a{i}.{fn}=(bcir_h_rng()&{(1 << bw) - 1}u);\n"
                 if bw
-                else f"    a{i}.{fn}=({_cname(ft)})rng();\n"
+                else f"    a{i}.{fn}=({_cname(ft)})bcir_h_rng();\n"
                 for fn, ft, _bo, _bf, bw in ct.fields
             )
             setup.append(inits.rstrip("\n"))
@@ -461,7 +473,7 @@ def _seed_params(entry):
         elif ct.is_complex:  # a _Complex param: seed BOTH axes (finite, in range)
             decls.append(f"  {_cname(ct)} s{i};")
             el = "float" if ct.size == 8 else ("long double" if ct.size > 16 else "double")
-            setup.append(f"    s{i}=({el})(rng()%1000) + ({el})(rng()%1000)*I;")
+            setup.append(f"    s{i}=({el})(bcir_h_rng()%1000) + ({el})(bcir_h_rng()%1000)*I;")
             args.append(f"s{i}")
         else:
             decls.append(f"  {_cname(ct)} s{i};")
@@ -469,7 +481,7 @@ def _seed_params(entry):
             # an integer scalar stays below 2**31 so it is non-negative as `int` -- the value model
             # is unsigned, so an int->float cast must agree in sign (wrapping arithmetic is unaffected).
             mod = 1000 if ct.is_float else (200 if has_ptr else 2000000000)
-            setup.append(f"    s{i}=({_cname(ct)})(rng()%{mod});")
+            setup.append(f"    s{i}=({_cname(ct)})(bcir_h_rng()%{mod});")
             args.append(f"s{i}")
     return decls, setup, args, prelude
 
@@ -521,8 +533,7 @@ def _equiv(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
 
 {c_emitted}
 {chr(10).join(prelude)}
-static uint64_t S=0x9E3779B97F4A7C15u;
-static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+{_HARNESS_RNG}
 int main(void){{
 {chr(10).join(decls)}
   for(int i=0;i<256;i++){{
@@ -566,13 +577,13 @@ def _equiv_atomic(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
             base = _cname(ct.of)  # may be `_Atomic uint32_t` (a C11 cell)
             plain = base.replace("_Atomic ", "")  # the seed casts to the non-atomic type
             decls += [f"  {base} ca{i};", f"  {base} cb{i};"]
-            setup.append(f"    ca{i}=cb{i}=({plain})(rng()%16);")
+            setup.append(f"    ca{i}=cb{i}=({plain})(bcir_h_rng()%16);")
             args_a.append(f"&ca{i}")
             args_b.append(f"&cb{i}")
             cell_cmp.append(f"ca{i}!=cb{i}")
         else:
             decls.append(f"  {_cname(ct)} s{i};")
-            setup.append(f"    s{i}=({_cname(ct)})(rng()%16);")
+            setup.append(f"    s{i}=({_cname(ct)})(bcir_h_rng()%16);")
             args_a.append(f"s{i}")
             args_b.append(f"s{i}")
     rt = _cname(entry.ret_type)
@@ -585,8 +596,7 @@ def _equiv_atomic(source: str, c_emitted: str, entry, *, cc=_CC) -> str:
 {source}
 
 {c_emitted}
-static uint64_t S=0x9E3779B97F4A7C15u;
-static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+{_HARNESS_RNG}
 int main(void){{
 {chr(10).join(decls)}
   for(int i=0;i<256;i++){{
@@ -749,8 +759,7 @@ def _original_xcc_verdict(source: str, entry, compilers) -> str:
    of range is undefined (C11 6.3.1.4p1), and the part of an overflowing complex result is often one (CF-UBGATE) */
 static int64_t xcc_fp_i64(long double v){{
   return v != v ? 0 : v >= 9223372036854775807.0L ? INT64_MAX : v <= -9223372036854775808.0L ? INT64_MIN : (int64_t)v;}}
-static uint64_t S=0x9E3779B97F4A7C15u;
-static uint32_t rng(void){{S=S*6364136223846793005u+1442695040888963407u;return (uint32_t)(S>>32);}}
+{_HARNESS_RNG}
 int main(void){{
   uint64_t h=1469598103934665603u;
 {chr(10).join(decls)}
@@ -12525,6 +12534,125 @@ def test_a_character_constant_after_an_identifier_is_no_digit_separator():
             run.returncode == 0 and "comment" not in run.stdout and "stripped" not in run.stdout
         ), run.stdout[-400:]
         _parity_on_targets(path, unit)
+
+
+# CF-TYPEDEFSCOPE: a block-scope name hides a typedef name of its own (C11 6.2.1p4). `cfront_typedefscope.c`'s
+# functions are each run against the original.
+_TYPEDEFSCOPE_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(td_assign, s); SAME(td_operands, s); SAME(td_param, s, 3u); SAME(td_param, 7u, s); SAME(td_block, s);
+    SAME(td_loop, s); SAME(td_enum, s); SAME(td_init, s); SAME(td_array, s); SAME(td_pointer, s); SAME(td_call, s);
+    SAME(td_struct, s); SAME(td_next, s); SAME(td_shadow, s); SAME(td_typeof, s); SAME(td_selfname, s);
+    SAME(td_selflocal, s); SAME(td_member, s); SAME(td_spelled, s); SAME(td_helper, s, s ^ 0x55u);
+    SAME(td_suffix, s); SAME(typedefscope, s);
+    /* the global `td_write` stores after its block, not the block's local of its name */
+    td_w = 5u; uint32_t w = td_write(s), gw = td_w; td_w = 5u;
+    if (bcir_td_write(s) != w || td_w != gw) return fail("td_write");
+  }
+  /* the values C gives: the object, not the typedef, where the object hides it */
+  if (bcir_td_init(0u) != 4u || bcir_td_operands(0u) != 1u + 800u + 8u + 3u || bcir_td_enum(2u) != 15u ||
+      bcir_td_selfname(1u) != 9u || bcir_td_member(4u) != 5u || bcir_td_helper(2u, 5u) != 11u)
+    return fail("values");
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_a_block_scope_name_hides_a_typedef_on_both_rails():
+    """CF-TYPEDEFSCOPE: `cfront_typedefscope.c` -- a local, a parameter, a loop's own declaration and a block's
+    enumerator each hiding a typedef name to the end of its block, in statements that start with it (`T = T * 3u;`,
+    `T * x;`, `T[1] ^= 4u;`, `*T += 2u;`, `F(s)`), a cast's place (`(T) - s`, `(T) * x`, `(T)[1]`, `(F)(s)`) and `sizeof`
+    and `typeof` operands (`sizeof(B)` of a `uint64_t` local beside `typedef uint8_t B`, 8, its own initializer's
+    `sizeof(B)` 4), a parameter and a local declared with the typedef they name (`T T`), a member named as it, and the
+    typedef declaring and casting again after the block, the loop and the function -- lowers to one claim graph on the
+    four targets, and each emit returns what the original does: its locals, declared up front, take no name the
+    function spells at file scope (a typedef, a global it reads or writes after the block, a function it calls). On the
+    parent both rails refused the statements that start with the hidden name, and both lowered `(T) - s` as a cast of
+    `-s` and `sizeof(B)` as 1, digest-equal: silent miscompiles; the twin's emit read a block's `td_g` for the global
+    after the block."""
+    if not _CC:
+        return
+    fx = "cfront_typedefscope.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _TYPEDEFSCOPE_DRIVER
+    )
+
+
+def test_both_emits_keep_their_objects_off_the_names_they_spell_for_themselves():
+    """CF-TYPEDEFSCOPE: the names an emit spells for itself -- the libc routines it calls or copies through (`memcpy`
+    spells every member store), the C11 atomics, the twin's store helper `_v`, the standard type names -- are one list
+    on both rails (`emit._EMIT_SPELLED`; `bcir_cfront.c`'s `emit_spelled`), read here out of each rail's own source:
+    neither emit names a parameter or a local as the other spells something else. The fixture's `td_spelled`,
+    `td_helper` and `td_suffix` hold the rule on both rails' emits against the original."""
+    from bcir.frontends.cfront import emit
+
+    with open(os.path.join(_C, "bcir_cfront.c"), encoding="utf-8") as fh:
+        src = fh.read()
+    m = re.search(r"static const char \*const emit_spelled\[\]=\{(.*?)\};", src, re.S)
+    assert m, "bcir_cfront.c holds no emit_spelled list"
+    twin = re.findall(r'"([^"]*)"', m.group(1))
+    assert len(twin) == len(set(twin)), "a name twice in emit_spelled"
+    assert {"memcpy", "_v", "size_t"} <= set(twin), twin
+    assert set(twin) == set(emit._EMIT_SPELLED), sorted(set(twin) ^ set(emit._EMIT_SPELLED))
+
+
+# ... and where the hidden name is used as the type it no longer names, C has a syntax error, as Clang reports: a
+# declaration, a cast, a compound literal, `sizeof` of a type built on it, after a local, a parameter or a block's
+# enumerator hides it. Each parser refuses it in its own syntax-error words.
+_TYPEDEFSCOPE_REFUSED = (
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { uint32_t T = s; T y = 3u; return y; }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { uint32_t T = s; const T y = 3u; return y; }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { uint32_t T = s; return (T)s; }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { uint32_t T = s; return (uint32_t)sizeof(T *); }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { uint32_t T = s; return (T){s}; }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t T) { T y = 1u; return y; }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { enum { T = 5 }; T y = s; return y; }",
+    "typedef uint32_t T;\nuint32_t f(uint32_t s) { for (uint32_t T = 0u; T < s; T++) { T y = T; s += y; } return s; }",
+    # a parameter hides the typedef for the parameters after it, in a definition's list and in a prototype's
+    "typedef uint32_t T;\nuint32_t f(uint32_t T, T x) { return T + x; }",
+    "typedef uint32_t T;\nuint32_t g(uint32_t T, T x);\nuint32_t f(uint32_t s) { return s; }",
+    "typedef uint32_t T;\nuint32_t g(uint32_t T, uint32_t (*p)(T));\nuint32_t f(uint32_t s) { return s; }",
+)
+
+
+def test_a_hidden_typedef_name_starts_no_declaration_or_cast_on_both_rails():
+    """CF-TYPEDEFSCOPE: every unit of `_TYPEDEFSCOPE_REFUSED` -- the hidden name used as a type -- is refused by Clang,
+    by the oracle's parser and by the twin's, so neither rail reads the typedef through the object that hides it."""
+    from bcir.frontends.cfront.cparse import CParseError
+
+    clang = shutil.which("clang")
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_TYPEDEFSCOPE_REFUSED):
+            unit = "#include <stdint.h>\n" + body + "\n"
+            try:
+                compile_unit(unit, check_clang=False)
+            except CParseError:
+                pass
+            else:
+                raise AssertionError(f"the oracle lowered {body!r}")
+            path = os.path.join(d, f"h{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            if clang:
+                run = subprocess.run(
+                    [clang, "-std=c2x", "-fsyntax-only", path], capture_output=True, text=True
+                )
+                assert run.returncode != 0, f"Clang took {body!r}"
+            if exe:
+                run = subprocess.run([exe, path], capture_output=True, text=True)
+                assert run.returncode == 1 and run.stdout.startswith("PARSE-ERR "), (
+                    body,
+                    run.stdout[:200],
+                )
 
 
 # CF-FPTAB: a call through any postfix expression whose value is a function pointer (C11 6.5.2.2p1) -- `(*fp)(x)`,

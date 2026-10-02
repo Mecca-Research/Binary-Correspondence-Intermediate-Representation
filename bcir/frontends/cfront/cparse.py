@@ -374,6 +374,7 @@ class _Parser:
         unit.anon_spelling = {
             tag: sp for tag in unit.aggregates if (sp := self._anon_spell(tag, unit)) is not None
         }
+        unit.typedef_names = frozenset(self.typedefs)
         return unit
 
     def _anon_spell(self, tag: str, unit: cast.Unit) -> str | None:
@@ -1012,7 +1013,7 @@ class _Parser:
                 self.nxt()
                 base = "va_list"
                 break
-            elif not words and w in self.typedefs:  # a typedef name -> expand the alias
+            elif not words and self._typedef_visible(w):  # a typedef name -> expand the alias
                 td = self.typedefs[w]
                 self.nxt()
                 break
@@ -1258,23 +1259,32 @@ class _Parser:
         self.eat("PUNCT", "(")
         params = []
         variadic = False
-        if not (self.at("PUNCT", ")") or self.at("IDENT", "void") and self.peek(1).text == ")"):
-            while True:
-                if self.at("PUNCT", "..."):  # a trailing `...` -- the function is variadic
-                    self.nxt()
-                    variadic = True
+        # the list's own scope: a parameter hides a typedef of its name from the end of its declarator, so no later
+        # parameter's type is read through it -- `f(uint32_t T, T x)` (C11 6.2.1p4, p7; the twin binds each as read)
+        listed: dict = {}
+        self.scopes.append(listed)
+        try:
+            if not (self.at("PUNCT", ")") or self.at("IDENT", "void") and self.peek(1).text == ")"):
+                while True:
+                    if self.at("PUNCT", "..."):  # a trailing `...` -- the function is variadic
+                        self.nxt()
+                        variadic = True
+                        break
+                    ptype = self._type_spec()
+                    # a prototype may leave a parameter unnamed (`T g(uint32_t *, uint32_t);`); a definition
+                    # names every one it binds, which the check below the list asks
+                    ptype, pname = self._declarator_or_funcptr(ptype, abstract=True)
+                    params.append(cast.Param(ptype, pname))
+                    if pname:
+                        listed[pname] = None
+                    if self.at("PUNCT", ","):
+                        self.nxt()
+                        continue
                     break
-                ptype = self._type_spec()
-                # a prototype may leave a parameter unnamed (`T g(uint32_t *, uint32_t);`); a definition
-                # names every one it binds, which the check below the list asks
-                ptype, pname = self._declarator_or_funcptr(ptype, abstract=True)
-                params.append(cast.Param(ptype, pname))
-                if self.at("PUNCT", ","):
-                    self.nxt()
-                    continue
-                break
-        elif self.at("IDENT", "void"):
-            self.nxt()
+            elif self.at("IDENT", "void"):
+                self.nxt()
+        finally:
+            self.scopes.pop()
         self.eat("PUNCT", ")")
         if self.at("PUNCT", ";"):  # a PROTOTYPE (`T name(params);`): record the
             self.nxt()  # signature -- a cross-TU callee (Phase 3 linking)
@@ -1347,6 +1357,15 @@ class _Parser:
                 return scope[w]
         return self.enums.get(w)
 
+    def _typedef_visible(self, w: str) -> bool:
+        """Whether `w` names a typedef where it is read: a name the function declares in a block scope enclosing this
+        point -- a local, a parameter, a loop's own declaration, an enumerator a block declares -- hides a file-scope
+        typedef of its name from the end of its declarator to the end of its block (C11 6.2.1p4, p7), so it starts
+        no declaration there, no cast and no `sizeof` type-name (CF-TYPEDEFSCOPE; the twin's `visible_typedef`).
+        Reading the typedef there had refused `uint32_t T = s; T = T * 3u;`, read `T * x;` as a declaration and
+        `(T) - s` as a cast, and taken `sizeof(T)` for the type's size: the last two silently."""
+        return w in self.typedefs and not any(w in scope for scope in self.scopes)
+
     def _is_decl_start(self) -> bool:
         """A declaration starts with a type: a keyword, a scalar or typedef name. A struct tag alone is
         not one -- tags have their own name space (C11 6.2.3), so a local `s` beside a `struct s` is an
@@ -1360,7 +1379,7 @@ class _Parser:
             or w == "enum"
             or is_scalar_name(w)
             or w in ("va_list", "__builtin_va_list", "_Atomic")
-            or w in self.typedefs
+            or self._typedef_visible(w)
         )
 
     def _stmt(self):
@@ -1894,7 +1913,7 @@ class _Parser:
                 "_Atomic",
             )  # `(_Atomic T *)p` (CF-RTFP)
             or is_scalar_name(w)
-            or w in self.typedefs
+            or self._typedef_visible(w)
         )
 
     def _postfix(self):

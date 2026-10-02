@@ -299,6 +299,51 @@ _OWN_HEADERS = (
         ),
     ),
 )
+# The names an emitted function spells for itself, whatever its source names: the <string.h> and <stdlib.h> routines
+# it calls or copies through (`memcpy` spells every plain member or element store), the C11 atomics it calls, the
+# twin's store helper `_v`, and the standard type names it declares objects with. No parameter or local the emit
+# declares takes one (`_spelled_names`; CF-TYPEDEFSCOPE). The twin's `emit_spelled` (`bcir_cfront.c`) holds the same
+# names -- a test reads both lists out of their sources.
+_EMIT_SPELLED = frozenset(
+    (
+        "_v",
+        "aligned_alloc",
+        "atomic_compare_exchange_strong",
+        "atomic_compare_exchange_weak",
+        "atomic_exchange",
+        "atomic_fetch_add",
+        "atomic_fetch_sub",
+        "atomic_fetch_xor",
+        "atomic_load",
+        "atomic_store",
+        "atomic_thread_fence",
+        "calloc",
+        "char16_t",
+        "char32_t",
+        "free",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "int8_t",
+        "intmax_t",
+        "intptr_t",
+        "malloc",
+        "memcpy",
+        "memmove",
+        "memset",
+        "ptrdiff_t",
+        "realloc",
+        "size_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "uint8_t",
+        "uintmax_t",
+        "uintptr_t",
+        "va_list",
+        "wchar_t",
+    )
+)
 _LITERAL_OR_COMMENT = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|/\*.*?\*/|//[^\n]*', re.S)
 
 
@@ -467,13 +512,15 @@ class _Names:
         return rid not in self.named
 
 
-def _signature(lf: LoweredFunc) -> str:
+def _signature(lf: LoweredFunc, names: dict | None = None) -> str:
     """The function's signature as its definition spells it, `static RET bcir_NAME(PARAMS)`: the
-    definition's head, and the forward declaration of it that a caller's emit makes."""
-    parts = [
-        _funcptr_decl(ct, pname) if _has_fp(ct) else f"{_cname(ct)} {pname}"
-        for pname, _rid, ct in lf.params
-    ]
+    definition's head, and the forward declaration of it that a caller's emit makes. `names` -- rid -> the
+    name the definition gives a parameter (`emit_function`), where it is not the source's."""
+    names = names or {}
+    parts = []
+    for pname, rid, ct in lf.params:
+        name = names.get(rid, pname)
+        parts.append(_funcptr_decl(ct, name) if _has_fp(ct) else f"{_cname(ct)} {name}")
     if lf.variadic:  # a trailing `...` after the named params
         parts.append("...")
     return f"static {_cname(lf.ret_type)} bcir_{lf.name}({', '.join(parts) or 'void'})"
@@ -558,6 +605,23 @@ def _unqualified_global(name: str, ct: CType) -> str:
     return f"(*({ptr})&{name})"
 
 
+def _spelled_names(lf: LoweredFunc) -> set:
+    """Every name the emitted function spells other than as one of its own parameters and locals: `_EMIT_SPELLED`, a
+    global or function it reads (`globals_used`), the unit's typedef names, and each function it calls as the emit
+    calls it -- `bcir_X` for one the unit defines, `X` for any other (a libc routine, a function another unit defines).
+    No parameter or local the emit declares may take one: declared up front for the whole function, where the source
+    declared it for its block -- or, for a name the source never spelled there, at all -- it would capture the emit's
+    own reference (CF-TYPEDEFSCOPE). The twin's `emit_name_taken` decides alike."""
+    spelled = set(_EMIT_SPELLED) | set(lf.globals_used.values()) | set(lf.typedef_names)
+    callees = {callee for callee, _args in lf.calls}
+    for c in lf.claims:  # a libc routine, a function another unit defines: `c.call<kind>:X`
+        if c.op.startswith("c.call") and ":" in c.op:
+            callees.add(c.op.split(":", 1)[1])
+    for callee in callees:
+        spelled.update((callee, f"bcir_{callee}"))
+    return spelled
+
+
 def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     """The lowered function as standalone C, named `bcir_<name>` (so it can sit beside the original).
     Walks the structured body tree, so `if`/`while`/`return` emit real C control flow; mutable named
@@ -565,14 +629,17 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     source); intermediate expression results stay single-assignment temporaries. `unit` -- the unit's
     lowered functions by name -- declares each one the function calls before it: a callee defined after
     its caller is otherwise undeclared at the call, which does not compile."""
-    nm: dict[int, str] = {rid: pname for pname, rid, _ct in lf.params}
+    nm: dict[int, str] = {}
     # Each local needs a *unique* C identifier: the lowering flattens scopes, so two source locals that
     # shared a name in disjoint scopes (e.g. `i` in two separate `for` loops, or a block local shadowing
     # a param) become distinct rids with the same name. Declaring both at function scope is a C
     # redefinition. Disambiguate the second-and-later occurrences (`i`, `i_2`, ...) -- a fresh variable
     # preserves the source's separate-scope semantics; naive name-sharing would corrupt a shadowed value.
-    used: set[str] = set(nm.values())
-    used.update(lf.globals_used.values())
+    # ... nor a name the function spells other than as one of its own objects (`_spelled_names`): the declarations up
+    # front would hide it for the whole function, where the source's local hid it for its block (CF-TYPEDEFSCOPE:
+    # `{ uint32_t S = s; } S v;` became `uint32_t S; S v;`, which does not compile) -- and a parameter or a local
+    # named as a name the emit alone spells (`memcpy`, `bcir_g`) would capture it everywhere
+    used: set[str] = _spelled_names(lf)
     local_name: dict[int, str] = {}
 
     def _uniq(name: str) -> str:
@@ -582,6 +649,10 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
         used.add(uniq)
         return uniq
 
+    # a parameter first: its source name, unless the emit spells that otherwise
+    for pname, rid, _ct in lf.params:
+        nm[rid] = _uniq(pname)
+    params = dict(nm)
     # a static too: two scopes' `static n` are two objects, both declared at function scope
     for rid, name, _ct, _init in lf.statics:
         nm[rid] = _uniq(name)
@@ -638,7 +709,7 @@ def emit_function(lf: LoweredFunc, unit: dict | None = None) -> str:
     callees = dict.fromkeys(c for c, _a in lf.calls if c != lf.name and c in (unit or {}))
     fwd = [_signature(unit[c]) + ";" for c in callees]
     head = "\n".join(tu_decls + fwd) + "\n" if tu_decls or fwd else ""
-    return head + _signature(lf) + "\n{\n" + "\n".join(decls + body) + "\n}"
+    return head + _signature(lf, params) + "\n{\n" + "\n".join(decls + body) + "\n}"
 
 
 def _labels(block: list, out: set) -> set:

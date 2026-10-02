@@ -1431,6 +1431,8 @@ class LoweredFunc:
     thread_statics: frozenset = frozenset()  # the statics of thread storage duration, each
     #   thread's own object, declared `static _Thread_local` (CF-TLS)
     globals_used: dict = field(default_factory=dict)  # rid -> name (file-scope globals referenced)
+    # the unit's typedef names, which no emitted parameter or local may take (`emit._spelled_names`)
+    typedef_names: frozenset = frozenset()
     global_quals: dict = field(default_factory=dict)  # rid -> its global's type qualifier levels
     #   (`_object_quals`), which the emit's own objects carry none of: the emit names such a global through an
     #   lvalue of its unqualified type (`emit._unqualified_global`; CF-LINKEMIT)
@@ -5724,6 +5726,7 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             func_variadic=func_variadic,
             lowered=functions,
         ).lower()
+        lf.typedef_names = unit.typedef_names
         functions[fn.name] = lf
         resources.update(lf.resources)
     gquals = {g.name: q for g in unit.globals if (q := _object_quals(g.type))}

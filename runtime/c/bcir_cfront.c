@@ -264,6 +264,9 @@ typedef struct {
   mutent mut[512]; int mut_n;
   int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
   int decl_seq;      /* the unit's declarations of block-scope names and enumerators so far, in order (CF-CONSTEXPR2) */
+  struct { const char *s; int n, frame; } uph[16]; int nuph;   /* the typedef names the token pre-pass has seen a
+                                          * block's declaration bind as objects, to the end of that block, and the
+                                          * frame of each (`visible_typedef`; CF-TYPEDEFSCOPE). Empty outside the pass. */
   uint32_t unsized[32]; int n_unsized;   /* local arrays declared `T a[]` that no brace initializer sized (the
                                           * resource keeps a placeholder count of 1): `sizeof` refuses them as
                                           * incomplete, as the oracle does. Reset per function. */
@@ -765,6 +768,21 @@ static int visible_enum(CC *c,const char *s,int n){
     return c->env[i].seq > c->ec[e].seq ? -1 : e;
   return e;
 }
+/* The typedef a name denotes where it is read, or -1: a name the function binds in an enclosing block scope (a local,
+ * a parameter, a loop's own declaration, all in `env`) or an enumerator a block declares hides a file-scope typedef of
+ * its name to the end of its block (C11 6.2.1p4, p7), so it starts no declaration there, no cast and no `sizeof`
+ * type-name (CF-TYPEDEFSCOPE; the oracle's `_typedef_visible`). Reading the typedef had refused `uint32_t T = s; T =
+ * T * 3u;`, read `T * x;` as a declaration and `(T) - s` as a cast, and taken `sizeof(T)` for the type's size. A
+ * typedef and an enumerator of one name cannot meet at file scope, so an enumerator in scope is a block's. The token
+ * pre-pass (`unparen_body`) runs before the body's locals are bound: it keeps the names a block's declarations bind
+ * to the end of that block itself (`uph`), as the parser's `env` will. */
+static int visible_typedef(CC *c,const char *s,int n){
+  int ti=find_typedef(c,s,n);
+  if(ti<0 || find_enum(c,s,n)>=0) return -1;
+  for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n)) return -1;
+  for(int i=0;i<c->nuph;i++) if(c->uph[i].n==n && !strncmp(c->uph[i].s,s,(size_t)n)) return -1;
+  return ti;
+}
 static int find_global(CC *c,const char *s,int n){
   for(int i=0;i<c->ngv;i++) if((int)strlen(c->gv[i].name)==n&&!strncmp(c->gv[i].name,s,n)) return i;
   return -1;
@@ -921,7 +939,7 @@ static int type_name_tok(CC *c, const tok *t){
       || tok_is(t,"_Complex")||tok_is(t,"complex")||tok_is(t,"_BitInt")
       || tok_is(t,"const")||tok_is(t,"volatile")||tok_is(t,"_Atomic")
       || tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
-      || find_typedef(c,t->s,t->n)>=0;
+      || visible_typedef(c,t->s,t->n)>=0;
 }
 static int starts_type_name(CC *c){ return type_name_tok(c,pk(c)); }
 /* ... and where a declaration's type may start (the oracle's `_is_decl_start`): `sizeof`, a size operand
@@ -939,7 +957,7 @@ static int decl_start_tok(CC *c, const tok *t){
       ||tok_is(t,"_Atomic")                                  /* `_Atomic int a;` -- an atomic local */
       ||tok_is(t,"va_list")||tok_is(t,"__builtin_va_list")   /* `va_list ap;` -- a variadic cursor local */
       ||tok_is(t,"typeof")||tok_is(t,"__typeof__")||tok_is(t,"typeof_unqual")
-      ||find_typedef(c,t->s,t->n)>=0);
+      ||visible_typedef(c,t->s,t->n)>=0);
 }
 /* A qualifier on a pointer typedef qualifies the pointer, not what it points to (C11 6.7.8p3: a typedef is the type
  * it names): `const str_t p` of `typedef char *str_t` is `char *const p`, its outer `*` const -- the function pointer
@@ -1013,7 +1031,7 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
       seen=1;break;}
     if(is(c,"va_list")||is(c,"__builtin_va_list")){              /* the variadic cursor type (<stdarg.h>) -- */
       ty->kind=0;ty->is_valist=1;ty->size=cc_abi(c)->pointer_size;ty->signd=0;c->i++;seen=1;break;}  /* opaque, emit `va_list` */
-    if(!seen&&isk(c,T_ID)){int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias */
+    if(!seen&&isk(c,T_ID)){int ti=visible_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias, where visible */
       if(ti>=0){int vol=ty->is_volatile, at=ty->is_atomic, cn=ty->is_const;*ty=c->td[ti].ty;
         td_ptr=ty->kind==2 || ty->kind==3;
         if(td_ptr){ if(td_ptr_qual(c,ty,cn,vol)) return 1; }   /* the pointer's own (CF-QUALS) */
@@ -1772,6 +1790,7 @@ static bcir_claim *new_claim(CC *c,const char *op,bcir_opcode opc) {
   cl->id=c->cid++;cl->opcode=opc;cl->lane=BCIR_LANE_U;cl->stride=BCIR_STRIDE_SCALAR;cl->count=1;
   cl->domain=BCIR_DOM_RAM;cl->hazard=BCIR_HZ_UNIQUE;cl->bounds=BCIR_BND_STRICT;
   if(!fits(c,cl->op,sizeof cl->op,"%s",op)) cl->op[0]=0;
+  if(!strncmp(cl->op,"c.call",6) && strchr(cl->op,':')) f->named_calls=1;   /* the emit spells the callee */
   return cl;
 }
 /* The casts the emit puts on a call's operands and result (CF-QUALS). A parameter of the callee's function type that
@@ -3067,6 +3086,7 @@ static void up_track(CC *c, upframe *fr, int *nf, int *deep, int w){
     case '}':
       if(*deep){ (*deep)--; break; }
       { int was_blk=f->blk; (*nf)--;
+        while(c->nuph>0 && c->uph[c->nuph-1].frame>=*nf) c->nuph--;   /* its names end with it */
         if(*nf>0 && was_blk){ upframe *o=&fr[*nf-1]; if(o->blk && o->pd==0){ o->start=1; o->decl=0; } } }
       break;
     case ';': if(f->blk && f->pd==0){ f->start=1; f->decl=0; } else if(f->decl && f->pd==f->dpd) f->decl=0; break;
@@ -3097,6 +3117,19 @@ static int up_paren_lvalue(CC *c, int r){
   }
   return q;
 }
+/* A block's declaration binding a typedef name `t` as an object (`uint32_t T = s;`, `uint32_t *T, T[2];`, `uint32_t
+ * (*T)(uint32_t)`): the name is no type to the end of the block (frame `nf`), for the pass as for the parser
+ * (`visible_typedef`). A declarator is the name before its `=`, `,`, `;`, `[` or `)`, outside an initializer and an
+ * expression the declarator holds; the type the declaration starts with is followed by a name or a `*`. A for-init's
+ * declaration ends with the loop, inside this frame, so it is not kept: the name stays a type to the pass, the
+ * direction in which it only declines a rewrite. Past 16 names the rest stay types too. */
+static void up_hide(CC *c, const upframe *f, int nf, const tok *t, const tok *pv, const tok *nx){
+  if(!f->blk || !f->decl || f->init || f->xpd>=0 || f->dpd!=0 || t->k!=T_ID || c->nuph>=(int)(sizeof c->uph/sizeof c->uph[0]))
+    return;
+  if(!pv || tok_is(pv,".") || tok_is(pv,"->") || find_typedef(c,t->s,t->n)<0) return;
+  if(!(tok_is(nx,"=")||tok_is(nx,",")||tok_is(nx,";")||tok_is(nx,"[")||tok_is(nx,")"))) return;
+  c->uph[c->nuph].s=t->s; c->uph[c->nuph].n=t->n; c->uph[c->nuph].frame=nf-1; c->nuph++;
+}
 /* One pass over the body at `start` (just past its `{`), compacting it in place; 1 when it rewrote something. Of a
  * run of `(`, only the one whose closers directly follow P can open P's parentheses: it is found once per run. */
 static int unparen_body(CC *c, int start){
@@ -3105,6 +3138,7 @@ static int unparen_body(CC *c, int start){
   struct { int pos, n, zero; } pend[UP_FRAMES];              /* scheduled closers: dropped, or `[0]` in their place */
   int run_end=start, cand=-1, pe=-1, k=0, star=0, is_name=0;   /* the current run of `(` and its one candidate */
   memset(&fr[0],0,sizeof fr[0]); fr[0].blk=1; fr[0].start=1; fr[0].xpd=-1;
+  c->nuph=0;
   while(r<c->nt && nf>0){
     if(np && pend[np-1].pos==r){                           /* P's closers */
       if(pend[np-1].zero){ c->t[w++]=lb; c->t[w++]=zero; c->t[w++]=rb; }
@@ -3149,10 +3183,12 @@ static int unparen_body(CC *c, int start){
         memmove(&c->t[r],&c->t[r+1],(size_t)(n-1)*sizeof(tok)); c->t[r+n-1]=pp;
         up_track(c,fr,&nf,&deep,w-1); cand=-1; changed=1; continue; }
     }
+    up_hide(c,f,nf,&t,w>start ? &c->t[w-1] : NULL,tat(c,r+1));
     c->t[w++]=t; r++;
     up_track(c,fr,&nf,&deep,w-1);
   }
   if(w<r){ memmove(&c->t[w],&c->t[r],(size_t)(c->nt+1-r)*sizeof(tok)); c->nt-=r-w; }
+  c->nuph=0;
   return changed;
 }
 
@@ -6114,6 +6150,14 @@ static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int si
   CC_ENSURE(c,c->env,c->nenv,c->cap_env);
   if(c->nenv>=c->cap_env)return; venv *v=&c->env[c->nenv++];
   idcpy(c,v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;v->seq=++c->decl_seq;
+  if(c->fn){                                            /* the typedef names it or a suffixed form of it spells, */
+    unsigned m=0;                                       /* which the emit renames it around (CF-TYPEDEFSCOPE) */
+    for(int i=0;i<c->ntd;i++){ const char *t=c->td[i].name; int tn=(int)strlen(t);
+      if(tn<nm->n || strncmp(t,nm->s,(size_t)nm->n)) continue;
+      if(tn==nm->n) m|=1u;                                                  /* `T` */
+      else if(tn==nm->n+2 && t[nm->n]=='_' && t[nm->n+1]>='2' && t[nm->n+1]<='8') m|=1u<<(t[nm->n+1]-'1'); }
+    if(m) for(size_t i=0;i<c->fn->n_res;i++) if(c->fn->res[i].rid==rid){ c->fn->res[i].typedef_named=(uint8_t)m; break; }
+  }
 }
 /* On first use of a file-scope global within a function, materialize a read-only data resource for
  * it (so an access `LUT[i]` lowers to a load) and bind it in the local env.  The resource is marked
@@ -8706,7 +8750,7 @@ static uint32_t p_stmt_expr(CC *c){
     else if(lt->k==T_ID && c->t[last_save+1].k==T_PUN && c->t[last_save+1].n==1 && c->t[last_save+1].s[0]==':') is_value=0;
     else if(lt->k==T_ID && (scalar_size(lt->s,lt->n)>=0||tok_is(lt,"struct")||tok_is(lt,"union")||tok_is(lt,"enum")
             ||tok_is(lt,"const")||tok_is(lt,"volatile")||tok_is(lt,"_Atomic")||tok_is(lt,"static")||tok_is(lt,"_BitInt")
-            ||find_typedef(c,lt->s,lt->n)>=0)) is_value=0; }
+            ||visible_typedef(c,lt->s,lt->n)>=0)) is_value=0; }
   uint32_t result;
   if(!is_value){ result=void_temp(c); }   /* a void / empty statement expression: the last stmt (if any) is
                                            * already lowered; the value is unused (an unreferenced placeholder) */
@@ -8996,39 +9040,107 @@ static unsigned qual_key(const bcir_ctype *t){
   unsigned below=lv>0 ? (1u<<lv)-1u : 0u;
   return (t->is_const?1u:0u) | ((unsigned)(t->ptr_const&below)<<1) | ((unsigned)(t->ptr_restrict&below)<<9);
 }
-/* A unique C identifier for a named local. The lowering flattens scopes, so two source locals that
- * shared a name in disjoint scopes (e.g. `i` in two separate `for` loops, or a local shadowing a param)
- * are distinct resources with the same name; declaring both at function scope is a C redefinition. The
- * N-th occurrence of a name (params first, then resources in order) keeps the bare name for the first
- * and gets a `_N` suffix thereafter (`i`, `i_2`, ...) -- the same scheme as the oracle's emitter, used
- * for both the declaration and every reference. An unnamed temp is `t<rid>` -- or, when a declared name
- * spells that (a re-parsed emit's local, a source's parameter), the first free `t<rid>_<k>`: never a second
- * declaration of the name (CF-RTVOL, the oracle's `_Names`). */
+/* Whether a declared object -- a parameter, a named local or static, a global -- emits as `nm` (below). An unnamed
+ * temp is `t<rid>` -- or, when a declared name spells that (a re-parsed emit's local, a source's parameter), the first
+ * free `t<rid>_<k>`: never a second declaration of the name (CF-RTVOL, the oracle's `_Names`). */
 static int declared_name(const bcir_func *f,const char *nm);
+/* The names an emitted function spells for itself, whatever its source names: the <string.h> and <stdlib.h> routines it
+ * calls or copies through (`memcpy` spells every plain member or element store), the C11 atomics it calls, the store
+ * helper `_v` (`{ T _v = x; memcpy(..., &_v, n); }`), and the standard type names it declares objects with. No
+ * parameter or local the emit declares takes one (CF-TYPEDEFSCOPE). The oracle's `emit._EMIT_SPELLED` holds the same
+ * names -- a test reads both lists out of their sources. */
+static const char *const emit_spelled[]={
+  "_v","aligned_alloc","atomic_compare_exchange_strong","atomic_compare_exchange_weak","atomic_exchange",
+  "atomic_fetch_add","atomic_fetch_sub","atomic_fetch_xor","atomic_load","atomic_store","atomic_thread_fence",
+  "calloc","char16_t","char32_t","free","int16_t","int32_t","int64_t","int8_t","intmax_t","intptr_t","malloc",
+  "memcpy","memmove","memset","ptrdiff_t","realloc","size_t","uint16_t","uint32_t","uint64_t","uint8_t","uintmax_t",
+  "uintptr_t","va_list","wchar_t",0};
+/* Whether the emitted function spells `nm` other than as one of its own parameters and locals: a name of
+ * `emit_spelled`, a global or a function it reads (a `read_only` resource), or a function it calls as the emit calls
+ * it -- `bcir_X` for one the unit defines, `X` for any other (a libc routine, a function another unit defines). No
+ * parameter or local the emit declares may take one: declared up front for the whole function, where the source
+ * declared it for its block -- or, for a name the source never spelled there, at all -- it would capture the emit's
+ * own reference (CF-TYPEDEFSCOPE; the oracle's `_spelled_names`). A typedef name is read off the object
+ * (`typedef_named`). */
+static int callee_named(const char *callee,const char *nm){
+  return !strcmp(callee,nm) || (!strncmp(nm,"bcir_",5) && !strcmp(callee,nm+5));
+}
+static int emit_name_taken(const bcir_func *f,const char *nm){
+  for(int i=0;emit_spelled[i];i++) if(!strcmp(emit_spelled[i],nm)) return 1;
+  for(int k=0;k<f->n_calls;k++) if(callee_named(f->calls[k],nm)) return 1;
+  for(size_t i=0;f->named_calls && i<f->n_claims;i++){ const char *op=f->claims[i].op, *x;   /* `c.call<kind>:X` */
+    if(!strncmp(op,"c.call",6) && (x=strchr(op,':')) && x[1] && callee_named(x+1,nm)) return 1; }
+  for(size_t i=0;i<f->n_res;i++) if(f->res[i].read_only && !strcmp(f->res[i].name,nm)) return 1;
+  return 0;
+}
+/* Whether `nm` is the source name of one of the function's parameters or named locals. */
+static int source_named(const bcir_func *f,const char *nm){
+  for(int p=0;p<f->n_params;p++) if(!strcmp(f->params[p].name,nm)) return 1;
+  for(size_t i=0;i<f->n_res;i++) if(!f->res[i].read_only && !strcmp(f->res[i].name,nm)) return 1;
+  return 0;
+}
+/* One pass over the names `emit_name_taken` reads and over the objects' source names, for a name `x`: whether `x` itself
+ * is spelled otherwise (`*bare`), and whether any of them starts with `x_` (`*prefixed`) -- only then can a suffixed
+ * candidate `x_<k>` be one of them, so the candidates are read one by one only then. */
+static int name_match(const char *s,const char *x,size_t xn,int *prefixed){   /* s is x; or s starts with `x_` */
+  if(strncmp(s,x,xn)) return 0;
+  if(!s[xn]) return 1;
+  if(s[xn]=='_') *prefixed=1;
+  return 0;
+}
+static int callee_match(const char *callee,const char *x,size_t xn,int *prefixed){   /* as `X` or as `bcir_X` */
+  int m=name_match(callee,x,xn,prefixed);
+  if(xn>5 && !strncmp(x,"bcir_",5)) m|=name_match(callee,x+5,xn-5,prefixed);
+  return m;
+}
+static void spelled_scan(const bcir_func *f,const char *x,int *bare,int *prefixed){
+  size_t xn=strlen(x); int b=0,pf=0;
+  for(int i=0;emit_spelled[i];i++) b|=name_match(emit_spelled[i],x,xn,&pf);
+  for(int k=0;k<f->n_calls;k++) b|=callee_match(f->calls[k],x,xn,&pf);
+  for(size_t i=0;f->named_calls && i<f->n_claims;i++){ const char *op=f->claims[i].op,*c;
+    if(!strncmp(op,"c.call",6) && (c=strchr(op,':')) && c[1]) b|=callee_match(c+1,x,xn,&pf); }
+  for(size_t i=0;i<f->n_res;i++){ int m=name_match(f->res[i].name,x,xn,&pf); if(f->res[i].read_only) b|=m; }
+  for(int p=0;p<f->n_params;p++) (void)name_match(f->params[p].name,x,xn,&pf);
+  *bare=b; *prefixed=pf;
+}
+static int param_rid(const bcir_func *f,uint32_t rid){
+  for(int p=0;p<f->n_params;p++) if(f->params[p].rid==rid) return 1;
+  return 0;
+}
+/* The name a parameter or a named local emits as. Its rank among the objects of its source name -- the parameters
+ * first, in order, then the named locals in order -- picks among its candidates: its own name, then `name_2`,
+ * `name_3`, ... (the lowering flattens scopes, so two locals of one name in disjoint blocks are two objects declared
+ * at function scope; declaring both is a C redefinition). A candidate the emit spells otherwise (`emit_name_taken`) or
+ * that is a typedef name is skipped, and so is a suffixed one that is another object's source name: no two objects,
+ * and no other reference, share a spelling -- the declaration and every reference read the same name (the oracle's
+ * `_uniq`). A suffix past `_8` is not read against the typedef names. */
 static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
   const bcir_resource *r=res_of(f,rid);
   if(!r||!r->name[0]){ snprintf(buf,BCIR_EMIT_NAME,"t%u",rid);
     for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,"t%u_%d",rid,k);
     return buf; }
   if(r->read_only){ snprintf(buf,BCIR_EMIT_NAME,"%s",r->name); return buf; }   /* a file-scope global */
-  for(int p=0;p<f->n_params;p++)                                              /* a param: keep its name */
-    if(f->params[p].rid==rid){ snprintf(buf,BCIR_EMIT_NAME,"%s",r->name); return buf; }
-  int occ=0;                                            /* count earlier holders of the bare name */
-  for(int p=0;p<f->n_params;p++)
-    if(f->params[p].name[0] && !strcmp(f->params[p].name,r->name)) occ++;
-  for(size_t i=0;i<f->n_res;i++){
-    const bcir_resource *q=&f->res[i];
-    if(q->rid==rid){
-      if(occ==0) snprintf(buf,BCIR_EMIT_NAME,"%s",r->name);
-      else       snprintf(buf,BCIR_EMIT_NAME,"%s_%d",r->name,occ+1);
-      return buf;
+  int occ=0, isp=0;
+  for(int p=0;p<f->n_params;p++){
+    if(f->params[p].rid==rid){ isp=1; break; }
+    if(f->params[p].name[0] && !strcmp(f->params[p].name,r->name)) occ++; }
+  if(!isp)
+    for(size_t i=0;i<f->n_res;i++){ const bcir_resource *q=&f->res[i];
+      if(q->rid==rid) break;
+      if(q->name[0] && !q->read_only && !strcmp(q->name,r->name) && !param_rid(f,q->rid)) occ++; }
+  int bare=0, prefixed=0;
+  spelled_scan(f,r->name,&bare,&prefixed);
+  for(int k=1;;k++){
+    if(k==1){
+      if(bare || (r->typedef_named&1u)) continue;
+      snprintf(buf,BCIR_EMIT_NAME,"%s",r->name);
+    } else {
+      snprintf(buf,BCIR_EMIT_NAME,"%s_%d",r->name,k);
+      if((k<=8 && ((r->typedef_named>>(k-1))&1u)) || (prefixed && (emit_name_taken(f,buf) || source_named(f,buf))))
+        continue;
     }
-    if(q->name[0] && !strcmp(q->name,r->name)){         /* an earlier same-named resource... */
-      int isp=0; for(int p=0;p<f->n_params;p++) if(f->params[p].rid==q->rid){isp=1;break;}
-      if(!isp) occ++;                                   /* ...that is not itself a param (counted above) */
-    }
+    if(occ--==0) return buf;
   }
-  snprintf(buf,BCIR_EMIT_NAME,"%s",r->name); return buf;
 }
 /* `nm` is the emitted name of a declared object -- a parameter, a named local or static, a global. Only a
  * resource whose own name `nm` starts with can emit as `nm` (disambiguating appends `_N`). */
@@ -9275,8 +9387,8 @@ static size_t emit_sig(const bcir_func *f,char *o,size_t on){
   ctype_str(&f->ret,ty,sizeof ty);
   w+=snprintf(o+SO,on-SO,"static %s bcir_%s(",ty,f->name);
   if(f->n_params==0&&!f->variadic) w+=snprintf(o+SO,on-SO,"void");
-  for(int i=0;i<f->n_params;i++){char pt[BCIR_EMIT_TYPE];ctype_str(&f->params[i].type,pt,sizeof pt);
-    w+=snprintf(o+SO,on-SO,"%s%s %s",i?", ":"",pt,f->params[i].name);}
+  for(int i=0;i<f->n_params;i++){char pt[BCIR_EMIT_TYPE],pn[BCIR_EMIT_NAME];ctype_str(&f->params[i].type,pt,sizeof pt);
+    w+=snprintf(o+SO,on-SO,"%s%s %s",i?", ":"",pt,uniq_local(f,f->params[i].rid,pn));}
   if(f->variadic) w+=snprintf(o+SO,on-SO,"%s...",f->n_params?", ":"");   /* a trailing variadic ellipsis */
   w+=snprintf(o+SO,on-SO,")");
   #undef SO

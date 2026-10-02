@@ -2483,7 +2483,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   13 injected defects, 6 on the oracle and 7 on the twin, are each caught (`tools/testing/faults/cfront-enumscope.json`).
   Found, not fixed here (a suggested follow-up): a local that hides a typedef name is refused on both rails where a
   statement begins with it (`typedef uint32_t T; ... uint32_t T = s; T = T * 3u;` -- the twin: `expected declarator
-  name`, the oracle: `expected 'IDENT', got OP '='`), where C reads the statement as an expression.
+  name`, the oracle: `expected 'IDENT', got OP '='`), where C reads the statement as an expression (closed by
+  CF-TYPEDEFSCOPE, below).
 
   CF-FPTAB (2026-10-01) closed the calls through `(*fp)` and through tables CF-SPLIT2 recorded, and the member reads
   CF-CALLS recorded (the first item of its list), and made both rails refuse, for one reason each, the operands C
@@ -3401,6 +3402,75 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     incomplete struct or union 'nope' has no layout here`, `unknown struct`);
   - a 5000-term `(10 / x) && ...` the oracle lowers is refused by the twin's driver (`input too large`): its
     preprocessed-text bound (64 KiB) and its 16384 tokens a unit.
+
+  CF-TYPEDEFSCOPE (2026-10-02) makes a block-scope name hide a typedef name on both rails, closing the item CF-ENUMSCOPE
+  recorded. RED was measured on the parent (CF-CONSTEXPR2's commit).
+  - The defect: both rails read a typedef name as a type wherever it stood, so a local, a parameter, a loop's own
+    declaration or a block's enumerator of the same name never hid it (C11 6.2.1p4). A statement starting with the
+    name was refused on both (`uint32_t T = s; T = T * 3u;`). Where the name was read in an expression the rails took
+    it for the type, digest-equal: `(T) - s` was a cast of `-s` where C subtracts, and `sizeof(B)` of a `uint64_t`
+    local beside `typedef uint8_t B` was 1 where C gives 8 -- silent miscompiles. `T * x;` was read as a declaration
+    of a pointer `x`, an emit that does not compile, and a declaration through the hidden name (`T y = 3u;`, which C
+    refuses) lowered on the oracle.
+  - Found while fixing it: both emits declare every local at the top of the function, so a block's local named as a
+    file-scope name the function spells after the block captured it there. The oracle kept such a local from a
+    parameter's or a used global's name (`g_2`), the twin only from an earlier local's: a block's `uint32_t g` beside
+    a global `g` the function read after the block made the twin's emit read the local -- a silent miscompile,
+    digest-equal with the oracle. A local named as a typedef (`{ uint32_t S = s; } S v;`) or as a function the
+    function calls emitted C that does not compile, on both rails. And a review of the slice before its gates found
+    the oracle asking one scope too late: a parameter entered its scopes with the body, so `f(uint32_t T, T x)` -- and
+    a prototype's `g(uint32_t T, T x);` -- read `T x` through the typedef there, where the twin, which binds each
+    parameter as it reads it, refused it as Clang does. The slice's gates found one more of the kind in a witness: the
+    shared corpus's harnesses set the original and its emits beside a generator state named `S`, which the fixture's
+    `typedef struct { uint32_t a; } S;` redefined, so the harness did not build; they name it `bcir_h_seed` now
+    (`_HARNESS_RNG`).
+  - RED: on the parent the three new tests fail (3 run, 3 findings): both rails refuse `cfront_typedefscope.c`, the
+    oracle lowers `T y = 3u;` through the hidden name, and neither rail holds a list of the names its emit spells for
+    itself.
+  - What landed: one visibility predicate per rail -- the oracle's `cparse._typedef_visible`, the twin's
+    `visible_typedef` -- a typedef name being a type only where no local, parameter, loop declaration or block
+    enumerator of its name is in scope, read where a declaration starts (`_is_decl_start`; `decl_start_tok`), where a
+    cast's or `sizeof`'s type-name starts (`_is_cast`; `type_name_tok`) and where a type specifier expands the alias
+    (`_type_spec`; `p_type`). The twin's token pre-pass, which runs before a body's locals are bound, keeps the
+    typedef names a block's declarations bind to the end of that block (`up_hide`, `uph`), so it rewrites `(T)[1]` of
+    a local array as the parser will read it; a for-init's declaration stays a type to it, the direction in which it
+    only declines a rewrite. One naming rule per emit: no parameter or hoisted local takes a name the emit spells for
+    anything else -- a name it spells for itself (the libc routines it calls or copies through, the C11 atomics, the
+    twin's store helper `_v`, the standard type names: `_EMIT_SPELLED`, the twin's `emit_spelled`, one list, which a
+    test reads out of both sources), a global or a function it reads, each function it calls as the emit calls it (`X`
+    and `bcir_X`), a typedef name -- nor another object's: a second local of a name takes the first of `_2`, `_3`, ...
+    that is none of those (the oracle's `_uniq` over `_spelled_names`; the twin's `uniq_local` over `emit_name_taken`,
+    `source_named` and `bcir_resource.typedef_named`, which holds the name and its `_2` to `_8`). A parameter is
+    renamed alike, and the signature spells it so. The twin reads a function's claims for the callees they name only
+    where it calls one by name (`bcir_func.named_calls`), and a candidate's checks only where a name could be it
+    (`spelled_scan`): naming 700 locals of one name takes it 0.66 s, the parent's 0.48 s (the rule's first cut,
+    checking every candidate in full, took 92 s). The oracle's parameter list is a scope of its own (`_func_body`),
+    each parameter in it from the end of its declarator, as the twin's `env` holds it.
+  - Outcomes: `runtime/c/cfront_typedefscope.c` (a local, a parameter, a loop's declaration and a block's enumerator
+    hiding a typedef in statements, casts' places, `sizeof` and `typeof` operands; a parameter and a local declared
+    with the typedef they name, `T T`; a member named as it; the typedef declaring and casting again after; locals
+    named as a global read, a global written, a callee and typedefs, and as the emit spells `bcir_td_twice`, `memcpy`,
+    `memset`, `fabs` and `size_t`; parameters named `_v` and `memcpy`, each stored whole into a member; a second local
+    whose `_2` is a local's, a typedef's or a global's name) lowers to one claim graph on the four targets and each
+    function of each emit returns what the original does under Clang and GCC; the 11 units of `_TYPEDEFSCOPE_REFUSED`,
+    the hidden name used as a type -- three of them a parameter's, in a definition's list and a prototype's -- are
+    refused by Clang and by both parsers; and the two rails' lists of the names their emits spell for themselves are
+    one. Over the corpus (240 fixtures, four targets) only the new fixture moved: 891 of 960 fixture-target pairs keep
+    equal summaries on both rails, the parent's 887 and the new fixture's four.
+  - Faults: `tools/testing/faults/cfront-typedefscope.json`, 30 -- 12 on the oracle, 18 on the twin -- each caught by
+    its own test. The first sweep, of the 17 then, caught 15: HO6 and HT10, each dropping a callee from the names a
+    hoisted local may not take, passed, for both emits call a unit's function `bcir_f`, which no local of its source
+    name meets. Holding the emits to what they spell, not to what the source does, found the rule partial on both
+    rails, each a defect of valid C older than the slice: a local or a parameter named `memcpy` -- which spells every
+    member store -- or a library routine a block's local outlived (`memset`, `memmove`, `malloc`, `fabs`), or `bcir_g`
+    beside a call to `g`, made an emit no compiler takes on both rails, as a block's `size_t` did the oracle's (it
+    declares `size_t` temporaries); a parameter or a local `_v` stored whole into a member made the twin's emit store
+    its own helper, `{ uint32_t _v = _v; ... }` -- a silent miscompile, digest-equal; and the twin's `x_2` for a
+    second `x` redefined a source's own `x_2`, or named a typedef. The fixture's `td_spelled`, `td_helper` and
+    `td_suffix` and `td_shadow`'s `td_g_2` hold each, HO5, HO6, HT8, HT9 and HT10 were re-pointed at the new rule and
+    thirteen faults added; the re-sweep caught 30 of 30.
+  Found, not fixed here: a comma expression as a statement (`a, u = 2u;`) is refused on both rails, in different words
+  (`expected ';', got PUNCT ','`, `;`).
 
 ---
 

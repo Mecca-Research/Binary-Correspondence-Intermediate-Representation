@@ -406,3 +406,6 @@ class Unit:
     # declaration, a typedef -- each as its tokens spell it, in source order: the linkable emit defines the
     # types its functions and globals name with them (CF-LINKEMIT)
     type_defs: list = field(default_factory=list)
+    # the unit's typedef names, which an emitted function may spell at file scope: no local it hoists may take one
+    # (CF-TYPEDEFSCOPE; the emit's `_uniq`)
+    typedef_names: frozenset = frozenset()

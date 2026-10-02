@@ -1544,6 +1544,28 @@ Witnesses: `test_character_constants_sizes_and_float_casts_fold_to_clangs_values
 `test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails`,
 `test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails`. Faults (`cfront-constexpr2.json`):
 `KO6`, `KO10`, `KO21`, `KT7`, `KT8`, `KT25`, `KT34`.
+CF-TYPEDEFSCOPE instance (2026-10-02): "is this name a type here" was asked at five sites per rail -- a declaration's
+start, a cast's, `sizeof`'s, a type specifier's, and on the twin a token pre-pass that runs before any local exists --
+each against the typedef table alone, so a local hiding the name was invisible to all five, and two of them read
+`(T) - s` and `sizeof(B)` as the type without a word. Each rail now asks one predicate (`_typedef_visible`,
+`visible_typedef`), and the pre-pass feeds it the names a block's declarations bind. The emit had the same shape one
+level down: which names a hoisted local may take was answered from the parameters and the globals on the oracle and
+from the earlier locals alone on the twin, so a block's `g` beside a global `g` read after the block became the global
+in the twin's emit. Both now reserve one set -- every name the emit spells other than as one of the function's own
+objects. The slice's first sweep showed the set had been read off the source, not the emit: both faults dropping a
+callee from it passed, for the emits call a unit's function as `bcir_f`, so no source name ever met it. Probing the
+emit's own spellings found what the source cannot see -- `memcpy`, which spells every member store, a libc callee a
+block's local outlived, `bcir_f` itself, a `size_t` temporary, and the twin's store helper `_v`, which a parameter of
+that name made a silent miscompile (`{ uint32_t _v = _v; ... }`) -- and the twin's `x_2` for a second `x`, which a
+source's own `x_2` redefined. The set is one list per rail now, read by a test out of both sources, plus each callee as
+the emit calls it, applied to parameters too, and no suffix is another object's name. A review of the slice
+found the oracle's question asked one scope too late as well: a parameter entered `scopes` with the body, so
+`f(uint32_t T, T x)` lowered there, where the twin, binding each parameter as it reads it, refused it as Clang does;
+the parameter list is a scope of its own now.
+Witnesses: `test_a_block_scope_name_hides_a_typedef_on_both_rails`,
+`test_a_hidden_typedef_name_starts_no_declaration_or_cast_on_both_rails`,
+`test_both_emits_keep_their_objects_off_the_names_they_spell_for_themselves`. Faults (`cfront-typedefscope.json`):
+`HO1`, `HO3`, `HO7`, `HO8`, `HO12`, `HT1`, `HT3`, `HT7`, `HT10`, `HT11`, `HT13`, `HT18`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

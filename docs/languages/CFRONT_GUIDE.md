@@ -333,6 +333,14 @@ _mm_sfence();                      //                   store (release) fence ->
   unsigned on Windows).
 - An enumeration declared in a block: its constants and its tag end with the block, each hiding an outer name from
   its declaration on and hidden in turn by a later local (C11 6.2.1p4).
+- A local, a parameter, a loop's own declaration or a block's enumerator hides a typedef name of its own to the end of
+  its block (C11 6.2.1p4), and a parameter for the parameters after it: there the name starts no declaration, cast or
+  `sizeof` type-name -- `T = T * 3u;` assigns, `T * x;` multiplies, `(T) - s` subtracts, `sizeof(T)` sizes the object
+  -- and after the block it is the type again.
+  The emitted C declares every local at the top of its function, so a local named as a typedef, a global the function
+  reads or writes or a function it calls is emitted under another name (`T_2`) -- and so is a parameter or a local named
+  as a name the emit spells for itself: a libc routine (`memcpy` spells every member store), `bcir_f` (the emit's name
+  for `f`), a standard type name, the twin's store helper `_v`.
 - A zero-length array member (`T m[0]`, GNU) or a flexible one (`T m[]`): no bytes of its own, indexed in place;
   `typedef T row[0];` names one.
 - Integer + IEEE-754 floating arithmetic and comparisons, casts and the usual arithmetic conversions,

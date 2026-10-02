@@ -1,0 +1,223 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_block_scope_name_hides_a_typedef_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_hidden_typedef_name_starts_no_declaration_or_cast_on_both_rails",
+    "bcir.tests.test_c_cfront:test_both_emits_keep_their_objects_off_the_names_they_spell_for_themselves"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO1 the oracle reads a typedef name a block-scope name hides",
+      "new": "        return w in self.typedefs\n",
+      "old": "        return w in self.typedefs and not any(w in scope for scope in self.scopes)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO2 the oracle starts a declaration with a hidden typedef name",
+      "new": "            or w in (\"va_list\", \"__builtin_va_list\", \"_Atomic\")\n            or w in self.typedefs\n",
+      "old": "            or w in (\"va_list\", \"__builtin_va_list\", \"_Atomic\")\n            or self._typedef_visible(w)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO3 the oracle reads a hidden typedef name in parentheses as a cast",
+      "new": "            or is_scalar_name(w)\n            or w in self.typedefs\n        )\n\n    def _postfix(self):",
+      "old": "            or is_scalar_name(w)\n            or self._typedef_visible(w)\n        )\n\n    def _postfix(self):",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_hidden_typedef_name_starts_no_declaration_or_cast_on_both_rails",
+      "label": "HO4 the oracle types a declaration by a hidden typedef name",
+      "new": "            elif not words and w in self.typedefs:  # a typedef name -> expand the alias\n",
+      "old": "            elif not words and self._typedef_visible(w):  # a typedef name -> expand the alias\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO5 the oracle's emit gives a parameter or a local a typedef's name",
+      "new": "    spelled = set(_EMIT_SPELLED) | set(lf.globals_used.values())\n",
+      "old": "    spelled = set(_EMIT_SPELLED) | set(lf.globals_used.values()) | set(lf.typedef_names)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO6 the oracle's emit gives a parameter or a local the name a function it calls is spelled by",
+      "new": "        pass\n",
+      "old": "        spelled.update((callee, f\"bcir_{callee}\"))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_hidden_typedef_name_starts_no_declaration_or_cast_on_both_rails",
+      "label": "HO7 the oracle reads a parameter's type through an earlier parameter of the typedef's name",
+      "new": "                    if pname:\n                        pass\n",
+      "old": "                    if pname:\n                        listed[pname] = None\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO8 the oracle's emit gives a parameter or a local a name it spells for itself (`memcpy`, `size_t`)",
+      "new": "    spelled = set(lf.globals_used.values()) | set(lf.typedef_names)\n",
+      "old": "    spelled = set(_EMIT_SPELLED) | set(lf.globals_used.values()) | set(lf.typedef_names)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO9 the oracle's emit keeps a parameter's name the emit spells otherwise",
+      "new": "        nm[rid] = pname\n",
+      "old": "        nm[rid] = _uniq(pname)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO10 the oracle's signature spells a renamed parameter by its source name",
+      "new": "    return head + _signature(lf) + ",
+      "old": "    return head + _signature(lf, params) + ",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HO11 the oracle's emit reads no library routine a function calls by name as a name it spells",
+      "new": "            pass\n",
+      "old": "            callees.add(c.op.split(\":\", 1)[1])\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_both_emits_keep_their_objects_off_the_names_they_spell_for_themselves",
+      "label": "HO12 the oracle's list of the names its emit spells for itself misses one the twin's holds",
+      "new": "        \"va_list\",\n    )\n)\n",
+      "old": "        \"va_list\",\n        \"wchar_t\",\n    )\n)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT1 the twin reads a typedef name a local or a parameter hides",
+      "new": "  for(int i=0;i<c->nuph;i++)",
+      "old": "  for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n)) return -1;\n  for(int i=0;i<c->nuph;i++)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT2 the twin reads a typedef name a block's enumerator hides",
+      "new": "  if(ti<0) return -1;",
+      "old": "  if(ti<0 || find_enum(c,s,n)>=0) return -1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT3 the twin's pre-pass reads a typedef name a block's declaration hides",
+      "new": "",
+      "old": "  for(int i=0;i<c->nuph;i++) if(c->uph[i].n==n && !strncmp(c->uph[i].s,s,(size_t)n)) return -1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT4 the twin's pre-pass keeps a block's hidden names past the block",
+      "new": "",
+      "old": "        while(c->nuph>0 && c->uph[c->nuph-1].frame>=*nf) c->nuph--;   /* its names end with it */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT5 the twin starts a declaration with a hidden typedef name",
+      "new": "      ||find_typedef(c,t->s,t->n)>=0);",
+      "old": "      ||visible_typedef(c,t->s,t->n)>=0);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT6 the twin reads a hidden typedef name in parentheses as a cast",
+      "new": "      || find_typedef(c,t->s,t->n)>=0;",
+      "old": "      || visible_typedef(c,t->s,t->n)>=0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_hidden_typedef_name_starts_no_declaration_or_cast_on_both_rails",
+      "label": "HT7 the twin types a declaration by a hidden typedef name",
+      "new": "int ti=find_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias, where visible */",
+      "old": "int ti=visible_typedef(c,pk(c)->s,pk(c)->n);   /* a typedef alias, where visible */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT8 the twin's emit gives a parameter or a local a typedef's name",
+      "new": "      if(bare) continue;",
+      "old": "      if(bare || (r->typedef_named&1u)) continue;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT9 the twin's emit gives a parameter or a local the name of a global it reads",
+      "new": "  for(size_t i=0;i<f->n_res;i++) (void)name_match(f->res[i].name,x,xn,&pf);",
+      "old": "  for(size_t i=0;i<f->n_res;i++){ int m=name_match(f->res[i].name,x,xn,&pf); if(f->res[i].read_only) b|=m; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT10 the twin's emit gives a parameter or a local the name a function it calls is spelled by",
+      "new": "  (void)callee; (void)x; (void)xn; (void)prefixed;\n  return 0;",
+      "old": "  int m=name_match(callee,x,xn,prefixed);\n  if(xn>5 && !strncmp(x,\"bcir_\",5)) m|=name_match(callee,x+5,xn-5,prefixed);\n  return m;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT11 the twin's emit gives a parameter or a local a name it spells for itself (`_v`, `memcpy`)",
+      "new": "",
+      "old": "  for(int i=0;emit_spelled[i];i++) b|=name_match(emit_spelled[i],x,xn,&pf);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT12 the twin's signature spells a renamed parameter by its source name",
+      "new": "w+=snprintf(o+SO,on-SO,\"%s%s %s\",i?\", \":\"\",pt,f->params[i].name);(void)pn;}",
+      "old": "w+=snprintf(o+SO,on-SO,\"%s%s %s\",i?\", \":\"\",pt,uniq_local(f,f->params[i].rid,pn));}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT13 the twin's renamed local takes another object's source name",
+      "new": "      if((k<=8 && ((r->typedef_named>>(k-1))&1u)) || (prefixed && emit_name_taken(f,buf)))",
+      "old": "      if((k<=8 && ((r->typedef_named>>(k-1))&1u)) || (prefixed && (emit_name_taken(f,buf) || source_named(f,buf))))",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT14 the twin's renamed local takes a typedef's name",
+      "new": "      }",
+      "old": "      else if(tn==nm->n+2 && t[nm->n]=='_' && t[nm->n+1]>='2' && t[nm->n+1]<='8') m|=1u<<(t[nm->n+1]-'1'); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT15 the twin's renamed local skips no name it starts",
+      "new": "",
+      "old": "  if(s[xn]=='_') *prefixed=1;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT16 the twin's emit reads no claim for a library routine a function calls by name",
+      "new": "",
+      "old": "  if(!strncmp(cl->op,\"c.call\",6) && strchr(cl->op,':')) f->named_calls=1;   /* the emit spells the callee */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
+      "label": "HT17 the twin's renamed local takes the name of a global the function reads",
+      "new": "      if((k<=8 && ((r->typedef_named>>(k-1))&1u)) || (prefixed && source_named(f,buf)))",
+      "old": "      if((k<=8 && ((r->typedef_named>>(k-1))&1u)) || (prefixed && (emit_name_taken(f,buf) || source_named(f,buf))))",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_both_emits_keep_their_objects_off_the_names_they_spell_for_themselves",
+      "label": "HT18 the twin's list of the names its emit spells for itself misses one the oracle's holds",
+      "new": "\"uintptr_t\",\"va_list\",0};",
+      "old": "\"uintptr_t\",\"va_list\",\"wchar_t\",0};",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}
