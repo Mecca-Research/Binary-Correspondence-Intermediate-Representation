@@ -1,0 +1,323 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_the_twin_drivers_hold_a_unit_of_any_length_to_the_token_bound_both_rails_share",
+    "bcir.tests.test_c_cfront:test_a_token_of_any_length_within_a_line_is_read_whole_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_malformed_defined_and_a_nul_are_refused_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_bcir_cc_undefines_a_macro_its_command_line_defines",
+    "bcir.tests.test_c_cfront:test_a_name_that_runs_into_a_non_ascii_character_is_refused_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_macro_parameter_list_is_read_by_one_grammar_on_both_rails",
+    "bcir.tests.test_c_cfront:test_the_emit_grows_whole_under_a_failing_allocator",
+    "bcir.tests.test_c_cfront:test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges",
+    "bcir.tests.test_c_cfront:test_the_twin_driver_reads_a_source_past_64_kib_whole",
+    "bcir.tests.test_c_cfront:test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_value_number_past_the_depth_cap_is_cyc_on_both_rails",
+    "bcir.tests.test_c_cfront:test_claim_ids_stay_unique_past_a_function_of_1000_claims"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_twin_drivers_hold",
+      "label": "PO1 the oracle's lexer holds no token bound: a unit of 65 536 tokens lowers there alone",
+      "new": "        if len(toks) >= MAX_TOKENS * 2:",
+      "old": "        if len(toks) >= MAX_TOKENS - 1:",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_the_twin_drivers_hold",
+      "label": "PT1 the twin holds 16 384 tokens: a unit of 6 000 globals is refused (`input too large`)",
+      "new": "#define MAXTOK 16384\n",
+      "old": "#define MAXTOK 65536\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twin_drivers_hold",
+      "label": "PT2 the preprocessed text is held in 64 KiB: a longer one is refused, never grown",
+      "new": "    return rc;",
+      "old": "    if(!((CppState *)context->state)->out_full||cap>BCIR_CPP_MAX_OUTPUT_BYTES)return rc;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_the_twin_drivers_hold",
+      "label": "PT3 the loop driver lowers the first 64 KiB of a source",
+      "new": "  if (why) { bcir_host_deallocate(&heap, raw); printf(\"READ-ERR %s\\n\", why); return 1; }\n  if (strlen(raw) > (1u << 16)) raw[1u << 16] = 0;\n",
+      "old": "  if (why) { bcir_host_deallocate(&heap, raw); printf(\"READ-ERR %s\\n\", why); return 1; }\n",
+      "path": "runtime/c/test_cfront_loop.c"
+    },
+    {
+      "expects": "test_c_preprocessor_driver_and_emitter_fail_closed",
+      "label": "PT4 bcir-cc refuses a preprocessed text past 64 KiB",
+      "new": "    int cpp_rc=bcir_cpp_run_ex_alloc(raw, path, dirs, ndirs, alldefs, nalldef, &src, NULL, cpperr, sizeof cpperr);\n    if(!cpp_rc&&strlen(src)>=(1u<<16)){cc_release_file(src);src=NULL;cpp_rc=1;snprintf(cpperr,sizeof cpperr,\"preprocessed output too large\");}\n",
+      "old": "    int cpp_rc=bcir_cpp_run_ex_alloc(raw, path, dirs, ndirs, alldefs, nalldef, &src, NULL, cpperr, sizeof cpperr);\n",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_a_token_of_any_length",
+      "label": "PT5 a line's token is held in 256 bytes (`preprocessor token too long`)",
+      "new": "  int i = 0; char t[256], prevc = 0;",
+      "old": "  int i = 0; char t[BCIR_CPP_LINE], prevc = 0;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_token_of_any_length",
+      "label": "PT6 a macro argument is held in 1 KiB (`macro argument is too large`)",
+      "new": "if (aw < 1023) args[na][aw++] = a[z]; else",
+      "old": "if (aw < BCIR_CPP_LINE - 1) args[na][aw++] = a[z]; else",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_token_of_any_length",
+      "label": "PT7 the spacing token keeps an argument's first 255 bytes: `...+b y` is written `...+by`",
+      "new": "  memcpy(prev, s, n > 255 ? 255 : n + 1); prev[255] = 0;",
+      "old": "  memcpy(prev, s + (n > 255 ? n - 255 : 0), n > 255 ? 256 : n + 1);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_token_of_any_length",
+      "label": "PT8 a `#if` token is held in 256 bytes: a long `__has_attribute` operand is refused",
+      "new": "  char *buf=state->conditional_buffer; size_t w=0; buf[0]=0; int i=0; char t[256];",
+      "old": "  char *buf=state->conditional_buffer; size_t w=0; buf[0]=0; int i=0; char t[BCIR_CPP_LINE];",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_malformed_defined",
+      "label": "PO2 the oracle leaves a malformed `defined` to be refused as a malformed expression",
+      "new": "            if t == \"defined_\":\n",
+      "old": "            if t == \"defined\":\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_malformed_defined",
+      "label": "PO3 the oracle takes a source holding a NUL",
+      "new": "        if False:\n            raise CPPError(\"the source holds a NUL byte\")",
+      "old": "        if \"\\0\" in text:\n            raise CPPError(\"the source holds a NUL byte\")",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_malformed_defined",
+      "label": "PO4 the oracle takes a header holding a NUL",
+      "new": "        if False:\n            raise CPPError(f\"#include {target} contains NUL\")",
+      "old": "        if \"\\0\" in text:\n            raise CPPError(f\"#include {target} contains NUL\")",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_malformed_defined",
+      "label": "PO5 the oracle's tokenizer drops a character no alternative matches (`@`, `€`)",
+      "new": "    r\"\",  # any other character",
+      "old": "    r\"|\\S\",  # any other character",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_malformed_defined",
+      "label": "PT9 the twin takes `defined(X` with no `)`",
+      "new": "        if(0){",
+      "old": "        if(has&&!next_is(expr,&j,')')){",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_bcir_cc_undefines",
+      "label": "PT10 bcir-cc hands a -D its -U drops on as an empty definition",
+      "new": "        defs[d] = \"\";",
+      "old": "        defs[d] = NULL;",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "PT11 the digest of a canon an allocation failed in is returned as a digest",
+      "new": "  if(0) return BCIR_CANON_OOM;\n  *out=c.h;",
+      "old": "  if(a.refused) return BCIR_CANON_OOM;\n  *out=c.h;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO6 the oracle reads a name that runs on into a non-ASCII character",
+      "new": "",
+      "old": "    if not text[m.end() : m.end() + 1].isascii():\n        raise CPPError(NONASCII)\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO7 the oracle's tokenizer reads Unicode letters and digits (`\\w`, `\\d`)",
+      "new": "    r\"|\\S\",  # any other character, one token: the lexer refuses it (`@`, a NUL, one past ASCII)\n",
+      "old": "    r\"|\\S\",  # any other character, one token: the lexer refuses it (`@`, a NUL, one past ASCII)\n    re.ASCII,\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO8 the oracle's lexer reads an identifier with `str.isalpha`/`isalnum`",
+      "new": "        if c.isalpha() or c == \"_\":  # identifier / keyword\n            j = i\n            while j < n and (src[j].isalnum() or src[j] == \"_\"):",
+      "old": "        if _alpha(c) or c == \"_\":  # identifier / keyword\n            j = i\n            while j < n and (_alnum(src[j]) or src[j] == \"_\"):",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO9 the oracle reads `#line` digits with a Unicode `\\d`",
+      "new": "        m = re.match(r\"\\d+\", toks[0])",
+      "old": "        m = re.match(r\"[0-9]+\", toks[0])",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO10 the oracle's parameter list takes a name that runs on into a non-ASCII character",
+      "new": "        i = m.end()\n",
+      "old": "        i = m.end()\n        if not rest[i : i + 1].isascii():\n            raise CPPError(NONASCII)\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PT12 the twin reads the ASCII start of a macro name (`#ifdef café` tests `caf`)",
+      "new": "",
+      "old": "  if ((unsigned char)s[*i] >= 0x80) { cpp_limit(state, nonascii_outside); return 0; }\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PT13 the twin's `#if` takes a byte past ASCII as a malformed expression",
+      "new": "    if(0){cpp_limit(state,nonascii_outside);break;}",
+      "old": "    if(k=='p'&&(unsigned char)t[0]>=0x80){cpp_limit(state,nonascii_outside);break;}",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PT14 the twin refuses a non-ASCII parameter as an invalid one",
+      "new": "      if(0){cpp_limit(state, nonascii_outside);return;}   /* a parameter is ASCII, as a",
+      "old": "      if((unsigned char)rest[i]>=0x80){cpp_limit(state, nonascii_outside);return;}   /* a parameter is ASCII, as a",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PT15 the twin's lexer hands a byte past ASCII on as a punctuator",
+      "new": "    if (0){ fail(c,nonascii_outside); break; }",
+      "old": "    if ((unsigned char)*p>=0x80){ fail(c,nonascii_outside); break; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_macro_parameter_list",
+      "label": "PO11 the oracle takes a parameter list that names one parameter twice",
+      "new": "",
+      "old": "        if m.group() in params:\n            raise CPPError(\"duplicate macro parameter\")\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_macro_parameter_list",
+      "label": "PO12 the oracle takes seventeen parameters",
+      "new": "",
+      "old": "        if len(params) >= _MAX_PARAMS:\n            raise CPPError(\"too many macro parameters\")\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_macro_parameter_list",
+      "label": "PO13 the oracle takes any separator between two parameters (`F(a b c)` defines `F(a, c)`)",
+      "new": "        if params:\n            if False:\n                raise CPPError(\"invalid macro parameter list\")\n",
+      "old": "        if params:\n            if rest[i : i + 1] != \",\":\n                raise CPPError(\"invalid macro parameter list\")\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO14 the oracle strips every Unicode space before a directive's `#` (`\\u00a0#define K 3u` defines `K`)",
+      "new": "                line = raw.strip()\n",
+      "old": "                line = raw.lstrip(_DIRECTIVE_SPACE)\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO15 the oracle ends a directive's name only at a space (`#define\\tK 3u` is an unknown directive)",
+      "new": "        op = d.partition(\" \")[0]\n",
+      "old": "        op = _DIRECTIVE_NAME.match(d).group()\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PO16 the oracle reads a directive name that runs on past ASCII as an unknown directive",
+      "new": "        if False:\n",
+      "old": "        if not d[len(op) : len(op) + 1].isascii() and active():\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_name_that_runs_into",
+      "label": "PT16 the twin cuts a directive name at its ASCII start (`#café` is `#caf`, ignored)",
+      "new": "      if(0){",
+      "old": "      if((unsigned char)line[q]>=0x80&&parent){",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PO17 the oracle spells a value number's whole tree (a chain's canon O(n^2), a doubling's 2^n)",
+      "new": "    return spelling\n",
+      "old": "    return f\"{_fnv1a64(spelling.encode('utf-8')):016x}\"\n",
+      "path": "bcir/verify/__init__.py"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PO18 the oracle numbers a value by its op alone, its reads' numbers left out",
+      "new": "    spelling = op + \"()\"\n",
+      "old": "    spelling = op + \"(\" + \",\".join(parts) + \")\"\n",
+      "path": "bcir/verify/__init__.py"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PO19 the oracle keeps a value number's low 32 bits",
+      "new": "{_fnv1a64(spelling.encode('utf-8')) & 0xFFFFFFFF:016x}",
+      "old": "{_fnv1a64(spelling.encode('utf-8')):016x}",
+      "path": "bcir/verify/__init__.py"
+    },
+    {
+      "expects": "test_a_value_number_past_the_depth_cap_is_cyc_on_both_rails",
+      "label": "PO20 the oracle reads a value number's memo before its depth (a value reached past the cap is its number)",
+      "new": "            if i in memo:\n                return memo[i]\n            if depth > _VN_MAXDEPTH:\n                return \"cyc\"\n",
+      "old": "            if depth > _VN_MAXDEPTH:\n                return \"cyc\"\n            if i in memo:\n                return memo[i]\n",
+      "path": "bcir/verify/__init__.py"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PT17 the twin numbers a value by its op alone, its reads' numbers left out",
+      "new": "  h=fnv_add(h,\")\",1);\n",
+      "old": "  for(int k=0;k<np;k++){ if(k) h=fnv_add(h,\",\",1); h=fnv_add(h,parts[k].s,parts[k].n); }\n  h=fnv_add(h,\")\",1);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PT18 the twin numbers a value by its reads run together, no `,` between them",
+      "new": "{ h=fnv_add(h,parts[k].s,parts[k].n); }",
+      "old": "{ if(k) h=fnv_add(h,\",\",1); h=fnv_add(h,parts[k].s,parts[k].n); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PT19 the twin keeps a value number's low 32 bits",
+      "new": "\"%016llx\",(unsigned long long)(uint32_t)h);",
+      "old": "\"%016llx\",(unsigned long long)h);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PT20 the twin numbers a commutative op's reads in their order, unsorted",
+      "new": "  uint64_t h=fnv_add(",
+      "old": "  if(vn_commutative(base)) sort_toks(parts,np);\n  uint64_t h=fnv_add(",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "PT21 the twin seeds a value number's hash with 0, not FNV-1a's offset basis",
+      "new": "uint64_t h=fnv_add(fnv_add(0,base,strlen(base)),\"(\",1);",
+      "old": "uint64_t h=fnv_add(fnv_add(BCIR_FNV_OFFSET,base,strlen(base)),\"(\",1);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_value_number_past",
+      "label": "PT22 the twin reads a value number's memo before its depth (a value reached past the cap is its number)",
+      "new": "  if(v->memo[ci]) return vn_tok(v->memo[ci],v->mlen[ci]);\n  if(depth>BCIR_VN_MAXDEPTH) return vn_tok(\"cyc\",3);",
+      "old": "  if(depth>BCIR_VN_MAXDEPTH) return vn_tok(\"cyc\",3);\n  if(v->memo[ci]) return vn_tok(v->memo[ci],v->mlen[ci]);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_claim_ids_stay",
+      "label": "PT23 the twin numbers each function's claims from 1000 + 1000 * its index, whatever the one before took",
+      "new": "    c->cid=1000u+(uint32_t)out->unit.n_funcs*1000u;",
+      "old": "    { uint32_t cid_base=1000u+(uint32_t)out->unit.n_funcs*1000u; if(c->cid<cid_base) c->cid=cid_base; }",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

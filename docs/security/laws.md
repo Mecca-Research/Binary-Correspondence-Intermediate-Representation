@@ -471,6 +471,19 @@ the derivation at 1); the product goes through `checkedMulNonnegative` like
 every other product in the pass (`calibration.strided_q8_overflow`, both
 rails). The oracle's `BinaryField` admitted an end offset the law rail's
 signed 64-bit field arithmetic cannot represent (`m5.field.end_overflow`).
+CF-PPLIMITS instance (2026-10-02): the token bound the cfront rails share was
+declared the compile's work budget, but the structural canon behind every
+digest spelled a value number as its whole dataflow tree, so its bytes grew as
+the square of a dependency chain and as 2^n over n doublings -- 18 doublings,
+500 bytes of source, built 32 MB, and a probe of 8 000 chained locals passed
+4 GiB on the twin. A token count bounds the input, not what the canon commits.
+A budget on the canon was the first answer, and it refused the digest of valid
+C the corpus already held -- CF-CONSTEXPR2's 3 000-term chains, 153 to 380 MB
+of canon: a bound that refuses what the rails agreed on is a regression of its
+own. Each rail now numbers a value by the FNV-1a of its op and its reads'
+numbers, so what the canon commits is linear in what the lowering committed.
+Witness: `test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails`.
+Faults (`cfront-pplimits.json`): `PO17`-`PO19`, `PT17`-`PT21`.
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -527,6 +540,16 @@ with everything else -- so `struct` only ever refuses a value (out of range), ne
 Witnesses: `test_struct_packs_what_the_wire_refuses_so_a_layout_sees_only_exact_types`, the
 `True` and `_Index` forgeries of `encode_fixtures`, and three faults in
 `tools/testing/faults/encode.json` (a bool claim id, an `__index__` target, a bool stride).
+CF-PPLIMITS instance (2026-10-02): the oracle read C source with Python's own predicates at seven sites --
+`str.isalpha`/`isalnum` for an identifier, `isdigit` for a number, `\w` and `\d` in the preprocessor's tokenizer,
+`\d` for a `#line` number, `str.strip` for a directive line, `split(",")` for a parameter list -- each a larger
+language than the twin's ASCII reader: `int café;`, `#line ٣`, `\u00a0#define K 3u` and `F(a b)` lowered on the oracle
+alone, and `#ifdef café` beside `#define caf 5` took the other branch. Each site reads the twin's grammar now
+(`re.ASCII`, `_alpha`/`_alnum`/`_digit`, `[0-9]+`, `_DIRECTIVE_SPACE`, `_params`), and a character past ASCII outside
+a literal is refused on both rails for one reason, `NONASCII`. Witnesses:
+`test_a_name_that_runs_into_a_non_ascii_character_is_refused_alike_on_both_rails`,
+`test_a_macro_parameter_list_is_read_by_one_grammar_on_both_rails`. Faults (`cfront-pplimits.json`): `PO6`-`PO10`,
+`PO13`-`PO16`, `PT12`-`PT16`.
 **Port note:** BCIR wire formats get grammar-complete parsers generated
 from the registry, or refusal. No "good enough" readers in C, ever.
 

@@ -238,13 +238,14 @@ static int report_ok(const char *buf,size_t cap,size_t len,const char *whole,int
 enum { REPORT_CAP = 1024, CANON_CAP = 4096 };
 
 static int cfront_analysis_once(const bcir_unit *unit,fault_state *state,size_t fail_at,
-                                size_t *attempts,char *whole_cn,char *whole_fx,char *whole_es){
+                                size_t *attempts,uint64_t *whole_dg,char *whole_cn,char *whole_fx,char *whole_es){
   bcir_host_allocator allocator=fault_allocator(state);
   char canon[CANON_CAP],cut[16],effects[REPORT_CAP],escape[REPORT_CAP];
   state->attempt=0;state->fail_at=fail_at;
   memset(canon,0xa5,sizeof canon);memset(cut,0xa5,sizeof cut);
   memset(effects,0xa5,sizeof effects);memset(escape,0xa5,sizeof escape);
-  (void)bcir_cfront_digest_with_allocator(unit,&allocator);
+  uint64_t dg=1;
+  int dr=bcir_cfront_digest_with_allocator(unit,&allocator,&dg);   /* the digest, or no digest (CF-PPLIMITS) */
   size_t cn=bcir_cfront_canon_with_allocator(unit,canon,sizeof canon,&allocator);
   size_t mn=bcir_cfront_canon_with_allocator(unit,NULL,0,&allocator);          /* measured (CF-LIMITS) */
   size_t un=bcir_cfront_canon_with_allocator(unit,cut,sizeof cut,&allocator);  /* cut, and saying so */
@@ -253,9 +254,12 @@ static int cfront_analysis_once(const bcir_unit *unit,fault_state *state,size_t 
   *attempts=state->attempt;
   if(!fail_at){   /* the fault-free run: whole reports, and the reference every failure is held to */
     CHECK(cn>sizeof cut && cn<sizeof canon && fx<sizeof effects && es<sizeof escape && fx>0 && es>0);
+    CHECK(dr==0); *whole_dg=dg;
     memcpy(whole_cn,canon,sizeof canon);
     memcpy(whole_fx,effects,sizeof effects);memcpy(whole_es,escape,sizeof escape);
   }
+  /* the whole digest, or a refusal with none: never the hash of a canon an allocation failed in */
+  CHECK(dr ? fail_at!=0 && dg==0 : dg==*whole_dg);
   CHECK(!report_ok(canon,sizeof canon,cn,whole_cn,fail_at!=0));
   CHECK(mn==SIZE_MAX ? fail_at!=0 : mn==strlen(whole_cn));
   /* a canon longer than its buffer: the buffer holds its first bytes and a NUL, the length the whole one's */
@@ -269,15 +273,15 @@ static int cfront_analysis_once(const bcir_unit *unit,fault_state *state,size_t 
 
 static int cfront_analysis_fault_test(void){
   bcir_cfront_context context;bcir_cfront_result result;
-  fault_state state={0};size_t attempts=0,baseline;
+  fault_state state={0};size_t attempts=0,baseline;uint64_t whole_dg=0;
   char whole_cn[CANON_CAP],whole_fx[REPORT_CAP],whole_es[REPORT_CAP];
   bcir_cfront_result_init(&result);CHECK(!bcir_cfront_context_init(&context,NULL));
   CHECK(!bcir_cfront_compile_context(&context,cfront_source,&result));
-  CHECK(!cfront_analysis_once(&result.unit,&state,0,&attempts,whole_cn,whole_fx,whole_es));
+  CHECK(!cfront_analysis_once(&result.unit,&state,0,&attempts,&whole_dg,whole_cn,whole_fx,whole_es));
   baseline=attempts;CHECK(baseline>=3u);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
-    CHECK(!cfront_analysis_once(&result.unit,&state,fail,&attempts,whole_cn,whole_fx,whole_es));
+    CHECK(!cfront_analysis_once(&result.unit,&state,fail,&attempts,&whole_dg,whole_cn,whole_fx,whole_es));
   }
   bcir_cfront_free(&result);bcir_cfront_context_destroy(&context);
   return 0;

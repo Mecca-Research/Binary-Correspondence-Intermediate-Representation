@@ -27,45 +27,6 @@ static void dirof(const char *path, char *out, size_t cap) {
   else snprintf(out, cap, ".");
 }
 
-/* The whole source, NUL-terminated, in a block the caller releases (CF-LIMITS): the driver kept the first 64 KiB of
- * a file and lowered that prefix without saying so. The block grows two-phase through the host allocator, each size
- * checked, to the bound `bcir-cc` holds a source to (as its `cc_read_file` does); a file that cannot be handed on
- * whole -- past that bound, unreadable, or holding a NUL a C string would stop at -- is refused, never cut. NULL on
- * success, else the reason. */
-#define TEST_CFRONT_MAX_SOURCE ((size_t)64u << 20)
-static const char *read_source(FILE *fp, const bcir_host_allocator *heap, char **out) {
-  size_t cap = (size_t)1u << 16, n = 0;
-  char *buf = (char *)bcir_host_allocate(heap, cap);
-  *out = NULL;
-  if (!buf) return "out of memory";
-  for (;;) {
-    if (n == cap - 1u) {                    /* full: past the bound one byte more is refused, else the block grows */
-      size_t want, grown;
-      if (cap >= TEST_CFRONT_MAX_SOURCE + 1u) {
-        int extra = fgetc(fp);
-        if (extra == EOF && !ferror(fp)) break;
-        bcir_host_deallocate(heap, buf);
-        return extra == EOF ? "cannot read the source" : "the source is larger than 64 MiB";
-      }
-      if (!bcir_size_add(cap, 1u, &want) || !bcir_host_grow_capacity(cap, want, 1u, &grown)) {
-        bcir_host_deallocate(heap, buf); return "out of memory"; }
-      if (grown > TEST_CFRONT_MAX_SOURCE + 1u) grown = TEST_CFRONT_MAX_SOURCE + 1u;
-      if (!bcir_host_realloc_array(heap, (void **)&buf, cap, grown, 1u, 0)) {
-        bcir_host_deallocate(heap, buf); return "out of memory"; }
-      cap = grown;
-    }
-    size_t avail = cap - 1u - n, got = fread(buf + n, 1, avail, fp);
-    n += got;
-    if (got < avail) {
-      if (ferror(fp) || (!feof(fp) && !got)) { bcir_host_deallocate(heap, buf); return "cannot read the source"; }
-      if (feof(fp)) break;
-    }
-  }
-  if (memchr(buf, 0, n)) { bcir_host_deallocate(heap, buf); return "the source holds a NUL byte"; }
-  buf[n] = 0; *out = buf;
-  return NULL;
-}
-
 int main(int argc, char **argv) {
   /* args: [--target <abi>] [--canon] <c-source>. --target selects the data model (x86_64-linux
    * default); --canon prints the raw cross-rail canonical serialization (the byte-identity proof). */
@@ -82,30 +43,33 @@ int main(int argc, char **argv) {
   FILE *fp = fopen(path, "rb");
   if (!fp) { perror("fopen"); return 2; }
   bcir_host_allocator heap = bcir_host_allocator_default();
-  char *raw = NULL;
-  const char *why = read_source(fp, &heap, &raw);
+  char *raw = NULL;   /* the whole source (CF-LIMITS): never a prefix */
+  const char *why = bcir_cpp_read_source(fp, &heap, &raw);
   if (fclose(fp) && !why) why = "cannot read the source";
   if (why) { bcir_host_deallocate(&heap, raw); printf("READ-ERR %s\n", why); return 1; }
 
-  /* L7: preprocess (macros / conditionals / #include / #embed) before the frontend. The preprocessed text is held in
-   * 64 KiB, as `bcir-cc` holds it; a unit that runs past it is refused (`preprocessed output too large`), never cut. */
-  static char src[1 << 16], cpperr[256], base[1024];
+  /* L7: preprocess (macros / conditionals / #include / #embed) before the frontend, into a block grown as the text
+   * needs (CF-PPLIMITS): it had been held in 64 KiB, and a longer unit refused that the oracle lowered. */
+  static char cpperr[256], base[1024];
+  char *src = NULL;
   dirof(path, base, sizeof base);
   { int cs = 1, ws = 4, wsg = 1;   /* the target's character types, which a `#if` reads (CF-PPARITH); an unknown
                                    * target keeps the default's, and the compile below refuses it */
     (void)bcir_cfront_target_chars(target, &cs, &ws, &wsg); bcir_cpp_set_chars(cs, ws, wsg); }
-  int cpp_rc = bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr);
+  int cpp_rc = bcir_cpp_run_alloc(raw, base, &src, NULL, cpperr, sizeof cpperr);
   bcir_host_deallocate(&heap, raw);
   if (cpp_rc) { printf("CPP-ERR %s\n", cpperr); return 1; }
   /* --emit-cpp: the C-twin preprocessor's expansion verbatim, so the Python differential can compare the
    * C rail against the reference compiler (catching a Python<->C preprocessor divergence). No frontend. */
-  if (emit_cpp) { fputs(src, stdout); return 0; }
+  if (emit_cpp) { fputs(src, stdout); bcir_host_deallocate(&heap, src); return 0; }
 
   static bcir_cfront_result r;
   /* free even on the compile-error path (not just success): the in-progress unit owns heap arrays, so an
    * error-path leak (Bug 3) is surfaced -- under the harness's LSan/detect_leaks=1 pass this orphaned
    * memory becomes a LeakSanitizer report, pinning the regression. */
-  if (bcir_cfront_compile_target(src, target, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); bcir_cfront_free(&r); return 1; }
+  int compile_rc = bcir_cfront_compile_target(src, target, &r);
+  bcir_host_deallocate(&heap, src);   /* the result owns copies of everything it names */
+  if (compile_rc != 0) { printf("PARSE-ERR %s\n", r.diag); bcir_cfront_free(&r); return 1; }
   /* --emit-link-flags (B1): the deduped, sorted linker flags the unit's external-call edges need, one
    * line (e.g. `-lm`; empty for a pure-integer unit). bcir/tests/test_c_cfront.py compares this against
    * the oracle's linkflags.derive_link_flags -- the dual-rail parity gate. */

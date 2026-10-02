@@ -2396,19 +2396,9 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `cfront_sec_cppmacro.c`, an overlong macro parameter both preprocessors now refuse, so the escape tests' pin of it
     as the twin's limit alone (`TWIN_PREPROCESSOR_LIMITS`) is empty. The canon's FNV-1a still equals the digest.
   16 injected defects, one per defect per rail, are each caught (`tools/testing/faults/cfront-buf.json`, now 30).
-  Found, not fixed here (each a suggested follow-up):
-  - the loop driver (`runtime/c/test_cfront_loop.c`) still reads the first 64 KiB of a source silently, and both
-    twin drivers hold the preprocessed text in 64 KiB (a 6 000-global unit is refused there, loudly, and lowers on
-    the oracle);
-  - the twin's preprocessor refuses any token of 256 characters or more (a string literal, a stringize argument, a
-    `__has_attribute` operand, a long number in `#if`), which the oracle takes;
-  - a malformed `defined` (`#if defined(X`, `#if defined +`) lowers on the oracle and is refused by the twin; the
-    oracle drops a NUL between tokens and lowers what surrounds it;
-  - `bcir-cc -DXQ=1 -UXQ` fails (`macro name must be an identifier`): an undefined `-D` becomes an empty
-    definition `define_macro` refuses;
-  - `bcir_cfront_digest_with_allocator` returns a digest of a canon that ran out of memory as an ordinary value;
-  - the twin reads only the ASCII start of a macro name: beside `#define caf 5`, `#ifdef café` keeps its group on
-    the twin and skips it on the oracle.
+  The six items it found and did not fix -- the 64 KiB loop driver and preprocessed text, the 256-byte token, a
+  malformed `defined` and a NUL, `-D`/`-U` of one name, the out-of-memory digest, a name past ASCII -- are closed by
+  CF-PPLIMITS (below).
 
   CF-ENUMFOLD (2026-10-01) folded every integer constant expression the parsers fold -- an enumerator, a `case`
   label, an array dimension, a designator -- in C's own types on both rails, closing the item the file-scope
@@ -3471,6 +3461,123 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     thirteen faults added; the re-sweep caught 30 of 30.
   Found, not fixed here: a comma expression as a statement (`a, u = 2u;`) is refused on both rails, in different words
   (`expected ';', got PUNCT ','`, `;`).
+
+  CF-PPLIMITS (2026-10-02) closes the six items CF-LIMITS found and did not fix, on both rails, and the splits fixing
+  them found. RED was measured on the parent (CF-TYPEDEFSCOPE's commit).
+  - The defects: the loop driver (`test_cfront_loop.c`) lowered the first 64 KiB of a source, silently -- a 70 KB unit
+    ran its first function as the entry -- and every twin driver held the preprocessed text in 64 KiB, so a unit of
+    6 000 globals was refused there that the oracle lowered. Past that, the twin held 16 384 tokens in a fixed array
+    (`input too large`) and the oracle none, whatever the comments on both said. The twin's preprocessor held a token
+    in 256 bytes, a macro argument in 1 KiB and a substitution in 2 KiB, and refused a longer one (`preprocessor token
+    too long`) where the oracle took it. A malformed `defined` (`#if defined(X`, `#if defined +`) lowered on the
+    oracle, whose two regular expressions matched a well-formed one only. The oracle's tokenizer dropped every
+    character no alternative matched -- a NUL, `@`, a character past ASCII -- and lowered what surrounded it (`x +
+    caf€` as `x + caf`). `bcir-cc -DXQ=1 -UXQ` failed every compile (`macro name must be an identifier`): the `-U`
+    turned the `-D` into an empty definition. `bcir_cfront_digest_with_allocator` returned the digest of a canon that
+    ran out of memory as an ordinary value. And the twin read the ASCII start of a name where the oracle read a whole
+    Unicode word: beside `#define caf 5`, `#ifdef café` kept its group on the twin and skipped it on the oracle,
+    digest-different, and the oracle's lexer took `int café;` (`str.isalpha`), which the twin's refused.
+  - Found while fixing them: the spacing token the twin's substitution judged a run-on by kept the first 255 bytes of
+    an argument, so after a longer one it read the wrong last byte -- `F(...+b)` with the body `t y` wrote `...+by`,
+    another identifier, which a parameter `by` made a program C refuses lower on the twin alone. The oracle split a
+    macro's parameter list at its commas and took whatever lay between two as a parameter, so `F(a b)`, `F(1)`, `F(a,
+    a)`, an unclosed list and seventeen parameters each defined a macro there that the twin refused. It read
+    `#line`'s number with a Unicode `\d`, numbering the line after `#line ٣` 3 where the twin, which reads no number
+    there, left it 2. It read a directive line with `str.strip`, so ` #define K 3u` defined `K` there where the
+    twin refused the no-break space, and ended a directive's name only at a space, so `#define\tK 3u`, `#if\t1` and
+    `#if(1)` were unknown directives there; the twin read `#café x` as `#caf`, an unknown directive it ignores.
+  - Found measuring the work budget the bound sets: the structural canon -- the digest every summary line carries, and
+    `bcir-cc` prints one for each file it compiles -- spelled a value number as its value's whole dataflow tree and
+    kept the string, so a chain of n dependent values cost it O(n^2) bytes and a value read twice at each of n steps
+    2^n, on both rails: 2 000 chained locals took the twin 551 MB and 11 s, a probe of 8 000 more than 4 GiB, and 18
+    doublings -- 500 bytes of source -- 32 MB of canon. The twin sorted a function's records by insertion, the cube of
+    a chain. It read a value number's memo before its depth where the oracle reads the depth first, so a value reached
+    again one step past the cap of 96 was its string on the twin and `cyc` on the oracle (`*p = t + 1u + ... + 1u` of
+    97 terms beside `return t`, digest-different). And it numbered a function's claims from 1000 + 1000 * its index,
+    so a function of more than 1000 claims ran into the next one's ids, and R1.1 refused a valid unit
+    (`duplicate claim id 2000`, ok=0) that the oracle -- one sequence over the unit -- lowered clean. Each predates
+    the slice; the bound it raises took each four times further.
+  - RED: on CF-TYPEDEFSCOPE's commit, 11 of the slice's 12 tests fail, each on its defect -- the twin refuses a unit
+    of 6 000 globals the oracle lowers, a token past 255 bytes, a source past 64 KiB and a preprocessed text past it
+    (`preprocessed output too large`); the oracle lowers a malformed `defined`, `F(a b)` and `#define caf 5`'s
+    neighbour `#ifdef café` otherwise than the twin; `bcir-cc -DXQ=1 -UXQ` fails (`macro name must be an identifier`);
+    the oracle's canon spells `(a - b) - a`'s value numbers as trees; the twin's digest of `*p = t + 1u + ...` of 97
+    terms is not the oracle's; and the twin refuses two functions of 1 800 claims (`duplicate claim id 2000`). The
+    twelfth, `test_the_emit_grows_whole_under_a_failing_allocator`, drives the memory-discipline harness of the tree
+    it runs in, and the checks the slice adds there -- the digest's status -- hold an interface the parent does not
+    have.
+  - What landed: the three twin drivers read a source through one reader (`bcir_cpp_read_source`: whole, to 64 MiB,
+    refused as `READ-ERR` past it, unreadable or holding a NUL) and preprocess into a block grown as the text needs
+    (`bcir_cpp_run_alloc` and its `_ex` forms, to 64 MiB). The twin's token array grows to the bound both lexers now
+    hold, 65 536 (`MAXTOK`, `clex.MAX_TOKENS`): `MAX_TOKENS - 1` tokens lower on both rails, one more is refused on
+    both as `input too large`. CF-CONSTEXPR2's 5 000-term `(10 / x) && ...` chain, which the twin's drivers refused
+    for its 80 KB of text, lowers on both rails to one claim graph, digest-equal. The bound is also the compile's work
+    budget -- see the found-not-fixed item on the twin's linear lookups, before which it does not grow. Each
+    preprocessor buffer that holds a token, an argument or a substitution holds a logical line (`BCIR_CPP_LINE`), so
+    no token is refused for its own length, and the spacing token keeps an argument's last bytes. Both rails read a
+    `#if` token by token and refuse a malformed `defined` for the twin's reason; the oracle's tokenizer keeps an
+    unmatched character as a token for the lexer to refuse, and both refuse a NUL in a source or a header before
+    reading it, in the twin's words. `bcir-cc`'s `-U` drops every `-D` of its name, as the oracle's CLI does.
+    `bcir_cfront_digest` and `bcir_cfront_digest_with_allocator` return a status and store the digest through a
+    pointer: a failed allocation is a nonzero status, never a digest, and the summary line says `out of memory` in its
+    place; `test_memory_discipline.c` checks both under every injected failure. An identifier is ASCII on both rails
+    -- a name a directive reads, a directive's own name, a macro parameter, an identifier or a number the lexer reads,
+    a `#line` number -- and a character past ASCII outside a literal or a comment is refused for one reason,
+    `non-ASCII character outside a literal` (the oracle reads with `re.ASCII` and its own ASCII predicates: a host
+    predicate is no grammar, docs/security/laws.md L4). The oracle reads a parameter list by the twin's grammar
+    (`cpp._params`) and a directive line too: its `#` and name across spaces and tabs, the name an ASCII identifier,
+    its operand stripped of ASCII white space only.
+  - What landed for the canon: a value number is the FNV-1a (64-bit) of its one-level spelling, its reads' own numbers
+    in it, in 16 hex digits, on both rails (`_vn_number`, `vn_claim`) -- `(a - b) - a` numbers its inner value
+    `fnv("c.bin.sub(in:p0,in:p1)")` and returns `fnv("c.bin.sub(<that>,in:p0)")` -- so a record is its claim's op, imm
+    and reads' numbers and the canon is linear in the function, 31 to 40 bytes a claim. The walk, the memo, `cyc` and
+    the depth cap are the spelled canon's, and a commutative op's reads are sorted by their numbers as they were by
+    their spellings, so two values number alike exactly when their trees spell alike, but for a 64-bit collision: over
+    the corpus, the canon with its value numbers spelled level by level is the parent's on all 960 fixture-target
+    pairs, and its 5 504 value numbers, 1 259 distinct function canons and 286 distinct unit canons map one to one
+    onto the spelled ones. A budget on the canon was the slice's first answer -- each value number, record and store
+    pair charged before it was built, 64 MiB over a unit, `canon too large` past it -- and the slice's gates refused
+    it: CF-CONSTEXPR2's 3 000-term chains, which the parent digested on both rails, charge it 153 to 380 MB. The twin
+    merges a function's records in sorting them. It reads a value number's depth before its memo, as the oracle does,
+    and starts each function's claim ids past the last one taken: a function of 1000 claims or fewer keeps the ids it
+    had, and every fixture of the corpus emits the same bytes on the twin as before.
+  - Outcomes: every `runtime/c/cfront_*.c` on the four targets through both rails, against the parent's: every summary
+    but its digest and every preprocessed text the parent's but `cfront_sec_lextail.c`'s, whose comment this slice
+    rewrites and which the twin refused at the old 16 384-token cap (`input too large`) and now refuses where it ends,
+    in the unterminated chain the oracle refuses too (891 of 960 pairs equal on both rails, as on the parent); every
+    twin emit, read past its summary line, the parent's on all 960 pairs; every digest and canon moved with the
+    numbering, the two rails' alike. CF-CONSTEXPR2's 5 000-term chain lowers digest-equal on both rails: the oracle in
+    14 s and 231 MB, where it had spent 156 s building a digest, the twin in 54 s and 32 MB. Its 3 000-term test,
+    133 s and 0.9 GB on the parent, takes 39 s and 141 MB.
+  - Faults: `tools/testing/faults/cfront-pplimits.json`, 43 -- 20 on the oracle, 23 on the twin -- each caught by its
+    own test; `cfront-buf.json`'s B15, B16, B29 and B30, anchored in lines this changed, were re-anchored and caught
+    again. The first sweep of the whole table, then 48 faults with the budget's 14, caught 46. PO13 removed one of two
+    checks of a parameter list's separator that the other held alike: one is gone, the fault holds the other, and
+    `F(a b c)` -- `F(a, c)` without it -- is its witness. PT3 cut the loop driver's preprocessed text at 64 KiB where
+    the defect was the read of its source (the test's 70 KB comment is gone before the text is cut); it cuts the
+    source now. The re-sweep caught both. The budget's faults left with it; the numbering's eight (a value number
+    spelled whole, numbered by its op alone, its reads run together, its hash cut to 32 bits or seeded with 0, a
+    commutative op's reads unsorted) and the oracle reading its memo before its depth came in, and a sweep of those,
+    of PT11, of the twin's precedence and claim-id faults and of `cfront-buf.json`'s B27, back to the parent's, caught
+    13 of 13.
+  Found, not fixed here (each a suggested follow-up):
+  - the twin's lookups are linear in a function's size -- a resource by its id (`res_of`, in the parser, the verifier
+    and the emitter), a local's emitted name against every earlier one (`uniq_local`), R1.1's pairwise claim-id scan,
+    the canon's writer of a rid (`writer_of`) -- so a function costs it its size squared: near the 65 536-token bound,
+    8 000 locals (56 000 tokens) take it 31 s and 6 400 statements updating one local 35 s, in some 25 MB (the oracle
+    7.5 s and 9 s);
+  - a call with more than six arguments: the twin keeps six operands per claim, so it lowers the call with the rest
+    dropped -- its emit passes six arguments to a function of more, which C refuses, its summary still `ok=1` and
+    its digest the oracle's no longer;
+  - white space C reads as such (6.4p3): a form feed or a vertical tab lowers on the oracle, in code and before a
+    directive's `#`, and is refused by the twin (`expected expression`, `expected a type`);
+  - an unknown directive (`#foo`) is refused by the oracle (`unknown directive #foo`) and ignored by the twin;
+  - the twin's preprocessor holds what the oracle's does not: a macro body of 1 023 bytes (`macro replacement is too
+    large`), a logical line of 8 190 (`preprocessor line too long`), 16 arguments in an invocation (`too many macro
+    arguments`, where the oracle also takes 17 arguments to a macro of 16 parameters, which C refuses), and a
+    `#line` number followed by more (`#line 12abc`: the oracle reads 12, the twin refuses it as out of range);
+  - `@` and `$` outside a literal are refused on both rails for different reasons (the oracle's `unexpected
+    character '@'`, the twin's `;`).
 
 ---
 

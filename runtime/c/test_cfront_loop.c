@@ -13,6 +13,7 @@
 
 #include "bcir_cfront.h"
 #include "bcir_cpp.h"
+#include "bcir_host_alloc.h"
 #include "bcir_exec.h"
 #include "bcir_hydrate.h"
 #include "bcir_plan.h"
@@ -35,12 +36,22 @@ static int record(const bcir_exec_item *it, void *ctx) {
 int main(int argc, char **argv) {
   if (argc < 2) { fprintf(stderr, "usage: %s <c-source>\n", argv[0]); return 2; }
   FILE *fp = fopen(argv[1], "rb"); if (!fp) { perror("fopen"); return 2; }
-  static char raw[1 << 16]; size_t n = fread(raw, 1, sizeof raw - 1, fp); raw[n] = 0; fclose(fp);
-  static char src[1 << 16], cpperr[256], base[1024]; dirof(argv[1], base, sizeof base);
-  if (bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr)) { printf("CPP-ERR %s\n", cpperr); return 1; }
+  /* the whole source and its whole preprocessed text, each in a block grown as it needs (CF-PPLIMITS): this driver
+   * had read the first 64 KiB of a source and lowered that prefix, silently, and held the text in 64 KiB */
+  bcir_host_allocator heap = bcir_host_allocator_default();
+  char *raw = NULL, *src = NULL;
+  const char *why = bcir_cpp_read_source(fp, &heap, &raw);
+  if (fclose(fp) && !why) why = "cannot read the source";
+  if (why) { bcir_host_deallocate(&heap, raw); printf("READ-ERR %s\n", why); return 1; }
+  static char cpperr[256], base[1024]; dirof(argv[1], base, sizeof base);
+  int cpp_rc = bcir_cpp_run_alloc(raw, base, &src, NULL, cpperr, sizeof cpperr);
+  bcir_host_deallocate(&heap, raw);
+  if (cpp_rc) { printf("CPP-ERR %s\n", cpperr); return 1; }
 
   static bcir_cfront_result r;
-  if (bcir_cfront_compile(src, &r) != 0) { printf("PARSE-ERR %s\n", r.diag); return 1; }
+  int compile_rc = bcir_cfront_compile(src, &r);
+  bcir_host_deallocate(&heap, src);   /* the result owns copies of everything it names */
+  if (compile_rc != 0) { printf("PARSE-ERR %s\n", r.diag); bcir_cfront_free(&r); return 1; }
   if (!r.ok) { printf("VERIFY-ERR %s\n", r.diag); bcir_cfront_free(&r); return 1; }
 
   const bcir_func *f = &r.unit.funcs[r.unit.n_funcs - 1];   /* the entry function */

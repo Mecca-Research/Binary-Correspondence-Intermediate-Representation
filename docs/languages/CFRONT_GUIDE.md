@@ -520,6 +520,18 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   looks up, past 63 characters is refused (`macro name is too long`), and so is a macro parameter (`macro
   parameter is too long`). A directive in a skipped group, or an `#elif` after a group was taken, is read only
   through its name (C11 6.10.1p6).
+- A character past ASCII outside a string, a character constant or a comment -- in an identifier, a number, a
+  directive's name or the names it reads, a macro parameter, a `#if` operand or between tokens: `non-ASCII character
+  outside a literal`, on both rails (an identifier is ASCII; one inside a literal or a comment lowers). A NUL in a
+  source or a header is refused before it is read. A source, and its preprocessed text, is at most 64 MiB, and a unit
+  lexes to fewer than 65 536 tokens (`input too large`): the bound is the compile's work budget too, for the twin looks
+  a function's resources and local names up by linear scans, so 6 400 statements in one function take it some 35 s --
+  a recorded follow-up. A unit's canon -- the digest on every summary line -- numbers each value once: a value
+  number is the FNV-1a of its producer's op and its reads' numbers, in 16 hex digits, so the canon is linear in the
+  unit (it spelled each value's whole dataflow tree, the square of a chain and 2^n over n doublings). The twin's preprocessor holds a logical line of 8 190 bytes (`preprocessor line too long`), a
+  macro body of 1 023 and 16 arguments in an invocation, which the oracle's does not -- recorded follow-ups, as are a
+  form feed or a vertical tab (C's white space, which the oracle takes and the twin refuses) and an unknown directive
+  (`#foo`, which the oracle refuses and the twin ignores).
 - An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
   struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
   rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.

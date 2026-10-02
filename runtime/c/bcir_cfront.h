@@ -90,7 +90,8 @@ void bcir_cfront_free(bcir_cfront_result *out);
  * the Python<->C dual-rail parity key (bcir/tests/test_c_cfront.py computes the same from
  * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N repro=N ok=1
  * digest=<16-hex>" (repro = the count of C23 [[reproducible]]/[[unsequenced]]-hinted functions in
- * the unit; digest = the cross-rail per-claim structural digest, see bcir_cfront_digest). */
+ * the unit; digest = the cross-rail per-claim structural digest, see bcir_cfront_digest), or in place of the line
+ * "out of memory" when the digest could not be computed whole. */
 void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
 
 /* The cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix): an FNV-1a (64-bit)
@@ -102,13 +103,20 @@ void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
  * redirects (return-temp / store target, via the anchor). The Python oracle (bcir.verify.cfront_
  * structural_digest) builds the same records + hash, so the two rails produce a BYTE-IDENTICAL digest.
  * Per-claim record: "<op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>";
- * anchor: "ret=<return-value VN>|stores=<dest-VN->value-VN;...>". */
-uint64_t bcir_cfront_digest(const bcir_unit *u);
+ * anchor: "ret=<return-value VN>|stores=<dest-VN->value-VN;...>". A value number is the FNV-1a (64-bit, 16 hex
+ * digits) of its producer's one-level spelling "<op-base>(<its reads' value numbers>)", so the canon is linear in
+ * the unit (CF-PPLIMITS: it spelled each value's whole dataflow tree, O(n^2) bytes for a chain of n dependent
+ * values and 2^n for a value read twice at each of n steps).
+ * Stores the digest at *out and returns 0; when an allocation the walk made failed, the canon it hashes is not whole,
+ * so neither is the hash: it stores 0 and returns BCIR_CANON_OOM -- never a digest of a canon that ran out of memory
+ * as an ordinary value (CF-PPLIMITS; the canon's SIZE_MAX, CF-LIMITS). */
+#define BCIR_CANON_OOM 1
+int bcir_cfront_digest(const bcir_unit *u, uint64_t *out);
 
 /* Allocator-injected canonical analysis forms. The allocator is borrowed for
  * the operation and every temporary is released before return. */
-uint64_t bcir_cfront_digest_with_allocator(const bcir_unit *u,
-                                           const bcir_host_allocator *allocator);
+int bcir_cfront_digest_with_allocator(const bcir_unit *u, const bcir_host_allocator *allocator,
+                                      uint64_t *out);
 
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof:
  * the Python cfront_structural_canon must equal this byte-for-byte on the corpus, so the digests

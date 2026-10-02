@@ -44,7 +44,14 @@ const char *bcir_opcode_name(bcir_opcode op) {
 typedef enum { T_ID, T_INT, T_FLT, T_STR, T_PUN, T_END } tkind;
 typedef struct { tkind k; const char *s; int n; long long v; } tok;
 
-#define MAXTOK 16384
+/* The most tokens a unit lexes to, less one (the T_END sentinel's slot): past it the compile is refused as `input too
+ * large`, on both rails (CF-PPLIMITS; the oracle's `clex.MAX_TOKENS`). The array grows to it as the unit needs. It
+ * had been a fixed array of 16 384: once the drivers held a preprocessed text of any length, a unit of some 6 000
+ * globals was refused here that the oracle -- which had no cap, whatever this comment once said -- lowered. It is the
+ * compile's work budget too: a function's resources and local names are looked up by linear scans (`res_of`,
+ * `uniq_local`), so a function costs its size squared -- 6 400 statements in one, near the bound, take some 40 s -- a
+ * recorded follow-up, before which the bound does not grow. */
+#define MAXTOK 65536
 #define MAXFLD 64        /* members per struct (f[] is embedded in sdef; generous, guarded) */
 /* The emitter's scratch spellings (CF-BUF), each sized for the longest it holds now that a name is at most
  * BCIR_CIR_IDENT_MAX characters: a declared name with its `_N` disambiguation; a C type (`_Atomic volatile
@@ -215,7 +222,7 @@ typedef struct {
   bcir_host_arena scratch;
   jmp_buf failure_jump;
   int jump_active;
-  tok t[MAXTOK]; int nt, i;
+  tok *t; int cap_t, nt, i;   /* the tokens, grown to MAXTOK as lex() needs (kept across compiles, as `s` is) */
   sdef *s; int ns, cap_s;         /* struct/union definitions (grown -- no fixed cap) */
   tdef *td; int ntd, cap_td;      /* typedef aliases (resolved at parse time) */
   econst *ec; int nec, cap_ec;    /* enum constants (folded to literals at parse time) */
@@ -288,9 +295,9 @@ typedef struct {
                       * and unwinds -- a clean rc-1 PARSE-ERR, never a crash. Mirrors the oracle's parser
                       * recursion guard (bcir/frontends/cfront/cparse.py) so both rails agree on the
                       * boundary (deep input -> a clean fallback/parse-error, not a segfault). */
-  int tok_overflow;  /* set by lex() when the input exceeds MAXTOK tokens -- the entry then fails cleanly
-                      * ("input too large") and routes to fallback rather than silently truncating the
-                      * token stream and mis-compiling a partial unit (Bug B correctness gap). */
+  int tok_overflow;  /* set by lex() when the input reaches MAXTOK tokens -- the entry then fails cleanly
+                      * ("input too large"), as the oracle's lexer does at the same count, rather than silently
+                      * truncating the token stream and mis-compiling a partial unit (Bug B correctness gap). */
   int call_dropped;  /* p_call dropped an operand past BCIR_CLAIM_MAX_RD: its call-site wrapper marks the call
                       * claim `truncated` (the escape analysis then refuses the unit) */
   int td_nd, td_dims[3];   /* the array dims of the typedef the last p_type_base resolved (0: none), for the
@@ -563,6 +570,7 @@ static void lex(CC *c, const char *src) {
     if (c->nt>=MAXTOK-1){ c->tok_overflow=1; break; }   /* over MAXTOK: flag it -- the entry fails cleanly
                                                          * (a fallback the oracle agrees with) instead of
                                                          * SILENTLY truncating + mis-compiling (Bug B). */
+    if (!CC_ENSURE(c,c->t,c->nt+1,c->cap_t)) return;   /* this token and the T_END after it */
     tok *t=&c->t[c->nt];
     if (p[0]=='L'||p[0]=='u'||p[0]=='U'){             /* wide/UTF literal prefix L/u/U/u8 before a quote */
       const char *qp=0;
@@ -632,17 +640,20 @@ static void lex(CC *c, const char *src) {
     int m=0; for(int j=0;pu[j];j++) if(p[0]==pu[j][0]&&p[1]==pu[j][1]){
       t->k=T_PUN;t->s=p;t->n=2;p+=2;c->nt++;m=1;break;}
     if (m) continue;
+    if ((unsigned char)*p>=0x80){ fail(c,nonascii_outside); break; }   /* no identifier, number or punctuator
+                                                                     * starts with it: past every literal */
     t->k=T_PUN;t->s=p;t->n=1;p++;c->nt++;
   }
+  if (!CC_ENSURE(c,c->t,c->nt,c->cap_t)) return;      /* the T_END sentinel's slot, for an empty unit too */
   c->t[c->nt].k=T_END;c->t[c->nt].s="";c->t[c->nt].n=0;
 }
 
 /* --- token helpers ------------------------------------------------------- */
 /* A read-only T_END sentinel returned for any out-of-range token index (a fixed `tok` with kind T_END,
- * empty spelling). Used to bound every lookahead so a near-MAXTOK token stream cannot read past the
- * fixed `c->t[MAXTOK]` array (Bug B: a global-buffer-overflow). The lexer fills `c->t[0..nt-1]` and a
- * T_END at `c->t[nt]` (nt<=MAXTOK-1), so the only valid readable indices are [0, nt]; anything beyond
- * resolves to this sentinel rather than indexing past the array end. */
+ * empty spelling). Used to bound every lookahead so a token stream cannot read past the end of its array
+ * (Bug B: a global-buffer-overflow when the array was fixed). The lexer fills `c->t[0..nt-1]` and a T_END at
+ * `c->t[nt]` (nt<=MAXTOK-1; the array holds at least nt+1), so the only valid readable indices are [0, nt];
+ * anything beyond resolves to this sentinel rather than indexing past the array end. */
 static const tok BCIR_TOK_END = { T_END, "", 0, 0 };
 /* The token at absolute index `idx`, bounded: an index past the last real token (idx>nt) or a negative
  * index yields the T_END sentinel, never an out-of-array read. Every `c->t[c->i+k]` lookahead and every
@@ -1118,7 +1129,7 @@ static void fp_capture_ret(bcir_ctype *fp, const bcir_ctype *ret, int ret_si){
 /* A function type into the context's table: `ret` and the `np` parameter types `params` (in the scratch arena),
  * spelled in the emit by `alias` ("" when the source declares it), the type of the designator `fn` ("" if none).
  * Returns 1 + its index -- a kind-3 ctype's `fp_sig`, a uint16_t -- or 0 after a failure. Each entry is a declarator,
- * a typedef, a member or a function the unit spells in at least five tokens, so MAXTOK keeps the table far below
+ * a typedef, a member or a function the unit spells in at least five tokens, so MAXTOK keeps the table below
  * the index's range; a unit past it is refused rather than given another entry's type. */
 static int sig_add(CC *c, const bcir_ctype *ret, const bcir_ctype *params, int np, const char *alias, const char *fn){
   if(c->nsig>=UINT16_MAX){ fail(c,"too many function-pointer types"); return 0; }
@@ -10037,14 +10048,15 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   bcir_host_allocator allocator;
   bcir_host_arena scratch;
   sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos; irange *iw_rng; iunion *iw_un; int *pure_memo;
+  tok *t;
   unsigned long long *swv;
-  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure,cap_swv;
+  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure,cap_swv,cap_t;
   ctext fpdefs,tudefs,anontext;
   if(!context||!context->state) return;
   c=(CC *)context->state;
   bcir_host_arena_reset(&c->scratch);
   allocator=c->allocator; scratch=c->scratch;
-  s=c->s;cap_s=c->cap_s;td=c->td;cap_td=c->cap_td;ec=c->ec;cap_ec=c->cap_ec;
+  s=c->s;cap_s=c->cap_s;td=c->td;cap_td=c->cap_td;ec=c->ec;cap_ec=c->cap_ec;t=c->t;cap_t=c->cap_t;
   gv=c->gv;cap_gv=c->cap_gv;env=c->env;cap_env=c->cap_env;
   protos=c->protos;cap_protos=c->cap_protos;
   iw_rng=c->iw_rng;iw_caprng=c->iw_caprng;iw_un=c->iw_un;iw_capun=c->iw_capun;
@@ -10052,7 +10064,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   fpdefs=c->fpdefs;tudefs=c->tudefs;anontext=c->anontext;
   memset(c,0,sizeof *c);
   c->allocator=allocator;c->scratch=scratch;
-  c->s=s;c->cap_s=cap_s;c->td=td;c->cap_td=cap_td;c->ec=ec;c->cap_ec=cap_ec;
+  c->s=s;c->cap_s=cap_s;c->td=td;c->cap_td=cap_td;c->ec=ec;c->cap_ec=cap_ec;c->t=t;c->cap_t=cap_t;
   c->gv=gv;c->cap_gv=cap_gv;c->env=env;c->cap_env=cap_env;
   c->protos=protos;c->cap_protos=cap_protos;
   c->iw_rng=iw_rng;c->iw_caprng=iw_caprng;c->iw_un=iw_un;c->iw_capun=iw_capun;
@@ -10070,7 +10082,7 @@ void bcir_cfront_context_destroy(bcir_cfront_context *context) {
   c=(CC *)context->state; allocator=c->allocator;
   bcir_host_arena_destroy(&c->scratch);
   bcir_host_deallocate(&allocator,c->s);bcir_host_deallocate(&allocator,c->td);
-  bcir_host_deallocate(&allocator,c->ec);bcir_host_deallocate(&allocator,c->gv);
+  bcir_host_deallocate(&allocator,c->ec);bcir_host_deallocate(&allocator,c->gv);bcir_host_deallocate(&allocator,c->t);
   bcir_host_deallocate(&allocator,c->env);bcir_host_deallocate(&allocator,c->protos);
   bcir_host_deallocate(&allocator,c->iw_rng);bcir_host_deallocate(&allocator,c->iw_un);
   bcir_host_deallocate(&allocator,c->pure_memo);bcir_host_deallocate(&allocator,c->swv);
@@ -10293,10 +10305,9 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
   }
   c->jump_active=1;
   lex(c,src);
-  if(c->tok_overflow){                     /* Bug B: more than MAXTOK tokens -> a clean fail (fallback), NOT
-                                           * a silent truncation + partial mis-compile. The oracle has no
-                                           * token cap but its recursion/size guards route the same oversized
-                                           * input to fallback, so both rails agree (neither mis-compiles). */
+  if(c->tok_overflow){                     /* Bug B: MAXTOK tokens or more -> a clean fail (fallback), NOT
+                                           * a silent truncation + partial mis-compile; the oracle's lexer
+                                           * refuses the same count (`clex.MAX_TOKENS`, CF-PPLIMITS) */
     return cfront_failure(context,out,"input too large"); }
   str_unparen(c);                          /* `= ("abc")` is `= "abc"` (CF-PARENSTR) */
   while(!isk(c,T_END)&&!c->failed){       /* no fixed function ceiling -- the unit list grows */
@@ -10314,7 +10325,12 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
     if(!CC_ENSURE(c,out->unit.funcs,out->unit.n_funcs,out->unit.cap_funcs))
       return cfront_failure(context,out,c->err);
     bcir_func *fn=&out->unit.funcs[out->unit.n_funcs]; /* res/claims/params/calls/statics grow lazily */
-    c->rid=100+out->unit.n_funcs*1000; c->cid=1000+out->unit.n_funcs*1000;
+    /* each function's claim ids from 1000 + 1000 * its index -- or past the last one taken, when a function before
+     * it held more than 1000 claims: its ids had run into this one's, and R1.1 refused a valid unit as `duplicate
+     * claim id` (CF-PPLIMITS; the oracle numbers the unit's claims in one sequence). Every function of 1000 claims
+     * or fewer keeps the ids it had. */
+    { uint32_t cid_base=1000u+(uint32_t)out->unit.n_funcs*1000u; if(c->cid<cid_base) c->cid=cid_base; }
+    c->rid=100+out->unit.n_funcs*1000;
     int pfr=p_func(c,fn);
     if(pfr==2){                             /* a PROTOTYPE: recorded in c->protos/c->tudefs, no function --
                                              * discard the scratch fn (params were collected into it) */
@@ -10450,9 +10466,10 @@ void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
       else if(!strncmp(cl->op,"c.call",6))calls++;}}   /* c.call:NAME + c.call.indirect */
   int repro=0;                                   /* A1.3: C23 `[[reproducible]]`/`[[unsequenced]]` hints */
   for(int i=0;i<u->n_funcs;i++) if(u->funcs[i].reproducible) repro++;   /* counted over the WHOLE unit */
+  uint64_t digest=0;
+  if(bcir_cfront_digest(u,&digest)){ snprintf(buf,n,"out of memory"); return; }   /* no digest is no summary */
   snprintf(buf,n,"funcs=%d claims=%zu mmio=%d bf=%d const=%d binop=%d call=%d repro=%d ok=%d digest=%016llx",
-           u->n_funcs,nc,mmio,bf,kn,binop,calls,repro,ok,
-           (unsigned long long)bcir_cfront_digest(u));
+           u->n_funcs,nc,mmio,bf,kn,binop,calls,repro,ok,(unsigned long long)digest);
 }
 
 /* --- the cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix) -----------------
@@ -10472,7 +10489,8 @@ void bcir_cfront_summary(const bcir_unit *u,int ok,char *buf,size_t n){
  * The digest is invariant to (1)-(3) yet still a STRUCTURE check:
  *
  *   record(claim) = <op-base>|<opcode-int>|<value-numbers of its reads>|<c.const imm>|<dom>
- *   vn(rid) = <op-base>(<value-numbers of that producer's reads>)  if a claim writes rid; else "in:pj"
+ *   vn(rid) = the FNV-1a (64-bit, 16 hex digits) of "<op-base>(<value-numbers of that producer's reads>)"
+ *             if a claim writes rid -- linear in the function, see vn_claim; else "in:pj"
  *             if rid is the j-th PARAMETER (position is cross-rail stable -> the two params in `a - b`
  *             are distinguished); else "in" (any other input -- a global/local -- stays anonymous).
  *
@@ -10553,78 +10571,141 @@ static void sb_str(sbuf *b,const char *s){ if(s)sb_add(b,s,strlen(s)); }
  * Python oracle emits the same bytes); rail-divergent metadata (the c.load bounds `ub`, the c.store
  * trailing _Bool/stride flags) is dropped, preserving --canon byte-identity. Mirrors _vn_imm exactly:
  *   c.const/c.addrof/c.bf.get/c.bf.set/c.call.imember/c.sizeof.vla -> all imm;
- *   c.load -> imm[0] (member byte offset; 0 if absent);  c.store -> imm[0],imm[1] (offset, unit size). */
-static void vn_imm(const bcir_func *f, const bcir_claim *cl, sbuf *rec){
-  const char *op=cl->op; char nb[24]; int n=cl->n_imm;
+ *   c.load -> imm[0] (member byte offset; 0 if absent);  c.store -> imm[0],imm[1] (offset, unit size).
+ * Written into `o` (BCIR_VN_IMM bytes: at most BCIR_CLAIM_MAX_IMM values of 21 characters and their commas). */
+#define BCIR_VN_IMM 128
+static void vn_imm(const bcir_func *f, const bcir_claim *cl, char *o, size_t on){
+  const char *op=cl->op; int n=cl->n_imm, l; size_t w=0;
+  o[0]=0;
   if(!strcmp(op,"c.const")||!strcmp(op,"c.addrof")||!strcmp(op,"c.bf.get")||!strcmp(op,"c.bf.set")||
      !strcmp(op,"c.call.imember")||!strcmp(op,"c.sizeof.vla")){
     /* a constant of an unsigned type is its value in that type: an unsigned 64-bit one past LLONG_MAX keeps its
      * bits in the imm, and the oracle's canon spells the value (`18446744073709551615`, never -1) */
     const bcir_resource *kr=!strcmp(op,"c.const") && cl->n_wr ? res_of(f,cl->wr[0]) : NULL;
     int unsig=kr && kr->kind==BCIR_RK_SCALAR && !kr->is_signed && !kr->is_float;
-    for(int k=0;k<n;k++){ if(k)sb_str(rec,",");
-      int l=unsig ? snprintf(nb,sizeof nb,"%llu",(unsigned long long)cl->imm[k])
-                  : snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]);
-      sb_add(rec,nb,(size_t)l); }
+    for(int k=0;k<n && w<on;k++){
+      l=unsig ? snprintf(o+w,on-w,"%s%llu",k?",":"",(unsigned long long)cl->imm[k])
+              : snprintf(o+w,on-w,"%s%lld",k?",":"",(long long)cl->imm[k]);
+      if(l<0) break;
+      w+=(size_t)l; }
   } else if(!strcmp(op,"c.load")){
-    long long off = n>0 ? (long long)cl->imm[0] : 0;   /* the member byte offset (0 if absent) */
-    int l=snprintf(nb,sizeof nb,"%lld",off); sb_add(rec,nb,(size_t)l);
+    snprintf(o,on,"%lld",n>0 ? (long long)cl->imm[0] : 0LL);   /* the member byte offset (0 if absent) */
   } else if(!strcmp(op,"c.store") || !strncmp(op,"c.c11atom.rmw:",14)){   /* an atomic read-modify-write: the
                                                        * store's address imm (CF-ATOMIC) */
     int m = n<2 ? n : 2;                               /* (byte offset, unit size); drop the _Bool/stride tail */
-    for(int k=0;k<m;k++){ if(k)sb_str(rec,","); int l=snprintf(nb,sizeof nb,"%lld",(long long)cl->imm[k]); sb_add(rec,nb,(size_t)l); }
+    for(int k=0;k<m && w<on;k++){
+      l=snprintf(o+w,on-w,"%s%lld",k?",":"",(long long)cl->imm[k]);
+      if(l<0) break;
+      w+=(size_t)l; }
   }
 }
 
-/* sort an array of \0-terminated strings (small n; insertion sort, strcmp order). */
-static void sort_strs(char **a, int n){
-  for(int i=1;i<n;i++){ char *t=a[i]; int j=i;
-    while(j>0 && strcmp(a[j-1]?a[j-1]:"",t?t:"")>0){ a[j]=a[j-1]; j--; } a[j]=t; }
+/* A string the canon reads by reference: a value number, a parameter's `in:p<j>`, or a fixed token --
+ * NUL-terminated, with its length. */
+typedef struct { const char *s; size_t n; } vntok;
+static vntok vn_tok(const char *s,size_t n){ vntok t; t.s=s; t.n=n; return t; }
+/* sort a claim's read value numbers (at most BCIR_CLAIM_MAX_RD): insertion sort, strcmp order. */
+static void sort_toks(vntok *a,int n){
+  for(int i=1;i<n;i++){ vntok t=a[i]; int j=i;
+    while(j>0 && strcmp(a[j-1].s,t.s)>0){ a[j]=a[j-1]; j--; } a[j]=t; }
+}
+/* Sort n NUL-terminated strings in strcmp order (a NULL reads as "") through `tmp`, n slots: a bottom-up merge
+ * sort, O(n log n) comparisons. The insertion sort it replaces compared a function's records n^2 times
+ * (CF-PPLIMITS). Equal strings are equal bytes, so the order among them is unobservable. */
+static void sort_strs(char **a,char **tmp,size_t n){
+  for(size_t w=1;w<n;w*=2){
+    for(size_t lo=0;lo<n;){
+      size_t mid=n-lo>w ? lo+w : n, hi=n-mid>w ? mid+w : n, i=lo, j=mid, k=lo;
+      while(i<mid && j<hi) tmp[k++]=strcmp(a[i]?a[i]:"",a[j]?a[j]:"")<=0 ? a[i++] : a[j++];
+      while(i<mid) tmp[k++]=a[i++];
+      while(j<hi) tmp[k++]=a[j++];
+      lo=hi;
+    }
+    memcpy(a,tmp,n*sizeof *a);
+  }
 }
 
+/* FNV-1a (64-bit) of n bytes, continued from h: the digest's hash and a value number's (the oracle's `_fnv1a64`). */
+#define BCIR_FNV_OFFSET 1469598103934665603ull   /* == the Python _DIGEST_OFFSET */
+static uint64_t fnv_add(uint64_t h,const char *b,size_t n){
+  for(size_t i=0;i<n;i++) h=(h^(unsigned char)b[i])*1099511628211ull;
+  return h;
+}
+
+/* A value number, 16 hex digits and its NUL. */
+#define BCIR_VN_NUM 17
 /* per-function value-number context: writer[rid]=claim index that first writes it, plus a memo. */
 typedef struct {
   const bcir_func *f;
   int *wclaim;          /* parallel to a rid list: index of the first writer claim, or -1 */
   uint32_t *wrid; int nw;
-  char **memo;          /* memo[claim] -> its value-number string (lazily built), or NULL */
-  bcir_host_arena *arena;
+  const char **memo;    /* memo[claim] -> its value number (num[claim]; "cyc" while it is walked), or NULL */
+  size_t *mlen;         /* ... and its length */
+  char (*num)[BCIR_VN_NUM];   /* num[claim] -> the claim's value number */
+  char (*pin)[24];      /* pin[j] -> `in:p<j>`, the j-th parameter's value number */
 } vnctx;
 static int writer_of(vnctx *v, uint32_t rid){
   for(int k=0;k<v->nw;k++) if(v->wrid[k]==rid) return v->wclaim[k]; return -1;
 }
-/* append vn(rid) to `out`. depth guards recursion; a re-entered claim folds to "cyc". */
-static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out);
-static void vn_claim(vnctx *v, int ci, int depth, sbuf *out){
-  if(v->memo[ci]){ sb_str(out,v->memo[ci]); return; }
-  if(depth>BCIR_VN_MAXDEPTH){ sb_str(out,"cyc"); return; }
-  v->memo[ci]=vn_strdup(v->arena,"cyc");        /* cycle guard: a loop-carried rid resolves to "cyc" */
+/* The value number of a claim's result: the FNV-1a (64-bit) of its one-level spelling `op(a,b)`, whose reads are
+ * their own value numbers, in 16 hex digits -- the oracle's `_vn_number`. It spelled the value's whole dataflow tree,
+ * so a chain of n dependent values cost the canon O(n^2) bytes and a value read twice at each of n steps 2^n: 2 000
+ * chained locals took the twin 551 MB and 11 s (CF-PPLIMITS). Two values number alike exactly when their trees spell
+ * alike, but for a 64-bit collision: the walk, the memo, `cyc` and the cap are the spelling's, and a commutative op's
+ * reads are sorted by their numbers as they were by their spellings. depth guards the recursion and is read before
+ * the memo, as the oracle reads it: past the cap a value is `cyc` even where a walk memoized it shallower. The twin
+ * read the memo first, so a value reached again one step past the cap -- `*p = t + 1u + ... + 1u` of 97 terms beside
+ * `return t` -- was its number here and `cyc` there, digest-different (CF-PPLIMITS). A re-entered claim folds to
+ * "cyc". */
+static vntok vn_of(vnctx *v, uint32_t rid, int depth);
+static vntok vn_claim(vnctx *v, int ci, int depth){
+  if(depth>BCIR_VN_MAXDEPTH) return vn_tok("cyc",3);
+  if(v->memo[ci]) return vn_tok(v->memo[ci],v->mlen[ci]);
+  v->memo[ci]="cyc"; v->mlen[ci]=3;        /* cycle guard: a loop-carried rid resolves to "cyc" */
   const bcir_claim *cl=&v->f->claims[ci];
   char base[BCIR_VN_OP]; canon_op(cl,base);
   /* gather the vns of this claim's reads -- POSITIONAL, except sorted for a commutative op */
-  char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
-  for(int k=0;k<np;k++){ ps[k]=sbuf_for(v->arena); vn_of(v,cl->rd[k],depth+1,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
-  if(vn_commutative(base)) sort_strs(parts,np);
-  sbuf me=sbuf_for(v->arena); sb_str(&me,base); sb_str(&me,"(");
-  for(int k=0;k<np;k++){ if(k)sb_str(&me,","); sb_str(&me,parts[k]); }
-  sb_str(&me,")");
-  v->memo[ci]=me.s?me.s:vn_strdup(v->arena,"");
-  sb_str(out,v->memo[ci]);
+  vntok parts[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
+  for(int k=0;k<np;k++) parts[k]=vn_of(v,cl->rd[k],depth+1);
+  if(vn_commutative(base)) sort_toks(parts,np);
+  uint64_t h=fnv_add(fnv_add(BCIR_FNV_OFFSET,base,strlen(base)),"(",1);
+  for(int k=0;k<np;k++){ if(k) h=fnv_add(h,",",1); h=fnv_add(h,parts[k].s,parts[k].n); }
+  h=fnv_add(h,")",1);
+  snprintf(v->num[ci],BCIR_VN_NUM,"%016llx",(unsigned long long)h);
+  v->memo[ci]=v->num[ci]; v->mlen[ci]=16;
+  return vn_tok(v->num[ci],16);
 }
-static void vn_of(vnctx *v, uint32_t rid, int depth, sbuf *out){
+static vntok vn_of(vnctx *v, uint32_t rid, int depth){
   int ci=writer_of(v,rid);
   if(ci<0){                                   /* a function input: a param (positional) or a global/etc */
     const bcir_func *f=v->f;
-    for(int j=0;j<f->n_params;j++) if(f->params[j].rid==rid){   /* the j-th parameter -> "in:pj" */
-      char b[24]; int l=snprintf(b,sizeof b,"in:p%d",j); sb_add(out,b,(size_t)l); return; }
-    sb_str(out,"in"); return;                 /* any other input stays anonymous (rail-private rid out) */
+    for(int j=0;j<f->n_params;j++)            /* the j-th -> "in:pj" */
+      if(f->params[j].rid==rid) return vn_tok(v->pin[j],strlen(v->pin[j]));
+    return vn_tok("in",2);                    /* any other input stays anonymous (rail-private rid out) */
   }
-  vn_claim(v,ci,depth,out);
+  return vn_claim(v,ci,depth);
+}
+/* A value-number context over `f` in the walk's arena: its rid -> writer index empty, its memo unbuilt, each
+ * parameter's `in:p<j>` spelled. */
+static int vn_init(vnctx *v,const bcir_func *f,bcir_host_arena *arena,size_t maxw){
+  size_t nm=f->n_claims?f->n_claims:1u, np=f->n_params>0?(size_t)f->n_params:1u;
+  v->f=f; v->nw=0;
+  v->wclaim=(int *)vn_alloc(arena,maxw,sizeof(int),0);
+  v->wrid=(uint32_t *)vn_alloc(arena,maxw,sizeof(uint32_t),0);
+  v->memo=(const char **)vn_alloc(arena,nm,sizeof *v->memo,1);
+  v->mlen=(size_t *)vn_alloc(arena,nm,sizeof *v->mlen,0);
+  v->num=(char (*)[BCIR_VN_NUM])vn_alloc(arena,nm,sizeof *v->num,0);
+  v->pin=(char (*)[24])vn_alloc(arena,np,sizeof *v->pin,0);
+  if(!v->wclaim || !v->wrid || !v->memo || !v->mlen || !v->num || !v->pin) return 0;
+  for(int j=0;j<f->n_params;j++) snprintf(v->pin[j],sizeof v->pin[j],"in:p%d",j);
+  return 1;
 }
 
 /* Build the sorted multiset of per-claim dataflow records for one function; emit each, '\n'-joined.
  * Even a zero-real-claim function (e.g. `int read_a(void){ return a_global; }`) emits its OBSERVABLE-
- * OUTPUT anchor (ret=...|stores=...), exactly as the Python oracle does -- so the byte-identity holds. */
+ * OUTPUT anchor (ret=...|stores=...), exactly as the Python oracle does -- so the byte-identity holds.
+ * A record is its claim's op, imm and reads' value numbers, so the canon is linear in the function. An
+ * allocation that failed writes `oom` and ends the function's canon (the caller refuses the canon). */
 static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t),
                        void *ctx,bcir_host_arena *arena){
   if(!f||!emit)return;
@@ -10634,12 +10715,10 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   int nc=0; for(size_t i=0;i<f->n_claims;i++) if(f->claims[i].opcode!=BCIR_OP_NOP) nc++;
   size_t maxw=f->n_claims*(size_t)BCIR_CLAIM_MAX_WR+1;   /* an upper bound on distinct written rids */
   int *cidx=(int *)vn_alloc(arena,(size_t)(nc?nc:1),sizeof *cidx,0);   /* cidx[j] = original claim index of the j-th non-NOP */
-  vnctx v={f,NULL,NULL,0,NULL,arena};
-  v.wclaim=(int *)vn_alloc(arena,maxw,sizeof(int),0);
-  v.wrid=(uint32_t *)vn_alloc(arena,maxw,sizeof(uint32_t),0);
-  v.memo=(char **)vn_alloc(arena,f->n_claims?f->n_claims:1,sizeof(char*),1);
-  if(!cidx||!v.wclaim||!v.wrid||!v.memo){
-    emit(ctx,"oom\n",4);return;}
+  char **recs=(char **)vn_alloc(arena,(size_t)(nc?nc:1),sizeof *recs,0);
+  char **tmp=(char **)vn_alloc(arena,(size_t)(nc?nc:1),sizeof *tmp,0);   /* the merge sort's other half */
+  vnctx v;
+  if(!vn_init(&v,f,arena,maxw)||!cidx||!recs||!tmp){ emit(ctx,"oom\n",4); return; }
   /* NB: vn indexes by ORIGINAL claim index (so memo/writer reference the real claim array). */
   int j=0;
   for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *cl=&f->claims[i];
@@ -10647,75 +10726,73 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
     for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int seen=0;
       for(int m=0;m<v.nw;m++) if(v.wrid[m]==rid){seen=1;break;}
       if(!seen){ v.wrid[v.nw]=rid; v.wclaim[v.nw]=(int)i; v.nw++; } } }
-  /* build each non-NOP claim's record */
-  char **recs=(char **)vn_alloc(arena,(size_t)nc,sizeof *recs,0);
-  if(nc&&!recs){emit(ctx,"oom\n",4);return;}
+  /* build each non-NOP claim's record, "<op>|<opcode>|<reads>|<imm>|<domain>" */
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
-    char base[BCIR_VN_OP]; canon_op(cl,base);
-    char *parts[BCIR_CLAIM_MAX_RD]; sbuf ps[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
-    for(int k=0;k<np;k++){ ps[k]=sbuf_for(arena); vn_of(&v,cl->rd[k],0,&ps[k]); parts[k]=ps[k].s?ps[k].s:(char*)""; }
-    if(vn_commutative(base)) sort_strs(parts,np);     /* commutative: sort; else POSITIONAL */
-    sbuf rec=sbuf_for(arena); char nb[24];
-    sb_str(&rec,base); sb_str(&rec,"|");
-    int ol=snprintf(nb,sizeof nb,"%d",(int)cl->opcode); sb_add(&rec,nb,(size_t)ol); sb_str(&rec,"|");
-    for(int k=0;k<np;k++){ if(k)sb_str(&rec,","); sb_str(&rec,parts[k]); }
-    sb_str(&rec,"|");
-    vn_imm(f,cl,&rec);                                /* the semantic imm (member offset / bitfield layout) */
-    sb_str(&rec,"|");
-    int dl=snprintf(nb,sizeof nb,"%d",(int)cl->domain); sb_add(&rec,nb,(size_t)dl);
-    recs[r]=rec.s?rec.s:vn_strdup(arena,"");
+    char base[BCIR_VN_OP], head[BCIR_VN_OP+16], imm[BCIR_VN_IMM], tail[BCIR_VN_IMM+16];
+    canon_op(cl,base);
+    vntok parts[BCIR_CLAIM_MAX_RD]; int np=cl->n_rd;
+    for(int k=0;k<np;k++) parts[k]=vn_of(&v,cl->rd[k],0);
+    if(vn_commutative(base)) sort_toks(parts,np);     /* commutative: sort; else POSITIONAL */
+    vn_imm(f,cl,imm,sizeof imm);                      /* the semantic imm (member offset / bitfield layout) */
+    int hl=snprintf(head,sizeof head,"%s|%d|",base,(int)cl->opcode);
+    int tl=snprintf(tail,sizeof tail,"|%s|%d",imm,(int)cl->domain);
+    if(hl<0||tl<0||(size_t)hl>=sizeof head||(size_t)tl>=sizeof tail){ emit(ctx,"overflow\n",9); return; }
+    size_t n=(size_t)hl+(size_t)tl+(np>1 ? (size_t)np-1u : 0u), w=(size_t)hl;
+    for(int k=0;k<np;k++) n+=parts[k].n;              /* each part a value number or a short token */
+    char *s=(char *)vn_alloc(arena,n+1u,1u,0);
+    if(!s){ emit(ctx,"oom\n",4); return; }
+    memcpy(s,head,w);
+    for(int k=0;k<np;k++){ if(k) s[w++]=','; memcpy(s+w,parts[k].s,parts[k].n); w+=parts[k].n; }
+    memcpy(s+w,tail,(size_t)tl); s[w+(size_t)tl]=0;
+    recs[r]=s;
   }
-  sort_strs(recs,nc);
-  for(int r=0;r<nc;r++){ const char *rec=recs[r]?recs[r]:"";emit(ctx,rec,strlen(rec));emit(ctx,"\n",1); }
+  sort_strs(recs,tmp,(size_t)nc);
+  for(int r=0;r<nc;r++){ emit(ctx,recs[r],strlen(recs[r])); emit(ctx,"\n",1); }
 
   /* The OBSERVABLE-OUTPUT anchor (LAST-writer VN -- a use observes the most-recent prior write, which
    * is what the emitted C returns/stores). It pins what the function OUTPUTS: the RETURN value's VN
    * (catches a sink-wr redirect that turns `return t` into `return (a+b)` though no per-claim record
    * changes) and the sorted STORE (dest-VN -> value-VN) pairs (catch a dead/store-target redirect).
    * last==first for a single-write rid, so the anchor stays cross-rail byte-identical. */
-  vnctx vl={f,NULL,NULL,0,NULL,arena};
-  vl.wclaim=(int *)vn_alloc(arena,maxw,sizeof(int),0);
-  vl.wrid=(uint32_t *)vn_alloc(arena,maxw,sizeof(uint32_t),0);
-  vl.memo=(char **)vn_alloc(arena,f->n_claims?f->n_claims:1,sizeof(char*),1);
-  if(!vl.wclaim||!vl.wrid||!vl.memo){
-    emit(ctx,"oom\n",4);return;}
+  vnctx vl;
+  if(!vn_init(&vl,f,arena,maxw)){ emit(ctx,"oom\n",4); return; }
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int slot=-1;
       for(int m=0;m<vl.nw;m++) if(vl.wrid[m]==rid){slot=m;break;}
       if(slot<0){ vl.wrid[vl.nw]=rid; vl.wclaim[vl.nw]=(int)i; vl.nw++; }
       else vl.wclaim[slot]=(int)i; } }                /* LAST writer wins (overwrite) */
-  sbuf anc=sbuf_for(arena); sb_str(&anc,"ret=");
-  if(f->has_return){ vn_of(&vl,f->return_rid,0,&anc); } else sb_str(&anc,"void");
-  sb_str(&anc,"|stores=");
-  /* collect store (dest->value) pairs, sorted */
-  int nst=0; for(int r=0;r<nc;r++) if(!strcmp(f->claims[cidx[r]].op,"c.store")) nst++;
-  if(nst){ char **sp=(char **)vn_alloc(arena,(size_t)nst,sizeof *sp,1); int si=0;
-    if(!sp)sb_str(&anc,"oom");
-    else {
-    for(int r=0;r<nc;r++){ const bcir_claim *cl=&f->claims[cidx[r]];
-      if(strcmp(cl->op,"c.store")) continue;
-      sbuf s=sbuf_for(arena);
-      if(cl->n_rd){ vn_of(&vl,cl->rd[0],0,&s); sb_str(&s,"->"); vn_of(&vl,cl->rd[cl->n_rd-1],0,&s); }
-      else sb_str(&s,"?->?");
-      sp[si++]=s.s?s.s:vn_strdup(arena,""); }
-    sort_strs(sp,si);
-    for(int k=0;k<si;k++){ if(k)sb_str(&anc,";"); sb_str(&anc,sp[k]); }
-    }
-  }
-  emit(ctx,anc.s?anc.s:"ret=void|stores=",anc.s?strlen(anc.s):16); emit(ctx,"\n",1);
-  /* A static's constant image (CF-STATICTAB): its initializer runs once, before the program, so no claim writes it (a
-   * static reads as an input) -- the initializer both rails render joins the canon instead, one line per static that
-   * has one, sorted. Two statics differing only in a value differ here. */
+  vntok ret=f->has_return ? vn_of(&vl,f->return_rid,0) : vn_tok("void",4);
+  /* the store (dest->value) pairs, sorted */
+  int nst=0, si=0; for(int r=0;r<nc;r++) if(!strcmp(f->claims[cidx[r]].op,"c.store")) nst++;
+  char **sp=nst ? (char **)vn_alloc(arena,(size_t)nst,sizeof *sp,0) : NULL;
+  char **st=nst ? (char **)vn_alloc(arena,(size_t)nst,sizeof *st,0) : NULL;
+  if(nst && (!sp||!st)){ emit(ctx,"oom\n",4); return; }
+  for(int r=0;r<nc && si<nst;r++){ const bcir_claim *cl=&f->claims[cidx[r]];   /* si<nst: sp holds nst */
+    if(strcmp(cl->op,"c.store")) continue;
+    vntok d=cl->n_rd ? vn_of(&vl,cl->rd[0],0) : vn_tok("?",1);
+    vntok x=cl->n_rd ? vn_of(&vl,cl->rd[cl->n_rd-1],0) : vn_tok("?",1);
+    char *s=(char *)vn_alloc(arena,d.n+3u+x.n,1u,0);   /* two value numbers, `->` and the NUL */
+    if(!s){ emit(ctx,"oom\n",4); return; }
+    memcpy(s,d.s,d.n); memcpy(s+d.n,"->",2); memcpy(s+d.n+2,x.s,x.n); s[d.n+2+x.n]=0;
+    sp[si++]=s; }
+  sort_strs(sp,st,(size_t)si);
+  emit(ctx,"ret=",4); emit(ctx,ret.s,ret.n); emit(ctx,"|stores=",8);
+  for(int k=0;k<si;k++){ if(k) emit(ctx,";",1); emit(ctx,sp[k],strlen(sp[k])); }
+  emit(ctx,"\n",1);
+  /* A static's constant image (CF-STATICTAB): its initializer runs once, before the program, so no claim
+   * writes it (a static reads as an input) -- the initializer both rails render joins the canon instead,
+   * one line per static that has one, sorted. Two statics differing only in a value differ here. */
   int nsx=0; for(int k=0;k<f->n_statics;k++) if(f->statics[k].text || f->statics[k].thread_storage) nsx++;
-  if(nsx){ char **sl=(char **)vn_alloc(arena,(size_t)nsx,sizeof *sl,1); int si=0;
-    if(!sl){ emit(ctx,"oom\n",4); return; }
+  if(nsx){ char **sl=(char **)vn_alloc(arena,(size_t)nsx,sizeof *sl,1), **sx=(char **)vn_alloc(arena,(size_t)nsx,sizeof *sx,0);
+    int si2=0;
+    if(!sl||!sx){ emit(ctx,"oom\n",4); return; }
     for(int k=0;k<f->n_statics;k++) if(f->statics[k].text || f->statics[k].thread_storage){ sbuf s=sbuf_for(arena);
       /* a static of thread storage duration has its line whatever its image (CF-TLS; the oracle's canon) */
       sb_str(&s,f->statics[k].thread_storage?"static _Thread_local ":"static "); sb_str(&s,f->statics[k].name);
       sb_str(&s," = "); sb_str(&s,f->statics[k].text?f->statics[k].text:"0");
-      sl[si++]=s.s?s.s:vn_strdup(arena,""); }
-    sort_strs(sl,si);
-    for(int k=0;k<si;k++){ const char *ln=sl[k]?sl[k]:""; emit(ctx,ln,strlen(ln)); emit(ctx,"\n",1); } }
+      sl[si2++]=s.s?s.s:vn_strdup(arena,""); }
+    sort_strs(sl,sx,(size_t)si2);
+    for(int k=0;k<si2;k++){ const char *ln=sl[k]?sl[k]:""; emit(ctx,ln,strlen(ln)); emit(ctx,"\n",1); } }
 }
 
 /* The shared canonical serializer: invokes emit(ctx, bytes, len) for each byte of the canon (so the
@@ -10733,22 +10810,6 @@ static void canon_walk(const bcir_unit *u, void (*emit)(void*,const char*,size_t
   bcir_host_arena_destroy(&arena);
 }
 
-typedef struct { uint64_t h; } fnv_ctx;
-static void fnv_emit(void *vc, const char *b, size_t n){
-  fnv_ctx *c=vc; for(size_t i=0;i<n;i++) c->h=(c->h^(unsigned char)b[i])*1099511628211ull;
-}
-uint64_t bcir_cfront_digest_with_allocator(const bcir_unit *u,
-                                           const bcir_host_allocator *allocator){
-  fnv_ctx c={1469598103934665603ull};            /* FNV-1a offset basis (== the Python _DIGEST_OFFSET) */
-  if(!u)return c.h;
-  canon_walk(u,fnv_emit,&c,allocator);
-  return c.h;
-}
-uint64_t bcir_cfront_digest(const bcir_unit *u){
-  bcir_host_allocator allocator=bcir_host_allocator_default();
-  return bcir_cfront_digest_with_allocator(u,&allocator);
-}
-
 typedef struct { char *buf; size_t cap, w; } buf_ctx;
 static void buf_emit(void *vc, const char *b, size_t n){
   buf_ctx *c=vc; for(size_t i=0;i<n;i++){ if(c->w+1<c->cap) c->buf[c->w]=b[i]; c->w++; }
@@ -10764,6 +10825,27 @@ static void *canon_reallocate(void *vc,void *p,size_t size){
   (void)p; (void)size; ((canon_alloc *)vc)->refused=1; return NULL;
 }
 static void canon_deallocate(void *vc,void *p){ canon_alloc *a=vc; bcir_host_deallocate(&a->inner,p); }
+
+typedef struct { uint64_t h; } fnv_ctx;
+static void fnv_emit(void *vc, const char *b, size_t n){ fnv_ctx *c=vc; c->h=fnv_add(c->h,b,n); }
+/* The digest hashes the canon's bytes as they are walked, through the canon's noting allocator: a walk an allocation
+ * failed in wrote `oom` where its work went undone, and its hash is no digest of the unit -- it had been returned as
+ * one (CF-PPLIMITS), so a unit built under memory pressure carried a digest no rail computes. */
+int bcir_cfront_digest_with_allocator(const bcir_unit *u,const bcir_host_allocator *allocator,uint64_t *out){
+  fnv_ctx c={BCIR_FNV_OFFSET};
+  canon_alloc a={bcir_host_allocator_or_default(allocator),0};
+  bcir_host_allocator noting={&a,canon_allocate,canon_reallocate,canon_deallocate};
+  if(!out) return BCIR_CANON_OOM;
+  *out=0;
+  if(u) canon_walk(u,fnv_emit,&c,&noting);
+  if(a.refused) return BCIR_CANON_OOM;
+  *out=c.h;
+  return 0;
+}
+int bcir_cfront_digest(const bcir_unit *u,uint64_t *out){
+  bcir_host_allocator allocator=bcir_host_allocator_default();
+  return bcir_cfront_digest_with_allocator(u,&allocator,out);
+}
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof
  * (the Python cfront_structural_canon must equal this byte-for-byte on the corpus). Its whole length, as snprintf
  * counts it: a canon longer than the buffer is cut there and the length says so -- the twin's driver held 128 KiB

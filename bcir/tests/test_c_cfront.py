@@ -3676,9 +3676,10 @@ def test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges():
         r = run("large_include.c", '#include "large.h"\nword f(void){return 1u;}\n')
         assert r.returncode == 0 and "ok=1" in r.stdout, (r.stdout, r.stderr)
 
-        # Fixed public result buffers now fail explicitly instead of returning omitted text/claims.
-        r = run("pp_overflow.c", "x\n" * 40000, "-E")
-        assert r.returncode == 1 and "preprocessed output too large" in r.stderr, r.stderr
+        # The preprocessed text is held whole, in a block grown as it needs (CF-PPLIMITS): an 80 KB `-E` output,
+        # refused once past the 64 KiB the driver held, is written whole.
+        r = run("pp_large.c", "x\n" * 40000, "-E")
+        assert r.returncode == 0 and r.stdout.split() == ["x"] * 40000, (r.returncode, r.stderr)
         # ...and the verified C has none (CF-BUF): a unit whose emit runs past the 32 KiB the result once held --
         # refused then as `emitted C exceeds` -- emits whole, and its linkable form renames every call in it.
         body = "\n".join("x += 1;" for _ in range(700))
@@ -10041,12 +10042,13 @@ def test_the_twin_driver_prints_a_canon_past_128_kib_whole():
     its first 131071 bytes, exit 0. The canon now returns its whole length (snprintf semantics; `SIZE_MAX` when an
     allocation failed), and the driver measures it, holds it and prints all of it -- byte for byte the oracle's
     `cfront_structural_canon`, whose FNV-1a is the digest both rails' summaries print: the digest hashes the canon as
-    it is produced, and is unmoved."""
+    it is produced, and is unmoved. Its value numbers numbered (CF-PPLIMITS), the 140-function unit's canon is 116 KB,
+    a 170-function unit's 141 KB."""
     if not _CC:
         return
     from bcir.verify import cfront_structural_canon
 
-    src = _wide_unit(140)
+    src = _wide_unit(170)
     r = compile_unit(src, check_clang=False)
     canon = cfront_structural_canon(r.lowered)
     digest = cfront_structural_digest(r.lowered)
@@ -10071,8 +10073,8 @@ def test_the_twin_driver_reads_a_source_past_64_kib_whole():
     prefix without saying so: a function after 70 000 bytes of comment was dropped (`funcs=1`, exit 0, against the
     oracle's two), and so was one after a NUL, where the text stopped. The driver now reads the whole file through
     the host allocator, as `bcir-cc` does: the unit lowers to the oracle's claim graph. A file it cannot hand on
-    whole -- one holding a NUL -- is refused, and a unit whose preprocessed text runs past the 64 KiB the driver
-    holds it in is refused by the preprocessor (`preprocessed output too large`): loudly, never cut."""
+    whole -- one holding a NUL -- is refused; and a unit whose preprocessed text runs past 64 KiB, refused there
+    once, lowers whole (CF-PPLIMITS: the text is held in a block grown as it needs)."""
     if not _CC:
         return
     exe = _build_frontend(_session_build_dir())
@@ -10086,10 +10088,408 @@ def test_the_twin_driver_reads_a_source_past_64_kib_whole():
     nul = "int f(int a) { return a + 1; }\n\0int g(int a) { return a * 3; }\n"
     got = _twin_line(exe, nul)
     assert got == (1, "READ-ERR the source holds a NUL byte"), got
-    wide = "".join(f"int v{k} = {k};\n" for k in range(6000))
+    wide = (
+        "".join(f"int v{k} = {k};\n" for k in range(6000)) + "int g(int a) { return a + v5999; }\n"
+    )
     assert len(wide) > 1 << 16
     got = _twin_line(exe, wide)
-    assert got == (1, "CPP-ERR preprocessed output too large"), got
+    assert got == (0, _oracle(wide)[0]), got
+
+
+#: A unit after a directive under test (CF-PPLIMITS).
+_PPLIMITS_UNIT = "#include <stdint.h>\nuint32_t f(uint32_t x) {{ return x + {v}; }}\n"
+
+
+def _twin_cpp(exe: str, src: str) -> tuple:
+    """The twin driver's exit status and its `--emit-cpp` text for the unit `src`."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "u.c")
+        with open(path, "wb") as fh:
+            fh.write(src.encode("utf-8"))
+        run = subprocess.run([exe, "--emit-cpp", path], capture_output=True, text=True)
+    return run.returncode, run.stdout
+
+
+def _oracle_refusal(src: str, includes=None) -> str:
+    """The reason the oracle refuses the unit `src` for, from any phase ("" when it lowers)."""
+    from bcir.frontends.cfront.clex import CLexError
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.cpp import CPPError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    try:
+        compile_unit(src, check_clang=False, includes=includes)
+    except (CPPError, CLexError, CParseError, CLowerError) as e:
+        return str(e)
+    return ""
+
+
+def test_the_twin_drivers_hold_a_unit_of_any_length_to_the_token_bound_both_rails_share():
+    """CF-PPLIMITS: the loop driver (`test_cfront_loop.c`) read the first 64 KiB of a source and lowered that prefix,
+    silently -- a 70 KB unit ran its first function as the entry -- and every twin driver held the preprocessed text
+    in 64 KiB, so a unit of 6 000 globals was refused there that the oracle lowered. The three drivers read through
+    one reader (`bcir_cpp_read_source`) and preprocess into a block grown as the text needs (`bcir_cpp_run_alloc`).
+    Past that, the twin's compiler held 16 384 tokens in a fixed array and refused more as `input too large`, where
+    the oracle had no cap at all (its comment said the rails agreed): the array grows now, to a bound both lexers
+    hold -- `MAX_TOKENS - 1` tokens lower on both rails, one more is refused on both."""
+    from bcir.frontends.cfront.clex import INPUT_TOO_LARGE, MAX_TOKENS
+
+    wide = "#include <stdint.h>\n" + "".join(f"uint32_t g{k} = {k}u;\n" for k in range(6000))
+    wide += "uint32_t f(uint32_t x) { return x + g5999; }\n"
+    oracle_summary, _r, _entry = _oracle(wide)
+    exe = None
+    if _CC:
+        exe = _build_frontend(_session_build_dir())
+        assert _twin_line(exe, wide) == (0, oracle_summary)
+        loop = _build_loop(_session_build_dir())
+        short = "#include <stdint.h>\nuint32_t first(uint32_t x) { return x + 1u; }\n"
+        entry = "uint32_t entry(uint32_t x) { return x * 3u + 7u; }\n"
+        outs = []
+        with tempfile.TemporaryDirectory() as d:
+            for name, src in (
+                ("short.c", short + entry),
+                ("long.c", short + "/*" + "x" * 70000 + "*/\n" + entry),
+                ("nul.c", short + "\0" + entry),
+            ):
+                path = os.path.join(d, name)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(src)
+                run = subprocess.run([loop, path], capture_output=True, text=True)
+                outs.append((run.returncode, run.stdout.strip()))
+        assert (
+            outs[0][0] == 0 and outs[0][1].startswith("loop: claims=4 ") and outs[1] == outs[0]
+        ), outs
+        assert outs[2] == (1, "READ-ERR the source holds a NUL byte"), outs[2]
+
+    # k empty statements, a hundred to a line (a line is at most 8 KiB on the twin)
+    def body(k: int) -> str:
+        return "\n".join(";" * 100 for _ in range(k // 100)) + "\n" + ";" * (k % 100) + "\n"
+
+    # `int f(void){` ... `return 0;}` is 10 tokens: with `k` more, the unit is `MAX_TOKENS - 1` tokens, or `MAX_TOKENS`
+    for k, lowers in ((MAX_TOKENS - 11, True), (MAX_TOKENS - 10, False)):
+        src = "int f(void){\n" + body(k) + "return 0;}\n"
+        if lowers:
+            expect = (0, _oracle(src)[0])
+        else:
+            assert _oracle_refusal(src) == INPUT_TOO_LARGE, k
+            expect = (1, f"PARSE-ERR {INPUT_TOO_LARGE}")
+        if exe:
+            assert _twin_line(exe, src) == expect, (k, expect)
+
+
+def test_a_token_of_any_length_within_a_line_is_read_whole_on_both_rails():
+    """CF-PPLIMITS: the twin's preprocessor held a token in 256 bytes, a macro argument in 1 KiB and a substitution in
+    2 KiB, and refused a longer one (`preprocessor token too long`) where the oracle took it: a 300-character string
+    literal, a stringized argument, a `__has_attribute` operand, an argument of 2 000 bytes. Each buffer holds a line
+    now, so no token is refused for its own length. And the spacing token it judged a run-on by kept the first 255
+    bytes of an argument, so after a longer one it read the wrong last byte: `F(...+b)` with the body `t y` wrote
+    `...+by` -- another identifier, which a parameter `by` made a program C refuses lower on the twin alone. It
+    writes `...+b y` now, as the oracle does, and both refuse it."""
+    arg = "aa" + "+a" * 200 + "+b"
+    units = (
+        '#include <stdint.h>\nstatic const char *s = "' + "A" * 300 + '";\n'
+        "uint32_t f(uint32_t x) { return x + (uint32_t)s[299]; }\n",
+        "#include <stdint.h>\n#define S(t) #t\n"
+        "uint32_t f(uint32_t x) { return x + (uint32_t)sizeof(S(" + "b" * 300 + ")); }\n",
+        "#include <stdint.h>\n#if __has_attribute(" + "z" * 300 + ")\n#error\n#endif\n"
+        "uint32_t f(uint32_t x) { return x + 2u; }\n",
+        "#include <stdint.h>\n#define ID(t) t\nuint32_t f(uint32_t a) { return ID("
+        + "a+" * 1000
+        + "a); }\n",
+    )
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for k, src in enumerate(units):
+        summary, _r, _entry = _oracle(src)
+        if exe:
+            assert _twin_line(exe, src) == (0, summary), k
+    run_on = (
+        "#include <stdint.h>\n#define F(t) t y\n"
+        "uint32_t f(uint32_t a, uint32_t b, uint32_t y, uint32_t by) { return F(" + arg + "); }\n"
+    )
+    assert _oracle_refusal(run_on), "the oracle lowered `b y`"
+    if exe:
+        rc, text = _twin_cpp(exe, run_on)
+        assert rc == 0 and "+b y" in text and "+by" not in text, text[-120:]
+        assert _twin_line(exe, run_on)[0] == 1
+
+
+_BAD_DEFINED = (
+    "defined(X",
+    "defined +",
+    "defined",
+    "defined()",
+    "defined(X Y)",
+    "defined(1)",
+    "1 || defined",
+)
+
+
+def test_a_malformed_defined_and_a_nul_are_refused_alike_on_both_rails():
+    """CF-PPLIMITS: the oracle read `defined` with two regular expressions, which matched a well-formed one only and
+    left a malformed one standing, to be refused as a malformed expression; the twin refused it as `malformed defined
+    operator`. Both rails read a `#if` token by token now, the oracle as the twin does, and give the twin's reason.
+    The oracle's tokenizer also dropped every character no alternative matched -- a NUL between tokens, `@`, a
+    character past ASCII -- and lowered what surrounded it (`x + caf€` as `x + caf`): it keeps each as a token now,
+    and a NUL in the source or a header is refused before, in the twin's words."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for operand in _BAD_DEFINED:
+        src = f"#if {operand}\n#endif\n" + _PPLIMITS_UNIT.format(v="1u")
+        assert _oracle_refusal(src) == "malformed defined operator", operand
+        if exe:
+            assert _twin_line(exe, src) == (1, "CPP-ERR malformed defined operator"), operand
+    good = (
+        "#define X\n#if defined X && defined(X) && defined ( X ) && !defined(Y)\n"
+        + _PPLIMITS_UNIT.format(v="7u")
+        + "#endif\n"
+    )
+    summary, _r, _entry = _oracle(good)
+    assert "binop=1" in summary, summary
+    if exe:
+        assert _twin_line(exe, good) == (0, summary)
+    nul = _PPLIMITS_UNIT.format(v="1u").replace("x + 1u", "x \0+ 1u")
+    assert _oracle_refusal(nul) == "the source holds a NUL byte"
+    if exe:
+        assert _twin_line(exe, nul) == (1, "READ-ERR the source holds a NUL byte")
+    header = '#include "h.h"\n' + _PPLIMITS_UNIT.format(v="1u")
+    assert (
+        _oracle_refusal(header, includes={"h.h": "#define H 1\0\n"}) == "#include h.h contains NUL"
+    )
+    if exe:
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "h.h"), "wb") as fh:
+                fh.write(b"#define H 1\0\n")
+            with open(os.path.join(d, "u.c"), "w", encoding="utf-8") as fh:
+                fh.write(header)
+            run = subprocess.run([exe, os.path.join(d, "u.c")], capture_output=True, text=True)
+        assert (run.returncode, run.stdout.strip()) == (1, "CPP-ERR #include h.h contains NUL"), (
+            run.stdout
+        )
+    for stray in ("@", "`"):
+        src = _PPLIMITS_UNIT.format(v="1u " + stray + " 2u")
+        assert _oracle_refusal(src) == f"unexpected character {stray!r}", stray
+        if exe:
+            assert _twin_line(exe, src)[0] == 1, stray
+
+
+def test_bcir_cc_undefines_a_macro_its_command_line_defines():
+    """CF-PPLIMITS: `bcir-cc -DXQ=1 -UXQ` failed every compile (`macro name must be an identifier`): the `-U` turned
+    the `-D` into an empty definition, which the preprocessor refused. A `-U` drops every `-D` of its name, wherever it
+    stands, as the oracle's CLI pops it, and the branch taken is the oracle's."""
+    if not _CC:
+        return
+    src = "#ifdef XQ\nint f(void){return 11;}\n#else\nint f(void){return 22;}\n#endif\n"
+    with tempfile.TemporaryDirectory() as d:
+        cc = _build_bcir_cc(d)
+        path = os.path.join(d, "u.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(src)
+        for flags, taken in (
+            (["-DXQ=1", "-UXQ"], "22"),
+            (["-UXQ", "-DXQ=1"], "22"),
+            (["-DXQ"], "11"),
+            (["-D", "XQ=2", "-U", "XQ", "-DYQ"], "22"),
+        ):
+            run = subprocess.run([cc, "-E", *flags, path], capture_output=True, text=True)
+            assert run.returncode == 0 and f"return {taken}" in run.stdout, (flags, run.stderr)
+            rc, out, err = _cli(["-E", *flags, path])
+            assert rc == 0 and f"return {taken}" in out, (flags, err)
+
+
+_NONASCII_REFUSED = (
+    "#define caf 5\n#ifdef café\n#endif\n",
+    "#define caf 5\n#ifndef café\n#endif\n",
+    "#define caf 5\n#if 0\n#elifdef café\n#endif\n",
+    "#define caf 5\n#if defined(café)\n#endif\n",
+    "#define caf 5\n#if defined café\n#endif\n",
+    "#define caf 5\n#if café\n#endif\n",
+    "#define caf 5\n#if é\n#endif\n",
+    "#undef café\n",
+    "#define café 5\n",
+    "#define F(café) 1\n",
+    "#define F(é) 1\n",
+    "#define F(a, bé) 1\n",
+    "#if 1\u00a0\n#endif\n",
+    "#café x\n",
+    "#\u00a0define K 1\n",
+)
+
+
+def test_a_name_that_runs_into_a_non_ascii_character_is_refused_alike_on_both_rails():
+    """CF-PPLIMITS: the twin read the ASCII start of a name and the oracle a whole Unicode word, so beside `#define
+    caf 5`, `#ifdef café` kept its group on the twin and skipped it on the oracle -- digest-different -- and the
+    oracle's lexer took `int café;` (`str.isalpha`), where the twin's refused it. An identifier is ASCII on both
+    rails now: a name a directive reads, a macro parameter, an identifier or a number the lexer reads, refused with
+    one reason where a character past ASCII runs on from it or stands outside a literal. One inside a string or a
+    comment is the literal's or the comment's, and lowers on both. A directive line is read by the twin's grammar on
+    both: its `#` and name across spaces and tabs only, the name an ASCII identifier -- the oracle had stripped every
+    Unicode space (`\u00a0#define K 3u` defined `K` there) and ended a name only at a space (`#define\tK 3u` was an
+    unknown directive there)."""
+    from bcir.frontends.cfront.clex import NONASCII
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for directive in _NONASCII_REFUSED:
+        src = directive + _PPLIMITS_UNIT.format(v="1u")
+        assert _oracle_refusal(src) == NONASCII, directive
+        if exe:
+            assert _twin_line(exe, src) == (1, f"CPP-ERR {NONASCII}"), directive
+    for code in (
+        "#include <stdint.h>\nuint32_t f(uint32_t café) { return café + 1u; }\n",
+        "#include <stdint.h>\nuint32_t f(uint32_t x) { return x + ٣; }\n",
+        "#include <stdint.h>\n#define caf 5u\nuint32_t f(uint32_t x) { return x + caf€; }\n",
+        "#include <stdint.h>\n\u00a0#define K 3u\nuint32_t f(uint32_t x) { return x + 1u; }\n",
+        "#include <stdint.h>\n#define K 3u\u00a0\nuint32_t f(uint32_t x) { return x + K; }\n",
+    ):
+        assert _oracle_refusal(code) == NONASCII, code
+        if exe:
+            assert _twin_line(exe, code) == (1, f"PARSE-ERR {NONASCII}"), code
+    literal = (
+        '#include <stdint.h>\n/* café */\nstatic const char *s = "café";\n'
+        "uint32_t f(uint32_t x) { return x + (uint32_t)s[1]; }\n"
+    )
+    # `#line` reads a number of ASCII digits: the oracle's `\d` had read `\u0663` as 3, numbering the next line 3
+    # where the twin, which reads no number there, leaves it 2
+    line = "#line \u0663\n#include <stdint.h>\nuint32_t f(uint32_t x) { return x + __LINE__; }\n"
+    spaced = [
+        f"#include <stdint.h>\n{d}\nuint32_t f(uint32_t x) {{ return x + K; }}\n"
+        for d in (
+            "#define\tK 3u",
+            "#\tdefine K 3u",
+            "#if\t1\n#define K 3u\n#endif",
+            "#if(1)\n#define K 3u\n#endif",
+        )
+    ]
+    for src in (literal, line, *spaced):
+        summary, _r, _entry = _oracle(src)
+        if exe:
+            assert _twin_line(exe, src) == (0, summary), src
+
+
+_PARAM_LISTS = (
+    ("#define F(a b) a\n", "invalid macro parameter list"),
+    ("#define F(a b c) a\n", "invalid macro parameter list"),
+    ("#define F(1) 1\n", "invalid macro parameter"),
+    ("#define F(a, a) a\n", "duplicate macro parameter"),
+    ("#define F(a\n", "invalid macro parameter list"),
+    ("#define F(a,) a\n", "invalid macro parameter list"),
+    ("#define F(..., a) 1\n", "variadic macro parameter must be last"),
+    ("#define F(" + ",".join(f"p{k}" for k in range(17)) + ") 1\n", "too many macro parameters"),
+)
+
+
+def test_a_macro_parameter_list_is_read_by_one_grammar_on_both_rails():
+    """CF-PPLIMITS: the oracle split a parameter list at its commas and took whatever lay between two as a parameter,
+    so `F(a b)`, `F(1)`, `F(a, a)`, an unclosed list and seventeen parameters each defined a macro there that the twin
+    refused. The oracle reads a list by the twin's grammar now (`cpp._params`), for the twin's reasons; well-formed
+    lists -- spaced, nullary, variadic -- expand alike."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for directive, why in _PARAM_LISTS:
+        src = directive + _PPLIMITS_UNIT.format(v="1u")
+        assert _oracle_refusal(src) == why, directive
+        if exe:
+            assert _twin_line(exe, src) == (1, f"CPP-ERR {why}"), directive
+    good = (
+        "#include <stdint.h>\n#define A( a , b ) ((a) - (b))\n#define Z() 3u\n#define V(x, ...) (x + __VA_ARGS__)\n"
+        "uint32_t f(uint32_t x) { return A(x, 1u) + Z() + V(x, 2u); }\n"
+    )
+    summary, _r, _entry = _oracle(good)
+    if exe:
+        assert _twin_line(exe, good) == (0, summary)
+
+
+def _canon_chain(n: int, name: str = "f") -> str:
+    """A function of n locals, each the one before plus one: a chain of n dependent values (CF-PPLIMITS)."""
+    body = "".join(f" uint32_t v{k} = v{k - 1} + 1u;\n" for k in range(1, n))
+    return f"uint32_t {name}(uint32_t x, uint32_t *p) {{\n uint32_t v0 = x;\n{body} return v{n - 1};\n}}\n"
+
+
+def _canon_doubling(n: int, stores: int = 0) -> str:
+    """A function of n locals, each the one before added to itself, the last stored through `p` `stores` times: a
+    value read twice at every step, whose tree spells 2^n leaves (CF-PPLIMITS)."""
+    body = "".join(f" uint32_t x{k} = x{k - 1} + x{k - 1};\n" for k in range(1, n + 1))
+    sink = f" *p = x{n};\n" * stores
+    return f"uint32_t f(uint32_t x0, uint32_t *p) {{\n{body}{sink} return x{n};\n}}\n"
+
+
+def test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails():
+    """CF-PPLIMITS: the structural canon -- the digest every summary line carries, and `bcir-cc` prints one for each
+    file it compiles -- spelled a value number as its value's whole dataflow tree and kept the string, so a chain of
+    n dependent values cost it O(n^2) bytes and a value read twice at each of n steps 2^n: 2 000 chained locals took
+    the twin 551 MB and 11 s, 8 000 more than 4 GiB, and 18 doublings -- a unit of 500 bytes -- 32 MB of canon, a few
+    more any memory there is. A value number is now the FNV-1a (64-bit) of its one-level spelling, its reads' own
+    numbers in it, in 16 hex digits, on both rails (`_vn_number`, `vn_claim`): read here out of a hash this test
+    computes, `(a - b) - a` numbers its inner value `fnv("c.bin.sub(in:p0,in:p1)")` and returns
+    `fnv("c.bin.sub(<that>,in:p0)")`. A record is then its claim's op, imm and reads' numbers, and the canon linear
+    in the unit: 1 200 chained locals and 64 doublings stored five times lower digest-equal, the twin's canon byte for
+    byte the oracle's and at most 64 bytes a claim. The chain runs first: spelled, its canon is 42 MB and fails here
+    in a moment, where the doublings' would take any memory there is."""
+    from bcir.verify import cfront_structural_canon
+
+    def num(spelling: str) -> str:
+        return f"{_fnv1a(spelling.encode()):016x}"
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    head = "#include <stdint.h>\n"
+    pin = head + "uint32_t f(uint32_t a, uint32_t b) { return (a - b) - a; }\n"
+    inner = num("c.bin.sub(in:p0,in:p1)")
+    canon = cfront_structural_canon(compile_unit(pin, check_clang=False).lowered)
+    assert canon == (
+        f"c.bin.sub|4|{inner},in:p0||0\nc.bin.sub|4|in:p0,in:p1||0\n"
+        f"ret={num(f'c.bin.sub({inner},in:p0)')}|stores=\n@\n"
+    ), canon
+    if exe:
+        assert _twin_canon(exe, pin) == canon
+    for what, src in (
+        ("1 200 chained locals", head + _canon_chain(1200)),
+        ("64 doublings stored five times", head + _canon_doubling(64, stores=5)),
+    ):
+        summary, r, _entry = _oracle(src)
+        canon = cfront_structural_canon(r.lowered)
+        claims = sum(len(lf.claims) for lf in r.lowered.functions.values())
+        assert r.is_clean and len(canon) <= 64 * claims, (what, claims, len(canon))
+        if exe:
+            assert _twin_line(exe, src) == (0, summary), what
+            assert _twin_canon(exe, src) == canon, what
+
+
+def test_a_value_number_past_the_depth_cap_is_cyc_on_both_rails():
+    """CF-PPLIMITS: a value number's walk stops past depth 96 (`cyc`) on both rails, but the twin read its memo before
+    the depth and the oracle the depth first, so a value an earlier walk numbered whole, reached again one step past
+    the cap, was its number on the twin and `cyc` on the oracle: `*p = t + 1u + ... + 1u` of 97 terms beside `return
+    t` -- the anchor numbers `t` first -- lowered digest-different. The twin reads the depth first, as the oracle. The
+    oracle's canon with its cap lifted shows each witness reaches the cap from 97 terms and not at 96."""
+    import bcir.verify as verify
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for terms in (96, 97, 98):
+        src = (
+            "#include <stdint.h>\nuint32_t f(uint32_t x, uint32_t *p) {\n uint32_t t = x + 1u + 2u + 3u;\n"
+            f" *p = t{' + 1u' * terms};\n return t;\n}}\n"
+        )
+        summary, r, _entry = _oracle(src)
+        capped = verify.cfront_structural_canon(r.lowered)
+        cap = verify._VN_MAXDEPTH
+        verify._VN_MAXDEPTH = 1 << 10
+        try:
+            whole = verify.cfront_structural_canon(r.lowered)
+        finally:
+            verify._VN_MAXDEPTH = cap
+        assert (capped != whole) == (terms >= 97), terms
+        if exe:
+            assert _twin_line(exe, src) == (0, summary), terms
+
+
+def test_claim_ids_stay_unique_past_a_function_of_1000_claims():
+    """CF-PPLIMITS: the twin numbered a function's claims from 1000 + 1000 * its index, so a function of more than
+    1000 claims ran into the next one's ids, and R1.1 refused a valid unit (`duplicate claim id 2000`, ok=0) the
+    oracle -- one sequence over the unit -- lowered clean, digest-equal but for that. Each function's ids start past
+    the last one taken; a function of 1000 claims or fewer keeps the ids it had."""
+    src = "#include <stdint.h>\n" + _canon_chain(600, "g") + _canon_chain(600)
+    summary, r, _entry = _oracle(src)
+    ids = [c.id for lf in r.lowered.functions.values() for c in lf.claims]
+    assert r.is_clean and " ok=1 " in summary and len(ids) == len(set(ids)) > 3000, summary
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    if exe:
+        assert _twin_line(exe, src) == (0, summary)
 
 
 _SPLITS_DRIVER = (

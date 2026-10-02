@@ -1,6 +1,6 @@
 /* Adversarial SANITIZER fixture (Bug A: unbounded-recursion stack exhaustion / DoS).
  * Pathological deeply-nested inputs (1500 levels each, ABOVE the recursive-descent depth cap
- * BCIR_MAXDEPTH=1200 yet BELOW MAXTOK=16384 tokens, so the depth GUARD -- not the token cap --
+ * BCIR_MAXDEPTH=1200 yet far BELOW the MAXTOK token cap, so the depth GUARD -- not the token cap --
  * is what stops them). With no guard the recursive-descent parser recurses once per nesting level
  * and exhausts the native stack (gcc-ASan: `stack-overflow`; raw: SIGSEGV). The depth counter in CC
  * (ENTER_REC/LEAVE_REC at every recursive-cycle entry: p_expr/p_unary/p_stmt/p_block/agg_init_at/

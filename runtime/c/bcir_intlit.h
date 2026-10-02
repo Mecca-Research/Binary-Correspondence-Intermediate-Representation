@@ -21,6 +21,10 @@
 typedef struct { unsigned long long v; int decimal, u, lr, nsuf; char suf[49]; } intlit;
 static const char int_bad[]="invalid integer literal", int_bad_suffix[]="invalid suffix",
                   int_too_large[]="an integer constant too large for every type its base and suffix allow";
+/* The one reason the lexer and the preprocessor refuse a byte past ASCII outside a literal for (CF-PPLIMITS; the
+ * oracle's `clex.NONASCII`): an identifier here is ASCII, so `café` is no name -- the preprocessor had read the
+ * name `caf` out of it, where the oracle read `café`, and the lexer handed the rest on as punctuators. */
+static const char nonascii_outside[]="non-ASCII character outside a literal";
 /* Whether suf[0..n) -- the trailing run of `u`/`U`/`l`/`L` -- is a suffix C spells (C11 6.4.4.1p1): at most one `u`
  * or `U`, first or last, around nothing, one `l`/`L`, or `ll`/`LL`; never `lL`, `uu` or `lul`, which Clang and GCC
  * refuse (the oracle's `clex.int_suffix_ok`, CF-SUFFIX). */

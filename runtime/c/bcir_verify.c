@@ -118,7 +118,8 @@ int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
   if(dn) diag[0]=0;
   if(!unit_shape_valid(u,diag,dn))return 0;
   /* R1.1: claim-id uniqueness (the mirror of R1's RID uniqueness, for the claim namespace). Claim ids
-   * are unit-wide unique by construction (the cid base is bumped per function); a duplicate/injected id
+   * are unit-wide unique by construction (each function's ids start past the last one taken, CF-PPLIMITS);
+   * a duplicate/injected id
    * makes the claim graph ambiguous (a plan step / attestation / structural digest could bind to the
    * wrong claim), so it is rejected here exactly as bcir/verify's R1.1 does. O(total_claims^2) over the
    * unit -- claim arrays are small per function; for a large unit this stays well within the verifier

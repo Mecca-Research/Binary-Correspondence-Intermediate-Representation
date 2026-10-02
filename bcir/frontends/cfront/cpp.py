@@ -25,7 +25,14 @@ from dataclasses import dataclass
 
 from ..._artifact_json import read_bounded_text
 from .abi import HOST, TargetABI
-from .clex import IDENT_MAX, CLexError, char_constant_units, int_literal_parts, parse_int_literal
+from .clex import (
+    IDENT_MAX,
+    NONASCII,
+    CLexError,
+    char_constant_units,
+    int_literal_parts,
+    parse_int_literal,
+)
 
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
 # dynamic predefined macros: expanded per source position, not stored as static bodies.
@@ -33,6 +40,19 @@ _DYNAMIC = ("__FILE__", "__LINE__")
 # feature-test operators usable in #if (and reported as `defined`); evaluated in _eval.
 _HAS_OPS = ("__has_include", "__has_embed", "__has_attribute", "__has_builtin", "__has_c_attribute")
 _SUPPORTED_ATTRS = frozenset({"packed", "aligned"})  # attributes the L8 ABI honours (GCC __x__ ok)
+#: The feature-test operators whose parenthesized operand the twin's `#if` walk reads as tokens.
+_HAS_PAREN = ("__has_attribute", "__has_builtin", "__has_c_attribute")
+#: The reason both rails refuse a `defined` with no name, or with `(` and a name but no `)`, for (CF-PPLIMITS).
+_BAD_DEFINED = "malformed defined operator"
+#: The white space a directive line is read across, as the twin reads it (`bcir_cpp.c`): a space or a tab before its
+#: `#`, between the `#` and its name and after the name, the name a run of ASCII identifier characters. `str.strip`
+#: had read every Unicode space as white space -- `\u00a0#define K 3u` defined `K` here and was refused by the twin --
+#: and the name had ended only at a space, so `#define\tK 3u` was an unknown directive here (CF-PPLIMITS).
+_DIRECTIVE_SPACE = " \t"
+_DIRECTIVE_NAME = re.compile(r"[A-Za-z0-9_]*", re.ASCII)
+#: The ASCII white space a directive's operand is stripped of at its ends: never a character past ASCII, which stays
+#: in the operand for the reader that refuses it (NONASCII).
+_ASCII_SPACE = " \t\r\f\v"
 # preprocessing tokens: identifier, number, string, char, or punctuation (multi-char first).
 _PUNCT = [
     "<<=",
@@ -84,16 +104,20 @@ _PUNCT = [
     ":",
     "?",
 ]
+#: ASCII (CF-PPLIMITS): `\w` and `\d` had taken every Unicode letter and digit, so `café` was one name here and `caf`
+#: and two bytes on the twin; and a character no alternative matched was dropped -- `x + caf€` lowered as `x + caf` --
+#: where the twin hands each such byte on as a token of its own.
 _TOKEN_RE = re.compile(
     r'"(?:\\.|[^"\\])*"'  # string
     r"|'(?:\\.|[^'\\])*'"  # char
     r"|(?:u8|[LuU])'(?:\\.|[^'\\])*'"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)
     r"|\.?\d(?:[eEpP][-+]|[\w.'])*"  # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
     r"|[A-Za-z_]\w*"  # identifier
-    r"|" + "|".join(re.escape(p) for p in _PUNCT) + r"|\\"
-)  # a stray backslash is its own token (e.g. a path in a
-#                                               stringize arg `#x` -> `"C:\\tmp"`); it would otherwise be
-#                                               dropped, corrupting the `#`-spelling.
+    rf"|{'|'.join(re.escape(p) for p in _PUNCT)}"  # the punctuators, longest first
+    r"|\\"  # a stray backslash is its own token (a path in a stringize arg `#x` -> `"C:\\tmp"`)
+    r"|\S",  # any other character, one token: the lexer refuses it (`@`, a NUL, one past ASCII)
+    re.ASCII,
+)
 
 
 class CPPError(Exception):
@@ -117,7 +141,12 @@ def _tokens(s: str) -> list[str]:
 
 
 def _is_id(t: str) -> bool:
-    return bool(t) and (t[0].isalpha() or t[0] == "_")
+    return bool(t) and (t[0].isascii() and t[0].isalpha() or t[0] == "_")
+
+
+def _digit(c: str) -> bool:
+    """An ASCII decimal digit -- `str.isdigit` takes `٣` and `²` too (CF-PPLIMITS)."""
+    return "0" <= c <= "9" and len(c) == 1
 
 
 #: The one reason each rail gives for a macro name, and for a macro parameter, longer than
@@ -128,23 +157,77 @@ def _is_id(t: str) -> bool:
 MACRO_NAME_TOO_LONG = "macro name is too long"
 MACRO_PARAM_TOO_LONG = "macro parameter is too long"
 _NEEDS_NAME = "conditional directive requires an identifier"
-#: A name as the tokenizer reads one (`_TOKEN_RE`), so a directive reads the name its text spells; an
-#: ASCII name is the one the twin's `macro_name` reads.
-_NAME_RE = re.compile(r"[ \t]*([A-Za-z_]\w*)")
+#: A name as the tokenizer reads one (`_TOKEN_RE`), so a directive reads the name its text spells: ASCII, the
+#: one the twin's `macro_name` reads.
+_NAME_RE = re.compile(r"[ \t]*([A-Za-z_]\w*)", re.ASCII)
 
 
 def _macro_name(text: str, why: str) -> tuple[str, int]:
     """The macro name a directive reads at the start of `text` -- the one `#define` or `-D` defines,
     `#undef` removes, `#ifdef`/`#ifndef`/`#elifdef`/`#elifndef`/`defined` tests -- and the index just
     past it: the identifier there (`_NAME_RE`). A CPPError with `why`, the directive's own reason
-    (the twin's), when none starts there, and with MACRO_NAME_TOO_LONG when it is longer than
-    IDENT_MAX."""
+    (the twin's), when none starts there, with MACRO_NAME_TOO_LONG when it is longer than IDENT_MAX, and
+    with NONASCII when a non-ASCII character runs on from it -- `#ifdef café` beside `#define caf 5` had
+    tested `café` here and `caf` on the twin (CF-PPLIMITS)."""
     m = _NAME_RE.match(text)
     if m is None:
         raise CPPError(why)
     if len(m.group(1)) > IDENT_MAX:
         raise CPPError(MACRO_NAME_TOO_LONG)
+    if not text[m.end() : m.end() + 1].isascii():
+        raise CPPError(NONASCII)
     return m.group(1), m.end()
+
+
+#: The most parameters a function-like macro takes (the twin's `Macro.params`), and a parameter's name.
+_MAX_PARAMS = 16
+_PARAM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _params(rest: str, i: int) -> tuple[list[str], int]:
+    """The parameter list of a function-like `#define` from just past its `(` at `rest[i]`, and the index just past
+    its `)`: names separated by commas, with spaces and tabs around them, a last `...` (`__VA_ARGS__`). Read by the
+    twin's grammar, for its reasons (CF-PPLIMITS) -- the oracle had split the text at commas and taken whatever lay
+    between them as a parameter, so `F(a b)`, `F(1)`, `F(a, a)`, `F(a` and seventeen parameters defined a macro here
+    that the twin refused, and `F(café)` one named `café`."""
+    params: list[str] = []
+
+    def skip(k: int) -> int:
+        while rest[k : k + 1] in (" ", "\t"):
+            k += 1
+        return k
+
+    while True:
+        i = skip(i)
+        if rest[i : i + 1] == ")":
+            return params, i + 1
+        if params:
+            if rest[i : i + 1] != ",":
+                raise CPPError("invalid macro parameter list")
+            i = skip(i + 1)
+            if i >= len(rest) or rest[i] == ")":
+                raise CPPError("invalid macro parameter list")
+        if len(params) >= _MAX_PARAMS:
+            raise CPPError("too many macro parameters")
+        if rest.startswith("...", i):
+            params.append("__VA_ARGS__")
+            i = skip(i + 3)
+            if rest[i : i + 1] != ")":
+                raise CPPError("variadic macro parameter must be last")
+            return params, i + 1
+        if not rest[i : i + 1].isascii():
+            raise CPPError(NONASCII)
+        m = _PARAM_RE.match(rest, i)
+        if m is None:
+            raise CPPError("invalid macro parameter")
+        if len(m.group()) > IDENT_MAX:
+            raise CPPError(MACRO_PARAM_TOO_LONG)
+        if m.group() in params:
+            raise CPPError("duplicate macro parameter")
+        params.append(m.group())
+        i = m.end()
+        if not rest[i : i + 1].isascii():
+            raise CPPError(NONASCII)
 
 
 def _bound_names(toks: list[str]) -> list[str]:
@@ -190,6 +273,9 @@ class Preprocessor:
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
+        # a NUL: the twin's drivers refuse it (`READ-ERR`), for a C string ends there (CF-PPLIMITS)
+        if "\0" in text:
+            raise CPPError("the source holds a NUL byte")
         out: list[str] = []
         self._incstack, self.linemap = [], []
         self._run(self._logical_lines(text), out, name)
@@ -248,9 +334,9 @@ class Preprocessor:
             for raw in lines:
                 self._cur_line = self._presumed
                 self._presumed += 1
-                line = raw.strip()
+                line = raw.lstrip(_DIRECTIVE_SPACE)
                 if line.startswith("#"):
-                    self._directive(line[1:].strip(), cond, out, name, active)
+                    self._directive(line[1:].lstrip(_DIRECTIVE_SPACE), cond, out, name, active)
                     continue
                 if active():
                     self._out(out, self._expand_text(raw))
@@ -260,9 +346,12 @@ class Preprocessor:
             raise CPPError(f"unterminated #if in {name}")
 
     def _directive(self, d: str, cond, out, name, active) -> None:
-        op, _, rest = d.partition(" ")
-        rest = rest.strip()
+        op = _DIRECTIVE_NAME.match(d).group()
+        rest = d[len(op) :].strip(_ASCII_SPACE)
         parent = all(c[0] for c in cond)
+        # a name running on past ASCII -- `#café`, `#\u00a0define` -- in a group read: the twin's reason
+        if not d[len(op) : len(op) + 1].isascii() and active():
+            raise CPPError(NONASCII)
 
         if op in ("ifdef", "ifndef", "if", "elifdef", "elifndef", "elif", "else", "endif"):
             self._conditional(op, rest, cond, parent)
@@ -322,28 +411,11 @@ class Preprocessor:
     def _define(self, rest: str) -> None:
         nm, nameend = _macro_name(rest, "macro name must be an identifier")
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
-            depth, i = 0, nameend
-            while i < len(rest):
-                if rest[i] == "(":
-                    depth += 1
-                elif rest[i] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                i += 1
-            params_src = rest[nameend + 1 : i]
-            body = rest[i + 1 :].strip()
-            params = [p.strip() for p in params_src.split(",") if p.strip()]
-            for p in params:  # bounded as a macro name is, for its own reason (the twin's)
-                m = _NAME_RE.match(p)
-                if m is not None and len(m.group(1)) > IDENT_MAX:
-                    raise CPPError(MACRO_PARAM_TOO_LONG)
-            variadic = bool(params) and params[-1] == "..."
-            if variadic:
-                params[-1] = "__VA_ARGS__"
-            self.macros[nm] = Macro(nm, _tokens(body), params, variadic)
+            params, i = _params(rest, nameend + 1)
+            variadic = bool(params) and params[-1] == "__VA_ARGS__"
+            self.macros[nm] = Macro(nm, _tokens(rest[i:].strip(_ASCII_SPACE)), params, variadic)
         else:  # object-like
-            self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip()))
+            self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip(_ASCII_SPACE)))
 
     # --- #line ---
     def _line(self, rest: str) -> None:
@@ -353,7 +425,7 @@ class Preprocessor:
         toks = self._expand(_tokens(rest), set())
         if not toks:
             return
-        m = re.match(r"\d+", toks[0])  # a decimal digit sequence
+        m = re.match(r"[0-9]+", toks[0])  # a decimal digit sequence
         if not m:
             return
         self._presumed = int(m.group())
@@ -364,7 +436,7 @@ class Preprocessor:
 
     # --- #include / #embed ---
     def _include(self, rest: str, out, name) -> None:
-        rest_x = self._expand_text(rest).strip()
+        rest_x = self._expand_text(rest).strip(_ASCII_SPACE)
         system = rest_x.startswith("<")
         target = self._header_name(rest)
         text = self._resolve(target)
@@ -376,6 +448,9 @@ class Preprocessor:
                 f"#include {target!r} not found (in {name}); searched the mount + "
                 f"{len(self.search_paths)} -I path(s)"
             )
+        # a NUL in a header, in the twin's words (`bcir_cpp.c`); the tokenizer had dropped it (CF-PPLIMITS)
+        if "\0" in text:
+            raise CPPError(f"#include {target} contains NUL")
         if self._depth >= 64:
             raise CPPError("#include nesting too deep")
         self._depth += 1
@@ -394,7 +469,7 @@ class Preprocessor:
         return ", ".join(str(b) for b in data)
 
     def _header_name(self, rest: str) -> str:
-        rest = self._expand_text(rest).strip()
+        rest = self._expand_text(rest).strip(_ASCII_SPACE)
         if rest.startswith(("<", '"')):
             return rest[1:].split(">" if rest[0] == "<" else '"', 1)[0]
         return rest
@@ -538,16 +613,57 @@ class Preprocessor:
         return out
 
     # --- constant-expression evaluation (#if / #elif) ---
+    def _defined_walk(self, expr: str) -> str:
+        """`expr` with each `defined X` and `defined(X)` replaced by 1 or 0, read token by token as the twin's
+        `eval_if` reads it: a name longer than IDENT_MAX refused where it stands, a non-ASCII character outside a
+        literal refused (NONASCII), and `defined`'s operand read as `#ifdef` reads one (`_macro_name`) -- no name,
+        or `(` and a name with no `)`, refused as `malformed defined operator`. Two regular expressions had matched
+        only a well-formed `defined` and left a malformed one standing, to be refused as a malformed expression
+        (CF-PPLIMITS). A `__has_*` operator's parenthesized operand is its own (the passes below read it); the twin
+        skips it as this does."""
+        out, last, pos = [], 0, 0
+        while (m := _TOKEN_RE.search(expr, pos)) is not None:
+            t, pos = m.group(), m.end()
+            if _is_id(t) and len(t) > IDENT_MAX:
+                raise CPPError(MACRO_NAME_TOO_LONG)
+            if not t[0].isascii():
+                raise CPPError(NONASCII)
+            if t == "defined":
+                rest = expr[pos:]
+                j = len(rest) - len(rest.lstrip(" \t"))
+                if rest[j : j + 1] == "(":
+                    name, k = _macro_name(rest[j + 1 :], _BAD_DEFINED)
+                    close = _TOKEN_RE.search(rest, j + 1 + k)
+                    if close is None or close.group() != ")":
+                        raise CPPError(_BAD_DEFINED)
+                    end = close.end()
+                else:
+                    name, end = _macro_name(rest, _BAD_DEFINED)
+                out += [expr[last : m.start()], "1" if self._defined(name) else "0"]
+                pos = last = m.end() + end
+            elif t == "__has_include":
+                # to the first `(` after it and the `)` that closes it, as the twin
+                o = expr.find("(", pos)
+                if o >= 0:
+                    depth, e = 1, o + 1
+                    while e < len(expr) and depth:
+                        depth += {"(": 1, ")": -1}.get(expr[e], 0)
+                        e += 1
+                    pos = e
+            elif t in _HAS_PAREN:  # a `(` next, then the tokens to the `)` that closes it
+                o = _TOKEN_RE.search(expr, pos)
+                if o is not None and o.group() == "(":
+                    depth, pos = 1, o.end()
+                    while depth and (a := _TOKEN_RE.search(expr, pos)) is not None:
+                        pos = a.end()
+                        depth += {"(": 1, ")": -1}.get(a.group(), 0)
+        return "".join(out) + expr[last:]
+
     def _eval(self, expr: str) -> int:
         # handle defined / the __has_* operators BEFORE macro expansion, then expand. A `defined`
         # operand and every name the expression looks up, before and after expansion, are macro
         # names: each is bounded (CF-LIMITS).
-        def defined(m) -> str:
-            name = _macro_name(m.group(1), "malformed defined operator")[0]
-            return "1" if self._defined(name) else "0"
-
-        expr = re.sub(r"\bdefined\s*\(\s*(\w+)\s*\)", defined, expr)
-        expr = re.sub(r"\bdefined\s+(\w+)", defined, expr)
+        expr = self._defined_walk(expr)
         expr = re.sub(
             r"\b__has_include\s*\(([^)]*)\)",
             lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None else "0",
@@ -564,6 +680,7 @@ class Preprocessor:
             r"\b__has_attribute\s*\(\s*(\w+)\s*\)",
             lambda m: "1" if m.group(1).strip("_") in _SUPPORTED_ATTRS else "0",
             expr,
+            flags=re.ASCII,
         )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
         expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
@@ -579,7 +696,7 @@ def _translation_datetime() -> tuple[str, str]:
     import os, time  # noqa: PLC0415,E401
 
     epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
-    tm = time.gmtime(int(epoch)) if epoch.isdigit() else time.gmtime()
+    tm = time.gmtime(int(epoch)) if epoch.isascii() and epoch.isdigit() else time.gmtime()
     mon = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[
         tm.tm_mon - 1
     ]
@@ -702,7 +819,7 @@ _PUNCT_RE = re.compile("|".join(re.escape(p) for p in _PUNCT))  # longest first:
 
 def _is_ppnum(t: str) -> bool:
     """Whether the preprocessing token `t` is a pp-number (C 6.4.8): a digit, or `.` and a digit, first."""
-    return t[:1].isdigit() or (t[:1] == "." and t[1:2].isdigit())
+    return _digit(t[:1]) or (t[:1] == "." and _digit(t[1:2]))
 
 
 def _pastes(prev: str, t: str) -> bool:
@@ -712,7 +829,7 @@ def _pastes(prev: str, t: str) -> bool:
     tokens cannot see it), a pp-number runs on through a `.` or an exponent's sign, or a `.` begins a
     number. A space between them keeps them two (the twin's `pastes`, byte for byte)."""
     a, b = prev[-1], t[0]
-    if (_is_id(a) or a.isdigit()) and (_is_id(b) or b.isdigit()):
+    if (_is_id(a) or _digit(a)) and (_is_id(b) or _digit(b)):
         return True
     if (a == "/" and b in "*/") or (a == "." and b == "."):
         return True
@@ -724,7 +841,7 @@ def _pastes(prev: str, t: str) -> bool:
         return True
     if b == "'" and a in "LuU8":  # a word that may be an encoding prefix (CF-PPARITH)
         return True
-    return a == "." and b.isdigit()
+    return a == "." and _digit(b)
 
 
 def _join(toks: list[str]) -> str:
@@ -899,7 +1016,7 @@ class _ConstEval:
             v = self._comma(live, depth + 1)
             self._expect(")")
             return v
-        if t[:1].isdigit():
+        if _digit(t[:1]):
             return _int_lit(t)
         if _CHAR_TOKEN.match(t):
             return _char_lit(t, self.abi)

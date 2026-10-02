@@ -549,7 +549,8 @@ def _event_laws(module: Module) -> list[Diagnostic]:
 # multiset of each claim's DATAFLOW VALUE-NUMBER:
 #
 #   record(claim) = <op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>
-#   value_number(rid) = <op-base>(<vns of that producer claim's reads>)  if some claim writes rid;
+#   value_number(rid) = the FNV-1a (64-bit, 16 hex digits) of `<op-base>(<vns of that producer claim's
+#                       reads>)` if some claim writes rid (see _vn_number: linear, not the tree spelled);
 #                       else "in:p<j>" if rid is the j-th PARAMETER (position is cross-rail stable, so
 #                       the two params in `a - b` are distinguished); else the literal "in" (any other
 #                       input -- a global / uninitialized local -- stays anonymous, rail-private rid out).
@@ -587,7 +588,7 @@ def _event_laws(module: Module) -> list[Diagnostic]:
 #
 # This is rid invariant + claim-order invariant (so it matches cross-rail, 171/171) but a real STRUCTURE
 # check: an operand swap (commutative OR non-commutative -- the latter now via positional order)
-# rebinds value-number trees; an op substitution changes a base; a call redirect changes a `c.call:NAME`
+# rebinds value numbers; an op substitution changes a base; a call redirect changes a `c.call:NAME`
 # base; a constant tamper changes c.const's imm; a cast-width change changes `c.cast:WIDTH`; an injected/
 # duplicate id is caught by the dedicated unit-wide R1.1 law. Non-tautological in test_ir_structural_parity.py.
 _DIGEST_OFFSET = 1469598103934665603  # FNV-1a 64-bit offset basis (== the C offset)
@@ -595,6 +596,29 @@ _DIGEST_PRIME = 1099511628211  # FNV-1a 64-bit prime
 _DIGEST_MASK = (1 << 64) - 1
 _NOP = 0  # Opcode.NOP integer value (the control-marker opcode)
 _VN_MAXDEPTH = 96  # recursion guard (== the C twin's; a deep/cyclic chain folds to "cyc")
+
+
+def _fnv1a64(data: bytes) -> int:
+    """FNV-1a (64-bit) of `data`: the digest's hash, and a value number's (the twin's `fnv_add`)."""
+    h = _DIGEST_OFFSET
+    for byte in data:
+        h = ((h ^ byte) * _DIGEST_PRIME) & _DIGEST_MASK
+    return h
+
+
+def _vn_number(op: str, parts: list[str]) -> str:
+    """A value number (CF-PPLIMITS): the FNV-1a of its one-level spelling `op(a,b)`, whose reads `parts` are their
+    own value numbers, in 16 hex digits (the twin's `vn_claim`). It spelled the value's whole dataflow tree, so a
+    chain of n dependent values cost the canon O(n^2) bytes and a value read twice at each of n steps 2^n -- 2 000
+    chained locals 116 MB of canon, 18 such steps in 500 bytes of source 32 MB, and a probe of 8 000 past any
+    memory. Numbered, the canon is linear in the function. Two values number alike exactly when their trees spell
+    alike, but for a 64-bit collision: the walk, the memo, `cyc` and the depth cap are the spelling's, a commutative
+    op's reads are sorted by their numbers as they were by their spellings, and the hash reads the one level the
+    spelling had -- so the canon draws every equality and every difference the spelled canon drew."""
+    spelling = op + "(" + ",".join(parts) + ")"
+    return f"{_fnv1a64(spelling.encode('utf-8')):016x}"
+
+
 # The ONLY op whose ':' suffix is a rail-divergent label (Python `c.call.vaarg` vs the C twin
 # `c.call.vaarg:int`); its suffix is stripped. Every other ':' suffix is structural and KEPT.
 _VN_STRIP_SUFFIX = ("c.call.vaarg",)
@@ -659,7 +683,7 @@ def _canon_func_records(lf) -> list[str]:
     OBSERVABLE-OUTPUT anchor line. The per-claim multiset alone is blind to a SINK claim's write target
     (redirecting a dead/return-temp/store wr is invisible if its result is not read downstream); the
     anchor closes that by pinning what the function actually OUTPUTS -- the value it RETURNS and the
-    memory it STORES -- as rail-stable value-number trees. Then one line per static local that has a
+    memory it STORES -- as rail-stable value numbers. Then one line per static local that has a
     constant initializer: the initializer both rails render (`static NAME = INIT`, sorted)."""
     claims = [c for c in lf.claims if int(c.opcode) != _NOP]
     first_writer: dict[int, int] = {}  # rid -> index of the FIRST claim that writes it
@@ -694,7 +718,7 @@ def _canon_func_records(lf) -> list[str]:
             memo[i] = "cyc"  # cycle guard (a loop-carried rid resolves to "cyc")
             c = claims[i]
             parts = _ordered(c, [vn(int(r), depth + 1) for r in c.rd])
-            memo[i] = "{}({})".format(_vn_op(c), ",".join(parts))
+            memo[i] = _vn_number(_vn_op(c), parts)
             return memo[i]
 
         return vn
@@ -762,10 +786,7 @@ def cfront_structural_digest(lowered) -> int:
     """The cross-rail per-claim structural digest of a lowered C unit (the C twin is
     `bcir_cfront_digest`). FNV-1a (64-bit) over `cfront_structural_canon`'s bytes; returns a 64-bit int
     (the dual-rail summary stamps it as `digest=<16-hex>`). Byte-identical to the C twin's digest."""
-    h = _DIGEST_OFFSET
-    for byte in cfront_structural_canon(lowered).encode("utf-8"):
-        h = ((h ^ byte) * _DIGEST_PRIME) & _DIGEST_MASK
-    return h
+    return _fnv1a64(cfront_structural_canon(lowered).encode("utf-8"))
 
 
 def cfront_unit_claim_ids_unique(lowered) -> list[Diagnostic]:

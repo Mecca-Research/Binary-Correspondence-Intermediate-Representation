@@ -23,6 +23,13 @@
  * one reason, as the oracle's `cpp.py` refuses it. */
 #define BCIR_CPP_NAME_MAX 63
 #define BCIR_CPP_NAME (BCIR_CPP_NAME_MAX + 1)
+/* A logical line is at most BCIR_CPP_LINE - 2 bytes (`preprocessor line too long`), and every buffer that holds one
+ * token, one macro argument or one substitution holds a line's worth (CF-PPLIMITS): a token is no longer than the
+ * line it is in, so none is refused for its own length. They had held 256 bytes -- a string literal, a stringized
+ * argument or a `__has_attribute` operand of 256 characters or more was refused (`preprocessor token too long`)
+ * where the oracle took it -- and an argument 1 KiB, a substitution 2 KiB. */
+#define BCIR_CPP_LINE 8192
+#define BCIR_CPP_ARGS 16
 #define BCIR_CPP_LONG_NAME "macro name is too long"
 typedef struct {
   char name[BCIR_CPP_NAME];
@@ -43,10 +50,15 @@ typedef struct CppState {
   int include_depth;
   int char_signed, wchar_size, wchar_signed;   /* the target's character types, which a `#if` reads a character
                                                 * constant by (CF-PPARITH): kept across runs and resets */
-  char expand_a[8192];
-  char expand_b[8192];
-  char conditional_buffer[8192];
-  char conditional_expanded[8192];
+  char expand_a[BCIR_CPP_LINE];
+  char expand_b[BCIR_CPP_LINE];
+  char conditional_buffer[BCIR_CPP_LINE];
+  char conditional_expanded[BCIR_CPP_LINE];
+  char args[BCIR_CPP_ARGS][BCIR_CPP_LINE];   /* a function-like invocation's arguments (expand_once, never nested) */
+  char subst[BCIR_CPP_LINE];                 /* the substitution it writes */
+  char line_token[BCIR_CPP_LINE];            /* a `#line` operand (cpp_process recurses per #include: no frame) */
+  char *out_buf;                             /* the caller's output buffer, and whether the output filled it */
+  int out_full;
 } CppState;
 
 /* Fixed-size scratch buffers are an implementation limit, never permission to truncate a
@@ -108,13 +120,15 @@ static int ident_at(const char *s, int *i) {
 }
 /* A macro name a directive reads -- the one #define or -D defines, #undef removes, #ifdef/#ifndef/#elifdef/#elifndef
  * or defined tests: the identifier at s[*i] into `out` (BCIR_CPP_NAME bytes), *i past it. 0, with the refusal
- * recorded, when none starts there (`why`, the directive's own reason) or when it is longer than BCIR_CPP_NAME_MAX,
- * at any length (CF-LIMITS; the oracle's `_macro_name`). */
+ * recorded, when none starts there (`why`, the directive's own reason), when it is longer than BCIR_CPP_NAME_MAX,
+ * at any length (CF-LIMITS; the oracle's `_macro_name`), or when a byte past ASCII runs on from it: beside `#define
+ * caf 5`, `#ifdef café` had tested `caf` here and `café` on the oracle (CF-PPLIMITS). */
 static int macro_name(CppState *state, const char *s, int *i, char *out, const char *why) {
   int n = ident_at(s, i);
   if (!n) { cpp_limit(state, why); return 0; }
   *i += n;
   if (n > BCIR_CPP_NAME_MAX) { cpp_limit(state, BCIR_CPP_LONG_NAME); return 0; }
+  if ((unsigned char)s[*i] >= 0x80) { cpp_limit(state, nonascii_outside); return 0; }
   memcpy(out, s + *i - n, (size_t)n); out[n] = 0;
   return 1;
 }
@@ -186,10 +200,33 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
   out[0] = s[(*i)++]; out[1] = 0; return 'p';
 }
 
+/* Whether the next token at s[*i] (past spaces and tabs, as ntok skips them) is the punctuator `c` -- `(` or `)`,
+ * which no longer punctuator begins -- and if so *i past it. It copies nothing: a peek through a short buffer had
+ * refused whatever long token came next (CF-PPLIMITS). */
+static int next_is(const char *s, int *i, char c) {
+  int j = *i;
+  while (s[j] == ' ' || s[j] == '\t') j++;
+  if (s[j] != c) return 0;
+  *i = j + 1;
+  return 1;
+}
+
+/* The spacing token: the last bytes of the token or argument just written, which `pastes` reads the last byte of. It
+ * had kept the first 255 bytes, so after a longer argument the byte it read was not the last one: `F(...+b)` with the
+ * body `x y` wrote `...+by`, one identifier (CF-PPLIMITS). */
+static void set_prev(char *prev, const char *s) {
+  size_t n = strlen(s);
+  memcpy(prev, s + (n > 255 ? n - 255 : 0), n > 255 ? 256 : n + 1);
+}
+
 /* --- macro expansion (expand a line until stable) ------------------------ */
 static void app(CppState *state, char *o, size_t cap, size_t *w, const char *s) {
   size_t n = strlen(s);
-  if (*w >= cap || n >= cap - *w) { cpp_limit(state, "preprocessed output too large"); return; }
+  if (*w >= cap || n >= cap - *w) {
+    if (o == state->out_buf) state->out_full = 1;   /* the output, not a line: a larger buffer would hold it */
+    cpp_limit(state, "preprocessed output too large");
+    return;
+  }
   memcpy(o + *w, s, n); *w += n; o[*w] = 0;
 }
 /* The length of the punctuator `s` begins with: its multi-character one (longest first), else 1. */
@@ -228,7 +265,7 @@ static int pastes(const char *prevp, char a, const char *t, int anum) {
 
 /* Append __VA_ARGS__: every trailing arg from index `first`, comma-joined (matching cpp.py). */
 static void app_va(CppState *state, char *out, size_t cap, size_t *w,
-                   char args[][1024], int na, int first) {
+                   char args[][BCIR_CPP_LINE], int na, int first) {
   for (int z = first; z < na; z++) {
     if (z > first) app(state, out, cap, w, ",");
     app(state, out, cap, w, args[z]);
@@ -237,7 +274,7 @@ static void app_va(CppState *state, char *out, size_t cap, size_t *w,
 
 /* Whether __VA_ARGS__ holds at least one token (controls __VA_OPT__): there are trailing args and
  * either more than one (a comma token) or a single non-empty one. */
-static int va_nonempty_of(const Macro *m, char args[][1024], int na) {
+static int va_nonempty_of(const Macro *m, char args[][BCIR_CPP_LINE], int na) {
   if (!m->variadic) return 0;
   int vp = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], "__VA_ARGS__")) vp = q;
   if (vp < 0) return 0;
@@ -251,18 +288,18 @@ static int va_nonempty_of(const Macro *m, char args[][1024], int na) {
  * which spaces the line token by token (`pastes`), so no space written here reaches the output. Only a
  * stringized argument keeps its spelling, and it is spaced exactly where the argument is gathered. */
 static void subst_into(CppState *state, const char *body, const Macro *m,
-                       char args[][1024], int na, int va_ne,
+                       char args[][BCIR_CPP_LINE], int na, int va_ne,
                        char *out, size_t cap, size_t *w, char *prev) {
-  int i = 0; char t[256];
+  int i = 0; char t[BCIR_CPP_LINE];   /* each token in turn: none is read once the next one is */
   while (1) {
     int k = ntok(state, body, &i, t, sizeof t); if (!k) break;
     if (k == 'i' && !strcmp(t, "__VA_OPT__")) {   /* C23 __VA_OPT__(content): content iff va non-empty */
-      int j = i; char nx[8]; int nk = ntok(state, body, &j, nx, sizeof nx);
-      if (nk && !strcmp(nx, "(")) {
-        int cstart = j, depth = 1, jj = j, cend = j; char a[256];
-        while (depth) { int ak = ntok(state, body, &jj, a, sizeof a); if (!ak) { cend = jj; break; }
-          if (!strcmp(a, "(")) depth++;
-          else if (!strcmp(a, ")")) { depth--; if (!depth) { cend = jj - 1; break; } } }
+      int j = i;
+      if (next_is(body, &j, '(')) {
+        int cstart = j, depth = 1, jj = j, cend = j;
+        while (depth) { int ak = ntok(state, body, &jj, t, sizeof t); if (!ak) { cend = jj; break; }
+          if (!strcmp(t, "(")) depth++;
+          else if (!strcmp(t, ")")) { depth--; if (!depth) { cend = jj - 1; break; } } }
         if (va_ne) { char content[1024]; int cl = cend - cstart; if (cl < 0) cl = 0;
           if (cl > 1023) { cpp_limit(state, "macro replacement is too large"); cl = 1023; }
           memcpy(content, body + cstart, (size_t)cl); content[cl] = 0;
@@ -271,8 +308,8 @@ static void subst_into(CppState *state, const char *body, const Macro *m,
       }
     }
     if (!strcmp(t, "#") && k == 'p') {            /* stringize next param */
-      char p[256]; ntok(state, body, &i, p, sizeof p);
-      int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], p)) pi = q;
+      ntok(state, body, &i, t, sizeof t);
+      int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
       app(state, out, cap, w, "\"");
       if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) app_va(state, out, cap, w, args, na, pi);
       else if (pi >= 0 && pi < na) app(state, out, cap, w, args[pi]);
@@ -280,19 +317,16 @@ static void subst_into(CppState *state, const char *body, const Macro *m,
       strcpy(prev, "\""); continue;
     }
     if (!strcmp(t, "##") && k == 'p') {           /* paste: glue prev to next, no space */
-      char r[256]; int rk = ntok(state, body, &i, r, sizeof r); (void)rk;
-      int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], r)) pi = q;
+      ntok(state, body, &i, t, sizeof t);
+      int pi = -1; for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
       if (pi >= 0 && !strcmp(m->params[pi], "__VA_ARGS__")) {   /* glue prev to flattened __VA_ARGS__ */
         app_va(state, out, cap, w, args, na, pi);
-        if (na > pi) { strncpy(prev, args[na - 1], 255); prev[255] = 0; }
+        if (na > pi) set_prev(prev, args[na - 1]);
         continue;
       }
-      const char *rt = (pi >= 0 && pi < na) ? args[pi] : r;
+      const char *rt = (pi >= 0 && pi < na) ? args[pi] : t;
       app(state, out, cap, w, rt);
-      if (rt[0]) { strncpy(prev, rt, 255); prev[255] = 0; }
-      /* An empty paste operand leaves `prev` untouched.  A macro argument may contain
-       * many preprocessing tokens (up to the 1024-byte argument ceiling), while prev
-       * is the bounded 256-byte spacing token: never copy the whole argument blindly. */
+      if (rt[0]) set_prev(prev, rt);   /* an empty paste operand leaves `prev` untouched */
       continue;
     }
     int pi = -1; if (k == 'i') for (int q = 0; q < m->np; q++) if (!strcmp(m->params[q], t)) pi = q;
@@ -301,19 +335,19 @@ static void subst_into(CppState *state, const char *body, const Macro *m,
         if (*w && pastes(NULL, prev[strlen(prev) ? strlen(prev) - 1 : 0], args[pi], 1))
           app(state, out, cap, w, " ");
         app_va(state, out, cap, w, args, na, pi);
-        strncpy(prev, args[na - 1], 255); prev[255] = 0;
+        set_prev(prev, args[na - 1]);
       }
       continue;                                              /* empty __VA_ARGS__: emit nothing */
     }
     const char *emit = (pi >= 0 && pi < na) ? args[pi] : t;
     if (*w && pastes(NULL, prev[strlen(prev) ? strlen(prev) - 1 : 0], emit, 1)) app(state, out, cap, w, " ");
     app(state, out, cap, w, emit);
-    strncpy(prev, emit, 255); prev[255] = 0;
+    set_prev(prev, emit);
   }
 }
 
 /* substitute a function macro's args into its body; writes to out. */
-static void substitute(CppState *state, const Macro *m, char args[][1024], int na,
+static void substitute(CppState *state, const Macro *m, char args[][BCIR_CPP_LINE], int na,
                        char *out, size_t cap) {
   size_t w = 0; out[0] = 0; char prev[256] = "";
   subst_into(state, m->body, m, args, na, va_nonempty_of(m, args, na), out, cap, &w, prev);
@@ -321,7 +355,7 @@ static void substitute(CppState *state, const Macro *m, char args[][1024], int n
 
 static int expand_once(CppState *state, const char *line, char *out, size_t cap, int *changed) {
   size_t w = 0; out[0] = 0; *changed = 0;
-  int i = 0; char t[256], prevc = 0;
+  int i = 0; char t[BCIR_CPP_LINE], prevc = 0;
   char ptok[4] = ""; const char *prevp = ptok;   /* the last token written: a punctuator's spelling (else
                                                     * ""), and whether a pp-number -- exact after a token;
                                                     * unknown after a substitution, which the next pass
@@ -332,28 +366,31 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
     if (k == 'i') {
       int mi = find_macro(state, t, (int)strlen(t));
       if (mi >= 0 && state->macros[mi].isfunc) {
-        int j = i; char nx[8]; int nk = ntok(state, line, &j, nx, sizeof nx);
-        if (nk && !strcmp(nx, "(")) {
-          char args[16][1024]; int na = 0; int depth = 1, closed = 0; size_t aw = 0; args[0][0] = 0;
-          char a[256], ap[4] = ""; int anum = 0;   /* the argument's last token: a punctuator's
-                                                     * spelling (else ""), and whether a pp-number */
-          while (depth) { int ak = ntok(state, line, &j, a, sizeof a); if (!ak) break;
+        int j = i;
+        if (next_is(line, &j, '(')) {
+          char (*args)[BCIR_CPP_LINE] = state->args; int na = 0; int depth = 1, closed = 0; size_t aw = 0;
+          char *a = t, ap[4] = ""; int anum = 0;   /* each token of the arguments in turn (the macro's name is
+                                                     * read), the argument's last: a punctuator's spelling (else
+                                                     * ""), and whether a pp-number */
+          args[0][0] = 0;
+          while (depth) { int ak = ntok(state, line, &j, a, sizeof t); if (!ak) break;
             if (!strcmp(a, "(")) depth++;
             else if (!strcmp(a, ")")) { depth--; if (!depth) { closed = 1; break; } }
             else if (!strcmp(a, ",") && depth == 1) {
-              if (na >= 15) cpp_limit(state, "too many macro arguments");
+              if (na >= BCIR_CPP_ARGS - 1) cpp_limit(state, "too many macro arguments");
               else { args[na][aw] = 0; na++; args[na][0] = 0; }
               aw = 0; ap[0] = 0; anum = 0; continue;
             }
-            if (na < 16) { if (aw && pastes(ap, args[na][aw-1], a, anum) && aw < 1023) args[na][aw++] = ' ';
+            if (na < BCIR_CPP_ARGS) {
+              if (aw && pastes(ap, args[na][aw-1], a, anum) && aw < BCIR_CPP_LINE - 1) args[na][aw++] = ' ';
               for (int z = 0; a[z]; z++) {
-                if (aw < 1023) args[na][aw++] = a[z]; else cpp_limit(state, "macro argument is too large");
+                if (aw < BCIR_CPP_LINE - 1) args[na][aw++] = a[z]; else cpp_limit(state, "macro argument is too large");
               }
               args[na][aw] = 0; anum = ak == 'n';
               snprintf(ap, sizeof ap, "%s", ak == 'p' && strlen(a) < sizeof ap ? a : ""); } }
           if (!closed) cpp_limit(state, "unterminated macro invocation");
-          if (na < 16) na++;             /* the final argument; excess arguments already diagnosed */
-          char sub[2048]; substitute(state, &state->macros[mi], args, na, sub, sizeof sub);
+          if (na < BCIR_CPP_ARGS) na++;  /* the final argument; excess arguments already diagnosed */
+          char *sub = state->subst; substitute(state, &state->macros[mi], args, na, sub, sizeof state->subst);
           if (w && sub[0] && pastes(prevp, prevc, sub, prevnum)) app(state, out, cap, &w, " ");
           app(state, out, cap, &w, sub); prevc = sub[0] ? sub[strlen(sub) - 1] : prevc; prevp = NULL; prevnum = 1;
           i = j; *changed = 1; continue;
@@ -363,7 +400,7 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
          * ones -- so an OBJECT-macro body `a##c` / `1##2` pastes too. Run the body through the SHARED
          * substitute/paste path (no args: `#`/`##` see only literal tokens) so object + function macros
          * use ONE paste engine; the result is rescanned by the outer expand_line loop. */
-        char osub[2048]; substitute(state, &state->macros[mi], NULL, 0, osub, sizeof osub);
+        char *osub = state->subst; substitute(state, &state->macros[mi], NULL, 0, osub, sizeof state->subst);
         if (w && osub[0] && pastes(prevp, prevc, osub, prevnum)) app(state, out, cap, &w, " ");
         app(state, out, cap, &w, osub); prevc = osub[0] ? osub[strlen(osub) - 1] : prevc; prevp = NULL; prevnum = 1;
         *changed = 1; continue;
@@ -384,11 +421,11 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
         if (w && pastes(prevp, prevc, fl, prevnum)) app(state, out, cap, &w, " ");
         app(state, out, cap, &w, fl); prevc = '"'; ptok[0] = 0; prevp = ptok; prevnum = 0; *changed = 1; continue;
       } else if (!strcmp(t, "_Pragma")) {          /* _Pragma("..."): a lowering no-op (like #pragma) */
-        int j = i; char nx[8]; int nk = ntok(state, line, &j, nx, sizeof nx);
-        if (nk && !strcmp(nx, "(")) {              /* consume the balanced (...), emit nothing */
-          int depth = 1; char a[256];
-          while (depth) { int ak = ntok(state, line, &j, a, sizeof a); if (!ak) break;
-            if (!strcmp(a, "(")) depth++; else if (!strcmp(a, ")")) depth--; }
+        int j = i;
+        if (next_is(line, &j, '(')) {              /* consume the balanced (...), emit nothing */
+          int depth = 1;
+          while (depth) { int ak = ntok(state, line, &j, t, sizeof t); if (!ak) break;
+            if (!strcmp(t, "(")) depth++; else if (!strcmp(t, ")")) depth--; }
           i = j; *changed = 1; continue;
         }
       }
@@ -618,29 +655,31 @@ static void header_name_of(CppState *state, const char *s, int e, char *nm, size
 
 static int eval_if(CppState *state, const char *expr, const char *const *dirs, int ndirs) {
   /* replace `defined X` / `defined(X)` and the __has_* operators first, then expand, then evaluate. */
-  char *buf=state->conditional_buffer; size_t w=0; buf[0]=0; int i=0; char t[256];
+  char *buf=state->conditional_buffer; size_t w=0; buf[0]=0; int i=0; char t[BCIR_CPP_LINE];
   while(1){{ int q=i; if(ident_at(expr,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME); }   /* a name
                                                         * it looks up is a macro name: bounded here and after expansion */
     int k=ntok(state,expr,&i,t,sizeof t); if(!k)break;
-    if(k=='i'&&!strcmp(t,"defined")){int has, j=i; char nm[BCIR_CPP_NAME]="", cl[8]="";   /* its operand is a
+    if(k=='p'&&(unsigned char)t[0]>=0x80){cpp_limit(state,nonascii_outside);break;}   /* past every literal: an
+                                                        * identifier and a number are ASCII (CF-PPLIMITS) */
+    if(k=='i'&&!strcmp(t,"defined")){int has, j=i; char nm[BCIR_CPP_NAME]="";   /* its operand is a
                                                         * macro name, read as #ifdef reads one */
       while(expr[j]==' '||expr[j]=='\t')j++;
       if(expr[j]=='('){ j++;
         has=macro_name(state,expr,&j,nm,"malformed defined operator");
-        if(has&&(ntok(state,expr,&j,cl,sizeof cl)!='p'||strcmp(cl,")"))){cpp_limit(state, "malformed defined operator");has=0;}
+        if(has&&!next_is(expr,&j,')')){cpp_limit(state, "malformed defined operator");has=0;}
       } else has=macro_name(state,expr,&j,nm,"malformed defined operator");
       i=j; has=has&&is_defined(state, nm);
       { char bit[2]={(char)(has?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     if(k=='i'&&(!strcmp(t,"__has_attribute")||!strcmp(t,"__has_builtin")||
                 !strcmp(t,"__has_c_attribute"))){
       /* feature-test: only the L8 ABI attributes are honoured (no builtins, no [[...]] attrs). */
-      char nm[256]=""; int j=i; char p[256]; int pk=ntok(state,expr,&j,p,sizeof p);
-      if(pk&&!strcmp(p,"(")){ int depth=1; char a[256]; int first=1;
-        while(depth){int ak=ntok(state,expr,&j,a,sizeof a); if(!ak)break;
-          if(!strcmp(a,"("))depth++; else if(!strcmp(a,")")){depth--; if(!depth)break;}
-          else if(first&&ak=='i'){strncpy(nm,a,sizeof nm-1);nm[sizeof nm-1]=0;first=0;} }
+      char nm[256]=""; int j=i, attr=!strcmp(t,"__has_attribute");
+      if(next_is(expr,&j,'(')){ int depth=1; int first=1;   /* the operand's tokens through `t`, whose name is read */
+        while(depth){int ak=ntok(state,expr,&j,t,sizeof t); if(!ak)break;
+          if(!strcmp(t,"("))depth++; else if(!strcmp(t,")")){depth--; if(!depth)break;}
+          else if(first&&ak=='i'){strncpy(nm,t,sizeof nm-1);nm[sizeof nm-1]=0;first=0;} }
         i=j; }
-      int yes = !strcmp(t,"__has_attribute") && has_attribute(nm);
+      int yes = attr && has_attribute(nm);
       { char bit[2]={(char)(yes?'1':'0'),0}; app(state,buf,sizeof state->conditional_buffer,&w,bit); } continue;}
     if(k=='i'&&!strcmp(t,"__has_include")){
       /* resolve the header against the include search path (the raw <...>/"..." argument). */
@@ -686,9 +725,12 @@ static void define_macro(CppState *state, const char *rest) {
         if(rest[i]!=')'){cpp_limit(state, "variadic macro parameter must be last");return;}
         i++;break;
       }
+      if((unsigned char)rest[i]>=0x80){cpp_limit(state, nonascii_outside);return;}   /* a parameter is ASCII, as a
+                                                        * name is (CF-PPLIMITS; the oracle's `_params`) */
       if(!id0((unsigned char)rest[i])){cpp_limit(state, "invalid macro parameter");return;}
       int pl;
       while(idc((unsigned char)rest[i]))i++;
+      if((unsigned char)rest[i]>=0x80){cpp_limit(state, nonascii_outside);return;}
       pl=i-ps;
       if(pl>BCIR_CPP_NAME_MAX){cpp_limit(state, "macro parameter is too long");return;}
       for(int p=0;p<m.np;p++)if((int)strlen(m.params[p])==pl&&!strncmp(m.params[p],rest+ps,(size_t)pl)){
@@ -833,6 +875,9 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
       memcpy(dir,line+ds,(size_t)dl);dir[dl]=0;
       const char *rest=line+q; while(*rest==' '||*rest=='\t')rest++;
       int parent=1; for(int k=0;k<ncs;k++) if(!cs[k].active){parent=0;break;}
+      /* a name running on past ASCII -- `#caf\xc3\xa9`, `#\xc2\xa0define` -- in a group read: not a directive name
+       * cut at its ASCII start, nor a null directive (CF-PPLIMITS; the oracle's `_directive`) */
+      if((unsigned char)line[q]>=0x80&&parent){if(err&&errcap)snprintf(err,errcap,"%s",nonascii_outside);return 1;}
       if(!strcmp(dir,"ifdef")||!strcmp(dir,"ifndef")||!strcmp(dir,"if")){
         int tk=0;
         if(!strcmp(dir,"ifdef")||!strcmp(dir,"ifndef")){   /* a skipped group's operand is never read (C11 6.10.1p6) */
@@ -902,14 +947,14 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
         else if(!strcmp(dir,"line")){          /* #line N ["file"]: presumed line of the NEXT line
                                                   is N (decimal); optional new __FILE__. Operands are
                                                   macro-expanded first. */
-          char ex[8192]; expand_line(state,rest,ex,sizeof ex); int j=0; char t[1024];
-          if(ntok(state,ex,&j,t,sizeof t)=='n'){char *end=NULL;errno=0;long long line_no=strtoll(t,&end,10);
+          char ex[8192]; expand_line(state,rest,ex,sizeof ex); int j=0; char *t=state->line_token;
+          if(ntok(state,ex,&j,t,sizeof state->line_token)=='n'){char *end=NULL;errno=0;long long line_no=strtoll(t,&end,10);
             if(errno||!end||*end||line_no<1||line_no>INT_MAX){
               if(err&&errcap)snprintf(err,errcap,"#line number is out of range");
               return 1;
             }
             presumed=line_no;
-            if(ntok(state,ex,&j,t,sizeof t)=='s'){  /* strip the quotes + resolve \ escapes into filebuf */
+            if(ntok(state,ex,&j,t,sizeof state->line_token)=='s'){  /* strip the quotes + resolve \ escapes into filebuf */
               size_t fw=0; for(int z=1; t[z] && t[z]!='"'; z++){
                 if(t[z]=='\\'&&t[z+1])z++;
                 if(fw>=sizeof filebuf-1){if(err&&errcap)snprintf(err,errcap,"#line file name too long");return 1;}
@@ -1017,6 +1062,7 @@ int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
   }
   state=(CppState *)context->state;
   bcir_cpp_context_reset(context);
+  state->out_buf=out; state->out_full=0;
   if(!src||!out||!outcap||ndirs<0||ndirs>BCIR_CPP_MAX_DIRS||
      ndefines<0||ndefines>BCIR_CPP_MAX_DEFINES||(ndirs&&!dirs)||(ndefines&&!defines)){
     if(err&&errcap)snprintf(err,errcap,"invalid preprocessor arguments");
@@ -1057,6 +1103,74 @@ cleanup:
   return rc;
 }
 
+/* The preprocessed text in a block grown as it needs (CF-PPLIMITS): the run is repeated with a buffer four times the
+ * last while the output alone filled it, to BCIR_CPP_MAX_OUTPUT_BYTES -- each run starts from a reset context, so
+ * only the last one is seen. The twin's drivers had held the text in 64 KiB: a unit of some 6 000 globals was refused
+ * there that the oracle lowered. */
+#define BCIR_CPP_MAX_OUTPUT_BYTES ((size_t)64u << 20)
+int bcir_cpp_run_ex_alloc_context(bcir_cpp_context *context, const char *src, const char *srcname,
+                                  const char *const *dirs, int ndirs, const char *const *defines, int ndefines,
+                                  char **out, size_t *outlen, char *err, size_t errcap) {
+  size_t cap=(size_t)1u<<16;
+  if(out)*out=NULL;
+  if(outlen)*outlen=0;
+  if(!context||!context->state||!out){
+    if(err&&errcap)snprintf(err,errcap,"invalid preprocessor arguments");
+    return 1;
+  }
+  for(;;){
+    char *buf=(char *)bcir_host_allocate(&context->allocator,cap);
+    int rc;
+    if(!buf){if(err&&errcap)snprintf(err,errcap,"oom");return 1;}
+    rc=bcir_cpp_run_ex_context(context,src,srcname,dirs,ndirs,defines,ndefines,buf,cap,err,errcap);
+    if(!rc){*out=buf;if(outlen)*outlen=strlen(buf);return 0;}
+    bcir_host_deallocate(&context->allocator,buf);
+    if(!((CppState *)context->state)->out_full||cap>BCIR_CPP_MAX_OUTPUT_BYTES)return rc;
+    cap=cap>BCIR_CPP_MAX_OUTPUT_BYTES/4u?BCIR_CPP_MAX_OUTPUT_BYTES+1u:cap*4u;   /* the bound, and a NUL */
+  }
+}
+
+/* The whole translation unit, NUL-terminated, in a block `allocator` holds (CF-LIMITS, CF-PPLIMITS): it grows two-phase,
+ * each size checked, to BCIR_CPP_MAX_SOURCE_BYTES; a file that cannot be handed on whole -- past that bound,
+ * unreadable, or holding a NUL a C string would stop at -- is refused, never cut. The twin's three drivers read
+ * through it: the loop driver had read the first 64 KiB of a source and lowered that prefix. */
+const char *bcir_cpp_read_source(FILE *fp, const bcir_host_allocator *allocator, char **out) {
+  bcir_host_allocator heap=bcir_host_allocator_or_default(allocator);
+  size_t cap=(size_t)1u<<16, n=0;
+  char *buf;
+  if(!out) return "invalid arguments";
+  *out=NULL;
+  if(!fp) return "cannot read the source";
+  buf=(char *)bcir_host_allocate(&heap,cap);
+  if(!buf) return "out of memory";
+  for(;;){
+    if(n==cap-1u){                          /* full: past the bound one byte more is refused, else the block grows */
+      size_t want, grown;
+      if(cap>=BCIR_CPP_MAX_SOURCE_BYTES+1u){
+        int extra=fgetc(fp);
+        if(extra==EOF&&!ferror(fp)) break;
+        bcir_host_deallocate(&heap,buf);
+        return extra==EOF?"cannot read the source":"the source is larger than 64 MiB";
+      }
+      if(!bcir_size_add(cap,1u,&want)||!bcir_host_grow_capacity(cap,want,1u,&grown)){
+        bcir_host_deallocate(&heap,buf); return "out of memory"; }
+      if(grown>BCIR_CPP_MAX_SOURCE_BYTES+1u) grown=BCIR_CPP_MAX_SOURCE_BYTES+1u;
+      if(!bcir_host_realloc_array(&heap,(void **)&buf,cap,grown,1u,0)){
+        bcir_host_deallocate(&heap,buf); return "out of memory"; }
+      cap=grown;
+    }
+    size_t avail=cap-1u-n, got=fread(buf+n,1,avail,fp);
+    n+=got;
+    if(got<avail){
+      if(ferror(fp)||(!feof(fp)&&!got)){ bcir_host_deallocate(&heap,buf); return "cannot read the source"; }
+      if(feof(fp)) break;
+    }
+  }
+  if(memchr(buf,0,n)){ bcir_host_deallocate(&heap,buf); return "the source holds a NUL byte"; }
+  buf[n]=0; *out=buf;
+  return NULL;
+}
+
 int bcir_cpp_run_context(bcir_cpp_context *context, const char *src,
                          const char *basedir, char *out, size_t outcap,
                          char *err, size_t errcap) {
@@ -1089,6 +1203,20 @@ int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
                  char *err, size_t errcap) {
   bcir_cpp_context *context=legacy_context(err,errcap);
   return context?bcir_cpp_run_context(context,src,basedir,out,outcap,err,errcap):1;
+}
+
+int bcir_cpp_run_ex_alloc(const char *src, const char *srcname, const char *const *dirs, int ndirs,
+                          const char *const *defines, int ndefines, char **out, size_t *outlen,
+                          char *err, size_t errcap) {
+  bcir_cpp_context *context=legacy_context(err,errcap);
+  if(out)*out=NULL;
+  return context?bcir_cpp_run_ex_alloc_context(context,src,srcname,dirs,ndirs,defines,ndefines,
+                                                out,outlen,err,errcap):1;
+}
+
+int bcir_cpp_run_alloc(const char *src, const char *basedir, char **out, size_t *outlen, char *err, size_t errcap) {
+  const char *d[1]; int nd=0; if(basedir&&basedir[0]){ d[0]=basedir; nd=1; }
+  return bcir_cpp_run_ex_alloc(src,"<source>",d,nd,NULL,0,out,outlen,err,errcap);
 }
 
 void bcir_cpp_set_chars(int char_signed, int wchar_size, int wchar_signed) {

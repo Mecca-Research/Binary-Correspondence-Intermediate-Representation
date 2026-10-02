@@ -103,6 +103,28 @@ _OPS = [
 ]
 _PUNCT = set("(){}[];,.:?")
 
+#: The one reason both rails refuse a character outside the basic character set for (CF-PPLIMITS): a C source here is
+#: ASCII outside its literals and comments. The oracle's lexer had read an identifier with `str.isalpha`/`isalnum` and
+#: a number with `str.isdigit`, which take every Unicode letter and digit, so `int café;` lowered on the oracle and was
+#: refused by the twin, whose lexer reads ASCII -- a host predicate taking a larger language on one rail. One ASCII
+#: predicate per rail now (docs/security/laws.md L4: a host predicate is no grammar); the twin's preprocessor and lexer
+#: give these words (`bcir_intlit.h`).
+NONASCII = "non-ASCII character outside a literal"
+
+
+def _digit(c: str) -> bool:
+    """An ASCII decimal digit -- `str.isdigit` takes `٣` and `²` too."""
+    return "0" <= c <= "9"
+
+
+def _alpha(c: str) -> bool:
+    """An ASCII letter -- `str.isalpha` takes `é`."""
+    return "a" <= c <= "z" or "A" <= c <= "Z"
+
+
+def _alnum(c: str) -> bool:
+    return _alpha(c) or _digit(c)
+
 
 def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
     """If `src[i:]` begins a *decimal* floating literal (`1.5` / `.5` / `1.` / `1e10` / `1.5e-3` /
@@ -110,14 +132,14 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
     so it lexes as an INT; hex floats (`0x1p4`) are handled separately by `_scan_hex_float`."""
     j = i
     has_digit = False
-    while j < n and (src[j].isdigit() or src[j] == "'"):
+    while j < n and (_digit(src[j]) or src[j] == "'"):
         j += 1
         has_digit = True
     has_dot = False
     if j < n and src[j] == ".":
         has_dot = True
         j += 1
-        while j < n and (src[j].isdigit() or src[j] == "'"):
+        while j < n and (_digit(src[j]) or src[j] == "'"):
             j += 1
             has_digit = True
     has_exp = False
@@ -125,10 +147,10 @@ def _scan_decimal_float(src: str, i: int, n: int) -> int | None:
         k = j + 1
         if k < n and src[k] in "+-":
             k += 1
-        if k < n and src[k].isdigit():
+        if k < n and _digit(src[k]):
             has_exp = True
             j = k
-            while j < n and src[j].isdigit():
+            while j < n and _digit(src[j]):
                 j += 1
     if not has_digit or not (has_dot or has_exp):  # no fraction/exponent -> not a float
         return None
@@ -164,7 +186,7 @@ def _scan_hex_float(src: str, i: int, n: int) -> int | None:
     if j < n and src[j] in "+-":  # an optionally-signed exponent
         j += 1
     estart = j
-    while j < n and (src[j].isdigit() or src[j] == "'"):
+    while j < n and (_digit(src[j]) or src[j] == "'"):
         j += 1
     if j == estart:  # the exponent needs at least one digit
         return None
@@ -179,6 +201,15 @@ def _scan_hex_float(src: str, i: int, n: int) -> int | None:
 #: spelling in its op, so a longer one could only be truncated there -- another callee, member or constant.
 #: The oracle has no such buffer; it refuses what the twin would truncate, with the twin's diagnostic.
 IDENT_MAX = 63
+
+#: The most tokens a unit lexes to, less one: a unit that reaches it is refused as `input too large` (CF-PPLIMITS), at
+#: the count the twin's lexer refuses it (`MAXTOK`, runtime/c/bcir_cfront.c, whose array grows to it). The twin had
+#: refused past 16 384 and this lexer at none, so a unit of 6 000 globals lowered here alone. It is the compile's work
+#: budget too: the twin looks a function's resources and local names up by linear scans (`res_of`, `uniq_local`), so
+#: a function costs it its size squared -- 6 400 statements in one, near this bound, take it some 40 s and this rail
+#: 11 s -- a recorded follow-up, before which the bound does not grow.
+MAX_TOKENS = 65536
+INPUT_TOO_LARGE = "input too large"
 
 
 def _too_long(kind: str, text: str, pos: int) -> None:
@@ -208,6 +239,8 @@ def tokenize(src: str) -> list[Tok]:
             while i < n and src[i] != "\n":
                 i += 1
             continue
+        if len(toks) >= MAX_TOKENS - 1:  # a token starts here: as the twin, before it is read
+            raise CLexError(INPUT_TOO_LARGE, pos=i)
         if c in "LuU":  # wide/UTF literal prefix L/u/U/u8
             pfx = ""  # before a " or ' (else an identifier)
             if src[i : i + 2] == "u8" and i + 2 < n and src[i + 2] in "\"'":
@@ -228,19 +261,17 @@ def tokenize(src: str) -> list[Tok]:
                 toks.append(Tok("STRING" if quote == '"' else "CHAR", src[i : j + 1], i))
                 i = j + 1
                 continue
-        if c.isalpha() or c == "_":  # identifier / keyword
+        if _alpha(c) or c == "_":  # identifier / keyword
             j = i
-            while j < n and (src[j].isalnum() or src[j] == "_"):
+            while j < n and (_alnum(src[j]) or src[j] == "_"):
                 j += 1
             _too_long("an identifier", src[i:j], i)
             toks.append(Tok("IDENT", src[i:j], i))
             i = j
             continue
         if (
-            (
-                c.isdigit() and src[i : i + 2] not in ("0x", "0X", "0b", "0B")
-            )  # decimal float literal
-            or (c == "." and i + 1 < n and src[i + 1].isdigit())
+            (_digit(c) and src[i : i + 2] not in ("0x", "0X", "0b", "0B"))  # decimal float literal
+            or (c == "." and i + 1 < n and _digit(src[i + 1]))
         ):  # (.5 / 1.5 / 1e10 / 3.14f)
             end = _scan_decimal_float(src, i, n)
             if end is not None:
@@ -255,11 +286,11 @@ def tokenize(src: str) -> list[Tok]:
                 toks.append(Tok("FLOAT", src[i:end], i))
                 i = end
                 continue
-        if c.isdigit():  # integer literal
+        if _digit(c):  # integer literal
             j = i
             if src[j : j + 2] in ("0x", "0X", "0b", "0B"):
                 j += 2
-            while j < n and (src[j].isalnum() or src[j] == "'"):  # digits, suffix, C23 separators
+            while j < n and (_alnum(src[j]) or src[j] == "'"):  # digits, suffix, C23 separators
                 j += 1
             toks.append(Tok("INT", src[i:j], i))
             i = j
@@ -295,6 +326,8 @@ def tokenize(src: str) -> list[Tok]:
             if c in _PUNCT:
                 toks.append(Tok("PUNCT", c, i))
                 i += 1
+            elif not c.isascii():
+                raise CLexError(NONASCII, pos=i)
             else:
                 raise CLexError(f"unexpected character {c!r}", pos=i)
     toks.append(Tok("EOF", "", n))

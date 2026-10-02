@@ -119,15 +119,15 @@
     {
       "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
       "label": "B15 the oracle takes a macro name of any length",
-      "new": "    return m.group(1), m.end()\n",
-      "old": "    if len(m.group(1)) > IDENT_MAX:\n        raise CPPError(MACRO_NAME_TOO_LONG)\n    return m.group(1), m.end()\n",
+      "new": "    if not text[",
+      "old": "    if len(m.group(1)) > IDENT_MAX:\n        raise CPPError(MACRO_NAME_TOO_LONG)\n    if not text[",
       "path": "bcir/frontends/cfront/cpp.py"
     },
     {
       "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
       "label": "B16 the oracle takes a macro parameter of any length",
       "new": "",
-      "old": "                if m is not None and len(m.group(1)) > IDENT_MAX:\n                    raise CPPError(MACRO_PARAM_TOO_LONG)\n",
+      "old": "        if len(m.group()) > IDENT_MAX:\n            raise CPPError(MACRO_PARAM_TOO_LONG)\n",
       "path": "bcir/frontends/cfront/cpp.py"
     },
     {
@@ -217,16 +217,16 @@
     {
       "expects": "test_the_twin_driver_reads_a_source_past_64_kib_whole",
       "label": "B29 the driver reads the first 64 KiB of a source and stops",
-      "new": "    if (n == cap - 1u) break; if (0) {      /* full:",
-      "old": "    if (n == cap - 1u) {                    /* full:",
-      "path": "runtime/c/test_cfront.c"
+      "new": "    if(n==cap-1u) break; if(0){            /* full:",
+      "old": "    if(n==cap-1u){                          /* full:",
+      "path": "runtime/c/bcir_cpp.c"
     },
     {
       "expects": "test_the_twin_driver_reads_a_source_past_64_kib_whole",
       "label": "B30 the driver hands on a source up to its NUL",
       "new": "",
-      "old": "  if (memchr(buf, 0, n)) { bcir_host_deallocate(heap, buf); return \"the source holds a NUL byte\"; }\n",
-      "path": "runtime/c/test_cfront.c"
+      "old": "  if(memchr(buf,0,n)){ bcir_host_deallocate(&heap,buf); return \"the source holds a NUL byte\"; }\n",
+      "path": "runtime/c/bcir_cpp.c"
     }
   ]
 }

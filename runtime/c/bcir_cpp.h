@@ -19,6 +19,7 @@
 #define BCIR_CPP_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 #include "bcir_host_alloc.h"
 
@@ -79,6 +80,21 @@ int bcir_cpp_run_ex(const char *src, const char *srcname, const char *const *dir
                     const char *const *defines, int ndefines,
                     char *out, size_t outcap, char *err, size_t errcap);
 
+/* The preprocessed text in a block grown as it needs, to 64 MiB (CF-PPLIMITS): *out the NUL-terminated text and
+ * *outlen its length, released through the context's allocator (`context->allocator`); the legacy forms' through the
+ * default host allocator. 0, or nonzero with the reason in `err` and *out NULL. A fixed-capacity run refuses a unit
+ * whose text outgrows its buffer (`preprocessed output too large`); these never do below the bound. */
+int bcir_cpp_run_ex_alloc_context(bcir_cpp_context *context, const char *src, const char *srcname,
+                                  const char *const *dirs, int ndirs, const char *const *defines, int ndefines,
+                                  char **out, size_t *outlen, char *err, size_t errcap);
+int bcir_cpp_run_ex_alloc(const char *src, const char *srcname, const char *const *dirs, int ndirs,
+                          const char *const *defines, int ndefines, char **out, size_t *outlen,
+                          char *err, size_t errcap);
+int bcir_cpp_run_alloc(const char *src, const char *basedir, char **out, size_t *outlen, char *err, size_t errcap);
+/* A whole translation unit read from `fp`, NUL-terminated, in a block `allocator` holds (NULL: libc), to 64 MiB:
+ * NULL with *out set, or the reason it is refused -- past the bound, unreadable, or holding a NUL -- with *out NULL.
+ * Never a prefix (CF-LIMITS, CF-PPLIMITS). */
+const char *bcir_cpp_read_source(FILE *fp, const bcir_host_allocator *allocator, char **out);
 /* NON-THREAD-SAFE: `bcir_cpp_context_set_chars` for the compatibility wrappers' process-static context. */
 void bcir_cpp_set_chars(int char_signed, int wchar_size, int wchar_signed);
 
