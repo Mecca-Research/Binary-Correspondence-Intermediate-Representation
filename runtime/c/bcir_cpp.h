@@ -46,6 +46,12 @@ void bcir_cpp_context_reset(bcir_cpp_context *context);
 /* Release all owned state. Safe on NULL and safe to call repeatedly. */
 void bcir_cpp_context_destroy(bcir_cpp_context *context);
 
+/* The target's character types, which a character constant in `#if` reads by (CF-PPARITH): whether plain `char`
+ * is signed -- Clang and GCC read a plain one as a `uintmax_t` where it is not -- and `wchar_t`'s size in bytes (2
+ * or 4) and signedness, an `L` one's. A context starts with x86-64 Linux's (a signed `char`, a signed 4-byte
+ * `wchar_t`) and keeps the last one set across runs and resets; `bcir_cfront_target_chars` gives a target's. */
+void bcir_cpp_context_set_chars(bcir_cpp_context *context, int char_signed, int wchar_size, int wchar_signed);
+
 /* Context-based forms. All input/output pointers are borrowed. */
 int bcir_cpp_run_context(bcir_cpp_context *context, const char *src,
                          const char *basedir, char *out, size_t outcap,
@@ -72,6 +78,9 @@ int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
 int bcir_cpp_run_ex(const char *src, const char *srcname, const char *const *dirs, int ndirs,
                     const char *const *defines, int ndefines,
                     char *out, size_t outcap, char *err, size_t errcap);
+
+/* NON-THREAD-SAFE: `bcir_cpp_context_set_chars` for the compatibility wrappers' process-static context. */
+void bcir_cpp_set_chars(int char_signed, int wchar_size, int wchar_signed);
 
 #ifdef __cplusplus
 }

@@ -78,6 +78,10 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
  * selects the host (x86_64-linux LP64); an unknown name returns nonzero with diag set. `long`, the
  * pointer, and the `size_t`-class types follow the selected model; everything else is fixed by C. */
 int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out);
+/* Target `target`'s character types, which the preprocessor's `#if` reads a character constant by (CF-PPARITH):
+ * whether plain `char` is signed, and `wchar_t`'s size in bytes and signedness -- for `bcir_cpp_set_chars`. NULL is
+ * the default target (x86-64 Linux). Returns 0, or 1 for an unknown target name (the outputs untouched). */
+int bcir_cfront_target_chars(const char *target, int *char_signed, int *wchar_size, int *wchar_signed);
 
 /* Release every owned allocation and restore the valid empty state. Idempotent. */
 void bcir_cfront_free(bcir_cfront_result *out);

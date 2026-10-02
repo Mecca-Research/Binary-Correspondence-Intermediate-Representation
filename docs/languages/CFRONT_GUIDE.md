@@ -441,6 +441,18 @@ _mm_sfence();                      //                   store (release) fence ->
   keep the storage class.
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
+- `#if` and `#elif` in C's arithmetic (C11 6.10.1p4): every operand an `intmax_t` or a `uintmax_t` (64 bits), an
+  integer constant unsigned where its suffix has `u` or its value is past `INTMAX_MAX`, an unsigned operand making
+  the operation unsigned, `true` 1 and any other identifier 0; `?:`, the comma operator in an operand C leaves
+  unevaluated, and C23's digit separators (`1'000`). A character constant reads by the target's character types,
+  as Clang reads one: a plain one sign-extended where `char` is signed and a `uintmax_t` where it is not (AArch64,
+  RISC-V), so `#if 'a' - 98 < 0` is false on AArch64; `u8`, `u` and `U` ones unsigned; an `L` one by `wchar_t`. A
+  form C leaves undefined in an evaluated operand -- a signed overflow, a division by zero, a shift by a negative
+  count or by 64 or more, a negative value shifted left, a comma operator -- is refused, as is a malformed
+  expression, a constant no type holds and a character constant outside what both rails read (an escape past its
+  code unit, a universal character name, an escape C does not define, a source character past ASCII, more than one
+  character behind a prefix); an operand C leaves unevaluated refuses for none of the operators' reasons. A `#if`
+  holds at most 512 tokens of at most 63 characters, nested at most 63 deep.
 
 ## Known limits
 
@@ -514,9 +526,8 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
 - An `enum` tag used before its enumerator list, or with none -- an object, a cast, `sizeof`, a typedef, a parameter,
   and a pointer to the incomplete type too, which C allows -- is refused on both rails (`an enumerated type with no
   definition`); define the enumeration first.
-- `#if` evaluates in each rail's own integers, not in C's `intmax_t` and `uintmax_t`: an unsigned operand does not
-  make a comparison unsigned (`#if -1 > 0u` takes the `#else` branch), a character constant is 0 there, and the
-  Python reference refuses `#if 0xFFFFFFFFFFFFFFFF == -1` with an internal error -- a recorded follow-up.
+- In `#if`, a multi-character constant (`'\xff\xff\xff\xff'`) where plain `char` is unsigned reads as Clang reads it,
+  by `char`'s signedness; GCC reads it as a signed `int` whatever `char` is.
 - The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
   *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
   through a cast; and the C twin's `--linkable` emits the unit's functions alone. Both are recorded follow-ups.

@@ -3109,7 +3109,8 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     with (closed by CF-ENUMOBJ, below);
   - `#if` evaluates outside C's arithmetic on both rails: `#if -1 > 0u` and `#if 'a' == 97` take the `#else` branch
     on both, digest-equal (a silent miscompile; C reads -1 as `UINTMAX_MAX` there, and `'a'` as 97), and `#if
-    0xFFFFFFFFFFFFFFFF == -1` raises a bare `ValueError` in the oracle where the twin refuses it as an overflow;
+    0xFFFFFFFFFFFFFFFF == -1` raises a bare `ValueError` in the oracle where the twin refuses it as an overflow
+    (closed by CF-PPARITH, below);
   - the linkable emit's definitions drop a parameter's qualifiers below its top level, so a function pointer of the
     source's type takes such a function only through a cast (`cfront_quals_link.c` under Clang: `incompatible function
     pointer types assigning to 'uint32_t (*)(const uint32_t *)'`); with the four `_BitInt` fixtures GCC 13 cannot
@@ -3170,6 +3171,67 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     type's signedness) and `cfront-gaps.json` T11 (the twin's AArch64 target row, which carries `enum_unsigned` now).
   Found, not fixed here: a pointer to an enumerated type before its definition (`enum later *p;`, which C allows while
   the type is incomplete) is refused on both rails with the rest.
+
+  CF-PPARITH (2026-10-02) evaluates `#if` and `#elif` in C's integer arithmetic (C11 6.10.1p4) on both rails, closing
+  card 4's second found-not-fixed item. RED was measured on the parent (`a8d3ef07`).
+  - The defect: both preprocessors evaluated in a signed host integer -- Python's unbounded `int`, the twin's `long`
+    -- so no operand was ever unsigned: `#if -1 > 0u` took `#else` on both rails, digest-equal (a silent miscompile).
+    A character constant was 0 on both (`#if 'a' == 97` took `#else`). The oracle's `_apply` built every operator's
+    result in one dictionary, so any operator whose right operand was negative computed `a << -1` and raised a bare
+    `ValueError` (`0xFFFFFFFFFFFFFFFF == -1`, `-7 % 2 == -1`); the twin refused every constant past `LONG_MAX`. The
+    twin took neither `?:` nor a unary `+` (`#if 1 ? 0 : 1` was 1); both ignored a token past the expression (`#if
+    1 2`), an unclosed `(` and a `?` with no `:`; the oracle read a string or an `=` as 0, divided by zero to 0 and
+    bounded neither a `#if`'s tokens nor its nesting (the twin held 512 tokens of 63 characters). Both tokenizers
+    split `L'a'` into the name `L` and a plain constant, so with `L` a macro it became `7'a'`; the twin ended `1'000`
+    at its digit separator and read a character constant from there.
+  - Measured (Clang 18 and GCC 13, `-std=c2x`, `-E` per target): a character constant in `#if` is a `uintmax_t`
+    where plain `char` is unsigned -- AArch64 and RISC-V Linux; `'a' - 98 < 0` is false there -- `u8`, `u` and `U`
+    ones are unsigned, an `L` one is `wchar_t`'s signedness and width, and a multi-character one packs big-endian
+    into 32 bits extended by `char`'s signedness. GCC reads that last one as a signed `int` whatever `char` is, so
+    for it the two compilers part; both rails read Clang's.
+  - RED: on the parent the four new tests fail (two at the target the preprocessor now takes as a parameter). Measured
+    with the parent's own interface: of the 46 forms of `_PPARITH_FORMS`, 30 keep another branch than Clang's on some
+    target -- 113 of the 184 form-target pairs, 101 on the oracle and 92 on the twin, 48 with the rails apart -- and
+    the oracle raises a bare `ValueError` on 9; 36 of the 37 forms of `_PPARITH_REFUSED` are not refused alike (the
+    oracle reads 140 of the 148 form-target pairs, the twin 76); the first unit of `_PPARITH_RUN_EXPRS` returns what
+    the original does not, and `_PPARITH_TOKENS` preprocesses otherwise.
+  - What landed: one evaluator per rail (`_ConstEval` and `_apply`; the twin's `ce_*` and `apply`): each operand its
+    64 bits and whether it is a `uintmax_t`; an integer constant unsigned where its suffix has `u` or its value is
+    past `INTMAX_MAX`, read by the lexer's reader (a constant no type holds refused with its words); the usual
+    arithmetic conversions, a shift typed by its left operand, `!`, comparisons, `&&` and `||` an `int`, `?:`
+    unsigned where either arm is; `true` 1 and any other identifier 0 (C23). A `live` flag carries what C evaluates,
+    so the right of `&&` after 0, of `||` after a nonzero and the arm of `?:` not taken refuse for none of the
+    operators' reasons: signed overflow, a negative value shifted left, `INTMAX_MIN / -1` and `% -1` (`integer
+    overflow in #if expression`), a shift by a negative count or by 64 or more (`invalid shift ...`), a division by
+    zero, an evaluated comma operator (6.6p3); a form the grammar does not admit is `malformed #if expression`
+    wherever it stands. Both rails hold a `#if` to 512 tokens of 63 characters, nested 63 deep (C11 5.2.4.1), and
+    unary operators apply as a run, so no form takes stack in proportion to its length. One reader of a character
+    constant per rail (`clex.char_constant_units`; `char_literal` in `bcir_intlit.h`, which the lexer's integer
+    reader already shared) takes ASCII source characters and simple, octal and hexadecimal escapes within the code
+    unit, a plain one up to 4 characters' worth, a prefixed one one, and refuses the rest as `unsupported character
+    constant`. The target reaches the preprocessor: `TargetABI.char_signed` and `bcir_abi.char_signed` (false on
+    AArch64 and RISC-V), `preprocess(abi=...)` from `compile_unit` and the CLI's `-E` and `-M`;
+    `bcir_cpp_context_set_chars` and `bcir_cpp_set_chars` on the twin, fed from `bcir_cfront_target_chars` by its
+    two drivers. A prefixed character constant is one token on both rails, a word that may be a prefix is kept apart
+    from a constant after it, and the twin's numbers keep C23's separators, as the oracle's did.
+  - Outcomes: every form of `_PPARITH_FORMS` keeps Clang's branch on the four targets on both rails, and GCC's on the
+    host with either `char` (but the multi-character form, and the wide ones with an unsigned `char`); the 37 forms
+    of `_PPARITH_REFUSED` are refused on both rails in the same words on every target, and a nesting one short of the
+    bound and a token count at it are read; the 9 units of `_PPARITH_RUN_EXPRS` and `_PPARITH_RUN_ELIF`, lowered by
+    both rails for x86-64 and for AArch64 Linux to one claim graph, each return what the original does, built with
+    that target's `char` under Clang and GCC. Every unit of the corpus keeps the parent's summary and digest on both
+    rails on the four targets: none reads `#if` where the two arithmetics part.
+  - Faults: `tools/testing/faults/cfront-pparith.json`, 47 -- 24 on the oracle, 23 on the twin -- each caught by its
+    own test. The first sweep caught 46: the twin dropping its check of a negative value shifted left (PT21) reached
+    no test, for its range check refuses `-1 << 1` too -- only a count of 0 tells the two apart -- so `-1 << 0`, as
+    undefined as any (6.5.7p4), joined `_PPARITH_REFUSED`, and the re-sweep caught PT21 and PO23 with it. Five
+    older faults anchored in lines this changed were re-anchored and caught again: `cfront-buf.json` B18 (the names
+    a `#if` looks up, now bounded with the evaluator's token checks), `cfront-filescope.json` FS2 and FS16 (the `#if`
+    constant readers), `cfront-enumobj.json` ET8 and `cfront-gaps.json` T11 (the target rows, which carry
+    `char_signed` now).
+  Found, not fixed here: the twin's `#` stringize copies a string-literal or character-constant argument as it is,
+  where C escapes its `"` and `\` (the oracle does): `S("q")` is `""q""` on the twin; and a prefixed string literal is
+  still two tokens on both rails, so a macro named `L` expands the prefix of `L"ab"`.
 
 ---
 

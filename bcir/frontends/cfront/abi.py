@@ -36,7 +36,10 @@ class TargetABI:
     AArch64 Linux, an `unsigned short` on Windows -- the element of an `L"..."` literal too. `enum_unsigned`: the
     type an enumeration with no negative enumerator is compatible with (C11 6.7.2.2p4 leaves it to the
     implementation) is `unsigned int` -- GCC and Clang on the System V targets; the MSVC ABI makes every one `int`.
-    One with a negative enumerator is `int` everywhere (CF-ENUMOBJ)."""
+    One with a negative enumerator is `int` everywhere (CF-ENUMOBJ). `char_signed`: plain `char` is signed (Clang's
+    `__CHAR_UNSIGNED__` undefined) on x86-64 and i386 Linux and on Windows, unsigned on AArch64 and RISC-V Linux --
+    which a character constant in `#if` reads by: Clang and GCC sign-extend its byte where `char` is signed, and read
+    it as a `uintmax_t` where it is not (CF-PPARITH)."""
 
     name: str  # short id, e.g. "x86_64-linux"
     triple: str  # the Clang target triple (for `-target` / provenance)
@@ -51,6 +54,7 @@ class TargetABI:
     wchar_size: int = 4
     wchar_signed: bool = True
     enum_unsigned: bool = True
+    char_signed: bool = True
 
     @property
     def wchar_type(self) -> str:
@@ -86,9 +90,11 @@ _LP64 = dict(
 TARGETS: dict[str, TargetABI] = {
     "x86_64-linux": TargetABI("x86_64-linux", "x86_64-unknown-linux-gnu", **_LP64),
     "aarch64-linux": TargetABI(
-        "aarch64-linux", "aarch64-unknown-linux-gnu", **_LP64, wchar_signed=False
+        "aarch64-linux", "aarch64-unknown-linux-gnu", **_LP64, wchar_signed=False, char_signed=False
     ),
-    "riscv64-linux": TargetABI("riscv64-linux", "riscv64-unknown-linux-gnu", **_LP64),
+    "riscv64-linux": TargetABI(
+        "riscv64-linux", "riscv64-unknown-linux-gnu", **_LP64, char_signed=False
+    ),
     "x86_64-windows": TargetABI(
         "x86_64-windows",
         "x86_64-pc-windows-msvc",

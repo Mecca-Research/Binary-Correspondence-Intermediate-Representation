@@ -140,8 +140,8 @@
     {
       "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
       "label": "B18 the oracle bounds no name a #if looks up",
-      "new": "        toks = self._expand(_tokens(expr), set())\n        return _ConstEval(toks).parse()\n",
-      "old": "        toks = self._expand(_bound_names(_tokens(expr)), set())\n        return _ConstEval(_bound_names(toks)).parse()\n",
+      "new": "        if False:\n            raise CPPError(MACRO_NAME_TOO_LONG)\n    return toks\n",
+      "old": "        if m is not None and len(m.group(1)) > IDENT_MAX:\n            raise CPPError(MACRO_NAME_TOO_LONG)\n    return toks\n",
       "path": "bcir/frontends/cfront/cpp.py"
     },
     {

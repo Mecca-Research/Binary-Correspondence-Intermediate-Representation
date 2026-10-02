@@ -40,8 +40,9 @@ typedef struct CppState {
   char constant_error[96];   /* the text of a malformed `#if` constant's refusal (`lit`), which limit_error names */
   const char *current_file;
   int current_line;
-  int constant_expression_suppression;
   int include_depth;
+  int char_signed, wchar_size, wchar_signed;   /* the target's character types, which a `#if` reads a character
+                                                * constant by (CF-PPARITH): kept across runs and resets */
   char expand_a[8192];
   char expand_b[8192];
   char conditional_buffer[8192];
@@ -125,6 +126,24 @@ static const char *const punct_ops[] = {"<<=", ">>=", "...", "->", "##", "<<", "
 
 /* next token from s[*i]; copies into out; returns 'i' ident, 'n' number, 's' string,
  * 'p' punct, 0 end. skips leading spaces. */
+/* A string literal or character constant from its opening quote at s[*i] through its closing one, appended at out[*j]. */
+static void ntok_quoted(CppState *state, const char *s, int *i, char *out, int cap, int *j) {
+  char q = s[*i];
+  if (*j < cap - 1) out[(*j)++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
+  (*i)++;
+  while (s[*i] && s[*i] != q) {
+    if (s[*i] == '\\' && s[*i+1]) {
+      if (*j < cap - 1) out[(*j)++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
+      (*i)++;
+    }
+    if (*j < cap - 1) out[(*j)++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
+    (*i)++;
+  }
+  if (s[*i] == q) {
+    if (*j < cap - 1) out[(*j)++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
+    (*i)++;
+  }
+}
 static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
   if (!s || !i || !out || cap < 2) { cpp_limit(state, "invalid preprocessor token buffer"); return 0; }
   while (s[*i] == ' ' || s[*i] == '\t') (*i)++;
@@ -136,12 +155,20 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
       if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
       (*i)++;
     }
-    out[j] = 0; return 'i';
+    out[j] = 0;
+    /* An encoding prefix and the character constant it begins are one token (C11 6.4.4.4), so its `L` is no macro
+     * name and a `#if` reads it whole (CF-PPARITH; the oracle's `_TOKEN_RE`). */
+    if (s[*i] == '\'' && (!strcmp(out, "L") || !strcmp(out, "u") || !strcmp(out, "U") || !strcmp(out, "u8"))) {
+      ntok_quoted(state, s, i, out, cap, &j); out[j] = 0; return 's'; }
+    return 'i';
   }
   if ((c >= '0' && c <= '9') || (c == '.' && s[*i+1] >= '0' && s[*i+1] <= '9')) {   /* a pp-number (a digit, or
-                                                          * `.` and a digit, first): digits, '.', idents, and an
-                                                          * e/E/p/P binary/decimal exponent's +/- sign */
-    while (idc((unsigned char)s[*i]) || s[*i] == '.') {
+                                                          * `.` and a digit, first): digits, '.', idents, an
+                                                          * e/E/p/P binary/decimal exponent's +/- sign, and C23's
+                                                          * `'` separators (6.4.8), read as the oracle's `_TOKEN_RE`
+                                                          * reads them: the twin had ended the number at one and read
+                                                          * a character constant from it (CF-PPARITH) */
+    while (idc((unsigned char)s[*i]) || s[*i] == '.' || s[*i] == '\'') {
       char d = s[*i];
       if (j < cap - 1) out[j++] = d; else cpp_limit(state, "preprocessor token too long");
       (*i)++;
@@ -152,21 +179,7 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
     }
     out[j] = 0; return 'n';
   }
-  if (c == '"' || c == '\'') { char q = (char)c;
-    out[j++] = s[(*i)++];
-    while (s[*i] && s[*i] != q) {
-      if (s[*i] == '\\' && s[*i+1]) {
-        if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
-        (*i)++;
-      }
-      if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
-      (*i)++;
-    }
-    if (s[*i] == q) {
-      if (j < cap - 1) out[j++] = s[*i]; else cpp_limit(state, "preprocessor token too long");
-      (*i)++;
-    }
-    out[j] = 0; return 's'; }
+  if (c == '"' || c == '\'') { ntok_quoted(state, s, i, out, cap, &j); out[j] = 0; return 's'; }
   for (int k = 0; punct_ops[k]; k++) { int L = (int)strlen(punct_ops[k]);
     if (!strncmp(s + *i, punct_ops[k], (size_t)L)) {
       memcpy(out, punct_ops[k], (size_t)L); out[L] = 0; *i += L; return 'p'; } }
@@ -207,6 +220,8 @@ static int pastes(const char *prevp, char a, const char *t, int anum) {
       break;
     }
   if (anum && (b == '.' || ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (b == '+' || b == '-'))))
+    return 1;
+  if (b == '\'' && (a == 'L' || a == 'u' || a == 'U' || a == '8'))   /* a word that may be an encoding prefix */
     return 1;
   return a == '.' && b >= '0' && b <= '9';
 }
@@ -401,40 +416,98 @@ static void expand_line(CppState *state, const char *line, char *out, size_t cap
 }
 
 /* --- #if constant-expression evaluation ---------------------------------- */
+/* The reasons a `#if`/`#elif` expression is refused for, the oracle's `cpp.PP_*` word for word (CF-PPARITH). One the
+ * grammar does not admit -- nothing, a token no operand or operator is, two operands with no operator between them,
+ * an unclosed `(`, a `?` with no `:` -- is malformed wherever it stands; the rest are C's undefined behaviour or
+ * constraint violations in an evaluated operand (6.6p3-4, 6.5.5p5-6, 6.5.7p3-4), and an operand C leaves unevaluated
+ * -- the right of `&&` after 0 and of `||` after a nonzero, the arm of `?:` not taken -- refuses for none of them. */
+#define PP_MALFORMED "malformed #if expression"
+#define PP_OVERFLOW "integer overflow in #if expression"
+#define PP_SHIFT "invalid shift in #if expression"
+#define PP_DIVZERO "division by zero in #if expression"
+#define PP_COMMA "comma operator in #if expression"
+#define PP_TOO_MANY "too many tokens in #if expression"
+#define PP_DEEP "#if expression nested too deeply"
+#define PP_MAX_DEPTH 63                     /* nested `(` and `?:`: C11 5.2.4.1's minimum */
 typedef struct { char t[512][64]; int n, i; CppState *state; } CE;
-static void ce_limit(CE *expression, const char *message){
-  if(!expression->state->constant_expression_suppression)
-    cpp_limit(expression->state, message);
-}
-static long ce_expr(CE *c);
+/* A `#if` operand (6.10.1p4): its 64 bits, and whether it is a `uintmax_t` (else an `intmax_t`). */
+typedef struct { unsigned long long v; int u; } ppv;
+static void ce_fail(CE *c, const char *message){ cpp_limit(c->state, message); }
+static long long ppv_signed(ppv a){ return a.v>>63 ? -(long long)(~a.v)-1 : (long long)a.v; }
+static ppv ce_comma(CE *c, int live, int depth);
 /* An integer constant of a `#if`, read as the lexer reads one (`int_literal`, bcir_intlit.h; the oracle's `_int_lit`
- * reads `clex.int_literal_parts`): its digits checked against its base, an octal one read as octal -- `strtol` had read
+ * reads `clex.parse_int_literal`): its digits checked against its base, an octal one read as octal -- `strtol` had read
  * `0777` as 777 where the oracle's `#if` and both lexers read 511, and a malformed digit or suffix (`08`, `1lL`)
  * stopped it short -- refused as the lexer refuses it, in an operand C leaves unevaluated too, for it is no constant
- * at all (CF-SUFFIX). Past LONG_MAX it is the overflow it was. */
-static long lit(CE *expression, const char *s) {
-  intlit L; const char *why=int_literal(s,(int)strlen(s),&L);
+ * at all (CF-SUFFIX), as is one no type holds. It is a `uintmax_t` where its suffix has `u` or its value is past
+ * INTMAX_MAX, else an `intmax_t`: it had been a `long`, refused past LONG_MAX (CF-PPARITH). */
+static ppv lit(CE *expression, const char *s) {
+  intlit L; const char *why=int_literal(s,(int)strlen(s),&L); ppv r={0,0};
   CppState *state=expression->state;
-  if(why==int_bad || why==int_bad_suffix){
+  if(why){
     if(!state->limit_error){
       if(why==int_bad) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.48s'",why,s);
-      else snprintf(state->constant_error,sizeof state->constant_error,"%s '%.*s' on integer constant",why,L.nsuf,L.suf);
+      else if(why==int_bad_suffix) snprintf(state->constant_error,sizeof state->constant_error,"%s '%.*s' on integer constant",why,L.nsuf,L.suf);
+      else snprintf(state->constant_error,sizeof state->constant_error,"%s",why);
       cpp_limit(state,state->constant_error); }
-    return 0; }
-  if(why || L.v>(unsigned long long)LONG_MAX){ ce_limit(expression, "integer overflow in #if expression"); return 0; }
-  return (long)L.v;
+    return r; }
+  r.v=L.v; r.u=L.u || L.v>(unsigned long long)LLONG_MAX;
+  return r;
 }
-static long ce_prim(CE *c){
-  const char *t;
-  if(c->i>=c->n) return 0;
-  t=c->t[c->i];
-  if(!strcmp(t,"(")){c->i++;long v=ce_expr(c);if(c->i<c->n&&!strcmp(c->t[c->i],")"))c->i++;return v;}
-  if(!strcmp(t,"!")){c->i++;return !ce_prim(c);}
-  if(!strcmp(t,"-")){c->i++;long v=ce_prim(c);if(v==LONG_MIN){ce_limit(c, "overflow in #if expression");return 0;}return -v;}
-  if(!strcmp(t,"~")){c->i++;return ~ce_prim(c);}
-  c->i++;
+/* A character constant of a `#if` (6.10.1p4), read as Clang and GCC read one: a plain one by the target's plain `char`
+ * -- its byte sign-extended, or zero-extended and the operand a `uintmax_t` where `char` is unsigned (so `'a' - 98 < 0`
+ * is false on AArch64); a multi-character one packed big-endian into an `int`'s 32 bits and extended likewise -- a `u8`
+ * one an `unsigned char`, a `u` and a `U` one `char16_t` and `char32_t`, unsigned, an `L` one the target's `wchar_t`.
+ * Both rails had read every one as 0; refused for `char_bad` in any operand (CF-PPARITH; the oracle's `_char_lit`). */
+static ppv chr(CE *expression, const char *s) {
+  CppState *state=expression->state; charlit L; ppv r={0,0};
+  int bits=8*state->wchar_size, sg;
+  unsigned long long v;
+  if(char_literal(s,(int)strlen(s),bits,&L)){ cpp_limit(state,char_bad); return r; }
+  v=L.units[0];
+  if(!L.prefix){ bits=8; sg=state->char_signed;
+    if(L.n>1){ bits=32; v=0; for(int k=0;k<L.n;k++) v=((v<<8)|L.units[k])&0xFFFFFFFFull; } }
+  else if(L.prefix=='L') sg=state->wchar_signed;
+  else { bits=L.prefix=='8' ? 8 : L.prefix=='u' ? 16 : 32; sg=0; }
+  if(sg && bits<64 && (v>>(bits-1))) v|=~0ull<<bits;    /* sign-extended */
+  r.v=v; r.u=!sg;
+  return r;
+}
+static int is_name(const char *t){
+  if(!id0((unsigned char)t[0])) return 0;
+  for(int k=1;t[k];k++) if(!idc((unsigned char)t[k])) return 0;
+  return 1;
+}
+static int is_char_token(const char *t){
+  if(t[0]=='u' && t[1]=='8') t+=2; else if(t[0]=='L'||t[0]=='u'||t[0]=='U') t++;
+  return t[0]=='\'';
+}
+static int ce_is(CE *c, const char *op){ return c->i<c->n && !strcmp(c->t[c->i],op); }
+static ppv ce_prim(CE *c, int live, int depth){
+  ppv z={0,0}; const char *t;
+  if(c->i>=c->n){ ce_fail(c,PP_MALFORMED); return z; }
+  t=c->t[c->i++];
+  if(!strcmp(t,"(")){
+    if(depth>=PP_MAX_DEPTH){ ce_fail(c,PP_DEEP); return z; }
+    ppv v=ce_comma(c,live,depth+1);
+    if(!ce_is(c,")")){ ce_fail(c,PP_MALFORMED); return z; }
+    c->i++; return v; }
   if(t[0]>='0'&&t[0]<='9') return lit(c, t);
-  return 0;                                        /* undefined identifier -> 0 */
+  if(is_char_token(t)) return chr(c, t);
+  if(is_name(t)){ z.v=!strcmp(t,"true"); return z; }   /* C23 6.10.1p11: `true` is 1, any other identifier 0 */
+  ce_fail(c,PP_MALFORMED); return z;
+}
+/* Prefix operators, read as a run and applied innermost first, so a long run takes no stack. */
+static ppv ce_unary(CE *c, int live, int depth){
+  int start=c->i, end;
+  while(ce_is(c,"+")||ce_is(c,"-")||ce_is(c,"~")||ce_is(c,"!")) c->i++;
+  end=c->i;
+  ppv v=ce_prim(c,live,depth);
+  for(int k=end-1;k>=start;k--){ char op=c->t[k][0];
+    if(op=='!'){ v.v=!v.v; v.u=0; }
+    else if(op=='~') v.v=~v.v;
+    else if(op=='-'){ if(!v.u && v.v==1ull<<63 && live) ce_fail(c,PP_OVERFLOW); v.v=0-v.v; } }
+  return v;
 }
 static int prec(const char *o){
   if(!strcmp(o,"||"))return 1;
@@ -449,55 +522,76 @@ static int prec(const char *o){
   if(!strcmp(o,"*")||!strcmp(o,"/")||!strcmp(o,"%"))return 10;
   return 0;
 }
-static long apply(CE *expression, const char *o,long a,long b){
-  if(!strcmp(o,"||"))return a||b;
-  if(!strcmp(o,"&&"))return a&&b;
-  if(!strcmp(o,"|"))return a|b;
-  if(!strcmp(o,"^"))return a^b;
-  if(!strcmp(o,"&"))return a&b;
-  if(!strcmp(o,"=="))return a==b;
-  if(!strcmp(o,"!="))return a!=b;
-  if(!strcmp(o,"<"))return a<b;
-  if(!strcmp(o,">"))return a>b;
-  if(!strcmp(o,"<="))return a<=b;
-  if(!strcmp(o,">="))return a>=b;
+/* `a op b` in C's `#if` arithmetic (the oracle's `_apply`); `live` where C evaluates it, so its undefined behaviour
+ * refuses the unit -- an unevaluated one's value is never read, but its type still decides a `?:`'s. */
+static ppv apply(CE *c, const char *o, ppv a, ppv b, int live){
+  ppv r={0,0};
+  if(!strcmp(o,"||")){ r.v=a.v||b.v; return r; }
+  if(!strcmp(o,"&&")){ r.v=a.v&&b.v; return r; }
   if(!strcmp(o,"<<")||!strcmp(o,">>")){
-    if(b<0 || (unsigned long)b >= sizeof(long)*CHAR_BIT){ce_limit(expression, "invalid shift in #if expression");return 0;}
-    if(!strcmp(o,">>")) return a>>b;
-    if(a<0 || (b && a>(LONG_MAX>>b))){ce_limit(expression, "overflow in #if expression");return 0;}
-    return a<<b;
+    r.u=a.u;
+    if(b.u ? b.v>=64 : (ppv_signed(b)<0 || ppv_signed(b)>=64)){ if(live) ce_fail(c,PP_SHIFT); return r; }
+    unsigned n=(unsigned)b.v;
+    if(o[0]=='>'){ r.v = a.u || !(a.v>>63) ? a.v>>n : ~(~a.v>>n); return r; }   /* a negative one: arithmetic */
+    if(!a.u && live && (a.v>>63 || (n && a.v>((unsigned long long)LLONG_MAX>>n)))) ce_fail(c,PP_OVERFLOW);
+    r.v=a.v<<n; return r;
   }
-  if(!strcmp(o,"+")){
-    if((b>0&&a>LONG_MAX-b)||(b<0&&a<LONG_MIN-b)){ce_limit(expression, "overflow in #if expression");return 0;}
-    return a+b;
-  }
-  if(!strcmp(o,"-")){
-    if((b>0&&a<LONG_MIN+b)||(b<0&&a>LONG_MAX+b)){ce_limit(expression, "overflow in #if expression");return 0;}
-    return a-b;
-  }
-  if(!strcmp(o,"*")){
-    if((a>0&&((b>0&&a>LONG_MAX/b)||(b<0&&b<LONG_MIN/a))) ||
-       (a<0&&((b>0&&a<LONG_MIN/b)||(b<0&&a<LONG_MAX/b)))){
-      ce_limit(expression, "overflow in #if expression");return 0;}
-    return a*b;
-  }
+  int u=a.u||b.u; long long x=ppv_signed(a), y=ppv_signed(b);
+  if(!strcmp(o,"==")){ r.v=a.v==b.v; return r; }
+  if(!strcmp(o,"!=")){ r.v=a.v!=b.v; return r; }
+  if(!strcmp(o,"<")){ r.v=u ? a.v<b.v : x<y; return r; }
+  if(!strcmp(o,">")){ r.v=u ? a.v>b.v : x>y; return r; }
+  if(!strcmp(o,"<=")){ r.v=u ? a.v<=b.v : x<=y; return r; }
+  if(!strcmp(o,">=")){ r.v=u ? a.v>=b.v : x>=y; return r; }
+  r.u=u;
+  if(!strcmp(o,"&")){ r.v=a.v&b.v; return r; }
+  if(!strcmp(o,"|")){ r.v=a.v|b.v; return r; }
+  if(!strcmp(o,"^")){ r.v=a.v^b.v; return r; }
   if(!strcmp(o,"/")||!strcmp(o,"%")){
-    if(!b){ce_limit(expression, "division by zero in #if expression");return 0;}
-    if(a==LONG_MIN&&b==-1){ce_limit(expression, "overflow in #if expression");return 0;}
-    return !strcmp(o,"/")?a/b:a%b;
+    if(!b.v){ if(live) ce_fail(c,PP_DIVZERO); return r; }
+    if(u){ r.v = o[0]=='/' ? a.v/b.v : a.v%b.v; return r; }
+    if(x==LLONG_MIN && y==-1){ if(live) ce_fail(c,PP_OVERFLOW); r.v=o[0]=='/' ? a.v : 0; return r; }   /* 6.5.5p6 */
+    r.v=(unsigned long long)(o[0]=='/' ? x/y : x%y); return r;
   }
-  return 0;
+  if(u){ r.v = o[0]=='+' ? a.v+b.v : o[0]=='-' ? a.v-b.v : a.v*b.v; return r; }   /* modulo 2^64 */
+  int over = o[0]=='+' ? (y>0 && x>LLONG_MAX-y) || (y<0 && x<LLONG_MIN-y)
+           : o[0]=='-' ? (y<0 && x>LLONG_MAX+y) || (y>0 && x<LLONG_MIN+y)
+           : (x>0 && ((y>0 && x>LLONG_MAX/y) || (y<0 && y<LLONG_MIN/x)))
+             || (x<0 && ((y>0 && x<LLONG_MIN/y) || (y<0 && x<LLONG_MAX/y)));
+  if(over && live) ce_fail(c,PP_OVERFLOW);
+  r.v = o[0]=='+' ? a.v+b.v : o[0]=='-' ? a.v-b.v : a.v*b.v;   /* the wrapped value, read by nothing live */
+  return r;
 }
-static long ce_bin(CE *c,int minp){
-  long lhs=ce_prim(c);
-  while(c->i<c->n){int p=prec(c->t[c->i]); if(p<minp||p==0)break; char op[8];strcpy(op,c->t[c->i]);c->i++;
-    int suppress=(!strcmp(op,"&&")&&!lhs)||(!strcmp(op,"||")&&lhs);
-    if(suppress)c->state->constant_expression_suppression++;
-    long rhs=ce_bin(c,p+1);
-    if(suppress)c->state->constant_expression_suppression--;
-    lhs=apply(c,op,lhs,rhs);} return lhs;
+/* Precedence climbing: one frame per operator level, so a long chain takes no stack. */
+static ppv ce_bin(CE *c, int minp, int live, int depth){
+  ppv lhs=ce_unary(c,live,depth);
+  while(c->i<c->n && !c->state->limit_error){ const char *op=c->t[c->i]; int p=prec(op);
+    if(!p || p<minp) break;
+    c->i++;
+    int rlive=live && !(!strcmp(op,"&&") && !lhs.v) && !(!strcmp(op,"||") && lhs.v);
+    ppv rhs=ce_bin(c,p+1,rlive,depth);
+    lhs=apply(c,op,lhs,rhs,live); }
+  return lhs;
 }
-static long ce_expr(CE *c){return ce_bin(c,1);}
+static ppv ce_cond(CE *c, int live, int depth){
+  ppv k=ce_bin(c,1,live,depth), z={0,0};
+  if(!ce_is(c,"?")) return k;
+  if(depth>=PP_MAX_DEPTH){ ce_fail(c,PP_DEEP); return z; }
+  c->i++;
+  ppv a=ce_comma(c,live && k.v,depth+1);
+  if(!ce_is(c,":")){ ce_fail(c,PP_MALFORMED); return z; }
+  c->i++;
+  ppv b=ce_cond(c,live && !k.v,depth+1);
+  ppv r = k.v ? a : b; r.u=a.u||b.u;
+  return r;
+}
+static ppv ce_comma(CE *c, int live, int depth){
+  ppv v=ce_cond(c,live,depth);
+  while(ce_is(c,",") && !c->state->limit_error){
+    if(live) ce_fail(c,PP_COMMA);
+    c->i++; v=ce_cond(c,live,depth); }
+  return v;
+}
 
 /* Does header `name` resolve against the search dirs (existence only, no read)? Mirrors
  * read_file_dirs' search so __has_include in #if agrees with #include. */
@@ -522,10 +616,9 @@ static void header_name_of(CppState *state, const char *s, int e, char *nm, size
   memcpy(nm, s+p, (size_t)nl); nm[nl]=0;
 }
 
-static long eval_if(CppState *state, const char *expr, const char *const *dirs, int ndirs) {
+static int eval_if(CppState *state, const char *expr, const char *const *dirs, int ndirs) {
   /* replace `defined X` / `defined(X)` and the __has_* operators first, then expand, then evaluate. */
   char *buf=state->conditional_buffer; size_t w=0; buf[0]=0; int i=0; char t[256];
-  state->constant_expression_suppression=0;
   while(1){{ int q=i; if(ident_at(expr,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME); }   /* a name
                                                         * it looks up is a macro name: bounded here and after expansion */
     int k=ntok(state,expr,&i,t,sizeof t); if(!k)break;
@@ -565,9 +658,12 @@ static long eval_if(CppState *state, const char *expr, const char *const *dirs, 
   CE c; c.n=0;c.i=0;c.state=state; int j=0; char tk[64];
   while(1){int q=j; if(ident_at(state->conditional_expanded,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME);
     int k=ntok(state,state->conditional_expanded,&j,tk,sizeof tk); if(!k)break;
-    if(c.n>=512){cpp_limit(state, "too many tokens in #if expression");break;}
+    if(c.n>=512){cpp_limit(state, PP_TOO_MANY);break;}
     strncpy(c.t[c.n++],tk,63);c.t[c.n-1][63]=0;}
-  return ce_expr(&c);
+  if(state->limit_error) return 0;
+  ppv v=ce_comma(&c,1,0);
+  if(c.i!=c.n) cpp_limit(state,PP_MALFORMED);    /* a token past the expression's end */
+  return v.v!=0;
 }
 
 /* --- directive processing ------------------------------------------------ */
@@ -848,6 +944,7 @@ int bcir_cpp_context_init(bcir_cpp_context *context,
   if (!state) return 1;
   memset(state, 0, sizeof *state);
   state->allocator = selected;
+  state->char_signed = 1; state->wchar_size = 4; state->wchar_signed = 1;   /* x86-64 Linux's */
   (void)bcir_host_arena_init(&state->scratch, &selected, 16384u);
   context->allocator = selected;
   context->state = state;
@@ -863,7 +960,6 @@ void bcir_cpp_context_reset(bcir_cpp_context *context) {
   state->limit_error = NULL;
   state->current_file = "<source>";
   state->current_line = 0;
-  state->constant_expression_suppression = 0;
   state->include_depth = 0;
 }
 
@@ -880,6 +976,15 @@ void bcir_cpp_context_destroy(bcir_cpp_context *context) {
   memset(state, 0, sizeof *state);
   bcir_host_deallocate(&allocator, state);
   memset(context, 0, sizeof *context);
+}
+
+void bcir_cpp_context_set_chars(bcir_cpp_context *context, int char_signed, int wchar_size, int wchar_signed) {
+  CppState *state;
+  if (!context || !context->state) return;
+  state = (CppState *)context->state;
+  state->char_signed = char_signed ? 1 : 0;
+  state->wchar_size = wchar_size == 2 ? 2 : 4;
+  state->wchar_signed = wchar_signed ? 1 : 0;
 }
 
 int bcir_cpp_run_ex_context(bcir_cpp_context *context, const char *src,
@@ -968,4 +1073,9 @@ int bcir_cpp_run(const char *src, const char *basedir, char *out, size_t outcap,
                  char *err, size_t errcap) {
   bcir_cpp_context *context=legacy_context(err,errcap);
   return context?bcir_cpp_run_context(context,src,basedir,out,outcap,err,errcap):1;
+}
+
+void bcir_cpp_set_chars(int char_signed, int wchar_size, int wchar_signed) {
+  bcir_cpp_context *context=legacy_context(NULL,0);
+  if(context) bcir_cpp_context_set_chars(context,char_signed,wchar_size,wchar_signed);
 }

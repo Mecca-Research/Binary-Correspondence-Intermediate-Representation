@@ -118,8 +118,8 @@
     {
       "expects": "test_enum_objects_fold_as_clang_folds_them_on_each_target",
       "label": "ET8 the twin's MSVC target makes an enumeration with no negative enumerator `unsigned int`",
-      "new": "\"LLP64\", 4, 8,  8,  8, 16, 8, 2, 0, 1},",
-      "old": "\"LLP64\", 4, 8,  8,  8, 16, 8, 2, 0, 0},",
+      "new": "\"LLP64\", 4, 8,  8,  8, 16, 8, 2, 0, 1, 1},",
+      "old": "\"LLP64\", 4, 8,  8,  8, 16, 8, 2, 0, 0, 1},",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

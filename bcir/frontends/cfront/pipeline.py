@@ -199,6 +199,7 @@ def compile_unit(
         search_paths=search_paths,
         defines=defines,
         name=filename,
+        abi=abi,  # a `#if` reads a character constant by the target's character types (CF-PPARITH)
     )
     unit = parse_unit(source, abi)  # the constants folded at parse take the target's data model
     lowered = lower_unit(unit, abi)

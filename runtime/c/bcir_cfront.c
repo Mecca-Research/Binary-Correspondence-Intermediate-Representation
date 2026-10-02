@@ -155,6 +155,8 @@ typedef struct {
                               * `unsigned short` on Windows */
   int enum_unsigned;         /* an enumeration with no negative enumerator is compatible with `unsigned int` (GCC and
                               * Clang on System V), not `int` (the MSVC ABI); 6.7.2.2p4 (CF-ENUMOBJ) */
+  int char_signed;           /* plain `char` is signed (x86-64, i386, Windows), not (AArch64, RISC-V): a `#if` reads a
+                              * character constant by it (CF-PPARITH) */
 } bcir_abi;
 
 /* The named matrix (mirrors abi.py TARGETS). x86-64 / AArch64 / RISC-V are all LP64, so their
@@ -162,11 +164,11 @@ typedef struct {
  * cases that change what the frontend lays out. g_targets[0] is the default (host LP64) model, so
  * --target-less compilation is byte-identical to the layout used before --target existed. */
 static const bcir_abi g_targets[] = {
-  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8, 4, 1, 1},
-  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 0, 1},
-  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 1, 1},
-  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8, 2, 0, 0},
-  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4, 4, 1, 1},
+  {"x86_64-linux",   "x86_64-unknown-linux-gnu",  "LP64",  8, 8, 16, 16, 16, 8, 4, 1, 1, 1},
+  {"aarch64-linux",  "aarch64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 0, 1, 0},
+  {"riscv64-linux",  "riscv64-unknown-linux-gnu", "LP64",  8, 8, 16, 16, 16, 8, 4, 1, 1, 0},
+  {"x86_64-windows", "x86_64-pc-windows-msvc",    "LLP64", 4, 8,  8,  8, 16, 8, 2, 0, 0, 1},
+  {"i386-linux",     "i386-unknown-linux-gnu",    "ILP32", 4, 4, 12,  4,  8, 4, 4, 1, 1, 1},
 };
 #define BCIR_N_TARGETS ((int)(sizeof g_targets / sizeof g_targets[0]))
 static const bcir_abi *bcir_abi_host(void){ return &g_targets[0]; }
@@ -175,6 +177,14 @@ static const bcir_abi *bcir_abi_by_name(const char *name){
   if(!name) return bcir_abi_host();
   for(int i=0;i<BCIR_N_TARGETS;i++) if(!strcmp(g_targets[i].name,name)) return &g_targets[i];
   return NULL;
+}
+int bcir_cfront_target_chars(const char *target, int *char_signed, int *wchar_size, int *wchar_signed){
+  const bcir_abi *a=bcir_abi_by_name(target);
+  if(!a) return 1;
+  if(char_signed) *char_signed=a->char_signed;
+  if(wchar_size) *wchar_size=a->wchar_size;
+  if(wchar_signed) *wchar_signed=a->wchar_signed;
+  return 0;
 }
 
 /* §5.12 one NAME's mutation tally (assignment count + address-taken flag) for the extent-stability

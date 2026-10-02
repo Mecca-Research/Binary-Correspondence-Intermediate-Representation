@@ -21,8 +21,8 @@
     {
       "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
       "label": "FS2 the oracle's `#if` reads a constant through Python's `int`, past any suffix",
-      "new": "    t = t.replace(\"'\", \"\")\n    while t and t[-1] in \"uUlL\":\n        t = t[:-1]\n    if t[:2] in (\"0x\", \"0X\"):\n        return int(t, 16)\n    if t[:2] in (\"0b\", \"0B\"):\n        return int(t[2:], 2)\n    if len(t) > 1 and t[0] == \"0\" and t.isdigit():\n        return int(t, 8)\n    return int(t or \"0\", 10)\n",
-      "old": "    try:\n        value, _decimal, _suffix = int_literal_parts(t)\n    except CLexError as e:\n        raise CPPError(str(e)) from None\n    return value\n",
+      "new": "    t = t.replace(\"'\", \"\")\n    while t and t[-1] in \"uUlL\":\n        t = t[:-1]\n    if t[:2] in (\"0x\", \"0X\"):\n        value, suffix = int(t, 16), \"\"\n    elif t[:2] in (\"0b\", \"0B\"):\n        value, suffix = int(t[2:], 2), \"\"\n    elif len(t) > 1 and t[0] == \"0\" and t.isdigit():\n        value, suffix = int(t, 8), \"\"\n    else:\n        value, suffix = int(t or \"0\", 10), \"\"\n",
+      "old": "    try:\n        value = parse_int_literal(t)\n        _value, _decimal, suffix = int_literal_parts(t)\n    except CLexError as e:\n        raise CPPError(str(e)) from None\n",
       "path": "bcir/frontends/cfront/cpp.py"
     },
     {
@@ -119,8 +119,8 @@
     {
       "expects": "test_malformed_constants_refused_and_file_scope_forms_lowered_alike",
       "label": "FS16 the twin's `#if` reads a constant with `strtol` (`0777` is 777, `1lL` is 1)",
-      "new": "  { long value; errno=0;\n    if (s[0]=='0'&&(s[1]=='x'||s[1]=='X')) value=strtol(s,0,16);\n    else if (s[0]=='0'&&(s[1]=='b'||s[1]=='B')) value=strtol(s+2,0,2);\n    else value=strtol(s,0,10);\n    if(errno==ERANGE) ce_limit(expression, \"integer overflow in #if expression\");\n    return value; }\n  intlit L; const char *why=int_literal(s,(int)strlen(s),&L);\n  CppState *state=expression->state;\n",
-      "old": "  intlit L; const char *why=int_literal(s,(int)strlen(s),&L);\n  CppState *state=expression->state;\n",
+      "new": "  { ppv q={0,0}; errno=0;\n    if (s[0]=='0'&&(s[1]=='x'||s[1]=='X')) q.v=(unsigned long long)strtol(s,0,16);\n    else if (s[0]=='0'&&(s[1]=='b'||s[1]=='B')) q.v=(unsigned long long)strtol(s+2,0,2);\n    else q.v=(unsigned long long)strtol(s,0,10);\n    if(errno==ERANGE) cpp_limit(expression->state, \"integer overflow in #if expression\");\n    return q; }\n  intlit L; const char *why=int_literal(s,(int)strlen(s),&L); ppv r={0,0};\n  CppState *state=expression->state;\n",
+      "old": "  intlit L; const char *why=int_literal(s,(int)strlen(s),&L); ppv r={0,0};\n  CppState *state=expression->state;\n",
       "path": "runtime/c/bcir_cpp.c"
     },
     {

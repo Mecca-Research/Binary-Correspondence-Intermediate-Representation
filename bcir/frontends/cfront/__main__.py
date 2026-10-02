@@ -174,6 +174,12 @@ def _load_compile_db(path: str) -> list[dict]:
     return jobs
 
 
+def _abi_of(target: str | None):
+    """The ABI of `target` (a name in TARGETS), or None for the host's: the preprocessor reads a `#if`'s character
+    constant by it (CF-PPARITH)."""
+    return TARGETS[target] if target is not None else None
+
+
 def _dep_rule(path: str, deps: list[str], mt: str | None) -> str:
     tgt = mt or (os.path.splitext(os.path.basename(path))[0] + ".o")
     return f"{tgt}: {' '.join([path, *deps])}"
@@ -340,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
             from .cpp import CPPError, Preprocessor  # noqa: PLC0415
 
             try:
-                pp = Preprocessor(None, None, search, job_defines)
+                pp = Preprocessor(None, None, search, job_defines, _abi_of(job_target))
                 pp.process(text, path)
                 dep_rules.append(_dep_rule(path, pp.dep_paths, dep_target))
                 outcomes.append("clean")
@@ -354,7 +360,15 @@ def main(argv: list[str] | None = None) -> int:
             from .cpp import CPPError, preprocess  # noqa: PLC0415
 
             try:
-                out.append(preprocess(text, search_paths=search, defines=job_defines, name=path))
+                out.append(
+                    preprocess(
+                        text,
+                        search_paths=search,
+                        defines=job_defines,
+                        name=path,
+                        abi=_abi_of(job_target),
+                    )
+                )
                 outcomes.append("clean")
             except CPPError as e:
                 sys.stderr.write(f"{path}: preprocessor error: {e}\n")

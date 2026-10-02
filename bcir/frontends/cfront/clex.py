@@ -533,3 +533,72 @@ def parse_int_literal(text: str, pos: int | None = None) -> int:
     if value >> (64 if ("u" in suffix.lower() or not decimal) else 63):
         raise CLexError(INT_TOO_LARGE, pos=pos)
     return value
+
+
+#: The one reason both rails give for a character constant they do not read (CF-PPARITH): one with no character, more
+#: than one character behind an encoding prefix, an escape past its type's code unit, a universal character name, an
+#: escape C does not define (`\q`, GNU's `\e`), or a source character past ASCII. Clang refuses most of these itself
+#: (`empty character constant`, `hex escape sequence out of range`, `character too large for enclosing character
+#: literal type`); the rest it reads in ways of its own. The twin's `char_bad` (`bcir_intlit.h`).
+CHAR_UNSUPPORTED = "unsupported character constant"
+
+#: A simple escape sequence's value (C11 6.4.4.4p1).
+_SIMPLE_ESCAPES = {
+    "'": 39,
+    '"': 34,
+    "?": 63,
+    "\\": 92,
+    "a": 7,
+    "b": 8,
+    "f": 12,
+    "n": 10,
+    "r": 13,
+    "t": 9,
+    "v": 11,
+}
+
+
+def char_constant_units(text: str, wchar_bits: int = 32) -> "tuple[str, list[int]]":
+    """A character constant (C11 6.4.4.4, C23's `u8`) as its encoding prefix -- "", "L", "u", "U" or "u8" -- and its
+    code units, each an ASCII source character but `'` and `\\` (a space, a tab, a vertical tab or a form feed, or a
+    printable one) or a simple, octal or hexadecimal escape, its value within its type's code unit: 8 bits for a plain
+    and a `u8` one, 16 for `u`, 32 for `U`, `wchar_bits` (the target's `wchar_t`) for `L`. A plain one may hold
+    several (a multi-character constant); a prefixed one holds one. A CLexError(CHAR_UNSUPPORTED) for any other
+    (CF-PPARITH; the twin's `char_literal`)."""
+    prefix = "u8" if text[:2] == "u8" else text[:1] if text[:1] in ("L", "u", "U") else ""
+    body = text[len(prefix) :]
+    if len(body) < 2 or body[0] != "'" or body[-1] != "'":
+        raise CLexError(CHAR_UNSUPPORTED)
+    body = body[1:-1]
+    limit = 1 << {"": 8, "u8": 8, "u": 16, "U": 32, "L": wchar_bits}[prefix]
+    units, i = [], 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\":
+            e = body[i + 1 : i + 2]
+            if e and e in _SIMPLE_ESCAPES:
+                v, i = _SIMPLE_ESCAPES[e], i + 2
+            elif e and e in "01234567":
+                j = i + 1
+                while j < len(body) and j < i + 4 and body[j] in "01234567":
+                    j += 1
+                v, i = int(body[i + 1 : j], 8), j
+            elif e == "x":
+                j = i + 2
+                while j < len(body) and body[j] in _BASE_DIGITS[16]:
+                    j += 1
+                if j == i + 2:
+                    raise CLexError(CHAR_UNSUPPORTED)
+                v, i = int(body[i + 2 : j], 16), j
+            else:
+                raise CLexError(CHAR_UNSUPPORTED)
+        elif ch in "\t\v\f" or (" " <= ch <= "~" and ch not in "'\\"):
+            v, i = ord(ch), i + 1
+        else:
+            raise CLexError(CHAR_UNSUPPORTED)
+        if v >= limit:
+            raise CLexError(CHAR_UNSUPPORTED)
+        units.append(v)
+    if not units or (prefix and len(units) > 1):
+        raise CLexError(CHAR_UNSUPPORTED)
+    return prefix, units

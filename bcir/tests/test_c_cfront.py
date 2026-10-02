@@ -14100,6 +14100,337 @@ def test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike():
             _rtfp_run_unit(f"l{n}", _ENUMOBJ_HEAD + body + "\n", exe, d)
 
 
+# CF-PPARITH: a `#if`/`#elif` expression in C's integer arithmetic (6.10.1p4) on both rails. Each form takes the branch
+# Clang takes for the target -- read from `clang -target T -std=c2x -E` -- on both rails, on the four targets: every
+# operand an `intmax_t` or a `uintmax_t`, an unsigned operand making the arithmetic unsigned, a character constant by
+# the target's character types (plain `char` unsigned on AArch64, so `'a' - 98 < 0` is false there; `wchar_t` unsigned
+# on AArch64 and Windows), `true` 1, the operand C leaves unevaluated never refused. Both rails had evaluated in a
+# signed host integer (Python's unbounded `int`, the twin's `long`), read a character constant as 0, taken `?:` whole
+# (the twin) and ignored an unclosed `(` or a trailing token.
+_PPARITH_FORMS = (
+    # unsigned operands and the usual arithmetic conversions
+    "-1 > 0u",
+    "-1 < 0",
+    "0u - 1 == 18446744073709551615u",
+    "0xFFFFFFFFFFFFFFFF == -1",
+    "0x8000000000000000 > 0",
+    "-9223372036854775807 - 1 < 0",
+    "-1 / 2u == 9223372036854775807",
+    "-1 % 3u == 0",
+    "-7 / 2 == -3 && -7 % 2 == -1",
+    "1u << 63 > 0",
+    "-1 >> 1 == -1",
+    "(0u - 1) >> 63 == 1",
+    "~0u == 18446744073709551615u",
+    "~0 == -1",
+    "-0u == 0",
+    "!0u - 2 < 0",
+    "(1 ? -1 : 0u) > 0",
+    "(0 ? 1u : -1) > 0",
+    "(1 ? -1 : 0) < 0",
+    "1 ? 2 : 3 ? 4 : 5",
+    "defined(__STDC__) + 0u - 2 > 0",
+    "NOT_A_MACRO == 0",
+    "true && !false",
+    "1 + 2 * 3 == 7 && (1 + 2) * 3 == 9",
+    # operands C leaves unevaluated refuse for nothing
+    "1 ? 2 : 1 / 0",
+    "0 ? 1 / 0 : 3",
+    "0 && 1 / 0",
+    "1 || 1 / 0",
+    "(2 || 1 / 0) == 1",
+    "0 && (1, 2)",
+    "0 && (1 << 64)",
+    "1 || -9223372036854775807 - 2",
+    # character constants
+    "'a' == 97",
+    "'a' - 98 < 0",
+    "'\\377' < 0",
+    "'\\xff' == -1",
+    "'\\0' == 0 && '\\n' == 10 && '\\'' == 39",
+    "'ab' == 24930",
+    "'\\xff\\xff\\xff\\xff' < 0",
+    "L'a' - 98 < 0",
+    "L'\\xff' == 255",
+    "u'\\xffff' > 0",
+    "U'\\xffffffff' > 0",
+    "u8'\\x80' > 0",
+    "u8'a' - 98 < 0",
+    # C23's digit separators, which the twin's tokenizer had cut a number at
+    "1'000 == 1000 && 0x1'F == 31",
+)
+# GCC reads a multi-character constant in `#if` as a signed `int` whatever plain `char` is (libcpp: "multichar constants
+# are of type int and therefore signed"); Clang reads it by `char`'s signedness, as a single one. Both rails read
+# Clang's, so GCC judges these only with a signed `char`.
+_PPARITH_GCC_APART = frozenset({"'\\xff\\xff\\xff\\xff' < 0"})
+_PPARITH_MALFORMED = "malformed #if expression"
+_PPARITH_OVERFLOW = "integer overflow in #if expression"
+_PPARITH_SHIFT = "invalid shift in #if expression"
+_PPARITH_DIVZERO = "division by zero in #if expression"
+_PPARITH_CHAR = "unsupported character constant"
+# ... and the forms both rails refuse, for one reason each, on every target: C's undefined behaviour or constraint
+# violations in an evaluated operand, a form the grammar does not admit, a constant no type holds, a character
+# constant the C front does not read, and the twin's bounds held on both rails
+_PPARITH_REFUSED = (
+    ("(1, 2)", "comma operator in #if expression"),
+    ("1 2", _PPARITH_MALFORMED),
+    ("", _PPARITH_MALFORMED),
+    ("(1", _PPARITH_MALFORMED),
+    ("1 ? 2", _PPARITH_MALFORMED),
+    ('"a"', _PPARITH_MALFORMED),
+    ("1 = 1", _PPARITH_MALFORMED),
+    ("L 'a'", _PPARITH_MALFORMED),
+    ("1.0", "invalid integer literal '1.0'"),
+    ("1 / 0", _PPARITH_DIVZERO),
+    ("1 % (2 - 2)", _PPARITH_DIVZERO),
+    ("9223372036854775807 + 1", _PPARITH_OVERFLOW),
+    ("-9223372036854775807 - 2", _PPARITH_OVERFLOW),
+    ("-(-9223372036854775807 - 1)", _PPARITH_OVERFLOW),
+    ("(-9223372036854775807 - 1) / -1", _PPARITH_OVERFLOW),
+    ("(-9223372036854775807 - 1) % -1", _PPARITH_OVERFLOW),
+    ("4611686018427387904 * 2", _PPARITH_OVERFLOW),
+    ("1 << 63", _PPARITH_OVERFLOW),
+    ("-1 << 1", _PPARITH_OVERFLOW),
+    ("-1 << 0", _PPARITH_OVERFLOW),  # a negative left operand, whatever the count (6.5.7p4)
+    ("1 << 64", _PPARITH_SHIFT),
+    ("1 >> -1", _PPARITH_SHIFT),
+    ("1u << 64u", _PPARITH_SHIFT),
+    (
+        "18446744073709551616",
+        "an integer constant too large for every type its base and suffix allow",
+    ),
+    (
+        "9223372036854775808",
+        "an integer constant too large for every type its base and suffix allow",
+    ),
+    (
+        "0 && 18446744073709551616",
+        "an integer constant too large for every type its base and suffix allow",
+    ),
+    ("''", _PPARITH_CHAR),
+    ("'\\x100'", _PPARITH_CHAR),
+    ("'\\400'", _PPARITH_CHAR),
+    ("'\\q'", _PPARITH_CHAR),
+    ("'\\u0041'", _PPARITH_CHAR),
+    ("L'ab'", _PPARITH_CHAR),
+    ("u8'\\x100'", _PPARITH_CHAR),
+    ("u'\\x10000'", _PPARITH_CHAR),
+    ("0 && '\\q'", _PPARITH_CHAR),
+    ("(" * 64 + "1" + ")" * 64, "#if expression nested too deeply"),
+    ("1" + " + 1" * 256, "too many tokens in #if expression"),
+)
+
+
+def _pparith_unit(expr: str) -> str:
+    return f"#if {expr}\nint pp_taken;\n#else\nint pp_skipped;\n#endif\n"
+
+
+def _pparith_branch(text: str) -> str:
+    """Which branch a preprocessed `_pparith_unit` kept."""
+    taken, skipped = "pp_taken" in text, "pp_skipped" in text
+    assert taken != skipped, text
+    return "taken" if taken else "skipped"
+
+
+def test_if_expressions_take_the_branch_clang_takes_on_each_target():
+    """CF-PPARITH: each `_PPARITH_FORMS` expression, preprocessed by both rails for each of the four targets, keeps the
+    branch Clang keeps for that target (`clang -target T -std=c2x -E`) -- and GCC on the host, for the System V rule
+    with a signed `char` (`-fsigned-char`) and, where no wide constant is read, with an unsigned one
+    (`-funsigned-char`, AArch64's)."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront import abi as abi_mod
+    from bcir.frontends.cfront.cpp import preprocess
+
+    clang = shutil.which("clang")
+    gcc = shutil.which("gcc")
+    exe = _build_frontend(_session_build_dir())
+    judged = 0
+    with tempfile.TemporaryDirectory() as d:
+        for k, expr in enumerate(_PPARITH_FORMS):
+            unit = _pparith_unit(expr)
+            path = os.path.join(d, f"pp{k}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            for t in _BUF_TARGETS:
+                abi = abi_mod.target(t)
+                oracle = _pparith_branch(preprocess(unit, abi=abi))
+                run = subprocess.run(
+                    [exe, "--target", t, "--emit-cpp", path], capture_output=True, text=True
+                )
+                assert run.returncode == 0, (expr, t, run.stdout)
+                assert _pparith_branch(run.stdout) == oracle, f"#if {expr} on {t}: the rails part"
+                if clang:
+                    ref = subprocess.run(
+                        [clang, "-target", abi.triple, "-std=c2x", "-E", "-P", path],
+                        capture_output=True,
+                        text=True,
+                    )
+                    assert ref.returncode == 0, (expr, t, ref.stderr)
+                    assert _pparith_branch(ref.stdout) == oracle, (
+                        f"#if {expr} on {t}: not Clang's branch"
+                    )
+                    judged += 1
+            if gcc:
+                for t, flag in (
+                    ("x86_64-linux", "-fsigned-char"),
+                    ("aarch64-linux", "-funsigned-char"),
+                ):
+                    if t == "aarch64-linux" and ("L'" in expr or expr in _PPARITH_GCC_APART):
+                        continue  # the host's `wchar_t` is not AArch64's; GCC's own reading
+                    ref = subprocess.run(
+                        [gcc, flag, "-std=c2x", "-E", "-P", path], capture_output=True, text=True
+                    )
+                    assert ref.returncode == 0, (expr, flag, ref.stderr)
+                    want = _pparith_branch(preprocess(unit, abi=abi_mod.target(t)))
+                    assert _pparith_branch(ref.stdout) == want, (
+                        f"#if {expr} {flag}: not GCC's branch"
+                    )
+    assert judged or not clang
+
+
+def test_if_expressions_refused_for_one_reason_on_both_rails():
+    """CF-PPARITH: each `_PPARITH_REFUSED` expression is refused by both rails, on the four targets, in the same words
+    -- none raises a bare Python exception (`0xFFFFFFFFFFFFFFFF == -1` had raised `ValueError: negative shift count`
+    on the oracle) -- and a nesting one level short of the bound, and a token count at it, are read."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront import abi as abi_mod
+    from bcir.frontends.cfront.cpp import CPPError, preprocess
+
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for k, (expr, why) in enumerate(_PPARITH_REFUSED):
+            unit = _pparith_unit(expr)
+            path = os.path.join(d, f"pr{k}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            for t in _BUF_TARGETS:
+                try:
+                    preprocess(unit, abi=abi_mod.target(t))
+                    raise AssertionError(f"oracle read #if {expr!r} on {t}")
+                except CPPError as e:
+                    assert str(e) == why, (expr, t, str(e))
+                run = subprocess.run(
+                    [exe, "--target", t, "--emit-cpp", path], capture_output=True, text=True
+                )
+                assert run.stdout.strip() == f"CPP-ERR {why}", (expr, t, run.stdout)
+        for expr in ("(" * 63 + "1" + ")" * 63, "1" + " + 1" * 255, "1 ? 1 : " * 62 + "1"):
+            unit = _pparith_unit(expr)
+            path = os.path.join(d, "edge.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            assert _pparith_branch(preprocess(unit)) == "taken", expr[:40]
+            run = subprocess.run([exe, "--emit-cpp", path], capture_output=True, text=True)
+            assert _pparith_branch(run.stdout) == "taken", (expr[:40], run.stdout[:200])
+
+
+# CF-PPARITH: an encoding prefix and the character constant it begins are one preprocessing token (C11 6.4.4.4), so
+# `L` there is no macro name; a prefix a macro expands to stays apart from a constant after it; a C23 digit separator
+# stays inside its number. The preprocessed text of each rail (the oracle's `preprocess`, the twin's `--emit-cpp`).
+_PPARITH_TOKENS = (
+    "#define P L\n#define L 7\n#define Q u8\n"
+    "int x = P'a';\nint y = L'a';\nint z = L;\nint w = 1'000;\nint v = Q'a';\n"
+)
+_PPARITH_TOKENS_TEXT = "int x=7'a';\nint y=L'a';\nint z=7;\nint w=1'000;\nint v=u8 'a';\n"
+
+
+def test_a_prefixed_character_constant_is_one_token_on_both_rails():
+    """CF-PPARITH: `_PPARITH_TOKENS` preprocesses to `_PPARITH_TOKENS_TEXT` on both rails. Both had read `L'a'` as the
+    identifier `L` and a plain constant -- with `L` a macro, `7'a'` -- and the twin had ended `1'000` at its separator
+    and read a character constant from it, so `#if 1'000 == 1000` took no branch of C's."""
+    if not _CC:
+        return
+    from bcir.frontends.cfront.cpp import preprocess
+
+    assert preprocess(_PPARITH_TOKENS) == _PPARITH_TOKENS_TEXT
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "tokens.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_PPARITH_TOKENS)
+        run = subprocess.run([exe, "--emit-cpp", path], capture_output=True, text=True)
+        assert run.stdout == _PPARITH_TOKENS_TEXT, run.stdout
+
+
+# ... and units whose `#if` picks a function body, lowered by both rails for x86-64 Linux and for AArch64 Linux and run
+# against the original built with that target's plain `char` (`-fsigned-char`, `-funsigned-char`) under Clang and GCC:
+# the task's three reproductions, a character constant read by each `char`, and `#if`/`#elif` chains in unsigned and
+# signed arithmetic with operands C leaves unevaluated
+_PPARITH_RUN_EXPRS = (
+    "-1 > 0u",
+    "'a' == 97",
+    "0xFFFFFFFFFFFFFFFF == -1",
+    "'\\xff' < 0",
+    "'a' - 98 < 0",
+    "-1 / 2u == 9223372036854775807 && -7 / 2 == -3 && 1u << 63 > 0 && ~0 == -1",
+    "(1 ? -1 : 0u) > 0 && true && !false",
+    "defined(__STDC__) + 0u - 2 > 0 && (0 && 1 / 0) == 0",
+)
+_PPARITH_RUN_ELIF = """#include <stdint.h>
+#if 0 && 1 / 0
+uint32_t f(uint32_t s) { return s; }
+#elif 1 || 1 / 0
+#if (0u - 1) >> 63 == 1 && -1 >> 63 == -1
+uint32_t f(uint32_t s) { return s * 3u + 1u; }
+#else
+uint32_t f(uint32_t s) { return s * 5u; }
+#endif
+#else
+uint32_t f(uint32_t s) { return s + 9u; }
+#endif
+"""
+
+
+def _pparith_run_unit(expr: str) -> str:
+    return (
+        f"#include <stdint.h>\n#if {expr}\nuint32_t f(uint32_t s) {{ return s + 1u; }}\n"
+        "#else\nuint32_t f(uint32_t s) { return s ^ 7u; }\n#endif\n"
+    )
+
+
+def test_if_branches_lowered_by_both_rails_run_as_the_original():
+    """CF-PPARITH: each `_PPARITH_RUN_EXPRS` unit and `_PPARITH_RUN_ELIF`, lowered by both rails for x86-64 Linux and
+    for AArch64 Linux, gives one claim graph, and each emit returns what the original does built with that target's
+    plain `char` under Clang and GCC -- the original's `#if` evaluated by the compiler itself. On the parent both
+    rails took `#else` for `-1 > 0u` and `'a' == 97`, and the oracle raised a bare `ValueError` on
+    `0xFFFFFFFFFFFFFFFF == -1`."""
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) SAME(f, gaps_in[n]);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    units = [_pparith_run_unit(e) for e in _PPARITH_RUN_EXPRS] + [_PPARITH_RUN_ELIF]
+    with tempfile.TemporaryDirectory() as d:
+        for k, unit in enumerate(units):
+            path = os.path.join(d, f"pa{k}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            for t, flag in (
+                ("x86_64-linux", "-fsigned-char"),
+                ("aarch64-linux", "-funsigned-char"),
+            ):
+                r = compile_unit(unit, check_clang=False, target=t)
+                run = subprocess.run([exe, "--target", t, path], capture_output=True, text=True)
+                twin_summary, _, twin_emit = run.stdout.partition("----EMIT----\n")
+                assert twin_summary.strip().splitlines()[0] == _summary_line(r), (
+                    unit,
+                    t,
+                    run.stdout[:300],
+                )
+                oracle_emit = "\n".join(r.emitted[n] for n in r.lowered.functions)
+                _run_against_original_werror(
+                    f"pa{k}-{t}",
+                    unit,
+                    (("twin", twin_emit), ("oracle", oracle_emit)),
+                    driver,
+                    {"clang": (flag,), "gcc": (flag,)},
+                )
+
+
 def _card4_refusal(src: str) -> str:
     """The oracle's refusal of `src` -- its lexer's and its `#if`'s too -- or "" when it lowers."""
     from bcir.frontends.cfront.clex import CLexError

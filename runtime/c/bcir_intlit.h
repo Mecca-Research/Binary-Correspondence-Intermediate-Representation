@@ -1,7 +1,9 @@
 /* bcir_intlit.h -- the C front's one reader of an integer constant (C11 6.4.4.1), shared by the lexer
  * (bcir_cfront.c) and the preprocessor's `#if` (bcir_cpp.c), so the two never read one constant two ways: the
  * twin's `#if` had read `0777` as 777 with `strtol` where the lexer, and the oracle's `#if`, read 511, and both
- * took any suffix (CF-SUFFIX). The oracle's counterpart is `clex.int_literal_parts`. Header-only: each includer
+ * took any suffix (CF-SUFFIX). The oracle's counterpart is `clex.int_literal_parts`. It holds the reader of a character
+ * constant too (`char_literal`, the oracle's `clex.char_constant_units`), which the `#if` reads by (CF-PPARITH).
+ * Header-only: each includer
  * gets its own static copy, so neither translation unit links against the other. */
 #ifndef BCIR_INTLIT_H
 #define BCIR_INTLIT_H
@@ -52,6 +54,54 @@ static inline const char *int_literal(const char *s, int n, intlit *o){
   if(!nd) return int_bad;
   if(over || (o->decimal && !o->u && o->v>(unsigned long long)LLONG_MAX)) return int_too_large;
   return NULL;
+}
+
+/* A character constant s[0..n) (C11 6.4.4.4, C23's `u8`), read as the oracle's `clex.char_constant_units` reads one:
+ * its encoding prefix -- 0, 'L', 'u', 'U' or '8' (u8) -- and its code units, each an ASCII source character but `'` and
+ * `\` (a space, a tab, a vertical tab, a form feed or a printable one) or a simple, octal or hexadecimal escape, its
+ * value within its type's code unit: 8 bits for a plain and a `u8` one, 16 for `u`, 32 for `U`, `wchar_bits` (the
+ * target's `wchar_t`) for `L`. A plain one may hold several (a multi-character constant; `units` keeps the last 4, as
+ * an `int` packs them), a prefixed one one. NULL, or `char_bad` for any other: no character, more than one behind a
+ * prefix, an escape past the code unit, a universal character name, an escape C does not define, a source character
+ * past ASCII (CF-PPARITH). */
+typedef struct { int prefix, n; unsigned long units[4]; } charlit;
+static const char char_bad[]="unsupported character constant";
+static inline const char *char_literal(const char *s, int n, int wchar_bits, charlit *o){
+  int i=0, e;
+  unsigned long long limit;
+  memset(o,0,sizeof *o);
+  if(n>=2 && s[0]=='u' && s[1]=='8'){ o->prefix='8'; i=2; }
+  else if(n>=1 && (s[0]=='L'||s[0]=='u'||s[0]=='U')){ o->prefix=s[0]; i=1; }
+  if(n-i<2 || s[i]!='\'' || s[n-1]!='\'') return char_bad;
+  limit = 1ull << (o->prefix=='u' ? 16 : o->prefix=='U' ? 32 : o->prefix=='L' ? wchar_bits : 8);
+  for(i++, e=n-1; i<e; ){
+    unsigned long long v=0; char ch=s[i];
+    if(ch=='\\'){ char x = i+1<e ? s[i+1] : 0;
+      switch(x){
+      case '\'': v=39; i+=2; break;  case '"': v=34; i+=2; break;  case '?': v=63; i+=2; break;
+      case '\\': v=92; i+=2; break;  case 'a': v=7; i+=2; break;   case 'b': v=8; i+=2; break;
+      case 'f': v=12; i+=2; break;   case 'n': v=10; i+=2; break;  case 'r': v=13; i+=2; break;
+      case 't': v=9; i+=2; break;    case 'v': v=11; i+=2; break;
+      case 'x': { int j=i+2;
+        for(; j<e; j++){ int c=s[j], d = c>='0'&&c<='9' ? c-'0' : (c|0x20)>='a'&&(c|0x20)<='f' ? (c|0x20)-'a'+10 : -1;
+          if(d<0) break;
+          if(v<limit) v=v*16u+(unsigned)d; }        /* past the code unit it stays past it */
+        if(j==i+2) return char_bad;
+        i=j; break; }
+      default:
+        if(x>='0' && x<='7'){ int j=i+1;
+          for(; j<e && j<i+4 && s[j]>='0' && s[j]<='7'; j++) v=v*8u+(unsigned)(s[j]-'0');
+          i=j; break; }
+        return char_bad;
+      }
+    } else if(ch=='\t'||ch=='\v'||ch=='\f'||(ch>=' ' && ch<='~' && ch!='\'' && ch!='\\')){ v=(unsigned char)ch; i++; }
+    else return char_bad;
+    if(v>=limit) return char_bad;
+    if(o->n==4){ memmove(o->units,o->units+1,3*sizeof o->units[0]); o->n=3; }
+    o->units[o->n++]=(unsigned long)v;
+    if(o->prefix && o->n>1) return char_bad;
+  }
+  return o->n ? NULL : char_bad;
 }
 
 #endif /* BCIR_INTLIT_H */

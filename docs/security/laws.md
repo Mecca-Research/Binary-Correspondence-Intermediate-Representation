@@ -974,6 +974,17 @@ every other test, parity included; only this witness fires. On the parent, 36 of
 rail-target-unit triples folded otherwise. Witnesses: `test_enum_objects_fold_as_clang_folds_them_on_each_target`,
 `test_enum_objects_take_their_compatible_type_on_both_rails`. Faults (`cfront-enumobj.json`): `EO2`, `EO8`,
 `ET2`, `ET8`.
+
+CF-PPARITH instance (2026-10-02): where the language leaves a reading to the implementation, the witness is the
+implementation, per target -- and two implementations can part. Both preprocessors evaluated `#if` in a signed host
+integer, so `#if -1 > 0u` took `#else` on both rails, digest-equal; parity, comparing the rails, saw nothing. The
+witness keeps the branch `clang -target T -E` keeps for each of the four targets, so the AArch64 reading of a
+character constant (a `uintmax_t`, plain `char` being unsigned) is held without an AArch64 host, and GCC judges the
+host's two `char`s. On one form the two compilers part -- GCC reads a multi-character constant as a signed `int`
+whatever `char` is -- and the test names it and asks only the compiler both rails follow. Witnesses:
+`test_if_expressions_take_the_branch_clang_takes_on_each_target`,
+`test_if_branches_lowered_by_both_rails_run_as_the_original`. Faults (`cfront-pparith.json`): `PO4`, `PO6`, `PO20`,
+`PT4`, `PT5`, `PT18`.
 **Port note:** this is BCIR's oracle/law/twin differential method itself;
 the pairing discipline applies to every future rail unchanged.
 

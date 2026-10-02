@@ -339,6 +339,8 @@ int main(int argc, char **argv) {
     for (int d = 0; d < ndef && nalldef <= MAXD; d++) alldefs[nalldef++] = defs[d];
 
     static char src[1 << 16], cpperr[256];
+    { int cs=1, ws=4, wsg=1;   /* the target's character types, which a `#if` reads (CF-PPARITH) */
+      (void)bcir_cfront_target_chars(target, &cs, &ws, &wsg); bcir_cpp_set_chars(cs, ws, wsg); }
     int cpp_rc=bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr);
     cc_release_file(raw);
     if (cpp_rc) {

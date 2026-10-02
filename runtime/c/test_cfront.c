@@ -91,6 +91,9 @@ int main(int argc, char **argv) {
    * 64 KiB, as `bcir-cc` holds it; a unit that runs past it is refused (`preprocessed output too large`), never cut. */
   static char src[1 << 16], cpperr[256], base[1024];
   dirof(path, base, sizeof base);
+  { int cs = 1, ws = 4, wsg = 1;   /* the target's character types, which a `#if` reads (CF-PPARITH); an unknown
+                                   * target keeps the default's, and the compile below refuses it */
+    (void)bcir_cfront_target_chars(target, &cs, &ws, &wsg); bcir_cpp_set_chars(cs, ws, wsg); }
   int cpp_rc = bcir_cpp_run(raw, base, src, sizeof src, cpperr, sizeof cpperr);
   bcir_host_deallocate(&heap, raw);
   if (cpp_rc) { printf("CPP-ERR %s\n", cpperr); return 1; }
