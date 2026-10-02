@@ -27,22 +27,22 @@
     {
       "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
       "label": "EF3 the oracle evaluates the right operand of && or || the left one decides",
-      "new": "            b = _kfold_node(node.rhs, abi, live)\n",
-      "old": "            b = _kfold_node(node.rhs, abi, live and (a.v != 0) == (node.op == \"&&\"))\n",
+      "new": "                b = _kfold_node(node.rhs, abi, live, layouts)\n",
+      "old": "                b = _kfold_node(node.rhs, abi, live and (a.v != 0) == (node.op == \"&&\"), layouts)\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
       "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
       "label": "EF4 the oracle evaluates the arm ?: does not take",
-      "new": "        a = _kfold_node(node.then, abi, live)\n",
-      "old": "        a = _kfold_node(node.then, abi, live and c.v != 0)\n",
+      "new": "        a = _kfold_node(node.then, abi, live, layouts)\n",
+      "old": "        a = _kfold_node(node.then, abi, live and c.v != 0, layouts)\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
       "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
       "label": "EF5 the oracle's cast converts nothing",
-      "new": "        return _kfold_node(node.operand, abi, live)\n",
-      "old": "        return _kconvert(_kfold_node(node.operand, abi, live), t)\n",
+      "new": "        return _kfold_node(node.operand, abi, live, layouts)\n",
+      "old": "        return _kconvert(_kfold_node(node.operand, abi, live, layouts), t)\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -62,8 +62,8 @@
     {
       "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
       "label": "EF8 the oracle makes a constant dimension that is no literal a VLA",
-      "new": "            raise CParseError(DIM_RANGE, pos=self.peek().pos)\n        return v if isinstance(e, cast.IntLit) else e\n",
-      "old": "            raise CParseError(DIM_RANGE, pos=self.peek().pos)\n        return v\n",
+      "new": "            return e\n        return self._dim_in_range(v) if isinstance(e, cast.IntLit) else e\n",
+      "old": "            return e\n        return self._dim_in_range(v)\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
@@ -97,8 +97,8 @@
     {
       "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
       "label": "EF13 the twin types a constant with a 64-bit long on every target",
-      "new": "lit_int_type(k.s,k.n,8,&sz,&sg);",
-      "old": "lit_int_type(k.s,k.n,cc_abi(c)->long_size,&sz,&sg);",
+      "new": "lit_int_type(k.s,k.n,bcir_abi_host(),&sz,&sg);",
+      "old": "lit_int_type(k.s,k.n,cc_abi(c),&sz,&sg);",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -118,8 +118,8 @@
     {
       "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
       "label": "EF16 the twin's cast converts nothing",
-      "new": "ok = ce_cast_type(c,&t) && ce_primary(c,live,out);",
-      "old": "ok = ce_cast_type(c,&t) && ce_primary(c,live,&a) && kconvert(&a,&t,out);",
+      "new": ": ce_primary(c,live,out));",
+      "old": ": ce_primary(c,live,&a) && kconvert(&a,&t,out));",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

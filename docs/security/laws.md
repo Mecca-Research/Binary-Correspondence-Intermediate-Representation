@@ -1531,6 +1531,19 @@ the suffix C spells.
 Witnesses: `_CARD4_REFUSED`'s suffixes and `_CARD4_LOWERED`'s `#if` units in
 `test_malformed_constants_refused_and_file_scope_forms_lowered_alike`. Faults (`cfront-filescope.json`):
 `FS1`, `FS2`, `FS15`, `FS16`.
+CF-CONSTEXPR2 instance (2026-10-02): the second reader is where the old reading survives. CF-PPARITH gave each rail
+one reader of a character constant for `#if`, typed by the target; the parser kept its own (`parse_char_literal`,
+the twin's `parse_char`), which read every constant as signed bytes, so `'\xff'` was 255 in a `#if` and -1 in code
+on AArch64. Both now read through the `#if`'s reader (`clex.char_constant`, the twin's `char_value`). The same shape
+recurred four times in the slice: the parser's `sizeof` of a type-name lays out through `lower_unit`'s own
+`layout_aggregates`, not a second layout; the twin's `sizeof` reads its type-name through the one reader
+`p_sizeof` uses (`sizeof_type_name`); a dimension's range is one check (`_dim_in_range`) for every site that takes
+a constant one; and "is this member an array" is one predicate (`farr`) at the 22 sites that each tested a nonzero
+element count, which a zero-length member does not have.
+Witnesses: `test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target`,
+`test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails`,
+`test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails`. Faults (`cfront-constexpr2.json`):
+`KO6`, `KO10`, `KO21`, `KT7`, `KT8`, `KT25`, `KT34`.
 **Port note:** identical everywhere.
 
 ### L15 — Discovery is reconciled; skips are scoped prefixes

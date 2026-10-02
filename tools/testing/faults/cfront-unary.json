@@ -118,8 +118,8 @@
     {
       "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
       "label": "UO16 the oracle compares an array with an `int` 0",
-      "new": "                    t\n",
-      "old": "                    pointer(scalar(\"void\"), self.abi) if t is not None and t.kind == \"array\" else t\n",
+      "new": "                t\n",
+      "old": "                pointer(scalar(\"void\"), self.abi) if t is not None and t.kind == \"array\" else t\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -174,8 +174,8 @@
     {
       "expects": "test_unary_operators_controlling_expressions_and_void_values_run_as_the_original",
       "label": "UO24 the oracle refuses a void left operand of `,`",
-      "new": "            self._rvalue(node.lhs)  # the comma operator: evaluate the left operand for\n",
-      "old": "            self._rvalue_void(node.lhs)  # the comma operator: evaluate the left operand for\n",
+      "new": "        a = self._rvalue(node)\n",
+      "old": "        a = self._rvalue_void(node) if spine[-1].op == \",\" else self._rvalue(node)\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {
@@ -385,7 +385,7 @@
       "expects": "test_void_values_struct_conditions_and_unary_operands_refused_and_lowered_alike",
       "label": "UT21 the twin takes a `switch` of anything",
       "new": "",
-      "old": "    if(!cond_value_ok(c,disc,1)) return;   /* an integer (CF-STRUCTCOND) */\n",
+      "old": "  if(!cond_value_ok(c,disc,1)) return;   /* an integer (CF-STRUCTCOND) */\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

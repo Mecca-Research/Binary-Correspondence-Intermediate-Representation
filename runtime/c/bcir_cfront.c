@@ -92,6 +92,9 @@ typedef struct { char name[BCIR_CIR_NAME]; int size; int signd; int is_float; in
                   * (ptee_size width / signd sign / ptee_float / ptee_sidx struct) types the loaded `T *` */
                  /* arr_count > 0: a member array; `size` is the element, arr_count the total element
                   * count, nadims/adims the per-dim sizes (`T m[A][B]` -> nadims 2, adims {A,B}) */
+/* Whether member `f` is an array: it has dimensions, whatever their product -- a zero-length (`T m[0]`, GNU) or
+ * flexible (`T m[]`) one has no elements, and an `arr_count` of 0, which had read it as a scalar (CF-CONSTEXPR2). */
+static int farr(const field *f){ return f->arr_count>0 || f->nadims>0; }
 /* An ANONYMOUS struct/union member: its promoted leaves are `f[first..first+n)` of the containing sdef, the
  * member itself the sdef `sidx` at byte offset `off` -- one subobject to an initializer (the oracle's
  * `CType.anon`), so an anonymous union takes one positional value, as in C. */
@@ -114,15 +117,17 @@ typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int sidx;
                  int nd, dims[3];   /* an array typedef's dims, outer first (`typedef T row_t[6];`): each declarator
                                      * of the alias appends them after its own (CF-SMALL) */
                } tdef;   /* a typedef alias */
-typedef struct { char name[BCIR_CIR_NAME]; long long val; int tag; } econst;   /* an enum constant; or (`tag`) an enum
-     * tag, `val` its enumeration's compatible type -- 1 `int`, 0 `unsigned int` -- kept in the constants' table so a
-     * speculative parse that rolls the constants back rolls its tags back with them (CF-ENUMOBJ) */
+typedef struct { char name[BCIR_CIR_NAME]; long long val; int tag, seq; } econst;   /* an enum constant; or (`tag`) an
+     * enum tag, `val` its enumeration's compatible type -- 1 `int`, 0 `unsigned int` -- kept in the constants' table so
+     * a speculative parse that rolls the constants back rolls its tags back with them (CF-ENUMOBJ); `seq` its place in
+     * the unit's declaration order, which `visible_enum` weighs against a local's (CF-CONSTEXPR2) */
 
 typedef struct {
   char name[BCIR_CIR_NAME];
   uint32_t rid;
   bcir_ctype type;   /* scalar / struct-by-value / pointer */
   int sidx;          /* struct index for kind 1 or ptr_to_struct */
+  int seq;           /* its place in the unit's declaration order (`econst.seq`, CF-CONSTEXPR2) */
 } venv;
 
 typedef struct { char name[BCIR_CIR_NAME]; bcir_ctype ty; int count;
@@ -258,6 +263,7 @@ typedef struct {
    * unsoundly. Reset (mut_n=0) per function. */
   mutent mut[512]; int mut_n;
   int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
+  int decl_seq;      /* the unit's declarations of block-scope names and enumerators so far, in order (CF-CONSTEXPR2) */
   uint32_t unsized[32]; int n_unsized;   /* local arrays declared `T a[]` that no brace initializer sized (the
                                           * resource keeps a placeholder count of 1): `sizeof` refuses them as
                                           * incomplete, as the oracle does. Reset per function. */
@@ -291,6 +297,9 @@ typedef struct {
                                              * literal inside an initializer), and end with it */
   int *pure_memo; int npure, cap_pure;      /* CF-TERNARY: an operand C may leave unevaluated, by the token it
                                              * starts at (`2*tok + pure`) -- a nested chain speculates once */
+  unsigned long long *swv; int nswv, cap_swv;   /* the case values of the switches being parsed, each converted to its
+                                             * switch's promoted type: the innermost's from `sw_base` (CF-CONSTEXPR2) */
+  int sw_base, sw_bits, sw_sgn, sw_default; /* ... and the innermost switch's: its promoted type, a `default:` seen */
   struct { const char *s; int n, def; } libdef[24]; int n_libdef;   /* unit_defines: each library name asked
                                              * about, and whether the unit defines it (zeroed per compile) */
   fsig *sigs; int nsig, cap_sig;            /* the function types function pointers point at, in the scratch arena
@@ -372,6 +381,8 @@ static void ctext_putn(CC *c, ctext *t, const char *p, size_t k){
 }
 /* The active target ABI (defaults to the host LP64 model when the driver set none). */
 static const bcir_abi *cc_abi(const CC *c){ return c->abi ? c->abi : bcir_abi_host(); }
+static int ce_int(CC *c,long long *v);      /* fwd: an integer constant expression's value (CF-CONSTEXPR2) */
+static int bf_width(CC *c,const bcir_ctype *ty,int named,int *w);   /* fwd: a bit-field's width (CF-CONSTEXPR2) */
 /* The alignment of a scalar type of `sz` bytes under the target ABI -- the oracle's `CType.align`: a `long
  * double` takes the ABI's long-double alignment, a complex type its element's (a `long double _Complex` the
  * long double's), an 8-byte scalar the ABI's `eight_byte_align` (4 on i386: `double`, `long long`, `int64_t`,
@@ -419,38 +430,24 @@ static int is_id0(int c){return c=='_'||(c>='a'&&c<='z')||(c>='A'&&c<='Z');}
 /* An integer constant's reader, `int_literal`, lives in bcir_intlit.h, which the preprocessor's `#if` reads through too
  * (CF-SUFFIX). */
 
-/* Decode a C character constant 'c' to its int value: a single char is its byte value sign-extended
- * as a (signed) char; a multi-character constant 'AB' packs big-endian (Clang/GCC: ('A'<<8)|'B'),
- * read as a 32-bit int. s[0..n) includes the surrounding quotes. */
-static long long parse_char(const char *s, int n) {
-  int i = 0;
-  if (i<n && (s[i]=='L'||s[i]=='u'||s[i]=='U')) {       /* skip an optional wide/UTF prefix L/u/U/u8 */
-    if (s[i]=='u' && i+1<n && s[i+1]=='8') i+=2; else i+=1;
-  }
-  int e = (n>0 && s[n-1]=='\'') ? n-1 : n;
-  if (i<n && s[i]=='\'') i++;                            /* the opening quote */
-  int bytes[8], nb=0;
-  while (i < e && nb < 8) {
-    int b;
-    if (s[i]=='\\' && i+1 < e) { char c = s[i+1];
-      if (c=='x') { i+=2; int v=0;
-        while (i<e && ((s[i]>='0'&&s[i]<='9')||((s[i]|0x20)>='a'&&(s[i]|0x20)<='f'))) {
-          int d = (s[i]<='9')?s[i]-'0':((s[i]|0x20)-'a'+10); v=v*16+d; i++; }
-        b = v & 0xFF; }
-      else if (c>='0'&&c<='7') { i++; int v=0,k=0;
-        while (k<3 && i<e && s[i]>='0'&&s[i]<='7'){v=v*8+(s[i]-'0');i++;k++;} b=v&0xFF; }
-      else { int v; switch(c){case 'n':v=10;break;case 't':v=9;break;case 'r':v=13;break;
-             case '\\':v=92;break;case '\'':v=39;break;case '"':v=34;break;case 'a':v=7;break;
-             case 'b':v=8;break;case 'f':v=12;break;case 'v':v=11;break;case '?':v=63;break;
-             default:v=(unsigned char)c;} b=v; i+=2; }
-    } else { b=(unsigned char)s[i]; i++; }
-    bytes[nb++]=b;
-  }
-  if (nb==0) return 0;
-  if (nb==1) return (bytes[0]>=128) ? bytes[0]-256 : bytes[0];          /* a single signed char */
-  unsigned long long v=0;
-  for (int k=0;k<nb;k++) v = ((v<<8) | (unsigned)bytes[k]) & 0xFFFFFFFFu;
-  return (v>=0x80000000u) ? (long long)v-(1LL<<32) : (long long)v;       /* an int32 multichar */
+/* A character constant s[0..n)'s value at the target `a`, read by the reader `#if` reads one by (`char_literal`,
+ * bcir_intlit.h), as Clang reads it (the oracle's `clex.char_constant`): a plain one an `int` of its byte as the
+ * target's plain `char` holds it -- '\xff' 255 where `char` is unsigned (AArch64), -1 where it is signed -- a
+ * multi-character one its last four bytes packed big-endian into an `int`; a prefixed one its code unit, an `L` one by
+ * the target's `wchar_t`, signed or not (its type: `lit_int_type`). NULL, or `char_bad` for any other. Both rails had
+ * read every character constant as an `int` of signed bytes (CF-CONSTEXPR2). */
+static const char *char_value(const bcir_abi *a, const char *s, int n, long long *v){
+  charlit L; int bits=8*a->wchar_size;
+  const char *why=char_literal(s,n,bits,&L);
+  if(why) return why;
+  if(!L.prefix && L.n==1){ *v = a->char_signed && (L.units[0]&0x80u) ? (long long)L.units[0]-256 : (long long)L.units[0];
+    return NULL; }
+  if(!L.prefix){ unsigned long long p=0;
+    for(int k=0;k<L.n;k++) p=((p<<8)|L.units[k])&0xFFFFFFFFu;
+    *v = p>=0x80000000u ? (long long)p-(1LL<<32) : (long long)p; return NULL; }
+  *v=(long long)L.units[0];
+  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1))) *v-=(1LL<<bits);
+  return NULL;
 }
 
 /* Bytes in a (possibly concatenated) string literal *excluding* the NUL, decoding escapes (a simple
@@ -571,7 +568,8 @@ static void lex(CC *c, const char *src) {
       if (qp){ char q=*qp; t->s=p; const char *r=qp+1;
         while(*r&&*r!=q){ if(*r=='\\'&&r[1]) r+=2; else r++; }
         if(*r==q) r++; t->n=(int)(r-p); p=r;
-        if (q=='"'){ t->k=T_STR; } else { t->k=T_INT; t->v=parse_char(t->s,t->n); }
+        if (q=='"'){ t->k=T_STR; }
+        else { const char *why=char_value(cc_abi(c),t->s,t->n,&t->v); t->k=T_INT; if(why){ fail(c,why); break; } }
         c->nt++; continue; }
     }
     if (is_id0(*p)){t->k=T_ID;t->s=p;while(is_idc(*p))p++;t->n=(int)(p-t->s);
@@ -621,7 +619,9 @@ static void lex(CC *c, const char *src) {
                  if(*p=='"')p++; t->n=(int)(p-t->s); c->nt++; continue;}
     if (*p=='\''){t->k=T_INT;t->s=p;p++;               /* character constant -> a folded int const */
                   while(*p&&*p!='\''){ if(*p=='\\'&&p[1]) p+=2; else p++; }
-                  if(*p=='\'')p++; t->n=(int)(p-t->s); t->v=parse_char(t->s,t->n); c->nt++; continue;}
+                  if(*p=='\'')p++; t->n=(int)(p-t->s);
+                  { const char *why=char_value(cc_abi(c),t->s,t->n,&t->v); if(why){ fail(c,why); break; } }
+                  c->nt++; continue;}
     if((p[0]=='<'||p[0]=='>')&&p[1]==p[0]&&p[2]=='='){   /* <<= / >>= -- 3-char shift-compound-assign */
       t->k=T_PUN;t->s=p;t->n=3;p+=3;c->nt++;continue;}
     if(p[0]=='.'&&p[1]=='.'&&p[2]=='.'){             /* `...` -- the variadic ellipsis (one 3-char token) */
@@ -744,22 +744,25 @@ static int find_typedef(CC *c,const char *s,int n){
   for(int i=0;i<c->ntd;i++) if((int)strlen(c->td[i].name)==n&&!strncmp(c->td[i].name,s,n)) return i;
   return -1;
 }
-static int find_enum(CC *c,const char *s,int n){   /* an enumerator: a tag is in another name space (6.2.3p1) */
-  for(int i=0;i<c->nec;i++) if(!c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
+static int find_enum(CC *c,const char *s,int n){   /* an enumerator: a tag is in another name space (6.2.3p1); */
+  for(int i=c->nec-1;i>=0;i--)                      /* the innermost, a block's (CF-CONSTEXPR2) */
+    if(!c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
   return -1;
 }
 static int find_enum_tag(CC *c,const char *s,int n){
   for(int i=c->nec-1;i>=0;i--) if(c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;
   return -1;
 }
-/* The enumerator a name denotes where it is read, or -1: a name the function binds in an enclosing block scope -- a
- * local, a parameter, a loop's own declaration, all in `env` -- hides a file-scope enumerator of its name (C11 6.2.1p4),
- * which is then no constant (CF-ENUMSCOPE; the oracle's `_enumerator`). Reading the enumerator first had folded it in
- * place of the object: `uint32_t N = s + 1u; uint32_t a[N];` became `a[4]` beside an `enum { N = 4 }`. `env` is empty
- * at file scope (the unit loop clears it). */
+/* The enumerator a name denotes where it is read, or -1: the innermost declaration of the name is the one it denotes
+ * (C11 6.2.1p4) -- a name the function binds in an enclosing block scope (a local, a parameter, a loop's own
+ * declaration, all in `env`) hides an enumerator declared before it, which is then no constant (CF-ENUMSCOPE), and an
+ * enumerator a block declares hides an outer object (CF-CONSTEXPR2): of the two in scope, the later declared (`seq`;
+ * the oracle's `_enumerator`). Reading the enumerator first had folded it in place of the object: `uint32_t N = s + 1u;
+ * uint32_t a[N];` became `a[4]` beside an `enum { N = 4 }`. `env` is empty at file scope (the unit loop clears it). */
 static int visible_enum(CC *c,const char *s,int n){
   int e=find_enum(c,s,n);
-  if(e>=0) for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n)) return -1;
+  if(e>=0) for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n))
+    return c->env[i].seq > c->ec[e].seq ? -1 : e;
   return e;
 }
 static int find_global(CC *c,const char *s,int n){
@@ -843,6 +846,14 @@ static int enum_spec(CC *c, bcir_ctype *ty);     /* fwd: `enum [tag] [{...}]` ->
 /* `switch (p)` of a pointer, a floating value, an array or a function: `switch` takes an integer (C11 6.8.4.2p1), and
  * Clang rejects any other; both rails had lowered them (CF-STRUCTCOND; the oracle's `SWITCH_NOT`, `cond_value_ok`). */
 #define CC_SWITCH_NOT "statement requires expression of integer type"
+/* A bit-field's width that is negative, wider than its type (`uint8_t a : 9`, `_Bool b : 2`) or, for a named one, zero
+ * (C11 6.7.2.1p4): both rails had laid each one out, which Clang refuses (CF-CONSTEXPR2; the oracle's `BF_WIDTH`). */
+#define CC_BF_WIDTH "invalid bit-field width"
+/* `case -1:` beside `case 4294967295u:` in a `switch` on a `uint32_t`: each case's constant converted to the promoted
+ * type of the controlling expression (C11 6.8.4.2p5), no two equal (6.8.4.2p3) -- both rails had lowered the pair, whose
+ * emit no compiler builds; and a second `default:` (CF-CONSTEXPR2; the oracle's `DUP_CASE`, `DUP_DEFAULT`) */
+#define CC_DUP_CASE "duplicate case value"
+#define CC_DUP_DEFAULT "multiple default labels in one switch"
 /* The (nonexistent) value of a void expression used as a value (C11 6.3.2.2) -- an initializer, an operand, a
  * condition, an argument, a `return` from a non-void function. The twin parses and lowers in one pass, so a void
  * value is a placeholder no claim writes, and a claim of a statement that reads one is the use: refused at the
@@ -980,8 +991,8 @@ static int p_type_base(CC *c, bcir_ctype *ty, int *sidx) {
                                                        * (a modifier on a float base; bare _Complex == double) */
     if(is(c,"_BitInt")){                                /* C23 `_BitInt ( N )` -- a bit-precise integer type */
       c->i++; if(!eat(c,"(")){return 1;}
-      if(!isk(c,T_INT)){fail(c,"expected the width N in `_BitInt(N)`");return 1;}
-      long long n=adv(c).v; if(!eat(c,")")){return 1;}
+      long long n; if(!ce_int(c,&n)) return 1;      /* an integer constant expression (CF-CONSTEXPR2) */
+      if(!eat(c,")")){return 1;}
       /* the supported subset is a single `_BitInt` with at most one of signed/unsigned and 2<=N<=64; a
        * base int keyword already seen, a second `_BitInt`, or an out-of-range width is rejected (the C
        * twin has no fallback -- a clean failure here routes the Python rail to fallback in parity). */
@@ -1209,14 +1220,14 @@ static void attrs(CC *c,int *packed,int *aligned){
       while(!is(c,")")&&!isk(c,T_END)&&!c->failed){
         if(is(c,"packed")||is(c,"__packed__")){*packed=1;c->i++;}
         else if(is(c,"aligned")||is(c,"__aligned__")){c->i++;eat(c,"(");
-          if(!isk(c,T_INT)){fail(c,"aligned() needs an integer");return;} *aligned=(int)adv(c).v;eat(c,")");}
+          long long a; if(!ce_int(c,&a)) return; *aligned=(int)a; eat(c,")");}
         else c->i++;
         if(is(c,","))c->i++;}
       eat(c,")");eat(c,")");
     } else if(is(c,"alignas")||is(c,"_Alignas")){c->i++;eat(c,"(");
       /* only the integer-constant form `alignas(N)` is supported; `alignas(type)` routes to fallback
        * (matching the oracle, which also rejects a non-integer operand) rather than silently mis-aligning. */
-      if(!isk(c,T_INT)){fail(c,"alignas() needs an integer");return;} *aligned=(int)adv(c).v;eat(c,")");}
+      long long a; if(!ce_int(c,&a)) return; *aligned=(int)a; eat(c,")");}
     else break;
   }
 }
@@ -1315,7 +1326,7 @@ static int p_struct_body(CC *c) {
       bcir_ctype ty=base; apply_stars(c,&ty);   /* per-declarator `*`: `int *p, q;` -> p ptr, q scalar */
       if(is(c,":")){                                  /* an UNNAMED `int :3` / ZERO-WIDTH `int :0` bitfield (no
                                                        * name): positions the cursor, NOT a field, no align bump. */
-        c->i++; int w=(int)adv(c).v;
+        c->i++; int w; if(bf_width(c,&ty,0,&w)) return -1;
         if(ty.is_atomic && ty.kind!=2){ fail(c,"a bit-field of `_Atomic` type is not supported"); return -1; }
         if(!is_union){ int ta=scalar_align(c,&ty,ty.size); long long fa=(long long)ta*8;
           if(w==0){ if(dbits%fa)dbits+=fa-(dbits%fa); }       /* zero-width -> the next boundary of its type's
@@ -1366,7 +1377,7 @@ static int p_struct_body(CC *c) {
       for(int d=0; d<btd; d++){ int dim=btdd[d];      /* a typedef'd array's dims follow the declarator's own */
         if(nadims<3)adims[nadims]=dim; nadims++; arr_count = arr_count ? arr_count*dim : dim; }
       if(nadims>3){ fail(c,"member array of more than 3 dimensions"); return -1; }   /* adims[] caps at 3 */
-      int width=0; if(is(c,":")){c->i++;width=(int)adv(c).v;}          /* per-declarator bitfield width */
+      int width=0; if(is(c,":")){c->i++; if(bf_width(c,&ty,1,&width)) return -1;}   /* per-declarator bitfield width */
       if(width && ty.is_atomic && ty.kind!=2){          /* as the oracle refuses it: GCC and Clang reject it */
         fail(c,"a bit-field of `_Atomic` type is not supported"); return -1; }
       if(ty.bit_width>0 && width && !(width>=1 && width<=ty.bit_width)){   /* a `_BitInt(N)` BITFIELD: W in 1..N */
@@ -1376,8 +1387,10 @@ static int p_struct_body(CC *c) {
        * bitfield of that size (byte-identical to Clang); a PLAIN `_BitInt(N)` member likewise uses that slot.
        * Either way the member's exact width rides in f->bit_width so the load/store + emit spell `_BitInt(N)`. */
       if(S->nf>=MAXFLD){ fail(c,"too many struct members"); return -1; }   /* f[] embedded; guarded */
-      int isptr=(ty.kind==2 && !arr_count);            /* a (non-array) pointer member: ABI pointer_size */
-      int elptr=(ty.kind==2 && arr_count);             /* an array of pointers: each ELEMENT is pointer_size -- the
+      int arr=arr_count>0 || nadims>0;                 /* an array member, a zero-length (`T m[0]`) or flexible
+                                                        * (`T m[]`) one too: dimensions, whatever their product */
+      int isptr=(ty.kind==2 && !arr);                  /* a (non-array) pointer member: ABI pointer_size */
+      int elptr=(ty.kind==2 && arr);             /* an array of pointers: each ELEMENT is pointer_size -- the
                                                         * pointee's size here put `uint32_t *arr[2]` at 4-byte
                                                         * elements and truncated every stored pointer */
       int sz=(isptr||elptr)?cc_abi(c)->pointer_size:ty.size;
@@ -1392,9 +1405,11 @@ static int p_struct_body(CC *c) {
       if(packed) al=1;                                /* packed wins over every natural alignment */
       if(maln>al) al=maln;                            /* `_Alignas(N)`/`aligned(N)` over-aligns (survives packed) */
       field *f=&S->f[S->nf++];
-      int total=arr_count?sz*arr_count:sz;             /* the bytes the member occupies (array: N*elem) */
+      int total=arr?sz*arr_count:sz;                   /* the bytes the member occupies (array: N*elem) -- none for a
+                                                        * zero-length or flexible one, which had taken one element's
+                                                        * (`sizeof` 8 for Clang's 4; CF-CONSTEXPR2) */
       idcpy(c,f->name,&nm);f->size=sz;f->access_bytes=sz;f->signd=ty.signd;f->bit_w=width;f->arr_count=arr_count;
-      f->bit_width=(!isptr && !elptr && !arr_count && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
+      f->bit_width=(!isptr && !elptr && !arr && ty.bit_width>0)?ty.bit_width:0;   /* a C23 `_BitInt(N)` member (plain OR
                                                                               * bitfield): exact N; f->bit_w holds W */
       f->is_float=(!isptr && !elptr && ty.is_float)?1:0;   /* a float/double member loads/stores as itself */
       f->is_complex=(!isptr && !elptr && ty.is_complex)?1:0;   /* a `_Complex` member: load/store as the complex pair,
@@ -1412,8 +1427,8 @@ static int p_struct_body(CC *c) {
       f->ptee_volatile=(ty.kind==2 && ty.is_volatile)?1:0;               /* `volatile T *m`: the pointee */
       f->is_atomic=(ty.kind!=2 && ty.kind!=3 && ty.is_atomic)?1:0;       /* `_Atomic T m`: its own storage */
       f->ptee_atomic=(ty.kind==2 && ty.is_atomic)?1:0;                   /* `_Atomic T *m`: the pointee */
-      f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr_count) ? si : -1;   /* value struct member -> nested */
-      f->elem_sidx = (ty.kind==1 && !ty.ptr_to_struct && arr_count) ? si : -1;   /* array-of-structs element struct */
+      f->sidx = (ty.kind==1 && !ty.ptr_to_struct && !arr) ? si : -1;   /* value struct member -> nested */
+      f->elem_sidx = (ty.kind==1 && !ty.ptr_to_struct && arr) ? si : -1;   /* array-of-structs element struct */
       f->fp_ret_size=ty.fp_ret_size; f->fp_ret_signd=ty.fp_ret_signd; f->fp_ret_float=ty.fp_ret_float;   /* funcptr member: return type */
       f->fp_ret_agg=ty.fp_ret_agg; f->fp_ret_void=ty.fp_ret_void; f->fp_sig=ty.fp_sig;
       if(al>S->align)S->align=al; if(total>maxsz)maxsz=total;
@@ -1479,7 +1494,7 @@ static int kbin(const char *suf,const kval *ia,const kval *ib,kval *out);
 static int kun(const char *suf,const kval *ia,kval *out);
 static int ksel(const kval *c0,const kval *ia,const kval *ib,kval *out);
 static int kconvert(const kval *a,const kval *t,kval *out);
-static void lit_int_type(const char *s,int n,int lsz,int *size,int *signd);
+static void lit_int_type(const char *s,int n,const bcir_abi *a,int *size,int *signd);
 #define CE_NOTCONST "not an integer constant expression"   /* the oracle's `ICE_NOT` */
 #define CE_NOTINT "an enumerator value not representable as int"   /* the oracle's `ENUM_NOT_INT` (6.7.2.2p2) */
 #define CE_ENUM_INCOMPLETE "an enumerated type with no definition"  /* the oracle's `ENUM_INCOMPLETE` (CF-ENUMOBJ) */
@@ -1512,18 +1527,52 @@ static BCIR_NOINLINE int ce_cast_type(CC *c,kval *t){
   if(ty.is_bool){ t->kind=1; t->bits=1; return 1; }
   t->bits=ty.size*8; t->sgn=ty.signd; return 1; }
 static int ce_expr(CC *c,int minp,int live,kval *out);
+static int ce_sizeof(CC *c,kval *out);   /* fwd: `sizeof`/`_Alignof` of a type-name (CF-CONSTEXPR2) */
+/* A floating constant, in any parentheses, at the cursor: the operand `ce_float_cast` takes. */
+static int float_operand_at(CC *c){
+  int k=c->i; while(tok_is(tat(c,k),"(")) k++;
+  return tat(c,k)->k==T_FLT;
+}
+#define CE_FLOAT_SPELLING 255   /* the oracle's `_FLOAT_SPELLING` */
+/* `(T)c` of a floating constant `c`, the cursor past the cast's `)` -- the one floating operand an integer constant
+ * expression takes (6.6p6) -- folded as C converts it (6.3.1.4p1): its value rounded to its own type, read by `strtod`
+ * (a `double`) or `strtof` (a `float`, `f`/`F`), each correctly rounded, then truncated toward zero; a value the
+ * integer type `t` cannot hold is undefined, and so no constant, where C evaluates it (`live`). `_Bool` is whether it
+ * is nonzero (6.3.1.2). A `long double` one (`L`), whose format is the target's, is refused, and so is a spelling past
+ * CE_FLOAT_SPELLING characters (the oracle's `_kfloat_cast`, CF-CONSTEXPR2): `(int)1.5` had been refused. */
+static BCIR_NOINLINE int ce_float_cast(CC *c,int live,const kval *t,kval *out){
+  int k=0; while(is(c,"(")){ c->i++; k++; }
+  tok f=adv(c); char b[CE_FLOAT_SPELLING+1]; int n=0;
+  for(int j=0;j<k;j++){ if(!is(c,")")) return 0; c->i++; }
+  for(int j=0;j<f.n;j++){ if(f.s[j]=='\'') continue; if(n>=CE_FLOAT_SPELLING) return 0; b[n++]=f.s[j]; }
+  if(n>0 && (b[n-1]=='l'||b[n-1]=='L')) return 0;
+  int isf = n>0 && (b[n-1]=='f'||b[n-1]=='F');
+  b[n-isf]=0;
+  double d = isf ? (double)strtof(b,NULL) : strtod(b,NULL);
+  *out=*t; out->p=0;
+  if(t->kind==1){ out->p = live && d!=0; return 1; }
+  if(!live) return 1;
+  double hi = t->bits>=64 ? (t->sgn ? 9223372036854775808.0 : 18446744073709551616.0)
+                          : (double)(1ull<<(t->bits - t->sgn));
+  double lo = !t->sgn ? -1.0 : t->bits>=64 ? -9223372036854775809.0 : -(double)(1ull<<(t->bits-1)) - 1.0;
+  if(!(d>lo && d<hi) && !(t->sgn && t->bits>=64 && d==-9223372036854775808.0)) return 0;   /* NaN fails too */
+  unsigned long long p = d<0 ? (unsigned long long)(long long)d : (unsigned long long)d;
+  *out=kint(p,t->bits,t->sgn); return 1;
+}
 /* An operand of `ce_expr` -- a unary operator's, a cast, a parenthesized expression, an integer or character constant,
  * an enumerator -- or 0 when it is none of these. */
 static int ce_primary(CC *c,int live,kval *out){
   if(ENTER_REC(c)){ LEAVE_REC(c); return 0; }   /* depth guard: a unary operator's or a cast's operand nests here */
   int ok=0; kval a, t;
   const char *suf = is(c,"-") ? "neg" : is(c,"~") ? "bnot" : is(c,"!") ? "lnot" : is(c,"+") ? "" : NULL;
-  if(isk(c,T_INT)){ tok k=adv(c); int sz,sg; lit_int_type(k.s,k.n,cc_abi(c)->long_size,&sz,&sg);
+  if(isk(c,T_INT)){ tok k=adv(c); int sz,sg; lit_int_type(k.s,k.n,cc_abi(c),&sz,&sg);
     *out=kint((unsigned long long)k.v,sz*8,sg); ok=1; }
+  else if(is(c,"sizeof")||is(c,"_Alignof")||is(c,"alignof")) ok=ce_sizeof(c,out);   /* of a type-name (6.6p6) */
   else if(isk(c,T_ID)){ int e=visible_enum(c,pk(c)->s,pk(c)->n);   /* a hidden one is an object: no constant */
     if(e>=0){ c->i++; *out=kint((unsigned long long)c->ec[e].val,32,1); ok=1; } }
   else if(is(c,"(")){ c->i++;
-    if(type_name_tok(c,pk(c))) ok = ce_cast_type(c,&t) && ce_primary(c,live,&a) && kconvert(&a,&t,out);
+    if(type_name_tok(c,pk(c))) ok = ce_cast_type(c,&t) && (float_operand_at(c) ? ce_float_cast(c,live,&t,out)
+                                                               : ce_primary(c,live,&a) && kconvert(&a,&t,out));
     else if(ce_expr(c,0,live,out) && is(c,")")){ c->i++; ok=1; } }
   else if(suf){ c->i++;
     ok = ce_primary(c,live,&a) && (*suf ? ce_op(suf,live,&a,NULL,out) : kpromote(&a,out)); }
@@ -1561,6 +1610,19 @@ static int ce_fold(CC *c,int probe,kval *out){
 }
 /* ... its value (`kvalue`) where a designator or a type-name's dimension takes one, 0 with it refused. */
 static long long ce_value(CC *c){ kval v; return ce_fold(c,0,&v) ? kvalue(&v) : 0; }
+/* ... and 1 with it in `*v` where C takes one and both rails had read a literal only -- a bit-field's width,
+ * `_BitInt(N)`'s width, `aligned(N)` and `alignas(N)` -- 0 with it refused (the oracle's `_const_int`, CF-CONSTEXPR2):
+ * `enum { W = 3 }; ... uint32_t a : W;` had been laid out with a width of 0, a member as wide as its type. */
+static int ce_int(CC *c,long long *v){ kval k; if(!ce_fold(c,0,&k)) return 0; *v=kvalue(&k); return 1; }
+/* A bit-field's width, the cursor past its `:` (`ce_int`), for a member of type `ty`, `named` or not: one that is
+ * negative, wider than its type -- 1 bit for a `_Bool`, a `_BitInt(N)`'s own check aside -- or, named, zero, is refused
+ * (`CC_BF_WIDTH`, C11 6.7.2.1p4; the oracle's `_bit_width` and `BF_WIDTH`). 1 on a refusal. */
+static int bf_width(CC *c,const bcir_ctype *ty,int named,int *w){
+  long long v; if(!ce_int(c,&v)) return 1;
+  long long bits = ty->is_bool ? 1 : (long long)ty->size*8;
+  if(v<0 || (named && v==0) || (v && ty->kind==0 && !ty->bit_width && v>bits)){ fail(c,CC_BF_WIDTH); return 1; }
+  *w=(int)v; return 0;
+}
 /* An array declarator's dimension, the cursor past its `[` (the oracle's `cparse._dim`): its value when it is an integer
  * constant expression ending at the `]` -- the array then a fixed one, whatever the expression's form (6.7.6.2p4) --
  * refused outside 0..INT_MAX (`CE_DIMRANGE`). -1 when it is none: refused (`CE_NOTCONST`), or with `probe` the cursor
@@ -1589,14 +1651,16 @@ static int p_enum_body(CC *c, const tok *tag){
     if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return 1; }
     if(val<0) neg=1;
     CC_ENSURE(c,c->ec,c->nec,c->cap_ec);
-    if(c->nec<c->cap_ec){idcpy(c,c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->ec[c->nec].tag=0;c->nec++;}
+    if(c->nec<c->cap_ec){idcpy(c,c->ec[c->nec].name,&nm);c->ec[c->nec].val=val;c->ec[c->nec].tag=0;
+      c->ec[c->nec].seq=++c->decl_seq;c->nec++;}   /* in scope just after its own enumerator (6.2.1p7) */
     val++;
     if(is(c,","))c->i++;
   }
   eat(c,"}");
   int sg=(cc_abi(c)->enum_unsigned && !neg) ? 0 : 1;
   if(tag && tag->k==T_ID && CC_ENSURE(c,c->ec,c->nec,c->cap_ec)){
-    idcpy(c,c->ec[c->nec].name,tag); c->ec[c->nec].val=sg; c->ec[c->nec].tag=1; c->nec++; }
+    idcpy(c,c->ec[c->nec].name,tag); c->ec[c->nec].val=sg; c->ec[c->nec].tag=1; c->ec[c->nec].seq=++c->decl_seq;
+    c->nec++; }
   return sg;
 }
 /* `enum [tag] [{...}]` at `c->i`: the integer type the enumeration is compatible with, as `p_enum_body` decides it --
@@ -1675,7 +1739,8 @@ static void p_typedef(CC *c){
   tok nm=adv(c);                                      /* the alias name */
   int tnd=0, tdims[3]={0,0,0};                        /* `typedef T row_t[6];`: its own dims, then its base's */
   while(is(c,"[") && !c->failed){ c->i++; long long d=ce_dim(c,0); if(d<0 || !eat(c,"]")) return;
-    if(d==0){ fail(c,"an array typedef needs a positive constant size"); return; }
+    /* a zero-length one (`typedef T row[0];`, GNU) is taken, as the oracle takes it: a member of it occupies no
+     * bytes (`farr`), and `sizeof` of it is refused on both rails as incomplete (CF-CONSTEXPR2) */
     if(tnd>=3){ fail(c,"an array typedef of more than 3 dimensions"); return; }
     tdims[tnd++]=(int)d; }
   if(ty.kind==1 && sidx>=0 && !tnd && !bnd && is_anon_tag(c->s[sidx].tag) && !c->s[sidx].tdname[0] && c->s[sidx].parent<0)
@@ -1875,10 +1940,16 @@ static void uac_i(int sa,int za,int sb,int zb,int *rs,int *rz){
 /* The integer type (width, signedness) of an integer constant from its source text (suffix + magnitude,
  * §6.4.4.1), mirroring ctype_model.int_literal_type -- a `long` candidate `lsz` bytes wide, the target's (the
  * oracle's `_lit_type`: on LLP64 / ILP32 a value past a 32-bit `long` is a `long long`). A character constant
- * ('c') has type int. */
-static void lit_int_type(const char *s,int n,int lsz,int *size,int *signd){
+ * ('c') has type int; a prefixed one its prefix's type (C11 6.4.4.4p11, C23 6.4.4.5; the oracle's
+ * `clex._CHAR_PREFIX_TYPE`): `u8` an `unsigned char`, `u` `char16_t` and `U` `char32_t` (unsigned 16 and 32 bits),
+ * `L` the target's `wchar_t` (CF-CONSTEXPR2). */
+static void lit_int_type(const char *s,int n,const bcir_abi *a,int *size,int *signd){
+  int lsz=a->long_size;
   *size=4; *signd=1;                                    /* default: int */
-  if(n>0 && s[0]=='\'') return;                         /* a character constant is int */
+  if(n>0 && s[0]=='\'') return;                         /* a plain character constant is int */
+  if(n>1 && s[0]=='u' && s[1]=='8'){ *size=1; *signd=0; return; }
+  if(n>0 && (s[0]=='u'||s[0]=='U')){ *size=s[0]=='u'?2:4; *signd=0; return; }
+  if(n>0 && s[0]=='L'){ *size=a->wchar_size; *signd=a->wchar_signed; return; }
   intlit L; if(int_literal(s,n,&L)) return;            /* (a refused one never reaches here: the lexer refuses it) */
   unsigned long long val=L.v; int u=L.u, lr=L.lr, decimal=L.decimal;   /* the exact value: a 63-character copy cut a
                                                         * long one (`0b` and 64 digits), and with it its type */
@@ -2522,7 +2593,7 @@ static int sdef_elem_field(CC *c, int sidx, field *sub) {
   for(int i=0;i<ES->nf;i++) if((int)strlen(ES->f[i].name)==fn.n&&!strncmp(ES->f[i].name,fn.s,fn.n)) fi=i;
   if(fi<0){ fail(c,"unknown field"); return 0; }
   field s=member_descend(c,ES->f[fi]);
-  if(s.bit_w||s.arr_count||s.sidx>=0||s.is_ptr){ fail(c,"array-of-structs non-scalar element field"); return 0; }
+  if(s.bit_w||farr(&s)||s.sidx>=0||s.is_ptr){ fail(c,"array-of-structs non-scalar element field"); return 0; }
   *sub=s; return 1;
 }
 /* A member access through a subscripted element that is a pointer -- `arr[i]->m`, `pp[i]->m`, `o.p[i]->m`: the oracle's
@@ -3504,7 +3575,7 @@ static int aos_member_array(CC *c, venv *v, uint32_t lin, field *af, uint32_t *t
     for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fn->n && !strncmp(S->f[k].name,fn->s,(size_t)fn->n)){ fi=k; break; }
     if(fi<0) return 0;
     m=S->f[fi];
-    if(m.arr_count && tok_is(tat(c,j+2),"[")) break;
+    if(farr(&m) && tok_is(tat(c,j+2),"[")) break;
     if(m.sidx<0 || !tok_is(tat(c,j+2),".")) return 0;  /* a scalar member: `a[i].f` (aos_elem_field) */
     off+=m.byte_off; vol|=m.is_volatile; S=&c->s[m.sidx]; j+=2;
   }
@@ -3758,11 +3829,11 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){    /* another pointer hop: load it, recurse */
         ptr=emit_member(c,&b,&mf,0); psidx=mf.ptee_sidx; pfld=mf; continue;
       }
-      if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);
+      if(farr(&mf) && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);
         field sub; if(elem_field(c,&mf,&sub)) return emit_member_index_field(c,&b,&mf,ix,&sub);
         if(c->failed) return 0;
         return emit_member_index(c,&b,&mf,ix); }
-      if(mf.arr_count) return member_array_value(c,&b,&mf);   /* an array member value: its address */
+      if(farr(&mf)) return member_array_value(c,&b,&mf);   /* an array member value: its address */
       return emit_member(c,&b,&mf,c->stmt_expr_declared_bf); /* terminal member load through the loaded pointer */
     }
     return ptr;                                       /* no further postfix: the pointer value itself */
@@ -3802,7 +3873,7 @@ static int plv_chain(CC *c, uint32_t ptr, int psidx, field pfld, plv *o){
     if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* another pointer hop: load it, walk on */
       ptr=emit_member(c,&b,&mf,0); psidx=mf.ptee_sidx; pfld=mf; continue;
     }
-    if(mf.is_ptr || mf.arr_count || mf.sidx>=0) return 0;   /* a pointer, array or struct member */
+    if(mf.is_ptr || farr(&mf) || mf.sidx>=0) return 0;   /* a pointer, array or struct member */
     o->kind=1; o->b=b; o->f=mf;
     return 1;
   }
@@ -3859,7 +3930,7 @@ static int deref_member_array(CC *c, venv *base, field *elem){
   if(fi<0) return 0;
   c->i+=3;
   field mf=member_descend(c,S->f[fi]);               /* nested value members add their offsets */
-  if(!mf.arr_count || mf.nadims>1 || mf.elem_ptr || mf.elem_sidx>=0 || mf.is_atomic || mf.bit_w
+  if(!farr(&mf) || mf.nadims>1 || mf.elem_ptr || mf.elem_sidx>=0 || mf.is_atomic || mf.bit_w
      || postfix_follows(c,c->i)){ c->i=save; return 0; }
   mf.arr_count=0; mf.nadims=0;                       /* the element, a scalar at the member's offset */
   *base=v; *elem=mf; return 1;
@@ -4587,16 +4658,16 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
       return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
     }
     field mf=member_descend(c,S->f[fi]);        /* nested `o.in.v` -> one flattened-offset load */
-    if(is(c,"[") && !mf.arr_count && !mf.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `o->v[1]` (CF-FPTAB) */
+    if(is(c,"[") && !farr(&mf) && !mf.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `o->v[1]` (CF-FPTAB) */
     if(mf.is_ptr && is(c,".")){ fail(c,CC_DOT_NOT); return 0; }   /* `o.p.x` through a pointer member */
     if(mf.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* deref-through a loaded pointer field (#fieldderef) */
       uint32_t ptr=emit_member(c,v,&mf,0);      /* load the pointer field, then chain through the loaded ptr */
       return postfix_ptr_chain(c,ptr,mf.ptee_sidx,mf); }
-    if(mf.arr_count && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
+    if(farr(&mf) && is(c,"[")){ uint32_t ix=member_arr_index(c,&mf);   /* s.arr[i] / s.m[i][j] load */
       field sub; if(elem_field(c,&mf,&sub)) return emit_member_index_field(c,v,&mf,ix,&sub);   /* arr[i].field */
       if(c->failed) return 0;
       return emit_member_index(c,v,&mf,ix); }
-    if(mf.arr_count) return member_array_value(c,v,&mf);   /* an array member value: its address (CF-DECAY) */
+    if(farr(&mf)) return member_array_value(c,v,&mf);   /* an array member value: its address (CF-DECAY) */
     return emit_member(c,v,&mf,c->stmt_expr_declared_bf);
   }
   if(is(c,"[")){                                /* L3: base[i] / m[i][j] (row-major flatten) / q[j][i] (a chain) */
@@ -4707,7 +4778,7 @@ static void szt_field(CC *c, szt *t, const field *f){
     e->is_complex=(uint8_t)(f->is_complex?1:0); e->is_bool=(uint8_t)(f->is_bool?1:0);
     e->is_plain_char=(uint8_t)(f->is_plain_char?1:0); e->bit_width=f->bit_width;
   }
-  if(f->arr_count){
+  if(farr(f)){
     int n=f->nadims>0?f->nadims:1; if(n>3) n=3;
     for(int d=0; d<n; d++) t->dims[d]=f->nadims>0?f->adims[d]:f->arr_count;
     t->nd=n;
@@ -4957,6 +5028,17 @@ static int type_name_dims(CC *c, szt *t){
   }
   return c->failed;
 }
+/* `sizeof ( type-name )`'s type, the cursor past its `(`, through its `)`: `sizeof(R (*)(P))` and an array of them
+ * (CF-RTFP), a typedef'd array's dimensions after the type-name's own. 1 on a refusal. Shared by `p_sizeof` and the
+ * constant expressions' `ce_sizeof` (CF-CONSTEXPR2). */
+static int sizeof_type_name(CC *c, szt *t){
+  if(p_cast_type(c,&t->ty,&t->si) || fp_name_dims(c,&t->ty,t->dims,&t->nd,4)) return 1;
+  int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array */
+  if(type_name_dims(c,t)) return 1;
+  for(int d=0; d<btd; d++){ if(t->nd>=4){ fail(c,"a type-name of more than four array dimensions"); return 1; }
+    t->dims[t->nd++]=btdd[d]; }
+  return !eat(c,")");
+}
 static uint32_t p_sizeof(CC *c){
   c->i++;                                               /* sizeof */
   szt t; long long size;
@@ -4965,13 +5047,7 @@ static uint32_t p_sizeof(CC *c){
     int save=c->i; c->i++;
     if(starts_decl_type(c) && !literal_close(c,c->i)){  /* sizeof ( type-name ) -- not `sizeof (T[N]){...}`, a compound
                                                          * literal's unary-expression form (CF-RTFP) */
-      if(p_cast_type(c,&t.ty,&t.si) || fp_name_dims(c,&t.ty,t.dims,&t.nd,4)) return 0;   /* `sizeof(R (*)(P))`, and
-                                                         * of an array of them (CF-RTFP) */
-      int btdd[3], btd=td_dims_of(c,btdd);   /* a typedef'd array */
-      if(type_name_dims(c,&t)) return 0;
-      for(int d=0; d<btd; d++){ if(t.nd>=4){ fail(c,"a type-name of more than four array dimensions"); return 0; }
-        t.dims[t.nd++]=btdd[d]; }
-      if(!eat(c,")")) return 0;
+      if(sizeof_type_name(c,&t)) return 0;
       size=szt_bytes(c,&t);
       goto fold;
     }
@@ -5018,6 +5094,38 @@ static uint32_t p_alignof(CC *c){
     return 0;                                           /* `_Alignof(R (*)(P))`, `_Alignof(R (*[N])(P))` (CF-RTFP) */
   int sz, al; type_layout(c,&t.ty,t.si,&sz,&al);
   return size_result(c,al);
+}
+/* `sizeof ( type-name )`, `_Alignof ( type-name )` or `alignof ( type-name )` in an integer constant expression, the
+ * cursor on the keyword (C11 6.6p6): its size or alignment, a `size_t` (6.5.3.4p5) -- 0, no constant, for an incomplete
+ * type or one no object of fits the target (`szt_bytes`), and for `sizeof` of an expression, whose type is the
+ * lowering's (the oracle's `_kfold_node`, CF-CONSTEXPR2). BCIR_NOINLINE: its `szt` stays out of the recursive frames. */
+static BCIR_NOINLINE int ce_sizeof(CC *c,kval *out){
+  int align=!is(c,"sizeof"); long long n;
+  szt t; memset(&t,0,sizeof t); t.si=-1;
+  c->i++;
+  { int k=c->i, open=0; while(tok_is(tat(c,k),"(")){ k++; open++; }   /* `sizeof` of a constant, in any parentheses:
+                                                                     * its type's size -- `sizeof(L'a')` the target's
+                                                                     * `wchar_t`'s (the oracle's `_kfold_node`) */
+    const tok *v=tat(c,k);
+    if(!align && (v->k==T_INT || v->k==T_FLT)){
+      int sz=0, sg;
+      for(int j=1;j<=open;j++) if(!tok_is(tat(c,k+j),")")) return 0;
+      if(v->k==T_INT) lit_int_type(v->s,v->n,cc_abi(c),&sz,&sg);
+      else { char last=v->n>0 ? v->s[v->n-1] : 0;
+        sz = (last=='f'||last=='F') ? 4 : (last=='l'||last=='L') ? cc_abi(c)->long_double_size : 8; }
+      c->i=k+1+open;
+      *out=kint((unsigned long long)sz,cc_abi(c)->pointer_size*8,0); return 1; } }
+  if(!is(c,"(")) return 0;
+  c->i++;
+  if(is(c,"struct")||is(c,"union")){ const tok *tg=tat(c,c->i+1);   /* an incomplete one: no constant, as the oracle's */
+    int si = tg->k==T_ID ? find_struct(c,tg->s,tg->n) : -1, at=c->i;   /* `fold_constant` refuses it -- the type-name */
+    c->i+=2; int ptr=ptr_follows(c); c->i=at;                          /* reader's own refusal had other words */
+    if(!ptr && (si<0 || c->s[si].incomplete)) return 0; }
+  if(!starts_decl_type(c) || literal_close(c,c->i) || sizeof_type_name(c,&t)) return 0;
+  if(align){ int sz, al; type_layout(c,&t.ty,t.si,&sz,&al); n=al; }
+  else n=szt_bytes(c,&t);
+  if(n<=0) return 0;
+  *out=kint((unsigned long long)n,cc_abi(c)->pointer_size*8,0); return 1;
 }
 /* A call of the name `id`, the cursor on its `(`: an atomic builtin, a call through a function-pointer object (p_icall)
  * or a direct named call (p_call), a struct or pointer result taking its postfix. `id(x)` -- and `(*id)(x)`, whose `*`
@@ -5075,7 +5183,7 @@ static uint32_t p_primary(CC *c) {
   if(is(c,"_Generic")) return call_value(c,p_generic(c));   /* `_Generic(x, T: f, ...)(y)` (CF-FPTAB) */
   if(isk(c,T_INT)){tok t=adv(c);
     if(is(c,"[")){ fail(c,"a subscript of an integer constant is not supported"); return 0; }   /* `1[p]` (CF-FPTAB) */
-    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c)->long_size,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */
+    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c),&lsz,&lsg);   /* the constant's type (§6.4.4.1) */
     uint32_t r=tempi(c,lsz,lsg);
     bcir_claim *cl=new_claim(c,"c.const",BCIR_OP_LOAD);if(!cl)return r;
     cl->n_wr=1;cl->wr[0]=r;cl->n_imm=1;cl->imm[0]=t.v;return call_value(c,r);}   /* `1(2)`: refused (CF-FPTAB) */
@@ -5408,10 +5516,10 @@ static uint32_t p_unary_inner(CC *c) {
           if(fi<0){ fail(c,"unknown field"); return 0; }
           field mf=member_descend(c,S->f[fi]);     /* accumulate the chain's byte offset + the leaf field */
           if(mf.bit_w){ fail(c,"cannot take the address of a bit-field"); return 0; }   /* illegal in C */
-          if(mf.is_ptr && !mf.arr_count && (is(c,"->")||is(c,".")||is(c,"[")))   /* `&h.next->v`, `&n->next->p[i]`:
+          if(mf.is_ptr && !farr(&mf) && (is(c,"->")||is(c,".")||is(c,"[")))   /* `&h.next->v`, `&n->next->p[i]`:
                                                     * the object through the pointer member it loads (CF-SPLIT2) */
             return addr_through_loaded(c,v,&mf);
-          if(mf.is_ptr && !mf.arr_count){          /* &s.ptr / &s->ptr -- address of a POINTER member -> a `T **` */
+          if(mf.is_ptr && !farr(&mf)){          /* &s.ptr / &s->ptr -- address of a POINTER member -> a `T **` */
             uint32_t t=add_res(c,BCIR_DOM_RAM, mf.ptee_size?mf.ptee_size:4, 1,0,BCIR_RK_POINTER,"");
             if(c->fn->n_res){ bcir_resource *tr=&c->fn->res[c->fn->n_res-1];   /* pointee = the member's pointee */
               tr->is_signed=(uint8_t)(mf.signd?1:0); tr->is_float=(uint8_t)(mf.ptee_float?1:0); tr->ptr_depth=2;
@@ -5422,7 +5530,7 @@ static uint32_t p_unary_inner(CC *c) {
             if(cl){cl->n_rd=1;cl->rd[0]=v->rid;cl->n_wr=1;cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=mf.byte_off;}
             return t;
           }
-          if(mf.arr_count){                        /* &s.arr[i] / &s->arr[i] / &s.m[i][j] -- a member-array element */
+          if(farr(&mf)){                           /* &s.arr[i] / &s->arr[i] / &s.m[i][j] -- a member-array element */
             if(!is(c,"[")){ fail(c,"address-of an array member is a follow-on"); return 0; }
             uint32_t ix=member_arr_index(c,&mf);   /* the row-major flattened element index */
             int es = mf.size?mf.size:4, off=mf.byte_off;   /* element (struct) STRIDE + the member offset */
@@ -5435,7 +5543,7 @@ static uint32_t p_unary_inner(CC *c) {
               for(int k=0;k<ES->nf;k++) if((int)strlen(ES->f[k].name)==efn.n&&!strncmp(ES->f[k].name,efn.s,efn.n)) efi=k;
               if(efi<0){ fail(c,"unknown field"); return 0; }
               field ef=member_descend(c,ES->f[efi]);
-              if(ef.bit_w||ef.is_ptr||ef.arr_count){ fail(c,"address-of a non-scalar array-of-structs field is a follow-on"); return 0; }
+              if(ef.bit_w||ef.is_ptr||farr(&ef)){ fail(c,"address-of a non-scalar array-of-structs field is a follow-on"); return 0; }
               off += ef.byte_off; resz=ef.size?ef.size:4; rsd=ef.signd; rfl=ef.is_float; rsx=ef.sidx;   /* field at member_off+field_off; stride stays the struct */
               rat=ef.is_atomic; rcx=ef.is_complex; rbo=ef.is_bool; rpc=ef.is_plain_char;
             }
@@ -5582,7 +5690,9 @@ static uint32_t p_unary_inner(CC *c) {
         if(ty.kind==3){ long long fd[3]; int nf=0;   /* `(R (*[N])(P))`: an array of function pointers (CF-RTFP) */
           if(fp_name_dims(c,&ty,fd,&nf,3)) return 0;
           for(int d=0; d<nf; d++){ int dim=(int)fd[d]; la_dims[la_nd++]=dim; la_count=la_count?la_count*dim:dim; } }
-        while(is(c,"[")){ c->i++; int dim=isk(c,T_INT)?(int)adv(c).v:0; eat(c,"]");
+        while(is(c,"[")){ c->i++; long long d=is(c,"]") ? 0 : ce_dim(c,0);   /* a constant (CF-CONSTEXPR2) */
+          if(d<0) return 0;
+          int dim=(int)d; eat(c,"]");
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
         for(int d=0; d<btd; d++){ int dim=btdd[d];     /* its dims follow the type-name's own */
           if(la_nd<3)la_dims[la_nd]=dim; la_nd++; la_count=la_count?la_count*dim:dim; }
@@ -6003,7 +6113,7 @@ static uint32_t p_cond(CC *c){
 static void env_add(CC *c,const tok *nm,uint32_t rid,const bcir_ctype *ty,int sidx){
   CC_ENSURE(c,c->env,c->nenv,c->cap_env);
   if(c->nenv>=c->cap_env)return; venv *v=&c->env[c->nenv++];
-  idcpy(c,v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;
+  idcpy(c,v->name,nm);v->rid=rid;v->type=*ty;v->sidx=sidx;v->seq=++c->decl_seq;
 }
 /* On first use of a file-scope global within a function, materialize a read-only data resource for
  * it (so an access `LUT[i]` lowers to a load) and bind it in the local env.  The resource is marked
@@ -6124,7 +6234,7 @@ static int member_assign_ahead(CC *c, field *out, venv **base){
   for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn->n && !strncmp(S->f[i].name,fn->s,fn->n)) fi=i;
   if(fi<0) return 0;
   field f=S->f[fi];
-  if(f.is_ptr || f.arr_count || f.sidx>=0) return 0;                  /* a scalar member (plain or bitfield) only */
+  if(f.is_ptr || farr(&f) || f.sidx>=0) return 0;                  /* a scalar member (plain or bitfield) only */
   if(f.bit_w && v->type.is_volatile) return 0;                        /* a volatile/MMIO bitfield re-read stays a fallback */
   const tok *as=tat(c,c->i+3);
   if(!(as->k==T_PUN && ((as->n==1 && as->s[0]=='=') || is_compound_op(as)))) return 0;
@@ -6493,7 +6603,7 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
     }
     /* --- a MEMBER-ARRAY element `s.arr[i] = rhs` (and member array-of-structs `s.arr[i].f = rhs`) as a
      * VALUE: a STRIDED store at member_off (+ field_off) + idx*element-size, resolved ONCE, then re-read. --- */
-    if(f.arr_count && !v->type.is_volatile && is(c,"[")){
+    if(farr(&f) && !v->type.is_volatile && is(c,"[")){
       size_t m_res=c->fn->n_res,m_cl=c->fn->n_claims; uint32_t m_rid=c->rid,m_cid=c->cid,m_clc=c->cl_ctr;
       uint32_t idx=member_arr_index(c,&f);             /* the row-major flattened element index, resolved once */
       field sub; int soa = (is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);   /* arr[i].field on AOS */
@@ -6513,7 +6623,7 @@ static BCIR_NOINLINE int lv_assign_value(CC *c, uint32_t *out){   /* out of p_as
      * (a pointer field reaching `->` / an array `[` would not land here; a struct leaf with no `=` is a
      * value), and the base must not be a volatile/MMIO struct (a bitfield re-read there would be an extra
      * access -- it stays a fallback, matching the single-level member path + the oracle's gate). */
-    if(!(is_eq || is_compound_op(op)) || f.is_ptr || f.arr_count || f.sidx>=0
+    if(!(is_eq || is_compound_op(op)) || f.is_ptr || farr(&f) || f.sidx>=0
        || v->type.is_volatile){ c->i=save; return 0; }
     if(is_eq){                                         /* plain: store rhs, then RELOAD the same member */
       c->i++; uint32_t rhs=p_assign(c);
@@ -6839,7 +6949,7 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
       *out=plv_incdec(c,&lv,prefix,ch);
       return 1;
     }
-    if(f.arr_count && is(c,"[")){                         /* a MEMBER-ARRAY element `s.arr[i]` / `s.arr[i].f` */
+    if(farr(&f) && is(c,"[")){                            /* a MEMBER-ARRAY element `s.arr[i]` / `s.arr[i].f` */
       uint32_t idx=member_arr_index(c,&f);
       field sub; int soa=(is(c,".")||is(c,"->")) && elem_field(c,&f,&sub);
       if(c->failed) return 0;
@@ -6852,7 +6962,7 @@ static BCIR_NOINLINE int incdec_value(CC *c, uint32_t *out){   /* out of p_unary
       *out=member_elem_incdec(c,v,&f,idx,soa,&sub,prefix,ch);
       return 1;
     }
-    if(f.is_ptr || f.arr_count || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
+    if(f.is_ptr || farr(&f) || f.sidx>=0){ c->i=save; return 0; }   /* a non-scalar leaf -> fallback */
     if(!incdec_settle(c,prefix,save)){                    /* a deeper lvalue / not stepped -> roll back */
       c->fn->n_res=s_res;c->fn->n_claims=s_cl;c->rid=s_rid;c->cid=s_cid;c->cl_ctr=s_clc; c->i=save; return 0; }
     if(f.is_atomic){                                      /* an `_Atomic` member: one atomic read-modify-write */
@@ -7152,7 +7262,7 @@ typedef struct { uint32_t rid; int top_array, top_n, inferred, rng0, un0;
 /* A member's subobject: an array, a struct/union, or a scalar (a bit-field keeps its unit). */
 static void iunit_of_field(CC *c, iunit *u, const field *F, int base_off){
   memset(u,0,sizeof *u); u->off=base_off+F->byte_off; u->sidx=-1;
-  if(F->arr_count>0){ u->k=IK_ARR; u->sidx=F->elem_sidx; u->nd=F->nadims>0?F->nadims:1;
+  if(farr(F)){ u->k=IK_ARR; u->sidx=F->elem_sidx; u->nd=F->nadims>0?F->nadims:1;
     if(F->nadims>0){ for(int d=0;d<3;d++) u->dims[d]=F->adims[d]; } else u->dims[0]=F->arr_count;
     u->es=F->size; u->size=F->arr_count*F->size; u->is_bool=F->is_bool; u->is_atomic=F->is_atomic;
     u->slot=field_slot(F); return; }
@@ -7665,11 +7775,22 @@ static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, 
   if(inferred){ c->fn->res[ari].count=(uint32_t)((rows<1?1:rows)*inner); init_remask(c,rid,s_nclaims); }
   return rid;
 }
+/* Whether the specifier at [from, cursor) declares an enumeration -- `enum`, and no `struct` or `union` -- so that a
+ * declaration of it with no declarator, `enum [tag] { ... };`, declares its constants and tag alone, in scope to the end
+ * of the block (C11 6.7p2; the oracle's `_decl_stmt`, CF-CONSTEXPR2). */
+static int enum_only_spec(CC *c,int from){
+  int e=0;
+  for(int k=from;k<c->i;k++){ const tok *t=tat(c,k);
+    if(tok_is(t,"struct")||tok_is(t,"union")) return 0;
+    if(tok_is(t,"enum")) e=1; }
+  return e;
+}
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }   /* depth guard: p_block<->p_stmt nesting cycle */
-  if(is(c,"{")){c->i++; int env_mark=c->nenv;   /* a block is a scope: its locals do not leak out */
+  if(is(c,"{")){c->i++; int env_mark=c->nenv, ec_mark=c->nec;   /* a block is a scope: its locals, enumerators
+                                                * and enumeration tags (CF-CONSTEXPR2) do not leak out */
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);
-    eat(c,"}"); c->nenv=env_mark;}              /* pop the block scope -- restore outer name bindings */
+    eat(c,"}"); c->nenv=env_mark; c->nec=ec_mark;}   /* pop the block scope -- restore outer name bindings */
   else p_stmt(c);
   LEAVE_REC(c);
 }
@@ -7820,12 +7941,49 @@ static void store_through_ptr_inner(CC *c, uint32_t ptr, int psidx, field pfld) 
 }
 /* A case label, the cursor past `case`: its integer constant expression folded (`ce_fold`) and its marker spelled the
  * value exactly in its type (`kdigits`, the oracle's `_const_spelling`) -- `%lld` had spelled 0xFFFFFFFFFFFFFFFFu as
- * -1. BCIR_NOINLINE: its buffers stay out of the recursive statement parser's frame. */
+ * -1 -- its value converted to the switch's promoted type equal to no earlier case's of the same switch (`CC_DUP_CASE`;
+ * a `case` is at most every third token, so the scan is bounded by MAXTOK). BCIR_NOINLINE: its buffers stay out of
+ * the recursive statement parser's frame. */
 static BCIR_NOINLINE void case_label(CC *c){
   kval v; char d[32], op[BCIR_CIR_OP];
   if(!ce_fold(c,0,&v)) return;
+  unsigned long long w=kwrap(v.p,c->sw_bits,c->sw_sgn);
+  for(int k=c->sw_base;k<c->nswv;k++) if(c->swv[k]==w){ fail(c,CC_DUP_CASE); return; }
+  if(!CC_ENSURE(c,c->swv,c->nswv,c->cap_swv)) return;
+  c->swv[c->nswv++]=w;
   kdigits(d,sizeof d,v.p,v.sgn && (v.p>>63));
   eat(c,":"); fits(c,op,sizeof op,"c.case:%s",d); marker(c,op,0,0);
+}
+/* The promoted type of a `switch`'s controlling expression `r` (C11 6.8.4.2p5) as (bits, signed): a `_Bool` or a type
+ * narrower than `int` an `int`, a `_BitInt(N)` itself (C23 promotes none), any other integer type itself (the oracle's
+ * `_switch_promoted`). */
+static void switch_promoted(const bcir_resource *r,int *bits,int *sgn){
+  if(!r || r->is_bool || (!r->bit_width && r->elem_bytes<4)){ *bits=32; *sgn=1; return; }
+  if(r->bit_width){ *bits=r->bit_width; *sgn=r->is_signed; return; }
+  *bits=r->elem_bytes>8 ? 64 : (int)r->elem_bytes*8; *sgn=r->is_signed;
+}
+/* A `switch` statement, the cursor on `switch`: a real C switch, its case labels and fallthrough preserved -- the
+ * discriminant lowered once, then the body's case labels (`case_label`), at most one `default:` (`CC_DUP_DEFAULT`)
+ * and its statements. A nested switch saves and restores the enclosing one's case state. BCIR_NOINLINE: its locals stay
+ * out of the recursive statement parser's frame. */
+static BCIR_NOINLINE void p_switch(CC *c){
+  c->i++; eat(c,"(");
+  uint32_t disc=p_expr(c);
+  if(!cond_value_ok(c,disc,1)) return;   /* an integer (CF-STRUCTCOND) */
+  eat(c,")"); eat(c,"{");
+  marker(c,"c.switch",disc,1);
+  int base=c->sw_base, bits=c->sw_bits, sgn=c->sw_sgn, dflt=c->sw_default;
+  c->sw_base=c->nswv; c->sw_default=0; switch_promoted(res_of(c->fn,disc),&c->sw_bits,&c->sw_sgn);
+  while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
+    if(is(c,"case")){ c->i++; case_label(c); }   /* case <const>: */
+    else if(is(c,"default")){ c->i++;
+      if(c->sw_default){ fail(c,CC_DUP_DEFAULT); break; }
+      c->sw_default=1; eat(c,":"); marker(c,"c.default",0,0); }
+    else p_stmt(c);                  /* body statements (break -> c.break, no implicit break) */
+  }
+  c->nswv=c->sw_base; c->sw_base=base; c->sw_bits=bits; c->sw_sgn=sgn; c->sw_default=dflt;
+  eat(c,"}");
+  marker(c,"c.endswitch",0,0);
 }
 static void p_stmt_inner(CC *c);
 /* Depth-guarded wrapper: p_stmt is a recursive-cycle entry (p_stmt->p_block->p_stmt, and the stmt-expr
@@ -7920,25 +8078,13 @@ static void p_stmt_inner(CC *c) {
   if(isk(c,T_ID)&&tat(c,c->i+1)->k==T_PUN&&tat(c,c->i+1)->n==1&&tat(c,c->i+1)->s[0]==':'){  /* `name:` -- a label */
     tok lb=adv(c); c->i++; char op[BCIR_CIR_OP];
     fits(c,op,sizeof op,"c.label:%.*s",lb.n,lb.s); new_claim(c,op,BCIR_OP_NOP); return; }
-  if(is(c,"switch")){                  /* a real C switch: case labels + fallthrough preserved */
-    c->i++; eat(c,"(");
-    uint32_t disc=p_expr(c);           /* the discriminant, lowered once */
-    if(!cond_value_ok(c,disc,1)) return;   /* an integer (CF-STRUCTCOND) */
-    eat(c,")"); eat(c,"{");
-    marker(c,"c.switch",disc,1);
-    while(!is(c,"}")&&!isk(c,T_END)&&!c->failed){
-      if(is(c,"case")){ c->i++; case_label(c); }   /* case <const>: */
-      else if(is(c,"default")){ c->i++; eat(c,":"); marker(c,"c.default",0,0); }
-      else p_stmt(c);                  /* body statements (break -> c.break, no implicit break) */
-    }
-    eat(c,"}");
-    marker(c,"c.endswitch",0,0);
-    return;
-  }
+  if(is(c,"switch")){ p_switch(c); return; }   /* a real C switch: case labels + fallthrough preserved */
   if(is(c,"{")){p_block(c);return;}
   if(decl_start_tok(c,pk(c))){
     c->saw_static=0; c->saw_extern=0; c->saw_thread=0;   /* THIS declaration's own storage classes, wherever spelled */
+    int spec_at=c->i;
     bcir_ctype base;int si;if(p_type_base(c,&base,&si))return;   /* the shared specifier (eats `static`, NOT `*`) */
+    if(is(c,";") && enum_only_spec(c,spec_at)){ c->i++; return; }   /* `enum [tag] { ... };`: its constants alone */
     if(c->saw_extern){ fail(c,"a block-scope extern declaration is not supported"); return; }   /* names an object
       * defined elsewhere, never a new local: binding it as one read an uninitialized object (CF-STORAGE) */
     int is_static = c->saw_static;                 /* `volatile static T n` / `T static n` are static (6.7p1) */
@@ -8362,12 +8508,12 @@ static void p_stmt_inner(CC *c) {
       for(int k=0;k<S->nf;k++) if((int)strlen(S->f[k].name)==fld.n&&!strncmp(S->f[k].name,fld.s,fld.n)) fi=k;
       if(fi<0){fail(c,"unknown field");return;}
       field f=member_descend(c,S->f[fi]);         /* nested `o.in.v` -> one flattened-offset store */
-      if(is(c,"[") && !f.arr_count && !f.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return; }   /* `o->v[1] = x` (CF-FPTAB) */
+      if(is(c,"[") && !farr(&f) && !f.is_ptr){ fail(c,CC_SUBSCRIPT_NOT); return; }   /* `o->v[1] = x` (CF-FPTAB) */
       if(f.is_ptr && is(c,".")){ fail(c,CC_DOT_NOT); return; }   /* `o.p.x = v` through a pointer member */
       if(f.is_ptr && (is(c,"->")||is(c,".")||is(c,"["))){   /* store deref-through a loaded pointer field (#fieldderef) */
         uint32_t ptr=emit_member(c,v,&f,0);       /* load the pointer field, then store through the loaded ptr */
         store_through_ptr(c,ptr,f.ptee_sidx,f); eat(c,";"); return; }
-      if(f.arr_count && is(c,"[")){               /* s.arr[i] / s.m[i][j] = expr  /  OP= expr */
+      if(farr(&f) && is(c,"[")){                  /* s.arr[i] / s.m[i][j] = expr  /  OP= expr */
         uint32_t idx=member_arr_index(c,&f); uint32_t aval;
         field sub; int soa=elem_field(c,&f,&sub);   /* arr[i].field on an array-of-structs (strided store) */
         if(c->failed) return;
@@ -8668,7 +8814,8 @@ static int p_func(CC *c, bcir_func *fn) {
         if(is(c,")") && tat(c,c->i+1)->k==T_PUN && tat(c,c->i+1)->n==1 && tat(c,c->i+1)->s[0]=='['){
           c->i++;                                  /* consume ) ; the next token is [ */
           pn=cand; int nd=1; ty.adims[0]=0;        /* the outer (pointer) dim is unspecified */
-          while(is(c,"[")){ c->i++; long long d=isk(c,T_INT)?(long long)adv(c).v:0;
+          while(is(c,"[")){ c->i++; long long d=is(c,"]") ? 0 : ce_dim(c,0);   /* a constant (CF-CONSTEXPR2) */
+            if(d<0) return 1;
             if(nd<3)ty.adims[nd]=(int)d; nd++; eat(c,"]"); }
           ty.nadims=nd<3?nd:3; if(ty.kind==0) ty.kind=2;
           else if(ty.kind==1){ ty.kind=2; ty.ptr_to_struct=1; ty.ptr_depth=1; }   /* rows of structs (CF-STRUCTVAL) */
@@ -8772,6 +8919,7 @@ static int p_func(CC *c, bcir_func *fn) {
     return 2;
   }
   if(!eat(c,"{"))return 1;
+  int ec_mark=c->nec;       /* the body's enumerators end with it (CF-CONSTEXPR2) */
   scan_mutations(c,c->i);   /* §5.12 extent-stability pre-pass over the body (cursor is just past `{`) */
   for(int k=0;k<c->n_vlaext;k++){          /* §5.12 resolve the deferred VLA-param extent bindings: bind `a` to
     * `n` ONLY when `n` is STABLE -- unmutated in the body and not address-taken (the _bind_extent stable-Name
@@ -8782,7 +8930,7 @@ static int p_func(CC *c, bcir_func *fn) {
   }
   for(int pass=0; pass<8 && unparen_body(c,c->i); pass++){}   /* CF-PAREN: `(a)[i]` -> `a[i]`, before the body parses */
   while(!is(c,"}")&&!isk(c,T_END)&&!c->failed) p_stmt(c);
-  eat(c,"}");
+  eat(c,"}"); c->nec=ec_mark;
   order_device_claims(fn);   /* R3: every claim touching a device region is device-domain and ordered */
   return c->failed;
 }
@@ -9777,7 +9925,8 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   bcir_host_allocator allocator;
   bcir_host_arena scratch;
   sdef *s; tdef *td; econst *ec; gvar *gv; venv *env; void *protos; irange *iw_rng; iunion *iw_un; int *pure_memo;
-  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure;
+  unsigned long long *swv;
+  int cap_s,cap_td,cap_ec,cap_gv,cap_env,cap_protos,iw_caprng,iw_capun,cap_pure,cap_swv;
   ctext fpdefs,tudefs,anontext;
   if(!context||!context->state) return;
   c=(CC *)context->state;
@@ -9787,7 +9936,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   gv=c->gv;cap_gv=c->cap_gv;env=c->env;cap_env=c->cap_env;
   protos=c->protos;cap_protos=c->cap_protos;
   iw_rng=c->iw_rng;iw_caprng=c->iw_caprng;iw_un=c->iw_un;iw_capun=c->iw_capun;
-  pure_memo=c->pure_memo;cap_pure=c->cap_pure;
+  pure_memo=c->pure_memo;cap_pure=c->cap_pure;swv=c->swv;cap_swv=c->cap_swv;
   fpdefs=c->fpdefs;tudefs=c->tudefs;anontext=c->anontext;
   memset(c,0,sizeof *c);
   c->allocator=allocator;c->scratch=scratch;
@@ -9795,7 +9944,7 @@ void bcir_cfront_context_reset(bcir_cfront_context *context) {
   c->gv=gv;c->cap_gv=cap_gv;c->env=env;c->cap_env=cap_env;
   c->protos=protos;c->cap_protos=cap_protos;
   c->iw_rng=iw_rng;c->iw_caprng=iw_caprng;c->iw_un=iw_un;c->iw_capun=iw_capun;
-  c->pure_memo=pure_memo;c->cap_pure=cap_pure;
+  c->pure_memo=pure_memo;c->cap_pure=cap_pure;c->swv=swv;c->cap_swv=cap_swv;
   c->fpdefs.s=fpdefs.s;c->fpdefs.cap=fpdefs.cap;c->tudefs.s=tudefs.s;c->tudefs.cap=tudefs.cap;   /* kept, emptied */
   c->anontext.s=anontext.s;c->anontext.cap=anontext.cap;
   if(c->fpdefs.s) c->fpdefs.s[0]=0;
@@ -9812,7 +9961,7 @@ void bcir_cfront_context_destroy(bcir_cfront_context *context) {
   bcir_host_deallocate(&allocator,c->ec);bcir_host_deallocate(&allocator,c->gv);
   bcir_host_deallocate(&allocator,c->env);bcir_host_deallocate(&allocator,c->protos);
   bcir_host_deallocate(&allocator,c->iw_rng);bcir_host_deallocate(&allocator,c->iw_un);
-  bcir_host_deallocate(&allocator,c->pure_memo);
+  bcir_host_deallocate(&allocator,c->pure_memo);bcir_host_deallocate(&allocator,c->swv);
   bcir_host_deallocate(&allocator,c->fpdefs.s);bcir_host_deallocate(&allocator,c->tudefs.s);
   bcir_host_deallocate(&allocator,c->anontext.s);
   memset(c,0,sizeof *c);bcir_host_deallocate(&allocator,c);

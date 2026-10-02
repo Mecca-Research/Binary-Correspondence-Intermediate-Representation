@@ -763,16 +763,30 @@ static int read_file_dirs(CppState *state, const char *const *dirs, int ndirs, c
  * `*w` and sharing the macro table. */
 /* Translation phase 3: replace every // and block comment with a single space, keeping the newlines
  * a block comment spanned (so __LINE__ and the per-line directive scan stay aligned). String/char
- * literals are copied verbatim; a `'` flanked by hex digits is a C23 digit separator, not a quote.
+ * literals are copied verbatim; an identifier and a preprocessing number (6.4.2, 6.4.8) are copied whole, so a C23
+ * digit separator (`1'000`) -- a `'` inside a pp-number -- is no quote, and the `'` after an identifier (`u8'a'`,
+ * `L'a'`) opens a character constant: a `'` flanked by hex digits had been taken for a separator in `u8'a'`, whose
+ * closing quote then opened a literal that ran past the next comment (CF-CONSTEXPR2; the oracle's `_strip_comments`).
  * In-place safe (the write cursor never overtakes the read cursor). Mirrors cpp.py _strip_comments,
  * and runs *before* directive processing so a directive inside a comment never fires and the
  * comment's punctuation can't be re-tokenized into the output. */
 static void strip_comments(const char *s, char *o, size_t ocap) {
   size_t i=0, w=0;
-  #define _HX(ch) (((ch)>='0'&&(ch)<='9')||(((ch)|0x20)>='a'&&((ch)|0x20)<='f'))
+  #define _DG(ch) ((ch)>='0'&&(ch)<='9')
+  #define _IDS(ch) ((((ch)|0x20)>='a'&&((ch)|0x20)<='z') || (ch)=='_')
+  #define _IDC(ch) (_IDS(ch) || _DG(ch))
   while(s[i] && w+1<ocap){
     char c=s[i];
-    if(c=='"' || (c=='\'' && !(i>0 && _HX(s[i-1]) && s[i+1] && _HX(s[i+1])))){
+    if(_IDC(c) || (c=='.' && _DG(s[i+1]))){        /* an identifier, or a pp-number (a digit or `.digit` first) */
+      int num=!_IDS(c);
+      o[w++]=c; i++;
+      while(s[i] && w+2<ocap){ char ch=s[i];
+        if(num && (ch=='e'||ch=='E'||ch=='p'||ch=='P') && (s[i+1]=='+'||s[i+1]=='-')){ o[w++]=ch; o[w++]=s[i+1]; i+=2; }
+        else if(num && ch=='\'' && _IDC(s[i+1])){ o[w++]=ch; o[w++]=s[i+1]; i+=2; }   /* a digit separator */
+        else if(_IDC(ch) || (num && ch=='.')){ o[w++]=ch; i++; }
+        else break; }
+      continue; }
+    if(c=='"' || c=='\''){
       o[w++]=c; i++;                                  /* a string/char literal: copy verbatim */
       while(s[i] && w+2<ocap){ char ch=s[i];
         if(ch=='\\' && s[i+1]){ o[w++]=ch; o[w++]=s[i+1]; i+=2; continue; }
@@ -785,7 +799,9 @@ static void strip_comments(const char *s, char *o, size_t ocap) {
       o[w++]=' '; while(nl>0 && w+1<ocap){ o[w++]='\n'; nl--; } continue; }
     o[w++]=c; i++;
   }
-  #undef _HX
+  #undef _DG
+  #undef _IDS
+  #undef _IDC
   o[w]=0;
 }
 

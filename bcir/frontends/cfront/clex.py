@@ -425,54 +425,6 @@ def str_units(spelling: str, unit_bytes) -> tuple[str, list[int]]:
     return prefix, units
 
 
-def decode_c_bytes(inner: str) -> list[int]:
-    """Decode the *inner* text of a string/character literal (surrounding quotes already stripped)
-    to its sequence of byte values, interpreting C escape sequences: the simple `\\c` escapes, an
-    octal `\\NNN` (up to three digits), and a hex `\\xHH..` (all following hex digits)."""
-    out: list[int] = []
-    i, ln = 0, len(inner)
-    while i < ln:
-        ch = inner[i]
-        if ch == "\\" and i + 1 < ln:
-            e = inner[i + 1]
-            if e == "x":  # \xHH.. -> all following hex digits
-                i, val = i + 2, 0
-                while i < ln and inner[i] in "0123456789abcdefABCDEF":
-                    val, i = val * 16 + int(inner[i], 16), i + 1
-                out.append(val & 0xFF)
-            elif e in "01234567":  # \NNN -> up to three octal digits
-                i, val, k = i + 1, 0, 0
-                while k < 3 and i < ln and inner[i] in "01234567":
-                    val, i, k = val * 8 + int(inner[i], 8), i + 1, k + 1
-                out.append(val & 0xFF)
-            else:  # \n, \t, \\, \", \0-less simple escapes
-                out.append(_SIMPLE_ESCAPE.get(e, ord(e)) & 0xFF)
-                i += 2
-        else:
-            out.append(ord(ch) & 0xFF)
-            i += 1
-    return out
-
-
-def parse_char_literal(text: str) -> int:
-    """Decode a C character constant to its `int` value. A single character is its byte value
-    sign-extended as a (signed) `char`; a multi-character constant `'AB'` packs big-endian
-    (Clang/GCC: `('A'<<8)|'B'`), interpreted as a 32-bit `int`. An optional wide/UTF prefix
-    (`L`/`u`/`U`) does not change the (ASCII) code-point value. `text` includes the quotes."""
-    _pfx, text = split_lit_prefix(text)
-    inner = text[1:-1] if len(text) >= 2 and text[0] == "'" else text
-    bs = decode_c_bytes(inner)
-    if not bs:
-        return 0
-    if len(bs) == 1:
-        b = bs[0]
-        return b - 256 if b >= 128 else b  # a single char is a signed char
-    v = 0
-    for b in bs:
-        v = ((v << 8) | b) & 0xFFFFFFFF
-    return v - (1 << 32) if v >= (1 << 31) else v  # an int32 multi-character constant
-
-
 _BASE_DIGITS = {16: "0123456789abcdefABCDEF", 10: "0123456789", 8: "01234567", 2: "01"}
 
 
@@ -602,3 +554,36 @@ def char_constant_units(text: str, wchar_bits: int = 32) -> "tuple[str, list[int
     if not units or (prefix and len(units) > 1):
         raise CLexError(CHAR_UNSUPPORTED)
     return prefix, units
+
+
+#: A prefixed character constant's type (C11 6.4.4.4p11, C23 6.4.4.5): `char16_t` and `char32_t`, the unsigned
+#: `uint_least16_t` and `uint_least32_t`; C23's `u8` an `unsigned char`; `L` the target's `wchar_t`.
+_CHAR_PREFIX_TYPE = {
+    "u8": "unsigned char",
+    "u": "unsigned short",
+    "U": "unsigned int",
+    "L": "wchar_t",
+}
+
+
+def char_constant(text: str, abi) -> "tuple[int, str]":
+    """A character constant's value and type at the target `abi`, read by the one reader `#if` reads one by
+    (`char_constant_units`), as Clang reads it: a plain one an `int` of its byte as the target's plain `char` holds it
+    -- `'\\xff'` 255 where `char` is unsigned (AArch64), -1 where it is signed -- a multi-character one its last four
+    bytes packed big-endian into an `int`; a prefixed one of `_CHAR_PREFIX_TYPE`'s type, its code unit's value (an
+    `L` one by the target's `wchar_t`, signed or not). A CLexError(CHAR_UNSUPPORTED) for any other. Both rails had
+    read every character constant as an `int` of signed bytes (CF-CONSTEXPR2; the twin's `char_value`)."""
+    bits = 8 * abi.wchar_size
+    prefix, units = char_constant_units(text, bits)
+    if prefix == "":
+        if len(units) == 1:
+            v = units[0]
+            return (v - 256 if abi.char_signed and v >> 7 else v), "int"
+        v = 0
+        for u in units:
+            v = ((v << 8) | u) & 0xFFFFFFFF
+        return (v - (1 << 32) if v >> 31 else v), "int"
+    v = units[0]
+    if prefix == "L" and abi.wchar_signed and v >> (bits - 1):
+        v -= 1 << bits
+    return v, _CHAR_PREFIX_TYPE[prefix]

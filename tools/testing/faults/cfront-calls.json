@@ -126,7 +126,7 @@
       "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
       "label": "CL17 the oracle leaves the 0 compared with a pointer an int",
       "new": "",
-      "old": "                if ta is not None:\n                    self._null_pointer(b, ta)\n                if tb is not None:\n                    self._null_pointer(a, tb)\n",
+      "old": "            if ta is not None:\n                self._null_pointer(b, ta)\n            if tb is not None:\n                self._null_pointer(a, tb)\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {

@@ -286,6 +286,8 @@ _PTRVALUE = [
     #   data model; a dimension that is an integer constant expression a fixed array (CF-ENUMFOLD)
     "cfront_enumscope.c",  # a local, a parameter and a loop's declaration hide an enumerator of their name to
     #   the end of their block; file scope after a function reads the enumerator again (CF-ENUMSCOPE)
+    "cfront_constexpr2.c",  # case labels in the promoted type, prefixed character constants, block enumerations,
+    #   constant widths and dimensions, sizeof and float casts in enumerators, zero-length members (CF-CONSTEXPR2)
     "cfront_fptab.c",  # tables of function pointers -- typedef'd and inline, local, file-scope, 2-D, members,
     #   pointers to them, parameters of them -- and calls through `(*fp)`, `(**fp)` and `(*f)` (CF-FPTAB)
     "cfront_fpret.c",  # function pointers calls return; pointers, structs and function pointers returned through a
@@ -11874,9 +11876,9 @@ _ENUMFOLD_REFUSED = (
     ("enum { N = 8 >> -1 };", _ICE_NOT),
     ("enum { N = g_x };", _ICE_NOT),
     ("enum { N = 0 && g_x };", _ICE_NOT),
-    ("enum { N = sizeof(int) };", _ICE_NOT),
+    ("enum { N = sizeof g_x };", _ICE_NOT),
     ("enum { N = (1, 2) };", _ICE_NOT),
-    ("enum { N = (int)1.5 };", _ICE_NOT),
+    ("enum { N = (int)1.5L };", _ICE_NOT),
     ("enum { N = (uint8_t *)0 == 0 };", _ICE_NOT),
     ("int32_t f(int32_t v) { switch (v) { case 1 / 0: return 1; default: return 0; } }", _ICE_NOT),
     (
@@ -11924,8 +11926,8 @@ def test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixe
     """CF-ENUMFOLD: every unit of `_ENUMFOLD_REFUSED` -- an enumerator past int's range (stated, an unsigned one
     past LLONG_MAX among them, or counted on from INT_MAX), a division or a remainder by zero, a signed overflow
     (`+`, `*`, `-`, `/` and `%` of INT_MIN by -1), a shift by the width or more, by a negative count or of a
-    negative value, an object, `sizeof`, the comma operator, a floating constant and a pointer in an enumerator, the
-    same in a case label, a designator that divides by zero, and the constant dimension of a local, a member or a
+    negative value, an object, `sizeof` of an expression, the comma operator, a `long double` constant and a pointer
+    in an enumerator, the same in a case label, a designator that divides by zero, and the constant dimension of a local, a member or a
     global outside 0..INT_MAX -- is refused on both rails for the one reason it witnesses, where both had picked a
     value or refused for reasons of their own. Every unit of `_ENUMFOLD_DIMS` lowers to one claim graph on both rails, a
     dimension that is an integer constant expression -- `2 + 1`, `N * 2` of a local, `N + 1` of a member, `N << 1`
@@ -12047,6 +12049,482 @@ def test_a_block_scope_name_hides_an_enumerator_on_both_rails():
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(unit)
             _parity_on_targets(path, unit)
+
+
+# CF-CONSTEXPR2: the constant expressions CF-ENUMFOLD left. `cfront_constexpr2.c` holds what the 64-bit Linux hosts
+# give alike; what the target's character types and data model decide is `_CONSTEXPR2_TARGET`'s, held to Clang's
+# value on each target.
+_CONSTEXPR2_DRIVER = (
+    _GAPS_SAME
+    + r"""
+int main(void) {
+  for (unsigned n = 0; n < GAPS_N; n++) {
+    uint32_t s = gaps_in[n];
+    SAME(ce_switch8, (uint8_t)s); SAME(ce_switch8, (uint8_t)(s + 'a')); SAME(ce_switch8, (uint8_t)'b');
+    SAME(ce_switch32, s); SAME(ce_switch32, 0xFFFFFFFFu); SAME(ce_switch32, 0xFFFFFFFEu);
+    SAME(ce_switch32, (uint32_t)sizeof(struct ce_pair)); SAME(ce_switch32, 7u);
+    SAME(ce_chars, s); SAME(ce_block, s); SAME(ce_bitfields, s); SAME(ce_literals, s); SAME(constexpr2, s);
+    /* each header in storage of its own with room for two elements, written through the member itself */
+    struct ce_zhdr *z = malloc(sizeof *z + 2 * sizeof(uint32_t));
+    struct ce_fhdr *f = malloc(sizeof *f + 2 * sizeof(uint64_t));
+    if (!z || !f) return fail("malloc");
+    z->n = s & 255u; z->tail[0] = s >> 8; z->tail[1] = s ^ 0x55u;
+    f->c = (uint8_t)(s & 0x7Fu); f->tail[0] = (uint64_t)s * 3u; f->tail[1] = (uint64_t)s + 11u;
+    uint32_t got = ce_zero(z, f, s), want = bcir_ce_zero(z, f, s);
+    free(z); free(f);
+    if (got != want) return fail("ce_zero");
+  }
+  /* the values C gives: a zero-length or flexible member occupies no bytes, each width truncates its field */
+  if (sizeof(struct ce_zhdr) != 4u || sizeof(struct ce_fhdr) != 8u || bcir_ce_switch8(255u) != 1u ||
+      bcir_ce_switch32(0xFFFFFFFEu) != 20u || bcir_ce_bitfields(0u) != (uint32_t)sizeof(struct ce_bits) * 100000u)
+    return fail("values");
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+_CONSTEXPR2_WERROR = {"clang": ("-Wno-multichar",), "gcc": ("-Wno-multichar",)}
+
+
+def test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails():
+    """CF-CONSTEXPR2: `cfront_constexpr2.c` -- switches whose labels differ only in the promoted controlling type, prefixed
+    and multi-character constants in their own types, an enumeration declared in a block (its constants and tag scoped
+    to it, hiding and hidden in turn), enumerators and `sizeof` as bit-field widths, a compound literal's and a row
+    pointer's dimension, `sizeof`/`_Alignof` of type-names and floating constants cast to integer types in
+    enumerators, zero-length and flexible array members -- lowers to one claim graph on the four targets, and each
+    function of each emit returns what the original does under Clang and GCC. On the parent both rails refused the
+    unit, and the twin laid a `uint32_t t[0]` member out as one element (`sizeof` 8 for Clang's 4) and an enumerator
+    width as a member as wide as its type."""
+    if not _CC:
+        return
+    fx = "cfront_constexpr2.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+        assert "__bcir_ext" not in emit, f"{rail}: a dimension that is a constant made a VLA"
+        assert re.search(r"\b(?:uint8_t|unsigned char) \w+ = 255u;", emit), (
+            f"{rail}: u8'\\xff' no unsigned char"
+        )
+        assert re.search(r"\b(?:uint16_t|unsigned short) \w+ = 98u;", emit), (
+            f"{rail}: u'b' is no char16_t"
+        )
+    _run_against_original_werror(
+        fx, src, (("twin", c_emit), ("oracle", oracle_emit)), _CONSTEXPR2_DRIVER, _CONSTEXPR2_WERROR
+    )
+
+
+# Each enumerator of `_CONSTEXPR2_TARGET` is the value Clang gives it on each target: a plain character constant by the
+# target's `char` (`'\xff'` 255 on AArch64, -1 elsewhere), an `L` one by its `wchar_t` (unsigned on AArch64 and
+# Windows, 16 bits on Windows), the sizes and alignments of its types, a `_BitInt` an enumerator sizes.
+_CONSTEXPR2_TARGET = r"""#include <stdint.h>
+#include <stddef.h>
+enum { W = 12 };
+struct ct_z { uint8_t c; uint64_t t[0]; };
+struct ct_f { uint16_t n; double t[]; };
+enum ct_char { CT_HI = '\xff', CT_OCT = '\200', CT_CMP = 'a' - 98 < 0, CT_LCMP = L'a' - 98 < 0, CT_LHI = L'\xffff',
+               CT_SZL = sizeof(L'a'), CT_SZU8 = sizeof(u8'a'), CT_SZU = sizeof(u'a'), CT_SZU32 = sizeof(U'a'),
+               CT_SZC = sizeof('a'), CT_MULTI = '\377a', CT_PLUS = '\xff' + 1, CT_SH = '\x80' >> 1 };
+enum ct_size { CT_LD = sizeof(long double), CT_ALD = _Alignof(long double), CT_L = sizeof(long),
+               CT_AD = _Alignof(double), CT_ALL = _Alignof(long long), CT_Z = sizeof(struct ct_z),
+               CT_F = sizeof(struct ct_f), CT_AZ = _Alignof(struct ct_z), CT_BI = sizeof(_BitInt(W)),
+               CT_BI2 = _Alignof(unsigned _BitInt(W * 4)), CT_PTR = sizeof(void *), CT_WCHAR = sizeof(wchar_t) };
+enum ct_float { CT_FL = (int)16777217.0f, CT_DB = (int)16777217.0, CT_HX = (int)0x1.fffffep23f, CT_TINY = (_Bool)1e-50f,
+                CT_TINYD = (_Bool)1e-50, CT_ROUND = (int)0.99999999999999999999, CT_BIG = (unsigned)4294967295.5 == 4294967295u,
+                CT_SZD = sizeof 1.0L, CT_SZF = sizeof(1.5f), CT_DEAD = 0 && (int)1e10, CT_DEAD2 = 1 || (unsigned char)300.5,
+                CT_DEAD3 = 1 ? 2 : (int)1e10 };
+"""
+
+
+def test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target():
+    """CF-CONSTEXPR2: each enumerator of `_CONSTEXPR2_TARGET` -- character constants plain, octal, multi-character and
+    prefixed, their `sizeof`, `sizeof`/`_Alignof` of `long double`, `long`, a zero-length and a flexible member's struct,
+    a `_BitInt` an enumerator sizes, and floating constants cast to integer types (`(int)16777217.0f` 16777216 after the
+    `float` rounds it, `(_Bool)1e-50f` 0 where `1e-50` is 1; one C does not evaluate, `0 && (int)1e10`, no refusal) --
+    is the constant the oracle folds on each of the four
+    targets, which Clang, compiling the unit for that target, holds it to (`_Static_assert`), and the twin folds the
+    same claim graph. Both rails had read every character constant as an `int` of signed bytes, `'\\xff'` -1 on
+    AArch64, and refused `sizeof` and a cast of a floating constant in an enumerator."""
+    clang = shutil.which("clang")
+    if not clang:
+        return
+    names = _enumerator_names(_CONSTEXPR2_TARGET)
+    assert len(names) == len(set(names)) == 38, names
+    unit = _CONSTEXPR2_TARGET + "".join(f"int64_t ev_{n}(void) {{ return {n}; }}\n" for n in names)
+    seen = set()
+    with tempfile.TemporaryDirectory() as d:
+        for target, triple in _ENUMFOLD_TRIPLES.items():
+            r = compile_unit(unit, check_clang=False, target=target)
+            values = {}
+            for n in names:
+                (k,) = [c for c in r.lowered.functions[f"ev_{n}"].claims if c.op == "c.const"]
+                values[n] = int(k.imm[0])
+            seen.add((values["CT_HI"], values["CT_LCMP"], values["CT_SZL"]))
+            checks = "".join(f'_Static_assert({n} == {v}LL, "{n}");\n' for n, v in values.items())
+            path = os.path.join(d, f"values_{target}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_CONSTEXPR2_TARGET + checks)
+            run = subprocess.run(
+                [
+                    clang,
+                    f"--target={triple}",
+                    "-ffreestanding",
+                    "-std=c2x",
+                    "-Wno-multichar",
+                    "-fsyntax-only",
+                    path,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode == 0, (
+                f"{target}: the oracle's values are not Clang's\n{run.stderr[:2000]}"
+            )
+        assert len(seen) == 3, seen  # the targets tell `char` and `wchar_t` apart
+        if not _CC:
+            return
+        path = os.path.join(d, "getters.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(unit)
+        _parity_on_targets(path, unit)
+
+
+# A wide character constant is a code unit of its target's `wchar_t`: `L'\xffffffff'` is -1 where that is a signed
+# 32-bit type (x86-64 and i386 Linux), 4294967295 where it is unsigned (AArch64), and no constant where it holds 16 bits
+# (Windows), whose code unit the escape is past -- refused there on both rails, as Clang refuses it. It is read so in
+# an enumerator, which wraps it to its type, and as a value, which only the reader's sign gives (`cw_val`, `cw_half`).
+_CONSTEXPR2_WIDE = (
+    "#include <stdint.h>\nenum { CW_NEG = L'\\xffffffff' < 0, CW_TOP = L'\\xffffffff' > 0x7fffffff };\n"
+    "int64_t cw_neg(void) { return CW_NEG; }\nint64_t cw_top(void) { return CW_TOP; }\n"
+    "int64_t cw_val(void) { return L'\\xffffffff'; }\nint64_t cw_half(void) { return (int64_t)L'\\xfffffffe' / 2; }\n"
+)
+#: Each function of `_CONSTEXPR2_WIDE` whose first constant is the one Clang must hold, and the expression it holds.
+_CONSTEXPR2_WIDE_HELD = {
+    "cw_neg": "CW_NEG",
+    "cw_top": "CW_TOP",
+    "cw_val": "(int64_t)L'\\xffffffff'",
+    "cw_half": "(int64_t)L'\\xfffffffe'",
+}
+
+
+def test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails():
+    """CF-CONSTEXPR2: `_CONSTEXPR2_WIDE` folds, on each of the four targets, to what Clang holds it to compiling the unit
+    for that target (`_Static_assert`) and to one claim graph on both rails -- or, on Windows, is refused by Clang and
+    by both rails for one reason. The parent read `L'\\xffffffff'` as an `int` of signed bytes on every target."""
+    from bcir.frontends.cfront.clex import CLexError
+
+    clang = shutil.which("clang")
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    refused = set()
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "wide.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_CONSTEXPR2_WIDE)
+        for target, triple in _ENUMFOLD_TRIPLES.items():
+            try:
+                r = compile_unit(_CONSTEXPR2_WIDE, check_clang=False, target=target)
+            except CLexError as e:
+                assert str(e) == _CHAR_BAD, (target, str(e))
+                refused.add(target)
+                oracle = f"PARSE-ERR {e}"
+                checks = ""
+            else:
+                checks = ""
+                for fn, held in _CONSTEXPR2_WIDE_HELD.items():
+                    k = next(c for c in r.lowered.functions[fn].claims if c.op == "c.const")
+                    checks += f'_Static_assert({held} == {int(k.imm[0])}, "{fn}");\n'
+                oracle = _summary_line(r)
+            if clang:
+                cpath = os.path.join(d, f"wide_{target}.c")
+                with open(cpath, "w", encoding="utf-8") as fh:
+                    fh.write(_CONSTEXPR2_WIDE + checks)
+                run = subprocess.run(
+                    [
+                        clang,
+                        f"--target={triple}",
+                        "-ffreestanding",
+                        "-std=c2x",
+                        "-fsyntax-only",
+                        cpath,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                assert (run.returncode != 0) == (target in refused), (target, run.stderr[:2000])
+            if exe:
+                run = subprocess.run(
+                    [exe, "--target", target, path], capture_output=True, text=True
+                )
+                twin = (run.stdout.partition("----EMIT----\n")[0].strip().splitlines() or [""])[0]
+                assert twin == oracle, f"on {target}\n C: {twin}\nPY: {oracle}"
+    assert refused == {"x86_64-windows"}, refused
+
+
+# What C requires a diagnostic for, or what is no integer constant expression where one is required, refused on both
+# rails for one reason: two case labels equal in the switch's promoted type (C11 6.8.4.2p3), a second `default:`, a
+# bit-field's width negative, named and zero, or wider than its type (6.7.2.1p4), a floating constant cast where C
+# leaves the conversion undefined (6.3.1.4p1), one that is no cast's immediate operand (`(int)-1.5`, 6.6p6), a `long
+# double` one (its format the target's), `sizeof` of an expression, `sizeof` of an incomplete type, an enumerator read
+# after the block or the function body that declared it, and a character constant C does not define or the C front
+# does not read (no character, an escape past its code unit or C does not define, a universal character name, two
+# behind a prefix) -- each had been read as an `int` of whatever bytes it held.
+_DUP_CASE = "duplicate case value"
+_DUP_DEFAULT = "multiple default labels in one switch"
+_BF_WIDTH = "invalid bit-field width"
+_CHAR_BAD = "unsupported character constant"
+_CONSTEXPR2_REFUSED = (
+    (
+        "uint32_t f(uint32_t v) { switch (v) { case -1: return 1u; case 4294967295u: return 2u; } return 0u; }",
+        _DUP_CASE,
+    ),
+    (
+        "int32_t f(int32_t v) { switch (v) { case 'a': return 1; case 97: return 2; } return 0; }",
+        _DUP_CASE,
+    ),
+    (
+        "int32_t f(int32_t v) { switch (v) { case u8'a': return 1; case 97u: return 2; } return 0; }",
+        _DUP_CASE,
+    ),
+    (
+        "int64_t f(int64_t v) { switch (v) { case -1: return 1; case 18446744073709551615u: return 2; } return 0; }",
+        _DUP_CASE,
+    ),
+    (
+        "uint8_t f(uint8_t v) { switch (v) { case 3: return 1u; case 1 + 2: return 2u; } return 0u; }",
+        _DUP_CASE,
+    ),
+    (  # a `_BitInt(N)` is not promoted (C23 6.3.1.1p2): -1 is its 4095
+        "uint32_t f(unsigned _BitInt(12) v) { switch (v) { case 4095: return 1u; case -1: return 2u; } return 0u; }",
+        _DUP_CASE,
+    ),
+    (
+        "int32_t f(int32_t v) { switch (v) { default: return 1; case 1: return 2; default: return 3; } }",
+        _DUP_DEFAULT,
+    ),
+    (
+        "struct s { uint8_t a : 9; };\nuint32_t f(uint32_t x) { struct s v; v.a = x; return v.a; }",
+        _BF_WIDTH,
+    ),
+    (
+        "struct s { uint32_t a : 0; };\nuint32_t f(uint32_t x) { struct s v; v.a = x; return v.a; }",
+        _BF_WIDTH,
+    ),
+    (
+        "struct s { uint32_t a : -1; };\nuint32_t f(uint32_t x) { struct s v; v.a = x; return v.a; }",
+        _BF_WIDTH,
+    ),
+    (
+        "struct s { _Bool a : 2; };\nuint32_t f(uint32_t x) { struct s v; v.a = x; return v.a; }",
+        _BF_WIDTH,
+    ),
+    (
+        "struct s { uint32_t : 33; uint32_t b; };\nuint32_t f(uint32_t x) { struct s v; v.b = x; return v.b; }",
+        _BF_WIDTH,
+    ),
+    ("enum { N = (int)1e10 };", _ICE_NOT),
+    ("enum { N = (unsigned char)300.7 };", _ICE_NOT),
+    ("enum { N = (unsigned)-0.5 };", _ICE_NOT),
+    ("enum { N = (int)-1.5 };", _ICE_NOT),
+    ("enum { N = (int)1.5L };", _ICE_NOT),
+    ("enum { N = sizeof g_x };", _ICE_NOT),
+    ("enum { N = sizeof(void) };", _ICE_NOT),
+    ("enum { N = sizeof(struct nope) };", _ICE_NOT),
+    ("struct half;\nenum { N = _Alignof(struct half) };", _ICE_NOT),
+    (
+        "uint32_t f(uint32_t x) { { enum { Q = 3 }; x += Q; } switch (x) { case Q: return 1u; } return 0u; }",
+        _ICE_NOT,
+    ),
+    (
+        "uint32_t g(uint32_t x) { enum { Q = 3 }; return x + Q; }\n"
+        "uint32_t f(uint32_t x) { switch (x) { case Q: return 1u; } return 0u; }",
+        _ICE_NOT,
+    ),
+    # an enumeration's tag ends with the block that declares it (6.2.1p4): after it, `enum e` names no definition
+    (
+        "uint32_t f(uint32_t s) { { enum e { A = 1 }; s += A; } enum e x = 0; return s + x; }",
+        "an enumerated type with no definition",
+    ),
+    (
+        "uint32_t f(uint32_t s) { { enum e { A = 1 }; s += A; } return s + (uint32_t)sizeof(enum e); }",
+        "an enumerated type with no definition",
+    ),
+    ("uint32_t f(uint32_t s) { return s + '\\q'; }", _CHAR_BAD),
+    ("uint32_t f(uint32_t s) { return s + ''; }", _CHAR_BAD),
+    ("uint32_t f(uint32_t s) { return s + '\\x100'; }", _CHAR_BAD),
+    ("uint32_t f(uint32_t s) { return s + '\\u0041'; }", _CHAR_BAD),
+    ("uint32_t f(uint32_t s) { return s + u8'ab'; }", _CHAR_BAD),
+    ("uint32_t f(uint32_t s) { return s + u'\\x10000'; }", _CHAR_BAD),
+)
+
+
+def test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails():
+    """CF-CONSTEXPR2: every unit of `_CONSTEXPR2_REFUSED` is refused on both rails for the one reason it witnesses. On
+    the parent both rails lowered the duplicate case labels and the second `default:` -- an emit no compiler takes --
+    laid out every one of the bit-fields, which Clang refuses, and read each character constant as an `int` of its
+    bytes."""
+    from bcir.frontends.cfront.clex import CLexError
+    from bcir.frontends.cfront.cparse import CParseError
+    from bcir.frontends.cfront.lower import CLowerError
+
+    for body, why in _CONSTEXPR2_REFUSED:
+        try:
+            compile_unit(_ENUMFOLD_HEAD + body + "\n", check_clang=False)
+        except (CLexError, CParseError, CLowerError) as e:
+            assert str(e) == why, (body, str(e))
+        else:
+            raise AssertionError(f"the oracle lowered {body!r}")
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for n, (body, why) in enumerate(_CONSTEXPR2_REFUSED):
+            path = os.path.join(d, f"r{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_ENUMFOLD_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            assert run.returncode == 1 and run.stdout.strip() == f"PARSE-ERR {why}", (
+                body,
+                run.stdout[:200],
+            )
+
+
+# ... while what C takes where it requires an integer constant expression lowers alike: an enumerator in a `_BitInt`'s
+# width, `aligned(N)` and `alignas(N)`, a nested switch reusing its enclosing one's labels, a `uint8_t` switch's 255 and
+# -1, `typedef T row[0];` and its member, a block enumeration hiding a file-scope one of its name -- its tag too, so
+# `enum t` after the block is the outer one again (an `unsigned int` on the System V targets, an `int` on Windows).
+_CONSTEXPR2_TAKEN = (
+    "enum { W = 12 };\nuint32_t f(uint32_t s) { _BitInt(W) x = (_BitInt(W))(s & 0x7FFu); return (uint32_t)x + 1u; }",
+    "enum { A = 8 };\nstruct s { uint8_t c; __attribute__((aligned(A * 2))) uint32_t v; };\n"
+    "uint32_t f(uint32_t x) { struct s v; v.v = x; return v.v + (uint32_t)sizeof(struct s); }",
+    "struct s { uint8_t c; _Alignas(sizeof(double) * 2) uint32_t v; };\n"
+    "uint32_t f(uint32_t x) { struct s v; v.v = x; return v.v + (uint32_t)_Alignof(struct s); }",
+    "uint32_t f(uint32_t v, uint32_t w) { switch (v) { case 1: switch (w) { case 1: return 5u; case 2: return 6u; } "
+    "case 2: return 7u; } return 0u; }",
+    "typedef uint32_t row[0];\nstruct hdr { uint32_t n; row tail; };\n"
+    "uint32_t f(const struct hdr *h, uint32_t i) { return h->n + h->tail[i & 1u] + (uint32_t)sizeof(struct hdr); }",
+    "enum { N = 4 };\nuint32_t f(uint32_t s) { enum { N = 2 }; uint32_t a[N]; a[1] = s; return a[1] + N + "
+    "(uint32_t)sizeof a; }",
+    "enum t { TA = 1 };\nuint32_t f(uint32_t s) { { enum t { TB = -1 }; enum t y = TB; s += (uint32_t)y; } "
+    "enum t x = TA; return s + (uint32_t)(x - 2 > 0); }",
+)
+
+
+def test_constant_widths_dimensions_and_block_enumerations_lower_alike_on_both_rails():
+    """CF-CONSTEXPR2: every unit of `_CONSTEXPR2_TAKEN` lowers to one claim graph on the four targets. On the parent the
+    oracle refused an enumerator as `_BitInt(N)`'s width, `aligned(N)`'s and `alignas(N)`'s, and both rails a block
+    enumeration; the twin refused the zero-length typedef."""
+    if not _CC:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        for n, body in enumerate(_CONSTEXPR2_TAKEN):
+            unit = _ENUMFOLD_HEAD + body + "\n"
+            path = os.path.join(d, f"t{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            _parity_on_targets(path, unit)
+
+
+def _chain(term: str, op: str, n: int) -> str:
+    """`term op term op ...`, `n` terms, one to a line (the twin's preprocessor bounds a line)."""
+    return f" {op}\n".join([term] * n)
+
+
+def test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails():
+    """CF-CONSTEXPR2: a left-associative chain of 3000 terms -- an enumerator's `1 + 1 + ...`, a case label's, a static's
+    initializer, a return's `x + x + ...`, `&&`, `||` and comma chains, a pointer's `p + 0 + ...` and `sizeof` of a
+    chain and an allocation's element count -- lowers to one claim graph on both rails, and each function returns what
+    the original does. The oracle had raised RecursionError folding one (`_kfold_node`), walking it
+    (`_scan_mutations`), lowering it (`_rvalue`), typing it (`_type_of`, `_sizeof_type`) and judging it pure
+    (`_is_pure`); the twin lowers it. Each unit stays under the twin's preprocessed
+    text bound."""
+    n = 3000
+    units = {
+        "ch_enum": (
+            f"enum {{ CH_N = {_chain('1', '+', n)} }};\n"
+            "uint32_t ch_enum(uint32_t x) { return x + (uint32_t)CH_N; }\n"
+        ),
+        "ch_static": (
+            f"static const int32_t CH_K = {_chain('1', '+', n)};\n"
+            "uint32_t ch_static(uint32_t x) { return x + (uint32_t)CH_K; }\n"
+        ),
+        "ch_case": (
+            "uint32_t ch_case(uint32_t v) {\n"
+            f"  switch (v) {{ case {_chain('1', '+', n)}: return 1u; default: return 2u; }}\n}}\n"
+        ),
+        "ch_sum": f"uint32_t ch_sum(uint32_t x) {{ return {_chain('x', '+', n)}; }}\n",
+        "ch_and": f"uint32_t ch_and(uint32_t x) {{ return {_chain('x', '&&', n)}; }}\n",
+        "ch_or": f"uint32_t ch_or(uint32_t x) {{ return {_chain('x', '||', n)}; }}\n",
+        "ch_comma": f"uint32_t ch_comma(uint32_t x) {{ return ({_chain('x', ',', n)}); }}\n",
+        "ch_ptr": (
+            "uint32_t ch_ptr(uint32_t x) { uint32_t a[2] = {x, x + 1u}; "
+            f"return *(a + {_chain('0', '+', n)}) + (uint32_t)sizeof({_chain('x', '+', n // 2)}); }}\n"
+        ),
+        "ch_alloc": (  # an allocation's element count, judged pure (`_is_pure`) to bound the pointer's accesses
+            "uint32_t ch_alloc(uint32_t x) {\n"
+            f"  uint32_t *p = malloc((x * 0u + {_chain('0u', '+', n)} + 2u) * sizeof(uint32_t));\n"
+            "  if (!p) return 0u;\n  p[0] = x; p[1] = x + 1u;\n  uint32_t r = p[0] + p[1];\n  free(p);\n  return r;\n}\n"
+        ),
+    }
+    if not _CC:
+        for body in units.values():
+            assert "ok=1" in _oracle("#include <stdint.h>\n#include <stdlib.h>\n" + body)[0]
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for name, body in units.items():
+            unit = "#include <stdint.h>\n#include <stdlib.h>\n" + body
+            oracle_summary, r, _entry = _oracle(unit)
+            assert "ok=1" in oracle_summary, (name, oracle_summary)
+            oracle_emit = "\n".join(r.emitted[f] for f in r.lowered.functions)
+            path = os.path.join(d, f"{name}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(unit)
+            c_summary, c_emit = _c_run(exe, path)
+            assert c_summary == oracle_summary, (name, c_summary, oracle_summary)
+            driver = (
+                _GAPS_SAME
+                + "int main(void) {\n  for (unsigned n = 0; n < GAPS_N; n++) {\n    uint32_t s = gaps_in[n];\n"
+                + f"    SAME({name}, s);\n"
+                + ("    SAME(ch_case, 3000u);\n" if name == "ch_case" else "")
+                + '  }\n  puts("MATCH");\n  return 0;\n}\n'
+            )
+            _run_against_original(
+                f"{name}.c", unit, (("twin", c_emit), ("oracle", oracle_emit)), driver
+            )
+
+
+def test_a_character_constant_after_an_identifier_is_no_digit_separator():
+    """CF-CONSTEXPR2: both preprocessors copy an identifier and a pp-number whole when they strip comments (C11 6.4.8),
+    so the `'` of `u8'a'` or `case'a'` opens a character constant and a comment after it is stripped, while a C23 digit
+    separator (`1'000`, `0xca'fe`, `1e+5'0`, `1e+'0` after an exponent's sign) stays inside its number. Both had taken a `'` between two hex digits for a
+    separator: the closing quote of `u8'a'` then opened a literal that ran past the next comment, which survived as the
+    tokens `/ *`."""
+    from bcir.frontends.cfront.cpp import preprocess
+
+    unit = (
+        "#include <stdint.h>\n"
+        "uint32_t f(uint32_t v) { switch (v) { case'a': return u8'a'; /* a comment's quote */ } return 1'000u; }\n"
+        "/* it's stripped */ uint32_t g(void) { return 0xca'feu; }\n"
+        "#if 0\ndouble h(void) { return 1e+5'0; } /* neither rail's lexer reads this C23 constant */\n#endif\n"
+        "#if 0\nint k = 1e+'0;\n#endif\n"  # one pp-number: a separator may follow an exponent's sign (6.4.8)
+        "/* stripped after the separator */ uint32_t m(void) { return 'm'; }\n"
+    )
+    out = preprocess(unit)
+    assert (
+        "/" not in out and "comment" not in out and "stripped" not in out and "lexer" not in out
+    ), out
+    assert "1'000u" in out and "0xca'feu" in out, out
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "sep.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(unit)
+        run = subprocess.run([exe, "--emit-cpp", path], capture_output=True, text=True)
+        assert (
+            run.returncode == 0 and "comment" not in run.stdout and "stripped" not in run.stdout
+        ), run.stdout[-400:]
+        _parity_on_targets(path, unit)
 
 
 # CF-FPTAB: a call through any postfix expression whose value is a function pointer (C11 6.5.2.2p1) -- `(*fp)(x)`,
@@ -14057,6 +14535,12 @@ _ENUMOBJ_REFUSED = (
     "uint32_t f(uint32_t s) { return (uint32_t)(enum nope)s; }",
     "uint32_t f(enum nope p) { return 1u; }",
 )
+# ... and a tag names no object (6.2.3p1): `col`, the tag of `enum col`, read as an identifier at file scope or in the
+# block that declares it, is refused on both rails as Clang refuses it -- never folded to the enumeration's record.
+_ENUMOBJ_TAG_ALONE = (
+    ("uint32_t f(uint32_t s) { return s + col; }", "col"),
+    ("uint32_t f(uint32_t s) { enum blk { B0, B1 = 4 }; return s + blk + B1; }", "blk"),
+)
 _ENUMOBJ_LOWERED = (
     "uint32_t f(uint32_t s) { enum col c = (enum col)s; enum col *p = &c; *p -= 1u; "
     "return (uint32_t)((int64_t)*p >> 40); }",
@@ -14076,11 +14560,15 @@ _ENUMOBJ_LOWERED = (
 def test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike():
     """CF-ENUMOBJ: each unit of `_ENUMOBJ_REFUSED` -- an object, a file-scope object, a typedef, a `sizeof`, a cast and
     a parameter of an enumerated type before or without its definition -- is refused on both rails as `an enumerated
-    type with no definition` (C11 6.7.2.3p3); both had read each as `int`. Each unit of `_ENUMOBJ_LOWERED` lowers to one
+    type with no definition` (C11 6.7.2.3p3); both had read each as `int`. Each of `_ENUMOBJ_TAG_ALONE`, a tag read as
+    an identifier, is refused on both as an undeclared identifier. Each unit of `_ENUMOBJ_LOWERED` lowers to one
     claim graph on the four targets, each emit the original under Clang and GCC."""
     for body in _ENUMOBJ_REFUSED:
         got = _card4_refusal(_ENUMOBJ_HEAD + body + "\n")
         assert got == _ENUMOBJ_INCOMPLETE, (body, got)
+    for body, tag in _ENUMOBJ_TAG_ALONE:
+        got = _card4_refusal(_ENUMOBJ_HEAD + body + "\n")
+        assert got == f"use of undeclared identifier {tag!r}", (body, got)
     for body in _ENUMOBJ_LOWERED:
         got = _card4_refusal(_ENUMOBJ_HEAD + body + "\n")
         assert got == "", (body, got)
@@ -14100,6 +14588,13 @@ def test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike():
                 run.returncode,
                 run.stdout[:200],
             )
+        for n, (body, tag) in enumerate(_ENUMOBJ_TAG_ALONE):
+            path = os.path.join(d, f"t{n}.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_ENUMOBJ_HEAD + body + "\n")
+            run = subprocess.run([exe, path], capture_output=True, text=True)
+            want = f"PARSE-ERR use of undeclared identifier {tag!r}"
+            assert run.returncode == 1 and run.stdout.strip() == want, (body, run.stdout[:200])
         for n, body in enumerate(_ENUMOBJ_LOWERED):
             _rtfp_run_unit(f"l{n}", _ENUMOBJ_HEAD + body + "\n", exe, d)
 

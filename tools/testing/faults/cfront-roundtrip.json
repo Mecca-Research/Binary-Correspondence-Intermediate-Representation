@@ -383,8 +383,8 @@
     {
       "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
       "label": "T62 `sizeof` of an array of function pointers one pointer on the twin",
-      "new": "      if(p_cast_type(c,&t.ty,&t.si)) return 0;",
-      "old": "      if(p_cast_type(c,&t.ty,&t.si) || fp_name_dims(c,&t.ty,t.dims,&t.nd,4)) return 0;",
+      "new": "  if(p_cast_type(c,&t->ty,&t->si)) return 1;",
+      "old": "  if(p_cast_type(c,&t->ty,&t->si) || fp_name_dims(c,&t->ty,t->dims,&t->nd,4)) return 1;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

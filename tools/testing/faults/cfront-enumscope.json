@@ -10,50 +10,50 @@
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ES1 the oracle reads an enumerator a block-scope name hides",
-      "new": "        if w not in self.enums:\n",
-      "old": "        if w not in self.enums or any(w in s for s in self.scopes):\n",
+      "new": "            if scope.get(w) is not None:\n                return scope[w]\n",
+      "old": "            if w in scope:\n                return scope[w]\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ES2 the oracle puts a local in no scope",
       "new": "            if self.scopes:\n                pass\n",
-      "old": "            if self.scopes:\n                self.scopes[-1].add(name)\n",
+      "old": "            if self.scopes:\n                self.scopes[-1][name] = None\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ES3 the oracle puts a local in scope only after its initializer",
-      "new": "            init = None\n            if self.at(\"OP\", \"=\"):\n                self.nxt()\n                init = self._init_value()\n            if self.scopes:\n                self.scopes[-1].add(name)\n",
-      "old": "            if self.scopes:\n                self.scopes[-1].add(name)\n            init = None\n            if self.at(\"OP\", \"=\"):\n                self.nxt()\n                init = self._init_value()\n",
+      "new": "            init = None\n            if self.at(\"OP\", \"=\"):\n                self.nxt()\n                init = self._init_value()\n            if self.scopes:\n                self.scopes[-1][name] = None\n",
+      "old": "            if self.scopes:\n                self.scopes[-1][name] = None\n            init = None\n            if self.at(\"OP\", \"=\"):\n                self.nxt()\n                init = self._init_value()\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ES4 the oracle puts a function's parameters in no scope",
-      "new": "        self.scopes.append(set())\n",
-      "old": "        self.scopes.append({p.name for p in params})\n",
+      "new": "        self.scopes.append({})\n",
+      "old": "        self.scopes.append(dict.fromkeys(p.name for p in params))\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ES5 the oracle lets a loop's declaration outlive the loop",
-      "new": "        # the loop's own declaration is in scope to the end of its body (6.8.5p5)\n        self.scopes.append(self.scopes[-1] if self.scopes else set())\n",
-      "old": "        # the loop's own declaration is in scope to the end of its body (6.8.5p5)\n        self.scopes.append(set())\n",
+      "new": "        # the loop's own declaration is in scope to the end of its body (6.8.5p5)\n        self.scopes.append(self.scopes[-1] if self.scopes else {})\n",
+      "old": "        # the loop's own declaration is in scope to the end of its body (6.8.5p5)\n        self.scopes.append({})\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ES6 the oracle lets a block's names outlive the block",
-      "new": "            self.scopes.append(self.scopes[-1] if self.scopes else set())  # a block is a scope: the names it declares end with it\n",
-      "old": "            self.scopes.append(set())  # a block is a scope: the names it declares end with it\n",
+      "new": "            self.scopes.append(self.scopes[-1] if self.scopes else {})  # a block is a scope: the names it declares end with it,\n",
+      "old": "            self.scopes.append({})  # a block is a scope: the names it declares end with it,\n",
       "path": "bcir/frontends/cfront/cparse.py"
     },
     {
       "expects": "test_a_block_scope_name_hides_an_enumerator_on_both_rails",
       "label": "ET1 the twin reads an enumerator a block-scope name hides",
       "new": "  (void)0;\n",
-      "old": "  if(e>=0) for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n)) return -1;\n",
+      "old": "  if(e>=0) for(int i=c->nenv-1;i>=0;i--) if((int)strlen(c->env[i].name)==n&&!strncmp(c->env[i].name,s,n))\n    return c->env[i].seq > c->ec[e].seq ? -1 : e;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

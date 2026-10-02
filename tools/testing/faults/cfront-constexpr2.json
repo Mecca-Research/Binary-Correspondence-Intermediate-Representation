@@ -1,0 +1,584 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+    "bcir.tests.test_c_cfront:test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails",
+    "bcir.tests.test_c_cfront:test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_constant_widths_dimensions_and_block_enumerations_lower_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_character_constant_after_an_identifier_is_no_digit_separator"
+  ],
+  "faults": [
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO1 the oracle takes two case labels equal in the promoted type",
+      "new": "                    if False:\n                        raise CLowerError(DUP_CASE)\n",
+      "old": "                    if converted in seen:\n                        raise CLowerError(DUP_CASE)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO2 the oracle compares case labels unconverted",
+      "new": "converted = item.value",
+      "old": "converted = _kwrap(item.value, bits, signed)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO3 the oracle converts case labels to an unpromoted narrow type",
+      "new": "",
+      "old": "    if ct.name in (\"_Bool\", \"bool\") or ct.size < 4:\n        return 32, True\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO4 the oracle promotes a `_BitInt(N)` switch",
+      "new": "",
+      "old": "    if ct.is_bitint:\n        return ct.bit_width, ct.signed\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO5 the oracle takes a second `default:`",
+      "new": "",
+      "old": "                    if has_default:\n                        raise CLowerError(DUP_DEFAULT)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KO6 the oracle reads a plain character constant as a signed `char` on every target",
+      "new": "            return (v - 256 if v >> 7 else v), \"int\"",
+      "old": "            return (v - 256 if abi.char_signed and v >> 7 else v), \"int\"",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO7 the oracle types `u8` an `int`",
+      "new": "    \"u8\": \"int\",",
+      "old": "    \"u8\": \"unsigned char\",",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO8 the oracle types `U` signed",
+      "new": "    \"U\": \"int\",",
+      "old": "    \"U\": \"unsigned int\",",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KO9 the oracle types `L` an `int` on every target",
+      "new": "    \"L\": \"int\",",
+      "old": "    \"L\": \"wchar_t\",",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails",
+      "label": "KO10 the oracle reads an `L` constant unsigned where `wchar_t` is signed",
+      "new": "",
+      "old": "    if prefix == \"L\" and abi.wchar_signed and v >> (bits - 1):\n        v -= 1 << bits\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO11 the oracle puts a block's enumerators at file scope",
+      "new": "            self.enums[tk.text] = value\n",
+      "old": "            (self.scopes[-1] if self.scopes else self.enums)[tk.text] = value\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO12 the oracle reads the outermost declaration of a name",
+      "new": "        for scope in self.scopes:\n",
+      "old": "        for scope in reversed(self.scopes):\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO13 the oracle lets a block's enumeration tags outlive it",
+      "new": "                self.scopes.pop()\n",
+      "old": "                self.scopes.pop()\n                self.enum_tags = tags\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO14 the oracle refuses a declaration of an enumeration alone",
+      "new": "        if False:\n",
+      "old": "        if self.at(\"PUNCT\", \";\") and \"enum\" in spec and not spec & {\"struct\", \"union\"}:\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO15 the oracle reads a width, `_BitInt(N)` or `aligned(N)` as a literal only",
+      "new": "        e = self._ternary()\n        if not isinstance(e, cast.IntLit):\n            raise CParseError(BF_WIDTH, pos=self.peek().pos)\n        return self._const_eval(e)\n",
+      "old": "        return self._const_eval(self._ternary())\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO16 the oracle takes a named bit-field of width 0",
+      "new": "        if w < 0:\n",
+      "old": "        if w < 0 or (named and w == 0):\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO17 the oracle takes a negative bit-field width",
+      "new": "        if named and w == 0:\n",
+      "old": "        if w < 0 or (named and w == 0):\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO18 the oracle takes a bit-field wider than its type",
+      "new": "                if width > 64:\n",
+      "old": "                if width > (1 if mt.name in (\"_Bool\", \"bool\") else mt.size * 8):\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO19 the oracle reads a row pointer's dimension as a literal only",
+      "new": "                        self.nxt()\n                        dims.append(0 if self.at(\"PUNCT\", \"]\") else self._dim_in_range(parse_int_literal(self.eat(\"INT\").text)))\n",
+      "old": "                        self.nxt()\n                        dims.append(0 if self.at(\"PUNCT\", \"]\") else self._const_dim())\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO20 the oracle reads a compound literal's dimension as a literal only",
+      "new": "                self.nxt()\n                dims.append(0 if self.at(\"PUNCT\", \"]\") else self._dim_in_range(parse_int_literal(self.eat(\"INT\").text)))\n                self.eat(\"PUNCT\", \"]\")\n            self.eat(\"PUNCT\", \")\")\n",
+      "old": "                self.nxt()\n                dims.append(0 if self.at(\"PUNCT\", \"]\") else self._const_dim())\n                self.eat(\"PUNCT\", \"]\")\n            self.eat(\"PUNCT\", \")\")\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO21 the oracle refuses `sizeof` and `_Alignof` of a type-name in a constant expression",
+      "new": "        and False\n",
+      "old": "        and layouts is not None\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO22 the oracle folds `_Alignof` to the size",
+      "new": "        n = ct.size\n",
+      "old": "        n = ct.align if isinstance(node, cast.AlignOf) else ct.size\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO23 the oracle folds `sizeof` of an incomplete type",
+      "new": "            n < 0\n            or",
+      "old": "            n <= 0\n            or",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO24 the oracle reads a `float` constant as a `double`",
+      "new": "_FLOAT_FORMATS = {\"\": (53, -1022, 1023), \"f\": (53, -1022, 1023)}",
+      "old": "_FLOAT_FORMATS = {\"\": (53, -1022, 1023), \"f\": (24, -126, 127)}",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KO25 the oracle rounds a floating constant's tie away from zero",
+      "new": "    if r * 2 >= quantum:",
+      "old": "    if r * 2 > quantum or (r * 2 == quantum and n % 2):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO26 the oracle rounds a floating constant cast to an integer",
+      "new": "    return t._replace(v=_kwrap(round(v), t.bits, t.signed))\n",
+      "old": "    return t._replace(v=_kwrap(math.trunc(v), t.bits, t.signed))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO27 the oracle wraps a floating constant its integer type cannot hold",
+      "new": "    if v is None:\n",
+      "old": "    if v is None or not _kfits(math.trunc(v), t.bits, t.signed):\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KO28 the oracle casts a floating constant to `_Bool` by truncation",
+      "new": "        return t._replace(v=int(live and v is not None and v >= 1))\n",
+      "old": "        return t._replace(v=int(live and (v is None or v != 0)))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KO29 the oracle refuses a floating constant C does not evaluate",
+      "new": "    if v is None or not _kfits",
+      "old": "    if not live:\n        return t\n    if v is None or not _kfits",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KO30 the oracle folds a `long double` constant as a `double`",
+      "new": "    if len(text) > _FLOAT_SPELLING:\n        raise CLowerError(ICE_NOT)\n    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix.replace(\"l\", \"\")])\n",
+      "old": "    if suffix == \"l\" or len(text) > _FLOAT_SPELLING:\n        raise CLowerError(ICE_NOT)\n    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KO31 the oracle sizes every constant an `int`",
+      "new": "        ct = scalar(\"int\", abi)\n",
+      "old": "        ct = _int_lit_type(e, abi) if isinstance(e, cast.IntLit) else _float_lit_type(e.value, abi)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+      "label": "KO32 the oracle folds a chain recursing down its left operands",
+      "new": "        spine.append(node)\n        node = node.lhs\n        a = _kfold_node(node, abi, live, layouts)\n",
+      "old": "        while isinstance(node, cast.Binary) and node.op in _BIN:\n            spine.append(node)\n            node = node.lhs\n        a = _kfold_node(node, abi, live, layouts)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+      "label": "KO33 the oracle lowers a chain recursing down its left operands",
+      "new": "        spine.append(node)\n        node = node.lhs\n        a = self._rvalue_void(node)",
+      "old": "        while isinstance(node, cast.Binary):\n            spine.append(node)\n            node = node.lhs\n        a = self._rvalue_void(node)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+      "label": "KO34 the oracle types a chain recursing down its left operands",
+      "new": "            spine.append(node)\n            node = node.lhs\n            t = self._operand_type(node)\n",
+      "old": "            while isinstance(node, cast.Binary):\n                spine.append(node)\n                node = node.lhs\n            t = self._operand_type(node)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+      "label": "KO35 the oracle types `sizeof` of a chain recursing down its left operands",
+      "new": "            spine.append(node)\n            node = node.lhs\n            t = self._sizeof_operand(node)\n",
+      "old": "            while isinstance(node, cast.Binary) and node.op != \",\":\n                spine.append(node)\n                node = node.lhs\n            t = self._sizeof_operand(node)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+      "label": "KO36 the oracle scans a body for mutations recursively",
+      "new": "        for f in dataclasses.fields(node):\n            _scan_mutations(getattr(node, f.name), assigned, body, addr)\n",
+      "old": "        stack.extend(getattr(node, f.name) for f in dataclasses.fields(node))\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_3000_term_chain_lowers_and_runs_as_the_original_on_both_rails",
+      "label": "KO37 the oracle judges a chain pure recursing down its left operands",
+      "new": "        if isinstance(node, cast.Binary):\n            if node.op not in {",
+      "old": "        while isinstance(node, cast.Binary):\n            if node.op not in {",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_character_constant_after_an_identifier_is_no_digit_separator",
+      "label": "KO38 the oracle's comment stripper takes a quote after an identifier for a separator",
+      "new": "        if False:\n",
+      "old": "        if c in _IDCHARS or (c == \".\" and i + 1 < n and text[i + 1] in _DIGITS):\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_character_constant_after_an_identifier_is_no_digit_separator",
+      "label": "KO39 the oracle's comment stripper ends a number at a digit separator",
+      "new": "",
+      "old": "                elif num and ch == \"'\" and j + 1 < n and text[j + 1] in _IDCHARS:\n                    j += 2  # a digit separator\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_character_constant_after_an_identifier_is_no_digit_separator",
+      "label": "KO40 the oracle's comment stripper ends a number at an exponent's sign",
+      "new": "                if",
+      "old": "                if num and ch in \"eEpP\" and j + 1 < n and text[j + 1] in \"+-\":\n                    j += 2  # an exponent's sign\n                elif",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT1 the twin takes two case labels equal in the promoted type",
+      "new": "",
+      "old": "  for(int k=c->sw_base;k<c->nswv;k++) if(c->swv[k]==w){ fail(c,CC_DUP_CASE); return; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT2 the twin compares case labels unconverted",
+      "new": "  unsigned long long w=v.p;",
+      "old": "  unsigned long long w=kwrap(v.p,c->sw_bits,c->sw_sgn);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT3 the twin converts case labels to an unpromoted narrow type",
+      "new": "  if(!r){ *bits=32; *sgn=1; return; }",
+      "old": "  if(!r || r->is_bool || (!r->bit_width && r->elem_bytes<4)){ *bits=32; *sgn=1; return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT4 the twin promotes a `_BitInt(N)` switch",
+      "new": "",
+      "old": "  if(r->bit_width){ *bits=r->bit_width; *sgn=r->is_signed; return; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT5 the twin takes a second `default:`",
+      "new": "",
+      "old": "      if(c->sw_default){ fail(c,CC_DUP_DEFAULT); break; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_widths_dimensions_and_block_enumerations_lower_alike_on_both_rails",
+      "label": "KT6 the twin keeps a nested switch's labels in the enclosing one",
+      "new": "  c->sw_base=base;",
+      "old": "  c->nswv=c->sw_base; c->sw_base=base;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KT7 the twin reads a plain character constant as a signed `char` on every target",
+      "new": "  if(!L.prefix && L.n==1){ *v = (L.units[0]&0x80u) ?",
+      "old": "  if(!L.prefix && L.n==1){ *v = a->char_signed && (L.units[0]&0x80u) ?",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_wide_character_constant_is_a_code_unit_of_its_targets_wchar_t_on_both_rails",
+      "label": "KT8 the twin reads an `L` constant unsigned where `wchar_t` is signed",
+      "new": "",
+      "old": "  if(L.prefix=='L' && a->wchar_signed && bits<64 && ((unsigned long long)*v>>(bits-1))) *v-=(1LL<<bits);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT9 the twin types `u8` as `u`",
+      "new": "",
+      "old": "  if(n>1 && s[0]=='u' && s[1]=='8'){ *size=1; *signd=0; return; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT10 the twin types `u` and `U` signed",
+      "new": "  if(n>0 && (s[0]=='u'||s[0]=='U')){ *size=s[0]=='u'?2:4; *signd=1; return; }",
+      "old": "  if(n>0 && (s[0]=='u'||s[0]=='U')){ *size=s[0]=='u'?2:4; *signd=0; return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KT11 the twin types `L` an `int` on every target",
+      "new": "",
+      "old": "  if(n>0 && s[0]=='L'){ *size=a->wchar_size; *signd=a->wchar_signed; return; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT12 the twin reads the outermost enumerator of a name",
+      "new": "  for(int i=0;i<c->nec;i++)",
+      "old": "  for(int i=c->nec-1;i>=0;i--)                      /* the innermost, a block's (CF-CONSTEXPR2) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT13 the twin lets any local hide an enumerator",
+      "new": "    return -1;",
+      "old": "    return c->env[i].seq > c->ec[e].seq ? -1 : e;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT14 the twin orders no local after an enumerator",
+      "new": "v->seq=0;",
+      "old": "v->seq=++c->decl_seq;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT15 the twin orders no enumerator after a local",
+      "new": "c->ec[c->nec].seq=0;c->nec++;}",
+      "old": "c->ec[c->nec].seq=++c->decl_seq;c->nec++;}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT16 the twin lets a block's enumerators outlive it",
+      "new": "    eat(c,\"}\"); c->nenv=env_mark;}",
+      "old": "    eat(c,\"}\"); c->nenv=env_mark; c->nec=ec_mark;}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT17 the twin lets a function body's enumerators outlive it",
+      "new": "  eat(c,\"}\");",
+      "old": "  eat(c,\"}\"); c->nec=ec_mark;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT18 the twin refuses a declaration of an enumeration alone",
+      "new": "",
+      "old": "    if(is(c,\";\") && enum_only_spec(c,spec_at)){ c->i++; return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT19 the twin reads a width, `_BitInt(N)` or `aligned(N)` as a literal only",
+      "new": "static int ce_int(CC *c,long long *v){ kval k; if(!isk(c,T_INT) || !ce_fold(c,0,&k)) return 0;",
+      "old": "static int ce_int(CC *c,long long *v){ kval k; if(!ce_fold(c,0,&k)) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT20 the twin takes a bit-field wider than its type",
+      "new": "(0)",
+      "old": "(v && ty->kind==0 && !ty->bit_width && v>bits)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT21 the twin takes a named bit-field of width 0",
+      "new": "if(v<0 ||",
+      "old": "if(v<0 || (named && v==0) ||",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT22 the twin reads a compound literal's dimension as a literal only",
+      "new": "for(int d=0; d<nf; d++){ int dim=(int)fd[d]; la_dims[la_nd++]=dim; la_count=la_count?la_count*dim:dim; } }\n        while(is(c,\"[\")){ c->i++; long long d=is(c,\"]\") ? 0 : (isk(c,T_INT) ? ce_dim(c,0) : -1);",
+      "old": "for(int d=0; d<nf; d++){ int dim=(int)fd[d]; la_dims[la_nd++]=dim; la_count=la_count?la_count*dim:dim; } }\n        while(is(c,\"[\")){ c->i++; long long d=is(c,\"]\") ? 0 : ce_dim(c,0);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT23 the twin reads a row pointer's dimension as a literal only",
+      "new": "/* the outer (pointer) dim is unspecified */\n          while(is(c,\"[\")){ c->i++; long long d=is(c,\"]\") ? 0 : (isk(c,T_INT) ? ce_dim(c,0) : -1);",
+      "old": "/* the outer (pointer) dim is unspecified */\n          while(is(c,\"[\")){ c->i++; long long d=is(c,\"]\") ? 0 : ce_dim(c,0);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT24 the twin folds `_Alignof` to the size",
+      "new": "  if(0){ int sz, al; type_layout(c,&t.ty,t.si,&sz,&al); n=al; }",
+      "old": "  if(align){ int sz, al; type_layout(c,&t.ty,t.si,&sz,&al); n=al; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT25 the twin refuses `sizeof` and `_Alignof` of a type-name in a constant expression",
+      "new": "",
+      "old": "  else if(is(c,\"sizeof\")||is(c,\"_Alignof\")||is(c,\"alignof\")) ok=ce_sizeof(c,out);   /* of a type-name (6.6p6) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KT26 the twin sizes every integer constant an `int`",
+      "new": "      if(v->k==T_INT) sz=4;",
+      "old": "      if(v->k==T_INT) lit_int_type(v->s,v->n,cc_abi(c),&sz,&sg);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT27 the twin reads a `float` constant as a `double`",
+      "new": "  double d = strtod(b,NULL);",
+      "old": "  double d = isf ? (double)strtof(b,NULL) : strtod(b,NULL);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT28 the twin takes a floating constant its integer type cannot hold",
+      "new": "",
+      "old": "  if(!(d>lo && d<hi) && !(t->sgn && t->bits>=64 && d==-9223372036854775808.0)) return 0;   /* NaN fails too */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT29 the twin folds a `long double` constant as a `double`",
+      "new": "",
+      "old": "  if(n>0 && (b[n-1]=='l'||b[n-1]=='L')) return 0;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT30 the twin casts a floating constant to `_Bool` by truncation",
+      "new": "  if(t->kind==1){ out->p = live && d>=1; return 1; }",
+      "old": "  if(t->kind==1){ out->p = live && d!=0; return 1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_character_constants_sizes_and_float_casts_fold_to_clangs_values_on_each_target",
+      "label": "KT31 the twin refuses a floating constant C does not evaluate",
+      "new": "  double hi",
+      "old": "  if(!live) return 1;\n  double hi",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT32 the twin rounds a floating constant cast to an integer",
+      "new": "  unsigned long long p = d<0 ? (unsigned long long)(long long)(d-0.5) : (unsigned long long)(d+0.5);",
+      "old": "  unsigned long long p = d<0 ? (unsigned long long)(long long)d : (unsigned long long)d;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT33 the twin casts no floating constant in a constant expression",
+      "new": "(0 ? ce_float_cast(c,live,&t,out)",
+      "old": "(float_operand_at(c) ? ce_float_cast(c,live,&t,out)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT34 the twin reads a zero-length or flexible member as a scalar",
+      "new": "static int farr(const field *f){ return f->arr_count>0; }",
+      "old": "static int farr(const field *f){ return f->arr_count>0 || f->nadims>0; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT35 the twin lays a zero-length member out as a scalar",
+      "new": "      int arr=arr_count>0;",
+      "old": "      int arr=arr_count>0 || nadims>0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_takes_lower_and_run_as_the_original_on_both_rails",
+      "label": "KT36 the twin lays a zero-length member out as one element",
+      "new": "      int total=arr_count>0?sz*arr_count:sz;",
+      "old": "      int total=arr?sz*arr_count:sz;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_widths_dimensions_and_block_enumerations_lower_alike_on_both_rails",
+      "label": "KT37 the twin refuses `typedef T row[0];`",
+      "new": "     * bytes (`farr`), and `sizeof` of it is refused on both rails as incomplete (CF-CONSTEXPR2) */\n    if(d==0){ fail(c,\"an array typedef needs a positive constant size\"); return; }\n",
+      "old": "     * bytes (`farr`), and `sizeof` of it is refused on both rails as incomplete (CF-CONSTEXPR2) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_character_constant_after_an_identifier_is_no_digit_separator",
+      "label": "KT38 the twin's comment stripper takes a quote after an identifier for a separator",
+      "new": "    if(0){",
+      "old": "    if(_IDC(c) || (c=='.' && _DG(s[i+1]))){",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_character_constant_after_an_identifier_is_no_digit_separator",
+      "label": "KT39 the twin's comment stripper ends a number at a digit separator",
+      "new": "",
+      "old": "        else if(num && ch=='\\'' && _IDC(s[i+1])){ o[w++]=ch; o[w++]=s[i+1]; i+=2; }   /* a digit separator */\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_character_constant_after_an_identifier_is_no_digit_separator",
+      "label": "KT40 the twin's comment stripper ends a number at an exponent's sign",
+      "new": "        if",
+      "old": "        if(num && (ch=='e'||ch=='E'||ch=='p'||ch=='P') && (s[i+1]=='+'||s[i+1]=='-')){ o[w++]=ch; o[w++]=s[i+1]; i+=2; }\n        else if",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
+      "label": "KT41 the twin refuses `sizeof` of an incomplete type in a constant expression in the type-name reader's words",
+      "new": "  if(0){ const tok *tg=tat(c,c->i+1);   /* an incomplete one: no constant, as the oracle's */",
+      "old": "  if(is(c,\"struct\")||is(c,\"union\")){ const tok *tg=tat(c,c->i+1);   /* an incomplete one: no constant, as the oracle's */",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

@@ -606,21 +606,39 @@ def _balanced(toks: list, k: int) -> tuple[list, int]:
     return inner, j
 
 
-_HEXD = frozenset("0123456789abcdefABCDEF")
+_DIGITS = frozenset("0123456789")
+_IDSTART = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+_IDCHARS = _IDSTART | _DIGITS
 
 
 def _strip_comments(text: str) -> str:
     """Translation phase 3: replace every `//` and `/* */` comment with a single space, leaving
     string/char literals untouched. A block comment keeps the newlines it spanned, so `__LINE__`
-    and the per-line directive scan stay aligned with the source. A C23 digit separator (`1'000`,
-    `0xca'fe`) is not mistaken for a char-literal quote — a `'` flanked by hex digits is data."""
+    and the per-line directive scan stay aligned with the source. An identifier and a preprocessing number (6.4.2,
+    6.4.8) are copied whole, so a C23 digit separator (`1'000`, `0xca'fe`) -- a `'` inside a pp-number -- is not
+    mistaken for a char-literal quote, and the quote after an identifier is one: a `'` flanked by hex digits had been
+    taken for a separator in `u8'a'` (and `case'a'`), the constant's closing quote then opening a literal that ran
+    past the next comment, which survived as tokens (CF-CONSTEXPR2; the twin's `strip_comments`)."""
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:
         c = text[i]
-        if c == '"' or (
-            c == "'" and not (i and text[i - 1] in _HEXD and i + 1 < n and text[i + 1] in _HEXD)
-        ):
+        if c in _IDCHARS or (c == "." and i + 1 < n and text[i + 1] in _DIGITS):
+            j, num = i + 1, c not in _IDSTART  # a pp-number begins with a digit or `.digit`
+            while j < n:
+                ch = text[j]
+                if num and ch in "eEpP" and j + 1 < n and text[j + 1] in "+-":
+                    j += 2  # an exponent's sign
+                elif num and ch == "'" and j + 1 < n and text[j + 1] in _IDCHARS:
+                    j += 2  # a digit separator
+                elif ch in _IDCHARS or (num and ch == "."):
+                    j += 1
+                else:
+                    break
+            out.append(text[i:j])
+            i = j
+            continue
+        if c in "\"'":
             out.append(c)  # a string/char literal: copy verbatim
             i += 1
             while i < n:

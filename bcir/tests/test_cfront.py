@@ -96,18 +96,32 @@ def test_L3_string_literal_value():
 
 
 def test_L1_character_constants():
-    """A character constant lexes as a CHAR token and folds to an `int` value: a single character is
-    its byte value (signed char), an escape decodes to one byte (simple `\\c`, octal `\\NNN`, hex
-    `\\xHH`), and a multi-character `'AB'` packs big-endian like Clang/GCC -- so it lowers to a
-    `c.const` and stays behaviour-equal to Clang."""
-    from bcir.frontends.cfront.clex import parse_char_literal, tokenize
+    """A character constant lexes as a CHAR token and folds to its value and type at the target
+    (`clex.char_constant`, CF-CONSTEXPR2): a single character is its byte as the target's plain `char`
+    holds it, an escape decodes to one code unit (simple `\\c`, octal `\\NNN`, hex `\\xHH`), a
+    multi-character `'AB'` packs big-endian like Clang/GCC, and a prefixed one has its prefix's type --
+    so it lowers to a `c.const` and stays behaviour-equal to Clang."""
+    from bcir.frontends.cfront import abi as abi_mod
+    from bcir.frontends.cfront.clex import char_constant, tokenize
 
+    x86, arm = abi_mod.target("x86_64-linux"), abi_mod.target("aarch64-linux")
     assert [t.text for t in tokenize(r"x 'A' '\n'") if t.kind == "CHAR"] == ["'A'", r"'\n'"]
-    assert parse_char_literal("'A'") == 65
-    assert parse_char_literal(r"'\n'") == 10 and parse_char_literal(r"'\t'") == 9
-    assert parse_char_literal(r"'\x7a'") == 122 and parse_char_literal(r"'\101'") == 65
-    assert parse_char_literal(r"'\0'") == 0
-    assert parse_char_literal("'AB'") == 0x4142  # multi-character constant (big-endian pack)
+    assert char_constant("'A'", x86) == (65, "int")
+    assert char_constant(r"'\n'", x86) == (10, "int") and char_constant(r"'\t'", x86) == (9, "int")
+    assert char_constant(r"'\x7a'", x86)[0] == 122 and char_constant(r"'\101'", x86)[0] == 65
+    assert char_constant(r"'\0'", x86) == (0, "int")
+    assert char_constant("'AB'", x86) == (
+        0x4142,
+        "int",
+    )  # multi-character constant (big-endian pack)
+    assert char_constant(r"'\xff'", x86) == (-1, "int") and char_constant(r"'\xff'", arm) == (
+        255,
+        "int",
+    )
+    assert (
+        char_constant("u8'a'", x86) == (97, "unsigned char")
+        and char_constant("U'a'", x86)[1] == "unsigned int"
+    )
 
     def eqok(r):
         return r.equivalence == "match" or r.equivalence.startswith("skip")
@@ -158,14 +172,16 @@ def test_L7_wide_and_utf_literal_prefixes():
     """Wide/UTF prefixes `L`/`u`/`U`/`u8` on character and string literals: a bare prefix letter is
     still an identifier; a prefixed character constant keeps its (ASCII) code-point value; a prefixed
     string literal has the element width of its character type, so `sizeof` scales."""
-    from bcir.frontends.cfront.clex import parse_char_literal, tokenize
+    from bcir.frontends.cfront import abi as abi_mod
+    from bcir.frontends.cfront.clex import char_constant, tokenize
 
+    x86 = abi_mod.target("x86_64-linux")
     kinds = {(t.kind, t.text) for t in tokenize('L"a" u8"b" u\'c\' U + Label')}
     assert (
         ("STRING", 'L"a"') in kinds and ("STRING", 'u8"b"') in kinds and ("CHAR", "u'c'") in kinds
     )
     assert ("IDENT", "U") in kinds and ("IDENT", "Label") in kinds  # bare prefix -> identifier
-    assert parse_char_literal(r"L'\n'") == 10 and parse_char_literal("u'A'") == 65
+    assert char_constant(r"L'\n'", x86)[0] == 10 and char_constant("u'A'", x86)[0] == 65
 
     def szof(lit: str) -> int:
         r = compile_unit("uint32_t f(void){ return sizeof %s; }" % lit, check_clang=False)

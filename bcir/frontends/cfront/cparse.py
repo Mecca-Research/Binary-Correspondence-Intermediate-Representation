@@ -12,11 +12,12 @@ import dataclasses
 
 from . import cast
 from .abi import HOST
-from .clex import KEYWORDS, Tok, parse_char_literal, parse_int_literal, tokenize
+from .clex import KEYWORDS, Tok, char_constant, parse_int_literal, tokenize
 from .ctype_model import int_literal_type
 from .ctype_model import is_scalar_name
 from .diagnostics import FixIt, SourceDiagnostic, Span
 from .lower import (
+    BF_WIDTH,
     DIM_RANGE,
     ENUM_INCOMPLETE,
     ENUM_NOT_INT,
@@ -30,6 +31,7 @@ from .lower import (
     VOLATILE_PTR,
     CLowerError,
     fold_constant,
+    layout_aggregates,
 )
 
 
@@ -197,16 +199,19 @@ class _Parser:
         self.enums: dict[str, int] = {}  # enumerator name -> its integer value
         # enum tag -> the integer type its enumeration is compatible with (`_enum_body`; CF-ENUMOBJ)
         self.enum_tags: dict[str, str] = {}
-        # the names the function being parsed declares, one set per block scope, innermost last (its parameters
-        # first): each hides a file-scope enumerator of its name to the end of its block (C11 6.2.1p4), so a
-        # name is read as an enumerator only where none of them is in scope (`_enumerator`; CF-ENUMSCOPE)
-        self.scopes: list[set] = []
+        # the names the function being parsed declares, one map per block scope, innermost last (its parameters
+        # first): an object's name to None, an enumerator's to its value. The innermost declaration of a name is
+        # the one it denotes (C11 6.2.1p4): an object hides an enumerator of an enclosing scope and a block's own
+        # enumerator an outer object or enumerator, to the end of its block (`_enumerator`; CF-ENUMSCOPE, a
+        # block's enumerators CF-CONSTEXPR2)
+        self.scopes: list[dict] = []
         self.recover = False  # panic-mode recovery: collect diagnostics, don't raise
         self.diags: list = []  # list[SourceDiagnostic] accumulated when recover is on
         self.unit: cast.Unit | None = (
             None  # the unit being built (so a nested inline aggregate registers)
         )
         self._anon_ctr = 0  # synthesizes unique tags for tagless inline aggregates
+        self._layout_memo = None  # (the aggregate definitions laid out, their layouts): `_layouts`
         self._depth = 0  # recursive-descent nesting depth (see _MAX_DEPTH / _descend)
         self._declared: set = set()  # the file-scope functions declared so far (`Func.declared`)
         # how C names each anonymous aggregate (`$anonN`, `Unit.anon_spelling`): the file-scope typedef that
@@ -340,7 +345,7 @@ class _Parser:
                         attrs["packed"] = True
                     elif a in ("aligned", "__aligned__"):
                         self.eat("PUNCT", "(")
-                        attrs["aligned"] = parse_int_literal(self.eat("INT").text)
+                        attrs["aligned"] = self._const_int()
                         self.eat("PUNCT", ")")
                     if self.at("PUNCT", ","):
                         self.nxt()
@@ -349,7 +354,7 @@ class _Parser:
             elif self.at("IDENT", "alignas") or self.at("IDENT", "_Alignas"):
                 self.nxt()
                 self.eat("PUNCT", "(")
-                attrs["aligned"] = parse_int_literal(self.eat("INT").text)
+                attrs["aligned"] = self._const_int()
                 self.eat("PUNCT", ")")
             else:
                 return attrs
@@ -727,7 +732,8 @@ class _Parser:
                 # is a constant-expression)
             if not -(1 << 31) <= value < 1 << 31:
                 raise CParseError(ENUM_NOT_INT, pos=tk.pos)
-            self.enums[tk.text] = value
+            # in scope just after its own enumerator (6.2.1p7): a block's to the end of the block (CF-CONSTEXPR2)
+            (self.scopes[-1] if self.scopes else self.enums)[tk.text] = value
             negative = negative or value < 0
             value += 1
             if self.at("PUNCT", ","):
@@ -744,9 +750,14 @@ class _Parser:
         else the expression, a runtime dimension. A constant outside 0..INT_MAX is refused (`DIM_RANGE`), as the
         twin's `ce_dim` refuses one (CF-ENUMFOLD)."""
         try:
-            v = fold_constant(e, self.abi).v
+            v = fold_constant(e, self.abi, layouts=self._layouts).v
         except CLowerError:
             return e
+        return self._dim_in_range(v)
+
+    def _dim_in_range(self, v: int) -> int:
+        """A constant dimension `v`, refused outside 0..INT_MAX (`DIM_RANGE`) -- the one range check of `_dim` and
+        `_const_dim`, as the twin's `ce_dim` is."""
         if not 0 <= v < 1 << 31:
             raise CParseError(DIM_RANGE, pos=self.peek().pos)
         return v
@@ -757,11 +768,50 @@ class _Parser:
         the predicate a static's initializer folds with; CF-ENUMFOLD): an operand C does not evaluate (`0 &&
         e`, the arm `?:` does not take) is not folded. One that is no integer constant expression, or whose
         arithmetic C leaves undefined (a division by zero, a signed overflow), is refused for that one reason
-        (`ICE_NOT`). `sizeof` stays out: no aggregate is laid out at parse."""
+        (`ICE_NOT`). A `sizeof` or `_Alignof` of a type-name reads the unit's aggregates laid out so far
+        (`_layouts`; CF-CONSTEXPR2)."""
         try:
-            return fold_constant(node, self.abi).v
+            return fold_constant(node, self.abi, layouts=self._layouts).v
         except CLowerError as e:
             raise CParseError(str(e), pos=self.peek().pos) from None
+
+    def _layouts(self) -> dict:
+        """The unit's aggregates defined so far, laid out on the target (`lower.layout_aggregates`), for a `sizeof` or
+        `_Alignof` an integer constant expression folds (CF-CONSTEXPR2): laid out again only when a definition was
+        added or completed since. A definition the layout refuses is refused here for that reason."""
+        defs = self.unit.aggregates if self.unit is not None else {}
+        seen = tuple(defs.values())
+        if (
+            self._layout_memo is None
+            or len(self._layout_memo[0]) != len(seen)
+            or any(a is not b for a, b in zip(self._layout_memo[0], seen))
+        ):
+            try:
+                self._layout_memo = (seen, layout_aggregates(defs, self.abi))
+            except CLowerError as e:
+                raise CParseError(str(e), pos=self.peek().pos) from None
+        return self._layout_memo[1]
+
+    def _const_int(self) -> int:
+        """The integer constant expression at the cursor -- a conditional-expression -- folded (`_const_eval`), where
+        C takes one and both rails had read a literal only: a bit-field's width, `_BitInt(N)`'s width, `aligned(N)`
+        and `alignas(N)` (CF-CONSTEXPR2; the twin's `ce_fold`). `enum { W = 3 }; ... uint32_t a : W;` had been refused
+        here and laid out with a width of 0 by the twin -- a member as wide as its type."""
+        return self._const_eval(self._ternary())
+
+    def _const_dim(self) -> int:
+        """... and a dimension where C takes only a constant one -- a compound literal's `(T[N]){...}` (6.5.2.5p1)
+        and a row pointer's `(*p)[N]` -- refused outside 0..INT_MAX (`DIM_RANGE`), as `_dim` refuses one (the twin's
+        `ce_dim`)."""
+        return self._dim_in_range(self._const_int())
+
+    def _bit_width(self, named: bool) -> int:
+        """A bit-field's width, the cursor past its `:` (`_const_int`): a negative one, or a named one of zero, is
+        refused (`BF_WIDTH`, C11 6.7.2.1p4) -- one wider than its type when the aggregate is laid out."""
+        w = self._const_int()
+        if w < 0 or (named and w == 0):
+            raise CParseError(BF_WIDTH, pos=self.peek().pos)
+        return w
 
     def _global(
         self, tref: cast.TypeRef, name: str, extern: bool = False, static: bool = False
@@ -834,9 +884,7 @@ class _Parser:
             while True:  # one or more declarators off one specifier:
                 if self.at("PUNCT", ":"):  # an UNNAMED/zero-width bitfield `type : width;` (no
                     self.nxt()  # declarator): it positions the layout cursor but is not
-                    w = parse_int_literal(
-                        self.eat("INT").text
-                    )  # accessible -- name "" + a scalar base marks it
+                    w = self._bit_width(False)  # accessible -- name "" + a scalar base marks it
                     members.append((base, "", w, malign))
                     if self.at("PUNCT", ","):
                         self.nxt()
@@ -858,7 +906,7 @@ class _Parser:
                 width = 0
                 if self.at("PUNCT", ":"):  # bitfield:  type name : width;
                     self.nxt()
-                    width = parse_int_literal(self.eat("INT").text)
+                    width = self._bit_width(True)
                 members.append(
                     (tref, name, width, malign)
                 )  # `malign` applies to every declarator here
@@ -899,9 +947,7 @@ class _Parser:
             if w == "_BitInt":  # C23 `_BitInt ( N )` -- a bit-precise integer type
                 self.nxt()
                 self.eat("PUNCT", "(")
-                if not self.at("INT"):
-                    raise CParseError("expected the width N in `_BitInt(N)`", pos=self.peek().pos)
-                bit_width = parse_int_literal(self.eat("INT").text)
+                bit_width = self._const_int()
                 self.eat("PUNCT", ")")
                 if saw_bitint:  # a second `_BitInt` in one specifier run -> fallback
                     raise CParseError("duplicate `_BitInt` type specifier")
@@ -1131,9 +1177,7 @@ class _Parser:
                     dims = []
                     while self.at("PUNCT", "["):
                         self.nxt()
-                        dims.append(
-                            0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text)
-                        )
+                        dims.append(0 if self.at("PUNCT", "]") else self._const_dim())
                         self.eat("PUNCT", "]")
                     return cast.TypeRef(
                         base=base.base,
@@ -1251,7 +1295,7 @@ class _Parser:
         self._declared.add(name)
         declared = frozenset(self._declared)
         # the parameters' scope encloses the body's block
-        self.scopes.append({p.name for p in params})
+        self.scopes.append(dict.fromkeys(p.name for p in params))
         try:
             body = self._block()
         finally:
@@ -1272,7 +1316,8 @@ class _Parser:
         with self._descend():  # depth guard: _block<->_stmt nesting (`{{{...}}}`) cycle
             self.eat("PUNCT", "{")
             stmts = []
-            self.scopes.append(set())  # a block is a scope: the names it declares end with it
+            self.scopes.append({})  # a block is a scope: the names it declares end with it,
+            tags = dict(self.enum_tags)  # its enumeration tags too (CF-CONSTEXPR2)
             try:
                 while not self.at("PUNCT", "}"):
                     if not self.recover:
@@ -1286,17 +1331,21 @@ class _Parser:
                             break
             finally:
                 self.scopes.pop()
+                self.enum_tags = tags
             self.eat("PUNCT", "}")
             return tuple(stmts)
 
     def _enumerator(self, w: str):
-        """The value of the enumerator `w` names where it is read, or None: a name the function declares in a
-        block scope enclosing this point -- a local, a parameter, a loop's own declaration -- hides a file-scope
-        enumerator of its name (C11 6.2.1p4), which is then no constant (CF-ENUMSCOPE; the twin's
-        `visible_enum`). Reading the enumerator there had folded it in place of the object."""
-        if w not in self.enums or any(w in s for s in self.scopes):
-            return None
-        return self.enums[w]
+        """The value of the enumerator `w` names where it is read, or None: the innermost declaration of `w` is
+        the one it denotes (C11 6.2.1p4) -- a name the function declares in a block scope enclosing this point (a
+        local, a parameter, a loop's own declaration) hides an enumerator of an enclosing scope, which is then no
+        constant (CF-ENUMSCOPE), and an enumerator a block declares hides an outer object or enumerator to the end
+        of the block (CF-CONSTEXPR2; the twin's `visible_enum`). Reading the enumerator there had folded it in
+        place of the object."""
+        for scope in reversed(self.scopes):
+            if w in scope:
+                return scope[w]
+        return self.enums.get(w)
 
     def _is_decl_start(self) -> bool:
         """A declaration starts with a type: a keyword, a scalar or typedef name. A struct tag alone is
@@ -1382,7 +1431,7 @@ class _Parser:
         self.eat("IDENT", "for")
         self.eat("PUNCT", "(")
         # the loop's own declaration is in scope to the end of its body (6.8.5p5)
-        self.scopes.append(set())
+        self.scopes.append({})
         try:
             if self.at("PUNCT", ";"):  # empty init
                 init = None
@@ -1629,7 +1678,14 @@ class _Parser:
         type-specifier: `T a = x, b, c = z;` == `T a = x; T b; T c = z;`. Each declarator re-derives
         its own pointer/array shape from the base (so `int *p, q;` types p pointer, q int)."""
         self.storage = set()  # this declaration's own storage classes, wherever they are spelled
+        start = self.i
         base = self._type_spec()
+        # `enum [tag] { ... };`: a declaration of the enumeration's constants (and tag) alone, in scope to the end of
+        # the block (C11 6.7p2; CF-CONSTEXPR2)
+        spec = {t.text for t in self.t[start : self.i]}
+        if self.at("PUNCT", ";") and "enum" in spec and not spec & {"struct", "union"}:
+            self.nxt()
+            return cast.Seq(())
         # a block-scope `extern` names an object defined elsewhere, never a new local: binding it as
         # one read an uninitialized object (CF-STORAGE)
         if "extern" in self.storage:
@@ -1650,7 +1706,7 @@ class _Parser:
             tref, name = self._declarator_or_funcptr(base)
             # in scope from the end of its declarator, its own initializer included (6.2.1p7)
             if self.scopes:
-                self.scopes[-1].add(name)
+                self.scopes[-1][name] = None
             init = None
             if self.at("OP", "="):
                 self.nxt()
@@ -1786,7 +1842,7 @@ class _Parser:
             dims = []
             while self.at("PUNCT", "["):  # `(int[N]){...}` / `(int[]){...}` — an array type-name
                 self.nxt()
-                dims.append(0 if self.at("PUNCT", "]") else parse_int_literal(self.eat("INT").text))
+                dims.append(0 if self.at("PUNCT", "]") else self._const_dim())
                 self.eat("PUNCT", "]")
             self.eat("PUNCT", ")")
             if ptr and tref.array:  # a pointer to a typedef'd array: no TypeRef spelling
@@ -2029,8 +2085,8 @@ class _Parser:
             return cast.IntLit(
                 parse_int_literal(tk.text, tk.pos), int_literal_type(tk.text, self.abi.long_size)
             )
-        if self.at("CHAR"):  # a character constant -> its int value
-            return cast.IntLit(parse_char_literal(self.nxt().text))
+        if self.at("CHAR"):  # a character constant: its value, typed by its prefix (CF-CONSTEXPR2)
+            return cast.IntLit(*char_constant(self.nxt().text, self.abi))
         if self.at("FLOAT"):  # a floating-point literal (1.5 / 3.14f)
             return cast.FloatLit(self.nxt().text)
         if self.at("STRING"):

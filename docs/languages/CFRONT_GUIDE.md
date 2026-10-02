@@ -310,15 +310,31 @@ _mm_sfence();                      //                   store (release) fence ->
   (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long` where `long` is 64 bits and an `unsigned long long` where
   it is 32; `017` is 15, in a `#if` too). Any other run of `u`s and `l`s (`1lL`, `1uu`, `1lul`) is refused in
   Clang's words, in code and in a `#if` (`invalid suffix 'lL' on integer constant`).
-- Integer constant expressions -- an enumerator's value, a case label, an array dimension, a designator --
-  folded where they are parsed, in C's own types on the target, by the predicate a static's initializer folds
-  with: the integer promotions and the usual arithmetic conversions (`~0u > 5` is 1, `-1 < 0u` is 0, `-1L < 1u`
-  is 1 where `long` is 64 bits and 0 where it is 32), `/` and `%` truncating toward zero (`-7 / 2` is -3, `-7 % 2`
-  is -1), shifts, a cast to an integer type (`(uint8_t)300` is 44), `?:` in its arms' common type, and an
-  operand C does not evaluate left unevaluated (`0 && 1 / 0` is 0). A dimension that is an integer constant
-  expression (`N * 2`, `2 + 1`) makes a fixed array (C11 6.7.6.2p4) for a local, a member, a typedef, a
-  parameter and a global. Both emits spell a negative constant signed (`-3`, not `-3u` or its 64-bit two's
-  complement) and a case label past `LLONG_MAX` with `u`.
+- Integer constant expressions -- an enumerator's value, a case label, an array dimension (a compound literal's
+  `(T[N]){...}` and a row pointer's `(*p)[N]` too), a designator, a bit-field's width, `_BitInt(N)`'s, `aligned(N)`
+  and `alignas(N)` -- folded where they are parsed, in C's own types on the target, by the predicate a static's
+  initializer folds with: the integer promotions and the usual arithmetic conversions (`~0u > 5` is 1, `-1 < 0u` is
+  0, `-1L < 1u` is 1 where `long` is 64 bits and 0 where it is 32), `/` and `%` truncating toward zero (`-7 / 2` is
+  -3, `-7 % 2` is -1), shifts, a cast to an integer type (`(uint8_t)300` is 44), `?:` in its arms' common type, and
+  an operand C does not evaluate left unevaluated (`0 && 1 / 0` is 0). `sizeof` and `_Alignof` of a type-name fold
+  to the target's layout of the unit's types as far as they are defined (`sizeof(struct s)`, `_Alignof(long
+  double)`), and `sizeof` of a constant to its type's size (`sizeof(L'a')` is 2 on Windows). A floating constant
+  cast to an integer type converts as C converts it: rounded to its own type, then truncated toward zero
+  (`(int)2.75` is 2, `(int)16777217.0f` 16777216), `_Bool` whether it is nonzero. A dimension that is an integer
+  constant expression (`N * 2`, `2 + 1`) makes a fixed array (C11 6.7.6.2p4) for a local, a member, a typedef, a
+  parameter and a global. Case labels are compared in the switch's promoted type -- 255 and -1 are two labels on a
+  `uint8_t`, one on a `uint32_t`'s 4294967295u -- and a `_BitInt(N)` is promoted to nothing. Both emits spell a
+  negative constant signed (`-3`, not `-3u` or its 64-bit two's complement) and a case label past `LLONG_MAX` with
+  `u`.
+- Character constants as Clang reads them on the target: a plain one an `int` of its byte as the target's plain
+  `char` holds it (`'\xff'` is 255 on AArch64, where `char` is unsigned, and -1 elsewhere), a multi-character one
+  its last four bytes packed big-endian (`'abcde'` is `'bcde'`); a prefixed one of its prefix's type -- `u8` an
+  `unsigned char`, `u` `char16_t`, `U` `char32_t`, `L` the target's `wchar_t` (unsigned on AArch64, 16 bits and
+  unsigned on Windows).
+- An enumeration declared in a block: its constants and its tag end with the block, each hiding an outer name from
+  its declaration on and hidden in turn by a later local (C11 6.2.1p4).
+- A zero-length array member (`T m[0]`, GNU) or a flexible one (`T m[]`): no bytes of its own, indexed in place;
+  `typedef T row[0];` names one.
 - Integer + IEEE-754 floating arithmetic and comparisons, casts and the usual arithmetic conversions,
   `sizeof`/`_Alignof`, bitfields, `<math.h>` library calls.
 - Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
@@ -470,11 +486,19 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   stated or counted on from `INT_MAX` (C11 6.7.2.2p2; C23 gives one a wider type, which neither rail models):
   `an enumerator value not representable as int`. A division or a remainder by zero, a signed overflow
   (`INT_MAX + 1`, `INT_MIN / -1`), a shift by the width or more, by a negative count, of a negative value or
-  past its signed type (`-1 << 1` and `1 << 31`, which Clang folds without a word), and `sizeof`, `_Alignof`, the
-  comma operator, a floating constant (`(int)1.5`), an object or a pointer in one: `not an integer constant
-  expression`. A constant array dimension outside 0..`INT_MAX`: `an array dimension outside 0..INT_MAX`. Both
-  rails refuse each for that one reason. A compound literal's dimension `(T[N]){...}` and a row pointer's
-  `(*p)[N]` take an integer literal only, and an `enum` defined at block scope is refused.
+  past its signed type (`-1 << 1` and `1 << 31`, which Clang folds without a word), and `sizeof` of an
+  expression (`sizeof g_x`, which C allows of an object that is no variable-length array -- a recorded follow-up)
+  or of an incomplete type, the comma operator, a floating constant cast where its type cannot hold its integral
+  part (`(uint8_t)300.7`, C11 6.3.1.4p1) or that is no cast's immediate operand (`(int)-1.5`, which Clang folds as
+  an extension), a `long double` one (its format the target's), an object or a pointer in one: `not an integer
+  constant expression`. A constant array dimension outside 0..`INT_MAX`: `an array dimension outside 0..INT_MAX`.
+  Two case labels equal in the switch's promoted type: `duplicate case value`; a second `default:`: `multiple
+  default labels in one switch`. A bit-field's width negative, zero for a named member or past its type's: `invalid
+  bit-field width`. Both rails refuse each for that one reason.
+- A character constant C does not define or the rails do not read: no character (`''`), an escape C does not define
+  (`'\q'`) or past its code unit (`'\x100'`, and `L'\xffffffff'` where `wchar_t` holds 16 bits), a universal
+  character name (`'\u0041'`), two characters behind a prefix (`u8'ab'`): `unsupported character constant`. A
+  floating constant with a C23 digit separator (`1e+5'0`) is read by neither rail -- a recorded follow-up.
 - A file-scope initializer C refuses (an excess entry, a string too long for its array, a designator outside its
   object) or that overrides a subobject a brace list or a string initialized, and an initialized file-scope array
   of more than three dimensions. A block-scope `_Thread_local` object that is not `static` (C11 6.7.1p3).

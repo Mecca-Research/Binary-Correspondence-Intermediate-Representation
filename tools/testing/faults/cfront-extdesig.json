@@ -75,7 +75,7 @@
       "expects": "test_designators_of_functions_another_unit_defines_run_as_the_original",
       "label": "XO10 the oracle compares 0 with a designator as a function of no parameters",
       "new": "",
-      "old": "                if a in self.func_globals:\n                    ta = self._fn_type(a) or ta\n                if b in self.func_globals:\n                    tb = self._fn_type(b) or tb\n",
+      "old": "            if a in self.func_globals:\n                ta = self._fn_type(a) or ta\n            if b in self.func_globals:\n                tb = self._fn_type(b) or tb\n",
       "path": "bcir/frontends/cfront/lower.py"
     },
     {

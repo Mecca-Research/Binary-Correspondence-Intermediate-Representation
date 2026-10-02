@@ -2444,15 +2444,18 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   24 injected defects, on both rails, are each caught (`tools/testing/faults/cfront-consts.json`).
   Found, not fixed here (each a suggested follow-up):
   - a duplicate case value after conversion (`case -1:` beside `case 4294967295u:` in a `uint32_t` switch) is
-    accepted by both rails, where C requires a diagnostic (6.8.4.2p3) and the emit does not compile;
+    accepted by both rails, where C requires a diagnostic (6.8.4.2p3) and the emit does not compile (closed by
+    CF-CONSTEXPR2, below);
   - a character constant `'\xff'` is -1 on every target on both rails; where plain `char` is unsigned (AArch64
-    Linux) C gives 255;
+    Linux) C gives 255 (closed by CF-CONSTEXPR2);
   - an `enum` defined at block scope is refused by both rails, for different reasons, and so are an enumerator in
     a compound literal's dimension `(T[N]){...}` and a row pointer's `(*p)[N]`, where each rail reads a literal
-    only;
-  - `sizeof`, `_Alignof` and `(int)1.5` in an enumerator are refused on both rails (6.6p6 allows them);
-  - a 3000-term `1 + 1 + ...` chain raises `RecursionError` in the oracle's parser, which the twin lowers;
-  - the twin refuses `typedef T row[0];`, which the oracle takes.
+    only (closed by CF-CONSTEXPR2);
+  - `sizeof`, `_Alignof` and `(int)1.5` in an enumerator are refused on both rails (6.6p6 allows them) (closed by
+    CF-CONSTEXPR2);
+  - a 3000-term `1 + 1 + ...` chain raises `RecursionError` in the oracle's parser, which the twin lowers (closed by
+    CF-CONSTEXPR2);
+  - the twin refuses `typedef T row[0];`, which the oracle takes (closed by CF-CONSTEXPR2).
 
   CF-ENUMSCOPE (2026-10-01) made a block-scope name hide an enumerator on both rails, a silent miscompile the
   CF-ENUMFOLD triage found. RED was measured on the parent (`04d575dc`).
@@ -3308,6 +3311,96 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     fault: with the Clang requirement removed, a test that named no test to run ran the whole cfront suite under GCC's
     unoptimized UBSan, for hours. Every driver call in the tests names one helper now, so a gate that no longer refuses
     runs that helper alone.
+
+  CF-CONSTEXPR2 (2026-10-02) closes the six items CF-ENUMFOLD found and did not fix, on both rails. RED was measured
+  on the parent (`b684841e`).
+  - The defect: both rails took two case labels equal in the switch's promoted type (`case -1:` beside `case
+    4294967295u:` on a `uint32_t`) and a second `default:`, an emit no compiler takes. Both read every character
+    constant as an `int` of signed bytes: `'\xff'` was -1 on AArch64, where plain `char` is unsigned and C gives 255;
+    `u8'a'`, `u'a'` and `U'a'` were `int`s, so `U'a' - 98 < 0` was 1 where C gives 0; `L'a'` was 4 bytes on Windows;
+    and a constant C does not define (`'\q'`, `''`, `'\x100'`) was read as some value. Both refused an enumeration
+    declared in a block, for different reasons, an enumerator as a compound literal's or a row pointer's dimension,
+    and `sizeof`, `_Alignof` and a cast of a floating constant in an enumerator (6.6p6 allows each); a bit-field's
+    width, `_BitInt(N)` and `aligned(N)` were read as a literal only -- the oracle refused `uint32_t a : W;` and the
+    twin laid it out with a width of 0, a member as wide as its type -- and a width past its type (`uint8_t a : 9`)
+    was laid out on both. The twin refused `typedef T row[0];` and laid a `uint32_t t[0]` member out as one element
+    (`sizeof` 8 for Clang's 4). A 3000-term `1 + 1 + ...` raised `RecursionError` in the oracle -- folding it, scanning
+    the body for mutations, lowering, typing and sizing it, and judging an allocation's count pure. And both comment
+    strippers took the `'` of `u8'a'` (and `case'a'`) for a C23 digit separator, a `'` between two hex digits, so the
+    constant's closing quote opened a literal that ran past the next comment, which survived as the tokens `/ *`.
+  - Measured (Clang 18, `-std=c2x`, per target): `'\xff'` is 255 on AArch64 and -1 elsewhere; `L'\xff'` is 255
+    everywhere; `L'\xffffffff'` is -1 on x86-64 and i386 Linux, 4294967295 on AArch64, and refused on Windows, whose
+    16-bit `wchar_t` the escape is past; `sizeof(L'a')` is 2 on Windows; `u8` is an `unsigned char`, `u` a
+    `char16_t`, `U` a `char32_t`; `(int)16777217.0f` is 16777216, the `float` rounding it first; an unsigned
+    `_BitInt(12)` switch takes `case -1:` as its 4095 (C23 promotes no `_BitInt`).
+  - RED: on the parent the seven new tests fail (7 run, 7 findings): the fixture is refused by both rails (`expected a
+    type`), the oracle refuses the per-target unit's `sizeof` (`not an integer constant expression`) and reads
+    `L'\xffffffff' < 0` as 1 on AArch64, lowers the duplicate labels, refuses `_BitInt(W)`, and raises
+    `RecursionError` on the chain; the comment stripper keeps `/ *a comment's quote */` after `u8'a'`.
+  - What landed: case labels converted to the switch's promoted type (6.8.4.2p5: an `int` for a narrower type or
+    `_Bool`, a `_BitInt(N)` itself) and compared there, per switch, a nested one apart: `duplicate case value`, and
+    `multiple default labels in one switch` (`lower._switch_promoted`; the twin's `switch_promoted`, `case_label` and
+    `p_switch`). One reader of a character constant per rail, the one `#if` reads through (`clex.char_constant` over
+    `char_constant_units`; the twin's `char_value` over `char_literal`): a plain one an `int` of its byte by the
+    target's `char`, a multi-character one its last four bytes packed big-endian, a prefixed one of its prefix's type
+    (`u8` `unsigned char`, `u` `char16_t`, `U` `char32_t`, `L` the target's `wchar_t`, signed or not; the twin's
+    `lit_int_type`), one C does not define refused (`unsupported character constant`). An enumeration declared in a
+    block: its constants and tag scoped to the block (6.2.1p4), the innermost declaration of a name the one it
+    denotes -- the oracle's scopes map a name to its enumerator's value or to `None` for an object; the twin orders
+    its locals and enumerators by one sequence (`venv.seq`, `econst.seq`) and restores its constants, tags included,
+    at each block's and body's end -- and `enum [tag] { ... };` a declaration of its own. One integer constant
+    expression reader where C takes one (`cparse._const_int`, `_const_dim`, `_bit_width`; the twin's `ce_int`,
+    `ce_dim`, `bf_width`): a bit-field's width (negative, named and zero, or past its type: `invalid bit-field
+    width`), `_BitInt(N)`, `aligned(N)`, `alignas(N)`, a compound literal's and a row pointer's dimension, the
+    dimension's range checked by one predicate (`_dim_in_range`). `sizeof` and `_Alignof` of a type-name fold, the
+    oracle's parser laying out the unit's aggregates as far as it has read (`lower.layout_aggregates`, shared with
+    `lower_unit`; the twin's `sizeof_type_name`, shared by `p_sizeof` and `ce_sizeof`), as does `sizeof` of a
+    constant (`sizeof(L'a')`); one of an incomplete type, or of an expression, is no constant. A floating constant
+    cast to an integer type folds as C converts it (6.3.1.4p1): read by its own grammar and rounded to its type,
+    ties to even (`_float_value`, an exact `Fraction`; `strtof`/`strtod` on the twin), truncated toward zero, refused
+    where its type cannot hold it and C evaluates it; `_Bool` is whether it is nonzero; a `long double` one, whose
+    format is the target's, is refused. A zero-length or flexible member is an array of no bytes on the twin (`farr`,
+    at the 22 sites that read `arr_count` as the test), and `typedef T row[0];` is taken. The oracle walks a binary
+    chain down its left operands with a loop where it folds, scans, lowers (`_binary_chain`, `_binary_step`), types,
+    sizes and judges it pure. Both comment strippers copy an identifier and a preprocessing number whole (6.4.8), a
+    digit separator and an exponent's sign inside the number.
+  - Outcomes: `runtime/c/cfront_constexpr2.c` (switches whose labels differ only in the promoted type, prefixed and
+    multi-character constants, a block enumeration hiding and hidden in turn, enumerators and `sizeof` as widths and
+    dimensions, `sizeof`/`_Alignof` of type-names and floating casts in enumerators, zero-length and flexible
+    members) lowers to one claim graph on the four targets and each function of each emit returns what the original
+    does under Clang and GCC; the 38 enumerators of `_CONSTEXPR2_TARGET` are Clang's on each target and fold to one
+    claim graph on both rails, as `L'\xffffffff'` does (refused alike on Windows); the 29 units of
+    `_CONSTEXPR2_REFUSED` are refused on both rails for one reason each, the 7 of `_CONSTEXPR2_TAKEN` lower alike on
+    the four targets, and nine 3000-term chains lower and run as the original on both. Over the corpus (239
+    fixtures, four targets) only the new fixture moved: 887 of 956 fixture-target pairs keep equal summaries on both
+    rails, the parent's 883 and the new fixture's four.
+  - Faults: `tools/testing/faults/cfront-constexpr2.json`, 81 -- 40 on the oracle, 41 on the twin -- each caught by
+    its own test. The first sweep caught 78: KO10 and KT8, each rail reading an `L` constant unsigned where `wchar_t`
+    is signed, reached no test, for `_CONSTEXPR2_WIDE` read the constant only in an enumerator, which wraps it to its
+    type whatever its sign -- the unit returns it as a value now (`cw_val`, `cw_half`), held to Clang's; and KO13, a
+    block's enumeration tag outliving the block, reached none, for no unit named a tag after its block -- two do now,
+    in `_CONSTEXPR2_REFUSED`. The re-sweep caught all three. Twenty-three older faults anchored in lines this changed
+    were re-anchored: `cfront-consts.json` EF3-EF5, EF8, EF9, EF13 and EF16 (the fold's new `layouts`, the shared
+    dimension check, the twin's `lit_int_type` taking the target), `cfront-enumscope.json` ES1-ES6 and ET1 (the scopes
+    as maps, `visible_enum`'s order), `cfront-enumobj.json` ET6 (`find_enum`), `cfront-statics.json` SO3 and ST4 (the
+    literal's type), `cfront-calls.json` CL17, `cfront-extdesig.json` XO10 and `cfront-unary.json` UO16, UO24 and
+    UT21 (the binary operators, now `_binary_step`, and `p_switch`), and `cfront-roundtrip.json` T62
+    (`sizeof_type_name`). All but two were caught again. ET6, the twin reading a tag as an enumerator, passed: its
+    witness, an object named as the tag, now meets the object first (`visible_enum`'s order), so a tag read as an
+    identifier joins CF-ENUMOBJ's refusal test (`_ENUMOBJ_TAG_ALONE`) and the re-sweep caught it. SO3, the lowering
+    not re-typing a `long` constant past a 32-bit `long`, passed for a reason of its own: the parser has typed
+    every constant by the target's `long` since CF-ENUMFOLD (`int_literal_type`; `cfront-consts.json` EF2 holds it),
+    so the branch it disabled could not run. The branch is gone, one typing per rail as the twin's `lit_int_type`,
+    and SO3 is retired.
+  Found, not fixed here (each a suggested follow-up):
+  - `sizeof` of an expression in an integer constant expression (`enum { N = sizeof g_x };`, an integer constant
+    expression by 6.6p6 when the operand is no variable-length array) is refused on both rails;
+  - a floating constant with a C23 digit separator (`1e+5'0`) is read by neither rail's lexer, which refuse it in
+    different words (`unterminated character constant`, `unsupported character constant`);
+  - `sizeof(struct nope)` of an undefined struct outside a constant expression is refused in different words (`the
+    incomplete struct or union 'nope' has no layout here`, `unknown struct`);
+  - a 5000-term `(10 / x) && ...` the oracle lowers is refused by the twin's driver (`input too large`): its
+    preprocessed-text bound (64 KiB) and its 16384 tokens a unit.
 
 ---
 

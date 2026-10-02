@@ -32,13 +32,6 @@
       "path": "bcir/verify/__init__.py"
     },
     {
-      "expects": "test_integer_constant_types_follow_the_target_long_on_both_rails",
-      "label": "SO3 an out-of-range long constant not re-typed",
-      "new": "        if False:",
-      "old": "        if ct.name in (\"long\", \"unsigned long\") and not _kfits(node.value, ct.size * 8, ct.signed):",
-      "path": "bcir/frontends/cfront/lower.py"
-    },
-    {
       "expects": "test_static_tables_run_as_the_original_on_both_rails",
       "label": "SO4 an emitted local named without de-duplication",
       "new": "        nm[rid] = name",
@@ -76,8 +69,8 @@
     {
       "expects": "test_integer_constant_types_follow_the_target_long_on_both_rails",
       "label": "ST4 a long constant typed by the host's long",
-      "new": "    int lsz,lsg; lit_int_type(t.s,t.n,8,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */",
-      "old": "    int lsz,lsg; lit_int_type(t.s,t.n,cc_abi(c)->long_size,&lsz,&lsg);   /* the constant's type (§6.4.4.1) */",
+      "new": "lit_int_type(t.s,t.n,bcir_abi_host(),&lsz,&lsg);",
+      "old": "lit_int_type(t.s,t.n,cc_abi(c),&lsz,&lsg);",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

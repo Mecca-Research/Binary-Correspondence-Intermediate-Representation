@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import math
+import re
 from bisect import bisect_left
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
+from fractions import Fraction
 from typing import NamedTuple
 
 from ...kbcir import compose
@@ -533,11 +536,14 @@ def _is_pure(node) -> bool:
     if isinstance(node, cast.Unary):
         return node.op in ("-", "~", "+") and _is_pure(node.operand)  # arithmetic only (NOT * / &)
     if isinstance(node, cast.Binary):
-        return (
-            node.op in {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"}
-            and _is_pure(node.lhs)
-            and _is_pure(node.rhs)
-        )
+        # along its chain of left operands (CF-CONSTEXPR2: no recursion per term)
+        while isinstance(node, cast.Binary):
+            if node.op not in {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"} or not _is_pure(
+                node.rhs
+            ):
+                return False
+            node = node.lhs
+        return _is_pure(node)
     if isinstance(node, cast.Cast):
         return _is_pure(node.operand)
     return False
@@ -555,28 +561,30 @@ def _scan_mutations(node, assigned: dict, body: dict, addr: set) -> None:
     STABLE from the allocation onward -- it is trusted only when `body == 0`: a decl-init (`m = n & 31`,
     before the alloc) is fine, but ANY ordinary assignment (`n = n - 1`, `n--`) could mutate it AFTER the
     alloc and make the runtime extent disagree with the allocation -- a false trap. Order-independent and
-    conservative: an over-approximation of mutation (more seen -> fewer promotions, never an unsound one)."""
-    if isinstance(node, (list, tuple)):
-        for x in node:
-            _scan_mutations(x, assigned, body, addr)
-        return
-    if not dataclasses.is_dataclass(node):
-        return
-    if isinstance(node, cast.Assign):
-        if isinstance(node.target, cast.Name):
-            assigned[node.target.ident] = assigned.get(node.target.ident, 0) + 1
-            body[node.target.ident] = (
-                body.get(node.target.ident, 0) + 1
-            )  # an ordinary (non-decl-init) write
-    elif isinstance(node, cast.Decl):
-        if node.init is not None:
-            assigned[node.name] = (
-                assigned.get(node.name, 0) + 1
-            )  # a decl-init: counted, but NOT body
-    elif isinstance(node, cast.Unary) and node.op == "&" and isinstance(node.operand, cast.Name):
-        addr.add(node.operand.ident)
-    for f in dataclasses.fields(node):
-        _scan_mutations(getattr(node, f.name), assigned, body, addr)
+    conservative: an over-approximation of mutation (more seen -> fewer promotions, never an unsound one). The
+    walk keeps its own stack: a 3000-term `x + x + ...` had raised RecursionError here (CF-CONSTEXPR2)."""
+    stack = [node]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (list, tuple)):
+            stack.extend(node)
+            continue
+        if not dataclasses.is_dataclass(node):
+            continue
+        if isinstance(node, cast.Assign):
+            if isinstance(node.target, cast.Name):
+                assigned[node.target.ident] = assigned.get(node.target.ident, 0) + 1
+                # an ordinary (non-decl-init) write
+                body[node.target.ident] = body.get(node.target.ident, 0) + 1
+        elif isinstance(node, cast.Decl):
+            if node.init is not None:
+                # a decl-init: counted, but NOT body
+                assigned[node.name] = assigned.get(node.name, 0) + 1
+        elif (
+            isinstance(node, cast.Unary) and node.op == "&" and isinstance(node.operand, cast.Name)
+        ):
+            addr.add(node.operand.ident)
+        stack.extend(getattr(node, f.name) for f in dataclasses.fields(node))
 
 
 class CLowerError(Exception):
@@ -879,6 +887,10 @@ ENUM_NOT_INT = "an enumerator value not representable as int"
 ENUM_INCOMPLETE = "an enumerated type with no definition"
 # ... and an array dimension that folds negative (6.7.6.2p1) or past INT_MAX, the twin holding a dimension in an int
 DIM_RANGE = "an array dimension outside 0..INT_MAX"
+# ... and a bit-field's width that is negative, wider than its type (`uint8_t a : 9`, `_Bool b : 2`) or, for a named
+# one, zero (C11 6.7.2.1p4): both rails had laid each one out, which Clang refuses (CF-CONSTEXPR2; the twin's
+# `CC_BF_WIDTH`)
+BF_WIDTH = "invalid bit-field width"
 # `T (*f(P))(Q)`: a function declared to return a function pointer by a nested declarator, which neither rail parses --
 # the same function with a typedef for its return type lowers (CF-FPRET; the twin's `CC_FN_RET_FP`)
 FN_RET_FP = "a function returning a function pointer is not supported without a typedef"
@@ -925,52 +937,197 @@ UNARY_NOT = "invalid argument type to unary expression"
 # union there, as in every controlling expression, is refused as an operator's operand is (`_STRUCT_OPERAND`)
 # (CF-STRUCTCOND; the twin's `CC_SWITCH_NOT`).
 SWITCH_NOT = "statement requires expression of integer type"
+# `case -1:` beside `case 4294967295u:` in a `switch` on a `uint32_t`: each case's constant converted to the promoted
+# type of the controlling expression (C11 6.8.4.2p5), no two equal (6.8.4.2p3) -- both rails had lowered the pair, whose
+# emit no compiler builds; and a second `default:` (CF-CONSTEXPR2; the twin's `CC_DUP_CASE`, `CC_DUP_DEFAULT`)
+DUP_CASE = "duplicate case value"
+DUP_DEFAULT = "multiple default labels in one switch"
 
 
-def fold_constant(node, abi, live: bool = True) -> _KVal:
+def fold_constant(node, abi, live: bool = True, layouts=None) -> _KVal:
     """`node`, an integer constant expression, folded in C's types on the target `abi`: an integer constant in its C11
     6.4.4.1 type (the parser types it for the target), a character or enumeration constant an `int` (the parser
     substitutes an enumerator's value), `-`, `+`, `~`, `!`, every binary operator but the comma, `?:` and a cast to an
     integer type. An operand C does not evaluate (`live` False: the right one of `0 && e`, the arm `?:` does not take)
     is typed but never refused for its arithmetic -- the predicate runs on a zero and a one of its operands' types --
-    as C evaluates it (6.5.13p4, 6.5.15p4). Raises `CLowerError(ICE_NOT)` for anything else."""
+    as C evaluates it (6.5.13p4, 6.5.15p4). A `sizeof` or `_Alignof` of a type-name is its size or alignment, a
+    `size_t`, its aggregates laid out by `layouts()` (the parser's, CF-CONSTEXPR2); a floating constant cast to an
+    integer type is converted as C converts it (`_kfloat_cast`). Raises `CLowerError(ICE_NOT)` for anything else."""
     try:
-        return _kfold_node(node, abi, live)
+        return _kfold_node(node, abi, live, layouts)
     except (CLowerError, KeyError):  # a predicate's refusal, or an unknown type-name
         raise CLowerError(ICE_NOT) from None
 
 
-def _kfold_node(node, abi, live: bool) -> _KVal:
+def _kfold_node(node, abi, live: bool, layouts=None) -> _KVal:
     """One node of `fold_constant`'s expression."""
     if isinstance(node, cast.IntLit):
         ct = scalar(node.ctype if is_scalar_name(node.ctype) else "int", abi)
         return _kconvert(_KVal(node.value), _ktype(ct))
     if isinstance(node, cast.Unary) and node.op in ("-", "~", "!", "+"):
-        a = _kfold_node(node.operand, abi, live)
+        a = _kfold_node(node.operand, abi, live, layouts)
         if node.op == "+":
             return _kpromote(a)
         r = _kun(_UN[node.op][1], a if live else a._replace(v=0))
         return r if live else r._replace(v=0)
     if isinstance(node, cast.Binary) and node.op in _BIN:
-        a = _kfold_node(node.lhs, abi, live)
-        if node.op in ("&&", "||"):  # the right one evaluates only when the left does not decide
-            b = _kfold_node(node.rhs, abi, live and (a.v != 0) == (node.op == "&&"))
-        else:
-            b = _kfold_node(node.rhs, abi, live)
-        if live:
-            return _kbin(_BIN[node.op][1], a, b)
-        return _kbin(_BIN[node.op][1], a._replace(v=0), b._replace(v=1))._replace(v=0)
+        # a left-associative chain (`1 + 1 + ...`) folds along its left operands without recursing down them: a
+        # 3000-term one had raised RecursionError (CF-CONSTEXPR2). The innermost left operand is as live as the
+        # chain; the right operand of `&&` or `||` only where its left one does not decide the result
+        spine = []
+        while isinstance(node, cast.Binary) and node.op in _BIN:
+            spine.append(node)
+            node = node.lhs
+        a = _kfold_node(node, abi, live, layouts)
+        for node in reversed(spine):
+            if node.op in ("&&", "||"):
+                b = _kfold_node(node.rhs, abi, live and (a.v != 0) == (node.op == "&&"), layouts)
+            else:
+                b = _kfold_node(node.rhs, abi, live, layouts)
+            if live:
+                a = _kbin(_BIN[node.op][1], a, b)
+            else:
+                a = _kbin(_BIN[node.op][1], a._replace(v=0), b._replace(v=1))._replace(v=0)
+        return a
     if isinstance(node, cast.Ternary):
-        c = _kfold_node(node.cond, abi, live)
-        a = _kfold_node(node.then, abi, live and c.v != 0)
-        b = _kfold_node(node.els, abi, live and c.v == 0)
+        c = _kfold_node(node.cond, abi, live, layouts)
+        a = _kfold_node(node.then, abi, live and c.v != 0, layouts)
+        b = _kfold_node(node.els, abi, live and c.v == 0, layouts)
         return _ksel(c, a, b)
     if isinstance(node, cast.Cast):
         t = _ktype(_resolve_member_type(node.type, {}, abi))
         if t.kind == "p":  # it converts only to an integer type (6.6p6)
             raise CLowerError(ICE_NOT)
-        return _kconvert(_kfold_node(node.operand, abi, live), t)
+        # a floating constant: the one floating operand it takes (6.6p6; CF-CONSTEXPR2)
+        if isinstance(node.operand, cast.FloatLit):
+            return _kfloat_cast(node.operand.value, t, live)
+        return _kconvert(_kfold_node(node.operand, abi, live, layouts), t)
+    if isinstance(node, cast.SizeOf) and isinstance(node.expr, (cast.IntLit, cast.FloatLit)):
+        # `sizeof` of a constant: its type's size (`sizeof(L'a')` is the target's `wchar_t`'s, `sizeof 1.0L` its
+        # `long double`'s), a `size_t` -- the one `sizeof` of an expression folded here (CF-CONSTEXPR2)
+        e = node.expr
+        ct = _int_lit_type(e, abi) if isinstance(e, cast.IntLit) else _float_lit_type(e.value, abi)
+        return _KVal(ct.size, 8 * abi.pointer_size, False)
+    if (
+        isinstance(node, (cast.SizeOf, cast.AlignOf))
+        and node.type is not None
+        and layouts is not None
+    ):
+        # `sizeof(T)` / `_Alignof(T)` of a type-name: its size or alignment, a `size_t` (6.6p6, 6.5.3.4p5) -- an
+        # incomplete type, or one no object of fits the target, is none (the twin's `ce_sizeof`; CF-CONSTEXPR2).
+        # `sizeof` of any other expression stays out: its operand's type is the lowering's.
+        ct = _resolve_member_type(node.type, layouts(), abi)
+        n = ct.align if isinstance(node, cast.AlignOf) else ct.size
+        if (
+            n <= 0
+            or (ct.kind == "array" and ct.count == 0)
+            or n > (1 << (8 * abi.pointer_size - 1)) - 1
+        ):
+            raise CLowerError(ICE_NOT)
+        return _KVal(n, 8 * abi.pointer_size, False)
     raise CLowerError(ICE_NOT)
+
+
+#: A floating constant's own format, by its suffix: a `double` and a `float` as IEEE binary64 and binary32 (their
+#: significant bits and exponent range) on every target the C front models. A `long double`'s (`L`) is the target's
+#: own -- x87's 64 bits, IEEE quad's 113, a `double` on Windows -- which neither rail models in a constant expression.
+_FLOAT_FORMATS = {"": (53, -1022, 1023), "f": (24, -126, 127)}
+_FLOAT_DEC = re.compile(r"([0-9]*)(?:\.([0-9]*))?(?:[eE]([+-]?)([0-9]+))?", re.ASCII)
+_FLOAT_HEX = re.compile(r"0[xX]([0-9a-fA-F]*)(?:\.([0-9a-fA-F]*))?[pP]([+-]?)([0-9]+)", re.ASCII)
+#: Past these, a floating constant converts to no integer type (its value is at least 2^1100, an infinity in both
+#: formats) or rounds to zero in both (below 2^-1100), so it needs no exact arithmetic; the twin reads it by
+#: `strtod`, which rounds alike. A spelling past `_FLOAT_SPELLING` characters is refused, as the twin refuses it.
+_FLOAT_LOG2 = 1100
+_FLOAT_SPELLING = 255
+
+
+def _digits(s: str, base: int) -> int:
+    """The digit string `s` in `base`, read a chunk at a time (Python bounds one `int()` of a decimal string)."""
+    v = 0
+    for i in range(0, len(s), 1000):
+        chunk = s[i : i + 1000]
+        v = v * base ** len(chunk) + int(chunk, base)
+    return v
+
+
+def _float_value(text: str, p: int, emin: int, emax: int) -> "Fraction | None":
+    """The C floating constant `text` (its separators and suffix removed) rounded to the nearest value of a binary
+    format of `p` significant bits and exponents `emin..emax`, ties to even (6.4.4.2p3, IEEE 754's default), as an
+    exact Fraction; None past the format's range (an infinity). Read by its own grammar -- a decimal one's digits and
+    exponent, a hexadecimal one's -- never by the host's float parser (CF-CONSTEXPR2)."""
+    m = _FLOAT_HEX.fullmatch(text)
+    if m:
+        ip, fp, sign, exp = m.group(1), m.group(2) or "", m.group(3), m.group(4)
+        mant, base, scale = _digits(ip + fp, 16) if ip + fp else 0, 2, 4 * len(fp)
+    else:
+        m = _FLOAT_DEC.fullmatch(text)
+        if not m or not (m.group(1) or m.group(2)):
+            raise CLowerError(ICE_NOT)
+        ip, fp, sign, exp = m.group(1), m.group(2) or "", m.group(3) or "", m.group(4) or "0"
+        mant, base, scale = _digits(ip + fp, 10) if ip + fp else 0, 10, len(fp)
+    if mant == 0:
+        return Fraction(0)
+    exp = exp.lstrip("0") or "0"
+    if len(exp) > 7:  # a magnitude far past either bound
+        return None if sign != "-" else Fraction(0)
+    e = (-1 if sign == "-" else 1) * int(exp) - scale
+    log2 = mant.bit_length() + (e if base == 2 else (e * 3322) // 1000)  # within a few bits
+    if log2 > _FLOAT_LOG2:
+        return None
+    if log2 < -_FLOAT_LOG2:
+        return Fraction(0)
+    q = Fraction(mant * base**e) if e >= 0 else Fraction(mant, base**-e)
+    e2 = q.numerator.bit_length() - q.denominator.bit_length()
+    if q < Fraction(2) ** e2:
+        e2 -= 1  # now 2**e2 <= q < 2**(e2 + 1)
+    quantum = Fraction(2) ** (max(e2, emin) - p + 1)  # below emin, a subnormal's fixed quantum
+    n = q // quantum
+    r = q - n * quantum
+    if r * 2 > quantum or (r * 2 == quantum and n % 2):
+        n += 1
+    v = n * quantum
+    return None if v >= Fraction(2) ** (emax + 1) else v
+
+
+def _kfloat_cast(spelling: str, t: _KVal, live: bool) -> _KVal:
+    """`(T)c` of a floating constant `c` -- the one floating operand an integer constant expression takes (6.6p6) --
+    folded as C converts it (6.3.1.4p1): its value rounded to its own type (`_FLOAT_FORMATS`: a `double`, or a `float`
+    for `f`/`F`), then truncated toward zero; a value the integer type cannot hold is undefined, and so no constant,
+    where C evaluates it (`live`). `_Bool` is whether it is nonzero (6.3.1.2). A `long double` one (`L`) is refused,
+    its format being the target's (the twin's `ce_float_cast`, CF-CONSTEXPR2): `(int)1.5` had been refused on both
+    rails."""
+    text = spelling.replace("'", "")
+    suffix = text[-1:].lower() if text[-1:] in ("f", "F", "l", "L") else ""
+    if suffix == "l" or len(text) > _FLOAT_SPELLING:
+        raise CLowerError(ICE_NOT)
+    v = _float_value(text[: len(text) - len(suffix)], *_FLOAT_FORMATS[suffix])
+    if t.kind == "b":
+        return t._replace(v=int(live and (v is None or v != 0)))
+    if not live:
+        return t
+    if v is None or not _kfits(math.trunc(v), t.bits, t.signed):
+        raise CLowerError(ICE_NOT)
+    return t._replace(v=_kwrap(math.trunc(v), t.bits, t.signed))
+
+
+def _int_lit_type(node: "cast.IntLit", abi) -> CType:
+    """An integer or character constant's type (6.4.4.1, 6.4.4.4) at the target `abi`: the one the parser gave it, which
+    reads the target's `long` (`int_literal_type`, CF-ENUMFOLD) -- a value past a 32-bit `long` is already the next
+    type of its list there (the twin's `lit_int_type`)."""
+    return scalar(node.ctype, abi) if is_scalar_name(node.ctype) else scalar("int", abi)
+
+
+def _switch_promoted(ct: "CType | None") -> "tuple[int, bool]":
+    """The promoted type of a `switch`'s controlling expression (C11 6.8.4.2p5), as (bits, signed): a `_Bool` or a type
+    narrower than `int` an `int`, a `_BitInt(N)` itself (C23 promotes none), any other integer type itself (the twin's
+    `switch_promoted`)."""
+    if ct is None or ct.kind != "scalar":
+        return 32, True
+    if ct.is_bitint:
+        return ct.bit_width, ct.signed
+    if ct.name in ("_Bool", "bool") or ct.size < 4:
+        return 32, True
+    return ct.size * 8, ct.signed
 
 
 def _arith_class(ct: CType) -> int:
@@ -2539,9 +2696,15 @@ class _FuncLowerer:
             n = _str_bytes(node.value) + 1  # decoded code units + the NUL
             return array(scalar(_LIT_ELEM[prefix], self.abi), n)
         if isinstance(node, cast.Binary):
-            return self._bin_result_type_ct(
-                node.op, self._operand_type(node.lhs), self._operand_type(node.rhs)
-            )
+            # along its chain of left operands (CF-CONSTEXPR2: no recursion per term)
+            spine = []
+            while isinstance(node, cast.Binary):
+                spine.append(node)
+                node = node.lhs
+            t = self._operand_type(node)
+            for node in reversed(spine):
+                t = self._bin_result_type_ct(node.op, t, self._operand_type(node.rhs))
+            return t
         if isinstance(node, cast.Unary):
             if node.op == "*":  # deref -> the pointee / element type
                 if self._fn_valued(node.operand):  # `*fp` names the function, a pointer to it again
@@ -2721,8 +2884,16 @@ class _FuncLowerer:
             if node.op == ",":
                 # the comma operator yields its right operand's value, unpromoted (C11 6.5.17p2)
                 return self._sizeof_decay(unqualified(self._sizeof_object(node.rhs)))
-            lhs = self._sizeof_operand(node.lhs)
-            return self._bin_result_type_ct(node.op, lhs, self._sizeof_operand(node.rhs))
+            spine = []  # along its chain of left operands (CF-CONSTEXPR2: no recursion per term)
+            while isinstance(node, cast.Binary) and node.op != ",":
+                spine.append(node)
+                node = node.lhs
+            t = self._sizeof_operand(node)
+            for node in reversed(spine):
+                t = self._sizeof_decay(
+                    self._bin_result_type_ct(node.op, t, self._sizeof_operand(node.rhs))
+                )
+            return t
         if isinstance(node, cast.Ternary):
             a, b = self._sizeof_operand(node.then), self._sizeof_operand(node.els)
             if a.kind == "pointer" or b.kind == "pointer":
@@ -2802,13 +2973,98 @@ class _FuncLowerer:
         raise CLowerError("no _Generic association matches the controlling expression's type")
 
     def _lit_type(self, node: "cast.IntLit") -> CType:
-        """An integer constant's type (§6.4.4.1) at this target. The parser picks the candidate for the LP64
-        model, whose `long` holds 64 bits; where it holds 32 (LLP64, ILP32) a value past it is a `long long`
-        -- unsigned for an unsigned candidate -- the next type C's list gives. The twin's `lit_int_type`."""
-        ct = scalar(node.ctype, self.abi) if is_scalar_name(node.ctype) else scalar("int", self.abi)
-        if ct.name in ("long", "unsigned long") and not _kfits(node.value, ct.size * 8, ct.signed):
-            return scalar("long long" if ct.signed else "unsigned long long", self.abi)
-        return ct
+        """An integer constant's type (§6.4.4.1) at this target, as the parser read it (`_int_lit_type`). The twin's
+        `lit_int_type`."""
+        return _int_lit_type(node, self.abi)
+
+    def _binary_chain(self, node) -> int:
+        """The value of a binary expression -- the comma, `&&`/`||`, or an arithmetic, bitwise, shift or comparison
+        operator -- lowered along its chain of left operands without recursing down them, each operator's right
+        operand after its left, as C sequences the comma and the logical operators (6.5.17p2, 6.5.13p4) and as
+        both rails emit the others: a left-associative chain of 3000 terms (`1 + 1 + ...`) had raised
+        RecursionError (CF-CONSTEXPR2). Returns `_VOID_RID` where a comma yields a void right operand."""
+        spine = []
+        while isinstance(node, cast.Binary):
+            spine.append(node)
+            node = node.lhs
+        a = self._rvalue_void(node) if spine[-1].op == "," else self._rvalue(node)
+        for node in reversed(spine):
+            a = self._binary_step(node, a)
+        return a
+
+    def _binary_step(self, node, a: int) -> int:
+        """One operator of `_binary_chain`: `node`, its left operand already lowered to `a`."""
+        if node.op == ",":
+            # the comma operator: the left operand was evaluated for its side effects and is discarded; it yields
+            # the right one
+            return self._rvalue_void(node.rhs)
+        if a == _VOID_RID:  # any other operator reads its left operand's value
+            raise CLowerError(VOID_VALUE)
+        if node.op in ("&&", "||"):
+            # The right operand is evaluated only when the left does not decide the result (C11 6.5.13p4,
+            # 6.5.14p4). One that can neither trap nor change state is computed eagerly (`c.bin.land` /
+            # `c.bin.lor` over both values); any other lowers as a branch (CF-TERNARY: `p && *p` read
+            # through NULL, `n && m / n` divided by zero). The arm that evaluates it computes the same op --
+            # there the left operand is known, so it is the right one's truth -- and the arm the left
+            # operand decides stores its constant.
+            blk_b, b = self._lower_apart(node.rhs)
+            opcode, suf = _BIN[node.op]
+            rt = self._bin_result_type(node.op, a, b)
+            if _operand_pure(blk_b, self._declared_rids()):
+                self.block_stack[-1].extend(blk_b)
+                t = self._temp(rt, f"b_{suf}")
+                return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
+            decided: list = []
+            if node.op == "&&":
+                sel, node_if = self._branch_value(a, rt, blk_b, decided)
+            else:
+                sel, node_if = self._branch_value(a, rt, decided, blk_b)
+            k = self._temp(rt, "c")
+            self.block_stack.append(decided)
+            try:
+                self._emit("c.const", Opcode.LOAD, (), (k,), imm=(0 if node.op == "&&" else 1,))
+            finally:
+                self.block_stack.pop()
+            self._assign_in(decided, k, sel)
+            t = self._temp(rt, f"b_{suf}")
+            self.block_stack.append(blk_b)
+            try:
+                self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
+            finally:
+                self.block_stack.pop()
+            self._assign_in(blk_b, t, sel)
+            self.block_stack[-1].append(node_if)
+            return sel
+        # an arithmetic, bitwise, shift or comparison operator
+        b = self._rvalue(node.rhs)
+        if node.op in ("==", "!="):
+            # a null pointer constant compared with a pointer converts to that pointer (C11 6.5.9p5): its
+            # temp is the pointer, where an `int` temp compared with it was a constraint violation (6.5.9p2)
+            # Clang and GCC only warn about. Only the temp's C type moves (CF-NULLCALL).
+            ta, tb = self.rtypes.get(a), self.rtypes.get(b)
+            # a designator's whole function type: `f != 0` makes the 0 a pointer to f's type, not to a
+            # function of no parameters (CF-EXTDESIG; the twin's `null_compared`)
+            if a in self.func_globals:
+                ta = self._fn_type(a) or ta
+            if b in self.func_globals:
+                tb = self._fn_type(b) or tb
+            # an array compared with 0 is the pointer it decays to, so the 0 is a null pointer too: typed `void
+            # *`, which any object pointer compares with (6.5.9p2) whatever the array's rank -- an `int` temp was
+            # an emit neither compiler takes (CF-STRUCTCOND; the twin's `null_compared`)
+            ta, tb = (
+                pointer(scalar("void"), self.abi) if t is not None and t.kind == "array" else t
+                for t in (ta, tb)
+            )
+            if ta is not None:
+                self._null_pointer(b, ta)
+            if tb is not None:
+                self._null_pointer(a, tb)
+        opcode, suf = _BIN[node.op]
+        # float arithmetic propagates the (wider) float type; comparisons/bitwise stay int. The
+        # actual IEEE-754 math is delegated to the emitted C / resident backend (never computed here).
+        rt = self._bin_result_type(node.op, a, b)
+        t = self._temp(rt, f"b_{suf}")
+        return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
 
     def _rvalue(self, node) -> int:
         """The value of `node`, which has one: a void expression's is refused (`VOID_VALUE`)."""
@@ -2862,80 +3118,13 @@ class _FuncLowerer:
             return rid
         if isinstance(node, cast.StringLit):  # a string value -> the global pointer
             return self._string_ptr(node.value)
-        if isinstance(node, cast.Binary) and node.op == ",":
-            self._rvalue_void(node.lhs)  # the comma operator: evaluate the left operand for
-            return self._rvalue_void(node.rhs)  # its side effects, discard it, yield the right one
+        if isinstance(node, cast.Binary):
+            return self._binary_chain(node)
         if isinstance(node, cast.IncDec):
             return self._incdec_value(node)
         if isinstance(node, cast.LabelAddr):  # `&&L` -- a label's address as a `void *` value (GNU)
             t = self._temp(pointer(scalar("void")), f"labeladdr_{node.label}")
             return self._emit(f"c.labeladdr:{node.label}", Opcode.LOAD, (), (t,))
-        if isinstance(node, cast.Binary) and node.op in ("&&", "||"):
-            # The right operand is evaluated only when the left does not decide the result (C11 6.5.13p4,
-            # 6.5.14p4). One that can neither trap nor change state is computed eagerly (`c.bin.land` /
-            # `c.bin.lor` over both values); any other lowers as a branch (CF-TERNARY: `p && *p` read
-            # through NULL, `n && m / n` divided by zero). The arm that evaluates it computes the same op --
-            # there the left operand is known, so it is the right one's truth -- and the arm the left
-            # operand decides stores its constant.
-            a = self._rvalue(node.lhs)
-            blk_b, b = self._lower_apart(node.rhs)
-            opcode, suf = _BIN[node.op]
-            rt = self._bin_result_type(node.op, a, b)
-            if _operand_pure(blk_b, self._declared_rids()):
-                self.block_stack[-1].extend(blk_b)
-                t = self._temp(rt, f"b_{suf}")
-                return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
-            decided: list = []
-            if node.op == "&&":
-                sel, node_if = self._branch_value(a, rt, blk_b, decided)
-            else:
-                sel, node_if = self._branch_value(a, rt, decided, blk_b)
-            k = self._temp(rt, "c")
-            self.block_stack.append(decided)
-            try:
-                self._emit("c.const", Opcode.LOAD, (), (k,), imm=(0 if node.op == "&&" else 1,))
-            finally:
-                self.block_stack.pop()
-            self._assign_in(decided, k, sel)
-            t = self._temp(rt, f"b_{suf}")
-            self.block_stack.append(blk_b)
-            try:
-                self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
-            finally:
-                self.block_stack.pop()
-            self._assign_in(blk_b, t, sel)
-            self.block_stack[-1].append(node_if)
-            return sel
-        if isinstance(node, cast.Binary):
-            a, b = self._rvalue(node.lhs), self._rvalue(node.rhs)
-            if node.op in ("==", "!="):
-                # a null pointer constant compared with a pointer converts to that pointer (C11 6.5.9p5): its
-                # temp is the pointer, where an `int` temp compared with it was a constraint violation (6.5.9p2)
-                # Clang and GCC only warn about. Only the temp's C type moves (CF-NULLCALL).
-                ta, tb = self.rtypes.get(a), self.rtypes.get(b)
-                # a designator's whole function type: `f != 0` makes the 0 a pointer to f's type, not to a
-                # function of no parameters (CF-EXTDESIG; the twin's `null_compared`)
-                if a in self.func_globals:
-                    ta = self._fn_type(a) or ta
-                if b in self.func_globals:
-                    tb = self._fn_type(b) or tb
-                # an array compared with 0 is the pointer it decays to, so the 0 is a null pointer too: typed `void
-                # *`, which any object pointer compares with (6.5.9p2) whatever the array's rank -- an `int` temp was
-                # an emit neither compiler takes (CF-STRUCTCOND; the twin's `null_compared`)
-                ta, tb = (
-                    pointer(scalar("void"), self.abi) if t is not None and t.kind == "array" else t
-                    for t in (ta, tb)
-                )
-                if ta is not None:
-                    self._null_pointer(b, ta)
-                if tb is not None:
-                    self._null_pointer(a, tb)
-            opcode, suf = _BIN[node.op]
-            # float arithmetic propagates the (wider) float type; comparisons/bitwise stay int. The
-            # actual IEEE-754 math is delegated to the emitted C / resident backend (never computed here).
-            rt = self._bin_result_type(node.op, a, b)
-            t = self._temp(rt, f"b_{suf}")
-            return self._emit(f"c.bin.{suf}", opcode, (a, b), (t,))
         if isinstance(node, cast.Unary):
             if node.op in ("__real__", "__imag__"):  # GNU complex part -> the real element float
                 v = self._rvalue(node.operand)
@@ -5145,12 +5334,21 @@ class _FuncLowerer:
             )
         elif isinstance(st, cast.Switch):
             disc = self._switch_value(st.disc)  # the discriminant, lowered once
+            bits, signed = _switch_promoted(self.rtypes.get(disc))
+            seen, has_default = set(), False
             block: list = []
             self.block_stack.append(block)
             for item in st.body:
                 if isinstance(item, cast.Case):
+                    converted = _kwrap(item.value, bits, signed)  # in the promoted controlling type
+                    if converted in seen:
+                        raise CLowerError(DUP_CASE)
+                    seen.add(converted)
                     block.append(CaseLabel(item.value))
                 elif isinstance(item, cast.Default):
+                    if has_default:
+                        raise CLowerError(DUP_DEFAULT)
+                    has_default = True
                     block.append(DefaultLabel())
                 else:
                     self._stmt(item)  # body stmts (break preserved as BreakNode)
@@ -5373,18 +5571,21 @@ def _region_for(lf: LoweredFunc, functions: dict) -> compose.Region:
     return _block_region(lf.body, functions, list(lf.calls))
 
 
-def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
-    """Lower a whole translation unit. Aggregates are laid out first (Clang-compatible for the target
-    data model `abi`, defaulting to the host), then each function to its claim-graph Module +
-    compose.Function."""
-    abi = abi or HOST
+def layout_aggregates(defs: dict, abi) -> "dict[str, CType]":
+    """Each aggregate definition of `defs` (tag -> `cast.Aggregate`, in definition order) laid out on the target `abi`
+    (Clang-compatible: `AggregateBuilder`) -- the unit's, and the parser's where an integer constant expression folds a
+    `sizeof` or `_Alignof` of a type-name (CF-CONSTEXPR2)."""
     aggregates: dict[str, CType] = {}
-    for tag, agg in unit.aggregates.items():
+    for tag, agg in defs.items():
         b = AggregateBuilder(agg.kind, tag, packed=agg.packed, force_align=agg.align)
         for tref, mname, width, malign in agg.members:
             mt = _resolve_member_type(tref, aggregates, abi)
             if mt.atomic and width:  # GCC and Clang reject it (C leaves it implementation-defined)
                 raise CLowerError("a bit-field of `_Atomic` type is not supported")
+            # no wider than its type (6.7.2.1p4; CF-CONSTEXPR2)
+            if width and mt.kind == "scalar" and not mt.is_bitint:
+                if width > (1 if mt.name in ("_Bool", "bool") else mt.size * 8):
+                    raise CLowerError(BF_WIDTH)
             if mt.is_bitint and width:  # a `_BitInt(N)` BITFIELD `_BitInt(N) m : W` is now
                 # first-class: it packs into the `_BitInt(N)` STORAGE UNIT (its `mt.size` = 1/2/4/8 bytes,
                 # the Clang slot) with the same LSB-first packing as a standard-int bitfield of that storage
@@ -5402,6 +5603,15 @@ def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
             # storage width typed `_BitInt(N)`, and the emit prints the faithful spelling.
             b.members.append((mname, mt, width, malign))
         aggregates[tag] = b.build()
+    return aggregates
+
+
+def lower_unit(unit: cast.Unit, abi=None) -> LoweredUnit:
+    """Lower a whole translation unit. Aggregates are laid out first (Clang-compatible for the target
+    data model `abi`, defaulting to the host), then each function to its claim-graph Module +
+    compose.Function."""
+    abi = abi or HOST
+    aggregates = layout_aggregates(unit.aggregates, abi)
 
     # pre-scan every function's return type (forward references resolve too), so a call can be typed
     # by its callee: a void call emits a bare statement, a wide/float return keeps its real type.

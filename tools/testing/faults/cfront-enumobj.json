@@ -102,10 +102,10 @@
       "path": "runtime/c/bcir_cfront.c"
     },
     {
-      "expects": "test_enum_objects_take_their_compatible_type_on_both_rails",
+      "expects": "test_an_incomplete_enum_type_is_refused_and_enum_forms_lowered_alike",
       "label": "ET6 the twin reads a tag as an enumerator (an object named as a tag folds to its record)",
-      "new": "  for(int i=0;i<c->nec;i++) if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
-      "old": "  for(int i=0;i<c->nec;i++) if(!c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
+      "new": "    if((int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
+      "old": "    if(!c->ec[i].tag&&(int)strlen(c->ec[i].name)==n&&!strncmp(c->ec[i].name,s,n)) return i;",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
