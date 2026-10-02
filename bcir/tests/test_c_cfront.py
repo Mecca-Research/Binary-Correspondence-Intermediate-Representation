@@ -14163,6 +14163,13 @@ _PPARITH_FORMS = (
 # are of type int and therefore signed"); Clang reads it by `char`'s signedness, as a single one. Both rails read
 # Clang's, so GCC judges these only with a signed `char`.
 _PPARITH_GCC_APART = frozenset({"'\\xff\\xff\\xff\\xff' < 0"})
+# the cfront target each machine host GCC preprocesses for is (`platform.machine()`)
+_PPARITH_HOSTS = {
+    "x86_64": "x86_64-linux",
+    "amd64": "x86_64-linux",
+    "aarch64": "aarch64-linux",
+    "arm64": "aarch64-linux",
+}
 _PPARITH_MALFORMED = "malformed #if expression"
 _PPARITH_OVERFLOW = "integer overflow in #if expression"
 _PPARITH_SHIFT = "invalid shift in #if expression"
@@ -14234,16 +14241,19 @@ def _pparith_branch(text: str) -> str:
 
 def test_if_expressions_take_the_branch_clang_takes_on_each_target():
     """CF-PPARITH: each `_PPARITH_FORMS` expression, preprocessed by both rails for each of the four targets, keeps the
-    branch Clang keeps for that target (`clang -target T -std=c2x -E`) -- and GCC on the host, for the System V rule
-    with a signed `char` (`-fsigned-char`) and, where no wide constant is read, with an unsigned one
-    (`-funsigned-char`, AArch64's)."""
+    branch Clang keeps for that target (`clang -target T -std=c2x -E`) -- and GCC on the host, for the host's own ABI
+    with a signed `char` (`-fsigned-char`) and with an unsigned one (`-funsigned-char`)."""
     if not _CC:
         return
+    import dataclasses
+    import platform
+
     from bcir.frontends.cfront import abi as abi_mod
     from bcir.frontends.cfront.cpp import preprocess
 
     clang = shutil.which("clang")
     gcc = shutil.which("gcc")
+    host = _PPARITH_HOSTS.get(platform.machine().lower())  # the machine host GCC preprocesses for
     exe = _build_frontend(_session_build_dir())
     judged = 0
     with tempfile.TemporaryDirectory() as d:
@@ -14271,20 +14281,22 @@ def test_if_expressions_take_the_branch_clang_takes_on_each_target():
                         f"#if {expr} on {t}: not Clang's branch"
                     )
                     judged += 1
-            if gcc:
-                for t, flag in (
-                    ("x86_64-linux", "-fsigned-char"),
-                    ("aarch64-linux", "-funsigned-char"),
-                ):
-                    if t == "aarch64-linux" and ("L'" in expr or expr in _PPARITH_GCC_APART):
-                        continue  # the host's `wchar_t` is not AArch64's; GCC's own reading
+            if gcc and host:
+                # GCC preprocesses for the machine it runs on: its own `wchar_t`, and the `char` a flag gives it --
+                # held to the oracle for that machine's ABI with that `char` (on an AArch64 runner the x86-64 ABI's
+                # signed `wchar_t` is not GCC's, CF-PPARITH.1)
+                for flag in ("-fsigned-char", "-funsigned-char"):
+                    signed = flag == "-fsigned-char"
+                    if not signed and expr in _PPARITH_GCC_APART:
+                        continue  # GCC's own reading of a multi-character constant
                     ref = subprocess.run(
                         [gcc, flag, "-std=c2x", "-E", "-P", path], capture_output=True, text=True
                     )
                     assert ref.returncode == 0, (expr, flag, ref.stderr)
-                    want = _pparith_branch(preprocess(unit, abi=abi_mod.target(t)))
+                    habi = dataclasses.replace(abi_mod.target(host), char_signed=signed)
+                    want = _pparith_branch(preprocess(unit, abi=habi))
                     assert _pparith_branch(ref.stdout) == want, (
-                        f"#if {expr} {flag}: not GCC's branch"
+                        f"#if {expr} {flag} on {host}: not GCC's branch"
                     )
     assert judged or not clang
 

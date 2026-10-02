@@ -3215,7 +3215,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     two drivers. A prefixed character constant is one token on both rails, a word that may be a prefix is kept apart
     from a constant after it, and the twin's numbers keep C23's separators, as the oracle's did.
   - Outcomes: every form of `_PPARITH_FORMS` keeps Clang's branch on the four targets on both rails, and GCC's on the
-    host with either `char` (but the multi-character form, and the wide ones with an unsigned `char`); the 37 forms
+    host for the host's own ABI with either `char` (but the multi-character form with an unsigned one); the 37 forms
     of `_PPARITH_REFUSED` are refused on both rails in the same words on every target, and a nesting one short of the
     bound and a token count at it are read; the 9 units of `_PPARITH_RUN_EXPRS` and `_PPARITH_RUN_ELIF`, lowered by
     both rails for x86-64 and for AArch64 Linux to one claim graph, each return what the original does, built with
@@ -3232,6 +3232,12 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   Found, not fixed here: the twin's `#` stringize copies a string-literal or character-constant argument as it is,
   where C escapes its `"` and `\` (the oracle does): `S("q")` is `""q""` on the twin; and a prefixed string literal is
   still two tokens on both rails, so a macro named `L` expands the prefix of `L"ab"`.
+  CF-PPARITH.1 (2026-10-02): on `de096434` the native AArch64 oracle job failed one test the x86-64 jobs passed,
+  `test_if_expressions_take_the_branch_clang_takes_on_each_target`. The rails were right; the test held the host's
+  GCC, which preprocesses for the machine it runs on, to the x86-64 ABI whenever it passed `-fsigned-char` -- and
+  AArch64's `wchar_t` is `unsigned int`, so `L'a' - 98 < 0` is false there. The GCC comparison now takes the host's
+  own ABI (`platform.machine()`) with the `char` each flag gives it, which also holds the wide forms under
+  `-funsigned-char` on x86-64, where the test had skipped them.
 
 ---
 
