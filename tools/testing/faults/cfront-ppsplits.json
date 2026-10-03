@@ -9,7 +9,8 @@
     "bcir.tests.test_c_cfront:test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
     "bcir.tests.test_c_cfront:test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails",
     "bcir.tests.test_c_cfront:test_a_stray_character_outside_a_literal_is_refused_alike_on_both_rails",
-    "bcir.tests.test_c_cfront:test_a_line_ends_at_a_new_line_alone_on_both_rails"
+    "bcir.tests.test_c_cfront:test_a_line_ends_at_a_new_line_alone_on_both_rails",
+    "bcir.tests.test_c_runtime:test_c_the_frontend_reads_c_white_space_at_its_own_entry"
   ],
   "faults": [
     {
@@ -20,8 +21,8 @@
       "new": "static int pp_space(int ch) { return ch == ' ' || ch == '\\t' || ch == '\\r'; }\n"
     },
     {
-      "expects": "test_form_feed_and_vertical_tab_are_white_space_on_both_rails",
-      "label": "PS2 the twin's lexer reads a form feed in code as a token's start: `return x\\v + 1u` is `expected expression`",
+      "expects": "test_c_the_frontend_reads_c_white_space_at_its_own_entry",
+      "label": "PS2 the twin's lexer reads a form feed in code as a token's start, as it did: at the frontend's own entry, past the preprocessor's single spaces, `return x\\v + 1u` is `unexpected character`",
       "path": "runtime/c/bcir_cfront.c",
       "old": "    if (*p==' '||*p=='\\t'||*p=='\\r'||*p=='\\n'||*p=='\\f'||*p=='\\v'){p++;continue;}   /* C's white space (6.4p3) */\n",
       "new": "    if (*p==' '||*p=='\\t'||*p=='\\r'||*p=='\\n'){p++;continue;}   /* C's white space (6.4p3) */\n"

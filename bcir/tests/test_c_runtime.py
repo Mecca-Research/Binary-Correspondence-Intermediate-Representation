@@ -657,6 +657,59 @@ int main(void){
         assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
 
 
+def test_c_the_frontend_reads_c_white_space_at_its_own_entry():
+    """CF-PPSPLITS: the twin's lexer skips a form feed and a vertical tab (C 6.4p3) where it skipped a space, a
+    tab, a carriage return and a new-line alone, so `\f` in code started a token. The preprocessor spells its
+    output with single spaces, so a unit that goes through it never shows the lexer either character;
+    `bcir_cfront_compile` takes preprocessed text and is the entry a caller of the frontend alone uses, so the
+    lexer's rule is witnessed there: a unit with both characters in code lowers to one function, and one with a
+    character no token starts with is refused in the oracle's words (fault PS2 of `cfront-ppsplits.json`)."""
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r"""
+#include <string.h>
+#include "bcir_cfront.h"
+int main(void){
+  bcir_cfront_result r;
+  int rc = bcir_cfront_compile("uint32_t f(uint32_t x) {\f return x\v + 1u; }\n", &r);
+  int lowered = rc == 0 && r.ok && r.unit.n_funcs == 1;
+  bcir_cfront_free(&r);
+  if(!lowered) return 1;
+  rc = bcir_cfront_compile("uint32_t f(uint32_t x) { return x @ 1u; }\n", &r);
+  int refused = rc != 0 && !strcmp(r.diag, "unexpected character '@'");
+  bcir_cfront_free(&r);
+  return refused ? 0 : 2;
+}
+"""
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "white_space.c")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        exe = os.path.join(d, "white_space")
+        build = subprocess.run(
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_cfront.c"),
+                os.path.join(_C_DIR, "bcir_cpp.c"),
+                os.path.join(_C_DIR, "bcir_verify.c"),
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+
+
 def test_c_lifetime_verifier_reads_back_to_the_last_event_on_a_rid():
     """CF-NAMECACHE: R21 decides a read by the last event on its rid -- a `free` that reads it marks it freed, a
     write re-validates it, and a claim that frees and writes it writes last -- read backwards to that event, where

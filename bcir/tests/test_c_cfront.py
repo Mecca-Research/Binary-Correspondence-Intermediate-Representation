@@ -9289,6 +9289,13 @@ def test_form_feed_and_vertical_tab_are_white_space_on_both_rails():
     )
     summary = _lowers_alike(exe, src)
     assert "funcs=2" in summary, summary
+    # each preprocessor spells its output with single spaces, so the lexers are witnessed at their own entries: the
+    # oracle's here, the twin's through `bcir_cfront_compile` (`test_c_the_frontend_reads_c_white_space_at_its_own_entry`)
+    from bcir.frontends.cfront.clex import tokenize
+
+    assert [(t.kind, t.text) for t in tokenize("x\f+\v1u\f")] == [
+        (t.kind, t.text) for t in tokenize("x + 1u")
+    ]
     # the white space between a directive's `#` and its name, and after the name: the oracle read a space and a tab
     # there (`_DIRECTIVE_SPACE`), so `#\finclude <stdint.h>` was a null directive with its header unread and
     # `#include\f<stdint.h>` named no header

@@ -3703,39 +3703,42 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   new-line, a vertical tab and a form feed (6.4p3): the twin's preprocessor and lexer read a space and a tab alone, so
   `\f` in code was an expression's end and `\f#define` no directive, where the oracle lowered both -- one predicate
   now (`pp_space`, at the twelve sites that spelled the pair), the lexer skipping both, and the oracle's lexer widened
-  to its preprocessor's set. `#error text` is the compile's failure (6.10.5), its text macro-expanded, and a
-  non-directive's execution is undefined (6.10p9): the twin ignored `#error`, `#warning`, `#pragma` and every unknown
-  directive alike and lowered on; it refuses `#error` and an unknown directive in the oracle's words now (the oracle's
-  reasons no longer name the file, which the driver's line does), and `#warning`, `#pragma` and the null directive
-  lower on both. The twin held a logical line to 8 190 bytes, a macro's replacement to 1 023 and an invocation to 16
-  arguments; the oracle held none, and neither held a function-like macro to as many arguments as parameters
-  (6.10.3p4): the twin took `M(x, 1u, 2u)` for `M(a, b)` and the oracle that and seventeen arguments for sixteen
-  parameters. The oracle holds the twin's three bounds now (`_MAX_LINE`, `_MAX_BODY`, `_MAX_ARGS`, in the twin's
-  words) and both hold the arity (`_check_arity`, the twin's check after its invocation reader): more arguments than
-  parameters `too many macro arguments`, fewer `too few macro arguments`, a variadic macro's `...` free to be empty,
-  `M()` of a macro of no parameters passing none. `#line` takes a decimal digit sequence (6.10.4p3) in 1..2147483647:
-  `#line 12abc` read 12 on the oracle and was `out of range` on the twin, `#line abc` was ignored on both; both refuse
-  `#line number is not a decimal digit sequence` and `out of range` now. And no C token starts with `@`, `$`, a
-  backquote or a stray `\\`: the twin's lexer made each a one-character punctuator for the parser to stumble on
-  (`parse error: ;`); it refuses them where the oracle does, `unexpected character '@'`, spelled as Python's repr
-  spells the character. Witnesses: five dual-rail tests, each unit lowering digest-equal on both rails or refused by
-  both in one sentence -- the last byte within each bound lowers, the first past it is refused. A probe of the same
-  family then found the line itself split. The oracle ended a logical line where `str.splitlines` does -- at a form
-  feed, a `\x1c`, a NEL, a U+2028 -- so `return x\x1c + 1u;` lowered there with the character gone and was `unexpected
-  character` on the twin, a NEL in code vanished before the reader that refuses a character past ASCII saw it, and
-  `}\f#define K 1u` was a directive on the oracle and text on the twin; the oracle read a space and a tab alone
-  between a `#` and its name (`_DIRECTIVE_SPACE`), so `#\finclude <stdint.h>` was a null directive with its header
-  unread; and the twin read a CRLF file's `\r` into the line, so `#if K == 5u\r` was `malformed` there and a `\\\r\n`
-  splice none, where the oracle lowered. One rule on each rail now: a CRLF end of line is a new-line (translation
-  phase 1 -- mapped before the splice on the oracle, read as one by the twin's line reader), a line ends at a new-line
-  alone, `_DIRECTIVE_SPACE` is `pp_space`'s set, and a lone carriage return is white space on both (`pp_space`, the
-  oracle's `_ASCII_SPACE`). A CRLF unit lowers to its LF twin's digest, the twin's longest line included; `\x1c` and
-  `\x1e` in code are `unexpected character` alike and a NEL or a U+2028 `NONASCII` alike
-  (`test_a_line_ends_at_a_new_line_alone_on_both_rails`; faults PS13-PS18). Found, not fixed: the parsers' reasons for
-  an empty parenthesis differ -- `M(x, )` for `M(a, b)` is `unexpected PUNCT ')'` on the oracle and `expected
-  expression` on the twin, both refusing -- as do the two for a lone `\r` between two directives on one line. Faults:
-  `tools/testing/faults/cfront-ppsplits.json`, 18 -- 10 on the twin, 8 on the oracle; `cfront-pplimits.json`'s PO9,
-  anchored in the oracle's old `#line` read, re-anchored onto the digit check.
+  to its preprocessor's set. Each preprocessor spells its output with single spaces, so a unit that goes through one
+  never shows its lexer either character: the lexers are witnessed at their own entries, the twin's through
+  `bcir_cfront_compile`, which takes preprocessed text (`test_c_the_frontend_reads_c_white_space_at_its_own_entry`;
+  the first ppsplits sweep found PS2 uncatchable through the driver), the oracle's through `tokenize`. `#error text`
+  is the compile's failure (6.10.5), its text macro-expanded, and a non-directive's execution is undefined (6.10p9):
+  the twin ignored `#error`, `#warning`, `#pragma` and every unknown directive alike and lowered on; it refuses
+  `#error` and an unknown directive in the oracle's words now (the oracle's reasons no longer name the file, which the
+  driver's line does), and `#warning`, `#pragma` and the null directive lower on both. The twin held a logical line to
+  8 190 bytes, a macro's replacement to 1 023 and an invocation to 16 arguments; the oracle held none, and neither
+  held a function-like macro to as many arguments as parameters (6.10.3p4): the twin took `M(x, 1u, 2u)` for `M(a, b)`
+  and the oracle that and seventeen arguments for sixteen parameters. The oracle holds the twin's three bounds now
+  (`_MAX_LINE`, `_MAX_BODY`, `_MAX_ARGS`, in the twin's words) and both hold the arity (`_check_arity`, the twin's
+  check after its invocation reader): more arguments than parameters `too many macro arguments`, fewer `too few macro
+  arguments`, a variadic macro's `...` free to be empty, `M()` of a macro of no parameters passing none. `#line` takes
+  a decimal digit sequence (6.10.4p3) in 1..2147483647: `#line 12abc` read 12 on the oracle and was `out of range` on
+  the twin, `#line abc` was ignored on both; both refuse `#line number is not a decimal digit sequence` and `out of
+  range` now. And no C token starts with `@`, `$`, a backquote or a stray `\\`: the twin's lexer made each a
+  one-character punctuator for the parser to stumble on (`parse error: ;`); it refuses them where the oracle does,
+  `unexpected character '@'`, spelled as Python's repr spells the character. Witnesses: five dual-rail tests, each
+  unit lowering digest-equal on both rails or refused by both in one sentence -- the last byte within each bound
+  lowers, the first past it is refused. A probe of the same family then found the line itself split. The oracle ended
+  a logical line where `str.splitlines` does -- at a form feed, a `\x1c`, a NEL, a U+2028 -- so `return x\x1c + 1u;`
+  lowered there with the character gone and was `unexpected character` on the twin, a NEL in code vanished before the
+  reader that refuses a character past ASCII saw it, and `}\f#define K 1u` was a directive on the oracle and text on
+  the twin; the oracle read a space and a tab alone between a `#` and its name (`_DIRECTIVE_SPACE`), so `#\finclude
+  <stdint.h>` was a null directive with its header unread; and the twin read a CRLF file's `\r` into the line, so `#if
+  K == 5u\r` was `malformed` there and a `\\\r\n` splice none, where the oracle lowered. One rule on each rail now: a
+  CRLF end of line is a new-line (translation phase 1 -- mapped before the splice on the oracle, read as one by the
+  twin's line reader), a line ends at a new-line alone, `_DIRECTIVE_SPACE` is `pp_space`'s set, and a lone carriage
+  return is white space on both (`pp_space`, the oracle's `_ASCII_SPACE`). A CRLF unit lowers to its LF twin's digest,
+  the twin's longest line included; `\x1c` and `\x1e` in code are `unexpected character` alike and a NEL or a U+2028
+  `NONASCII` alike (`test_a_line_ends_at_a_new_line_alone_on_both_rails`; faults PS13-PS18). Found, not fixed: the
+  parsers' reasons for an empty parenthesis differ -- `M(x, )` for `M(a, b)` is `unexpected PUNCT ')'` on the oracle
+  and `expected expression` on the twin, both refusing -- as do the two for a lone `\r` between two directives on one
+  line. Faults: `tools/testing/faults/cfront-ppsplits.json`, 18 -- 10 on the twin, 8 on the oracle;
+  `cfront-pplimits.json`'s PO9, anchored in the oracle's old `#line` read, re-anchored onto the digit check.
 
 ---
 
