@@ -3596,6 +3596,152 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   literal the record holds. Swept again on the change: `cfront-values.json` 32 of 32, `cfront-calls.json` 45 of 45,
   `cfront-globals.json` 37 of 37, `cfront-fptab.json` 35 of 35.
 
+  CF-NAMECACHE / CF-CANONFAST (2026-10-03) closed the first found-not-fixed item above -- the twin's lookups linear in
+  a function's size -- and the two regressions an A/B measurement of #786 against #797 found, both from the slices
+  above: the twin's compile of a run of statements on one local (chain@500 17 ms to 31 ms, chain@1800 96 ms to
+  290 ms; CPU, Clang `-O2`) and the oracle's digest of the fixture corpus (66 ms to 79 ms).
+  - What landed, twin: each function's emitted names are computed once before the unit is rendered
+    (`bcir_emit_names`; `names_build` in `emit_unit`): a name per resource index, the declared names in a hash set
+    (`declared_name`), and the ranking walks of `uniq_local_compute` tabulated (`names_rank`: each object's rank
+    among the objects of its source name counted by name in the walks' order, and `spelled_scan`'s two answers from a
+    table of the names `spelled_each` enumerates, with an entry for each prefix of a name that ends before an `_`).
+    One enumeration and one spelling decision (`uniq_local_rank`) serve the walks and the table, so the emit is the
+    walks' byte for byte. A resource is found by halving the rid-ordered `res` array (`res_index`: `add_res` gives
+    rids in order, a rollback drops them with their resources, nothing reorders them) in the lowering, the canon and
+    the emit; the verifier halves too, for a function whose rids increase (`rids_increasing`, read once per
+    function), and walks any other, since it reads caller-owned memory it did not lay out. The canon's writer of a
+    rid is a hash (`wslot`), and R1.1 sorts the unit's claim ids (`claim_ids_unique`: a heap sort, a duplicate found
+    by halving) where it compared every pair, and R21's lifetime walk reads back from a use to the last event on
+    its rid -- the `free` that reads it, the write that re-validates it, the write last when one claim does both --
+    where it rescanned every prior claim for every read (4 800 updates of one local: 0.3 s of the driver's 0.35 s;
+    the first push's scaling witness missed its bound on a CI runner by this). A failed allocation of the name
+    table is the compile's `oom` failure,
+    never a slower success: the first draft fell back to the walks, and `cfront-pplimits.json`'s sweep, through the
+    memory-discipline harness, found a compile succeeding under an allocation that had failed.
+  - What landed, oracle: `_fnv1a64_from` folds four bytes a step (the low 64 bits of a product depend only on the
+    factors' low 64 bits, so one mask a step suffices); each op's prefix hash and each base spelling's number are
+    memoized in bounded tables (`_VN_PREFIX`, `_VN_BASE`, cleared past 4 096 entries), and a function's spellings in
+    a table of its own (`numbers`), kept apart between the first-writer and the last-writer pass, since a value past
+    the depth cap of 96 is `cyc` by the pass that reaches it.
+  - Outcomes (CPU time, the median of 7 runs under `prlimit`, Clang `-O2`; #786 / #797 / now): chain@500 17.9 /
+    31.2 / 12.2 ms; chain@1800 96.5 / 288.9 / 29.7 ms; locals@1800 6 373 / 811 / 47 ms; the oracle's digest of the
+    165-unit corpus (15 samples) 65.9 / 79.3 / 61.3 ms. The item's two cases: 8 000 chained locals (56 000 tokens)
+    32.9 s on #797 and 0.83 s now (the oracle 7.1 s), 6 400 statements on one local 7.0 s and 0.14 s (the
+    oracle 6.0 s), each digest-equal on both rails. Every fixture of the corpus and the scaling inputs -- 256 inputs on the
+    four targets, the summary and `--emit-c`, 2 048 runs -- give #797's twin's bytes, status and diagnostics, built
+    with Clang and with GCC alike; the oracle's digest of every corpus unit is unchanged.
+  - Found, not fixed here: the parser's scans are still linear per name -- `lookup` over the environment, `mut_body`
+    over the mutation table -- most of the 0.83 s 8 000 locals take; and a digest split independent of this slice:
+    a global written inside a block that also declares a local hiding a parameter (`uint32_t x_2 = 7u; uint32_t
+    f(uint32_t x, uint32_t y) { { uint32_t x = y * 3u; x_2 = x + 1u; } return x + x_2; }`) reads back as a fresh
+    input (`in`) on the twin where the oracle forwards the written value, both emits running as the original; with
+    a local in the global's place, or the write outside a block, the rails agree.
+  - Faults: `tools/testing/faults/cfront-namecache.json`, 11 -- 9 on the twin, 2 on the oracle -- each caught by
+    its own test: NC1 by the memory-discipline sweep, NC10 and NC11 (R21 reading a claim's `free` before its write,
+    R21 reading one claim back) by `test_c_lifetime_verifier_reads_back_to_the_last_event_on_a_rid`, NC8 and NC9 by
+    the ranking witness
+    (`test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails`), the twin's
+    linear emit by `test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_time` (4 800 updates
+    of one local against 600, the child's CPU time, the min of three runs, under 24 times; the first push measured
+    2 400 against 300 in wall time under 16, and a loaded CI runner read 16.4 and 28.6). `cfront-pplimits.json`'s PO17-PO19, anchored in
+    the lines the oracle's memo moved, were re-anchored, and `cfront-typedefscope.json`'s HT9 and HT11, anchored in
+    the walk `spelled_each` replaced, onto the enumeration; its HT10 and HT15 injected into the walks the emit no
+    longer takes -- a fault in a path nothing reads is caught by nothing -- and inject into the table's lookup now.
+    Swept on the change, each table whole, one worker in a clean worktree: `cfront-namecache.json` 11 of 11,
+    `cfront-pplimits.json` 43 of 43, `cfront-typedefscope.json` 30 of 30, `cfront-buf.json` 30 of 30.
+
+  CF-GBLOCK (2026-10-03) closed the digest split CF-NAMECACHE found and left: the twin bound a global's resource
+  with the block that first named it (`use_global` -> `env_add` at the block's depth) and dropped the binding with
+  the block, so the next reference -- `{ g = y; } return g;`, an `if` body, a loop body -- bound a second resource
+  for the same object; the canon read the written value back as an input (`in`) where the oracle, which holds one
+  resource per global per function (`gres`), forwards it, and the digest split. The emits named both resources `g`
+  and ran as the original, so no fixture's behaviour moved; the shape needs only a global first named inside a
+  block and named again after it (a block-scope local hiding a parameter, which the first report blamed, is
+  incidental). The twin now reuses the resource it gave the global (`global_res_of_name`: a read-only resource of
+  the global's name that is no function designator -- a resource a speculative lowering dropped is not there to
+  find, so the reuse survives every rollback), binding the name afresh for the block. Witness
+  `test_a_global_first_named_inside_a_block_is_one_resource_on_both_rails`: five units -- the block, the `if`, the
+  loop (`{ g = 0u; }` first, so the sum starts known), the global hidden by a block-scope `g`, the global named at
+  function scope first -- summary and digest the oracle's on the twin and the twin's emits run as the originals;
+  each unit assigns `g` on every path before reading it, since the equivalence harness's original and emit share
+  one `g`. RED on the parent: the block, `if` and loop units' digests leave the oracle's (`in` for the read, the
+  twin's claim graph two resources). Fault GB10 (`cfront-globals.json`): the reuse refused.
+
+  CF-CALLARGS (2026-10-03) closed CF-PPLIMITS's second found-not-fixed item: the twin's claim held six reads, so
+  `p_call` kept a call's first six arguments and dropped the rest, marking the claim `truncated` for the escape
+  analysis to refuse -- but the compile succeeded, `ok=1`, with a digest the oracle's no longer, and the emit passed
+  six arguments to a function of seven, which C refuses. Both rails now carry sixteen arguments and refuse a
+  seventeenth alike (`a call of more than 16 arguments is not supported`): the twin's `BCIR_CALL_MAX_ARGS` and the
+  oracle's `lower.MAX_CALL_ARGS`, one number, a claim's reads one more (`BCIR_CLAIM_MAX_RD`) for the callee value or
+  the object base an indirect or member call reads first. Every call form -- direct, through a pointer, through a
+  member, the atomic builtins -- reads its arguments through one parser (`p_call_args`), and the oracle's three sites
+  through one helper (`_call_args`); the `call_dropped` flag and the `truncated` marking are gone from the twin, since
+  nothing is dropped. A claim grew from 248 to 292 bytes. Witness
+  `test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails`: calls of seven and sixteen,
+  direct and through a function pointer, digest-equal on both rails and the twin's emits running as the originals;
+  seventeen refused alike. RED on the parent: the call of seven lowers with six on the twin, its digest the oracle's
+  no longer. Faults CL46 (the twin keeps six and drops the rest) and CL47 (the oracle lowers seventeen) in
+  `cfront-calls.json`. The number had two more mirrors on the oracle besides `lower.MAX_CALL_ARGS`: the freeze's
+  `CLAIM_MAX_RD` (`bcir/gem/handoff.py`), which refused a seventh read where the C rail now takes seventeen, and the
+  escape analysis's, still six; a test reads the three out of `bcir_cir.h`
+  (`test_a_claims_read_capacity_is_the_c_twins_on_every_rail`), and the freeze differential's `reads-longest` (17) and
+  `too-many-reads` (18) graphs cross the bound on both rails. The escape analysis's witness of the capacity moved to
+  the new boundary: a call of sixteen is analyzed, one of seventeen never lowers, and a claim widened past the
+  capacity by hand is refused as the truncation was. Faults CL48, CL49.
+
+  CF-CPPZERO (2026-10-03): the preprocessor's state (`CppState`, 2.3 MB of macro and line tables) was taken from the
+  allocator and `memset` to zero, so every compile touched 2.3 MB before reading a byte of source: a trivial unit
+  cost the twin 2.35 ms, of which that memset was a third and more. `bcir_host_allocate_zeroed` takes it zeroed --
+  libc's `calloc`, whose large allocation is fresh pages the kernel already zeroed and the compile mostly never
+  touches, or `allocate` then `memset` for an injected allocator, which promises nothing -- one allocation either
+  way, as the fault-injecting allocators count it (the memory-discipline sweep is unchanged). A trivial unit now
+  costs 1.30 ms. Witness `test_c_zeroed_allocation_is_zero_under_every_allocator_and_is_one_allocation`: an
+  allocator that fills what it hands out with 0xAA and counts its calls, libc's, a NULL passed through, an invalid
+  allocator refused. Fault B31 (`cfront-buf.json`): the injected allocator's memory handed back as it came.
+
+  CF-PPSPLITS (2026-10-03) closed the preprocessor splits CF-PPLIMITS left. C's white space is a space, a tab, a
+  new-line, a vertical tab and a form feed (6.4p3): the twin's preprocessor and lexer read a space and a tab alone, so
+  `\f` in code was an expression's end and `\f#define` no directive, where the oracle lowered both -- one predicate
+  now (`pp_space`, at the twelve sites that spelled the pair), the lexer skipping both, and the oracle's lexer widened
+  to its preprocessor's set. Each preprocessor spells its output with single spaces, so a unit that goes through one
+  never shows its lexer either character: the lexers are witnessed at their own entries, the twin's through
+  `bcir_cfront_compile`, which takes preprocessed text (`test_c_the_frontend_reads_c_white_space_at_its_own_entry`;
+  the first ppsplits sweep found PS2 uncatchable through the driver), the oracle's through `tokenize`. `#error text`
+  is the compile's failure (6.10.5), its text macro-expanded, and a non-directive's execution is undefined (6.10p9):
+  the twin ignored `#error`, `#warning`, `#pragma` and every unknown directive alike and lowered on; it refuses
+  `#error` and an unknown directive in the oracle's words now (the oracle's reasons no longer name the file, which the
+  driver's line does), and `#warning`, `#pragma` and the null directive lower on both. The twin held a logical line to
+  8 190 bytes, a macro's replacement to 1 023 and an invocation to 16 arguments; the oracle held none, and neither
+  held a function-like macro to as many arguments as parameters (6.10.3p4): the twin took `M(x, 1u, 2u)` for `M(a, b)`
+  and the oracle that and seventeen arguments for sixteen parameters. The oracle holds the twin's three bounds now
+  (`_MAX_LINE`, `_MAX_BODY`, `_MAX_ARGS`, in the twin's words) -- the line's read after the comments are gone, as the
+  twin's reader reads it: CI's thorough tier caught the oracle refusing a 70 KB comment on one line -- and both hold
+  the arity (`_check_arity`, the twin's check after its invocation reader): more arguments than parameters `too many
+  macro arguments`, fewer `too few macro arguments`, a variadic macro's `...` free to be empty, `M()` of a macro of no
+  parameters passing none. `#line` takes a decimal digit sequence (6.10.4p3) in 1..2147483647: `#line 12abc` read 12
+  on the oracle and was `out of range` on the twin, `#line abc` was ignored on both; both refuse `#line number is not
+  a decimal digit sequence` and `out of range` now. And no C token starts with `@`, `$`, a backquote or a stray `\\`:
+  the twin's lexer made each a one-character punctuator for the parser to stumble on (`parse error: ;`); it refuses
+  them where the oracle does, `unexpected character '@'`, spelled as Python's repr spells the character. Witnesses:
+  five dual-rail tests, each unit lowering digest-equal on both rails or refused by both in one sentence -- the last
+  byte within each bound lowers, the first past it is refused. A probe of the same family then found the line itself
+  split. The oracle ended a logical line where `str.splitlines` does -- at a form feed, a `\x1c`, a NEL, a U+2028 --
+  so `return x\x1c + 1u;` lowered there with the character gone and was `unexpected character` on the twin, a NEL in
+  code vanished before the reader that refuses a character past ASCII saw it, and `}\f#define K 1u` was a directive on
+  the oracle and text on the twin; the oracle read a space and a tab alone between a `#` and its name
+  (`_DIRECTIVE_SPACE`), so `#\finclude <stdint.h>` was a null directive with its header unread; and the twin read a
+  CRLF file's `\r` into the line, so `#if K == 5u\r` was `malformed` there and a `\\\r\n` splice none, where the
+  oracle lowered. One rule on each rail now: a CRLF end of line is a new-line (translation phase 1 -- mapped before
+  the splice on the oracle, read as one by the twin's line reader), a line ends at a new-line alone,
+  `_DIRECTIVE_SPACE` is `pp_space`'s set, and a lone carriage return is white space on both (`pp_space`, the oracle's
+  `_ASCII_SPACE`). A CRLF unit lowers to its LF twin's digest, the twin's longest line included; `\x1c` and `\x1e` in
+  code are `unexpected character` alike and a NEL or a U+2028 `NONASCII` alike
+  (`test_a_line_ends_at_a_new_line_alone_on_both_rails`; faults PS13-PS18). Found, not fixed: the parsers' reasons for
+  an empty parenthesis differ -- `M(x, )` for `M(a, b)` is `unexpected PUNCT ')'` on the oracle and `expected
+  expression` on the twin, both refusing -- as do the two for a lone `\r` between two directives on one line. Faults:
+  `tools/testing/faults/cfront-ppsplits.json`, 18 -- 10 on the twin, 8 on the oracle; `cfront-pplimits.json`'s PO9,
+  anchored in the oracle's old `#line` read, re-anchored onto the digit check.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

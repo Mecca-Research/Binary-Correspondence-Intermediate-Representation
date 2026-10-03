@@ -8,7 +8,8 @@
     "bcir.tests.test_c_cfront:test_an_integer_constant_no_type_holds_is_refused_on_both_rails",
     "bcir.tests.test_c_cfront:test_file_scope_arrays_and_character_tables_run_as_the_original_on_both_rails",
     "bcir.tests.test_c_cfront:test_file_scope_initializers_and_thread_storage_run_as_the_original_on_both_rails",
-    "bcir.tests.test_c_cfront:test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails"
+    "bcir.tests.test_c_cfront:test_file_scope_initializers_the_walk_refuses_are_refused_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_global_first_named_inside_a_block_is_one_resource_on_both_rails"
   ],
   "faults": [
     {
@@ -269,6 +270,13 @@
       "new": "        tls = \"\"\n",
       "old": "        tls = \"_Thread_local \" if gname in threads else \"\"  # each thread's own object (CF-TLS)\n",
       "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_global_first_named_inside_a_block_is_one_resource_on_both_rails",
+      "label": "GB10 the twin binds a global's resource with the block that first names it: the reference after the block is a second resource, and the digest leaves the oracle's",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    if(r->read_only && !r->is_funcptr && r->name[0] && !strcmp(r->name,name)){ *rid=r->rid; return 1; } }\n",
+      "new": "    if(r->read_only && !r->is_funcptr && r->name[0] && !strcmp(r->name,name)){ *rid=r->rid; return 0; } }\n"
     }
   ]
 }

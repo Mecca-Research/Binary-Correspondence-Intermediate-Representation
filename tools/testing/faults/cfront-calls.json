@@ -7,7 +7,9 @@
     "bcir.tests.test_c_cfront:test_void_callbacks_run_as_the_original_on_both_rails",
     "bcir.tests.test_c_cfront:test_function_designator_arms_select_a_function_pointer_on_both_rails",
     "bcir.tests.test_c_cfront:test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
-    "bcir.tests.test_c_cfront:test_struct_arithmetic_and_conversion_are_refused_on_both_rails"
+    "bcir.tests.test_c_cfront:test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails",
+    "bcir.tests.test_handoff:test_a_claims_read_capacity_is_the_c_twins_on_every_rail"
   ],
   "faults": [
     {
@@ -324,6 +326,34 @@
       "new": "    if(!ctype_generic_eq(&x->params[k],&y->params[k])\n",
       "old": "    if(x->params[k].is_valist!=y->params[k].is_valist || !ctype_generic_eq(&x->params[k],&y->params[k])\n",
       "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails",
+      "label": "CL46 the twin keeps six of a call's arguments and drops the rest, as it did: a call of seven lowers with six, and its digest leaves the oracle's",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  if(!is(c,\")\")) for(;;){ uint32_t a=p_expr(c); if(n<BCIR_CALL_MAX_ARGS) args[n++]=a; else over=1;\n",
+      "new": "  if(!is(c,\")\")) for(;;){ uint32_t a=p_expr(c); if(n<6) args[n++]=a; else over=0;\n"
+    },
+    {
+      "expects": "test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails",
+      "label": "CL47 the oracle lowers a call of seventeen arguments the twin refuses",
+      "path": "bcir/frontends/cfront/lower.py",
+      "old": "        if len(args) > MAX_CALL_ARGS:\n",
+      "new": "        if len(args) > 2 * MAX_CALL_ARGS:\n"
+    },
+    {
+      "label": "CL48 the freeze's mirror of the claim's read capacity holds six, as it did: a seventeen-read claim is refused on the oracle alone",
+      "path": "bcir/gem/handoff.py",
+      "expects": "test_a_claims_read_capacity_is_the_c_twins_on_every_rail",
+      "old": "CLAIM_MAX_RD, CLAIM_MAX_WR = 17, 2\n",
+      "new": "CLAIM_MAX_RD, CLAIM_MAX_WR = 6, 2\n"
+    },
+    {
+      "label": "CL49 the escape analysis's mirror of the claim's read capacity holds six, as it did: a call of seven arguments is refused analysis",
+      "path": "bcir/frontends/cfront/escape.py",
+      "expects": "test_a_claims_read_capacity_is_the_c_twins_on_every_rail",
+      "old": "CLAIM_MAX_RD = MAX_CALL_ARGS + 1\n",
+      "new": "CLAIM_MAX_RD = 6\n"
     }
   ]
 }

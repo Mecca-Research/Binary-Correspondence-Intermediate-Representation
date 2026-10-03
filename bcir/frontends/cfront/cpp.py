@@ -48,7 +48,9 @@ _BAD_DEFINED = "malformed defined operator"
 #: `#`, between the `#` and its name and after the name, the name a run of ASCII identifier characters. `str.strip`
 #: had read every Unicode space as white space -- `\u00a0#define K 3u` defined `K` here and was refused by the twin --
 #: and the name had ended only at a space, so `#define\tK 3u` was an unknown directive here (CF-PPLIMITS).
-_DIRECTIVE_SPACE = " \t"
+#: A form feed and a vertical tab are that white space too, as they are everywhere the twin's `pp_space` reads one:
+#: `#\finclude <stdint.h>` was a null directive here, its header unread (CF-PPSPLITS).
+_DIRECTIVE_SPACE = " \t\f\v"
 _DIRECTIVE_NAME = re.compile(r"[A-Za-z0-9_]*", re.ASCII)
 #: The ASCII white space a directive's operand is stripped of at its ends: never a character past ASCII, which stays
 #: in the operand for the reader that refuses it (NONASCII).
@@ -181,6 +183,12 @@ def _macro_name(text: str, why: str) -> tuple[str, int]:
 
 #: The most parameters a function-like macro takes (the twin's `Macro.params`), and a parameter's name.
 _MAX_PARAMS = 16
+#: The twin's preprocessor holds a logical line to 8 190 bytes (`BCIR_CPP_LINE`), a macro's replacement to 1 023
+#: (`Macro.body`) and an invocation to 16 arguments (`BCIR_CPP_ARGS`); this rail holds the same, in its words, so a
+#: unit one rail refuses for its size the other does too (CF-PPSPLITS).
+_MAX_LINE = 8190
+_MAX_BODY = 1023
+_MAX_ARGS = 16
 _PARAM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -316,7 +324,23 @@ class Preprocessor:
         # phase 2 then phase 3: splice backslash-newlines, then replace every comment with a space
         # (before directives are scanned, so a `#define` *inside* a comment is never executed and a
         # comment in a macro body / on a directive line is gone). Runs for the source and headers.
-        return _strip_comments(text.replace("\\\n", "")).splitlines()
+        # Phase 1 first: a CRLF end of line is a new-line, so a CRLF file splices and ends its directives as an LF
+        # file does on both rails. A line then ends at a new-line and nowhere else -- not at a form feed, a `\x1c`,
+        # a NEL or a U+2028, where `str.splitlines` ends one and the twin's reader does not: `return x\x1c + 1u;`
+        # lowered here with the character gone and was refused there, and a NEL in code vanished before the reader
+        # that refuses a character past ASCII saw it (CF-PPSPLITS).
+        spliced = text.replace("\r\n", "\n").replace("\\\n", "")
+        lines = _strip_comments(spliced).split("\n")
+        if (
+            lines and lines[-1] == ""
+        ):  # the new-line that ends the last line ends no further, empty line
+            lines.pop()
+        # the twin's bound, on the line as its reader sees it: after its comments are gone (a 70 KB comment on
+        # one line lowers on both rails)
+        for line in lines:
+            if len(line.encode("utf-8")) > _MAX_LINE:
+                raise CPPError("preprocessor line too long")
+        return lines
 
     def _run(self, lines: list[str], out: list[str], name: str) -> None:
         # conditional stack: each entry is [currently_active, any_branch_taken, parent_active]
@@ -369,11 +393,11 @@ class Preprocessor:
         elif op == "line":
             self._line(rest)
         elif op in ("error",):
-            raise CPPError(f"#error {self._expand_text(rest)} (in {name})")
+            raise CPPError(f"#error {self._expand_text(rest)}")
         elif op in ("warning", "pragma", ""):
             pass  # accepted, no effect on lowering
         else:
-            raise CPPError(f"unknown directive #{op} in {name}")
+            raise CPPError(f"unknown directive #{op}")
 
     def _conditional(self, op, rest, cond, parent) -> None:
         # A directive in a skipped group is processed only through its name (C11 6.10.1p6), as is
@@ -413,22 +437,44 @@ class Preprocessor:
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
             params, i = _params(rest, nameend + 1)
             variadic = bool(params) and params[-1] == "__VA_ARGS__"
-            self.macros[nm] = Macro(nm, _tokens(rest[i:].strip(_ASCII_SPACE)), params, variadic)
+            self.macros[nm] = Macro(nm, _tokens(self._body(rest[i:])), params, variadic)
         else:  # object-like
-            self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip(_ASCII_SPACE)))
+            self.macros[nm] = Macro(nm, _tokens(self._body(rest[nameend:])))
+
+    @staticmethod
+    def _body(text: str) -> str:
+        """A macro's replacement text, held to the twin's `Macro.body` (CF-PPSPLITS)."""
+        body = text.strip(_ASCII_SPACE)
+        if len(body.encode("utf-8")) > _MAX_BODY:
+            raise CPPError("macro replacement is too large")
+        return body
+
+    @staticmethod
+    def _check_arity(mac, args: list) -> None:
+        """As many arguments as parameters (C11 6.10.3p4), the variadic part free to be empty, and never more than
+        the twin carries; `M()` of a macro of no parameters passes no argument (the twin's invocation reader)."""
+        params = mac.params or []
+        variadic = bool(params) and params[-1] == "__VA_ARGS__"
+        need = len(params) - 1 if variadic else len(params)
+        given = 0 if (len(args) == 1 and not args[0] and need == 0) else len(args)
+        if len(args) > _MAX_ARGS or (not variadic and given > len(params)):
+            raise CPPError("too many macro arguments")
+        if given < need:
+            raise CPPError("too few macro arguments")
 
     # --- #line ---
     def _line(self, rest: str) -> None:
         """`#line digits ["file"]` — the presumed line number of the *following* line becomes
         `digits` (decimal), and __FILE__ becomes `"file"` if given. Operands are macro-expanded
-        first (C23 6.10.5). Malformed directives are ignored (a strict compiler would diagnose)."""
+        first (C23 6.10.5). The number is a decimal digit sequence (6.10.4p3) in 1..2147483647, or the directive
+        is refused, as the twin refuses it (CF-PPSPLITS: `#line 12abc` once read 12 here, nothing there)."""
         toks = self._expand(_tokens(rest), set())
-        if not toks:
-            return
-        m = re.match(r"[0-9]+", toks[0])  # a decimal digit sequence
-        if not m:
-            return
-        self._presumed = int(m.group())
+        if not toks or not re.fullmatch(r"[0-9]+", toks[0], re.ASCII):
+            raise CPPError("#line number is not a decimal digit sequence")
+        number = int(toks[0])
+        if not 1 <= number <= 2147483647:
+            raise CPPError("#line number is out of range")
+        self._presumed = number
         for t in toks[1:]:  # an optional new file name
             if t[:1] == '"':
                 self._cur_file = _unescape_str(t)
@@ -510,6 +556,7 @@ class Preprocessor:
                 j = i + 1
                 if j < len(toks) and toks[j] == "(":
                     args, j = self._collect_args(toks, j)
+                    self._check_arity(mac, args)
                     out += self._expand(self._substitute(mac, args), hide | {t})
                     i = j
                     continue

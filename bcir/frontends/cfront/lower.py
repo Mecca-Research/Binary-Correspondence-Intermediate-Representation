@@ -626,6 +626,9 @@ class _LV:
 
 
 _INIT_MAX_FRAMES = 64  # the subobjects one brace list may nest into (the twin's IW_MAXFRAMES)
+MAX_CALL_ARGS = (
+    16  # the arguments a call carries, both rails (the twin's BCIR_CALL_MAX_ARGS; CF-CALLARGS)
+)
 
 # A struct or union object takes only a value of its own type: its initializer, when not a brace list, is
 # one expression of it (C11 6.7.9p13), and so is what `=` assigns it (6.5.16.1p1). CF-STRUCTINIT: the rails
@@ -3405,7 +3408,7 @@ class _FuncLowerer:
         fpct = self.rtypes.get(fptr)
         if fpct is None or fpct.kind != "funcptr":
             raise CLowerError(NOT_CALLABLE)
-        actuals = tuple(self._rvalue(a) for a in node.args)
+        actuals = self._call_args(node.args)
         return self._call_through(fptr, fpct, actuals, "icall")
 
     def _call_member(self, node: cast.CallMember) -> int:
@@ -3415,7 +3418,7 @@ class _FuncLowerer:
         ride in the 4-byte value model. Not added to the call graph (R18: an opaque external edge)."""
         m = node.callee
         base_rid, base_ct, _base_off = self._addr(m.base)  # a dispatch base is a pointer (offset 0)
-        actuals = tuple(self._rvalue(a) for a in node.args)
+        actuals = self._call_args(node.args)
         # the struct with the funcptr field
         agg = self._complete(self._member_agg(base_ct, m.arrow))
         try:  # the member's funcptr CType -> its return type
@@ -4826,8 +4829,15 @@ class _FuncLowerer:
             callee_sig=callee_signature(fpct),
         )
 
+    def _call_args(self, args) -> tuple:
+        """The actuals of a call, lowered in order: at most MAX_CALL_ARGS of them, as the twin's claim carries
+        (`p_call_args`); one more is refused alike on both rails (CF-CALLARGS)."""
+        if len(args) > MAX_CALL_ARGS:
+            raise CLowerError(f"a call of more than {MAX_CALL_ARGS} arguments is not supported")
+        return tuple(self._rvalue(a) for a in args)
+
     def _call(self, node: cast.CallExpr) -> int:
-        actuals = tuple(self._rvalue(a) for a in node.args)
+        actuals = self._call_args(node.args)
         # Indirect call through a function-pointer local/param (HAL dispatch): the target is dynamic,
         # so there is no named callee -- it lowers to a `c.call.indirect` claim (reads: the pointer
         # value then the actuals) and is *not* added to the call graph, leaving R18 to treat it as an

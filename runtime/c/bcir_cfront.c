@@ -298,8 +298,6 @@ typedef struct {
   int tok_overflow;  /* set by lex() when the input reaches MAXTOK tokens -- the entry then fails cleanly
                       * ("input too large"), as the oracle's lexer does at the same count, rather than silently
                       * truncating the token stream and mis-compiling a partial unit (Bug B correctness gap). */
-  int call_dropped;  /* p_call dropped an operand past BCIR_CLAIM_MAX_RD: its call-site wrapper marks the call
-                      * claim `truncated` (the escape analysis then refuses the unit) */
   int td_nd, td_dims[3];   /* the array dims of the typedef the last p_type_base resolved (0: none), for the
                             * declarator that consumes the type to append after its own */
   irange *iw_rng; int iw_nrng, iw_caprng;   /* the initializer walk's stored ranges and union members: one */
@@ -563,7 +561,7 @@ static void lex(CC *c, const char *src) {
                            "++","--",
                            "+=","-=","*=","/=","%=","&=","|=","^=",0};
   while (*p) {
-    if (*p==' '||*p=='\t'||*p=='\r'||*p=='\n'){p++;continue;}
+    if (*p==' '||*p=='\t'||*p=='\r'||*p=='\n'||*p=='\f'||*p=='\v'){p++;continue;}   /* C's white space (6.4p3) */
     if (p[0]=='/'&&p[1]=='/'){while(*p&&*p!='\n')p++;continue;}
     if (p[0]=='/'&&p[1]=='*'){p+=2;while(*p&&!(p[0]=='*'&&p[1]=='/'))p++;if(*p)p+=2;continue;}
     if (*p=='#'){while(*p&&*p!='\n')p++;continue;}   /* preprocessor: L7 */
@@ -642,6 +640,14 @@ static void lex(CC *c, const char *src) {
     if (m) continue;
     if ((unsigned char)*p>=0x80){ fail(c,nonascii_outside); break; }   /* no identifier, number or punctuator
                                                                      * starts with it: past every literal */
+    if (!strchr("[](){}.&*+-~!/%<>=^|?:;,#",*p)){            /* no C token starts with it: `@`, `$`, a backquote,
+                                                           * a stray `\` -- the oracle's `unexpected character`,
+                                                           * spelled as Python's repr spells it (CF-PPSPLITS) */
+      char m[48];
+      if(*p=='\\') snprintf(m,sizeof m,"unexpected character '\\\\'");
+      else if(*p>=0x20&&*p<0x7f) snprintf(m,sizeof m,"unexpected character '%c'",*p);
+      else snprintf(m,sizeof m,"unexpected character '\\x%02x'",(unsigned char)*p);
+      fail(c,m); break; }
     t->k=T_PUN;t->s=p;t->n=1;p++;c->nt++;
   }
   if (!CC_ENSURE(c,c->t,c->nt,c->cap_t)) return;      /* the T_END sentinel's slot, for an empty unit too */
@@ -2044,6 +2050,17 @@ static venv *lookup(CC *c,const tok *t){
 
 /* --- expression lowering (returns rid) ----------------------------------- */
 static uint32_t p_expr(CC *c);
+/* The arguments of a call, from after its `(` to its `)`: at most BCIR_CALL_MAX_ARGS, as the oracle lowers them
+ * (`_call_args`); one more fails the compile, where the twin once kept six and dropped the rest, emitting a call of
+ * six arguments to a function of more (CF-CALLARGS). Every call form reads its arguments here. */
+static int p_call_args(CC *c, uint32_t *args, int *na){
+  int n=0, over=0;
+  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(n<BCIR_CALL_MAX_ARGS) args[n++]=a; else over=1;
+    if(is(c,",")){c->i++;continue;} break; }
+  eat(c,")"); *na=n;
+  if(over){ fail(c,"a call of more than " BCIR_STR(BCIR_CALL_MAX_ARGS) " arguments is not supported"); return 0; }
+  return 1;
+}
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` / `(struct P[]){init}` (defined w/ arr_init) */
@@ -3859,17 +3876,15 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
       b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);   /* a pointer to a volatile struct */
       if(is(c,"(")){     /* funcptr-member call through the loaded pointer: `d->ops->fn(args)` (#fnptrchain) */
-        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
-          if(is(c,",")){c->i++;continue;} break; }
-        eat(c,")");
+        c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+        if(!p_call_args(c,args,&na)) return 0;
         field ff=S->f[fi];                               /* the funcptr field carries its captured return type */
         null_pointer_sig(c,ff.fp_sig,args,na);           /* a null pointer argument: its parameter's pointer */
         uint32_t t = field_call_temp(c,&ff);             /* typed by the member's function type (CF-FPRET) */
         char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.imember:%s",S->f[fi].name);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
         if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=ptr;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-          cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;cl->truncated=(uint8_t)dropped;}   /* imm0=1: `ptr->fn(args)` */
+          cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;}   /* imm0=1: `ptr->fn(args)` */
         qcast_sig_call(c,cl,ff.fp_sig,na);               /* its qualified parameters and return (CF-QUALS) */
         return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
       }
@@ -4316,11 +4331,8 @@ static uint32_t p_call(CC *c, const tok *name) {
     return t;
   }
   c->i++; /* '(' */
-  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a; else dropped=1;
-    if(is(c,",")){c->i++;continue;} break; }
-  eat(c,")");
-  c->call_dropped=dropped;             /* every path below creates the call claim LAST (the site marks it) */
+  uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+  if(!p_call_args(c,args,&na)) return 0;
   if(tok_is(name,"va_start")||tok_is(name,"va_end")||tok_is(name,"va_copy")){   /* opaque void variadic builtins */
     char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.vabuiltin:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
@@ -4478,16 +4490,14 @@ static uint32_t p_icall(CC *c, const venv *fv) {
    * realloc c->env[] -- `fv`, a pointer into it, would dangle before fv->type / fv->rid are read. */
   venv fvsnap=*fv; fv=&fvsnap;
   c->i++; /* '(' */
-  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
-    if(is(c,",")){c->i++;continue;} break; }
-  eat(c,")");
+  uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+  if(!p_call_args(c,args,&na)) return 0;
   null_pointer_sig(c,fv->type.fp_sig,args,na);   /* a null pointer argument: its parameter's pointer (CF-NULLCALL) */
   int vd=fv->type.fp_ret_void;              /* a pointer to a void function: no result (CF-VOIDCB) */
   uint32_t t=vd?0:fp_result_temp(c,&fv->type);   /* type by the funcptr's captured return -> a signed return reads back signed */
   bcir_claim *cl=new_claim(c,"c.call.indirect",BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=fv->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-    cl->n_wr=(uint8_t)(vd?0:1);cl->wr[0]=t;cl->truncated=(uint8_t)dropped;}
+    cl->n_wr=(uint8_t)(vd?0:1);cl->wr[0]=t;}
   qcast_sig_call(c,cl,fv->type.fp_sig,na);   /* its qualified parameters and return (CF-QUALS) */
   return vd?void_temp(c):t;                 /* the void value, as a direct void call's (`return cb();`, `c ? cb() : ...`) */
 }
@@ -4619,14 +4629,12 @@ static uint32_t atomic_value_temp(CC *c,uint32_t ptr){
   return ctype_value_temp(c,&t);
 }
 static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered){
-  c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
+  c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na=0;
   /* SEG7: an order-taking fence (`__atomic_thread_fence`/`atomic_thread_fence`) routes its KIND by the
    * first arg's order value -- peeked HERE, BEFORE the arg is lowered, so the arg's const claim (the
    * value rail) is still emitted in sequence, exactly as the oracle does (digest = [const, fence]). */
   if(ordered && kind==AK_FENCE && !is(c,")")) op=fence_order_op(c);
-  if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;else dropped=1;
-    if(is(c,",")){c->i++;continue;}break;}
-  eat(c,")");
+  if(!p_call_args(c,args,&na)) return 0;
   /* the value an atomic reads through its pointer -- atomic_load, a fetch-op, atomic_exchange, a value CAS --
    * has the pointee's type, unqualified (the oracle's `_atomic_value_type`): a uint32 temp truncated a 64-bit
    * counter and converted an `_Atomic float` to an integer (CF-ATOMIC). The bool forms and a fence stay 4-byte. */
@@ -4634,7 +4642,6 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordere
   uint32_t t = valued ? atomic_value_temp(c,args[0]) : temp(c,4);
   if(!strncmp(op,"c.c11atom.cas",13) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;  /* compare_exchange -> _Bool */
   bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
-  cl->truncated=(uint8_t)dropped;
   cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
   if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
@@ -4690,17 +4697,15 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
     if(fi<0){fail(c,"unknown field");return 0;}
     if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
-      c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-      if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
-        if(is(c,",")){c->i++;continue;} break; }
-      eat(c,")");
+      c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+      if(!p_call_args(c,args,&na)) return 0;
       field ff=S->f[fi];                          /* the funcptr field carries its captured return type */
       null_pointer_sig(c,ff.fp_sig,args,na);      /* a null pointer argument: its parameter's pointer */
       uint32_t t = field_call_temp(c,&ff);        /* typed by the member's function type (CF-FPRET) */
       char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.imember:%s",S->f[fi].name);
       bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
       if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-        cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;cl->truncated=(uint8_t)dropped;}
+        cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
       qcast_sig_call(c,cl,ff.fp_sig,na);          /* its qualified parameters and return (CF-QUALS) */
       return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
     }
@@ -5191,10 +5196,7 @@ static uint32_t p_named_call(CC *c, tok id){
         if(s>0 && s<=c->nsig && !c->failed){ bcir_ctype rt=c->sigs[s-1].ret; return call_result(c,r,&rt); }
         return call_value(c,r); }
       const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
-      int drop_save=c->call_dropped; c->call_dropped=0;   /* a call nested in an argument restores it */
       uint32_t r=p_call(c,&id);
-      if(c->call_dropped && c->fn->n_claims) c->fn->claims[c->fn->n_claims-1].truncated=1;
-      c->call_dropped=drop_save;
       return call_result(c,r,rt); }                 /* `mk(x).f`, `f()->v`; `g(x)(y)` through the result, which must be
                                                      * a function pointer */
 }
@@ -6215,10 +6217,29 @@ static void qglobal_add(CC *c, uint32_t rid, const gvar *g){
   if(k<0 || (size_t)k>=sizeof q->spelling) return;
   q->rid=rid; c->fn->n_qglobals++;
 }
+/* The resource this function already gave the global `name`: a read-only resource of its name that is no function
+ * designator. A global is one object, so it is one resource per function, as the oracle's `gres` holds it: a block
+ * binds the name for its scope and drops the binding with it, but the resource outlives the block (CF-GBLOCK: a
+ * global first referenced inside a block -- `{ g = y; }`, an `if` body, a loop body -- and read after it was a
+ * second resource, so the canon read the written value back as an input and the digest left the oracle's). The
+ * scan runs once per block that first names a global; references within the block find the binding. */
+static int global_res_of_name(const CC *c,const char *name,uint32_t *rid){
+  for(size_t i=0;i<c->fn->n_res;i++){ const bcir_resource *r=&c->fn->res[i];
+    if(r->read_only && !r->is_funcptr && r->name[0] && !strcmp(r->name,name)){ *rid=r->rid; return 1; } }
+  return 0;
+}
 static venv *use_global(CC *c,const tok *id){
   int gi=find_global(c,id->s,id->n); if(gi<0) return NULL;
   venv *ex=lookup(c,id); if(ex) return ex;
   gvar *g=&c->gv[gi];
+  { uint32_t bound;                                    /* bound earlier in this function: the same resource again */
+    if(global_res_of_name(c,g->name,&bound)){
+      int gsi0=(g->ty.kind==1 || g->ty.ptr_to_struct) ? find_struct(c,g->ty.tag,(int)strlen(g->ty.tag)) : -1;
+      int md0=global_md_elems(g);
+      env_add(c,id,bound,&g->ty,gsi0);
+      venv *gv0=lookup(c,id);
+      if(gv0 && md0){ gv0->type.nadims=(uint8_t)g->nd; for(int d=0; d<3; d++) gv0->type.adims[d]=d<g->nd?(int)g->dims[d]:0; }
+      return gv0; } }
   /* a struct or union global -- an object, an array of them, or a pointer to one -- is bound with its
    * definition, as a local is, so `g.m` / `g[i].m` / `g->m` lower through the member paths (CF-GSTRUCT: an
    * index of -1 here made every member access read `c->s[-1]`), and its volatile members make it a device
@@ -8990,9 +9011,81 @@ static int p_func(CC *c, bcir_func *fn) {
   return c->failed;
 }
 
+/* --- the names an emitted function's objects take, computed once per emission (CF-NAMECACHE) --------------------
+ * `uniq_local` is a pure function of the function's objects, parameters, calls and claims, and the emit reads it
+ * once per reference. Every read re-walked the resources and -- since CF-TYPEDEFSCOPE -- every name the emit
+ * spells (`spelled_scan`), so a function of n references cost O(n * names): quadratic in a long run of statements
+ * on one object (1 800 updates of one local emitted in 285 ms where the parent took 97). Before a unit's functions
+ * are emitted, each function's names are computed once into a table by resource index, with an index of its
+ * resources by rid and the set of the names its declared objects take (`declared_name`'s question); `uniq_local`,
+ * `declared_name` and `res_of` read the table while it exists, and the slow walks otherwise. The table holds the
+ * slow path's own answers, computed in the slow path's own order -- the declared objects' names, then the temps
+ * against them -- so the emit is byte for byte the one without it. The index and the set are open-addressing
+ * tables at a load of at most one half, owned by the lowering's allocator. */
+typedef struct bcir_emit_names {
+  size_t n;                       /* == f->n_res when built */
+  char (*name)[BCIR_EMIT_NAME];   /* name[i]: what resource i emits as */
+  const char **decl; size_t decls;/* the declared names: the parameters' and the named resources' */
+} bcir_emit_names;
+/* The index of the resource `rid` names. `add_res` is the one place an rid is given, in order (`c->rid++`), a
+ * rollback drops the rids with the resources it drops, and nothing reorders a function's resources, so they stand
+ * sorted by rid: a binary search. Every `res_of` reads it -- the lowering's, the canon's and the emit's -- where
+ * each walked the resources (8 000 locals: 31 s). */
+static int res_index(const bcir_func *f,uint32_t rid,size_t *ix){
+  size_t lo=0,hi=f->n_res;
+  while(lo<hi){ size_t mid=lo+(hi-lo)/2; uint32_t m=f->res[mid].rid;
+    if(m==rid){ *ix=mid; return 1; } if(m<rid) lo=mid+1; else hi=mid; }
+  return 0;
+}
+static uint32_t names_hash(const char *s){
+  uint32_t h=2166136261u; for(;*s;s++) h=(h^(unsigned char)*s)*16777619u; return h;
+}
+static int names_declared(const bcir_emit_names *en,const char *nm){
+  size_t m=en->decls-1, i=names_hash(nm)&m;
+  for(;;){ const char *s=en->decl[i]; if(!s) return 0; if(!strcmp(s,nm)) return 1; i=(i+1)&m; }
+}
+static void names_decl_insert(bcir_emit_names *en,const char *nm){
+  size_t m=en->decls-1, i=names_hash(nm)&m;
+  while(en->decl[i]){ if(!strcmp(en->decl[i],nm)) return; i=(i+1)&m; }
+  en->decl[i]=nm;
+}
+static void names_free(const bcir_host_allocator *al,bcir_emit_names *en){
+  if(!en) return;
+  bcir_host_deallocate(al,en->name); bcir_host_deallocate(al,en->decl);
+  bcir_host_deallocate(al,en);
+}
+static const char *uniq_local_compute(const bcir_func *f,uint32_t rid,char *buf);
+static int names_rank(const bcir_host_allocator *al,const bcir_func *f,bcir_emit_names *en);
+/* Builds `f->emit_names` (0 on allocation failure, which is the whole compile's: the emit never falls back to
+ * the slow walks, so a failed allocation is never a slower success). A resource is named for the index
+ * `res_index` gives its rid -- the one `uniq_local` names by -- so the first of an rid's resources holds the
+ * name, as it holds the slow walk's. */
+static int names_build(const bcir_host_allocator *al,bcir_func *f){
+  size_t n=f->n_res, decls=8; bcir_emit_names *en;
+  while(decls<2*(n+(size_t)(f->n_params>0?f->n_params:0))+2) decls<<=1;
+  en=(bcir_emit_names *)bcir_host_allocate(al,sizeof *en); if(!en) return 0;
+  memset(en,0,sizeof *en); en->n=n; en->decls=decls;
+  en->name=(char (*)[BCIR_EMIT_NAME])bcir_host_allocate(al,(n?n:1)*sizeof *en->name);
+  en->decl=(const char **)bcir_host_allocate(al,decls*sizeof *en->decl);
+  if(!en->name||!en->decl){ names_free(al,en); return 0; }
+  memset(en->decl,0,decls*sizeof *en->decl);
+  f->emit_names=NULL;                                   /* the declared objects' names: the slow walks' answers,
+                                                         * the walks tabulated (`names_rank`) */
+  if(!names_rank(al,f,en)){ names_free(al,en); return 0; }
+  for(int p=0;p<f->n_params;p++) if(f->params[p].name[0]) names_decl_insert(en,f->params[p].name);
+  for(size_t i=0;i<n;i++){ size_t j;                      /* `declared_name`: a named resource whose own name
+                                                           * its emitted name starts with */
+    if(f->res[i].name[0] && res_index(f,f->res[i].rid,&j) && j==i &&
+       !strncmp(f->res[i].name,en->name[i],strlen(f->res[i].name))) names_decl_insert(en,en->name[i]); }
+  f->emit_names=en;                                     /* the temps, named against the declared set */
+  for(size_t i=0;i<n;i++){ size_t j;
+    if(!f->res[i].name[0] && res_index(f,f->res[i].rid,&j) && j==i) uniq_local_compute(f,f->res[i].rid,en->name[i]); }
+  return 1;
+}
+
 /* --- verify: R1-R18 live in bcir_verify.c (the C twin of bcir/verify) ---- */
 static const bcir_resource *res_of(const bcir_func *f,uint32_t rid){
-  for(size_t i=0;i<f->n_res;i++) if(f->res[i].rid==rid) return &f->res[i]; return NULL;
+  size_t i; return res_index(f,rid,&i)?&f->res[i]:NULL;
 }
 
 /* --- faithful C emitter -------------------------------------------------- */
@@ -9104,15 +9197,30 @@ static int callee_match(const char *callee,const char *x,size_t xn,int *prefixed
   if(xn>5 && !strncmp(x,"bcir_",5)) m|=name_match(callee,x+5,xn-5,prefixed);
   return m;
 }
-static void spelled_scan(const bcir_func *f,const char *x,int *bare,int *prefixed){
-  size_t xn=strlen(x); int b=0,pf=0;
-  for(int i=0;emit_spelled[i];i++) b|=name_match(emit_spelled[i],x,xn,&pf);
-  for(int k=0;k<f->n_calls;k++) b|=callee_match(f->calls[k],x,xn,&pf);
+/* The names read, enumerated once for a reader `fn`: `emit_spelled` and the globals and functions the function reads
+ * (SP_BARE: `x` itself may be one), every object's source name (SP_PREF: only a suffixed `x_<k>` may be one), and the
+ * functions it calls (SP_CALLEE: as `X` or as `bcir_X`). The walk (`spelled_scan`) and the table (`names_rank`) read
+ * this one enumeration, so neither can see a name the other does not. */
+enum { SP_BARE=1, SP_PREF=2, SP_CALLEE=4 };
+typedef void (*spelled_fn)(void *ctx,const char *s,int kind);
+static void spelled_each(const bcir_func *f,spelled_fn fn,void *ctx){
+  for(int i=0;emit_spelled[i];i++) fn(ctx,emit_spelled[i],SP_BARE|SP_PREF);
+  for(int k=0;k<f->n_calls;k++) fn(ctx,f->calls[k],SP_CALLEE);
   for(size_t i=0;f->named_calls && i<f->n_claims;i++){ const char *op=f->claims[i].op,*c;
-    if(!strncmp(op,"c.call",6) && (c=strchr(op,':')) && c[1]) b|=callee_match(c+1,x,xn,&pf); }
-  for(size_t i=0;i<f->n_res;i++){ int m=name_match(f->res[i].name,x,xn,&pf); if(f->res[i].read_only) b|=m; }
-  for(int p=0;p<f->n_params;p++) (void)name_match(f->params[p].name,x,xn,&pf);
-  *bare=b; *prefixed=pf;
+    if(!strncmp(op,"c.call",6) && (c=strchr(op,':')) && c[1]) fn(ctx,c+1,SP_CALLEE); }
+  for(size_t i=0;i<f->n_res;i++) fn(ctx,f->res[i].name,f->res[i].read_only?SP_BARE|SP_PREF:SP_PREF);
+  for(int p=0;p<f->n_params;p++) fn(ctx,f->params[p].name,SP_PREF);
+}
+typedef struct { const char *x; size_t xn; int bare, prefixed; } spelled_query;
+static void spelled_scan_one(void *ctx,const char *s,int kind){
+  spelled_query *q=(spelled_query *)ctx;
+  if(kind&SP_CALLEE){ q->bare|=callee_match(s,q->x,q->xn,&q->prefixed); return; }
+  int m=name_match(s,q->x,q->xn,&q->prefixed); if(kind&SP_BARE) q->bare|=m;
+}
+static void spelled_scan(const bcir_func *f,const char *x,int *bare,int *prefixed){
+  spelled_query q={x,strlen(x),0,0};
+  spelled_each(f,spelled_scan_one,&q);
+  *bare=q.bare; *prefixed=q.prefixed;
 }
 static int param_rid(const bcir_func *f,uint32_t rid){
   for(int p=0;p<f->n_params;p++) if(f->params[p].rid==rid) return 1;
@@ -9124,8 +9232,15 @@ static int param_rid(const bcir_func *f,uint32_t rid){
  * at function scope; declaring both is a C redefinition). A candidate the emit spells otherwise (`emit_name_taken`) or
  * that is a typedef name is skipped, and so is a suffixed one that is another object's source name: no two objects,
  * and no other reference, share a spelling -- the declaration and every reference read the same name (the oracle's
- * `_uniq`). A suffix past `_8` is not read against the typedef names. */
+ * `_uniq`). A suffix past `_8` is not read against the typedef names. Read from the function's name table while it
+ * exists (CF-NAMECACHE); computed otherwise. */
 static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
+  if(f->emit_names){ size_t i;
+    if(res_index(f,rid,&i) && i<f->emit_names->n){ memcpy(buf,f->emit_names->name[i],BCIR_EMIT_NAME); return buf; } }
+  return uniq_local_compute(f,rid,buf);
+}
+static const char *uniq_local_rank(const bcir_func *f,const bcir_resource *r,int occ,int bare,int prefixed,char *buf);
+static const char *uniq_local_compute(const bcir_func *f,uint32_t rid,char *buf){
   const bcir_resource *r=res_of(f,rid);
   if(!r||!r->name[0]){ snprintf(buf,BCIR_EMIT_NAME,"t%u",rid);
     for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,"t%u_%d",rid,k);
@@ -9141,6 +9256,11 @@ static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
       if(q->name[0] && !q->read_only && !strcmp(q->name,r->name) && !param_rid(f,q->rid)) occ++; }
   int bare=0, prefixed=0;
   spelled_scan(f,r->name,&bare,&prefixed);
+  return uniq_local_rank(f,r,occ,bare,prefixed,buf);
+}
+/* A named object's emitted name from its rank `occ` among the objects of its source name and `spelled_scan`'s two
+ * answers for that name: the one place the candidates are read, for the walks above and the table below alike. */
+static const char *uniq_local_rank(const bcir_func *f,const bcir_resource *r,int occ,int bare,int prefixed,char *buf){
   for(int k=1;;k++){
     if(k==1){
       if(bare || (r->typedef_named&1u)) continue;
@@ -9153,9 +9273,96 @@ static const char *uniq_local(const bcir_func *f,uint32_t rid,char *buf){
     if(occ--==0) return buf;
   }
 }
+/* The walks of `uniq_local_compute`, tabulated for a whole function (CF-NAMECACHE): each named object's rank among
+ * the objects of its source name, counted by name in the walks' order -- the parameters, then the named locals --
+ * and `spelled_scan`'s two answers, from a table of the names `spelled_each` enumerates (a name with the flags of
+ * its kinds; each prefix of a name that ends before an `_`, with the prefixed flags), read once per name. Each
+ * declared object's name is then `uniq_local_rank`'s, as the walks give it, in the function's size rather than its
+ * square (8 000 locals: 1.9 s of the 4.8 s their compile took). Scratch memory is the allocator's, released here;
+ * 0 on allocation failure. */
+enum { ST_BARE=1, ST_PREF=2, ST_CBARE=4, ST_CPREF=8 };
+typedef struct { uint32_t *off; uint8_t *flag; size_t cap; char *pool; size_t used, bytes, entries; int fail; } spelled_table;
+static uint32_t names_hashn(const char *s,size_t n){
+  uint32_t h=2166136261u; for(size_t i=0;i<n;i++) h=(h^(unsigned char)s[i])*16777619u; return h;
+}
+static void spelled_count(void *ctx,const char *s,int kind){
+  spelled_table *t=(spelled_table *)ctx; size_t n=strlen(s); (void)kind;
+  if(!n) return;
+  t->entries++; t->bytes+=n+1;
+  for(size_t j=1;j<n;j++) if(s[j]=='_'){ t->entries++; t->bytes+=j+1; }
+}
+static void spelled_put(spelled_table *t,const char *s,size_t n,int flags){
+  size_t m=t->cap-1, i=names_hashn(s,n)&m;
+  for(;;){ uint32_t o=t->off[i];
+    if(!o){
+      if(t->used+n+1>t->bytes){ t->fail=1; return; }
+      memcpy(t->pool+t->used,s,n); t->pool[t->used+n]=0;
+      t->off[i]=(uint32_t)t->used+1u; t->flag[i]=(uint8_t)flags; t->used+=n+1; return; }
+    if(!strncmp(t->pool+o-1,s,n) && !t->pool[o-1+n]){ t->flag[i]|=(uint8_t)flags; return; }
+    i=(i+1)&m; }
+}
+static void spelled_insert(void *ctx,const char *s,int kind){
+  spelled_table *t=(spelled_table *)ctx; size_t n=strlen(s);
+  if(!n) return;
+  if(kind&(SP_CALLEE|SP_BARE)) spelled_put(t,s,n,(kind&SP_CALLEE)?ST_CBARE:ST_BARE);
+  for(size_t j=1;j<n;j++) if(s[j]=='_') spelled_put(t,s,j,(kind&SP_CALLEE)?ST_CPREF:ST_PREF);
+}
+static int spelled_flags(const spelled_table *t,const char *s,size_t n){
+  size_t m=t->cap-1, i=names_hashn(s,n)&m;
+  for(;;){ uint32_t o=t->off[i]; if(!o) return 0;
+    if(!strncmp(t->pool+o-1,s,n) && !t->pool[o-1+n]) return t->flag[i]; i=(i+1)&m; }
+}
+static void spelled_lookup(const spelled_table *t,const char *x,int *bare,int *prefixed){   /* == spelled_scan */
+  size_t xn=strlen(x); int e=spelled_flags(t,x,xn);
+  int b=(e&(ST_BARE|ST_CBARE))!=0, pf=(e&(ST_PREF|ST_CPREF))!=0;
+  if(xn>5 && !strncmp(x,"bcir_",5)){ int e5=spelled_flags(t,x+5,xn-5); b|=(e5&ST_CBARE)!=0; pf|=(e5&ST_CPREF)!=0; }
+  *bare=b; *prefixed=pf;
+}
+typedef struct { const char **key; uint32_t *cnt; size_t cap; } name_counts;
+static uint32_t *name_count(name_counts *t,const char *s){     /* the count under `s`, entered at 0 */
+  size_t m=t->cap-1, i=names_hash(s)&m;
+  for(;;){ if(!t->key[i]){ t->key[i]=s; t->cnt[i]=0; return &t->cnt[i]; }
+    if(!strcmp(t->key[i],s)) return &t->cnt[i]; i=(i+1)&m; }
+}
+static int names_rank(const bcir_host_allocator *al,const bcir_func *f,bcir_emit_names *en){
+  size_t n=f->n_res, cap=8; spelled_table st; name_counts pa,lo; uint8_t *isp; uint32_t *occ; int ok=0;
+  while(cap<2*(n+(size_t)(f->n_params>0?f->n_params:0))+2) cap<<=1;
+  memset(&st,0,sizeof st); spelled_each(f,spelled_count,&st);
+  st.cap=8; while(st.cap<2*st.entries+2) st.cap<<=1;
+  st.off=(uint32_t *)bcir_host_allocate(al,st.cap*sizeof *st.off);
+  st.flag=(uint8_t *)bcir_host_allocate(al,st.cap);
+  st.pool=(char *)bcir_host_allocate(al,st.bytes?st.bytes:1);
+  pa.cap=lo.cap=cap;
+  pa.key=(const char **)bcir_host_allocate(al,cap*sizeof *pa.key); pa.cnt=(uint32_t *)bcir_host_allocate(al,cap*sizeof *pa.cnt);
+  lo.key=(const char **)bcir_host_allocate(al,cap*sizeof *lo.key); lo.cnt=(uint32_t *)bcir_host_allocate(al,cap*sizeof *lo.cnt);
+  isp=(uint8_t *)bcir_host_allocate(al,n?n:1); occ=(uint32_t *)bcir_host_allocate(al,(n?n:1)*sizeof *occ);
+  if(st.off && st.flag && st.pool && pa.key && pa.cnt && lo.key && lo.cnt && isp && occ){
+    memset(st.off,0,st.cap*sizeof *st.off); spelled_each(f,spelled_insert,&st);
+    memset(pa.key,0,cap*sizeof *pa.key); memset(lo.key,0,cap*sizeof *lo.key);
+    memset(isp,0,n); memset(occ,0,n*sizeof *occ);
+    for(int p=0;p<f->n_params;p++){ size_t j;             /* a parameter: its rank among the parameters before it */
+      if(res_index(f,f->params[p].rid,&j)){ isp[j]=1; occ[j]=*name_count(&pa,f->res[j].name); }
+      if(f->params[p].name[0]) (*name_count(&pa,f->params[p].name))++; }
+    for(size_t i=0;i<n;i++){ const bcir_resource *r=&f->res[i];   /* a named local: after every parameter of its
+                                                                    * name, the locals of it before it */
+      if(!r->name[0] || r->read_only || isp[i]) continue;
+      uint32_t *k=name_count(&lo,r->name); occ[i]=*name_count(&pa,r->name)+*k; (*k)++; }
+    for(size_t i=0;i<n;i++){ size_t j; const bcir_resource *r=&f->res[i];
+      if(!r->name[0] || !res_index(f,r->rid,&j) || j!=i) continue;
+      if(r->read_only){ snprintf(en->name[i],BCIR_EMIT_NAME,"%s",r->name); continue; }   /* a file-scope global */
+      int bare=0, prefixed=0; spelled_lookup(&st,r->name,&bare,&prefixed);
+      uniq_local_rank(f,r,(int)occ[i],bare,prefixed,en->name[i]); }
+    ok=!st.fail;
+  }
+  bcir_host_deallocate(al,st.off); bcir_host_deallocate(al,st.flag); bcir_host_deallocate(al,st.pool);
+  bcir_host_deallocate(al,pa.key); bcir_host_deallocate(al,pa.cnt); bcir_host_deallocate(al,lo.key); bcir_host_deallocate(al,lo.cnt);
+  bcir_host_deallocate(al,isp); bcir_host_deallocate(al,occ);
+  return ok;
+}
 /* `nm` is the emitted name of a declared object -- a parameter, a named local or static, a global. Only a
  * resource whose own name `nm` starts with can emit as `nm` (disambiguating appends `_N`). */
 static int declared_name(const bcir_func *f,const char *nm){
+  if(f->emit_names) return names_declared(f->emit_names,nm);
   for(int p=0;p<f->n_params;p++) if(!strcmp(f->params[p].name,nm)) return 1;
   for(size_t i=0;i<f->n_res;i++){ const bcir_resource *q=&f->res[i]; size_t n=strlen(q->name); char b[BCIR_EMIT_NAME];
     if(n && !strncmp(q->name,nm,n) && !strcmp(uniq_local(f,q->rid,b),nm)) return 1; }
@@ -10019,6 +10226,7 @@ static void cfront_free_func(const bcir_host_allocator *allocator, bcir_func *fn
   bcir_host_deallocate(allocator,fn->ptr_extents);
   bcir_host_deallocate(allocator,fn->qcasts);
   bcir_host_deallocate(allocator,fn->qglobals);
+  names_free(allocator,fn->emit_names);
   memset(fn,0,sizeof *fn);
 }
 
@@ -10236,7 +10444,17 @@ static const char *respell_anon(CC *c, bcir_cfront_result *out){
 }
 /* The whole unit's verified C: the C.2 attestation, the preludes, then every function. NULL on success, else
  * the failure's diagnostic. */
+static const char *emit_unit_body(CC *c, bcir_cfront_result *out, const bcir_func *entry, const char *lflags);
+/* The unit's C: each function's names are computed once before any of it is rendered (CF-NAMECACHE) -- a callee's
+ * declaration spells its parameters ahead of its definition -- and dropped after, whatever the rendering returned. */
 static const char *emit_unit(CC *c, bcir_cfront_result *out, const bcir_func *entry, const char *lflags){
+  const char *e=NULL;
+  for(int i=0;i<out->unit.n_funcs&&!e;i++) if(!names_build(&c->allocator,&out->unit.funcs[i])) e=emit_oom;
+  if(!e) e=emit_unit_body(c,out,entry,lflags);
+  for(int i=0;i<out->unit.n_funcs;i++){ names_free(&c->allocator,out->unit.funcs[i].emit_names); out->unit.funcs[i].emit_names=NULL; }
+  return e;
+}
+static const char *emit_unit_body(CC *c, bcir_cfront_result *out, const bcir_func *entry, const char *lflags){
   const char *e;
   /* C.2 verified-C attestation: stamp the emitted C with its R-law status + R13 digest + the unit's derived
    * link flags (B1; so --emit-c is self-describing about what it links -- a comment, stripped on re-parse).
@@ -10639,13 +10857,24 @@ typedef struct {
   const bcir_func *f;
   int *wclaim;          /* parallel to a rid list: index of the first writer claim, or -1 */
   uint32_t *wrid; int nw;
+  uint32_t *wslot; size_t wslots;   /* rid -> its slot in wrid/wclaim + 1 (0: empty), open addressing at a load of at
+                                     * most one half (CF-NAMECACHE): the walk's lookups were linear in the writers */
   const char **memo;    /* memo[claim] -> its value number (num[claim]; "cyc" while it is walked), or NULL */
   size_t *mlen;         /* ... and its length */
   char (*num)[BCIR_VN_NUM];   /* num[claim] -> the claim's value number */
   char (*pin)[24];      /* pin[j] -> `in:p<j>`, the j-th parameter's value number */
 } vnctx;
+static int writer_index(const vnctx *v, uint32_t rid){   /* the slot of rid's writer in wrid/wclaim, or -1 */
+  size_t m=v->wslots-1, i=((size_t)rid*2654435761u)&m;
+  for(;;){ uint32_t s=v->wslot[i]; if(!s) return -1; if(v->wrid[s-1]==rid) return (int)(s-1); i=(i+1)&m; }
+}
+static void writer_add(vnctx *v, uint32_t rid, int claim){    /* an rid not yet written: `claim` writes it */
+  size_t m=v->wslots-1, i=((size_t)rid*2654435761u)&m;
+  while(v->wslot[i]) i=(i+1)&m;
+  v->wrid[v->nw]=rid; v->wclaim[v->nw]=claim; v->wslot[i]=(uint32_t)v->nw+1u; v->nw++;
+}
 static int writer_of(vnctx *v, uint32_t rid){
-  for(int k=0;k<v->nw;k++) if(v->wrid[k]==rid) return v->wclaim[k]; return -1;
+  int k=writer_index(v,rid); return k<0?-1:v->wclaim[k];
 }
 /* The value number of a claim's result: the FNV-1a (64-bit) of its one-level spelling `op(a,b)`, whose reads are
  * their own value numbers, in 16 hex digits -- the oracle's `_vn_number`. It spelled the value's whole dataflow tree,
@@ -10689,9 +10918,12 @@ static vntok vn_of(vnctx *v, uint32_t rid, int depth){
  * parameter's `in:p<j>` spelled. */
 static int vn_init(vnctx *v,const bcir_func *f,bcir_host_arena *arena,size_t maxw){
   size_t nm=f->n_claims?f->n_claims:1u, np=f->n_params>0?(size_t)f->n_params:1u;
-  v->f=f; v->nw=0;
+  size_t ws=16; while(ws<2*maxw+2) ws<<=1;
+  v->f=f; v->nw=0; v->wslots=ws;
   v->wclaim=(int *)vn_alloc(arena,maxw,sizeof(int),0);
   v->wrid=(uint32_t *)vn_alloc(arena,maxw,sizeof(uint32_t),0);
+  v->wslot=(uint32_t *)vn_alloc(arena,ws,sizeof(uint32_t),1);
+  if(!v->wslot) return 0;
   v->memo=(const char **)vn_alloc(arena,nm,sizeof *v->memo,1);
   v->mlen=(size_t *)vn_alloc(arena,nm,sizeof *v->mlen,0);
   v->num=(char (*)[BCIR_VN_NUM])vn_alloc(arena,nm,sizeof *v->num,0);
@@ -10723,9 +10955,8 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   int j=0;
   for(size_t i=0;i<f->n_claims;i++){ const bcir_claim *cl=&f->claims[i];
     if(cl->opcode==BCIR_OP_NOP) continue; cidx[j++]=(int)i;
-    for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int seen=0;
-      for(int m=0;m<v.nw;m++) if(v.wrid[m]==rid){seen=1;break;}
-      if(!seen){ v.wrid[v.nw]=rid; v.wclaim[v.nw]=(int)i; v.nw++; } } }
+    for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k];
+      if(writer_index(&v,rid)<0) writer_add(&v,rid,(int)i); } }
   /* build each non-NOP claim's record, "<op>|<opcode>|<reads>|<imm>|<domain>" */
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
     char base[BCIR_VN_OP], head[BCIR_VN_OP+16], imm[BCIR_VN_IMM], tail[BCIR_VN_IMM+16];
@@ -10757,9 +10988,8 @@ static void canon_func(const bcir_func *f, void (*emit)(void*,const char*,size_t
   vnctx vl;
   if(!vn_init(&vl,f,arena,maxw)){ emit(ctx,"oom\n",4); return; }
   for(int r=0;r<nc;r++){ int i=cidx[r]; const bcir_claim *cl=&f->claims[i];
-    for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int slot=-1;
-      for(int m=0;m<vl.nw;m++) if(vl.wrid[m]==rid){slot=m;break;}
-      if(slot<0){ vl.wrid[vl.nw]=rid; vl.wclaim[vl.nw]=(int)i; vl.nw++; }
+    for(int k=0;k<cl->n_wr;k++){ uint32_t rid=cl->wr[k]; int slot=writer_index(&vl,rid);
+      if(slot<0) writer_add(&vl,rid,(int)i);
       else vl.wclaim[slot]=(int)i; } }                /* LAST writer wins (overwrite) */
   vntok ret=f->has_return ? vn_of(&vl,f->return_rid,0) : vn_tok("void",4);
   /* the store (dest->value) pairs, sorted */

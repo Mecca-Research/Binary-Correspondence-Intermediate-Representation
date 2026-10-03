@@ -598,6 +598,187 @@ int main(void){
         assert run.returncode == 0, (run.stdout, run.stderr)
 
 
+def test_c_zeroed_allocation_is_zero_under_every_allocator_and_is_one_allocation():
+    """CF-CPPZERO: the preprocessor's 2.3 MB state is taken zeroed (`bcir_host_allocate_zeroed`) -- libc's `calloc`
+    hands pages the kernel already zeroed where `malloc` and a `memset` touched every byte, a third of a small
+    unit's compile. An injected allocator cannot promise zero, so it is `allocate` then `memset`: this harness's
+    allocator fills what it hands out with 0xAA and counts its calls, and both allocators must return memory that
+    is all zero, in one allocation, with a NULL from the allocator passed through and an invalid allocator refused."""
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r"""
+#include <string.h>
+#include "bcir_host_alloc.h"
+static int calls, fail_next;
+static void *aa_allocate(void *ctx,size_t n){ (void)ctx; calls++; if(fail_next) return NULL; void *p=malloc(n); if(p) memset(p,0xAA,n); return p; }
+static void *aa_reallocate(void *ctx,void *p,size_t n){ (void)ctx; return realloc(p,n); }
+static void aa_deallocate(void *ctx,void *p){ (void)ctx; free(p); }
+static int all_zero(const unsigned char *p,size_t n){ for(size_t i=0;i<n;i++) if(p[i]) return 0; return 1; }
+int main(void){
+  bcir_host_allocator aa={0}; aa.allocate=aa_allocate; aa.reallocate=aa_reallocate; aa.deallocate=aa_deallocate;
+  bcir_host_allocator libc=bcir_host_allocator_default(); bcir_host_allocator bad={0};
+  size_t n=3u*1024u*1024u+7u;
+  unsigned char *p=(unsigned char *)bcir_host_allocate_zeroed(&aa,n);
+  if(!p||calls!=1||!all_zero(p,n)) return 1;
+  bcir_host_deallocate(&aa,p);
+  unsigned char *q=(unsigned char *)bcir_host_allocate_zeroed(&libc,n);
+  if(!q||!all_zero(q,n)) return 2;
+  bcir_host_deallocate(&libc,q);
+  fail_next=1; if(bcir_host_allocate_zeroed(&aa,n)!=NULL||calls!=2) return 3;
+  if(bcir_host_allocate_zeroed(&bad,n)!=NULL||bcir_host_allocate_zeroed(NULL,n)!=NULL) return 4;
+  return 0;
+}
+"""
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "zeroed.c")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        exe = os.path.join(d, "zeroed")
+        build = subprocess.run(
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C_DIR,
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+
+
+def test_c_the_frontend_reads_c_white_space_at_its_own_entry():
+    """CF-PPSPLITS: the twin's lexer skips a form feed and a vertical tab (C 6.4p3) where it skipped a space, a
+    tab, a carriage return and a new-line alone, so `\f` in code started a token. The preprocessor spells its
+    output with single spaces, so a unit that goes through it never shows the lexer either character;
+    `bcir_cfront_compile` takes preprocessed text and is the entry a caller of the frontend alone uses, so the
+    lexer's rule is witnessed there: a unit with both characters in code lowers to one function, and one with a
+    character no token starts with is refused in the oracle's words (fault PS2 of `cfront-ppsplits.json`)."""
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r"""
+#include <string.h>
+#include "bcir_cfront.h"
+int main(void){
+  bcir_cfront_result r;
+  int rc = bcir_cfront_compile("uint32_t f(uint32_t x) {\f return x\v + 1u; }\n", &r);
+  int lowered = rc == 0 && r.ok && r.unit.n_funcs == 1;
+  bcir_cfront_free(&r);
+  if(!lowered) return 1;
+  rc = bcir_cfront_compile("uint32_t f(uint32_t x) { return x @ 1u; }\n", &r);
+  int refused = rc != 0 && !strcmp(r.diag, "unexpected character '@'");
+  bcir_cfront_free(&r);
+  return refused ? 0 : 2;
+}
+"""
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "white_space.c")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        exe = os.path.join(d, "white_space")
+        build = subprocess.run(
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_cfront.c"),
+                os.path.join(_C_DIR, "bcir_cpp.c"),
+                os.path.join(_C_DIR, "bcir_verify.c"),
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+
+
+def test_c_lifetime_verifier_reads_back_to_the_last_event_on_a_rid():
+    """CF-NAMECACHE: R21 decides a read by the last event on its rid -- a `free` that reads it marks it freed, a
+    write re-validates it, and a claim that frees and writes it writes last -- read backwards to that event, where
+    the walk scanned every prior claim for every read (4 800 updates of one local: 0.3 s of 0.35 s). Five functions
+    pin the order: a use after a free (reported), a use three claims after the free (reported: the read goes past
+    unrelated claims), a use after a free and a re-validating write (clean), a use after one claim that frees and
+    writes the rid (clean: the write is last), and a second free (double-free)."""
+    clang = which("clang")
+    if clang is None:
+        return
+    source = r"""
+#include <string.h>
+#include "bcir_verify.h"
+static int uaf, dfree;
+static void report(const char *fn,const char *kind,void *ctx){
+  (void)fn;(void)ctx;if(!strcmp(kind,"use-after-free"))uaf++;else if(!strcmp(kind,"double-free"))dfree++;
+}
+static void claim(bcir_claim *c,unsigned id,const char *op,int lifetime,unsigned rd,unsigned wr){
+  memset(c,0,sizeof *c);c->id=id;strcpy(c->op,op);c->lifetime=(uint8_t)lifetime;
+  if(rd){c->n_rd=1;c->rd[0]=rd;} if(wr){c->n_wr=1;c->wr[0]=wr;}
+}
+int main(void){
+  static bcir_claim c[5][4]; bcir_func f[5]; bcir_unit u;
+  memset(f,0,sizeof f);memset(&u,0,sizeof u);
+  strcpy(f[0].name,"free_then_use");
+  claim(&c[0][0],1,"c.free",2,1,0);claim(&c[0][1],2,"c.load",0,1,0);f[0].claims=c[0];f[0].n_claims=2;
+  strcpy(f[1].name,"free_far_back");
+  claim(&c[1][0],1,"c.free",2,1,0);claim(&c[1][1],2,"c.load",0,2,0);claim(&c[1][2],3,"c.load",0,3,0);
+  claim(&c[1][3],4,"c.load",0,1,0);f[1].claims=c[1];f[1].n_claims=4;
+  strcpy(f[2].name,"free_then_write");
+  claim(&c[2][0],1,"c.free",2,1,0);claim(&c[2][1],2,"c.alloc",1,0,1);claim(&c[2][2],3,"c.load",0,1,0);
+  f[2].claims=c[2];f[2].n_claims=3;
+  strcpy(f[3].name,"free_and_write_in_one");
+  claim(&c[3][0],1,"c.free",2,1,1);claim(&c[3][1],2,"c.load",0,1,0);f[3].claims=c[3];f[3].n_claims=2;
+  strcpy(f[4].name,"double_free");
+  claim(&c[4][0],1,"c.free",2,1,0);claim(&c[4][1],2,"c.free",2,1,0);f[4].claims=c[4];f[4].n_claims=2;
+  u.funcs=f;u.n_funcs=5;bcir_verify_lifetime(&u,report,0);
+  return (uaf==2 && dfree==1)?0:1;
+}
+"""
+    with tempfile.TemporaryDirectory() as d:
+        driver = os.path.join(d, "lifetime_order.c")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write(source)
+        exe = os.path.join(d, "lifetime_order")
+        build = subprocess.run(
+            [
+                clang,
+                "-std=c11",
+                "-O1",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                _C_DIR,
+                os.path.join(_C_DIR, "bcir_runtime.c"),
+                os.path.join(_C_DIR, "bcir_verify.c"),
+                driver,
+                "-o",
+                exe,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert build.returncode == 0, build.stderr
+        run = subprocess.run([exe], capture_output=True, text=True)
+        assert run.returncode == 0, (run.stdout, run.stderr)
+
+
 def test_c_planner_width_contract_and_r9_rederives_costs():
     """The scalar planner used to write a claim's ELEMENT COUNT into the step's lane width, so
     a claim over 3 elements planned at "width 3" -- a width the hydrator rightly refuses -- and

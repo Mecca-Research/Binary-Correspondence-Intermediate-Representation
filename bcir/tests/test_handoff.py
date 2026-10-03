@@ -225,7 +225,8 @@ def test_a_frozen_step_is_a_v4_pack_bound_to_the_live_registry():
 def test_every_freeze_law_names_its_status():
     want = {
         "overflow": "BCIR_ERR_OVERFLOW", "no-vector": "BCIR_ERR_GENERATION",
-        "unsorted-vector": "BCIR_ERR_GENERATION", "too-many-reads": "BCIR_ERR_PROVENANCE",
+        "unsorted-vector": "BCIR_ERR_GENERATION", "reads-longest": "BCIR_OK",
+        "too-many-reads": "BCIR_ERR_PROVENANCE",
         "too-many-writes": "BCIR_ERR_PROVENANCE", "label-control-char": "BCIR_ERR_PROVENANCE",
         "label-no-terminator": "BCIR_ERR_PROVENANCE", "label-longest": "BCIR_OK",
         "ids-not-ascending": "BCIR_ERR_PROVENANCE", "nop-ids-count": "BCIR_ERR_PROVENANCE",
@@ -237,6 +238,29 @@ def test_every_freeze_law_names_its_status():
 
 
 # --- the manifest-of-shards ---------------------------------------------------------------------
+
+
+def test_a_claims_read_capacity_is_the_c_twins_on_every_rail():
+    """A `bcir_claim` carries `BCIR_CLAIM_MAX_RD` reads -- a call's `BCIR_CALL_MAX_ARGS` arguments and its callee
+    value or object base (CF-CALLARGS: sixteen and one) -- and the oracle's three mirrors of that number (the
+    freeze's `CLAIM_MAX_RD`, the escape analysis's, the lowering's `MAX_CALL_ARGS`) are read out of the header, so
+    the rails cannot disagree about what a claim holds: the freeze of a seven-read claim was refused here and
+    accepted by the C rail while this mirror still said six."""
+    from bcir.frontends.cfront import escape, lower
+    from bcir.gem import handoff
+
+    header = open(os.path.join(hf.C_DIR, "bcir_cir.h"), encoding="utf-8").read()
+    args = int(re.search(r"#define BCIR_CALL_MAX_ARGS\s+(\d+)", header).group(1))
+    assert re.search(r"#define BCIR_CLAIM_MAX_RD \(BCIR_CALL_MAX_ARGS \+ 1\)", header), (
+        "the header's capacity"
+    )
+    assert (lower.MAX_CALL_ARGS, handoff.CLAIM_MAX_RD, escape.CLAIM_MAX_RD) == (
+        args,
+        args + 1,
+        args + 1,
+    )
+    writes = int(re.search(r"#define BCIR_CLAIM_MAX_WR\s+(\d+)", header).group(1))
+    assert handoff.CLAIM_MAX_WR == writes
 
 
 def test_the_manifest_layout_is_the_c_twin_s():

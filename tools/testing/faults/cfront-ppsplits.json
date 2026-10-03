@@ -1,0 +1,143 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_form_feed_and_vertical_tab_are_white_space_on_both_rails",
+    "bcir.tests.test_c_cfront:test_an_error_directive_and_an_unknown_one_are_refused_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_stray_character_outside_a_literal_is_refused_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_line_ends_at_a_new_line_alone_on_both_rails",
+    "bcir.tests.test_c_runtime:test_c_the_frontend_reads_c_white_space_at_its_own_entry"
+  ],
+  "faults": [
+    {
+      "expects": "test_form_feed_and_vertical_tab_are_white_space_on_both_rails",
+      "label": "PS1 the twin's preprocessor reads a space and a tab as white space, as it did: `\\f#define` is no directive",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "static int pp_space(int ch) { return ch == ' ' || ch == '\\t' || ch == '\\f' || ch == '\\v' || ch == '\\r'; }\n",
+      "new": "static int pp_space(int ch) { return ch == ' ' || ch == '\\t' || ch == '\\r'; }\n"
+    },
+    {
+      "expects": "test_c_the_frontend_reads_c_white_space_at_its_own_entry",
+      "label": "PS2 the twin's lexer reads a form feed in code as a token's start, as it did: at the frontend's own entry, past the preprocessor's single spaces, `return x\\v + 1u` is `unexpected character`",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    if (*p==' '||*p=='\\t'||*p=='\\r'||*p=='\\n'||*p=='\\f'||*p=='\\v'){p++;continue;}   /* C's white space (6.4p3) */\n",
+      "new": "    if (*p==' '||*p=='\\t'||*p=='\\r'||*p=='\\n'){p++;continue;}   /* C's white space (6.4p3) */\n"
+    },
+    {
+      "expects": "test_an_error_directive_and_an_unknown_one_are_refused_alike_on_both_rails",
+      "label": "PS3 the twin ignores `#error`, as it did: the unit lowers past it",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "        else if(!strcmp(dir,\"error\")){           /* `#error text`: the compile's failure, the text macro-expanded\n",
+      "new": "        else if(!strcmp(dir,\"error\")&&0){        /* `#error text`: the compile's failure, the text macro-expanded\n"
+    },
+    {
+      "expects": "test_an_error_directive_and_an_unknown_one_are_refused_alike_on_both_rails",
+      "label": "PS4 the twin ignores an unknown directive, as it did",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "        else { if(err&&errcap)snprintf(err,errcap,\"unknown directive #%s\",dir); return 1; }   /* C11 6.10p9: a\n",
+      "new": "        else { (void)dir; }   /* C11 6.10p9: a\n"
+    },
+    {
+      "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
+      "label": "PS5 the twin's invocation reader takes any number of arguments for a macro's parameters, as it did",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "            if (!m->variadic && given > m->np) cpp_limit(state, \"too many macro arguments\");\n            else if (given < need) cpp_limit(state, \"too few macro arguments\"); }\n",
+      "new": "            (void)m; (void)need; (void)given; }\n"
+    },
+    {
+      "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
+      "label": "PS6 the oracle's preprocessor holds no line length: a line of 8 191 bytes lowers there alone",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "            if len(line.encode(\"utf-8\")) > _MAX_LINE:\n",
+      "new": "            if len(line.encode(\"utf-8\")) > 2 * _MAX_LINE:\n"
+    },
+    {
+      "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
+      "label": "PS7 the oracle's preprocessor holds no replacement length: a macro body of 1 024 bytes lowers there alone",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "        if len(body.encode(\"utf-8\")) > _MAX_BODY:\n",
+      "new": "        if len(body.encode(\"utf-8\")) > 2 * _MAX_BODY:\n"
+    },
+    {
+      "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
+      "label": "PS8 the oracle takes more arguments than a macro has parameters, as it did",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "        if len(args) > _MAX_ARGS or (not variadic and given > len(params)):\n",
+      "new": "        if len(args) > _MAX_ARGS:\n"
+    },
+    {
+      "expects": "test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails",
+      "label": "PS9 the oracle substitutes a missing argument as empty: `M(x)` for `M(a, b)` lowers there",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "        if given < need:\n            raise CPPError(\"too few macro arguments\")\n",
+      "new": "        if given < 0:\n            raise CPPError(\"too few macro arguments\")\n"
+    },
+    {
+      "expects": "test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails",
+      "label": "PS10 the twin ignores a `#line` whose operand is no number, as it did",
+      "path": "runtime/c/bcir_cpp.c",
+      "old": "            if(!digits){                                     /* a character past ASCII in the operand is its own\n                                                              * refusal (NONASCII), read before the digits are */\n              if(err&&errcap)snprintf(err,errcap,\"%s\",state->limit_error?state->limit_error:\"#line number is not a decimal digit sequence\");\n              return 1; }\n",
+      "new": "            if(!digits){ continue; }\n"
+    },
+    {
+      "expects": "test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails",
+      "label": "PS11 the oracle reads the digits `#line 12abc` starts with, as it did",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "old": "        if not toks or not re.fullmatch(r\"[0-9]+\", toks[0], re.ASCII):\n",
+      "new": "        if not toks or not re.match(r\"[0-9]+\", toks[0], re.ASCII):\n"
+    },
+    {
+      "expects": "test_a_stray_character_outside_a_literal_is_refused_alike_on_both_rails",
+      "label": "PS12 the twin's lexer makes `@` a punctuator for the parser to stumble on, as it did",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    if (!strchr(\"[](){}.&*+-~!/%<>=^|?:;,#\",*p)){            /* no C token starts with it: `@`, `$`, a backquote,\n",
+      "new": "    if (!strchr(\"[](){}.&*+-~!/%<>=^|?:;,#@$`\\\\\",*p)){        /* no C token starts with it: `@`, `$`, a backquote,\n"
+    },
+    {
+      "label": "PS13 the oracle ends a logical line where `str.splitlines` does -- at a form feed, a `\\x1c`, a NEL -- as it did",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
+      "old": "        lines = _strip_comments(spliced).split(\"\\n\")\n",
+      "new": "        lines = _strip_comments(spliced).splitlines()\n"
+    },
+    {
+      "label": "PS14 the oracle maps no CRLF end of line to a new-line: a `\\\\\\r\\n` splice is none there, as it was",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
+      "old": "        spliced = text.replace(\"\\r\\n\", \"\\n\").replace(\"\\\\\\n\", \"\")\n",
+      "new": "        spliced = text.replace(\"\\\\\\n\", \"\")\n"
+    },
+    {
+      "label": "PS15 the oracle reads a space and a tab alone between a `#` and its name: `#\\finclude` a null directive, as it was",
+      "path": "bcir/frontends/cfront/cpp.py",
+      "expects": "test_form_feed_and_vertical_tab_are_white_space_on_both_rails",
+      "old": "_DIRECTIVE_SPACE = \" \\t\\f\\v\"\n",
+      "new": "_DIRECTIVE_SPACE = \" \\t\"\n"
+    },
+    {
+      "label": "PS16 the twin's line reader splices no `\\\\\\r\\n`, as it did",
+      "path": "runtime/c/bcir_cpp.c",
+      "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
+      "old": "      if(*p=='\\\\'&&p[1]=='\\r'&&p[2]=='\\n'){p+=3;continue;}",
+      "new": "      if(*p=='\\\\'&&p[1]=='\\r'&&p[2]=='\\f'){p+=3;continue;}"
+    },
+    {
+      "label": "PS17 the twin's line reader reads a CRLF's `\\r` into the line, as it did: the longest line is one byte too long",
+      "path": "runtime/c/bcir_cpp.c",
+      "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
+      "old": "      if(*p=='\\r'&&p[1]=='\\n'){p++;continue;}\n",
+      "new": "      if(*p=='\\r'&&p[1]=='\\f'){p++;continue;}\n"
+    },
+    {
+      "label": "PS18 a lone carriage return is no white space on the twin: `#if K ==\\r2u` is malformed there",
+      "path": "runtime/c/bcir_cpp.c",
+      "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
+      "old": "ch == '\\v' || ch == '\\r'; }",
+      "new": "ch == '\\v'; }"
+    }
+  ]
+}

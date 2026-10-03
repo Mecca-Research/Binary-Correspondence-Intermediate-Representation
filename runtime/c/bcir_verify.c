@@ -39,7 +39,19 @@ static int unit_shape_valid(const bcir_unit *u,char *diag,size_t dn){
   return 1;
 }
 
-static const bcir_resource *res_of(const bcir_func *f,uint32_t rid){
+/* A resource by its rid. The parser lays a function's resources out by increasing rid (`add_res`), and a function laid
+ * out so is searched by halving (CF-NAMECACHE: the walk cost a function of 8 000 locals half its compile); the verifier
+ * reads caller-owned memory it did not lay out, so any other function is walked. `sorted` is `rids_increasing`'s
+ * answer for the function, read once in `verify_func`. */
+static int rids_increasing(const bcir_func *f){
+  for(size_t i=1;i<f->n_res;i++) if(f->res[i-1].rid>=f->res[i].rid) return 0;
+  return 1;
+}
+static const bcir_resource *res_of(const bcir_func *f,int sorted,uint32_t rid){
+  if(sorted){ size_t lo=0,hi=f->n_res;
+    while(lo<hi){ size_t mid=lo+(hi-lo)/2; uint32_t m=f->res[mid].rid;
+      if(m==rid) return &f->res[mid]; if(m<rid) lo=mid+1; else hi=mid; }
+    return NULL; }
   for(size_t i=0;i<f->n_res;i++) if(f->res[i].rid==rid) return &f->res[i];
   return NULL;
 }
@@ -61,15 +73,15 @@ static int lane_legal(bcir_stride sc,uint8_t lane){
 
 /* --- R1-R8 + R12 + R17 (per function) ------------------------------------ */
 static int verify_func(const bcir_func *f,char *diag,size_t dn){
-  int effect=0;
+  int effect=0, sorted=rids_increasing(f);
   for(size_t i=0;i<f->n_claims;i++){const bcir_claim *cl=&f->claims[i];
-    for(int k=0;k<cl->n_rd;k++) if(!res_of(f,cl->rd[k])){snprintf(diag,dn,"R2: claim %u reads undefined rid %u",cl->id,cl->rd[k]);return 0;}
-    for(int k=0;k<cl->n_wr;k++) if(!res_of(f,cl->wr[k])){snprintf(diag,dn,"R2: claim %u writes undefined rid %u",cl->id,cl->wr[k]);return 0;}
+    for(int k=0;k<cl->n_rd;k++) if(!res_of(f,sorted,cl->rd[k])){snprintf(diag,dn,"R2: claim %u reads undefined rid %u",cl->id,cl->rd[k]);return 0;}
+    for(int k=0;k<cl->n_wr;k++) if(!res_of(f,sorted,cl->wr[k])){snprintf(diag,dn,"R2: claim %u writes undefined rid %u",cl->id,cl->wr[k]);return 0;}
     int dom_ok=0;
-    for(int k=0;k<cl->n_rd;k++){const bcir_resource *r=res_of(f,cl->rd[k]);if(r&&r->domain==cl->domain)dom_ok=1;}
-    for(int k=0;k<cl->n_wr;k++){const bcir_resource *r=res_of(f,cl->wr[k]);if(r&&r->domain==cl->domain)dom_ok=1;}
+    for(int k=0;k<cl->n_rd;k++){const bcir_resource *r=res_of(f,sorted,cl->rd[k]);if(r&&r->domain==cl->domain)dom_ok=1;}
+    for(int k=0;k<cl->n_wr;k++){const bcir_resource *r=res_of(f,sorted,cl->wr[k]);if(r&&r->domain==cl->domain)dom_ok=1;}
     if((cl->n_rd||cl->n_wr)&&!dom_ok){snprintf(diag,dn,"R3: claim %u domain mismatch",cl->id);return 0;}
-    for(int k=0;k<cl->n_wr;k++){const bcir_resource *r=res_of(f,cl->wr[k]);
+    for(int k=0;k<cl->n_wr;k++){const bcir_resource *r=res_of(f,sorted,cl->wr[k]);
       if(r&&r->domain==BCIR_DOM_MMIO&&cl->hazard==BCIR_HZ_UNIQUE){snprintf(diag,dn,"R3: MMIO write %u needs a barriered hazard",cl->id);return 0;}}
     /* R5: an atomic lane or an atomic/cmpxchg/barrier opcode needs a non-unique hazard. */
     int atomicish = cl->lane==BCIR_LANE_A || (cl->opcode>=BCIR_OP_ATOMIC_ADD && cl->opcode<=BCIR_OP_BARRIER);
@@ -110,6 +122,41 @@ static int has_cycle_iterative(const bcir_unit *u,int start,int *state,verify_fr
   return 0;
 }
 
+/* R1.1's scan, sorted (CF-NAMECACHE): the unit's claim ids in the order the claims stand, and a sorted copy. An id
+ * that stands twice in the copy is a duplicate, and the one reported is the first claim, in that order, whose id is
+ * one -- the claim the pairwise walk reported. O(n log n) in the unit's claims, where the walk was O(n^2): one
+ * function of 5 400 claims spent a third of its compile here. Heap sort: in place, no recursion, no libc order. */
+static void u32_sift(uint32_t *a,size_t root,size_t n){
+  for(;;){ size_t child=2*root+1; if(child>=n) return;
+    if(child+1<n && a[child+1]>a[child]) child++;
+    if(a[root]>=a[child]) return;
+    uint32_t t=a[root]; a[root]=a[child]; a[child]=t; root=child; }
+}
+static void u32_heapsort(uint32_t *a,size_t n){
+  for(size_t start=n/2;start-- >0;) u32_sift(a,start,n);
+  for(size_t end=n;end-- >1;){ uint32_t t=a[0]; a[0]=a[end]; a[end]=t; u32_sift(a,0,end); }
+}
+static int u32_twice(const uint32_t *sorted,size_t n,uint32_t id){   /* `id` stands at least twice in `sorted` */
+  size_t lo=0,hi=n;
+  while(lo<hi){ size_t mid=lo+(hi-lo)/2; if(sorted[mid]<id) lo=mid+1; else hi=mid; }
+  return lo+1<n && sorted[lo]==id && sorted[lo+1]==id;
+}
+static int claim_ids_unique(const bcir_unit *u,const bcir_host_allocator *al,char *diag,size_t dn){
+  size_t n=0,bytes; uint32_t *ids,*sorted;
+  for(int i=0;i<u->n_funcs;i++) n+=u->funcs[i].n_claims;
+  if(n<2) return 1;
+  if(!bcir_size_mul(n,2u*sizeof *ids,&bytes)){ snprintf(diag,dn,"oom"); return 0; }
+  ids=(uint32_t *)bcir_host_allocate(al,bytes);
+  if(!ids){ snprintf(diag,dn,"oom"); return 0; }
+  sorted=ids+n; n=0;
+  for(int i=0;i<u->n_funcs;i++) for(size_t a=0;a<u->funcs[i].n_claims;a++) ids[n++]=u->funcs[i].claims[a].id;
+  memcpy(sorted,ids,n*sizeof *ids); u32_heapsort(sorted,n);
+  for(size_t a=0;a<n;a++) if(u32_twice(sorted,n,ids[a])){
+    snprintf(diag,dn,"R1.1: duplicate claim id %u",ids[a]); bcir_host_deallocate(al,ids); return 0; }
+  bcir_host_deallocate(al,ids);
+  return 1;
+}
+
 int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
                                     const bcir_host_allocator *allocator){
   bcir_host_allocator selected=bcir_host_allocator_or_default(allocator);
@@ -124,13 +171,7 @@ int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
    * wrong claim), so it is rejected here exactly as bcir/verify's R1.1 does. O(total_claims^2) over the
    * unit -- claim arrays are small per function; for a large unit this stays well within the verifier
    * budget (the cost model never runs on a dirty graph). */
-  for(int i=0;i<u->n_funcs;i++){ const bcir_func *fi=&u->funcs[i];
-    for(size_t a=0;a<fi->n_claims;a++){ uint32_t id=fi->claims[a].id;
-      for(size_t b=a+1;b<fi->n_claims;b++) if(fi->claims[b].id==id){
-        snprintf(diag,dn,"R1.1: duplicate claim id %u",id); return 0; }
-      for(int j=i+1;j<u->n_funcs;j++){ const bcir_func *fj=&u->funcs[j];
-        for(size_t b=0;b<fj->n_claims;b++) if(fj->claims[b].id==id){
-          snprintf(diag,dn,"R1.1: duplicate claim id %u",id); return 0; } } } }
+  if(!claim_ids_unique(u,&selected,diag,dn)) return 0;
   for(int i=0;i<u->n_funcs;i++) if(!verify_func(&u->funcs[i],diag,dn)) return 0;
   for(int i=0;i<u->n_funcs;i++) for(int k=0;k<u->funcs[i].n_calls;k++)
     if(func_index(u,u->funcs[i].calls[k])<0){snprintf(diag,dn,"R18: call to undefined function %s",u->funcs[i].calls[k]);return 0;}
@@ -238,19 +279,24 @@ void bcir_verify_lifetime(const bcir_unit *u,
   if(!report||!unit_shape_valid(u,NULL,0))return;
   for(int fi=0;fi<u->n_funcs;fi++){
     const bcir_func *f=&u->funcs[fi];
-    for(size_t i=0;i<f->n_claims;i++){
+    size_t first_free=f->n_claims;                   /* a rid is freed only after the function's first `free` */
+    for(size_t i=0;i<f->n_claims;i++) if(f->claims[i].lifetime==2){ first_free=i; break; }
+    for(size_t i=first_free+1;i<f->n_claims;i++){
       const bcir_claim *cl=&f->claims[i];
       int is_free = (cl->lifetime==2);
       for(int k=0;k<cl->n_rd;k++){
         uint32_t rid=cl->rd[k];int freed=0;
-        /* Reconstruct the RID's state from prior events. This allocation-free
-         * scan has no 256-resource truncation and preserves free-then-write order. */
-        for(size_t q=0;q<i;q++){
-          const bcir_claim *prior=&f->claims[q];
-          if(prior->lifetime==2){
-            for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;break;}
-          }
-          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){freed=0;break;}
+        /* Reconstruct the RID's state from prior events: the last event on it decides -- a `free` that reads it
+         * marks it freed, a write re-validates it, and a claim that does both writes last. Read backwards to that
+         * event, so a run of claims touching a rid costs the distance to its last event, not the function's length
+         * (CF-NAMECACHE: 4 800 updates of one local spent 0.3 s of 0.35 s here); allocation-free, no 256-resource
+         * truncation. */
+        for(size_t q=i;q-- >first_free;){
+          const bcir_claim *prior=&f->claims[q];int hit=0;
+          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){hit=1;break;}
+          if(hit)break;
+          if(prior->lifetime==2) for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;hit=1;break;}
+          if(hit)break;
         }
         if(freed)report(f->name,is_free?"double-free":"use-after-free",ctx);
       }

@@ -81,6 +81,19 @@ static inline void *bcir_host_allocate(const bcir_host_allocator *allocator, siz
   return allocator->allocate(allocator->context,size?size:1u);
 }
 
+/* A zeroed allocation: libc's `calloc`, which hands fresh pages the kernel already zeroed where `malloc` and
+ * `memset` would touch every byte (the preprocessor's state is 2.3 MB, a tenth of a small unit's compile:
+ * CF-CPPZERO), and `allocate` then `memset` for an injected allocator -- one allocation either way, as the
+ * fault-injecting allocators count it. */
+static inline void *bcir_host_allocate_zeroed(const bcir_host_allocator *allocator, size_t size) {
+  void *allocation;
+  if(!bcir_host_allocator_valid(allocator)) return NULL;
+  if(allocator->allocate==bcir_host_libc_allocate) return calloc(1u, size?size:1u);
+  allocation = allocator->allocate(allocator->context, size?size:1u);
+  if(allocation) memset(allocation, 0, size?size:1u);
+  return allocation;
+}
+
 static inline void bcir_host_deallocate(const bcir_host_allocator *allocator, void *allocation) {
   if (allocation && bcir_host_allocator_valid(allocator)) {
     if(allocator->deallocate==bcir_host_libc_deallocate) free(allocation);

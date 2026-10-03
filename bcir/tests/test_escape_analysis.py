@@ -293,32 +293,50 @@ def test_an_indirect_call_is_narrowed_to_the_functions_its_pointer_can_hold():
 
 
 def test_a_call_with_more_operands_than_a_c_twin_claim_holds_refuses_the_unit():
-    """The C twin keeps six operands per claim and drops the rest, so neither rail may reason
-    about the unit: every footprint is `*`, no local is proved private, no site is narrowed. Six
-    operands is the boundary: that unit is analyzed."""
-    seven = (
-        "static unsigned s7(unsigned a, unsigned b, unsigned c, unsigned d, unsigned e,"
-        " unsigned f, unsigned *p) { p[0] = a + b + c + d + e + f; return p[1]; }\n"
-        "unsigned caller(unsigned x) { unsigned t[4]; t[1] = x;"
-        " return s7(x, x, x, x, x, x, t); }\n"
-    )
-    six = (
-        "static unsigned s6(unsigned a, unsigned b, unsigned c, unsigned d, unsigned e,"
-        " unsigned *p) { p[0] = a + b + c + d + e; return p[1]; }\n"
-        "unsigned caller(unsigned x) { unsigned t[4]; t[1] = x;"
-        " return s6(x, x, x, x, x, t); }\n"
-    )
-    everything = Footprint(frozenset({UNKNOWN}), frozenset({UNKNOWN}))
-    refused = _unit(seven)
-    assert refused.escape.truncated
-    assert all(fp == everything for fp in refused.escape.footprints.values())
-    assert not any(refused.escape.objects.values())
-    assert escape_report(refused.lowered, refused.escape) == (
-        "truncated=1\nfn=s7 refused\nfn=caller refused\n"
-    )
-    kept = _unit(six)
+    """A C-twin claim holds `BCIR_CLAIM_MAX_RD` operands: a call's sixteen arguments and its callee value or object
+    base (CF-CALLARGS; it held six and dropped the rest, so neither rail could reason about a unit with a call of
+    seven). Sixteen arguments is the boundary now -- that unit is analyzed, its buffer lent -- and a seventeenth is
+    refused at lowering on both rails, so no lowered unit reaches the analysis with more operands than a claim
+    holds. A claim widened past the capacity by hand is still refused as the twin's truncation was -- every
+    footprint `*`, no local proved private, no site narrowed -- so the guard keeps the rails honest should the
+    lowering ever carry more than the twin."""
+    from bcir.frontends.cfront.escape import CLAIM_MAX_RD
+    from bcir.frontends.cfront.lower import CLowerError, MAX_CALL_ARGS
+
+    def unit(n: int) -> str:
+        params = ", ".join(f"unsigned a{i}" for i in range(n - 1)) + ", unsigned *p"
+        total = " + ".join(f"a{i}" for i in range(n - 1))
+        args = ", ".join(["x"] * (n - 1)) + ", t"
+        return (
+            f"static unsigned s{n}({params}) {{ p[0] = {total}; return p[1]; }}\n"
+            f"unsigned caller(unsigned x) {{ unsigned t[4]; t[1] = x; return s{n}({args}); }}\n"
+        )
+
+    kept = _unit(unit(MAX_CALL_ARGS))
     assert not kept.escape.truncated
     assert kept.escape.objects["caller"] == {"t": "lent"}
+    try:
+        _unit(unit(MAX_CALL_ARGS + 1))
+    except CLowerError as e:
+        assert str(e) == f"a call of more than {MAX_CALL_ARGS} arguments is not supported", e
+    else:
+        raise AssertionError("a call of one argument past the capacity lowered")
+    everything = Footprint(frozenset({UNKNOWN}), frozenset({UNKNOWN}))
+    widened = kept.lowered
+    lf = widened.functions["caller"]
+    i, call = next((i, c) for i, c in enumerate(lf.claims) if c.op.startswith("c.call"))
+    assert len(call.rd) == MAX_CALL_ARGS <= CLAIM_MAX_RD  # a direct call reads its arguments alone
+    lf.claims[i] = dataclasses.replace(
+        call, rd=call.rd + (call.rd[0],) * (CLAIM_MAX_RD + 1 - len(call.rd))
+    )
+    assert len(lf.claims[i].rd) == CLAIM_MAX_RD + 1
+    refused = analyze(widened)
+    assert refused.truncated
+    assert all(fp == everything for fp in refused.footprints.values())
+    assert not any(refused.objects.values())
+    assert escape_report(widened, refused) == (
+        f"truncated=1\nfn=s{MAX_CALL_ARGS} refused\nfn=caller refused\n"
+    )
 
 
 def test_the_reports_the_c_twin_prints_have_the_documented_shape():

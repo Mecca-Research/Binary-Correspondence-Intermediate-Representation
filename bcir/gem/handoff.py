@@ -358,7 +358,9 @@ OPCODE_ATOMICS = (6, 7, 8, 9)
 OPCODE_GEM_DISPATCH = 16
 DOMAIN_MMIO = 3
 LANE_MAX = 5
-CLAIM_MAX_RD, CLAIM_MAX_WR = 6, 2
+#: bcir_claim's rd[] and wr[]: BCIR_CALL_MAX_ARGS + 1 reads and 2 writes, read out of `bcir_cir.h` by
+#: `test_a_claims_read_capacity_is_the_c_twins_on_every_rail` (CF-CALLARGS: this mirror held six).
+CLAIM_MAX_RD, CLAIM_MAX_WR = 17, 2
 LABEL_MAX = 127  # bcir_claim.op is BCIR_CIR_OP (128) bytes: a label and its terminator
 
 

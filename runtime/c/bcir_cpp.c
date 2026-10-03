@@ -65,6 +65,11 @@ typedef struct CppState {
  * translation unit.  The old preprocessor silently dropped text when one filled (and one long
  * macro-parameter name overflowed Macro.params outright).  Record the first limit violation and
  * make the public entry return a clean diagnostic after the current bounded operation unwinds. */
+/* The white space C reads as such (6.4p3) between tokens and before a directive's `#`: a space, a tab, a form feed, a
+ * vertical tab -- the oracle's `_ASCII_SPACE`, which holds a carriage return too: a lone one is white space on both
+ * rails, as both lexers skip it (a CRLF end of line is a new-line, read as one below). Once a space or a tab alone,
+ * so `\f` in code was an expression's end here and lowered on the oracle (CF-PPSPLITS). */
+static int pp_space(int ch) { return ch == ' ' || ch == '\t' || ch == '\f' || ch == '\v' || ch == '\r'; }
 static void cpp_limit(CppState *state, const char *message) {
   if (state && !state->limit_error) state->limit_error = message;
 }
@@ -114,7 +119,7 @@ static int id0(int c) { return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' &
 /* The length of the identifier at s[*i], past the spaces before it (*i is moved past them); 0 when none starts there. */
 static int ident_at(const char *s, int *i) {
   int n = 0;
-  while (s[*i] == ' ' || s[*i] == '\t') (*i)++;
+  while (pp_space(s[*i])) (*i)++;
   if (id0((unsigned char)s[*i])) while (idc((unsigned char)s[*i + n])) n++;
   return n;
 }
@@ -160,7 +165,7 @@ static void ntok_quoted(CppState *state, const char *s, int *i, char *out, int c
 }
 static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
   if (!s || !i || !out || cap < 2) { cpp_limit(state, "invalid preprocessor token buffer"); return 0; }
-  while (s[*i] == ' ' || s[*i] == '\t') (*i)++;
+  while (pp_space(s[*i])) (*i)++;
   int c = (unsigned char)s[*i];
   if (!c) return 0;
   int j = 0;
@@ -205,7 +210,7 @@ static int ntok(CppState *state, const char *s, int *i, char *out, int cap) {
  * refused whatever long token came next (CF-PPLIMITS). */
 static int next_is(const char *s, int *i, char c) {
   int j = *i;
-  while (s[j] == ' ' || s[j] == '\t') j++;
+  while (pp_space(s[j])) j++;
   if (s[j] != c) return 0;
   *i = j + 1;
   return 1;
@@ -390,6 +395,13 @@ static int expand_once(CppState *state, const char *line, char *out, size_t cap,
               snprintf(ap, sizeof ap, "%s", ak == 'p' && strlen(a) < sizeof ap ? a : ""); } }
           if (!closed) cpp_limit(state, "unterminated macro invocation");
           if (na < BCIR_CPP_ARGS) na++;  /* the final argument; excess arguments already diagnosed */
+          { /* as many arguments as parameters (C11 6.10.3p4), the variadic part free to be empty; `M()` of a macro
+             * of no parameters passes no argument. The oracle's `_check_arity` (CF-PPSPLITS: the twin took
+             * `M(x,1u,2u)` for `M(a,b)`, the oracle that and seventeen arguments for sixteen parameters). */
+            const Macro *m = &state->macros[mi]; int need = m->variadic ? m->np - 1 : m->np;
+            int given = (na == 1 && args[0][0] == 0 && need == 0) ? 0 : na;
+            if (!m->variadic && given > m->np) cpp_limit(state, "too many macro arguments");
+            else if (given < need) cpp_limit(state, "too few macro arguments"); }
           char *sub = state->subst; substitute(state, &state->macros[mi], args, na, sub, sizeof state->subst);
           if (w && sub[0] && pastes(prevp, prevc, sub, prevnum)) app(state, out, cap, &w, " ");
           app(state, out, cap, &w, sub); prevc = sub[0] ? sub[strlen(sub) - 1] : prevc; prevp = NULL; prevnum = 1;
@@ -663,7 +675,7 @@ static int eval_if(CppState *state, const char *expr, const char *const *dirs, i
                                                         * identifier and a number are ASCII (CF-PPLIMITS) */
     if(k=='i'&&!strcmp(t,"defined")){int has, j=i; char nm[BCIR_CPP_NAME]="";   /* its operand is a
                                                         * macro name, read as #ifdef reads one */
-      while(expr[j]==' '||expr[j]=='\t')j++;
+      while(pp_space(expr[j]))j++;
       if(expr[j]=='('){ j++;
         has=macro_name(state,expr,&j,nm,"malformed defined operator");
         if(has&&!next_is(expr,&j,')')){cpp_limit(state, "malformed defined operator");has=0;}
@@ -710,18 +722,18 @@ static void define_macro(CppState *state, const char *rest) {
   int i=0; Macro m; memset(&m,0,sizeof m);
   if(!macro_name(state,rest,&i,m.name,"macro name must be an identifier"))return;
   if(rest[i]=='('){m.isfunc=1;i++; for(;;){
-      while(rest[i]==' '||rest[i]=='\t')i++;
+      while(pp_space(rest[i]))i++;
       if(rest[i]==')'){i++;break;}
       if(m.np){
         if(rest[i]!=','){cpp_limit(state, "invalid macro parameter list");return;}
-        i++;while(rest[i]==' '||rest[i]=='\t')i++;
+        i++;while(pp_space(rest[i]))i++;
         if(!rest[i]||rest[i]==')'){cpp_limit(state, "invalid macro parameter list");return;}
       }
       if(m.np>=16){cpp_limit(state, "too many macro parameters");return;}
       int ps=i;
       if(!strncmp(rest+i,"...",3)){
         m.variadic=1;strcpy(m.params[m.np++],"__VA_ARGS__");i+=3;
-        while(rest[i]==' '||rest[i]=='\t')i++;
+        while(pp_space(rest[i]))i++;
         if(rest[i]!=')'){cpp_limit(state, "variadic macro parameter must be last");return;}
         i++;break;
       }
@@ -736,11 +748,11 @@ static void define_macro(CppState *state, const char *rest) {
       for(int p=0;p<m.np;p++)if((int)strlen(m.params[p])==pl&&!strncmp(m.params[p],rest+ps,(size_t)pl)){
         cpp_limit(state, "duplicate macro parameter");return;}
       memcpy(m.params[m.np],rest+ps,(size_t)pl);m.params[m.np][pl]=0;m.np++;
-      while(rest[i]==' '||rest[i]=='\t')i++;
+      while(pp_space(rest[i]))i++;
       if(rest[i]!=','&&rest[i]!=')'){cpp_limit(state, "invalid macro parameter list");return;}
     }
   }
-  while(rest[i]==' '||rest[i]=='\t')i++;
+  while(pp_space(rest[i]))i++;
   if(strlen(rest+i)>=sizeof m.body){cpp_limit(state, "macro replacement is too large");return;}
   strcpy(m.body,rest+i);
   undef_macro(state, m.name);
@@ -859,6 +871,11 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
     int L=0,line_too_long=0;
     while(*p&&*p!='\n'){
       if(*p=='\\'&&p[1]=='\n'){p+=2;continue;}
+      if(*p=='\\'&&p[1]=='\r'&&p[2]=='\n'){p+=3;continue;}   /* a CRLF end of line is a new-line (translation
+                                                             * phase 1): spliced as one, ended as one -- `#if K\r`
+                                                             * was malformed here and lowered on the oracle, and a
+                                                             * `\\\r\n` splice was none (CF-PPSPLITS) */
+      if(*p=='\r'&&p[1]=='\n'){p++;continue;}
       if(L<(int)sizeof line-2)line[L++]=*p;else line_too_long=1;
       p++;
     }
@@ -867,13 +884,13 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
     if(line_too_long){if(err&&errcap)snprintf(err,errcap,"preprocessor line too long");return 1;}
     if(presumed<1||presumed>INT_MAX){if(err&&errcap)snprintf(err,errcap,"presumed line number is out of range");return 1;}
     state->current_file=curf; state->current_line=(int)presumed; presumed++;
-    int q=0; while(line[q]==' '||line[q]=='\t')q++;
+    int q=0; while(pp_space(line[q]))q++;
     if(line[q]=='#'){
-      q++; while(line[q]==' '||line[q]=='\t')q++; int ds=q; while(idc((unsigned char)line[q]))q++;
+      q++; while(pp_space(line[q]))q++; int ds=q; while(idc((unsigned char)line[q]))q++;
       char dir[32]; int dl=q-ds;
       if(dl>31){if(err&&errcap)snprintf(err,errcap,"preprocessor directive name too long");return 1;}
       memcpy(dir,line+ds,(size_t)dl);dir[dl]=0;
-      const char *rest=line+q; while(*rest==' '||*rest=='\t')rest++;
+      const char *rest=line+q; while(pp_space(*rest))rest++;
       int parent=1; for(int k=0;k<ncs;k++) if(!cs[k].active){parent=0;break;}
       /* a name running on past ASCII -- `#caf\xc3\xa9`, `#\xc2\xa0define` -- in a group read: not a directive name
        * cut at its ASCII start, nor a null directive (CF-PPLIMITS; the oracle's `_directive`) */
@@ -948,8 +965,16 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
                                                   is N (decimal); optional new __FILE__. Operands are
                                                   macro-expanded first. */
           char ex[8192]; expand_line(state,rest,ex,sizeof ex); int j=0; char *t=state->line_token;
-          if(ntok(state,ex,&j,t,sizeof state->line_token)=='n'){char *end=NULL;errno=0;long long line_no=strtoll(t,&end,10);
-            if(errno||!end||*end||line_no<1||line_no>INT_MAX){
+          { int digits=ntok(state,ex,&j,t,sizeof state->line_token)=='n';   /* a decimal digit sequence (C11 6.10.4p3):
+                                                                             * `12abc` and `0x10` are none; both rails
+                                                                             * refuse where each once read 12 or nothing */
+            for(const char *dp=t; digits && *dp; dp++) if(*dp<'0'||*dp>'9') digits=0;
+            if(!digits){                                     /* a character past ASCII in the operand is its own
+                                                              * refusal (NONASCII), read before the digits are */
+              if(err&&errcap)snprintf(err,errcap,"%s",state->limit_error?state->limit_error:"#line number is not a decimal digit sequence");
+              return 1; }
+            errno=0; long long line_no=strtoll(t,NULL,10);
+            if(errno||line_no<1||line_no>INT_MAX){
               if(err&&errcap)snprintf(err,errcap,"#line number is out of range");
               return 1;
             }
@@ -960,7 +985,14 @@ static int cpp_process(CppState *state, const char *src, const char *curfile,
                 if(fw>=sizeof filebuf-1){if(err&&errcap)snprintf(err,errcap,"#line file name too long");return 1;}
                 filebuf[fw++]=t[z]; }
               filebuf[fw]=0; curf=filebuf; } } }
-        /* #error/#warning/#pragma ignored */
+        else if(!strcmp(dir,"error")){           /* `#error text`: the compile's failure, the text macro-expanded
+                                                  * (C11 6.10.5), as the oracle's; once ignored here (CF-PPSPLITS) */
+          char ex[8192]; expand_line(state,rest,ex,sizeof ex); size_t el=strlen(ex);
+          while(el && pp_space((unsigned char)ex[el-1])) ex[--el]=0;
+          if(err&&errcap)snprintf(err,errcap,"#error %s",ex); return 1; }
+        else if(!strcmp(dir,"warning")||!strcmp(dir,"pragma")||!dir[0]){ /* accepted, no effect on lowering */ }
+        else { if(err&&errcap)snprintf(err,errcap,"unknown directive #%s",dir); return 1; }   /* C11 6.10p9: a
+                                                  * non-directive's execution is undefined; the oracle refuses it */
       }
       continue;
     }
@@ -1001,9 +1033,8 @@ int bcir_cpp_context_init(bcir_cpp_context *context,
   if (!context) return 1;
   memset(context, 0, sizeof *context);
   selected = bcir_host_allocator_or_default(allocator);
-  state = (CppState *)bcir_host_allocate(&selected, sizeof *state);
+  state = (CppState *)bcir_host_allocate_zeroed(&selected, sizeof *state);   /* 2.3 MB: zero pages, not a memset */
   if (!state) return 1;
-  memset(state, 0, sizeof *state);
   state->allocator = selected;
   state->char_signed = 1; state->wchar_size = 4; state->wchar_signed = 1;   /* x86-64 Linux's */
   (void)bcir_host_arena_init(&state->scratch, &selected, 16384u);

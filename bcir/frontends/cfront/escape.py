@@ -62,6 +62,7 @@ from dataclasses import dataclass, field
 from bcir.model.lanes import Domain
 
 from .lower import (
+    MAX_CALL_ARGS,
     _IO_PORT_RID,
     ComputedGotoNode,
     IfNode,
@@ -77,9 +78,10 @@ UNKNOWN = "*"
 #: band above it (`lower.py`: `900000 + gi`, `970000 + idx`).
 _SHARED_RID = 900000
 _CONST_RID = 970000
-#: The operand capacity of a C-twin claim (`BCIR_CLAIM_MAX_RD`): a call with more reads than this
-#: cannot be represented there, so both rails refuse to analyze such a unit (see `analyze`).
-CLAIM_MAX_RD = 6
+#: The operand capacity of a C-twin claim (`BCIR_CLAIM_MAX_RD`): a call's arguments and its callee value or object
+#: base, one number on both rails (CF-CALLARGS; this mirror held six after the twin took sixteen). A call with more
+#: reads than this cannot be represented there, so both rails refuse to analyze such a unit (see `analyze`).
+CLAIM_MAX_RD = MAX_CALL_ARGS + 1
 #: The allocators: each returns fresh memory, the calling function's heap object.
 _ALLOCATORS = frozenset(
     f"c.call.libm:{name}" for name in ("malloc", "calloc", "realloc", "aligned_alloc")
