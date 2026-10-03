@@ -330,18 +330,17 @@ class Preprocessor:
         # lowered here with the character gone and was refused there, and a NEL in code vanished before the reader
         # that refuses a character past ASCII saw it (CF-PPSPLITS).
         spliced = text.replace("\r\n", "\n").replace("\\\n", "")
-        lines = spliced.split("\n")
+        lines = _strip_comments(spliced).split("\n")
         if (
             lines and lines[-1] == ""
         ):  # the new-line that ends the last line ends no further, empty line
             lines.pop()
-        for line in lines:  # the twin's bound, on the line as it reads it: comments included
+        # the twin's bound, on the line as its reader sees it: after its comments are gone (a 70 KB comment on
+        # one line lowers on both rails)
+        for line in lines:
             if len(line.encode("utf-8")) > _MAX_LINE:
                 raise CPPError("preprocessor line too long")
-        stripped = _strip_comments(spliced).split("\n")
-        if stripped and stripped[-1] == "":
-            stripped.pop()
-        return stripped
+        return lines
 
     def _run(self, lines: list[str], out: list[str], name: str) -> None:
         # conditional stack: each entry is [currently_active, any_branch_taken, parent_active]

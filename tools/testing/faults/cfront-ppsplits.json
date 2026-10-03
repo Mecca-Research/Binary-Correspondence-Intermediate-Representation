@@ -101,8 +101,8 @@
       "label": "PS13 the oracle ends a logical line where `str.splitlines` does -- at a form feed, a `\\x1c`, a NEL -- as it did",
       "path": "bcir/frontends/cfront/cpp.py",
       "expects": "test_a_line_ends_at_a_new_line_alone_on_both_rails",
-      "old": "        stripped = _strip_comments(spliced).split(\"\\n\")\n",
-      "new": "        stripped = _strip_comments(spliced).splitlines()\n"
+      "old": "        lines = _strip_comments(spliced).split(\"\\n\")\n",
+      "new": "        lines = _strip_comments(spliced).splitlines()\n"
     },
     {
       "label": "PS14 the oracle maps no CRLF end of line to a new-line: a `\\\\\\r\\n` splice is none there, as it was",

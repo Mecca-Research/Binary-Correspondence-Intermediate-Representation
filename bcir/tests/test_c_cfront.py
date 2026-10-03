@@ -3561,7 +3561,6 @@ def test_c_preprocessor_macros_conditionals_and_embed():
             "a __LINE__\n#line 100\nb __LINE__\nc __LINE__\n",
             "#define N 200\n#line N\nq __LINE__\n",
             '#line 30 "a\\"b.c"\nz __FILE__\n',  # an escaped quote in the name
-            "p __LINE__\n#line\nq __LINE__\n",  # malformed -> ignored
             "#if 0\n#line 999\n#endif\nr __LINE__\n",  # inactive branch -> skipped
             'int x; _Pragma("once") int y;\n',  # _Pragma operator: a no-op
             'p _Pragma("a(b)c") q\n',  # balanced parens consumed
@@ -3583,6 +3582,10 @@ def test_c_preprocessor_macros_conditionals_and_embed():
         ]
         for s in probes:
             assert pp(s) == _py_pp(s), f"twin divergence on {s!r}\n C: {pp(s)!r}\nPY: {_py_pp(s)!r}"
+        # a `#line` of no decimal digit sequence is refused alike (CF-PPSPLITS; it was ignored on both)
+        bare = "p __LINE__\n#line\nq __LINE__\n"
+        assert pp(bare) == "ERR #line number is not a decimal digit sequence", pp(bare)
+        assert _oracle_refusal(bare) == "#line number is not a decimal digit sequence"
         # the #include-boundary case (header numbered from 1, __FILE__ restored on return), and the
         # same with a #line-set name that must survive the include and restore afterwards.
         inc = 't __LINE__ __FILE__\n#include "ph.h"\nu __LINE__ __FILE__\n'
@@ -4939,39 +4942,49 @@ def test_escape_and_effects_reports_are_byte_identical_over_the_corpus():
 
 
 def test_escape_refusal_and_its_boundary_agree_across_rails():
-    """A call with more operands than a claim holds is dropped past the sixth on the twin, so both
-    rails REFUSE the unit (`truncated=1`, every footprint `*`); six operands is analyzed. The
-    twin's `truncated` claim flag is what makes the refusal visible to it."""
+    """A C-twin claim holds a call's sixteen arguments and its callee value (CF-CALLARGS; it held six and dropped
+    the rest, so both rails refused a unit with a call of seven as `truncated=1`, every footprint `*`). Sixteen
+    arguments is the boundary now: a call of seven and one of sixteen are analyzed on both rails, their effects
+    and escape reports byte-identical, and a call of seventeen is refused at lowering by both in the same words,
+    so no unit reaches either rail's analysis truncated."""
     from bcir.frontends.cfront.escape import effects_report, escape_report  # noqa: PLC0415
+    from bcir.frontends.cfront.lower import MAX_CALL_ARGS  # noqa: PLC0415
 
-    seven = (
-        "static unsigned s7(unsigned a, unsigned b, unsigned c, unsigned d, unsigned e,"
-        " unsigned f, unsigned *p) { p[0] = a + b + c + d + e + f; return p[1]; }\n"
-        "unsigned caller(unsigned x) { unsigned t[4]; t[1] = x;"
-        " return s7(x, x, x, x, x, x, t); }\n"
-    )
-    six = (
-        "static unsigned s6(unsigned a, unsigned b, unsigned c, unsigned d, unsigned e,"
-        " unsigned *p) { p[0] = a + b + c + d + e; return p[1]; }\n"
-        "unsigned caller(unsigned x) { unsigned t[4]; t[1] = x;"
-        " return s6(x, x, x, x, x, t); }\n"
-    )
+    def unit(n: int) -> str:
+        params = ", ".join(f"unsigned a{i}" for i in range(n - 1)) + ", unsigned *p"
+        total = " + ".join(f"a{i}" for i in range(n - 1))
+        args = ", ".join(["x"] * (n - 1)) + ", t"
+        return (
+            f"static unsigned s{n}({params}) {{ p[0] = {total}; return p[1]; }}\n"
+            f"unsigned caller(unsigned x) {{ unsigned t[4]; t[1] = x; return s{n}({args}); }}\n"
+        )
+
     if not _CC:
         return
     with tempfile.TemporaryDirectory() as d:
         cc = _build_bcir_cc(d)
-        for label, src in (("seven", seven), ("six", six)):
+        for label, n in (("seven", 7), ("sixteen", MAX_CALL_ARGS)):
+            src = unit(n)
             path = os.path.join(d, f"{label}.c")
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(src)
             r = compile_unit(src, check_clang=False)
+            assert not r.escape.truncated and r.escape.objects["caller"] == {"t": "lent"}, label
             for flag, report in (
                 ("--emit-effects", effects_report),
                 ("--emit-escape", escape_report),
             ):
                 out = subprocess.run([cc, flag, path], capture_output=True, text=True).stdout
                 assert out == report(r.lowered, r.escape), (label, flag, out)
-            assert r.escape.truncated == (label == "seven")
+        why = f"a call of more than {MAX_CALL_ARGS} arguments is not supported"
+        assert _oracle_refusal(unit(MAX_CALL_ARGS + 1)) == why
+        path = os.path.join(d, "seventeen.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(unit(MAX_CALL_ARGS + 1))
+        run = subprocess.run([cc, "--emit-escape", path], capture_output=True, text=True)
+        assert run.returncode != 0 and (run.stdout + run.stderr).strip().endswith(
+            f": parse error: {why}"
+        ), (run.returncode, run.stdout, run.stderr)
 
 
 def _scale_unit_src() -> str:
@@ -9358,6 +9371,11 @@ def test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails():
         exe,
         "#include <stdint.h>\n" + line + " " + "\n" + unit.format(v="g(x)"),
         "preprocessor line too long",
+    )
+    # the bound is read after the comments are gone, as the twin's reader reads it: a comment of 9 000 bytes on
+    # one line lowers on both (CI's thorough tier caught the oracle refusing a 70 KB comment line)
+    _lowers_alike(
+        exe, "#include <stdint.h>\n/*" + "c" * 9000 + "*/ " + head + "; }\n" + unit.format(v="g(x)")
     )
     # an invocation: 16 arguments lower, 17 are refused -- and as many as the parameters, or refused
     va = "#define V(...) (0u __VA_OPT__(+) __VA_ARGS__)\n"
