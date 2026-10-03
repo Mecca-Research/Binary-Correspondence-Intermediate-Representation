@@ -1294,8 +1294,14 @@ def _segment_laws(module: Module, seg, traced, claims, pf_targets) -> list[Diagn
         diags.append(
             Diagnostic("R10", f"segment {seg.name}: references unknown claim {seg.claim_id}")
         )
-    for rid in tuple(seg.reads) + tuple(seg.writes):
-        if module.resource(rid) is None:
+    declared = (
+        module.resources
+    )  # `module.resource(rid) is None` for each RID, read once per segment
+    for rid in seg.reads:
+        if rid is None or rid not in declared:
+            diags.append(Diagnostic("R10", f"segment {seg.name}: references undeclared RID {rid}"))
+    for rid in seg.writes:
+        if rid is None or rid not in declared:
             diags.append(Diagnostic("R10", f"segment {seg.name}: references undeclared RID {rid}"))
     if seg.prefetch is not None and seg.prefetch not in pf_targets:
         diags.append(Diagnostic("R10", f"segment {seg.name}: undeclared prefetch {seg.prefetch!r}"))

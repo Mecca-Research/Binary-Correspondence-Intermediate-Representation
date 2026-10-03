@@ -1,5 +1,6 @@
 """Frozen StreamPack binary ABI (Phase 7) tests."""
 
+import dataclasses
 import struct
 import zlib
 from dataclasses import replace
@@ -8,7 +9,7 @@ from bcir.abi import ABI_MAGIC, ABI_VERSION, AbiError, decode, encode
 from bcir.abi.streampack_abi import ABI_VERSION_MAX
 from bcir.examples import vector_add
 from bcir.gem import generation_vector, hydrate
-from bcir.gem.streampack import Generation, LaneSegment, Prefetch, StreamPack, TraceNote
+from bcir.gem.streampack import Block, Generation, LaneSegment, Prefetch, StreamPack, TraceNote
 from bcir.kbcir import optimize
 from bcir.kbcir.cost import TargetProfile, Theta
 from bcir.model import Lane
@@ -321,11 +322,11 @@ def test_v3_decode_rejects_unknown_dispatch_code():
 def test_encoder_rejects_unrepresentable_or_semantically_invalid_fields():
     """The writer never masks, wraps, or silently substitutes another contract."""
     bad = _v3_pack()
-    bad.segments[0] = LaneSegment(**{**bad.segments[0].__dict__, "dispatch": "unknown-device"})
+    bad.segments[0] = dataclasses.replace(bad.segments[0], dispatch="unknown-device")
     cases = [bad, StreamPack(pipeline_depth=0), StreamPack(pipeline_depth=1 << 16)]
     unhashable_dispatch = _v3_pack()
     unhashable_dispatch.segments[0] = LaneSegment(
-        **{**unhashable_dispatch.segments[0].__dict__, "dispatch": ["pim"]}
+        **{**dataclasses.asdict(unhashable_dispatch.segments[0]), "dispatch": ["pim"]}
     )
     cases.append(unhashable_dispatch)
     invalid_buffers = StreamPack(pipeline_depth=2)
@@ -334,7 +335,7 @@ def test_encoder_rejects_unrepresentable_or_semantically_invalid_fields():
     overflow_gen = StreamPack(topo_gen=1 << 32)
     cases.append(overflow_gen)
     invalid_width = _v3_pack()
-    invalid_width.segments[0] = LaneSegment(**{**invalid_width.segments[0].__dict__, "width": 3})
+    invalid_width.segments[0] = dataclasses.replace(invalid_width.segments[0], width=3)
     cases.append(invalid_width)
     for pack in cases:
         try:
@@ -455,3 +456,111 @@ def test_decoder_rejects_crc_valid_reserved_fields_and_invalid_utf8():
             raise AssertionError("expected reserved/UTF-8 refusal")
         except AbiError:
             pass
+
+
+# --- SP-DEC / SP-REC: the compiled decoder and the slotted records ------------------------------
+
+
+def test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal():
+    """SP-DEC. `decode` reads the body in place -- a local position, one precompiled layout per
+    fixed group, one per array count -- where it read every field through `_Reader`. The reader's
+    decoder is kept verbatim (`decode_fixtures.decode_reference`) and graded against it over every
+    honest pack in every spelling, one pack cut at every length and every byte of it replaced, raw
+    and with the CRC remade, and a replaced byte with the body cut just past it: the pack, or the
+    refusal's type and message, must be the same on every item. The grader is non-vacuous: packs
+    of every wire version accepted, refusals of many distinct laws."""
+    from bcir.tests import decode_fixtures
+
+    seen: dict = {}
+    rows = decode_fixtures.measure(seen)
+    assert rows["streampack.decode.parity"] == 0, seen.get("mismatched", [])[:8]
+    assert seen["items"] > 10_000 and seen["accepted"] > 1_000 and seen["refused"] > 10_000, seen
+    assert seen["versions"] == {1, 2, 3, 4}, seen["versions"]
+    assert len(seen["messages"]) >= 40, len(seen["messages"])
+
+
+def test_a_streampack_record_is_the_frozen_records_value_and_a_slot_cheaper():
+    """SP-REC. The five record kinds are slotted value classes built by the generated `__init__`
+    where they were frozen dataclasses: the same fields compare and hash the same, `repr` and
+    `asdict` are the same, `replace`, `copy` and pickle work, and a record carries no instance
+    dictionary (one object for the collector to walk, not two). A record is a value: it is never
+    assigned to after it is built, and the pack verifier, the delta StreamPack and the encoder
+    read it as one."""
+    import copy
+    import pickle
+
+    frozen = {
+        cls: dataclasses.make_dataclass(
+            cls.__name__,
+            [(f.name, f.type, f) for f in dataclasses.fields(cls)],
+            frozen=True,
+        )
+        for cls in (LaneSegment, Prefetch, Block, TraceNote, Generation)
+    }
+    samples = [
+        LaneSegment(
+            "seg0",
+            1,
+            0,
+            Lane.T,
+            8,
+            "vector.add",
+            (1, 2),
+            (3,),
+            "pf0",
+            ("acq",),
+            (),
+            "pim",
+            "hbm_pim",
+        ),
+        LaneSegment(
+            name="seg1",
+            claim_id=2,
+            phase_id=1,
+            lane=Lane.U,
+            width=1,
+            opcode="x",
+            reads=(),
+            writes=(),
+        ),
+        Prefetch("pf0", 4, (1, 2)),
+        Prefetch(
+            name="db", distance=4, targets=(9,), hint="T1", pattern="double_buffer", buffers=2
+        ),
+        Block(0, 16),
+        Block(base=8, count=4, strides=(2, 1)),
+        TraceNote(7),
+        TraceNote(claim_id=7, src_hash=1, trace_hash=2),
+        Generation(1),
+        Generation(rid=3, map_gen=1, data_gen=2),
+    ]
+    for record in samples:
+        cls = type(record)
+        fields = dataclasses.asdict(record)
+        twin = frozen[cls](**fields)
+        assert hash(record) == hash(twin) and repr(record) == repr(twin), record
+        assert dataclasses.asdict(twin) == fields and dataclasses.astuple(
+            record
+        ) == dataclasses.astuple(twin)
+        assert record == cls(**fields) and hash(record) == hash(cls(**fields))
+        assert not hasattr(record, "__dict__") and hasattr(cls, "__slots__"), cls
+        assert copy.deepcopy(record) == record and pickle.loads(pickle.dumps(record)) == record
+        first = dataclasses.fields(cls)[0].name
+        changed = dataclasses.replace(record, **{first: getattr(record, first)})
+        assert changed == record and changed is not record
+    # a pack decoded from the wire holds these classes, and only them
+    pack = hydrate(vector_add(), optimize(vector_add(), TargetProfile.x86_avx2(), Theta.cool()))
+    decoded = decode(encode(pack))
+    assert decoded == pack
+    kinds = {
+        type(r)
+        for rows in (
+            decoded.segments,
+            decoded.prefetches,
+            decoded.blocks,
+            decoded.trace_notes,
+            decoded.generations,
+        )
+        for r in rows
+    }
+    assert kinds <= {LaneSegment, Prefetch, Block, TraceNote, Generation} and LaneSegment in kinds

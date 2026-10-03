@@ -1001,6 +1001,39 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       `_Writer` packed it (L14). The corpus's "a generator where a sequence belongs" had never
       been built; it now holds a generator, a one-pass iterable and one whose `len()` is short,
       and four faults are caught only by them.
+  SP-DEC / SP-REC (2026-10-03) compiled the StreamPack decoder's reads and made the five record
+  kinds slotted value classes, for the rows the #786-vs-#797 benchmark left within noise.
+  - RED, measured on #797 (`7ae15ac2`): `decode@4` 95 ms and 777,497 calls for 4,096 segments --
+    `_Reader._take` 169,730 of them, a method call, a bounds check and a `struct.unpack` per field;
+    `hydrate@4` 27 ms, 17 ms of it building four frozen records a step: a frozen dataclass's
+    generated `__init__` assigns each field through `object.__setattr__`, 4 microseconds a record,
+    and each record carried an instance dictionary the cyclic collector walked beside it.
+  - What landed: `decode` reads the body in place (`bcir/abi/streampack_abi.py`) -- the position
+    a local, each fixed group of fields through one precompiled layout, each array through the
+    layout of its count (cached, bounded), each string through the `bytes` slice -- with every law
+    of the field-by-field reader in its order; where a fixed group does not fit, `_Reader`
+    finishes the record, so a cut is refused at the field it was refused at. `LaneSegment`,
+    `Prefetch`, `Block`, `TraceNote` and `Generation` are `@dataclass(slots=True,
+    unsafe_hash=True)`: built by the generated `__init__` in 0.7 microseconds, no dictionary, the
+    same equality, hash and repr as the frozen records (a record is a value; `dataclasses.replace`
+    changes one). An at-once instance dictionary was tried first and measured out: 613 bytes a
+    record against 278, and the collector's share grew with it. `verify_pack` reads the registry
+    once per segment where it called `module.resource` per RID.
+  - The reader's decoder is kept verbatim as `tests.decode_fixtures.decode_reference`, and
+    `streampack.decode.parity` holds the compiled decoder to it pack for pack and refusal for
+    refusal over 15,734 items: every honest pack in every spelling, one pack cut at every length
+    and every byte of it replaced by seven values, raw and with the CRC remade, and a replaced
+    byte beside a cut just past it (a law checked out of the reader's order is found, not only a
+    law dropped). The records' equality, hash, repr, `asdict`, `replace`, `copy` and pickle are
+    held to a frozen twin (`test_a_streampack_record_is_the_frozen_records_value_and_a_slot_cheaper`).
+  - Outcomes (median of 9, the heap collected before each sample, #797 -> now): `decode@4` 95 ->
+    37 ms, `decode@8` 909 -> 379 ms, `hydrate@4` 26.8 -> 14.0 ms, `hydrate@8` 341 -> 285 ms,
+    `verify_pack@4` 7.3 -> 6.1 ms; every pack, plan and verdict byte-identical; `encode` untouched.
+  - Faults: `tools/testing/faults/streampack-decode.json`, 12 -- the empty fence array, the fixed
+    group read where it does not fit, the lane and buffer-count laws, the width law checked out
+    of order, an array and a trace note read past the buffer, the trailing-bytes law, the UTF-8
+    reason, a record compared by identity, a record with a dictionary again, and the verifier's
+    written RIDs against no registry.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

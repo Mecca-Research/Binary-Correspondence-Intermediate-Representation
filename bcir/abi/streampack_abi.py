@@ -34,7 +34,14 @@ from dataclasses import dataclass
 import struct
 import zlib
 
-from ..gem.streampack import Block, Generation, LaneSegment, Prefetch, StreamPack, TraceNote
+from ..gem.streampack import (
+    Block,
+    Generation,
+    LaneSegment,
+    Prefetch,
+    StreamPack,
+    TraceNote,
+)
 from ..model import Lane
 
 ABI_MAGIC = b"BSPK"
@@ -680,6 +687,33 @@ def encode(pack: StreamPack) -> bytes:
     return body + _U32.pack(zlib.crc32(body) & 0xFFFFFFFF)
 
 
+# The decoder's compiled reads (SP-DEC). `decode` once read every field through `_Reader`: a
+# method call, a bounds check and a `struct.unpack` each, 170,000 calls for 4,096 segments. It
+# reads the body in place now -- the position in a local, each fixed group of fields through
+# ONE precompiled layout, each array through the layout of its count, each string through the
+# `bytes` slice -- and keeps every law of the field-by-field reader in its order: the same
+# refusal, the same message, at the same byte. Where a fixed group does not fit, the field-by-
+# field reader finishes the record (`_Reader`, kept verbatim for `inspect_stream_pack`), so the
+# truncation is reported at the field it was reported at, after the checks that precede it.
+# `bcir/tests/decode_fixtures.py` keeps the reader's decoder verbatim and holds this one to it,
+# pack for pack and refusal for refusal.
+_LANE_FROM_WIRE = {member.value: member for member in Lane}
+_TRUNCATED = "truncated StreamPack"
+_NOT_UTF8 = "StreamPack string is not valid UTF-8"
+_ARRAYS_MAX = 256  # array layouts cached by count, bounded whatever a pack declares (L3)
+_U32_READS: dict[int, struct.Struct] = {}
+_U64_READS: dict[int, struct.Struct] = {}
+
+
+def _array_layout(cache: dict, code: str, count: int) -> struct.Struct:
+    layout = cache.get(count)
+    if layout is None:
+        layout = struct.Struct(f"<{count}{code}")
+        if len(cache) < _ARRAYS_MAX:
+            cache[count] = layout
+    return layout
+
+
 def decode(data: bytes) -> StreamPack:
     """Parse the v1..v4 wire format back into a StreamPack (magic/version/CRC)."""
     if len(data) < _HEADER_SIZE + 4:
@@ -709,22 +743,111 @@ def decode(data: bytes) -> StreamPack:
     if depth == 0:
         raise AbiError("pipeline_depth must be in [1, 65535]")
 
-    r = _Reader(data, _HEADER_SIZE)
+    limit = len(data)  # the reader bounds every field by the whole buffer, trailer included
+    u16_at = _U16.unpack_from
+    u8_at = _U8.unpack_from
+    segment_fixed = _SEGMENT_FIXED.unpack_from
+    block_fixed = _BLOCK_FIXED.unpack_from
+    trace_record = _TRACE_RECORD.unpack_from
+    generation_record = _GENERATION_RECORD.unpack_from
+    u32_reads, u64_reads = _U32_READS, _U64_READS
+    lane_from_wire, dispatch_from_wire = _LANE_FROM_WIRE, _DISPATCH_FROM_WIRE
+    pos = _HEADER_SIZE
+
+    def string():  # `_Reader.s`: the u16 length, the bytes, UTF-8 -- each refused where it was
+        nonlocal pos
+        if pos + 2 > limit:
+            raise AbiError(_TRUNCATED)
+        n = u16_at(data, pos)[0]
+        pos += 2
+        if pos + n > limit:
+            raise AbiError(_TRUNCATED)
+        try:
+            text = data[pos : pos + n].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AbiError(_NOT_UTF8) from exc
+        pos += n
+        return text
+
+    def u32_array():  # `_Reader.u32_array`: the u16 count, then the items; short is truncated
+        nonlocal pos
+        if pos + 2 > limit:
+            raise AbiError(_TRUNCATED)
+        count = u16_at(data, pos)[0]
+        pos += 2
+        if pos + 4 * count > limit:
+            raise AbiError(_TRUNCATED)
+        layout = u32_reads.get(count)
+        if layout is None:
+            layout = _array_layout(u32_reads, "I", count)
+        items = layout.unpack_from(data, pos)
+        pos += 4 * count
+        return items
+
+    def u64_array():
+        nonlocal pos
+        if pos + 2 > limit:
+            raise AbiError(_TRUNCATED)
+        count = u16_at(data, pos)[0]
+        pos += 2
+        if pos + 8 * count > limit:
+            raise AbiError(_TRUNCATED)
+        layout = u64_reads.get(count)
+        if layout is None:
+            layout = _array_layout(u64_reads, "Q", count)
+        items = layout.unpack_from(data, pos)
+        pos += 8 * count
+        return items
+
+    def s_array():
+        nonlocal pos
+        if pos + 2 > limit:
+            raise AbiError(_TRUNCATED)
+        count = u16_at(data, pos)[0]
+        pos += 2
+        if count == 0:
+            return ()
+        return tuple([string() for _ in range(count)])
+
+    def byte():  # `_Reader.u8`
+        nonlocal pos
+        if pos + 1 > limit:
+            raise AbiError(_TRUNCATED)
+        value = data[pos]
+        pos += 1
+        return value
+
+    source_plan = string()
     pack = StreamPack(
-        source_plan=r.s(), topo_gen=topo, map_gen=mapg, data_gen=datag, pipeline_depth=depth
+        source_plan=source_plan, topo_gen=topo, map_gen=mapg, data_gen=datag, pipeline_depth=depth
+    )
+    segments, prefetches, blocks, trace_notes, generations = (
+        pack.segments,
+        pack.prefetches,
+        pack.blocks,
+        pack.trace_notes,
+        pack.generations,
     )
     for _ in range(nseg):
-        name = r.s()
-        claim_id = r.u64()
-        phase_id = r.u32()
-        raw_lane = r.u8()
-        try:
-            lane = Lane(raw_lane)
-        except ValueError as exc:
-            raise AbiError(f"unknown segment lane code {raw_lane}") from exc
-        width = r.u32()
-        stride_k = r.u32()
-        opcode = r.s()
+        name = string()
+        if pos + _SEGMENT_FIXED.size <= limit:
+            claim_id, phase_id, raw_lane, width, stride_k = segment_fixed(data, pos)
+            pos += _SEGMENT_FIXED.size
+            lane = lane_from_wire.get(raw_lane)
+            if lane is None:
+                raise AbiError(f"unknown segment lane code {raw_lane}")
+        else:  # the reader's order: the lane is checked before the width is read
+            r = _Reader(data, pos)
+            claim_id = r.u64()
+            phase_id = r.u32()
+            raw_lane = r.u8()
+            lane = lane_from_wire.get(raw_lane)
+            if lane is None:
+                raise AbiError(f"unknown segment lane code {raw_lane}")
+            width = r.u32()
+            stride_k = r.u32()
+            pos = r.pos
+        opcode = string()
         # Range gate: width must be a nonzero power of two (docs/kernel/BCIR_STREAMPACK_ABI.md, "BCIR_ERR_WIDTH").
         # The C runtime (bcir_runtime.c seg_range_ok) rejects a non-power-of-two width at decode time; the
         # oracle enforces the same law so a CRC-valid but width-corrupt pack is never accepted here while
@@ -733,20 +856,20 @@ def decode(data: bytes) -> StreamPack:
             raise AbiError(f"segment width must be a nonzero power of two, got {width}")
         if stride_k != 0:
             raise AbiError(f"reserved segment stride_k must be zero, got {stride_k}")
-        reads = r.u32_array()
-        writes = r.u32_array()
-        prefetch = r.s() or None
-        fb = r.s_array()
-        fa = r.s_array()
+        reads = u32_array()
+        writes = u32_array()
+        prefetch = string() or None
+        fb = s_array()
+        fa = s_array()
         if version >= 3:
-            dcode = r.u8()
-            if dcode not in _DISPATCH_FROM_WIRE:
+            dcode = byte()
+            dispatch = dispatch_from_wire.get(dcode)
+            if dispatch is None:
                 raise AbiError(f"unknown segment dispatch code {dcode} (0=core, 1=pim)")
-            dispatch = _DISPATCH_FROM_WIRE[dcode]
-            channel = r.s()
+            channel = string()
         else:
             dispatch, channel = _DISPATCH_DEFAULT, _CHANNEL_DEFAULT
-        pack.segments.append(
+        segments.append(
             LaneSegment(
                 name=name,
                 claim_id=claim_id,
@@ -764,15 +887,18 @@ def decode(data: bytes) -> StreamPack:
             )
         )
     for index in range(npf):
-        name = r.s()
-        distance = r.u32()
-        targets = r.u32_array()
-        hint = r.s()
-        pattern = r.s()
-        buffers = r.u8() if version >= 2 else 1
+        name = string()
+        if pos + 4 > limit:
+            raise AbiError(_TRUNCATED)
+        distance = _U32.unpack_from(data, pos)[0]
+        pos += 4
+        targets = u32_array()
+        hint = string()
+        pattern = string()
+        buffers = byte() if version >= 2 else 1
         if buffers not in (1, 2):
             raise AbiError(f"prefetch[{index}] buffers must be 1 or 2, got {buffers}")
-        pack.prefetches.append(
+        prefetches.append(
             Prefetch(
                 name=name,
                 distance=distance,
@@ -783,17 +909,33 @@ def decode(data: bytes) -> StreamPack:
             )
         )
     for _ in range(nblk):
-        pack.blocks.append(Block(base=r.u64(), count=r.u64(), strides=r.u64_array()))
+        if pos + _BLOCK_FIXED.size <= limit:
+            base, count = block_fixed(data, pos)
+            pos += _BLOCK_FIXED.size
+        else:
+            r = _Reader(data, pos)
+            base = r.u64()
+            count = r.u64()
+            pos = r.pos
+        blocks.append(Block(base=base, count=count, strides=u64_array()))
     for _ in range(ntr):
-        pack.trace_notes.append(TraceNote(claim_id=r.u64(), src_hash=r.u64(), trace_hash=r.u64()))
+        if pos + _TRACE_RECORD.size > limit:
+            raise AbiError(_TRUNCATED)
+        claim_id, src_hash, trace_hash = trace_record(data, pos)
+        pos += _TRACE_RECORD.size
+        trace_notes.append(TraceNote(claim_id=claim_id, src_hash=src_hash, trace_hash=trace_hash))
     for _ in range(n_gens):
-        pack.generations.append(Generation(rid=r.u32(), map_gen=r.u32(), data_gen=r.u32()))
+        if pos + _GENERATION_RECORD.size > limit:
+            raise AbiError(_TRUNCATED)
+        rid, map_gen, data_gen = generation_record(data, pos)
+        pos += _GENERATION_RECORD.size
+        generations.append(Generation(rid=rid, map_gen=map_gen, data_gen=data_gen))
     # The vector's well-formedness is the same predicate the encoder applies (rail symmetry
     # with the C decoder's BCIR_ERR_GENERATION): ascending RIDs, header maxima.
     _validate_generation_vector(pack)
-    if r.pos != len(data) - 4:
+    if pos != len(data) - 4:
         raise AbiError(
-            f"unexpected trailing body bytes: decoded through offset {r.pos}, "
+            f"unexpected trailing body bytes: decoded through offset {pos}, "
             f"CRC trailer starts at {len(data) - 4}"
         )
     return pack

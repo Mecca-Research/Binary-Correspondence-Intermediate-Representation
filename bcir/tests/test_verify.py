@@ -463,6 +463,28 @@ def test_vector_naming_an_undeclared_rid_is_R11():
     ]
 
 
+def test_a_segment_naming_an_undeclared_rid_in_a_read_or_a_write_is_R10():
+    """R10 names every RID a segment reads or writes against the registry: one it does not
+    declare is one diagnostic, for a read and for a write alike (the verifier reads the registry
+    once per segment where it asked `module.resource` per RID; SP-DEC holds the verdict)."""
+    from bcir.kbcir.cost import TargetProfile
+
+    m = vector_add()
+    pack = hydrate(m, optimize(m, TargetProfile.x86_avx2(), Theta.cool()))
+    assert verify_pack(m, pack) == []
+    undeclared = max(m.resources) + 7
+    for field in ("reads", "writes"):
+        kept = pack.segments[0]
+        forged = replace(kept, **{field: (*getattr(kept, field), undeclared)})
+        pack.segments[0] = forged
+        messages = _messages(verify_pack(m, pack), "R10")
+        pack.segments[0] = kept
+        assert messages == [f"segment {forged.name}: references undeclared RID {undeclared}"], (
+            field,
+            messages,
+        )
+
+
 def test_vector_less_pack_against_a_registry_is_R11():
     # A v1-v3 artifact (no vector) is stale against any registry that declares resources:
     # the maxima alone cannot see a resource that moved under them.

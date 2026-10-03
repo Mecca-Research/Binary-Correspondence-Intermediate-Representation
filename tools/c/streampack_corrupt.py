@@ -30,6 +30,7 @@ the C rail should be told: the (map_gen, data_gen) maxima for the legacy
 
 from __future__ import annotations
 
+import dataclasses
 import struct
 import sys
 import zlib
@@ -142,7 +143,7 @@ def _vector_offset(data: bytes) -> int:
 
 
 def _replace_seg0(p: StreamPack, **kw) -> None:
-    p.segments[0] = LaneSegment(**{**p.segments[0].__dict__, **kw})
+    p.segments[0] = dataclasses.replace(p.segments[0], **kw)
 
 
 def corrupt(kind: str) -> bytes:

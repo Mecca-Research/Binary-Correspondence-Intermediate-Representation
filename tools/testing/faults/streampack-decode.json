@@ -1,0 +1,95 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_abi:test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+    "bcir.tests.test_abi:test_a_streampack_record_is_the_frozen_records_value_and_a_slot_cheaper",
+    "bcir.tests.test_verify:test_a_segment_naming_an_undeclared_rid_in_a_read_or_a_write_is_R10"
+  ],
+  "faults": [
+    {
+      "label": "SD1 the compiled decoder reads an empty fence array as one empty name",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if count == 0:\n            return ()\n",
+      "new": "        if count == 0:\n            return (\"\",)\n"
+    },
+    {
+      "label": "SD2 the segment's fixed group is read in one layout where it does not fit: a cut inside it is a struct error, not `truncated StreamPack`",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if pos + _SEGMENT_FIXED.size <= limit:\n            claim_id, phase_id, raw_lane, width, stride_k = segment_fixed(data, pos)\n",
+      "new": "        if True:\n            claim_id, phase_id, raw_lane, width, stride_k = segment_fixed(data, pos)\n"
+    },
+    {
+      "label": "SD3 the compiled decoder takes an unknown lane code as the unit lane",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "            lane = lane_from_wire.get(raw_lane)\n            if lane is None:\n                raise AbiError(f\"unknown segment lane code {raw_lane}\")\n        else:",
+      "new": "            lane = lane_from_wire.get(raw_lane, Lane.U)\n        else:"
+    },
+    {
+      "label": "SD4 the width law is checked before the opcode is read: a bad width beside a cut opcode is refused for the width, where the reader refused the cut",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        opcode = string()\n        # Range gate: width must be a nonzero power of two",
+      "new": "        if width == 0 or (width & (width - 1)):\n            raise AbiError(f\"segment width must be a nonzero power of two, got {width}\")\n        opcode = string()\n        # Range gate: width must be a nonzero power of two"
+    },
+    {
+      "label": "SD5 a u32 array's items are read past the buffer: a cut inside one is a struct error",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if pos + 4 * count > limit:\n            raise AbiError(_TRUNCATED)\n        layout = u32_reads.get(count)\n",
+      "new": "        layout = u32_reads.get(count)\n"
+    },
+    {
+      "label": "SD6 the trailing-bytes law is dropped: a pack with bytes after its last record is accepted",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "    if pos != len(data) - 4:\n        raise AbiError(\n            f\"unexpected trailing body bytes: decoded through offset {pos}, \"\n",
+      "new": "    if pos > len(data) - 4:\n        raise AbiError(\n            f\"unexpected trailing body bytes: decoded through offset {pos}, \"\n"
+    },
+    {
+      "label": "SD7 a string that is not UTF-8 is refused in other words",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "_NOT_UTF8 = \"StreamPack string is not valid UTF-8\"\n",
+      "new": "_NOT_UTF8 = \"StreamPack string is not UTF-8\"\n"
+    },
+    {
+      "label": "SD8 a prefetch's buffer count past 2 is accepted by the compiled decoder",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if buffers not in (1, 2):\n            raise AbiError(f\"prefetch[{index}] buffers must be 1 or 2, got {buffers}\")\n",
+      "new": "        if buffers not in (1, 2, 3):\n            raise AbiError(f\"prefetch[{index}] buffers must be 1 or 2, got {buffers}\")\n"
+    },
+    {
+      "label": "SD9 the trace note's record is read without its bound: a cut inside it is a struct error",
+      "expects": "test_the_compiled_decoder_is_the_field_reader_pack_for_pack_and_refusal_for_refusal",
+      "path": "bcir/abi/streampack_abi.py",
+      "old": "        if pos + _TRACE_RECORD.size > limit:\n            raise AbiError(_TRUNCATED)\n        claim_id, src_hash, trace_hash = trace_record(data, pos)\n",
+      "new": "        claim_id, src_hash, trace_hash = trace_record(data, pos)\n"
+    },
+    {
+      "label": "SD10 a segment record compares by identity, not by its fields: two decodes of one pack differ",
+      "expects": "test_a_streampack_record_is_the_frozen_records_value_and_a_slot_cheaper",
+      "path": "bcir/gem/streampack.py",
+      "old": "@dataclass(slots=True, unsafe_hash=True)\nclass LaneSegment:",
+      "new": "@dataclass(slots=True, unsafe_hash=True, eq=False)\nclass LaneSegment:"
+    },
+    {
+      "label": "SD11 the prefetch record carries an instance dictionary again (two objects a record)",
+      "expects": "test_a_streampack_record_is_the_frozen_records_value_and_a_slot_cheaper",
+      "path": "bcir/gem/streampack.py",
+      "old": "@dataclass(slots=True, unsafe_hash=True)\nclass Prefetch:",
+      "new": "@dataclass(unsafe_hash=True)\nclass Prefetch:"
+    },
+    {
+      "label": "SD12 the pack verifier reads a segment's writes against no registry: an undeclared written RID passes R10",
+      "expects": "test_a_segment_naming_an_undeclared_rid_in_a_read_or_a_write_is_R10",
+      "path": "bcir/verify/__init__.py",
+      "old": "    for rid in seg.writes:\n        if rid is None or rid not in declared:\n",
+      "new": "    for rid in seg.writes:\n        if rid is None:\n"
+    }
+  ]
+}
