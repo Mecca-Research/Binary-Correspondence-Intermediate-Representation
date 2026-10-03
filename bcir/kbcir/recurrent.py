@@ -272,6 +272,21 @@ def _row_dot(w: list[float], v: list[float], o: int, d_in: int) -> float:
     return acc
 
 
+def _float_rows(w, d_out: int, d_in: int) -> list[list[float]]:
+    """The rows of a ``d_out x d_in`` row-major weight, each entry `float`-converted once --
+    what `_row_dot` converts per use -- so a cell step dots them without a conversion."""
+    return [[float(v) for v in w[o * d_in : (o + 1) * d_in]] for o in range(d_out)]
+
+
+def _rows_dot(row: list[float], v: list[float]) -> float:
+    """`_row_dot` over a converted row and a converted vector of its length: the same products
+    in the same order, summed from 0.0."""
+    acc = 0.0
+    for x, y in zip(row, v):
+        acc += x * y
+    return acc
+
+
 # ============================================================================================================
 # Tier B.1 -- the LSTM cell: numeric forward reference + the closed-form analytic gradients (the seed).
 # ============================================================================================================
@@ -339,13 +354,42 @@ def lstm_cell_reference(
         raise ValueError(f"lstm_cell: h_prev must be length hidden_dim = {dh}; got {len(h_prev)}")
     if len(c_prev) != dh:
         raise ValueError(f"lstm_cell: c_prev must be length hidden_dim = {dh}; got {len(c_prev)}")
+    return _lstm_step(x, h_prev, c_prev, _lstm_rows(params), params)
+
+
+def _lstm_rows(params: "LstmParams") -> tuple:
+    """The eight weights of an LSTM as converted rows (`_float_rows`), built once per cell call
+    and once per unroll."""
+    di, dh = params.input_dim, params.hidden_dim
+    return (
+        _float_rows(params.W_f, dh, di),
+        _float_rows(params.U_f, dh, dh),
+        _float_rows(params.W_i, dh, di),
+        _float_rows(params.U_i, dh, dh),
+        _float_rows(params.W_o, dh, di),
+        _float_rows(params.U_o, dh, dh),
+        _float_rows(params.W_g, dh, di),
+        _float_rows(params.U_g, dh, dh),
+    )
+
+
+def _lstm_step(
+    x, h_prev, c_prev, rows: tuple, params: "LstmParams"
+) -> tuple[list[float], list[float]]:
+    """`lstm_cell_reference` over validated operands and the converted rows: each gate
+    pre-activation is the input row dot, plus the recurrent row dot, plus the bias, as it was."""
+    dh = params.hidden_dim
+    w_f, u_f, w_i, u_i, w_o, u_o, w_g, u_g = rows
+    b_f, b_i, b_o, b_g = params.b_f, params.b_i, params.b_o, params.b_g
+    xf = [float(v) for v in x]
+    hf = [float(v) for v in h_prev]
     h = [0.0] * dh
     c = [0.0] * dh
     for u in range(dh):
-        a_f = _row_dot(params.W_f, x, u, di) + _row_dot(params.U_f, h_prev, u, dh) + params.b_f[u]
-        a_i = _row_dot(params.W_i, x, u, di) + _row_dot(params.U_i, h_prev, u, dh) + params.b_i[u]
-        a_o = _row_dot(params.W_o, x, u, di) + _row_dot(params.U_o, h_prev, u, dh) + params.b_o[u]
-        a_g = _row_dot(params.W_g, x, u, di) + _row_dot(params.U_g, h_prev, u, dh) + params.b_g[u]
+        a_f = _rows_dot(w_f[u], xf) + _rows_dot(u_f[u], hf) + b_f[u]
+        a_i = _rows_dot(w_i[u], xf) + _rows_dot(u_i[u], hf) + b_i[u]
+        a_o = _rows_dot(w_o[u], xf) + _rows_dot(u_o[u], hf) + b_o[u]
+        a_g = _rows_dot(w_g[u], xf) + _rows_dot(u_g[u], hf) + b_g[u]
         f, i, o, g = sigmoid(a_f), sigmoid(a_i), sigmoid(a_o), math.tanh(a_g)
         c[u] = f * float(c_prev[u]) + i * g
         h[u] = o * math.tanh(c[u])
@@ -457,8 +501,15 @@ def lstm_unroll(
         )
     T = len(x_seq) // di
     h, c = [float(v) for v in h0], [float(v) for v in c0]
-    for t in range(T):
-        h, c = lstm_cell_reference(x_seq[t * di : (t + 1) * di], h, c, params)
+    if T:
+        dh = params.hidden_dim  # the cell's checks of the state lengths, once (they never change)
+        if len(h) != dh:
+            raise ValueError(f"lstm_cell: h_prev must be length hidden_dim = {dh}; got {len(h)}")
+        if len(c) != dh:
+            raise ValueError(f"lstm_cell: c_prev must be length hidden_dim = {dh}; got {len(c)}")
+        rows = _lstm_rows(params)  # the weights converted once for every step
+        for t in range(T):
+            h, c = _lstm_step(x_seq[t * di : (t + 1) * di], h, c, rows, params)
     return h, c
 
 
@@ -552,14 +603,37 @@ def gru_cell_reference(x: list[float], h_prev: list[float], params: GruParams) -
         raise ValueError(f"gru_cell: x must be length input_dim = {di}; got {len(x)}")
     if len(h_prev) != dh:
         raise ValueError(f"gru_cell: h_prev must be length hidden_dim = {dh}; got {len(h_prev)}")
+    return _gru_step(x, h_prev, _gru_rows(params), params)
+
+
+def _gru_rows(params: "GruParams") -> tuple:
+    """The six weights of a GRU as converted rows (`_float_rows`)."""
+    di, dh = params.input_dim, params.hidden_dim
+    return (
+        _float_rows(params.W_z, dh, di),
+        _float_rows(params.U_z, dh, dh),
+        _float_rows(params.W_r, dh, di),
+        _float_rows(params.U_r, dh, dh),
+        _float_rows(params.W_n, dh, di),
+        _float_rows(params.U_n, dh, dh),
+    )
+
+
+def _gru_step(x, h_prev, rows: tuple, params: "GruParams") -> list[float]:
+    """`gru_cell_reference` over validated operands and the converted rows."""
+    dh = params.hidden_dim
+    w_z, u_z, w_r, u_r, w_n, u_n = rows
+    b_z, b_r, b_n = params.b_z, params.b_r, params.b_n
+    xf = [float(v) for v in x]
+    hf = [float(v) for v in h_prev]
     h = [0.0] * dh
     for u in range(dh):
-        a_z = _row_dot(params.W_z, x, u, di) + _row_dot(params.U_z, h_prev, u, dh) + params.b_z[u]
-        a_r = _row_dot(params.W_r, x, u, di) + _row_dot(params.U_r, h_prev, u, dh) + params.b_r[u]
+        a_z = _rows_dot(w_z[u], xf) + _rows_dot(u_z[u], hf) + b_z[u]
+        a_r = _rows_dot(w_r[u], xf) + _rows_dot(u_r[u], hf) + b_r[u]
         z = sigmoid(a_z)
         r = sigmoid(a_r)
-        recur_n = _row_dot(params.U_n, h_prev, u, dh)  # U_n h_prev for unit u
-        a_n = _row_dot(params.W_n, x, u, di) + r * recur_n + params.b_n[u]
+        recur_n = _rows_dot(u_n[u], hf)  # U_n h_prev for unit u
+        a_n = _rows_dot(w_n[u], xf) + r * recur_n + b_n[u]
         n = math.tanh(a_n)
         h[u] = (1.0 - z) * n + z * float(h_prev[u])
     return h
@@ -632,8 +706,13 @@ def gru_unroll(x_seq: list[float], h0: list[float], params: GruParams) -> list[f
         )
     T = len(x_seq) // di
     h = [float(v) for v in h0]
-    for t in range(T):
-        h = gru_cell_reference(x_seq[t * di : (t + 1) * di], h, params)
+    if T:
+        dh = params.hidden_dim  # the cell's check of the state length, once (it never changes)
+        if len(h) != dh:
+            raise ValueError(f"gru_cell: h_prev must be length hidden_dim = {dh}; got {len(h)}")
+        rows = _gru_rows(params)  # the weights converted once for every step
+        for t in range(T):
+            h = _gru_step(x_seq[t * di : (t + 1) * di], h, rows, params)
     return h
 
 

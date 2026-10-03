@@ -125,14 +125,17 @@ _ARITY = {
 }  # dot is n-ary (variadic)
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class Node:
     """A hash-consed node of the expression DAG.
 
     ``key`` is the structural content key (op + operand keys + constant), so equal
     structure == equal key == one interned node. ``args`` are operand node ids
     (ints), ``const`` carries a leaf's constant (a float for ``const``; a name for
-    ``var``)."""
+    ``var``). A value, never assigned to after it is interned: a slotted class compared
+    and hashed by its fields, built by the generated ``__init__`` in a fraction of a
+    microsecond (a frozen dataclass assigned each field through ``object.__setattr__``,
+    and a training step interns tens of thousands)."""
 
     nid: int
     op: str
@@ -163,12 +166,13 @@ class Tape:
 
     # -- the interning core --
     def _intern(self, op: str, args: tuple, const=None) -> int:
-        key = _content_key(op, args, const)
+        args = tuple(args)
+        key = (op, const, args)  # `_content_key`, in place
         hit = self._memo.get(key)
         if hit is not None:
             return hit
         nid = len(self._nodes)
-        self._nodes.append(Node(nid, op, tuple(args), const, key))
+        self._nodes.append(Node(nid, op, args, const, key))
         self._memo[key] = nid
         return nid
 
@@ -264,50 +268,42 @@ class Tape:
 def evaluate(tape: Tape, root: int, env: dict) -> float:
     """Evaluate the DAG rooted at ``root`` under ``env`` (var name -> float).
     Deterministic; memoized over node ids so a shared subexpression is evaluated once
-    (the forward analogue of the shared-adjoint property)."""
-    cache: dict[int, float] = {}
-    for nid in _topo_order(tape, root):
-        n = tape.node(nid)
-        op = n.op
-        if op == "const":
-            cache[nid] = n.const
-        elif op == "var":
-            if n.const not in env:
-                raise KeyError(f"unbound var {n.const!r}")
-            cache[nid] = float(env[n.const])
-        elif op == "neg":
-            cache[nid] = -cache[n.args[0]]
-        elif op == "add":
-            cache[nid] = cache[n.args[0]] + cache[n.args[1]]
-        elif op == "sub":
-            cache[nid] = cache[n.args[0]] - cache[n.args[1]]
-        elif op == "mul":
-            cache[nid] = cache[n.args[0]] * cache[n.args[1]]
-        elif op == "div":
-            cache[nid] = cache[n.args[0]] / cache[n.args[1]]
-        elif op == "exp":
-            cache[nid] = math.exp(cache[n.args[0]])
-        elif op == "log":
-            cache[nid] = math.log(cache[n.args[0]])
-        elif op == "sqrt":
-            cache[nid] = math.sqrt(cache[n.args[0]])
-        elif op == "tanh":
-            cache[nid] = math.tanh(cache[n.args[0]])
-        elif op == "sin":
-            cache[nid] = math.sin(cache[n.args[0]])
-        elif op == "cos":
-            cache[nid] = math.cos(cache[n.args[0]])
-        elif op == "select":
-            # predicate is the SIGN TEST of the cond node's forward value (JAX lax.select).
-            cond, a, b = n.args
-            cache[nid] = cache[a] if cache[cond] > 0 else cache[b]
-        elif op == "dot":
-            k = n.const[1]
-            us, vs = n.args[:k], n.args[k:]
-            cache[nid] = sum(cache[u] * cache[v] for u, v in zip(us, vs))
-        else:  # pragma: no cover - defensive; _ARITY is the source of truth
-            raise ValueError(f"unknown op {op!r}")
-    return cache[root]
+    (the forward analogue of the shared-adjoint property). The forward values of the
+    reachable nodes (`_forward_values`), read at the root."""
+    return _forward_values(tape, _topo_order(tape, root), env)[root]
+
+
+def evaluate_many(tape: Tape, roots, env: dict) -> list[float]:
+    """`evaluate` for every root of ``roots``, in one forward pass over the union of their
+    DAGs: a node's value is a function of its operands' values alone, so the pass computes
+    each shared node once and reads the same value `evaluate` computes for each root."""
+    values = _forward_values(tape, _topo_order_many(tape, roots), env)
+    return [values[root] for root in roots]
+
+
+def _topo_order_many(tape: Tape, roots) -> list[int]:
+    """`_topo_order` of each root in turn, over one `seen`: every node reachable from the
+    roots exactly once, operands before users."""
+    order: list[int] = []
+    seen: set[int] = set()
+    nodes = tape._nodes
+    for root in roots:
+        stack = [root]
+        while stack:
+            nid = stack.pop()
+            if nid < 0:
+                nid = ~nid
+                if nid not in seen:
+                    seen.add(nid)
+                    order.append(nid)
+                continue
+            if nid in seen:
+                continue
+            stack.append(~nid)
+            for a in nodes[nid].args:
+                if a not in seen:
+                    stack.append(a)
+    return order
 
 
 def _topo_order(tape: Tape, root: int) -> list[int]:
@@ -316,22 +312,25 @@ def _topo_order(tape: Tape, root: int) -> list[int]:
     exactly once -- the single visit that the shared-adjoint accumulation relies on."""
     order: list[int] = []
     seen: set[int] = set()
-    # iterative post-order: push (nid, expanded?) frames so a node is emitted only
-    # after all its operands, and exactly once.
-    stack = [(root, False)]
+    nodes = tape._nodes
+    # iterative post-order: a frame is the node id, unexpanded, or its complement (~nid, a
+    # negative int) once expanded, so a node is emitted only after all its operands, and
+    # exactly once -- the frames of the historical (nid, expanded) tuples, as ints.
+    stack = [root]
     while stack:
-        nid, expanded = stack.pop()
-        if expanded:
+        nid = stack.pop()
+        if nid < 0:
+            nid = ~nid
             if nid not in seen:
                 seen.add(nid)
                 order.append(nid)
             continue
         if nid in seen:
             continue
-        stack.append((nid, True))
-        for a in tape.node(nid).args:
+        stack.append(~nid)
+        for a in nodes[nid].args:
             if a not in seen:
-                stack.append((a, False))
+                stack.append(a)
     return order
 
 
@@ -480,12 +479,14 @@ def _accumulate_adjoints(tape: Tape, root: int, order, fvals: dict) -> tuple[dic
     (confluence / the diamond property)."""
     adj: dict[int, float] = {root: 1.0}  # seed: d(output)/d(output) = 1
     firings = 0
+    nodes = tape._nodes
+    rules = _BACKWARD
     for nid in order:
         gz = adj.get(nid, 0.0)
         if gz == 0.0:
             continue  # no adjoint flows here -> rule is a no-op
-        n = tape.node(nid)
-        rule = _BACKWARD.get(n.op)
+        n = nodes[nid]
+        rule = rules.get(n.op)
         if rule is None:
             continue  # a leaf (const/var): differentiation boundary
         firings += 1
@@ -522,7 +523,14 @@ def reverse_orders(tape: Tape, output: int) -> tuple[list[int], list[int]]:
     return order_a, order_b
 
 
-def grad(tape: Tape, output: int, inputs, *, order: list[int] | None = None) -> GradResult:
+def grad(
+    tape: Tape,
+    output: int,
+    inputs,
+    *,
+    order: list[int] | None = None,
+    fvals: dict | None = None,
+) -> GradResult:
     """Reverse-mode gradient of ``output`` w.r.t. each name in ``inputs``, computed by
     applying the per-primitive local backward rewrite rules over the content-addressed
     DAG.
@@ -538,19 +546,27 @@ def grad(tape: Tape, output: int, inputs, *, order: list[int] | None = None) -> 
     ``inputs`` is an iterable of var names *or* an ``env`` dict (its keys are used);
     ``env`` for the forward values is taken from ``inputs`` if it is a dict, else must
     be supplied via ``grad_at``. ``order`` lets a caller inject an alternative valid
-    reverse order to exercise confluence."""
+    reverse order to exercise confluence. ``fvals`` are forward values already computed
+    under ``env`` for every node the output reaches (`_forward_values` over a superset of
+    its DAG, `evaluate_many`'s pass): the same values this function would compute, so a
+    caller differentiating many outputs of one tape computes them once."""
     if not isinstance(inputs, dict):
         raise TypeError("grad() needs an env dict (var name -> value); use grad_at for names + env")
     env = inputs
     topo = _topo_order(tape, output)
-    fvals = _forward_values(tape, topo, env)
+    if fvals is None:
+        fvals = _forward_values(tape, topo, env)
     rev = order if order is not None else _reverse_order(topo)
     adj, firings = _accumulate_adjoints(tape, output, rev, fvals)
     # map each var name back to the node id that carries it, read its adjoint (0 if the
     # input never reaches the output -- an unused input has zero gradient).
-    name_to_nid = {tape.node(nid).const: nid for nid in topo if tape.node(nid).op == "var"}
+    nodes = tape._nodes
+    name_to_nid = {nodes[nid].const: nid for nid in topo if nodes[nid].op == "var"}
     grads = {name: adj.get(name_to_nid.get(name, -1), 0.0) for name in env}
-    forward_ops = sum(1 for nid in topo if tape.node(nid).op in _BACKWARD)
+    forward_ops = 0
+    for nid in topo:
+        if nodes[nid].op in _BACKWARD:
+            forward_ops += 1
     return GradResult(
         grads=grads, value=fvals[output], forward_ops=forward_ops, backward_ops=firings
     )
@@ -565,8 +581,9 @@ def _forward_values(tape: Tape, topo: list[int], env: dict) -> dict:
     """Forward values for every node in ``topo`` (the linearization point). Separated
     from :func:`evaluate` so the reverse pass can reuse the per-node table."""
     cache: dict[int, float] = {}
+    nodes = tape._nodes
     for nid in topo:
-        n = tape.node(nid)
+        n = nodes[nid]
         op = n.op
         if op == "const":
             cache[nid] = n.const
@@ -574,14 +591,18 @@ def _forward_values(tape: Tape, topo: list[int], env: dict) -> dict:
             if n.const not in env:
                 raise KeyError(f"unbound var {n.const!r}")
             cache[nid] = float(env[n.const])
-        elif op == "neg":
-            cache[nid] = -cache[n.args[0]]
         elif op == "add":
             cache[nid] = cache[n.args[0]] + cache[n.args[1]]
-        elif op == "sub":
-            cache[nid] = cache[n.args[0]] - cache[n.args[1]]
         elif op == "mul":
             cache[nid] = cache[n.args[0]] * cache[n.args[1]]
+        elif op == "dot":
+            k = n.const[1]
+            us, vs = n.args[:k], n.args[k:]
+            cache[nid] = sum(cache[u] * cache[v] for u, v in zip(us, vs))
+        elif op == "neg":
+            cache[nid] = -cache[n.args[0]]
+        elif op == "sub":
+            cache[nid] = cache[n.args[0]] - cache[n.args[1]]
         elif op == "div":
             cache[nid] = cache[n.args[0]] / cache[n.args[1]]
         elif op == "exp":
@@ -599,10 +620,6 @@ def _forward_values(tape: Tape, topo: list[int], env: dict) -> dict:
         elif op == "select":
             cond, a, b = n.args
             cache[nid] = cache[a] if cache[cond] > 0 else cache[b]
-        elif op == "dot":
-            k = n.const[1]
-            us, vs = n.args[:k], n.args[k:]
-            cache[nid] = sum(cache[u] * cache[v] for u, v in zip(us, vs))
         else:  # pragma: no cover
             raise ValueError(f"unknown op {op!r}")
     return cache

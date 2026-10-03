@@ -1,0 +1,178 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_tmsao:test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+    "bcir.tests.test_autodiff:test_a_tape_node_is_the_frozen_nodes_value_and_a_slot_cheaper"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN1 the telemetry record's fast path admits a control character in the segment id",
+      "new": "            and len(segment_id) <= _MAX_TEXT_FIELD\n",
+      "old": "            and len(segment_id) <= _MAX_TEXT_FIELD\n            and not _CONTROL_CHAR.search(segment_id)\n",
+      "path": "bcir/telemetry.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN2 the control-character class stops one code point short",
+      "new": "_CONTROL_CHAR = re.compile(r\"[\\x00-\\x1e]\")",
+      "old": "_CONTROL_CHAR = re.compile(r\"[\\x00-\\x1f]\")",
+      "path": "bcir/telemetry.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN3 the fast path admits a claim id past the signed 64-bit lane",
+      "new": "            and type(claim_id) is int\n            and 0 <= claim_id\n",
+      "old": "            and type(claim_id) is int\n            and 0 <= claim_id <= _I64_MAX\n",
+      "path": "bcir/telemetry.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN4 the fast path admits a utilization above 100",
+      "new": "            and type(utilization) is int\n            and NORM_MIN <= utilization\n",
+      "old": "            and type(utilization) is int\n            and NORM_MIN <= utilization <= NORM_MAX\n",
+      "path": "bcir/telemetry.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN5 the quantizer never saturates a code the clamped scale pushes past the lane",
+      "new": "    if False:  # only a scale clamped at the exponent band's edge\n",
+      "old": "    if min(raw) < -cmax or max(raw) > cmax:  # only a scale clamped at the exponent band's edge\n",
+      "path": "bcir/kbcir/quantize.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN6 a negative quotient is rounded half up instead of half away from zero",
+      "new": "        raw = [floor(q + 0.5) for q in quotients]\n",
+      "old": "        raw = [floor(q + 0.5) if q >= 0.0 else -floor(-q + 0.5) for q in quotients]\n",
+      "path": "bcir/kbcir/quantize.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN7 the group's fast path admits a code one past the lane",
+      "new": "        if codes and set(map(type, codes)) == {int} and -cmax <= min(codes) and max(codes) <= cmax + 1:\n",
+      "old": "        if codes and set(map(type, codes)) == {int} and -cmax <= min(codes) and max(codes) <= cmax:\n",
+      "path": "bcir/kbcir/quantize.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN8 the int4 packer admits the code -8",
+      "new": "    if values and (set(map(type, values)) != {int} or min(values) < -8 or max(values) > 7):\n",
+      "old": "    if values and (set(map(type, values)) != {int} or min(values) < -7 or max(values) > 7):\n",
+      "path": "bcir/kbcir/lowbit.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN9 the int4 unpacker keeps an odd count's padding nibble as a code",
+      "new": "",
+      "old": "    del values[count:]\n",
+      "path": "bcir/kbcir/lowbit.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN10 the int4 unpacker admits the code -8",
+      "new": "    if -8 in values and not values:\n        raise ValueError(\"packed Q4 contains forbidden non-symmetric code -8\")\n",
+      "old": "    if -8 in values:\n        raise ValueError(\"packed Q4 contains forbidden non-symmetric code -8\")\n",
+      "path": "bcir/kbcir/lowbit.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN11 a distance tie goes to the later centroid",
+      "new": "        if centroid == 0 or acc <= best_d:\n",
+      "old": "        if centroid == 0 or acc < best_d:\n",
+      "path": "bcir/kbcir/unsupervised.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN12 the finiteness scan reads the values unconverted, refusing a numeric string it accepted",
+      "new": "        finite = all(map(math.isfinite, values))\n",
+      "old": "        finite = all(map(math.isfinite, map(float, values)))\n",
+      "path": "bcir/kbcir/unsupervised.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN13 the reference matmul walks a column in reverse (the same products, another order)",
+      "new": "            for x, y in zip(row, reversed(columns[j])):  # the same products, summed in the same order\n",
+      "old": "            for x, y in zip(row, columns[j]):  # the same products, summed in the same order\n",
+      "path": "bcir/kbcir/matmul.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN14 the tiled matmul's row tile starts one past its k-tile (the same count of products, misaligned)",
+      "new": "            row = a[i * K + k0 + 1 : i * K + k1 + 1]  # the k-tile of row i\n",
+      "old": "            row = a[i * K + k0 : i * K + k1]  # the k-tile of row i\n",
+      "path": "bcir/kbcir/matmul.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN15 the normal matrix drops the last row of the design",
+      "new": "    columns = [[float(v) for v in a[p::n][: m - 1]] for p in range(n)]  # column p of A, i ascending\n    for p in range(n):\n        for q in range(n):\n",
+      "old": "    columns = [[float(v) for v in a[p::n]] for p in range(n)]  # column p of A, i ascending\n    for p in range(n):\n        for q in range(n):\n",
+      "path": "bcir/kbcir/ols.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN16 a column mean skips the first sample",
+      "new": "        for v in x[j::n][1:]:  # column j, i ascending: the same additions in the same order\n",
+      "old": "        for v in x[j::n]:  # column j, i ascending: the same additions in the same order\n",
+      "path": "bcir/kbcir/pca.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN17 the recurrent row dot pairs a row with the vector shifted by one",
+      "new": "    for x, y in zip(row, v[1:]):\n        acc += x * y\n    return acc\n",
+      "old": "    for x, y in zip(row, v):\n        acc += x * y\n    return acc\n",
+      "path": "bcir/kbcir/recurrent.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN18 the LSTM unroll no longer refuses a hidden state of the wrong length",
+      "new": "        if len(c) != dh:\n",
+      "old": "        if len(h) != dh:\n            raise ValueError(f\"lstm_cell: h_prev must be length hidden_dim = {dh}; got {len(h)}\")\n        if len(c) != dh:\n",
+      "path": "bcir/kbcir/recurrent.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN19 the tape's traversal pushes a node's operands in reverse",
+      "new": "        stack.append(~nid)\n        for a in reversed(nodes[nid].args):\n            if a not in seen:\n                stack.append(a)\n    return order\n\n\n# --- reverse-mode AD",
+      "old": "        stack.append(~nid)\n        for a in nodes[nid].args:\n            if a not in seen:\n                stack.append(a)\n    return order\n\n\n# --- reverse-mode AD",
+      "path": "bcir/kbcir/autodiff.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN20 the many-root evaluation reads every root as the first",
+      "new": "    values = _forward_values(tape, _topo_order_many(tape, roots), env)\n    return [values[roots[0]] for root in roots]\n",
+      "old": "    values = _forward_values(tape, _topo_order_many(tape, roots), env)\n    return [values[root] for root in roots]\n",
+      "path": "bcir/kbcir/autodiff.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN21 the batch's shared forward pass covers the first logit only",
+      "new": "        fvals = _forward_values(tape, _topo_order_many(tape, out[:1]), env)\n",
+      "old": "        fvals = _forward_values(tape, _topo_order_many(tape, out), env)\n",
+      "path": "bcir/kbcir/training.py"
+    },
+    {
+      "expects": "test_the_restructured_kernels_are_the_historical_ones_bit_for_bit",
+      "label": "KN22 the search's exploration term divides by the visits, not the visits plus one",
+      "new": "                    exploration_q20 * priors_q20[candidate] * root // (total_prior * count)\n",
+      "old": "                    exploration_q20 * priors_q20[candidate] * root // (total_prior * (count + 1))\n",
+      "path": "bcir/kbcir/hardware_rl.py"
+    },
+    {
+      "expects": "test_a_tape_node_is_the_frozen_nodes_value_and_a_slot_cheaper",
+      "label": "KN23 a tape node is compared and hashed by identity",
+      "new": "@dataclass(slots=True, eq=False)\nclass Node:\n",
+      "old": "@dataclass(slots=True, unsafe_hash=True)\nclass Node:\n",
+      "path": "bcir/kbcir/autodiff.py"
+    },
+    {
+      "expects": "test_a_tape_node_is_the_frozen_nodes_value_and_a_slot_cheaper",
+      "label": "KN24 a tape node carries an instance dictionary again",
+      "new": "@dataclass(unsafe_hash=True)\nclass Node:\n",
+      "old": "@dataclass(slots=True, unsafe_hash=True)\nclass Node:\n",
+      "path": "bcir/kbcir/autodiff.py"
+    }
+  ]
+}

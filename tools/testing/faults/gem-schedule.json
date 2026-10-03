@@ -1,0 +1,178 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "bcir.tests.test_schedule:test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+  "bcir.tests.test_schedule:test_a_slot_is_the_frozen_slots_value_and_a_slot_cheaper"
+ ],
+ "faults": [
+  {
+   "label": "GS1 the conflict predecessors merge several histories from an empty set, dropping the first",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "                elif merged is None:\n                    merged = set(first)\n                    merged.update(history)\n                else:\n                    merged.update(history)\n        for rid in wr:\n",
+   "new": "                elif merged is None:\n                    merged = set()\n                    merged.update(history)\n                else:\n                    merged.update(history)\n        for rid in wr:\n"
+  },
+  {
+   "label": "GS2 a resource's first reader is not recorded in its history",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "            history = readers.get(rid)\n            if history is None:\n                readers[rid] = [index]\n",
+   "new": "            history = readers.get(rid)\n            if history is None:\n                readers[rid] = []\n"
+  },
+  {
+   "label": "GS3 the frontier keeps a resource's readers across its write",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "        for rid in wr:\n            last_writer[rid] = index\n            readers_since[rid] = []\n",
+   "new": "        for rid in wr:\n            last_writer[rid] = index\n"
+  },
+  {
+   "label": "GS4 the frontier's second writer position displaces the first instead of joining it",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "                elif only < 0:\n                    only = writer\n                elif writer != only:\n                    positions = {only, writer}\n        for rid in wr:\n",
+   "new": "                elif only < 0:\n                    only = writer\n                elif writer != only:\n                    positions = {writer}\n        for rid in wr:\n"
+  },
+  {
+   "label": "GS5 the fence pass is skipped for a phase whose only fences are volatile claims",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "    for claim in claims:\n        if is_fence(claim):\n            break\n    else:\n        return out\n",
+   "new": "    for claim in claims:\n        if claim.hazard == \"barriered\":\n            break\n    else:\n        return out\n"
+  },
+  {
+   "label": "GS6 a read's wave follows a writer in the same wave",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "        for rid in rd:\n            prior = writer_wave.get(rid)\n            if prior is not None and prior >= wave:\n                wave = prior + 1\n        for rid in wr:\n",
+   "new": "        for rid in rd:\n            prior = writer_wave.get(rid)\n            if prior is not None and prior > wave:\n                wave = prior + 1\n        for rid in wr:\n"
+  },
+  {
+   "label": "GS7 the decoupled tail is listed in reverse claim-id order",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/concurrency.py",
+   "old": "            if _is_sparse(claim):\n                tail.append(claim.id)\n",
+   "new": "            if _is_sparse(claim):\n                tail.insert(0, claim.id)\n"
+  },
+  {
+   "label": "GS8 an unpriced claim takes no time instead of a unit",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/schedule.py",
+   "old": "        duration_of = {cid: max(0, durations.get(cid, 1)) for cid in ordinal}\n",
+   "new": "        duration_of = {cid: max(0, durations.get(cid, 0)) for cid in ordinal}\n"
+  },
+  {
+   "label": "GS9 a stream tying on finish and on locality displaces the lower index",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/schedule.py",
+   "old": "                    score = len(rids & resident[other])\n                    if score > best_score:\n",
+   "new": "                    score = len(rids & resident[other])\n                    if score >= best_score:\n"
+  },
+  {
+   "label": "GS10 a stream tying on finish is taken before its locality is scored",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/schedule.py",
+   "old": "                if other_start < start:\n                    d, start, best_score = other, other_start, -1\n",
+   "new": "                if other_start <= start:\n                    d, start, best_score = other, other_start, -1\n"
+  },
+  {
+   "label": "GS11 a slot is compared and hashed by identity",
+   "expects": "test_a_slot_is_the_frozen_slots_value_and_a_slot_cheaper",
+   "path": "bcir/gem/schedule.py",
+   "old": "@dataclass(slots=True, unsafe_hash=True)\nclass Slot:\n",
+   "new": "@dataclass(slots=True, eq=False)\nclass Slot:\n"
+  },
+  {
+   "label": "GS12 a slot carries an instance dictionary again",
+   "expects": "test_a_slot_is_the_frozen_slots_value_and_a_slot_cheaper",
+   "path": "bcir/gem/schedule.py",
+   "old": "@dataclass(slots=True, unsafe_hash=True)\nclass Slot:\n",
+   "new": "@dataclass(unsafe_hash=True)\nclass Slot:\n"
+  },
+  {
+   "label": "GS13 the executor reports no claim executed",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/execute.py",
+   "old": "        stat = PhaseStat(pid, count, count)  # every dispatched claim runs (a kernel that\n",
+   "new": "        stat = PhaseStat(pid, count, 0)  # every dispatched claim runs (a kernel that\n"
+  },
+  {
+   "label": "GS14 the executor skips the first claim's kernel",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/execute.py",
+   "old": "                if claim_id in kernels:\n                    kernels[claim_id]()\n",
+   "new": "                if claim_id in kernels and claim_id != ids[0]:\n                    kernels[claim_id]()\n"
+  },
+  {
+   "label": "GS15 the token plan's forks are in declared order, not claim-id order",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/gem/async_tokens.py",
+   "old": "        flat.extend(sorted(pmap[pid].claims, key=_claim_id))\n",
+   "new": "        flat.extend(pmap[pid].claims)\n"
+  },
+  {
+   "label": "GS16 the canonical order visits a dangling dependency",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/model/graph.py",
+   "old": "            for dep in deps:\n                if dep in pmap and dep not in color:\n",
+   "new": "            for dep in deps:\n                if dep not in color:\n"
+  },
+  {
+   "label": "GS17 a dependency on a phase still on the stack is not a cycle",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/model/graph.py",
+   "old": "                state = color.get(dep, 0)\n                if state == 1:\n                    return True\n",
+   "new": "                state = color.get(dep, 0)\n                if state == 1:\n                    continue\n"
+  },
+  {
+   "label": "GS18 a zero-extent resource counts one element",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/model/graph.py",
+   "old": "        return prod(self.shape)  # the element count; 1 for a scalar's () -- one call, not a loop\n",
+   "new": "        return prod(self.shape) or 1  # the element count; 1 for a scalar's () -- one call, not a loop\n"
+  },
+  {
+   "label": "GS19 an MMIO read needs the ordered hazard an MMIO write needs",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/verify/__init__.py",
+   "old": "            if kind == \"write\" and domain == Domain.MMIO and claim.hazard == \"unique\":\n",
+   "new": "            if domain == Domain.MMIO and claim.hazard == \"unique\":\n"
+  },
+  {
+   "label": "GS20 a claim touching no declared resource declares a domain it does not touch",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/verify/__init__.py",
+   "old": "    if touched and not matched:\n",
+   "new": "    if not matched:\n"
+  },
+  {
+   "label": "GS21 the decoupled-tail law skips a phase of two claims",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/verify/__init__.py",
+   "old": "    if len(claims) < 2:\n        return diags  # no pair: the scan below would visit nothing\n",
+   "new": "    if len(claims) < 3:\n        return diags  # no pair: the scan below would visit nothing\n"
+  },
+  {
+   "label": "GS22 every phase dependency is undeclared",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/verify/__init__.py",
+   "old": "    declared_pids = seen_pid  # every phase seen: the declared ids\n",
+   "new": "    declared_pids = set()  # every phase seen: the declared ids\n"
+  },
+  {
+   "label": "GS23 the H lane is legal for every access pattern",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/verify/__init__.py",
+   "old": "    legal = _LEGAL_LANES.get(claim.stride_class, _NO_LANES)\n    if claim.lane not in legal:\n",
+   "new": "    legal = _LEGAL_LANES.get(claim.stride_class, _NO_LANES)\n    if claim.lane not in legal and claim.lane != Lane.H:\n"
+  },
+  {
+   "label": "GS24 an access reaching exactly the resource's extent overruns it",
+   "expects": "test_the_restructured_schedulers_are_the_historical_ones_program_for_program",
+   "path": "bcir/verify/__init__.py",
+   "old": "            count = res.count\n            if extent > count:\n",
+   "new": "            count = res.count\n            if extent >= count:\n"
+  }
+ ]
+}

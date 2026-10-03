@@ -1001,6 +1001,172 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       `_Writer` packed it (L14). The corpus's "a generator where a sequence belongs" had never
       been built; it now holds a generator, a one-pass iterable and one whose `len()` is short,
       and four faults are caught only by them.
+  SP-DEC / SP-REC (2026-10-03) compiled the StreamPack decoder's reads and made the five record
+  kinds slotted value classes, for the rows the #786-vs-#797 benchmark left within noise.
+  - RED, measured on #797 (`7ae15ac2`): `decode@4` 95 ms and 777,497 calls for 4,096 segments --
+    `_Reader._take` 169,730 of them, a method call, a bounds check and a `struct.unpack` per field;
+    `hydrate@4` 27 ms, 17 ms of it building four frozen records a step: a frozen dataclass's
+    generated `__init__` assigns each field through `object.__setattr__`, 4 microseconds a record,
+    and each record carried an instance dictionary the cyclic collector walked beside it.
+  - What landed: `decode` reads the body in place (`bcir/abi/streampack_abi.py`) -- the position
+    a local, each fixed group of fields through one precompiled layout, each array through the
+    layout of its count (cached, bounded), each string through the `bytes` slice -- with every law
+    of the field-by-field reader in its order; where a fixed group does not fit, `_Reader`
+    finishes the record, so a cut is refused at the field it was refused at. `LaneSegment`,
+    `Prefetch`, `Block`, `TraceNote` and `Generation` are `@dataclass(slots=True,
+    unsafe_hash=True)`: built by the generated `__init__` in 0.7 microseconds, no dictionary, the
+    same equality, hash and repr as the frozen records (a record is a value; `dataclasses.replace`
+    changes one). An at-once instance dictionary was tried first and measured out: 613 bytes a
+    record against 278, and the collector's share grew with it. `verify_pack` reads the registry
+    once per segment where it called `module.resource` per RID.
+  - The reader's decoder is kept verbatim as `tests.decode_fixtures.decode_reference`, and
+    `streampack.decode.parity` holds the compiled decoder to it pack for pack and refusal for
+    refusal over 15,734 items: every honest pack in every spelling, one pack cut at every length
+    and every byte of it replaced by seven values, raw and with the CRC remade, and a replaced
+    byte beside a cut just past it (a law checked out of the reader's order is found, not only a
+    law dropped). The records' equality, hash, repr, `asdict`, `replace`, `copy` and pickle are
+    held to a frozen twin (`test_a_streampack_record_is_the_frozen_records_value_and_a_slot_cheaper`).
+  - Outcomes (median of 9, the heap collected before each sample, #797 -> now): `decode@4` 95 ->
+    37 ms, `decode@8` 909 -> 379 ms, `hydrate@4` 26.8 -> 14.0 ms, `hydrate@8` 341 -> 285 ms,
+    `verify_pack@4` 7.3 -> 6.1 ms; every pack, plan and verdict byte-identical; `encode` untouched.
+  - Faults: `tools/testing/faults/streampack-decode.json`, 12 -- the empty fence array, the fixed
+    group read where it does not fit, the lane and buffer-count laws, the width law checked out
+    of order, an array and a trace note read past the buffer, the trailing-bytes law, the UTF-8
+    reason, a record compared by identity, a record with a dictionary again, and the verifier's
+    written RIDs against no registry.
+  PERF-SCHED (2026-10-03) restructured the hot loops of the GEM schedulers, the phase-DAG
+  traversals, the executor and the verifier's per-claim laws, for the rows the #786-vs-#797
+  benchmark left within noise, with every schedule, order and verdict the historical one.
+  - RED, measured on #797 (`7ae15ac2`) over the mixed scheduler fixture (2,048 claims, 64 shared
+    resources, 8 domains) and the deep phase DAG (2,048 single-claim phases declared in reverse),
+    the min of 21: `sched_waves@4` 3.3 ms, `sched_tokens@4` 3.6 ms, `sched_eft@4` 15.7 ms,
+    `dag_exec@4` 2.6 ms, `dag_verify@4` 10.1 ms. The conflict and frontier predecessors sorted
+    every claim's predecessor set through a position dictionary's `__getitem__`; the wave
+    indices called `max` five times a claim; the fence pass walked every phase to add nothing;
+    the dispatch read each duration through a closure (4,096 calls a placement), picked a
+    stream in two passes over the eligible streams and built a frozen slot a claim (an
+    `object.__setattr__` a field); the traversals rebuilt a tuple frame per dependency; the
+    verifier resolved a claim's references into two lists and walked them four times, and
+    listed every single-claim phase's sparsity for a pair scan that had no pair to visit.
+  - What landed. `gem.concurrency`: the per-resource histories hold positions, so a claim's
+    predecessors sort as integers and are spelled as ids once, a claim whose conflicts all lie
+    in one history takes it as it is, and the frontier keeps one position until a second one
+    joins it; the wave indices compare where they called `max`; a phase without a fence leaves
+    the fence pass at its first line; sparsity is read once a claim. `gem.schedule`: `Slot` is
+    `@dataclass(slots=True, unsafe_hash=True)` (SP-REC's finding); the dispatch reads every
+    duration once into a table, picks the stream in one pass that keeps the running minimum of
+    the key `(finish, -score, index)` and scores the running best the first time a later stream
+    ties it, and binds the heap and the slot list as locals. `gem.execute`: the ids of a phase
+    are spelled once and appended as a list, the telemetry written once. `model.graph`: a frame
+    of the two traversals is the phase id and an iterator over its dependencies, resumed where
+    a push left it; `Resource.count` is `math.prod`. `verify`: one walk of a claim's resolved
+    references for R2 and the three R3 rules, their diagnostics in the order each rule listed
+    them (R2 and R3 are separate sections); the pair law returns at a phase of one claim; the
+    phase law reads the declared ids from the set it built; an unknown access-pattern shape
+    admits no lane through one shared empty set.
+  - The code before the slice is kept verbatim in `tests.sched_fixtures` (the two traversals,
+    the five concurrency functions, the token plan, the dispatch, the executor and the four
+    verifier laws), and `gem.schedule.parity` holds the faster rails to it program for program:
+    400 random programs built to reach every branch (shared and private resources, repeated and
+    overlapping RIDs, `barriered` and `volatile` fences, GGG and random tails, unpriced and
+    zero-cost claims, one to eight domains with and without the locality tie-break, dangling and
+    cyclic dependencies, duplicate phase and claim ids, undeclared RIDs, isolated domains, every
+    illegal lane, hazard, bound, extent and cost class) x 16 rails and more (the canonical order,
+    the cycle verdict, the verdict, the executor with and without kernels, the waves, the token
+    plan, each phase's hazard DAG and frontier, the EFT placement on the frontier and on the full
+    DAG, the placer) = 6,666 outcomes, 216 of them refusals: 0 mismatches
+    (`test_the_restructured_schedulers_are_the_historical_ones_program_for_program`). `Slot` is
+    held to a frozen twin (`test_a_slot_is_the_frozen_slots_value_and_a_slot_cheaper`).
+  - Outcomes (the min of 21 / the median, #797 -> now): `sched_waves@4` 3.3 / 3.5 -> 2.4 / 2.5
+    ms, `sched_tokens@4` 3.6 / 3.8 -> 2.5 / 2.7 ms, `sched_eft@4` 15.7 / 16.3 -> 10.0 / 10.5 ms,
+    `dag_exec@4` 2.6 / 2.9 -> 2.2 / 2.3 ms, `dag_verify@4` 10.1 / 10.4 -> 7.0 / 7.3 ms; every
+    wave, tail, affinity, fork, await, slot, makespan, order and diagnostic byte-identical.
+  - Faults: `tools/testing/faults/gem-schedule.json`, 24 -- a history dropped from a merge, a
+    first reader unrecorded, readers kept across a write, a writer position displaced, the fence
+    pass skipped over a volatile fence, a read in its writer's wave, the tail reversed, an
+    unpriced claim at no cost, both tie-breaks of the stream pick, a slot compared by identity
+    and one with a dictionary, the executor's telemetry and a skipped kernel, forks out of
+    order, a dangling dependency visited, a cycle missed, a zero-extent count, and five verifier
+    rules (an MMIO read, an untouched claim, a two-claim phase, the declared ids, the H lane, an
+    exact-extent access): each caught.
+  PERF-AUDIT (2026-10-03) removed the Python overhead around the numeric kernels behind the
+  TMSAO audit groups the #786-vs-#797 benchmark left within noise, with every floating-point
+  operation kept in its order: the audit's `correctness_sha256` at scale 4 is the same digest
+  before and after (`b57fc635...`), case for case.
+  - RED, measured on #797 (`7ae15ac2`), the median of 9 at scale 4: `bounded-overwrite-ring`
+    28.7 ms (378,040 calls: a schema check of seven `getattr`s, seven `_is_i64` calls and two
+    generator scans per record, written and read), `q8-q4-blocks` 30.2 ms (456,364 calls: a
+    `_quantize_code` and a `_round_half_away` call per value, a per-code validation loop per
+    group, a nibble loop per code), `kmeans-knn-scaler-embedding` 40.3 ms (eight distance calls
+    a point, two `float` conversions an element), `tiled-matmul` 151 ms (two index products and
+    two subscripts per multiply-add), `ols-pca` 4.5 ms, `transformer-block` 9.6 ms, `lstm-gru`
+    6.2 ms (a `_row_dot` call per unit per gate, converting its weights per use), `autodiff-adam`
+    167 ms (1,437,129 calls: a forward pass per logit for the loss and another inside its
+    gradient, a frozen `Node` per interned subexpression, `tape.node` 270,320 times),
+    `bounded-mcts` 1.4 ms (a closure and a keyed `min` per simulation).
+  - What landed. `telemetry.DataDNA.violations`: the valid record decided in one expression of
+    plain-type and range checks, the control-character scan a compiled class, the walk that
+    names each violation kept for anything else. `kbcir.quantize`: `quantize_group` converts,
+    scans and reduces through `map`, rounds every quotient in one comprehension with the
+    rounding chosen once, and saturates only when a clamped scale asks (the band's edge is the
+    one case); `QGroup` admits a group of plain in-lane codes from the type set and the extremes
+    and walks the rest. `kbcir.lowbit`: the packer pairs codes, the unpacker spells nibbles
+    through a 16-entry table. `kbcir.unsupervised`: the nearest centroid over float storage
+    (`kmeans_assign` converts its centroids once; `kmeans_fit`'s are floats by construction)
+    with the squared distance spelled in place; the finiteness scan through `map`.
+    `kbcir.matmul`, `kbcir.ols`, `kbcir.pca`: each dot product walks a row and a column already
+    sliced, the same products summed from 0.0 in the same order -- never `sum()`, which 3.12
+    made compensated. `kbcir.recurrent`: a cell dots converted rows (`_float_rows`, built once
+    per cell call and once per unroll) against the converted input and state, the per-use
+    conversions gone; an unroll checks the state lengths once. `kbcir.autodiff`: `Node` is
+    `@dataclass(slots=True, unsafe_hash=True)` (SP-REC's finding, again); the traversal's frames
+    are ints (a node id, or its complement once expanded); `evaluate` is the forward values read
+    at the root; `evaluate_many` is one forward pass for many roots; `grad` takes forward values
+    already computed (`fvals`); the training loop computes one forward pass per batch and reads
+    each logit from its gradient's value, and predicts a dataset in one pass.
+    `kbcir.hardware_rl`: the root-PUCT score in a loop over the sorted candidates.
+  - The kernels before the slice are kept verbatim in `tests.kernel_fixtures` and
+    `kernel.parity` holds the faster ones to them float for float (`float.hex`) and refusal for
+    refusal over random inputs built to reach every branch -- the odd integer, bool, string,
+    infinity and NaN, every magnitude, short and long operands, ties, every rounding and width,
+    clamped scales, int4 codes past the lane, the padding nibble, dangling and shared tape
+    nodes, every op, unbound inputs, every loss, duplicate candidates and empty priors --
+    23,419 items, 5,367 refusals of 97 messages: 0 mismatches
+    (`test_the_restructured_kernels_are_the_historical_ones_bit_for_bit`); `Node` is held to a
+    frozen twin (`test_a_tape_node_is_the_frozen_nodes_value_and_a_slot_cheaper`).
+  - Outcomes (the median of 9 at scale 4, #797 -> now): `bounded-overwrite-ring` 28.7 -> 19.9
+    ms, `q8-q4-blocks` 30.2 -> 20.1 ms, `kmeans-knn-scaler-embedding` 40.3 -> 30.5 ms,
+    `tiled-matmul` 151 -> 84 ms, `ols-pca` 4.5 -> 3.0 ms, `transformer-block` 9.6 -> 7.2 ms,
+    `lstm-gru` 6.2 -> 4.4 ms, `autodiff-adam` 167 -> 102 ms, `bounded-mcts` 1.43 -> 0.80 ms;
+    with the earlier slices, `iterative-phase-dag` 19.3 -> 13.1 ms, `mixed-wave-token-eft` 32.1
+    -> 26.4 ms, `kbcir-streampack` 186 -> 154 ms; `static-lifetime-planner` untouched (172 ->
+    178 ms median, 166 -> 167 ms min). Every case's `result_sha256` the same.
+  - Faults: `tools/testing/faults/kernels.json`, 24 -- the record's fast path admitting a
+    control character, a code point, an unbounded claim id and a utilization above 100; the
+    quantizer's saturation skipped and a negative quotient rounded half up; a code past the
+    lane admitted by the group and by the packer, the padding nibble kept and -8 admitted by the
+    unpacker; a tie to the later centroid; the finiteness scan unconverted; a column walked in
+    reverse, a row tile one past its k-tile, a design's last row and a column's first sample
+    dropped, a row paired with a shifted vector, an unchecked hidden state, operands pushed in
+    reverse, every root read as the first, a batch's forward pass of one logit, the search's
+    exploration term over the visits alone, and a node compared by identity or carrying a
+    dictionary: each caught.
+  PERF-CORPUS (2026-10-03) measured the native twin's CPU over the corpus and found the floor.
+  - Measured (the min of 3 passes per file, user + system CPU of the child, Clang -O2, the
+    default target and summary mode, 240 `runtime/c/cfront_*.c` inputs): #797 (`7ae15ac2`)
+    1,070 ms, the PR's base (CF-CPPZERO in #798) 799 ms, a mean of 3.3 ms per file; this PR
+    changes no C source, so the twin's bytes are main's.
+  - Where the remaining time is: a process that does nothing (`/bin/true`) costs 1.4 ms of
+    the same CPU on this host, 56 page faults -- about 340 ms of the 799 ms is process creation
+    the twin cannot reach. The smallest fixture (203 bytes) executes 554,129 instructions, 39%
+    of them the dynamic loader, 115 page faults against the empty process's 56: no fixed cost
+    of the twin's own is left to cut (the preprocessor's 2.3 MB state is taken zeroed and
+    untouched, CF-CPPZERO). The median fixture (3.0 M instructions) and the largest (31 M)
+    spend their instructions in the pipeline proper -- the parse (`p_func`, 22%), the canon
+    digest of the summary (`canon_walk`, 21-23%), the emit (`emit_unit`, 20-29%, a third of it
+    `snprintf`: 1,525 calls at 1,190 instructions each on the largest) and the preprocessor
+    (15-19%) -- with no single site worth a byte-exact rewrite of the emitter for the 5% of a
+    large file it would return. Found, not changed: the emit's `snprintf` per operand name.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

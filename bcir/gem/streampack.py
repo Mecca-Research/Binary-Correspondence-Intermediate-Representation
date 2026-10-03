@@ -20,7 +20,7 @@ from ..model import Lane, Module, topological_phase_ids
 from ..kbcir.realize import RealizationResult
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class Prefetch:
     name: str
     distance: int
@@ -30,15 +30,24 @@ class Prefetch:
     buffers: int = 1  # v2 (append-only): 2 = double-buffer contract
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class Block:
     base: int
     count: int
     strides: tuple[int, ...] = (1,)
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class LaneSegment:
+    """One lowered claim on the wire. The five record kinds are value classes: slotted, hashed
+    and compared by their fields, built by the generated `__init__` and changed only by
+    `dataclasses.replace`. They were frozen dataclasses: a frozen `__init__` assigns each field
+    through `object.__setattr__`, 4 microseconds a record against 0.7, and the record carried a
+    dictionary beside it -- a hydration or a decode builds three or four a step, so the records
+    were most of `hydrate` and a third of `decode`, and half the objects the cyclic collector
+    walked (SP-REC). Equality, hash and repr are the frozen record's; `test_streampack_records`
+    holds them to it."""
+
     name: str
     claim_id: int
     phase_id: int
@@ -62,14 +71,14 @@ class LaneSegment:
     channel: str = "host"
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class TraceNote:
     claim_id: int
     src_hash: int = 0
     trace_hash: int = 0
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class Generation:
     """One resource's generation at hydration (StreamPack v4, append-only; law R11): the pack
     was hydrated while RID `rid` stood at (`map_gen`, `data_gen`). The vector is in RID order
@@ -117,9 +126,10 @@ def step_records(n: int, step, claim) -> tuple[LaneSegment, Prefetch | None, Blo
     `hydrate` and the delta StreamPack (`gem.delta_pack`, GEM+ G18) build them here, so a step
     the delta re-emits is the step a full hydration would write."""
     cand = step.candidate
+    reads = tuple(claim.rd)
     prefetch = None
-    if cand.width > 1 and claim.rd:
-        prefetch = Prefetch(name=f"pf{n}", distance=4, targets=tuple(claim.rd))
+    if cand.width > 1 and reads:
+        prefetch = Prefetch(name=f"pf{n}", distance=4, targets=reads)
     segment = LaneSegment(
         name=f"seg{n}",
         claim_id=claim.id,
@@ -127,7 +137,7 @@ def step_records(n: int, step, claim) -> tuple[LaneSegment, Prefetch | None, Blo
         lane=cand.lane,
         width=cand.width,
         opcode=f"{claim.op or cand.name}",
-        reads=tuple(claim.rd),
+        reads=reads,
         writes=tuple(claim.wr),
         prefetch=None if prefetch is None else prefetch.name,
     )

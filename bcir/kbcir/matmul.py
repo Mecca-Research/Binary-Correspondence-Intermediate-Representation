@@ -55,14 +55,24 @@ def _validate_inputs(a, b, M: int, N: int, K: int) -> None:
 def matmul_reference(a, b, M: int, N: int, K: int) -> list[float]:
     """C = A @ B, the naive definition -- the single source of truth every realization is checked against."""
     _validate_inputs(a, b, M, N, K)
+    a, b = _sliceable(a), _sliceable(b)
     c = [0.0] * (M * N)
+    columns = [b[j::N] for j in range(N)]  # column j of B, k ascending: the inner loop's walk
     for i in range(M):
+        row = a[i * K : (i + 1) * K]
+        base = i * N
         for j in range(N):
             s = 0.0
-            for k in range(K):
-                s += a[i * K + k] * b[k * N + j]
-            c[i * N + j] = s
+            for x, y in zip(row, columns[j]):  # the same products, summed in the same order
+                s += x * y
+            c[base + j] = s
     return c
+
+
+def _sliceable(values):
+    """`values` as a sequence the kernels can slice: a list or a tuple as it is, anything
+    else (validated to be a sized sequence) listed once."""
+    return values if isinstance(values, (list, tuple)) else list(values)
 
 
 def matmul_tiled(a, b, M: int, N: int, K: int, plan: "TilePlan") -> list[float]:
@@ -77,15 +87,20 @@ def matmul_tiled(a, b, M: int, N: int, K: int, plan: "TilePlan") -> list[float]:
             raise ValueError(f"{name} must be a positive integer; got {value!r}")
     if plan.loop_order not in _LOOP_ORDERS:
         raise ValueError(f"unsupported matmul loop order {plan.loop_order!r}")
+    a, b = _sliceable(a), _sliceable(b)
     c = [0.0] * (M * N)
     tm, tn, tk = plan.tile_m, plan.tile_n, plan.tile_k
+    columns = [b[j::N] for j in range(N)]  # column j of B, k ascending
     for i0, j0, k0 in tile_origins(M, N, K, plan):
+        k1 = min(k0 + tk, K)
         for i in range(i0, min(i0 + tm, M)):
+            row = a[i * K + k0 : i * K + k1]  # the k-tile of row i
+            base = i * N
             for j in range(j0, min(j0 + tn, N)):
                 s = 0.0
-                for k in range(k0, min(k0 + tk, K)):
-                    s += a[i * K + k] * b[k * N + j]
-                c[i * N + j] += s
+                for x, y in zip(row, columns[j][k0:k1]):  # the same products, the same order
+                    s += x * y
+                c[base + j] += s
     return c
 
 

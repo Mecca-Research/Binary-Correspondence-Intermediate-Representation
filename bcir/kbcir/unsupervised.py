@@ -71,20 +71,29 @@ from .training import _lcg_permutation
 
 
 def _kmeans_assign_flat(centroids, point, point_offset: int, k: int, n_feat: int) -> int:
-    """Nearest centroid over validated flat storage, with no temporary row slices."""
+    """Nearest centroid over validated flat FLOAT storage (its callers convert both operands,
+    so the exact squared distance is spelled in place: the same subtractions, squares and
+    sums as `classical._squared_distance_at`, without the per-element conversions and the
+    per-centroid call). The lowest centroid index wins a distance tie."""
+    row = point[point_offset : point_offset + n_feat]
     best_c = 0
-    best_d = _squared_distance_at(point, point_offset, centroids, 0, n_feat)
-    for centroid in range(1, k):
-        distance = _squared_distance_at(point, point_offset, centroids, centroid * n_feat, n_feat)
-        if distance < best_d:
-            best_d = distance
+    best_d = 0.0
+    base = 0
+    for centroid in range(k):
+        acc = 0.0
+        for x, y in zip(row, centroids[base : base + n_feat]):
+            delta = x - y
+            acc += delta * delta
+        base += n_feat
+        if centroid == 0 or acc < best_d:
+            best_d = acc
             best_c = centroid
     return best_c
 
 
 def _finite(values, field: str) -> None:
     try:
-        finite = all(math.isfinite(float(value)) for value in values)
+        finite = all(map(math.isfinite, map(float, values)))
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{field} entries must all be finite numbers") from exc
     if not finite:
@@ -110,7 +119,7 @@ def kmeans_assign(centroids: list[float], x: list[float], k: int, n_feat: int) -
     xf = [float(v) for v in x]
     _finite(xf, "kmeans point")
     _finite(centroids, "kmeans centroids")
-    return _kmeans_assign_flat(centroids, xf, 0, k, n_feat)
+    return _kmeans_assign_flat([float(v) for v in centroids], xf, 0, k, n_feat)
 
 
 def kmeans_fit(
@@ -142,7 +151,7 @@ def kmeans_fit(
     for c, idx in enumerate(init_indices):
         if type(idx) is not int or not (0 <= idx < n_samples):
             raise ValueError(f"kmeans init_indices[{c}] = {idx} out of range [0, {n_samples})")
-    Xf = [float(v) for v in X]
+    Xf = list(map(float, X))
     _finite(Xf, "kmeans X")
     # the initial centroids: the chosen seed rows of X (a fresh copy, so X is never mutated).
     centroids = [Xf[init_indices[c] * n_feat + j] for c in range(k) for j in range(n_feat)]
@@ -198,7 +207,7 @@ def kmeans_inertia(
         raise ValueError(
             f"kmeans labels must have n_samples = {n_samples} entries; got {len(labels)}"
         )
-    Xf = [float(v) for v in X]
+    Xf = list(map(float, X))
     _finite(Xf, "kmeans X")
     _finite(centroids, "kmeans centroids")
     acc = 0.0
@@ -275,7 +284,7 @@ def standard_scaler_fit(X: list[float], n_samples: int, n_feat: int) -> Standard
         raise ValueError(f"scaler n_samples must be >= 1; got {n_samples}")
     if len(X) != n_samples * n_feat:
         raise ValueError(f"scaler X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
-    Xf = [float(v) for v in X]
+    Xf = list(map(float, X))
     _finite(Xf, "scaler X")
     mean = [0.0] * n_feat
     for i in range(n_samples):
@@ -353,7 +362,7 @@ def minmax_fit(X: list[float], n_samples: int, n_feat: int) -> MinMaxScaler:
         raise ValueError(f"scaler n_samples must be >= 1; got {n_samples}")
     if len(X) != n_samples * n_feat:
         raise ValueError(f"scaler X must be n_samples*n_feat = {n_samples * n_feat}; got {len(X)}")
-    Xf = [float(v) for v in X]
+    Xf = list(map(float, X))
     _finite(Xf, "scaler X")
     mn = list(Xf[0:n_feat])
     mx = list(Xf[0:n_feat])

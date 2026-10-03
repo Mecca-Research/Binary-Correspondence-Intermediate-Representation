@@ -60,16 +60,19 @@ def _checked_shape(shape) -> tuple[int, ...]:
 
 def pack_signed_int4(codes) -> bytes:
     values = tuple(codes)
-    if any(type(code) is not int or not -7 <= code <= 7 for code in values):
+    # Every code a plain int in [-7, 7]: the type set and the extremes, at C speed.
+    if values and (set(map(type, values)) != {int} or min(values) < -7 or max(values) > 7):
         raise ValueError("Q4 codes must be integer values in [-7, 7]")
-    output = bytearray((len(values) + 1) // 2)
-    for index, code in enumerate(values):
-        nibble = code & 0xF
-        if index & 1:
-            output[index // 2] |= nibble << 4
-        else:
-            output[index // 2] = nibble
+    # Two codes a byte, the even code in the low nibble; an odd last code alone in its byte.
+    output = bytearray(
+        [(low & 0xF) | ((high & 0xF) << 4) for low, high in zip(values[0::2], values[1::2])]
+    )
+    if len(values) & 1:
+        output.append(values[-1] & 0xF)
     return bytes(output)
+
+
+_NIBBLE_CODE = tuple(nibble - 16 if nibble & 8 else nibble for nibble in range(16))
 
 
 def unpack_signed_int4(data, count: int) -> tuple[int, ...]:
@@ -83,13 +86,14 @@ def unpack_signed_int4(data, count: int) -> tuple[int, ...]:
     raw = bytes(data)
     if count & 1 and raw and raw[-1] & 0xF0:
         raise ValueError("packed Q4 odd-element padding nibble must be zero")
-    values = []
-    for index in range(count):
-        nibble = raw[index // 2] >> (4 if index & 1 else 0) & 0xF
-        code = nibble - 16 if nibble & 8 else nibble
-        if code == -8:
-            raise ValueError("packed Q4 contains forbidden non-symmetric code -8")
-        values.append(code)
+    # Each byte's low nibble then its high one, through the sign-extension table; an odd
+    # count's padding nibble (zero, checked above) is dropped. The one code the table spells
+    # that no Q4 lane holds, -8, is refused wherever it is.
+    table = _NIBBLE_CODE
+    values = [table[nibble] for byte in raw for nibble in (byte & 0xF, byte >> 4)]
+    del values[count:]
+    if -8 in values:
+        raise ValueError("packed Q4 contains forbidden non-symmetric code -8")
     return tuple(values)
 
 

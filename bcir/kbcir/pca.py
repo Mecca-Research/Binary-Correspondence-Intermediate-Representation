@@ -142,9 +142,11 @@ def _jacobi_eigh(
 def _column_means(x: list[float], m: int, n: int) -> list[float]:
     """Per-feature (per-column) mean of the m x n row-major data ``x`` (length-n list)."""
     means = [0.0] * n
-    for i in range(m):
-        for j in range(n):
-            means[j] += float(x[i * n + j])
+    for j in range(n):
+        acc = 0.0
+        for v in x[j::n]:  # column j, i ascending: the same additions in the same order
+            acc += float(v)
+        means[j] = acc
     return [mu / m for mu in means]
 
 
@@ -180,11 +182,12 @@ def covariance_matrix(x: list[float], m: int, n: int, ddof: int = 1) -> list[flo
     xc = center_columns(x, m, n)  # validates n>=1, m>=1, len(x)==m*n
     denom = float(m - ddof)
     cmat = [0.0] * (n * n)
+    columns = [xc[p::n] for p in range(n)]  # column p of the centered data, i ascending
     for p in range(n):
         for q in range(n):
             acc = 0.0
-            for i in range(m):
-                acc += xc[i * n + p] * xc[i * n + q]
+            for x, y in zip(columns[p], columns[q]):  # the same products, the same order
+                acc += x * y
             cmat[p * n + q] = acc / denom
     return cmat
 

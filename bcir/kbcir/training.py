@@ -58,7 +58,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .autodiff import Tape, evaluate, grad
+from .autodiff import Tape, _forward_values, _topo_order_many, evaluate_many, grad
 from .losses import binary_cross_entropy_with_logits, mse, mse_value, softmax_cross_entropy
 from ..lower.optimizers import adam_step, momentum_step, rmsprop_step, sgd_step
 
@@ -319,9 +319,9 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
         # differentiates the whole model->loss DAG -- no seeding. (mse already scales by 1/nb -> mean loss.)
         pred_nids = tuple(out)
         loss_node = mse(tape, pred_nids, list(yb))
-        loss_val = evaluate(tape, loss_node, env)
-        g = grad(tape, loss_node, env).grads
-        return loss_val, {name: g.get(name, 0.0) for name in param_names}
+        result = grad(tape, loss_node, env)  # its value is the forward value at the loss node
+        g = result.grads
+        return result.value, {name: g.get(name, 0.0) for name in param_names}
 
     # TRANSCENDENTAL-SEED path: the loss value is monitored via M1; the gradient is seeded by grad_logits and
     # chained through each logit's own backward. We accumulate dL/dparam = sum_logit grad_logits[k] *
@@ -329,14 +329,17 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
     grad_acc = {name: 0.0 for name in param_names}
     total_loss = 0.0
     if loss == "bce":
-        # `out` is a list of scalar logit node ids, one per example (binary).
+        # `out` is a list of scalar logit node ids, one per example (binary). One forward pass
+        # over every logit's DAG (the parameters are shared), each logit's own reverse pass.
+        fvals = _forward_values(tape, _topo_order_many(tape, out), env)
         for logit_node, y in zip(out, yb):
-            z = evaluate(tape, logit_node, env)
+            result = grad(tape, logit_node, env, fvals=fvals)  # d(logit)/dparam and the logit
+            z = result.value
             lval, grad_logits = binary_cross_entropy_with_logits(
                 [z], [y]
             )  # mean over 1 -> the per-example loss
             seed = grad_logits[0]  # dL/dz = sigmoid(z) - y
-            dlogit = grad(tape, logit_node, env).grads  # d(logit)/dparam, seed 1.0
+            dlogit = result.grads
             for name in param_names:
                 grad_acc[name] += seed * dlogit.get(name, 0.0)
             total_loss += lval
@@ -344,14 +347,16 @@ def _batch_loss_and_grad(model, params, param_names, xb, yb, loss):
         return loss_val, {name: grad_acc[name] / nb for name in param_names}
 
     # softmax_ce: `out` is a list of K-length logit-node lists, one row per example; yb holds the class index.
+    fvals = _forward_values(tape, _topo_order_many(tape, [ln for row in out for ln in row]), env)
     for logit_row, y in zip(out, yb):
-        zvec = [evaluate(tape, ln, env) for ln in logit_row]
+        results = [grad(tape, ln, env, fvals=fvals) for ln in logit_row]  # each logit, its grads
+        zvec = [result.value for result in results]
         K = len(zvec)
         onehot = [1.0 if k == int(round(y)) else 0.0 for k in range(K)]
         lval, grad_logits = softmax_cross_entropy(zvec, onehot)  # grad = softmax(z) - onehot
-        for k, ln in enumerate(logit_row):
+        for k, result in enumerate(results):
             seed = grad_logits[k]
-            dlogit = grad(tape, ln, env).grads  # d(logit_k)/dparam
+            dlogit = result.grads
             for name in param_names:
                 grad_acc[name] += seed * dlogit.get(name, 0.0)
         total_loss += lval
@@ -372,13 +377,13 @@ def _predict(model, params, param_names, X, loss):
     tape = Tape()
     out = model(tape, param_names, X)
     if loss == "mse":
-        return [evaluate(tape, nid, env) for nid in out]
+        return evaluate_many(tape, out, env)
     if loss == "bce":
-        return [1.0 / (1.0 + math.exp(-evaluate(tape, nid, env))) for nid in out]
+        return [1.0 / (1.0 + math.exp(-z)) for z in evaluate_many(tape, out, env)]
     # softmax_ce: softmax the logit row (stable max-subtraction) -> a probability vector per example.
     preds = []
     for logit_row in out:
-        z = [evaluate(tape, ln, env) for ln in logit_row]
+        z = evaluate_many(tape, logit_row, env)
         m = max(z)
         ex = [math.exp(v - m) for v in z]
         s = sum(ex) or 1.0

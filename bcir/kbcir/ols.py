@@ -44,11 +44,12 @@ def _normal_matrix(a: list[float], m: int, n: int) -> list[float]:
     """``G = A^T A`` (n x n, row-major), recomputed directly from the m x n row-major ``a``. Symmetric
     positive-semidefinite by construction; positive-definite iff A has full column rank n."""
     g = [0.0] * (n * n)
+    columns = [[float(v) for v in a[p::n]] for p in range(n)]  # column p of A, i ascending
     for p in range(n):
         for q in range(n):
             acc = 0.0
-            for i in range(m):
-                acc += float(a[i * n + p]) * float(a[i * n + q])
+            for x, y in zip(columns[p], columns[q]):  # the same products, the same order
+                acc += x * y
             g[p * n + q] = acc
     return g
 
@@ -56,11 +57,13 @@ def _normal_matrix(a: list[float], m: int, n: int) -> list[float]:
 def _normal_rhs(a: list[float], b: list[float], m: int, n: int, nrhs: int) -> list[float]:
     """``c = A^T b`` (n x nrhs, row-major), recomputed directly from the row-major ``a`` and ``b``."""
     c = [0.0] * (n * nrhs)
+    columns = [[float(v) for v in a[p::n]] for p in range(n)]  # column p of A, i ascending
+    sides = [[float(v) for v in b[r::nrhs]] for r in range(nrhs)]  # column r of b
     for p in range(n):
         for r in range(nrhs):
             acc = 0.0
-            for i in range(m):
-                acc += float(a[i * n + p]) * float(b[i * nrhs + r])
+            for x, y in zip(columns[p], sides[r]):
+                acc += x * y
             c[p * nrhs + r] = acc
     return c
 

@@ -805,19 +805,20 @@ def bounded_mcts(
         if step < len(candidates):
             selected = candidates[step]
         else:
+            # The root-PUCT score of every candidate -- the mean utility plus the exploration
+            # term -- the highest taken, the lowest candidate id on a tie (the candidates are
+            # sorted, so the first maximum is that id).
             root = math.isqrt(step + 1)
-
-            def puct(candidate, root=root):
-                mean = utility[candidate] // visits[candidate]
-                explore = (
-                    exploration_q20
-                    * priors_q20[candidate]
-                    * root
-                    // (total_prior * (visits[candidate] + 1))
+            selected = candidates[0]
+            best = None
+            for candidate in candidates:
+                count = visits[candidate]
+                score = utility[candidate] // count + (
+                    exploration_q20 * priors_q20[candidate] * root // (total_prior * (count + 1))
                 )
-                return mean + explore
-
-            selected = min(candidates, key=lambda candidate: (-puct(candidate), candidate))
+                if best is None or score > best:
+                    best = score
+                    selected = candidate
         value = evaluator(selected)
         if type(value) is not int or not -_MAX_U63 <= value <= _MAX_U63:
             raise ValueError("MCTS evaluator must return a bounded integer utility")
