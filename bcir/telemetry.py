@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import struct
 import threading
@@ -40,7 +41,9 @@ NORM_MAX = 100
 _NORM_FIELDS = ("misses", "thermal", "voltage", "utilization")  # the 0..100 pressures
 _COUNTER_FIELDS = ("cycles", "bytes")  # non-negative counters
 _I64_MAX = (1 << 63) - 1
+_I64_MIN = -(1 << 63)
 _MAX_TEXT_FIELD = 4096
+_CONTROL_CHAR = re.compile(r"[\x00-\x1f]")  # a code point below 0x20: not a control-free string
 
 
 class TelemetryIntegrityError(ValueError):
@@ -99,28 +102,60 @@ class DataDNA:
         non-negative signed-64-bit ints. A float/bool, oversized Python int, NaN/inf,
         negative value, or pressure ``> 100`` is bogus and is reported so the
         ingest path can REJECT-and-count it before it reaches Theta or the policy."""
+        # The valid record, in one expression: plain strings within the bound and control-free,
+        # plain ints within the lanes (an int subclass takes the walk below, which admits it).
+        segment_id, provenance = self.segment_id, self.provenance
+        claim_id, cycles, byte_count = self.claim_id, self.cycles, self.bytes
+        misses, thermal, voltage, utilization = (
+            self.misses,
+            self.thermal,
+            self.voltage,
+            self.utilization,
+        )
+        if (
+            type(segment_id) is str
+            and len(segment_id) <= _MAX_TEXT_FIELD
+            and not _CONTROL_CHAR.search(segment_id)
+            and type(provenance) is str
+            and len(provenance) <= _MAX_TEXT_FIELD
+            and not _CONTROL_CHAR.search(provenance)
+            and type(claim_id) is int
+            and 0 <= claim_id <= _I64_MAX
+            and type(cycles) is int
+            and 0 <= cycles <= _I64_MAX
+            and type(byte_count) is int
+            and 0 <= byte_count <= _I64_MAX
+            and type(misses) is int
+            and NORM_MIN <= misses <= NORM_MAX
+            and type(thermal) is int
+            and NORM_MIN <= thermal <= NORM_MAX
+            and type(voltage) is int
+            and NORM_MIN <= voltage <= NORM_MAX
+            and type(utilization) is int
+            and NORM_MIN <= utilization <= NORM_MAX
+        ):
+            return []
         bad: list[str] = []
         for f in ("segment_id", "provenance"):
             v = getattr(self, f)
-            if (
-                not isinstance(v, str)
-                or len(v) > _MAX_TEXT_FIELD
-                or any(ord(ch) < 0x20 for ch in v)
-            ):
+            if not isinstance(v, str) or len(v) > _MAX_TEXT_FIELD or _CONTROL_CHAR.search(v):
                 bad.append(f"{f} not a bounded control-free string")
-        if not _is_i64(self.claim_id):
+        # `_is_i64`, spelled in place for the seven integer fields (the ring validates every
+        # record it writes and every record it reads).
+        v = self.claim_id
+        if not (isinstance(v, int) and not isinstance(v, bool) and _I64_MIN <= v <= _I64_MAX):
             bad.append("claim_id not a signed-64-bit int")
-        elif self.claim_id < 0:
-            bad.append(f"claim_id negative ({self.claim_id})")
+        elif v < 0:
+            bad.append(f"claim_id negative ({v})")
         for f in _COUNTER_FIELDS:
             v = getattr(self, f)
-            if not _is_i64(v):
+            if not (isinstance(v, int) and not isinstance(v, bool) and _I64_MIN <= v <= _I64_MAX):
                 bad.append(f"{f} not a signed-64-bit int")
             elif v < 0:
                 bad.append(f"{f} negative ({v})")
         for f in _NORM_FIELDS:
             v = getattr(self, f)
-            if not _is_i64(v):
+            if not (isinstance(v, int) and not isinstance(v, bool) and _I64_MIN <= v <= _I64_MAX):
                 bad.append(f"{f} not a signed-64-bit int")
             elif v < NORM_MIN or v > NORM_MAX:
                 bad.append(f"{f} out of [0,100] ({v})")

@@ -94,7 +94,13 @@ class QGroup:
             or not _EXP_MIN <= self.scale_exp <= _EXP_MAX
         ):
             raise ValueError(f"QGroup scale_exp must be an integer in [{_EXP_MIN}, {_EXP_MAX}]")
-        for index, code in enumerate(self.codes):
+        codes = self.codes
+        # Every code a plain int within the lane: one pass of C-level checks (the type set, the
+        # extremes). Anything else -- a bool, a float, an int subclass, a code out of range --
+        # takes the walk below, which names the first offending code.
+        if codes and set(map(type, codes)) == {int} and -cmax <= min(codes) and max(codes) <= cmax:
+            return
+        for index, code in enumerate(codes):
             if isinstance(code, bool) or not isinstance(code, int) or not -cmax <= code <= cmax:
                 raise ValueError(f"QGroup code[{index}] does not fit signed {self.bits}-bit range")
 
@@ -121,21 +127,30 @@ def quantize_group(values, bits: int, *, rounding: str = "nearest") -> QGroup:
     if rounding not in ("nearest", "truncate"):
         raise ValueError(f"rounding must be 'nearest' or 'truncate'; got {rounding!r}")
     cmax = code_max(bits)
-    vals = [float(v) for v in values]
-    if any(not math.isfinite(v) for v in vals):
+    vals = list(map(float, values))
+    if not all(map(math.isfinite, vals)):
         raise ValueError(
             "quantize_group: inputs must be finite (no inf/nan at the bridge boundary)"
         )
-    amax = max((abs(v) for v in vals), default=0.0)
+    amax = max(map(abs, vals), default=0.0)
     if amax == 0.0:
-        return QGroup(codes=tuple(0 for _ in vals), scale_exp=0, bits=bits)
+        return QGroup(codes=(0,) * len(vals), scale_exp=0, bits=bits)
     # Smallest power-of-two step 2**e with cmax * 2**e >= amax.  The
     # integer-ratio helper is exact even at transition points and subnormals.
     e = _scale_exponent(amax, cmax)
     scale = math.ldexp(1.0, e)
-    return QGroup(
-        codes=tuple(_quantize_code(v, cmax, scale, rounding) for v in vals), scale_exp=e, bits=bits
-    )
+    # `_quantize_code` for every value, the rounding chosen once: the quotient, rounded
+    # half away from zero (`_round_half_away`: floor(q + 1/2) on either side of zero) or
+    # toward it, saturated into the lane.
+    floor = math.floor
+    quotients = map(scale.__rtruediv__, vals)  # v / scale, each
+    if rounding == "truncate":
+        raw = [int(q) for q in quotients]
+    else:
+        raw = [floor(q + 0.5) if q >= 0.0 else -floor(-q + 0.5) for q in quotients]
+    if min(raw) < -cmax or max(raw) > cmax:  # only a scale clamped at the exponent band's edge
+        raw = [cmax if c > cmax else -cmax if c < -cmax else c for c in raw]
+    return QGroup(codes=tuple(raw), scale_exp=e, bits=bits)
 
 
 def quantize_per_group(

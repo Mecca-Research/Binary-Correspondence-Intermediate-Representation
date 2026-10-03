@@ -679,3 +679,33 @@ def test_select_hessian_away_from_boundary_matches_but_boundary_caveat_holds():
     assert H_b[("cb", "cb")] == 0.0  # delta dropped -> finite a.e. value
     assert abs(sd_b[("cb", "cb")]) > 1e3  # the stencil sees the jump (blows up)
     assert not hessians_match(H_b, sd_b)  # honest: NOT exact at the boundary
+
+
+def test_a_tape_node_is_the_frozen_nodes_value_and_a_slot_cheaper():
+    """PERF-AUDIT. `Node` is a slotted value class built by the generated `__init__` where it
+    was a frozen dataclass: the same fields compare and hash the same, `repr`, `asdict` and
+    `astuple` are the same, `replace`, `copy` and pickle work, and a node carries no instance
+    dictionary. A node is a value: interned once by its content key and never assigned to."""
+    import copy
+    import dataclasses
+    import pickle
+
+    from bcir.kbcir.autodiff import Node, Tape
+
+    frozen = dataclasses.make_dataclass(
+        "Node", [(f.name, f.type, f) for f in dataclasses.fields(Node)], frozen=True
+    )
+    tape = Tape()
+    a, b = tape.var("a"), tape.const(2.0)
+    root = tape.dot((tape.mul(a, b), a), (b, b))
+    for node in tape._nodes:
+        fields = dataclasses.asdict(node)
+        twin = frozen(**fields)
+        assert hash(node) == hash(twin) and repr(node) == repr(twin), node
+        assert dataclasses.astuple(node) == dataclasses.astuple(twin)
+        assert node == Node(**fields) and node != Node(**{**fields, "nid": fields["nid"] + 1})
+        assert not hasattr(node, "__dict__") and hasattr(Node, "__slots__")
+        assert copy.deepcopy(node) == node and pickle.loads(pickle.dumps(node)) == node
+        changed = dataclasses.replace(node, const=node.const)
+        assert changed == node and changed is not node
+    assert tape.node(root).op == "dot" and tape.unique_node_count == 4

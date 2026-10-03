@@ -471,3 +471,30 @@ def test_hydrate_refuses_partial_unknown_duplicate_and_phase_mismatched_plans():
             raise AssertionError("malformed/partial plan must not hydrate")
         except ValueError:
             pass
+
+
+def test_the_restructured_kernels_are_the_historical_ones_bit_for_bit():
+    """PERF-AUDIT. The kernels behind the audit groups had their Python overhead removed with
+    every floating-point operation kept in its order: the telemetry record's schema check,
+    the per-group quantizer and the quantized group's validation, the int4 packer and
+    unpacker, the nearest centroid, the reference and tiled matmul, the normal equations and
+    the covariance, the recurrent cells, the autodiff tape's traversal, forward and reverse
+    passes, the training loop's per-batch gradient and prediction, and the bounded search.
+    Each one before the slice is kept verbatim in `kernel_fixtures` and the faster kernel is
+    held to it over random inputs built to reach every branch: the same result, float for
+    float by `float.hex`, or the same refusal. The grader is non-vacuous: thousands of
+    items, thousands of refusals of many distinct messages, every rail exercised."""
+    from bcir.tests import kernel_fixtures
+
+    seen: dict = {}
+    rows = kernel_fixtures.measure(seen)
+    assert rows["kernel.parity"] == 0, seen.get("mismatched", [])[:4]
+    assert seen["items"] > 20_000 and seen["refused"] > 4_000, seen["items"]
+    assert len(seen["messages"]) >= 60, len(seen["messages"])
+    assert all(count >= 24 for count in seen["rails"].values()), seen["rails"]
+    assert {"violations", "quantize_group[8]", "qgroup", "pack_int4", "unpack_int4"} <= set(
+        seen["rails"]
+    )
+    assert {"matmul_tiled", "covariance", "lstm_unroll", "grad", "batch[bce]", "mcts"} <= set(
+        seen["rails"]
+    )
