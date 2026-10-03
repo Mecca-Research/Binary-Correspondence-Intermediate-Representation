@@ -1151,6 +1151,22 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     reverse, every root read as the first, a batch's forward pass of one logit, the search's
     exploration term over the visits alone, and a node compared by identity or carrying a
     dictionary: each caught.
+  PERF-CORPUS (2026-10-03) measured the native twin's CPU over the corpus and found the floor.
+  - Measured (the min of 3 passes per file, user + system CPU of the child, Clang -O2, the
+    default target and summary mode, 240 `runtime/c/cfront_*.c` inputs): #797 (`7ae15ac2`)
+    1,070 ms, the PR's base (CF-CPPZERO in #798) 799 ms, a mean of 3.3 ms per file; this PR
+    changes no C source, so the twin's bytes are main's.
+  - Where the remaining time is: a process that does nothing (`/bin/true`) costs 1.4 ms of
+    the same CPU on this host, 56 page faults -- about 340 ms of the 799 ms is process creation
+    the twin cannot reach. The smallest fixture (203 bytes) executes 554,129 instructions, 39%
+    of them the dynamic loader, 115 page faults against the empty process's 56: no fixed cost
+    of the twin's own is left to cut (the preprocessor's 2.3 MB state is taken zeroed and
+    untouched, CF-CPPZERO). The median fixture (3.0 M instructions) and the largest (31 M)
+    spend their instructions in the pipeline proper -- the parse (`p_func`, 22%), the canon
+    digest of the summary (`canon_walk`, 21-23%), the emit (`emit_unit`, 20-29%, a third of it
+    `snprintf`: 1,525 calls at 1,190 instructions each on the largest) and the preprocessor
+    (15-19%) -- with no single site worth a byte-exact rewrite of the emitter for the 5% of a
+    large file it would return. Found, not changed: the emit's `snprintf` per operand name.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
