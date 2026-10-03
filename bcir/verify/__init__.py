@@ -57,6 +57,7 @@ _LEGAL_LANES = {
     StrideClass.TILE: {Lane.T},
     StrideClass.RANDOM: {Lane.GGG, Lane.A},
 }
+_NO_LANES: frozenset = frozenset()  # an unknown access-pattern shape admits no lane
 
 # Contract mnemonics (LangRef Sec. 5; mirror BCIRAttrs.td).
 _HAZARDS = {"unique", "atomic", "barriered"}
@@ -122,9 +123,13 @@ def verify(module: Module) -> list[Diagnostic]:
     hazard = sections[_S_HAZARD]
     for ph in module.phases:
         for claim in ph.claims:
-            for section, diag in _claim_laws(module, claim, mask_law):
-                sections[section].append(diag)
-        hazard += _pair_laws(ph)
+            laws = _claim_laws(module, claim, mask_law)
+            if laws:
+                for section, diag in laws:
+                    sections[section].append(diag)
+        pairs = _pair_laws(ph)
+        if pairs:
+            hazard += pairs
     sections[_S_EVENTS] = _event_laws(module)
     return [diag for section in sections for diag in section]
 
@@ -217,7 +222,7 @@ def _phase_laws(module: Module) -> list[Diagnostic]:
         if ph.phase_id in seen_pid:
             diags.append(Diagnostic("R4", f"duplicate phase id {ph.phase_id}"))
         seen_pid.add(ph.phase_id)
-    declared_pids = {ph.phase_id for ph in module.phases}
+    declared_pids = seen_pid  # every phase seen: the declared ids
     for ph in module.phases:
         for dep in ph.deps:
             if dep not in declared_pids:
@@ -242,63 +247,80 @@ def _claim_laws(module: Module, claim, mask_law) -> list[tuple[int, Diagnostic]]
     laws)."""
     out: list[tuple[int, Diagnostic]] = []
     resources = module.resources
-    rd, wr = claim.rd, claim.wr
-    reads = [(rid, resources[rid] if rid in resources else None) for rid in rd]
-    writes = [(rid, resources[rid] if rid in resources else None) for rid in wr]
+    reads = [(rid, resources.get(rid)) for rid in claim.rd]
+    writes = [(rid, resources.get(rid)) for rid in claim.wr]
 
+    # One walk of the resolved references, reads then writes, for R2 and the three R3 rules --
+    # each rule's diagnostics in the order it listed them (R2 and R3 are separate sections).
+    #
     # R2: registry resolution -- every claim resource reference resolves.
-    for rid, res in reads + writes:
-        if res is None:
-            out.append(
-                (_S_RESOLVE, Diagnostic("R2", f"claim {claim.id} references undeclared RID {rid}"))
-            )
-
     # R3: domain legality -- claim domain contracts correspond to registry placement.
-    touched = [res for _, res in reads + writes if res is not None]
-    if touched and claim.domain not in {r.domain for r in touched}:
+    # R3 (the isolated-domain redirection gap, S0-6 -- one rule on both rails): a resource in a
+    # device-ISOLATED domain (MMIO: `model.ISOLATED_DOMAINS`) may be touched only by a claim
+    # declaring that domain. A host-domain claim that reaches a device register while "backed"
+    # by one RAM operand was accepted by the membership check -- an isolated resource silently
+    # treated as another address space. The converse stays legal: an MMIO claim carries the RAM
+    # value it stores / the index it reads (every cfront MMIO access has that shape), so only
+    # the RESOURCE side of the pair is required to match.
+    # R3: an MMIO write needs an ordered hazard contract.
+    claim_domain = claim.domain
+    touched = False  # some reference resolved
+    matched = False  # ... and the claim's domain is one of the touched resources'
+    isolated: list[tuple[int, Diagnostic]] = []
+    mmio: list[tuple[int, Diagnostic]] = []
+    for kind, resolved in (("read", reads), ("write", writes)):
+        for rid, res in resolved:
+            if res is None:
+                out.append(
+                    (
+                        _S_RESOLVE,
+                        Diagnostic("R2", f"claim {claim.id} references undeclared RID {rid}"),
+                    )
+                )
+                continue
+            touched = True
+            domain = res.domain
+            if domain == claim_domain:
+                matched = True
+            elif domain in ISOLATED_DOMAINS:
+                isolated.append(
+                    (
+                        _S_DOMAIN,
+                        Diagnostic(
+                            "R3",
+                            f"claim {claim.id}: {kind} of RID {rid} (domain {domain.name}) "
+                            f"does not match the claim domain {claim_domain.name} -- an "
+                            f"isolated resource may not be reached as another address space",
+                        ),
+                    )
+                )
+            if kind == "write" and domain == Domain.MMIO and claim.hazard == "unique":
+                mmio.append(
+                    (
+                        _S_DOMAIN,
+                        Diagnostic(
+                            "R3",
+                            f"claim {claim.id}: MMIO write to RID {rid} requires an "
+                            f"atomic/barriered hazard contract",
+                        ),
+                    )
+                )
+    if touched and not matched:
+        names = sorted({res.domain.name for _, res in reads + writes if res is not None})
         out.append(
             (
                 _S_DOMAIN,
                 Diagnostic(
                     "R3",
-                    f"claim {claim.id}: declares domain {claim.domain.name} but touches only "
-                    f"{{{', '.join(sorted({r.domain.name for r in touched}))}}}",
+                    f"claim {claim.id}: declares domain {claim_domain.name} but touches only "
+                    f"{{{', '.join(names)}}}",
                 ),
             )
         )
-    # R3 (the isolated-domain redirection gap, S0-6 -- one rule on both rails): a resource in a
-    # device-ISOLATED domain (MMIO: `model.ISOLATED_DOMAINS`) may be touched only by a claim
-    # declaring that domain. A host-domain claim that reaches a device register while "backed"
-    # by one RAM operand was accepted by the membership check above -- an isolated resource
-    # silently treated as another address space. The converse stays legal: an MMIO claim
-    # carries the RAM value it stores / the index it reads (every cfront MMIO access has that
-    # shape), so only the RESOURCE side of the pair is required to match.
-    for kind, resolved in (("read", reads), ("write", writes)):
-        for rid, res in resolved:
-            if res is not None and res.domain in ISOLATED_DOMAINS and res.domain != claim.domain:
-                out.append(
-                    (
-                        _S_DOMAIN,
-                        Diagnostic(
-                            "R3",
-                            f"claim {claim.id}: {kind} of RID {rid} (domain {res.domain.name}) "
-                            f"does not match the claim domain {claim.domain.name} -- an "
-                            f"isolated resource may not be reached as another address space",
-                        ),
-                    )
-                )
-    for rid, res in writes:
-        if res is not None and res.domain == Domain.MMIO and claim.hazard == "unique":
-            out.append(
-                (
-                    _S_DOMAIN,
-                    Diagnostic(
-                        "R3",
-                        f"claim {claim.id}: MMIO write to RID {rid} requires an "
-                        f"atomic/barriered hazard contract",
-                    ),
-                )
-            )
+    if isolated:
+        out += isolated
+    if mmio:
+        out += mmio
 
     # R5: hazard legality -- the hazard contract is sufficient for the declared semantics.
     if claim.hazard not in _HAZARDS:
@@ -360,7 +382,7 @@ def _claim_laws(module: Module, claim, mask_law) -> list[tuple[int, Diagnostic]]
             )
 
     # R6: lane legality -- lane type matches the declared access pattern.
-    legal = _LEGAL_LANES.get(claim.stride_class, set())
+    legal = _LEGAL_LANES.get(claim.stride_class, _NO_LANES)
     if claim.lane not in legal:
         out.append(
             (
@@ -375,8 +397,10 @@ def _claim_laws(module: Module, claim, mask_law) -> list[tuple[int, Diagnostic]]
 
     # R7: bounds legality -- strict bounds are discharged statically (affine patterns) or
     # guarded by a runtime verify contract (data-dependent patterns).
-    for diag in _bounds_laws(claim, reads, writes):
-        out.append((_S_BOUNDS, diag))
+    bounds = _bounds_laws(claim, reads, writes)
+    if bounds:
+        for diag in bounds:
+            out.append((_S_BOUNDS, diag))
 
     # R8 (static half): cost completeness -- every claim names a known cost class.
     if claim.cost_class not in _COST_CLASSES:
@@ -455,7 +479,7 @@ def _bounds_laws(claim, reads, writes) -> list[Diagnostic]:
     read_extent = claim.offset + (claim.count - 1) * k + 1 if claim.count > 0 else 0
     is_reduction = claim.op.startswith("reduce.")
     write_extent = claim.offset + (1 if is_reduction else claim.count)
-    if max(read_extent, write_extent) > _I64_MAX:
+    if read_extent > _I64_MAX or write_extent > _I64_MAX:
         # The wire domain (S0-6): an extent the MLIR attributes and the C runtime cannot carry
         # is refused, not compared -- checked arithmetic on the law rail.
         diags.append(
@@ -466,12 +490,13 @@ def _bounds_laws(claim, reads, writes) -> list[Diagnostic]:
         for rid, res in resolved:
             if res is None or not res.shape:
                 continue
-            if extent > res.count:
+            count = res.count
+            if extent > count:
                 diags.append(
                     Diagnostic(
                         "R7",
                         f"claim {claim.id}: {kind} of RID {rid} overruns the resource "
-                        f"(extent {extent} > {res.count})",
+                        f"(extent {extent} > {count})",
                     )
                 )
     return diags
@@ -487,6 +512,8 @@ def _pair_laws(ph) -> list[Diagnostic]:
     The pairs are visited in (i, j) order, i < j, and each is `_pair_law`."""
     diags: list[Diagnostic] = []
     claims = ph.claims
+    if len(claims) < 2:
+        return diags  # no pair: the scan below would visit nothing
     is_sp = [_is_sparse(c) for c in claims]
     if any(is_sp):
         for i, a in enumerate(claims):

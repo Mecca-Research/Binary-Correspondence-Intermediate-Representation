@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..model import Module
-from .concurrency import _topo_phase_ids, hazard_predecessors
+from .concurrency import _claim_id, _topo_phase_ids, hazard_predecessors
 
 
 @dataclass
@@ -32,10 +32,9 @@ def async_plan(module: Module) -> AsyncPlan:
     """Build the async fork/await plan: each claim forks; it awaits its earlier hazards
     (data conflicts and fences, `concurrency.hazard_predecessors`)."""
     pmap = module.phase_map()
-    flat = []
+    flat: list = []
     for pid in _topo_phase_ids(module):
-        for c in sorted(pmap[pid].claims, key=lambda c: c.id):
-            flat.append(c)
+        flat.extend(sorted(pmap[pid].claims, key=_claim_id))
 
     plan = AsyncPlan(forks=[c.id for c in flat])
     plan.awaits = hazard_predecessors(flat)

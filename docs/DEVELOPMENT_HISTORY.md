@@ -1034,6 +1034,61 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     of order, an array and a trace note read past the buffer, the trailing-bytes law, the UTF-8
     reason, a record compared by identity, a record with a dictionary again, and the verifier's
     written RIDs against no registry.
+  PERF-SCHED (2026-10-03) restructured the hot loops of the GEM schedulers, the phase-DAG
+  traversals, the executor and the verifier's per-claim laws, for the rows the #786-vs-#797
+  benchmark left within noise, with every schedule, order and verdict the historical one.
+  - RED, measured on #797 (`7ae15ac2`) over the mixed scheduler fixture (2,048 claims, 64 shared
+    resources, 8 domains) and the deep phase DAG (2,048 single-claim phases declared in reverse),
+    the min of 21: `sched_waves@4` 3.3 ms, `sched_tokens@4` 3.6 ms, `sched_eft@4` 15.7 ms,
+    `dag_exec@4` 2.6 ms, `dag_verify@4` 10.1 ms. The conflict and frontier predecessors sorted
+    every claim's predecessor set through a position dictionary's `__getitem__`; the wave
+    indices called `max` five times a claim; the fence pass walked every phase to add nothing;
+    the dispatch read each duration through a closure (4,096 calls a placement), picked a
+    stream in two passes over the eligible streams and built a frozen slot a claim (an
+    `object.__setattr__` a field); the traversals rebuilt a tuple frame per dependency; the
+    verifier resolved a claim's references into two lists and walked them four times, and
+    listed every single-claim phase's sparsity for a pair scan that had no pair to visit.
+  - What landed. `gem.concurrency`: the per-resource histories hold positions, so a claim's
+    predecessors sort as integers and are spelled as ids once, a claim whose conflicts all lie
+    in one history takes it as it is, and the frontier keeps one position until a second one
+    joins it; the wave indices compare where they called `max`; a phase without a fence leaves
+    the fence pass at its first line; sparsity is read once a claim. `gem.schedule`: `Slot` is
+    `@dataclass(slots=True, unsafe_hash=True)` (SP-REC's finding); the dispatch reads every
+    duration once into a table, picks the stream in one pass that keeps the running minimum of
+    the key `(finish, -score, index)` and scores the running best the first time a later stream
+    ties it, and binds the heap and the slot list as locals. `gem.execute`: the ids of a phase
+    are spelled once and appended as a list, the telemetry written once. `model.graph`: a frame
+    of the two traversals is the phase id and an iterator over its dependencies, resumed where
+    a push left it; `Resource.count` is `math.prod`. `verify`: one walk of a claim's resolved
+    references for R2 and the three R3 rules, their diagnostics in the order each rule listed
+    them (R2 and R3 are separate sections); the pair law returns at a phase of one claim; the
+    phase law reads the declared ids from the set it built; an unknown access-pattern shape
+    admits no lane through one shared empty set.
+  - The code before the slice is kept verbatim in `tests.sched_fixtures` (the two traversals,
+    the five concurrency functions, the token plan, the dispatch, the executor and the four
+    verifier laws), and `gem.schedule.parity` holds the faster rails to it program for program:
+    400 random programs built to reach every branch (shared and private resources, repeated and
+    overlapping RIDs, `barriered` and `volatile` fences, GGG and random tails, unpriced and
+    zero-cost claims, one to eight domains with and without the locality tie-break, dangling and
+    cyclic dependencies, duplicate phase and claim ids, undeclared RIDs, isolated domains, every
+    illegal lane, hazard, bound, extent and cost class) x 16 rails and more (the canonical order,
+    the cycle verdict, the verdict, the executor with and without kernels, the waves, the token
+    plan, each phase's hazard DAG and frontier, the EFT placement on the frontier and on the full
+    DAG, the placer) = 6,666 outcomes, 216 of them refusals: 0 mismatches
+    (`test_the_restructured_schedulers_are_the_historical_ones_program_for_program`). `Slot` is
+    held to a frozen twin (`test_a_slot_is_the_frozen_slots_value_and_a_slot_cheaper`).
+  - Outcomes (the min of 21 / the median, #797 -> now): `sched_waves@4` 3.3 / 3.5 -> 2.4 / 2.5
+    ms, `sched_tokens@4` 3.6 / 3.8 -> 2.5 / 2.7 ms, `sched_eft@4` 15.7 / 16.3 -> 10.0 / 10.5 ms,
+    `dag_exec@4` 2.6 / 2.9 -> 2.2 / 2.3 ms, `dag_verify@4` 10.1 / 10.4 -> 7.0 / 7.3 ms; every
+    wave, tail, affinity, fork, await, slot, makespan, order and diagnostic byte-identical.
+  - Faults: `tools/testing/faults/gem-schedule.json`, 24 -- a history dropped from a merge, a
+    first reader unrecorded, readers kept across a write, a writer position displaced, the fence
+    pass skipped over a volatile fence, a read in its writer's wave, the tail reversed, an
+    unpriced claim at no cost, both tie-breaks of the stream pick, a slot compared by identity
+    and one with a dictionary, the executor's telemetry and a skipped kernel, forks out of
+    order, a dangling dependency visited, a cycle missed, a zero-extent count, and five verifier
+    rules (an MMIO read, an untouched claim, a two-claim phase, the declared ids, the H lane, an
+    exact-extent access): each caught.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

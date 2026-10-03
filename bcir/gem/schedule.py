@@ -48,16 +48,28 @@ module is the duration-aware placement that prices and places real work.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from heapq import heapify, heappop, heappush
 
 from ..model import Claim, Module
 from .async_tokens import async_plan
-from .concurrency import _is_sparse, _topo_phase_ids, hazard_frontier, hazard_predecessors
+from .concurrency import (
+    _claim_id,
+    _is_sparse,
+    _topo_phase_ids,
+    hazard_frontier,
+    hazard_predecessors,
+)
 
 TAIL_STREAM = -1  # the decoupled GGG/random tail executes on its own stream
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, unsafe_hash=True)
 class Slot:
+    """One placed claim. A value: never assigned to after it is built, compared and hashed by
+    its four fields -- a slotted class the generated `__init__` builds in a fraction of a
+    microsecond, where a frozen dataclass assigned each field through `object.__setattr__`
+    (one slot per claim per placement: the §6.3 sweep's re-selection prices thousands)."""
+
     claim_id: int
     domain: int  # affinity domain, or TAIL_STREAM for the decoupled tail
     start: int
@@ -100,35 +112,7 @@ def durations_from(result) -> dict[int, int]:
 
 
 def _rids(c: Claim) -> set[int]:
-    return set(c.rd) | set(c.wr)
-
-
-def _pick_domain(
-    rids: set[int],
-    ready_t: int,
-    dur: int,
-    domain_free: list[int],
-    resident: list[set[int]],
-    eligible: range,
-    locality: bool,
-) -> tuple[int, int]:
-    """Earliest finish first; ties prefer the stream holding the claim's operands, then the
-    lowest index -- the key (finish, -score, index), with the locality score computed only
-    for the streams that tie on finish."""
-    best_d = eligible[0]
-    best_start = max(domain_free[best_d], ready_t)
-    for d in eligible:
-        start = max(domain_free[d], ready_t)
-        if start < best_start:
-            best_d, best_start = d, start
-    if locality:
-        best_score = len(rids & resident[best_d])
-        for d in eligible:
-            if d != best_d and max(domain_free[d], ready_t) == best_start:
-                score = len(rids & resident[d])
-                if score > best_score or (score == best_score and d < best_d):
-                    best_d, best_score = d, score
-    return best_d, best_start
+    return {*c.rd, *c.wr}
 
 
 class _PhaseDispatch:
@@ -189,7 +173,7 @@ class _PhaseDispatch:
             claim.id: tail if _is_sparse(claim) else wave[claim.cost_class == "bandwidth"]
             for claim in claims
         }
-        self.rids = {claim.id: _rids(claim) for claim in claims}
+        self.rids = {claim.id: {*claim.rd, *claim.wr} for claim in claims}
         self.domains = domains
         self.locality = locality
 
@@ -208,8 +192,6 @@ class _PhaseDispatch:
         return the pop count. `sched` collects the slots (None: the makespan reader needs
         only `finish_of` and the residency); `record` takes the push indices and, when it
         asks for them, checkpoints every `record.stride` pops."""
-        import heapq
-
         if len(domain_free) != self.domains + 1 or len(resident) != self.domains + 1:
             raise ValueError("GEM dispatch needs one stream per affinity domain plus the tail")
         for claim in self.claims:
@@ -220,21 +202,22 @@ class _PhaseDispatch:
                         "is unavailable"
                     )
 
-        def duration_of(claim_id: int) -> int:
-            return max(0, durations.get(claim_id, 1))  # an unpriced claim takes a unit
-
         ordinal, successors, preds_of = self.ordinal, self.successors, self.preds_of
         eligible, rids_of, domains, locality = self.eligible, self.rids, self.domains, self.locality
+        # Every claim's duration, read once: an unpriced claim takes a unit, a negative one none.
+        duration_of = {cid: max(0, durations.get(cid, 1)) for cid in ordinal}
         if resume is None:
             indegree = dict(self.indegree0)
-            ready = [(-duration_of(cid), cid, ordinal[cid]) for cid in self.roots]
-            heapq.heapify(ready)  # the key is total (ids are unique): the pop order is the same
+            ready = [(-duration_of[cid], cid, ordinal[cid]) for cid in self.roots]
+            heapify(ready)  # the key is total (ids are unique): the pop order is the same
             pops = 0
         else:
             indegree = dict(resume.indegree)
             ready = list(resume.ready)
             pops = resume.pops
         stride = record.stride if record is not None and record.checkpoints is not None else 0
+        slots = sched.slots if sched is not None else None
+        affinity = sched.affinity if sched is not None else None
         while ready:
             if stride and pops and pops % stride == 0:
                 record.checkpoints.append(
@@ -247,35 +230,56 @@ class _PhaseDispatch:
                         dict(finish_of),
                     )
                 )
-            key = heapq.heappop(ready)
+            key = heappop(ready)
             claim_id = key[1]
             if record is not None:
                 record.pop_index[claim_id] = pops
                 record.pop_keys.append(key)
-            dur = duration_of(claim_id)
+            dur = duration_of[claim_id]
             ready_t = t0
             for p in preds_of[claim_id]:
-                if finish_of[p] > ready_t:
-                    ready_t = finish_of[p]
+                finish = finish_of[p]
+                if finish > ready_t:
+                    ready_t = finish
             rids = rids_of[claim_id]
-            d, start = _pick_domain(
-                rids, ready_t, dur, domain_free, resident, eligible[claim_id], locality
-            )
+            # The stream: earliest finish first; ties prefer the stream holding the claim's
+            # operands, then the lowest index -- the key (finish, -score, index), with the
+            # locality score computed only for the streams that tie on finish. One pass in
+            # stream order keeps the running minimum of the key, scoring the running best the
+            # first time a later stream ties it (a tie displaces the best only with a strictly
+            # higher score; an equal one keeps the lower index, the one already held).
+            streams = eligible[claim_id]
+            d = streams[0]
+            free = domain_free[d]
+            start = free if free > ready_t else ready_t
+            best_score = -1  # the running best's locality score, once a tie asks for it
+            for other in streams[1:]:
+                free = domain_free[other]
+                other_start = free if free > ready_t else ready_t
+                if other_start < start:
+                    d, start, best_score = other, other_start, -1
+                elif other_start == start and locality:
+                    if best_score < 0:
+                        best_score = len(rids & resident[d])
+                    score = len(rids & resident[other])
+                    if score > best_score:
+                        d, best_score = other, score
             finish = start + dur
             domain_free[d] = finish
             resident[d] |= rids
             finish_of[claim_id] = finish
-            if sched is not None:
+            if slots is not None:
                 stream = TAIL_STREAM if d == domains else d
-                sched.slots.append(Slot(claim_id, stream, start, finish))
-                sched.affinity[claim_id] = stream
+                slots.append(Slot(claim_id, stream, start, finish))
+                affinity[claim_id] = stream
             pops += 1
             for successor in successors[claim_id]:
-                indegree[successor] -= 1
-                if indegree[successor] == 0:
+                left = indegree[successor] - 1
+                indegree[successor] = left
+                if left == 0:
                     if record is not None:
                         record.push_index[successor] = pops
-                    heapq.heappush(ready, (-duration_of(successor), successor, ordinal[successor]))
+                    heappush(ready, (-duration_of[successor], successor, ordinal[successor]))
         if pops != len(self.claims):
             raise ValueError("GEM dispatch dependency graph is cyclic")
         return pops
@@ -354,11 +358,12 @@ def phase_hazards(module: Module, *, frontier: bool = False) -> dict[int, dict[i
     out: dict[int, dict[int, list[int]]] = {}
     seen_claim_ids: set[int] = set()
     for pid in _topo_phase_ids(module):
-        claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+        claims = sorted(pmap[pid].claims, key=_claim_id)
         claim_ids = [claim.id for claim in claims]
-        if len(set(claim_ids)) != len(claim_ids) or seen_claim_ids & set(claim_ids):
+        fresh = set(claim_ids)
+        if len(fresh) != len(claim_ids) or not seen_claim_ids.isdisjoint(fresh):
             raise ValueError("GEM scheduling requires module-wide unique claim ids")
-        seen_claim_ids.update(claim_ids)
+        seen_claim_ids |= fresh
         out[pid] = build(claims)
     return out
 
@@ -400,7 +405,7 @@ def schedule_eft(
         hazards = phase_frontiers(module)
 
     for pid in _topo_phase_ids(module):
-        claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+        claims = sorted(pmap[pid].claims, key=_claim_id)
         # The intra-phase hazard DAG over main AND tail claims, before the stream split
         # (the lower claim id is the producer of a conflicting pair).
         preds = hazards[pid]
@@ -487,7 +492,7 @@ class EftPlacer:
         self.records: list[_PhaseRecord] = []
         resident: list[set[int]] = [set() for _ in range(self.domains + 1)]
         for index, pid in enumerate(_topo_phase_ids(module)):
-            claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+            claims = sorted(pmap[pid].claims, key=_claim_id)
             for claim in claims:
                 self.phase_of[claim.id] = index
             dispatch = _PhaseDispatch(claims, hazards[pid], self.domains, self.knee, locality)

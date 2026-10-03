@@ -8,6 +8,7 @@ DAG plus explicit dependencies, never accidental textual order.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import prod
 from typing import Optional
 
 from .lanes import ISOLATED_DOMAINS, Domain, Lane, StrideClass
@@ -32,10 +33,7 @@ class Resource:
 
     @property
     def count(self) -> int:
-        n = 1
-        for d in self.shape:
-            n *= d
-        return n
+        return prod(self.shape)  # the element count; 1 for a scalar's () -- one call, not a loop
 
 
 @dataclass(frozen=True)
@@ -218,52 +216,48 @@ def topological_phase_ids(module: Module) -> list[int]:
     and module insertion order exactly while avoiding Python's recursion limit on a
     valid deep phase DAG.  Missing dependencies are ignored here, as before; R4 reports
     them before an artifact is eligible for execution.
+
+    A frame is the phase id and an iterator over its dependencies, resumed where a push
+    left it, so no index is kept or rebuilt per dependency; a phase is on the stack (1) or
+    ordered (2), so "unvisited" is "not in `color`".
     """
     pmap = module.phase_map()
     color: dict[int, int] = {}
     order: list[int] = []
     for phase in module.phases:
         root = phase.phase_id
-        if color.get(root, 0) != 0:
+        if root in color:
             continue
         color[root] = 1
-        stack: list[tuple[int, int]] = [(root, 0)]
+        stack: list[tuple] = [(root, iter(pmap[root].deps))]
         while stack:
-            pid, next_dep = stack[-1]
-            deps = pmap[pid].deps
-            while next_dep < len(deps):
-                dep = deps[next_dep]
-                next_dep += 1
-                stack[-1] = (pid, next_dep)
-                if dep in pmap and color.get(dep, 0) == 0:
+            pid, deps = stack[-1]
+            for dep in deps:
+                if dep in pmap and dep not in color:
                     color[dep] = 1
-                    stack.append((dep, 0))
+                    stack.append((dep, iter(pmap[dep].deps)))
                     break
             else:
                 stack.pop()
-                if color.get(pid) != 2:
-                    color[pid] = 2
-                    order.append(pid)
+                color[pid] = 2
+                order.append(pid)
     return order
 
 
 def phase_graph_has_cycle(module: Module) -> bool:
-    """Detect a phase-DAG cycle without recursive Python calls."""
+    """Detect a phase-DAG cycle without recursive Python calls (the frames of
+    `topological_phase_ids`; a dependency on a phase still on the stack is the cycle)."""
     pmap = module.phase_map()
     color: dict[int, int] = {}
     for phase in module.phases:
         root = phase.phase_id
-        if color.get(root, 0) != 0:
+        if root in color:
             continue
         color[root] = 1
-        stack: list[tuple[int, int]] = [(root, 0)]
+        stack: list[tuple] = [(root, iter(pmap[root].deps))]
         while stack:
-            pid, next_dep = stack[-1]
-            deps = pmap[pid].deps
-            while next_dep < len(deps):
-                dep = deps[next_dep]
-                next_dep += 1
-                stack[-1] = (pid, next_dep)
+            pid, deps = stack[-1]
+            for dep in deps:
                 if dep not in pmap:
                     continue
                 state = color.get(dep, 0)
@@ -271,7 +265,7 @@ def phase_graph_has_cycle(module: Module) -> bool:
                     return True
                 if state == 0:
                     color[dep] = 1
-                    stack.append((dep, 0))
+                    stack.append((dep, iter(pmap[dep].deps)))
                     break
             else:
                 stack.pop()

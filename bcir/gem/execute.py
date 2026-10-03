@@ -15,7 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
+from operator import attrgetter
+
 from ..model import Module, topological_phase_ids
+
+_claim_id = attrgetter("id")  # the deterministic dispatch order: ascending claim id
 
 
 @dataclass
@@ -51,18 +55,24 @@ def execute(
     """
     pmap = module.phase_map()
     result = ExecResult()
+    order, phase_order, phases = result.order, result.phase_order, result.phases
+    executed = 0
     for pid in _topo_phases(module):
-        phase = pmap[pid]
-        claims = list(phase.claims)
+        claims = pmap[pid].claims
         if deterministic:
-            claims.sort(key=lambda c: c.id)
-        stat = PhaseStat(phase_id=pid, scheduled=len(claims))
-        result.phase_order.append(pid)
-        for claim in claims:
-            result.order.append(claim.id)
-            if kernels and claim.id in kernels:
-                kernels[claim.id]()
-            stat.executed += 1
-            result.executed += 1
-        result.phases.append(stat)
+            claims = sorted(claims, key=_claim_id)
+        ids = [claim.id for claim in claims]
+        count = len(ids)
+        stat = PhaseStat(pid, count, count)  # every dispatched claim runs (a kernel that
+        phase_order.append(pid)  # raises takes the result with it)
+        if kernels:
+            for claim_id in ids:
+                order.append(claim_id)
+                if claim_id in kernels:
+                    kernels[claim_id]()
+        else:
+            order += ids
+        executed += count
+        phases.append(stat)
+    result.executed = executed
     return result

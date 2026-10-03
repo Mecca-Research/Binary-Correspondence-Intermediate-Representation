@@ -22,8 +22,11 @@ closure in O(resource touches) edges -- which the EFT dispatch reads (G2 residua
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from operator import attrgetter
 
 from ..model import Claim, Lane, Module, StrideClass, topological_phase_ids
+
+_claim_id = attrgetter("id")  # the sort key of a phase's claims: ascending claim id
 
 
 @dataclass
@@ -74,27 +77,70 @@ def _conflict_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
     doing work proportional to resource touches plus the dependency edges that must
     actually be represented.  A dense single-resource chain still has O(n^2) output;
     an independent workload is linear instead of quadratic.
+
+    The histories hold positions, so a claim's predecessors sort as integers and are spelled
+    as ids once; a claim whose conflicts all lie in one history (one resource read, say) takes
+    that history as it is -- appended in position order, each position once -- and only a
+    claim that merges histories pays the set.
     """
-    if len({claim.id for claim in claims}) != len(claims):
+    ids = [claim.id for claim in claims]
+    if len(set(ids)) != len(ids):
         raise ValueError("GEM dependency planning requires unique claim ids")
-    readers: dict[int, list[int]] = {}
-    writers: dict[int, list[int]] = {}
-    position: dict[int, int] = {}
+    readers: dict[int, list[int]] = {}  # per resource: the positions of its readers so far
+    writers: dict[int, list[int]] = {}  # per resource: the positions of its writers so far
     out: dict[int, list[int]] = {}
+    spell = ids.__getitem__
     for index, claim in enumerate(claims):
         rd, wr = _claim_accesses(claim)
-        predecessors: set[int] = set()
+        first: list[int] | None = None  # the one history the claim conflicts with, or
+        merged: set[int] | None = None  # the positions of several, merged
         for rid in rd:
-            predecessors.update(writers.get(rid, ()))
+            history = writers.get(rid)
+            if history:
+                if first is None:
+                    first = history
+                elif merged is None:
+                    merged = set(first)
+                    merged.update(history)
+                else:
+                    merged.update(history)
         for rid in wr:
-            predecessors.update(writers.get(rid, ()))
-            predecessors.update(readers.get(rid, ()))
-        out[claim.id] = sorted(predecessors, key=position.__getitem__)
-        position[claim.id] = index
+            history = writers.get(rid)
+            if history:
+                if first is None:
+                    first = history
+                elif merged is None:
+                    merged = set(first)
+                    merged.update(history)
+                else:
+                    merged.update(history)
+            history = readers.get(rid)
+            if history:
+                if first is None:
+                    first = history
+                elif merged is None:
+                    merged = set(first)
+                    merged.update(history)
+                else:
+                    merged.update(history)
+        if merged is not None:
+            out[claim.id] = list(map(spell, sorted(merged)))
+        elif first is not None:
+            out[claim.id] = list(map(spell, first))
+        else:
+            out[claim.id] = []
         for rid in rd:
-            readers.setdefault(rid, []).append(claim.id)
+            history = readers.get(rid)
+            if history is None:
+                readers[rid] = [index]
+            else:
+                history.append(index)
         for rid in wr:
-            writers.setdefault(rid, []).append(claim.id)
+            history = writers.get(rid)
+            if history is None:
+                writers[rid] = [index]
+            else:
+                history.append(index)
     return out
 
 
@@ -109,28 +155,60 @@ def _frontier_predecessors(claims: list[Claim]) -> dict[int, list[int]]:
     is implied by a path through those, so the closure -- which pairs are ordered -- is
     exactly the full DAG's. A dense single-resource chain of n claims keeps n - 1 edges
     instead of n(n - 1) / 2 (G2's residual: the dispatch read them all once per placement).
+    The frontier holds positions, spelled as ids once they are sorted.
     """
-    if len({claim.id for claim in claims}) != len(claims):
+    ids = [claim.id for claim in claims]
+    if len(set(ids)) != len(ids):
         raise ValueError("GEM dependency planning requires unique claim ids")
-    last_writer: dict[int, int] = {}
+    last_writer: dict[int, int] = {}  # per resource: the position of its last writer
     readers_since: dict[int, list[int]] = {}  # per resource: readers since its last write
-    position: dict[int, int] = {}
     out: dict[int, list[int]] = {}
+    spell = ids.__getitem__
     for index, claim in enumerate(claims):
         rd, wr = _claim_accesses(claim)
-        predecessors: set[int] = set()
-        for rid in rd | wr:
+        only = -1  # the one position the claim waits for, or
+        positions: set[int] | None = None  # the several, as a set
+        for rid in rd:
             writer = last_writer.get(rid)
             if writer is not None:
-                predecessors.add(writer)
+                if positions is not None:
+                    positions.add(writer)
+                elif only < 0:
+                    only = writer
+                elif writer != only:
+                    positions = {only, writer}
         for rid in wr:
-            predecessors.update(readers_since.get(rid, ()))
-        out[claim.id] = sorted(predecessors, key=position.__getitem__)
-        position[claim.id] = index
-        for rid in rd - wr:  # a claim that also writes the resource is its new last writer
-            readers_since.setdefault(rid, []).append(claim.id)
+            writer = last_writer.get(rid)
+            if writer is not None:
+                if positions is not None:
+                    positions.add(writer)
+                elif only < 0:
+                    only = writer
+                elif writer != only:
+                    positions = {only, writer}
+            since = readers_since.get(rid)
+            if since:
+                if positions is None:
+                    positions = set(since)
+                    if only >= 0:
+                        positions.add(only)
+                else:
+                    positions.update(since)
+        if positions is not None:
+            out[claim.id] = list(map(spell, sorted(positions)))
+        elif only >= 0:
+            out[claim.id] = [ids[only]]
+        else:
+            out[claim.id] = []
+        for rid in rd:
+            if rid not in wr:  # a claim that also writes the resource is its new last writer
+                since = readers_since.get(rid)
+                if since is None:
+                    readers_since[rid] = [index]
+                else:
+                    since.append(index)
         for rid in wr:
-            last_writer[rid] = claim.id
+            last_writer[rid] = index
             readers_since[rid] = []
     return out
 
@@ -166,7 +244,13 @@ def hazard_frontier(claims: list[Claim]) -> dict[int, list[int]]:
 
 
 def _with_fences(claims: list[Claim], out: dict[int, list[int]]) -> dict[int, list[int]]:
-    """Layer the ordering fences (`hazard_predecessors`) onto a data DAG, in place."""
+    """Layer the ordering fences (`hazard_predecessors`) onto a data DAG, in place. A phase
+    without a fence is left as it is: the pass below would add no edge to it."""
+    for claim in claims:
+        if is_fence(claim):
+            break
+    else:
+        return out
     position = {claim.id: index for index, claim in enumerate(claims)}
     last_fence: int | None = None
     segment: list[int] = []  # claims since the last fence (non-fences)
@@ -202,19 +286,28 @@ def _wave_indices(claims: list[Claim]) -> tuple[dict[int, int], dict[int, list[C
         rd, wr = _claim_accesses(claim)
         wave = 0
         for rid in rd:
-            if rid in writer_wave:
-                wave = max(wave, writer_wave[rid] + 1)
+            prior = writer_wave.get(rid)
+            if prior is not None and prior >= wave:
+                wave = prior + 1
         for rid in wr:
-            if rid in writer_wave:
-                wave = max(wave, writer_wave[rid] + 1)
-            if rid in reader_wave:
-                wave = max(wave, reader_wave[rid] + 1)
+            prior = writer_wave.get(rid)
+            if prior is not None and prior >= wave:
+                wave = prior + 1
+            prior = reader_wave.get(rid)
+            if prior is not None and prior >= wave:
+                wave = prior + 1
         wave_of[claim.id] = wave
-        members.setdefault(wave, []).append(claim)
+        row = members.get(wave)
+        if row is None:
+            members[wave] = [claim]
+        else:
+            row.append(claim)
         for rid in rd:
-            reader_wave[rid] = max(reader_wave.get(rid, -1), wave)
+            if reader_wave.get(rid, -1) < wave:
+                reader_wave[rid] = wave
         for rid in wr:
-            writer_wave[rid] = max(writer_wave.get(rid, -1), wave)
+            if writer_wave.get(rid, -1) < wave:
+                writer_wave[rid] = wave
     return wave_of, members
 
 
@@ -230,14 +323,21 @@ def schedule_concurrent(module: Module, target=None) -> ConcurrentSchedule:
     pmap = module.phase_map()
     seen_claim_ids: set[int] = set()
 
+    waves, tail, affinity = sched.waves, sched.ggg_tail, sched.affinity
+
     for pid in _topo_phase_ids(module):
-        claims = sorted(pmap[pid].claims, key=lambda c: c.id)
+        claims = sorted(pmap[pid].claims, key=_claim_id)
         claim_ids = [claim.id for claim in claims]
-        if len(set(claim_ids)) != len(claim_ids) or seen_claim_ids & set(claim_ids):
+        fresh = set(claim_ids)
+        if len(fresh) != len(claim_ids) or not seen_claim_ids.isdisjoint(fresh):
             raise ValueError("GEM scheduling requires module-wide unique claim ids")
-        seen_claim_ids.update(claim_ids)
-        main = [c for c in claims if not _is_sparse(c)]
-        sched.ggg_tail.extend(c.id for c in claims if _is_sparse(c))
+        seen_claim_ids |= fresh
+        main: list[Claim] = []
+        for claim in claims:  # sparsity read once per claim: the tail, in claim-id order
+            if _is_sparse(claim):
+                tail.append(claim.id)
+            else:
+                main.append(claim)
 
         # Greedy wave assignment within the phase (phase boundary = implicit barrier).
         wave_of, wave_members = _wave_indices(main)
@@ -246,9 +346,9 @@ def schedule_concurrent(module: Module, target=None) -> ConcurrentSchedule:
         for w in range(nwaves):
             members = [c.id for c in wave_members.get(w, ())]
             for slot, cid in enumerate(members):
-                sched.affinity[cid] = slot % domains
+                affinity[cid] = slot % domains
             if len(members) > domains:
                 sched.contention += len(members) - domains
-            sched.waves.append(members)
+            waves.append(members)
 
     return sched

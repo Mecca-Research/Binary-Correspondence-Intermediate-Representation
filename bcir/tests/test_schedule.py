@@ -538,3 +538,53 @@ def test_mlir_power_rail_per_slot_clock_is_in_sync():
     assert by_id[1].klass == "memory" and by_id[1].clock_q8 == 192 and by_id[1].finish == 7808
     assert by_id[2].klass == "memory" and by_id[2].clock_q8 == 192 and by_id[2].finish == 5888
     assert rail.downclocked == (1, 2) and rail.energy_saved_milli == 3424000
+
+
+def test_the_restructured_schedulers_are_the_historical_ones_program_for_program():
+    """PERF-SCHED. The wave, token and EFT schedulers, the hazard DAG and its frontier, the
+    phase-DAG traversals, the executor and the verifier's per-claim laws had their hot loops
+    restructured (positions in the histories, one pass over the resolved references, a
+    slotted slot, iterator frames). Each one before the slice is kept verbatim in
+    `sched_fixtures` and the faster rail is held to it over random programs built to reach
+    every branch -- the result, or the same refusal -- on every rail of every program. The
+    grader is non-vacuous: programs with fences, sparse tails, cycles and several phases, one
+    to eight domains, refusals seen, and verdicts carrying every per-claim law."""
+    from bcir.tests import sched_fixtures
+
+    seen: dict = {}
+    rows = sched_fixtures.measure(seen)
+    assert rows["gem.schedule.parity"] == 0, seen.get("mismatched", [])[:4]
+    assert seen["programs"] >= 400 and seen["rails"] > 6_000 and seen["refused"] > 100, seen
+    assert seen["fenced"] > 300 and seen["sparse"] > 300 and seen["cyclic"] > 100, seen
+    assert seen["multi_phase"] > 250 and seen["domains"] == set(range(1, 9)), seen
+    assert {"R1", "R1.1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R18", "EV"} <= seen["laws"]
+
+
+def test_a_slot_is_the_frozen_slots_value_and_a_slot_cheaper():
+    """PERF-SCHED. `Slot` is a slotted value class built by the generated `__init__` where it
+    was a frozen dataclass: the same fields compare and hash the same, `repr`, `asdict` and
+    `astuple` are the same, `replace`, `copy` and pickle work, and a slot carries no instance
+    dictionary. A slot is a value: the placer, the exact solver and the execution plan build
+    new ones and never assign to one."""
+    import copy
+    import dataclasses
+    import pickle
+
+    from bcir.gem.schedule import Slot
+
+    frozen = dataclasses.make_dataclass(
+        "Slot", [(f.name, f.type, f) for f in dataclasses.fields(Slot)], frozen=True
+    )
+    for slot in (Slot(1, 0, 0, 5), Slot(claim_id=7, domain=TAIL_STREAM, start=3, finish=3)):
+        fields = dataclasses.asdict(slot)
+        twin = frozen(**fields)
+        assert hash(slot) == hash(twin) and repr(slot) == repr(twin), slot
+        assert dataclasses.astuple(slot) == dataclasses.astuple(twin)
+        assert slot == Slot(**fields) and slot != Slot(**{**fields, "finish": fields["finish"] + 1})
+        assert not hasattr(slot, "__dict__") and hasattr(Slot, "__slots__")
+        assert copy.deepcopy(slot) == slot and pickle.loads(pickle.dumps(slot)) == slot
+        changed = dataclasses.replace(slot, start=slot.start)
+        assert changed == slot and changed is not slot
+    sched = schedule_eft(vector_add(), {}, TargetProfile.x86_avx2())
+    assert sched.slots and all(type(s) is Slot for s in sched.slots)
+    assert len({*sched.slots}) == len(sched.slots)  # hashable, distinct by value
