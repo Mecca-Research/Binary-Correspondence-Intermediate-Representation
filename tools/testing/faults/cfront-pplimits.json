@@ -245,22 +245,22 @@
     {
       "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
       "label": "PO17 the oracle spells a value number's whole tree (a chain's canon O(n^2), a doubling's 2^n)",
-      "new": "    return spelling\n",
-      "old": "    return f\"{_fnv1a64(spelling.encode('utf-8')):016x}\"\n",
+      "new": "    number = op + \"(\" + tail\n",
+      "old": "    number = f\"{_fnv1a64_from(head, tail.encode('utf-8')):016x}\"\n",
       "path": "bcir/verify/__init__.py"
     },
     {
       "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
       "label": "PO18 the oracle numbers a value by its op alone, its reads' numbers left out",
-      "new": "    spelling = op + \"()\"\n",
-      "old": "    spelling = op + \"(\" + \",\".join(parts) + \")\"\n",
+      "new": "    tail = \")\"\n",
+      "old": "    tail = \",\".join(parts) + \")\"\n",
       "path": "bcir/verify/__init__.py"
     },
     {
       "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
       "label": "PO19 the oracle keeps a value number's low 32 bits",
-      "new": "{_fnv1a64(spelling.encode('utf-8')) & 0xFFFFFFFF:016x}",
-      "old": "{_fnv1a64(spelling.encode('utf-8')):016x}",
+      "new": "{_fnv1a64_from(head, tail.encode('utf-8')) & 0xFFFFFFFF:016x}",
+      "old": "{_fnv1a64_from(head, tail.encode('utf-8')):016x}",
       "path": "bcir/verify/__init__.py"
     },
     {

@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from functools import wraps
 
 from bcir.frontends.cfront import compile_unit
@@ -9131,6 +9132,46 @@ def test_a_temporary_never_redeclares_a_declared_name_on_either_rail():
                 assert verdict == "MATCH", f"{rail} names, the {label}'s emit: {verdict}\n{e}"
 
 
+_RANK_NAMES = (
+    "#include <stdint.h>\n"
+    "uint32_t x_2(uint32_t v) { return v + 1u; }\n"
+    "uint32_t f(uint32_t x, uint32_t y) {\n"
+    "  uint32_t z = 0u;\n"
+    "  { uint32_t x = y * 3u; z = x_2(x); }\n"
+    "  { uint32_t x = y ^ 5u; z += x; }\n"
+    "  return x + z;\n"
+    "}\n"
+)
+
+
+def test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails():
+    """CF-NAMECACHE. A named object emits under its rank among the objects of its source name -- the parameters
+    first, then the locals in order -- skipping a suffixed candidate the emit spells otherwise. The parameter `x`
+    keeps its name; the first block's `x` ranks second, and `x_2` being a function it calls (spelled `bcir_x_2`), takes
+    `x_3`; the second block's takes `x_4`. The oracle and the twin's walks read the names so; the twin's table (`names_rank`) must give the
+    walks' own: each object declared once, no local under the global's name, and both emits run as the original."""
+    summary, r, entry = _oracle(_RANK_NAMES)
+    oracle_emit = "\n".join(r.emitted[n] for n in r.lowered.functions)
+
+    def family(emit):
+        return set(re.findall(r"\bx(?:_\d+)?\b", re.sub(r"/\*.*?\*/", "", emit, flags=re.S)))
+
+    assert family(oracle_emit) == {"x", "x_3", "x_4"}, oracle_emit  # the callee: `bcir_x_2`
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "rank.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(_RANK_NAMES)
+        c_summary, c_emit = _c_run(exe, path)
+    assert c_summary == summary, f"parity\n C: {c_summary}\nPY: {summary}"
+    assert family(c_emit) == {"x", "x_3", "x_4"}, c_emit
+    for label, e in (("twin", c_emit), ("oracle", oracle_emit)):
+        verdict = _equiv(_RANK_NAMES, e, entry)
+        assert verdict == "MATCH", f"the {label}'s emit: {verdict}\n{e}"
+
+
 _STATICTAB_DRIVER = (
     _GAPS_SAME
     + r"""
@@ -10449,6 +10490,45 @@ def test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails():
         if exe:
             assert _twin_line(exe, src) == (0, summary), what
             assert _twin_canon(exe, src) == canon, what
+
+
+def test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_time():
+    """CF-NAMECACHE: the twin's emit read `uniq_local` once per reference, and since CF-TYPEDEFSCOPE each read walked
+    every name the emit spells (`spelled_scan`), so a function of n statements on one object cost O(n * names) to
+    emit: 1 800 updates of one local took 285 ms where the parent of CF-TYPEDEFSCOPE took 97, and the A/B against
+    PR #786 put the twin at 0.34x there. Each function's names are computed once before its unit is emitted
+    (`names_build`) and every reference reads the table; the verifier's R1.1 scan is sorted and the canon's writer
+    lookup hashed, where each was a walk. The witness is self-relative, as `cperf`'s invariants are: the twin on
+    300 and on 2 400 updates of one local, the shorter of three runs each. Linear emission grows by about the 8x of
+    the input (the process's start makes the ratio smaller still), quadratic emission by 64x; the bound is 16. The
+    summary is the oracle's either way, so only the time tells the two apart."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    if not exe:
+        return
+    head = "#include <stdint.h>\n"
+
+    def updates(n: int) -> str:
+        steps = "".join(f" x = x + {k}u;\n" for k in range(1, n + 1))
+        return f"{head}uint32_t f(uint32_t x) {{\n{steps} return x;\n}}\n"
+
+    def seconds(src: str) -> float:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "u.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            best = float("inf")
+            for _ in range(3):
+                start = time.perf_counter()
+                run = subprocess.run([exe, path], capture_output=True, text=True)
+                best = min(best, time.perf_counter() - start)
+                assert run.returncode == 0 and " ok=1 " in run.stdout, run.stdout + run.stderr
+        return best
+
+    small = updates(300)
+    summary, _r, _entry = _oracle(small)
+    assert _twin_line(exe, small) == (0, summary)
+    short, long = seconds(small), seconds(updates(2400))
+    assert long < 16 * short, (short, long)
 
 
 def test_a_value_number_past_the_depth_cap_is_cyc_on_both_rails():

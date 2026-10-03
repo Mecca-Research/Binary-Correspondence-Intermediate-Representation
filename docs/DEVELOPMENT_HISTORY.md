@@ -3596,6 +3596,53 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   literal the record holds. Swept again on the change: `cfront-values.json` 32 of 32, `cfront-calls.json` 45 of 45,
   `cfront-globals.json` 37 of 37, `cfront-fptab.json` 35 of 35.
 
+  CF-NAMECACHE / CF-CANONFAST (2026-10-03) closed the first found-not-fixed item above -- the twin's lookups linear in
+  a function's size -- and the two regressions an A/B measurement of #786 against #797 found, both from the slices
+  above: the twin's compile of a run of statements on one local (chain@500 17 ms to 31 ms, chain@1800 96 ms to
+  290 ms; CPU, Clang `-O2`) and the oracle's digest of the fixture corpus (66 ms to 79 ms).
+  - What landed, twin: each function's emitted names are computed once before the unit is rendered
+    (`bcir_emit_names`; `names_build` in `emit_unit`): a name per resource index, the declared names in a hash set
+    (`declared_name`), and the ranking walks of `uniq_local_compute` tabulated (`names_rank`: each object's rank
+    among the objects of its source name counted by name in the walks' order, and `spelled_scan`'s two answers from a
+    table of the names `spelled_each` enumerates, with an entry for each prefix of a name that ends before an `_`).
+    One enumeration and one spelling decision (`uniq_local_rank`) serve the walks and the table, so the emit is the
+    walks' byte for byte. A resource is found by halving the rid-ordered `res` array (`res_index`: `add_res` gives
+    rids in order, a rollback drops them with their resources, nothing reorders them) in the lowering, the canon and
+    the emit; the verifier halves too, for a function whose rids increase (`rids_increasing`, read once per
+    function), and walks any other, since it reads caller-owned memory it did not lay out. The canon's writer of a
+    rid is a hash (`wslot`), and R1.1 sorts the unit's claim ids (`claim_ids_unique`: a heap sort, a duplicate found
+    by halving) where it compared every pair. A failed allocation of the name table is the compile's `oom` failure,
+    never a slower success: the first draft fell back to the walks, and `cfront-pplimits.json`'s sweep, through the
+    memory-discipline harness, found a compile succeeding under an allocation that had failed.
+  - What landed, oracle: `_fnv1a64_from` folds four bytes a step (the low 64 bits of a product depend only on the
+    factors' low 64 bits, so one mask a step suffices); each op's prefix hash and each base spelling's number are
+    memoized in bounded tables (`_VN_PREFIX`, `_VN_BASE`, cleared past 4 096 entries), and a function's spellings in
+    a table of its own (`numbers`), kept apart between the first-writer and the last-writer pass, since a value past
+    the depth cap of 96 is `cyc` by the pass that reaches it.
+  - Outcomes (CPU time, the median of 7 runs under `prlimit`, Clang `-O2`; #786 / #797 / now): chain@500 17.1 /
+    30.9 / 13.0 ms; chain@1800 96.5 / 290.2 / 44.4 ms; locals@1800 6 660 / 840 / 127 ms; the oracle's digest of the
+    165-unit corpus (15 samples) 65.9 / 79.3 / 61.3 ms. The item's two cases: 8 000 chained locals (56 000 tokens)
+    32.9 s on #797 and 0.9 s now (the oracle 7.1 s), 6 400 statements on one local 7.0 s and 0.15 s (the oracle
+    6.0 s), each digest-equal on both rails. Every fixture of the corpus and the scaling inputs -- 256 inputs on the
+    four targets, the summary and `--emit-c`, 2 048 runs -- give #797's twin's bytes, status and diagnostics, built
+    with Clang and with GCC alike; the oracle's digest of every corpus unit is unchanged.
+  - Found, not fixed here: the parser's scans are still linear per name -- `lookup` over the environment, `mut_body`
+    over the mutation table -- 0.7 s of the 0.9 s 8 000 locals take; and a digest split independent of this slice:
+    a global written inside a block that also declares a local hiding a parameter (`uint32_t x_2 = 7u; uint32_t
+    f(uint32_t x, uint32_t y) { { uint32_t x = y * 3u; x_2 = x + 1u; } return x + x_2; }`) reads back as a fresh
+    input (`in`) on the twin where the oracle forwards the written value, both emits running as the original; with
+    a local in the global's place, or the write outside a block, the rails agree.
+  - Faults: `tools/testing/faults/cfront-namecache.json`, 9 -- 7 on the twin, 2 on the oracle -- each caught by its
+    own test: NC1 by the memory-discipline sweep, NC8 and NC9 by the ranking witness
+    (`test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails`), the twin's
+    linear emit by `test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_time` (2 400 updates
+    of one local against 300, the min of three runs, under 16 times). `cfront-pplimits.json`'s PO17-PO19, anchored in
+    the lines the oracle's memo moved, were re-anchored, and `cfront-typedefscope.json`'s HT9 and HT11, anchored in
+    the walk `spelled_each` replaced, onto the enumeration; its HT10 and HT15 injected into the walks the emit no
+    longer takes -- a fault in a path nothing reads is caught by nothing -- and inject into the table's lookup now.
+    Swept on the change, each table whole, one worker in a clean worktree: `cfront-namecache.json` 9 of 9,
+    `cfront-pplimits.json` 43 of 43, `cfront-typedefscope.json` 30 of 30, `cfront-buf.json` 30 of 30.
+
 ---
 
 ## 4. Capability closure ledger migrated from the former master roadmap

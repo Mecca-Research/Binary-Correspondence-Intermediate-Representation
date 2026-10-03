@@ -1,0 +1,80 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_the_emit_grows_whole_under_a_failing_allocator",
+    "bcir.tests.test_c_cfront:test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+    "bcir.tests.test_c_cfront:test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_time",
+    "bcir.tests.test_c_cfront:test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+    "bcir.tests.test_c_cfront:test_claim_id_uniqueness_law_R1_1_dual_rail",
+    "bcir.tests.test_c_cfront:test_claim_ids_stay_unique_past_a_function_of_1000_claims",
+    "bcir.tests.test_c_cfront:test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "NC1 the twin emits through the slow walks when the name table's allocation fails: a failed allocation is a slower success, not the compile's failure",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  for(int i=0;i<out->unit.n_funcs&&!e;i++) if(!names_build(&c->allocator,&out->unit.funcs[i])) e=emit_oom;\n",
+      "new": "  for(int i=0;i<out->unit.n_funcs;i++) (void)names_build(&c->allocator,&out->unit.funcs[i]);\n"
+    },
+    {
+      "expects": "test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+      "label": "NC2 the twin's declared-name set answers no name: a temporary `t<rid>` redeclares a local of that name",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  for(;;){ const char *s=en->decl[i]; if(!s) return 0; if(!strcmp(s,nm)) return 1; i=(i+1)&m; }\n",
+      "new": "  for(;;){ const char *s=en->decl[i]; if(!s) return 0; if(!strcmp(s,nm)) return 0; i=(i+1)&m; }\n"
+    },
+    {
+      "expects": "test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails",
+      "label": "NC3 the twin's rid search turns the wrong way: `res_of` misses most resources, and the emit names each missed object a temporary `t<rid>`",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "    if(m==rid){ *ix=mid; return 1; } if(m<rid) lo=mid+1; else hi=mid; }\n",
+      "new": "    if(m==rid){ *ix=mid; return 1; } if(m>rid) lo=mid+1; else hi=mid; }\n"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "NC4 the twin's canon finds no value's writer: every read is a parameter or a leaf, and the digest leaves the oracle's",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  for(;;){ uint32_t s=v->wslot[i]; if(!s) return -1; if(v->wrid[s-1]==rid) return (int)(s-1); i=(i+1)&m; }\n",
+      "new": "  for(;;){ uint32_t s=v->wslot[i]; if(!s) return -1; if(v->wrid[s-1]==rid) return -1; i=(i+1)&m; }\n"
+    },
+    {
+      "expects": "test_claim_id_uniqueness_law_R1_1_dual_rail",
+      "label": "NC5 the twin's sorted R1.1 never sees an id twice: a duplicate claim id verifies",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "  return lo+1<n && sorted[lo]==id && sorted[lo+1]==id;\n",
+      "new": "  return 0;\n"
+    },
+    {
+      "expects": "test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails",
+      "label": "NC8 the twin's table ranks a local among the locals of its name alone: a block's `x` takes the parameter's name, declared twice",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "      uint32_t *k=name_count(&lo,r->name); occ[i]=*name_count(&pa,r->name)+*k; (*k)++; }\n",
+      "new": "      uint32_t *k=name_count(&lo,r->name); occ[i]=*k; (*k)++; }\n"
+    },
+    {
+      "expects": "test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails",
+      "label": "NC9 the twin's table holds no prefix of a spelled name: `x_2` is never read against the function `x_2` it calls, and a local takes it",
+      "path": "runtime/c/bcir_cfront.c",
+      "old": "  for(size_t j=1;j<n;j++) if(s[j]=='_') spelled_put(t,s,j,(kind&SP_CALLEE)?ST_CPREF:ST_PREF);\n}\n",
+      "new": "  (void)n;\n}\n"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "NC6 the oracle's per-function spelling memo is keyed by the op alone: every value of an op takes the first's number",
+      "path": "bcir/verify/__init__.py",
+      "old": "        spelling = op + \"(\" + tail\n",
+      "new": "        spelling = op\n"
+    },
+    {
+      "expects": "test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
+      "label": "NC7 the oracle's FNV tail runs unmasked: a spelling whose length is not a multiple of four hashes past 64 bits",
+      "path": "bcir/verify/__init__.py",
+      "old": "        h = ((h ^ byte) * prime) & mask\n",
+      "new": "        h = (h ^ byte) * prime\n"
+    }
+  ]
+}

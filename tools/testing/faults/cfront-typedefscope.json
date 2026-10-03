@@ -152,22 +152,22 @@
     {
       "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
       "label": "HT9 the twin's emit gives a parameter or a local the name of a global it reads",
-      "new": "  for(size_t i=0;i<f->n_res;i++) (void)name_match(f->res[i].name,x,xn,&pf);",
-      "old": "  for(size_t i=0;i<f->n_res;i++){ int m=name_match(f->res[i].name,x,xn,&pf); if(f->res[i].read_only) b|=m; }",
+      "new": "  for(size_t i=0;i<f->n_res;i++) fn(ctx,f->res[i].name,SP_PREF);\n",
+      "old": "  for(size_t i=0;i<f->n_res;i++) fn(ctx,f->res[i].name,f->res[i].read_only?SP_BARE|SP_PREF:SP_PREF);\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
       "label": "HT10 the twin's emit gives a parameter or a local the name a function it calls is spelled by",
-      "new": "  (void)callee; (void)x; (void)xn; (void)prefixed;\n  return 0;",
-      "old": "  int m=name_match(callee,x,xn,prefixed);\n  if(xn>5 && !strncmp(x,\"bcir_\",5)) m|=name_match(callee,x+5,xn-5,prefixed);\n  return m;",
+      "new": "  int b=(e&ST_BARE)!=0, pf=(e&ST_PREF)!=0;\n",
+      "old": "  int b=(e&(ST_BARE|ST_CBARE))!=0, pf=(e&(ST_PREF|ST_CPREF))!=0;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
       "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
       "label": "HT11 the twin's emit gives a parameter or a local a name it spells for itself (`_v`, `memcpy`)",
       "new": "",
-      "old": "  for(int i=0;emit_spelled[i];i++) b|=name_match(emit_spelled[i],x,xn,&pf);\n",
+      "old": "  for(int i=0;emit_spelled[i];i++) fn(ctx,emit_spelled[i],SP_BARE|SP_PREF);\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {
@@ -194,8 +194,8 @@
     {
       "expects": "test_a_block_scope_name_hides_a_typedef_on_both_rails",
       "label": "HT15 the twin's renamed local skips no name it starts",
-      "new": "",
-      "old": "  if(s[xn]=='_') *prefixed=1;\n",
+      "new": ", pf=0;\n",
+      "old": ", pf=(e&(ST_PREF|ST_CPREF))!=0;\n",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

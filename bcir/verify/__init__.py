@@ -598,15 +598,33 @@ _NOP = 0  # Opcode.NOP integer value (the control-marker opcode)
 _VN_MAXDEPTH = 96  # recursion guard (== the C twin's; a deep/cyclic chain folds to "cyc")
 
 
-def _fnv1a64(data: bytes) -> int:
-    """FNV-1a (64-bit) of `data`: the digest's hash, and a value number's (the twin's `fnv_add`)."""
-    h = _DIGEST_OFFSET
-    for byte in data:
-        h = ((h ^ byte) * _DIGEST_PRIME) & _DIGEST_MASK
+def _fnv1a64_from(h: int, data: bytes) -> int:
+    """FNV-1a (64-bit) of `data`, continued from the state `h` (the twin's `fnv_add`). Four bytes a step: a
+    product's low 64 bits read only its factors' low 64 bits, and the XOR only the low byte, so masking after
+    every fourth byte leaves exactly the bits the per-byte mask leaves -- and the interpreter runs a quarter
+    of the loop (CF-CANONFAST: the digest is the one place the oracle hashes byte by byte)."""
+    prime, mask = _DIGEST_PRIME, _DIGEST_MASK
+    quads = iter(data)
+    for b0, b1, b2, b3 in zip(quads, quads, quads, quads):
+        h = (((((((h ^ b0) * prime) ^ b1) * prime) ^ b2) * prime) ^ b3) * prime & mask
+    for byte in data[len(data) & ~3 :]:
+        h = ((h ^ byte) * prime) & mask
     return h
 
 
-def _vn_number(op: str, parts: list[str]) -> str:
+def _fnv1a64(data: bytes) -> int:
+    """FNV-1a (64-bit) of `data`: the digest's hash, and a value number's (the twin's `fnv_add`)."""
+    return _fnv1a64_from(_DIGEST_OFFSET, data)
+
+
+#: op -> the FNV-1a state after its one-level spelling's constant head `op(` (CF-CANONFAST): a value number
+#: hashes its head once per op, not once per value. Bounded: the ops carry callees and constants, so a long
+#: process sees many; past the bound the table starts over (a miss costs one short hash, never a wrong one).
+_VN_PREFIX: dict[str, int] = {}
+_VN_TABLE_BOUND = 4096
+
+
+def _vn_number(op: str, parts: list[str], numbers: dict[str, str] | None = None) -> str:
     """A value number (CF-PPLIMITS): the FNV-1a of its one-level spelling `op(a,b)`, whose reads `parts` are their
     own value numbers, in 16 hex digits (the twin's `vn_claim`). It spelled the value's whole dataflow tree, so a
     chain of n dependent values cost the canon O(n^2) bytes and a value read twice at each of n steps 2^n -- 2 000
@@ -615,8 +633,24 @@ def _vn_number(op: str, parts: list[str]) -> str:
     alike, but for a 64-bit collision: the walk, the memo, `cyc` and the depth cap are the spelling's, a commutative
     op's reads are sorted by their numbers as they were by their spellings, and the hash reads the one level the
     spelling had -- so the canon draws every equality and every difference the spelled canon drew."""
-    spelling = op + "(" + ",".join(parts) + ")"
-    return f"{_fnv1a64(spelling.encode('utf-8')):016x}"
+    tail = ",".join(parts) + ")"
+    # one function's spellings, each hashed once: the anchor pass re-spells the records'
+    if numbers is not None:
+        spelling = op + "(" + tail
+        number = numbers.get(spelling)
+        if number is not None:
+            return number
+    head = _VN_PREFIX.get(op)
+    if head is None:
+        if len(_VN_PREFIX) >= _VN_TABLE_BOUND:
+            _VN_PREFIX.clear()
+        head = _VN_PREFIX[op] = _fnv1a64_from(_DIGEST_OFFSET, (op + "(").encode("utf-8"))
+    # UTF-8 encodes a concatenation as the concatenation of the encodings, so continuing from the head's
+    # state over the tail hashes exactly the bytes of `op(a,b)`.
+    number = f"{_fnv1a64_from(head, tail.encode('utf-8')):016x}"
+    if numbers is not None:
+        numbers[spelling] = number
+    return number
 
 
 # The ONLY op whose ':' suffix is a rail-divergent label (Python `c.call.vaarg` vs the C twin
@@ -630,11 +664,20 @@ _VN_COMMUTATIVE = frozenset(
 )
 
 
+# op -> `_vn_base(op)`, read three times per value (bounded as `_VN_PREFIX`)
+_VN_BASE: dict[str, str] = {}
+
+
 def _vn_base(op: str) -> str:
     """The op identity for value-numbering: strip ONLY `c.call.vaarg`'s rail-divergent `:T` suffix; keep
     every other ':' suffix (the c.call callee, the c.cast width, the c.fconst value -- all structural)."""
-    head = op.split(":", 1)[0]
-    return head if head in _VN_STRIP_SUFFIX else op
+    base = _VN_BASE.get(op)
+    if base is None:
+        if len(_VN_BASE) >= _VN_TABLE_BOUND:
+            _VN_BASE.clear()
+        head = op.split(":", 1)[0]
+        base = _VN_BASE[op] = head if head in _VN_STRIP_SUFFIX else op
+    return base
 
 
 def _vn_op(c) -> str:
@@ -697,6 +740,8 @@ def _canon_func_records(lf) -> list[str]:
     # parameter value-numbers to "in:pj" -- which DISTINGUISHES the two params in `a - b` vs `b - a` (a
     # non-commutative reversal of two params is now caught). Any other input stays anonymous "in".
     param_ix = {int(rid): j for j, (_nm, rid, _ty) in enumerate(getattr(lf, "params", []))}
+    # spelling -> value number, for both walks over this function (CF-CANONFAST)
+    numbers: dict[str, str] = {}
 
     def _ordered(c, parts: list[str]) -> list[str]:
         # commutative ops: sort the reads (order-irrelevant, absorbs cross-rail divergence); else keep
@@ -718,7 +763,7 @@ def _canon_func_records(lf) -> list[str]:
             memo[i] = "cyc"  # cycle guard (a loop-carried rid resolves to "cyc")
             c = claims[i]
             parts = _ordered(c, [vn(int(r), depth + 1) for r in c.rd])
-            memo[i] = _vn_number(_vn_op(c), parts)
+            memo[i] = _vn_number(_vn_op(c), parts, numbers)
             return memo[i]
 
         return vn

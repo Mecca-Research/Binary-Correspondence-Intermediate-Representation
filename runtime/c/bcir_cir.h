@@ -286,6 +286,9 @@ typedef struct bcir_func {
   bcir_qcast *qcasts; int n_qcasts, cap_qcasts;           /* the casts its calls' operands take (CF-QUALS) */
   bcir_qglobal *qglobals; int n_qglobals, cap_qglobals;   /* its qualified globals, as the emit names them
                                                            * (CF-LINKEMIT) */
+  struct bcir_emit_names *emit_names;                     /* the names its objects emit as, built once per emission
+                                                           * and read by every reference (CF-NAMECACHE); NULL
+                                                           * otherwise. Emit-only; owned by the lowering's allocator. */
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */

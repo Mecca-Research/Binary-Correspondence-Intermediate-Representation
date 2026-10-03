@@ -484,6 +484,13 @@ own. Each rail now numbers a value by the FNV-1a of its op and its reads'
 numbers, so what the canon commits is linear in what the lowering committed.
 Witness: `test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails`.
 Faults (`cfront-pplimits.json`): `PO17`-`PO19`, `PT17`-`PT21`.
+CF-NAMECACHE instance (2026-10-03): the twin's first per-function name table
+fell back to the slow walks when its allocation failed -- a slower success
+where the memory discipline owes the compile's failure (every block released,
+no unit, no partial text). The fault-allocator sweep of `cfront-pplimits.json`
+found it through `runtime/c/test_memory_discipline.c`: a resource bound is
+only honest if a failed allocation is a failure. Fault
+(`cfront-namecache.json`): `NC1`.
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
