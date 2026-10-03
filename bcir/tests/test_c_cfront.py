@@ -9172,6 +9172,280 @@ def test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_pref
         assert verdict == "MATCH", f"the {label}'s emit: {verdict}\n{e}"
 
 
+_GBLOCK_UNITS = {
+    "block": "#include <stdint.h>\nuint32_t g = 7u;\nuint32_t f(uint32_t y) {\n  { g = y; }\n  return g;\n}\n",
+    "if": (
+        "#include <stdint.h>\nuint32_t g = 7u;\nuint32_t f(uint32_t y) {\n"
+        "  if (y & 1u) { g = y; } else { g = y + 1u; }\n  return g;\n}\n"
+    ),
+    "loop": (
+        "#include <stdint.h>\nuint32_t g = 7u;\nuint32_t f(uint32_t y) {\n"
+        "  { g = 0u; }\n  for (uint32_t i = 0u; i < (y & 15u); i++) { g += i; }\n  return g;\n}\n"
+    ),
+    "shadowed": (
+        "#include <stdint.h>\nuint32_t g = 7u;\nuint32_t f(uint32_t y) {\n"
+        "  g = y;\n  { uint32_t g = 1u; y += g; }\n  g += y;\n  return g;\n}\n"
+    ),
+    "function scope first": (
+        "#include <stdint.h>\nuint32_t g = 7u;\nuint32_t f(uint32_t y) {\n  g = 1u;\n  { g = y; }\n  return g;\n}\n"
+    ),
+}
+
+
+def test_a_global_first_named_inside_a_block_is_one_resource_on_both_rails():
+    """CF-GBLOCK. The twin bound a global's resource with the block that first named it and dropped the binding
+    with the block, so the next reference -- `{ g = y; } return g;`, an `if` body, a loop body -- made a second
+    resource for the same object: the canon read the written value back as an input and the digest left the
+    oracle's (the emits still ran as the original, both naming the object `g`). A global is one object, so it is
+    one resource per function on both rails (the oracle's `gres`; the twin's `global_res_of_name`). Each unit's
+    summary, digest included, is the oracle's on the twin; a block-scope `g` still hides the global for its block
+    (`shadowed`); the twin's emits run as the originals. Every unit assigns `g` on every path before reading it,
+    so the equivalence harness, whose original and emit share one `g`, reads no call's leftovers."""
+    oracle = {name: _oracle(src) for name, src in _GBLOCK_UNITS.items()}
+    if not _CC:
+        return
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        for name, src in _GBLOCK_UNITS.items():
+            summary, _r, entry = oracle[name]
+            path = os.path.join(d, name.replace(" ", "_") + ".c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            c_summary, c_emit = _c_run(exe, path)
+            assert c_summary == summary, f"{name}: parity\n C: {c_summary}\nPY: {summary}"
+            verdict = _equiv(src, c_emit, entry)
+            assert verdict == "MATCH", f"{name}: the twin's emit: {verdict}\n{c_emit}"
+
+
+def _call_of(n: int, *, indirect: bool = False) -> str:
+    """`f` calls a function of `n` parameters with `x + i` for its i-th argument -- directly, or through a function
+    pointer it holds -- and the callee folds its arguments with distinct weights, so a dropped or reordered one
+    changes the result."""
+    params = ", ".join(f"uint32_t a{i}" for i in range(n))
+    body = " + ".join(f"{i + 1}u * a{i}" for i in range(n))
+    args = ", ".join(f"x + {i}u" for i in range(n))
+    callee = f"#include <stdint.h>\nuint32_t h({params}) {{ return {body}; }}\n"
+    if indirect:
+        sig = ", ".join(["uint32_t"] * n)
+        return f"{callee}uint32_t f(uint32_t x) {{ uint32_t (*p)({sig}) = h; return p({args}); }}\n"
+    return f"{callee}uint32_t f(uint32_t x) {{ return h({args}); }}\n"
+
+
+def test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails():
+    """CF-CALLARGS. The twin's claim held six reads, so `p_call` kept a call's first six arguments and dropped the
+    rest: a call of seven lowered `ok=1` with a digest the oracle's no longer, and its emit passed six arguments to
+    a function of seven, which C refuses. Both rails now carry sixteen arguments (`BCIR_CALL_MAX_ARGS`,
+    `lower.MAX_CALL_ARGS`; a claim's reads are one more, for a callee value or an object base) and refuse a
+    seventeenth alike: calls of seven and of sixteen, direct and through a function pointer, are digest-equal on
+    both rails and the twin's emits run as the originals."""
+    units = {
+        "seven": _call_of(7),
+        "sixteen": _call_of(16),
+        "sixteen through a pointer": _call_of(16, indirect=True),
+    }
+    oracle = {name: _oracle(src) for name, src in units.items()}
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    for src in (_call_of(17), _call_of(17, indirect=True)):
+        _refused_on_both_rails(exe, src, "a call of more than 16 arguments is not supported")
+    if exe is None:
+        return
+    with tempfile.TemporaryDirectory() as d:
+        for name, src in units.items():
+            summary, _r, entry = oracle[name]
+            path = os.path.join(d, name.replace(" ", "_") + ".c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(src)
+            c_summary, c_emit = _c_run(exe, path)
+            assert c_summary == summary, f"{name}: parity\n C: {c_summary}\nPY: {summary}"
+            verdict = _equiv(src, c_emit, entry)
+            assert verdict == "MATCH", f"{name}: the twin's emit: {verdict}\n{c_emit}"
+
+
+def _lowers_alike(exe, src: str) -> str:
+    """Both rails lower `src`: the oracle's summary, which the twin (when built) prints verbatim."""
+    summary, _r, _entry = _oracle(src)
+    if exe is not None:
+        assert _twin_line(exe, src) == (0, summary), src
+    return summary
+
+
+def _refused_alike(exe, src: str, why: str, *, phase: str = "CPP") -> None:
+    """Neither rail lowers `src`, each naming `why` exactly: the oracle's refusal is `why`, the twin's line is
+    `<phase>-ERR why` (`CPP` for the preprocessor, `PARSE` for the lexer and parser)."""
+    assert _oracle_refusal(src) == why, (src, _oracle_refusal(src))
+    if exe is not None:
+        assert _twin_line(exe, src) == (1, f"{phase}-ERR {why}"), (src, _twin_line(exe, src))
+
+
+def test_form_feed_and_vertical_tab_are_white_space_on_both_rails():
+    """CF-PPSPLITS. C's white space is a space, a tab, a new-line, a vertical tab and a form feed (6.4p3). The twin's
+    preprocessor and lexer read a space and a tab alone, so `\f` in code was an expression's end (`expected
+    expression`) and `\f#define` no directive, where the oracle lowered both. One predicate on the twin
+    (`pp_space`), the oracle's lexer widened to match its preprocessor: the unit lowers digest-equal."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    src = (
+        "#include <stdint.h>\nuint32_t f(uint32_t x) {\f return x\v + 1u; }\n"
+        "\f#define K 2u\n\v#\tdefine L 3u\nuint32_t g(uint32_t x) {\treturn\fx + K\v+ L; }\n"
+    )
+    summary = _lowers_alike(exe, src)
+    assert "funcs=2" in summary, summary
+    # the white space between a directive's `#` and its name, and after the name: the oracle read a space and a tab
+    # there (`_DIRECTIVE_SPACE`), so `#\finclude <stdint.h>` was a null directive with its header unread and
+    # `#include\f<stdint.h>` named no header
+    for directive in ("#\finclude <stdint.h>", "#include\f<stdint.h>", "#\vinclude\v<stdint.h>"):
+        summary = _lowers_alike(exe, directive + "\nuint32_t f(uint32_t x) { return x; }\n")
+        assert "funcs=1" in summary, summary
+    # a form feed ends no line: `#define K 1u` after one on a code line is text, not a directive, on both rails
+    # (each lexer skips a `#` line), so `K` is undeclared alike
+    _refused_alike(
+        exe,
+        "uint32_t f(uint32_t x) { return x; }\f#define K 1u\nuint32_t g(uint32_t x) { return x + K; }\n",
+        "use of undeclared identifier 'K'",
+        phase="PARSE",
+    )
+
+
+def test_an_error_directive_and_an_unknown_one_are_refused_alike_on_both_rails():
+    """CF-PPSPLITS. `#error text` is the compile's failure (C11 6.10.5), its text macro-expanded, and a non-directive
+    (`#foo`) is undefined behaviour the oracle refused (6.10p9); the twin ignored both, with `#warning` and
+    `#pragma`, and lowered on. Both refuse alike now, spelling the oracle's reason; `#warning`, `#pragma` and the
+    null directive `#` lower on both, and a group not taken keeps its `#error` and `#foo` unread (6.10.1p6)."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "uint32_t f(uint32_t x) { return x; }\n"
+    _refused_alike(exe, "#define WHY stop here\n#error WHY now\n" + unit, "#error stop here now")
+    _refused_alike(exe, "#foo bar\n" + unit, "unknown directive #foo")
+    _refused_alike(exe, "#include_next <x.h>\n" + unit, "unknown directive #include_next")
+    summary = _lowers_alike(
+        exe, "#pragma once\n#warning not an error\n#\n#if 0\n#error unread\n#foo\n#endif\n" + unit
+    )
+    assert "funcs=1" in summary, summary
+
+
+def test_the_preprocessors_hold_one_set_of_limits_and_one_arity_on_both_rails():
+    """CF-PPSPLITS. The twin's preprocessor holds a logical line to 8 190 bytes, a macro's replacement to 1 023 and an
+    invocation to 16 arguments; the oracle's held none of these, and neither rail held a function-like macro to as
+    many arguments as parameters (C11 6.10.3p4): the twin took `M(x, 1u, 2u)` for `M(a, b)`, the oracle that and
+    seventeen arguments for sixteen parameters. Both now hold the same bounds in the same words -- the last byte
+    within each lowers digest-equal, the first past it is refused alike -- and the same arity: more arguments than
+    parameters `too many macro arguments`, fewer `too few macro arguments`, a variadic macro's `...` free to be empty,
+    and `M()` of a macro of no parameters passing none."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t f(uint32_t x) {{ return {v}; }}\n"
+    # a macro replacement: 1 023 bytes lowers, 1 024 is refused
+    body = "x" + "+1u" * 340 + "+2u"  # 1 + 1020 + 3 = 1 024 bytes
+    assert len(body.encode()) == 1024
+    _lowers_alike(exe, "#define B " + body[:-1] + "\n" + unit.format(v="B"))
+    _refused_alike(
+        exe, "#define B " + body + "\n" + unit.format(v="B"), "macro replacement is too large"
+    )
+    # a logical line: 8 190 bytes lowers (spliced across a continuation), 8 191 is refused
+    head = "uint32_t g(uint32_t x) { return x"
+    line = head + "+1u" * ((8190 - len(head) - 5) // 3)
+    line += " " * (8190 - len(line) - 5) + "+1u;}"
+    assert len(line.encode()) == 8190
+    _lowers_alike(
+        exe,
+        "#include <stdint.h>\n" + line[:4000] + "\\\n" + line[4000:] + "\n" + unit.format(v="g(x)"),
+    )
+    _refused_alike(
+        exe,
+        "#include <stdint.h>\n" + line + " " + "\n" + unit.format(v="g(x)"),
+        "preprocessor line too long",
+    )
+    # an invocation: 16 arguments lower, 17 are refused -- and as many as the parameters, or refused
+    va = "#define V(...) (0u __VA_OPT__(+) __VA_ARGS__)\n"
+    _lowers_alike(exe, va + unit.format(v="V(" + ", ".join(["x"] * 16) + ")"))
+    _refused_alike(
+        exe, va + unit.format(v="V(" + ", ".join(["x"] * 17) + ")"), "too many macro arguments"
+    )
+    two = "#define M(a, b) ((a) + (b))\n"
+    _lowers_alike(exe, two + unit.format(v="M(x, 1u)"))
+    _refused_alike(exe, two + unit.format(v="M(x, 1u, 2u)"), "too many macro arguments")
+    _refused_alike(exe, two + unit.format(v="M(x)"), "too few macro arguments")
+    _lowers_alike(
+        exe, "#define N() 3u\n#define O(a) (3u a)\n" + unit.format(v="x + N() + O() + O(+1u)")
+    )
+    _refused_alike(exe, "#define N() 3u\n" + unit.format(v="x + N(1u)"), "too many macro arguments")
+    va2 = "#define W(a, b, ...) ((a) + (b) __VA_OPT__(+) __VA_ARGS__)\n"
+    _lowers_alike(exe, va2 + unit.format(v="W(x, 1u) + W(x, 1u, 2u, 3u)"))
+    _refused_alike(exe, va2 + unit.format(v="W(x)"), "too few macro arguments")
+    _lowers_alike(
+        exe,
+        "#define E(a, ...) (0u a __VA_OPT__(+) __VA_ARGS__)\n" + unit.format(v="E() + E(+x, 1u)"),
+    )
+
+
+def test_a_line_directive_takes_a_decimal_digit_sequence_in_range_on_both_rails():
+    """CF-PPSPLITS. `#line` takes a decimal digit sequence (C11 6.10.4p3) in 1..2147483647, then an optional file
+    name. `#line 12abc` read 12 on the oracle and was `out of range` on the twin; `#line abc` was ignored on both.
+    Both refuse a number that is no decimal digit sequence, and one out of range, in the same words; the directive
+    that conforms sets `__LINE__` and `__FILE__` alike."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t f(uint32_t x) {{ return {v}; }}\n"
+    for bad in ("12abc", "abc", "0x10", "", '"a.c"'):
+        _refused_alike(
+            exe,
+            f"#line {bad}\n" + unit.format(v="x"),
+            "#line number is not a decimal digit sequence",
+        )
+    for bad in ("0", "2147483648", "999999999999999999999"):
+        _refused_alike(exe, f"#line {bad}\n" + unit.format(v="x"), "#line number is out of range")
+    summary = _lowers_alike(exe, '#define N 70\n#line N "a.c"\n' + unit.format(v="x + __LINE__"))
+    assert "const=1" in summary, summary
+
+
+def test_a_stray_character_outside_a_literal_is_refused_alike_on_both_rails():
+    """CF-PPSPLITS. No C token starts with `@`, `$`, a backquote or a stray backslash: the oracle's lexer refused
+    them as `unexpected character '@'`, the twin's made each a one-character punctuator for the parser to stumble
+    on (`parse error: ;`). The twin refuses them where the oracle does, in the oracle's words -- a character past
+    ASCII stays `NONASCII` on both (CF-PPLIMITS)."""
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    unit = "#include <stdint.h>\nuint32_t f(uint32_t x) {{ return {v}; }}\n"
+    for stray in ("@", "$", "`", "\\"):
+        _refused_alike(
+            exe, unit.format(v=f"x {stray} 1u"), f"unexpected character {stray!r}", phase="PARSE"
+        )
+    _lowers_alike(exe, unit.format(v='x + sizeof("@$`")'))
+
+
+def test_a_line_ends_at_a_new_line_alone_on_both_rails():
+    """CF-PPSPLITS. A logical line ends at a new-line, and a CRLF end of line is one (translation phase 1). The twin
+    read a CRLF file's `\\r` into the line, so `#if K == 5u\\r` was `malformed` there and lowered on the oracle, and a
+    `\\\\\\r\\n` splice was none; the oracle ended a line where `str.splitlines` does -- at a form feed, a `\\x1c`, a NEL,
+    a U+2028 -- so `return x\\x1c + 1u;` lowered there with the character gone and was refused here, and a NEL in code
+    vanished before the reader that refuses a character past ASCII saw it. One rule on each rail now: a CRLF unit
+    lowers to its LF twin's digest on both, the twin's longest line included; a `\\x1c` or `\\x1e` in code, at a
+    line's end too, is `unexpected character` alike; a NEL or a U+2028 in code is `NONASCII` alike; and a lone
+    carriage return is white space alike, in a directive's operand too."""
+    from bcir.frontends.cfront.clex import NONASCII
+
+    exe = _build_frontend(_session_build_dir()) if _CC else None
+    lf = "#define K 2u + \\\n 3u\n#if K == 5u\nuint32_t f(uint32_t x) { return x + K; }\n#endif\n"
+    assert _lowers_alike(exe, lf.replace("\n", "\r\n")) == _lowers_alike(exe, lf)
+    head = "uint32_t g(uint32_t x) { return x"
+    line = head + "+1u" * ((8190 - len(head) - 5) // 3)
+    line += (
+        " " * (8190 - len(line) - 5) + "+1u;}"
+    )  # the twin's longest line, its CRLF end not counted
+    assert len(line.encode()) == 8190
+    unit = "#include <stdint.h>\nuint32_t f(uint32_t x) {{ return {v}; }}\n"
+    longest = "#include <stdint.h>\n" + line + "\n" + unit.format(v="g(x)")
+    assert _lowers_alike(exe, longest.replace("\n", "\r\n")) == _lowers_alike(exe, longest)
+    for stray in ("\x1c", "\x1e"):
+        _refused_alike(
+            exe, unit.format(v=f"x{stray} + 1u"), f"unexpected character {stray!r}", phase="PARSE"
+        )
+    _refused_alike(
+        exe, unit.format(v="x") + "\x1c\n", "unexpected character '\\x1c'", phase="PARSE"
+    )
+    for past in ("\u0085", "\u2028"):
+        _refused_alike(exe, unit.format(v=f"x{past} + 1u"), NONASCII, phase="PARSE")
+    summary = _lowers_alike(
+        exe, "#define K 2u\n#if K ==\r2u\n#define L 3u\n#endif\n" + unit.format(v="x + L")
+    )
+    assert "const=1" in summary, summary
+
+
 _STATICTAB_DRIVER = (
     _GAPS_SAME
     + r"""
@@ -10388,8 +10662,12 @@ def test_a_name_that_runs_into_a_non_ascii_character_is_refused_alike_on_both_ra
         "uint32_t f(uint32_t x) { return x + (uint32_t)s[1]; }\n"
     )
     # `#line` reads a number of ASCII digits: the oracle's `\d` had read `\u0663` as 3, numbering the next line 3
-    # where the twin, which reads no number there, leaves it 2
+    # where the twin, which read no number there, left it 2 -- and since CF-PPSPLITS a `#line` whose operand is no
+    # decimal digit sequence is refused alike, so the digit past ASCII is refused on both rails as no digit
     line = "#line \u0663\n#include <stdint.h>\nuint32_t f(uint32_t x) { return x + __LINE__; }\n"
+    assert _oracle_refusal(line) == "#line number is not a decimal digit sequence"
+    if exe:
+        assert _twin_line(exe, line) == (1, "CPP-ERR #line number is not a decimal digit sequence")
     spaced = [
         f"#include <stdint.h>\n{d}\nuint32_t f(uint32_t x) {{ return x + K; }}\n"
         for d in (
@@ -10399,7 +10677,7 @@ def test_a_name_that_runs_into_a_non_ascii_character_is_refused_alike_on_both_ra
             "#if(1)\n#define K 3u\n#endif",
         )
     ]
-    for src in (literal, line, *spaced):
+    for src in (literal, *spaced):
         summary, _r, _entry = _oracle(src)
         if exe:
             assert _twin_line(exe, src) == (0, summary), src
@@ -10493,15 +10771,15 @@ def test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails():
 
 
 def test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_time():
-    """CF-NAMECACHE: the twin's emit read `uniq_local` once per reference, and since CF-TYPEDEFSCOPE each read walked
-    every name the emit spells (`spelled_scan`), so a function of n statements on one object cost O(n * names) to
-    emit: 1 800 updates of one local took 285 ms where the parent of CF-TYPEDEFSCOPE took 97, and the A/B against
-    PR #786 put the twin at 0.34x there. Each function's names are computed once before its unit is emitted
-    (`names_build`) and every reference reads the table; the verifier's R1.1 scan is sorted and the canon's writer
-    lookup hashed, where each was a walk. The witness is self-relative, as `cperf`'s invariants are: the twin on
-    300 and on 2 400 updates of one local, the shorter of three runs each. Linear emission grows by about the 8x of
-    the input (the process's start makes the ratio smaller still), quadratic emission by 64x; the bound is 16. The
-    summary is the oracle's either way, so only the time tells the two apart."""
+    """CF-NAMECACHE: the twin's emit named each object again at every reference, walking every resource and every
+    name the emit spells (`uniq_local`, `declared_name`, `spelled_scan`), and R21 rescanned every prior claim for
+    every read, so a run of statements on one local cost the square of its length: 1 800 updates of one local
+    emitted in 285 ms where CF-PPLIMITS's parent took 97. The names are computed once per function now
+    (`names_build`, `names_rank`), R21 reads back to a rid's last event, and the twin's compile of 4 800 updates
+    costs under 24 times its compile of 600 (8 times the input; linear at about 8, the walks at 35 and more). The
+    time is the child's CPU time (`RUSAGE_CHILDREN`, the min of three runs), which a loaded runner does not inflate
+    as it does wall time; where `resource` is absent the wall time stands in. The 600-update unit's summary is the
+    oracle's."""
     exe = _build_frontend(_session_build_dir()) if _CC else None
     if not exe:
         return
@@ -10511,6 +10789,15 @@ def test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_
         steps = "".join(f" x = x + {k}u;\n" for k in range(1, n + 1))
         return f"{head}uint32_t f(uint32_t x) {{\n{steps} return x;\n}}\n"
 
+    try:
+        import resource
+
+        def children_cpu() -> float:
+            ru = resource.getrusage(resource.RUSAGE_CHILDREN)
+            return ru.ru_utime + ru.ru_stime
+    except ImportError:  # no `resource` on this host: the wall clock stands in
+        children_cpu = time.perf_counter
+
     def seconds(src: str) -> float:
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "u.c")
@@ -10518,17 +10805,17 @@ def test_the_twin_names_each_object_once_so_a_run_of_statements_emits_in_linear_
                 fh.write(src)
             best = float("inf")
             for _ in range(3):
-                start = time.perf_counter()
+                start = children_cpu()
                 run = subprocess.run([exe, path], capture_output=True, text=True)
-                best = min(best, time.perf_counter() - start)
+                best = min(best, children_cpu() - start)
                 assert run.returncode == 0 and " ok=1 " in run.stdout, run.stdout + run.stderr
         return best
 
-    small = updates(300)
+    small = updates(600)
     summary, _r, _entry = _oracle(small)
     assert _twin_line(exe, small) == (0, summary)
-    short, long = seconds(small), seconds(updates(2400))
-    assert long < 16 * short, (short, long)
+    short, long = seconds(small), seconds(updates(4800))
+    assert long < 24 * short, (short, long)
 
 
 def test_a_value_number_past_the_depth_cap_is_cyc_on_both_rails():

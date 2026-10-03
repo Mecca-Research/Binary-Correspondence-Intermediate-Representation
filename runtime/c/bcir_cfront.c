@@ -298,8 +298,6 @@ typedef struct {
   int tok_overflow;  /* set by lex() when the input reaches MAXTOK tokens -- the entry then fails cleanly
                       * ("input too large"), as the oracle's lexer does at the same count, rather than silently
                       * truncating the token stream and mis-compiling a partial unit (Bug B correctness gap). */
-  int call_dropped;  /* p_call dropped an operand past BCIR_CLAIM_MAX_RD: its call-site wrapper marks the call
-                      * claim `truncated` (the escape analysis then refuses the unit) */
   int td_nd, td_dims[3];   /* the array dims of the typedef the last p_type_base resolved (0: none), for the
                             * declarator that consumes the type to append after its own */
   irange *iw_rng; int iw_nrng, iw_caprng;   /* the initializer walk's stored ranges and union members: one */
@@ -563,7 +561,7 @@ static void lex(CC *c, const char *src) {
                            "++","--",
                            "+=","-=","*=","/=","%=","&=","|=","^=",0};
   while (*p) {
-    if (*p==' '||*p=='\t'||*p=='\r'||*p=='\n'){p++;continue;}
+    if (*p==' '||*p=='\t'||*p=='\r'||*p=='\n'||*p=='\f'||*p=='\v'){p++;continue;}   /* C's white space (6.4p3) */
     if (p[0]=='/'&&p[1]=='/'){while(*p&&*p!='\n')p++;continue;}
     if (p[0]=='/'&&p[1]=='*'){p+=2;while(*p&&!(p[0]=='*'&&p[1]=='/'))p++;if(*p)p+=2;continue;}
     if (*p=='#'){while(*p&&*p!='\n')p++;continue;}   /* preprocessor: L7 */
@@ -642,6 +640,14 @@ static void lex(CC *c, const char *src) {
     if (m) continue;
     if ((unsigned char)*p>=0x80){ fail(c,nonascii_outside); break; }   /* no identifier, number or punctuator
                                                                      * starts with it: past every literal */
+    if (!strchr("[](){}.&*+-~!/%<>=^|?:;,#",*p)){            /* no C token starts with it: `@`, `$`, a backquote,
+                                                           * a stray `\` -- the oracle's `unexpected character`,
+                                                           * spelled as Python's repr spells it (CF-PPSPLITS) */
+      char m[48];
+      if(*p=='\\') snprintf(m,sizeof m,"unexpected character '\\\\'");
+      else if(*p>=0x20&&*p<0x7f) snprintf(m,sizeof m,"unexpected character '%c'",*p);
+      else snprintf(m,sizeof m,"unexpected character '\\x%02x'",(unsigned char)*p);
+      fail(c,m); break; }
     t->k=T_PUN;t->s=p;t->n=1;p++;c->nt++;
   }
   if (!CC_ENSURE(c,c->t,c->nt,c->cap_t)) return;      /* the T_END sentinel's slot, for an empty unit too */
@@ -2044,6 +2050,17 @@ static venv *lookup(CC *c,const tok *t){
 
 /* --- expression lowering (returns rid) ----------------------------------- */
 static uint32_t p_expr(CC *c);
+/* The arguments of a call, from after its `(` to its `)`: at most BCIR_CALL_MAX_ARGS, as the oracle lowers them
+ * (`_call_args`); one more fails the compile, where the twin once kept six and dropped the rest, emitting a call of
+ * six arguments to a function of more (CF-CALLARGS). Every call form reads its arguments here. */
+static int p_call_args(CC *c, uint32_t *args, int *na){
+  int n=0, over=0;
+  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(n<BCIR_CALL_MAX_ARGS) args[n++]=a; else over=1;
+    if(is(c,",")){c->i++;continue;} break; }
+  eat(c,")"); *na=n;
+  if(over){ fail(c,"a call of more than " BCIR_STR(BCIR_CALL_MAX_ARGS) " arguments is not supported"); return 0; }
+  return 1;
+}
 static uint32_t p_compound_literal(CC *c, const bcir_ctype *ty, int si);   /* `(type){init}` (defined w/ agg_init) */
 static uint32_t p_stmt_expr(CC *c);   /* `({ ... })` -- a GCC statement expression (defined after p_stmt) */
 static uint32_t p_array_literal(CC *c, const bcir_ctype *ty, int si, int count, const int *la_dims, int la_nd);    /* `(T[N]){init}` / `(T[A][B]){init}` / `(struct P[]){init}` (defined w/ arr_init) */
@@ -3859,17 +3876,15 @@ static uint32_t postfix_ptr_chain(CC *c, uint32_t ptr, int psidx, field pfld) {
       venv b; memset(&b,0,sizeof b); b.rid=ptr; b.sidx=psidx; b.type.kind=1;   /* base = the loaded pointer */
       b.type.is_volatile=(uint8_t)(pfld.ptee_volatile?1:0);   /* a pointer to a volatile struct */
       if(is(c,"(")){     /* funcptr-member call through the loaded pointer: `d->ops->fn(args)` (#fnptrchain) */
-        c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-        if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
-          if(is(c,",")){c->i++;continue;} break; }
-        eat(c,")");
+        c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+        if(!p_call_args(c,args,&na)) return 0;
         field ff=S->f[fi];                               /* the funcptr field carries its captured return type */
         null_pointer_sig(c,ff.fp_sig,args,na);           /* a null pointer argument: its parameter's pointer */
         uint32_t t = field_call_temp(c,&ff);             /* typed by the member's function type (CF-FPRET) */
         char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.imember:%s",S->f[fi].name);
         bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
         if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=ptr;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-          cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;cl->truncated=(uint8_t)dropped;}   /* imm0=1: `ptr->fn(args)` */
+          cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=1;}   /* imm0=1: `ptr->fn(args)` */
         qcast_sig_call(c,cl,ff.fp_sig,na);               /* its qualified parameters and return (CF-QUALS) */
         return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
       }
@@ -4316,11 +4331,8 @@ static uint32_t p_call(CC *c, const tok *name) {
     return t;
   }
   c->i++; /* '(' */
-  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD)args[na++]=a; else dropped=1;
-    if(is(c,",")){c->i++;continue;} break; }
-  eat(c,")");
-  c->call_dropped=dropped;             /* every path below creates the call claim LAST (the site marks it) */
+  uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+  if(!p_call_args(c,args,&na)) return 0;
   if(tok_is(name,"va_start")||tok_is(name,"va_end")||tok_is(name,"va_copy")){   /* opaque void variadic builtins */
     char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.vabuiltin:%.*s",name->n,name->s);
     bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
@@ -4478,16 +4490,14 @@ static uint32_t p_icall(CC *c, const venv *fv) {
    * realloc c->env[] -- `fv`, a pointer into it, would dangle before fv->type / fv->rid are read. */
   venv fvsnap=*fv; fv=&fvsnap;
   c->i++; /* '(' */
-  uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-  if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
-    if(is(c,",")){c->i++;continue;} break; }
-  eat(c,")");
+  uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+  if(!p_call_args(c,args,&na)) return 0;
   null_pointer_sig(c,fv->type.fp_sig,args,na);   /* a null pointer argument: its parameter's pointer (CF-NULLCALL) */
   int vd=fv->type.fp_ret_void;              /* a pointer to a void function: no result (CF-VOIDCB) */
   uint32_t t=vd?0:fp_result_temp(c,&fv->type);   /* type by the funcptr's captured return -> a signed return reads back signed */
   bcir_claim *cl=new_claim(c,"c.call.indirect",BCIR_OP_GEM_DISPATCH);
   if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=fv->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-    cl->n_wr=(uint8_t)(vd?0:1);cl->wr[0]=t;cl->truncated=(uint8_t)dropped;}
+    cl->n_wr=(uint8_t)(vd?0:1);cl->wr[0]=t;}
   qcast_sig_call(c,cl,fv->type.fp_sig,na);   /* its qualified parameters and return (CF-QUALS) */
   return vd?void_temp(c):t;                 /* the void value, as a direct void call's (`return cb();`, `c ? cb() : ...`) */
 }
@@ -4619,14 +4629,12 @@ static uint32_t atomic_value_temp(CC *c,uint32_t ptr){
   return ctype_value_temp(c,&t);
 }
 static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordered){
-  c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
+  c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na=0;
   /* SEG7: an order-taking fence (`__atomic_thread_fence`/`atomic_thread_fence`) routes its KIND by the
    * first arg's order value -- peeked HERE, BEFORE the arg is lowered, so the arg's const claim (the
    * value rail) is still emitted in sequence, exactly as the oracle does (digest = [const, fence]). */
   if(ordered && kind==AK_FENCE && !is(c,")")) op=fence_order_op(c);
-  if(!is(c,")")) for(;;){uint32_t a=p_expr(c);if(na<BCIR_CLAIM_MAX_RD)args[na++]=a;else dropped=1;
-    if(is(c,",")){c->i++;continue;}break;}
-  eat(c,")");
+  if(!p_call_args(c,args,&na)) return 0;
   /* the value an atomic reads through its pointer -- atomic_load, a fetch-op, atomic_exchange, a value CAS --
    * has the pointee's type, unqualified (the oracle's `_atomic_value_type`): a uint32 temp truncated a 64-bit
    * counter and converted an `_Atomic float` to an integer (CF-ATOMIC). The bool forms and a fence stay 4-byte. */
@@ -4634,7 +4642,6 @@ static uint32_t p_atomic(CC *c,const char *op,bcir_opcode oc,int kind,int ordere
   uint32_t t = valued ? atomic_value_temp(c,args[0]) : temp(c,4);
   if(!strncmp(op,"c.c11atom.cas",13) && c->fn->n_res) c->fn->res[c->fn->n_res-1].is_bool=1;  /* compare_exchange -> _Bool */
   bcir_claim *cl=new_claim(c,op,oc); if(!cl)return t;
-  cl->truncated=(uint8_t)dropped;
   cl->lane=BCIR_LANE_A; cl->hazard=kind==AK_FENCE?BCIR_HZ_BARRIERED:BCIR_HZ_ATOMIC;
   if(kind!=AK_FENCE&&na>=1){ bcir_domain dom=BCIR_DOM_RAM;
     for(size_t z=0;z<c->fn->n_res;z++) if(c->fn->res[z].rid==args[0]) dom=c->fn->res[z].domain;
@@ -4690,17 +4697,15 @@ static uint32_t postfix_lvalue(CC *c, venv *v){
     for(int i=0;i<S->nf;i++) if((int)strlen(S->f[i].name)==fn.n&&!strncmp(S->f[i].name,fn.s,fn.n)) fi=i;
     if(fi<0){fail(c,"unknown field");return 0;}
     if(is(c,"(")){     /* o->fnptr(args): fused indirect call via a funcptr struct member */
-      c->i++; uint32_t args[BCIR_CLAIM_MAX_RD]; int na=0, dropped=0;
-      if(!is(c,")")) for(;;){ uint32_t a=p_expr(c); if(na<BCIR_CLAIM_MAX_RD-1)args[na++]=a; else dropped=1;
-        if(is(c,",")){c->i++;continue;} break; }
-      eat(c,")");
+      c->i++; uint32_t args[BCIR_CALL_MAX_ARGS]; int na;
+      if(!p_call_args(c,args,&na)) return 0;
       field ff=S->f[fi];                          /* the funcptr field carries its captured return type */
       null_pointer_sig(c,ff.fp_sig,args,na);      /* a null pointer argument: its parameter's pointer */
       uint32_t t = field_call_temp(c,&ff);        /* typed by the member's function type (CF-FPRET) */
       char op[BCIR_CIR_OP]; fits(c,op,sizeof op,"c.call.imember:%s",S->f[fi].name);
       bcir_claim *cl=new_claim(c,op,BCIR_OP_GEM_DISPATCH);
       if(cl){cl->n_rd=(uint8_t)(na+1);cl->rd[0]=v->rid;for(int k=0;k<na;k++)cl->rd[k+1]=args[k];
-        cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;cl->truncated=(uint8_t)dropped;}
+        cl->n_wr=(uint8_t)(ff.fp_ret_void?0:1);cl->wr[0]=t;cl->n_imm=1;cl->imm[0]=arrow;}
       qcast_sig_call(c,cl,ff.fp_sig,na);          /* its qualified parameters and return (CF-QUALS) */
       return ff.fp_ret_void ? void_temp(c) : member_call_result(c,&ff,t);
     }
@@ -5191,10 +5196,7 @@ static uint32_t p_named_call(CC *c, tok id){
         if(s>0 && s<=c->nsig && !c->failed){ bcir_ctype rt=c->sigs[s-1].ret; return call_result(c,r,&rt); }
         return call_value(c,r); }
       const bcir_ctype *rt=callee_ret(c,&id);     /* a struct-returning call: `mk(x).field` postfixes the result */
-      int drop_save=c->call_dropped; c->call_dropped=0;   /* a call nested in an argument restores it */
       uint32_t r=p_call(c,&id);
-      if(c->call_dropped && c->fn->n_claims) c->fn->claims[c->fn->n_claims-1].truncated=1;
-      c->call_dropped=drop_save;
       return call_result(c,r,rt); }                 /* `mk(x).f`, `f()->v`; `g(x)(y)` through the result, which must be
                                                      * a function pointer */
 }
@@ -6215,10 +6217,29 @@ static void qglobal_add(CC *c, uint32_t rid, const gvar *g){
   if(k<0 || (size_t)k>=sizeof q->spelling) return;
   q->rid=rid; c->fn->n_qglobals++;
 }
+/* The resource this function already gave the global `name`: a read-only resource of its name that is no function
+ * designator. A global is one object, so it is one resource per function, as the oracle's `gres` holds it: a block
+ * binds the name for its scope and drops the binding with it, but the resource outlives the block (CF-GBLOCK: a
+ * global first referenced inside a block -- `{ g = y; }`, an `if` body, a loop body -- and read after it was a
+ * second resource, so the canon read the written value back as an input and the digest left the oracle's). The
+ * scan runs once per block that first names a global; references within the block find the binding. */
+static int global_res_of_name(const CC *c,const char *name,uint32_t *rid){
+  for(size_t i=0;i<c->fn->n_res;i++){ const bcir_resource *r=&c->fn->res[i];
+    if(r->read_only && !r->is_funcptr && r->name[0] && !strcmp(r->name,name)){ *rid=r->rid; return 1; } }
+  return 0;
+}
 static venv *use_global(CC *c,const tok *id){
   int gi=find_global(c,id->s,id->n); if(gi<0) return NULL;
   venv *ex=lookup(c,id); if(ex) return ex;
   gvar *g=&c->gv[gi];
+  { uint32_t bound;                                    /* bound earlier in this function: the same resource again */
+    if(global_res_of_name(c,g->name,&bound)){
+      int gsi0=(g->ty.kind==1 || g->ty.ptr_to_struct) ? find_struct(c,g->ty.tag,(int)strlen(g->ty.tag)) : -1;
+      int md0=global_md_elems(g);
+      env_add(c,id,bound,&g->ty,gsi0);
+      venv *gv0=lookup(c,id);
+      if(gv0 && md0){ gv0->type.nadims=(uint8_t)g->nd; for(int d=0; d<3; d++) gv0->type.adims[d]=d<g->nd?(int)g->dims[d]:0; }
+      return gv0; } }
   /* a struct or union global -- an object, an array of them, or a pointer to one -- is bound with its
    * definition, as a local is, so `g.m` / `g[i].m` / `g->m` lower through the member paths (CF-GSTRUCT: an
    * index of -1 here made every member access read `c->s[-1]`), and its volatile members make it a device

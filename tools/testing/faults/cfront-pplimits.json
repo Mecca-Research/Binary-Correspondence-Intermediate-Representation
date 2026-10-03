@@ -104,7 +104,7 @@
     },
     {
       "expects": "test_a_malformed_defined",
-      "label": "PO5 the oracle's tokenizer drops a character no alternative matches (`@`, `€`)",
+      "label": "PO5 the oracle's tokenizer drops a character no alternative matches (`@`, `\u20ac`)",
       "new": "    r\"\",  # any other character",
       "old": "    r\"|\\S\",  # any other character",
       "path": "bcir/frontends/cfront/cpp.py"
@@ -154,8 +154,8 @@
     {
       "expects": "test_a_name_that_runs_into",
       "label": "PO9 the oracle reads `#line` digits with a Unicode `\\d`",
-      "new": "        m = re.match(r\"\\d+\", toks[0])",
-      "old": "        m = re.match(r\"[0-9]+\", toks[0])",
+      "new": "        if not toks or not re.fullmatch(r\"\\d+\", toks[0]):\n",
+      "old": "        if not toks or not re.fullmatch(r\"[0-9]+\", toks[0], re.ASCII):\n",
       "path": "bcir/frontends/cfront/cpp.py"
     },
     {
@@ -167,7 +167,7 @@
     },
     {
       "expects": "test_a_name_that_runs_into",
-      "label": "PT12 the twin reads the ASCII start of a macro name (`#ifdef café` tests `caf`)",
+      "label": "PT12 the twin reads the ASCII start of a macro name (`#ifdef caf\u00e9` tests `caf`)",
       "new": "",
       "old": "  if ((unsigned char)s[*i] >= 0x80) { cpp_limit(state, nonascii_outside); return 0; }\n",
       "path": "runtime/c/bcir_cpp.c"
@@ -237,7 +237,7 @@
     },
     {
       "expects": "test_a_name_that_runs_into",
-      "label": "PT16 the twin cuts a directive name at its ASCII start (`#café` is `#caf`, ignored)",
+      "label": "PT16 the twin cuts a directive name at its ASCII start (`#caf\u00e9` is `#caf`, ignored)",
       "new": "      if(0){",
       "old": "      if((unsigned char)line[q]>=0x80&&parent){",
       "path": "runtime/c/bcir_cpp.c"

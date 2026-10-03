@@ -623,7 +623,7 @@ def test_L7_predefined_file_and_line():
 def test_L7_line_directive():
     """`#line N ["file"]` resets the presumed line number of the *following* line (and __FILE__ when a
     name is given); operands are macro-expanded; a #line-set name survives an #include and restores."""
-    from bcir.frontends.cfront.cpp import preprocess
+    from bcir.frontends.cfront.cpp import CPPError, preprocess
 
     # #line sets the NEXT line; numbering then counts up from there.
     assert preprocess("a __LINE__\n#line 100\nb __LINE__\nc __LINE__").split() == [
@@ -637,8 +637,14 @@ def test_L7_line_directive():
     # a file-name operand redirects __FILE__ too, and operands are macro-expanded.
     assert preprocess('#line 50 "foo.c"\nx __LINE__ __FILE__').strip() == 'x 50"foo.c"'
     assert preprocess("#define N 200\n#line N\nq __LINE__").split() == ["q", "200"]
-    # a malformed #line is ignored (numbering just continues); an inactive-branch #line never fires.
-    assert preprocess("p __LINE__\n#line\nq __LINE__").split() == ["p", "1", "q", "3"]
+    # a #line of no decimal digit sequence is refused, as the twin refuses it (CF-PPSPLITS; it was ignored here, the
+    # numbering continuing); an inactive-branch #line never fires.
+    try:
+        preprocess("p __LINE__\n#line\nq __LINE__")
+    except CPPError as e:
+        assert str(e) == "#line number is not a decimal digit sequence", e
+    else:
+        raise AssertionError("a bare #line was not refused")
     assert preprocess("#if 0\n#line 999\n#endif\nr __LINE__").split() == ["r", "4"]
     # a #line-set name persists across an #include and is restored on return.
     body = preprocess(

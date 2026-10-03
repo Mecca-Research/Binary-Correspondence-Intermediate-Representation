@@ -524,14 +524,21 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   directive's name or the names it reads, a macro parameter, a `#if` operand or between tokens: `non-ASCII character
   outside a literal`, on both rails (an identifier is ASCII; one inside a literal or a comment lowers). A NUL in a
   source or a header is refused before it is read. A source, and its preprocessed text, is at most 64 MiB, and a unit
-  lexes to fewer than 65 536 tokens (`input too large`): the bound is the compile's work budget too, for the twin looks
-  a function's resources and local names up by linear scans, so 6 400 statements in one function take it some 35 s --
-  a recorded follow-up. A unit's canon -- the digest on every summary line -- numbers each value once: a value
+  lexes to fewer than 65 536 tokens (`input too large`): the bound is the compile's work budget too, and the twin's
+  compile is linear in it -- a function's resources are found by halving, its emitted names computed once, the
+  canon's writers hashed and R1.1 sorted (CF-NAMECACHE: 6 400 statements updating one local took it 35 s; 0.14 s now,
+  8 000 chained locals 0.8 s). A unit's canon -- the digest on every summary line -- numbers each value once: a value
   number is the FNV-1a of its producer's op and its reads' numbers, in 16 hex digits, so the canon is linear in the
-  unit (it spelled each value's whole dataflow tree, the square of a chain and 2^n over n doublings). The twin's preprocessor holds a logical line of 8 190 bytes (`preprocessor line too long`), a
-  macro body of 1 023 and 16 arguments in an invocation, which the oracle's does not -- recorded follow-ups, as are a
-  form feed or a vertical tab (C's white space, which the oracle takes and the twin refuses) and an unknown directive
-  (`#foo`, which the oracle refuses and the twin ignores).
+  unit (it spelled each value's whole dataflow tree, the square of a chain and 2^n over n doublings). Both preprocessors hold a logical line to 8 190 bytes (`preprocessor line too long`), a macro's
+  replacement to 1 023 (`macro replacement is too large`), an invocation to 16 arguments and a function-like macro to
+  as many arguments as parameters (`too many` / `too few macro arguments`; C11 6.10.3p4, the variadic part free to be
+  empty); a form feed or a vertical tab is white space on both (6.4p3); `#error` is the compile's failure and an
+  unknown directive (`#foo`) is refused on both, where `#warning`, `#pragma` and `#` lower; `#line` takes a decimal
+  digit sequence in 1..2147483647 or is refused; and a character no C token starts with -- `@`, `$`, a backquote, a
+  stray `\\` -- is `unexpected character` on both; a logical line ends at a new-line alone on both, a CRLF end of line
+  is a new-line (translation phase 1) and a lone `\r` white space, so a CRLF unit lowers to its LF twin's digest, and a
+  `\x1c` or `\x1e` in code is `unexpected character` and a NEL or U+2028 `NONASCII` on both (CF-PPSPLITS). A call
+  carries at most 16 arguments on both rails (CF-CALLARGS).
 - An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
   struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
   rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.

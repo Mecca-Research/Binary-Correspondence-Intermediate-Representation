@@ -15,7 +15,8 @@
     "bcir.tests.test_c_cfront:test_a_skipped_group_reads_no_macro_name_on_either_rail",
     "bcir.tests.test_c_cfront:test_a_directive_that_reads_no_macro_name_is_refused_on_both_rails",
     "bcir.tests.test_c_cfront:test_the_twin_driver_prints_a_canon_past_128_kib_whole",
-    "bcir.tests.test_c_cfront:test_the_twin_driver_reads_a_source_past_64_kib_whole"
+    "bcir.tests.test_c_cfront:test_the_twin_driver_reads_a_source_past_64_kib_whole",
+    "bcir.tests.test_c_runtime:test_c_zeroed_allocation_is_zero_under_every_allocator_and_is_one_allocation"
   ],
   "faults": [
     {
@@ -227,6 +228,13 @@
       "new": "",
       "old": "  if(memchr(buf,0,n)){ bcir_host_deallocate(&heap,buf); return \"the source holds a NUL byte\"; }\n",
       "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_c_zeroed_allocation_is_zero_under_every_allocator_and_is_one_allocation",
+      "label": "B31 the zeroed allocation hands an injected allocator's memory back as it came: the preprocessor's state starts with whatever the allocator left",
+      "path": "runtime/c/bcir_host_alloc.h",
+      "old": "  if(allocation) memset(allocation, 0, size?size:1u);\n",
+      "new": "  (void)allocation;\n"
     }
   ]
 }

@@ -491,6 +491,18 @@ no unit, no partial text). The fault-allocator sweep of `cfront-pplimits.json`
 found it through `runtime/c/test_memory_discipline.c`: a resource bound is
 only honest if a failed allocation is a failure. Fault
 (`cfront-namecache.json`): `NC1`.
+CF-CALLARGS instance (2026-10-03): a bound that drops the excess is no bound.
+The twin's claim held six reads, so its call parser kept a call's first six
+arguments and dropped the rest, marking the claim for the escape analysis to
+refuse -- but the compile succeeded, `ok=1`, with an emit that passed six
+arguments to a function of seven, which C refuses, and a digest the oracle's
+no longer. A bound on what a structure carries is a refusal at the point of
+entry, in the same words on both rails, or the structure is widened to what
+the law admits: both rails carry sixteen arguments now and refuse a seventeenth
+alike (`a call of more than 16 arguments is not supported`). Witness:
+`test_a_call_carries_sixteen_arguments_and_a_seventeenth_is_refused_on_both_rails`.
+Faults (`cfront-calls.json`): `CL46` (the drop restored), `CL47` (the oracle
+lowers seventeen).
 **Port note:** this is the memory-safety law. In Python these failures were
 OOMs; in C the same shapes are allocator abuse and heap corruption. Every
 `malloc` sized from input data is an L3 site.
@@ -557,6 +569,15 @@ a literal is refused on both rails for one reason, `NONASCII`. Witnesses:
 `test_a_name_that_runs_into_a_non_ascii_character_is_refused_alike_on_both_rails`,
 `test_a_macro_parameter_list_is_read_by_one_grammar_on_both_rails`. Faults (`cfront-pplimits.json`): `PO6`-`PO10`,
 `PO13`-`PO16`, `PT12`-`PT16`.
+CF-PPSPLITS instance (2026-10-03): an eighth site, the line itself. `str.splitlines` ends a line at a form feed, a
+vertical tab, `\x1c`-`\x1e`, a NEL, U+2028 and U+2029, where C and the twin end one at a new-line alone: the oracle
+lowered `return x\x1c + 1u;` with the character gone where the twin refuses it, a NEL in code vanished before the
+reader that refuses a character past ASCII saw it, and `}\f#define K 1u` was a directive here and text there; and
+`_DIRECTIVE_SPACE` read a space and a tab alone where the twin's `pp_space` reads a form feed and a vertical tab too,
+so `#\finclude <stdint.h>` was a null directive with its header unread. The oracle splits at the new-line alone now, a
+CRLF end of line mapped first (translation phase 1, as the twin's line reader reads it), and `_DIRECTIVE_SPACE` is
+`pp_space`'s set. Witnesses: `test_a_line_ends_at_a_new_line_alone_on_both_rails`,
+`test_form_feed_and_vertical_tab_are_white_space_on_both_rails`. Faults (`cfront-ppsplits.json`): `PS13`-`PS18`.
 **Port note:** BCIR wire formats get grammar-complete parsers generated
 from the registry, or refusal. No "good enough" readers in C, ever.
 

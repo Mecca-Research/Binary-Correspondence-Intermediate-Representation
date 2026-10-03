@@ -10,7 +10,8 @@
     "bcir.tests.test_c_cfront:test_the_canon_numbers_each_value_once_and_is_linear_on_both_rails",
     "bcir.tests.test_c_cfront:test_claim_id_uniqueness_law_R1_1_dual_rail",
     "bcir.tests.test_c_cfront:test_claim_ids_stay_unique_past_a_function_of_1000_claims",
-    "bcir.tests.test_c_cfront:test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails"
+    "bcir.tests.test_c_cfront:test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails",
+    "bcir.tests.test_c_runtime:test_c_lifetime_verifier_reads_back_to_the_last_event_on_a_rid"
   ],
   "faults": [
     {
@@ -47,6 +48,20 @@
       "path": "runtime/c/bcir_verify.c",
       "old": "  return lo+1<n && sorted[lo]==id && sorted[lo+1]==id;\n",
       "new": "  return 0;\n"
+    },
+    {
+      "expects": "test_c_lifetime_verifier_reads_back_to_the_last_event_on_a_rid",
+      "label": "NC10 the twin's R21 reads a claim's `free` before its write: a rid freed and written by one claim is freed, and its next use reported",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){hit=1;break;}\n          if(hit)break;\n          if(prior->lifetime==2) for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;hit=1;break;}\n          if(hit)break;\n",
+      "new": "          if(prior->lifetime==2) for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;hit=1;break;}\n          if(hit)break;\n          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){hit=1;break;}\n          if(hit)break;\n"
+    },
+    {
+      "expects": "test_c_lifetime_verifier_reads_back_to_the_last_event_on_a_rid",
+      "label": "NC11 the twin's R21 reads one claim back: a `free` two claims before a use is forgotten",
+      "path": "runtime/c/bcir_verify.c",
+      "old": "        for(size_t q=i;q-- >first_free;){\n",
+      "new": "        for(size_t q=i;q-- >i-1;){\n"
     },
     {
       "expects": "test_a_local_of_a_parameters_name_ranks_after_it_and_past_the_global_it_prefixes_on_both_rails",

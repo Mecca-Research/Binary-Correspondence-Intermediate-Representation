@@ -46,7 +46,11 @@ typedef enum bcir_stride {
 typedef enum bcir_hazard { BCIR_HZ_UNIQUE = 0, BCIR_HZ_ATOMIC = 1, BCIR_HZ_BARRIERED = 2 } bcir_hazard;
 typedef enum bcir_bounds { BCIR_BND_STRICT = 0, BCIR_BND_MASKED = 1, BCIR_BND_ASSUMED = 2 } bcir_bounds;
 
-#define BCIR_CLAIM_MAX_RD 6
+/* The arguments a call carries, on both rails (the oracle's `lower.MAX_CALL_ARGS`): a seventeenth is refused alike,
+ * where the twin once kept six and dropped the rest (CF-CALLARGS). A claim reads a callee value or an object base
+ * and then the arguments, so its reads are one more. */
+#define BCIR_CALL_MAX_ARGS 16
+#define BCIR_CLAIM_MAX_RD (BCIR_CALL_MAX_ARGS + 1)
 #define BCIR_CLAIM_MAX_WR 2
 #define BCIR_CLAIM_MAX_IMM 4   /* off, size, flag, stride -- the array-of-structs `arr[i].field` store */
 /* Names in the graph are bounded (CF-BUF). An identifier -- a function, parameter, local, global, struct or

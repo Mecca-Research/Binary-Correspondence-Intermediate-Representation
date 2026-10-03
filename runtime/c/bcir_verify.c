@@ -279,19 +279,24 @@ void bcir_verify_lifetime(const bcir_unit *u,
   if(!report||!unit_shape_valid(u,NULL,0))return;
   for(int fi=0;fi<u->n_funcs;fi++){
     const bcir_func *f=&u->funcs[fi];
-    for(size_t i=0;i<f->n_claims;i++){
+    size_t first_free=f->n_claims;                   /* a rid is freed only after the function's first `free` */
+    for(size_t i=0;i<f->n_claims;i++) if(f->claims[i].lifetime==2){ first_free=i; break; }
+    for(size_t i=first_free+1;i<f->n_claims;i++){
       const bcir_claim *cl=&f->claims[i];
       int is_free = (cl->lifetime==2);
       for(int k=0;k<cl->n_rd;k++){
         uint32_t rid=cl->rd[k];int freed=0;
-        /* Reconstruct the RID's state from prior events. This allocation-free
-         * scan has no 256-resource truncation and preserves free-then-write order. */
-        for(size_t q=0;q<i;q++){
-          const bcir_claim *prior=&f->claims[q];
-          if(prior->lifetime==2){
-            for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;break;}
-          }
-          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){freed=0;break;}
+        /* Reconstruct the RID's state from prior events: the last event on it decides -- a `free` that reads it
+         * marks it freed, a write re-validates it, and a claim that does both writes last. Read backwards to that
+         * event, so a run of claims touching a rid costs the distance to its last event, not the function's length
+         * (CF-NAMECACHE: 4 800 updates of one local spent 0.3 s of 0.35 s here); allocation-free, no 256-resource
+         * truncation. */
+        for(size_t q=i;q-- >first_free;){
+          const bcir_claim *prior=&f->claims[q];int hit=0;
+          for(int r=0;r<prior->n_wr;r++)if(prior->wr[r]==rid){hit=1;break;}
+          if(hit)break;
+          if(prior->lifetime==2) for(int r=0;r<prior->n_rd;r++)if(prior->rd[r]==rid){freed=1;hit=1;break;}
+          if(hit)break;
         }
         if(freed)report(f->name,is_free?"double-free":"use-after-free",ctx);
       }

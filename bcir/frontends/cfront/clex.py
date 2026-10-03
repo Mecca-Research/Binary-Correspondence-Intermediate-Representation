@@ -222,7 +222,7 @@ def tokenize(src: str) -> list[Tok]:
     i, n = 0, len(src)
     while i < n:
         c = src[i]
-        if c in " \t\r\n":
+        if c in " \t\r\n\f\v":  # C's white space (6.4p3)
             i += 1
             continue
         if c == "/" and i + 1 < n and src[i + 1] == "/":  # line comment
