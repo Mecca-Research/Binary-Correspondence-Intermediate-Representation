@@ -1,12 +1,15 @@
 /* Adversarial SANITIZER fixture (Bug B: lexer-tail out-of-bounds read past the token array).
- * A token stream that fills the fixed `tok t[MAXTOK]` (MAXTOK=16384, a STATIC array, so the OOB read is
- * a global-buffer-overflow) and ENDS in a `name.field.field...` member chain whose final `.` lands on
+ * A token stream that filled the then-fixed `tok t[16384]` (a STATIC array, so the OOB read was a
+ * global-buffer-overflow) and ENDS in a `name.field.field...` member chain whose final `.` landed on
  * the last array slot. Pre-fix the member lookahead scanners (member_is_store / incdec_value) walked a
  * `j+=2` chain off the tail with NO bound on j and read c->t[16384] -- one past the array end (UBSan:
  * `index 16384 out of bounds for type 'tok [16384]'`; also a clang-trap SIGILL). The fix bounds every
  * lookahead through tat() (a T_END sentinel for any index past c->t[nt]) AND routes an over-MAXTOK input
- * to a clean fail (`input too large`) rather than silently truncating + mis-compiling. Result: a clean
- * rc-1 parse error, no OOB. Swept by the gcc-ASan + clang-trap fixture loops (an OOB / SIGILL = FAIL).
+ * to a clean fail (`input too large`) rather than silently truncating + mis-compiling. The token array
+ * now grows to MAXTOK (65 536, CF-PPLIMITS), so this stream ends inside it: the chain still runs off the
+ * last token into the T_END sentinel, and the over-MAXTOK refusal is held by a test at the cap on both
+ * rails. Result: a clean rc-1 parse error, no OOB. Swept by the gcc-ASan + clang-trap fixture loops (an
+ * OOB / SIGILL = FAIL).
  * NB: the trailing chain is intentionally unterminated -- the truncation must land mid-chain (its final
  * `.` on the last token slot) so the pre-fix scanner walks off the end; do not 'fix' or close it. */
 struct S{int x;};

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .clex import int_literal_parts
+
 # Scalar integer/base types -> (size in bytes, signed). C23 fixed-width names + the core set.
 _SCALAR = {
     "void": (0, False),
@@ -37,6 +39,7 @@ _SCALAR = {
     "int64_t": (8, True),
     "uint64_t": (8, False),
     "size_t": (8, False),
+    "wchar_t": (4, True),  # the target's `wchar_t` integer (`scalar` resolves it per ABI)
     "intptr_t": (8, True),
     "uintptr_t": (8, False),
 }
@@ -68,6 +71,11 @@ class CType:
     packed: bool = False  # an __attribute__((packed)) struct/union (no padding; a bitfield
     #   packs bit-by-bit and its access unit spans only the bytes it covers)
     params: tuple = ()  # parameter CTypes (funcptr only) — for faithful emit
+    variadic: bool = False  # funcptr only: the function takes a trailing `...` (CF-FPRET)
+    fquals: tuple = ()  # funcptr only: the qualifiers its return and parameters keep below their top level --
+    #   (return levels, (parameter levels, ...)), each level a tuple of `const` / `restrict` from what it points
+    #   to out (`lower._qual_sig`); () when none is qualified. Part of the function type's identity, and
+    #   spelled wherever the type is (CF-QUALS)
     shape: tuple = ()  # array dims of a decayed multi-dim array param (m[i][j])
     bit_width: int = 0  # a C23 `_BitInt(N)` type's EXACT width N (0 == a normal type; >0 ==
     #   `_BitInt(N)`). A distinct integer type that does NOT promote and does
@@ -77,6 +85,16 @@ class CType:
     natural: tuple = ()  # an `_Atomic` type's own (size, align) before the ABI's atomic promotion
     #   (`with_atomic`), which `unqualified` restores: the value read from an
     #   `_Atomic float _Complex` is a `float _Complex`, aligned to 4, not 8
+    incomplete: bool = (
+        False  # a struct/union named before (or without) its definition -- the pointee
+    )
+    #   of `struct node *next` inside `struct node`, of `struct fwd *` -- which a pointer to it
+    #   does not need laid out (C11 6.2.5p22); the lowering completes it by tag where its members
+    #   are used (`_FuncLowerer._complete`)
+    anon: tuple = ()  # a struct/union's ANONYMOUS members, in declaration order: (first, n, CType,
+    #   byte_off) -- `fields[first:first+n]` are the member's promoted leaves. An initializer
+    #   takes the member as ONE subobject of its own type (C11 6.7.2.1p13), so an anonymous
+    #   union takes one positional value, as in C, where its flattened leaves would take several
 
     @property
     def is_bitint(self) -> bool:
@@ -131,6 +149,11 @@ class CType:
             if entry[0] == name:
                 return entry[1], entry[2], entry[3], entry[4]
         raise KeyError(name)
+
+
+def incomplete_aggregate(kind: str, tag: str) -> CType:
+    """The incomplete struct or union `tag` -- known by name, not (yet) laid out -- as a pointer's pointee."""
+    return CType(kind, name=tag, size=0, align=1, incomplete=True)
 
 
 def with_volatile(ct: CType, vol: bool = True) -> CType:
@@ -224,6 +247,10 @@ def scalar(name: str, abi=None) -> CType:
         return CType(
             "scalar", name=name, size=size, align=scalar_align(size // 2, abi), signed=True
         )
+    if name == "wchar_t":  # a typedef of the target's integer type (`abi.wchar_type`), so it
+        name = (
+            abi.wchar_type if abi is not None else "int"
+        )  # lowers, emits and converts as that type
     if name not in _SCALAR:
         raise KeyError(f"unknown scalar type {name!r}")
     size, signed = _SCALAR[name]
@@ -377,27 +404,18 @@ def usual_arith_int(a: CType, b: CType, abi=None) -> CType:
     return int_type(pa.size, pa.signed and pb.signed, abi)
 
 
-def int_literal_type(text: str) -> str:
+def int_literal_type(text: str, long_size: int = 8) -> str:
     """The type of an integer constant (§6.4.4.1): from its `u`/`l`/`ll` suffix and magnitude, the
     first type in the suffix-permitted candidate list that can hold the value. Decimal literals only
     pick an unsigned type when `u`-suffixed; hex/octal literals may at any rank. Returns a canonical
-    scalar name (`int` / `unsigned int` / `long` / ... )."""
-    s = text.replace("'", "")  # strip C23 digit separators
-    i = len(s)
-    while i > 0 and s[i - 1] in "uUlL":
-        i -= 1
-    body, suf = s[:i], s[i:].lower()
+    scalar name (`int` / `unsigned int` / `long` / ... ). `long_size`: the target's `long`, in bytes --
+    where it is 4 (LLP64, ILP32) `0xFFFFFFFFL` is an `unsigned long`, as the twin's `lit_int_type` has it,
+    and a value past it the next type the list gives (CF-ENUMFOLD)."""
+    val, decimal, suf = int_literal_parts(text)  # the value, as the lexer checked it
+    suf = suf.lower()
     u, lrank = ("u" in suf), suf.count("l")  # lrank: 0 none / 1 long / 2 long long
-    if body[:2] in ("0x", "0X"):
-        val, decimal = int(body, 16), False
-    elif body[:2] in ("0b", "0B"):
-        val, decimal = int(body, 2), False
-    elif len(body) > 1 and body[0] == "0":
-        val, decimal = int(body, 8), False
-    else:
-        val, decimal = int(body or "0", 10), True
     INT, UINT = ("int", 4, True), ("unsigned int", 4, False)
-    LONG, ULONG = ("long", 8, True), ("unsigned long", 8, False)
+    LONG, ULONG = ("long", long_size, True), ("unsigned long", long_size, False)
     LL, ULL = ("long long", 8, True), ("unsigned long long", 8, False)
     if u:
         cands = {0: [UINT, ULONG, ULL], 1: [ULONG, ULL], 2: [ULL]}[lrank]
@@ -425,12 +443,24 @@ def valist(abi=None) -> CType:
     return CType("valist", name="va_list", size=size, align=size)
 
 
-def funcptr(name: str, ret: CType, params: tuple = (), abi=None) -> CType:
+def funcptr(
+    name: str, ret: CType, params: tuple = (), abi=None, variadic: bool = False, fquals: tuple = ()
+) -> CType:
     """A function-pointer type — pointer-sized (per the target ABI), carrying its return + parameter
-    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim)."""
+    types so the emitter can reconstruct a call (``name`` is the typedef spelling, used verbatim),
+    whether the function is variadic (CF-FPRET), and the qualifiers of its return and parameters
+    (CF-QUALS)."""
     size = abi.pointer_size if abi is not None else PTR_SIZE
     return CType(
-        "funcptr", name=name, size=size, align=size, signed=False, of=ret, params=tuple(params)
+        "funcptr",
+        name=name,
+        size=size,
+        align=size,
+        signed=False,
+        of=ret,
+        params=tuple(params),
+        variadic=variadic,
+        fquals=fquals,
     )
 
 
@@ -483,6 +513,7 @@ class AggregateBuilder:
         dbits = 0
         align = 1
         laid: list = []
+        anon: list = []  # the anonymous members' leaf groups (`CType.anon`)
         bf_unit_off = None  # byte offset of the active bitfield storage unit (packed path)
         bf_bits = 0  # bits already used in it
         bf_unit_size = 0
@@ -517,6 +548,8 @@ class AggregateBuilder:
                         dbits += a8 - (dbits % a8)
                     off = dbits // 8
                     dbits += mtype.size * 8
+                if mtype.fields:  # one initializable subobject over its promoted leaves
+                    anon.append((len(laid), len(mtype.fields), mtype, off))
                 for fn, fty, fbo, fbit, fbw in mtype.fields:
                     laid.append((fn, fty, off + fbo, fbit, fbw))
                 continue
@@ -561,4 +594,5 @@ class AggregateBuilder:
             align=max(1, align),
             fields=tuple(laid),
             packed=self.packed,
+            anon=tuple(anon),
         )

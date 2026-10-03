@@ -26,12 +26,17 @@ extern "C" {
 typedef struct bcir_cfront_result {
   bcir_unit unit;          /* the lowered translation unit (functions + call graph) */
   int ok;                  /* R1-R8 + R18 verifier clean */
-  int emitted_ok;          /* emitted[] is complete; false means the graph is valid but its optional
-                            * verified-C text exceeded the fixed result capacity (never partial) */
+  int emitted_ok;          /* `emitted` holds the complete verified C: set by every successful compile, clear
+                            * on every failure and after free (the text is never partial) */
   char diag[256];          /* first diagnostic (empty when ok) */
-  char emitted[32768];     /* faithful emitted C for every bcir_<fn> (the C.2 output seam) */
+  char *emitted;           /* faithful emitted C for every bcir_<fn> (the C.2 output seam), NUL-terminated. The
+                            * result owns it: it grows through the result's allocator with no fixed capacity
+                            * (CF-BUF), an allocation failure fails the compile ("oom"), and bcir_cfront_free
+                            * releases it. NULL when emitted_ok is clear. */
+  size_t emitted_len;      /* strlen(emitted); 0 when there is none */
   bcir_host_allocator _allocator; /* private owner used by idempotent free */
   uint32_t _owner_tag;
+  size_t _emitted_cap;     /* private: the bytes the owned `emitted` block holds */
 } bcir_cfront_result;
 
 /* Re-entrant hosted compiler context. The context owns parser caches and a
@@ -63,9 +68,9 @@ int bcir_cfront_compile_target_context(bcir_cfront_context *context,
  * initializes `out` for legacy callers; release each returned result before
  * passing the same object to another compatibility call.
  * Compile one C translation unit (the L1-L5 + L3/L4 subset) into the claim graph,
- * verify it (R1-R8 + R18 call-graph), and emit faithful C when it fits. Returns 0 on
- * graph success, nonzero on a parse/lowering error (diag set). `ok` reflects the verifier;
- * `emitted_ok` must be checked before consuming `emitted` (a too-large artifact is empty). */
+ * verify it (R1-R8 + R18 call-graph), and emit faithful C. Returns 0 on graph success,
+ * nonzero on a parse/lowering error or an allocation failure (diag set). `ok` reflects the
+ * verifier; `emitted_ok` must be checked before consuming `emitted` (NULL without it). */
 int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
 
 /* NON-THREAD-SAFE compatibility wrapper. As above, but lay the unit out for `target`'s data model (the C twin of frontends/cfront/abi.py:
@@ -73,6 +78,10 @@ int bcir_cfront_compile(const char *src, bcir_cfront_result *out);
  * selects the host (x86_64-linux LP64); an unknown name returns nonzero with diag set. `long`, the
  * pointer, and the `size_t`-class types follow the selected model; everything else is fixed by C. */
 int bcir_cfront_compile_target(const char *src, const char *target, bcir_cfront_result *out);
+/* Target `target`'s character types, which the preprocessor's `#if` reads a character constant by (CF-PPARITH):
+ * whether plain `char` is signed, and `wchar_t`'s size in bytes and signedness -- for `bcir_cpp_set_chars`. NULL is
+ * the default target (x86-64 Linux). Returns 0, or 1 for an unknown target name (the outputs untouched). */
+int bcir_cfront_target_chars(const char *target, int *char_signed, int *wchar_size, int *wchar_signed);
 
 /* Release every owned allocation and restore the valid empty state. Idempotent. */
 void bcir_cfront_free(bcir_cfront_result *out);
@@ -81,7 +90,8 @@ void bcir_cfront_free(bcir_cfront_result *out);
  * the Python<->C dual-rail parity key (bcir/tests/test_c_cfront.py computes the same from
  * the oracle). Writes "funcs=N claims=N mmio=N bf=N const=N binop=N call=N repro=N ok=1
  * digest=<16-hex>" (repro = the count of C23 [[reproducible]]/[[unsequenced]]-hinted functions in
- * the unit; digest = the cross-rail per-claim structural digest, see bcir_cfront_digest). */
+ * the unit; digest = the cross-rail per-claim structural digest, see bcir_cfront_digest), or in place of the line
+ * "out of memory" when the digest could not be computed whole. */
 void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
 
 /* The cross-rail PER-CLAIM STRUCTURAL DIGEST (the count->structural parity fix): an FNV-1a (64-bit)
@@ -93,20 +103,30 @@ void bcir_cfront_summary(const bcir_unit *u, int ok, char *buf, size_t n);
  * redirects (return-temp / store target, via the anchor). The Python oracle (bcir.verify.cfront_
  * structural_digest) builds the same records + hash, so the two rails produce a BYTE-IDENTICAL digest.
  * Per-claim record: "<op-base>|<opcode-int>|<read value-numbers>|<semantic imm>|<dom-int>";
- * anchor: "ret=<return-value VN>|stores=<dest-VN->value-VN;...>". */
-uint64_t bcir_cfront_digest(const bcir_unit *u);
+ * anchor: "ret=<return-value VN>|stores=<dest-VN->value-VN;...>". A value number is the FNV-1a (64-bit, 16 hex
+ * digits) of its producer's one-level spelling "<op-base>(<its reads' value numbers>)", so the canon is linear in
+ * the unit (CF-PPLIMITS: it spelled each value's whole dataflow tree, O(n^2) bytes for a chain of n dependent
+ * values and 2^n for a value read twice at each of n steps).
+ * Stores the digest at *out and returns 0; when an allocation the walk made failed, the canon it hashes is not whole,
+ * so neither is the hash: it stores 0 and returns BCIR_CANON_OOM -- never a digest of a canon that ran out of memory
+ * as an ordinary value (CF-PPLIMITS; the canon's SIZE_MAX, CF-LIMITS). */
+#define BCIR_CANON_OOM 1
+int bcir_cfront_digest(const bcir_unit *u, uint64_t *out);
 
 /* Allocator-injected canonical analysis forms. The allocator is borrowed for
  * the operation and every temporary is released before return. */
-uint64_t bcir_cfront_digest_with_allocator(const bcir_unit *u,
-                                           const bcir_host_allocator *allocator);
+int bcir_cfront_digest_with_allocator(const bcir_unit *u, const bcir_host_allocator *allocator,
+                                      uint64_t *out);
 
 /* The raw canonical serialization the digest hashes (text, NOT hashed) -- the byte-identity proof:
  * the Python cfront_structural_canon must equal this byte-for-byte on the corpus, so the digests
- * match. Writes the per-function sorted records, '@'-separated. */
-void bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
-void bcir_cfront_canon_with_allocator(const bcir_unit *u, char *buf, size_t n,
-                                      const bcir_host_allocator *allocator);
+ * match. Writes the per-function sorted records, '@'-separated. Returns the complete canon's length
+ * (snprintf semantics: at most n-1 bytes plus a NUL are written, so a canon longer than buf is cut and
+ * the length says so; buf may be NULL to measure), or SIZE_MAX when an allocation failed (buf is then
+ * empty). */
+size_t bcir_cfront_canon(const bcir_unit *u, char *buf, size_t n);
+size_t bcir_cfront_canon_with_allocator(const bcir_unit *u, char *buf, size_t n,
+                                        const bcir_host_allocator *allocator);
 
 /* G10 -- the escape analysis, indirect-call narrowing and effect footprint of a unit (the C twin of
  * bcir/frontends/cfront/escape.py: the same Andersen analysis and the same reports, byte for byte).

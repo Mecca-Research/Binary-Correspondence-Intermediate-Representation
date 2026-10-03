@@ -1,0 +1,62 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "bcir.tests.test_telemetry_replay:test_a_replay_re_decides_the_capture_and_carries_its_witness",
+    "bcir.tests.test_telemetry_replay:test_replayed_continuity_is_the_transports_sequence_not_the_claim_ids",
+    "bcir.tests.test_telemetry_replay:test_a_ring_capture_replays_with_the_rings_own_loss",
+    "bcir.tests.test_telemetry_replay:test_a_log_that_is_not_its_capture_is_refused",
+    "bcir.tests.test_telemetry_replay:test_the_writer_never_writes_a_log_the_reader_refuses"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_replay_re_decides_the_capture_and_carries_its_witness",
+      "label": "replay drops the transport's own loss from the witness it hands the RT3 gate",
+      "new": "    records, integrity = intake.witness()\n",
+      "old": "    records, integrity = intake.witness(dropped=transport_lost)\n",
+      "path": "bcir/telemetry_replay.py"
+    },
+    {
+      "expects": "test_a_replay_re_decides_the_capture_and_carries_its_witness",
+      "label": "replay ignores the live generation changes, so a stale record re-decides as current",
+      "new": "            pass\n",
+      "old": "            intake.set_live_generation(value)\n",
+      "path": "bcir/telemetry_replay.py"
+    },
+    {
+      "expects": "test_a_log_that_is_not_its_capture_is_refused",
+      "label": "replay ignores which signal table the capture decided against",
+      "new": "    if False:\n",
+      "old": "    if head[\"signal_table\"] != signal_table_fingerprint(intake.known):\n",
+      "path": "bcir/telemetry_replay.py"
+    },
+    {
+      "expects": "test_a_log_that_is_not_its_capture_is_refused",
+      "label": "replay never checks the digest, so a record altered after capture replays as the original",
+      "new": "    if False:\n",
+      "old": "    if trailer[\"digest\"] != digest.hexdigest():\n",
+      "path": "bcir/telemetry_replay.py"
+    },
+    {
+      "expects": "test_a_log_that_is_not_its_capture_is_refused",
+      "label": "replay never compares the re-decided report with the retained witness, so a trailer can say anything",
+      "new": "    if False:\n",
+      "old": "    if replayed != retained:\n",
+      "path": "bcir/telemetry_replay.py"
+    },
+    {
+      "expects": "test_a_log_that_is_not_its_capture_is_refused",
+      "label": "replay reads hex with the host parser's grammar (spaces, uppercase)",
+      "new": "        or False\n",
+      "old": "        or not set(text) <= _HEX\n",
+      "path": "bcir/telemetry_replay.py"
+    },
+    {
+      "expects": "test_the_writer_never_writes_a_log_the_reader_refuses",
+      "label": "the writer takes a record longer than the reader's bound, writing a log the reader refuses",
+      "new": "        if len(data) > 2 * MAX_LOG_RECORD:\n",
+      "old": "        if len(data) > MAX_LOG_RECORD:\n",
+      "path": "bcir/telemetry_replay.py"
+    }
+  ]
+}

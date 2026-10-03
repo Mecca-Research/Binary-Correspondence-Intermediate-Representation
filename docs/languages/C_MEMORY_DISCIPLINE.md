@@ -30,6 +30,17 @@ replacing process-global `malloc`.
   idempotent. A failed operation leaves no executable or emitted partial artifact.
 - `realloc` is always two-phase: failure preserves the original pointer, bytes, and
   capacity.
+- A pointer into a growable array does not survive a call that may grow the array:
+  copy what is needed, or keep the index, before the call. The C frontend's resource
+  and claim tables grow while a function lowers (`res_copy` in `bcir_cfront.c`;
+  `runtime/c/cfront_resgrow.c` is the sanitizer witness for the use-after-free this
+  rule was written after).
+- A recursive descent is bounded twice: a depth guard caps its levels, and a level's
+  frame holds only what every level needs. The address sanitizer gives each
+  address-taken local its own stack slot, so the locals of a rarely taken path that
+  inlines into a recursive function cost every level; such a path lives in a
+  `BCIR_NOINLINE` helper (`bcir_cfront.c`). `runtime/c/cfront_sec_deepnest.c`, which
+  nests past the C frontend's depth cap, is the sanitizer witness.
 - Every size addition, multiplication, alignment, and capacity growth is checked
   before allocation or pointer arithmetic.
 - Hosted compiler scratch uses per-operation arenas. Returned claim graphs and model

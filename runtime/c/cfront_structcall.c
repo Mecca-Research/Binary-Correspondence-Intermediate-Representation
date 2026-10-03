@@ -25,6 +25,7 @@ static struct P passthru(int a)              /* a function that returns another'
 
 int structcall(int x)
 {
+    x &= 0xFFFF;                             /* every sum below stays within `int` (CF-UBGATE) */
     struct P p = mk(x);                      /* assign a call result to a local */
     int s = p.x + p.y + (int)p.z;
     s += mk(x + 1).x + mk(x + 2).y;          /* member of a call result */

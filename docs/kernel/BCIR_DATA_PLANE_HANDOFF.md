@@ -113,7 +113,7 @@ and every segment carries the v3 defaults (dispatch core, channel `host`). The o
 3. no vector, or RIDs not strictly ascending → `BCIR_ERR_GENERATION` (a frozen step binds to a
    registry)
 4. per claim:
-   - read/write counts over their bounds, or a label that is not ≤ 31 printable ASCII characters
+   - read/write counts over their bounds, or a label that is not ≤ 127 printable ASCII characters
      → `BCIR_ERR_PROVENANCE`
    - ids not strictly ascending across all claims → `BCIR_ERR_PROVENANCE`
    - NOP claims are skipped for the checks that follow

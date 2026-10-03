@@ -9,6 +9,8 @@
 
 int assign_expr(int x, int y)
 {
+    x &= 0xFFFF;                         /* every sum below stays within `int` (CF-UBGATE) */
+    y &= 0xFFFF;
     int a, b, c;
     a = b = c = x;                       /* chained, right-associative: all get x */
     int sum = a + b + c;

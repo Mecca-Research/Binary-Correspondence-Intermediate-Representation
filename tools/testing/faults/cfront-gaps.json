@@ -1,0 +1,273 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_pointer_to_an_incomplete_struct_lowers_and_only_its_layout_is_refused",
+    "bcir.tests.test_c_cfront:test_brace_elision_runs_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_string_sized_locals_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_self_referential_structs_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_typedef_arrays_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_multidimensional_globals_and_member_arrays_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_storage_classes_in_any_position_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_initializer_and_declaration_refusals_on_both_rails",
+    "bcir.tests.test_c_cfront:test_wchar_t_is_the_targets_integer_type_on_both_rails",
+    "bcir.tests.test_c_cfront:test_sizeof_measures_the_operand_type_on_every_target",
+    "bcir.tests.test_c_cfront:test_sizeof_refuses_what_it_cannot_measure_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O1 excess initializer silently kept",
+      "new": "                return fr",
+      "old": "                raise CLowerError(\"excess elements in an initializer\")",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O2 override of an initialized subobject allowed",
+      "new": "        if False:",
+      "old": "        if any(a < hi and lo < b for a, b in w.stores):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_brace_elision_runs_as_the_original_on_both_rails",
+      "label": "O3 a designator does not return to the list's object",
+      "new": "        pass\n",
+      "old": "        del frames[1:]\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O4 a _Bool array takes a string",
+      "new": "        if el.is_bitint:",
+      "old": "        if el.name == \"_Bool\" or el.is_bitint:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O5 the 64-subobject bound lifted",
+      "new": "        if len(frames) >= 10 * _INIT_MAX_FRAMES:",
+      "old": "        if len(frames) >= _INIT_MAX_FRAMES:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O6 a string longer than its array accepted",
+      "new": "        if len(units) > count + 1:\n            raise CLowerError",
+      "old": "        if len(units) > count:\n            raise CLowerError",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_brace_elision_runs_as_the_original_on_both_rails",
+      "label": "O7 an inferred array sized one short",
+      "new": "        n = max(n - 1, 1)\n        if len(ct.shape) > 1:",
+      "old": "        n = max(n, 1)\n        if len(ct.shape) > 1:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_string_sized_locals_run_as_the_original_on_both_rails",
+      "label": "O8 an inferred string array drops its NUL",
+      "new": "            count = len(units)\n",
+      "old": "            count = len(units) + 1\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_wchar_t_is_the_targets_integer_type_on_both_rails",
+      "label": "O9 aarch64 wchar_t signed",
+      "new": "\"aarch64-linux\", \"aarch64-unknown-linux-gnu\", **_LP64, wchar_signed=True",
+      "old": "\"aarch64-linux\", \"aarch64-unknown-linux-gnu\", **_LP64, wchar_signed=False",
+      "path": "bcir/frontends/cfront/abi.py"
+    },
+    {
+      "expects": "test_wchar_t_is_the_targets_integer_type_on_both_rails",
+      "label": "O10 Windows wchar_t 4 bytes",
+      "new": "        wchar_size=4,\n",
+      "old": "        wchar_size=2,\n",
+      "path": "bcir/frontends/cfront/abi.py"
+    },
+    {
+      "expects": "test_a_pointer_to_an_incomplete_struct_lowers_and_only_its_layout_is_refused",
+      "label": "O11 an incomplete struct never completed",
+      "new": "        if False:",
+      "old": "        if ct is not None and ct.incomplete and ct.name in self.aggregates:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_storage_classes_in_any_position_run_as_the_original_on_both_rails",
+      "label": "O12 only a leading static honored",
+      "new": "        is_static = False",
+      "old": "        is_static = \"static\" in self.storage",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O13 block-scope extern bound as a local",
+      "new": "        if False:\n            raise CParseError(",
+      "old": "        if \"extern\" in self.storage:\n            raise CParseError(",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_storage_classes_in_any_position_run_as_the_original_on_both_rails",
+      "label": "O14 no specifier after a tag or typedef name",
+      "new": "        while False:",
+      "old": "        while self.at(\"IDENT\") and self.peek().text in _TRAILING_SPEC:",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_typedef_arrays_run_as_the_original_on_both_rails",
+      "label": "O15 a typedef'd array's dims outer, not inner",
+      "new": "            # the declarator's own dims are the outer ones: `row_t rw[2]` is two `row_t`s\n            array=tuple(base.array) + tuple(dims),\n",
+      "old": "            # the declarator's own dims are the outer ones: `row_t rw[2]` is two `row_t`s\n            array=tuple(dims) + tuple(base.array),\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_brace_elision_runs_as_the_original_on_both_rails",
+      "label": "O16 a[i].m[j] folds with the wrong stride",
+      "new": "mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size + 1",
+      "old": "mem_shape, mem_elem, aos_idx, aos_k = tuple(dims), t, el.idx, agg.size // t.size",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_sizeof_measures_the_operand_type_on_every_target",
+      "label": "O17 sizeof &f measures the function",
+      "new": "                    return self.func_rets.get(o.ident)",
+      "old": "                    return funcptr(o.ident, self.func_rets.get(o.ident), (), self.abi)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "O18 T a[]; with no initializer accepted",
+      "new": "                pass",
+      "old": "                # `T a[];` has no size and nothing to count (6.7.9p22) -- it was a zero-length array\n                raise CLowerError(\"an array of unknown size needs an initializer\")",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "T1 excess initializer silently kept",
+      "new": "    if(*nf==1){ return NULL; }",
+      "old": "    if(*nf==1){ fail(c,\"excess elements in an initializer\"); return NULL; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "T2 override of an initialized subobject allowed",
+      "new": "    if(0){ return 1; }",
+      "old": "    if(c->iw_rng[k].lo<hi && lo<c->iw_rng[k].hi){ fail(c,\"an initializer overrides a prior initialization of a subobject\"); return 1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "T3 the 64-subobject bound lifted to the array's end",
+      "new": "  if(*nf>=IW_MAXFRAMES+1){ fail(c,\"an initializer nested deeper than 64 subobjects\"); return NULL; }",
+      "old": "  if(*nf>=IW_MAXFRAMES){ fail(c,\"an initializer nested deeper than 64 subobjects\"); return NULL; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "T4 a _Bool array takes a string",
+      "new": "u->slot.kind==0 && !u->slot.is_float &&",
+      "old": "u->slot.kind==0 && !u->slot.is_float && !u->slot.is_bool &&",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_brace_elision_runs_as_the_original_on_both_rails",
+      "label": "T5 a[i].m[j] folds with the wrong stride",
+      "new": "kc->imm[0]=ES->size/m.size+1;}",
+      "old": "kc->imm[0]=ES->size/m.size;}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_multidimensional_globals_and_member_arrays_run_as_the_original_on_both_rails",
+      "label": "T6 a member element's narrow compound not re-read",
+      "new": "  return (0)",
+      "old": "  return ((int)sf->size < (int)(trr?trr->elem_bytes:4))",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_multidimensional_globals_and_member_arrays_run_as_the_original_on_both_rails",
+      "label": "T7 a postfix member-element step returns the new value",
+      "new": "  store_member_index(c,v,&f,idx,soa,sf,nw);\n  if(!prefix) return nw;\n",
+      "old": "  store_member_index(c,v,&f,idx,soa,sf,nw);\n  if(!prefix) return cur;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_storage_classes_in_any_position_run_as_the_original_on_both_rails",
+      "label": "T8 no specifier after the type",
+      "new": "  while(0){\n    if(is(c,\"volatile\"))",
+      "old": "  while(seen){\n    if(is(c,\"volatile\"))",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_storage_classes_in_any_position_run_as_the_original_on_both_rails",
+      "label": "T9 only a leading static honored",
+      "new": "    int is_static = 0;                 /*",
+      "old": "    int is_static = c->saw_static;                 /*",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "T10 block-scope extern bound as a local",
+      "new": "    if(0){ return; }",
+      "old": "    if(c->saw_extern){ fail(c,\"a block-scope extern declaration is not supported\"); return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_wchar_t_is_the_targets_integer_type_on_both_rails",
+      "label": "T11 aarch64 wchar_t signed",
+      "new": "{\"aarch64-linux\",  \"aarch64-unknown-linux-gnu\", \"LP64\",  8, 8, 16, 16, 16, 8, 4, 1, 1, 0},",
+      "old": "{\"aarch64-linux\",  \"aarch64-unknown-linux-gnu\", \"LP64\",  8, 8, 16, 16, 16, 8, 4, 0, 1, 0},",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_sizeof_measures_the_operand_type_on_every_target",
+      "label": "T12 an L literal 4 bytes on every target",
+      "new": "  return p=='u' ? 2 : p=='U' ? 4 : p=='L' ? 4 : 1;",
+      "old": "  return p=='u' ? 2 : p=='U' ? 4 : p=='L' ? cc_abi(c)->wchar_size : 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_typedef_arrays_run_as_the_original_on_both_rails",
+      "label": "T13 a typedef'd array's dims dropped",
+      "new": "      for(int d=0; d<0; d++){ int dim=btdd[d];   /* a typedef'd array's dims follow the declarator's own */",
+      "old": "      for(int d=0; d<btd; d++){ int dim=btdd[d];   /* a typedef'd array's dims follow the declarator's own */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_multidimensional_globals_and_member_arrays_run_as_the_original_on_both_rails",
+      "label": "T14 &m[i][j] takes one subscript",
+      "new": "          if(0){                              /* &m[i][j]",
+      "old": "          if(want>1){                              /* &m[i][j]",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_self_referential_structs_run_as_the_original_on_both_rails",
+      "label": "T15 a completed struct's pointer keeps size 0",
+      "new": "    if(0) F->ptee_size=sz; }",
+      "old": "    if(F->ptee_sidx==si && (F->is_ptr||F->elem_ptr) && F->ptee_depth<=1) F->ptee_size=sz; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_initializer_and_declaration_refusals_on_both_rails",
+      "label": "T16 T a[]; with no initializer accepted",
+      "new": "      if(0){ return; }",
+      "old": "      if(inferred && !is(c,\"=\")){ fail(c,\"an array of unknown size needs an initializer\"); return; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_typedef_arrays_run_as_the_original_on_both_rails",
+      "label": "T17 the multi-dimensional global element read as a flat index",
+      "new": "    { field gf; if(0 && global_md_field(c,v,&gf)){       /* g[i][j] of a multi-dimensional global (CF-SMALL) */",
+      "old": "    { field gf; if(global_md_field(c,v,&gf)){       /* g[i][j] of a multi-dimensional global (CF-SMALL) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_brace_elision_runs_as_the_original_on_both_rails",
+      "label": "T18 a[i].m[j] as a value not folded",
+      "new": "    { field af; uint32_t tot; int r=0; (void)aos_member_array;   /* `a[i].m[j]` =/OP= (CF-SMALL) */",
+      "old": "    { field af; uint32_t tot; int r=aos_member_array(c,v,idx,&af,&tot);   /* `a[i].m[j]` =/OP= (CF-SMALL) */",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

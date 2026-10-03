@@ -1,0 +1,182 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+    "bcir.tests.test_c_cfront:test_the_enumerators_the_triage_found_fold_as_c_does_on_both_rails",
+    "bcir.tests.test_c_cfront:test_every_enumerator_folds_to_clangs_value_on_each_target",
+    "bcir.tests.test_c_cfront:test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
+      "label": "EF1 the oracle folds every integer constant as a long long",
+      "new": "        ct = scalar(\"long long\", abi)\n",
+      "old": "        ct = scalar(node.ctype if is_scalar_name(node.ctype) else \"int\", abi)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
+      "label": "EF2 the oracle types a constant with a 64-bit long on every target",
+      "new": "                parse_int_literal(tk.text, tk.pos), int_literal_type(tk.text)\n",
+      "old": "                parse_int_literal(tk.text, tk.pos), int_literal_type(tk.text, self.abi.long_size)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF3 the oracle evaluates the right operand of && or || the left one decides",
+      "new": "                b = _kfold_node(node.rhs, abi, live, layouts)\n",
+      "old": "                b = _kfold_node(node.rhs, abi, live and (a.v != 0) == (node.op == \"&&\"), layouts)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF4 the oracle evaluates the arm ?: does not take",
+      "new": "        a = _kfold_node(node.then, abi, live, layouts)\n",
+      "old": "        a = _kfold_node(node.then, abi, live and c.v != 0, layouts)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
+      "label": "EF5 the oracle's cast converts nothing",
+      "new": "        return _kfold_node(node.operand, abi, live, layouts)\n",
+      "old": "        return _kconvert(_kfold_node(node.operand, abi, live, layouts), t)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF6 the oracle takes an enumerator no int holds",
+      "new": "            if False:\n",
+      "old": "            if not -(1 << 31) <= value < 1 << 31:\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF7 the oracle refuses a constant for the predicate's own reason",
+      "new": "        raise\n",
+      "old": "        raise CLowerError(ICE_NOT) from None\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF8 the oracle makes a constant dimension that is no literal a VLA",
+      "new": "            return e\n        return self._dim_in_range(v) if isinstance(e, cast.IntLit) else e\n",
+      "old": "            return e\n        return self._dim_in_range(v)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF9 the oracle takes a negative constant dimension",
+      "new": "        if v >= 1 << 31:\n",
+      "old": "        if not 0 <= v < 1 << 31:\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF10 the oracle's emit spells a negative constant as an unsigned int",
+      "new": "        return deftmp(c.wr[0], f\"{c.imm[0]}u\")\n",
+      "old": "        return deftmp(c.wr[0], _kspell(c.imm[0]))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF11 the oracle's emit spells a case label past LLONG_MAX without u",
+      "new": "                    out.append(f\"{ind}case {item.value}:\")\n",
+      "old": "                    out.append(f\"{ind}case {_const_spelling(item.value)}:\")\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
+      "label": "EF12 the twin folds every integer constant as a long long",
+      "new": "    *out=kint((unsigned long long)k.v,64,1); ok=1; }",
+      "old": "    *out=kint((unsigned long long)k.v,sz*8,sg); ok=1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
+      "label": "EF13 the twin types a constant with a 64-bit long on every target",
+      "new": "lit_int_type(k.s,k.n,bcir_abi_host(),&sz,&sg);",
+      "old": "lit_int_type(k.s,k.n,cc_abi(c),&sz,&sg);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF14 the twin evaluates the right operand of && or || the left one decides",
+      "new": "    ok = ce_expr(c,P[k].p+1,live,&r) && ce_op(P[k].s,live,out,&r,out);",
+      "old": "    ok = ce_expr(c,P[k].p+1,live && (P[k].p>2 || (out->p!=0)==(P[k].p==2)),&r) && ce_op(P[k].s,live,out,&r,out);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF15 the twin evaluates the arm ?: does not take",
+      "new": "    ok = ce_expr(c,0,live,&a) && is(c,\":\");",
+      "old": "    ok = ce_expr(c,0,live && out->p!=0,&a) && is(c,\":\");",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_every_enumerator_folds_to_clangs_value_on_each_target",
+      "label": "EF16 the twin's cast converts nothing",
+      "new": ": ce_primary(c,live,out));",
+      "old": ": ce_primary(c,live,&a) && kconvert(&a,&t,out));",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF17 the twin takes an enumerator no int holds",
+      "new": "    if(0){ fail(c,CE_NOTINT); return 1; }",
+      "old": "    if(val<INT_MIN || val>INT_MAX){ fail(c,CE_NOTINT); return 1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF18 the twin reads an unsigned constant past LLONG_MAX as negative",
+      "new": "  return kll(v->p); }",
+      "old": "  return v->sgn ? kll(v->p) : v->p>(unsigned long long)LLONG_MAX ? LLONG_MAX : (long long)v->p; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF19 the twin refuses a constant for a reason of its own",
+      "new": "  fail(c,\"non-constant enum initializer\"); return 0;",
+      "old": "  fail(c,CE_NOTCONST); return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF20 the twin makes a local's constant dimension that is no literal a VLA",
+      "new": "        long long cd=is(c,\"]\") ? 0 : isk(c,T_INT) && tok_is(tat(c,c->i+1),\"]\") ? ce_dim(c,1) : -1;",
+      "old": "        long long cd=is(c,\"]\") ? 0 : ce_dim(c,1);    /* an integer constant expression: a fixed dim (6.7.6.2p4) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF21 the twin reads a global's dimension as a literal only",
+      "new": "long long d=is(c,\"]\") ? 0 : isk(c,T_INT) ? (long long)adv(c).v : 0;\n    if(d<0) return;\n",
+      "old": "long long d=is(c,\"]\") ? 0 : ce_dim(c,0);   /* an integer constant expression */\n    if(d<0) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_constant_expressions_c_refuses_are_refused_and_constant_dimensions_fixed_on_both_rails",
+      "label": "EF22 the twin takes a negative constant dimension",
+      "new": "  if(d>INT_MAX){ fail(c,CE_DIMRANGE); return -1; }",
+      "old": "  if(d<0 || d>INT_MAX){ fail(c,CE_DIMRANGE); return -1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF23 the twin's emit spells a negative constant as its 64-bit two's complement",
+      "new": "      if(0) kdigits(kd,sizeof kd,(unsigned long long)cl->imm[0],1);",
+      "old": "      if(cs && cl->imm[0]<0) kdigits(kd,sizeof kd,(unsigned long long)cl->imm[0],1);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
+      "label": "EF24 the twin spells a case label past LLONG_MAX as negative",
+      "new": "  snprintf(d,sizeof d,\"%lld\",kll(v.p));",
+      "old": "  kdigits(d,sizeof d,v.p,v.sgn && (v.p>>63));",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

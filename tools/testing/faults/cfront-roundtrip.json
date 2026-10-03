@@ -1,0 +1,559 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+    "bcir.tests.test_cfront_roundtrip:test_volatile_member_emits_reach_a_fixed_point_given_their_definitions",
+    "bcir.tests.test_cfront_roundtrip:test_a_temporary_never_redeclares_a_declared_name",
+    "bcir.tests.test_cfront_roundtrip:test_roundtrip_smoke_and_exclusion_set_is_pinned",
+    "bcir.tests.test_cfront_roundtrip:test_loop_emits_reach_a_fixed_point_and_compile",
+    "bcir.tests.test_cfront_roundtrip:test_the_zero_baseline_re_lowers_as_itself",
+    "bcir.tests.test_c_cfront:test_string_routines_are_libc_edges_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails",
+    "bcir.tests.test_c_cfront:test_both_emitters_spell_the_zero_baseline_as_the_empty_initializer",
+    "bcir.tests.test_c_cfront:test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+    "bcir.tests.test_c_cfront:test_link_flag_derivation_dual_rail",
+    "bcir.tests.test_c_cfront:test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+    "bcir.tests.test_cfront_roundtrip:test_function_pointer_and_atomic_emits_reach_a_fixed_point",
+    "bcir.tests.test_c_cfront:test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "O28 a byte-offset volatile access not folded",
+      "new": "                lv = None",
+      "old": "                lv = self._byte_offset_access(operand)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+      "label": "O29 an emitter temp redeclares a declared name",
+      "new": "            while False:",
+      "old": "            while name in self.used:",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_volatile_member_emits_reach_a_fixed_point_given_their_definitions",
+      "label": "O30 a copy into a temp recognized by its spelling",
+      "new": "        if ref(c.wr[0]) == f\"t{c.wr[0]}\":  # into a temp: the value read from a volatile object",
+      "old": "        if ref.is_temp(c.wr[0]):  # into a temp: the value read from a volatile object",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "T40 the twin's byte-offset matcher never matches",
+      "new": "  if(0 && bo_match(c,base,f)) return 1;",
+      "old": "  if(bo_match(c,base,f)) return 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "T41 a byte-offset volatile load not folded on the twin",
+      "new": "  if(1 || !byte_off_access(c,&bb,&bf)) return 0;",
+      "old": "  if(!byte_off_access(c,&bb,&bf)) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_volatile_access_at_a_literal_byte_offset_folds_alike_on_both_rails",
+      "label": "T42 a byte-offset volatile store not folded on the twin",
+      "new": "      if(0 && byte_off_access(c,&bb,&bf)){",
+      "old": "      if(byte_off_access(c,&bb,&bf)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_temporary_never_redeclares_a_declared_name_on_either_rail",
+      "label": "T43 a twin temp redeclares a declared name",
+      "new": "    for(int k=2; 0 && declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,\"t%u_%d\",rid,k);",
+      "old": "    for(int k=2; declared_name(f,buf); k++) snprintf(buf,BCIR_EMIT_NAME,\"t%u_%d\",rid,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_zero_baseline_re_lowers_as_itself",
+      "label": "O31 the zero baseline spelled `= {0}` again",
+      "new": "        zi = \" = {0}\" if rid in lf.zero_init_locals else \"\"",
+      "old": "        zi = \" = {}\" if rid in lf.zero_init_locals else \"\"",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_loop_emits_reach_a_fixed_point_and_compile",
+      "label": "O32 a loop of the constant 1 tested again",
+      "new": "    return False and any(\n        isinstance(c, Claim)\n        and c.op == \"c.const\"",
+      "old": "    return any(\n        isinstance(c, Claim)\n        and c.op == \"c.const\"",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_loop_emits_reach_a_fixed_point_and_compile",
+      "label": "O33 a continue label not cleared of the function's own labels",
+      "new": "        while False:\n            name, k = f\"__cont_{loop_id}_{k}\", k + 1",
+      "old": "        while name in taken:\n            name, k = f\"__cont_{loop_id}_{k}\", k + 1",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_string_routines_are_libc_edges_on_both_rails",
+      "label": "O34 memcpy/memmove/memset no libc edges on the oracle",
+      "new": "        if False:",
+      "old": "        if node.callee in _STRING_MEM and node.callee not in self.func_rets:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "O35 the oracle's string edge ignores the unit's own definition",
+      "new": "        if node.callee in _STRING_MEM:",
+      "old": "        if node.callee in _STRING_MEM and node.callee not in self.func_rets:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_roundtrip_smoke_and_exclusion_set_is_pinned",
+      "label": "O36 the classifier supplies no definitions",
+      "new": "    defs = \"\"\n    e1 = _emit_joined(r1)",
+      "old": "    defs = _aggregate_defs(src, _includes_for(fx))\n    e1 = _emit_joined(r1)",
+      "path": "bcir/tests/test_cfront_roundtrip.py"
+    },
+    {
+      "expects": "test_link_flag_derivation_dual_rail",
+      "label": "O37 a string routine an unknown callee to the link rule",
+      "new": "",
+      "old": "        or callee in _STRING_MEM\n",
+      "path": "bcir/frontends/cfront/linkflags.py"
+    },
+    {
+      "expects": "test_the_linkable_emit_includes_the_header_of_each_libc_edge",
+      "label": "O38 the linkable emit includes <math.h> for a string routine",
+      "new": "",
+      "old": "    if callees & _STRING_MEM or _MEM_CALL.search(code):\n        parts.append(\"#include <string.h>\")\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_both_emitters_spell_the_zero_baseline_as_the_empty_initializer",
+      "label": "T44 the twin's zero baseline spelled `{0}` again",
+      "new": "                             : r->zinit ? \"{0}\" : \"\";",
+      "old": "                             : r->zinit ? \"{}\" : \"\";",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails",
+      "label": "T45 a loop of the constant 1 tested again on the twin",
+      "new": "      if(0 && pv && !strcmp(pv->op,\"c.const\") && pv->n_wr==1 && cl->n_rd==1 && pv->wr[0]==cl->rd[0] && pv->n_imm==1\n         && pv->imm[0]==1) continue;",
+      "old": "      if(pv && !strcmp(pv->op,\"c.const\") && pv->n_wr==1 && cl->n_rd==1 && pv->wr[0]==cl->rd[0] && pv->n_imm==1\n         && pv->imm[0]==1) continue;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_label_spelled_as_a_continue_label_stays_one_label_on_both_rails",
+      "label": "T46 a twin continue label not cleared of the function's own labels",
+      "new": "  for(int k=2; 0 && own && label_taken(f,buf); k++) snprintf(buf,cap,\"__cont_%d_%d\",n,k);",
+      "old": "  for(int k=2; own && label_taken(f,buf); k++) snprintf(buf,cap,\"__cont_%d_%d\",n,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_string_routines_are_libc_edges_on_both_rails",
+      "label": "T47 memcpy/memmove/memset no libc edges on the twin",
+      "new": "  if(0 && is_string_mem(name->s,name->n) && !unit_defines(c,name)){   /* <string.h> memcpy/memmove/memset */",
+      "old": "  if(is_string_mem(name->s,name->n) && !unit_defines(c,name)){   /* <string.h> memcpy/memmove/memset */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "T48 the twin finds no definition of a library name",
+      "new": "    def=0;",
+      "old": "    def=tok_is(tat(c,j+1),\"{\");",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "T49 the twin's allocator edge ignores the unit's own definition",
+      "new": "  if(0 && sal && unit_defines(c,name)) sal=0;     /* ... unless the unit defines it: its own function */",
+      "old": "  if(sal && unit_defines(c,name)) sal=0;     /* ... unless the unit defines it: its own function */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_library_name_the_unit_defines_is_its_own_function_on_both_rails",
+      "label": "T50 the twin asks only the definitions before a printf-family call",
+      "new": "  if(!rt && is_extern_variadic(name->s,name->n)){   /* a printf/scanf-family external -> opaque */",
+      "old": "  if(is_extern_variadic(name->s,name->n) && !unit_defines(c,name)){   /* a printf/scanf-family external -> opaque */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O39 the oracle's cast reads no function-pointer type name",
+      "new": "            tref = self._type_spec()\n            ptr, pq = (",
+      "old": "            tref = self._fp_type_name(self._type_spec())\n            ptr, pq = (",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O40 a type name that names an identifier accepted on the oracle",
+      "new": "        if False:\n            raise CParseError(TYPE_NAME_NAMED, pos=self.peek().pos)",
+      "old": "        if name:\n            raise CParseError(TYPE_NAME_NAMED, pos=self.peek().pos)",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O41 a cast to an array type lowered on the oracle",
+      "new": "            if False:",
+      "old": "            if tref.array and not literal:",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails",
+      "label": "O42 a compound literal of `_Atomic` type lowered on the oracle",
+      "new": "            if False:",
+      "old": "            if literal and \"_Atomic\" in tref.quals and not tref.ptr:",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O43 `_Atomic` no cast's type name on the oracle",
+      "new": "            )  # `(_Atomic T *)p` (CF-RTFP)",
+      "old": "                \"_Atomic\",\n            )  # `(_Atomic T *)p` (CF-RTFP)",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O44 the oracle folds no function-pointer slot at a byte offset",
+      "new": "        if False:  # a function-pointer slot (CF-RTFP)",
+      "old": "        if el.kind == \"funcptr\" and not el.volatile:  # a function-pointer slot (CF-RTFP)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O45 the oracle folds no `_Atomic` access at a byte offset",
+      "new": "        if not el.volatile:",
+      "old": "        if not (el.volatile or el.atomic):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O46 the oracle's slot store keeps its cast",
+      "new": "            if slot is not None and slot.ct.kind == \"funcptr\":\n                pass",
+      "old": "            if slot is not None and slot.ct.kind == \"funcptr\":\n                value = value.operand",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O47 the oracle's emit spells a function-pointer cast by its op",
+      "new": "        to = c.op.split(\":\", 1)[1]",
+      "old": "        to = _qual_type(rt, ()) if _has_fp(rt) else c.op.split(\":\", 1)[1]",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O48 a standard type's name read as a keyword after a type on the oracle",
+      "new": "                if False:",
+      "old": "                if w not in _TYPE_KW and words:",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_function_pointer_and_atomic_emits_reach_a_fixed_point",
+      "label": "O49 a `_BitInt` stored to a bit-field not converted on the oracle",
+      "new": "            if False",
+      "old": "            if vt is not None and vt.is_bitint",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_function_pointer_and_atomic_emits_reach_a_fixed_point",
+      "label": "O50 the classifier supplies no typedef",
+      "new": "            if tagged:",
+      "old": "            if tagged or head.split()[:1] == [\"typedef\"]:",
+      "path": "bcir/tests/test_cfront_roundtrip.py"
+    },
+    {
+      "expects": "test_function_pointer_and_atomic_emits_reach_a_fixed_point",
+      "label": "O51 the classifier supplies no prototype of a function the original defines",
+      "new": "                    pass  # a function's definition: its prototype",
+      "old": "                    out.append(_prototype(text[start:i]))  # a function's definition: its prototype",
+      "path": "bcir/tests/test_cfront_roundtrip.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O52 `sizeof (T){...}` read as `sizeof (T)` on the oracle",
+      "new": "            if self._is_decl_start():  # sizeof ( type-name )",
+      "old": "            if self._is_decl_start() and not self._literal_follows():  # sizeof ( type-name )",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O53 a cast of 0 no null pointer on the oracle",
+      "new": "            return self._cast_value(v, ct)",
+      "old": "            return self._cast_value(self._null_pointer(v, ct), ct)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails",
+      "label": "O54 a cast to an `_Atomic` type lowered on the oracle",
+      "new": "            if ct.atomic:  # `(_Atomic T)v`, which Clang does not convert (`CAST_ATOMIC`)\n                ct = unqualified(ct)",
+      "old": "            if ct.atomic:  # `(_Atomic T)v`, which Clang does not convert (`CAST_ATOMIC`)\n                raise CLowerError(CAST_ATOMIC)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "O55 a function-pointer cast's temp untyped on the oracle",
+      "new": "        typed = ct.is_integer or ct.is_float or ct.kind in (\"pointer\",)",
+      "old": "        typed = ct.is_integer or ct.is_float or ct.kind in (\"pointer\", \"funcptr\")",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O56 a pointer to a function pointer spelled by no type on the oracle's cast",
+      "new": "        base = \"void\"",
+      "old": "        base = \"fnptr\"",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T51 the twin's cast reads no function-pointer type name",
+      "new": "  if(p_type(c,ty,si)) return 1;\n  return 0;",
+      "old": "  if(p_type(c,ty,si)) return 1;\n  if(!fp_decl_at(c,1)) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T52 a type name that names an identifier accepted on the twin",
+      "new": "  (void)nm;",
+      "old": "  if(nm.n){ fail(c,CC_TYPE_NAME_NAMED); return 1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T53 a cast to an array type not refused on the twin",
+      "new": "",
+      "old": "      if(la_nd && is(c,\")\") && !tok_is(tat(c,c->i+1),\"{\")){ fail(c,CC_CAST_ARRAY); return 0; }   /* C11 6.5.4p2 */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails",
+      "label": "T54 a compound literal of `_Atomic` type lowered on the twin",
+      "new": "          if(!tok_is(tat(c,c->i+1),\"{\")){ fail(c,CC_CAST_ATOMIC); return 0; } }",
+      "old": "          fail(c,tok_is(tat(c,c->i+1),\"{\") ? CC_ATOMIC_LITERAL : CC_CAST_ATOMIC); return 0; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails",
+      "label": "T55 `&` of a compound literal of `_Atomic` type lowered on the twin",
+      "new": "",
+      "old": "        if(is(c,\"{\") && ty.is_atomic && ty.kind!=2){ fail(c,CC_ATOMIC_LITERAL); return 0; }   /* CF-RTFP */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T56 the twin's slot store keeps its cast",
+      "new": "val=p_expr(c);",
+      "old": "if(!bf.fp_sig || !fp_slot_value(c,&val)) val=p_expr(c);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T57 the twin's compound of an `_Atomic` slot no one atomic operation",
+      "new": "          if(0){ char ch=aop->s[0]; c->i++;",
+      "old": "          if(cmp && bf.is_atomic){ char ch=aop->s[0]; c->i++;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T58 the twin's step of an `_Atomic` slot no one atomic operation",
+      "new": "      if(0) form=5;",
+      "old": "      if(af.is_atomic) form=5;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T59 the twin folds no `_Atomic` access at a byte offset",
+      "new": "  if(!fpslot && (to.ptr_to_fp || to.size<=0 || !to.is_volatile))",
+      "old": "  if(!fpslot && (to.ptr_to_fp || to.size<=0 || !(to.is_volatile || to.is_atomic)))",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T60 the twin folds no function-pointer slot at a byte offset",
+      "new": "  int fpslot=0;",
+      "old": "  int fpslot=to.ptr_to_fp && !to.is_volatile;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T61 the twin's emit spells a function-pointer cast by its op",
+      "new": "                  cl->op+7,",
+      "old": "                  strncmp(to,\"fnptr\",5) ? cl->op+7 : dt,",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T62 `sizeof` of an array of function pointers one pointer on the twin",
+      "new": "  if(p_cast_type(c,&t->ty,&t->si)) return 1;",
+      "old": "  if(p_cast_type(c,&t->ty,&t->si) || fp_name_dims(c,&t->ty,t->dims,&t->nd,4)) return 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T63 `sizeof` of an array compound literal a pointer's on the twin",
+      "new": "    if(starts_type_name(c)) return 0;",
+      "old": "    if(starts_type_name(c)) r=sz_literal(c,t);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T64 `sizeof (T){...}` read as `sizeof (T)` on the twin",
+      "new": "    if(starts_decl_type(c)){",
+      "old": "    if(starts_decl_type(c) && !literal_close(c,c->i)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T65 a compound literal of function pointers untyped on the twin",
+      "new": "",
+      "old": "  else if(ty->kind==3) ptee_fp(c,&c->fn->res[ari],ty);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T66 no call through a compound literal's element on the twin",
+      "new": "            return postfix_lvalue(c,&sv); }",
+      "old": "            return call_value(c,postfix_lvalue(c,&sv)); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T67 a typedef of a table of function pointers refused on the twin",
+      "new": "    if(0){                               /* `typedef R (*NAME[N])(P);`",
+      "old": "    if(fp_decl_at(c,0)){                               /* `typedef R (*NAME[N])(P);`",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T68 `typeof` of a function-pointer value an integer on the twin",
+      "new": "    } else if(0){",
+      "old": "    } else if(r->is_funcptr && res_sig(c,v)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T69 `( E ) = v;` refused on the twin",
+      "new": "    if(0){",
+      "old": "    if(first && tok_is(&t,\"(\") && np<UP_FRAMES && !deep){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T70 a braced function-pointer initializer refused on the twin",
+      "new": "          if(0){ c->i++;                        /* `= {f}`",
+      "old": "          if(is(c,\"{\")){ c->i++;                        /* `= {f}`",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T71 `op_t f = 0` an integer on the twin",
+      "new": "          (void)fty;                     /* `= 0`",
+      "old": "          v=null_pointer(c,v,&fty);                     /* `= 0`",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T72 a cast of 0 no null pointer on the twin",
+      "new": "  /* `(T *)0`",
+      "old": "  v=null_pointer(c,v,&ty);   /* `(T *)0`",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T73 `_Atomic` no type name on the twin",
+      "new": "tok_is(t,\"const\")||tok_is(t,\"volatile\")",
+      "old": "tok_is(t,\"const\")||tok_is(t,\"volatile\")||tok_is(t,\"_Atomic\")",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_casts_to_function_pointer_and_atomic_types_run_as_the_original",
+      "label": "T74 a function-pointer cast's temp an integer on the twin",
+      "new": "  uint32_t r = 0 ? fp_value_temp(c, ty.tag)",
+      "old": "  uint32_t r = ty.kind==3 ? fp_value_temp(c, ty.tag)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T75 a pointer to a function pointer spelled by no type on the twin's cast",
+      "new": "",
+      "old": "    else if(ty->ptr_to_fp) snprintf(base,sizeof base,\"fnptr\");",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails",
+      "label": "O57 a cast to an `_Atomic` type typed under `sizeof` on the oracle",
+      "new": "            if ct.atomic and isinstance(node, cast.Cast):\n                pass",
+      "old": "            if ct.atomic and isinstance(node, cast.Cast):\n                raise CLowerError(CAST_ATOMIC)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O58 the oracle's emit stores a function pointer through a generic slot",
+      "new": "    if True:\n        return f\"*(void (**)(void))({dst}) = (void (*)(void)){ref(rid)};\"",
+      "old": "    if vt is None:\n        return f\"*(void (**)(void))({dst}) = (void (*)(void)){ref(rid)};\"",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O59 the oracle's emit types a function's name by its return alone",
+      "new": "            fn_types={},",
+      "old": "            fn_types={rid: self._fn_type(rid) for rid in self.func_globals},",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "O60 a pointer compound literal's null constant an `int` on the oracle",
+      "new": "            self._emit(\"c.copy\", Opcode.ADD, (v,), (rid,))",
+      "old": "            v = self._null_pointer(v, ct)\n            self._emit(\"c.copy\", Opcode.ADD, (v,), (rid,))",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_an_atomic_aggregate_cast_or_literal_is_refused_on_both_rails",
+      "label": "T76 a cast to an `_Atomic` type lowered on the twin",
+      "new": "          if(tok_is(tat(c,c->i+1),\"{\")){ fail(c,CC_ATOMIC_LITERAL); return 0; } }",
+      "old": "          fail(c,tok_is(tat(c,c->i+1),\"{\") ? CC_ATOMIC_LITERAL : CC_CAST_ATOMIC); return 0; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T77 the twin's emit stores a function pointer through a generic slot",
+      "new": "  (void)vr; (void)nm; snprintf(buf,n,\"%s\",\"void (**)(void)\");",
+      "old": "  if(vr->agg[0]) snprintf(buf,n,\"%s *\",vr->agg); else snprintf(buf,n,\"__typeof__(&*%s) *\",nm);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T78 the twin stores a function pointer into a member table's element through an integer",
+      "new": "        else if(0){ char fs[BCIR_EMIT_TYPE+32];   /* an element of a member table of function pointers",
+      "old": "        else if(vr && vr->is_funcptr){ char fs[BCIR_EMIT_TYPE+32];   /* an element of a member table of function pointers",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T79 a pointer compound literal a `uint32_t` on the twin",
+      "new": "  uint32_t rid=0 ? temp_ptr(c,ty,si) : add_res(c,BCIR_DOM_RAM, ty->size?ty->size:4, 1, 0, BCIR_RK_SCALAR, nm);",
+      "old": "  uint32_t rid=ty->kind==2 ? temp_ptr(c,ty,si) : add_res(c,BCIR_DOM_RAM, ty->size?ty->size:4, 1, 0, BCIR_RK_SCALAR, nm);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T80 a pointer compound literal's null constant an `int` on the twin",
+      "new": "                                                     /* `(T *){0}`: a null pointer of the literal's type */",
+      "old": "  v=null_pointer(c,v,ty);                            /* `(T *){0}`: a null pointer of the literal's type */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T81 `&(T *){p}` one level short on the twin",
+      "new": "          bcir_ctype pt=ty; if(pt.kind==2){ pt.kind=0; pt.ptr_depth=0; }\n          uint32_t t=addr_temp(c,&pt); if(c->failed) return 0;",
+      "old": "          uint32_t t=addr_temp(c,&ty); if(c->failed) return 0;   /* a `T *` to it -- `T **` of a pointer one (CF-RTFP) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_pointer_types_refused_and_lowered_alike_on_both_rails",
+      "label": "T82 no call through a function-pointer compound literal on the twin",
+      "new": "          return rid; }",
+      "old": "          return call_value(c,rid); }              /* `(op_t){f}(x)`: a call through it (CF-RTFP) */",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

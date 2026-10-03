@@ -157,7 +157,27 @@ static const char cfront_source[]=
   "  return n + b;\n"
   "}\n";
 
-static int cfront_once(fault_state *state,size_t fail_at,size_t *attempts){
+/* CF-BUF: a unit whose verified C outgrows the emit's first block several times over, and whose function-pointer
+ * parameters grow the typedef prelude -- the emit and its prelude grow through the context's allocator, so the
+ * sweep below fails each of those growths in turn. `funcs` functions, written into `src`. */
+enum { WIDE_FUNCS = 64, WIDE_SOURCE = 32768 };
+static int cfront_wide_source(char *src,size_t cap){
+  size_t w=0;
+  for(int k=0;k<WIDE_FUNCS;k++){
+    int n=snprintf(src+w,cap-w,
+      "uint32_t wide_%d(uint32_t (*op_%d)(uint32_t, uint32_t), uint32_t a, uint32_t b) {\n"
+      "  uint32_t s = a * %du + b;\n  s ^= s >> 3;\n  s += b * %du;\n  return s + %du + op_%d(a, b);\n}\n",
+      k,k,k+3,k+5,k+7,k);
+    CHECK(n>0&&(size_t)n<cap-w);
+    w+=(size_t)n;
+  }
+  return 0;
+}
+
+/* One compile under the fault allocator (fail_at 0: none fails). A failure is the whole compile's: no unit, no
+ * emitted C -- never a partial text -- and every block released; a success emits `expect` whole. */
+static int cfront_once(const char *source,const char *expect,size_t min_emit,fault_state *state,
+                       size_t fail_at,size_t *attempts){
   bcir_host_allocator allocator=fault_allocator(state);
   bcir_cfront_context context;
   bcir_cfront_result result;
@@ -165,63 +185,86 @@ static int cfront_once(fault_state *state,size_t fail_at,size_t *attempts){
   bcir_cfront_result_init(&result);
   CHECK(!bcir_cfront_context_init(&context,&allocator));
   state->attempt=0;state->fail_at=fail_at;
-  int rc=bcir_cfront_compile_context(&context,cfront_source,&result);
+  int rc=bcir_cfront_compile_context(&context,source,&result);
   *attempts=state->attempt;
   if(fail_at){
     CHECK(rc!=0);CHECK(result.unit.funcs==NULL);CHECK(result.unit.n_funcs==0);
-    CHECK(!result.emitted_ok&&result.emitted[0]==0);
+    CHECK(!result.emitted_ok&&result.emitted==NULL&&result.emitted_len==0);
+    CHECK(!strcmp(result.diag,"oom"));
   }else{
-    CHECK(rc==0&&result.ok&&result.emitted_ok);
-    CHECK(result.unit.n_funcs==1&&strstr(result.emitted,"hi ")!=NULL);
+    CHECK(rc==0&&result.ok&&result.emitted_ok&&result.emitted!=NULL);
+    CHECK(result.emitted_len==strlen(result.emitted)&&result.emitted_len>=min_emit);
+    CHECK(strstr(result.emitted,expect)!=NULL);
   }
   bcir_cfront_free(&result);
   CHECK(result.unit.funcs==NULL&&result.unit.n_funcs==0&&result.ok==0);
-  CHECK(result.emitted_ok==0&&result.emitted[0]==0&&result.diag[0]==0);
+  CHECK(result.emitted_ok==0&&result.emitted==NULL&&result.emitted_len==0&&result.diag[0]==0);
   bcir_cfront_free(&result);
   bcir_cfront_context_destroy(&context);bcir_cfront_context_destroy(&context);
   CHECK(state->live==0u);
   return 0;
 }
 
-static int cfront_fault_test(void){
+static int cfront_sweep(const char *source,const char *expect,size_t min_emit,size_t min_attempts){
   fault_state state={0};size_t attempts=0,baseline;
-  CHECK(!cfront_once(&state,0,&attempts));
-  baseline=attempts;CHECK(baseline>5u);
+  CHECK(!cfront_once(source,expect,min_emit,&state,0,&attempts));
+  baseline=attempts;CHECK(baseline>=min_attempts);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
-    CHECK(!cfront_once(&state,fail,&attempts));
+    CHECK(!cfront_once(source,expect,min_emit,&state,fail,&attempts));
   }
   return 0;
 }
 
-/* a G10 report (bcir_cfront_effects / bcir_cfront_escape) under an injected allocation failure: the
- * complete report (the bytes the fault-free run wrote) with its length, or -- when an allocation it
- * made failed -- SIZE_MAX and an empty buffer. Never a partial report, and never a short one that
- * claims to be whole. */
+static int cfront_fault_test(void){
+  char wide[WIDE_SOURCE];
+  CHECK(!cfront_sweep(cfront_source,"hi ",1u,6u));
+  CHECK(!cfront_wide_source(wide,sizeof wide));
+  /* the emit's first block is 4 KiB: this one's verified C needs it grown at least three times */
+  CHECK(!cfront_sweep(wide,"typedef uint32_t (*__bcir_fp63)(uint32_t, uint32_t);",8u*4096u+1u,64u));
+  return 0;
+}
+
+/* a G10 report (bcir_cfront_effects / bcir_cfront_escape), or the canon, under an injected allocation
+ * failure: the complete report (the bytes the fault-free run wrote) with its length, or -- when an
+ * allocation it made failed -- SIZE_MAX and an empty buffer. Never a partial report, and never a short
+ * one that claims to be whole. */
 static int report_ok(const char *buf,size_t cap,size_t len,const char *whole,int may_fail){
   if(len==SIZE_MAX){ CHECK(may_fail); CHECK(buf[0]==0); return 0; }
   CHECK(len<cap && strlen(buf)==len && !strcmp(buf,whole));
   return 0;
 }
 
-enum { REPORT_CAP = 1024 };
+enum { REPORT_CAP = 1024, CANON_CAP = 4096 };
 
 static int cfront_analysis_once(const bcir_unit *unit,fault_state *state,size_t fail_at,
-                                size_t *attempts,char *whole_fx,char *whole_es){
+                                size_t *attempts,uint64_t *whole_dg,char *whole_cn,char *whole_fx,char *whole_es){
   bcir_host_allocator allocator=fault_allocator(state);
-  char canon[4096],effects[REPORT_CAP],escape[REPORT_CAP];
+  char canon[CANON_CAP],cut[16],effects[REPORT_CAP],escape[REPORT_CAP];
   state->attempt=0;state->fail_at=fail_at;
-  memset(canon,0xa5,sizeof canon);memset(effects,0xa5,sizeof effects);memset(escape,0xa5,sizeof escape);
-  (void)bcir_cfront_digest_with_allocator(unit,&allocator);
-  bcir_cfront_canon_with_allocator(unit,canon,sizeof canon,&allocator);
+  memset(canon,0xa5,sizeof canon);memset(cut,0xa5,sizeof cut);
+  memset(effects,0xa5,sizeof effects);memset(escape,0xa5,sizeof escape);
+  uint64_t dg=1;
+  int dr=bcir_cfront_digest_with_allocator(unit,&allocator,&dg);   /* the digest, or no digest (CF-PPLIMITS) */
+  size_t cn=bcir_cfront_canon_with_allocator(unit,canon,sizeof canon,&allocator);
+  size_t mn=bcir_cfront_canon_with_allocator(unit,NULL,0,&allocator);          /* measured (CF-LIMITS) */
+  size_t un=bcir_cfront_canon_with_allocator(unit,cut,sizeof cut,&allocator);  /* cut, and saying so */
   size_t fx=bcir_cfront_effects_with_allocator(unit,effects,sizeof effects,&allocator);
   size_t es=bcir_cfront_escape_with_allocator(unit,escape,sizeof escape,&allocator);
   *attempts=state->attempt;
-  CHECK(memchr(canon,0,sizeof canon)!=NULL);
   if(!fail_at){   /* the fault-free run: whole reports, and the reference every failure is held to */
-    CHECK(fx<sizeof effects && es<sizeof escape && fx>0 && es>0);
+    CHECK(cn>sizeof cut && cn<sizeof canon && fx<sizeof effects && es<sizeof escape && fx>0 && es>0);
+    CHECK(dr==0); *whole_dg=dg;
+    memcpy(whole_cn,canon,sizeof canon);
     memcpy(whole_fx,effects,sizeof effects);memcpy(whole_es,escape,sizeof escape);
   }
+  /* the whole digest, or a refusal with none: never the hash of a canon an allocation failed in */
+  CHECK(dr ? fail_at!=0 && dg==0 : dg==*whole_dg);
+  CHECK(!report_ok(canon,sizeof canon,cn,whole_cn,fail_at!=0));
+  CHECK(mn==SIZE_MAX ? fail_at!=0 : mn==strlen(whole_cn));
+  /* a canon longer than its buffer: the buffer holds its first bytes and a NUL, the length the whole one's */
+  if(un==SIZE_MAX){ CHECK(fail_at!=0); CHECK(cut[0]==0); }
+  else CHECK(un==strlen(whole_cn) && strlen(cut)==sizeof cut-1u && !memcmp(cut,whole_cn,sizeof cut-1u));
   CHECK(!report_ok(effects,sizeof effects,fx,whole_fx,fail_at!=0));
   CHECK(!report_ok(escape,sizeof escape,es,whole_es,fail_at!=0));
   CHECK(state->live==0u);
@@ -230,15 +273,15 @@ static int cfront_analysis_once(const bcir_unit *unit,fault_state *state,size_t 
 
 static int cfront_analysis_fault_test(void){
   bcir_cfront_context context;bcir_cfront_result result;
-  fault_state state={0};size_t attempts=0,baseline;
-  char whole_fx[REPORT_CAP],whole_es[REPORT_CAP];
+  fault_state state={0};size_t attempts=0,baseline;uint64_t whole_dg=0;
+  char whole_cn[CANON_CAP],whole_fx[REPORT_CAP],whole_es[REPORT_CAP];
   bcir_cfront_result_init(&result);CHECK(!bcir_cfront_context_init(&context,NULL));
   CHECK(!bcir_cfront_compile_context(&context,cfront_source,&result));
-  CHECK(!cfront_analysis_once(&result.unit,&state,0,&attempts,whole_fx,whole_es));
+  CHECK(!cfront_analysis_once(&result.unit,&state,0,&attempts,&whole_dg,whole_cn,whole_fx,whole_es));
   baseline=attempts;CHECK(baseline>=3u);
   for(size_t fail=1;fail<=baseline;fail++){
     memset(&state,0,sizeof state);
-    CHECK(!cfront_analysis_once(&result.unit,&state,fail,&attempts,whole_fx,whole_es));
+    CHECK(!cfront_analysis_once(&result.unit,&state,fail,&attempts,&whole_dg,whole_cn,whole_fx,whole_es));
   }
   bcir_cfront_free(&result);bcir_cfront_context_destroy(&context);
   return 0;
@@ -411,9 +454,13 @@ static int channel_test(void){
 int main(int argc,char **argv){
   CHECK(argc==2&&argv[1]&&argv[1][0]);
   CHECK(!checked_growth_test());
-  CHECK(!cpp_fault_and_isolation_test());
   CHECK(!cfront_fault_test());
   CHECK(!cfront_analysis_fault_test());
+  if(!strcmp(argv[1],"--cfront")){      /* the C frontend's sweeps alone -- no model file (test_c_cfront.py) */
+    puts("memory-discipline: cfront ok");
+    return 0;
+  }
+  CHECK(!cpp_fault_and_isolation_test());
   CHECK(!q8_and_llama_fault_test(argv[1]));
   CHECK(!channel_test());
   puts("memory-discipline: ok");

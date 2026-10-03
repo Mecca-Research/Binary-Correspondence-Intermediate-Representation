@@ -1,0 +1,208 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_function_pointers_returned_by_calls_run_as_the_original",
+  "bcir.tests.test_c_cfront:test_function_pointer_returns_refused_and_lowered_alike_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO1 the oracle types a call's function-pointer result `uint32_t`",
+   "new": "",
+   "old": "        if ret_ct is not None and ret_ct.kind == \"funcptr\":\n            return ret_ct\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO2 the oracle's `_fn_valued` does not see a call returning a function pointer",
+   "new": "",
+   "old": "        if isinstance(node, (cast.CallExpr, cast.CallPtr)):  # a call returning one (CF-FPRET)\n            ret = self._call_ret(node)\n            return ret is not None and ret.kind == \"funcptr\"\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO3 the oracle leaves a pointer return's `*`s to the declarator",
+   "new": "        if True:\n            return base\n",
+   "old": "        if not k or not self._is_funcptr_declarator(abstract, at=k):\n            return base\n",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO4 the oracle refuses `...` in a function-pointer declarator",
+   "new": "                if False:",
+   "old": "                if params and self.at(\"PUNCT\", \"...\"):",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO5 the oracle gives a variadic designator no function type",
+   "new": "        if params is None or None in params or name in self.func_variadic:\n            return None\n        variadic = False",
+   "old": "        if params is None or None in params:\n            return None\n        variadic = name in self.func_variadic",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
+   "label": "FO6 the oracle's function-type identity ignores `...`",
+   "new": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.fquals\n",
+   "old": "        return ret, tuple(self._type_key(p) for p in fct.params), fct.variadic, fct.fquals\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO7 the oracle takes no member of a struct an indirect call returns",
+   "new": "",
+   "old": "        if isinstance(node, (cast.CallPtr, cast.CallMember)):\n            rid = self._rvalue(node)\n            return rid, self.rtypes.get(rid, scalar(\"uint32_t\")), 0\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO8 the oracle's emit drops a variadic function pointer's `...`",
+   "new": "",
+   "old": " + ([\"...\"] if ct.variadic else [])",
+   "path": "bcir/frontends/cfront/emit.py"
+  },
+  {
+   "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
+   "label": "FO9 the oracle's callee signature drops `...`",
+   "new": "",
+   "old": " + ([\"...\"] if fct.variadic else [])",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
+   "label": "FO10 the oracle parses a function returning a function pointer as a declarator",
+   "new": "        if True:\n            return False\n        k = self._skip_stars(1)\n",
+   "old": "        if not (self.at(\"PUNCT\", \"(\") and self.peek(1).kind == \"OP\" and self.peek(1).text == \"*\"):\n            return False\n        k = self._skip_stars(1)\n",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO11 the oracle's `_call_ret` sees through no indirect call",
+   "new": "        if False:\n",
+   "old": "        if isinstance(node, cast.CallPtr) and self._fn_valued(node.callee):\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO12 the oracle's typedef takes no pointer return",
+   "new": "",
+   "old": "        # `typedef T *(*NAME)(PARAMS);`: a pointer return (CF-FPRET)\n        base = self._fp_return_stars(base)\n",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FO13 the oracle's member takes no pointer return",
+   "new": "                fbase = base\n",
+   "old": "                fbase = self._fp_return_stars(base)  # `T *(*name)(params)` (CF-FPRET)\n",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT1 the twin types a defined callee's function-pointer result `uint32_t`",
+   "new": "",
+   "old": "      : (rt && rt->kind==3)             ? fp_ret_temp(c,rt)   /* a function pointer: that pointer (CF-FPRET) */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT2 the twin types a prototyped callee's function-pointer result `uint32_t`",
+   "new": "",
+   "old": "                 : ptt->kind==3 ? fp_ret_temp(c,ptt)\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT3 the twin types what a call through a function pointer returns by its width alone",
+   "new": "  if(0){            /* the function type is known",
+   "old": "  if(fp->fp_sig>0 && fp->fp_sig<=c->nsig){            /* the function type is known",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT4 the twin types a member call's result by its width alone",
+   "new": "fp.kind=3; fp.fp_sig=0;",
+   "old": "fp.kind=3; fp.fp_sig=(uint16_t)ff->fp_sig;",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT5 the twin takes no postfix after a call through a function-pointer object",
+   "new": "",
+   "old": "        if(s>0 && s<=c->nsig && !c->failed){ bcir_ctype rt=c->sigs[s-1].ret; return call_result(c,r,&rt); }\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT6 the twin takes no postfix after a member call",
+   "new": "  return t;\n",
+   "old": "  if(ff->fp_sig<=0 || ff->fp_sig>c->nsig) return t;\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT7 the twin refuses `...` in a function-pointer parameter list",
+   "new": "    if(0){ c->i++; *variadic=1;",
+   "old": "    if(np && is(c,\"...\")){ c->i++; *variadic=1;",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT8 the twin gives a variadic designator no function type",
+   "new": "  bcir_ctype *ps=NULL; size_t bytes;\n  if(va) return 0;\n  if(np>0){",
+   "old": "  bcir_ctype *ps=NULL; size_t bytes;\n  if(np>0){",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
+   "label": "FT9 the twin's function-type identity ignores `...`",
+   "new": "",
+   "old": " || x->variadic!=y->variadic",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT10 the twin spells a synthesized variadic alias without `...`",
+   "new": "0?\"\":",
+   "old": "c->sigs[sig-1].variadic?(c->sigs[sig-1].n_params?\", ...\":\"...\"):",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT11 the twin spells a variadic designator's alias without `...`",
+   "new": "np?\"\":\"void\"",
+   "old": "va?(np?\", ...\":\"...\"):np?\"\":\"void\"",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointer_returns_refused_and_lowered_alike_on_both_rails",
+   "label": "FT12 the twin parses a function returning a function pointer as a name",
+   "new": "  return 0;\n}\nstatic int p_func(",
+   "old": "  return tat(c,k)->k==T_ID && tok_is(tat(c,k+1),\"(\");\n}\nstatic int p_func(",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT13 the twin declares a call through a function pointer's result as a scalar",
+   "new": "      else{ const char *dt=tty(&type_scratch,f,cl->wr[0]);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),rname(f,cl->rd[0],a)); }\n",
+   "old": "      else{ const char *dt=decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),rname(f,cl->rd[0],a)); }\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT14 the twin declares a member call's result as a scalar",
+   "new": "      else{ const char *dt=tty(&type_scratch,f,cl->wr[0]);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s%s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),\n",
+   "old": "      else{ const char *dt=decl_ty(&type_scratch,f,cl->wr[0],cty,sizeof cty);   /* result typed by the funcptr's return */\n        w+=snprintf(o+EO,on-EO,\"%s %s = %s%s%s%s(\",dt,rname(f,cl->wr[0],d),qcast_text(f,cl,-1,dt,qb,sizeof qb),\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_pointers_returned_by_calls_run_as_the_original",
+   "label": "FT15 the twin takes no postfix after a call through a value",
+   "new": "    if(0){",
+   "old": "    if(s && !c->failed && (is(c,\".\")||is(c,\"->\")||is(c,\"[\"))){",
+   "path": "runtime/c/bcir_cfront.c"
+  }
+ ]
+}

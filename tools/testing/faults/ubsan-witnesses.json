@@ -1,0 +1,177 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_ubsan_witnesses:_UBSAN",
+    "bcir.tests.test_ubsan_witnesses:test_a_build_that_is_no_witness_passes_through_the_shim_untouched",
+    "bcir.tests.test_ubsan_witnesses:test_a_c23_witness_is_sanitized_by_an_engine_that_spells_c23_by_its_draft_name",
+    "bcir.tests.test_ubsan_witnesses:test_a_run_that_sanitizes_nothing_or_fails_a_test_is_no_pass",
+    "bcir.tests.test_ubsan_witnesses:test_a_shimmed_witness_fails_on_undefined_behaviour_and_runs_a_defined_one_unchanged",
+    "bcir.tests.test_ubsan_witnesses:test_a_witness_link_is_an_executable_built_from_sources_outside_the_repository",
+    "bcir.tests.test_ubsan_witnesses:test_a_witness_no_engine_can_build_is_recorded_unsanitized",
+    "bcir.tests.test_ubsan_witnesses:test_a_witness_whose_original_and_emit_overflow_alike_is_reported_by_every_engine",
+    "bcir.tests.test_ubsan_witnesses:test_a_witness_whose_original_discards_an_overflow_is_reported_by_the_gates_engines",
+    "bcir.tests.test_ubsan_witnesses:test_an_engine_that_builds_but_never_reports_is_no_engine",
+    "bcir.tests.test_ubsan_witnesses:test_no_ubsan_runtime_is_a_skip_unless_one_was_required",
+    "bcir.tests.test_ubsan_witnesses:test_the_ci_job_that_installs_the_runtime_requires_it",
+    "bcir.tests.test_ubsan_witnesses:test_the_gate_fires_on_a_witness_whose_original_runs_undefined_behaviour",
+    "bcir.tests.test_ubsan_witnesses:test_the_sanitized_build_keeps_the_program_and_drops_only_optimisation_and_warnings"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_witness_link_is_an_executable",
+      "label": "UW1 a build from the runtime's own sources counts as a witness",
+      "new": "        if False:\n",
+      "old": "        if path.startswith(repo + os.sep) and not os.path.basename(path).startswith(\"cfront_\"):\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_build_that_is_no_witness",
+      "label": "UW2 an object build (`-c`) counts as a witness link",
+      "new": "_NOT_A_LINK = {\"-S\", ",
+      "old": "_NOT_A_LINK = {\"-c\", \"-S\", ",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_the_sanitized_build_keeps_the_program",
+      "label": "UW3 the sanitized twin keeps the witness's `-O2`",
+      "new": "            a.startswith(\"-W\")",
+      "old": "            a.startswith(\"-O\") or a.startswith(\"-W\")",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_shimmed_witness_fails",
+      "label": "UW4 UBSan without `float-cast-overflow` (CI-ARM's own defect unreported under GCC)",
+      "new": "SANITIZE = [\"-g\", \"-fsanitize=undefined\", ",
+      "old": "SANITIZE = [\"-g\", \"-fsanitize=undefined,float-cast-overflow\", ",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_shimmed_witness_fails",
+      "label": "UW5 the launcher reads no report",
+      "new": "if grep -q -e 'runtime-error:' ",
+      "old": "if grep -q -e 'runtime error:' -e 'UndefinedBehaviorSanitizer' ",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_shimmed_witness_fails",
+      "label": "UW6 the launcher never runs the sanitized program",
+      "new": "true \"$@\" </dev/null",
+      "old": "{q(out + \".ubsan\")} \"$@\" </dev/null",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_shimmed_witness_fails",
+      "label": "UW7 a reported witness runs on as if clean",
+      "new": "  exec {q(out + \".real\")} \"$@\"\n",
+      "old": "  exit 125\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_witness_no_engine_can_build",
+      "label": "UW8 an engine that failed the build is taken as having built it",
+      "new": "        if True:\n",
+      "old": "        if b.returncode == 0:\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_an_engine_that_builds_but_never_reports",
+      "label": "UW9 the probe takes an engine that never reports",
+      "new": "            if True:\n",
+      "old": "            if run.returncode != 0 and \"runtime error:\" in run.stderr:\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_no_ubsan_runtime_is_a_skip_unless_one_was_required",
+      "label": "UW10 `--require-ubsan` lets an absent runtime pass",
+      "new": "return finish(\"UNAVAILABLE\", EXIT_OK)",
+      "old": "return finish(\"UNAVAILABLE\", EXIT_UNAVAILABLE if args.require_ubsan else EXIT_OK)",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_run_that_sanitizes_nothing_or_fails_a_test",
+      "label": "UW11 a run that sanitized nothing passes",
+      "new": "    if False:\n",
+      "old": "    if report[\"sanitized\"] == 0 or report[\"runs\"] == 0:\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_run_that_sanitizes_nothing_or_fails_a_test",
+      "label": "UW12 a shard that could not run its tests is not INVALID",
+      "new": "            unavailable |= False\n",
+      "old": "            unavailable |= p.returncode == EXIT_UNAVAILABLE\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_the_ci_job_that_installs_the_runtime_requires_it",
+      "label": "UW13 the CI job that installs the runtime stops requiring it",
+      "new": "        run: python3 tools/testing/ubsan_witnesses.py -j 4\n",
+      "old": "        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan -j 4\n",
+      "path": ".github/workflows/ci.yml"
+    },
+    {
+      "expects": "test_a_c23_witness_is_sanitized",
+      "label": "UW14 an engine that spells C23 by its draft name is not asked to",
+      "new": "_STD_DRAFT = {}\n",
+      "old": "_STD_DRAFT = {\"-std=c23\": \"-std=c2x\", \"-std=gnu23\": \"-std=gnu2x\"}\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_shimmed_witness_fails",
+      "label": "UW15 a report keeps no copy of the witness's source",
+      "new": "    copies = \"\"\n",
+      "old": "    copies = \"\".join(f'cp {q(p)} \"$r.src{k}.c\" 2>/dev/null\\n' for k, p in enumerate(paths))\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_the_gate_fires_on_a_witness",
+      "label": "UW16 the test runner no longer names the test running",
+      "new": "        os.environ.pop(\"BCIR_CHECK_TEST\", None)\n",
+      "old": "        os.environ[\"BCIR_CHECK_TEST\"] = spec\n",
+      "path": "tools/testing/check_tests.py"
+    },
+    {
+      "expects": "test_a_witness_whose_original_and_emit_overflow_alike",
+      "label": "UW17 GCC's sanitized twin is optimized (`-O1`): GCC folds an original and an emit that overflow alike, and deletes both checks",
+      "new": "LEVEL = {\"clang\": \"-O2\", \"gcc\": \"-O1\"}",
+      "old": "LEVEL = {\"clang\": \"-O2\", \"gcc\": \"-O0\"}",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_witness_no_engine_can_build",
+      "label": "UW18 an unsanitized witness's reason is its diagnostic's last line (a caret), not the error",
+      "new": "    return (lines[-1] if lines else \"?\")[:200]\n",
+      "old": "    return (errors[0] if errors else lines[-1] if lines else \"?\")[:200]\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_a_witness_whose_original_discards_an_overflow",
+      "label": "UW19 GCC's UBSan first: an original that discards an overflowing value (`x * x;`) runs clean",
+      "new": "ENGINES = (\"gcc\", \"clang\")",
+      "old": "ENGINES = (\"clang\", \"gcc\")",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_no_ubsan_runtime_is_a_skip_unless_one_was_required",
+      "label": "UW20 `--require-ubsan` takes GCC's UBSan alone in place of Clang's, the gate's instrument",
+      "new": "    if False:\n",
+      "old": "    if args.require_ubsan and not args.engine and \"clang\" not in report[\"engines\"]:\n",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_the_sanitized_build_keeps_the_program",
+      "label": "UW21 an engine the gate does not know builds optimized, where its checks may be folded",
+      "new": "    return [LEVEL.get(os.path.basename(engine), \"-O2\"), *SANITIZE]",
+      "old": "    return [LEVEL.get(os.path.basename(engine), \"-O0\"), *SANITIZE]",
+      "path": "tools/testing/ubsan_witnesses.py"
+    },
+    {
+      "expects": "test_the_sanitized_build_keeps_the_program",
+      "label": "UW22 Clang's sanitized twin is unoptimized: a witness looping 2**31 times runs for hours",
+      "new": "LEVEL = {\"clang\": \"-O0\", \"gcc\": \"-O0\"}",
+      "old": "LEVEL = {\"clang\": \"-O2\", \"gcc\": \"-O0\"}",
+      "path": "tools/testing/ubsan_witnesses.py"
+    }
+  ]
+}

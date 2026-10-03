@@ -32,6 +32,7 @@ double aostruct_rmw(struct Scene *p, int v)
 /* The nested-brace initializer of an array-of-structs member (built as a by-value local + read back). */
 int aostruct_init(int v)
 {
+    v &= 0xFFFF;                                /* every sum below stays within `int` (CF-UBGATE) */
     struct Scene s = { v, { { v, (short)v, (signed char)v, 1.0f },
                             { v + 1, (short)(v + 1), (signed char)(v + 1), 2.0f } }, (long)v };
     s.pts[0].x += 10;

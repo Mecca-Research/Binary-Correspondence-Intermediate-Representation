@@ -90,7 +90,7 @@ rejecting stage + reason — the signal for a driver to route the unit to the LL
 fail. Without `--fallback`, an unsupported construct is a normal diagnostic.
 
 ```
-fb.c: fallback to LLVM backend: lower: static initializer is not a constant expression
+fb.c: fallback to LLVM backend: lower: a static initializer is not an integer constant expression
 ```
 
 ## Pointer-bounds policy (LangRef §4)
@@ -301,37 +301,289 @@ _mm_sfence();                      //                   store (release) fence ->
 ## What's supported
 
 - Fixed-width and core integer types, `_Bool`/`char`, `void`, `float`/`double`/`long double`, pointers,
-  arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`.
+  arrays, `struct`/`union` (Clang-compatible layout, per target), `enum`, `typedef`. An object of an enumerated type
+  has the integer type its enumeration is compatible with, as Clang gives it on the target: `unsigned int` when no
+  enumerator is negative on the System V targets, `int` otherwise and on the MSVC target; the enumeration constants
+  are `int` (C11 6.7.2.2p4, 6.4.4.3).
+- Integer constants in every base (`0x`, `0b`, a leading `0` octal, decimal) and with every suffix C spells -- a
+  `u` before or after an `l`, `L`, `ll` or `LL` -- each its exact value in its C11 6.4.4.1 type on the target
+  (`0xFFFFFFFFFFFFFFFFu` is 2^64 - 1, an `unsigned long` where `long` is 64 bits and an `unsigned long long` where
+  it is 32; `017` is 15, in a `#if` too). Any other run of `u`s and `l`s (`1lL`, `1uu`, `1lul`) is refused in
+  Clang's words, in code and in a `#if` (`invalid suffix 'lL' on integer constant`).
+- Integer constant expressions -- an enumerator's value, a case label, an array dimension (a compound literal's
+  `(T[N]){...}` and a row pointer's `(*p)[N]` too), a designator, a bit-field's width, `_BitInt(N)`'s, `aligned(N)`
+  and `alignas(N)` -- folded where they are parsed, in C's own types on the target, by the predicate a static's
+  initializer folds with: the integer promotions and the usual arithmetic conversions (`~0u > 5` is 1, `-1 < 0u` is
+  0, `-1L < 1u` is 1 where `long` is 64 bits and 0 where it is 32), `/` and `%` truncating toward zero (`-7 / 2` is
+  -3, `-7 % 2` is -1), shifts, a cast to an integer type (`(uint8_t)300` is 44), `?:` in its arms' common type, and
+  an operand C does not evaluate left unevaluated (`0 && 1 / 0` is 0). `sizeof` and `_Alignof` of a type-name fold
+  to the target's layout of the unit's types as far as they are defined (`sizeof(struct s)`, `_Alignof(long
+  double)`), and `sizeof` of a constant to its type's size (`sizeof(L'a')` is 2 on Windows). A floating constant
+  cast to an integer type converts as C converts it: rounded to its own type, then truncated toward zero
+  (`(int)2.75` is 2, `(int)16777217.0f` 16777216), `_Bool` whether it is nonzero. A dimension that is an integer
+  constant expression (`N * 2`, `2 + 1`) makes a fixed array (C11 6.7.6.2p4) for a local, a member, a typedef, a
+  parameter and a global. Case labels are compared in the switch's promoted type -- 255 and -1 are two labels on a
+  `uint8_t`, one on a `uint32_t`'s 4294967295u -- and a `_BitInt(N)` is promoted to nothing. Both emits spell a
+  negative constant signed (`-3`, not `-3u` or its 64-bit two's complement) and a case label past `LLONG_MAX` with
+  `u`.
+- Character constants as Clang reads them on the target: a plain one an `int` of its byte as the target's plain
+  `char` holds it (`'\xff'` is 255 on AArch64, where `char` is unsigned, and -1 elsewhere), a multi-character one
+  its last four bytes packed big-endian (`'abcde'` is `'bcde'`); a prefixed one of its prefix's type -- `u8` an
+  `unsigned char`, `u` `char16_t`, `U` `char32_t`, `L` the target's `wchar_t` (unsigned on AArch64, 16 bits and
+  unsigned on Windows).
+- An enumeration declared in a block: its constants and its tag end with the block, each hiding an outer name from
+  its declaration on and hidden in turn by a later local (C11 6.2.1p4).
+- A local, a parameter, a loop's own declaration or a block's enumerator hides a typedef name of its own to the end of
+  its block (C11 6.2.1p4), and a parameter for the parameters after it: there the name starts no declaration, cast or
+  `sizeof` type-name -- `T = T * 3u;` assigns, `T * x;` multiplies, `(T) - s` subtracts, `sizeof(T)` sizes the object
+  -- and after the block it is the type again.
+  The emitted C declares every local at the top of its function, so a local named as a typedef, a global the function
+  reads or writes or a function it calls is emitted under another name (`T_2`) -- and so is a parameter or a local named
+  as a name the emit spells for itself: a libc routine (`memcpy` spells every member store), `bcir_f` (the emit's name
+  for `f`), a standard type name, the twin's store helper `_v`.
+- A zero-length array member (`T m[0]`, GNU) or a flexible one (`T m[]`): no bytes of its own, indexed in place;
+  `typedef T row[0];` names one.
 - Integer + IEEE-754 floating arithmetic and comparisons, casts and the usual arithmetic conversions,
   `sizeof`/`_Alignof`, bitfields, `<math.h>` library calls.
 - Functions, the call graph (R18: callee resolution, no recursion), inter-procedural summary reuse,
   function pointers — as a `typedef`'d parameter, a `struct` member (HAL dispatch table), **and as a
   local variable** (`RET (*f)(PARAMS) = fn;`, reassignable, called indirectly, return-type-signed).
+  A call through a pointer to a `void` function has no value, as a direct void call has none
+  (`cb();`, `c ? cb() : (void)0`, `return cb();` in a void function). `c ? f : g` whose arms are
+  function designators or function-pointer objects is a pointer to their one function type; arms that
+  point to functions of different types are refused. The constant `0` compared with a pointer by `==`
+  or `!=`, passed through a function pointer to a pointer parameter, or given to `free` and as
+  `realloc`'s pointer is a null pointer of that type.
+- Tables of function pointers, typedef'd or spelled inline (`uint32_t (*t[N])(uint32_t)`, up to three
+  dimensions), local or file-scope, struct members, pointers to them (`op_t *p`, `uint32_t (**p)(uint32_t)`) and
+  parameters of them; their elements read through `t[i]`, `*(t + i)` and `*p` as the function pointers they are, and
+  a member read as one. A call takes any expression whose value is a function pointer: `t[i](x)`, `(*t[i])(x)`,
+  `p->fn[i](x)`, `(c ? f : g)(x)`, `_Generic(...)(x)`, and `(*fp)(x)`, `(**fp)(x)` or `(*f)(x)`, whose `*` names the
+  function again (C11 6.5.3.2p4). Each operator takes only the operand C allows -- a call a function pointer, `*` and
+  `[]` a pointer to an object or an array, `.` a struct or union, `->` a pointer to one -- and anything else is refused
+  for one reason on both rails (`called object is not a function or function pointer`, `dereference of a
+  non-pointer`, `subscripted value is not an array or a pointer to an object`, ...), as is storing to or stepping a
+  function (`a function designator is not an lvalue`) and `sizeof` of one.
+- The unary operators as C types them, under `sizeof`, `typeof` and `_Generic` too: `+a` is `a` promoted (`sizeof(+c)`
+  of a `char` is 4), `-z` and `~z` of a complex are complex, `__real__` and `__imag__` of a complex its element type
+  and of a real operand its own, a bit-field operand the type of its value (`int` when narrower), `&x` a pointer to
+  `x`'s type. Each takes only the operand C gives it -- `+` and `-` an arithmetic one, `~` an integer one or a complex,
+  `!` a scalar -- and anything else is refused (`invalid argument type to unary expression`; a struct or union for
+  the reason every operator gives). `if`, `while`, `for`, `do` and `?:` take a scalar, `switch` an integer
+  (`statement requires expression of integer type`); `++` and `--` of a struct are refused as any operator's operand;
+  `++(x)` is `++x`, and an array compared with 0 is the pointer it decays to. A void expression is used only where C
+  discards its value -- an expression statement, `(void)e`, an operand of `,`, an arm of `?:`, a `_Generic`
+  association, a statement expression's last statement, `return f();` in a void function -- and its value used
+  anywhere else is refused (`the value of a void expression is used`).
+- A function returning a function pointer, declared with a typedef for its return type (`op_t pick(uint32_t s);`):
+  its call is that function pointer -- held, compared, selected, returned, or called at once (`pick(s)(x)`,
+  `(*pick(s))(x)`) -- whether the function is defined, declared by a prototype, or reached through a pointer to it.
+  A call through a function pointer returns what the function's type says: a pointer (`T *(*pf)(T *)`, so
+  `*h(&v)` and `h(s)->v`), a struct whose member is read (`m(s).a`, `(*m)(s).b`, `o.mk(s).a`), or a function pointer.
+  A pointer to a variadic function (`uint32_t (*g)(uint32_t, ...)`, a typedef, a member, a table of them) is declared
+  and called, and a variadic function named as an arm of `?:` is a pointer to it.
+- A function the unit only prototypes -- another unit defines it -- is a value as a defined one is: passed, held,
+  selected, stored in a member or a table, compared, its address taken. `&f` of any function is the same pointer
+  as `f`, `*&f` and `&*f` name it again, and `(&f)(x)` is the call `f(x)`. Each emit declares every function it
+  names `extern` as its prototype does, a variadic one with its `...`. A function is no object: `f = g`, `f++`,
+  `++f` and `f += 1` are refused (`a function designator is not an lvalue`), as `*f = v` is.
+- Qualifiers below a type's top level -- what a pointer points to and each `*` under the outermost (`const char *const
+  *v`, `char *restrict *`), a `const` pointer typedef (`const str_t *`), and the qualifiers of a function pointer's
+  own parameters and return -- are kept: every `extern` declaration and function-pointer type the emit spells is the
+  prototype's, and two function types that differ only in a qualifier are two types (`?:` of them is refused). The
+  emit spells its own objects without qualifiers, so where C converts none -- `char **` passed to `const char *const
+  *`, a `const T *` result -- a call casts.
+- Casts to a function-pointer type -- spelled inline (`(uint32_t (*)(uint32_t))f`), through a typedef (`(op_t)f`),
+  or a pointer to one (`(uint32_t (**)(uint32_t))p`) -- and `0` cast to any pointer type, the null pointer of that
+  type. `_Atomic` starts a type name, and a pointer to an `_Atomic` member at its byte offset,
+  `*(_Atomic T *)((char *)p + K)`, reaches the member as one atomic operation, a compound assignment and a step
+  included. With the function-pointer store through a pointer to its own type, `*(R (**)(P))((char *)p + K) = f;`
+  (a generic `*(void (**)(void))((char *)p + K) = (void (*)(void))f;` reads too), these are the forms each emit
+  writes for a member it reaches at its byte offset, so the emit of a unit with a function-pointer or `_Atomic`
+  member reads back.
+- A typedef of a table of function pointers or of a pointer to one (`typedef uint32_t (*tab_t[2])(uint32_t);`, `pp_t`
+  of `uint32_t (**)(uint32_t)`) as a local, a global, a parameter or a member; a compound literal of function
+  pointers, called through (`(op_t[2]){f, g}[i](x)`); `__typeof__` of an element or a member that is a function
+  pointer (`__typeof__(t[0])`, `__typeof__(o.fn)`); a braced function-pointer initializer (`op_t g = {f};`, `= {}`,
+  C11 6.7.9p11). `( E ) = v;` and `( E ) OP= v;` of an lvalue `E`: the parentheses change nothing (6.5.1p5).
+- A unit that declares a `<stdint.h>` or `<stddef.h>` name itself (`typedef unsigned long size_t;`), as freestanding
+  code does.
 - **Array compound literals — the full surface:** 1-D scalar (indexed `(T[]){...}[i]`, sized + zero-fill
   `(T[N]){...}`, signed-element), **multi-dimensional scalar** `(T[A][B]){...}[i][j]` (incl. an inferred
   outer dim `(T[][N]){...}` and a designated outer `{[1]=..,[0]=..}`), **1-D aggregate-element**
   `(struct P[]){...}[i].field`, and **multi-dimensional aggregate-element** `(struct P[A][B]){...}[i][j].field`.
+  `sizeof` of a sized one is the array's size (C11 6.5.2.5p4), parenthesized or not (`sizeof (T[3]){...}`). A
+  compound literal of a pointer or function-pointer type (`(uint32_t *){&g}`, `&(uint32_t *){&g}`, `(op_t){f}(x)`)
+  is an object of its type, and `0` or `{}` in one is a null pointer.
 - Local array declarations with initializers, including nested-brace multi-dim (`T a[A][B]={{..},{..}}`),
   inferred-size (`T a[]={..}`), and array-of-structs (`struct P a[N]={{..},{..}}`).
 - **Computed goto** — the GNU label-as-value `&&L` (a `void *`) and the indirect `goto *p`.
-- String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO).
+- The conditional operators as C evaluates them: `?:` evaluates one arm, and `&&`/`||` their right operand
+  only when the left one does not decide. An operand that can trap or change state (a division, a
+  dereference, a call, a volatile read, an assignment) lowers as a branch, a pure one as a select; a
+  conditional whose arms are void (`c ? f() : (void)0`, an `assert`) runs its arm for its effects.
+- Members of array elements in every access form (read, store, compound assignment, increment, `&`):
+  `a[i].m[j]`, `a[i].m.k`, `a[i].m.arr[j]`, on a local, global or pointer base.
+- An object reached through a pointer in every access form (read, store, compound assignment, increment and
+  decrement as a statement or a value, an assignment used as a value, `&`): a member through a pointer the lvalue
+  loads (`h.next->v`, `n->next->v`, `s->p[i]`), an element of a pointer (`p[i]`), a dereference of any pointer value
+  (`*p`, `*(p + i)`, `*&a`, `*(c ? &a : &b)`, `*p++`) and the first element of a member array (`*q->a`). A call
+  through a parenthesized callee, `(fp)(x)` or `(o.fn)(x)`, is the call without the parentheses.
+- The libc memory routines as external edges, opaque to R18 and linked with no flag: `<stdlib.h>`'s
+  `malloc`/`calloc`/`realloc`/`aligned_alloc`/`free` and `<string.h>`'s `memcpy`/`memmove`/`memset`, each string
+  routine returning its destination. A unit that defines one of these names -- before its call or after it --
+  calls its own function.
+- Functions declared by a prototype and defined later, or only prototyped (another unit defines them): a
+  prototype may leave its parameters unnamed (`uint32_t g(uint32_t *, uint32_t);`). Each emit declares the unit's
+  functions a function calls ahead of it, and a prototyped callee's `extern` declaration keeps a pointer
+  parameter's `const` and spells a function-pointer parameter as C does.
+- Structs and unions declared without a tag and named by a typedef (`typedef struct { ... } P;`, or only through a
+  pointer, `typedef struct { ... } *PP;`), with nested anonymous members: the emit names each as C does -- by the
+  typedef's name, `__typeof__(*(PP)0)`, or `__typeof__` of the member whose type it is.
+- String/character literals (with prefixes), `static` locals, file-scope globals, `volatile` (MMIO). A string
+  literal's element has its prefix's type (`char`, `char16_t`, `char32_t`, the target's `wchar_t`), read by `"ab"[i]`
+  and `*("ab" + i)` alike; the pieces of one literal take the one prefix they carry (`"a" L"b"` is a wide literal),
+  and pieces of two encodings (`u"a" U"b"`) are refused, as Clang refuses them. A plain `char` element, and
+  `(char)v`, are `char` in both emits -- signed or not as the target's `char` is.
+- File-scope declarations of several objects (`uint32_t a[3], b[2], *p;`, `static struct t { ... } x, y;`),
+  character tables sized by their string literals (`char name[] = "bcir";`, `char name[] = ("bcir");` too), and a
+  multi-dimensional global passed to a row-pointer parameter (`T (*p)[N]`, `T m[][N]`). A member of an element of a
+  2-D or 3-D file-scope array of structs or unions (`gm[i][j].x`: read, stored, stepped, copied, its address
+  taken) and an element of a 2-D table of pointers (`*gp[i][j]`, `gp[i][j][k]`). `*(p + i - j)` is the element
+  `p + i - j` points at. A `const` global at any level (`const uint32_t k[3]`, `const char *const names[2]`), which
+  both emits name through an lvalue of its unqualified type -- the emit's own objects carry no qualifiers.
+- The linkable emit (`--linkable`) of the Python reference: the unit as one standalone translation unit -- its
+  struct, union, enum and typedef definitions as the source spells them, in its order; every function declared
+  before the globals; each global with its qualifiers and its initializer, a pointer's string literal, `&g[k]`, an
+  array and a function among them as the address constants they are; and the headers its own text names (its
+  copies' `<string.h>`, `<stdarg.h>`, `<stdatomic.h>`, `<complex.h>`). A global whose type is an untagged
+  aggregate no typedef names is refused by name.
+- File-scope initializers as a local's: nested braces, brace elision and designators for arrays of structs, rows
+  and character tables, an unsized global sized by what its initializer reaches (`struct pt g[] = {1u, 2u, 3u,
+  4u};` is two elements).
+- `_Thread_local` globals and `static _Thread_local` locals: each thread has its own object, and both emits
+  keep the storage class.
 - The preprocessor: `#include`/`#embed`, conditionals, object/function-like + variadic macros, the
   predefined macros, `#line`, `_Pragma`, and the `__has_*` feature-test operators.
+- `#if` and `#elif` in C's arithmetic (C11 6.10.1p4): every operand an `intmax_t` or a `uintmax_t` (64 bits), an
+  integer constant unsigned where its suffix has `u` or its value is past `INTMAX_MAX`, an unsigned operand making
+  the operation unsigned, `true` 1 and any other identifier 0; `?:`, the comma operator in an operand C leaves
+  unevaluated, and C23's digit separators (`1'000`). A character constant reads by the target's character types,
+  as Clang reads one: a plain one sign-extended where `char` is signed and a `uintmax_t` where it is not (AArch64,
+  RISC-V), so `#if 'a' - 98 < 0` is false on AArch64; `u8`, `u` and `U` ones unsigned; an `L` one by `wchar_t`. A
+  form C leaves undefined in an evaluated operand -- a signed overflow, a division by zero, a shift by a negative
+  count or by 64 or more, a negative value shifted left, a comma operator -- is refused, as is a malformed
+  expression, a constant no type holds and a character constant outside what both rails read (an escape past its
+  code unit, a universal character name, an escape C does not define, a source character past ASCII, more than one
+  character behind a prefix); an operand C leaves unevaluated refuses for none of the operators' reasons. A `#if`
+  holds at most 512 tokens of at most 63 characters, nested at most 63 deep.
 
 ## Known limits
 
 These are reported as diagnostics, or — with `--fallback` — as a fallback-to-LLVM signal:
 
 - Non-constant `static`/global initializers; constructs beyond the L1–L6 statement subset.
+- A function called, named as a value or used in a `sizeof` operand before any declaration of it -- C99 dropped
+  the implicit declaration (C11 6.5.1p2): `call to undeclared function 'g'`, `use of undeclared identifier 'g'`.
+  Declare it first with a prototype. A definition that leaves a parameter unnamed is refused as well.
+- An integer constant no type in its list can hold: one past `unsigned long long`, and a decimal constant
+  without `u` past `long long`, whose type C leaves to the implementation (GCC gives it `__int128`, Clang
+  `unsigned long long`). Both rails refuse it (`an integer constant too large for every type its base and suffix
+  allow`); write `9223372036854775808u`, or `INT64_MIN` as `-9223372036854775807 - 1`.
+- An integer constant expression C requires a diagnostic for, or that is none. An enumerator no `int` holds,
+  stated or counted on from `INT_MAX` (C11 6.7.2.2p2; C23 gives one a wider type, which neither rail models):
+  `an enumerator value not representable as int`. A division or a remainder by zero, a signed overflow
+  (`INT_MAX + 1`, `INT_MIN / -1`), a shift by the width or more, by a negative count, of a negative value or
+  past its signed type (`-1 << 1` and `1 << 31`, which Clang folds without a word), and `sizeof` of an
+  expression (`sizeof g_x`, which C allows of an object that is no variable-length array -- a recorded follow-up)
+  or of an incomplete type, the comma operator, a floating constant cast where its type cannot hold its integral
+  part (`(uint8_t)300.7`, C11 6.3.1.4p1) or that is no cast's immediate operand (`(int)-1.5`, which Clang folds as
+  an extension), a `long double` one (its format the target's), an object or a pointer in one: `not an integer
+  constant expression`. A constant array dimension outside 0..`INT_MAX`: `an array dimension outside 0..INT_MAX`.
+  Two case labels equal in the switch's promoted type: `duplicate case value`; a second `default:`: `multiple
+  default labels in one switch`. A bit-field's width negative, zero for a named member or past its type's: `invalid
+  bit-field width`. Both rails refuse each for that one reason.
+- A character constant C does not define or the rails do not read: no character (`''`), an escape C does not define
+  (`'\q'`) or past its code unit (`'\x100'`, and `L'\xffffffff'` where `wchar_t` holds 16 bits), a universal
+  character name (`'\u0041'`), two characters behind a prefix (`u8'ab'`): `unsupported character constant`. A
+  floating constant with a C23 digit separator (`1e+5'0`) is read by neither rail -- a recorded follow-up.
+- A file-scope initializer C refuses (an excess entry, a string too long for its array, a designator outside its
+  object) or that overrides a subobject a brace list or a string initialized, and an initialized file-scope array
+  of more than three dimensions. A block-scope `_Thread_local` object that is not `static` (C11 6.7.1p3).
+- An identifier (a function, parameter, local, global, struct or union tag, member, typedef, enum constant or
+  label) or a floating constant longer than 63 characters — C11 5.2.4.1's significant initial characters of an
+  internal identifier. Both rails refuse it where it is lexed (`an identifier longer than 63 characters is not
+  supported`, `a floating constant longer than 63 characters is not supported`): the C twin's claim graph holds
+  63, and would otherwise have to cut the rest. The emitted C itself has no size limit. A macro name never
+  reaches a lexer, so both preprocessors bound it where a directive reads it: a name `#define`, `-D` or `#undef`
+  names, one `#ifdef`, `#ifndef`, `#elifdef`, `#elifndef` or `defined` tests, or one an evaluated `#if` or `#elif`
+  looks up, past 63 characters is refused (`macro name is too long`), and so is a macro parameter (`macro
+  parameter is too long`). A directive in a skipped group, or an `#elif` after a group was taken, is read only
+  through its name (C11 6.10.1p6).
+- A character past ASCII outside a string, a character constant or a comment -- in an identifier, a number, a
+  directive's name or the names it reads, a macro parameter, a `#if` operand or between tokens: `non-ASCII character
+  outside a literal`, on both rails (an identifier is ASCII; one inside a literal or a comment lowers). A NUL in a
+  source or a header is refused before it is read. A source, and its preprocessed text, is at most 64 MiB, and a unit
+  lexes to fewer than 65 536 tokens (`input too large`): the bound is the compile's work budget too, for the twin looks
+  a function's resources and local names up by linear scans, so 6 400 statements in one function take it some 35 s --
+  a recorded follow-up. A unit's canon -- the digest on every summary line -- numbers each value once: a value
+  number is the FNV-1a of its producer's op and its reads' numbers, in 16 hex digits, so the canon is linear in the
+  unit (it spelled each value's whole dataflow tree, the square of a chain and 2^n over n doublings). The twin's preprocessor holds a logical line of 8 190 bytes (`preprocessor line too long`), a
+  macro body of 1 023 and 16 arguments in an invocation, which the oracle's does not -- recorded follow-ups, as are a
+  form feed or a vertical tab (C's white space, which the oracle takes and the twin refuses) and an unknown directive
+  (`#foo`, which the oracle refuses and the twin ignores).
+- An increment, or an assignment used as a value, of a device object -- a `volatile` object, or any member of a
+  struct that holds volatile storage reached through a pointer: its value would be a second device access. Both
+  rails refuse it; the statement forms (`dev->ctrl = v;`, `dev->ctrl |= m;`) lower.
+- A `static` table of function pointers in a block (`static op_t t[2] = {f, g};`): refused on both rails as no integer
+  constant expression; a file-scope table holds the same designators. Arithmetic on a function pointer (`fp + 1`,
+  `fp++`), which C does not define, lowers today and is a recorded follow-up; `i[p]` (the pointer as the index) is
+  refused -- write `p[i]`.
+- A function declared to return a function pointer without a typedef (`uint32_t (*pick(uint32_t s))(uint32_t)`):
+  refused on both rails (`a function returning a function pointer is not supported without a typedef`); declare
+  its return type with a typedef. A function pointer given a function of another type (`op_t g = va;`), which C
+  forbids, lowers today and is a recorded follow-up.
+- A function declared inside a block (`uint32_t f(uint32_t s) { uint32_t g(uint32_t); ... }`): refused on both
+  rails; declare it at file scope.
+- A pointer object that is itself `volatile` (`T *volatile p`, `volatile str_t p` of a pointer typedef), whose every
+  access C performs as written: refused on both rails (`a volatile-qualified pointer is not supported`); a pointer
+  to volatile storage (`volatile T *p`) lowers. A `_Generic` association of a qualified type, which no controlling
+  expression's type has: refused (`a \`_Generic\` association of a qualified type is not supported`). A qualifier on a
+  `*` past the eighth from the base: refused (`a qualified pointer nested more than 8 deep is not supported`).
+- A member access straight through an element that is a pointer (`arr[i]->m`, `pp[i]->m`, `o.p[i]->m`): refused on
+  both rails (`unsupported base expression Index`); read the element first (`T *e = arr[i]; e->m`).
+- A cast to an array type, which C forbids (6.5.4p2) -- `(uint32_t[2])s`, `(tab_t)f` of a table typedef: refused on
+  both rails (`a cast to an array type`). A type name that names an identifier (`(uint32_t (*p)(uint32_t))f`,
+  6.7.7p1): refused (`a type name names an identifier`). A compound literal of an `_Atomic` type, an `_Atomic`
+  object (`&(_Atomic uint32_t){x}`): refused (`a compound literal of \`_Atomic\` type is not supported`). A cast to an
+  `_Atomic` type (`(_Atomic uint32_t)x`, a typedef of one, under `sizeof` or `typeof` too): refused (`a cast to an
+  \`_Atomic\` type is not supported`) -- C17 6.5.4p5 gives it the unqualified type, as GCC does, but Clang types it
+  `_Atomic` and rejects it as an operand; a cast to a pointer to an `_Atomic` object lowers. A braced
+  scalar or function-pointer initializer of more than one expression, or nested braces: refused (`a braced scalar
+  initializer holds one expression`).
+- `sizeof` of a compound literal its initializer sizes (`sizeof((uint32_t[]){1u, 2u})`, which C sizes as two
+  elements): refused on both rails (`sizeof of an incomplete type`) -- a recorded follow-up; give the literal its
+  dimension. A call through a function-pointer member of an indexed struct element (`a[i].fn(s)`): refused on both
+  rails; take the element first (`struct ops *e = &a[i]; e->fn(s)`). Two splits recorded for follow-up: reading
+  that member as a value (`op_t g = a[i].fn;`), and `__typeof__` of a call, of `?:` or of a function designator,
+  are refused by the Python reference as not yet supported and lowered by the C twin.
+- An `enum` tag used before its enumerator list, or with none -- an object, a cast, `sizeof`, a typedef, a parameter,
+  and a pointer to the incomplete type too, which C allows -- is refused on both rails (`an enumerated type with no
+  definition`); define the enumeration first.
+- In `#if`, a multi-character constant (`'\xff\xff\xff\xff'`) where plain `char` is unsigned reads as Clang reads it,
+  by `char`'s signedness; GCC reads it as a signed `int` whatever `char` is.
+- The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
+  *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
+  through a cast; and the C twin's `--linkable` emits the unit's functions alone. Both are recorded follow-ups.
+- A subscript of a pointer member of an element of an array of structs (`gt[i].name[1]`), a pointer to an array of
+  structs (`struct pt (*q)[3] = gm;`), a member through the address of an element (`(&gm[0][1])->y`), a bit-field
+  of a 2-D array of structs and an element of a string literal plus an offset (`("ab" + 1)[i]`): refused on both
+  rails; read the element, or the member, into a local first.
 - 64-bit-integer **results** of a few `<math.h>` functions and pointer out-params are supported, but a
   general 64-bit *value* model and Windows/ILP32 *code generation* (vs. layout) are not.
-- The i386 in-struct `double`-alignment quirk is not modelled (the `long`/pointer/`long double` data
-  axes are).
 - `_Decimal32`/`_Decimal64`/`_Decimal128` are **blocked, not unsupported in principle**: Clang 18
   cannot compile `_Decimal`, so the form is un-validatable under the Clang-equivalence methodology and
   is gated out until a `_Decimal`-capable reference compiler is available.
-- An `Index`-base array-member access (`x[i].v[j]`, a member array indexed off an indexed base) stays a
-  general limitation; the array-compound-literal `[i][j].field` form is fully supported.
 - Cross-target builds are layout-only here; running them needs a cross toolchain.
 
 When in doubt, run `-fsyntax-only` (or `--fallback`) — the frontend names exactly what it can't do.

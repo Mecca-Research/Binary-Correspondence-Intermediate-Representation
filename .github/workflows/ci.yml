@@ -264,6 +264,40 @@ jobs:
         # run count and time bound are unchanged, so only the scheduling differs.
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
+  cfront-ubsan:
+    name: BCIR cfront witnesses under UBSan (every run-as-the-original program)
+    runs-on: ubuntu-latest
+    # A witness links an original beside an emit and compares them; if the ORIGINAL runs undefined
+    # behaviour the platform supplies the verdict (CI-ARM: a negative double converted to uint32_t,
+    # wrapped on x86-64, saturated on AArch64 -- docs/security/laws.md L12). This runs the 17 cfront
+    # test modules with compiler shims first on PATH: each witness keeps its own unsanitized -O2
+    # build (the miscompile witness) and is ALSO built under Clang's UBSan at -O2 -- whose checks no
+    # optimizer deletes; GCC's, unoptimized, only where Clang cannot build it -- with
+    # -fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all and run first; a UBSan report
+    # fails the job. Its own job, beside the oracle shards rather than behind the C analysis steps: the
+    # suite runs once more, sanitized.
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install the C toolchain (clang + compiler-rt for Clang's UBSan; the runner's GCC brings libubsan)
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: clang lld llvm libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
+
+      - name: cfront witnesses under UBSan
+        # This job installs Clang's compiler-rt beside the runner's GCC, so Clang's runtime gone missing
+        # FAILS here (--require-ubsan) instead of skipping (L2); so does a witness neither engine builds.
+        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan -j 4
+
   host-portability:
     name: Host portability (${{ matrix.os }}, Python 3.12)
     runs-on: ${{ matrix.os }}

@@ -1,0 +1,242 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_arrays_stored_into_pointer_slots_decay_on_both_rails",
+    "bcir.tests.test_c_cfront:test_null_pointer_constants_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_struct_values_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_struct_takes_only_a_value_of_its_own_type_on_both_rails",
+    "bcir.tests.test_c_cfront:test_rail_splits_lower_alike_and_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_nested_members_of_array_elements_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_postfix_after_parentheses_runs_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_paren_and_nested_member_refusals_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_arrays_stored_into_pointer_slots_decay_on_both_rails",
+      "label": "O19 an array stored through memcpy copies its bytes",
+      "new": "",
+      "old": "    if vt is not None and vt.kind == \"array\":\n        return \"const volatile void *\"\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_arrays_stored_into_pointer_slots_decay_on_both_rails",
+      "label": "T19 an array stored into a member staged as an integer",
+      "new": "                      :0?\"const volatile void *\"   /* an array decays to its address",
+      "old": "                      :(vr&&(vr->is_array||vr->is_vla))?\"const volatile void *\"   /* an array decays to its address",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_arrays_stored_into_pointer_slots_decay_on_both_rails",
+      "label": "T20 an array stored into a member array of pointers staged as an integer",
+      "new": "                      :0?\"const volatile void *\"   /* an array decays to its\n",
+      "old": "                      :(vr&&(vr->is_array||vr->is_vla))?\"const volatile void *\"   /* an array decays to its\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "O20 a null pointer constant keeps its int temp",
+      "new": "        if False:",
+      "old": "        if v in self.zero_consts and ct.kind in (\"pointer\", \"funcptr\"):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "O21 `return 0;` from a pointer function keeps its int temp",
+      "new": "                pass",
+      "old": "                rid = self._null_pointer(rid, self._resolve_type(self.func.ret))",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "O22 a pointer element stored from 0 keeps its int temp",
+      "new": "\n",
+      "old": "        else:\n            v = self._null_pointer(v, lv.ct)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T21 a null pointer constant keeps its integer temp",
+      "new": "  if(1) return v;",
+      "old": "  if(!k || strcmp(k->op,\"c.const\") || k->n_imm!=1 || k->imm[0]!=0) return v;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T22 a pointer constant declared by its scalar type",
+      "new": "\"%s %s = %s;\\n\",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],d),\n                  kd); }",
+      "old": "\"%s %s = %s;\\n\",decl_ty(&type_scratch,f,cl->wr[0],tb,sizeof tb),rname(f,cl->wr[0],d),\n                  kd); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T23 `return 0;` from a pointer function keeps its integer temp",
+      "new": "else{c->fn->return_rid=rv;",
+      "old": "else{rv=null_pointer(c,rv,&c->fn->ret);c->fn->return_rid=rv;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T24 a listed pointer element keeps its integer temp",
+      "new": "    /* fault */",
+      "old": "    if(u->k==IK_SCAL){ bcir_ctype et=u->slot; v=null_pointer(c,v,&et); }   /* `T *a[] = {&x, 0}` */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T25 a stored `T **` element keeps its integer temp",
+      "new": "        if(!ptr_array(c,v)){ et=index_elem_ctype(v); }",
+      "old": "        if(!ptr_array(c,v)){ if(et.kind==2 && (et.ptr_depth?et.ptr_depth:1)>1) et.ptr_depth--; else et=index_elem_ctype(v); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_values_run_as_the_original_on_both_rails",
+      "label": "O23 a struct value's temp typed uint32_t",
+      "new": "        if ct and (ct.is_integer or ct.is_float or ct.kind == \"pointer\")",
+      "old": "        if ct and (ct.is_integer or ct.is_float or ct.kind == \"pointer\" or ct.is_aggregate)",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_a_struct_takes_only_a_value_of_its_own_type_on_both_rails",
+      "label": "O24 a struct takes a value of another type",
+      "new": "        if False:",
+      "old": "        if vt is None or (vt.kind, vt.name) != (ct.kind, ct.name):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_struct_values_run_as_the_original_on_both_rails",
+      "label": "T26 a struct value's temp spelled as an integer",
+      "new": "  if(0 && r->kind==BCIR_RK_AGGREGATE && r->agg[0]) return r->agg;   /* a struct/union value: `struct T` (CF-STRUCTVAL) */",
+      "old": "  if(r->kind==BCIR_RK_AGGREGATE && r->agg[0]) return r->agg;   /* a struct/union value: `struct T` (CF-STRUCTVAL) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_values_run_as_the_original_on_both_rails",
+      "label": "T27 an element of an array of structs loaded into an integer temp",
+      "new": "    t=tempi(c,base->type.size?base->type.size:4,base->type.signd);",
+      "old": "    t=tempagg(c,index_elem_sidx(c,base));",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_values_run_as_the_original_on_both_rails",
+      "label": "T28 an array parameter of structs passed by value",
+      "new": "      else if(0){ ty.kind=2; ty.ptr_to_struct=1; ty.ptr_depth=1; }   /* `struct T a[..]` -> `struct T *`",
+      "old": "      else if(ty.kind==1){ ty.kind=2; ty.ptr_to_struct=1; ty.ptr_depth=1; }   /* `struct T a[..]` -> `struct T *`",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_struct_takes_only_a_value_of_its_own_type_on_both_rails",
+      "label": "T29 a struct takes a value of another type",
+      "new": "  if(1 || si<0 || value_is_struct(c,v,si)) return 1;",
+      "old": "  if(si<0 || value_is_struct(c,v,si)) return 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_rail_splits_lower_alike_and_run_as_the_original",
+      "label": "T30 `!` takes the ADD opcode",
+      "new": "    bcir_opcode oc=is(c,\"-\")?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;",
+      "old": "    bcir_opcode oc=(is(c,\"-\")||is(c,\"!\"))?BCIR_OP_SUB:BCIR_OP_ADD;c->i++;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_rail_splits_lower_alike_and_run_as_the_original",
+      "label": "T31 a bare `*e;` keeps its store probe's claims",
+      "new": "    c->i=save;   /* not a deref-store",
+      "old": "    spec_end(c,&dm); c->i=save;   /* not a deref-store",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_rail_splits_lower_alike_and_run_as_the_original",
+      "label": "T32 `&p[i]` counts as taking `p`'s address",
+      "new": "        if (closed == np) {",
+      "old": "        if (closed == np && !tok_is(&c->t[k], \"[\") && !tok_is(&c->t[k], \".\") && !tok_is(&c->t[k], \"->\")) {",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_rail_splits_lower_alike_and_run_as_the_original",
+      "label": "T33 a volatile VLA laid out as ordinary memory",
+      "new": "        uint32_t arid=add_res(c,BCIR_DOM_RAM,ty.size,1,ty.is_volatile,BCIR_RK_SCALAR,nb);",
+      "old": "        uint32_t arid=add_res(c,vmm?BCIR_DOM_MMIO:BCIR_DOM_RAM,ty.size,1,ty.is_volatile,BCIR_RK_SCALAR,nb);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_rail_splits_lower_alike_and_run_as_the_original",
+      "label": "T34 a volatile VLA declared without its qualifier",
+      "new": "        w+=snprintf(o+EO,on-EO,\"%s%s %s[%s];\\n\",vr&&0?\"volatile \":\"\",",
+      "old": "        w+=snprintf(o+EO,on-EO,\"%s%s %s[%s];\\n\",vr&&vr->is_volatile?\"volatile \":\"\",",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_postfix_after_parentheses_runs_as_the_original_on_both_rails",
+      "label": "T35 the twin reads `(a)[i]` without the parenthesis pass",
+      "new": "  for(int pass=0; pass<8 && 0; pass++){}",
+      "old": "  for(int pass=0; pass<8 && unparen_body(c,c->i); pass++){}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_paren_and_nested_member_refusals_on_both_rails",
+      "label": "T36 a parenthesized declarator taken as an operand",
+      "new": "  if(0 && f->decl && !f->init && f->xpd<0) return 0;",
+      "old": "  if(f->decl && !f->init && f->xpd<0) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_nested_members_of_array_elements_run_as_the_original_on_both_rails",
+      "label": "T37 an element's nested member not descended",
+      "new": "  field s=ES->f[fi];",
+      "old": "  field s=member_descend(c,ES->f[fi]);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_nested_members_of_array_elements_run_as_the_original_on_both_rails",
+      "label": "T38 a nested hop's offset dropped before a member array",
+      "new": "    vol|=m.is_volatile; S=&c->s[m.sidx]; j+=2;",
+      "old": "    off+=m.byte_off; vol|=m.is_volatile; S=&c->s[m.sidx]; j+=2;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_nested_members_of_array_elements_run_as_the_original_on_both_rails",
+      "label": "T39 an enclosing volatile member's qualifier dropped",
+      "new": "    f=S->f[fi]; f.byte_off+=base_off;",
+      "old": "    f=S->f[fi]; f.byte_off+=base_off; if(base_vol) f.is_volatile=1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_postfix_after_parentheses_runs_as_the_original_on_both_rails",
+      "label": "O25 `(*p).x` read as a member of a struct value",
+      "new": "                    node = cast.Member(node, field, arrow=False)",
+      "old": "                    node = cast.Member(node.operand, field, arrow=True)",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_postfix_after_parentheses_runs_as_the_original_on_both_rails",
+      "label": "O26 `(*p)[i]` subscripts a scalar",
+      "new": "                    pass",
+      "old": "                    node = cast.Index(node.operand, cast.IntLit(0))",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_nested_members_of_array_elements_run_as_the_original_on_both_rails",
+      "label": "O27 a nested member resolved in the element struct",
+      "new": "            agg = self._complete(elem)",
+      "old": "            agg = self._complete(ftype)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T44 a null function pointer keeps its integer temp",
+      "new": "  if(ty->kind==3){ return v; }   /* `op_t f = 0;` */",
+      "old": "  if(ty->kind==3){ r->is_funcptr=1; fits(c,r->agg,BCIR_CIR_AGG,\"%s\",ty->tag); return v; }   /* `op_t f = 0;` */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_run_as_the_original_on_both_rails",
+      "label": "T45 a null function pointer constant declared as an integer",
+      "new": "r->is_funcptr=1; return v; }",
+      "old": "r->is_funcptr=1; fits(c,r->agg,BCIR_CIR_AGG,\"%s\",ty->tag); return v; }",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

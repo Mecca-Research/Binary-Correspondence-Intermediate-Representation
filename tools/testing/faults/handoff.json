@@ -118,6 +118,13 @@
     },
     {
       "expects": "handoff.builder.violations",
+      "label": "Python freeze: the label law keeps the 31 characters of the old 32-byte claim op",
+      "new": "LABEL_MAX = 31  # bcir_claim.op is BCIR_CIR_OP (128) bytes: a label and its terminator",
+      "old": "LABEL_MAX = 127  # bcir_claim.op is BCIR_CIR_OP (128) bytes: a label and its terminator",
+      "path": "bcir/gem/handoff.py"
+    },
+    {
+      "expects": "handoff.builder.violations",
       "label": "C++ builder: a claim's reads are silently clamped to the record's bound instead of refused",
       "new": "  c.n_rd = static_cast<std::uint8_t>(spec.reads.size() > BCIR_CLAIM_MAX_RD ? BCIR_CLAIM_MAX_RD : spec.reads.size());",
       "old": "  c.n_rd = static_cast<std::uint8_t>(spec.reads.size() > 255u ? 255u : spec.reads.size());",

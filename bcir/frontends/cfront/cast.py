@@ -20,6 +20,7 @@ class TypeRef:
     funcptr: bool = False  # a function-pointer alias (RET (*name)(PARAMS)) — base is its name
     func_ret: object = None  # the return TypeRef (funcptr only)
     func_params: tuple = ()  # the parameter TypeRefs (funcptr only) — for faithful emit
+    func_variadic: bool = False  # a trailing `...` in its parameter list (funcptr only, CF-FPRET)
     typeof_var: str = ""  # `typeof(var)` — resolved in lowering to the in-scope variable's type
     typeof_expr: object = (
         None  # `typeof(expr)` — the unevaluated operand; lowering infers its static type
@@ -32,6 +33,9 @@ class TypeRef:
     #   the verbatim spelling (`_BitInt(N)` / `unsigned _BitInt(N)`) lowering builds
     #   the `bitint` CType from. Carried on the TypeRef so the no-promotion +
     #   faithful-emit width survives parse -> lower.
+    ptr_quals: tuple = ()  # the qualifiers after each `*`, from the base out -- `const char *const *`
+    #   has `(("const",), ())` -- each a tuple of `const` and `restrict`; () when no `*` is qualified.
+    #   A function type spells and compares them (CF-QUALS)
 
 
 # --- expressions ---
@@ -87,7 +91,7 @@ class Name:
 
 @dataclass(frozen=True)
 class Unary:
-    op: str  # - ~ ! * & (deref / address-of)
+    op: str  # + - ~ ! * & (deref / address-of), GNU __real__ / __imag__
     operand: object
 
 
@@ -189,6 +193,16 @@ class CallMember:
     args: tuple  # function-pointer struct member (HAL dispatch table)
 
 
+@dataclass(frozen=True)
+class CallPtr:
+    """A call through any other postfix expression (C11 6.5.2.2p1): `(*fp)(x)`, `ops[i](x)`,
+    `(*p)(x)`. Lowering calls the function the expression names -- a function-pointer value, or a
+    function designator a `*` of it names (6.5.3.2p4) -- and refuses anything else."""
+
+    callee: object
+    args: tuple
+
+
 # --- statements ---
 @dataclass(frozen=True)
 class Decl:
@@ -196,6 +210,7 @@ class Decl:
     name: str
     init: object = None
     static_storage: bool = False  # `static T name = init;` — static storage duration (persists)
+    thread_storage: bool = False  # `_Thread_local`: each thread's own object (CF-TLS)
 
 
 @dataclass(frozen=True)
@@ -342,6 +357,11 @@ class Func:
     static_fn: bool = False  # source `static` on the definition (internal linkage). The default
     #   emit is static regardless; the LINKABLE emit keeps `static` only
     #   when this is set (source-static honoring).
+    declared: frozenset | None = (
+        None  # the file-scope functions declared -- defined or prototyped --
+    )
+    #   before the body, the function itself included: what its body may call or name (C11
+    #   6.5.1p2). None when no parser recorded it (nothing is checked)
 
 
 @dataclass(frozen=True)
@@ -360,11 +380,12 @@ class Global:
 
     type: TypeRef
     name: str
-    init: tuple = ()  # initializer element expressions (for an array/scalar)
+    init: object = None  # the initializer, as a local's: an expression or a brace list (AggInit)
     extern_decl: bool = False  # `extern T g;` -- a DECLARATION of another TU's definition
     #   (the linkable emit prints `extern ...;`, never a definition)
     static_storage: bool = False  # source `static` (internal linkage) -- the linkable emit keeps
     #   the definition file-local instead of exporting it
+    thread_storage: bool = False  # `_Thread_local` -- the linkable emit keeps it (CF-TLS)
 
 
 @dataclass
@@ -375,3 +396,16 @@ class Unit:
     protos: dict = field(default_factory=dict)  # name -> (ret TypeRef, (param TypeRef, ...)) --
     #   file-scope function PROTOTYPES (Phase 3 linking:
     #   a cross-TU callee, or an in-unit forward decl)
+    # the prototypes ending in `...`, which their `extern` declarations keep (CF-EXTDESIG)
+    variadic_protos: set = field(default_factory=set)
+    anon_spelling: dict = field(
+        default_factory=dict
+    )  # a synthesized `$anonN` tag -> how C names the
+    #   anonymous aggregate: a file-scope typedef's name, or `__typeof__` of the member it is the type of
+    # the file-scope declarations that define or name a type -- a struct, union or enum definition, a tag's forward
+    # declaration, a typedef -- each as its tokens spell it, in source order: the linkable emit defines the
+    # types its functions and globals name with them (CF-LINKEMIT)
+    type_defs: list = field(default_factory=list)
+    # the unit's typedef names, which an emitted function may spell at file scope: no local it hoists may take one
+    # (CF-TYPEDEFSCOPE; the emit's `_uniq`)
+    typedef_names: frozenset = frozenset()

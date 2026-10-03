@@ -1,0 +1,343 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_if_expressions_take_the_branch_clang_takes_on_each_target",
+    "bcir.tests.test_c_cfront:test_if_expressions_refused_for_one_reason_on_both_rails",
+    "bcir.tests.test_c_cfront:test_if_branches_lowered_by_both_rails_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_a_prefixed_character_constant_is_one_token_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO1 the oracle's `#if` reads a `u` suffix as signed",
+      "new": "    return _PPValue(value, value > _IMAX)",
+      "old": "    return _PPValue(value, \"u\" in suffix.lower() or value > _IMAX)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO2 the oracle's `#if` keeps a constant past INTMAX_MAX signed",
+      "new": "    return _PPValue(value, \"u\" in suffix.lower())",
+      "old": "    return _PPValue(value, \"u\" in suffix.lower() or value > _IMAX)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO3 the oracle's `#if` makes an operation unsigned only when both operands are",
+      "new": "    u = a.unsigned and b.unsigned\n",
+      "old": "    u = a.unsigned or b.unsigned\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO4 the oracle's `#if` reads a plain character constant as signed on every target",
+      "new": "        bits, signed, v = 8, True, units[0]",
+      "old": "        bits, signed, v = 8, abi.char_signed, units[0]",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO5 the oracle's `#if` reads a character constant as 0",
+      "new": "            return _ZERO",
+      "old": "            return _char_lit(t, self.abi)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO6 the oracle's `#if` reads an `L` constant as signed on every target",
+      "new": "        signed, v = True, units[0]",
+      "old": "        signed, v = abi.wchar_signed, units[0]",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO7 the oracle's `#if` evaluates the right of `&&` after 0",
+      "new": "            rlive = live",
+      "old": "            rlive = live and not (op == \"&&\" and not lhs.bits) and not (op == \"||\" and lhs.bits)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO8 the oracle's `#if` evaluates the arm of `?:` not taken",
+      "new": "        a = self._comma(live, depth + 1)",
+      "old": "        a = self._comma(live and c.bits != 0, depth + 1)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO9 the oracle's `#if` types `?:` by the arm taken alone",
+      "new": "        return _PPValue((a if c.bits else b).bits, (a if c.bits else b).unsigned)",
+      "old": "        return _PPValue((a if c.bits else b).bits, a.unsigned or b.unsigned)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO10 the oracle's `#if` ignores a token past the expression",
+      "new": "        if False:\n            raise CPPError(PP_MALFORMED)",
+      "old": "        if self.i != len(self.t):\n            raise CPPError(PP_MALFORMED)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO11 the oracle's `#if` takes any shift count",
+      "new": "        if False:",
+      "old": "        if not 0 <= n < 64:",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO12 the oracle's `#if` wraps a signed overflow",
+      "new": "    if False:",
+      "old": "    if not u and not -(1 << 63) <= r <= _IMAX and live:",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO13 the oracle's `#if` divides toward minus infinity",
+      "new": "        q = x // y  # C truncates toward zero",
+      "old": "        q = abs(x) // abs(y) * (1 if (x < 0) == (y < 0) else -1)  # C truncates toward zero",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO14 the oracle's `#if` reads `true` as 0",
+      "new": "                _ZERO",
+      "old": "                _ONE if t == \"true\" else _ZERO",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO15 the oracle's `#if` takes an evaluated comma",
+      "new": "            if False:\n                raise CPPError(PP_COMMA)",
+      "old": "            if live:\n                raise CPPError(PP_COMMA)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO16 the oracle's `#if` divides by zero to 0",
+      "new": "            if False:\n                raise CPPError(PP_DIVZERO)",
+      "old": "            if live:\n                raise CPPError(PP_DIVZERO)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PO17 the oracle's tokenizer splits a prefixed character constant",
+      "new": "",
+      "old": "    r\"|(?:u8|[LuU])'(?:\\\\.|[^'\\\\])*'\"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO18 the oracle reads a character escape past its code unit",
+      "new": "        if False:",
+      "old": "        if v >= limit:",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO19 the oracle's `#if` nests parentheses without bound",
+      "new": "            if False:\n                raise CPPError(PP_DEEP)",
+      "old": "            if depth >= _PP_MAX_DEPTH:\n                raise CPPError(PP_DEEP)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_branches_lowered_by_both_rails_run_as_the_original",
+      "label": "PO20 the oracle's compile reads `#if` by the host's characters, not the target's",
+      "new": "        abi=None,  # a `#if` reads",
+      "old": "        abi=abi,  # a `#if` reads",
+      "path": "bcir/frontends/cfront/pipeline.py"
+    },
+    {
+      "expects": "test_a_prefixed_character_constant_is_one_token_on_both_rails",
+      "label": "PO21 the oracle joins an encoding prefix to the constant after it",
+      "new": "    if False:",
+      "old": "    if b == \"'\" and a in \"LuU8\":",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO22 the oracle's `#if` negates INTMAX_MIN",
+      "new": "                if False:",
+      "old": "                if not v.unsigned and v.bits == 1 << 63 and live:",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO23 the oracle's `#if` shifts a negative value left",
+      "new": "(a.signed() << n > _IMAX)",
+      "old": "(a.signed() < 0 or a.signed() << n > _IMAX)",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PO24 the oracle's `#if` takes INTMAX_MIN % -1",
+      "new": "            False",
+      "old": "            not u and q > _IMAX and live",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT1 the twin's `#if` reads a `u` suffix as signed",
+      "new": "  r.v=L.v; r.u=L.v>(unsigned long long)LLONG_MAX;",
+      "old": "  r.v=L.v; r.u=L.u || L.v>(unsigned long long)LLONG_MAX;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT2 the twin's `#if` keeps a constant past INTMAX_MAX signed",
+      "new": "  r.v=L.v; r.u=L.u;",
+      "old": "  r.v=L.v; r.u=L.u || L.v>(unsigned long long)LLONG_MAX;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT3 the twin's `#if` makes an operation unsigned only when both operands are",
+      "new": "  int u=a.u&&b.u; long long x",
+      "old": "  int u=a.u||b.u; long long x",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT4 the twin's `#if` reads a plain character constant as signed on every target",
+      "new": "  if(!L.prefix){ bits=8; sg=1;",
+      "old": "  if(!L.prefix){ bits=8; sg=state->char_signed;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT5 the twin's `#if` reads an `L` constant as signed on every target",
+      "new": "  else if(L.prefix=='L') sg=1;",
+      "old": "  else if(L.prefix=='L') sg=state->wchar_signed;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT6 the twin's `#if` evaluates the right of `&&` after 0",
+      "new": "    int rlive=live;",
+      "old": "    int rlive=live && !(!strcmp(op,\"&&\") && !lhs.v) && !(!strcmp(op,\"||\") && lhs.v);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT7 the twin's `#if` evaluates the arm of `?:` not taken",
+      "new": "  ppv a=ce_comma(c,live,depth+1);",
+      "old": "  ppv a=ce_comma(c,live && k.v,depth+1);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT8 the twin's `#if` types `?:` by the arm taken alone",
+      "new": "  ppv r = k.v ? a : b;",
+      "old": "  ppv r = k.v ? a : b; r.u=a.u||b.u;",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT9 the twin's `#if` ignores a token past the expression",
+      "new": "  if(0) cpp_limit(state,PP_MALFORMED);",
+      "old": "  if(c.i!=c.n) cpp_limit(state,PP_MALFORMED);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT10 the twin's `#if` takes any shift count",
+      "new": "{ return r; }",
+      "old": "{ if(live) ce_fail(c,PP_SHIFT); return r; }",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT11 the twin's `#if` wraps a signed overflow",
+      "new": "  if(0 && over && live) ce_fail(c,PP_OVERFLOW);",
+      "old": "  if(over && live) ce_fail(c,PP_OVERFLOW);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT12 the twin's `#if` reads `true` as 0",
+      "new": "  if(is_name(t)){ z.v=0; return z; }",
+      "old": "  if(is_name(t)){ z.v=!strcmp(t,\"true\"); return z; }",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT13 the twin's `#if` takes an evaluated comma",
+      "new": "    if(0) ce_fail(c,PP_COMMA);",
+      "old": "    if(live) ce_fail(c,PP_COMMA);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT14 the twin's `#if` divides by zero to 0",
+      "new": "    if(!b.v){ return r; }",
+      "old": "    if(!b.v){ if(live) ce_fail(c,PP_DIVZERO); return r; }",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT15 the twin's tokenizer splits a prefixed character constant",
+      "new": "    if (0 && s[*i] == '\\'' && (!strcmp(out, \"L\")",
+      "old": "    if (s[*i] == '\\'' && (!strcmp(out, \"L\")",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT16 the twin reads a character escape past its code unit",
+      "new": "    if(0) return char_bad;",
+      "old": "    if(v>=limit) return char_bad;",
+      "path": "runtime/c/bcir_intlit.h"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT17 the twin's `#if` nests parentheses without bound",
+      "new": "    if(0){ ce_fail(c,PP_DEEP); return z; }",
+      "old": "    if(depth>=PP_MAX_DEPTH){ ce_fail(c,PP_DEEP); return z; }",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT18 the twin's driver reads `#if` by the default target's characters",
+      "new": "bcir_cpp_set_chars(cs | 1, ws, wsg); }",
+      "old": "bcir_cpp_set_chars(cs, ws, wsg); }",
+      "path": "runtime/c/test_cfront.c"
+    },
+    {
+      "expects": "test_a_prefixed_character_constant_is_one_token_on_both_rails",
+      "label": "PT19 the twin joins an encoding prefix to the constant after it",
+      "new": "  if (0 && b == '\\'' && (a == 'L' || a == 'u' || a == 'U' || a == '8'))",
+      "old": "  if (b == '\\'' && (a == 'L' || a == 'u' || a == 'U' || a == '8'))",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT20 the twin's `#if` negates INTMAX_MIN",
+      "new": "if(0) ce_fail(c,PP_OVERFLOW);",
+      "old": "if(!v.u && v.v==1ull<<63 && live) ce_fail(c,PP_OVERFLOW);",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT21 the twin's `#if` shifts a negative value left",
+      "new": "((n && a.v>((unsigned long long)LLONG_MAX>>n)))",
+      "old": "(a.v>>63 || (n && a.v>((unsigned long long)LLONG_MAX>>n)))",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_refused_for_one_reason_on_both_rails",
+      "label": "PT22 the twin's `#if` takes INTMAX_MIN % -1",
+      "new": "{ r.v=o[0]",
+      "old": "{ if(live) ce_fail(c,PP_OVERFLOW); r.v=o[0]",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_if_expressions_take_the_branch_clang_takes_on_each_target",
+      "label": "PT23 the twin's tokenizer ends a number at a digit separator",
+      "new": "    while (idc((unsigned char)s[*i]) || s[*i] == '.') {",
+      "old": "    while (idc((unsigned char)s[*i]) || s[*i] == '.' || s[*i] == '\\'') {",
+      "path": "runtime/c/bcir_cpp.c"
+    }
+  ]
+}

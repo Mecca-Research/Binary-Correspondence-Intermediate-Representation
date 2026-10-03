@@ -166,11 +166,18 @@ PY
     if [ ! -f "${C}/${sec}" ]; then
       echo "  FAIL: ${label} adversarial fixture ${sec} is MISSING (a memory-safety regression pin was removed)"; adv_fail=1; fail=1; continue
     fi
-    errf="${tmp}/secerr_${key}.txt"
-    ASAN_OPTIONS="halt_on_error=1:detect_leaks=1" "${bin}" "${C}/${sec}" >/dev/null 2>"${errf}"; rc=$?
+    errf="${tmp}/secerr_${key}.txt"; outf="${tmp}/secout_${key}.txt"
+    ASAN_OPTIONS="halt_on_error=1:detect_leaks=1" "${bin}" "${C}/${sec}" >"${outf}" 2>"${errf}"; rc=$?
     if [ "${rc}" -ge 128 ] || grep -qiE "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error|stack-buffer|heap-buffer-overflow|global-buffer-overflow|stack-overflow|use-after-free|out of bounds|detected memory leaks" "${errf}"; then
       echo "  FAIL: ${label} adversarial fixture ${sec} tripped the sanitizer (rc=${rc}):"; sed 's/^/    /' "${errf}" | head -25; adv_fail=1; fail=1
     fi
+    # the two that must compile clean do (CF-BUF): sigoverflow's 60-parameter signature once marked its whole
+    # emit impossible (`EMIT-ERR`, rc 1), which passed this stage because only a crash failed it
+    case "${sec}" in cfront_sec_envrealloc.c|cfront_sec_sigoverflow.c)
+      if [ "${rc}" -ne 0 ]; then
+        echo "  FAIL: ${label} adversarial fixture ${sec} did not compile clean (rc=${rc}): $(head -c 200 "${outf}")"; adv_fail=1; fail=1
+      fi ;;
+    esac
   done
   [ "${adv_fail}" -eq 0 ] && echo "  PASS ${label} adversarial fixtures (env realloc, signature overflow, deep nesting, lexer tail, preprocessor macro overflow; ASan+leak clean)"
 }

@@ -1334,9 +1334,14 @@ def audit_delta(module, k: int) -> tuple[tuple, tuple]:
     return (replace(c, count=c.count + 1 + k),), ()
 
 
-def delta_ratio(scale: int = RATIO_SCALE, rounds: int = 9) -> float:
+def delta_ratio(scale: int = RATIO_SCALE, rounds: int = 9, floor: dict | None = None) -> float:
     """Median time of one `DeltaChain.apply` over the median time of the chain from scratch on
-    the module the delta declares, the audit fixture at `scale`, in one process."""
+    the module the delta declares, the audit fixture at `scale`, in one process.
+
+    With `floor`, `floor["ratio"]` is the row's floor over the same denominator, timed in the same
+    rounds: allocating and writing the new link's pack bytes once. A delta that changes the pack
+    returns a new immutable `bytes` of the whole pack (`Link.data`), so that much of the output is
+    written whatever the incremental machinery above it does."""
     import gc
     import statistics
     import time
@@ -1348,7 +1353,7 @@ def delta_ratio(scale: int = RATIO_SCALE, rounds: int = 9) -> float:
 
     module, h, theta = audit_fixture(scale)
     chain = DeltaChain.build(module, h, theta, PERF, PLAN, 2)
-    full, step = [], []
+    full, step, fresh = [], [], []
     for k in range(rounds):
         claims, resources = audit_delta(chain.module, k)
         new = declared(chain.module, claims, resources)
@@ -1358,14 +1363,24 @@ def delta_ratio(scale: int = RATIO_SCALE, rounds: int = 9) -> float:
         full.append(time.perf_counter() - t0)
         gc.collect()
         t0 = time.perf_counter()
-        chain.apply(Delta(claims, resources))
+        link = chain.apply(Delta(claims, resources))
         step.append(time.perf_counter() - t0)
+        if floor is not None:
+            size = len(link.data)
+            gc.collect()
+            t0 = time.perf_counter()
+            b"\x01" * size
+            fresh.append(time.perf_counter() - t0)
+    if floor is not None:
+        floor["ratio"] = statistics.median(fresh) / statistics.median(full)
+        floor["bytes"] = size
     return statistics.median(step) / statistics.median(full)
 
 
-def _profiled_calls(fn, *args) -> int:
-    """cProfile's total for one call of `fn`, with the collector run first and paused during it:
-    a finalizer the collector happens to run inside the window is a call the code did not make."""
+def _profiled(fn, *args) -> tuple[int, object]:
+    """(cProfile's total for one call of `fn`, its value), with the collector run first and paused
+    during it: a finalizer the collector happens to run inside the window is a call the code did
+    not make."""
     import cProfile
     import gc
     import pstats
@@ -1375,18 +1390,24 @@ def _profiled_calls(fn, *args) -> int:
     profile = cProfile.Profile()
     try:
         profile.enable()
-        fn(*args)
+        value = fn(*args)
         profile.disable()
     finally:
         gc.enable()
-    return pstats.Stats(profile).total_calls
+    return pstats.Stats(profile).total_calls, value
 
 
-def delta_calls(scale: int = CALLS_SCALE) -> tuple[int, int]:
+def _profiled_calls(fn, *args) -> int:
+    """cProfile's total for one call of `fn` (`_profiled` without the value)."""
+    return _profiled(fn, *args)[0]
+
+
+def delta_calls(scale: int = CALLS_SCALE, links: list | None = None) -> tuple[int, int]:
     """(calls of one `DeltaChain.apply`, calls of the chain from scratch) for the one-claim delta
     of the audit fixture at `scale` (cProfile's total, builtins included). Deterministic for one
     interpreter and different between CPython versions, so a gate compares the two in one
-    process."""
+    process. With `links`, it receives the chain's link before the counted apply, the one the
+    apply returned and the delta it applied -- what the row's emission floor is read from."""
     from bcir.gem.delta_chain import DeltaChain
     from bcir.kbcir.delta import Delta
     from bcir.kbcir.weights import PERF
@@ -1397,17 +1418,27 @@ def delta_calls(scale: int = CALLS_SCALE) -> tuple[int, int]:
     chain.apply(Delta(*audit_delta(chain.module, 1)))  # warm imports and caches outside the count
     claims, resources = audit_delta(chain.module, 0)
     new = declared(chain.module, claims, resources)
-    step = _profiled_calls(chain.apply, Delta(claims, resources))
+    before = chain.link
+    delta = Delta(claims, resources)
+    step, after = _profiled(chain.apply, delta)
+    if links is not None:
+        links[:] = [before, after, delta]
     return step, _profiled_calls(reference_chain, new, h, theta, PERF, 2)
 
 
-def full_calls(scale: int = CALLS_SCALE) -> int:
+def full_calls(scale: int = CALLS_SCALE, links: list | None = None) -> int:
     """Calls of the chain from scratch on the audit fixture's one-claim delta at `scale` -- what a
-    delta costs without G18 (the RED of `kbcir-streampack.delta.calls`)."""
+    delta costs without G18 (the RED of `kbcir-streampack.delta.calls`). With `links`, it receives
+    the chain's output (the `Reference`) and the module it ran on -- what the row's emission floor
+    is read from."""
     from bcir.kbcir.weights import PERF
     from bcir.tests.planner_fixtures import audit_fixture
 
     module, h, theta = audit_fixture(scale)
     reference_chain(module, h, theta, PERF, 2)  # warm
     claims, resources = audit_delta(module, 0)
-    return _profiled_calls(reference_chain, declared(module, claims, resources), h, theta, PERF, 2)
+    new = declared(module, claims, resources)
+    calls, out = _profiled(reference_chain, new, h, theta, PERF, 2)
+    if links is not None:
+        links[:] = [out, new]
+    return calls

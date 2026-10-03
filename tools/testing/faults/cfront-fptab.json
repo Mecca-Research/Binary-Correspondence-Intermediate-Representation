@@ -1,0 +1,260 @@
+{
+ "command": [
+  "@python",
+  "tools/testing/check_tests.py",
+  "--require",
+  "bcir.tests.test_c_cfront:_CC",
+  "bcir.tests.test_c_cfront:test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+  "bcir.tests.test_c_cfront:test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+  "bcir.tests.test_c_cfront:test_function_designator_arms_select_a_function_pointer_on_both_rails",
+  "bcir.tests.test_c_cfront:test_sizeof_refuses_what_it_cannot_measure_on_both_rails",
+  "bcir.tests.test_c_cfront:test_a_member_access_on_a_non_struct_is_refused_on_both_rails"
+ ],
+ "faults": [
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FO1 the oracle's parser calls only after a name or a member",
+   "new": "            elif self.at(\"PUNCT\", \"(\") and isinstance(node, (cast.Name, cast.Member)):\n                self.nxt()\n                args = []",
+   "old": "            elif self.at(\"PUNCT\", \"(\"):\n                self.nxt()\n                args = []",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FO2 the oracle reads through `*fp` instead of naming the function",
+   "new": "",
+   "old": "                if self._fn_valued(\n                    node.operand\n                ):  # `*fp`, `*inc`: the function, converted back to the\n                    return self._rvalue(\n                        node.operand\n                    )  # pointer -- no read (C11 6.5.3.2p4, 6.3.2.1p4)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FO3 the oracle drops an inline table's dimensions",
+   "new": "        return dataclasses.replace(fp, ptr=ptr, quals=own, ptr_quals=pq), name\n",
+   "old": "        return dataclasses.replace(fp, ptr=ptr, array=tuple(dims), quals=own, ptr_quals=pq), name\n",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO4 the oracle takes any operand for `*` and `[]`",
+   "new": "        return True\n",
+   "old": "        return ct is not None and ct.kind in (\"pointer\", \"array\")\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO5 the oracle reads `->` through the base's own type",
+   "new": "            return base_ct.of if base_ct.of is not None else base_ct\n",
+   "old": "            of = base_ct.of if self._indexable(base_ct) else None\n            # (a multi-dimensional array converts to a row pointer, not to a struct)\n            if of is None or of.kind not in (\"struct\", \"union\") or len(base_ct.shape) > 1:\n                raise CLowerError(ARROW_NOT)\n            return of\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FO6 the oracle's `_fn_valued` does not see through a conditional",
+   "new": "",
+   "old": "        # `c ? f : g`, `c ? f : 0`: a pointer to the arms' function type (CF-FNSEL)\n        if isinstance(node, cast.Ternary):\n            return self._fn_valued(node.then) or self._fn_valued(node.els)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FO7 the oracle types a subscript chain one level per `[]`",
+   "new": "                depth -= 1\n",
+   "old": "                depth -= min(depth, max(1, len(t.shape)))\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FO8 the oracle refuses a 2-D file-scope table of function pointers",
+   "new": "                whole_ok = t.kind == \"scalar\"\n",
+   "old": "                whole_ok = t.kind in (\"scalar\", \"funcptr\")\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO9 the oracle takes `&*s` of an integer",
+   "new": "",
+   "old": "                    if not (\n                        self._indexable(self.rtypes.get(rid)) or self._fn_valued(operand.operand)\n                    ):\n                        raise CLowerError(DEREF_NOT)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO10 the oracle measures `sizeof *fp`",
+   "new": "",
+   "old": "                if self._fn_valued(node.operand):  # `sizeof *fp`: a function (C11 6.5.3.4p1)\n                    raise CLowerError(SIZEOF_FN)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO11 the oracle refuses `1[p]` for an internal reason",
+   "new": "",
+   "old": "                # `1[p]`: C allows the pointer as the index, neither rail (CF-FPTAB)\n                if isinstance(n, cast.IntLit):\n                    raise CLowerError(\"a subscript of an integer constant is not supported\")\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO12 the oracle takes an inline table of four dimensions",
+   "new": "            if len(dims) == 30:\n",
+   "old": "            if len(dims) == 3:  # at most three, as for any array here (the twin's `fp_inline_decl`)\n",
+   "path": "bcir/frontends/cfront/cparse.py"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FO13 the oracle stores through `*fp`",
+   "new": "",
+   "old": "            # `*fp = v`, `(*fp)++`: a function is no object (6.3.2.1p1)\n            if self._fn_valued(operand):\n                raise CLowerError(FN_NOT_LVALUE)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_sizeof_refuses_what_it_cannot_measure_on_both_rails",
+   "label": "FO14 the oracle's `sizeof` names no reason of its own for a function",
+   "new": "                    raise CLowerError(f\"sizeof of the function {node.ident!r}\", pos=node.pos)\n",
+   "old": "                    raise CLowerError(SIZEOF_FN, pos=node.pos)  # the twin's reason (CF-FPTAB)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_a_member_access_on_a_non_struct_is_refused_on_both_rails",
+   "label": "FO15 the oracle reads `p.x` through the pointer's own type",
+   "new": "        return base_ct\n",
+   "old": "        if base_ct is None or base_ct.kind not in (\"struct\", \"union\"):\n            raise CLowerError(DOT_NOT)\n        return base_ct\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT1 the twin knows no inline table declarator in a block",
+   "new": "        if(0 && k!=c->i+3){   /* `RET (*t[N])(P)`, `RET (**pp)(P)`: an array of, or a pointer to, function pointers",
+   "old": "        if(k && k!=c->i+3){   /* `RET (*t[N])(P)`, `RET (**pp)(P)`: an array of, or a pointer to, function pointers",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT2 the twin calls `(**t)(x)` through the table itself",
+   "new": "          : lv ? lv->type.kind==3\n",
+   "old": "          : lv ? (lv->type.kind==3 && !names_object_ptr(c,lv))   /* a table's `*t` is its first element */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT3 the twin calls nothing through a parenthesized value",
+   "new": "    eat(c,\")\");return r;}      /* side effects, DISCARD all but the last, yield the last rid; a `(`\n",
+   "old": "    eat(c,\")\");return call_value(c,r);}      /* side effects, DISCARD all but the last, yield the last rid; a `(`\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT4 the twin takes any named operand for `*` and `[]`",
+   "new": "  (void)c; (void)v; return 1;\n",
+   "old": "  if(v->type.kind==2) return 1;\n  const bcir_resource *r=res_of(c->fn,v->rid);\n  return r && (r->kind==BCIR_RK_POINTER || r->is_array || r->is_vla || r->is_pointer);\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT5 the twin reads `s->x` of a struct as `s.x`",
+   "new": "  if(arrow) return 1;\n",
+   "old": "  if(arrow) return v->type.nadims<=1 && ((v->type.kind==2 && v->type.ptr_to_struct && (v->type.ptr_depth?v->type.ptr_depth:1)==1)\n                                         || (v->type.kind==1 && arr));\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT6 the twin reads `*g` of a file-scope table as an integer",
+   "new": "    if(0) ptee_fp(c,gr,&g->ty);   /* a table of function pointers: its element's alias, as a\n",
+   "old": "    if(g->is_arr && g->ty.kind==3) ptee_fp(c,gr,&g->ty);   /* a table of function pointers: its element's alias, as a\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT7 the twin declares a table parameter as one function pointer",
+   "new": "      else if(0) fp_star(c,&ty);               /* `op_t t[N]` -> `op_t *t`: a pointer to function pointers,\n",
+   "old": "      else if(ty.kind==3) fp_star(c,&ty);               /* `op_t t[N]` -> `op_t *t`: a pointer to function pointers,\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT8 the twin refuses a 2-D file-scope table of function pointers",
+   "new": "  if(!r || !r->read_only || !r->name[0] || v->type.kind!=0) return 0;   /* scalars, and function\n",
+   "old": "  if(!r || !r->read_only || !r->name[0] || (v->type.kind!=0 && v->type.kind!=3)) return 0;   /* scalars, and function\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT9 the twin stores through `*fp`",
+   "new": "  if(0){   /* (a table's */\n",
+   "old": "  if(v ? (v->type.kind==3 && !names_object_ptr(c,v)) : (callee_ret(c,nm) || declared_ret(c,nm))){   /* (a table's */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT10 the twin subscripts an integer",
+   "new": "",
+   "old": "  if(!names_object_ptr(c,v)){ fail(c,CC_SUBSCRIPT_NOT); return 0; }   /* `s[1]` of an integer, `fp[0]` (CF-FPTAB) */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT11 the twin takes `&*s` of an integer",
+   "new": "      (void)rr;\n",
+   "old": "      if(!c->failed && !(rr && (rr->kind==BCIR_RK_POINTER || rr->is_array || rr->is_vla || rr->is_pointer\n                                || rr->is_funcptr || rr->is_voidptr))) fail(c,CC_DEREF_NOT);   /* (6.5.3.2p3, CF-FPTAB) */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT12 the twin measures `sizeof *fp`",
+   "new": "",
+   "old": "  else if(is(c,\"*\") && star_names_fn(c,c->i)){ fail(c,CC_SIZEOF_FN); r=-1; }   /* `sizeof *fp` (CF-FPTAB) */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT13 the twin refuses `1[p]` as a missing `;`",
+   "new": "",
+   "old": "    if(is(c,\"[\")){ fail(c,\"a subscript of an integer constant is not supported\"); return 0; }   /* `1[p]` (CF-FPTAB) */\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT14 the twin refuses an inline table of two dimensions",
+   "new": "    if(*nd>=1){ fail(c,\"an array of function pointers of more than 3 dimensions is not supported\"); return 1; }\n",
+   "old": "    if(*nd>=3){ fail(c,\"an array of function pointers of more than 3 dimensions is not supported\"); return 1; }\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT15 the twin types a table's element as an integer",
+   "new": "  if((base->type.kind==2 && base->type.ptr_to_fp && (base->type.ptr_depth?base->type.ptr_depth:1)==1\n",
+   "old": "  if(base->type.kind==3 || (base->type.kind==2 && base->type.ptr_to_fp && (base->type.ptr_depth?base->type.ptr_depth:1)==1\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_a_member_access_on_a_non_struct_is_refused_on_both_rails",
+   "label": "FT16 the twin reads `p.x` of a pointer as `p->x`",
+   "new": "  return 1;\n}\n",
+   "old": "  return v->type.kind==1 && !arr;\n}\n",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_operands_of_call_star_subscript_and_member_are_refused_alike_on_both_rails",
+   "label": "FT17 the twin refuses a call through a call's result for a missing `;`",
+   "new": "      return r; }",
+   "old": "      return call_result(c,r,rt); }",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+   "label": "FO16 the oracle reads a function-pointer member as no function pointer",
+   "new": "        if isinstance(node, cast.Member):\n            return False\n        # `c ? f : g`, `c ? f : 0`: a pointer to the arms' function type (CF-FNSEL)\n",
+   "old": "        # `c ? f : g`, `c ? f : 0`: a pointer to the arms' function type (CF-FNSEL)\n",
+   "path": "bcir/frontends/cfront/lower.py"
+  },
+  {
+   "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+   "label": "FT18 the twin reads a function-pointer member as an integer",
+   "new": "  uint32_t t=(0)?fp_value_temp(c,sig_alias(c,fld->fp_sig))",
+   "old": "  uint32_t t=(fld->fp_sig && !fld->is_ptr)?fp_value_temp(c,sig_alias(c,fld->fp_sig))",
+   "path": "runtime/c/bcir_cfront.c"
+  },
+  {
+   "expects": "test_tables_of_function_pointers_and_calls_through_them_run_as_the_original",
+   "label": "FT19 the twin spells a function-pointer value by its width",
+   "new": "  if(0) return r->agg;   /* a function-pointer",
+   "old": "  if(r->kind==BCIR_RK_SCALAR && r->is_funcptr && r->agg[0] && !r->is_array) return r->agg;   /* a function-pointer",
+   "path": "runtime/c/bcir_cfront.c"
+  }
+ ]
+}

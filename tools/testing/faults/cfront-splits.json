@@ -1,0 +1,131 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_split_forms_on_a_device_object_are_refused_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "S1 the oracle folds a written-out `p = p + n` into the compound's in-place c.ptradd",
+      "new": "            and node.value.op in (\"+\", \"-\")\n            and isinstance(node.value.lhs, cast.Name)\n            and node.value.lhs.ident == node.target.ident\n        ):\n            rid, ct = self._lookup(node.target.ident, node.target.pos)",
+      "old": "            and node.value.op in (\"+\", \"-\")\n            and node.value.lhs is node.target\n        ):\n            rid, ct = self._lookup(node.target.ident, node.target.pos)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "S2 the oracle's statement shortcut takes `++h` of `++h.next->v;` again",
+      "new": "        ):\n            pass\n        if self.at(\"OP\", \"++\") or self.at(\"OP\", \"--\"):",
+      "old": "        ):\n            return None\n        if self.at(\"OP\", \"++\") or self.at(\"OP\", \"--\"):",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "S3 the oracle dereferences only a name, a member or a call (`*&a` refused again)",
+      "new": "            ) and not (isinstance(operand, cast.Unary) and operand.op == \"*\"):\n                rid = self._rvalue(operand)\n                ct = self.rtypes.get(rid)\n                raise CLowerError(DEREF_NOT)",
+      "old": "            ) and not (isinstance(operand, cast.Unary) and operand.op == \"*\"):\n                rid = self._rvalue(operand)\n                ct = self.rtypes.get(rid)\n                if ct is not None and ct.kind == \"pointer\":\n                    return _LV(\"mem\", rid, ct.of or scalar(\"uint32_t\"), byte_off=0)\n                raise CLowerError(DEREF_NOT)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_split_forms_on_a_device_object_are_refused_on_both_rails",
+      "label": "S4 the oracle steps a member of a device struct as a value",
+      "new": "            _is_scalar_member_lv(node.operand, lv)\n        ):",
+      "old": "            _is_scalar_member_lv(node.operand, lv) and not self._mmio(lv.rid)\n        ):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T1 the twin's inc/dec stops at a pointer member (`h.next->v++` refused again)",
+      "new": "    if(0 && f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){   /* on through the pointer member it loads: `h.next->v++`,",
+      "old": "    if(f.is_ptr && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){   /* on through the pointer member it loads: `h.next->v++`,",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T2 the twin's assignment value stops at a pointer member (`x = (h.next->v = 5)` refused again)",
+      "new": "    if(0 && f.is_ptr && !v->type.is_volatile && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){",
+      "old": "    if(f.is_ptr && !v->type.is_volatile && (is(c,\"->\")||is(c,\".\")||is(c,\"[\"))){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T3 the twin takes no element of a pointer variable as a value lvalue (`p[i]++` refused again)",
+      "new": "  return 0;",
+      "old": "  return tok_is(tat(c,c->i+1),\"[\") && sub_group_count(c,c->i+1)==1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T4 the twin steps no dereference (`(*p)++` refused again)",
+      "new": "  if(0 && deref_incdec(c,out)) return 1;                   /* `++*p` / `(*p)++` (CF-SPLIT2) */",
+      "old": "  if(deref_incdec(c,out)) return 1;                        /* `++*p` / `(*p)++` (CF-SPLIT2) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T5 the twin keeps the parentheses of a callee (`(fp)(x)` refused again)",
+      "new": "      if(0 && !star && is_name && tok_is(op,\"(\") && !up_has_subscript(c,run_end,pe)){",
+      "old": "      if(!star && is_name && tok_is(op,\"(\") && !up_has_subscript(c,run_end,pe)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T6 the twin takes no address through a loaded pointer (`&h.next->v` refused again)",
+      "new": "    return 0; }\n  fail(c,\"address-of through a loaded pointer\"); return 0;\n}",
+      "old": "    return 0; }\n  return plv_addr(c,&lv);\n}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T7 the twin's statement shortcut takes `++h` of `++h.next->v;` again",
+      "new": "    (void)nx;",
+      "old": "    if(tok_is(nx,\".\")||tok_is(nx,\"->\")||tok_is(nx,\"[\")||tok_is(nx,\"(\")||tok_is(nx,\"++\")||tok_is(nx,\"--\")) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_on_a_device_object_are_refused_on_both_rails",
+      "label": "T8 the twin steps a member of a device struct as a value (the loaded pointer's domain unread)",
+      "new": "  (void)r;",
+      "old": "  if(r && r->domain==BCIR_DOM_MMIO) return 1;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T9 the twin never re-reads a narrowing store's value through a loaded pointer",
+      "new": "  (void)r; (void)sz; return 0;",
+      "old": "  return (lv->kind==1 && lv->f.bit_w) || sz < (int)(r?r->elem_bytes:4);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T10 the twin's postfix step through a loaded pointer yields the new value",
+      "new": "  (void)plv_write(c,lv,nw);\n  if(!prefix) return nw;",
+      "old": "  (void)plv_write(c,lv,nw);\n  if(!prefix) return cur;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T11 the twin reads `*q->a` of a member array through the array's address",
+      "new": "  if(1 || !deref_member_array(c,&mb,&me)) return 0;",
+      "old": "  if(!deref_member_array(c,&mb,&me)) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T12 the twin stores `*q->a = v;` through the array's address",
+      "new": "      if(0 && deref_member_array(c,&lv.b,&lv.f)){\n        const tok *aop=pk(c); int cmp=is_compound_op(aop);",
+      "old": "      if(deref_member_array(c,&lv.b,&lv.f)){\n        const tok *aop=pk(c); int cmp=is_compound_op(aop);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_split_forms_lower_alike_and_run_as_the_original_on_both_rails",
+      "label": "T13 the twin's first element of a member array drops the member's offset",
+      "new": "  mf.arr_count=0; mf.nadims=0; mf.byte_off=0;        /* the element, a scalar at the member's offset */",
+      "old": "  mf.arr_count=0; mf.nadims=0;                       /* the element, a scalar at the member's offset */",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

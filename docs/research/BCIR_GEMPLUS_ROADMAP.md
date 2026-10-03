@@ -28,7 +28,7 @@ That is a loop, and a loop needs a fixed point to measure against, so the baseli
 code before any slice is written:
 
 ```
-python tools/perf/gemplus_baseline.py --list      # 24 frozen metrics and their floors
+python tools/perf/gemplus_baseline.py --list      # the frozen metrics and their floors
 python tools/perf/gemplus_baseline.py --compare   # re-measure and grade
 ```
 
@@ -88,21 +88,56 @@ Every slice ends with this, written into its PR:
 deliberate trade (exactness bought with time, say), the trade is stated and a new metric is
 added for the thing that got better.
 
-### 0.3 Rows with no bound yet
+### 0.3 Floors measured beside the value
 
-Five rows have no lower bound computed:
+**Every row carries a lower bound.** Most are frozen: quoted from the report, or proved by the
+slice that added the row (`bound`). Thirteen rows had no floor, so no optimality statement was
+available for them. As of 2026-09-30 each of the thirteen measures its floor **in the same run
+as its value** (`Metric.floor_key`): the same process, host, fixture and clock. That is the only
+condition under which a trivial solution is a floor at all (laws.md L23). A floor frozen in
+milliseconds on one host bounds nothing on another, and a call count moves with the
+interpreter, so these floors are measured rather than frozen:
 
 ```
-static_memory.digest.2048        audit.kbcir-streampack.scale4
-audit.mixed-wave-token-eft.scale4  audit.static-lifetime-planner.scale4
-audit.iterative-phase-dag.scale4
+static_memory.digest.2048             planner.calls
+planner.native.scale4                 kbcir-streampack.delta
+kbcir-streampack.delta.calls          streampack.encode.calls
+streampack.encode                     kbcir-streampack.full.calls
+audit.kbcir-streampack.scale4         audit.static-lifetime-planner.scale4
+audit.mixed-wave-token-eft.scale4     audit.iterative-phase-dag.scale4
+verify.plan.scope.overhead
 ```
 
-**No optimality claim is available for these until a bound exists.** Computing one is
-in-scope work, not paperwork: for the digest row the bound is an Ω(n) argument over the bytes
-that must be hashed, and for the audit rows it is the critical path plus the work/capacity
-bound from the lower-bound stack (§4). A slice that improves one of these without computing
-its floor produces a TMSAO-4 claim and nothing better.
+`test_the_roadmap_lists_the_harness_floors` pins this block to the harness's measured-floor
+rows, and pins the unbounded set to empty. §0.3 once listed five unbounded rows while the harness
+had thirteen, and that drift is not repeated silently.
+
+A floor is work every implementation does, so the incumbent can meet it but never beat it. A
+value past its floor means the floor measured something else, and the harness refuses the table
+(`floor_violated`: an exact floor is held exactly, a timed one past the kind's noise band). Each
+floor is held to the work it stands for (`bcir/tests/test_gemplus_floors.py`;
+`tools/testing/faults/floors.json` injects 20 defects, all caught). One run on the development
+container gave the readings below (4 vCPUs, CPython 3.11.15, `--compare`, 2026-09-30):
+
+| Floor | Rows | Reading (value / floor) |
+|---|---|---|
+| **The digest's own arithmetic.** The FNV-1a chain alone over the pre-rendered canonical stream (`provenance.fnv_chain`). It returns the same digest, and the chain is sequential in its bytes, so this is the Ω(n) argument over the bytes that must be hashed, measured. | `static_memory.digest.2048` | 50.7 / 40.4 ms: within 1.26× of the floor. What remains is the walk and the rendering |
+| **Emission.** The call, plus one constructor call per record the output must carry fresh (`emission_floor`). Each distinct value is counted once, and a value the previous link or the delta already holds is not counted. The currency charges calls, not bytecode, so this is all an implementation cannot avoid: an update costs at least its change (Ramalingam and Reps' bounded incremental computation). | `planner.calls`, `kbcir-streampack.delta.calls`, `kbcir-streampack.full.calls`, `streampack.encode.calls` | 589,858 / 65,539 (a step per claim, the result, each distinct Candidate and CostVector); 472 / 13 (the one-claim delta's change: the link, result and step, candidate, cost vector, pack and block, module and phase, and the three R7 verdicts its count adds); 3,588,352 / 166,923; 989,245 / 1: the wire image is one bytes object, so an encoder that batches each layout has a constant floor |
+| **Writing the output once.** A memory roofline: the fixed-size realization (`test_kplan --bench-floor`), the delta link's pack bytes, and the wire image, each timed with its value. | `planner.native.scale4`, `kbcir-streampack.delta`, `streampack.encode` | 3.73 ms / 24 µs; 0.0112 / 0.00059; 0.335 / 0.0015 |
+| **The case's own fixture.** Each audit case builds its fixture inside its timed interval (`performance_audit.AUDIT_FIXTURES`), and no GEM slice touches that work. The static-lifetime plan also carries its module digest, so the chain is output there. | the four `audit.*` rows | kbcir-streampack 209 / 13.5 ms; static-lifetime 257 / 52.0 ms; mixed-wave-token-eft 38.8 / 10.3 ms; iterative-phase-dag 20.1 / 3.7 ms |
+| **R9's own work.** Each chosen step's cost is re-derived once through the shared predicate. The re-derived costs must sum to the plan's score. | `verify.plan.scope.overhead` | 0.68 / 0.059 |
+
+**The lower-bound stack (§4) bounds none of these, and this corrects an earlier plan in this
+section.** G4's stack bounds a schedule's *makespan*: the quality of the answer. The audit rows
+time *computing* the answer, and a makespan floor says nothing about how fast a planner may
+run. The honest floor of a timed case is the work inside its timed interval that no
+implementation avoids. These floors are sound and mostly loose, and the large headroom is the
+statement. The rows sit between 1.3× their floor (the digest) and ~230× (the encoder's time),
+and the encoder's call count sits a million times over its constant floor. A row moves toward its
+floor only by doing less interpretation per record. The native planner is the existence proof:
+3.73 ms where the Python planner takes 65 ms for the same plan on the same host. A slice that
+improves one of these rows now states its gap to a measured floor (TMSAO-2 for that row's
+number), not a TMSAO-4 claim.
 
 ---
 
@@ -242,12 +277,13 @@ contributions and reprice only the affected chain.
 
 | Gate | Baseline | Target | Headroom today |
 |---|---|---|---|
-| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A**; **3.5× after S2-A** (A/B on one idle host, 6.4× → 3.5×: the price read from the placer's records instead of a second placement, the candidate map built once) — under the harness bound of 4×; the last of the fixed overhead is the serial chain's O(n²) hazard edges |
+| `ratio` `optimize_scheduled.slowdown.512` | 69.2× | ≤ 8× | **6.27× after S1-A**; **3.5× after S2-A** (A/B on one idle host, 6.4× → 3.5×: the price read from the placer's records instead of a second placement, the candidate map built once); **2.8× after the hazard frontier** (2026-09-30, A/B 10.9× → 2.8× on one busy host: the serial chain's O(n²) hazard edges, the last of the fixed overhead, cut to n − 1) — under the harness bound of 4× |
 | `wall` `optimize_scheduled.512` | 1,703.66 ms | ≤ 200 ms | **83 ms after S1-A**, **60 ms after S2-A** (98 → 60 ms A/B on one host; 1,148 ms on the same host before S1-A; indicative) |
 | `wall` `optimize_scheduled.256` | 435.73 ms | ≤ 100 ms | **29 ms after S1-A**, **23 ms after S2-A** (35 → 23 ms A/B; 287 ms before S1-A; indicative) |
 | `exact` The plan chosen is unchanged | — | **identical assignment** | **met**: the delta search returns the reference sweep's assignment claim by claim, with the same step costs, price and artifact, on 1,344 (fixture, target, Θ, policy) cases — 12 corpus programs, the harness fixtures, the general-case and adoption fixtures and 40 generated hazard-bearing modules |
 | `ratio` `optimize_scheduled.general.slowdown.512` (the general case: 256 step-shortening trials, 16 phases) | 44.5× (S1-D, this host) | ≤ 8× | **4.7×** (605 → 67 ms A/B on one host) |
 | `exact` `sweep.replacement.fraction` (claims re-placed per trial / claims) | 1.0 | the affected phase (1/16) | **0.0625**, at the bound |
+| `exact` `optimize_scheduled.edges.512` (the hazard edges the sweep's dispatch reads) | 130,816 = n(n − 1)/2 | n − 1 = 511 | **511**, at the bound (2026-09-30): a chain's closure is a total order, so every covering pair must be an edge |
 
 The last row is the one that matters. A faster sweep that picks a *different* plan has not
 been made faster; it has been changed. Delta pricing must be an exact refactor of the same
@@ -288,6 +324,30 @@ a lengthened successor first and the placement is inherently sequential (the sin
 general fixture goes 44× → 27×); the phase-level mechanism is what the report named, and the
 harness fixture's residual is the serial chain's O(n²) hazard edges, which the dispatch reads
 once per placement.
+
+That residual closed on 2026-09-30. `concurrency.hazard_frontier` keeps, per resource, the last
+writer and the readers since that write. That is the same transitive closure as
+`hazard_predecessors` in O(resource touches) edges: every dropped edge is implied by a path
+through the kept ones. The dispatch pushes a claim when its last predecessor is popped and
+releases it at the latest predecessor finish. A dropped predecessor is an ancestor of a kept one,
+so it pops earlier and, with non-negative durations, finishes no later. The pop order and every
+release time are therefore unchanged, and each placement is the full DAG's, slot for slot.
+`schedule.phase_frontiers` feeds `schedule_eft`, `EftPlacer` and `optimize_scheduled`.
+`hazard_predecessors` stays the published DAG, because the token plan's awaits and the exact
+solver's symmetry classes read it literally.
+
+On the §6.3 chain the dispatch reads 511 edges where it read 130,816
+(`optimize_scheduled.edges.512`, exact, at its proved floor). An interleaved A/B against the
+parent on one busy host moved the slowdown ratio from 10.9× to 2.8×, under the 4× bound, and
+the 512-claim wall row from 85.8 to 19.1 ms. The general case does not move, because its trials
+are not edge-bound. Held by `bcir/tests/test_hazard_frontier.py`:
+- the frontier's edges are a subset with the same closure, over 400 random phases and the
+  sweep fixtures' modules;
+- every placement is the same on 84 fixtures × 3 targets × 2 policies;
+- every trial and adoption prices the same;
+- the sweep adopts the same plan.
+
+`tools/testing/faults/frontier.json` catches 6 of 6 injected defects.
 
 ### G3 — canonical digest computed once — **landed (S1-B, 2026-09-12)**
 
@@ -1225,8 +1285,9 @@ declared fact, not to reimplement the pass.
   different target, with PMU counters, and this host has neither PMU nor RAPL.
 - **No silicon certificate from a virtualized measurement.** G7 exists to make that refusal
   mechanical instead of a matter of discipline.
-- **No optimality claim on a row with no lower bound.** Five rows are in that state today and
-  they are listed in §0.3 rather than quietly graded.
+- **No optimality claim on a row with no lower bound.** No row is in that state since
+  2026-09-30. The thirteen that were measure their floor in the same run as their value (§0.3),
+  and a floor that is loose is reported as the headroom it is, not tightened by assumption.
 - **No sublinear claim on an Ω(n) operation** without naming the admitted work that changed.
 - **No IPC claim beyond one host.** Since G15 a second process runs the ring's contract over a
   shared mapping (and is SIGKILLed and taken over). Since G16 a shard set is a format that nodes
@@ -1237,15 +1298,18 @@ declared fact, not to reimplement the pass.
 
 ---
 
-## 8. Current state, 2026-09-04
+## 8. Current state, 2026-09-30
 
-`tools/perf/gemplus_baseline.py --compare` on a host that is not the baseline's (Python 3.11,
-no PMU):
+`tools/perf/gemplus_baseline.py --compare`, run on a host that is not the baseline's (Python
+3.11, no PMU). Every group was measured, and no row regressed (2026-09-30, the development
+container). Where a row's floor is measured in the same run (§0.3), the reading gives the value
+and then the floor.
 
 | Row | Slice | Baseline | Today | Verdict |
 |---|---|---:|---:|---|
 | `pricing.eft.divergence` | G1 | 1.9922 | **1.0** (S1-A, 2026-09-05) | GAIN, at the bound — one artifact; the retired pricer still reads 1.9922 on the fixture as the witness |
-| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) → **3.5×** (S2-A, 2026-09-13) | GAIN — under the 4× bound (A/B on one idle host); the residual is the serial chain's O(n²) hazard edges |
+| `optimize_scheduled.slowdown.512` | G2 | 69.2× | **6.27×** (S1-A) → **3.5×** (S2-A, 2026-09-13) → **2.8×** (the hazard frontier, 2026-09-30; 2.55× in this run) | GAIN, under the 4× bound (A/B on one host). The serial chain's O(n²) hazard-edge residual is closed |
+| `optimize_scheduled.edges.512` | G2 | 130,816 | **511** (2026-09-30) | GAIN, at the bound. The dispatch reads each resource's frontier: n − 1 edges on the chain, its proved floor |
 | `optimize_scheduled.general.slowdown.512` / `sweep.replacement.fraction` | G2 | 44.5× / 1.0 (S1-D, this host) | **4.7× / 0.0625** (S2-A, 2026-09-13) | GAIN, the fraction at the bound — 256 step-shortening trials each re-place one phase of sixteen; the assignment is the reference sweep's claim by claim |
 | `static_memory.digests.2048` | G3 | 3 | **1** (S1-B, 2026-09-12) | GAIN, at the bound — one digest per plan-and-verify chain; the verifier still recomputes at a trust boundary |
 | `plan.abi.mismatches` / `plan.readers.disagreements` / `plan.stale.accepted` / `plan.malformed.accepted` | G11 | 26 / 27 / 6 / 39 | **0 / 0 / 0 / 0** (S1-C, 2026-09-12) | GAIN, at the bound — the plan has bytes: every corpus plan survives the C twin, every reader reproduces its trace from the bytes, every stale and malformed fixture is refused on every rail that can see it |
@@ -1263,8 +1327,19 @@ no PMU):
 | `handoff.stale.admitted` / `handoff.stale.dispatched` / `handoff.fresh.refused` / `handoff.lifetime.unrefused` / `handoff.copies` / `handoff.builder.violations` / `handoff.decisions.nonconforming` / `handoff.shards.mismatches` / `handoff.shards.malformed.accepted` / `handoff.reentry.divergent` / `handoff.traces.divergent` | G16 | 42 / 90 / 90 / 68 / 80 / 422 / 349 / 392 / 68 / 115 / 77 (the parent tree) | **0 / 0 / 0 / 0 / 0 / 0 / 0 / 0 / 0 / 0 / 0** (S3-C, 2026-09-24) | GAIN, at the bound. The data plane has laws: bytes are written once and read in place, a dead view is refused, only what the live plane admitted at the resident generation of the same registry runs, a step's freeze binds the live registry, and shards reassemble to the whole or are refused. Three rails are identical to the state digest |
 | `handoff.stage3.stale.accepted` / `handoff.stage3.flow.divergent` | Stage 3 exit | 18 / 75 (the parent tree) | **0 / 0** (S3-C, 2026-09-24) | GAIN, at the bound. One generation flows plan → control → data → telemetry → evidence on three rails, the old one is refused at each of six boundaries, and the telemetry ring's loss equals the intake's gap count exactly |
 | `handoff.dispatch.overhead` | G16 | 1.95× (the parent's seam) | **~1.01×** (S3-C) | GAIN. The parent verified the whole pack twice per dispatch (`shard()`, then the walk); now every per-dispatch check is O(1) and the verification runs once, at `admit()`. A single-core ratio, so the band holds across hosts |
-| `verify.*` / `scope.*` | G0 | — | not measured | need the native rig or the digest fixtures |
+| `planner.parity` / `planner.malformed.accepted` / `planner.r9.misjudged` | G17 | 8,430 / 148 / 232 (the parent tree) | **0 / 0 / 0** (S4-A, 2026-09-24) | GAIN, at the bound. The native planner reproduces the Python plan byte for byte over the generated corpus, refuses every malformed input, and R9 judges every forgery |
+| `planner.calls` / `planner.native.scale4` | G17 | 3,419,172 / 3.41 ms | **589,858** (floor 65,539) / **3.73 ms** (floor 0.024 ms) | GAIN / INDICATIVE. 89% of the calls are above the emission floor; the native plan sits 155× above writing its realization once |
+| `planner.delta.parity` / `pack.delta.identity` / `verify.delta.identity` / `delta.malformed.accepted` | G18 | 2,064 / 2,064 / 4,128 / 51 (the parent tree) | **0 / 0 / 0 / 0** (S4-B, 2026-09-24) | GAIN, at the bound. Every link of the delta chain equals the chain from scratch on the declared module |
+| `kbcir-streampack.delta` / `kbcir-streampack.delta.calls` | G18 | 1.0 / 10,855,666 | **0.0112** (floor 0.00059) / **472** (floor 13) | GAIN. A one-claim delta costs 1.1% of the chain from scratch; its floor is its change, 12 records at every scale |
+| `streampack.encode.parity` / `streampack.encode.calls` / `streampack.encode` / `kbcir-streampack.full.calls` | SP-ENC | 0 / 7,543,875 / 1.0 / 10,110,215 | **0 / 989,245** (floor 1) / **0.335** (floor 0.0015) / **3,588,352** (floor 166,923) | GAIN; the parity guard is held at 0. The compiled encoder is byte-identical to the one it replaced |
+| the fifteen `alias.*` rows | G9 | 648 / 2,646 / 2,646 / … (the parent tree; the false-`noalias` guard 0) | **all 0** (S5-A, 2026-09-25) | GAIN, at the bound. The declared alias facts reach LLVM (`noalias`, alias scopes, TBAA, volatility), and LLVM judges them |
+| `escape.unproved` / `icall.unknown` / `icall.unresolved` / the five mismatch and soundness rows | G10 | 39 / 22 / 22 / 73, 20, 119, 24, 200 (the parent tree) | **0 / 15 / 18 / all 0** (S5-B, 2026-09-25) | GAIN. `escape.unproved` and `icall.unknown` are at their floors (the open world's 15); `icall.unresolved` is 2 above its floor of 16 |
+| the five `volatile.*` rows | CF-VOL | 356 / 369 / 69 / 0 / 282 (the parent tree) | **all 0** (CF-VOL, 2026-09-25) | GAIN, at the bound. Clang judges `volatile` through both cfront rails |
+| the nine `movement.*` rows | G8 | 9 / 597,840 / 0 / 30 / 0 / 9 / 9 / 18 / 11 (the parent tree) | **all 0** (S5-C, 2026-09-26) | GAIN, at the bound. Every fixture is at the joint objective's optimum, and each law variant is refused by its own law |
+| `verify.plan.r9.vacuous` / `verify.plan.scope.overhead` | S0-A / G17 | 1.0 / 1.07× | **0** / **0.68–0.87×** over two runs (floor 0.06) | GAIN, at the bound / GAIN or NO-CHANGE by the run. G17 made both sides of the ratio faster together (the compact planner, and R9's single-candidate re-derivation); scope-aware R9 sits 11–15× above re-deriving each step once |
+| `static_memory.digest.2048` and the four `audit.*` rows | G0–G3 | 88.05 / 275.22 / 566.35 / 48.05 / 34.62 ms (the report's host) | **50.7** (floor 40.4) / **209** (13.5) / **257** (52.0) / **38.8** (10.3) / **20.1** (3.7) ms | INDICATIVE, each with its gap to a measured floor (§0.3). The digest sits 1.26× above its own arithmetic |
 
-Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail; since S2-E the
-measured rail exists and grants TMSAO-3 to nothing on this host — the two-target rule keeps
-it hardware-gated (Stage 6).
+Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail. Since S2-E the
+measured rail exists, but it grants TMSAO-3 to nothing on this host: the two-target rule keeps
+it hardware-gated (Stage 6). Since 2026-09-30 every row of the table has a floor (§0.3). What
+remains without one is only what needs hardware: the PMU and energy rows of Stage 6.

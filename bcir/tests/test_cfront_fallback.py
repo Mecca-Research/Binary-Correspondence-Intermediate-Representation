@@ -197,7 +197,7 @@ def test_compile_unit_keeps_its_raise_contract():
 # A pathological deeply-nested input must be handled IDENTICALLY on both rails: neither the Python oracle
 # (which previously raised an UNCAUGHT RecursionError out of compile_with_fallback) nor the C twin (which
 # previously SEGFAULTed / ASan `stack-overflow`) may crash, and both must route it to fallback / a clean
-# parse error. The depth, in tokens, stays well under the C twin's MAXTOK=16384 cap so it is the DEPTH
+# parse error. The depth, in tokens, stays well under the token cap both rails hold (MAXTOK) so it is the DEPTH
 # guard (not the token cap) that stops it on the C side -- matching the oracle's parser depth guard.
 _DEEP_N = (
     3000  # nesting levels: above both depth caps (Python _MAX_DEPTH=50, C BCIR_MAXDEPTH=1200),

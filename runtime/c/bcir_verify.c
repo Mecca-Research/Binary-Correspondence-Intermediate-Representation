@@ -19,17 +19,20 @@ static int unit_shape_valid(const bcir_unit *u,char *diag,size_t dn){
     const bcir_func *f=&u->funcs[i];
     if(!fixed_string(f->name,sizeof f->name)||(f->n_res&&!f->res)||
        (f->n_claims&&!f->claims)||f->n_params<0||f->n_calls<0||f->n_statics<0||
-       f->n_host_literals<0||f->n_ptr_extents<0||
+       f->n_host_literals<0||f->n_ptr_extents<0||f->n_qcasts<0||
        (f->n_params&&!f->params)||(f->n_calls&&!f->calls)||
        (f->n_statics&&!f->statics)||(f->n_host_literals&&!f->host_literals)||
-       (f->n_ptr_extents&&!f->ptr_extents)){
+       (f->n_ptr_extents&&!f->ptr_extents)||(f->n_qcasts&&!f->qcasts)){
       snprintf(diag,dn,"invalid function shape");return 0;}
     for(int k=0;k<f->n_calls;k++) if(!fixed_string(f->calls[k],BCIR_CIR_NAME)){
       snprintf(diag,dn,"unterminated call name");return 0;}
+    for(int k=0;k<f->n_qcasts;k++) if(!fixed_string(f->qcasts[k].type,sizeof f->qcasts[k].type)){
+      snprintf(diag,dn,"unterminated cast");return 0;}
     for(size_t k=0;k<f->n_claims;k++){
       const bcir_claim *cl=&f->claims[k];
       if(cl->n_rd>BCIR_CLAIM_MAX_RD||cl->n_wr>BCIR_CLAIM_MAX_WR||
-         cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op)){
+         cl->n_imm>BCIR_CLAIM_MAX_IMM||!fixed_string(cl->op,sizeof cl->op)||
+         cl->qcast>(uint32_t)f->n_qcasts){
         snprintf(diag,dn,"invalid claim shape");return 0;}
     }
   }
@@ -73,10 +76,13 @@ static int verify_func(const bcir_func *f,char *diag,size_t dn){
     if(atomicish && cl->hazard==BCIR_HZ_UNIQUE){snprintf(diag,dn,"R5: claim %u (atomic/fence) needs an atomic/barriered hazard",cl->id);return 0;}
     /* R6: the claim's lane must be legal for its declared access-pattern shape. */
     if(!lane_legal(cl->stride,cl->lane)){snprintf(diag,dn,"R6: claim %u lane %u illegal for stride %d",cl->id,cl->lane,(int)cl->stride);return 0;}
-    if(!seq(cl->op,"") && cl->opcode!=BCIR_OP_NOP && (cl->n_wr||cl->opcode==BCIR_OP_STORE||cl->opcode==BCIR_OP_BARRIER)) effect=1;
+    if(!seq(cl->op,"") && cl->opcode!=BCIR_OP_NOP
+       && (cl->n_wr||cl->opcode==BCIR_OP_STORE||cl->opcode==BCIR_OP_BARRIER||cl->opcode==BCIR_OP_GEM_DISPATCH)) effect=1;
   }
   /* R12 (lowering contract / support): a lowered function preserves an observable effect --
-   * a return value or a store/barrier. (A pure no-op function would discharge nothing.) */
+   * a return value, a store/barrier, or a call: a void function's only work may be the calls it makes
+   * (`void init(void){ clk_on(); }`), which the oracle verifies clean. (A pure no-op function would
+   * discharge nothing.) */
   if(f->n_claims && !effect && !f->has_return){snprintf(diag,dn,"R12: function %s discharges no effect",f->name);return 0;}
   /* R17 (accuracy): the C subset is integer/Q-fixed -- exact, 0 ULP -- so it holds by construction. */
   return 1;
@@ -112,7 +118,8 @@ int bcir_verify_unit_with_allocator(const bcir_unit *u,char *diag,size_t dn,
   if(dn) diag[0]=0;
   if(!unit_shape_valid(u,diag,dn))return 0;
   /* R1.1: claim-id uniqueness (the mirror of R1's RID uniqueness, for the claim namespace). Claim ids
-   * are unit-wide unique by construction (the cid base is bumped per function); a duplicate/injected id
+   * are unit-wide unique by construction (each function's ids start past the last one taken, CF-PPLIMITS);
+   * a duplicate/injected id
    * makes the claim graph ambiguous (a plan step / attestation / structural digest could bind to the
    * wrong claim), so it is rejected here exactly as bcir/verify's R1.1 does. O(total_claims^2) over the
    * unit -- claim arrays are small per function; for a large unit this stays well within the verifier

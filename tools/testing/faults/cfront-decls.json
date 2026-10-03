@@ -1,0 +1,240 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_prototype_declares_its_function_alike_on_both_rails",
+    "bcir.tests.test_c_cfront:test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_null_pointer_arguments_to_later_and_prototyped_callees"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DO1 the oracle refuses no function named before its declaration",
+      "new": "        if False and declared is not None and name not in declared:\n",
+      "old": "        if declared is not None and name not in declared:\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DO2 a prototype declares nothing on the oracle",
+      "new": "                self.unit.variadic_protos.add(name)\n            return None\n",
+      "old": "                self.unit.variadic_protos.add(name)\n            self._declared.add(name)\n            return None\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DO3 the oracle refuses an unnamed prototype parameter again",
+      "new": "                ptype, pname = self._declarator_or_funcptr(ptype, abstract=False)\n",
+      "old": "                ptype, pname = self._declarator_or_funcptr(ptype, abstract=True)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DO4 the oracle accepts a definition that leaves a parameter unnamed",
+      "new": "        if False and any(not p.name for p in params):\n",
+      "old": "        if any(not p.name for p in params):\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DO5 the oracle's emit declares no callee ahead of its caller",
+      "new": "    callees = {}\n",
+      "old": "    callees = dict.fromkeys(c for c, _a in lf.calls if c != lf.name and c in (unit or {}))\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
+      "label": "DO6 the oracle's extern drops a pointer parameter's const",
+      "new": "    out = _cname(at)\n",
+      "old": "    out = (\"const \" if \"const\" in sig[0] else \"\") + _cname(at)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
+      "label": "DO7 the oracle's extern spells a function-pointer parameter by its name",
+      "new": "        return _cname(ct)\n",
+      "old": "        return _funcptr_decl(ct, \"\", sig)\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
+      "label": "DO8 the oracle's extern drops an array parameter's const",
+      "new": "    if True:\n",
+      "old": "    if not (tref.array or tref.vla is not None or tref.vla_dims):\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DO9 the oracle types a sizeof of a call no declaration precedes",
+      "new": "            ):\n                pass\n            ret = self.func_rets.get(node.callee)\n",
+      "old": "            ):\n                self._require_declared(node.callee, \"call to undeclared function\")\n            ret = self.func_rets.get(node.callee)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DO10 the oracle takes a designator no declaration precedes",
+      "new": "        pass\n",
+      "old": "        self._require_declared(name, \"use of undeclared identifier\")\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DT1 the twin refuses no call made before its callee's declaration",
+      "new": "    if(0 && later){ char msg[BCIR_CIR_NAME+40];",
+      "old": "    if(later){ char msg[BCIR_CIR_NAME+40];",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DT2 the twin records no call made before any declaration",
+      "new": "  if(0 && !rt && !(c->fn && (int)strlen(c->fn->name)==name->n",
+      "old": "  if(!rt && !(c->fn && (int)strlen(c->fn->name)==name->n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DT3 a prototype after the call declares it on the twin",
+      "new": "    for(int k=0;0 && k<c->n_protos && !later;k++) later=",
+      "old": "    for(int k=0;k<c->n_protos && !later;k++) later=",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DT4 the twin refuses an unnamed prototype parameter again",
+      "new": "    if(0 && (is(c,\",\") || is(c,\")\") || is(c,\"[\"))){ memset(&pn,0,sizeof pn); pn.s=\"\"; unnamed=1; }",
+      "old": "    if(is(c,\",\") || is(c,\")\") || is(c,\"[\")){ memset(&pn,0,sizeof pn); pn.s=\"\"; unnamed=1; }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DT5 the twin refuses an unnamed function-pointer parameter",
+      "new": "    int fp_abstract = 0 && !row_ptr && is(c,\"(\") && tok_is(tat(c,c->i+1),\"*\")",
+      "old": "    int fp_abstract = !row_ptr && is(c,\"(\") && tok_is(tat(c,c->i+1),\"*\")",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_function_named_before_its_declaration_is_refused_on_both_rails",
+      "label": "DT6 the twin accepts a definition that leaves a parameter unnamed",
+      "new": "  if(0 && unnamed && !is(c,\";\")){ fail(c,",
+      "old": "  if(unnamed && !is(c,\";\")){ fail(c,",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
+      "label": "DT7 the twin's extern drops a pointer parameter's const",
+      "new": "  int w=snprintf(o,n,\"%s%s \",0?\"const \":\"\",b);\n",
+      "old": "  int w=snprintf(o,n,\"%s%s \",ty->is_const?\"const \":\"\",b);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_prototyped_external_callees_are_declared_as_their_prototypes_on_both_rails",
+      "label": "DT8 the twin records no const of a specifier",
+      "new": "    if(is(c,\"const\")){c->i++;continue;}",
+      "old": "    if(is(c,\"const\")){ty->is_const=1;c->i++;continue;}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DT9 the twin's emit declares no callee ahead of its caller",
+      "new": "    if(0 && (e=emit_callee_decls(out,&out->unit.funcs[i]))) return e;",
+      "old": "    if((e=emit_callee_decls(out,&out->unit.funcs[i]))) return e;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_prototype_declares_its_function_alike_on_both_rails",
+      "label": "DT10 the twin types a sizeof of a call by a definition only",
+      "new": "      const bcir_ctype *cr=callee_ret(c,&id);",
+      "old": "      const bcir_ctype *cr=declared_ret(c,&id);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_callees_declared_ahead_of_their_callers_run_as_the_original_on_both_rails",
+      "label": "DT11 the twin refuses a designator its prototype declares",
+      "new": "      if(callee_ret(c,&id) || (declared_ret(c,&id) && !unit_defines(c,&id))){   /* a FUNCTION used as a VALUE (CF-EXTDESIG) */",
+      "old": "      if(declared_ret(c,&id)){                          /* a FUNCTION used as a VALUE (CF-EXTDESIG) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AO1 a typedef'd anonymous struct keeps the empty tag on the oracle",
+      "new": "                if False:\n                    # anonymous: a synthesized tag",
+      "old": "                if not tag:\n                    # anonymous: a synthesized tag",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AO2 the oracle records no typedef's name for an anonymous struct",
+      "new": "                pass\n",
+      "old": "                self._anon_typedef.setdefault(tref.base, name)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AO3 the oracle records no member an anonymous struct is the type of",
+      "new": "                        pass\n",
+      "old": "                        self._anon_member.setdefault(base.base, member)\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AO4 the oracle records no pointer typedef of an anonymous struct",
+      "new": "                pass\n",
+      "old": "                self._anon_ptrdef.setdefault(tref.base, (name, tref.ptr))\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AO5 the oracle's emit keeps the synthesized tags",
+      "new": "            emit_function(lf, lowered.functions), {}\n",
+      "old": "            emit_function(lf, lowered.functions), lowered.anon_spelling\n",
+      "path": "bcir/frontends/cfront/pipeline.py"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AO6 the oracle spells a member array's type, not its element's",
+      "new": "            spelling = f\"__typeof__({'*' * stars}(({spelling} *)0)->{member})\"\n",
+      "old": "            spelling = f\"__typeof__({'*' * stars}(({spelling} *)0)->{member}{'[0]' * dims})\"\n",
+      "path": "bcir/frontends/cfront/cparse.py"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AT1 the twin records no typedef's name for an anonymous struct",
+      "new": "    (void)nm;",
+      "old": "    idcpy(c,c->s[sidx].tdname,&nm);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AT2 the twin records no member an anonymous struct is the type of",
+      "new": "A->parent=-1; idcpy(c,A->member,&nm);",
+      "old": "A->parent=my; idcpy(c,A->member,&nm);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AT3 the twin's emit keeps the synthesized tags",
+      "new": "  return NULL;",
+      "old": "  return respell_anon(c,out);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AT4 the twin spells a member array's type, not its element's",
+      "new": "    for(int dd=0; 0 && dd<c->s[x].mdims; dd++) ctext_putf(c,t,\"[0]\");",
+      "old": "    for(int dd=0; dd<c->s[x].mdims; dd++) ctext_putf(c,t,\"[0]\");",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_anonymous_structs_named_by_a_typedef_run_as_the_original_on_both_rails",
+      "label": "AT5 the twin records no pointer typedef of an anonymous struct",
+      "new": "      (void)stars; }",
+      "old": "      idcpy(c,c->s[sidx].tdptr,pk(c)); c->s[sidx].tdstars=stars; }",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

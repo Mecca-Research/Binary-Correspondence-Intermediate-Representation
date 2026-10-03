@@ -1171,11 +1171,12 @@ def audit_fixture(scale: int):
     return matmul_tiled(n=grid * 8, tile=8), TargetProfile.x86_avx2(), Theta.mem_bound()
 
 
-def call_count(planner, scale: int = CALLS_SCALE) -> int:
+def call_count(planner, scale: int = CALLS_SCALE, out: list | None = None) -> int:
     """The calls `planner(module, h, theta)` makes planning the audit fixture at `scale` (cProfile's
     total, builtins included -- the count the 2026-09-04 profile quoted). Deterministic for one
     interpreter; it differs between CPython versions, so a gate compares two planners in one
-    process and the recorded baseline names its interpreter."""
+    process and the recorded baseline names its interpreter. With `out`, it receives the counted
+    call's plan and module -- what the row's emission floor is read from."""
     import cProfile
     import pstats
 
@@ -1183,19 +1184,32 @@ def call_count(planner, scale: int = CALLS_SCALE) -> int:
     planner(module, h, theta)  # warm imports and caches outside the count
     profile = cProfile.Profile()
     profile.enable()
-    planner(module, h, theta)
+    result = planner(module, h, theta)
     profile.disable()
+    if out is not None:
+        out[:] = [result, module]
     return pstats.Stats(profile).total_calls
 
 
-def native_ms(exe: str, tmp: str, scale: int = 4) -> float:
-    """The native planner's median time per plan of the audit fixture at `scale`, in ms."""
+def _bench(exe: str, tmp: str, scale: int, mode: str, tag: str) -> list[str]:
     module, h, theta = audit_fixture(scale)
     path = os.path.join(tmp, f"audit_{scale}.bkpi")
     with open(path, "wb") as f:
         f.write(pa.encode_input(module, h, theta))
-    run = subprocess.run([exe, "--bench", path, "5", "9"], capture_output=True, text=True,
+    run = subprocess.run([exe, mode, path, "5", "9"], capture_output=True, text=True,
                          timeout=600)  # fmt: skip
-    if run.returncode != 0 or not run.stdout.startswith("BENCH "):
-        raise RuntimeError(f"the native bench failed: {run.stdout} {run.stderr[-300:]}")
-    return int(run.stdout.split()[1]) / 1e6
+    if run.returncode != 0 or not run.stdout.startswith(tag + " "):
+        raise RuntimeError(f"the native {mode} failed: {run.stdout} {run.stderr[-300:]}")
+    return run.stdout.split()
+
+
+def native_ms(exe: str, tmp: str, scale: int = 4) -> float:
+    """The native planner's median time per plan of the audit fixture at `scale`, in ms."""
+    return int(_bench(exe, tmp, scale, "--bench", "BENCH")[1]) / 1e6
+
+
+def native_floor(exe: str, tmp: str, scale: int = 4) -> tuple[float, int]:
+    """(ms, bytes): the harness's `--bench-floor` on the same record -- writing the realization's
+    bytes once, the floor of `native_ms` -- and the size of the realization it wrote."""
+    fields = _bench(exe, tmp, scale, "--bench-floor", "FLOOR")
+    return int(fields[1]) / 1e6, int(fields[2])

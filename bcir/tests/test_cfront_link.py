@@ -14,6 +14,7 @@ DERIVED --emit-link-flags, behaves exactly like the all-original reference build
 mode are the named next steps; see the master roadmap Phase 3.)"""
 
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -276,7 +277,8 @@ def test_linkable_static_forward_declaration_and_pointer_string_table():
     DEFINED AFTER its caller -- must yield a compilable artifact (the emit forward-declares
     every kept-static function); (2) a pointer-element string table (`char *tab[] = {..}`)
     must NOT take the char-array string path (it would size the array from the string bytes
-    and mis-render) -- it refuses loudly, and the array keeps its init-tuple count."""
+    and mis-render): the array keeps its init-tuple count, and each literal renders as the
+    address constant it is (C11 6.6p9), in an artifact that compiles (CF-LINKEMIT)."""
     from bcir.frontends.cfront.emit import emit_linkable
 
     fwd = compile_unit(
@@ -302,12 +304,20 @@ def test_linkable_static_forward_declaration_and_pointer_string_table():
         'char *tab[] = {"hi"};\nunsigned f4(void) { return 3u; }\n', check_clang=False
     )
     _, ct, vals, _, _ = [g for g in ptab.lowered.globals_decl if g[0] == "tab"][0]
-    assert ct.count == 1 and vals is None  # tuple-sized, not string-sized
-    try:
-        emit_linkable(ptab.lowered, ptab.emitted)
-        raise AssertionError("a pointer-element string table must be rejected")
-    except ValueError as e:
-        assert "tab" in str(e)
+    assert ct.count == 1 and vals == ('{"hi"}',)  # tuple-sized, not string-sized
+    text = emit_linkable(ptab.lowered, ptab.emitted)
+    assert 'tab[1] = {"hi"};' in text, text
+    if cc is not None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ptab.c")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            r = subprocess.run(
+                [cc, "-std=c11", "-Wall", "-Werror", "-c", path, "-o", os.path.join(tmp, "ptab.o")],
+                capture_output=True,
+                text=True,
+            )
+            assert r.returncode == 0, r.stderr
 
 
 def test_linkable_renders_float_negative_and_string_initializers():
@@ -341,6 +351,229 @@ def test_linkable_renders_float_negative_and_string_initializers():
             text=True,
         )
         assert r2.returncode == 0, r2.stderr
+
+
+# CF-LINKEMIT (card 4): units whose linkable emit had not built alone -- a struct, a union, a nested struct or a typedef'd
+# anonymous struct named; a `const` global and a `const` table of structs; tables of string pointers; address constants;
+# a function designator in an initializer; the emit's own memcpy; `<complex.h>`, `<stdarg.h>` and `<stdatomic.h>` --
+# each with the type definitions a unit sharing it would need, that unit's declarations of what it defines, and the
+# values its driver prints of `s` (name, source, types, declarations, values).
+_LINKEMIT_UNITS = (
+    (
+        "struct_member",
+        "struct pt { uint32_t x, y; };\nstruct pt lk_gp = {1u, 2u};\n"
+        "uint32_t lk_member(uint32_t s) { lk_gp.x = s; return lk_gp.x + lk_gp.y; }\n",
+        "struct pt { uint32_t x, y; };\n",
+        "extern struct pt lk_gp;\nuint32_t lk_member(uint32_t s);\n",
+        ("lk_member(s)", "lk_gp.y"),
+    ),
+    (
+        "const_global",
+        "const uint32_t lk_k = 5u;\nstatic const uint32_t lk_t[3] = {1u, 2u, 3u};\n"
+        "uint32_t lk_const(uint32_t s) { const uint32_t *p = &lk_k; return *p + lk_t[s % 3u]; }\n",
+        "",
+        "extern const uint32_t lk_k;\nuint32_t lk_const(uint32_t s);\n",
+        ("lk_const(s)", "lk_k"),
+    ),
+    (
+        "string_table",
+        'const char *lk_tab[] = {"a", "bc"};\n'
+        "uint32_t lk_tabf(uint32_t s) { return (uint32_t)lk_tab[s & 1u][0]; }\n",
+        "",
+        "extern const char *lk_tab[2];\nuint32_t lk_tabf(uint32_t s);\n",
+        ("lk_tabf(s)", "(uint32_t)lk_tab[1][1]"),
+    ),
+    (
+        "const_string_table",
+        'const char *const lk_names[2] = {"x", "yz"};\n'
+        "uint32_t lk_namef(uint32_t s) { return (uint32_t)lk_names[s & 1u][0]; }\n",
+        "",
+        "extern const char *const lk_names[2];\nuint32_t lk_namef(uint32_t s);\n",
+        ("lk_namef(s)", "(uint32_t)lk_names[1][1]"),
+    ),
+    (
+        "struct_array",
+        "struct pt { uint32_t x, y; };\nstruct pt lk_ga[2] = {{1u, 2u}, {3u, 4u}};\n"
+        "uint32_t lk_arr(uint32_t s) { return lk_ga[s & 1u].y; }\n",
+        "struct pt { uint32_t x, y; };\n",
+        "extern struct pt lk_ga[2];\nuint32_t lk_arr(uint32_t s);\n",
+        ("lk_arr(s)", "lk_ga[0].x"),
+    ),
+    (
+        "const_struct_table",
+        "struct pt { uint32_t x, y; };\nconst struct pt lk_cpt[2] = {{1u, 2u}, {3u, 4u}};\n"
+        "uint32_t lk_cs(uint32_t s) { const struct pt *p = &lk_cpt[s & 1u]; return p->x + lk_cpt[1].y; }\n",
+        "struct pt { uint32_t x, y; };\n",
+        "extern const struct pt lk_cpt[2];\nuint32_t lk_cs(uint32_t s);\n",
+        ("lk_cs(s)",),
+    ),
+    (
+        "union_global",
+        "union un { uint32_t w; uint8_t b[4]; };\nunion un lk_gu = {7u};\n"
+        "uint32_t lk_union(uint32_t s) { lk_gu.w = s; return lk_gu.b[0]; }\n",
+        "union un { uint32_t w; uint8_t b[4]; };\n",
+        "extern union un lk_gu;\nuint32_t lk_union(uint32_t s);\n",
+        ("lk_union(s)", "lk_gu.w"),
+    ),
+    (
+        "nested_struct",
+        "struct in { uint16_t a, b; };\nstruct ot { struct in i; uint32_t c; };\nstruct ot lk_go = {{1u, 2u}, 3u};\n"
+        "uint32_t lk_nest(uint32_t s) { return lk_go.i.b + lk_go.c + s; }\n",
+        "struct in { uint16_t a, b; };\nstruct ot { struct in i; uint32_t c; };\n",
+        "extern struct ot lk_go;\nuint32_t lk_nest(uint32_t s);\n",
+        ("lk_nest(s)", "lk_go.i.a"),
+    ),
+    (
+        "typedef_anonymous",
+        "typedef struct { uint32_t a; uint32_t b; } pair_t;\npair_t lk_pair = {1u, 2u};\n"
+        "uint32_t lk_pairf(uint32_t s) { return lk_pair.a + lk_pair.b * s; }\n",
+        "typedef struct { uint32_t a; uint32_t b; } pair_t;\n",
+        "extern pair_t lk_pair;\nuint32_t lk_pairf(uint32_t s);\n",
+        ("lk_pairf(s)", "lk_pair.b"),
+    ),
+    (
+        "address_constants",
+        "uint32_t lk_buf[4] = {1u, 2u, 3u, 4u};\nuint32_t *lk_ptr = &lk_buf[2];\nuint32_t *const lk_cp = lk_buf;\n"
+        "uint32_t lk_addr(uint32_t s) { return *lk_ptr + lk_cp[s & 3u]; }\n",
+        "",
+        "extern uint32_t lk_buf[4];\nextern uint32_t *lk_ptr;\nextern uint32_t *const lk_cp;\n"
+        "uint32_t lk_addr(uint32_t s);\n",
+        ("lk_addr(s)", "*lk_ptr + lk_cp[1]"),
+    ),
+    (
+        "function_designator",
+        "static uint32_t lk_inc(uint32_t v) { return v + 1u; }\nuint32_t (*lk_fp)(uint32_t) = lk_inc;\n"
+        "uint32_t lk_call(uint32_t s) { return lk_fp(s) * 3u; }\n",
+        "",
+        "extern uint32_t (*lk_fp)(uint32_t);\nuint32_t lk_call(uint32_t s);\n",
+        ("lk_call(s)", "lk_fp(s)"),
+    ),
+    (
+        "struct_copy",
+        "struct pt { uint32_t x, y; };\nstruct pt lk_q = {3u, 4u};\n"
+        "uint32_t lk_copy(uint32_t s) { struct pt v = lk_q; v.x += s; return v.x + v.y; }\n",
+        "struct pt { uint32_t x, y; };\n",
+        "extern struct pt lk_q;\nuint32_t lk_copy(uint32_t s);\n",
+        ("lk_copy(s)", "lk_q.x"),
+    ),
+    (
+        "complex_parts",
+        "#include <complex.h>\ndouble _Complex lk_z = 2.0;\n"
+        "uint32_t lk_cplx(uint32_t s) { double _Complex z = lk_z * (double)(s & 7u);"
+        " return (uint32_t)creal(z) + (uint32_t)cimag(z); }\n",
+        "",
+        "extern double _Complex lk_z;\nuint32_t lk_cplx(uint32_t s);\n",
+        ("lk_cplx(s)",),
+    ),
+    (
+        "variadic",
+        "#include <stdarg.h>\n"
+        "uint32_t lk_sum(uint32_t n, ...) { va_list ap; va_start(ap, n); uint32_t r = 0u;"
+        " for (uint32_t i = 0u; i < n; i++) r += va_arg(ap, uint32_t); va_end(ap); return r; }\n"
+        "uint32_t lk_var(uint32_t s) { return lk_sum(3u, s, 2u, 5u); }\n",
+        "",
+        "uint32_t lk_sum(uint32_t n, ...);\nuint32_t lk_var(uint32_t s);\n",
+        ("lk_var(s)",),
+    ),
+    (
+        "atomic_global",
+        "#include <stdatomic.h>\n_Atomic uint32_t lk_at = 1u;\n"
+        "uint32_t lk_atom(uint32_t s) { return atomic_fetch_add(&lk_at, s & 7u) + lk_at; }\n",
+        "",
+        "extern _Atomic uint32_t lk_at;\nuint32_t lk_atom(uint32_t s);\n",
+        ("lk_atom(s)", "(uint32_t)lk_at"),
+    ),
+)
+# A loop's `continue` label the emit places whether or not the body continues: unused, a `-Wall` warning both emits
+# share (recorded in DEVELOPMENT_HISTORY's found-not-fixed list), named here for the one unit with a loop
+_LINKEMIT_QUIET = {"variadic": ("-Wno-unused-label",)}
+_LINKEMIT_GAPS = "0u, 1u, 2u, 3u, 7u, 255u, 256u, 65535u, 65536u, 0x12345678u, 0xFFFFFFFFu"
+
+
+def test_linkable_emit_defines_what_the_source_defines():
+    """CF-LINKEMIT: each unit's linkable emit (1) builds alone under `-std=c11 -Wall -Werror` -- its struct, union and
+    typedef definitions as the source spells them, a `const` global `const`, a table of string pointers and an
+    address constant (C11 6.6p9) rendered, `<string.h>` for its own memcpy and the headers its calls need; (2) still
+    builds with another unit's declarations of what it defines after it, so each definition has the source's type (C11
+    6.2.7p2: a global defined without its `const` is another type); and (3) linked with a driver, prints what the
+    original prints, under Clang and GCC. It had named every struct undefined, spelled a typedef'd anonymous struct
+    `struct $anon0`, dropped `const`, refused `const char *tab[] = {"a"}`, and called memcpy, `va_start` and
+    `atomic_fetch_add` undeclared."""
+    from bcir.frontends.cfront.emit import emit_linkable
+
+    runtime_c = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "runtime", "c")
+    compilers = [c for c in (shutil.which("clang"), shutil.which("gcc")) if c]
+    if not compilers or not os.path.isfile(os.path.join(runtime_c, "bcir_quarantine.c")):
+        return
+    for name, body, types, decls, values in _LINKEMIT_UNITS:
+        src = "#include <stdint.h>\n" + body
+        r = compile_unit(src, check_clang=False)
+        linkable = emit_linkable(r.lowered, r.emitted)
+        printed = " ".join(f'printf(" %u", (unsigned)({v}));' for v in values)
+        driver = (
+            f"#include <stdint.h>\n#include <stdio.h>\n{types}{decls}"
+            f"static const uint32_t lk_in[] = {{{_LINKEMIT_GAPS}}};\n"
+            "int main(void) {\n  for (unsigned n = 0; n < sizeof lk_in / sizeof lk_in[0]; n++) {\n"
+            f"    uint32_t s = lk_in[n];\n    {printed}\n    putchar('\\n');\n  }}\n  return 0;\n}}\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = {}
+            for label, text in (
+                ("linkable", linkable),
+                ("declared", linkable + "\n" + decls),
+                ("original", src),
+                ("driver", driver),
+            ):
+                paths[label] = os.path.join(tmp, f"{label}.c")
+                with open(paths[label], "w", encoding="utf-8") as f:
+                    f.write(text)
+            for cc in compilers:
+                for label in ("linkable", "declared"):
+                    b = subprocess.run(
+                        [
+                            cc,
+                            "-std=c11",
+                            "-Wall",
+                            "-Werror",
+                            *_LINKEMIT_QUIET.get(name, ()),
+                            "-I",
+                            runtime_c,
+                        ]
+                        + ["-c", paths[label], "-o", os.path.join(tmp, f"{label}.o")],
+                        capture_output=True,
+                        text=True,
+                    )
+                    assert b.returncode == 0, (
+                        f"{name}: the {label} linkable emit does not build ({cc})\n{b.stderr}"
+                    )
+                outs = []
+                for label, parts in (
+                    ("original", [paths["original"]]),
+                    (
+                        "linkable",
+                        [
+                            "-I",
+                            runtime_c,
+                            paths["linkable"],
+                            os.path.join(runtime_c, "bcir_quarantine.c"),
+                        ],
+                    ),
+                ):
+                    prog = os.path.join(tmp, label)
+                    b = subprocess.run(
+                        host_link_args(
+                            [cc, "-std=c11", "-O2", *parts, paths["driver"], "-o", prog, "-lm"]
+                        ),
+                        capture_output=True,
+                        text=True,
+                    )
+                    assert b.returncode == 0, (
+                        f"{name}: the {label} program does not build ({cc})\n{b.stderr}"
+                    )
+                    outs.append(
+                        subprocess.run([prog], capture_output=True, text=True, timeout=120).stdout
+                    )
+                assert outs[0] and outs[1] == outs[0], (name, cc, outs[0][:200], outs[1][:200])
 
 
 if __name__ == "__main__":

@@ -342,22 +342,25 @@ def test_portio_nested_out_over_in_is_clean():
 
 def test_portio_outb_result_used_as_a_value_is_clean():
     # `outb` is VOID -- assigning its result `unsigned y = outb(v, 0x60)` exercises the `_VOID_RID` return
-    # path through an assignment. It must LOWER (the void rid is handled), never an internal crash typing a
-    # void temp. (A real C compiler would warn "void value not ignored"; the frontend handles it cleanly.)
+    # path through an assignment. C refuses the value of a void expression (C11 6.3.2.2: GCC "void value not
+    # ignored", Clang "incompatible type 'void'"), and so does the frontend now (CF-VOIDVAL) -- a clean
+    # CLowerError, never an internal crash typing a void temp. (It had lowered, failing verification.)
     assert (
         _assert_clean_or_diagnoses(
             "unsigned f(unsigned v){ unsigned y = outb(v, 0x60); return y; }"
         )
-        == "LOWERED"
+        == "CLowerError"
     )
 
 
 def test_portio_outb_result_in_arithmetic_is_clean():
-    # `outb(v, 0x60) + 1` -- the void result flows into arithmetic. The `_VOID_RID` path must LOWER (or
-    # diagnose) cleanly, never a KeyError/TypeError using the void rid as an arithmetic operand.
-    assert _assert_clean_or_diagnoses(
-        "void f(unsigned v){ unsigned y = outb(v, 0x60) + 1; (void)y; }"
-    ) in ("LOWERED", "CLowerError")
+    # `outb(v, 0x60) + 1` -- the void result flows into arithmetic. The `_VOID_RID` path must diagnose
+    # cleanly, never a KeyError/TypeError using the void rid as an arithmetic operand: a void value is no
+    # operand (C11 6.3.2.2), refused as one (CF-VOIDVAL).
+    assert (
+        _assert_clean_or_diagnoses("void f(unsigned v){ unsigned y = outb(v, 0x60) + 1; (void)y; }")
+        == "CLowerError"
+    )
 
 
 def test_portio_inb_result_ignored_as_void_statement_is_clean():

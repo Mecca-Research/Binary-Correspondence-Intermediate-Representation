@@ -30,7 +30,7 @@ from .clex import CLexError
 from .cparse import CParseError, parse_unit, parse_with_recovery
 from .cpp import CPPError, preprocess
 from .diagnostics import DiagnosticReport, SourceDiagnostic, Span
-from .emit import emit_function
+from .emit import emit_function, respell_anon
 from .linkflags import derive_link_flags, format_link_flags
 from .escape import analyze as analyze_escape
 from .lower import CLowerError, LoweredUnit, lower_unit
@@ -199,8 +199,9 @@ def compile_unit(
         search_paths=search_paths,
         defines=defines,
         name=filename,
+        abi=abi,  # a `#if` reads a character constant by the target's character types (CF-PPARITH)
     )
-    unit = parse_unit(source)
+    unit = parse_unit(source, abi)  # the constants folded at parse take the target's data model
     lowered = lower_unit(unit, abi)
     explicit_target = (
         target is not None
@@ -220,7 +221,9 @@ def compile_unit(
         plan = optimize(lf.module, h, theta, policy)
         diags += verify_plan(lf.module, plan, h, theta=theta, policy=policy)
         res.plans[name] = plan
-        res.emitted[name] = emit_function(lf)
+        res.emitted[name] = respell_anon(
+            emit_function(lf, lowered.functions), lowered.anon_spelling
+        )
         res.explain[name] = _explain(lf.module, h, theta, policy)
         res.diagnostics += [Diagnostic(d.law, f"{name}: {d.message}") for d in diags]
         # R21 lifetime (§5.12): an ADVISORY pass over the optional malloc/free `claim.lifetime` -- a
@@ -476,7 +479,10 @@ def _harness_c(source: str, lowered: LoweredUnit, entry) -> str:
     runs both on the same seeded-random inputs and prints MATCH iff every trial agrees."""
     from .emit import _cname  # noqa: PLC0415
 
-    emitted = "\n\n".join(emit_function(lf) for lf in lowered.functions.values())
+    emitted = respell_anon(
+        "\n\n".join(emit_function(lf, lowered.functions) for lf in lowered.functions.values()),
+        lowered.anon_spelling,
+    )
     # §5.12: a masked (bounds-promoted) array access is emitted as `a[BCIR_CHK(rid, i, n)]`. Mirror the
     # runtime ABI here so the emitted unit compiles+links standalone: BCIR_CHK is transparent in-bounds
     # (so a provably-bounded `masked` access is byte-identical to the raw `a[i]`), and the handler is a

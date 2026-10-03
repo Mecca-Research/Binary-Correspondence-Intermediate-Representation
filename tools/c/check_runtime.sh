@@ -2001,7 +2001,7 @@ dtr="$("${tmp}/dt_h")"
   || { echo "  FAIL: designated behaviour (${dtr})"; exit 1; }
 
 # Local aggregate initializers for a struct/union (#aggregate): `struct cfg c = {.field=v, ...}` lowers
-# to a `= {0}` zero baseline + a c.store per initialized member (uninitialized members zero-fill). The
+# to a `= {}` zero baseline + a c.store per initialized member (uninitialized members zero-fill). The
 # twin's --emit-c is Clang-behaviour-equivalent. Compile the emitted bcir_* beside the source + a driver.
 echo "[c-runtime] local aggregate init (bcir-cc): struct/union {.field=v} emit == Clang (#aggregate)"
 "${tmp}/bcir-cc" --emit-c "${C}/cfront_agginit.c" > "${tmp}/ag_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
@@ -2021,8 +2021,8 @@ agr="$("${tmp}/ag_h")"
 [ "${agr}" = "MATCH" ] \
   && echo "  PASS aggregate: struct/union designated + positional init (+ zero-fill) == Clang" \
   || { echo "  FAIL: aggregate behaviour (${agr})"; exit 1; }
-grep -q "= {0}" "${tmp}/ag_emit.c" \
-  && echo "  PASS aggregate: emit carries the = {0} zero baseline" \
+grep -qF "= {};" "${tmp}/ag_emit.c" \
+  && echo "  PASS aggregate: emit carries the = {} zero baseline" \
   || { echo "  FAIL: aggregate emit missing zero baseline"; exit 1; }
 
 # Scalable parser state (#pscale): segment-1 made the IR arrays grow; this removes the twin's fixed

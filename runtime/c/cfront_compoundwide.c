@@ -13,8 +13,8 @@ long   l_local(long x, long y)    { long s = x; s += y; s *= 3; s -= 7; return s
 double d_local(double x, double y){ double s = x; s += y; s *= 2.0; s /= 4.0; return s; }
 long   l_inc(long x)              { long s = x; s++; ++s; s--; return s; }
 long   l_member(long x, long y)   { struct S s; s.m = x; s.m += y; s.m *= 2; return s.m; }
-long   l_array(long x, long y)    { long a[2]; a[0] = x; a[1] = 0; a[0] += y; a[1] = a[0] << 1; return a[0] + a[1]; }
-long   l_ptr(long x, long y)      { long v = x; long *p = &v; *p += y; *p <<= 1; return v; }
+long   l_array(long x, long y)    { long a[2]; a[0] = x; a[1] = 0; a[0] += y; a[1] = a[0] >> 1; return a[0] + a[1]; }
+long   l_ptr(long x, long y)      { long v = x; long *p = &v; *p += y; *p >>= 1; return v; }
 
 /* float vararg accumulation via `+=` -- needs the wide/float compound-assign result type */
 double d_vararg(int n, ...) {

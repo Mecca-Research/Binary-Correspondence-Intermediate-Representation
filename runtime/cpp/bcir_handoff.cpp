@@ -326,7 +326,7 @@ bcir_claim claim_of(std::uint32_t id, const GraphBuilder::ClaimSpec &spec) {
   c.n_wr = static_cast<std::uint8_t>(spec.writes.size() > 255u ? 255u : spec.writes.size());
   for (std::size_t i = 0; i < spec.writes.size() && i < BCIR_CLAIM_MAX_WR; ++i)
     c.wr[i] = spec.writes[i];
-  // A label of 32 bytes or more keeps no terminator, so the rail's label law refuses it.
+  // A label of BCIR_CIR_OP bytes or more keeps no terminator, so the rail's label law refuses it.
   std::size_t n = spec.label.size() < sizeof c.op ? spec.label.size() : sizeof c.op;
   std::memcpy(c.op, spec.label.data(), n);
   if (n < sizeof c.op)

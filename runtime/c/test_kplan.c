@@ -11,6 +11,9 @@
  *   test_kplan --api                 the fail-closed API laws (NULL, short scratch, short output,
  *                                    zeroing on failure); prints "API OK <checks>"
  *   test_kplan --bench IN REPS ROUNDS    the median over ROUNDS of REPS plans, in ns per plan
+ *   test_kplan --bench-floor IN REPS ROUNDS   the same median for writing the realization's bytes
+ *                                    once -- the floor of `planner.native.scale4`; prints
+ *                                    "FLOOR <ns> <bytes>"
  *===----------------------------------------------------------------------===*/
 #define _POSIX_C_SOURCE 200809L /* clock_gettime under a strict -std */
 #include <stdint.h>
@@ -322,6 +325,45 @@ static int run_bench(const char *path, long reps, long rounds) {
   return 0;
 }
 
+/* The floor of the native row (tools/perf/gemplus_baseline.py, `planner.native.scale4`): writing
+ * the realization once. BKPR is fixed-size -- 32 + 120 x claims + 4 bytes, every one of them
+ * written by a plan (the steps, the score, the CRC over them) -- so storing its bytes once is
+ * work no planner avoids, measured beside `--bench` under the same conditions: the same record,
+ * a warm buffer of the same size reused across repetitions, the same clock and median. The store
+ * goes through a volatile function pointer so the compiler cannot drop a buffer nothing reads. */
+static void *(*volatile floor_memset)(void *, int, size_t) = memset;
+
+static int run_bench_floor(const char *path, long reps, long rounds) {
+  size_t len = 0;
+  uint8_t *data = read_file(path, &len);
+  bcir_kp_input in;
+  size_t cap = 0;
+  if (!data || reps < 1 || rounds < 1 || rounds > 64 ||
+      bcir_kp_decode_input(data, len, &in) != BCIR_OK ||
+      bcir_kp_realization_size(&in, &cap) != BCIR_OK) {
+    free(data);
+    return 2;
+  }
+  uint8_t *out = (uint8_t *)malloc(cap);
+  if (!out) {
+    free(data);
+    return 2;
+  }
+  size_t wrote = cap; /* the whole realization, and the size the grader holds to 32 + 120n + 4 */
+  floor_memset(out, 0, wrote); /* the bench's buffer is warm after its first plan: so is this one */
+  uint64_t per[64];
+  for (long r = 0; r < rounds; r++) {
+    uint64_t t0 = now_ns();
+    for (long i = 0; i < reps; i++) floor_memset(out, (int)(i & 0xFF), wrote);
+    per[r] = (now_ns() - t0) / (uint64_t)reps;
+  }
+  qsort(per, (size_t)rounds, sizeof per[0], cmp_u64);
+  printf("FLOOR %llu %zu\n", (unsigned long long)per[rounds / 2], wrote);
+  free(out);
+  free(data);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 4 && strcmp(argv[1], "--plan") == 0) {
     size_t len = 0;
@@ -354,8 +396,10 @@ int main(int argc, char **argv) {
   if (argc == 3 && strcmp(argv[1], "--api") == 0) return run_api(argv[2]);
   if (argc == 5 && strcmp(argv[1], "--bench") == 0)
     return run_bench(argv[2], strtol(argv[3], NULL, 10), strtol(argv[4], NULL, 10));
+  if (argc == 5 && strcmp(argv[1], "--bench-floor") == 0)
+    return run_bench_floor(argv[2], strtol(argv[3], NULL, 10), strtol(argv[4], NULL, 10));
   fprintf(stderr,
           "usage: test_kplan --plan IN OUT | --batch IN OUT | --decode-realization IN |"
-          " --api IN | --bench IN REPS ROUNDS\n");
+          " --api IN | --bench IN REPS ROUNDS | --bench-floor IN REPS ROUNDS\n");
   return 2;
 }

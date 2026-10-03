@@ -66,7 +66,6 @@ static void cc_r21_count(const char *funcname, const char *kind, void *ctx) {
 }
 
 #define MAXD 64
-#define BCIR_CC_MAX_SOURCE_BYTES ((size_t)64u << 20)
 
 static const char *USAGE =
   "usage: bcir-cc [-I dir] [-D name[=val]] [-U name] [-std=c23] [-E] [-o out]\n"
@@ -131,7 +130,15 @@ static int cc_linkable_static_fn(const bcir_cfront_result *r, const char *line, 
   return 0;
 }
 
-static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
+static int cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
+  /* the renames below ping-pong between two copies of the emitted C; a rename never lengthens it (`bcir_X(` ->
+   * `X(`), so each copy is the emitted C's own size -- the emit has no fixed capacity to size them from (CF-BUF).
+   * Taken before anything is written, so a failed allocation writes nothing. */
+  bcir_host_allocator heap = bcir_host_allocator_default();
+  size_t cap = r->emitted_len + 1u;
+  char *ba = cap ? (char *)bcir_host_allocate(&heap, cap) : NULL;
+  char *bb = cap ? (char *)bcir_host_allocate(&heap, cap) : NULL;
+  if (!ba || !bb) { bcir_host_deallocate(&heap, ba); bcir_host_deallocate(&heap, bb); return 1; }
   int need_math = 0, need_stdlib = 0, need_stdio = 0;
   for (int f = 0; f < r->unit.n_funcs; f++)
     for (size_t k = 0; k < r->unit.funcs[f].n_claims; k++) {
@@ -148,14 +155,13 @@ static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
   if (need_stdlib) fputs("#include <stdlib.h>\n", outf);
   if (need_stdio) fputs("#include <stdio.h>\n", outf);
   if (need_math) fputs("#include <math.h>\n", outf);
-  static char ba[sizeof ((bcir_cfront_result *)0)->emitted], bb[sizeof ba];
   const char *cur = r->emitted;
   char *nxt = ba;
   for (int f = 0; f < r->unit.n_funcs; f++) {        /* unprefix every in-unit call/def name */
     char pat[BCIR_CIR_NAME + 8], rep[BCIR_CIR_NAME + 2];
     snprintf(pat, sizeof pat, "bcir_%s(", r->unit.funcs[f].name);
     snprintf(rep, sizeof rep, "%s(", r->unit.funcs[f].name);
-    cc_replace_all(cur, pat, rep, nxt, sizeof ba);
+    cc_replace_all(cur, pat, rep, nxt, cap);
     cur = nxt;
     nxt = (nxt == ba) ? bb : ba;
   }
@@ -176,6 +182,9 @@ static void cc_emit_linkable(const bcir_cfront_result *r, FILE *outf) {
     } else fwrite(s, 1, len, outf);
     s += len;
   }
+  bcir_host_deallocate(&heap, ba);
+  bcir_host_deallocate(&heap, bb);
+  return 0;
 }
 
 static void dirof(const char *path, char *out, size_t cap) {
@@ -187,39 +196,18 @@ static void dirof(const char *path, char *out, size_t cap) {
   else snprintf(out, cap, ".");
 }
 
-/* Read a whole translation unit without the old 64 KiB silent truncation.  Returns 0 on
- * success, 1 when the path cannot be opened, and 2 on an allocation/read/close failure. */
+/* Read a whole translation unit through the C front's one source reader (`bcir_cpp_read_source`: CF-LIMITS,
+ * CF-PPLIMITS), never a prefix. Returns 0 on success, 1 when the path cannot be opened, and 2 when the file cannot be
+ * handed on whole -- past 64 MiB, unreadable, or holding a NUL. */
 static int cc_read_file(const char *path, char **out) {
-  FILE *fp=fopen(path,"rb");size_t cap=1u<<16,n=0;char *buf;
+  FILE *fp=fopen(path,"rb");
   bcir_host_allocator allocator=bcir_host_allocator_default();
+  const char *why;
   *out=NULL;if(!fp)return 1;
-  buf=(char *)bcir_host_allocate(&allocator,cap);if(!buf){fclose(fp);return 2;}
-  for(;;){
-    if(n==cap-1u){
-      size_t minimum,nc;
-      if(cap>=BCIR_CC_MAX_SOURCE_BYTES+1u){
-        int extra=fgetc(fp);
-        if(extra==EOF&&!ferror(fp)){break;}
-        bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;
-      }
-      if(!bcir_size_add(cap,1u,&minimum)||
-         !bcir_host_grow_capacity(cap,minimum,1u,&nc)){
-        bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
-      if(nc>BCIR_CC_MAX_SOURCE_BYTES+1u)nc=BCIR_CC_MAX_SOURCE_BYTES+1u;
-      if(!bcir_host_realloc_array(&allocator,(void **)&buf,cap,nc,1u,0)){
-        bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
-      cap=nc;
-    }
-    size_t avail=cap-1u-n,got=fread(buf+n,1,avail,fp);n+=got;
-    if(got<avail){
-      if(ferror(fp)){bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
-      if(feof(fp))break;
-      if(!got){bcir_host_deallocate(&allocator,buf);fclose(fp);return 2;}
-    }
-  }
-  if(fclose(fp)){bcir_host_deallocate(&allocator,buf);return 2;}
-  if(memchr(buf,0,n)){bcir_host_deallocate(&allocator,buf);return 2;} /* never compile only the prefix before an embedded NUL */
-  buf[n]=0;*out=buf;return 0;
+  why=bcir_cpp_read_source(fp,&allocator,out);
+  if(fclose(fp)&&!why)why="cannot read the source";
+  if(why){bcir_host_deallocate(&allocator,*out);*out=NULL;return 2;}
+  return 0;
 }
 
 static void cc_release_file(char *contents) {
@@ -299,12 +287,15 @@ int main(int argc, char **argv) {
     fputs("bcir-cc: --emit-pack requires exactly one input and cannot be combined with --project\n",stderr);return 2;
   }
 
-  /* -std seeds __STDC_VERSION__ (a -D can still override it); honour -U by dropping a -D. */
+  /* -std seeds __STDC_VERSION__ (a -D can still override it); honour -U by dropping every -D of its name, wherever
+   * it stands -- as the oracle's CLI pops it (`__main__.py`). A dropped -D is left out of the seeds: it had been
+   * handed on as an empty definition, which `define_macro` refuses (`macro name must be an identifier`), so
+   * `-DXQ=1 -UXQ` failed every compile (CF-PPLIMITS). */
   char stdver[64]; snprintf(stdver, sizeof stdver, "__STDC_VERSION__ %s", std_version(std));
   for (int u = 0; u < nundef; u++)
     for (int d = 0; d < ndef; d++)
-      if (!strncmp(defs[d], undefs[u], strlen(undefs[u])) && defs[d][strlen(undefs[u])] == ' ')
-        defs[d] = "";                                /* "" -> define_macro ignores (no name) */
+      if (defs[d] && !strncmp(defs[d], undefs[u], strlen(undefs[u])) && defs[d][strlen(undefs[u])] == ' ')
+        defs[d] = NULL;
 
   FILE *outf = stdout;
   if (out_path && (outf = fopen(out_path, emit_pack ? "wb" : "w")) == NULL) {
@@ -326,10 +317,14 @@ int main(int argc, char **argv) {
     for (int d = 0; d < ninc && ndirs <= MAXD; d++) dirs[ndirs++] = incdirs[d];
     const char *alldefs[MAXD + 1]; int nalldef = 0;
     alldefs[nalldef++] = stdver;
-    for (int d = 0; d < ndef && nalldef <= MAXD; d++) alldefs[nalldef++] = defs[d];
+    for (int d = 0; d < ndef && nalldef <= MAXD; d++) if (defs[d]) alldefs[nalldef++] = defs[d];
 
-    static char src[1 << 16], cpperr[256];
-    int cpp_rc=bcir_cpp_run_ex(raw, path, dirs, ndirs, alldefs, nalldef, src, sizeof src, cpperr, sizeof cpperr);
+    static char cpperr[256];
+    char *src=NULL;              /* the preprocessed text, in a block grown as it needs (CF-PPLIMITS): it had been held
+                                  * in 64 KiB, and a longer unit refused that the oracle lowered */
+    { int cs=1, ws=4, wsg=1;   /* the target's character types, which a `#if` reads (CF-PPARITH) */
+      (void)bcir_cfront_target_chars(target, &cs, &ws, &wsg); bcir_cpp_set_chars(cs, ws, wsg); }
+    int cpp_rc=bcir_cpp_run_ex_alloc(raw, path, dirs, ndirs, alldefs, nalldef, &src, NULL, cpperr, sizeof cpperr);
     cc_release_file(raw);
     if (cpp_rc) {
       /* --fallback: a construct outside the supported subset routes to the LLVM backend (rc 2),
@@ -337,10 +332,12 @@ int main(int argc, char **argv) {
       if (fallback) { fprintf(stderr, "%s: fallback to LLVM backend: preprocess: %s\n", path, cpperr); if (rc != 1) rc = 2; n_fallback++; continue; }
       fprintf(stderr, "%s: preprocessor error: %s\n", path, cpperr); rc = 1; n_dirty++; continue;
     }
-    if (pp_only) { fputs(src, outf); n_clean++; continue; }
+    if (pp_only) { fputs(src, outf); cc_release_file(src); n_clean++; continue; }
 
     static bcir_cfront_result r;
-    if (bcir_cfront_compile_target(src, target, &r) != 0) {
+    int compile_rc = bcir_cfront_compile_target(src, target, &r);
+    cc_release_file(src);        /* the result owns copies of everything it names */
+    if (compile_rc != 0) {
       /* free the partial unit on the compile-error path too (the success path frees at the loop foot): `r`
        * is a reused static, so a skipped free here would leak the in-progress unit across files (the next
        * call's entry memset zeroes out->unit.funcs without freeing it). */
@@ -348,8 +345,8 @@ int main(int argc, char **argv) {
       fprintf(stderr, "%s: parse error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
     if (!r.ok) { fprintf(stderr, "%s: verify error: %s\n", path, r.diag); rc = 1; n_dirty++; bcir_cfront_free(&r); continue; }
-    if ((emit_c || linkable) && !r.emitted_ok) {
-      fprintf(stderr, "%s: emitted C exceeds %zu-byte result capacity\n", path, sizeof r.emitted);
+    if ((emit_c || linkable) && !r.emitted_ok) {   /* a successful compile always emits (CF-BUF): defensive */
+      fprintf(stderr, "%s: no emitted C\n", path);
       rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
     }
 
@@ -376,7 +373,9 @@ int main(int argc, char **argv) {
       fprintf(outf, "%s\n", lflags);
       n_clean++;
     } else if (linkable) {
-      cc_emit_linkable(&r, outf);                    /* Phase 3: the externally-linkable artifact */
+      if (cc_emit_linkable(&r, outf)) {              /* Phase 3: the externally-linkable artifact */
+        fprintf(stderr, "%s: linkable: out of memory\n", path); rc = 1; n_dirty++; bcir_cfront_free(&r); continue;
+      }
       n_clean++;
     } else if (emit_c) {
       /* §5.12: a masked (bounds-promoted) access emits `a[BCIR_CHK(...)]`, which references the

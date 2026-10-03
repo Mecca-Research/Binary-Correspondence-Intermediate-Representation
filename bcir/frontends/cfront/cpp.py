@@ -24,6 +24,15 @@ import re
 from dataclasses import dataclass
 
 from ..._artifact_json import read_bounded_text
+from .abi import HOST, TargetABI
+from .clex import (
+    IDENT_MAX,
+    NONASCII,
+    CLexError,
+    char_constant_units,
+    int_literal_parts,
+    parse_int_literal,
+)
 
 _PREDEFINED = {"__STDC__": "1", "__STDC_VERSION__": "202311L", "__STDC_HOSTED__": "1"}
 # dynamic predefined macros: expanded per source position, not stored as static bodies.
@@ -31,6 +40,19 @@ _DYNAMIC = ("__FILE__", "__LINE__")
 # feature-test operators usable in #if (and reported as `defined`); evaluated in _eval.
 _HAS_OPS = ("__has_include", "__has_embed", "__has_attribute", "__has_builtin", "__has_c_attribute")
 _SUPPORTED_ATTRS = frozenset({"packed", "aligned"})  # attributes the L8 ABI honours (GCC __x__ ok)
+#: The feature-test operators whose parenthesized operand the twin's `#if` walk reads as tokens.
+_HAS_PAREN = ("__has_attribute", "__has_builtin", "__has_c_attribute")
+#: The reason both rails refuse a `defined` with no name, or with `(` and a name but no `)`, for (CF-PPLIMITS).
+_BAD_DEFINED = "malformed defined operator"
+#: The white space a directive line is read across, as the twin reads it (`bcir_cpp.c`): a space or a tab before its
+#: `#`, between the `#` and its name and after the name, the name a run of ASCII identifier characters. `str.strip`
+#: had read every Unicode space as white space -- `\u00a0#define K 3u` defined `K` here and was refused by the twin --
+#: and the name had ended only at a space, so `#define\tK 3u` was an unknown directive here (CF-PPLIMITS).
+_DIRECTIVE_SPACE = " \t"
+_DIRECTIVE_NAME = re.compile(r"[A-Za-z0-9_]*", re.ASCII)
+#: The ASCII white space a directive's operand is stripped of at its ends: never a character past ASCII, which stays
+#: in the operand for the reader that refuses it (NONASCII).
+_ASCII_SPACE = " \t\r\f\v"
 # preprocessing tokens: identifier, number, string, char, or punctuation (multi-char first).
 _PUNCT = [
     "<<=",
@@ -82,15 +104,20 @@ _PUNCT = [
     ":",
     "?",
 ]
+#: ASCII (CF-PPLIMITS): `\w` and `\d` had taken every Unicode letter and digit, so `café` was one name here and `caf`
+#: and two bytes on the twin; and a character no alternative matched was dropped -- `x + caf€` lowered as `x + caf` --
+#: where the twin hands each such byte on as a token of its own.
 _TOKEN_RE = re.compile(
     r'"(?:\\.|[^"\\])*"'  # string
     r"|'(?:\\.|[^'\\])*'"  # char
+    r"|(?:u8|[LuU])'(?:\\.|[^'\\])*'"  # a prefixed char: one token (C11 6.4.4.4), its `L` no macro (CF-PPARITH)
     r"|\.?\d(?:[eEpP][-+]|[\w.'])*"  # pp-number (C23 ' seps; ints, hex/bin, floats w/ exp+suffix)
     r"|[A-Za-z_]\w*"  # identifier
-    r"|" + "|".join(re.escape(p) for p in _PUNCT) + r"|\\"
-)  # a stray backslash is its own token (e.g. a path in a
-#                                               stringize arg `#x` -> `"C:\\tmp"`); it would otherwise be
-#                                               dropped, corrupting the `#`-spelling.
+    rf"|{'|'.join(re.escape(p) for p in _PUNCT)}"  # the punctuators, longest first
+    r"|\\"  # a stray backslash is its own token (a path in a stringize arg `#x` -> `"C:\\tmp"`)
+    r"|\S",  # any other character, one token: the lexer refuses it (`@`, a NUL, one past ASCII)
+    re.ASCII,
+)
 
 
 class CPPError(Exception):
@@ -114,7 +141,104 @@ def _tokens(s: str) -> list[str]:
 
 
 def _is_id(t: str) -> bool:
-    return bool(t) and (t[0].isalpha() or t[0] == "_")
+    return bool(t) and (t[0].isascii() and t[0].isalpha() or t[0] == "_")
+
+
+def _digit(c: str) -> bool:
+    """An ASCII decimal digit -- `str.isdigit` takes `٣` and `²` too (CF-PPLIMITS)."""
+    return "0" <= c <= "9" and len(c) == 1
+
+
+#: The one reason each rail gives for a macro name, and for a macro parameter, longer than
+#: `IDENT_MAX` (CF-LIMITS): C11 5.2.4.1's 63 significant initial characters, the bound both lexers
+#: hold an identifier to (CF-BUF). A macro name never reaches a lexer -- the preprocessor replaces
+#: it -- so it is bounded where a directive reads it. The twin's preprocessor (`bcir_cpp.c`) holds a
+#: name in 64 bytes and gives these reasons.
+MACRO_NAME_TOO_LONG = "macro name is too long"
+MACRO_PARAM_TOO_LONG = "macro parameter is too long"
+_NEEDS_NAME = "conditional directive requires an identifier"
+#: A name as the tokenizer reads one (`_TOKEN_RE`), so a directive reads the name its text spells: ASCII, the
+#: one the twin's `macro_name` reads.
+_NAME_RE = re.compile(r"[ \t]*([A-Za-z_]\w*)", re.ASCII)
+
+
+def _macro_name(text: str, why: str) -> tuple[str, int]:
+    """The macro name a directive reads at the start of `text` -- the one `#define` or `-D` defines,
+    `#undef` removes, `#ifdef`/`#ifndef`/`#elifdef`/`#elifndef`/`defined` tests -- and the index just
+    past it: the identifier there (`_NAME_RE`). A CPPError with `why`, the directive's own reason
+    (the twin's), when none starts there, with MACRO_NAME_TOO_LONG when it is longer than IDENT_MAX, and
+    with NONASCII when a non-ASCII character runs on from it -- `#ifdef café` beside `#define caf 5` had
+    tested `café` here and `caf` on the twin (CF-PPLIMITS)."""
+    m = _NAME_RE.match(text)
+    if m is None:
+        raise CPPError(why)
+    if len(m.group(1)) > IDENT_MAX:
+        raise CPPError(MACRO_NAME_TOO_LONG)
+    if not text[m.end() : m.end() + 1].isascii():
+        raise CPPError(NONASCII)
+    return m.group(1), m.end()
+
+
+#: The most parameters a function-like macro takes (the twin's `Macro.params`), and a parameter's name.
+_MAX_PARAMS = 16
+_PARAM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _params(rest: str, i: int) -> tuple[list[str], int]:
+    """The parameter list of a function-like `#define` from just past its `(` at `rest[i]`, and the index just past
+    its `)`: names separated by commas, with spaces and tabs around them, a last `...` (`__VA_ARGS__`). Read by the
+    twin's grammar, for its reasons (CF-PPLIMITS) -- the oracle had split the text at commas and taken whatever lay
+    between them as a parameter, so `F(a b)`, `F(1)`, `F(a, a)`, `F(a` and seventeen parameters defined a macro here
+    that the twin refused, and `F(café)` one named `café`."""
+    params: list[str] = []
+
+    def skip(k: int) -> int:
+        while rest[k : k + 1] in (" ", "\t"):
+            k += 1
+        return k
+
+    while True:
+        i = skip(i)
+        if rest[i : i + 1] == ")":
+            return params, i + 1
+        if params:
+            if rest[i : i + 1] != ",":
+                raise CPPError("invalid macro parameter list")
+            i = skip(i + 1)
+            if i >= len(rest) or rest[i] == ")":
+                raise CPPError("invalid macro parameter list")
+        if len(params) >= _MAX_PARAMS:
+            raise CPPError("too many macro parameters")
+        if rest.startswith("...", i):
+            params.append("__VA_ARGS__")
+            i = skip(i + 3)
+            if rest[i : i + 1] != ")":
+                raise CPPError("variadic macro parameter must be last")
+            return params, i + 1
+        if not rest[i : i + 1].isascii():
+            raise CPPError(NONASCII)
+        m = _PARAM_RE.match(rest, i)
+        if m is None:
+            raise CPPError("invalid macro parameter")
+        if len(m.group()) > IDENT_MAX:
+            raise CPPError(MACRO_PARAM_TOO_LONG)
+        if m.group() in params:
+            raise CPPError("duplicate macro parameter")
+        params.append(m.group())
+        i = m.end()
+        if not rest[i : i + 1].isascii():
+            raise CPPError(NONASCII)
+
+
+def _bound_names(toks: list[str]) -> list[str]:
+    """`toks`, the tokens of an evaluated `#if`/`#elif`, refused when a name it looks up -- a macro
+    name, though one too long to have been defined -- is longer than IDENT_MAX (the twin reads them
+    before and after expansion)."""
+    for t in toks:
+        m = _NAME_RE.match(t)
+        if m is not None and len(m.group(1)) > IDENT_MAX:
+            raise CPPError(MACRO_NAME_TOO_LONG)
+    return toks
 
 
 class Preprocessor:
@@ -124,8 +248,10 @@ class Preprocessor:
         embeds: dict | None = None,
         search_paths: list | None = None,
         defines: dict | None = None,
+        abi: TargetABI | None = None,
     ):
         self.includes = includes or {}  # name -> header text (the in-memory mount)
+        self.abi = abi or HOST  # the target whose character types a `#if` reads (CF-PPARITH)
         self.embeds = embeds or {}  # name -> bytes
         self.search_paths = list(search_paths or [])  # -I dirs (+ the source dir): on-disk headers
         self._disk_cache: dict[str, str | None] = {}  # resolved header name -> text (or None)
@@ -134,6 +260,7 @@ class Preprocessor:
         self.macros["__DATE__"] = Macro("__DATE__", _tokens(f'"{date}"'))
         self.macros["__TIME__"] = Macro("__TIME__", _tokens(f'"{clock}"'))
         for n, v in (defines or {}).items():  # -D name[=value]  (value "" -> defined as 1)
+            _macro_name(n, "macro name must be an identifier")  # read as `#define` reads it
             self.macros[n] = Macro(n, _tokens(str(v) if v != "" else "1"))
         self._depth = 0
         self._cur_file = "<source>"  # __FILE__: the file currently being processed
@@ -146,6 +273,9 @@ class Preprocessor:
 
     # --- public ---
     def process(self, text: str, name: str = "<source>") -> str:
+        # a NUL: the twin's drivers refuse it (`READ-ERR`), for a C string ends there (CF-PPLIMITS)
+        if "\0" in text:
+            raise CPPError("the source holds a NUL byte")
         out: list[str] = []
         self._incstack, self.linemap = [], []
         self._run(self._logical_lines(text), out, name)
@@ -204,9 +334,9 @@ class Preprocessor:
             for raw in lines:
                 self._cur_line = self._presumed
                 self._presumed += 1
-                line = raw.strip()
+                line = raw.lstrip(_DIRECTIVE_SPACE)
                 if line.startswith("#"):
-                    self._directive(line[1:].strip(), cond, out, name, active)
+                    self._directive(line[1:].lstrip(_DIRECTIVE_SPACE), cond, out, name, active)
                     continue
                 if active():
                     self._out(out, self._expand_text(raw))
@@ -216,9 +346,12 @@ class Preprocessor:
             raise CPPError(f"unterminated #if in {name}")
 
     def _directive(self, d: str, cond, out, name, active) -> None:
-        op, _, rest = d.partition(" ")
-        rest = rest.strip()
+        op = _DIRECTIVE_NAME.match(d).group()
+        rest = d[len(op) :].strip(_ASCII_SPACE)
         parent = all(c[0] for c in cond)
+        # a name running on past ASCII -- `#café`, `#\u00a0define` -- in a group read: the twin's reason
+        if not d[len(op) : len(op) + 1].isascii() and active():
+            raise CPPError(NONASCII)
 
         if op in ("ifdef", "ifndef", "if", "elifdef", "elifndef", "elif", "else", "endif"):
             self._conditional(op, rest, cond, parent)
@@ -228,7 +361,7 @@ class Preprocessor:
         if op == "define":
             self._define(rest)
         elif op == "undef":
-            self.macros.pop(rest.split()[0], None) if rest else None
+            self.macros.pop(_macro_name(rest, "#undef requires an identifier")[0], None)
         elif op == "include":
             self._include(rest, out, name)
         elif op == "embed":
@@ -243,13 +376,16 @@ class Preprocessor:
             raise CPPError(f"unknown directive #{op} in {name}")
 
     def _conditional(self, op, rest, cond, parent) -> None:
+        # A directive in a skipped group is processed only through its name (C11 6.10.1p6), as is
+        # an `#elif...` after a group was taken: its operand is never read, so no macro name or
+        # expression in it can refuse the unit.
         if op in ("ifdef", "ifndef", "if"):
             if op == "ifdef":
-                taken = self._defined(rest.split()[0])
+                taken = parent and self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             elif op == "ifndef":
-                taken = not self._defined(rest.split()[0])
+                taken = parent and not self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             else:
-                taken = self._eval(rest) != 0
+                taken = parent and self._eval(rest) != 0
             cond.append([parent and taken, taken, parent])
         elif op == "endif":
             if not cond:
@@ -263,9 +399,9 @@ class Preprocessor:
             if op == "else":
                 take = not top[1]
             elif op == "elifdef":
-                take = (not top[1]) and self._defined(rest.split()[0])
+                take = (not top[1]) and par and self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             elif op == "elifndef":
-                take = (not top[1]) and not self._defined(rest.split()[0])
+                take = (not top[1]) and par and not self._defined(_macro_name(rest, _NEEDS_NAME)[0])
             else:  # elif
                 take = (not top[1]) and (par and self._eval(rest) != 0)
             top[0] = par and take
@@ -273,30 +409,13 @@ class Preprocessor:
 
     # --- #define ---
     def _define(self, rest: str) -> None:
-        m = re.match(r"(\w+)", rest)
-        if not m:
-            return
-        nameend = m.end()
-        nm = m.group(1)
+        nm, nameend = _macro_name(rest, "macro name must be an identifier")
         if nameend < len(rest) and rest[nameend] == "(":  # function-like
-            depth, i = 0, nameend
-            while i < len(rest):
-                if rest[i] == "(":
-                    depth += 1
-                elif rest[i] == ")":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                i += 1
-            params_src = rest[nameend + 1 : i]
-            body = rest[i + 1 :].strip()
-            params = [p.strip() for p in params_src.split(",") if p.strip()]
-            variadic = bool(params) and params[-1] == "..."
-            if variadic:
-                params[-1] = "__VA_ARGS__"
-            self.macros[nm] = Macro(nm, _tokens(body), params, variadic)
+            params, i = _params(rest, nameend + 1)
+            variadic = bool(params) and params[-1] == "__VA_ARGS__"
+            self.macros[nm] = Macro(nm, _tokens(rest[i:].strip(_ASCII_SPACE)), params, variadic)
         else:  # object-like
-            self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip()))
+            self.macros[nm] = Macro(nm, _tokens(rest[nameend:].strip(_ASCII_SPACE)))
 
     # --- #line ---
     def _line(self, rest: str) -> None:
@@ -306,7 +425,7 @@ class Preprocessor:
         toks = self._expand(_tokens(rest), set())
         if not toks:
             return
-        m = re.match(r"\d+", toks[0])  # a decimal digit sequence
+        m = re.match(r"[0-9]+", toks[0])  # a decimal digit sequence
         if not m:
             return
         self._presumed = int(m.group())
@@ -317,7 +436,7 @@ class Preprocessor:
 
     # --- #include / #embed ---
     def _include(self, rest: str, out, name) -> None:
-        rest_x = self._expand_text(rest).strip()
+        rest_x = self._expand_text(rest).strip(_ASCII_SPACE)
         system = rest_x.startswith("<")
         target = self._header_name(rest)
         text = self._resolve(target)
@@ -329,6 +448,9 @@ class Preprocessor:
                 f"#include {target!r} not found (in {name}); searched the mount + "
                 f"{len(self.search_paths)} -I path(s)"
             )
+        # a NUL in a header, in the twin's words (`bcir_cpp.c`); the tokenizer had dropped it (CF-PPLIMITS)
+        if "\0" in text:
+            raise CPPError(f"#include {target} contains NUL")
         if self._depth >= 64:
             raise CPPError("#include nesting too deep")
         self._depth += 1
@@ -347,7 +469,7 @@ class Preprocessor:
         return ", ".join(str(b) for b in data)
 
     def _header_name(self, rest: str) -> str:
-        rest = self._expand_text(rest).strip()
+        rest = self._expand_text(rest).strip(_ASCII_SPACE)
         if rest.startswith(("<", '"')):
             return rest[1:].split(">" if rest[0] == "<" else '"', 1)[0]
         return rest
@@ -491,16 +613,57 @@ class Preprocessor:
         return out
 
     # --- constant-expression evaluation (#if / #elif) ---
+    def _defined_walk(self, expr: str) -> str:
+        """`expr` with each `defined X` and `defined(X)` replaced by 1 or 0, read token by token as the twin's
+        `eval_if` reads it: a name longer than IDENT_MAX refused where it stands, a non-ASCII character outside a
+        literal refused (NONASCII), and `defined`'s operand read as `#ifdef` reads one (`_macro_name`) -- no name,
+        or `(` and a name with no `)`, refused as `malformed defined operator`. Two regular expressions had matched
+        only a well-formed `defined` and left a malformed one standing, to be refused as a malformed expression
+        (CF-PPLIMITS). A `__has_*` operator's parenthesized operand is its own (the passes below read it); the twin
+        skips it as this does."""
+        out, last, pos = [], 0, 0
+        while (m := _TOKEN_RE.search(expr, pos)) is not None:
+            t, pos = m.group(), m.end()
+            if _is_id(t) and len(t) > IDENT_MAX:
+                raise CPPError(MACRO_NAME_TOO_LONG)
+            if not t[0].isascii():
+                raise CPPError(NONASCII)
+            if t == "defined":
+                rest = expr[pos:]
+                j = len(rest) - len(rest.lstrip(" \t"))
+                if rest[j : j + 1] == "(":
+                    name, k = _macro_name(rest[j + 1 :], _BAD_DEFINED)
+                    close = _TOKEN_RE.search(rest, j + 1 + k)
+                    if close is None or close.group() != ")":
+                        raise CPPError(_BAD_DEFINED)
+                    end = close.end()
+                else:
+                    name, end = _macro_name(rest, _BAD_DEFINED)
+                out += [expr[last : m.start()], "1" if self._defined(name) else "0"]
+                pos = last = m.end() + end
+            elif t == "__has_include":
+                # to the first `(` after it and the `)` that closes it, as the twin
+                o = expr.find("(", pos)
+                if o >= 0:
+                    depth, e = 1, o + 1
+                    while e < len(expr) and depth:
+                        depth += {"(": 1, ")": -1}.get(expr[e], 0)
+                        e += 1
+                    pos = e
+            elif t in _HAS_PAREN:  # a `(` next, then the tokens to the `)` that closes it
+                o = _TOKEN_RE.search(expr, pos)
+                if o is not None and o.group() == "(":
+                    depth, pos = 1, o.end()
+                    while depth and (a := _TOKEN_RE.search(expr, pos)) is not None:
+                        pos = a.end()
+                        depth += {"(": 1, ")": -1}.get(a.group(), 0)
+        return "".join(out) + expr[last:]
+
     def _eval(self, expr: str) -> int:
-        # handle defined / the __has_* operators BEFORE macro expansion, then expand.
-        expr = re.sub(
-            r"\bdefined\s*\(\s*(\w+)\s*\)",
-            lambda m: "1" if self._defined(m.group(1)) else "0",
-            expr,
-        )
-        expr = re.sub(
-            r"\bdefined\s+(\w+)", lambda m: "1" if self._defined(m.group(1)) else "0", expr
-        )
+        # handle defined / the __has_* operators BEFORE macro expansion, then expand. A `defined`
+        # operand and every name the expression looks up, before and after expansion, are macro
+        # names: each is bounded (CF-LIMITS).
+        expr = self._defined_walk(expr)
         expr = re.sub(
             r"\b__has_include\s*\(([^)]*)\)",
             lambda m: "1" if self._resolve(self._header_name(m.group(1))) is not None else "0",
@@ -517,11 +680,12 @@ class Preprocessor:
             r"\b__has_attribute\s*\(\s*(\w+)\s*\)",
             lambda m: "1" if m.group(1).strip("_") in _SUPPORTED_ATTRS else "0",
             expr,
+            flags=re.ASCII,
         )
         expr = re.sub(r"\b__has_builtin\s*\([^)]*\)", "0", expr)
         expr = re.sub(r"\b__has_c_attribute\s*\([^)]*\)", "0", expr)
-        toks = self._expand(_tokens(expr), set())
-        return _ConstEval(toks).parse()
+        toks = self._expand(_bound_names(_tokens(expr)), set())
+        return _ConstEval(toks, self.abi).parse()
 
 
 def _translation_datetime() -> tuple[str, str]:
@@ -532,7 +696,7 @@ def _translation_datetime() -> tuple[str, str]:
     import os, time  # noqa: PLC0415,E401
 
     epoch = os.environ.get("SOURCE_DATE_EPOCH", "")
-    tm = time.gmtime(int(epoch)) if epoch.isdigit() else time.gmtime()
+    tm = time.gmtime(int(epoch)) if epoch.isascii() and epoch.isdigit() else time.gmtime()
     mon = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[
         tm.tm_mon - 1
     ]
@@ -559,21 +723,39 @@ def _balanced(toks: list, k: int) -> tuple[list, int]:
     return inner, j
 
 
-_HEXD = frozenset("0123456789abcdefABCDEF")
+_DIGITS = frozenset("0123456789")
+_IDSTART = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+_IDCHARS = _IDSTART | _DIGITS
 
 
 def _strip_comments(text: str) -> str:
     """Translation phase 3: replace every `//` and `/* */` comment with a single space, leaving
     string/char literals untouched. A block comment keeps the newlines it spanned, so `__LINE__`
-    and the per-line directive scan stay aligned with the source. A C23 digit separator (`1'000`,
-    `0xca'fe`) is not mistaken for a char-literal quote — a `'` flanked by hex digits is data."""
+    and the per-line directive scan stay aligned with the source. An identifier and a preprocessing number (6.4.2,
+    6.4.8) are copied whole, so a C23 digit separator (`1'000`, `0xca'fe`) -- a `'` inside a pp-number -- is not
+    mistaken for a char-literal quote, and the quote after an identifier is one: a `'` flanked by hex digits had been
+    taken for a separator in `u8'a'` (and `case'a'`), the constant's closing quote then opening a literal that ran
+    past the next comment, which survived as tokens (CF-CONSTEXPR2; the twin's `strip_comments`)."""
     out: list[str] = []
     i, n = 0, len(text)
     while i < n:
         c = text[i]
-        if c == '"' or (
-            c == "'" and not (i and text[i - 1] in _HEXD and i + 1 < n and text[i + 1] in _HEXD)
-        ):
+        if c in _IDCHARS or (c == "." and i + 1 < n and text[i + 1] in _DIGITS):
+            j, num = i + 1, c not in _IDSTART  # a pp-number begins with a digit or `.digit`
+            while j < n:
+                ch = text[j]
+                if num and ch in "eEpP" and j + 1 < n and text[j + 1] in "+-":
+                    j += 2  # an exponent's sign
+                elif num and ch == "'" and j + 1 < n and text[j + 1] in _IDCHARS:
+                    j += 2  # a digit separator
+                elif ch in _IDCHARS or (num and ch == "."):
+                    j += 1
+                else:
+                    break
+            out.append(text[i:j])
+            i = j
+            continue
+        if c in "\"'":
             out.append(c)  # a string/char literal: copy verbatim
             i += 1
             while i < n:
@@ -637,7 +819,7 @@ _PUNCT_RE = re.compile("|".join(re.escape(p) for p in _PUNCT))  # longest first:
 
 def _is_ppnum(t: str) -> bool:
     """Whether the preprocessing token `t` is a pp-number (C 6.4.8): a digit, or `.` and a digit, first."""
-    return t[:1].isdigit() or (t[:1] == "." and t[1:2].isdigit())
+    return _digit(t[:1]) or (t[:1] == "." and _digit(t[1:2]))
 
 
 def _pastes(prev: str, t: str) -> bool:
@@ -647,7 +829,7 @@ def _pastes(prev: str, t: str) -> bool:
     tokens cannot see it), a pp-number runs on through a `.` or an exponent's sign, or a `.` begins a
     number. A space between them keeps them two (the twin's `pastes`, byte for byte)."""
     a, b = prev[-1], t[0]
-    if (_is_id(a) or a.isdigit()) and (_is_id(b) or b.isdigit()):
+    if (_is_id(a) or _digit(a)) and (_is_id(b) or _digit(b)):
         return True
     if (a == "/" and b in "*/") or (a == "." and b == "."):
         return True
@@ -657,7 +839,9 @@ def _pastes(prev: str, t: str) -> bool:
             return True
     if _is_ppnum(prev) and (b == "." or (a in "eEpP" and b in "+-")):
         return True
-    return a == "." and b.isdigit()
+    if b == "'" and a in "LuU8":  # a word that may be an encoding prefix (CF-PPARITH)
+        return True
+    return a == "." and _digit(b)
 
 
 def _join(toks: list[str]) -> str:
@@ -683,122 +867,252 @@ def _stringize(toks: list[str]) -> str:
     applied per-token to literals, not blanket to the joined text."""
     esc = []
     for t in toks:
-        if t[:1] in ('"', "'") and len(t) >= 2:  # a string/char literal -> escape \ and "
+        if (t[:1] in ('"', "'") or _CHAR_TOKEN.match(t)) and len(
+            t
+        ) >= 2:  # a literal -> escape \ and "
             esc.append(t.replace("\\", "\\\\").replace('"', '\\"'))
         else:  # any other token, incl. a bare `\`, verbatim
             esc.append(t)
     return '"' + _join(esc) + '"'
 
 
+#: The reasons both rails refuse a `#if`/`#elif` expression for (CF-PPARITH; the twin's `bcir_cpp.c` gives the same
+#: words). One the grammar does not admit -- nothing, a token no operand or operator is (a string, a floating
+#: constant, `=`), two operands with no operator between them, an unclosed `(`, a `?` with no `:` -- is malformed,
+#: wherever it stands. The rest are C's undefined behaviour or constraint violations in an evaluated operand (6.6p3,
+#: 6.6p4, 6.5.5p5, 6.5.7p3-4): a signed result past `intmax_t`, a division by zero, a shift by a negative count or
+#: by 64 or more, a negative value shifted left, a comma operator. An operand C leaves unevaluated -- the right of
+#: `&&` after 0 and of `||` after a nonzero, the arm of `?:` not taken -- refuses for none of them.
+PP_MALFORMED = "malformed #if expression"
+PP_OVERFLOW = "integer overflow in #if expression"
+PP_SHIFT = "invalid shift in #if expression"
+PP_DIVZERO = "division by zero in #if expression"
+PP_COMMA = "comma operator in #if expression"
+#: The bounds the twin holds a `#if` to, held here too: 512 tokens after expansion, each at most 63 characters, and
+#: at most 63 nested parentheses and conditional operators (C11 5.2.4.1's minimum).
+PP_TOO_MANY = "too many tokens in #if expression"
+PP_SPELLING_LONG = "preprocessor token too long"
+PP_DEEP = "#if expression nested too deeply"
+_PP_MAX_TOKENS, _PP_MAX_TOKEN, _PP_MAX_DEPTH = 512, 63, 63
+
+_M64 = (1 << 64) - 1
+_IMAX = (1 << 63) - 1
+_CHAR_TOKEN = re.compile(r"(?:u8|[LuU])?'")
+
+
+@dataclass(frozen=True)
+class _PPValue:
+    """A `#if` operand (C11 6.10.1p4): its 64 bits, and whether it is a `uintmax_t` (else an `intmax_t`)."""
+
+    bits: int
+    unsigned: bool
+
+    def signed(self) -> int:
+        return self.bits - (1 << 64) if self.bits >> 63 else self.bits
+
+    def value(self) -> int:
+        return self.bits if self.unsigned else self.signed()
+
+
+_ZERO, _ONE = _PPValue(0, False), _PPValue(1, False)
+
+
 class _ConstEval:
-    """A small integer constant-expression evaluator for #if (undefined identifiers -> 0)."""
+    """The `#if`/`#elif` constant expression (C11 6.10.1), evaluated as C says: every operand an `intmax_t` or a
+    `uintmax_t` -- an integer constant unsigned where its suffix has `u` or its value is past `INTMAX_MAX`, a
+    character constant by the target's character types, `true` 1 and any other identifier 0 -- and each operator by
+    the usual arithmetic conversions (an unsigned operand makes both unsigned; a shift takes its left operand's
+    type; `!`, a comparison, `&&` and `||` give an `int`). Python's unbounded `int` had read `-1 > 0u` as false and
+    `0xFFFFFFFFFFFFFFFF == -1` had raised a bare ValueError; a character constant had been 0, `?:` taken whole and an
+    unclosed `(` or a trailing token ignored (CF-PPARITH; the twin's `ce_*`)."""
 
-    _LEVELS = [
-        ("||",),
-        ("&&",),
-        ("|",),
-        ("^",),
-        ("&",),
-        ("==", "!="),
-        ("<", ">", "<=", ">="),
-        ("<<", ">>"),
-        ("+", "-"),
-        ("*", "/", "%"),
-    ]
+    _BINARY = {
+        "||": 1, "&&": 2, "|": 3, "^": 4, "&": 5, "==": 6, "!=": 6, "<": 7, ">": 7, "<=": 7, ">=": 7,
+        "<<": 8, ">>": 8, "+": 9, "-": 9, "*": 10, "/": 10, "%": 10,
+    }  # fmt: skip
 
-    def __init__(self, toks: list[str]):
-        self.t = toks
-        self.i = 0
+    def __init__(self, toks: list[str], abi: TargetABI):
+        for k, t in enumerate(
+            toks
+        ):  # each token in turn, as the twin reads them: its name, its length, its count
+            _bound_names([t])
+            if len(t) > _PP_MAX_TOKEN:
+                raise CPPError(PP_SPELLING_LONG)
+            if k >= _PP_MAX_TOKENS:
+                raise CPPError(PP_TOO_MANY)
+        self.t, self.i, self.abi = toks, 0, abi
 
     def parse(self) -> int:
-        v = self._ternary()
-        return int(v)
+        v = self._comma(True, 0)
+        if self.i != len(self.t):
+            raise CPPError(PP_MALFORMED)
+        return int(v.bits != 0)
 
     def _peek(self):
         return self.t[self.i] if self.i < len(self.t) else None
 
-    def _ternary(self) -> int:
-        c = self._binary(0)
-        if self._peek() == "?":
-            self.i += 1
-            a = self._ternary()
-            if self._peek() == ":":
-                self.i += 1
-            b = self._ternary()
-            return a if c else b
-        return c
+    def _expect(self, tok: str) -> None:
+        if self._peek() != tok:
+            raise CPPError(PP_MALFORMED)
+        self.i += 1
 
-    def _binary(self, lvl: int) -> int:
-        if lvl >= len(self._LEVELS):
-            return self._unary()
-        v = self._binary(lvl + 1)
-        while self._peek() in self._LEVELS[lvl]:
-            op = self.t[self.i]
+    def _comma(self, live: bool, depth: int) -> _PPValue:
+        v = self._cond(live, depth)
+        while self._peek() == ",":
+            if live:
+                raise CPPError(PP_COMMA)
             self.i += 1
-            r = self._binary(lvl + 1)
-            v = _apply(op, v, r)
+            v = self._cond(live, depth)
         return v
 
-    def _unary(self) -> int:
-        t = self._peek()
-        if t in ("!", "-", "+", "~"):
-            self.i += 1
-            v = self._unary()
-            return {"!": int(not v), "-": -v, "+": +v, "~": ~v}[t]
-        return self._primary()
-
-    def _primary(self) -> int:
-        t = self._peek()
-        if t == "(":
-            self.i += 1
-            v = self._ternary()
-            if self._peek() == ")":
-                self.i += 1
-            return v
+    def _cond(self, live: bool, depth: int) -> _PPValue:
+        c = self._binary(1, live, depth)
+        if self._peek() != "?":
+            return c
+        if depth >= _PP_MAX_DEPTH:
+            raise CPPError(PP_DEEP)
         self.i += 1
+        a = self._comma(live and c.bits != 0, depth + 1)
+        self._expect(":")
+        b = self._cond(live and c.bits == 0, depth + 1)
+        return _PPValue((a if c.bits else b).bits, a.unsigned or b.unsigned)
+
+    def _binary(self, minp: int, live: bool, depth: int) -> _PPValue:
+        lhs = self._unary(live, depth)
+        while True:
+            op = self._peek()
+            p = self._BINARY.get(op)
+            if p is None or p < minp:
+                return lhs
+            self.i += 1
+            rlive = live and not (op == "&&" and not lhs.bits) and not (op == "||" and lhs.bits)
+            lhs = _apply(op, lhs, self._binary(p + 1, rlive, depth), live)
+
+    def _unary(self, live: bool, depth: int) -> _PPValue:
+        ops = []
+        while self._peek() in ("+", "-", "~", "!"):
+            ops.append(self.t[self.i])
+            self.i += 1
+        v = self._primary(live, depth)
+        for op in reversed(ops):
+            if op == "!":
+                v = _PPValue(int(v.bits == 0), False)
+            elif op == "~":
+                v = _PPValue(~v.bits & _M64, v.unsigned)
+            elif op == "-":
+                if not v.unsigned and v.bits == 1 << 63 and live:
+                    raise CPPError(PP_OVERFLOW)
+                v = _PPValue(-v.bits & _M64, v.unsigned)
+        return v
+
+    def _primary(self, live: bool, depth: int) -> _PPValue:
+        t = self._peek()
         if t is None:
-            return 0
-        if t[:1].isdigit():
+            raise CPPError(PP_MALFORMED)
+        self.i += 1
+        if t == "(":
+            if depth >= _PP_MAX_DEPTH:
+                raise CPPError(PP_DEEP)
+            v = self._comma(live, depth + 1)
+            self._expect(")")
+            return v
+        if _digit(t[:1]):
             return _int_lit(t)
-        return 0  # undefined identifier -> 0
+        if _CHAR_TOKEN.match(t):
+            return _char_lit(t, self.abi)
+        if _NAME_RE.fullmatch(t):
+            return (
+                _ONE if t == "true" else _ZERO
+            )  # C23 6.10.1p11: `true` is 1, any other identifier 0
+        raise CPPError(PP_MALFORMED)
 
 
-def _int_lit(t: str) -> int:
-    t = t.replace("'", "")
-    while t and t[-1] in "uUlL":
-        t = t[:-1]
-    if t[:2] in ("0x", "0X"):
-        return int(t, 16)
-    if t[:2] in ("0b", "0B"):
-        return int(t[2:], 2)
-    if len(t) > 1 and t[0] == "0" and t.isdigit():
-        return int(t, 8)
-    return int(t or "0", 10)
+def _int_lit(t: str) -> _PPValue:
+    """An integer constant of a `#if`, read as the lexer reads one (`clex.parse_int_literal`): its digits checked
+    against its base and its suffix checked, a malformed one (`08`, `1lL`) or one no type holds refused as the lexer
+    refuses it, in an operand C leaves unevaluated too, for it is no constant at all (CF-SUFFIX). It is a
+    `uintmax_t` where its suffix has `u` or its value is past `INTMAX_MAX` (6.10.1p4; a hexadecimal, octal or binary
+    one: 6.4.4.1p5), else an `intmax_t` (CF-PPARITH)."""
+    try:
+        value = parse_int_literal(t)
+        _value, _decimal, suffix = int_literal_parts(t)
+    except CLexError as e:
+        raise CPPError(str(e)) from None
+    return _PPValue(value, "u" in suffix.lower() or value > _IMAX)
 
 
-def _apply(op: str, a: int, b: int) -> int:
-    if op == "/":
-        return int(a / b) if b else 0
-    if op == "%":
-        return a % b if b else 0
-    return {
-        "||": int(bool(a) or bool(b)),
-        "&&": int(bool(a) and bool(b)),
-        "|": a | b,
-        "^": a ^ b,
-        "&": a & b,
-        "==": int(a == b),
-        "!=": int(a != b),
-        "<": int(a < b),
-        ">": int(a > b),
-        "<=": int(a <= b),
-        ">=": int(a >= b),
-        "<<": a << b,
-        ">>": a >> b,
-        "+": a + b,
-        "-": a - b,
-        "*": a * b,
-    }[op]
+def _char_lit(t: str, abi) -> _PPValue:
+    """A character constant of a `#if` (6.10.1p4), read as Clang and GCC read one: a plain one by the target's plain
+    `char` -- its byte sign-extended, or zero-extended and the operand a `uintmax_t` where `char` is unsigned (so
+    `'a' - 98 < 0` is false on AArch64); a multi-character one packed big-endian into an `int`'s 32 bits and
+    extended likewise -- a `u8` one an `unsigned char`, a `u` and a `U` one `char16_t` and `char32_t`, unsigned, an
+    `L` one the target's `wchar_t`. Refused for `clex.CHAR_UNSUPPORTED` in any operand (CF-PPARITH)."""
+    bits = 8 * abi.wchar_size
+    try:
+        prefix, units = char_constant_units(t, bits)
+    except CLexError as e:
+        raise CPPError(str(e)) from None
+    if prefix == "":
+        bits, signed, v = 8, abi.char_signed, units[0]
+        if len(units) > 1:
+            bits, v = 32, 0
+            for u in units:
+                v = ((v << 8) | u) & 0xFFFFFFFF
+    elif prefix == "L":
+        signed, v = abi.wchar_signed, units[0]
+    else:
+        bits, signed, v = {"u8": 8, "u": 16, "U": 32}[prefix], False, units[0]
+    if signed and v >> (bits - 1):
+        v -= 1 << bits
+    return _PPValue(v & _M64, not signed)
+
+
+def _apply(op: str, a: _PPValue, b: _PPValue, live: bool) -> _PPValue:
+    """`a op b` in C's `#if` arithmetic; `live` where C evaluates it, so its undefined behaviour refuses the unit
+    (an unevaluated one's value is never read, but its type still decides a `?:`'s)."""
+    if op in ("||", "&&"):
+        return _PPValue(
+            int(bool(a.bits) or bool(b.bits)) if op == "||" else int(bool(a.bits) and bool(b.bits)),
+            False,
+        )
+    if op in ("<<", ">>"):
+        n = b.value()
+        if not 0 <= n < 64:
+            if live:
+                raise CPPError(PP_SHIFT)
+            return _PPValue(0, a.unsigned)
+        if op == ">>":
+            return _PPValue((a.bits if a.unsigned else a.signed()) >> n & _M64, a.unsigned)
+        if not a.unsigned and live and (a.signed() < 0 or a.signed() << n > _IMAX):
+            raise CPPError(PP_OVERFLOW)
+        return _PPValue(a.bits << n & _M64, a.unsigned)
+    u = a.unsigned or b.unsigned
+    x, y = (a.bits, b.bits) if u else (a.signed(), b.signed())
+    if op in ("==", "!=", "<", ">", "<=", ">="):
+        return _PPValue(
+            int(
+                {"==": x == y, "!=": x != y, "<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y}[op]
+            ),
+            False,
+        )
+    if op in ("&", "|", "^"):
+        return _PPValue({"&": x & y, "|": x | y, "^": x ^ y}[op] & _M64, u)
+    if op in ("/", "%"):
+        if y == 0:
+            if live:
+                raise CPPError(PP_DIVZERO)
+            return _PPValue(0, u)
+        q = abs(x) // abs(y) * (1 if (x < 0) == (y < 0) else -1)  # C truncates toward zero
+        if (
+            not u and q > _IMAX and live
+        ):  # INTMAX_MIN / -1, whose remainder is undefined too (6.5.5p6)
+            raise CPPError(PP_OVERFLOW)
+        r = q if op == "/" else x - q * y
+    else:
+        r = {"+": x + y, "-": x - y, "*": x * y}[op]
+    if not u and not -(1 << 63) <= r <= _IMAX and live:
+        raise CPPError(PP_OVERFLOW)
+    return _PPValue(r & _M64, u)
 
 
 def preprocess(
@@ -810,10 +1124,12 @@ def preprocess(
     defines: dict | None = None,
     name: str = "<source>",
     return_map: bool = False,
+    abi: TargetABI | None = None,
 ):
     """Preprocess `text` to the flat translation-unit string. With `return_map=True`, also return the
     per-output-line provenance map (file, line, #include stack) so diagnostics resolve to their
-    origin file even across inlined includes."""
-    p = Preprocessor(includes, embeds, search_paths, defines)
+    origin file even across inlined includes. `abi` is the target whose character types a `#if` reads (the host's,
+    x86-64 Linux, when None; CF-PPARITH)."""
+    p = Preprocessor(includes, embeds, search_paths, defines, abi)
     out = p.process(text, name)
     return (out, p.linemap) if return_map else out

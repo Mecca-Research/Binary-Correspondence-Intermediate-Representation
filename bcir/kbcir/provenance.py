@@ -135,6 +135,39 @@ def hash_module(module: Module) -> int:
     return _fnv_items(canonical_stream(module))
 
 
+def rendered_stream(module: Module) -> list[bytes]:
+    """The canonical stream rendered to the bytes `hash_module` chains: per item its UTF-8
+    rendering and the 0xFF field separator, by `_fnv_items`'s own rule. The GEM+ harness
+    measures the digest's floor over it (`fnv_chain`); nothing on the digest's path reads it."""
+    out = []
+    enc = _ENCODED
+    for it in canonical_stream(module):
+        if type(it) is int or type(it) is str:
+            e = enc.get(it)
+            if e is None:
+                e = enc[it] = str(it).encode("utf-8") + b"\xff"
+        else:
+            e = str(it).encode("utf-8") + b"\xff"
+        out.append(e)
+    return out
+
+
+def fnv_chain(rendered: list[bytes]) -> int:
+    """`hash_module`'s arithmetic alone: the FNV-1a chain over an already-rendered stream, one
+    xor-multiply per canonical byte and one reduction per item, with the walk and the rendering
+    done beforehand. `fnv_chain(rendered_stream(m)) == hash_module(m)`; the chain is sequential in
+    its bytes (`h = (h ^ b) * P mod 2**64` admits no reassociation), so the time of this loop is
+    the floor of `static_memory.digest.2048` (tools/perf/gemplus_baseline.py)."""
+    h = _FNV_OFFSET
+    prime = _FNV_PRIME
+    mask = _MASK
+    for e in rendered:
+        for byte in e:
+            h = (h ^ byte) * prime
+        h &= mask
+    return h & _I63
+
+
 def digest_stats() -> dict:
     """A copy of the digest counters (full module digests computed so far)."""
     return dict(_STATS)

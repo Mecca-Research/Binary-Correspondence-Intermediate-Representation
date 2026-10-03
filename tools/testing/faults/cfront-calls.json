@@ -1,0 +1,329 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_void_callbacks_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_function_designator_arms_select_a_function_pointer_on_both_rails",
+    "bcir.tests.test_c_cfront:test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+    "bcir.tests.test_c_cfront:test_struct_arithmetic_and_conversion_are_refused_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL1 the oracle takes no function-pointer return as void",
+      "new": "        and fct.of.name == \"no-return-is-void\"\n    )",
+      "old": "        and fct.of.name == \"void\"\n    )",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL2 the oracle's emit declares a result for every indirect call",
+      "new": "        call = f\"{ref(c.rd[0])}({_qual_args(lf, ref, c.rd[1:], params, quals)})\"\n        if not c.wr:  # a void function: a bare call\n            return deftmp(0, call)\n",
+      "old": "        call = f\"{ref(c.rd[0])}({_qual_args(lf, ref, c.rd[1:], params, quals)})\"\n        if not c.wr:  # a void function: a bare call\n            return f\"{call};\"\n",
+      "path": "bcir/frontends/cfront/emit.py"
+    },
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL3 the twin captures no void return",
+      "new": "  fp->fp_ret_void=0;",
+      "old": "  fp->fp_ret_void=(uint8_t)(ret->kind==0 && ret->size==0 && !ret->is_float && !ret->is_valist && ret->bit_width==0);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL4 the twin's struct member drops the void flag",
+      "new": "f->fp_ret_agg=ty.fp_ret_agg; f->fp_ret_void=0; f->fp_sig=ty.fp_sig;",
+      "old": "f->fp_ret_agg=ty.fp_ret_agg; f->fp_ret_void=ty.fp_ret_void; f->fp_sig=ty.fp_sig;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL5 the twin's call through a pointer keeps a result",
+      "new": "  int vd=0;",
+      "old": "  int vd=fv->type.fp_ret_void;              /* a pointer to a void function: no result (CF-VOIDCB) */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL6 the twin's member call on a named base keeps a result",
+      "new": "      field ff=S->f[fi]; ff.fp_ret_void=0;\n      null_pointer_sig",
+      "old": "      field ff=S->f[fi];                          /* the funcptr field carries its captured return type */\n      null_pointer_sig",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_void_callbacks_run_as_the_original_on_both_rails",
+      "label": "CL7 the twin's emit declares a result for every indirect call",
+      "new": "      {",
+      "old": "      if(cl->n_wr==0) w+=snprintf(o+EO,on-EO,\"%s(\",rname(f,cl->rd[0],a));   /* a void function: a bare call (CF-VOIDCB) */\n      else{",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL8 the oracle gives a designator no function type",
+      "new": "        return None\n",
+      "old": "        return funcptr(\n            name, self.func_rets[name], params, self.abi, variadic=variadic, fquals=fquals\n        )\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL9 the oracle selects functions of two types",
+      "new": "                if False:",
+      "old": "                if fa is not None and fb is not None and self._fn_key(fa) != self._fn_key(fb):",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL10 the oracle's select leaves a null pointer arm an int",
+      "new": "                return self._emit(\"c.select\"",
+      "old": "                self._null_pointer(a, rt)\n                self._null_pointer(b, rt)\n                return self._emit(\"c.select\"",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL11 the twin gives no function-pointer value a function type",
+      "new": "  return 0*s;",
+      "old": "  return s>0 && s<=c->nsig && c->sigs[s-1].alias[0] ? s : 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL12 the twin selects functions of two types",
+      "new": "      if(0 && ga && gb && !sig_same(c,ga,gb)){",
+      "old": "      if(ga && gb && !sig_same(c,ga,gb)){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL13 the twin gives a designator no function type",
+      "new": "  if(1) return 0;",
+      "old": "  if(!df && pk<0) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL14 the twin's select leaves a null pointer arm an int",
+      "new": "    /* the null arm untyped */",
+      "old": "    { const bcir_resource *tr=res_of(c->fn,t); if(tr) null_arms_as(c,tr,a,b); }   /* `c ? p : 0`: 0 is p's pointer */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL15 the twin's emit spells a function-pointer select as an integer",
+      "new": "tr->is_funcptr=1; }",
+      "old": "tr->is_funcptr=1; fits(c,tr->agg,BCIR_CIR_AGG,\"%s\",al); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL16 the twin's typedef records no function type",
+      "new": "      fp.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "      fp.fp_sig=sig_addv(c,&ty,ps,np,fp.tag,\"\",va);     /* spelled by the source's own alias */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL17 the oracle leaves the 0 compared with a pointer an int",
+      "new": "",
+      "old": "            if ta is not None:\n                self._null_pointer(b, ta)\n            if tb is not None:\n                self._null_pointer(a, tb)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL18 the oracle leaves the 0 passed through a pointer an int",
+      "new": "",
+      "old": "        self._null_pointer_args(actuals, fpct.params)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL19 the oracle leaves the 0 passed through a member an int",
+      "new": "            pass\n",
+      "old": "            self._null_pointer_args(actuals, fct.params)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL20 the oracle leaves free's 0 an int",
+      "new": "            if False:\n",
+      "old": "            if actuals:  # `free(0)`: a null `void *` (CF-NULLCALL)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL21 the oracle leaves realloc's 0 an int",
+      "new": "            if False:",
+      "old": "            if node.callee == \"realloc\" and actuals:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL22 the twin leaves the 0 compared with a pointer an int",
+      "new": "    /* the 0 compared untyped */",
+      "old": "    if(!strcmp(suf,\"eq\")||!strcmp(suf,\"ne\")){ null_compared(c,rhs,lhs); null_compared(c,lhs,rhs); }   /* `p == 0` */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL23 the twin leaves the 0 passed through a pointer an int",
+      "new": "    }",
+      "old": "    null_pointer(c,args[k],&s->params[k]); }",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL24 the twin leaves free's and realloc's 0 an int",
+      "new": "    if(0){",
+      "old": "    if(na>0 && (sal==2 || tok_is(name,\"realloc\"))){",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL25 the twin's member declarator records no parameters",
+      "new": "        ty.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "        ty.fp_sig=sig_addv(c,&rty,ps,np,\"\",\"\",va);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL26 the twin's local declarator records no parameters",
+      "new": "        fty.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "        fty.fp_sig=sig_addv(c,&ret,ps,np,fty.tag,\"\",va);   /* ... and its parameters, a null pointer argument */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL27 the twin's parameter declarator records no parameters",
+      "new": "      ty.fp_sig=0*np+0*(ps!=NULL)+0*va;",
+      "old": "      ty.fp_sig=sig_addv(c,&ret,ps,np,ty.tag,\"\",va);  /* ... and its parameters, a null pointer argument */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_null_pointer_constants_compared_passed_and_freed_run_as_the_original",
+      "label": "CL28 the twin reads `p -= 1` as `p->`",
+      "new": "||(tat(c,c->i+1)->n==2&&tat(c,c->i+1)->s[0]=='-'))",
+      "old": "||(tat(c,c->i+1)->n==2&&tat(c,c->i+1)->s[0]=='-'&&tat(c,c->i+1)->s[1]=='>'))   /* `->`, never `-=` or `--` */",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL29 the oracle lets a struct be an operand",
+      "new": "            pass",
+      "old": "            raise CLowerError(_STRUCT_OPERAND)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL30 the oracle lets a struct convert to a scalar",
+      "new": "            pass",
+      "old": "            raise CLowerError(_STRUCT_CONVERTED)",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL31 the oracle casts a struct to a scalar",
+      "new": "",
+      "old": "            self._scalar_value(ct, v)  # `(uint32_t)a` of a struct (C11 6.5.4p2, CF-STRUCTARITH)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL32 the oracle returns a struct from a scalar function",
+      "new": "",
+      "old": "                # `return a;` of a struct from a function returning a scalar (CF-STRUCTARITH)\n                self._scalar_value(self._resolve_type(self.func.ret), rid)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL33 the oracle passes a struct to a scalar parameter",
+      "new": "",
+      "old": "                self._scalar_value(ct, v)  # a struct for a scalar parameter (CF-STRUCTARITH)\n",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL34 the twin assigns a struct to a scalar object",
+      "new": "  if(0) return scalar_value_ok(c,v);",
+      "old": "  if(si<0 && !is(c,\".\") && !is(c,\"->\") && !is(c,\"[\")) return scalar_value_ok(c,v);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL35 the twin lets a struct be the left operand of `&&` / `||`",
+      "new": "",
+      "old": "  if(agg_operand(c,lhs)) return lhs;               /* a struct operand (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL36 the twin lets a struct be a unary operand",
+      "new": "  if(c->failed) return 0;",
+      "old": "  if(c->failed || agg_operand(c,a)) return 0;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL37 the twin passes a struct to a scalar parameter",
+      "new": "",
+      "old": "  if(c->failed) return cfront_failure(context,out,c->err);   /* ... and a struct argument refused (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL38 the twin returns a struct from a scalar function",
+      "new": "      else if(0) return;",
+      "old": "      else if(c->fn->ret.kind!=1 && !scalar_value_ok(c,rv)) return;",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL39 the twin casts a struct to a scalar",
+      "new": "",
+      "old": "        if(ty.kind!=1 && !scalar_value_ok(c,v)) return 0;   /* `(uint32_t)a` of a struct (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL40 the twin stores a struct into a scalar list element",
+      "new": "",
+      "old": "  if(u->k==IK_SCAL && !scalar_value_ok(c,v)) return;   /* a scalar subobject takes no struct (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL41 the twin initializes a braced scalar with a struct",
+      "new": "",
+      "old": "          if(!scalar_value_ok(c,v)) return;             /* `T x = {a}` of a struct (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL42 the twin lets a struct be an arithmetic operand",
+      "new": "",
+      "old": "  if(agg_operand(c,lhs) || agg_operand(c,rhs)) return temp(c,4);   /* `a + 1`, `a += 5`, `a++` (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_struct_arithmetic_and_conversion_are_refused_on_both_rails",
+      "label": "CL43 the twin lets a struct be compared",
+      "new": "",
+      "old": "    if(agg_operand(c,lhs) || agg_operand(c,rhs)) return lhs;   /* a struct operand (CF-STRUCTARITH) */\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL44 the oracle leaves a designator with a `typeof` or `va_list` parameter untyped",
+      "new": "        if False:",
+      "old": "        if params is not None and None in params and name in self.lowered:",
+      "path": "bcir/frontends/cfront/lower.py"
+    },
+    {
+      "expects": "test_function_designator_arms_select_a_function_pointer_on_both_rails",
+      "label": "CL45 the twin takes a `va_list` parameter for the integer of its size",
+      "new": "    if(!ctype_generic_eq(&x->params[k],&y->params[k])\n",
+      "old": "    if(x->params[k].is_valist!=y->params[k].is_valist || !ctype_generic_eq(&x->params[k],&y->params[k])\n",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}

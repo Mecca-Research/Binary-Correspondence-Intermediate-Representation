@@ -49,7 +49,17 @@ typedef enum bcir_bounds { BCIR_BND_STRICT = 0, BCIR_BND_MASKED = 1, BCIR_BND_AS
 #define BCIR_CLAIM_MAX_RD 6
 #define BCIR_CLAIM_MAX_WR 2
 #define BCIR_CLAIM_MAX_IMM 4   /* off, size, flag, stride -- the array-of-structs `arr[i].field` store */
-#define BCIR_CIR_NAME 32
+/* Names in the graph are bounded (CF-BUF). An identifier -- a function, parameter, local, global, struct or
+ * union tag, member, typedef, enum constant, label -- and a floating constant's spelling are at most
+ * BCIR_CIR_IDENT_MAX characters: C11 5.2.4.1's 63 significant initial characters of an internal identifier.
+ * The frontend refuses a longer one on both rails (the oracle has no buffer; it refuses what this graph could
+ * only truncate), so every name, tag, op and alias below holds whatever the frontend accepts. */
+#define BCIR_CIR_IDENT_MAX 63
+#define BCIR_CIR_NAME (BCIR_CIR_IDENT_MAX + 1)   /* an identifier and its NUL */
+#define BCIR_CIR_AGG (BCIR_CIR_NAME + 8)         /* `struct ` or `union ` and a tag, or a function-pointer alias */
+#define BCIR_CIR_OP (2 * BCIR_CIR_NAME)          /* an op: a prefix and a name (`c.call.libm.void:` + 63), a floating
+                                                  * constant (`c.fconst:` + 63), a pointer cast's type (`c.cast:volatile
+                                                  * union <tag> ` and 16 `*`s: 102 characters) */
 
 /* shape kind of a resource (drives how the emitter takes its address). */
 typedef enum bcir_rkind { BCIR_RK_SCALAR = 0, BCIR_RK_AGGREGATE = 1, BCIR_RK_POINTER = 2 } bcir_rkind;
@@ -69,7 +79,7 @@ typedef struct bcir_resource {
   uint8_t  is_bool;          /* a _Bool/bool object: emit `_Bool` so a store normalizes to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (not signed/unsigned char): emit `char`, whose signedness
                               * is implementation-defined -- NOT int8_t (always signed -> wrong on ARM) */
-  uint8_t  zinit;            /* an aggregate local declared with a `= {0}` zero baseline (§6.7.10) */
+  uint8_t  zinit;            /* an aggregate local declared with the `= {}` zero baseline (§6.7.10) */
   uint8_t  ptr_depth;        /* pointer indirection depth (POINTER kind): 1 `T*`, 2 `T**`, ...; 0 == 1 */
   uint8_t  is_valist;        /* a `va_list` object (variadic): emit `va_list`, opaque to load/store */
   uint8_t  is_voidptr;       /* a `void *` pointer (a `&&L` label address / void-pointee local): emit `void *`,
@@ -102,15 +112,39 @@ typedef struct bcir_resource {
                               * the declaration spells `T *a[N]` (0 == not one; a struct pointee rides in `agg`) */
   uint8_t  ptee_signed, ptee_float, ptee_plain_char;
   char     name[BCIR_CIR_NAME];
-  char     agg[BCIR_CIR_NAME]; /* struct tag (aggregate resources, for emission); else "" */
+  char     agg[BCIR_CIR_AGG]; /* `struct T` / `union T` (aggregate resources and pointees, for emission), or a
+                               * function pointer's alias; else "" */
   uint8_t  is_atomic;        /* `_Atomic` storage, as `bcir_ctype.is_atomic` reads it: a named object (or an array's
                               * elements) is `_Atomic T`, and a POINTER's pointee is -- so a declaration spells it and
                               * an access through it is an atomic one (CF-ATOMIC). A value temp is never atomic. */
+  uint8_t  is_void;          /* the value of a void expression -- a call to a void function, `(void)e`, a statement
+                              * expression ending in a statement: a placeholder no claim writes and nothing reads, so
+                              * `c ? f() : g()` is known to have no value (CF-TERNARY; the oracle's `_VOID_RID`) */
+  uint8_t  ptee_funcptr;     /* a POINTER whose pointee is a function pointer (`op_t *p`), or an ARRAY of function
+                              * pointers (`op_t ops[3]`), whose `agg` is the function pointer's alias (CF-FPTAB): the
+                              * declaration spells `op_t *p` / `op_t ops[3]`, and an element read is a function-pointer
+                              * value, never an integer of its width. Not `is_funcptr`: the object is no function */
+  uint8_t  ndims;            /* a file-scope array's dimensions, when it has more than one; else 0. It is declared nested,
+                              * as the source declares it, so a call passes it as its first element's address,
+                              * `&m[0][0]` -- the flat `T *` an emitted parameter is (CF-GARRAY). Emit-only: the claim
+                              * graph and its digest do not read it. */
+  uint8_t  typedef_named;    /* a named local whose name is one of the unit's typedef names, which the emitted function
+                              * may spell: its hoisted declaration may not take the name (CF-TYPEDEFSCOPE; the oracle's
+                              * `_uniq`). Emit-only. */
 } bcir_resource;
 
 /* a C type descriptor (for signatures + faithful emission). */
 typedef struct bcir_ctype {
   uint8_t  kind;             /* 0 scalar, 1 struct-by-value, 2 pointer, 3 function-pointer */
+  uint8_t  is_const;         /* `const`-qualified: a pointer's pointee (`const T *`), which a prototype's `extern`
+                              * declaration keeps -- a parameter of a pointer to const is a different type. It sits
+                              * in the padding after `kind`: a ctype is no larger */
+  uint8_t  ptr_to_fp;        /* a pointer (kind 2) whose pointee is a function pointer, `op_t *p` (CF-FPTAB): `tag`,
+                              * `fp_sig` and the `fp_ret_*` fields describe the pointee, so a read through it is a
+                              * function-pointer value and the emit spells `op_t *`. In the same padding */
+  uint8_t  ptr_const;        /* the `*`s that are `const` (kind 2): bit k-1 for the k-th from the base, `char *const *`
+                              * bit 0 (CF-QUALS). A function type spells and compares those below a parameter's or the
+                              * return's top level; a qualified `*` past the eighth is refused. In the same padding */
   int      size;             /* scalar size, pointee size for a pointer, or 8 for a funcptr */
   int      signd;
   uint8_t  is_volatile;      /* volatile-qualified (MMIO) */
@@ -123,6 +157,9 @@ typedef struct bcir_ctype {
   uint8_t  is_bool;          /* a _Bool/bool type: emit `_Bool` so conversions normalize to 0/1 (§6.3.1.2) */
   uint8_t  is_plain_char;    /* a plain `char` (vs signed/unsigned char): emit `char` (impl-defined sign) */
   uint8_t  is_valist;        /* the `va_list` type (variadic argument cursor) -- emit `va_list` */
+  uint16_t fp_sig;           /* kind-3 funcptr: its function type -- return and parameter types -- as 1 + the index of
+                              * the front end's record of it (0: not captured). A null pointer constant passed through
+                              * the pointer takes its parameter's type; the arms of `?:` compare by it (CF-FNSEL) */
   int      bit_width;        /* a C23 `_BitInt(N)` type's exact width N (0 == a normal type; >0 == `_BitInt(N)`),
                               * carried on signatures so a param/return spells `_BitInt(N)` faithfully */
   char     tag[BCIR_CIR_NAME]; /* struct/union tag (kind 1/ptr_to_struct), or funcptr alias (kind 3) */
@@ -130,6 +167,13 @@ typedef struct bcir_ctype {
                               * c.call.indirect / c.call.imember result temp; ZERO if the return wasn't captured */
   uint8_t  fp_ret_signd;
   uint8_t  fp_ret_float;
+  uint8_t  fp_ret_void;      /* kind-3 funcptr: the function returns `void` -- a call through it has no value
+                              * and writes no result (CF-VOIDCB). Set where the return type is captured; a zero
+                              * fp_ret_size alone cannot tell `void` from a return that was not captured. It and
+                              * fp_sig sit in padding: a ctype is no larger, and every parser frame holds several */
+  uint8_t  ptr_restrict;     /* the `*`s that are `restrict`, as `ptr_const` (CF-QUALS). In padding too */
+  int      fp_ret_agg;       /* kind-3 funcptr: a struct/union RETURN, as 1 + the front end's index of its
+                              * definition (0: not one) -- the call's result is that aggregate value */
   int      adims[3];         /* decayed multi-dim array-param shape (outer-first), for m[i][j] */
   int      nadims;           /* number of array dims (0 == not an array parameter) */
 } bcir_ctype;
@@ -160,14 +204,43 @@ typedef struct bcir_claim {
                                * through a volatile lvalue of exactly the accessed type. A claim that only moves
                                * a pointer to volatile storage is device-domain (R3) without it. OPTIONAL
                                * annotation, digest-excluded, default 0; the oracle's `Claim.volatile`. */
-  char     op[BCIR_CIR_NAME]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" */
+  char     op[BCIR_CIR_OP]; /* semantic label, e.g. "c.bin.add" / "c.load" / "c.bf.get" / "c.call:<callee>" */
+  uint32_t qcast;             /* a call whose operands or result the emit casts (CF-QUALS): 1 + the index in its
+                               * function's `qcasts` of the first of its casts, which follow one another; 0 for
+                               * none. Held on the claim so that a lowering rolled back takes its casts with it.
+                               * OPTIONAL annotation, digest-excluded, default 0. In the struct's tail padding. */
 } bcir_claim;
+
+/* A cast the emit puts on an operand of a call, or on its result (CF-QUALS): the callee's function type keeps a
+ * qualifier below a parameter's top level, or below its return's, that the emit's own objects -- spelled without
+ * qualifiers -- lack, where C converts neither way by itself (`char **` to `const char *const *`). An OPTIONAL emit
+ * annotation: it adds no claim and the digest does not read it; the oracle casts in its emit alike. */
+#define BCIR_QCAST_TYPE 256
+typedef struct bcir_qcast {
+  uint32_t claim_id;          /* the call's claim, whose `qcast` names its first */
+  int      operand;           /* the operand, an index of its rd[]; -1 for the result */
+  char     type[BCIR_QCAST_TYPE];   /* the operand's cast, spelled; "" for the result, cast to its own type */
+} bcir_qcast;
+
+/* A file-scope object whose type is `const` at some level -- `const uint32_t k[3]`, `const char *tab[2]`, `char *const
+ * p` -- as the emit names it (CF-LINKEMIT): an lvalue of its type with no qualifier, `(*(char * (*)[2])&tab)`, which the
+ * emit's own objects, spelled without qualifiers, meet as a call meets a qualified parameter. An OPTIONAL emit
+ * annotation: it adds no claim and the digest does not read it; the oracle names such a global alike. */
+#define BCIR_QGLOBAL_SPELL 384
+typedef struct bcir_qglobal {
+  uint32_t rid;               /* the function's resource of the global */
+  char     spelling[BCIR_QGLOBAL_SPELL];   /* the whole lvalue, spelled */
+} bcir_qglobal;
 
 /* A static-local variable (static storage duration: a once-only constant init). */
 typedef struct bcir_static {
   char name[BCIR_CIR_NAME];
-  long long init;
+  char *text;                 /* its initializer as the declaration spells it -- the rendered constant image
+                               * (CF-STATICTAB); NULL when it is zero. Owned by the containing hosted cfront
+                               * result, like a host literal's spelling. */
   uint32_t rid;               /* its resource (the escape analysis names it `function.name`) */
+  uint8_t thread_storage;     /* 1: thread storage duration, declared `static _Thread_local` -- each thread's
+                               * own object (CF-TLS); its canon line is kept whatever its image */
 } bcir_static;
 
 /* Hosted-frontend metadata retained only so verified-C emission and diagnostics can
@@ -203,10 +276,16 @@ typedef struct bcir_func {
                                * its address is taken, so callers the unit cannot see may reach it (the
                                * oracle's LoweredUnit.init_refs twin; read by the escape analysis) */
   uint32_t return_rid; uint8_t has_return;
+  uint8_t  named_calls;       /* a claim calls a function by name, `c.call<kind>:X` -- a libc routine, a function another
+                               * unit defines, as well as one in `calls`: the emit's naming reads the claims for the
+                               * names they spell only then (CF-TYPEDEFSCOPE, `spelled_scan`). Emit-only. */
   char (*calls)[BCIR_CIR_NAME]; int n_calls, cap_calls;   /* callee names (R18 call graph) */
   bcir_static *statics; int n_statics, cap_statics;       /* static locals */
   bcir_host_literal *host_literals; int n_host_literals, cap_host_literals;
   bcir_ptr_extent *ptr_extents; int n_ptr_extents, cap_ptr_extents;
+  bcir_qcast *qcasts; int n_qcasts, cap_qcasts;           /* the casts its calls' operands take (CF-QUALS) */
+  bcir_qglobal *qglobals; int n_qglobals, cap_qglobals;   /* its qualified globals, as the emit names them
+                                                           * (CF-LINKEMIT) */
 } bcir_func;
 
 /* A translation unit: a growable list of functions sharing struct definitions + a call graph. */

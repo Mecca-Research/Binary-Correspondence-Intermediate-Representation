@@ -1,0 +1,232 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_long_names_run_as_the_original_on_both_rails",
+    "bcir.tests.test_c_cfront:test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+    "bcir.tests.test_c_cfront:test_an_emit_past_64_kib_lowers_and_runs_as_the_original",
+    "bcir.tests.test_c_cfront:test_a_long_function_pointer_signature_emits_on_the_twin",
+    "bcir.tests.test_c_cfront:test_the_twin_formats_no_name_into_a_field_that_could_cut_it",
+    "bcir.tests.test_c_cfront:test_the_emit_grows_whole_under_a_failing_allocator",
+    "bcir.tests.test_c_cfront:test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges",
+    "bcir.tests.test_c_cfront:test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+    "bcir.tests.test_c_cfront:test_a_skipped_group_reads_no_macro_name_on_either_rail",
+    "bcir.tests.test_c_cfront:test_a_directive_that_reads_no_macro_name_is_refused_on_both_rails",
+    "bcir.tests.test_c_cfront:test_the_twin_driver_prints_a_canon_past_128_kib_whole",
+    "bcir.tests.test_c_cfront:test_the_twin_driver_reads_a_source_past_64_kib_whole"
+  ],
+  "faults": [
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B1 the oracle takes an identifier of any length",
+      "new": "",
+      "old": "            _too_long(\"an identifier\", src[i:j], i)\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B2 the oracle takes a decimal floating constant of any length",
+      "new": "            end = _scan_decimal_float(src, i, n)\n            if end is not None:\n",
+      "old": "            end = _scan_decimal_float(src, i, n)\n            if end is not None:\n                _too_long(\"a floating constant\", src[i:end], i)\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B3 the oracle refuses a name of exactly 63 characters",
+      "new": "    if len(text) >= IDENT_MAX:\n",
+      "old": "    if len(text) > IDENT_MAX:\n",
+      "path": "bcir/frontends/cfront/clex.py"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B4 the twin takes an identifier of any length",
+      "new": "",
+      "old": "      if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_ID); break; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_lowers",
+      "label": "B5 the twin takes a decimal floating constant of any length",
+      "new": "        t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;\n",
+      "old": "        t->k=T_FLT;t->s=p;t->n=(int)(q-p);p=q;\n        if(t->n>BCIR_CIR_IDENT_MAX){ fail(c,BCIR_LONG_FLT); break; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B6 a claim's op holds a name, not a prefix and a name",
+      "new": "#define BCIR_CIR_OP (BCIR_CIR_NAME)",
+      "old": "#define BCIR_CIR_OP (2 * BCIR_CIR_NAME)",
+      "path": "runtime/c/bcir_cir.h"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B7 a resource's `struct T` spelling holds a name, not the keyword and a tag",
+      "new": "#define BCIR_CIR_AGG (BCIR_CIR_NAME)",
+      "old": "#define BCIR_CIR_AGG (BCIR_CIR_NAME + 8)",
+      "path": "runtime/c/bcir_cir.h"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B8 the emit's name for a shadowing local holds no room for its `_N`",
+      "new": "#define BCIR_EMIT_NAME (BCIR_CIR_NAME)",
+      "old": "#define BCIR_EMIT_NAME (BCIR_CIR_NAME + 16)",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twin_formats_no_name_into_a_field_that_could_cut_it",
+      "label": "B9 a struct value's type is compared through a name-sized buffer",
+      "new": "  char want[BCIR_CIR_NAME];\n",
+      "old": "  char want[BCIR_CIR_AGG];\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_long_names_run_as_the_original_on_both_rails",
+      "label": "B10 va_arg's type keeps only its first token",
+      "new": "    for(int k=k0;k<k0+1 && ow<sizeof op;k++){ const tok *tk=tat(c,k);",
+      "old": "    for(int k=k0;k<k1 && ow<sizeof op;k++){ const tok *tk=tat(c,k);",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_an_emit_past_64_kib_lowers_and_runs_as_the_original",
+      "label": "B11 a grown emit keeps a function's first, cut rendering",
+      "new": "",
+      "old": "    if(emit_func(f,out->emitted+out->emitted_len,room)!=n) return emit_unrenderable;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_a_long_function_pointer_signature_emits_on_the_twin",
+      "label": "B12 the typedef prelude drops what runs past 512 bytes",
+      "new": "  if(k<0 || !bcir_size_add(t->w,(size_t)k,&need)){ cc_raise_oom(c); return; }\n  if(need>=512u || !cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
+      "old": "  if(k<0 || !bcir_size_add(t->w,(size_t)k,&need)){ cc_raise_oom(c); return; }\n  if(!cc_ensure_size(c,(void **)&t->s,need,&t->cap,1u,256u)) return;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "B13 a failed emit returns its partial text as a success",
+      "new": "  if(unemitted){ out->emitted_ok=1; c->jump_active=0; bcir_host_arena_reset(&c->scratch); return 0; }\n",
+      "old": "  if(unemitted)return cfront_failure(context,out,unemitted);\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_c_preprocessor_driver_and_emitter_fail_closed_at_capacity_edges",
+      "label": "B14 bcir-cc's linkable rename holds 32 KiB of the emit",
+      "new": "  size_t cap = 32768u;\n",
+      "old": "  size_t cap = r->emitted_len + 1u;\n",
+      "path": "runtime/c/bcir_cc.c"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B15 the oracle takes a macro name of any length",
+      "new": "    if not text[",
+      "old": "    if len(m.group(1)) > IDENT_MAX:\n        raise CPPError(MACRO_NAME_TOO_LONG)\n    if not text[",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B16 the oracle takes a macro parameter of any length",
+      "new": "",
+      "old": "        if len(m.group()) > IDENT_MAX:\n            raise CPPError(MACRO_PARAM_TOO_LONG)\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B17 the oracle takes a -D name of any length",
+      "new": "",
+      "old": "            _macro_name(n, \"macro name must be an identifier\")  # read as `#define` reads it\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B18 the oracle bounds no name a #if looks up",
+      "new": "        if False:\n            raise CPPError(MACRO_NAME_TOO_LONG)\n    return toks\n",
+      "old": "        if m is not None and len(m.group(1)) > IDENT_MAX:\n            raise CPPError(MACRO_NAME_TOO_LONG)\n    return toks\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_skipped_group_reads_no_macro_name_on_either_rail",
+      "label": "B19 the oracle evaluates a skipped group's #if",
+      "new": "                taken = self._eval(rest) != 0\n",
+      "old": "                taken = parent and self._eval(rest) != 0\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_directive_that_reads_no_macro_name_is_refused_on_both_rails",
+      "label": "B20 the oracle reads #undef's operand as it did, not as the twin does",
+      "new": "            self.macros.pop(rest.split()[0], None) if rest else None\n",
+      "old": "            self.macros.pop(_macro_name(rest, \"#undef requires an identifier\")[0], None)\n",
+      "path": "bcir/frontends/cfront/cpp.py"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B21 the twin refuses a long macro name for its token buffer's length",
+      "new": "  if (n > BCIR_CPP_NAME_MAX) { cpp_limit(state, \"preprocessor token too long\"); return 0; }\n",
+      "old": "  if (n > BCIR_CPP_NAME_MAX) { cpp_limit(state, BCIR_CPP_LONG_NAME); return 0; }\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B22 the twin's defined takes an operand of any length",
+      "new": "      } else { int n=ident_at(expr,&j); has=n>0; j+=n; }\n",
+      "old": "      } else has=macro_name(state,expr,&j,nm,\"malformed defined operator\");\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B23 the twin bounds no name a #if looks up before expansion",
+      "new": "  while(1){   /* a name\n",
+      "old": "  while(1){{ int q=i; if(ident_at(expr,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME); }   /* a name\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_macro_name_past_63_characters_is_refused_on_both_rails_and_one_at_63_expands",
+      "label": "B24 the twin bounds no name a #if looks up after expansion",
+      "new": "  while(1){\n",
+      "old": "  while(1){int q=j; if(ident_at(state->conditional_expanded,&q)>BCIR_CPP_NAME_MAX)cpp_limit(state, BCIR_CPP_LONG_NAME);\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_a_skipped_group_reads_no_macro_name_on_either_rail",
+      "label": "B25 the twin reads a skipped group's #ifdef operand",
+      "new": "          if(macro_name(state,rest,&j,n,\"conditional directive requires an identifier\")&&parent)\n",
+      "old": "          if(parent&&macro_name(state,rest,&j,n,\"conditional directive requires an identifier\"))\n",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_the_twin_driver_prints_a_canon_past_128_kib_whole",
+      "label": "B26 the canon returns what it wrote, not its whole length",
+      "new": "  if(buf&&n) buf[c.w<n?c.w:n-1]=0;\n  return c.w<n?c.w:(n?n-1:0);\n",
+      "old": "  if(buf&&n) buf[c.w<n?c.w:n-1]=0;\n  return c.w;\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_emit_grows_whole_under_a_failing_allocator",
+      "label": "B27 a canon past a refused allocation returned as whole",
+      "new": "",
+      "old": "  if(a.refused){ if(buf&&n) buf[0]=0; return SIZE_MAX; }\n",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_twin_driver_prints_a_canon_past_128_kib_whole",
+      "label": "B28 the driver prints a canon cut at 128 KiB",
+      "new": "    fwrite(cbuf, 1, need < 131071u ? need : 131071u, stdout); bcir_host_deallocate(&heap, cbuf);",
+      "old": "    fwrite(cbuf, 1, need, stdout); bcir_host_deallocate(&heap, cbuf);",
+      "path": "runtime/c/test_cfront.c"
+    },
+    {
+      "expects": "test_the_twin_driver_reads_a_source_past_64_kib_whole",
+      "label": "B29 the driver reads the first 64 KiB of a source and stops",
+      "new": "    if(n==cap-1u) break; if(0){            /* full:",
+      "old": "    if(n==cap-1u){                          /* full:",
+      "path": "runtime/c/bcir_cpp.c"
+    },
+    {
+      "expects": "test_the_twin_driver_reads_a_source_past_64_kib_whole",
+      "label": "B30 the driver hands on a source up to its NUL",
+      "new": "",
+      "old": "  if(memchr(buf,0,n)){ bcir_host_deallocate(&heap,buf); return \"the source holds a NUL byte\"; }\n",
+      "path": "runtime/c/bcir_cpp.c"
+    }
+  ]
+}

@@ -169,11 +169,55 @@ The report counts accepted, skipped, refused (malformed, unknown, stale, ahead, 
 `reported_lost`, missing, reordered, duplicated and the streams in use. Telemetry is evidence,
 never a verdict: nothing here reaches `bcir/verify` or the cost vector.
 
+## Replay: the transport's witness, kept
+
+`telemetry.DurableLog` replays DataDNA *values*. The only order it can hand the RT3 gate is the
+records' static claim ids, and nothing it stores says what the live consumer saw lost, reordered
+or duplicated. Replayed telemetry was therefore not transport evidence (the 2026-09-04 review,
+finding 16). `bcir/telemetry_replay.py` keeps the transport instead.
+
+**The log.** An `EnvelopeLog` is JSON Lines, one object per line:
+- a header (`kind` `bcir.envelope_log`, `schema` 1, the capture's initial live generation, and
+  the SHA-256 fingerprint of the signal table the intake decides against);
+- one event per input, in arrival order: `{"record": <hex>}` for a record's bytes exactly as
+  the transport delivered them (a malformed one included), `{"live": <generation>}` for a
+  change of the live generation;
+- a trailer, `{"end": {...}}`. It retains the live intake's report (the witness), the transport's
+  own loss the intake cannot see (a ring's overwrite count), the number of events, and a SHA-256
+  over every line before it.
+
+`RecordingIntake` is the capture side: an intake whose every input is logged before it is
+decided, so the log and the live decisions cannot drift.
+
+**The replay.** `replay_envelope_log` refuses the log with a `ReplayError` unless every law
+holds, checked in this order:
+- the bounds: at most 4,096 bytes a record, 2²⁰ events, 64 MiB a log;
+- each line newline-terminated;
+- the header's and the trailer's exact keys;
+- every counter an unsigned integer in range;
+- strict JSON: duplicate keys, NaN and floats refused;
+- lowercase hex, parsed by the format's own grammar rather than the host's;
+- the event count;
+- the digest;
+- the signal-table fingerprint.
+
+It then re-decides every event through a fresh `TelemetryIntake` (the boundary the live consumer
+ran and `bcir_tev_intake` decides identically), and requires the replayed report to *equal* the
+retained one. The result's `TelemetryIntegrity` is `intake.witness(dropped=transport_lost)`, so
+it carries the transport's sequence continuity per (source, session) stream:
+`frames_missing`, `frames_reordered`, `frames_duplicated`. A capture whose ring overwrote records
+replays with its gaps, `accepted + missing` equal to the stream's sequence span. A log that lost,
+reordered, altered or appended to its records is refused, not replayed.
+
+**Not defended.** The digest is not a MAC. A writer that fabricates records *and* recomputes the
+trailer is out of scope, as it is for every telemetry path here.
+
 ## Gates
 
 | Gate | Where |
 |---|---|
 | every table row and every corpus envelope identical on both rails; the generated header current | `ring.abi.mismatches`; `bcir/tests/test_signal_table.py`, `test_telemetry_envelope.py` |
+| a replayed capture reproduces the live report; the ring's overwrites replay as gaps; 18 tamper cases each refused by its own law; the C twin's intake decides a replayed log identically | `bcir/tests/test_telemetry_replay.py`; `tools/testing/faults/replay.json` |
 | one malformed variant per wire law (and the unknown-required-signal law), refused on both rails with the declared status | `ring.malformed.accepted` |
 | continuity fixtures report the declared (missing, reordered, duplicated) on both rails | `ring.sequence.misreported` |
 | telemetry of a generation the plane has left refused | `ring.stale.accepted` |
@@ -183,7 +227,7 @@ never a verdict: nothing here reaches `bcir/verify` or the cost vector.
 ## Not claimed
 
 - **No transport of its own.** The live ring carries envelopes; UART, HTTP, OTLP and Redfish
-  transports remain unbuilt.
+  transports remain unbuilt. A replayed log is the evidence of one capture, not a transport.
 - **No clock translation.** `clock` and `unit` name the timestamp's clock; comparing two
   producers' clocks still needs calibration the envelope does not carry.
 - **No authentication.** The CRC detects corruption; nothing proves who produced a record.

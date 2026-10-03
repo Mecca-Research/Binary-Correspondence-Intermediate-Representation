@@ -1,0 +1,49 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/ubsan_witnesses.py",
+    "--require-ubsan",
+    "-j",
+    "2",
+    "bcir.tests.test_c_cfront:test_python_c_parity_and_equivalence_across_fixtures_g0",
+    "bcir.tests.test_c_cfront:test_python_c_parity_and_equivalence_across_fixtures_g1",
+    "bcir.tests.test_c_cfront:test_python_c_parity_and_equivalence_across_fixtures_g3"
+  ],
+  "faults": [
+    {
+      "expects": "ubsan",
+      "label": "UB1 `signed_scale` multiplies full-width `int`s again (signed overflow, 6.5p5)",
+      "new": "  signed int x = (signed int)a;\n  signed int y = (signed int)(b + 1u);\n",
+      "old": "  signed int x = (signed int)(a & 0xFFFFu) - 32768;   /* in [-32768, 32767]: negative and positive operands, */\n  signed int y = (signed int)(b & 0xFFFFu) - 32767;   /* and no product that overflows `int` (CF-UBGATE)     */\n",
+      "path": "runtime/c/cfront_signed.c"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB2 `ps_unary` adds `int32_t`s again",
+      "new": "int32_t ps_unary(int32_t a, int32_t b) {\n",
+      "old": "uint32_t ps_unary(uint32_t a, uint32_t b) {   /* unsigned: the spelling is the point, and it wraps defined (CF-UBGATE) */\n",
+      "path": "runtime/c/cfront_paste.c"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB3 `aostruct_init` sums a full-width `int` again",
+      "new": "",
+      "old": "    v &= 0xFFFF;                                /* every sum below stays within `int` (CF-UBGATE) */\n",
+      "path": "runtime/c/cfront_aostruct.c"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB4 `structcall` sums a full-width `int` again",
+      "new": "",
+      "old": "    x &= 0xFFFF;                             /* every sum below stays within `int` (CF-UBGATE) */\n",
+      "path": "runtime/c/cfront_structcall.c"
+    },
+    {
+      "expects": "ubsan",
+      "label": "UB5 `assign_expr` sums full-width `int`s again",
+      "new": "",
+      "old": "    x &= 0xFFFF;                         /* every sum below stays within `int` (CF-UBGATE) */\n    y &= 0xFFFF;\n",
+      "path": "runtime/c/cfront_assignexpr.c"
+    }
+  ]
+}
