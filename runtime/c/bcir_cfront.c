@@ -9521,7 +9521,14 @@ static const char *elem_base(const bcir_func *f,uint32_t rid,char *buf,char *out
  * plain access lands: a typed element `base[idx]` keeps its bounds guard (a write site's unless the claim is a
  * load); a member-array element or an array-of-structs field lands at base + off + idx*stride (the stride at
  * imm[stride_at], else the element size); a member, a dereference or a named object at base + off. Never a
- * byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears. */
+ * byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears.
+ * The indexed form reaches the element through its own pointer type, `(*((_Atomic T *)((char *)base + off) +
+ * (size_t)idx * stride/es))`, not through byte arithmetic cast at the end (TC23): Clang 23 gives a pointer
+ * computed from a *defined* object by `char` arithmetic with a runtime index the alignment of `char`, and an
+ * atomic access it cannot prove aligned becomes a libatomic call (`__atomic_load`/`__atomic_store`,
+ * undefined in a freestanding link) where Clang 18 inlined one instruction. Typed arithmetic from the
+ * constant-offset base keeps the element's alignment on every Clang and GCC; the byte form remains for a
+ * stride the element size does not divide (no lock-free atomic has one). */
 static const char *atomic_object(const bcir_func *f,const bcir_claim *cl,const char *t,int naddr,int stride_at,
                                  char *buf,size_t n){
   char pb[BCIR_EMIT_TYPE+32], a[BCIR_EMIT_NAME], b[BCIR_EMIT_NAME], gb[BCIR_EMIT_EXPR];
@@ -9532,8 +9539,12 @@ static const char *atomic_object(const bcir_func *f,const bcir_claim *cl,const c
     return buf; }
   const char *amp=base_amp(res_of(f,cl->rd[0])); long long off=cl->n_imm?cl->imm[0]:0;
   if(naddr==2){ long long es=cl->n_imm>1?cl->imm[1]:4, stride=cl->n_imm>stride_at?cl->imm[stride_at]:es;
-    snprintf(buf,n,"(*(%s)((char *)%s%s + %lld + (size_t)%s * %lld))",pb,amp,rname(f,cl->rd[0],a),off,
-             rname(f,cl->rd[1],b),stride);
+    if(es>0 && stride%es==0)                        /* the element's pointer from the aligned base, then typed */
+      snprintf(buf,n,"(*((%s)((char *)%s%s + %lld) + (size_t)%s * %lld))",pb,amp,rname(f,cl->rd[0],a),off,
+               rname(f,cl->rd[1],b),stride/es);     /* arithmetic in its own units (TC23, below) */
+    else
+      snprintf(buf,n,"(*(%s)((char *)%s%s + %lld + (size_t)%s * %lld))",pb,amp,rname(f,cl->rd[0],a),off,
+               rname(f,cl->rd[1],b),stride);
     return buf; }
   snprintf(buf,n,"(*(%s)((char *)%s%s + %lld))",pb,amp,rname(f,cl->rd[0],a),off);
   return buf;

@@ -177,7 +177,16 @@ def _atomic_object(lf: LoweredFunc, c: Claim, ref, t: str, naddr: int, *, stride
     typed element `base[idx]` keeps its bounds guard (a write site's, since an atomic access may write);
     a member-array element or an array-of-structs field lands at `base + off + idx*stride` (the stride at
     `imm[stride_at]`, else the element size); a member, a dereference or a named object at `base + off`.
-    Never a byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears."""
+    Never a byte copy: a `memcpy` of an atomic object is not an atomic access, and it tears.
+
+    The indexed form reaches the element through its own pointer type, `(*((_Atomic T *)((char *)base +
+    off) + (size_t)idx * stride/es))`, not through byte arithmetic cast at the end (TC23): Clang 23 gives
+    a pointer computed from a *defined* object by `char` arithmetic with a runtime index the alignment of
+    `char`, and an atomic access it cannot prove aligned becomes a libatomic call (`__atomic_load`,
+    `__atomic_store`; undefined in a freestanding link) where Clang 18 inlined one instruction. Typed
+    arithmetic from the constant-offset base keeps the element's alignment on every Clang and GCC; the
+    byte form remains for a stride the element size does not divide (no lock-free atomic has one). The
+    twin spells it the same (`bcir_cfront.c`, `atomic_object`)."""
     ptr = _atomic_ptr(t, c.volatile)
     if naddr == 2 and not c.imm:
         return (
@@ -188,6 +197,9 @@ def _atomic_object(lf: LoweredFunc, c: Claim, ref, t: str, naddr: int, *, stride
     if naddr == 2:
         es = c.imm[1] if len(c.imm) > 1 else 4
         stride = c.imm[stride_at] if len(c.imm) > stride_at else es
+        if es > 0 and stride % es == 0:
+            # the element's pointer from the aligned base, then arithmetic in its own units (TC23)
+            return f"(*(({ptr})((char *){bp} + {off}) + (size_t){ref(c.rd[1])} * {stride // es}))"
         return f"(*({ptr})((char *){bp} + {off} + (size_t){ref(c.rd[1])} * {stride}))"
     return f"(*({ptr})((char *){bp} + {off}))"
 
