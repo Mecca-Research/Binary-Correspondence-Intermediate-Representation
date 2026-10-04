@@ -2,7 +2,7 @@
 //
 // IRDL smoke test in *generic* operation syntax (the pure-data form), loaded by
 // stock mlir-opt with the BCIR IRDL projection registered at runtime -- no
-// BCIR-authored C++. Validated on the latest LLVM/MLIR (22).
+// BCIR-authored C++. Validated on the latest LLVM/MLIR (23).
 //
 // The IRDL rail is structural: region-bearing ops are exercised with empty
 // regions (the nested tree is carried by the ODS rail). Leaf ops are siblings.

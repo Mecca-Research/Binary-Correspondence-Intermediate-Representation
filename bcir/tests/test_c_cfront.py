@@ -2079,7 +2079,8 @@ def _assert_atomic_emit(emit: str, rail: str) -> None:
     assert set(bodies) == set(_ATOMIC_ACCESS), (rail, sorted(bodies))
     for name, (loads_stores, rmws) in _ATOMIC_ACCESS.items():
         body = bodies[name]
-        lvalues = re.findall(r"\(\*\((?:volatile )?_Atomic ", body)
+        # `(*(_Atomic T *)A)`, and the indexed `(*((_Atomic T *)B + i))` (TC23)
+        lvalues = re.findall(r"\(\*\(\(?(?:volatile )?_Atomic ", body)
         assert len(lvalues) == loads_stores + rmws, (rail, name, len(lvalues), body)
         copies = [line for line in body.splitlines() if "memcpy" in line]
         assert len(copies) == _ATOMIC_ACCESS_PLAIN.get(name, 0), (rail, name, copies)
@@ -15988,3 +15989,72 @@ def test_malformed_constants_refused_and_file_scope_forms_lowered_alike():
             )
         for n, body in enumerate(_CARD4_LOWERED):
             _rtfp_run_unit(f"l{n}", _CARD4_HEAD + body + "\n", exe, d)
+
+
+# TC23: an `_Atomic` member of a file-scope array of structs and a member array of atomics, each reached at
+# a runtime index -- the two indexed forms `atomic_object` emits through the element's own pointer type.
+_TC23_INDEXED_ATOMIC_UNIT = """#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+struct at { _Atomic uint32_t x; uint32_t y; };
+static struct at gt[2][2];
+struct ma { uint32_t k; _Atomic uint32_t arr[4]; };
+static struct ma gm;
+uint32_t f(uint32_t s) { gt[s & 1u][1].x = s; gt[s & 1u][1].x += 2u; return gt[s & 1u][1].x + gt[1][0].y; }
+uint32_t g(uint32_t s) { gm.arr[s & 3u] = s; gm.arr[(s >> 1) & 3u]++; return gm.arr[s & 3u] + gm.k; }
+"""
+
+
+def test_an_indexed_atomic_member_of_a_defined_object_is_a_lock_free_atomic_under_clang():
+    """TC23: an `_Atomic` member of a file-scope array of structs, or of a member array, reached at a runtime
+    index is one lock-free atomic instruction in both emits under the host Clang -- never a libatomic call.
+    Clang 23 gives a pointer computed from a *defined* object by `char` arithmetic with a runtime index the
+    alignment of `char`, and lowers an atomic access it cannot prove aligned to `__atomic_load` /
+    `__atomic_store` / `__atomic_compare_exchange`, which no freestanding link defines; Clang 18 inlined the
+    same access. Both rails now reach the element through its own pointer type from the constant-offset
+    base, `(*((_Atomic T *)((char *)base + off) + (size_t)idx * K))`, so the alignment is the element's on
+    either Clang. The judge is Clang's own IR at -O2: the emitted `f` and `g` carry their atomic
+    instructions and no `@__atomic_*` call. Under `BCIR_REQUIRE_LLVM` (both CI oracle jobs) the absence of
+    Clang is a failure, not a skip (L2)."""
+    clang = shutil.which("clang")
+    if not clang:
+        assert not os.environ.get("BCIR_REQUIRE_LLVM"), (
+            "BCIR_REQUIRE_LLVM is set and no Clang judges the atomic lowering"
+        )
+        return
+    unit = _TC23_INDEXED_ATOMIC_UNIT
+    oracle_summary, r, _entry = _oracle(unit)
+    assert "ok=1" in oracle_summary, oracle_summary
+    oracle_emit = "\n".join(r.emitted[name] for name in r.lowered.functions)
+    exe = _build_frontend(_session_build_dir())
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "unit.c")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(unit)
+        c_summary, c_emit = _c_run(exe, path)
+        assert c_summary == oracle_summary, (c_summary, oracle_summary)
+        for rail, emit in (("twin", c_emit), ("oracle", oracle_emit)):
+            # the indexed forms, through the element's pointer type: the array of structs (stride 8 over a
+            # 4-byte element, K = 2) and the member array (stride == element size, K = 1)
+            assert "(*((_Atomic uint32_t *)((char *)gt + 0) + (size_t)" in emit, (rail, emit)
+            assert re.search(r"\* 2\)\)", emit), (rail, emit)
+            assert "(*((_Atomic uint32_t *)((char *)&gm + 4) + (size_t)" in emit, (rail, emit)
+            assert re.search(r"\* 1\)\)", emit), (rail, emit)
+            cpath = os.path.join(d, f"{rail}.c")
+            keep = "\nvoid *bcir_tc23_keep[] = {(void *)bcir_f, (void *)bcir_g};\n"  # static: keep
+            with open(cpath, "w", encoding="utf-8") as fh:
+                fh.write(unit + "\n" + emit + keep)
+            run = subprocess.run(
+                [clang, "-std=c2x", "-O2", "-w", "-S", "-emit-llvm", "-o", "-", cpath],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode == 0, (rail, run.stderr[-2000:])
+            for fn in ("bcir_f", "bcir_g"):
+                m = re.search(rf"define [^@\n]*@{fn}\(.*?\n\}}", run.stdout, re.S)
+                assert m, (rail, fn, run.stdout[:400])
+                body = m.group(0)
+                atomics = re.findall(r"\b(?:atomicrmw|load atomic|store atomic|cmpxchg)\b", body)
+                assert len(atomics) >= 3, (rail, fn, atomics, body)
+                libcalls = re.findall(r"call [^\n]*@__atomic_\w+", body)
+                assert not libcalls, (rail, fn, libcalls)

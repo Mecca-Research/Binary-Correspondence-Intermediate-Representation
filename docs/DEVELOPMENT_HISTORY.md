@@ -1167,6 +1167,90 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `snprintf`: 1,525 calls at 1,190 instructions each on the largest) and the preprocessor
     (15-19%) -- with no single site worth a byte-exact rewrite of the emitter for the 5% of a
     large file it would return. Found, not changed: the emit's `snprintf` per operand name.
+  TC23 (2026-10-04) judged the GEM+ S slices on LLVM/Clang 23 and Node 24, and found the one place they
+  disagreed with the release the law rail tracks.
+  - Why: every S slice (S0-A through S5-C) was developed against the LLVM 18 / Clang 18 a default container
+    ships, and the CI jobs that judge the oracle's lowerings and the C rails (`oracle`, `c-runtime`,
+    `c-analysis`, `cfront-ubsan`, `security-assurance`) install Ubuntu's clang 18 too. #752 moved the MLIR
+    rail to 23, so `mlir-rail-validate` (22, 23) and `training-llvm-latest` (23) were the only jobs on the
+    current release: the AOT/JIT/WASM lowerings, the C twins of G11 and G14-G18, the alias facts (S5-A),
+    escape analysis (S5-B) and data movement (S5-C), the fuzzers and the sanitizer sweeps had never been
+    judged by it.
+  - The toolset: apt.llvm.org is unreachable from the container and conda-forge is not, so micromamba
+    2.9.0 came from conda-forge's own package and the `m23` env holds mlir, llvmdev, clang (the `nocfg`
+    variant, a distribution-like clang), clangxx, clangdev, llvm-tools, lld and compiler-rt 23.1.2 with
+    conda's g++ 16.2 (4.6 GB; `BCIR_LOCAL_FULL=1 bash tools/local/setup_mlir.sh` reproduces it); Node
+    24.21.0 through nvm; FileCheck from Ubuntu's `llvm-18-tools` (the scripts accept any major for it).
+  - RED, measured on the parent (`d9a3950`, main plus three lines of text) with that toolset first on PATH
+    and `LLVM_BIN` set:
+    - the MLIR rail on 23.1.2 (`MLIR_MAJOR=23 bash tools/local/check_rail.sh`, bcir-opt built with conda's
+      g++): tblgen, the R1-R25 / GEM / optimizer passes, the ODS examples, the bytecode round trip and the
+      IRDL corpus all OK -- #752 left nothing for 23.1.2 to find;
+    - the thorough tier (`BCIR_THOROUGH=1 BCIR_REQUIRE_LLVM=1 run_all --tier thorough -j 2`): 4,158 passed,
+      2 failed, `test_malformed_constants_refused_and_file_scope_forms_lowered_alike` and
+      `test_nested_members_of_array_elements_run_as_the_original_on_both_rails`, both the twin's emit failing
+      to LINK under clang 23 -- undefined `__atomic_store`, `__atomic_load`, `__atomic_compare_exchange`;
+    - `check_alias.py --require-llvm` 0 on every row; `check_runtime.sh` ok (0 FAIL); `sanitize_cfront.sh`
+      (ASan/UBSan/LSan) clean; `clang-23 --analyze` over the ten hosted sources 0 diagnostics;
+      `fuzz_streampack.sh` (20,000 runs per decoder, libFuzzer + ASan/UBSan) clean; the UBSan witnesses (2,730 witnesses, every one sanitized by clang 23's UBSan, 0 reports; the gate's two test findings are the same two link failures);
+      `check_handoff.sh` FAIL at the BCAB C++ wrapper build -- under clang++ 18 and 23 alike, a gate defect (below); the decoder campaign (`--require-c`) PASS on all nine decoders with the C rail, the malformed differential with the 23 `bcir-opt` PASS (6 cases, 0 disagreements, 5 malformed rejected); every row gate 0 (`check_escape`, `check_movement` and `check_volatile --require-cc`, `check_delta`, `check_encode`, `check_handoff.py`, `check_planner.py`, `check_ring.py`), the TMSAO audit's 13 cases, the pass gate once more with its output kept (all passes validate, the assemble-smoke through mlir-translate and llc 23 included), and a clean rebuild of `bcir-opt` on 23.1.2 with 0 errors and 30 warnings -- 28 `-Wmaybe-uninitialized` inside LLVM's own `Hashing.h` under GCC 16 and two in `BCIRCimDvfsPass.cpp` (`w` set but not used, `total` unused; #752 recorded one of them), none a 23 API deprecation; the corpus sweep -- the 240 `cfront_*.c` fixtures through the twin (227 emitted), each fixture plus its emit compiled by clang 18 and by clang 23 to IR at -O2: on the fixed tree all 227 build under both, 0 libatomic calls under either (the corpus holds no file-scope array of structs with an atomic member at a runtime index, which is why two inline test units found it and the witness now adds one), and one diagnostic difference, clang 23's `-Wpointer-bool-conversion` on `cfront_unaryops`'s `if (uo_arr)` in the original and in the faithful emit alike, where 18 is silent (not under any `-Werror` the gates use).
+  - The mismatch: both rails reached an `_Atomic` member of an array of structs, or of a member array, at a
+    runtime index through byte arithmetic cast at the end, `(*(_Atomic T *)((char *)gt + 0 + (size_t)i *
+    8))`. Clang 18 gave that pointer the alignment of `T` and inlined the atomic (`align 8`); Clang 23 gives
+    a pointer computed from a *defined* object by `char` arithmetic with a runtime index the alignment of
+    `char`, and lowers an atomic access it cannot prove aligned to a libatomic call, which no freestanding
+    link defines. Through a pointer parameter both compilers assume the natural alignment, and with a
+    constant offset both compute it: the two failing tests were exactly the units with a file-scope array
+    and a runtime index. Measured on the saved emit: clang 18 `store atomic ... align 8`, clang 23
+    `call @__atomic_store(i64 4, ...)` and `atomicrmw add ... align 1`.
+  - What landed:
+    - both cfront rails reach the indexed element through its own pointer type from the constant-offset
+      base, `(*((_Atomic T *)((char *)base + off) + (size_t)idx * stride/es))` (`atomic_object` in
+      `bcir_cfront.c`, `_atomic_object` in `emit.py`), so the alignment is the element's on every Clang and
+      GCC; the byte form remains for a stride the element size does not divide (no lock-free atomic has
+      one). The CF-ATOMIC lvalue count reads both spellings.
+    - `test_an_indexed_atomic_member_of_a_defined_object_is_a_lock_free_atomic_under_clang`: both emits of
+      a unit with an array of structs (stride 8 over a 4-byte element) and a member array (stride == size)
+      compiled by the host Clang to IR at -O2 carry their atomic instructions and no `@__atomic_*` call;
+      RED on the parent (the two link failures under 23, and the parent's emit text under any Clang),
+      GREEN under 18 and 23. The nine atomic and RTFP tests pass under both.
+    - CI: `oracle-llvm-latest` (the two thorough shards on apt.llvm.org's clang/lld/llvm 23 + compiler-rt
+      and Node 24; the anti-vacuity step asks the oracle's own resolver for the major it will use) and
+      `c-rails-llvm-latest` (`check_runtime.sh`, the memory-discipline and cfront sanitizer sweeps,
+      `clang-23 --analyze`, the 500,000-run decoder fuzz, the UBSan witnesses with the clang engine and the
+      decoder campaign under clang 23 + its compiler-rt): the lowering rail and the C rails on the release
+      the law rail tracks: 22 minutes of runner time per run (the C rails 14, the two oracle shards 4 each) beside the 61 of the jobs that were there, measured on this PR's run.
+    - `tools/local/setup_mlir.sh` `BCIR_LOCAL_FULL=1` (the whole lowering toolset of the major) and its
+      README; `mlir/README.md`, the IRDL projection's header and its smoke fixture name 23 as the validated
+      major; the cicd skill's job table.
+  - Found, not changed: neither rail reads its own indexed atomic emit back as input -- the twin never
+    read the byte form (a parse error) and the oracle read it but refuses the typed one ("unsupported base
+    expression Cast") -- so both refuse now, in different words. The RTFP subset (`cfront_rtfp.c`) covers
+    the constant-offset member form only, which both rails still read.
+  - Not claimed: LLVM 24 (trunk); the aarch64 jobs on 23 (they stay on Ubuntu's clang); Windows; the
+    training corpus (#768-#786, out of scope by the user's instruction).
+  TC23-CI (2026-10-04) cut the wall time of the LLVM 23 C-rails job, and of the workflow's longest job.
+  - Measured on the job's first run (`6d17ed2`): 13.8 minutes, serialized -- the UBSan witnesses 5.9, the
+    500,000-run decoder fuzz 3.1, the runtime gate 2.2, the rest 2.2 -- where the clang-18 jobs it mirrors
+    run as three jobs in parallel (`c-runtime` 5.2, `c-analysis` 6.2, `cfront-ubsan` 8.2, the workflow's
+    longest).
+  - What landed:
+    - `tools/testing/ubsan_witnesses.py --shard I/N`: the Ith stride of the discovered witness list, as
+      `run_all --shard` cuts the suite -- the N slices are disjoint and together the whole list, so N cells
+      run every witness exactly once; a slice holding no test, an index past its count and a spelling that
+      is no I/N are refused as INVALID (L2), and the report and the summary line carry the shard.
+      `test_shards_partition_the_witnesses_and_an_empty_or_malformed_shard_is_refused` holds it: the one
+      failing helper sits in exactly one of two shards, and each refusal is named. Under clang 23 the two
+      halves sanitize the whole set between them (the counts are in the PR's verification table).
+    - `c-rails-llvm-latest` is one job of four parallel cells: `runtime` (the runtime gate and the
+      memory-discipline sweep), `analysis` (the cfront sanitizer sweep, the analyzer, the decoder fuzz
+      bounded to 100,000 runs per decoder -- the deep campaign stays in the clang-18 `c-analysis` job; here
+      the question is whether clang 23 builds and runs every fuzzer clean -- the decoder campaign and the
+      C++ hand-off) and `ubsan-1` / `ubsan-2` (the witnesses, one shard each). Every cell installs the
+      toolchain (cached) and runs the anti-vacuity check.
+    - `cfront-ubsan` (clang 18) runs as two shards; the fault table's UW13 anchor follows its command line.
+  - Not claimed: fewer runner minutes (the work is the same, spread wider; the cells' installs add about
+    a minute each); the measured wall time after the change is in the PR's record.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

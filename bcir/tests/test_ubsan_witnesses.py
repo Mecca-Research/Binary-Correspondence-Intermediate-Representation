@@ -476,6 +476,42 @@ def test_a_run_that_sanitizes_nothing_or_fails_a_test_is_no_pass():
     assert (code, report["verdict"]) == (uw.EXIT_UNAVAILABLE, "INVALID")
 
 
+def test_shards_partition_the_witnesses_and_an_empty_or_malformed_shard_is_refused():
+    """`--shard I/N` runs the Ith stride of the witness list (CI cells): the slices are disjoint and together they
+    are the whole list, so the failing test sits in exactly one of them; a slice that holds no test, an index past
+    its count and a spelling that is no I/N are each refused as INVALID, never run as an empty pass (L2)."""
+    here = "bcir.tests.test_ubsan_witnesses"
+    fake = ["/nonexistent/gcc"]
+    three = [f"{here}:_witness_none", f"{here}:_witness_fails", f"{here}:_witness_none"]
+    assert uw.parse_shard(None) == (1, 1) and uw.parse_shard("2/3") == (2, 3)
+    for bad in ("0/2", "3/2", "1/0", "x", "1", "1/x"):
+        try:
+            uw.parse_shard(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"parse_shard accepted {bad!r}")
+    # 1/2 is [none, none]: nothing sanitized
+    code, report, _ = _verdict(["--shard", "1/2", *three], fake)
+    assert (code, report["verdict"], report["shard"]) == (uw.EXIT_UNAVAILABLE, "INVALID", "1/2")
+    assert report["test_findings"] == [], report
+    # 2/2 is [fails]: the finding, and only it
+    code, report, out = _verdict(["--shard", "2/2", *three], fake)
+    assert (code, report["verdict"], report["shard"]) == (uw.EXIT_FINDINGS, "FAIL", "2/2"), report
+    assert report["test_findings"] == [
+        "- _witness_fails: AssertionError: the emit is not the original"
+    ], report
+    assert "shard=2/2" in out, out
+    # three tests, a fourth slice: empty
+    code, report, out = _verdict(["--shard", "4/4", *three], fake)
+    assert (code, report["verdict"]) == (uw.EXIT_UNAVAILABLE, "INVALID") and "holds no test" in out
+    code, report, out = _verdict(["--shard", "3/2", *three], fake)
+    assert (code, report["verdict"]) == (uw.EXIT_UNAVAILABLE, "INVALID") and "out of range" in out
+    code, report, out = _verdict(["--shard", "two", *three], fake)
+    assert (code, report["verdict"]) == (uw.EXIT_UNAVAILABLE, "INVALID") and "needs I/N" in out
+    code, report, _ = _verdict(three, fake)  # no shard: the whole list, and the report says so
+    assert (code, report["verdict"], report["shard"]) == (uw.EXIT_FINDINGS, "FAIL", "1/1"), report
+
+
 def test_the_gate_fires_on_a_witness_whose_original_runs_undefined_behaviour():
     """End to end, under each engine at hand: the driver runs a witness whose original overflows `int` through its
     shims and fails it with the sanitizer's report (the RED half); a defined witness passes with its sanitized run

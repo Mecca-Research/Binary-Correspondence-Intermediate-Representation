@@ -19,7 +19,15 @@ bash tools/local/setup_mlir.sh                 # micromamba + conda-forge mlir=2
 bash tools/local/check_rail.sh                 # build bcir-opt vs 23 + run the WHOLE rail on 23
 MLIR_MAJOR=22 bash tools/local/setup_mlir.sh   # the other major still in the CI matrix
 MLIR_MAJOR=22 bash tools/local/check_rail.sh
+BCIR_LOCAL_FULL=1 bash tools/local/setup_mlir.sh   # + clang/lld/llvm-tools/compiler-rt of the same major (~4.6 GB)
 ```
+
+With `BCIR_LOCAL_FULL=1` the env also carries the lowering toolset of that major, so the gates the
+`oracle-llvm-latest` and `c-rails-llvm-latest` CI jobs run on apt.llvm.org's LLVM 23 run here too
+(TC23): put `${XDG_CACHE_HOME:-$HOME/.cache}/bcir/mamba/envs/m23/bin` first on PATH, export
+`LLVM_BIN` to it, and run `BCIR_THOROUGH=1 BCIR_REQUIRE_LLVM=1 python -m bcir.tests.run_all -j 2`,
+`bash tools/c/check_runtime.sh`, `CLANG=clang bash tools/c/sanitize_cfront.sh`, and the rest of the
+C and security rails as CI spells them. The conda binaries need no `LD_LIBRARY_PATH`.
 
 `check_rail.sh` runs tblgen, the R1–R25 / GEM / optimizer pass suite, the ODS examples,
 the bytecode round-trip, and the **IRDL named-syntax corpus** (the check an 18 build cannot

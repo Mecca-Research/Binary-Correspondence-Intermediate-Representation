@@ -83,9 +83,23 @@ else
 fi
 chmod 0700 "${MM}"
 
+# BCIR_LOCAL_FULL=1 adds the whole lowering toolset of the same major -- clang, clang++, lld (wasm-ld),
+# the llvm tools (lli / llc / opt / llvm-as) and compiler-rt (ASan / UBSan / TSan / libFuzzer) -- so the
+# thorough Python tier, the C rails and the security campaigns run on that major too, as the
+# `oracle-llvm-latest` and `c-rails-llvm-latest` CI jobs do (TC23). The env is then ~4.6 GB. The `nocfg`
+# clang variant behaves like a distribution clang (the host's headers and libc), which is what every gate
+# assumes; `LLVM_BIN="${PREFIX}/envs/${ENV_NAME}/bin"` and that directory first on PATH select it.
+FULL_PKGS=()
+if [ "${BCIR_LOCAL_FULL:-0}" = "1" ]; then
+  FULL_PKGS=("clang=${MLIR_MAJOR}=default_nocfg*" "clangxx=${MLIR_MAJOR}=default_nocfg*" "clangdev=${MLIR_MAJOR}"
+             "llvm-tools=${MLIR_MAJOR}" "lld=${MLIR_MAJOR}" "compiler-rt=${MLIR_MAJOR}")
+fi
 if [ ! -x "${PREFIX}/envs/${ENV_NAME}/bin/mlir-opt" ]; then
-  echo "[setup_mlir] creating the MLIR ${MLIR_MAJOR} env from conda-forge (~250 MB)..."
-  "${MM}" create -y -n "${ENV_NAME}" -c conda-forge "mlir=${MLIR_MAJOR}" "llvmdev=${MLIR_MAJOR}" "${GXX_PKG}" ninja cmake
+  echo "[setup_mlir] creating the MLIR ${MLIR_MAJOR} env from conda-forge (~250 MB; ~4.6 GB with BCIR_LOCAL_FULL=1)..."
+  "${MM}" create -y -n "${ENV_NAME}" -c conda-forge "mlir=${MLIR_MAJOR}" "llvmdev=${MLIR_MAJOR}" "${GXX_PKG}" ninja cmake "${FULL_PKGS[@]}"
+elif [ "${#FULL_PKGS[@]}" -gt 0 ] && [ ! -x "${PREFIX}/envs/${ENV_NAME}/bin/clang" ]; then
+  echo "[setup_mlir] adding the lowering toolset of major ${MLIR_MAJOR} to the existing env..."
+  "${MM}" install -y -n "${ENV_NAME}" -c conda-forge "${FULL_PKGS[@]}"
 fi
 
 echo "[setup_mlir] toolchain ready at ${PREFIX}/envs/${ENV_NAME}"

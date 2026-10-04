@@ -30,7 +30,9 @@ Three parallel workflows run on every push/PR; the main CI's jobs and what each
 | Job | Owns |
 |---|---|
 | BCIR oracle 1/2 + 2/2 | thorough tier, sharded by discovery-order stride (`BCIR_THOROUGH=1 run_all -j0 --shard N/2`); whole-suite campaigns run once on shard 1 |
+| BCIR oracle 1/2 + 2/2 on LLVM 23 | the same thorough shards judged by apt.llvm.org's clang/lld/llvm 23 + compiler-rt and Node 24 (`oracle-llvm-latest`): the lowering rail on the release the law rail tracks, since the default `oracle` shards run Ubuntu's 18 |
 | BCIR C runtime / C analysis | StreamPack byte-identity, decoder fuzz, sanitizers, static analysis |
+| BCIR C rails on clang 23 (runtime / analysis / ubsan-1 / ubsan-2) | one job, four parallel cells (`c-rails-llvm-latest`): `check_runtime.sh` + the memory-discipline sweep; the cfront sanitizer sweep, `clang-23 --analyze`, a bounded (100,000-run) decoder fuzz, the decoder campaign and the C++ hand-off; and the UBSan witnesses in two `--shard` halves -- all under clang 23 + its compiler-rt |
 | BCIR MLIR rail (LLVM 22 / LLVM 23) | tblgen, `bcir-opt` build, ODS corpus, pass tests — the only place compiled-law work is verified |
 | LLVM training corpus | the separate curriculum's validators |
 | Docs governance | STATUS drift, links, retired paths, claim markers |

@@ -168,8 +168,17 @@ variants = (
 )
 write_bundle(sys.argv[1], ArtifactBundle(variants, "00-root", "portable-c", 123, 7))
 PY
+# The C units as C objects, the wrapper as C++, linked by the C++ compiler -- the seam's own rule above.
+# This step used to hand the .c files to "${CXX}" directly: g++ silently compiles them as C++, clang++
+# (18 and 23 alike) refuses under -Werror ("treating 'c' input as 'c++' when in C++ mode, this
+# behavior is deprecated"), so the gate agreed with itself on one compiler only (TC23; laws.md L12).
+mkdir -p "${tmp}/bcab_obj"
+for src in "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c"; do
+  "${CC}" -std=c11 -O2 -Wall -Wextra -Werror -I "${C}" -c "${src}" -o "${tmp}/bcab_obj/$(basename "${src}" .c).o" \
+    || { echo "  FAIL: BCAB C unit build ($(basename "${src}"), compiled as C)"; exit 1; }
+done
 "${CXX}" -std=c++17 -O2 -Wall -Wextra -Werror -I "${C}" -I "${CPP}" \
-  "${CPP}/test_artifact_bundle.cpp" "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" \
+  "${CPP}/test_artifact_bundle.cpp" "${tmp}"/bcab_obj/*.o \
   -o "${tmp}/test_artifact_bundle_cpp" \
   || { echo "  FAIL: BCAB C++ wrapper build"; exit 1; }
 cppout="$("${tmp}/test_artifact_bundle_cpp" "${tmp}/bundle.bcab")" \

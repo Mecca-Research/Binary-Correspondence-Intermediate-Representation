@@ -233,6 +233,19 @@ def _engines(names=ENGINES, which=shutil.which) -> list[str]:
     return found
 
 
+def parse_shard(raw: str | None) -> tuple[int, int]:
+    """``I/N`` as (I, N), 1 <= I <= N; ``None`` is (1, 1). Anything else is a ValueError naming the spelling."""
+    if raw is None:
+        return (1, 1)
+    try:
+        index, count = (int(part) for part in raw.split("/", 1))
+    except ValueError:
+        raise ValueError(f"--shard needs I/N, got {raw!r}") from None
+    if not (count >= 1 and 1 <= index <= count):
+        raise ValueError(f"--shard {raw} is out of range")
+    return (index, count)
+
+
 def _tests(selected: list[str]) -> list[str]:
     if selected:
         return selected
@@ -267,11 +280,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json-out")
     parser.add_argument("--timeout", type=int, default=3600, help="seconds for each test process")
     parser.add_argument(
+        "--shard",
+        metavar="I/N",
+        help="run the Ith of N disjoint stride slices of the witnesses (CI cells); default all",
+    )
+    parser.add_argument(
         "tests", nargs="*", metavar="MODULE:FUNCTION", help="default: every cfront test"
     )
     args = parser.parse_args(argv)
     report = {"verdict": None, "witnesses": 0, "sanitized": 0, "sanitized_by": {}, "unsanitized": [], "runs": 0,
-              "reports": [], "test_findings": [], "engines": []}  # fmt: skip
+              "reports": [], "test_findings": [], "engines": [], "shard": "1/1"}  # fmt: skip
 
     def finish(verdict: str, code: int) -> int:
         report["verdict"] = verdict
@@ -280,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             f"reports={len(report['reports'])} unsanitized={len(report['unsanitized'])} "
             f"test_findings={len(report['test_findings'])} engines={','.join(report['engines']) or '-'} "
             f"by={','.join(f'{k}:{v}' for k, v in sorted(report['sanitized_by'].items())) or '-'}"
+            + (f" shard={report['shard']}" if args.shard else "")
         )
         if args.json_out:
             with open(args.json_out, "w", encoding="utf-8", newline="\n") as fh:
@@ -301,10 +320,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.jobs < 1:
         return finish("INVALID", EXIT_UNAVAILABLE)
     try:
+        shard = parse_shard(args.shard)
+    except ValueError as exc:
+        print(f"  - unresolved: {exc}")
+        return finish("INVALID", EXIT_UNAVAILABLE)
+    try:
         tests = _tests(args.tests)
     except Exception as exc:  # noqa: BLE001 -- an unimportable module: the gate cannot run what it was asked (L1)
         print(f"  - unresolved: {type(exc).__name__}: {exc}")
         return finish("INVALID", EXIT_UNAVAILABLE)
+    if args.shard:
+        # The Ith stride of N (run_all's `--shard`): the N slices are disjoint and their union is the whole
+        # list, so a CI matrix of N cells runs every witness exactly once; a slice holding no test would
+        # examine nothing and is refused (L2).
+        index, count = shard
+        report["shard"] = f"{index}/{count}"
+        tests = tests[index - 1 :: count]
+        if not tests:
+            print(f"  - unresolved: shard {index}/{count} holds no test")
+            return finish("INVALID", EXIT_UNAVAILABLE)
     with tempfile.TemporaryDirectory() as work:
         shims, log = os.path.join(work, "bin"), os.path.join(work, "log")
         os.makedirs(shims)
