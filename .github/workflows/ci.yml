@@ -1231,6 +1231,56 @@ jobs:
           bash training/llvm/tools/verify-mlir-examples.sh --require-tools
           python3 training/llvm/tools/grade-exercises.py --self-test --format json --output build/mlir-rail-training-scores.json
 
+  cmake-build:
+    name: BCIR CMake build (${{ matrix.compiler }}; manifest + build parity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # BUILD-1 (docs/BCIR_BUILD_ROADMAP.md): the top-level CMake project over runtime/manifest.json.
+    # Building is the proof for the libraries, the tools, the harnesses, the C++ seam and the
+    # freestanding object checks (C11 + C23); `ctest -L build` runs the manifest reconciliation and
+    # the build-parity gate (the CMake-built bcir-cc against the shell gate's recipe, every mode
+    # over every fixture, byte-identical). The MLIR law is OFF here on purpose: mlir-rail-validate
+    # owns it with a coherent toolset, and a package the runner happens to carry must not decide
+    # what this job builds. Clang also builds the fuzz preset and runs its bounded CTest entries.
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install ninja and the clang toolchain (compiler-rt for the fuzz preset)
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: ninja-build clang lld llvm libclang-rt-18-dev
+          version: train-${{ runner.arch }}-v1
+
+      - name: Configure (the ${{ matrix.compiler }} preset, MLIR off)
+        run: cmake --preset ${{ matrix.compiler }} -DBCIR_BUILD_MLIR=OFF
+
+      - name: Build everything the manifest lists (two workers, as the presets say)
+        run: cmake --build --preset ${{ matrix.compiler }}
+
+      - name: Manifest reconciliation + build parity (ctest, label build)
+        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L build -j 2 --output-on-failure
+
+      - name: Fuzz preset (clang only; the 19 libFuzzer targets under ASan/UBSan, bounded runs)
+        if: matrix.compiler == 'clang'
+        run: |
+          cmake --preset fuzzer -DBCIR_BUILD_MLIR=OFF
+          cmake --build --preset fuzzer
+          ctest --test-dir build/cmake-fuzzer -L fuzz -j 2 --output-on-failure
+
+      - name: The dependency index is written and names the compilers
+        run: python3 -c "import json,sys; d=json.load(open('build/cmake-${{ matrix.compiler }}/bcir-deps.json')); print(d['c_compiler'], d['system'], [r['name'] for r in d['dependencies'] if r['found']]); sys.exit(0 if d['schema']=='bcir-deps.v1' else 1)"
+
   docs-governance:
     name: Docs governance (status drift + links + retired paths)
     runs-on: ubuntu-latest

@@ -1,0 +1,113 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Release, the host's default compilers",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/cmake",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+    },
+    {
+      "name": "gcc",
+      "inherits": "default",
+      "displayName": "Release with GCC",
+      "binaryDir": "${sourceDir}/build/cmake-gcc",
+      "cacheVariables": {"CMAKE_C_COMPILER": "gcc", "CMAKE_CXX_COMPILER": "g++"}
+    },
+    {
+      "name": "clang",
+      "inherits": "default",
+      "displayName": "Release with Clang",
+      "binaryDir": "${sourceDir}/build/cmake-clang",
+      "cacheVariables": {"CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++"}
+    },
+    {
+      "name": "asan",
+      "inherits": "clang",
+      "displayName": "Clang, AddressSanitizer + UndefinedBehaviorSanitizer on every target",
+      "binaryDir": "${sourceDir}/build/cmake-asan",
+      "cacheVariables": {"BCIR_SANITIZE": "address,undefined"}
+    },
+    {
+      "name": "ubsan",
+      "inherits": "clang",
+      "displayName": "Clang, UndefinedBehaviorSanitizer on every target",
+      "binaryDir": "${sourceDir}/build/cmake-ubsan",
+      "cacheVariables": {"BCIR_SANITIZE": "undefined"}
+    },
+    {
+      "name": "tsan",
+      "inherits": "clang",
+      "displayName": "Clang, ThreadSanitizer on every target (the ring and the seam)",
+      "binaryDir": "${sourceDir}/build/cmake-tsan",
+      "cacheVariables": {"BCIR_SANITIZE": "thread"}
+    },
+    {
+      "name": "fuzzer",
+      "inherits": "clang",
+      "displayName": "Clang, the libFuzzer targets (bounded by BCIR_FUZZ_RUNS)",
+      "binaryDir": "${sourceDir}/build/cmake-fuzzer",
+      "cacheVariables": {"BCIR_BUILD_FUZZERS": "ON", "BCIR_FUZZ_RUNS": "1000"}
+    },
+    {
+      "name": "mlir",
+      "inherits": "default",
+      "displayName": "The MLIR law too (MLIR_DIR from the environment)",
+      "binaryDir": "${sourceDir}/build/cmake-mlir",
+      "cacheVariables": {"BCIR_BUILD_MLIR": "ON", "MLIR_DIR": "$env{MLIR_DIR}"}
+    }
+  ],
+  "buildPresets": [
+    {"name": "default", "configurePreset": "default", "jobs": 2},
+    {"name": "gcc", "configurePreset": "gcc", "jobs": 2},
+    {"name": "clang", "configurePreset": "clang", "jobs": 2},
+    {"name": "asan", "configurePreset": "asan", "jobs": 2},
+    {"name": "ubsan", "configurePreset": "ubsan", "jobs": 2},
+    {"name": "tsan", "configurePreset": "tsan", "jobs": 2},
+    {"name": "fuzzer", "configurePreset": "fuzzer", "jobs": 2},
+    {"name": "mlir", "configurePreset": "mlir", "jobs": 2}
+  ],
+  "testPresets": [
+    {
+      "name": "build",
+      "displayName": "The manifest reconciliation and the build-parity gate",
+      "configurePreset": "default",
+      "filter": {"include": {"label": "^build$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
+      "name": "quick",
+      "displayName": "build + the oracle's quick tier",
+      "configurePreset": "default",
+      "filter": {"include": {"label": "^(build|python)$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
+      "name": "c",
+      "displayName": "The C and C++ shell gates under the configured compilers",
+      "configurePreset": "default",
+      "filter": {"include": {"label": "^(c|cpp)$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
+      "name": "fuzz",
+      "displayName": "The bounded libFuzzer entries",
+      "configurePreset": "fuzzer",
+      "filter": {"include": {"label": "^fuzz$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
+      "name": "all",
+      "displayName": "Everything registered, two workers, heavy gates serialized",
+      "configurePreset": "default",
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    }
+  ]
+}

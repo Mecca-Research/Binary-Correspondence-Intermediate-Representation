@@ -188,6 +188,11 @@ python -m bcir.tests.run_all --tier thorough -j 2
 bash tools/c/check_runtime.sh
 bash tools/cpp/check_handoff.sh
 
+# The CMake project over runtime/manifest.json (two workers)
+cmake --preset default && cmake --build --preset default
+ctest --preset build   # the manifest checker + the bcir-cc build-parity gate
+ctest --preset all     # every registered gate, heavy ones serialized
+
 # Optional pinned hosted-model CPU gate (one thread in CI)
 python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate
 python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
@@ -206,6 +211,11 @@ git diff --check
 # Bounded cross-organ performance/correctness evidence (no timing floor in shared CI)
 python tools/perf/run_tmsao_audit.py --repeats 3
 ```
+
+The shell gates remain the gates: the CMake project wraps them as CTest entries under the
+configured compilers and proves its own targets against their recipes
+(`tools/build/build_parity.py`); [`BCIR_BUILD_ROADMAP.md`](BCIR_BUILD_ROADMAP.md) owns the
+migration ladder.
 
 Tool-dependent cases report explicit skips when the required compiler, LLVM toolset,
 hardware counter, or architecture is unavailable. CI supplies the required host matrix;

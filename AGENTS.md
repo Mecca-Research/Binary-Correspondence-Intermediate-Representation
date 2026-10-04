@@ -33,6 +33,8 @@ live in `CONTRIBUTING.md`.
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
 - Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
+- Adding or moving a C/C++ source → `runtime/manifest.json` (the one source list; CMake reads it,
+  `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation
@@ -48,7 +50,7 @@ During iteration, focused tests are appropriate. Before a commit or PR update:
 
 On the local development workstation, serialize heavy gates and cap parallel work
 at two workers. Use `-j 2` for the Python runner,
-`CMAKE_BUILD_PARALLEL_LEVEL=2` for builds, and
+`CMAKE_BUILD_PARALLEL_LEVEL=2` for builds (the presets in `CMakePresets.json` already say two), and
 `-DLLVM_TRAINING_LIT_JOBS=2` for the LLVM-training aggregate. Do not run the
 Python, C sanitizer/fuzzer, model, LLVM-training, or MLIR gates concurrently.
 
