@@ -1296,10 +1296,17 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     gate's sections compile without optimization; so do the checks); `bcir_decode.c` needs libm; a test
     registered before `enable_testing()`'s directory is dropped silently (one fuzz entry registered
     instead of twenty until the call moved above the subdirectories); `add_mlir_tool` leaves `bcir-opt`
-    out of `ALL` out of tree.
+    out of `ALL` out of tree; and `tools/c/check_memory_discipline.sh` judged differently under the two
+    compilers -- its strict per-unit pass (`-Wpedantic -Werror`) lacked the compatibility warnings its own
+    harness builds take, so it passed under clang and failed under gcc on the twin's misleading-indentation
+    and format-truncation families, which never showed because the gate prefers `clang` on PATH (L12; found
+    the moment the CMake project handed it the configured gcc). The strict loop now takes the same array;
+    under clang that adds `-Wno-misleading-indentation` only, so nothing it judged there changes.
   - Measured: build parity 240 fixtures x 8 modes = 1,920 rows, 0 differ, on GCC 13.3 (CMake `-std=c2x`
     against the recipe's `c11` fallback) and on Clang 23.1.2; gcc configure + build 13 s at two workers;
-    `fuzzer` preset 20/20 CTest entries; `mlir` preset: `bcir-opt` built, the four mlir gates 4/4.
+    `fuzzer` preset 20/20 CTest entries; `mlir` preset: `bcir-opt` built, the four mlir gates 4/4; the
+    system clang 18 tree builds with 0 warnings and passes the build label and the fuzz label alike; the
+    memory-discipline gate passes under gcc and clang 18 and as the gcc tree's CTest entry.
   - Not claimed: any gate section migrated (BUILD-2 is section by section with a byte-identity proof
     each); install/export; MSVC; a BCIRfile (design only, roadmap S8).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them

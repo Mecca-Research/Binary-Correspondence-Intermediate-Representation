@@ -207,6 +207,8 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | `fuzzer` preset (Clang 23) | 19 targets built; `ctest -L fuzz` 20/20 at 1,000 runs each |
 | `mlir` preset (Clang 23, MLIR 23.1.2) | `bcir-opt` built under the top-level project; `ctest -L mlir` 4/4 |
 | `ctest -L build` (gcc) | 2/2 |
+| `clang` preset (system Clang 18.1.3) | 0 warnings; `ctest -L build` 2/2; `fuzzer` preset `ctest -L fuzz` 20/20 |
+| The shell gates as CTest entries (gcc tree) | `cpp-handoff` and `c-memory-discipline` pass; the latter only after the gate's strict compile took its own compatibility warnings (it had passed under clang and failed under gcc: laws.md L12, found by the wrap) |
 
 The next slice is BUILD-2; its first group is the sections that already have a harness built here
 (`test_runtime`, `test_sha256`, `test_exec`, `test_encode`, `test_telemetry_frame`) because their
