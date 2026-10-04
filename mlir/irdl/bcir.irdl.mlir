@@ -1,4 +1,4 @@
-//===- bcir.irdl.mlir - pure-IRDL BCIR projection (LLVM 22) ---------------===//
+//===- bcir.irdl.mlir - pure-IRDL BCIR projection (LLVM 23) ---------------===//
 //
 // The portability rail: a structural BCIR dialect definition shipped as IR data
 // and loaded by stock `mlir-opt` -- no BCIR-authored C++ compiled first. The
@@ -7,7 +7,7 @@
 //
 //   mlir-opt --irdl-file=mlir/irdl/bcir.irdl.mlir <program-in-bcir-generic.mlir>
 //
-// Validated on the latest LLVM/MLIR (22): this file loads and the generic-syntax
+// Validated on the latest LLVM/MLIR (23): this file loads and the generic-syntax
 // corpus in test/irdl/ round-trips against it.
 //
 // Notes on the form:
