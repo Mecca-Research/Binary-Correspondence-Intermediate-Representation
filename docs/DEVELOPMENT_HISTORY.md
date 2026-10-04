@@ -1229,6 +1229,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     the constant-offset member form only, which both rails still read.
   - Not claimed: LLVM 24 (trunk); the aarch64 jobs on 23 (they stay on Ubuntu's clang); Windows; the
     training corpus (#768-#786, out of scope by the user's instruction).
+  TC23-CI (2026-10-04) cut the wall time of the LLVM 23 C-rails job, and of the workflow's longest job.
+  - Measured on the job's first run (`6d17ed2`): 13.8 minutes, serialized -- the UBSan witnesses 5.9, the
+    500,000-run decoder fuzz 3.1, the runtime gate 2.2, the rest 2.2 -- where the clang-18 jobs it mirrors
+    run as three jobs in parallel (`c-runtime` 5.2, `c-analysis` 6.2, `cfront-ubsan` 8.2, the workflow's
+    longest).
+  - What landed:
+    - `tools/testing/ubsan_witnesses.py --shard I/N`: the Ith stride of the discovered witness list, as
+      `run_all --shard` cuts the suite -- the N slices are disjoint and together the whole list, so N cells
+      run every witness exactly once; a slice holding no test, an index past its count and a spelling that
+      is no I/N are refused as INVALID (L2), and the report and the summary line carry the shard.
+      `test_shards_partition_the_witnesses_and_an_empty_or_malformed_shard_is_refused` holds it: the one
+      failing helper sits in exactly one of two shards, and each refusal is named. Under clang 23 the two
+      halves sanitize the whole set between them (the counts are in the PR's verification table).
+    - `c-rails-llvm-latest` is one job of four parallel cells: `runtime` (the runtime gate and the
+      memory-discipline sweep), `analysis` (the cfront sanitizer sweep, the analyzer, the decoder fuzz
+      bounded to 100,000 runs per decoder -- the deep campaign stays in the clang-18 `c-analysis` job; here
+      the question is whether clang 23 builds and runs every fuzzer clean -- the decoder campaign and the
+      C++ hand-off) and `ubsan-1` / `ubsan-2` (the witnesses, one shard each). Every cell installs the
+      toolchain (cached) and runs the anti-vacuity check.
+    - `cfront-ubsan` (clang 18) runs as two shards; the fault table's UW13 anchor follows its command line.
+  - Not claimed: fewer runner minutes (the work is the same, spread wider; the cells' installs add about
+    a minute each); the measured wall time after the change is in the PR's record.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

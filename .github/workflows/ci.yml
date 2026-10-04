@@ -193,14 +193,27 @@ jobs:
         run: BCIR_THOROUGH=1 BCIR_REQUIRE_LLVM=1 python3 -m bcir.tests.run_all -j0 --shard ${{ matrix.shard }}/2
 
   c-rails-llvm-latest:
-    name: BCIR C rails on clang 23 (runtime, sanitizers, analysis, fuzz, UBSan witnesses)
+    name: BCIR C rails on clang 23 (${{ matrix.cell }})
     runs-on: ubuntu-latest
     # The C runtime, C analysis, cfront-UBSan and security jobs above build with Ubuntu's
-    # clang 18. This job re-runs their compiler-facing gates with clang 23 + its compiler-rt
+    # clang 18. These cells re-run their compiler-facing gates with clang 23 + its compiler-rt
     # from apt.llvm.org: the strict -Werror C11/C23 builds, the -O0 == -O3 twins, ASan /
     # UBSan / TSan / libFuzzer, the static analyzer, and the cfront witnesses under UBSan --
     # the surface a new compiler major changes (new default warnings, new sanitizer checks,
     # new analyzer checkers) and the surface every GEM+ C twin (G11, G14-G18) lives on.
+    # One job definition, four cells in parallel (the first run of this job, serialized, took
+    # 13.8 min; its UBSan witnesses alone 5.9, the fuzz 3.1, the runtime gate 2.2): the runtime
+    # gate, the analysis gates, and the witnesses in two shards. Every step names the cell it
+    # belongs to; the toolchain and its anti-vacuity check run in each.
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: [runtime, analysis, ubsan-1, ubsan-2]
+        include:
+          - cell: ubsan-1
+            shard: 1/2
+          - cell: ubsan-2
+            shard: 2/2
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,7 +231,7 @@ jobs:
         run: echo "/usr/lib/llvm-23/bin" >> "$GITHUB_PATH"
 
       - name: Confirm clang is 23 and its sanitizer + fuzzer runtimes link
-        # Anti-vacuity for the whole job: a gate that silently resolved clang 18, or a
+        # Anti-vacuity for every cell: a gate that silently resolved clang 18, or a
         # compiler-rt that did not install, would pass below while proving nothing.
         run: |
           set -euo pipefail
@@ -234,18 +247,24 @@ jobs:
           clang -g -fsanitize=thread "${workdir}/t.c" -o "${workdir}/t" && "${workdir}/t"
           rm -rf "${workdir}"
 
+      # ---- cell: runtime ----
       - name: Freestanding C StreamPack runtime on clang 23 (no-libc + Python->C ABI parity)
         # check_runtime.sh prefers the highest versioned clang on PATH, so this is 23 by
         # construction; BCIR_REQUIRE_TSAN as in the clang-18 job.
+        if: matrix.cell == 'runtime'
         run: BCIR_SKIP_CFRONT_SANITIZE=1 BCIR_REQUIRE_TSAN=1 bash tools/c/check_runtime.sh
 
       - name: Allocator-failure and direct-channel sanitizer sweep on clang 23
+        if: matrix.cell == 'runtime'
         run: CC=clang-23 MEMORY_DISCIPLINE_SANITIZE=1 bash tools/c/check_memory_discipline.sh
 
+      # ---- cell: analysis ----
       - name: cfront twin sanitizer sweep on clang 23 (ASan/UBSan/LSan)
+        if: matrix.cell == 'analysis'
         run: CLANG=clang-23 SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis with clang 23's analyzer
+        if: matrix.cell == 'analysis'
         run: |
           workdir="$(mktemp -d)"
           trap 'rm -rf "${workdir}"' EXIT
@@ -271,17 +290,25 @@ jobs:
           done
           exit "${status}"
 
-      - name: Binary trust-boundary fuzz on clang 23 (libFuzzer + ASan/UBSan on all ten decoders)
-        run: CLANG=clang-23 FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
-
-      - name: cfront witnesses under clang 23's UBSan (the clang engine only, since this job is about that compiler)
-        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan --engine clang -j 4
+      - name: Binary trust-boundary fuzz on clang 23 (libFuzzer + ASan/UBSan on all ten decoders, bounded)
+        # The deep campaign (500,000 runs per decoder) stays in the clang-18 `c-analysis` job; here
+        # the question is whether clang 23 builds and runs every fuzzer and its sanitizers clean,
+        # which 100,000 runs answer in a fifth of the time.
+        if: matrix.cell == 'analysis'
+        run: CLANG=clang-23 FUZZ_RUNS=100000 bash tools/c/fuzz_streampack.sh
 
       - name: Bounded StreamPack/BCAB/model decoder campaign on clang 23
+        if: matrix.cell == 'analysis'
         run: CLANG=clang-23 python3 tools/security/run_decoder_campaign.py --mutations 24 --fuzz-runs 200 --fuzz-seconds 8 --require-c
 
       - name: C++ hand-off seam with clang++ 23 (the C units as C, the wrapper and the seam as C++)
+        if: matrix.cell == 'analysis'
         run: CXX=clang++-23 CC=clang-23 bash tools/cpp/check_handoff.sh
+
+      # ---- cells: ubsan-1, ubsan-2 ----
+      - name: cfront witnesses under clang 23's UBSan (the clang engine only, since these cells are about that compiler)
+        if: startsWith(matrix.cell, 'ubsan')
+        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan --engine clang --shard ${{ matrix.shard }} -j 4
 
   c-runtime:
     name: BCIR C runtime (StreamPack byte-identity + decoder fuzz)
@@ -425,8 +452,14 @@ jobs:
         run: FUZZ_RUNS=500000 bash tools/c/fuzz_streampack.sh
 
   cfront-ubsan:
-    name: BCIR cfront witnesses under UBSan (every run-as-the-original program)
+    name: BCIR cfront witnesses under UBSan (every run-as-the-original program, ${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
+    # Two cells, each the Ith stride of the witness list (`--shard I/N`: disjoint, together the whole
+    # list, an empty slice refused), so the longest job of the workflow halves (8 min -> ~4).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     # A witness links an original beside an emit and compares them; if the ORIGINAL runs undefined
     # behaviour the platform supplies the verdict (CI-ARM: a negative double converted to uint32_t,
     # wrapped on x86-64, saturated on AArch64 -- docs/security/laws.md L12). This runs the 17 cfront
@@ -456,7 +489,7 @@ jobs:
       - name: cfront witnesses under UBSan
         # This job installs Clang's compiler-rt beside the runner's GCC, so Clang's runtime gone missing
         # FAILS here (--require-ubsan) instead of skipping (L2); so does a witness neither engine builds.
-        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan -j 4
+        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan --shard ${{ matrix.shard }}/2 -j 4
 
   host-portability:
     name: Host portability (${{ matrix.os }}, Python 3.12)

@@ -106,8 +106,8 @@
     {
       "expects": "test_the_ci_job_that_installs_the_runtime_requires_it",
       "label": "UW13 the CI job that installs the runtime stops requiring it",
-      "new": "        run: python3 tools/testing/ubsan_witnesses.py -j 4\n",
-      "old": "        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan -j 4\n",
+      "new": "        run: python3 tools/testing/ubsan_witnesses.py --shard ${{ matrix.shard }}/2 -j 4\n",
+      "old": "        run: python3 tools/testing/ubsan_witnesses.py --require-ubsan --shard ${{ matrix.shard }}/2 -j 4\n",
       "path": ".github/workflows/ci.yml"
     },
     {
