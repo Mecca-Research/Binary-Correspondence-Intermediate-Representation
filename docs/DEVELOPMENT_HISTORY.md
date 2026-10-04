@@ -1219,7 +1219,7 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       `c-rails-llvm-latest` (`check_runtime.sh`, the memory-discipline and cfront sanitizer sweeps,
       `clang-23 --analyze`, the 500,000-run decoder fuzz, the UBSan witnesses with the clang engine and the
       decoder campaign under clang 23 + its compiler-rt): the lowering rail and the C rails on the release
-      the law rail tracks, about thirty minutes of runner time per run beside the sixty today.
+      the law rail tracks: 22 minutes of runner time per run (the C rails 14, the two oracle shards 4 each) beside the 61 of the jobs that were there, measured on this PR's run.
     - `tools/local/setup_mlir.sh` `BCIR_LOCAL_FULL=1` (the whole lowering toolset of the major) and its
       README; `mlir/README.md`, the IRDL projection's header and its smoke fixture name 23 as the validated
       major; the cicd skill's job table.
