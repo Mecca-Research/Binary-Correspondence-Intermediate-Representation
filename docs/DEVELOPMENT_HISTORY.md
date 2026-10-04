@@ -1302,6 +1302,10 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     and format-truncation families, which never showed because the gate prefers `clang` on PATH (L12; found
     the moment the CMake project handed it the configured gcc). The strict loop now takes the same array;
     under clang that adds `-Wno-misleading-indentation` only, so nothing it judged there changes.
+    And `.gitignore`'s `build/` matched `tools/build/` too, so the checker and the parity gate sat
+    untracked in the working tree: every local check passed over files no checkout would have, and
+    the first CI run failed on all of them (L21: an exclusion hides a shipping defect). The directory
+    is re-included and a test asserts the tools are neither ignored nor untracked.
   - Measured: build parity 240 fixtures x 8 modes = 1,920 rows, 0 differ, on GCC 13.3 (CMake `-std=c2x`
     against the recipe's `c11` fallback) and on Clang 23.1.2; gcc configure + build 13 s at two workers;
     `fuzzer` preset 20/20 CTest entries; `mlir` preset: `bcir-opt` built, the four mlir gates 4/4; the

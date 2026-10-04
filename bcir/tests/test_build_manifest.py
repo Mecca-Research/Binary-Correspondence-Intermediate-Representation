@@ -17,6 +17,8 @@ import importlib.util
 import io
 import json
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -290,6 +292,24 @@ def test_the_parity_gate_refuses_before_it_compiles():
             )
         assert rc == 2 and "INVALID" in out.getvalue(), (rc, out.getvalue())
         assert not list(empty.iterdir()), "the gate wrote into the fixture directory"
+
+
+def test_the_build_tools_are_tracked_and_not_ignored():
+    """The checker and the parity gate must reach every checkout: `.gitignore`'s `build/` once
+    matched tools/build/ too, so the tools passed here untracked and were absent on CI (L21: a
+    skip is where a shipping defect hides). Without git in reach there is nothing to judge."""
+    if shutil.which("git") is None or not (_ROOT / ".git").exists():
+        return
+    for name in ("manifest.py", "build_parity.py"):
+        rel = f"tools/build/{name}"
+        ignored = subprocess.run(["git", "check-ignore", "-q", rel], cwd=_ROOT, capture_output=True)
+        assert ignored.returncode == 1, (
+            f"{rel} is ignored by .gitignore (exit {ignored.returncode})"
+        )
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", rel], cwd=_ROOT, capture_output=True
+        )
+        assert tracked.returncode == 0, f"{rel} is not tracked by git"
 
 
 def test_the_ci_owns_the_build_gate():

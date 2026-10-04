@@ -1,4 +1,7 @@
 build/
+# `build/` above also matches tools/build/ (the manifest checker and the build-parity gate); the
+# BUILD-1 tools went uncommitted once because of it, and a checkout test cannot see an ignored file.
+!/tools/build/
 
 # Python (bcir/ oracle)
 __pycache__/
