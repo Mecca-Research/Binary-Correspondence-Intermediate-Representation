@@ -16,6 +16,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -205,7 +206,24 @@ def test_the_gate_must_call_every_section_script():
 
 def test_the_section_parity_gate_sees_a_differing_output():
     """compare_section: two builds whose section outputs differ are a finding; identical passing
-    output is parity; identical output without a PASS line is not a pass (L2)."""
+    output is parity; identical output without a PASS line is not a pass (L2). Without a probed
+    POSIX shell (a Windows runner's `bash` is the WSL launcher) the gate refuses rather than
+    judges, and that refusal is what this host is held to."""
+    shell = section_tool.posix_shell()
+    if shell is None:
+        try:
+            section_tool.compare_section(Path("none.sh"), [], [], python=sys.executable, timeout=30)
+        except RuntimeError as exc:
+            assert "POSIX shell" in str(exc)
+        else:
+            raise AssertionError("compare_section ran without a shell")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = section_tool.main(
+                ["--harness-dir", str(_ROOT / "runtime" / "c"), "--cc", sys.executable]
+            )
+        assert rc == 2 and "no POSIX shell" in out.getvalue(), (rc, out.getvalue())
+        return
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         script = work / "section.sh"
@@ -217,19 +235,57 @@ def test_the_section_parity_gate_sees_a_differing_output():
         b = work / "b"
         a.write_text("  PASS one\n", encoding="utf-8")
         b.write_text("  PASS one\n", encoding="utf-8")
-        same = section_tool.compare_section(script, [a], [b], python=sys.executable, timeout=30)
+        same = section_tool.compare_section(
+            script, [a], [b], python=sys.executable, timeout=30, shell=shell
+        )
         assert same["differ"] == [] and same["passed"], same
         b.write_text("  PASS two\n", encoding="utf-8")
-        diff = section_tool.compare_section(script, [a], [b], python=sys.executable, timeout=30)
+        diff = section_tool.compare_section(
+            script, [a], [b], python=sys.executable, timeout=30, shell=shell
+        )
         assert diff["differ"] == ["stdout"] and diff["passed"], diff
         a.write_text("nothing judged\n", encoding="utf-8")
         b.write_text("nothing judged\n", encoding="utf-8")
-        vacuous = section_tool.compare_section(script, [a], [b], python=sys.executable, timeout=30)
+        vacuous = section_tool.compare_section(
+            script, [a], [b], python=sys.executable, timeout=30, shell=shell
+        )
         assert vacuous["differ"] == [] and not vacuous["passed"], vacuous
         failing = work / "failing.sh"
         failing.write_text('#!/usr/bin/env bash\necho "  FAIL: x"; exit 1\n', encoding="utf-8")
-        failed = section_tool.compare_section(failing, [a], [b], python=sys.executable, timeout=30)
+        failed = section_tool.compare_section(
+            failing, [a], [b], python=sys.executable, timeout=30, shell=shell
+        )
         assert failed["differ"] == [] and not failed["passed"] and failed["cmake"][0] == 1, failed
+
+
+def test_a_bash_that_is_not_a_shell_is_not_a_shell():
+    """posix_shell() probes: a `bash` that prints a notice and exits 1 (the Windows WSL launcher)
+    or exits 0 without saying ok is no shell; a real one is returned as given."""
+    with tempfile.TemporaryDirectory() as tmp:
+        stub = Path(tmp) / "bash"
+        stub.write_text(
+            "#!/bin/sh\necho 'Windows Subsystem for Linux has no installed distributions.'\nexit 1\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        saved = os.environ.get("BCIR_SHELL")
+        os.environ["BCIR_SHELL"] = str(stub)
+        try:
+            assert section_tool.posix_shell() is None
+            silent = Path(tmp) / "quiet"
+            silent.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            silent.chmod(0o755)
+            os.environ["BCIR_SHELL"] = str(silent)
+            assert section_tool.posix_shell() is None
+            real = shutil.which("sh")
+            if real is not None:
+                os.environ["BCIR_SHELL"] = real
+                assert section_tool.posix_shell() == real
+        finally:
+            if saved is None:
+                os.environ.pop("BCIR_SHELL", None)
+            else:
+                os.environ["BCIR_SHELL"] = saved
 
 
 def test_the_section_parity_gate_refuses_before_it_compiles():

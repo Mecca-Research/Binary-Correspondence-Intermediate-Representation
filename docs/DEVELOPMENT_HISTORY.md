@@ -1338,9 +1338,17 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     part of the rule, so a section the gate stopped calling is a finding). Four injected violations
     and a gate-text mutation each fire; `compare_section` is shown to see a differing stream, an
     identical-but-vacuous output and a failing section.
+  - Found on CI: the `windows-latest` runner's `bash` on PATH is the WSL launcher stub, which prints a
+    UTF-16 "no installed distributions" notice and exits 1 -- an engine that is no engine (L2). The
+    parity gate ran it as a shell and the witness read the stub's output as the section's. The gate
+    now probes its shell (`posix_shell()`: `BCIR_SHELL` or `bash`, kept only if `bash -c 'echo ok'`
+    says ok and exits 0), refuses with exit 2 without one, and the test holds a shell-less host to
+    that refusal while a stub that talks and exits 1, and one that exits 0 silently, are both no shell.
   - Measured: gcc tree `ctest -L section` 6/6 in 1.5 s; `build-section-parity` 6 sections identical,
-    11 PASS lines, 12 s (gcc's `-std=c23` falling back to `c2x` as the gate does); the gate's 220
-    section lines became 6 delegating lines plus the six scripts.
+    11 PASS lines, 12 s (gcc's `-std=c23` falling back to `c2x` as the gate does); the gate under
+    clang 18 exit 0 with the delegating sections (116 sections, 387 PASS lines); the clang 18 tree
+    0 warnings, section 6/6, build 4/4; quick tier 4177/0; the gate's 220 section lines became 6
+    delegating lines plus the six scripts.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

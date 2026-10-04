@@ -13,8 +13,10 @@ cannot read as parity.
     section_parity.py --harness-dir build/cmake/harnesses --cc gcc [--section runtime ...]
 
 Exit 0 when every section agrees and passes, 1 when a section's two runs differ or the section
-fails, 2 when the gate cannot run (no sections, a missing binary, no compiler, a recipe that does
-not build): a skipped gate never reads as a passing one.
+fails, 2 when the gate cannot run (no sections, a missing binary, no compiler, no POSIX shell, a
+recipe that does not build): a skipped gate never reads as a passing one. The shell is probed
+before it is trusted: on a Windows runner `bash` on PATH is the WSL launcher, which prints a
+UTF-16 notice and exits 1 -- an engine that is no engine (docs/security/laws.md L2).
 """
 
 from __future__ import annotations
@@ -122,13 +124,26 @@ def build_recipe(
     return False
 
 
+def posix_shell() -> str | None:
+    """A bash that is a shell: BCIR_SHELL or `bash` on PATH, and only if `bash -c 'echo ok'` prints
+    ok and exits 0 (the Windows WSL launcher is named bash and does neither)."""
+    candidate = os.environ.get("BCIR_SHELL") or shutil.which("bash")
+    if not candidate:
+        return None
+    try:
+        proc = subprocess.run([candidate, "-c", "echo ok"], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return candidate if proc.returncode == 0 and proc.stdout.strip() == b"ok" else None
+
+
 def run_section(
-    script: Path, binaries: list[Path], python: str, timeout: float
+    shell: str, script: Path, binaries: list[Path], python: str, timeout: float
 ) -> tuple[object, bytes, bytes]:
     env = dict(os.environ, PYTHON=python)
     try:
         proc = subprocess.run(
-            ["bash", str(script), *map(str, binaries)],
+            [shell, str(script), *map(str, binaries)],
             capture_output=True,
             timeout=timeout,
             cwd=ROOT,
@@ -147,11 +162,15 @@ def compare_section(
     cmake_binaries: list[Path],
     python: str = sys.executable,
     timeout: float = 600.0,
+    shell: str | None = None,
 ) -> dict:
     """One section over two builds: the streams that differ, and whether the CMake run is a pass
-    (exit 0 with at least one PASS line; an empty or failing section is not parity)."""
-    gate = run_section(script, gate_binaries, python, timeout)
-    cmake = run_section(script, cmake_binaries, python, timeout)
+    (exit 0 with at least one PASS line; an empty or failing section is not parity). `shell` is a
+    probed POSIX shell (posix_shell()); without one there is nothing to run."""
+    if shell is None:
+        raise RuntimeError("compare_section needs a probed POSIX shell (posix_shell() found none)")
+    gate = run_section(shell, script, gate_binaries, python, timeout)
+    cmake = run_section(shell, script, cmake_binaries, python, timeout)
     differ = [name for name, a, b in zip(STREAMS, gate, cmake) if a != b]
     passed = cmake[0] == 0 and b"PASS" in cmake[1]
     return {"gate": gate, "cmake": cmake, "differ": differ, "passed": passed}
@@ -193,6 +212,12 @@ def main(argv: list[str] | None = None) -> int:
     if cc is None:
         print(f"section-parity: UNUSABLE: no compiler {args.cc!r} on PATH")
         return 2
+    shell = posix_shell()
+    if shell is None:
+        print(
+            "section-parity: UNUSABLE: no POSIX shell (a `bash` that runs `echo ok`; set BCIR_SHELL)"
+        )
+        return 2
     cc_id = compiler_id(cc)
     for name, section in wanted.items():
         for harness in section.get("harnesses", []):
@@ -226,7 +251,12 @@ def main(argv: list[str] | None = None) -> int:
                 gate_binaries.append(out)
             cmake_binaries = [args.harness_dir / h for h in section["harnesses"]]
             result = compare_section(
-                ROOT / section["script"], gate_binaries, cmake_binaries, args.python, args.timeout
+                ROOT / section["script"],
+                gate_binaries,
+                cmake_binaries,
+                args.python,
+                args.timeout,
+                shell,
             )
             if result["differ"]:
                 failures.append(
@@ -250,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
     print("\n".join(log))
     print(
-        f"section-parity: {len(wanted)} section(s), {len(failures)} failing, compiler {cc} ({cc_id})"
+        f"section-parity: {len(wanted)} section(s), {len(failures)} failing, compiler {cc} ({cc_id}), shell {shell}"
     )
     if failures:
         for line in failures:
