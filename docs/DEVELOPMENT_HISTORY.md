@@ -1305,7 +1305,11 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     And `.gitignore`'s `build/` matched `tools/build/` too, so the checker and the parity gate sat
     untracked in the working tree: every local check passed over files no checkout would have, and
     the first CI run failed on all of them (L21: an exclusion hides a shipping defect). The directory
-    is re-included and a test asserts the tools are neither ignored nor untracked.
+    is re-included and a test asserts the tools are neither ignored nor untracked. And the dependency
+    index `bcir-deps.json` was not JSON: the registry wrote CMake's `ON`/`OFF` where JSON spells
+    `true`/`false`, which no local step had parsed; the cmake-build job's reader caught it. The writer
+    spells booleans, and `manifest.py --deps-index` (a `build`-label CTest entry and the job's step)
+    holds the index to its schema, with the shipped defect as its witness.
   - Measured: build parity 240 fixtures x 8 modes = 1,920 rows, 0 differ, on GCC 13.3 (CMake `-std=c2x`
     against the recipe's `c11` fallback) and on Clang 23.1.2; gcc configure + build 13 s at two workers;
     `fuzzer` preset 20/20 CTest entries; `mlir` preset: `bcir-opt` built, the four mlir gates 4/4; the

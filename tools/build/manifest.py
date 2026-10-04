@@ -9,6 +9,7 @@ and asserts that it fires (docs/security/laws.md L2, L11).
 
     python tools/build/manifest.py --check            # exit 0 clean, 1 with findings, 2 unusable
     python tools/build/manifest.py --closure bcir-cc  # the sources, libraries and options a unit links
+    python tools/build/manifest.py --deps-index build/cmake/bcir-deps.json   # the configure's index
 
 The rules, each with the code its findings carry:
 
@@ -32,6 +33,9 @@ The rules, each with the code its findings carry:
                    per list, tuple or set literal that names it
   M11 seam         the C++ seam's units equal handoff_fixtures/check_handoff.sh's (the #719 pair)
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
+  D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
+                   compilers named and one {name, found: true|false, detail} row per dependency,
+                   names unique, PYTHON3 / THREADS / MLIR among them
 
 Scope: the checker reads the gates and the Python modules as text (string literals and compile
 lines); a source list assembled at run time is outside it, and a gate that links a unit the
@@ -635,6 +639,58 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     return errors
 
 
+# --- D1: the dependency index -------------------------------------------------------------------
+
+DEPS_SCHEMA = "bcir-deps.v1"
+DEPS_REQUIRED = ("PYTHON3", "THREADS", "MLIR")
+
+
+def check_deps_index(path: Path) -> list[str]:
+    """Findings over the configure's dependency index (empty when it is well-formed)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"D1: {path}: {exc}"]
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return [f"D1: {path} is not JSON ({exc})"]
+    errors: list[str] = []
+    if not isinstance(data, dict):
+        return [f"D1: {path} is not a JSON object"]
+    if data.get("schema") != DEPS_SCHEMA:
+        errors.append(f"D1: schema is {data.get('schema')!r}, not {DEPS_SCHEMA!r}")
+    for key in ("c_compiler", "cxx_compiler", "system"):
+        if not isinstance(data.get(key), str) or not data[key].strip():
+            errors.append(f"D1: {key} is missing or empty")
+    rows = data.get("dependencies")
+    if not isinstance(rows, list) or not rows:
+        return errors + [
+            "D1: dependencies is missing or empty (an index that records nothing indexes nothing)"
+        ]
+    names: list[str] = []
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict) or set(row) != {"name", "found", "detail"}:
+            errors.append(f"D1: dependency row {i} is not {{name, found, detail}}")
+            continue
+        if not isinstance(row["name"], str) or not row["name"]:
+            errors.append(f"D1: dependency row {i} has no name")
+        if not isinstance(row["found"], bool):
+            errors.append(
+                f"D1: dependency {row.get('name')!r} has found={row['found']!r}, not a JSON boolean"
+            )
+        if not isinstance(row["detail"], str):
+            errors.append(f"D1: dependency {row.get('name')!r} detail is not a string")
+        names.append(str(row["name"]))
+    for name in sorted(set(names)):
+        if names.count(name) > 1:
+            errors.append(f"D1: dependency {name} is recorded twice")
+    for name in DEPS_REQUIRED:
+        if name not in names:
+            errors.append(f"D1: dependency {name} is not recorded")
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--manifest", type=Path, default=MANIFEST)
@@ -642,7 +698,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--closure", metavar="UNIT", help="print what a unit links (kind/name or name)"
     )
+    parser.add_argument(
+        "--deps-index", type=Path, metavar="JSON", help="validate a configure's bcir-deps.json"
+    )
     args = parser.parse_args(argv)
+    if args.deps_index is not None:
+        errors = check_deps_index(args.deps_index)
+        for error in errors:
+            print(f"FAIL: {error}")
+        if errors:
+            print(f"deps-index: {len(errors)} finding(s) in {args.deps_index}")
+            return 1
+        print(f"deps-index: ok ({args.deps_index})")
+        return 0
     try:
         manifest = load(args.manifest)
     except ManifestError as exc:

@@ -312,6 +312,42 @@ def test_the_build_tools_are_tracked_and_not_ignored():
         assert tracked.returncode == 0, f"{rel} is not tracked by git"
 
 
+def test_the_dependency_index_is_held_to_its_schema():
+    """The configure's bcir-deps.json: well-formed passes; the defect that shipped first (CMake's ON
+    in place of JSON's true), a missing schema and an empty row list are each a finding."""
+    good = {
+        "schema": "bcir-deps.v1",
+        "c_compiler": "GNU 13.3.0",
+        "cxx_compiler": "GNU 13.3.0",
+        "system": "Linux x86_64",
+        "dependencies": [
+            {"name": "PYTHON3", "found": True, "detail": " (3.11 at /usr/bin/python3)"},
+            {"name": "THREADS", "found": True, "detail": ""},
+            {"name": "MLIR", "found": False, "detail": " (set MLIR_DIR)"},
+        ],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bcir-deps.json"
+        path.write_text(json.dumps(good), encoding="utf-8")
+        assert manifest_tool.check_deps_index(path) == []
+        path.write_text(json.dumps(good).replace("true", "ON"), encoding="utf-8")
+        findings = manifest_tool.check_deps_index(path)
+        assert findings and all(f.startswith("D1:") for f in findings), findings
+        path.write_text(json.dumps({**good, "schema": "other"}), encoding="utf-8")
+        assert any("schema" in f for f in manifest_tool.check_deps_index(path))
+        path.write_text(json.dumps({**good, "dependencies": []}), encoding="utf-8")
+        assert any("empty" in f for f in manifest_tool.check_deps_index(path))
+        dup = {**good, "dependencies": good["dependencies"] + [good["dependencies"][0]]}
+        path.write_text(json.dumps(dup), encoding="utf-8")
+        assert any("twice" in f for f in manifest_tool.check_deps_index(path))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = manifest_tool.main(["--deps-index", str(Path(tmp) / "absent.json")])
+        assert rc == 1 and "D1:" in out.getvalue(), (rc, out.getvalue())
+    cmake = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
+    assert "--deps-index" in cmake, "ctest does not validate the index"
+
+
 def test_the_ci_owns_the_build_gate():
     """The gate's CI owner (L2): a job configures with both compilers and runs the build label."""
     workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")

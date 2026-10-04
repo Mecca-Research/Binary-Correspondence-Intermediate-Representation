@@ -1278,8 +1278,10 @@ jobs:
           cmake --build --preset fuzzer
           ctest --test-dir build/cmake-fuzzer -L fuzz -j 2 --output-on-failure
 
-      - name: The dependency index is written and names the compilers
-        run: python3 -c "import json,sys; d=json.load(open('build/cmake-${{ matrix.compiler }}/bcir-deps.json')); print(d['c_compiler'], d['system'], [r['name'] for r in d['dependencies'] if r['found']]); sys.exit(0 if d['schema']=='bcir-deps.v1' else 1)"
+      - name: The dependency index is well-formed and names the compilers (the predicate ctest ran)
+        run: |
+          python3 tools/build/manifest.py --deps-index build/cmake-${{ matrix.compiler }}/bcir-deps.json
+          python3 -c "import json; d=json.load(open('build/cmake-${{ matrix.compiler }}/bcir-deps.json')); print(d['c_compiler'], '|', d['system'], '|', [r['name'] for r in d['dependencies'] if r['found']])"
 
   docs-governance:
     name: Docs governance (status drift + links + retired paths)

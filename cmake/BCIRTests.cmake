@@ -28,6 +28,10 @@ add_test(NAME build-manifest
          COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/manifest.py" --check
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(build-manifest PROPERTIES LABELS "build" TIMEOUT 120)
+add_test(NAME build-deps-index
+         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/manifest.py" --deps-index "${CMAKE_BINARY_DIR}/bcir-deps.json"
+         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_tests_properties(build-deps-index PROPERTIES LABELS "build" TIMEOUT 60)
 add_test(NAME build-parity
          COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/build_parity.py"
                  --bcir-cc "$<TARGET_FILE:bcir-cc>" --cc "${CMAKE_C_COMPILER}"
