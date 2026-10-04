@@ -18,6 +18,9 @@
 #   BCIR_<kind>_<name>_CLASS        libraries only: freestanding_core / hosted_tool / driver_adapter
 #   BCIR_<kind>_<name>_MAX_LEN      fuzzers only: libFuzzer's -max_len, or empty
 #   BCIR_MANIFEST_FREESTANDING      the sources compiled -ffreestanding -nostdlib at C11 and C23
+#   BCIR_MANIFEST_sections          the gate sections that run as scripts over built harnesses
+#   BCIR_sections_<name>_SCRIPT     the script (a path under the source tree)
+#   BCIR_sections_<name>_HARNESSES  the manifest harnesses it takes, in argument order
 include_guard(GLOBAL)
 
 set(BCIR_MANIFEST_KINDS libraries tools harnesses fuzzers seam_libraries seam_tests)
@@ -87,13 +90,33 @@ function(bcir_manifest_load path)
     set(BCIR_MANIFEST_${_kind} "${_names}" PARENT_SCOPE)
     math(EXPR _total "${_total} + ${_n}")
   endforeach()
+  # sections: {name: {script, harnesses}} -- the gate sections that moved into tools/c/sections/.
+  set(_section_names "")
+  string(JSON _nsec ERROR_VARIABLE _err LENGTH "${_json}" sections)
+  if(NOT _err AND _nsec GREATER 0)
+    math(EXPR _last "${_nsec} - 1")
+    foreach(_i RANGE 0 ${_last})
+      string(JSON _name MEMBER "${_json}" sections ${_i})
+      string(JSON _unit GET "${_json}" sections ${_name})
+      _bcir_json_string("${_unit}" script _script)
+      _bcir_json_list("${_unit}" harnesses _harnesses)
+      if(NOT _script OR NOT _harnesses)
+        message(FATAL_ERROR "BCIR: manifest section ${_name} needs a script and at least one harness")
+      endif()
+      list(APPEND _section_names "${_name}")
+      set(BCIR_sections_${_name}_SCRIPT "${_script}" PARENT_SCOPE)
+      set(BCIR_sections_${_name}_HARNESSES "${_harnesses}" PARENT_SCOPE)
+    endforeach()
+  endif()
+  set(BCIR_MANIFEST_sections "${_section_names}" PARENT_SCOPE)
   _bcir_json_list("${_json}" freestanding_checks _free)
   if(NOT _free)
     message(FATAL_ERROR "BCIR: ${path} lists no freestanding_checks (the freestanding core is unproven)")
   endif()
   set(BCIR_MANIFEST_FREESTANDING "${_free}" PARENT_SCOPE)
   list(LENGTH _free _nfree)
-  message(STATUS "BCIR manifest: ${_total} units, ${_nfree} freestanding checks (${path})")
+  list(LENGTH _section_names _nsections)
+  message(STATUS "BCIR manifest: ${_total} units, ${_nfree} freestanding checks, ${_nsections} sections (${path})")
 endfunction()
 
 # The manifest's basenames as paths under runtime/c (bcir_manifest_paths) or runtime/cpp

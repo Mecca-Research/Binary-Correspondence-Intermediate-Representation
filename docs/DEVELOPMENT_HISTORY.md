@@ -1317,6 +1317,30 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     memory-discipline gate passes under gcc and clang 18 and as the gcc tree's CTest entry.
   - Not claimed: any gate section migrated (BUILD-2 is section by section with a byte-identity proof
     each); install/export; MSVC; a BCIRfile (design only, roadmap S8).
+  BUILD-2a (2026-10-04) moved the first six sections of `tools/c/check_runtime.sh` out of the monolith.
+  - Each section's own text became `tools/c/sections/<name>.sh` (runtime, artifact_bundle, executor,
+    encoder, execution_plan, telemetry_frame), generated from the gate's lines rather than retyped: the
+    script takes the harness binaries as arguments, makes its own temp dir and fixtures (the encoder
+    section regenerates the executor's `exec.bin` instead of reaching into a previous section's temp),
+    and prints the lines the gate printed. The gate keeps its freestanding loops and its compile lines
+    and calls the script over the binaries it built, so the gate and the CTest entry run one text.
+  - `runtime/manifest.json` gained `sections` (script + harnesses in argument order); the CMake reader
+    reads it; `c-section-<name>` CTest entries (label `section`) run each script over the manifest's
+    harnesses with `PYTHON` set; the `section` test preset and the `cmake-build` job run them.
+  - `tools/build/section_parity.py` (`build-section-parity`, label `build`): for every section it builds
+    the gate's recipe for each harness from the manifest closure (`-std=c23 -O2`, the gate's own
+    fallbacks for a compiler without the spelling), runs the script over the gate-built and the
+    CMake-built binaries and requires stdout, stderr and status byte-identical and at least one PASS
+    line under exit 0; an empty section set, a missing binary or a recipe that does not build is
+    exit 2, never a pass.
+  - Checker rule M13: every section names an existing `tools/c/sections/*.sh` and manifest harnesses,
+    every script in that directory is one section, and the gate calls each script (the delegation is
+    part of the rule, so a section the gate stopped calling is a finding). Four injected violations
+    and a gate-text mutation each fire; `compare_section` is shown to see a differing stream, an
+    identical-but-vacuous output and a failing section.
+  - Measured: gcc tree `ctest -L section` 6/6 in 1.5 s; `build-section-parity` 6 sections identical,
+    11 PASS lines, 12 s (gcc's `-std=c23` falling back to `c2x` as the gate does); the gate's 220
+    section lines became 6 delegating lines plus the six scripts.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

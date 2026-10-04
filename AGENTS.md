@@ -35,6 +35,8 @@ live in `CONTRIBUTING.md`.
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
 - Adding or moving a C/C++ source → `runtime/manifest.json` (the one source list; CMake reads it,
   `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
+- Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (the gate and the
+  `c-section-<name>` CTest entry run that one file; `build-section-parity` proves the two builds agree).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

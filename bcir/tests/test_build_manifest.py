@@ -37,6 +37,7 @@ def _load_tool(name: str):
 
 manifest_tool = _load_tool("manifest")
 parity_tool = _load_tool("build_parity")
+section_tool = _load_tool("section_parity")
 
 _TREE = None
 
@@ -160,6 +161,22 @@ _FAULTS = (
         "the seam's C++ units",
         lambda m: m["seam_libraries"]["bcir_seam"].__setitem__("sources", ["bcir_handoff.cpp"]),
     ),
+    (
+        "M13",
+        "a section's unknown harness",
+        lambda m: m["sections"]["runtime"].__setitem__("harnesses", ["test_nowhere"]),
+    ),
+    (
+        "M13",
+        "a section's missing script",
+        lambda m: m["sections"]["runtime"].__setitem__("script", "tools/c/sections/absent.sh"),
+    ),
+    ("M13", "a script no section registers", lambda m: m["sections"].pop("encoder")),
+    (
+        "M13",
+        "a section without harnesses",
+        lambda m: m["sections"]["executor"].__setitem__("harnesses", []),
+    ),
 )
 
 
@@ -170,6 +187,79 @@ def test_every_injected_violation_is_a_finding():
         assert any(f.startswith(f"{code}:") for f in findings), (
             f"{code} ({what}) did not fire: {findings}"
         )
+
+
+def test_the_gate_must_call_every_section_script():
+    """A section the gate stopped calling would still pass as a CTest entry while the gate judged
+    other text (L12): the delegation is part of the rule."""
+    tree = manifest_tool.Tree()
+    tree.runtime_gate_text = tree.runtime_gate_text.replace(
+        "tools/c/sections/runtime.sh", "tools/c/sections/other.sh"
+    )
+    findings = manifest_tool.check(_manifest(), tree)
+    assert any(
+        f.startswith("M13:") and "does not call tools/c/sections/runtime.sh" in f for f in findings
+    ), findings
+    assert manifest_tool.check(_manifest(), _tree()) == []
+
+
+def test_the_section_parity_gate_sees_a_differing_output():
+    """compare_section: two builds whose section outputs differ are a finding; identical passing
+    output is parity; identical output without a PASS line is not a pass (L2)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        script = work / "section.sh"
+        script.write_text(
+            '#!/usr/bin/env bash\nset -uo pipefail\ncat "$1"\n[ -z "${2:-}" ] || cat "$2"\n',
+            encoding="utf-8",
+        )
+        a = work / "a"
+        b = work / "b"
+        a.write_text("  PASS one\n", encoding="utf-8")
+        b.write_text("  PASS one\n", encoding="utf-8")
+        same = section_tool.compare_section(script, [a], [b], python=sys.executable, timeout=30)
+        assert same["differ"] == [] and same["passed"], same
+        b.write_text("  PASS two\n", encoding="utf-8")
+        diff = section_tool.compare_section(script, [a], [b], python=sys.executable, timeout=30)
+        assert diff["differ"] == ["stdout"] and diff["passed"], diff
+        a.write_text("nothing judged\n", encoding="utf-8")
+        b.write_text("nothing judged\n", encoding="utf-8")
+        vacuous = section_tool.compare_section(script, [a], [b], python=sys.executable, timeout=30)
+        assert vacuous["differ"] == [] and not vacuous["passed"], vacuous
+        failing = work / "failing.sh"
+        failing.write_text('#!/usr/bin/env bash\necho "  FAIL: x"; exit 1\n', encoding="utf-8")
+        failed = section_tool.compare_section(failing, [a], [b], python=sys.executable, timeout=30)
+        assert failed["differ"] == [] and not failed["passed"] and failed["cmake"][0] == 1, failed
+
+
+def test_the_section_parity_gate_refuses_before_it_compiles():
+    """No harness binaries, an unknown section name: exit 2, never a pass, nothing compiled."""
+    with tempfile.TemporaryDirectory() as tmp:
+        empty = Path(tmp)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = section_tool.main(["--harness-dir", str(empty), "--cc", sys.executable])
+        assert rc == 2 and "UNUSABLE" in out.getvalue(), (rc, out.getvalue())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = section_tool.main(
+                ["--harness-dir", str(empty), "--cc", sys.executable, "--section", "nowhere"]
+            )
+        assert rc == 2 and "no manifest section" in out.getvalue(), (rc, out.getvalue())
+        assert not list(empty.iterdir())
+    options = section_tool.compiler_options(
+        ["-ffp-contract=off", "gcc:-Wno-x", "clang:-Wno-y"], "gcc"
+    )
+    assert options == ["-ffp-contract=off", "-Wno-x"], options
+    sources, link, opts = section_tool.recipe_sources(
+        manifest_tool, _manifest(), "test_execution_plan"
+    )
+    assert (
+        sources[0] == "test_execution_plan.c"
+        and "bcir_runtime.c" in sources
+        and link == []
+        and opts == []
+    ), (sources, link, opts)
 
 
 def test_the_presets_hold_the_two_worker_law():
@@ -240,6 +330,9 @@ def test_the_closure_is_dependents_first_and_once():
 def test_the_cmake_reader_and_the_checker_agree():
     """CMake reads the same manifest; the two readers must agree on its kinds and keys (L12)."""
     cmake = (_ROOT / "cmake" / "BCIRManifest.cmake").read_text(encoding="utf-8")
+    assert "BCIR_MANIFEST_sections" in cmake and '"${_unit}" script' in cmake, (
+        "the CMake reader does not read sections"
+    )
     kinds = re.search(r"set\(BCIR_MANIFEST_KINDS ([^)]*)\)", cmake)
     assert kinds is not None
     assert tuple(kinds.group(1).split()) == manifest_tool.KINDS, kinds.group(1)
@@ -356,6 +449,7 @@ def test_the_ci_owns_the_build_gate():
     body = job.group(1)
     assert "gcc" in body and "clang" in body, "the job does not cover both compilers"
     assert re.search(r"ctest .*-L build", body), "the job does not run the build label"
+    assert re.search(r"ctest .*-L section", body), "the job does not run the migrated sections"
     assert "BCIR_BUILD_MLIR=OFF" in body, (
         "the MLIR law has its own job; this one must not depend on a found package"
     )

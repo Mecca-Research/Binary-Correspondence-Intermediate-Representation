@@ -65,18 +65,7 @@ echo "  PASS x86 interrupt-frame ABI (fixed 176-byte long-mode frame)"
 echo "[c-runtime] build harness (C23) + Python->C ABI parity"
 "${CC}" -std=c23 -O2 "${C}/bcir_runtime.c" "${C}/test_runtime.c" -I "${C}" -o "${tmp}/test_runtime" \
   || { echo "  FAIL: harness build"; exit 1; }
-python3 -c "
-from bcir.examples import vector_add
-from bcir.kbcir import optimize
-from bcir.kbcir.cost import TargetProfile, Theta
-from bcir.gem import hydrate
-from bcir.abi import encode
-m=vector_add(1024); pack=hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
-open('${tmp}/pack.bin','wb').write(encode(pack))
-" || { echo "  FAIL: python encode"; exit 1; }
-out="$("${tmp}/test_runtime" "${tmp}/pack.bin")" || { echo "  FAIL: C decode"; echo "${out}"; exit 1; }
-echo "${out}" | grep -q "^OK$" && echo "  PASS parity (Python encode -> C decode)" \
-  || { echo "  FAIL: parity"; echo "${out}"; exit 1; }
+bash "${ROOT}/tools/c/sections/runtime.sh" "${tmp}/test_runtime" || exit 1
 
 echo "[c-runtime] BCAB artifact bundle: freestanding reader + Python/C selection parity"
 for std in c11 c23; do
@@ -86,64 +75,16 @@ for std in c11 c23; do
       || { echo "  FAIL: BCAB reader (${unit}) not freestanding-clean under -std=${std}"; exit 1; }
   done
 done
-# The shared SHA-256 / HMAC-SHA256 (bcir_sha256.c) holds the standards' own worked examples:
-# FIPS 180-4 and RFC 4231 (cases 6-7 take the hash-the-key-first path), one-shot and incremental.
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${C}/bcir_sha256.c" "${C}/test_sha256.c" \
   -o "${tmp}/test_sha256" || { echo "  FAIL: SHA-256/HMAC vector harness build"; exit 1; }
-sha_out="$("${tmp}/test_sha256")" || { echo "  FAIL: SHA-256/HMAC vectors"; echo "${sha_out}"; exit 1; }
-[ "${sha_out}" = "OK" ] && echo "  PASS shared SHA-256 / HMAC-SHA256 == FIPS 180-4 + RFC 4231 vectors" \
-  || { echo "  FAIL: unexpected SHA-256/HMAC harness output"; echo "${sha_out}"; exit 1; }
-python3 - "${tmp}/bundle.bcab" "${tmp}/bundle.der" "${tmp}/bundle.from-der.bcab" <<'PY' \
-  || { echo "  FAIL: Python BCAB/ASN.1 fixture"; exit 1; }
-import struct, sys
-from bcir.abi import (ArtifactBundle, ArtifactFormat, ArtifactKind, ArtifactVariant,
-                      Endianness, encode, encode_bundle)
-from bcir.asn1.artifact_bundle import der_to_native, native_to_der
-from bcir.examples import vector_add
-from bcir.gem import hydrate
-from bcir.kbcir import optimize
-from bcir.kbcir.cost import TargetProfile, Theta
-m = vector_add(8)
-pack = hydrate(m, optimize(m, TargetProfile.x86_avx512(), Theta.cool()))
-elf = bytearray(20); elf[:7] = b"\x7fELF\x02\x01\x01"; struct.pack_into("<H", elf, 16, 1); struct.pack_into("<H", elf, 18, 62)
-variants = (
-    ArtifactVariant("00-root", ArtifactKind.STREAM_PACK, ArtifactFormat.STREAM_PACK,
-                    encode(pack), channel="host", portable=True),
-    ArtifactVariant("portable-c", ArtifactKind.C_SOURCE, ArtifactFormat.TEXT,
-                    b"int bcir_kernel(void){return 0;}\n", portable=True),
-    ArtifactVariant("x86-avx2", ArtifactKind.ELF_OBJECT, ArtifactFormat.ELF, bytes(elf),
-                    triple="x86_64-unknown-linux-gnu", architecture="x86_64",
-                    os_abi="linux-gnu", channel="host", entry_symbol="bcir_kernel",
-                    required_features=("avx2",), endianness=Endianness.LITTLE,
-                    pointer_bits=64, e_machine=62, priority=9,
-                    r12_attested=True, executable=True),
-)
-native = encode_bundle(ArtifactBundle(variants, "00-root", "portable-c", 123, 7))
-open(sys.argv[1], "wb").write(native)
-projection = native_to_der(native)
-open(sys.argv[2], "wb").write(projection)
-open(sys.argv[3], "wb").write(der_to_native(projection))
-PY
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   "${C}/bcir_artifact_bundle.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" \
   "${C}/test_artifact_bundle.c" -o "${tmp}/test_artifact_bundle" \
   || { echo "  FAIL: BCAB C parity harness build"; exit 1; }
-about="$("${tmp}/test_artifact_bundle" "${tmp}/bundle.bcab")" \
-  || { echo "  FAIL: BCAB C parity harness"; exit 1; }
-case "${about}" in
-  OK\ entries=3*) echo "  PASS BCAB Python encode -> C checksum/select parity" ;;
-  *) echo "  FAIL: unexpected BCAB result '${about}'"; exit 1 ;;
-esac
-cmp -s "${tmp}/bundle.bcab" "${tmp}/bundle.from-der.bcab" \
-  || { echo "  FAIL: BCAB native -> ASN.1 DER -> native bytes differ"; exit 1; }
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   "${C}/bcir_asn1.c" "${C}/test_asn1.c" -o "${tmp}/test_artifact_asn1" \
   || { echo "  FAIL: BCAB ASN.1 C validation harness build"; exit 1; }
-asn1_about="$("${tmp}/test_artifact_asn1" "${tmp}/bundle.der")" \
-  || { echo "  FAIL: BCAB ASN.1 projection C validation"; exit 1; }
-printf '%s\n' "${asn1_about}" | grep -q '^der ok$' \
-  && echo "  PASS BCAB native <-> DER byte identity + generic C X.690 validation" \
-  || { echo "  FAIL: C X.690 rail rejected BCAB DER projection"; printf '%s\n' "${asn1_about}"; exit 1; }
+bash "${ROOT}/tools/c/sections/artifact_bundle.sh" "${tmp}/test_sha256" "${tmp}/test_artifact_bundle" "${tmp}/test_artifact_asn1" || exit 1
 
 echo "[c-runtime] ETL binary-record decoder: freestanding compile (C11 + C23)"
 # bcir_binrec.c is the C twin of bcir/etl/binary.py (a second binary trust boundary).
@@ -154,162 +95,27 @@ done
 echo "  PASS bcir_binrec freestanding (C11 + C23)"
 
 echo "[c-runtime] StreamPack executor: freestanding compile (C11 + C23) + Python->C parity"
-# bcir_exec.c is the C twin of bcir/gem/execute.py -- the deterministic phase-sliced
-# executor that turns the StreamPack into a no-Python hot artifact.
 for std in c11 c23; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_exec.c" -o /dev/null \
     || { echo "  FAIL: bcir_exec not freestanding-clean under -std=${std}"; exit 1; }
 done
 "${CC}" -std=c23 -O2 "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/test_exec.c" -I "${C}" -o "${tmp}/test_exec" \
   || { echo "  FAIL: executor harness build"; exit 1; }
-python3 -c "
-from bcir.examples import multi_histogram
-from bcir.kbcir import optimize
-from bcir.kbcir.cost import TargetProfile, Theta
-from bcir.gem import hydrate, execute
-from bcir.abi import encode
-m=multi_histogram(); r=optimize(m, TargetProfile.x86_avx512(), Theta.cool())
-open('${tmp}/exec.bin','wb').write(encode(hydrate(m, r)))
-open('${tmp}/exec.order','w').write(' '.join(str(i) for i in execute(m).order))
-" || { echo "  FAIL: python encode"; exit 1; }
-c_order="$("${tmp}/test_exec" "${tmp}/exec.bin" | sed -n 's/^order: //p')"
-[ "${c_order}" = "$(cat "${tmp}/exec.order")" ] \
-  && echo "  PASS executor parity (Python gem.execute == C bcir_sp_execute: ${c_order})" \
-  || { echo "  FAIL: executor order parity (C='${c_order}' PY='$(cat "${tmp}/exec.order")')"; exit 1; }
+bash "${ROOT}/tools/c/sections/executor.sh" "${tmp}/test_exec" || exit 1
 
 echo "[c-runtime] StreamPack encoder: freestanding compile (C11 + C23) + byte-identical re-encode"
-# bcir_encode.c is the C write-side twin of bcir/abi/streampack_abi.py -- the full C
-# round-trip (a driver emits the artifact with no Python).
 for std in c11 c23; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_encode.c" -o /dev/null \
     || { echo "  FAIL: bcir_encode not freestanding-clean under -std=${std}"; exit 1; }
 done
 "${CC}" -std=c23 -O2 "${C}/bcir_encode.c" "${C}/bcir_runtime.c" "${C}/test_encode.c" -I "${C}" -o "${tmp}/test_encode" \
   || { echo "  FAIL: encoder harness build"; exit 1; }
-"${tmp}/test_encode" "${tmp}/exec.bin" "${tmp}/reenc.bin" >/dev/null || { echo "  FAIL: C re-encode"; exit 1; }
-if cmp -s "${tmp}/exec.bin" "${tmp}/reenc.bin"; then
-  echo "  PASS encoder parity (C bcir_sp_reencode == Python encode, byte-identical)"
-else
-  echo "  FAIL: encoder bytes differ from the Python encoding"; exit 1
-fi
+bash "${ROOT}/tools/c/sections/encoder.sh" "${tmp}/test_encode" || exit 1
 
 echo "[c-runtime] ExecutionPlanV1 (G11): freestanding decode + Python->C->Python byte-identical round trip + plan/pack binding"
-# bcir_execution_plan.h is the C twin of bcir/abi/execution_plan_abi.py -- the plan the pack was
-# derived from, as bytes (its decoder/verifier lives in bcir_runtime.c, freestanding-checked above).
-# Python encodes the audit fixture's plan and pack; the C harness decodes, verifies, binds the pack
-# to the plan (bcir_ep_check_pack) and checks the vector against the live registry; Python rebuilds
-# the plan from the C decode and must re-encode it byte for byte. A registry that moved after the
-# plan was minted must be refused as STALE on the C rail.
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror "${C}/bcir_runtime.c" "${C}/test_execution_plan.c" -I "${C}" \
   -o "${tmp}/test_execution_plan" || { echo "  FAIL: plan harness build"; exit 1; }
-python3 - "${tmp}" <<'PY' || { echo "  FAIL: python plan encode"; exit 1; }
-import sys
-from dataclasses import replace
-from bcir.abi import encode, encode_plan
-from bcir.gem.execution_plan import plan_from_realization
-from bcir.gem.streampack import generation_vector, hydrate
-from bcir.kbcir.realize import optimize
-from bcir.tests.plan_fixtures import audit_fixture
-tmp = sys.argv[1]
-module, target, theta, result = audit_fixture()
-plan = plan_from_realization(module, result, target, "tokens", plan="plan0")
-open(f"{tmp}/plan.bin", "wb").write(encode_plan(plan))
-open(f"{tmp}/plan_pack.bin", "wb").write(encode(hydrate(module, result, "plan0")))
-# v2 (G5): the same plan carrying schedule-liveness lifetimes from the static memory planner
-from bcir.gem.schedule import schedule_plan
-from bcir.kbcir.static_memory import plan_static_memory
-from bcir.performance_audit import _AuditHardware, static_memory_module
-sm = static_memory_module(1)
-sm_result = optimize(sm, target, theta)
-placement = schedule_plan(sm, sm_result, target, "tokens")
-static = plan_static_memory(sm, {rid: "ram" for rid in sm.resources}, _AuditHardware(), schedule=placement)
-v2 = plan_from_realization(sm, sm_result, target, "tokens", static_plan=static)
-assert encode_plan(v2)[4] == 2
-open(f"{tmp}/plan_v2.bin", "wb").write(encode_plan(v2))
-open(f"{tmp}/live.txt", "w").write(" ".join(f"{g.rid}:{g.map_gen}:{g.data_gen}" for g in generation_vector(module)))
-rid = min(module.resources)
-module.resources[rid] = replace(module.resources[rid], map_gen=module.resources[rid].map_gen + 1)
-module.touch()
-open(f"{tmp}/moved.txt", "w").write(" ".join(f"{g.rid}:{g.map_gen}:{g.data_gen}" for g in generation_vector(module)))
-PY
-# shellcheck disable=SC2046
-plan_out="$("${tmp}/test_execution_plan" "${tmp}/plan.bin" --dump --pack "${tmp}/plan_pack.bin" --live $(cat "${tmp}/live.txt"))" \
-  || { echo "  FAIL: C plan decode/verify/pack/vector"; echo "${plan_out}" | tail -5; exit 1; }
-printf '%s\n' "${plan_out}" > "${tmp}/plan_dump.txt"
-python3 - "${tmp}" <<'PY' || { echo "  FAIL: Python re-encode of the C decode is not byte-identical"; exit 1; }
-import sys
-from bcir.abi import encode_plan
-from bcir.tests.plan_fixtures import parse_c_dump
-tmp = sys.argv[1]
-original = open(f"{tmp}/plan.bin", "rb").read()
-again = encode_plan(parse_c_dump(open(f"{tmp}/plan_dump.txt").read()))
-sys.exit(0 if again == original else 1)
-PY
-echo "  PASS ExecutionPlanV1 parity (Python encode -> C decode -> Python re-encode, byte-identical; plan/pack bound; vector live)"
-v2_out="$("${tmp}/test_execution_plan" "${tmp}/plan_v2.bin" --dump)" \
-  || { echo "  FAIL: C v2 plan decode/verify"; echo "${v2_out}" | tail -5; exit 1; }
-printf '%s\n' "${v2_out}" > "${tmp}/plan_v2_dump.txt"
-python3 - "${tmp}" <<'PY' || { echo "  FAIL: Python re-encode of the C v2 decode is not byte-identical"; exit 1; }
-import sys
-from bcir.abi import encode_plan
-from bcir.tests.plan_fixtures import parse_c_dump
-tmp = sys.argv[1]
-original = open(f"{tmp}/plan_v2.bin", "rb").read()
-dump = open(f"{tmp}/plan_v2_dump.txt").read()
-assert "header version=2 mode=1 liveness=1" in dump, dump[:200]
-sys.exit(0 if encode_plan(parse_c_dump(dump)) == original else 1)
-PY
-echo "  PASS ExecutionPlanV1 v2 parity (schedule-liveness lifetimes: Python encode -> C decode -> Python re-encode, byte-identical)"
-# shellcheck disable=SC2046
-if "${tmp}/test_execution_plan" "${tmp}/plan.bin" --live $(cat "${tmp}/moved.txt") > "${tmp}/plan_stale.txt" 2>&1; then
-  echo "  FAIL: a plan minted under an older generation vector was accepted on the C rail"; exit 1
-fi
-grep -q "^vector=BCIR_ERR_STALE$" "${tmp}/plan_stale.txt" \
-  && echo "  PASS ExecutionPlanV1 stale vector refused on the C rail (BCIR_ERR_STALE)" \
-  || { echo "  FAIL: unexpected stale verdict"; cat "${tmp}/plan_stale.txt"; exit 1; }
-# v3 (G8, S5-C): every plan the movement planner mints (bcir/kbcir/movement.py) -- the move tail
-# and the source/spec binding trailer -- decodes on the C rail, binds its pack and the live
-# registry of the module it realizes (the vector sits before the binding trailer) and re-encodes
-# byte for byte; every malformed move and binding (plan_fixtures.v3_variants, the list the tests
-# read) is refused on both rails.
-python3 - "${tmp}" "${tmp}/test_execution_plan" <<'PY' || { echo "  FAIL: ExecutionPlan v3 (G8) parity"; exit 1; }
-import sys
-from bcir.abi import encode, encode_plan
-from bcir.abi.execution_plan_abi import plan_version
-from bcir.gem.streampack import generation_vector, hydrate
-from bcir.kbcir.movement import execution_plan_of
-from bcir.tests import movement_fixtures as mf
-from bcir.tests.plan_fixtures import (
-    c_refuses, c_roundtrip, parse_c_dump, run_harness, v3_variants, wire_refuses,
-)
-tmp, exe = sys.argv[1], sys.argv[2]
-h, _theta = mf.target_and_theta()
-moved = set()
-for name, (_module, _spec, mp) in mf.planned().items():
-    plan = execution_plan_of(mp.best, h)
-    blob = encode_plan(plan)
-    if encode_plan(parse_c_dump(c_roundtrip(exe, tmp, blob))) != blob:
-        print(f"  {name}: the C decode does not re-encode byte for byte")
-        sys.exit(1)
-    mod = mp.best.transform.module
-    pack = encode(hydrate(mod, mp.best.result, "plan0"))
-    code, out = run_harness(exe, tmp, blob, pack_bytes=pack, live=generation_vector(mod))
-    if code != 0 or "pack=BCIR_OK" not in out or "vector=BCIR_OK" not in out:
-        print(f"  {name}: the plan/pack/vector binding was refused on the C rail")
-        print(out)
-        sys.exit(1)
-    if plan_version(plan) == 3:
-        moved.add(name)
-variants = v3_variants()
-accepted = [name for name, blob, _plan in variants if not (wire_refuses(blob) and c_refuses(exe, tmp, blob))]
-if moved != set(mf.planned()) - mf.IDENTITY or accepted:
-    print(f"  v3 plans {sorted(moved)}; malformed variants accepted by a rail: {accepted}")
-    sys.exit(1)
-print(
-    f"  PASS ExecutionPlan v3 (G8): {len(moved)} movement plans Python -> C -> Python byte-identical, "
-    f"plan/pack/vector bound; {len(variants)} malformed moves/bindings refused on both rails"
-)
-PY
+bash "${ROOT}/tools/c/sections/execution_plan.sh" "${tmp}/test_execution_plan" || exit 1
 
 echo "[c-runtime] ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces"
 # bcir_control_plane.h is the C twin of bcir/abi/control_abi.py (the wire laws, in the same order)
@@ -619,33 +425,13 @@ fi
 echo "  PASS planner gate fires on an injected fault (the 128-bit carry dropped: ${mutant_rows#rows })"
 
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
-# bcir_telemetry_frame.c is the C twin of bcir/telemetry_frame.py -- the framed, CRC-sealed,
-# resync-able telemetry transport (T2). The producer drains TelemetryRing and frames the 56-byte
-# <7q> records; the host decoder reuses RT3. It REUSES bcir_crc32 from bcir_runtime.c (so the C
-# and Python (zlib.crc32) CRCs agree). Self-skipping/non-fatal without a C compiler (the section
-# is only reached past the CC guard at the top, so a missing CC already exited 0 cleanly above).
 for std in c11 c23; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -I "${C}" -c "${C}/bcir_telemetry_frame.c" -o /dev/null \
     || { echo "  FAIL: bcir_telemetry_frame not freestanding-clean under -std=${std}"; exit 1; }
 done
 "${CC}" -std=c23 -O2 "${C}/bcir_telemetry_frame.c" "${C}/bcir_runtime.c" "${C}/test_telemetry_frame.c" -I "${C}" -o "${tmp}/test_tframe" \
   || { echo "  FAIL: telemetry-frame harness build"; exit 1; }
-# Python-encode a fixed DataDNA batch into one frame; C decode + re-encode; assert byte-identical.
-python3 -c "
-from bcir.telemetry import DataDNA
-from bcir.telemetry_frame import encode_frame
-recs=[DataDNA(segment_id='',claim_id=1,cycles=100,bytes=200,misses=5,thermal=40,voltage=10,utilization=30),
-      DataDNA(segment_id='',claim_id=2,cycles=999999,bytes=4096,misses=0,thermal=0,voltage=0,utilization=100),
-      DataDNA(segment_id='',claim_id=3,cycles=-50,bytes=0,misses=100,thermal=99,voltage=50,utilization=0)]
-open('${tmp}/tframe.bin','wb').write(encode_frame(recs, seq=7, timestamp=123456))
-" || { echo "  FAIL: python frame encode"; exit 1; }
-tfout="$("${tmp}/test_tframe" "${tmp}/tframe.bin" "${tmp}/tframe_reenc.bin")" || { echo "  FAIL: C frame decode"; echo "${tfout}"; exit 1; }
-echo "${tfout}" | grep -q "^OK " || { echo "  FAIL: C frame decode did not OK"; echo "${tfout}"; exit 1; }
-if cmp -s "${tmp}/tframe.bin" "${tmp}/tframe_reenc.bin"; then
-  echo "  PASS #telemetry-frame (C bcir_tf decode + re-encode == Python encode_frame, byte-identical; bcir_crc32 == zlib.crc32)"
-else
-  echo "  FAIL: telemetry-frame bytes differ from the Python encoding"; exit 1
-fi
+bash "${ROOT}/tools/c/sections/telemetry_frame.sh" "${tmp}/test_tframe" || exit 1
 
 echo "[c-runtime] frozen Q8 table (#embed / fallback): build + self-check (C11 + C23)"
 # Drift gate: the committed runtime/c/{q8_tiers.bin,bcir_q8_tables.h} must equal a
