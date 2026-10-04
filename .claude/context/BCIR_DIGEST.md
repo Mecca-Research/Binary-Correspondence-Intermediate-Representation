@@ -165,8 +165,11 @@ rather than re-implement.
 Gotchas: quick tier intentionally hides toolchains; thorough must use one coherent LLVM
 major (23, with 22 still passing — an LLVM-18 host cannot build `mlir/`, honest skip). The default target is
 host-adaptive. Keep local concurrency at two and never launch unbounded fuzzing,
-inference, emulation, or nested build loops. New C sources must land in the
-check_runtime.sh gate block AND `native_bench._SOURCES` together (the #719 wiring trap).
+inference, emulation, or nested build loops. A new or moved C/C++ source is a
+`runtime/manifest.json` edit first (the one list; CMake reads it, `tools/build/manifest.py --check`
+holds every gate and harness to it, `test_build_manifest` injects the violations) — the #719
+wiring trap closed by BUILD-1 (`docs/BCIR_BUILD_ROADMAP.md`: presets `gcc`/`clang`/`asan`/
+`ubsan`/`tsan`/`fuzzer`/`mlir`, `ctest --preset build|all`, two workers everywhere).
 New `test_*.py` files must be registered in `run_all.py`. Regenerate `STATUS.md` last;
 regenerate this digest (`build_digest.py`) when its inventory drifts.
 **2026-09-03 whole-system analysis** (`docs/research/BCIR_SYSTEM_ANALYSIS_2026-09-03.md`, PR #751):
@@ -215,12 +218,12 @@ describes and is out of the hook's scope by declaration.
 
 ## Generated inventory (do not edit — rebuild with build_digest.py)
 
-Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
+Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **4162** across 285 files |
+| Static Python `test_*` function inventory | **4173** across 286 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
 | Static MLIR fixture inventory (`mlir/test/`) | **128** files; 386 `expected-error` markers |
@@ -247,14 +250,15 @@ Top-level: ./bcir ./channels ./docs ./mlir ./runtime ./tools ./training
 - **docs/BCIR_ASN1_COMPILER_COMPARISON.md** (271L): 1. What each one is · 2. Transfer syntaxes · 3. Schema language coverage · 4. What BCIR has that none of the other three do · 5. What the other three do that BCIR does not · 6. What to import, ranked · 7. What not to import
 - **docs/BCIR_ASN1_JSON_ROADMAP.md** (1237L): 1. Decision · 2. Source-backed baseline (taken at PR #670; §7 tracks what  · 3. Standards and terminology · 4. Trust and ownership contract · 5. Compiled schema and lowering contract · 6. K_BCIR selection and artifacts · 7. Delivery phases · 8. Validation and performance method · 9. Driver and kernel boundary · 10. Risk register · 11. References
 - **docs/BCIR_ASN1_X690_ABI.md** (558L): 1. The stance: DER out, BER in · 2. Coverage · 3. The BCIR-StreamPack module · 3a. The DER → native fast path · 3b. The BCIR-ExecutionPlan module · 3c. The BCIR-ControlPlane module · 4. The BCIR-ArtifactBundle module · 5. The laws · 6. The law rail (R24) · 7. Trust boundary · 8. Transfer syntax identity · 9. Validation
+- **docs/BCIR_BUILD_ROADMAP.md** (215L): 1. Why: the shell build, measured · 2. Principles · 3. Target layout (BUILD-1) · 4. CTest mapping · 5. Dependencies and submodules · 6. Platform and compiler policy · 7. What stays in shell · 8. The BCIR Make file and the smart task runner (design; BUI · 9. The ladder · 10. State (BUILD-1's own runs, 2026-10-04)
 - **docs/BCIR_JSON_PROGRAM_REPRESENTATION.md** (373L): 1. The proposal, restated precisely · 2. Prior art, because none of the core ideas are new — and t · 3. Three claims in the proposal that must be corrected befor · 4. The three deficiencies, and the mechanisms that answer th · 5. Control flow as a cost problem — the technically stronges · 6. Self-modification: the staged model · 7. Phase ladder · 8. What this changes in the existing roadmaps · 9. Risk register · 10. References
 - **docs/BCIR_LANGREF.md** (1435L): 0. Stance · 1. The multi-level IR · 2. Central equation · 3–9. Laws (summary) · 10. Verifier laws (R1–R25) · 11. Rewrite laws (the building-blocks engine) · 12. Lowering contracts · 13. Learning placement (normative policy) · 14. The two-truth separation (MOPC) · 15. The enriched-operad memory interface (the higher intelli · 16. BCIRQ8 v1 decoder-artifact contract · 17. ASN.1 in BCIR · 18. Conformance profiles and external-contract boundary
 - **docs/BCIR_MACHINE_CODE_HAL_ISA_AUDIT.md** (219L): 0. Executive verdicts · 1. The machine model as built (the "BCIR ISA") · 2. The toolchain as built · 3. What the research docs add to the frame · 4. HAL/ABI as built · 5. The ABI ledger (what is frozen today) · 6. The gap register — the MC-track (code-backed) · 7. Standing positions this audit confirms (no change needed)
 - **docs/BCIR_MASTER_ROADMAP.md** (390L): 1. Mission and non-negotiable invariants · 2. Architecture and current baseline · 3. Dependency order · 4. Active workstreams · 5. Program milestones · 6. Release policy · 7. Validation and publication gate · 8. Decision boundaries · 9. Risk register · 10. Document ownership · 11. Immediate priority queue
 - **docs/BCIR_NATIVE_OBJECT_GATE.md** (152L): 1. The decision · 2. The warranted slice (done): real native objects end-to-en · 3. GO criteria — what would warrant BCIR-native isel · 4. STOP criteria — if a native-isel experiment is taken · 5. Current verdict and evidence boundary
-- **docs/BCIR_Repo_Structure.md** (226L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · Fast dependency-free oracle tier · Full local oracle/toolchain tier, with bounded concurrency · Production C and C++ boundaries · Optional pinned hosted-model CPU gate (one thread in CI) · MLIR/IRDL rails when the coherent LLVM toolset is installed · Documentation governance
+- **docs/BCIR_Repo_Structure.md** (236L): 1. Top-level ownership · 2. Oracle package (`bcir/`) · 3. Law rail (`mlir/`) · 4. C and C++ runtime classes · 5. Contract ownership · 6. Documentation taxonomy · 7. Build and validation entry points · Fast dependency-free oracle tier · Full local oracle/toolchain tier, with bounded concurrency · Production C and C++ boundaries · The CMake project over runtime/manifest.json (two workers) · Optional pinned hosted-model CPU gate (one thread in CI) · MLIR/IRDL rails when the coherent LLVM toolset is installed
 - **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
-- **docs/DEVELOPMENT_HISTORY.md** (4048L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
+- **docs/DEVELOPMENT_HISTORY.md** (4114L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
 - **docs/PARITY.md** (500L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated

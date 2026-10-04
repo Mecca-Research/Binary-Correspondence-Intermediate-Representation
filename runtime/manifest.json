@@ -1,0 +1,183 @@
+{
+  "schema": "bcir-build-manifest.v1",
+  "comment": [
+    "The one list of what the C and C++ rails are made of. CMake reads it (cmake/BCIRManifest.cmake)",
+    "and bcir/tests/test_build_manifest.py holds every shell gate and Python harness to it:",
+    "a unit linked anywhere must be linked from here, with the same sources (docs/BCIR_BUILD_ROADMAP.md).",
+    "Sources are basenames under runtime/c (seam_* kinds: under runtime/cpp). `libraries` names other",
+    "units of this file; `link` names system libraries (m, pthread); `class` is the unit's memory",
+    "class from runtime/c/MEMORY_CLASSIFICATION.txt, one per library; `options` are GNU-style compile",
+    "options the gates pass for that unit (`gcc:`/`clang:` prefixes scope one to that compiler);",
+    "`max_len` is libFuzzer's -max_len, absent when unbounded."
+  ],
+  "libraries": {
+    "bcir_base": {
+      "class": "freestanding_core",
+      "sources": ["bcir_runtime.c", "bcir_sha256.c"]
+    },
+    "bcir_streampack": {
+      "class": "freestanding_core",
+      "sources": [
+        "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c", "bcir_decode.c",
+        "bcir_binrec.c", "bcir_train.c", "bcir_telemetry_frame.c", "bcir_provenance.c"
+      ],
+      "libraries": ["bcir_base"],
+      "link": ["m"]
+    },
+    "bcir_plane": {
+      "class": "freestanding_core",
+      "sources": [
+        "bcir_control_plane.c", "bcir_ring.c", "bcir_telemetry_envelope.c", "bcir_handoff.c",
+        "bcir_shard_manifest.c", "bcir_kplan.c"
+      ],
+      "libraries": ["bcir_streampack", "bcir_base"]
+    },
+    "bcir_artifact": {
+      "class": "freestanding_core",
+      "sources": ["bcir_artifact_bundle.c"],
+      "libraries": ["bcir_base"]
+    },
+    "bcir_asn1": {
+      "class": "freestanding_core",
+      "sources": [
+        "bcir_asn1.c", "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c",
+        "bcir_xer.c", "bcir_jer.c", "bcir_emit.c"
+      ],
+      "libraries": ["bcir_base"]
+    },
+    "bcir_cfront": {
+      "class": "hosted_tool",
+      "sources": ["bcir_cfront.c", "bcir_cpp.c", "bcir_verify.c", "bcir_diag.c"],
+      "libraries": ["bcir_base"],
+      "options": ["-Wno-misleading-indentation", "gcc:-Wno-stringop-truncation", "gcc:-Wno-format-truncation", "gcc:-Wno-maybe-uninitialized"]
+    },
+    "bcir_quarantine": {
+      "class": "hosted_tool",
+      "sources": ["bcir_quarantine.c", "bcir_quarantine_recover.c"],
+      "link": ["pthread"]
+    },
+    "bcir_models": {
+      "class": "hosted_tool",
+      "sources": ["bcir_q8_model.c", "bcir_q4_kernel.c", "bcir_ai_kernels.c", "bcir_llama.c"],
+      "libraries": ["bcir_streampack", "bcir_base"],
+      "link": ["m"],
+      "options": ["-ffp-contract=off"]
+    },
+    "bcir_channel": {
+      "class": "hosted_tool",
+      "sources": ["bcir_channel.c"]
+    },
+    "bcir_driver": {
+      "class": "driver_adapter",
+      "sources": ["bcir_runtime_channel.c"]
+    }
+  },
+  "tools": {
+    "bcir-cc": {
+      "sources": ["bcir_cc.c"],
+      "libraries": ["bcir_cfront", "bcir_streampack", "bcir_base"]
+    },
+    "bcir_asn1_bench": {
+      "sources": ["bcir_asn1_bench.c"],
+      "libraries": ["bcir_asn1", "bcir_base"]
+    },
+    "bcir_microbench": {
+      "sources": ["bcir_microbench.c"]
+    },
+    "bcir_ai_microbench": {
+      "sources": ["bcir_ai_microbench.c"],
+      "libraries": ["bcir_models"],
+      "options": ["-ffp-contract=off"]
+    },
+    "bcir-llama": {
+      "sources": ["bcir_llama_cli.c"],
+      "libraries": ["bcir_models", "bcir_streampack", "bcir_base"],
+      "options": ["-ffp-contract=off"]
+    }
+  },
+  "harnesses": {
+    "test_runtime": {"sources": ["test_runtime.c"], "libraries": ["bcir_base"]},
+    "test_sha256": {"sources": ["test_sha256.c"], "libraries": ["bcir_base"]},
+    "test_execution_plan": {"sources": ["test_execution_plan.c"], "libraries": ["bcir_base"]},
+    "test_exec": {"sources": ["test_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_encode": {"sources": ["test_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_decode": {"sources": ["test_decode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_binrec": {"sources": ["test_binrec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_train": {"sources": ["test_train.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
+    "test_train_stream": {"sources": ["test_train_stream.c"], "libraries": ["bcir_streampack", "bcir_base"], "link": ["m"]},
+    "test_telemetry_frame": {"sources": ["test_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_artifact_bundle": {"sources": ["test_artifact_bundle.c"], "libraries": ["bcir_artifact", "bcir_base"]},
+    "test_control_plane": {"sources": ["test_control_plane.c"], "libraries": ["bcir_plane", "bcir_base"]},
+    "test_ring": {"sources": ["test_ring.c"], "libraries": ["bcir_plane", "bcir_base"], "link": ["pthread"]},
+    "test_handoff": {"sources": ["test_handoff.c"], "libraries": ["bcir_plane", "bcir_streampack", "bcir_base"]},
+    "test_kplan": {"sources": ["test_kplan.c"], "libraries": ["bcir_plane", "bcir_base"]},
+    "test_asn1": {"sources": ["test_asn1.c"], "libraries": ["bcir_asn1"]},
+    "test_asn1_streampack": {"sources": ["test_asn1_streampack.c"], "libraries": ["bcir_asn1", "bcir_base"]},
+    "test_per": {"sources": ["test_per.c"], "libraries": ["bcir_asn1"]},
+    "test_per_plan": {"sources": ["test_per_plan.c"], "libraries": ["bcir_asn1"]},
+    "test_oer": {"sources": ["test_oer.c"], "libraries": ["bcir_asn1"]},
+    "test_xer": {"sources": ["test_xer.c"], "libraries": ["bcir_asn1"]},
+    "test_jer": {"sources": ["test_jer.c"], "libraries": ["bcir_asn1", "bcir_base"]},
+    "test_emit": {"sources": ["test_emit.c"], "libraries": ["bcir_asn1"]},
+    "test_cfront": {"sources": ["test_cfront.c"], "libraries": ["bcir_cfront", "bcir_base"]},
+    "test_cfront_loop": {"sources": ["test_cfront_loop.c"], "libraries": ["bcir_cfront", "bcir_streampack", "bcir_base"], "options": ["-Wno-misleading-indentation"]},
+    "test_diag": {"sources": ["test_diag.c"], "libraries": ["bcir_cfront"]},
+    "test_streampack_semantic": {"sources": ["test_streampack_semantic.c"], "libraries": ["bcir_streampack", "bcir_cfront", "bcir_base"]},
+    "test_channel": {"sources": ["test_channel.c"], "libraries": ["bcir_channel"]},
+    "test_memory_discipline": {
+      "sources": ["test_memory_discipline.c"],
+      "libraries": ["bcir_driver", "bcir_cfront", "bcir_models", "bcir_streampack", "bcir_base"],
+      "link": ["m"]
+    },
+    "test_ai_kernels": {"sources": ["test_ai_kernels.c"], "libraries": ["bcir_models"], "link": ["m"], "options": ["-ffp-contract=off"]},
+    "test_q8_tables": {"sources": ["test_q8_tables.c"]},
+    "test_x86_interrupt": {"sources": ["test_x86_interrupt.c"], "options": ["-ffreestanding"]}
+  },
+  "fuzzers": {
+    "fuzz_q8_model": {"sources": ["fuzz_q8_model.c"], "libraries": ["bcir_models"], "max_len": "16384"},
+    "fuzz_telemetry_frame": {"sources": ["fuzz_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "fuzz_asn1": {"sources": ["fuzz_asn1.c"], "libraries": ["bcir_asn1"], "max_len": "8192"},
+    "fuzz_per": {"sources": ["fuzz_per.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},
+    "fuzz_xer": {"sources": ["fuzz_xer.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},
+    "fuzz_jer": {"sources": ["fuzz_jer.c"], "libraries": ["bcir_asn1", "bcir_base"], "max_len": "4096"},
+    "fuzz_oer": {"sources": ["fuzz_oer.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},
+    "fuzz_per_plan": {"sources": ["fuzz_per_plan.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},
+    "fuzz_emit": {"sources": ["fuzz_emit.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},
+    "fuzz_control_plane": {"sources": ["fuzz_control_plane.c"], "libraries": ["bcir_plane", "bcir_base"], "max_len": "4096"},
+    "fuzz_ring": {"sources": ["fuzz_ring.c"], "libraries": ["bcir_plane", "bcir_base"], "max_len": "4096"},
+    "fuzz_handoff": {"sources": ["fuzz_handoff.c"], "libraries": ["bcir_plane", "bcir_streampack", "bcir_base"], "max_len": "16384"},
+    "fuzz_kplan": {"sources": ["fuzz_kplan.c"], "libraries": ["bcir_plane", "bcir_base"], "max_len": "16384"},
+    "fuzz_streampack": {"sources": ["fuzz_streampack.c"], "libraries": ["bcir_base"]},
+    "fuzz_artifact_bundle": {"sources": ["fuzz_artifact_bundle.c"], "libraries": ["bcir_artifact", "bcir_base"], "max_len": "16384"},
+    "fuzz_exec": {"sources": ["fuzz_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "fuzz_encode": {"sources": ["fuzz_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "fuzz_binrec": {"sources": ["fuzz_binrec.c"], "libraries": ["bcir_streampack"], "max_len": "64"},
+    "fuzz_asn1_streampack": {"sources": ["fuzz_asn1_streampack.c"], "libraries": ["bcir_asn1", "bcir_base"], "max_len": "8192"}
+  },
+  "seam_libraries": {
+    "bcir_seam": {
+      "sources": ["bcir_handoff.cpp", "bcir_orchestrator.cpp"],
+      "libraries": ["bcir_plane", "bcir_streampack", "bcir_base"],
+      "link": ["pthread"]
+    },
+    "bcir_jer_index": {
+      "sources": ["bcir_jer_index.cpp", "bcir_jer_simd.cpp"],
+      "libraries": ["bcir_asn1", "bcir_base"]
+    }
+  },
+  "seam_tests": {
+    "test_orchestrator": {"sources": ["test_orchestrator.cpp"], "libraries": ["bcir_seam"]},
+    "test_handoff_cpp": {"sources": ["test_handoff.cpp"], "libraries": ["bcir_seam"]},
+    "test_artifact_bundle_cpp": {"sources": ["test_artifact_bundle.cpp"], "libraries": ["bcir_artifact", "bcir_base"]},
+    "test_jer_index": {"sources": ["test_jer_index.cpp"], "libraries": ["bcir_jer_index"]},
+    "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]}
+  },
+  "freestanding_checks": [
+    "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",
+    "bcir_decode.c", "bcir_binrec.c", "bcir_train.c", "bcir_telemetry_frame.c", "bcir_provenance.c",
+    "bcir_control_plane.c", "bcir_ring.c", "bcir_telemetry_envelope.c", "bcir_handoff.c",
+    "bcir_shard_manifest.c", "bcir_kplan.c", "bcir_artifact_bundle.c", "bcir_asn1.c",
+    "bcir_asn1_streampack.c", "bcir_per.c", "bcir_per_plan.c", "bcir_oer.c", "bcir_xer.c", "bcir_jer.c",
+    "bcir_emit.c"
+  ]
+}

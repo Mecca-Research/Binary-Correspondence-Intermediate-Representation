@@ -1251,6 +1251,72 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     - `cfront-ubsan` (clang 18) runs as two shards; the fault table's UW13 anchor follows its command line.
   - Not claimed: fewer runner minutes (the work is the same, spread wider; the cells' installs add about
     a minute each); the measured wall time after the change is in the PR's record.
+  BUILD-0 / BUILD-1 (2026-10-04) opened the build program: the C and C++ rails as a CMake project over one
+  source manifest, with CTest, presets and a build-parity gate -- the first slice of
+  `docs/BCIR_BUILD_ROADMAP.md`'s ladder away from the shell build.
+  - Measured first (BUILD-0): 27 shell scripts and 8,600 lines under `tools/`; `check_runtime.sh` alone 4,543
+    lines, 116 sections and 223 compiler invocations, its source lists spelled again in the fuzz driver, the
+    seam gate, the memory-discipline sweep and a dozen Python harnesses (the #719 trap, patched per pair
+    until now); 14 units proved freestanding by hand-written sections; no graph anywhere, so no rebuild of
+    only what changed and no two independent sections running at once under the two-worker cap.
+  - What landed (BUILD-1):
+    - `runtime/manifest.json` (`bcir-build-manifest.v1`): ten class-homogeneous libraries over the 38
+      non-main `bcir_*.c` units, five tools, the 32 harnesses, the 19 fuzz targets with the gate's
+      `-max_len`, the C++ seam's two libraries and five tests, and the 26 `freestanding_core` units compiled
+      `-ffreestanding -nostdlib` at C11 and C23 as part of `ALL`. Per-unit `options` carry what the gates
+      pass for a unit (the twin's four GCC warning families, `-ffp-contract=off` for the model kernels),
+      scoped `gcc:`/`clang:` so a family one compiler lacks is not an unknown-option error on the other.
+    - `CMakeLists.txt` + `cmake/` (compiler-flag policy: C23 spelled `c2x` where CMake must, C++17
+      `-Wpedantic`, `-Wall -Wextra -Werror`, Release `-O2` without NDEBUG, `BCIR_SANITIZE`; the
+      dependency registry writing `bcir-deps.json`; the manifest reader with closures; the CTest
+      registration with labels and `PROCESSORS 2`) and `runtime/{c,cpp}/CMakeLists.txt`, which list
+      nothing -- every target comes from the manifest. Fuzz targets compile their library closure into
+      themselves so libFuzzer and the sanitizers instrument the code under test. The MLIR law is
+      `add_subdirectory()`'d when `BCIR_BUILD_MLIR` is on (default OFF; the `mlir` preset), with
+      `LLVM_BUILD_TOOLS` set so `add_mlir_tool` keeps `bcir-opt` in `ALL`.
+    - `CMakePresets.json`: `default`/`gcc`/`clang`/`asan`/`ubsan`/`tsan`/`fuzzer`/`mlir`; every build and
+      test preset at two workers, which the checker refuses to see changed.
+    - `tools/build/manifest.py --check`: twelve rules (schema, shape, files, roles, references, link
+      names and options, memory classes, the freestanding set against the gates' `-ffreestanding` lines,
+      the gates' compile lines and arrays against the closures, every Python module's literal groups
+      (per list/tuple/set, by the AST) against the closures, the seam's two lists, the presets), reading
+      the gates and the harnesses out of their own text. `tools/build/build_parity.py`: the CMake-built
+      `bcir-cc` against the gate's one-command recipe, every mode over every fixture, stdout + stderr +
+      status + pack bytes identical; an empty corpus is INVALID and a missing tool UNUSABLE, never a pass.
+    - `bcir/tests/test_build_manifest.py` (repository-only): the tree reconciles; 22 injected violations
+      each a finding; the scanners shown to have examined the real gates (the empty-match vacuity of L2);
+      the AST grouping; the CMake reader and the checker agreeing on kinds and keys (L12); the parity
+      gate's refusals before any compile; the `cmake-build` CI job as the gate's owner.
+    - CI: `cmake-build` (gcc + clang): configure with MLIR off, build everything, `ctest -L build`; the
+      clang cell builds the `fuzzer` preset and runs its bounded entries.
+  - Found while building: the twin is not GCC `-Werror`-clean at `-O2` (misleading-indentation,
+    stringop/format-truncation, maybe-uninitialized -- the gates build it without `-Werror`; the manifest
+    scopes exactly those families and keeps every other warning an error); `bcir_kplan.c` under
+    `-ffreestanding -O2` draws a GCC maybe-uninitialized verdict its hosted `-O2` build does not (the
+    gate's sections compile without optimization; so do the checks); `bcir_decode.c` needs libm; a test
+    registered before `enable_testing()`'s directory is dropped silently (one fuzz entry registered
+    instead of twenty until the call moved above the subdirectories); `add_mlir_tool` leaves `bcir-opt`
+    out of `ALL` out of tree; and `tools/c/check_memory_discipline.sh` judged differently under the two
+    compilers -- its strict per-unit pass (`-Wpedantic -Werror`) lacked the compatibility warnings its own
+    harness builds take, so it passed under clang and failed under gcc on the twin's misleading-indentation
+    and format-truncation families, which never showed because the gate prefers `clang` on PATH (L12; found
+    the moment the CMake project handed it the configured gcc). The strict loop now takes the same array;
+    under clang that adds `-Wno-misleading-indentation` only, so nothing it judged there changes.
+    And `.gitignore`'s `build/` matched `tools/build/` too, so the checker and the parity gate sat
+    untracked in the working tree: every local check passed over files no checkout would have, and
+    the first CI run failed on all of them (L21: an exclusion hides a shipping defect). The directory
+    is re-included and a test asserts the tools are neither ignored nor untracked. And the dependency
+    index `bcir-deps.json` was not JSON: the registry wrote CMake's `ON`/`OFF` where JSON spells
+    `true`/`false`, which no local step had parsed; the cmake-build job's reader caught it. The writer
+    spells booleans, and `manifest.py --deps-index` (a `build`-label CTest entry and the job's step)
+    holds the index to its schema, with the shipped defect as its witness.
+  - Measured: build parity 240 fixtures x 8 modes = 1,920 rows, 0 differ, on GCC 13.3 (CMake `-std=c2x`
+    against the recipe's `c11` fallback) and on Clang 23.1.2; gcc configure + build 13 s at two workers;
+    `fuzzer` preset 20/20 CTest entries; `mlir` preset: `bcir-opt` built, the four mlir gates 4/4; the
+    system clang 18 tree builds with 0 warnings and passes the build label and the fuzz label alike; the
+    memory-discipline gate passes under gcc and clang 18 and as the gcc tree's CTest entry.
+  - Not claimed: any gate section migrated (BUILD-2 is section by section with a byte-identity proof
+    each); install/export; MSVC; a BCIRfile (design only, roadmap S8).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -49,10 +49,15 @@ compat_warnings=(-Wno-misleading-indentation)
 if ! "${CC_BIN}" --version 2>/dev/null | head -n 1 | grep -qi clang; then
   compat_warnings+=(-Wno-format-truncation)
 fi
+# The strict per-unit compile takes the same compatibility warnings the harness builds below
+# take: without them this gate passed under clang and failed under gcc on the twin's known
+# families (misleading-indentation, format-truncation), so its verdict depended on which compiler
+# PATH named first -- a gate disagreeing with itself across two paths (docs/security/laws.md L12),
+# found when the CMake project handed it the configured compiler (BUILD-1).
 for unit in bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c \
             bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_verify.c \
             bcir_cc.c bcir_llama_cli.c bcir_microbench.c; do
-  "${CC_BIN}" "${strict[@]}" -c "${C}/${unit}" -o "${tmp}/${unit%.c}.o"
+  "${CC_BIN}" "${strict[@]}" "${compat_warnings[@]}" -c "${C}/${unit}" -o "${tmp}/${unit%.c}.o"
 done
 
 sources=(
