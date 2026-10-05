@@ -8,7 +8,8 @@
  *   tiers                        report which tiers this build has and this CPU allows
  *   utf8 <tier> <hex>            validate at a pinned tier; `-` spells the empty document
  *   bench <tier> <rounds> <iterations> <hex>   per-round median nanoseconds, and the CPU
- *                                              each round ran on (-1 where unavailable)
+ *                                              each round ran on (-1 where unavailable);
+ *                                              <tier> `rail` times the scalar rail itself
  *
  * Output:
  *
@@ -172,18 +173,26 @@ int main() {
         continue;
       }
       tier = parse_tier(tier_name);
+      /* `rail` is the scalar rail ITSELF: `bcir_jer_validate_utf8` over the whole document, no
+       * adapter and no run walk. The `scalar` tier is the adapter pinned to scalar -- the same
+       * alternating walk, its runs found by byte loops -- so whatever the walk costs lands on
+       * both sides of a scalar-versus-vector ratio and cancels there. A claim about what the
+       * walk costs needs the rail beside it. */
+      const bool rail = std::strcmp(tier_name, "rail") == 0;
       /* Warmup, discarded: the first pass over a cold buffer measures the memory system. */
       for (long i = 0; i < iterations; i++) {
         bcir_jer_diag diag;
         sink += static_cast<uint64_t>(
-            bcir_jer_validate_utf8_at(tier, data, static_cast<size_t>(len), &diag));
+            rail ? bcir_jer_validate_utf8(data, static_cast<size_t>(len), &diag)
+                 : bcir_jer_validate_utf8_at(tier, data, static_cast<size_t>(len), &diag));
       }
       for (long r = 0; r < rounds; r++) {
         for (long i = 0; i < iterations; i++) {
           bcir_jer_diag diag;
           uint64_t t0 = now_ns();
           sink += static_cast<uint64_t>(
-              bcir_jer_validate_utf8_at(tier, data, static_cast<size_t>(len), &diag));
+              rail ? bcir_jer_validate_utf8(data, static_cast<size_t>(len), &diag)
+                   : bcir_jer_validate_utf8_at(tier, data, static_cast<size_t>(len), &diag));
           batch[i] = now_ns() - t0;
         }
         std::qsort(batch, static_cast<size_t>(iterations), sizeof(batch[0]), cmp_u64);

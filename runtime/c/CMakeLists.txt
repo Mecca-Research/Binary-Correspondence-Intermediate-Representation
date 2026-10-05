@@ -39,19 +39,45 @@ endif()
 
 # --- variants: a harness rebuilt with its whole library closure compiled in, so the change reaches
 # the code under test and not only the harness: extra options (the gates' -O0/-O3 sweeps, appended
-# after the build's -O2 so the last one wins) or one mutated source (the fault-injection witnesses
-# a gate section must see fail). A mutant's source is generated at build time by
+# after the build's -O2 so the last one wins), one mutated source (the fault-injection witnesses
+# a gate section must see fail), another C standard (the two-standard sections) or a sanitizer
+# (the ring's ThreadSanitizer leg). A mutant's source is generated at build time by
 # tools/build/mutate.py, the applier tools/c/check_runtime.sh uses, from the manifest's one spelling
-# of the fault; a mutant is built without the warning policy, as the gate builds it. ---
+# of the fault; a mutant is built without the warning policy, as the gate builds it. A variant this
+# host cannot build is recorded with its reason (the global property BCIR_UNBUILT_<variant>, and
+# BCIR_UNBUILT_VARIANTS for the section-parity gate), so its section is reported as not run here
+# rather than failing the configure -- except where BCIR_REQUIRE_TSAN makes that a failure. ---
 if(BCIR_BUILD_HARNESSES)
   foreach(_v IN LISTS BCIR_MANIFEST_variants)
     set(_of "${BCIR_variants_${_v}_OF}")
     set(_mfile "${BCIR_variants_${_v}_MUTATION_FILE}")
+    set(_san "${BCIR_variants_${_v}_SANITIZER}")
+    set(_std 23)
+    if(BCIR_variants_${_v}_STANDARD)
+      set(_std "${BCIR_variants_${_v}_STANDARD}")
+    endif()
     if(NOT DEFINED BCIR_harnesses_${_of}_SOURCES)
       message(FATAL_ERROR "BCIR: variant ${_v} rebuilds '${_of}', which is not a manifest harness")
     endif()
+    set(_unbuilt "")
     if(_mfile AND NOT BCIR_HAVE_PYTHON3)
-      message(STATUS "BCIR: variant ${_v} is not built: its fault-injected source needs Python (tools/build/mutate.py)")
+      set(_unbuilt "its fault-injected source needs Python (tools/build/mutate.py)")
+    elseif(_san AND NOT BCIR_GNU_LIKE)
+      set(_unbuilt "-fsanitize=${_san} needs GCC or Clang")
+    elseif(_san STREQUAL "thread" AND NOT BCIR_HAVE_TSAN)
+      set(_unbuilt "no working ThreadSanitizer runtime here (the dependency index's TSAN row)")
+    elseif(_san STREQUAL "thread" AND BCIR_SANITIZE MATCHES "(^|,)(address|hwaddress|memory|leak)(,|$)")
+      # BCIR_SANITIZE applies to every target (the asan/ubsan/tsan presets); ThreadSanitizer joins
+      # UndefinedBehaviorSanitizer but no address, memory or leak sanitizer.
+      set(_unbuilt "BCIR_SANITIZE=${BCIR_SANITIZE} builds every target with a sanitizer ThreadSanitizer cannot be combined with")
+    endif()
+    if(_unbuilt)
+      if(_san STREQUAL "thread" AND BCIR_REQUIRE_TSAN)
+        message(FATAL_ERROR "BCIR: ThreadSanitizer is required here (BCIR_REQUIRE_TSAN=ON), but variant ${_v} cannot be built: ${_unbuilt}")
+      endif()
+      message(STATUS "BCIR: variant ${_v} is not built: ${_unbuilt}")
+      set_property(GLOBAL PROPERTY BCIR_UNBUILT_${_v} "${_unbuilt}")
+      set_property(GLOBAL APPEND PROPERTY BCIR_UNBUILT_VARIANTS "${_v}=${_unbuilt}")
       continue()
     endif()
     bcir_manifest_closure(_closure ${BCIR_harnesses_${_of}_LIBRARIES})
@@ -75,7 +101,7 @@ if(BCIR_BUILD_HARNESSES)
       message(FATAL_ERROR "BCIR: variant ${_v} mutates ${_mfile}, which ${_of}'s closure does not compile")
     endif()
     add_executable(${_v} ${_srcs})
-    set_target_properties(${_v} PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+    set_target_properties(${_v} PROPERTIES C_STANDARD ${_std} C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
                           RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/harnesses")
     if(NOT _mfile)
       target_compile_options(${_v} PRIVATE ${BCIR_C_WARNINGS})
@@ -89,6 +115,10 @@ if(BCIR_BUILD_HARNESSES)
     set(_opts ${_closure_OPTIONS} ${BCIR_harnesses_${_of}_OPTIONS})
     bcir_manifest_options(${_v} "${_opts}")
     bcir_manifest_options(${_v} "${BCIR_variants_${_v}_OPTIONS}")
+    if(_san)
+      target_compile_options(${_v} PRIVATE -fsanitize=${_san})
+      target_link_options(${_v} PRIVATE -fsanitize=${_san})
+    endif()
   endforeach()
 endif()
 

@@ -51,8 +51,11 @@ if(BCIR_BUILD_HARNESSES)
     set(_unbuilt "")
     foreach(_h IN LISTS BCIR_sections_${_sec}_HARNESSES)
       if(NOT TARGET ${_h})
-        if(BCIR_variants_${_h}_MUTATION_FILE AND NOT BCIR_HAVE_PYTHON3)
-          set(_unbuilt "${_h}")
+        # runtime/c/CMakeLists.txt records why it did not build a variant; anything else missing
+        # is a manifest the build does not honour.
+        get_property(_why GLOBAL PROPERTY BCIR_UNBUILT_${_h})
+        if(_why)
+          set(_unbuilt "${_h} is not built here (${_why})")
         else()
           message(FATAL_ERROR "BCIR: section ${_sec} names ${_h}, which the manifest does not build")
         endif()
@@ -60,7 +63,7 @@ if(BCIR_BUILD_HARNESSES)
       list(APPEND _args "$<TARGET_FILE:${_h}>")
     endforeach()
     if(_unbuilt)
-      message(STATUS "BCIR: section ${_sec} is not registered: ${_unbuilt} needs Python to be generated")
+      message(STATUS "BCIR: section ${_sec} is not registered: ${_unbuilt}")
       continue()
     endif()
     add_test(NAME c-section-${_sec}
@@ -68,9 +71,17 @@ if(BCIR_BUILD_HARNESSES)
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(c-section-${_sec} PROPERTIES LABELS "c;section" TIMEOUT 900)
   endforeach()
+  # The variants this tree did not build, with the reason: their sections are reported as not
+  # compared here, by name, instead of as missing binaries.
+  get_property(_unbuilt_variants GLOBAL PROPERTY BCIR_UNBUILT_VARIANTS)
+  set(_parity_unbuilt "")
+  foreach(_u IN LISTS _unbuilt_variants)
+    list(APPEND _parity_unbuilt --unbuilt "${_u}")
+  endforeach()
   add_test(NAME build-section-parity
            COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
                    --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --cc "${CMAKE_C_COMPILER}"
+                   ${_parity_unbuilt}
            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
   set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
 endif()

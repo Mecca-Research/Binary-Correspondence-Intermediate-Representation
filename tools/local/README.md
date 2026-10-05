@@ -48,3 +48,21 @@ do) — all against the true selected major.
 - **The clean alternative** is to allow `apt.llvm.org` in the environment's network policy
   (see https://code.claude.com/docs/en/claude-code-on-the-web); then the CI install path
   works locally verbatim and conda is unnecessary.
+
+## The newest toolchain, for every change
+
+Every BCIR change is judged on the newest LLVM/Clang/MLIR 23 and Node 24 as well as on the
+CI-default Clang 18 / GCC 13 (`.claude/skills/bcir-latest-toolchain/SKILL.md`):
+
+```bash
+python3 tools/local/latest_toolchain.py status        # installed vs the newest llvmorg-23 tag / Node 24 release
+python3 tools/local/latest_toolchain.py install-node  # the newest Node 24, signature-verified, into the BCIR cache
+eval "$(python3 tools/local/latest_toolchain.py env)" # LLVM 23 and Node 24 first on PATH for this shell
+bash tools/local/check_latest.sh                      # status, confirm, cmake (clang23 preset), fuzz, gate,
+                                                      # thorough (BCIR_REQUIRE_LLVM=1) and mlir legs on them
+```
+
+`status` exits 0 only when every tool is the newest release; a source it cannot reach is
+UNKNOWN (exit 2), never current. `check_latest.sh` runs its legs one after another at two workers
+and prints one verdict line per leg; `--legs` picks a subset and `--allow-outdated` records a
+toolchain behind upstream instead of failing on it.

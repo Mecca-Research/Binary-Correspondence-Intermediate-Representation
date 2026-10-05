@@ -37,8 +37,9 @@ live in `CONTRIBUTING.md`.
   `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
 - Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (the gate and the
   `c-section-<name>` CTest entry run that one file; `build-section-parity` proves the two builds agree).
-- Changing a fault-injection witness or an optimisation sweep → the manifest's `variants` (one
-  spelling of each injected fault; `tools/build/mutate.py` applies it for the gate and CMake alike).
+- Changing a fault-injection witness, an optimisation sweep, a C11 build or a sanitizer build → the
+  manifest's `variants` (one spelling of each injected fault, applied by `tools/build/mutate.py` for
+  the gate and CMake alike; one sanitizer predicate, `tools/build/sanitizer.py`).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation
@@ -60,12 +61,17 @@ Python, C sanitizer/fuzzer, model, LLVM-training, or MLIR gates concurrently.
 
 1. Run focused regressions and the bounded complete quick oracle locally. Run
    broader local gates only when the host and resource budget support them.
-2. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,
+2. Judge the change on the newest LLVM/Clang/MLIR 23 and Node 24 as well as on the
+   CI-default Clang 18 / GCC 13: `python3 tools/local/latest_toolchain.py status`, then
+   `bash tools/local/check_latest.sh`
+   ([`.claude/skills/bcir-latest-toolchain`](.claude/skills/bcir-latest-toolchain/SKILL.md)).
+   A Clang-18-only pass is not evidence about 23.
+3. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,
    MLIR, Windows, and native ARM matrix to GitHub Actions as appropriate.
-3. Treat hardware-only validation that neither the local host nor CI provides as
+4. Treat hardware-only validation that neither the local host nor CI provides as
    an explicit, documented skip. Never hide it or replace it with unsafe emulation.
-4. Confirm tests leave tracked files unchanged and run `git diff --check`.
-5. After publishing, wait for the full Actions run and fix every failure before
+5. Confirm tests leave tracked files unchanged and run `git diff --check`.
+6. After publishing, wait for the full Actions run and fix every failure before
    handing off the PR as complete.
 
 The command inventory and tool-gated rules live in

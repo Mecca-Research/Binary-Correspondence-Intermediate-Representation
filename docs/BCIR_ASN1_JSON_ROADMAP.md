@@ -819,6 +819,17 @@ front cost a 29 KB document its entire acceleration: **1.00×**. Alternating res
 25×. The regression is pinned by a test asserting the early-accent ratio against the
 all-ASCII ratio, so a return to a single hand-off fails rather than merely slows down.
 
+**The suite's speed floors measure the way the runbook does (§7.3.2).** Each ratio is the
+median over interleaved pairs: a baseline round and a vector round, one process, the order
+alternating. A load that arrives mid-measurement reaches both halves of a pair and cancels.
+Measured as two medians one after the other, the CJK document read 0.70× on a CI runner in a
+run that changed nothing in the rail, under the 0.75× floor. The multi-byte floor is judged
+against `rail`, the scalar rail itself (`bcir_jer_validate_utf8` over the whole document). The
+driver's `scalar` tier runs the same alternating walk with byte-loop runs, so a cost the walk
+adds cancels in a ratio against it. Validating every multi-byte run twice more read 1.21×
+against `scalar` and passed; it reads 0.72× against `rail` and fails. A witness holds the
+pairing to its property on a driver whose answers are known.
+
 **The two-host clause is MET.** Two dedicated hosts on two architectures, each with a vector
 interval strictly below its scalar interval:
 

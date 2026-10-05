@@ -24,6 +24,13 @@
       "cacheVariables": {"CMAKE_C_COMPILER": "clang", "CMAKE_CXX_COMPILER": "clang++"}
     },
     {
+      "name": "clang23",
+      "inherits": "default",
+      "displayName": "Release with Clang 23 (the newest LLVM major; .claude/skills/bcir-latest-toolchain)",
+      "binaryDir": "${sourceDir}/build/cmake-clang23",
+      "cacheVariables": {"CMAKE_C_COMPILER": "clang-23", "CMAKE_CXX_COMPILER": "clang++-23"}
+    },
+    {
       "name": "asan",
       "inherits": "clang",
       "displayName": "Clang, AddressSanitizer + UndefinedBehaviorSanitizer on every target",
@@ -63,6 +70,7 @@
     {"name": "default", "configurePreset": "default", "jobs": 2},
     {"name": "gcc", "configurePreset": "gcc", "jobs": 2},
     {"name": "clang", "configurePreset": "clang", "jobs": 2},
+    {"name": "clang23", "configurePreset": "clang23", "jobs": 2},
     {"name": "asan", "configurePreset": "asan", "jobs": 2},
     {"name": "ubsan", "configurePreset": "ubsan", "jobs": 2},
     {"name": "tsan", "configurePreset": "tsan", "jobs": 2},

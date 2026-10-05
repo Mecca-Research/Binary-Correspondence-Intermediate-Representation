@@ -173,6 +173,8 @@ bash tools/irdl/check_corpus.sh
 python tools/docs/gen_status.py --check             # + regenerate STATUS.md LAST after test changes
 python tools/docs/check_links.py
 git diff --check
+bash tools/local/check_latest.sh                    # the same change on the newest LLVM/Clang 23 + Node 24
+                                                    # (skill bcir-latest-toolchain): 18 alone is not evidence
 
 # the assurance rails (#749) — each one a required CI job
 python tools/security/scan_secrets.py

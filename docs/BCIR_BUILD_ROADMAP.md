@@ -67,15 +67,17 @@ utilities, and the gates' own content until each section has been migrated with 
 
 ```
 CMakeLists.txt                 project BCIR (C, CXX), options, presets' home
-CMakePresets.json              default / gcc / clang / asan / ubsan / tsan / fuzzer / mlir
+CMakePresets.json              default / gcc / clang / clang23 / asan / ubsan / tsan / fuzzer / mlir
 cmake/BCIRCompilerFlags.cmake  C23 (c2x where needed), C++17 -Wpedantic, -Wall -Wextra [-Werror],
                                -O2 without NDEBUG, BCIR_SANITIZE, the freestanding object check
-cmake/BCIRDependencies.cmake   Python, Threads, MLIR/LLVM, FFTW3F/LAPACKE/GSL/SLEEF/libcerf -> bcir-deps.json
+cmake/BCIRDependencies.cmake   Python, Threads, MLIR/LLVM, TSan, FFTW3F/LAPACKE/GSL/SLEEF/libcerf -> bcir-deps.json
 cmake/BCIRManifest.cmake       the manifest reader, closures, link-name and option mapping
 cmake/BCIRTests.cmake          CTest registration (labels, PROCESSORS 2, the gates as entries)
 tools/c/sections/*.sh          the gate sections that migrated (BUILD-2): one script each, run by the
                                gate over its own binaries and by CTest over the manifest's harnesses
 tools/build/mutate.py          the one applier of the manifest's fault injections (gate and CMake)
+tools/build/sanitizer.py       the one predicate for "this sanitizer builds and runs here" (gate,
+                               configure, and through the configure the section-parity gate)
 runtime/manifest.json          libraries / tools / harnesses / fuzzers / seam_libraries / seam_tests,
                                plus sections (BUILD-2) and variants (the harness rebuilds they judge)
 runtime/c/CMakeLists.txt       targets from the manifest; nothing listed by hand
@@ -88,7 +90,7 @@ mlir/CMakeLists.txt            unchanged; add_subdirectory()'d when BCIR_BUILD_M
 | `libraries` | 10 static libraries over the 38 `bcir_*.c` units that are not tool mains: `bcir_base` (runtime, SHA-256), `bcir_streampack`, `bcir_plane` (control plane, rings, hand-off, planner), `bcir_artifact`, `bcir_asn1`, `bcir_cfront` (the twin, the preprocessor, the verifier, diagnostics), `bcir_quarantine`, `bcir_models`, `bcir_channel`, `bcir_driver` | class-homogeneous; `libraries` is the dependency edge; `link` names `m`/`pthread`; `options` carries the gates' per-unit flags (`gcc:`/`clang:` scoped) |
 | `tools` | `bcir-cc`, `bcir_asn1_bench`, `bcir_microbench`, `bcir_ai_microbench`, `bcir-llama` | one `hosted_tool` main each |
 | `harnesses` | the 32 `test_*.c` mains | built in `ALL` (the link proof); the gates run them with their own argv until BUILD-2 |
-| `variants` | 10 harness rebuilds the migrated sections judge: `-O0`/`-O3` of `test_ring`, `test_handoff`, `test_kplan`, and one fault-injected mutant each of `test_control_plane`, `test_ring`, `test_handoff`, `test_kplan` | each compiles its harness's whole library closure with the variant's options appended (so `-O0` reaches the twin, not only the harness main); a mutant's source is generated at build time by `tools/build/mutate.py` -- the applier the gate uses, from the manifest's one spelling of the fault, applied only when its anchor occurs exactly once -- and is built without the warning policy, as the gate builds it |
+| `variants` | 14 harness rebuilds the migrated sections judge: `-O0`/`-O3` of `test_ring`, `test_handoff`, `test_kplan`; one fault-injected mutant each of `test_control_plane`, `test_ring`, `test_handoff`, `test_kplan`; the C11 builds of `test_x86_interrupt` and `test_q8_tables`; and the ring's two ThreadSanitizer builds (`test_ring_tsan`, and `test_ring_plain`, whose relaxed atomic stores are made plain) | each compiles its harness's whole library closure with the variant's options appended (so `-O0` reaches the twin, not only the harness main), in its `standard` when that is not C23, with its `sanitizer` on every object and the link; a mutant's source is generated at build time by `tools/build/mutate.py` -- the applier the gate uses, from the manifest's one spelling of the fault, applied only when its anchor occurs exactly once -- and is built without the warning policy, as the gate builds it. A sanitizer variant is built only where `tools/build/sanitizer.py` finds the runtime working (the dependency index's `TSAN` row) and no conflicting `BCIR_SANITIZE` is set; otherwise its section is reported as not registered, with the reason, and `BCIR_REQUIRE_TSAN=ON` turns that into a configure failure |
 | `fuzzers` | the 19 `fuzz_*.c` targets | Clang only; each compiles its library closure into itself with `-fsanitize=fuzzer,address,undefined` so the code under test is instrumented; `max_len` equals the gate's `-max_len` |
 | `seam_libraries` / `seam_tests` | `bcir_seam`, `bcir_jer_index`; `test_orchestrator`, `test_handoff_cpp`, `test_artifact_bundle_cpp`, `test_jer_index`, `test_jer_simd` | C++17 over the C libraries; the seam's unit lists equal `check_handoff.sh`'s and `handoff_fixtures.py`'s |
 | `freestanding_checks` | the 26 `freestanding_core` units | OBJECT libraries at C11 and C23, `-ffreestanding -nostdlib -O0`; a superset of the 14 the gate compiles |
@@ -193,7 +195,7 @@ rails, judged like everything else here by the oracle, the twin and their parity
 |---|---|---|
 | **BUILD-0** | this roadmap with the measured inventory | linked from the README, the repo-structure map and AGENTS.md |
 | **BUILD-1** (landed) | top-level CMake, the four modules, `runtime/manifest.json`, the presets, CTest registration, `tools/build/manifest.py`, `tools/build/build_parity.py`, the `cmake-build` CI job | the checker clean and every injected violation a finding; build parity over every fixture and mode on GCC and Clang with 0 rows differing; every CTest label runs; the MLIR law builds under the top-level project |
-| **BUILD-2** (groups 1 and 2 landed) | `check_runtime.sh`'s sections as CTest entries, one group of sections per PR: each section's text moves into `tools/c/sections/<name>.sh`, the gate compiles its harnesses and calls the script, the manifest's `sections` registers script + harnesses, CMake runs it as `c-section-<name>`. Group 1: `runtime`, `artifact_bundle`, `executor`, `encoder`, `execution_plan`, `telemetry_frame`. Group 2: `control_plane`, `ring`, `handoff`, `kplan`, whose optimisation and fault-injection binaries are manifest `variants` (the ring's ThreadSanitizer leg stays in the gate) | per section: `build-section-parity` holds the script's stdout, stderr and status byte-identical over the gate-built and the CMake-built harnesses on both compilers, and requires a PASS line; the gate's compile lines go only after that proof has run on CI for the group |
+| **BUILD-2** (groups 1, 2 and 3a landed) | `check_runtime.sh`'s sections as CTest entries, one group of sections per PR: each section's text moves into `tools/c/sections/<name>.sh`, the gate compiles its harnesses and calls the script, the manifest's `sections` registers script + harnesses, CMake runs it as `c-section-<name>`. Group 1: `runtime`, `artifact_bundle`, `executor`, `encoder`, `execution_plan`, `telemetry_frame`. Group 2: `control_plane`, `ring`, `handoff`, `kplan`, whose optimisation and fault-injection binaries are manifest `variants`. Group 3a: `x86_interrupt`, `q8_tables` (C11 variants) and `ring_tsan`, the ring's ThreadSanitizer leg (sanitizer variants) | per section: `build-section-parity` holds the script's stdout, stderr and status byte-identical over the gate-built and the CMake-built harnesses on both compilers, and requires a PASS line; the gate's compile lines go only after that proof has run on CI for the group |
 | **BUILD-3** | install and export: `install(TARGETS …)`, `BCIRConfig.cmake`, versioned headers; `find_package(BCIR)` from an installed tree | an out-of-tree consumer builds `test_runtime` against the installed package on both compilers |
 | **BUILD-4** | the dependency index consumed by the Python harnesses (`native_bench`, the link-flag rules, the model gates) instead of per-harness probing | a harness and the configure cannot disagree about a dependency: the harness reads the index, and a test injects a missing row |
 | **BUILD-5** | the MLIR rail under the top-level project in CI (`mlir-rail-validate` uses the `mlir` preset; `bcir-opt`'s lit suite as CTest) | the rail's own gates green from the top-level tree on LLVM 22 and 23 |
@@ -215,6 +217,7 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | `ctest -L build` (gcc) | 2/2 |
 | BUILD-2 group 1: `ctest -L section` (gcc) | 6/6, 1.5 s; `build-section-parity` 6 sections identical under both builds, 11 PASS lines, 12 s |
 | BUILD-2 group 2: `ctest -L section` (gcc) | 10/10, 16 s (the planner's corpus 14 s); `build-section-parity` 10 sections identical, the ring's one declared varying value masked; each mutant byte-identical to the gate's former `sed` output |
+| BUILD-2 group 3a: `ctest -L section` (gcc, `BCIR_REQUIRE_TSAN=ON`) | 13/13, 15 s (`ring_tsan` 5.4 s); `build-section-parity` 13 sections identical; the plain-store mutant byte-identical to the gate's former `sed` output; an AddressSanitizer preset and a compiler without TSan each leave `ring_tsan` unregistered with the reason, and fail the configure under `BCIR_REQUIRE_TSAN=ON` |
 | `clang` preset (system Clang 18.1.3) | 0 warnings; `ctest -L build` 2/2; `fuzzer` preset `ctest -L fuzz` 20/20 |
 | The shell gates as CTest entries (gcc tree) | `cpp-handoff` and `c-memory-discipline` pass; the latter only after the gate's strict compile took its own compatibility warnings (it had passed under clang and failed under gcc: laws.md L12, found by the wrap) |
 
@@ -222,8 +225,13 @@ BUILD-2 continues group by group. Group 1 (landed) took the six sections whose a
 path and whose verdict is a PASS line. Group 2 (landed) took the four sections that compile second
 binaries of their own (`control_plane`'s mutant; `ring`'s, `handoff`'s and `kplan`'s `-O0`/`-O3`
 sweeps and mutants): their scripts take those binaries as further arguments, the manifest's
-`variants` let CMake build them, and the gate generates its mutants with the same applier. Group 3
-is what is left of the gate: the two-standard sections (`x86_interrupt`, `q8_tables`, which need C11
-variants), the ring's ThreadSanitizer leg (a sanitizer variant whose build and stress run are one
-step today) and the `bcir-cc` sections (#emitlink onward), where `build-parity` already covers the
-tool they drive.
+`variants` let CMake build them, and the gate generates its mutants with the same applier. Group 3a
+(landed) took the two-standard sections (`x86_interrupt`, `q8_tables`, over C11 variants) and the
+ring's ThreadSanitizer leg (`ring_tsan`, over sanitizer variants: the gate builds the two TSan
+binaries -- the plain-store mutant through the applier -- and the script runs their stress). Whether
+TSan works on a host is one predicate, `tools/build/sanitizer.py`, asked by the gate and the
+configure; the configure records what it could not build, and the section-parity gate reports those
+sections by name instead of comparing them. Group 3b onward is what is left of the gate: the `bcir-cc`
+sections (#emitlink onward), where `build-parity` already covers the tool they drive, and the
+sections before them that drive the twin and its Python parity (`bcir_cfront`, the target-ABI
+matrix, the compile-to-execute loop, the channel decision).

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 
 from bcir.abi import q8_tables
+from bcir.abi.embed import embed_probe
 from bcir.kbcir.cost import MemTier, MemoryHierarchy
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -45,6 +46,9 @@ def test_header_uses_embed_guarded_with_a_fallback():
     assert '#embed "q8_tiers.bin"' in h  # the C23 directive
     assert "defined(__has_embed)" in h  # feature-probed
     assert "#  if __has_embed(" in h  # ... in a NESTED #if (pre-#embed safe)
+    # ... through the one shared probe: #embed only in C23 mode (a C11 build takes the fallback)
+    assert embed_probe("q8_tiers.bin", "BCIR_Q8_EMBED") in h
+    assert "__STDC_VERSION__ >= 202311L" in h
     assert "BCIR_Q8_EMBED 0" in h  # the fallback path
     assert "0x" in h  # the fallback array bytes
     assert "_Static_assert(sizeof(bcir_q8_tiers_blob)" in h
@@ -59,14 +63,29 @@ def test_header_builds_and_self_checks_under_c11_and_c23():
         for std in ("c11", "c23"):
             exe = os.path.join(d, f"q8_{std}")
             build = subprocess.run(
-                [cc, f"-std={std}", "-Wall", "-Wextra", "-I", _RUNTIME_C, src, "-o", exe],
+                [
+                    cc,
+                    f"-std={std}",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    _RUNTIME_C,
+                    src,
+                    "-o",
+                    exe,
+                ],
                 capture_output=True,
                 text=True,
             )
             assert build.returncode == 0, f"{std} build: {build.stderr}"
             run = subprocess.run([exe], capture_output=True, text=True)
             assert run.returncode == 0 and run.stdout.startswith("OK q8"), run.stdout + run.stderr
-            # Older Clang/GCC take the byte-identical fallback; newer Clang exposes
-            # __has_embed even in C11 extension mode. Pin the reported capability value,
-            # not a stale compiler-version assumption.
-            assert "embed=0" in run.stdout or "embed=1" in run.stdout
+            # C11 takes the byte-identical fallback on every toolchain: Clang 19+ offers
+            # #embed to C11 as an extension, whose warning -Werror (above) would make an
+            # error, so the probe admits it only in C23 mode. C23 reports the toolchain's
+            # capability (0 on a pre-#embed compiler, 1 where it has it).
+            if std == "c11":
+                assert "embed=0" in run.stdout, run.stdout
+            else:
+                assert "embed=0" in run.stdout or "embed=1" in run.stdout, run.stdout

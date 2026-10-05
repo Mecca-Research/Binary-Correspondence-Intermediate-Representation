@@ -61,6 +61,7 @@ from dataclasses import dataclass, field
 from ..kbcir.activation import ACTIVATIONS, activation_reference, libm_edges
 from ..kbcir.precision import quantization_error_bound
 from ..kbcir.quantize import dequantize, quantize_per_group
+from ..abi.embed import embed_probe
 from .c_kernel import _inline_activation_expr
 
 # Tables with more than this many elements bake via C23 #embed (with the __has_embed fallback array, the
@@ -255,8 +256,9 @@ def _literal_array(name: str, values) -> str:
 
 
 def _embed_array(name: str, values, blob_files: dict[str, bytes]) -> str:
-    """A LARGE baked table via C23 ``#embed`` (with the ``__has_embed`` fallback, the q8_tables.py
-    pattern). The float blob is registered in ``blob_files`` (the caller writes ``<name>.bin`` next to the
+    """A LARGE baked table via C23 ``#embed``, probed by ``bcir.abi.embed.embed_probe`` (the Q8
+    table's probe: C23 mode and a toolchain that has it; any other build takes the fallback). The
+    float blob is registered in ``blob_files`` (the caller writes ``<name>.bin`` next to the
     .c so ``#embed`` finds it); the fallback is the byte-identical literal array. The bytes are reinterpreted
     as ``float`` through a union so a strict-aliasing build stays well-defined."""
     blob = _float_blob(values)
@@ -267,13 +269,9 @@ def _embed_array(name: str, values, blob_files: dict[str, bytes]) -> str:
     n = len(values)
     macro = f"BCIR_INFER_EMBED_{name.upper()}"
     return (
-        f"/* {name}: {n} baked weights via C23 #embed (q8_tables.py pattern); "
-        f"__has_embed selects the byte-identical fallback on a pre-#embed toolchain. */\n"
-        f"#if defined(__has_embed)\n"
-        f'#  if __has_embed("{name}.bin")\n'
-        f"#    define {macro} 1\n"
-        f"#  endif\n"
-        f"#endif\n"
+        f"/* {name}: {n} baked weights via C23 #embed in a C23 build whose toolchain has it; "
+        f"any other build takes the byte-identical fallback. */\n"
+        f"{embed_probe(f'{name}.bin', macro)}"
         f"#if defined({macro}) && {macro}\n"
         f'static const unsigned char {name}_bytes[] = {{\n#embed "{name}.bin"\n}};\n'
         f"#else\n"

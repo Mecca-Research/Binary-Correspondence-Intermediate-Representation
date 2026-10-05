@@ -21,8 +21,10 @@ All deterministic + pure-Python on the oracle rail; the compile-and-run tests se
 is hidden (the quick tier), exactly like the activation / fusion / blas tests."""
 
 import random
+import re
 import shutil
 
+from bcir.abi.embed import embed_probe
 from bcir.kbcir.precision import quantization_error_bound
 from bcir.lower.inference import (
     InferenceModel,
@@ -222,6 +224,11 @@ def test_large_weights_bake_via_embed_and_still_match():
     )
     src = emit_inference_kernel_c(model)
     assert "#embed" in src and "__has_embed" in src  # the C23 embed + the fallback probe
+    # every baked table is probed by the one shared predicate (C23 mode + toolchain capability)
+    blobs = re.findall(r'#embed "(\w+)\.bin"', src)
+    assert blobs, src[:400]
+    for stem in blobs:
+        assert embed_probe(f"{stem}.bin", f"BCIR_INFER_EMBED_{stem.upper()}") in src, stem
     assert "_Static_assert" in src  # the baked-size assertion (q8_tables pattern)
     x = [round(rng.uniform(-1.0, 1.0), 4) for _ in range(20)]
     ref = model.forward(x)
