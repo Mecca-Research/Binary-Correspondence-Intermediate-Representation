@@ -29,6 +29,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import shutil
 import subprocess
@@ -118,7 +119,9 @@ def header_closure(source: str, include_dirs: tuple[str, ...]) -> list[str]:
             text = (ROOT / current).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        here = str(Path(current).parent)
+        # a repo path on every host: the host's own spelling of the directory gave a Windows runner
+        # `runtime\c/bcir_runtime.h`, which no BCIRfile can name
+        here = posixpath.dirname(current) or "."
         for name in INCLUDE.findall(text):
             for base in (here, *include_dirs):
                 candidate = f"{base}/{name}"

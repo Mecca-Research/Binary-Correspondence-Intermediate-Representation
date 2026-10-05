@@ -104,9 +104,11 @@ def test_a_tool_keeps_the_name_it_is_run_by():
 
 def test_an_object_reads_the_headers_its_source_reaches():
     """A header edit must make exactly its includers stale, so each object claims the headers its
-    source reaches through quoted includes, transitively."""
+    source reaches through quoted includes, transitively -- named as repo paths on every host (the
+    Windows runner found `runtime\\c/bcir_runtime.h`, the host's spelling of the directory)."""
     generator = _load("bcirfile")
     closure = generator.header_closure("runtime/c/test_runtime.c", ("runtime/c",))
     assert "runtime/c/bcir_runtime.h" in closure, closure
+    assert all("\\" not in path for path in closure), closure
     with tempfile.TemporaryDirectory() as tmp:
         assert generator.header_closure(str(Path(tmp) / "absent.c"), ("runtime/c",)) == []
