@@ -55,7 +55,11 @@ echo "  ok: bcir_jer_index.cpp is warning-clean under C++17"
 # The load-bearing one. The cursor exists so the hosted index can reach the scan's dispatch
 # state; if exporting it ever drags a hosted header into the core, the core stops being
 # freestanding and every embedded target loses it -- silently, because the hosted build works.
-for std in c11 c23; do
+# C23 as the compiler spells it: GCC 13 knows only -std=c2x, and refusing the option is no verdict
+# about the freestanding core (the CTest entry runs this under the configured compiler, GCC included).
+c23=c23
+printf 'int main(void){return 0;}\n' | "${CC}" -std=c23 -x c -fsyntax-only - 2>/dev/null || c23=c2x
+for std in c11 "${c23}"; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
     -c "${C}/bcir_jer.c" -o /dev/null \
     || { echo "FAIL: exporting the scan cursor cost bcir_jer.c its freestanding build (${std})"; exit 1; }

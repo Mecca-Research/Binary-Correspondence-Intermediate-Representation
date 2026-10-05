@@ -324,6 +324,74 @@ _FAULTS = (
         lambda m: m["kernels"].__setitem__("test_runtime", m["kernels"].pop("kernel_tree")),
     ),
     ("M15", "a driver no kernel names", lambda m: m["kernels"].pop("kernel_kmeans")),
+    (
+        "M13",
+        "a compiler-only section that names a binary",
+        lambda m: m["sections"]["inlineasm"].__setitem__("harnesses", ["test_runtime"]),
+    ),
+    (
+        "M13",
+        "a compiler_only flag that is not true",
+        lambda m: m["sections"]["portio"].__setitem__("compiler_only", "yes"),
+    ),
+    (
+        "M13",
+        "a compiler_only flag of false on a section without binaries",
+        lambda m: m["sections"]["barrier"].__setitem__("compiler_only", False),
+    ),
+    ("M16", "delegated gates that are no object", lambda m: m.__setitem__("delegated", [])),
+    (
+        "M16",
+        "a delegated entry with an unknown key",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("timeout", 60),
+    ),
+    (
+        "M16",
+        "a delegated entry without labels",
+        lambda m: m["delegated"]["cpp-sycl"].pop("labels"),
+    ),
+    (
+        "M16",
+        "a delegated name that is no CTest name",
+        lambda m: m["delegated"].__setitem__("SYCL", m["delegated"].pop("cpp-sycl")),
+    ),
+    (
+        "M16",
+        "a delegated label outside c and cpp",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("labels", ["fuzz"]),
+    ),
+    (
+        "M16",
+        "a delegated script M9 does not read",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("script", "tools/cpp/check_other.sh"),
+    ),
+    (
+        "M16",
+        "delegating to the runtime gate itself",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("script", "tools/c/check_runtime.sh"),
+    ),
+    (
+        "M16",
+        "delegating to the cfront sanitizer, which keeps its own switch",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("script", "tools/c/sanitize_cfront.sh"),
+    ),
+    (
+        "M16",
+        "two entries delegating to one script",
+        lambda m: m["delegated"].__setitem__(
+            "c-memory-classes", dict(m["delegated"]["c-memory-discipline"])
+        ),
+    ),
+    (
+        "M16",
+        "a gate the runtime gate calls with no entry (CTest would run it only inside c-runtime)",
+        lambda m: m["delegated"].pop("cpp-sycl"),
+    ),
+    (
+        "M16",
+        "an entry renamed away from the name the gate's SKIP line gives",
+        lambda m: m["delegated"].__setitem__("cpp-sycl-oracle", m["delegated"].pop("cpp-sycl")),
+    ),
 )
 
 
@@ -562,6 +630,63 @@ def test_a_varying_value_is_masked_only_where_declared():
     assert stale == [r"never=([0-9]+)"], stale
 
 
+def test_a_compiler_only_section_must_run_the_compiler():
+    """A section that takes no binary judges what the oracle emits under CC; a script that never
+    runs ${CC} would judge nothing at all, and pass (L2)."""
+    tree = manifest_tool.Tree()
+    assert '"${CC}"' in tree.section_texts["barrier.sh"]
+    tree.section_texts["barrier.sh"] = tree.section_texts["barrier.sh"].replace('"${CC}"', '"cc"')
+    findings = manifest_tool.check(_manifest(), tree)
+    assert any(
+        f.startswith("M13:") and "sections/barrier" in f and "never runs" in f for f in findings
+    ), findings
+
+
+def test_every_delegated_gate_runs_once_under_ctest():
+    """The runtime gate skips the gates it delegates to when CTest's c-runtime entry sets
+    BCIR_SKIP_DELEGATED_GATES=1, and CMake registers each as its own entry: a call outside the
+    guard runs twice, a guard naming another entry sends the log's reader to the wrong place, a
+    second call or a missing switch on the CMake side breaks the once, and a missing registration
+    loses the gate from ctest altogether (L12). Each is an M16 finding."""
+    gate_rel = "tools/cpp/check_sycl.sh"
+    faults = {
+        "the guard removed": lambda g: g.replace(
+            'if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then\n'
+            '  echo "  SKIP SYCL backend differential oracle (BCIR_SKIP_DELEGATED_GATES=1; '
+            'CTest runs it as cpp-sycl)"\nelif bash',
+            "if bash",
+        ),
+        "the SKIP line naming another entry": lambda g: g.replace(
+            "CTest runs it as cpp-sycl)", "CTest runs it as cpp-handoff)"
+        ),
+        "a second call": lambda g: g + f'\nbash "${{ROOT}}/{gate_rel}"\n',
+        "an unregistered script": lambda g: g + '\nbash "${ROOT}/tools/c/check_other.sh"\n',
+        "the sanitizer's own guard removed": lambda g: g.replace(
+            'if [ "${BCIR_SKIP_CFRONT_SANITIZE:-0}" = "1" ]; then', "if false; then"
+        ),
+    }
+    clean = _tree()
+    assert manifest_tool.check(_manifest(), clean) == []
+    for what, fault in faults.items():
+        tree = copy.copy(clean)  # a Tree is read once; each fault edits its own copy's text
+        tree.runtime_gate_text = fault(clean.runtime_gate_text)
+        assert tree.runtime_gate_text != clean.runtime_gate_text, f"{what}: the fault did not apply"
+        findings = manifest_tool.check(_manifest(), tree)
+        assert any(f.startswith("M16:") for f in findings), f"{what} is no finding: {findings}"
+    cmake_faults = {
+        "c-runtime without the switch": lambda c: c.replace('"BCIR_SKIP_DELEGATED_GATES=1"', ""),
+        "the registration loop removed": lambda c: c.replace(
+            "IN LISTS BCIR_MANIFEST_delegated", "IN LISTS BCIR_MANIFEST_other"
+        ),
+    }
+    for what, fault in cmake_faults.items():
+        tree = copy.copy(clean)
+        tree.tests_cmake_text = fault(clean.tests_cmake_text)
+        assert tree.tests_cmake_text != clean.tests_cmake_text, f"{what}: the fault did not apply"
+        findings = manifest_tool.check(_manifest(), tree)
+        assert any(f.startswith("M16:") for f in findings), f"{what} is no finding: {findings}"
+
+
 def test_the_gate_must_call_every_section_script():
     """A section the gate stopped calling would still pass as a CTest entry while the gate judged
     other text (L12): the delegation is part of the rule."""
@@ -671,6 +796,16 @@ def test_the_section_parity_gate_sees_a_differing_output():
             failing, [a], [b], python=sys.executable, timeout=30, shell=shell
         )
         assert failed["differ"] == [] and not failed["passed"] and failed["cmake"][0] == 1, failed
+        # a compiler-only section takes no binary: its two runs must still agree and pass, so a
+        # verdict that is not a function of its inputs is a finding there too
+        alone = section_tool.compare_section(
+            cc_script, [], [], python=sys.executable, timeout=30, shell=shell, cc="cc-under-test"
+        )
+        assert alone["differ"] == [] and alone["passed"], alone
+        drifting = section_tool.compare_section(
+            varying, [], [], python=sys.executable, timeout=30, shell=shell
+        )
+        assert drifting["differ"] == ["stdout"] and drifting["unstable"], drifting
 
 
 def test_a_bash_that_is_not_a_shell_is_not_a_shell():
@@ -914,6 +1049,18 @@ def test_the_cmake_reader_and_the_checker_agree():
         and '"${_unit}" main' in cmake
         and '"${_unit}" link' in cmake
     ), "the CMake reader does not read the kernels' drivers and libraries"
+    assert '"${_unit}" compiler_only' in cmake, (
+        "the CMake reader does not read a section's compiler_only, so it would refuse one or accept "
+        "an empty section"
+    )
+    assert (
+        "BCIR_MANIFEST_delegated" in cmake
+        and '"${_unit}" script _dscript' in cmake
+        and '"${_unit}" labels' in cmake
+    ), "the CMake reader does not read the delegated gates"
+    assert "IN LISTS BCIR_MANIFEST_delegated" in tests and "BCIR_SKIP_DELEGATED_GATES=1" in tests, (
+        "CMake must register every delegated gate and let c-runtime skip them"
+    )
     runtime = (_ROOT / "runtime" / "c" / "CMakeLists.txt").read_text(encoding="utf-8")
     assert manifest_tool.KERNEL_WRITER in runtime and "DEPFILE" in runtime, (
         "the CMake build must write each kernel with the gate's writer, and rebuild it from its depfile"

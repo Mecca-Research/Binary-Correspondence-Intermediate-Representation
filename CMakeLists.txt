@@ -4,9 +4,10 @@
 #
 #   cmake --preset default && cmake --build --preset default && ctest --preset build
 #
-# The shell gates under tools/ still own their sections until BUILD-2 migrates them; here they
-# are CTest entries (`ctest -L shell`) run under the configured compilers, so one configure
-# decides which toolchain every rail is judged on.
+# BUILD-2 moved the runtime gate's sections into tools/c/sections/, each a CTest entry over the
+# binaries built here (`ctest -L section`); the shell gates are CTest entries too (`ctest -L shell`),
+# the runtime gate's delegated gates one entry each, all run under the configured compilers, so one
+# configure decides which toolchain every rail is judged on.
 cmake_minimum_required(VERSION 3.21)
 
 project(BCIR

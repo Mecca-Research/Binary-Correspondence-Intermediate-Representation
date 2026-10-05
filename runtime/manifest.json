@@ -23,7 +23,11 @@
     "section must not). `kernels` are programs the Python oracle emits (bcir.lower.c_kernel): `emit`",
     "names the emitter, `args` its arguments, `main` the driver under runtime/c/kernels appended to the",
     "emitted text, `link` the system libraries; tools/build/emit_kernel.py writes the unit for the gate,",
-    "CMake and the section-parity recipe alike."
+    "CMake and the section-parity recipe alike. A `compiler_only` section takes no binary: it judges what",
+    "the oracle emits under CC, and section parity holds its output stable over two runs. `delegated` are",
+    "the gates tools/c/check_runtime.sh calls, each a script that builds and judges binaries of its own:",
+    "CMake registers each as its own CTest entry under `labels`, and the gate skips them when CTest's",
+    "c-runtime entry sets BCIR_SKIP_DELEGATED_GATES=1."
   ],
   "libraries": {
     "bcir_base": {
@@ -147,7 +151,9 @@
     "test_ai_kernels": {"sources": ["test_ai_kernels.c"], "libraries": ["bcir_models"], "link": ["m"], "options": ["-ffp-contract=off"]},
     "test_q8_tables": {"sources": ["test_q8_tables.c"]},
     "test_x86_interrupt": {"sources": ["test_x86_interrupt.c"], "options": ["-ffreestanding"]},
-    "test_link_flag_rules": {"sources": ["test_link_flag_rules.c"], "libraries": ["bcir_cfront"]}
+    "test_link_flag_rules": {"sources": ["test_link_flag_rules.c"], "libraries": ["bcir_cfront"]},
+    "test_oob_counter": {"sources": ["test_oob_counter.c"], "libraries": ["bcir_quarantine"], "link": ["pthread"]},
+    "test_extent_assert": {"sources": ["test_extent_assert.c"], "libraries": ["bcir_quarantine"]}
   },
   "fuzzers": {
     "fuzz_q8_model": {"sources": ["fuzz_q8_model.c"], "libraries": ["bcir_models"], "max_len": "16384"},
@@ -211,6 +217,18 @@
       "of": "test_kplan",
       "mutation": {"file": "bcir_kplan.c", "find": "r.hi = a.hi + b.hi + (r.lo < a.lo ? 1u : 0u);", "replace": "r.hi = a.hi + b.hi;"}
     },
+    "test_per_O0": {"of": "test_per", "options": ["-O0"]},
+    "test_per_O3": {"of": "test_per", "options": ["-O3"]},
+    "test_xer_O0": {"of": "test_xer", "options": ["-O0"]},
+    "test_xer_O3": {"of": "test_xer", "options": ["-O3"]},
+    "test_jer_O0": {"of": "test_jer", "options": ["-O0"]},
+    "test_jer_O3": {"of": "test_jer", "options": ["-O3"]},
+    "test_emit_O0": {"of": "test_emit", "options": ["-O0"]},
+    "test_emit_O3": {"of": "test_emit", "options": ["-O3"]},
+    "test_per_plan_O0": {"of": "test_per_plan", "options": ["-O0"]},
+    "test_per_plan_O3": {"of": "test_per_plan", "options": ["-O3"]},
+    "test_oer_O0": {"of": "test_oer", "options": ["-O0"]},
+    "test_oer_O3": {"of": "test_oer", "options": ["-O3"]},
     "test_x86_interrupt_c11": {"of": "test_x86_interrupt", "standard": 11},
     "test_q8_tables_c11": {"of": "test_q8_tables", "standard": 11},
     "test_ring_tsan": {"of": "test_ring", "standard": 11, "sanitizer": "thread", "options": ["-O1", "-g"]},
@@ -257,6 +275,8 @@
     "emitlink": {"script": "tools/c/sections/emitlink.sh", "harnesses": ["bcir-cc"]},
     "recover": {"script": "tools/c/sections/recover.sh", "harnesses": ["bcir-cc"]},
     "writeguard": {"script": "tools/c/sections/writeguard.sh", "harnesses": ["bcir-cc"]},
+    "atomicring": {"script": "tools/c/sections/atomicring.sh", "harnesses": ["test_oob_counter"]},
+    "extentassert": {"script": "tools/c/sections/extentassert.sh", "harnesses": ["test_extent_assert"]},
     "diag": {"script": "tools/c/sections/diag.sh", "harnesses": ["test_diag"]},
     "fallback": {"script": "tools/c/sections/fallback.sh", "harnesses": ["bcir-cc"]},
     "cexpr": {"script": "tools/c/sections/cexpr.sh", "harnesses": ["bcir-cc"]},
@@ -328,7 +348,27 @@
     "addrmember": {"script": "tools/c/sections/addrmember.sh", "harnesses": ["bcir-cc"]},
     "atomiclocal": {"script": "tools/c/sections/atomiclocal.sh", "harnesses": ["bcir-cc"]},
     "builtins": {"script": "tools/c/sections/builtins.sh", "harnesses": ["bcir-cc"]},
-    "stmtexpr": {"script": "tools/c/sections/stmtexpr.sh", "harnesses": ["bcir-cc"]}
+    "stmtexpr": {"script": "tools/c/sections/stmtexpr.sh", "harnesses": ["bcir-cc"]},
+    "inlineasm": {"script": "tools/c/sections/inlineasm.sh", "harnesses": [], "compiler_only": true},
+    "portio": {"script": "tools/c/sections/portio.sh", "harnesses": [], "compiler_only": true},
+    "barrier": {"script": "tools/c/sections/barrier.sh", "harnesses": [], "compiler_only": true},
+    "per": {"script": "tools/c/sections/per.sh", "harnesses": ["test_per_O0", "test_per_O3"]},
+    "xer": {"script": "tools/c/sections/xer.sh", "harnesses": ["test_xer_O0", "test_xer_O3"]},
+    "jer": {"script": "tools/c/sections/jer.sh", "harnesses": ["test_jer_O0", "test_jer_O3"]},
+    "asn1_emit": {"script": "tools/c/sections/asn1_emit.sh", "harnesses": ["test_emit_O0", "test_emit_O3"]},
+    "per_plan": {"script": "tools/c/sections/per_plan.sh", "harnesses": ["test_per_plan_O0", "test_per_plan_O3"]},
+    "oer": {"script": "tools/c/sections/oer.sh", "harnesses": ["test_oer_O0", "test_oer_O3"]},
+    "asn1bench": {"script": "tools/c/sections/asn1bench.sh", "harnesses": ["bcir_asn1_bench"]},
+    "asn1fast": {"script": "tools/c/sections/asn1fast.sh", "harnesses": ["test_asn1_streampack"]}
+  },
+  "delegated": {
+    "c-memory-discipline": {"script": "tools/c/check_memory_discipline.sh", "labels": ["c"]},
+    "c-streampack-semantic": {"script": "tools/c/check_streampack_semantic.sh", "labels": ["c"]},
+    "c-target-abi": {"script": "tools/c/check_target_abi.sh", "labels": ["c"]},
+    "cpp-jer-index": {"script": "tools/cpp/check_jer_index.sh", "labels": ["cpp"]},
+    "cpp-jer-simd": {"script": "tools/cpp/check_jer_simd.sh", "labels": ["cpp"]},
+    "cpp-handoff": {"script": "tools/cpp/check_handoff.sh", "labels": ["cpp"]},
+    "cpp-sycl": {"script": "tools/cpp/check_sycl.sh", "labels": ["cpp"]}
   },
   "freestanding_checks": [
     "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",

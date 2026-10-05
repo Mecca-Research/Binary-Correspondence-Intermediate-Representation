@@ -23,8 +23,8 @@ foreach(_tool IN LISTS BCIR_MANIFEST_tools)
   bcir_manifest_options(${_tool} "${BCIR_tools_${_tool}_OPTIONS}")
 endforeach()
 
-# --- harnesses: the gates' test executables, built (the manifest's link proof); the gates run
-# them with their own argv until BUILD-2 registers each as a CTest entry ---
+# --- harnesses: the gates' test executables, built (the manifest's link proof); the migrated
+# sections run them as c-section-* entries, as the gate runs its own builds (BUILD-2) ---
 if(BCIR_BUILD_HARNESSES)
   foreach(_h IN LISTS BCIR_MANIFEST_harnesses)
     bcir_manifest_paths(_srcs ${BCIR_harnesses_${_h}_SOURCES})

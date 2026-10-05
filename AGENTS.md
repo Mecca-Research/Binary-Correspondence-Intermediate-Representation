@@ -43,6 +43,8 @@ live in `CONTRIBUTING.md`.
 - Changing a test of C the Python oracle emits (the E-series kernels) → the manifest's `kernels` and
   its driver under `runtime/c/kernels/` (one writer, `tools/build/emit_kernel.py`, for the gate,
   CMake and the section-parity recipe alike).
+- Adding a gate `tools/c/check_runtime.sh` calls that builds its own binaries → the manifest's
+  `delegated` (its own CTest entry; the gate calls it under `BCIR_SKIP_DELEGATED_GATES`, M16).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

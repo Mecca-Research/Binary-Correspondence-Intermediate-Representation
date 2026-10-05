@@ -6,7 +6,8 @@
 #             section-parity gate (`ctest --preset build`)
 #   section   the gate sections that moved into tools/c/sections/, over the harnesses built here
 #   python    the oracle's quick tier
-#   shell     the shell gates, wrapped as they are until their sections migrate (BUILD-2)
+#   shell     the shell gates, wrapped as they are: c-runtime, the gates it delegates to (one entry
+#             each, from the manifest's `delegated`), the cfront sanitizer and the fuzzers
 #   c / cpp / fuzz / mlir / docs   what each gate is about
 # CC/CXX are handed to the shell gates from the configured compilers, so `cmake --preset clang`
 # followed by `ctest` runs them under the same compiler the targets were built with.
@@ -95,10 +96,17 @@ add_test(NAME python-quick
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOUT 1800)
 
-# --- shell: the gates as they are (BUILD-2 migrates their sections) ---
-bcir_add_shell_gate(c-runtime tools/c/check_runtime.sh LABELS "c" ENV "BCIR_SKIP_CFRONT_SANITIZE=1")
-bcir_add_shell_gate(c-memory-discipline tools/c/check_memory_discipline.sh LABELS "c" TIMEOUT 900)
-bcir_add_shell_gate(cpp-handoff tools/cpp/check_handoff.sh LABELS "cpp" TIMEOUT 900)
+# --- shell: the gates as they are ---
+# c-runtime runs tools/c/check_runtime.sh without the gates it delegates to: each of those is an entry
+# of its own here, read from the manifest's `delegated`, so `ctest` runs every one once (BUILD-2j;
+# M16 of tools/build/manifest.py holds the gate, the manifest and this file in step). The cfront
+# sanitizer is skipped by its own switch: on Clang it is the cfront-sanitize entry below.
+bcir_add_shell_gate(c-runtime tools/c/check_runtime.sh LABELS "c"
+                    ENV "BCIR_SKIP_CFRONT_SANITIZE=1" "BCIR_SKIP_DELEGATED_GATES=1")
+foreach(_gate IN LISTS BCIR_MANIFEST_delegated)
+  bcir_add_shell_gate(${_gate} ${BCIR_delegated_${_gate}_SCRIPT} LABELS "${BCIR_delegated_${_gate}_LABELS}"
+                      TIMEOUT 1800)
+endforeach()
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
   bcir_add_shell_gate(cfront-sanitize tools/c/sanitize_cfront.sh LABELS "c" TIMEOUT 1800
                       ENV "SANITIZE_SKIP_VALGRIND=1" "SANITIZE_ENGINES_PARALLEL=1")

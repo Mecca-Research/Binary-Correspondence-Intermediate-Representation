@@ -38,8 +38,16 @@ if [ "${CC_WAS_SET}" != x ] &&
   [ -z "${best}" ] || CC="${best}"
 fi
 
+# The gates this script delegates to -- the manifest's `delegated` entries, each a script that builds
+# and judges binaries of its own -- run here in turn. BCIR_SKIP_DELEGATED_GATES=1 skips them for a
+# caller that runs each one itself: the CTest `c-runtime` entry, beside which CMake registers every
+# delegated gate as an entry of its own, so `ctest` runs each once (BUILD-2j). M16 of
+# tools/build/manifest.py holds these calls, the manifest and the switch in step. Anyone invoking
+# check_runtime.sh directly still gets every gate.
 echo "[c-runtime] memory classes + allocator/context/channel fault sweep"
-if CC="${CC}" bash "${ROOT}/tools/c/check_memory_discipline.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -ne 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP memory-discipline gate (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as c-memory-discipline)"
+elif CC="${CC}" bash "${ROOT}/tools/c/check_memory_discipline.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -ne 0 ]; then
   echo "  FAIL: memory-discipline gate"; exit 1
 fi
 
@@ -299,65 +307,17 @@ CC="${CC}" bash "${ROOT}/tools/c/sections/recover.sh" "${tmp}/bcir-cc" || exit 1
 echo "[c-runtime] bcir-cc WRITE-guard: an OOB store fails-fast, never clamps (#writeguard)"
 CC="${CC}" bash "${ROOT}/tools/c/sections/writeguard.sh" "${tmp}/bcir-cc" || exit 1
 
-# Atomic OOB ring (#atomicring, §5.12): the counter and payload publication must both be synchronized.
-# An atomic fetch-add alone gives writers distinct slots but still lets a reporter race a non-atomic struct
-# update (C undefined behaviour / torn audit records). The hosted implementation serializes each short
-# publish/snapshot section. This test hammers writers while a reporter snapshots concurrently, then asserts
-# the total equals N*M. If the freestanding build has no atomics the contract is single-threaded and this
-# hosted concurrency test is skipped.
 echo "[c-runtime] OOB ring counter is atomic under concurrent events (#atomicring)"
-{ echo '#include <stdio.h>'; echo '#include "bcir_quarantine.h"'
-  cat <<'DRV'
-#if BCIR_OOB_COUNTER_ATOMIC
-#include <pthread.h>
-#define NT 8
-#define NM 50000
-static void *hammer(void *arg){ (void)arg;
-  for(long k=0;k<NM;k++) bcir_oob_record_event(1u, (uint64_t)k, 64u, "race:a");
-  return 0; }
-static void *observe(void *arg){ (void)arg; FILE *f=tmpfile(); if(!f) return (void *)1;
-  for(int k=0;k<200;k++){ bcir_quarantine_report(f); rewind(f); }
-  return fclose(f) ? (void *)1 : 0; }
-int main(void){
-  pthread_t th[NT], reader;
-  bcir_quarantine_report(NULL); bcir_decide_report(NULL); /* public null handles are harmless */
-  if(pthread_create(&reader,0,observe,0)) return 2;
-  for(int i=0;i<NT;i++) pthread_create(&th[i],0,hammer,0);
-  for(int i=0;i<NT;i++) pthread_join(th[i],0);
-  void *reader_rc=0; pthread_join(reader,&reader_rc); if(reader_rc) return 3;
-  unsigned long got = bcir_oob_count, want = (unsigned long)NT*NM;
-  printf(got==want ? "EXACT %lu\n" : "LOST %lu/%lu\n", got, want);
-  return got==want ? 0 : 1; }
-#else
-int main(void){ printf("SKIP (no atomics; single-threaded contract)\n"); return 0; }
-#endif
-DRV
-} > "${tmp}/race_main.c"
-"${CC}" -std=c23 -O2 -pthread -I "${C}" "${tmp}/race_main.c" "${C}/bcir_quarantine.c" -o "${tmp}/race_h" 2>/dev/null \
-  || "${CC}" -std=c2x -O2 -pthread -I "${C}" "${tmp}/race_main.c" "${C}/bcir_quarantine.c" -o "${tmp}/race_h" \
+"${CC}" -std=c23 -O2 -pthread -I "${C}" "${C}/test_oob_counter.c" "${C}/bcir_quarantine.c" -o "${tmp}/test_oob_counter" 2>/dev/null \
+  || "${CC}" -std=c2x -O2 -pthread -I "${C}" "${C}/test_oob_counter.c" "${C}/bcir_quarantine.c" -o "${tmp}/test_oob_counter" \
   || { echo "  FAIL: atomic-ring test build"; exit 1; }
-race_out="$("${tmp}/race_h")"; race_rc=$?
-{ [ "${race_rc}" = "0" ] && { printf '%s' "${race_out}" | grep -q "^EXACT" || printf '%s' "${race_out}" | grep -q "^SKIP"; }; } \
-  && echo "  PASS atomicring: ${race_out} (concurrent OOB events do not scramble the total)" \
-  || { echo "  FAIL: OOB ring counter raced (${race_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/atomicring.sh" "${tmp}/test_oob_counter" || exit 1
 
-# rid->extent tamper-evidence (#extentassert, §5.12): the guard trusts the inline `n`, and the freestanding
-# unit has NO registry to resolve `rid`->extent (a DOCUMENTED limit; see bcir_quarantine.h). The feasible
-# lightweight check, for a KNOWN-EXTENT array, ties `n` to the array's true storage via a COMPILE-TIME
-# BCIR_EXTENT_ASSERT(arr, n) == _Static_assert(n == sizeof(arr)/sizeof(arr[0])): a correct extent compiles,
-# a TAMPERED `n` fails to compile -- so the extent is tamper-evident with no runtime cost and no registry.
 echo "[c-runtime] rid->extent tamper-evidence: BCIR_EXTENT_ASSERT (freestanding lightweight check) (#extentassert)"
-{ echo '#include "bcir_quarantine.h"'; echo 'static unsigned a[8];'
-  echo 'int main(void){ BCIR_EXTENT_ASSERT(a, 8u); return (int)a[0]; }'; } > "${tmp}/ext_ok.c"
-"${CC}" -std=c23 -I "${C}" "${tmp}/ext_ok.c" "${C}/bcir_quarantine.c" -o "${tmp}/ext_ok" 2>/dev/null \
-  || "${CC}" -std=c2x -I "${C}" "${tmp}/ext_ok.c" "${C}/bcir_quarantine.c" -o "${tmp}/ext_ok" \
+"${CC}" -std=c23 -I "${C}" "${C}/test_extent_assert.c" "${C}/bcir_quarantine.c" -o "${tmp}/test_extent_assert" 2>/dev/null \
+  || "${CC}" -std=c2x -I "${C}" "${C}/test_extent_assert.c" "${C}/bcir_quarantine.c" -o "${tmp}/test_extent_assert" \
   || { echo "  FAIL: BCIR_EXTENT_ASSERT rejected a CORRECT extent"; exit 1; }
-{ echo '#include "bcir_quarantine.h"'; echo 'static unsigned a[8];'
-  echo 'int main(void){ BCIR_EXTENT_ASSERT(a, 99u); return (int)a[0]; }'; } > "${tmp}/ext_bad.c"
-if "${CC}" -std=c23 -I "${C}" "${tmp}/ext_bad.c" "${C}/bcir_quarantine.c" -o "${tmp}/ext_bad" 2>/dev/null; then
-  echo "  FAIL: BCIR_EXTENT_ASSERT did NOT catch a tampered extent (n=99 vs storage 8)"; exit 1
-fi
-echo "  PASS extentassert: correct extent compiles; tampered n=99 fails to compile (tamper-evident) (#extentassert)"
+CC="${CC}" bash "${ROOT}/tools/c/sections/extentassert.sh" "${tmp}/test_extent_assert" || exit 1
 
 echo "[c-runtime] Clang-style diagnostic renderer (bcir_diag): caret layout == oracle (#diag)"
 "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_diag.c" "${C}/test_diag.c" -o "${tmp}/test_diag" 2>/dev/null \
@@ -614,250 +574,15 @@ CC="${CC}" bash "${ROOT}/tools/c/sections/builtins.sh" "${tmp}/bcir-cc" || exit 
 echo "[c-runtime] GCC statement expressions -- ({ ...; e; }) (#stmtexpr)"
 CC="${CC}" bash "${ROOT}/tools/c/sections/stmtexpr.sh" "${tmp}/bcir-cc" || exit 1
 
-# Inline assembly (#inlineasm): GNU `asm`/`__asm__` is an ISA-NEUTRAL trusted opaque effect edge (ASM1) --
-# the template is re-emitted VERBATIM as a `__asm__ [__volatile__] (...)` statement; BCIR owns only the
-# calling side (operands + constraints + clobbers + ordering). This is a PYTHON-frontend feature (the C twin
-# bcir_cfront.c does not parse asm yet), so the probe emits via `compile_unit` (not bcir-cc --emit-c). It
-# proves the emit compiles under BOTH the default CC and -- when present -- a second compiler, AND that an
-# `asm volatile("" ::: "memory")` compiler barrier wrapped around a store/load does NOT change the observable
-# value (it only constrains ordering). Uses the reserved __asm__/__volatile__ spellings + the ISA-neutral
-# `"=r"(out) : "0"(in)` tied-register copy + empty-template `"memory"` barrier, so it compiles on any ISA.
 echo "[c-runtime] inline assembly: ISA-neutral trusted opaque edge, verbatim emit + memory barrier (#inlineasm)"
-cat > "${tmp}/cfront_asm.c" <<'ASMC'
-unsigned asm_copy(unsigned x){ unsigned y = 0; __asm__("" : "=r"(y) : "0"(x)); return y; }
-unsigned asm_barrier(unsigned *p, unsigned x){
-  *p = x;                                  /* store ... */
-  __asm__ __volatile__("" ::: "memory");   /* an ordering fence between the store and the load */
-  return *p;                               /* ... load: the barrier must NOT change the value (== x) */
-}
-void asm_basic(void){ __asm__("nop"); __asm__ __volatile__("" ::: "memory"); }
-ASMC
-FX="${tmp}/cfront_asm.c" python3 - > "${tmp}/asm_emit.c" <<'PY' || { echo "  FAIL: python asm emit"; exit 1; }
-import os, re
-from bcir.frontends.cfront import compile_unit
-from bcir.frontends.cfront.emit import emit_function
-r = compile_unit(open(os.environ['FX']).read(), check_clang=False)
-assert r.is_clean, [(d.law, d.message) for d in r.diagnostics]
-out = []
-for lf in r.lowered.functions.values():
-    t = re.sub(r"/\*.*?\*/\n?", "", emit_function(lf), flags=re.S)   # drop the attestation comment
-    assert "__asm__" in t, "the asm edge was eliminated from the emit"
-    out.append(t)
-print("\n\n".join(out))
-PY
-grep -q '__asm__ __volatile__ ("" :  :  : "memory")' "${tmp}/asm_emit.c" \
-  && echo "  PASS inlineasm: emit carries the verbatim __asm__ __volatile__ memory barrier" \
-  || { echo "  FAIL: inlineasm emit missing the verbatim barrier"; cat "${tmp}/asm_emit.c"; exit 1; }
-{ echo '#include <stdint.h>'; echo '#include <stdio.h>'; echo '#include <string.h>'
-  cat "${tmp}/asm_emit.c"
-  cat <<'DRV'
-int main(void){
-  unsigned buf = 0;
-  for(unsigned x=0; x<5000u; x++){
-    if(bcir_asm_copy(x) != x){ printf("COPY@%u\n", x); return 1; }
-    if(bcir_asm_barrier(&buf, x) != x){ printf("BARRIER@%u\n", x); return 1; }
-  }
-  bcir_asm_basic();
-  puts("MATCH"); return 0;
-}
-DRV
-} > "${tmp}/asm_harness.c"
-asm_ok=1; asm_seen=""
-for cc in "${CC}" "$(command -v gcc)" "$(command -v clang)"; do
-  [ -n "${cc}" ] && [ -x "${cc}" ] || continue
-  case " ${asm_seen} " in *" ${cc} "*) continue;; esac     # de-dup (CC may already be gcc/clang)
-  asm_seen="${asm_seen} ${cc}"
-  "${cc}" -std=c11 -pedantic -O2 "${tmp}/asm_harness.c" -o "${tmp}/asm_h" 2>/dev/null \
-    || { echo "  FAIL: inlineasm harness build (${cc})"; asm_ok=0; break; }
-  ar="$("${tmp}/asm_h")"
-  [ "${ar}" = "MATCH" ] || { echo "  FAIL: inlineasm behaviour (${cc}: ${ar})"; asm_ok=0; break; }
-done
-[ "${asm_ok}" = "1" ] \
-  && echo "  PASS inlineasm: __asm__ copy + memory-barrier store/load == value-preserving (ISA-neutral, every CC)" \
-  || exit 1
+CC="${CC}" bash "${ROOT}/tools/c/sections/inlineasm.sh" || exit 1
 
-# Port-mapped I/O intrinsics (#portio, ASM2): inb/inw/inl / outb/outw/outl lower to a typed, isolated,
-# BARRIERED I/O-port edge; the per-ISA `in`/`out` instruction is emitted behind `--target` (x86 emits the
-# real instruction as `__asm__ __volatile__`; non-x86 has no port I/O -> the honest unsupported diagnostic).
-# HONEST BOUNDARY: executing `in`/`out` from userspace TRAPS (it needs iopl/ioperm + ring-0), so this probe
-# ASSEMBLES the emitted asm (`-c`, assemble-only) to prove it is valid x86 the toolchain accepts -- it NEVER
-# links or runs it. The emitted text must carry the right `in`/`out` instruction + operands.
 echo "[c-runtime] port-mapped I/O intrinsics: typed barriered edge, x86 in/out emit, assemble-only (#portio)"
-cat > "${tmp}/cfront_portio.c" <<'PIOC'
-unsigned pio_inb(unsigned port){ return inb(port); }      /* read u8  from a port */
-unsigned pio_inw(unsigned port){ return inw(port); }      /* read u16 */
-unsigned pio_inl(unsigned port){ return inl(port); }      /* read u32 */
-void pio_outb(unsigned v, unsigned port){ outb(v, port); } /* Linux out(value, port): value first, port second */
-void pio_outw(unsigned v, unsigned port){ outw(v, port); }
-void pio_outl(unsigned v, unsigned port){ outl(v, port); }
-PIOC
-FX="${tmp}/cfront_portio.c" python3 - > "${tmp}/portio_emit.c" <<'PY' || { echo "  FAIL: python portio emit"; exit 1; }
-import os, re
-from bcir.frontends.cfront import compile_unit
-from bcir.frontends.cfront.emit import emit_function
-from bcir.model import Domain
-r = compile_unit(open(os.environ['FX']).read(), check_clang=False)   # default target x86_64-linux
-assert r.is_clean, [(d.law, d.message) for d in r.diagnostics]
-# the edges are typed + isolated + barriered (the IR-level contract): MMIO domain, barriered hazard.
-pio = [c for lf in r.lowered.functions.values() for c in lf.claims if c.op.startswith('c.portio.')]
-assert len(pio) == 6, f"expected 6 port-I/O edges, got {len(pio)}"
-assert all(c.hazard == 'barriered' for c in pio), "a port-I/O edge is not barriered"
-assert all(c.domain == Domain.MMIO for c in pio), "a port-I/O edge is not isolated in the MMIO I/O domain"
-out = ["#include <stdint.h>"]
-for lf in r.lowered.functions.values():
-    t = re.sub(r"/\*.*?\*/\n?", "", emit_function(lf), flags=re.S)   # drop the attestation comment
-    assert "__asm__ __volatile__" in t, "the port-I/O edge was eliminated from the emit"
-    out.append(t)
-print("\n\n".join(out))
-PY
-# the emit carries the real x86 in/out instructions + the standard <asm/io.h> operand constraints.
-{ grep -q '"inb %w1, %b0" : "=a"' "${tmp}/portio_emit.c" \
-  && grep -q '"outb %b0, %w1" :  : "a"' "${tmp}/portio_emit.c" \
-  && grep -q '"inl %w1, %k0" : "=a"' "${tmp}/portio_emit.c" \
-  && grep -q '"Nd"' "${tmp}/portio_emit.c"; } \
-  && echo "  PASS portio: emit carries the real x86 inb/outb/inl + the <asm/io.h> =a/a/Nd constraints" \
-  || { echo "  FAIL: portio emit missing the real in/out instruction"; cat "${tmp}/portio_emit.c"; exit 1; }
-# ASSEMBLE-ONLY (-c): prove the emitted x86 asm is valid the toolchain accepts. NEVER linked/run (the
-# `in`/`out` instructions are privileged). Every available CC must assemble it.
-# The emitted asm is x86 `in`/`out`, which a non-x86 host's native assembler cannot accept (and a clang
-# cross-compile `-target x86_64-linux-gnu` cannot satisfy without an x86 sysroot the ARM CI lane lacks). So
-# the assemble check runs ONLY on an x86 host and SKIPS on a non-x86 host (e.g. the aarch64 lane) -- the
-# emit-text check above is arch-independent, and the x86 asm's validity is proven on the x86 CI lanes.
-case "$(uname -m)" in x86_64|amd64|x86|i386|i486|i586|i686) pio_host_x86=1;; *) pio_host_x86=0;; esac
-if [ "${pio_host_x86}" = "1" ]; then
-  pio_ok=1; pio_seen=""
-  for cc in "${CC}" "$(command -v gcc)" "$(command -v clang)"; do
-    [ -n "${cc}" ] && [ -x "${cc}" ] || continue
-    case " ${pio_seen} " in *" ${cc} "*) continue;; esac   # de-dup (CC may already be gcc/clang)
-    pio_seen="${pio_seen} ${cc}"
-    "${cc}" -std=c11 -pedantic -c "${tmp}/portio_emit.c" -o "${tmp}/portio_${cc##*/}.o" 2>/dev/null \
-      || { echo "  FAIL: portio emit did not ASSEMBLE under ${cc}"; pio_ok=0; break; }
-    [ -f "${tmp}/portio_${cc##*/}.o" ] || { echo "  FAIL: portio object not produced by ${cc}"; pio_ok=0; break; }
-  done
-  [ "${pio_ok}" = "1" ] \
-    && echo "  PASS portio: emitted x86 in/out ASSEMBLES under every CC (-c, assemble-only; execution is privileged)" \
-    || exit 1
-else
-  echo "  SKIP portio assemble: non-x86 host cannot assemble x86 in/out (validity proven on the x86 lanes; emit-text + fallback checks ran)"
-fi
-# the non-x86 honest diagnostic: ARM/RISC-V have no port I/O -> route to the LLVM fallback (the oracle).
-pio_fb="$(python3 -c "
-from bcir.frontends.cfront.pipeline import compile_with_fallback
-r = compile_with_fallback('unsigned f(void){ return inb(0x60); }', check_clang=False, target='aarch64-linux')
-print('FB' if (r.needs_fallback and 'requires an x86 target' in r.fallback) else 'NO')")" \
-  || { echo "  FAIL: portio non-x86 fallback probe"; exit 1; }
-[ "${pio_fb}" = "FB" ] \
-  && echo "  PASS portio: a non-x86 target (aarch64) has no port I/O -> honest unsupported diagnostic (LLVM fallback)" \
-  || { echo "  FAIL: portio non-x86 did not fall back honestly"; exit 1; }
+CC="${CC}" bash "${ROOT}/tools/c/sections/portio.sh" || exit 1
 
-# Memory-fence (hardware barrier) intrinsics (#barrier, ASM3): __sync_synchronize / __atomic_thread_fence /
-# the C11 atomic_thread_fence (all FULL/seq_cst, op `c.fence`) + the x86-conventional _mm_mfence (full) /
-# _mm_lfence (acquire) / _mm_sfence (release) lower to a typed, KINDED, barriered BARRIER edge; the per-ISA
-# instruction is emitted behind `--target` (x86 mfence/lfence/sfence; aarch64 dmb ish/ishld/ishst; riscv64
-# fence rw,rw / r,rw / rw,w), always with the required `"memory"` compiler-barrier clobber. Every ISA has a
-# fence, so a target outside the three families keeps the portable __atomic_thread_fence default (no
-# unsupported-diagnostic path -- unlike port I/O). The emit text is arch-independent (checked on every host);
-# the emitted NATIVE-arch barrier is ASSEMBLED on its own lane (x86 assembles mfence/lfence/sfence; the
-# aarch64 lane assembles dmb ish/ishld/ishst) -- non-native emits are NOT assembled (no cross sysroot).
 echo "[c-runtime] memory-fence intrinsics: typed kinded barriered edge, per-ISA emit, native assemble (#barrier)"
-# the native target for THIS host's arch (the only one we can assemble without a cross sysroot).
-case "$(uname -m)" in
-  x86_64|amd64|x86|i386|i486|i586|i686) brr_native="x86_64-linux"; brr_family="x86";;
-  aarch64|arm64) brr_native="aarch64-linux"; brr_family="arm";;
-  riscv64) brr_native="riscv64-linux"; brr_family="riscv";;
-  *) brr_native=""; brr_family="";;
-esac
-cat > "${tmp}/cfront_barrier.c" <<'BRRC'
-void b_full(void){ __sync_synchronize(); }          /* full (seq_cst) fence -> c.fence */
-void b_full11(void){ atomic_thread_fence(5); }       /* C11 <stdatomic.h> full fence -> c.fence */
-void b_mfence(void){ _mm_mfence(); }                 /* x86 mfence -> c.fence (full) */
-void b_lfence(void){ _mm_lfence(); }                 /* x86 lfence -> c.fence.acquire (load fence) */
-void b_sfence(void){ _mm_sfence(); }                 /* x86 sfence -> c.fence.release (store fence) */
-BRRC
-# emit for the NATIVE target (so the asm assembles); a host outside the three families emits x86_64-linux for
-# the TEXT checks but assembles nothing.
-BRR_TARGET="${brr_native:-x86_64-linux}" FX="${tmp}/cfront_barrier.c" python3 - > "${tmp}/barrier_emit.c" <<'PY' || { echo "  FAIL: python barrier emit"; exit 1; }
-import os, re
-from bcir.frontends.cfront import compile_unit
-from bcir.frontends.cfront.emit import emit_function
-from bcir.model import Opcode
-r = compile_unit(open(os.environ['FX']).read(), check_clang=False, target=os.environ['BRR_TARGET'])
-assert r.is_clean, [(d.law, d.message) for d in r.diagnostics]
-# the edges are typed + kinded + barriered (the IR-level contract): BARRIER opcode, barriered hazard.
-fen = [c for lf in r.lowered.functions.values() for c in lf.claims if c.op == 'c.fence' or c.op.startswith('c.fence.')]
-assert len(fen) == 5, f"expected 5 fence edges, got {len(fen)}"
-assert all(c.hazard == 'barriered' for c in fen), "a fence edge is not barriered"
-assert all(c.opcode == Opcode.BARRIER for c in fen), "a fence edge is not the BARRIER opcode"
-ops = sorted({c.op for c in fen})
-assert ops == ['c.fence', 'c.fence.acquire', 'c.fence.release'], f"unexpected fence op set: {ops}"
-out = ["#include <stdint.h>"]
-for lf in r.lowered.functions.values():
-    t = re.sub(r"/\*.*?\*/\n?", "", emit_function(lf), flags=re.S)   # drop the attestation comment
-    assert '__asm__ __volatile__' in t and ':::' in t and '"memory"' in t, "the fence edge lost its barrier emit"
-    out.append(t)
-print("\n\n".join(out))
-PY
-# the emit carries the per-ISA fence mnemonics + the required "memory" compiler-barrier clobber, per family.
-case "${brr_family}" in
-  arm)   m_full="dmb ish"; m_acq="dmb ishld"; m_rel="dmb ishst";;
-  riscv) m_full="fence rw,rw"; m_acq="fence r,rw"; m_rel="fence rw,w";;
-  *)     m_full="mfence"; m_acq="lfence"; m_rel="sfence";;     # x86 + the default-text host
-esac
-{ grep -q "\"${m_full}\" ::: \"memory\"" "${tmp}/barrier_emit.c" \
-  && grep -q "\"${m_acq}\" ::: \"memory\"" "${tmp}/barrier_emit.c" \
-  && grep -q "\"${m_rel}\" ::: \"memory\"" "${tmp}/barrier_emit.c"; } \
-  && echo "  PASS barrier: emit carries the per-ISA ${m_full}/${m_acq}/${m_rel} + the required \"memory\" clobber" \
-  || { echo "  FAIL: barrier emit missing the per-ISA fence instruction"; cat "${tmp}/barrier_emit.c"; exit 1; }
-# ASSEMBLE-ONLY (-c) the NATIVE-arch fence: prove the emitted barrier is valid asm the toolchain accepts. The
-# emit is native for THIS host (target = brr_native), so a native gcc/clang assembles it without a cross
-# sysroot. Non-native fence emits are NOT assembled (the aarch64 lane has no x86 sysroot, and vice-versa) --
-# their validity is proven on their own CI lane, the emit-text check above is arch-independent.
-if [ -n "${brr_native}" ]; then
-  brr_ok=1; brr_seen=""
-  for cc in "${CC}" "$(command -v gcc)" "$(command -v clang)"; do
-    [ -n "${cc}" ] && [ -x "${cc}" ] || continue
-    case " ${brr_seen} " in *" ${cc} "*) continue;; esac       # de-dup (CC may already be gcc/clang)
-    brr_seen="${brr_seen} ${cc}"
-    "${cc}" -std=c11 -pedantic -c "${tmp}/barrier_emit.c" -o "${tmp}/barrier_${cc##*/}.o" 2>/dev/null \
-      || { echo "  FAIL: barrier emit did not ASSEMBLE under ${cc}"; brr_ok=0; break; }
-    [ -f "${tmp}/barrier_${cc##*/}.o" ] || { echo "  FAIL: barrier object not produced by ${cc}"; brr_ok=0; break; }
-  done
-  [ "${brr_ok}" = "1" ] \
-    && echo "  PASS barrier: emitted native ${brr_family} fence ASSEMBLES under every CC (-c, assemble-only)" \
-    || exit 1
-else
-  echo "  SKIP barrier assemble: host arch outside the x86/aarch64/riscv64 families (emit-text check ran)"
-fi
-# the non-native fence emit is arch-independent TEXT (no assemble needed): the aarch64 dmb-ish family + the
-# riscv64 fence family are emitted correctly even off-arch, proving the per-ISA table is keyed off --target.
-brr_text="$(python3 -c "
-import re
-from bcir.frontends.cfront import compile_unit
-from bcir.frontends.cfront.emit import emit_function
-def body(src, target):
-    r = compile_unit(src, check_clang=False, target=target)
-    lf = r.lowered.functions['f']
-    return re.sub(r'/\*.*?\*/\n?', '', emit_function(lf), flags=re.S)
-ok = True
-ok &= 'dmb ish' in body('void f(void){ _mm_mfence(); }', 'aarch64-linux')
-ok &= 'dmb ishld' in body('void f(void){ _mm_lfence(); }', 'aarch64-linux')
-ok &= 'dmb ishst' in body('void f(void){ _mm_sfence(); }', 'aarch64-linux')
-ok &= 'fence rw,rw' in body('void f(void){ _mm_mfence(); }', 'riscv64-linux')
-ok &= 'fence r,rw' in body('void f(void){ _mm_lfence(); }', 'riscv64-linux')
-ok &= 'fence rw,w' in body('void f(void){ _mm_sfence(); }', 'riscv64-linux')
-print('OK' if ok else 'NO')")" \
-  || { echo "  FAIL: barrier per-ISA text probe"; exit 1; }
-[ "${brr_text}" = "OK" ] \
-  && echo "  PASS barrier: the aarch64 dmb-ish + riscv64 fence families emit correctly off-arch (per-ISA --target keying)" \
-  || { echo "  FAIL: barrier per-ISA off-arch emit text is wrong"; exit 1; }
+CC="${CC}" bash "${ROOT}/tools/c/sections/barrier.sh" || exit 1
 
-# X.691 PER decoding primitives (#per, roadmap phase C): the C twin of clause 11. PER is
-# NOT self-delimiting (X.691 7.2), so unlike the X.690 twin there is no schema-free
-# structure walk -- clause 11's whole-number and length decoders ARE the schema-free layer,
-# and they are the ones that take an attacker-supplied width, octet count or fragment header
-# and move a cursor with it. The dual-rail differential lives in bcir/tests/test_c_per.py;
-# what is checked HERE is the same discipline the other twins get: strict warnings as
-# errors, and a genuinely freestanding translation unit.
 echo "[c-runtime] X.691 PER primitives: strict-warning and freestanding build (#per)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_per.c" "${C}/test_per.c" -o "${tmp}/test_per"; then
@@ -868,61 +593,24 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   done
   # A decoder whose answers depend on the optimiser is not a decoder. Build the same twin
   # at -O0 and -O3 and require identical output on the same campaign: a signed-overflow or
-  # shift-past-width bug typically only diverges at one of the two.
+  # shift-past-width bug typically only diverges at one of the two. A twin that builds at -O2
+  # but not at -O0 or -O3 is a defect, and the CMake build of the manifest variants fails on
+  # it, so the gate fails too: these sweeps used to SKIP on a failed build (laws.md L12, L21).
   per_ok=1
   "${CC}" -std=c23 -O0 -I "${C}" "${C}/bcir_per.c" "${C}/test_per.c" -o "${tmp}/test_per_O0" \
     || per_ok=0
   "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_per.c" "${C}/test_per.c" -o "${tmp}/test_per_O3" \
     || per_ok=0
   if [ "${per_ok}" -eq 1 ]; then
-    python3 - "${tmp}" <<'PERPY' > "${tmp}/per_cases.txt"
-import sys, random
-sys.path.insert(0, ".")
-from bcir.asn1.per import (BitWriter, PerVariant, _encode_constrained,
-                           _encode_semi_constrained, _encode_unconstrained,
-                           _encode_normally_small)
-rng = random.Random(20260726)
-for variant, flag in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
-    for lb, ub in ((0, 255), (0, 256), (0, 65535), (0, 1 << 40), (-5, 5)):
-        for _ in range(40):
-            v = rng.randint(lb, ub)
-            w = BitWriter(variant); _encode_constrained(w, v, lb, ub)
-            print(f"constrained {lb} {ub} {flag} {w.to_bytes().hex()}")
-    for _ in range(40):
-        v = rng.randint(-(1 << 40), 1 << 40)
-        w = BitWriter(variant); _encode_unconstrained(w, v)
-        print(f"unconstrained {flag} {w.to_bytes().hex()}")
-    for _ in range(40):
-        v = rng.randint(0, 1 << 20)
-        w = BitWriter(variant); _encode_semi_constrained(w, v, 0)
-        print(f"semi 0 {flag} {w.to_bytes().hex()}")
-    for v in (0, 63, 64, 300):
-        w = BitWriter(variant); _encode_normally_small(w, v)
-        print(f"small {flag} {w.to_bytes().hex()}")
-PERPY
-    "${tmp}/test_per_O0" < "${tmp}/per_cases.txt" > "${tmp}/per_O0.txt"
-    "${tmp}/test_per_O3" < "${tmp}/per_cases.txt" > "${tmp}/per_O3.txt"
-    if cmp -s "${tmp}/per_O0.txt" "${tmp}/per_O3.txt"; then
-      echo "  PASS X.691 PER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/per_cases.txt") cases)"
-    else
-      echo "  FAIL: the PER twin's answers depend on the optimisation level"
-      diff "${tmp}/per_O0.txt" "${tmp}/per_O3.txt" | head -10
-      exit 1
-    fi
+    bash "${ROOT}/tools/c/sections/per.sh" "${tmp}/test_per_O0" "${tmp}/test_per_O3" || exit 1
   else
-    echo "  SKIP PER optimisation-parity (a build failed)"
+    echo "  FAIL: the X.691 PER twin did not build at -O0/-O3"; exit 1
   fi
 else
   echo "  FAIL: the X.691 PER twin does not build warning-clean"
   exit 1
 fi
 
-# X.693 XER lexical layer (#xer, roadmap phase E-adjacent): the C twin of the tag scanner
-# and the xmlcstring escaper. XER is text, so there is no bit cursor to get wrong -- but
-# there is a byte cursor, and it is driven entirely by attacker-supplied content before any
-# type is consulted. The dual-rail differential lives in bcir/tests/test_c_xer.py; what is
-# checked HERE is the same discipline every other twin gets: strict warnings as errors, a
-# genuinely freestanding translation unit, and answers that do not depend on the optimiser.
 echo "[c-runtime] X.693 XER lexical layer: strict-warning and freestanding build (#xer)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_xer.c" "${C}/test_xer.c" -o "${tmp}/test_xer"; then
@@ -937,68 +625,15 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_xer.c" "${C}/test_xer.c" -o "${tmp}/test_xer_O3" \
     || xer_ok=0
   if [ "${xer_ok}" -eq 1 ]; then
-    python3 - <<'XERPY' > "${tmp}/xer_cases.txt"
-import sys
-sys.path.insert(0, ".")
-from bcir.asn1.xer import _CONTROL_ELEMENT
-
-# Documents that reach every branch of the scanner, plus the truncations one octet short of
-# each excluded construct -- the inputs where a bounds check that is off by one shows up.
-docs = ["<a>", "</a>", "<a/>", "<PersonnelRecord>", "</ChildInformation>", "<_XMLThing/>",
-        "<a >", "<a\t/>", "<nul/>", "<BIT_STRING>", "<x-y.z/>", "<!-- c -->",
-        "<![CDATA[x]]>", "<!DOCTYPE a>", "<?xml?>", '<a b="1">', "<a:b>", "<", "</",
-        "<a", "<a/", "<!", "<!-", "<![CDATA", "<?", "<1a>", "<>", "< a>", "a",
-        "<a><b/></a>", "  <a>x</a>", "<a\xc3\xa9>"]
-for doc in docs:
-    raw = doc.encode("utf-8", "surrogatepass")
-    for pos in range(len(raw) + 2):
-        print(f"tag {raw.hex() or '-'} {pos}")
-        print(f"space {raw.hex() or '-'} {pos}")
-
-strings = ["", "a", "a<b>&c", "\t\n\r", "John P Smith", "&&&", "é中\U0001f600",
-           "".join(chr(code) for code in sorted(_CONTROL_ELEMENT))]
-for text in strings:
-    raw = text.encode()
-    print(f"escape {raw.hex() or '-'}")
-    print(f"unescape 1 {raw.hex() or '-'}")
-    print(f"unescape 0 {raw.hex() or '-'}")
-for text in ("a&#233;b", "a&#xEE;b", "a&amp;b", "a&nbsp;b", "a<nul/>b", "a&#;b"):
-    print(f"unescape 1 {text.encode().hex()}")
-    print(f"unescape 0 {text.encode().hex()}")
-for raw in (b"\xc0\x80", b"\xe0\x80\x80", b"\xed\xa0\x80", b"\xf5\x80\x80\x80", b"\x80",
-            b"\xc3", b"\xc3\xa9", b"\xf0\x9f\x98\x80"):
-    for pos in range(len(raw) + 1):
-        print(f"utf8 {raw.hex()} {pos}")
-XERPY
-    "${tmp}/test_xer_O0" < "${tmp}/xer_cases.txt" > "${tmp}/xer_O0.txt"
-    "${tmp}/test_xer_O3" < "${tmp}/xer_cases.txt" > "${tmp}/xer_O3.txt"
-    if cmp -s "${tmp}/xer_O0.txt" "${tmp}/xer_O3.txt"; then
-      echo "  PASS X.693 XER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/xer_cases.txt") cases)"
-    else
-      echo "  FAIL: the XER twin's answers depend on the optimisation level"
-      diff "${tmp}/xer_O0.txt" "${tmp}/xer_O3.txt" | head -10
-      exit 1
-    fi
+    bash "${ROOT}/tools/c/sections/xer.sh" "${tmp}/test_xer_O0" "${tmp}/test_xer_O3" || exit 1
   else
-    echo "  SKIP XER optimisation-parity (a build failed)"
+    echo "  FAIL: the X.693 XER twin did not build at -O0/-O3"; exit 1
   fi
 else
   echo "  FAIL: the X.693 XER twin does not build warning-clean"
   exit 1
 fi
 
-# X.697 bounded JER reader (#jer, JSON roadmap phase J3): the C twin of
-# bcir/asn1/jer_bounded.py -- 4.3's limits, 7.6.2's encoding, and the ECMA-404 grammar as an
-# event stream. Unlike the XER twin this one has no `json.loads` behind it, so it is a real
-# parser and not only a lexer. The dual-rail differential lives in bcir/tests/test_c_jer.py;
-# what is checked HERE is the discipline every other twin gets: strict warnings as errors, a
-# genuinely freestanding translation unit, and answers that do not depend on the optimiser.
-#
-# The -O0 == -O3 comparison earns its place on this file specifically. The reader's hot path
-# is signed/unsigned arithmetic on attacker-supplied lengths and a saturating exponent
-# accumulator; if any of it were undefined behaviour the optimiser would be entitled to
-# choose differently at -O3 than at -O0, and the answers would diverge exactly where a
-# malicious document lives.
 echo "[c-runtime] X.697 bounded JER reader: strict-warning and freestanding build (#jer)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_jer.c" "${C}/test_jer.c" "${C}/bcir_runtime.c" -o "${tmp}/test_jer"; then
@@ -1015,81 +650,15 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_jer.c" "${C}/test_jer.c" "${C}/bcir_runtime.c" \
     -o "${tmp}/test_jer_O3" || jer_ok=0
   if [ "${jer_ok}" -eq 1 ]; then
-    python3 - <<'JERPY' > "${tmp}/jer_cases.txt"
-import sys
-sys.path.insert(0, ".")
-from bcir.asn1.jer_bounded import STRICT_LIMITS, frame
-
-# Documents that reach every branch of both the bounding pass and the parser, plus the
-# forms permissive readers accept and ECMA-404 does not: trailing commas, missing
-# separators, leading zeros, the non-JSON constants, and the surrogate cases.
-docs = [b"", b" ", b"null", b"true", b"false", b"0", b"-0", b"10", b"01", b"1.5",
-        b"-0.5e+3", b"1E-2", b"1.", b".5", b"-", b"1e", b"+1", b'""', b'"a"',
-        rb'"\n\t\r\b\f\/\\\""', rb'"A"', '"\U0001f600"'.encode(), rb'"\ud800"',
-        rb'"\udc00"', rb'"\uZZZZ"', rb'"\q"', b'"a', b"[]", b"{}", b"[1,2,3]",
-        b'{"a":1,"b":2}', b'{"a":{"b":[1,[2,[3]]]}}', b"[1,]", b'{"a":1,}', b"[,]",
-        b"[1 2]", b'{"a" 1}', b'{"a":}', b"[", b"]", b"{", b"}", b"1 2", b"[]]",
-        b"nan", b"NaN", b"Infinity", b"undefined", b"'a'", b'{"a":1,"a":2}',
-        b"\x80", b'"\x80"', b'"\xc0\x80"', b'"\xed\xa0\x80"', b"\xef\xbb\xbf{}",
-        b'"\x00"', b'"\x1f"', "[\"é\", \"中\"]".encode(),
-        b"[" * 80 + b"]" * 80, b"1" * (STRICT_LIMITS.integer_digits + 1),
-        b"1e" + str(STRICT_LIMITS.exponent_magnitude + 1).encode()]
-for doc in docs:
-    payload = doc.hex() or "-"
-    for strict in (0, 1):
-        print(f"scan {strict} {payload}")
-        print(f"parse {strict} {payload}")
-    print(f"utf8doc {payload}")
-    for at in range(4):
-        print(f"refuse {at} {payload}")
-
-for raw in (b"", b"a", rb"\n", rb"A", "\U0001f600".encode(), rb"\ud800", rb"\q",
-            "é中".encode()):
-    payload = raw.hex() or "-"
-    for cap in (0, 3, 65536):
-        print(f"unescape {cap} {payload}")
-
-for raw in (b"\xc0\x80", b"\xe0\x80\x80", b"\xed\xa0\x80", b"\xf5\x80\x80\x80", b"\x80",
-            b"\xc3", b"\xc3\xa9", b"\xf0\x9f\x98\x80", b"\xf4\x90\x80\x80"):
-    for at in range(len(raw) + 1):
-        print(f"utf8 {raw.hex()} {at}")
-
-good = frame(b'{"a":1}', sequence=42, generation=7)
-for cut in range(0, len(good) + 1):
-    print(f"unframe {good[:cut].hex() or '-'}")
-bad = bytearray(good)
-bad[-1] ^= 1
-print(f"unframe {bytes(bad).hex()}")
-
-for field in ("input_bytes", "depth", "nodes", "members", "elements", "string_bytes",
-              "number_bytes", "integer_digits", "exponent_magnitude", "work"):
-    for value in (1, 1 << 40):
-        print(f"tighten {field} {value}")
-JERPY
-    "${tmp}/test_jer_O0" < "${tmp}/jer_cases.txt" > "${tmp}/jer_O0.txt"
-    "${tmp}/test_jer_O3" < "${tmp}/jer_cases.txt" > "${tmp}/jer_O3.txt"
-    if cmp -s "${tmp}/jer_O0.txt" "${tmp}/jer_O3.txt"; then
-      echo "  PASS X.697 JER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/jer_cases.txt") cases)"
-    else
-      echo "  FAIL: the JER twin's answers depend on the optimisation level"
-      diff "${tmp}/jer_O0.txt" "${tmp}/jer_O3.txt" | head -10
-      exit 1
-    fi
+    bash "${ROOT}/tools/c/sections/jer.sh" "${tmp}/test_jer_O0" "${tmp}/test_jer_O3" || exit 1
   else
-    echo "  SKIP JER optimisation-parity (a build failed)"
+    echo "  FAIL: the X.697 JER twin did not build at -O0/-O3"; exit 1
   fi
 else
   echo "  FAIL: the X.697 JER twin does not build warning-clean"
   exit 1
 fi
 
-# Plan-driven ASN.1 encoder (#emit, E2): the write-side twin of bcir/asn1/emit.py. #682
-# established that only X.690 can be encoded WITHOUT a type -- X.697 22.2 puts member
-# identifiers in a JER document and an identifier exists only in the schema -- so every
-# emitter here is schema-DIRECTED and all four read one format-neutral value stream. That is
-# what makes their costs comparable at all. -O0 == -O3 earns its place twice over: the file
-# does long division on octet arrays for arbitrary-width integers, and it compares
-# attacker-supplied counts against remaining stream lengths.
 echo "[c-runtime] plan-driven ASN.1 encoder: strict-warning and freestanding build (#emit)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_emit.c" "${C}/test_emit.c" -o "${tmp}/test_emit"; then
@@ -1104,160 +673,15 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_emit.c" "${C}/test_emit.c" \
     -o "${tmp}/test_emit_O3" || emit_ok=0
   if [ "${emit_ok}" -eq 1 ]; then
-    python3 - <<'EMITPY' > "${tmp}/emit_cases.txt"
-import sys
-sys.path.insert(0, ".")
-from bcir.asn1.codec import NULL, Oid
-from bcir.asn1.constraints import Extensible, Size, ValueRange
-from bcir.asn1.emit import flatten
-from bcir.asn1.encode_plan import compile_encode_plan
-from bcir.asn1.schema import Choice, Component, Primitive, Sequence, SequenceOf
-from bcir.asn1.tags import Universal
-
-I = Primitive(Universal.INTEGER)
-S = Primitive(Universal.UTF8_STRING)
-B = Primitive(Universal.BOOLEAN)
-N = Primitive(Universal.NULL)
-O = Primitive(Universal.OCTET_STRING)
-D = Primitive(Universal.OBJECT_IDENTIFIER)
-
-
-def seq(*components, name="X"):
-    return Sequence(tuple(components), name=name)
-
-
-CH = Choice((Component("num", I, tag=0), Component("txt", S, tag=1)), name="C")
-
-# Version 4: an ENUMERATED needs its enumeration, because X.697 22.2 spells the value as the
-# IDENTIFIER of its item and X.691 14.1 indexes the root. A hyphen exercises the descriptor's
-# `name:number|...` field against an identifier X.680 12.4 permits.
-ENUM = (("five", 5), ("two-hundred", 200), ("minus-one", -1))
-
-CASES = [
-    (seq(Component("v", I)), {"v": -1}),
-    (seq(Component("v", I)), {"v": 2 ** 64 + 7}),
-    (seq(Component("v", I)), {"v": 2 ** 400 + 12345}),
-    (seq(Component("v", I)), {"v": 0}),
-    (seq(Component("v", I)), {"v": 128}),
-    (seq(Component("a", B), Component("b", B)), {"a": True, "b": False}),
-    (seq(Component("v", N)), {"v": NULL}),
-    (seq(Component("a", I), Component("v", N), Component("b", I)),
-     {"a": 1, "v": NULL, "b": 2}),
-    (seq(Component("v", O)), {"v": b"\x00\xff\x10"}),
-    (seq(Component("v", O)), {"v": b""}),
-    (seq(Component("v", S)), {"v": ""}),
-    (seq(Component("v", S)), {"v": "a\nb\tc\"d\\e"}),
-    (seq(Component("v", S)), {"v": "x" * 300}),
-    (seq(Component("v", D)), {"v": Oid((1, 3, 6, 1, 4, 1, 62596, 1))}),
-    (seq(Component("v", D)), {"v": Oid((2, 999, 1234567))}),
-    (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1, "b": 2}),
-    (seq(Component("a", I), Component("b", I, optional=True)), {"a": 1}),
-    (seq(Component("a", I), Component("b", B, default=False)), {"a": 1}),
-    # Version 5: a DEFAULT component whose value EQUALS the default must be OMITTED (X.690
-    # 11.5, X.696 31.9, CJER). Every row above supplies one that differs, which is exactly
-    # how three emitters shipped emitting it.
-    (seq(Component("a", I), Component("b", B, default=False)), {"a": 1, "b": False}),
-    (seq(Component("a", I), Component("b", I, default=7)), {"a": 1, "b": 7}),
-    (seq(Component("a", I), Component("b", S, default="hi")), {"a": 1, "b": "hi"}),
-    (seq(*[Component("c%d" % i, I, default=i) for i in range(12)]),
-     dict(("c%d" % i, (i if i % 2 else 99)) for i in range(12))),
-    (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]),
-     dict(("c%d" % i, i) for i in range(0, 12, 2))),
-    (seq(*[Component("c%d" % i, I, optional=True) for i in range(12)]), {}),
-    (seq(Component("v", SequenceOf(I, "SEQ"))), {"v": []}),
-    (seq(Component("v", SequenceOf(I, "SEQ"))), {"v": [1, 2, 3]}),
-    (seq(Component("v", SequenceOf(I, "SEQ"))), {"v": list(range(300))}),
-    (seq(Component("in", seq(Component("a", I), name="In"))), {"in": {"a": 5}}),
-    (seq(Component("a", I, tag=0), Component("b", S, tag=1)), {"a": 1, "b": "x"}),
-    (seq(Component("a", I, tag=0, explicit=True)), {"a": 1}),
-    (seq(Component("a", I, tag=100, explicit=True)), {"a": 1}),
-    (seq(Component("a", I, tag=100)), {"a": 1}),
-    (seq(Component("v", CH, tag=5, explicit=True)), {"v": ("num", 7)}),
-    (seq(Component("v", CH, tag=5, explicit=True)), {"v": ("txt", "hi")}),
-    (seq(Component("s", seq(Component("a", I), name="In"), tag=3)), {"s": {"a": 9}}),
-    (seq(Component("v", SequenceOf(I, "SEQ"), tag=4)), {"v": [1, 2]}),
-]
-
-# Plan version 3's cases. Every row above is UNCONSTRAINED, and that is precisely how an OER
-# emitter ignoring constraints passed this gate: X.696 10.3 gives a constrained INTEGER a
-# fixed-width form with no length determinant, and nothing here ever asked for one. An
-# ENUMERATED is here for the same reason -- 11 is not 10, and nothing asked for that either.
-CASES += [
-    (seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                  constraint=ValueRange(0, 255)))), {"v": 42}),
-    (seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                  constraint=ValueRange(0, 2 ** 64 - 1)))), {"v": 2 ** 63}),
-    (seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                  constraint=ValueRange(-128, 127)))), {"v": -5}),
-    (seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                  constraint=ValueRange(0, None)))), {"v": 300}),
-    (seq(Component("v", Primitive(Universal.INTEGER, "I",
-                                  constraint=Extensible(ValueRange(0, 255))))), {"v": 42}),
-    (seq(Component("v", Primitive(Universal.OCTET_STRING, "O",
-                                  constraint=Size(ValueRange(3, 3))))), {"v": b"abc"}),
-    (seq(Component("v", Primitive(Universal.IA5_STRING, "A",
-                                  constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
-    (seq(Component("v", Primitive(Universal.UTF8_STRING, "U",
-                                  constraint=Size(ValueRange(3, 3))))), {"v": "abc"}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM))), {"v": 5}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM))), {"v": 200}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM))), {"v": -1}),
-    (seq(Component("v", Primitive(Universal.ENUMERATED, "E", enumeration=ENUM,
-                                  enum_extensible=True))), {"v": 5}),
-    (Sequence((Component("a", I),), name="X", extensible=True), {"a": 1}),
-]
-
-for index, (kind, value) in enumerate(CASES):
-    plan = compile_encode_plan(kind, module="Gate", type_name="c%d" % index)
-    stream = flatten(plan, value)
-    print("plan %s" % plan.serialize().hex())
-    for rules in ("der", "ber", "jer", "coer", "cper-a", "cper-u", "bper-a", "bper-u"):
-        print("emit %s %s" % (rules, stream.hex() or "-"))
-EMITPY
-    "${tmp}/test_emit_O0" < "${tmp}/emit_cases.txt" > "${tmp}/emit_O0.txt"
-    "${tmp}/test_emit_O3" < "${tmp}/emit_cases.txt" > "${tmp}/emit_O3.txt"
-    if ! diff -q "${tmp}/emit_O0.txt" "${tmp}/emit_O3.txt" >/dev/null; then
-      echo "  FAIL: the plan-driven encoder answers differently at -O0 and -O3"
-      exit 1
-    fi
-    emit_cases=$(grep -c '^emit ' "${tmp}/emit_cases.txt")
-    if grep -q '^err ' "${tmp}/emit_O0.txt"; then
-      echo "  FAIL: the encoder refused a case from its own reference corpus"
-      exit 1
-    fi
-    echo "  ok: -O0 == -O3 over ${emit_cases} encode cases (8 candidates x 1 plan each)"
+    bash "${ROOT}/tools/c/sections/asn1_emit.sh" "${tmp}/test_emit_O0" "${tmp}/test_emit_O3" || exit 1
+  else
+    echo "  FAIL: the plan-driven ASN.1 encoder did not build at -O0/-O3"; exit 1
   fi
 else
   echo "  FAIL: the plan-driven ASN.1 encoder does not build warning-clean"
   exit 1
 fi
 
-# X.696 OER decoder (#oer, ASN.1 build-out phase D): the encoding rule with the best decode
-# cost -- octet-aligned throughout, most fields fixed-width words a target loads directly --
-# and therefore the one a driver-side or DMA-fed path actually wants. It is SCHEMA-DIRECTED
-# because 6.2 leaves no choice: "without knowledge of the type of the value encoded, it is
-# not possible to determine the structure of the encoding". The dual-rail differential lives
-# in bcir/tests/test_c_oer.py; what is checked here is the usual discipline plus -O0 == -O3,
-# which earns its place because the decoder sign-extends by hand and compares widths against
-# attacker-supplied lengths.
-# X.691 PER, decoded against a PLAN (#per, ASN.1 build-out phase H). 6.2's NOTE is why this
-# has to be plan-driven: PER "does not include the identifier of the type being encoded" and
-# "the abstract syntax is required in order to decode" -- no tags, no lengths except where a
-# clause asks, fields at odd bit widths, so there is no schema-free structural pass at all.
-# 7.2 bars the schema-FREE decode and says nothing against this one.
-#
-# The corpus is generated by BCIR's OWN PER encoder and read back by the C twin. Both variants
-# are covered, because ALIGNED and UNALIGNED differ at every field boundary and a decoder
-# correct on one can be wrong on the other in a way no single-variant corpus would show.
-#
-# WHAT THIS GATE DOES AND DOES NOT PROVE. The -O0/-O3 comparison below is a MISCOMPILATION
-# check and nothing more: both columns come from the same decoder, so a decoder that is wrong
-# about a rule agrees with itself perfectly. This gate once carried a comment calling that a
-# "real differential", and two defects lived behind the claim -- a mid-octet string reported at
-# the octet containing it, and 16.6's short string refused in ALIGNED PER. The comparison
-# against what the encoder actually encoded lives in bcir/tests/test_c_per_plan.py, which
-# decodes the same records and checks every field VALUE, locating each string by its reported
-# bit offset. Keep that file in mind before trusting this one about correctness.
 echo "[c-runtime] X.691 plan-driven PER decoder: strict-warning and freestanding build (#per)"
 if "${CC}" -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_per.c" "${C}/bcir_per_plan.c" "${C}/test_per_plan.c" -o "${tmp}/test_per_plan"; then
@@ -1268,78 +692,11 @@ if "${CC}" -O2 -Wall -Wextra -Werror -I "${C}" \
   done
   per_ok=1
   "${CC}" -O0 -I "${C}" "${C}/bcir_per.c" "${C}/bcir_per_plan.c" "${C}/test_per_plan.c" \
-    -o "${tmp}/test_per_O0" || per_ok=0
+    -o "${tmp}/test_per_plan_O0" || per_ok=0
   "${CC}" -O3 -I "${C}" "${C}/bcir_per.c" "${C}/bcir_per_plan.c" "${C}/test_per_plan.c" \
-    -o "${tmp}/test_per_O3" || per_ok=0
+    -o "${tmp}/test_per_plan_O3" || per_ok=0
   if [ "${per_ok}" -eq 1 ]; then
-    python3 - <<'PERPY' > "${tmp}/per_cases.txt"
-import sys
-sys.path.insert(0, ".")
-from bcir.asn1.constraints import Size, ValueRange
-from bcir.asn1.per import PerVariant, encode_per
-from bcir.asn1.schema import Component, Primitive, Sequence
-from bcir.asn1.tags import Universal
-
-byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
-word = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 65535))
-flag = Primitive(Universal.BOOLEAN, "BOOLEAN")
-text = Primitive(Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(3, 3)))
-
-# kind:bounds:lb:ub:fixed:optional -- every property bcir_per_field carries.
-PLAN = "0:2:0:255:0:0,1:0:0:0:0:0,3:0:0:0:3:0"
-record = Sequence((Component("id", byte), Component("flag", flag),
-                   Component("name", text)), name="R")
-for variant in (PerVariant.UNALIGNED, PerVariant.ALIGNED):
-    aligned = 1 if variant is PerVariant.ALIGNED else 0
-    for ident in (0, 1, 42, 254, 255):
-        for truth in (True, False):
-            raw = encode_per(record, {"id": ident, "flag": truth, "name": b"abc"},
-                             variant=variant)
-            print(f"sequence {raw.hex()} {aligned} 0 {PLAN}")
-
-# A two-field record whose first component is optional, so 18.2's bit-map is exercised in
-# both of its states rather than only in the one a happy path reaches.
-opt = Sequence((Component("id", word, optional=True), Component("flag", flag)), name="O")
-OPLAN = "0:2:0:65535:0:1,1:0:0:0:0:0"
-for variant in (PerVariant.UNALIGNED, PerVariant.ALIGNED):
-    aligned = 1 if variant is PerVariant.ALIGNED else 0
-    for value in ({"flag": True}, {"id": 7, "flag": False}, {"id": 65535, "flag": True}):
-        raw = encode_per(opt, value, variant=variant)
-        print(f"sequence {raw.hex()} {aligned} 0 {OPLAN}")
-
-# 16.6: a string of two octets or fewer is placed with NO alignment in EITHER variant, so it
-# begins at bit 1 here. The twin refused exactly this shape in ALIGNED PER until the sweep,
-# and no corpus reached it -- every other record above has a string of three octets.
-short = Primitive(Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(2, 2)))
-brief = Sequence((Component("flag", flag), Component("s", short)), name="S")
-SPLAN = "1:0:0:0:0:0,3:0:0:0:2:0"
-for variant in (PerVariant.UNALIGNED, PerVariant.ALIGNED):
-    aligned = 1 if variant is PerVariant.ALIGNED else 0
-    raw = encode_per(brief, {"flag": True, "s": b"hi"}, variant=variant)
-    print(f"sequence {raw.hex()} {aligned} 0 {SPLAN}")
-
-# Truncation and refusal: every prefix of a valid encoding, plus the 18.1 extension bit.
-raw = encode_per(record, {"id": 42, "flag": True, "name": b"abc"},
-                 variant=PerVariant.UNALIGNED).hex()
-for cut in range(0, len(raw) - 1, 2):
-    print(f"sequence {raw[:cut]} 0 0 {PLAN}")
-print(f"sequence 80{raw} 0 1 {PLAN}")
-PERPY
-    "${tmp}/test_per_O0" < "${tmp}/per_cases.txt" > "${tmp}/per_O0.txt"
-    "${tmp}/test_per_O3" < "${tmp}/per_cases.txt" > "${tmp}/per_O3.txt"
-    if cmp -s "${tmp}/per_O0.txt" "${tmp}/per_O3.txt"; then
-      cases=$(wc -l < "${tmp}/per_cases.txt")
-      # A corpus that decoded nothing would compare equal too, so the gate checks that the
-      # differential actually produced answers rather than a column of refusals.
-      oks=$(grep -c '^OK' "${tmp}/per_O0.txt" || true)
-      if [ "${oks}" -lt 20 ]; then
-        echo "  FAIL: only ${oks} of ${cases} PER cases decoded; the corpus is not exercising the decoder"
-        exit 1
-      fi
-      echo "  PASS X.691 plan-driven PER twin (freestanding, -Werror, -O0 == -O3 over ${cases} cases, ${oks} decoded)"
-    else
-      echo "  FAIL: PER decoder differs between -O0 and -O3"; exit 1
-    fi
+    bash "${ROOT}/tools/c/sections/per_plan.sh" "${tmp}/test_per_plan_O0" "${tmp}/test_per_plan_O3" || exit 1
   else
     echo "  FAIL: PER decoder did not build at -O0/-O3"; exit 1
   fi
@@ -1361,103 +718,26 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
   "${CC}" -std=c23 -O3 -I "${C}" "${C}/bcir_oer.c" "${C}/test_oer.c" \
     -o "${tmp}/test_oer_O3" || oer_ok=0
   if [ "${oer_ok}" -eq 1 ]; then
-    python3 - <<'OERPY' > "${tmp}/oer_cases.txt"
-import sys
-sys.path.insert(0, ".")
-from bcir.asn1.constraints import Size, ValueRange
-from bcir.asn1.oer import OerRules, encode_length, encode_oer
-from bcir.asn1.schema import Component, Primitive, Sequence
-from bcir.asn1.tags import Universal
-
-for value in (0, 1, 126, 127, 128, 255, 256, 65535, 65536, 1 << 24):
-    raw = encode_length(value)
-    for pos in range(len(raw) + 2):
-        print(f"length {raw.hex()} {pos}")
-# The malformed and BASIC-OER spellings a decoder must tell apart.
-for raw in ("80", "8100", "820080", "82ff", "ff"):
-    print(f"length {raw} 0")
-
-byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
-word = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(-32768, 32767))
-wide = Primitive(Universal.INTEGER, "INTEGER")
-text = Primitive(Universal.UTF8_STRING, "UTF8String")
-for kind, width, signed, values in ((byte, 1, 0, (0, 1, 255)),
-                                    (word, 2, 1, (-32768, -1, 0, 32767)),
-                                    (wide, 0, 1, (0, -1, 128, -129, 2 ** 40))):
-    for value in values:
-        raw = encode_oer(kind, value, rules=OerRules.CANONICAL)
-        print(f"integer {raw.hex()} 0 {width} {signed}")
-for raw in ("00", "ff", "0000", "ffff", "ffffffffffffffff"):
-    for width in (1, 2, 4, 8, 0, 3):
-        for signed in (0, 1):
-            print(f"integer {raw} 0 {width} {signed}")
-
-for raw in ("00", "80", "40", "c0", "ff", "81"):
-    for count in (0, 1, 2, 3, 8):
-        print(f"preamble {raw} 0 {count}")
-
-record = Sequence((Component("id", byte), Component("delta", word),
-                   Component("label", text), Component("note", text, optional=True)),
-                  name="Record")
-plan = "0:1:0:0:0,0:2:1:0:0,4:0:0:0:0,4:0:0:1:0"
-for value in ({"id": 7, "delta": -3, "label": "abc", "note": "n"},
-              {"id": 0, "delta": 0, "label": ""},
-              {"id": 255, "delta": 32767, "label": "x" * 200}):
-    raw = encode_oer(record, value, rules=OerRules.CANONICAL)
-    for cut in range(len(raw) + 1):
-        print(f"sequence {raw[:cut].hex() or '-'} {plan}")
-# Plans the checker must refuse before reading an octet.
-print(f"sequence 00 9:0:0:0:0")
-print(f"sequence 00 0:3:0:0:0")
-OERPY
-    "${tmp}/test_oer_O0" < "${tmp}/oer_cases.txt" > "${tmp}/oer_O0.txt"
-    "${tmp}/test_oer_O3" < "${tmp}/oer_cases.txt" > "${tmp}/oer_O3.txt"
-    if cmp -s "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt"; then
-      echo "  PASS X.696 OER twin (freestanding, -Werror, -O0 == -O3 over $(wc -l < "${tmp}/oer_cases.txt") cases)"
-    else
-      echo "  FAIL: the OER twin's answers depend on the optimisation level"
-      diff "${tmp}/oer_O0.txt" "${tmp}/oer_O3.txt" | head -10
-      exit 1
-    fi
+    bash "${ROOT}/tools/c/sections/oer.sh" "${tmp}/test_oer_O0" "${tmp}/test_oer_O3" || exit 1
   else
-    echo "  SKIP OER optimisation-parity (a build failed)"
+    echo "  FAIL: the X.696 OER twin did not build at -O0/-O3"; exit 1
   fi
 else
   echo "  FAIL: the X.696 OER twin does not build warning-clean"
   exit 1
 fi
 
-# The native ASN.1 decode microbench (#asn1bench, JSON roadmap J6 follow-on): the harness
-# that makes a `measured` cost table possible, and therefore the reason select_certified can
-# decide a timing objective at all instead of refusing every one. It is a MEASUREMENT tool,
-# so what is gated here is that it builds warning-clean and answers a corpus -- the numbers
-# themselves are deliberately NOT a CI assertion, because a shared runner's timings are not
-# evidence about a target and pinning them would invent the false precision J6 refuses.
 echo "[c-runtime] native ASN.1 decode microbench: strict-warning build (#asn1bench)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" \
      "${C}/bcir_asn1_bench.c" "${C}/bcir_asn1.c" "${C}/bcir_jer.c" "${C}/bcir_xer.c" \
      "${C}/bcir_runtime.c" "${C}/bcir_emit.c" "${C}/bcir_oer.c" \
      "${C}/bcir_per.c" "${C}/bcir_per_plan.c" -o "${tmp}/asn1_bench"; then
-  printf 'rounds 1 7 8\ncase DER der 3009020102040461\ncase JER jer 7b2261223a317d\nrun\n' \
-    > "${tmp}/bench_cases.txt"
-  if "${tmp}/asn1_bench" < "${tmp}/bench_cases.txt" | grep -q '^done 2$'; then
-    echo "  PASS native ASN.1 microbench (builds -Werror, answers a two-case corpus)"
-  else
-    echo "  FAIL: the native ASN.1 microbench did not complete its corpus"
-    exit 1
-  fi
+  bash "${ROOT}/tools/c/sections/asn1bench.sh" "${tmp}/asn1_bench" || exit 1
 else
   echo "  FAIL: the native ASN.1 microbench does not build warning-clean"
   exit 1
 fi
 
-# DER -> native StreamPack fast path (#asn1fast, roadmap phase D): reconstruct the native
-# artifact from its X.690 DER projection in freestanding C, with no Python anywhere in the
-# reconstruction path, and assert BYTE IDENTITY against what the Python encoder produced.
-# That is law A3 (additive: the native octets survive the round trip) proven on the C rail.
-# Byte identity, not equivalence -- the fast path has to re-derive the StreamPack VERSION
-# from content the way bcir/abi::encode does, emit the reserved stride_k the projection
-# deliberately omits, and recompute the CRC.
 echo "[c-runtime] DER -> native StreamPack fast path: byte-identical reconstruction (#asn1fast)"
 if "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_asn1_streampack.c" \
      "${C}/bcir_asn1.c" "${C}/bcir_runtime.c" "${C}/test_asn1_streampack.c" \
@@ -1467,55 +747,9 @@ if "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_asn1_streampack.c" \
       -c "${C}/bcir_asn1_streampack.c" -o /dev/null \
       || { echo "  FAIL: bcir_asn1_streampack not freestanding-clean under -std=${std}"; exit 1; }
   done
-  python3 - "${tmp}" <<'ASN1FASTPY' || { echo "  FAIL: could not project the corpus"; exit 1; }
-import os, sys
-from bcir.abi import encode
-from bcir.asn1.streampack import encode_pack
-from bcir.examples import PROGRAMS
-from bcir.gem import hydrate
-from bcir.kbcir import optimize
-from bcir.kbcir.cost import TargetProfile, Theta
-d = sys.argv[1]
-host, theta = TargetProfile.x86_avx512(), Theta.cool()
-for name, build in sorted(PROGRAMS.items()):
-    module = build()
-    pack = hydrate(module, optimize(module, host, theta))
-    open(os.path.join(d, name + ".proj.der"), "wb").write(encode_pack(pack))
-    open(os.path.join(d, name + ".native.bin"), "wb").write(encode(pack))
-ASN1FASTPY
-  fast_ok=0; fast_bad=0
-  for proj in "${tmp}"/*.proj.der; do
-    base="$(basename "${proj}" .proj.der)"
-    if out="$("${tmp}/test_asn1_sp" "${proj}" "${tmp}/${base}.native.bin" 2>&1)" \
-         && [ "${out%% *}" = "OK" ]; then
-      fast_ok=$((fast_ok + 1))
-    else
-      echo "  FAIL ${base}: ${out}"; fast_bad=$((fast_bad + 1))
-    fi
-  done
-  # A malformed or BER-only projection must be refused, never partially reconstructed.
-  python3 - "${tmp}" <<'ASN1NEGPY'
-import os, sys
-d = sys.argv[1]
-der = open(os.path.join(d, "vector_add.proj.der"), "rb").read()
-for n in (0, 1, 5, len(der) // 2, len(der) - 1):
-    open(os.path.join(d, f"neg{n}.bad.der"), "wb").write(der[:n])
-if der[1] < 0x80:      # the same value with a non-minimal length: legal BER, not DER
-    open(os.path.join(d, "nonmin.bad.der"), "wb").write(
-        bytes([der[0], 0x81, der[1]]) + der[2:])
-ASN1NEGPY
-  for bad in "${tmp}"/*.bad.der; do
-    if "${tmp}/test_asn1_sp" "${bad}" >/dev/null 2>&1; then
-      echo "  FAIL: $(basename "${bad}") was accepted by the fast path"; fast_bad=$((fast_bad + 1))
-    fi
-  done
-  if [ "${fast_bad}" -eq 0 ] && [ "${fast_ok}" -ge 10 ]; then
-    echo "  PASS DER -> native byte-identical on ${fast_ok} corpus programs; malformed + BER-only refused"
-  else
-    echo "  FAIL: fast path (${fast_ok} ok, ${fast_bad} bad)"; exit 1
-  fi
+  bash "${ROOT}/tools/c/sections/asn1fast.sh" "${tmp}/test_asn1_sp" || exit 1
 else
-  echo "  SKIP fast path (harness did not build)"
+  echo "  FAIL: the DER -> StreamPack fast-path harness did not build"; exit 1
 fi
 
 # Sanitizer + memory-stress harness for the cfront C twin (#sanitize): the dual-rail parity gates above
@@ -1551,7 +785,9 @@ fi
 # asserts the C rail (bcir_sp_verify_semantic / bcir_sp_execute_checked) now REJECTS it, plus a
 # C-decode == Python-decode differential (the lane-asymmetry class) over v1/v2/v3 packs.
 echo "[c-runtime] StreamPack semantic trust boundary (check_streampack_semantic.sh)"
-if CC="${CC}" bash "${ROOT}/tools/c/check_streampack_semantic.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP StreamPack semantic trust boundary (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as c-streampack-semantic)"
+elif CC="${CC}" bash "${ROOT}/tools/c/check_streampack_semantic.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS StreamPack semantic-corruption rejection + C/Python decode differential"
 else
   echo "  FAIL: a CRC-valid semantically-corrupt pack was not rejected on the C rail"; exit 1
@@ -1579,21 +815,27 @@ fi
 # existing cross-compile gates target aarch64-linux-GNU, which is the right architecture and
 # the wrong libc.
 echo "[c-runtime] target ABI: the freestanding core builds for Android and 32-bit (#targetabi)"
-if bash "${ROOT}/tools/c/check_target_abi.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP target ABI sweep (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as c-target-abi)"
+elif bash "${ROOT}/tools/c/check_target_abi.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS target ABI sweep (freestanding core portable; no hand-declared libc prototypes)"
 else
   echo "  FAIL: the freestanding core is not portable, or a source declares a libc function"; exit 1
 fi
 
 echo "[c-runtime] hosted structural index: the cursor seam and its vector pass (#jerindex)"
-if bash "${ROOT}/tools/cpp/check_jer_index.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP hosted structural index (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as cpp-jer-index)"
+elif bash "${ROOT}/tools/cpp/check_jer_index.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS hosted structural index (freestanding core preserved, tier is real not scalar)"
 else
   echo "  FAIL: the hosted structural index did not build, or a tier degraded to scalar"; exit 1
 fi
 
 echo "[c-runtime] hosted SIMD rail: scalar-identical status/offset at every tier (#jersimd)"
-if bash "${ROOT}/tools/cpp/check_jer_simd.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP hosted SIMD rail (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as cpp-jer-simd)"
+elif bash "${ROOT}/tools/cpp/check_jer_simd.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS hosted SIMD rail (same corpus + same trace at every tier, no unsupported-CPU fault)"
 else
   echo "  FAIL: the hosted SIMD rail diverged from the scalar rail or did not build"; exit 1
@@ -1609,7 +851,9 @@ fi
 # The dynamic-graph + distributed backends are documented STUBS behind the same interface (no real
 # MPI/NCCL dependency). Self-skips (exit 0) if no C++ compiler is present, like the gates above.
 echo "[c-runtime] C<->C++ hand-off seam scaffold round-trip (tools/cpp/check_handoff.sh)"
-if bash "${ROOT}/tools/cpp/check_handoff.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP C<->C++ hand-off seam (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as cpp-handoff)"
+elif bash "${ROOT}/tools/cpp/check_handoff.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS C<->C++ hand-off seam compiles + round-trips (single-node Orchestrator == direct C/IR)"
 else
   echo "  FAIL: the C++ hand-off seam scaffold did not compile or round-trip"; exit 1
@@ -1624,7 +868,9 @@ fi
 # links a probe). SYCL is a compiler MODE, NOT a c.call.libm: -l<lib> edge (no link-flag rule). Lives
 # above the G8 C++ boundary; self-skips (exit 0) if no C++ compiler, like check_handoff.sh.
 echo "[c-runtime] SYCL backend differential oracle (tools/cpp/check_sycl.sh)"
-if bash "${ROOT}/tools/cpp/check_sycl.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then
+  echo "  SKIP SYCL backend differential oracle (BCIR_SKIP_DELEGATED_GATES=1; CTest runs it as cpp-sycl)"
+elif bash "${ROOT}/tools/cpp/check_sycl.sh" 2>&1 | sed 's/^/  /'; [ "${PIPESTATUS[0]}" -eq 0 ]; then
   echo "  PASS SYCL SAXPY differential (portable C++ fallback == BCIR reference; device path when -fsycl present)"
 else
   echo "  FAIL: the SYCL backend differential oracle did not compile or agree"; exit 1

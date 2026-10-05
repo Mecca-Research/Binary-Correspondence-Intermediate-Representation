@@ -1624,6 +1624,41 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     counts the two together (72 and 145) and requires 100 of the sections' own.
   - Measured: `build-section-parity` holds the 52 identical under both builds with gcc and again
     with clang, so no diagnostic names a temporary path, and the gate's 3,086 lines are 1,633.
+  BUILD-2j (2026-10-05) moved group 3g, the rest of the gate, and with it BUILD-2 is complete:
+  every check `tools/c/check_runtime.sh` makes now also runs as a CTest entry.
+  - The ASN.1 twins: `per`, `xer`, `jer`, `asn1_emit`, `per_plan` and `oer` compare their twin at
+    `-O0` with it at `-O3`, over twelve new manifest variants; `asn1bench` takes the
+    `bcir_asn1_bench` tool and `asn1fast` its harness. The gate's sweeps had turned a failed `-O0`
+    or `-O3` build into a SKIP, and the `asn1_emit` sweep into nothing at all, where the CMake
+    build of the same variants fails; the gate fails on it now too (laws.md L12, L21).
+  - The probe programs became harnesses: `#atomicring`'s heredoc is `runtime/c/test_oob_counter.c`
+    and `#extentassert` is `runtime/c/test_extent_assert.c`. Found moving the latter: the gate
+    compiled the tampered extent with `-std=c23` alone. GCC 13 refuses that option, so under GCC
+    the compile failed on the flag, the assertion was never reached, and the section printed its
+    PASS line having judged nothing (L2). The section now compiles the tampered unit in the
+    standard the correct one compiled in and requires the assertion's own diagnostic. RED: with the
+    macro made a no-op the old check still passes under GCC 13 and the new one fails; a macro that
+    fails another way (a negative array) fails the new one too.
+  - `#inlineasm`, `#portio` and `#barrier` judge what the Python oracle emits for a C source under
+    CC and the gcc and clang on `PATH`, so they take no binary. They are `compiler_only` sections:
+    M13 lets a section name no binary only then, and only if its script runs `${CC}`; the
+    section-parity gate runs such a section twice and holds the runs identical.
+  - The delegated gates: the seven scripts the gate calls that build and judge binaries of their
+    own (memory discipline, the StreamPack semantic boundary, the target ABI, the JER index and
+    SIMD rails, the C++ hand-off, SYCL) are the manifest's `delegated` entries. CMake registers
+    each as a CTest entry of its own, and the gate skips them under `BCIR_SKIP_DELEGATED_GATES=1`,
+    which the `c-runtime` entry sets, so `ctest` runs each once. M16 holds the gate's guarded
+    calls, each SKIP line naming its entry, the manifest and `cmake/BCIRTests.cmake` in step, and
+    refuses a script the gate calls that is neither a section nor a delegated gate. RED: with M16's
+    call removed, its eleven manifest faults and seven tree faults go unreported.
+  - Found by the CTest runs: `asn1_emit` ended on `ok:` where every other section prints a PASS
+    line, so the section-parity gate, which requires one, failed it under every compiler; it
+    prints PASS now. Two delegated gates compiled with `-std=c23`, which GCC 13 spells `c2x`: they
+    passed under clang and failed as CTest entries under GCC, and now ask the compiler (L12).
+  - Measured: on the gcc, clang 18 and clang 23 trees `ctest -L section` runs 106/106 and
+    `build-section-parity` holds all 106 identical, the three compiler-only sections over two runs;
+    the seven delegated entries pass on each tree. The gate prints 399 PASS lines on clang 18 and
+    388 on clang 23, 0 FAIL; its 1,633 lines are 879.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -20,7 +20,9 @@
 #   BCIR_MANIFEST_FREESTANDING      the sources compiled -ffreestanding -nostdlib at C11 and C23
 #   BCIR_MANIFEST_sections          the gate sections that run as scripts over built harnesses
 #   BCIR_sections_<name>_SCRIPT     the script (a path under the source tree)
-#   BCIR_sections_<name>_HARNESSES  the binaries it takes (harnesses or variants), in argument order
+#   BCIR_sections_<name>_HARNESSES  the binaries it takes (harnesses or variants), in argument order;
+#                                   empty for a compiler_only section, which judges the oracle's emit
+#                                   under CC and takes no binary
 #   BCIR_MANIFEST_variants          harnesses rebuilt with their closure: extra options, one
 #                                   mutation, another C standard or a sanitizer
 #   BCIR_variants_<name>_OF         the harness a variant rebuilds
@@ -33,6 +35,10 @@
 #                                   driver appended: tools/build/emit_kernel.py writes the unit
 #   BCIR_kernels_<name>_MAIN        the driver (a basename under runtime/c/kernels)
 #   BCIR_kernels_<name>_LINK        system libraries it links (m, pthread)
+#   BCIR_MANIFEST_delegated         the gates tools/c/check_runtime.sh calls, each a script that builds
+#                                   and judges binaries of its own; each name is its CTest entry
+#   BCIR_delegated_<name>_SCRIPT    the gate script (a path under the source tree)
+#   BCIR_delegated_<name>_LABELS    its CTest labels (c, cpp)
 include_guard(GLOBAL)
 
 set(BCIR_MANIFEST_KINDS libraries tools harnesses fuzzers seam_libraries seam_tests)
@@ -115,8 +121,14 @@ function(bcir_manifest_load path)
       string(JSON _unit GET "${_json}" sections ${_name})
       _bcir_json_string("${_unit}" script _script)
       _bcir_json_list("${_unit}" harnesses _harnesses)
-      if(NOT _script OR NOT _harnesses)
-        message(FATAL_ERROR "BCIR: manifest section ${_name} needs a script and at least one harness")
+      # A boolean reads back as ON or OFF; absent is OFF.
+      _bcir_json_string("${_unit}" compiler_only _compiler_only)
+      if(NOT _script)
+        message(FATAL_ERROR "BCIR: manifest section ${_name} names no script")
+      elseif(_compiler_only AND _harnesses)
+        message(FATAL_ERROR "BCIR: manifest section ${_name} is compiler_only yet names binaries")
+      elseif(NOT _compiler_only AND NOT _harnesses)
+        message(FATAL_ERROR "BCIR: manifest section ${_name} needs at least one harness (or compiler_only)")
       endif()
       list(APPEND _section_names "${_name}")
       set(BCIR_sections_${_name}_SCRIPT "${_script}" PARENT_SCOPE)
@@ -181,6 +193,26 @@ function(bcir_manifest_load path)
     endforeach()
   endif()
   set(BCIR_MANIFEST_kernels "${_kernel_names}" PARENT_SCOPE)
+  # delegated: {name: {script, labels}} -- the gates the runtime gate calls; each runs as its own
+  # CTest entry, and the c-runtime entry skips them (BCIR_SKIP_DELEGATED_GATES=1).
+  set(_delegated_names "")
+  string(JSON _ndel ERROR_VARIABLE _err LENGTH "${_json}" delegated)
+  if(NOT _err AND _ndel GREATER 0)
+    math(EXPR _last "${_ndel} - 1")
+    foreach(_i RANGE 0 ${_last})
+      string(JSON _name MEMBER "${_json}" delegated ${_i})
+      string(JSON _unit GET "${_json}" delegated ${_name})
+      _bcir_json_string("${_unit}" script _dscript)
+      _bcir_json_list("${_unit}" labels _dlabels)
+      if(NOT _dscript OR NOT _dlabels)
+        message(FATAL_ERROR "BCIR: manifest delegated gate ${_name} needs a script and labels")
+      endif()
+      list(APPEND _delegated_names "${_name}")
+      set(BCIR_delegated_${_name}_SCRIPT "${_dscript}" PARENT_SCOPE)
+      set(BCIR_delegated_${_name}_LABELS "${_dlabels}" PARENT_SCOPE)
+    endforeach()
+  endif()
+  set(BCIR_MANIFEST_delegated "${_delegated_names}" PARENT_SCOPE)
   _bcir_json_list("${_json}" freestanding_checks _free)
   if(NOT _free)
     message(FATAL_ERROR "BCIR: ${path} lists no freestanding_checks (the freestanding core is unproven)")
@@ -190,7 +222,8 @@ function(bcir_manifest_load path)
   list(LENGTH _section_names _nsections)
   list(LENGTH _variant_names _nvariants)
   list(LENGTH _kernel_names _nkernels)
-  message(STATUS "BCIR manifest: ${_total} units, ${_nvariants} variants, ${_nkernels} kernels, ${_nfree} freestanding checks, ${_nsections} sections (${path})")
+  list(LENGTH _delegated_names _ndelegated)
+  message(STATUS "BCIR manifest: ${_total} units, ${_nvariants} variants, ${_nkernels} kernels, ${_nfree} freestanding checks, ${_nsections} sections, ${_ndelegated} delegated gates (${path})")
 endfunction()
 
 # The manifest's basenames as paths under runtime/c (bcir_manifest_paths) or runtime/cpp

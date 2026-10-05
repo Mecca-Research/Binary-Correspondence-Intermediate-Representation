@@ -14,7 +14,9 @@ ring's count of concurrent runs that caught an injected race) is declared in the
 `varies` pattern: a regex whose one capture group is the varying value, masked in both outputs
 before they are compared. A declaration that matches nothing is stale and fails; an output that
 differs between two runs of the same binaries without a declaration is reported as such, not
-as a build difference.
+as a build difference. A `compiler_only` section takes no binary -- it judges what the Python
+oracle emits under CC -- so there is no build to compare: it is run twice all the same, and its
+two outputs must agree and pass, which holds its verdict to its inputs.
 
     section_parity.py --harness-dir build/cmake/harnesses --tool-dir build/cmake/runtime/c \
         --cc gcc [--section runtime ...]
@@ -405,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     # One recipe build per binary per run: several sections take the same binary (every bcir-cc
     # section takes bcir-cc), and a recipe is a function of the manifest and the compiler alone.
     built: dict[str, Path] = {}
+    compiler_only = 0
     with tempfile.TemporaryDirectory(prefix="bcir-section-parity-") as tmp:
         work = Path(tmp)
         for name, section in wanted.items():
@@ -468,6 +471,12 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"--- {name} (status {result['cmake'][0]}) ---")
                 print(result["cmake"][1].decode("utf-8", "replace")[-2000:])
                 print(result["cmake"][2].decode("utf-8", "replace")[-1000:])
+            elif not result["stale"] and section.get("compiler_only") is True:
+                passes = sum(1 for line in result["cmake"][1].splitlines() if b"PASS" in line)
+                compiler_only += 1
+                print(
+                    f"section {name}: compiler-only, the same over two runs ({passes} PASS line(s), no binary)"
+                )
             elif not result["stale"]:
                 passes = sum(1 for line in result["cmake"][1].splitlines() if b"PASS" in line)
                 masked = (
@@ -484,8 +493,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     print("\n".join(log))
     not_compared = f", {len(skipped)} not built here" if skipped else ""
+    of_which = f" ({compiler_only} compiler-only)" if compiler_only else ""
     print(
-        f"section-parity: {len(wanted)} section(s) compared, {len(failures)} failing{not_compared}, compiler {cc} ({cc_id}), shell {shell}"
+        f"section-parity: {len(wanted)} section(s) compared{of_which}, {len(failures)} failing{not_compared}, compiler {cc} ({cc_id}), shell {shell}"
     )
     if failures:
         for line in failures:
