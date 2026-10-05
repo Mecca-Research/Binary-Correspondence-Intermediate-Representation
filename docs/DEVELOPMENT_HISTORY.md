@@ -1864,6 +1864,14 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     from a gate that only ever ran under Clang, asked for `-std=c23`, which GCC 13 spells
     `-std=c2x`. The section now takes the spelling CC accepts, as every compiling section does;
     the gate before BUILD-8 could not run under GCC 13 at all, failing at the same compiles.
+  - Found by CI's clang 23 analysis cell, fixed: clang 23's stream checker (`unix.Stream`) flagged
+    the twin's two read loops, which read a stream again after a short read -- the end of the
+    file or an error, after which C11 leaves the position indeterminate. Each now stops at its
+    first short read and asks `ferror`; the parity corpus is unchanged (401 cases, 0 differ). The
+    analysis ran only on CI: its unit list lived twice in `ci.yml` and in no local check. It is
+    one script now, `tools/c/analyze_hosted.sh`, which both CI steps and a new `analyze` leg of
+    `tools/local/check_latest.sh` run (two workers locally); a test drives it with a stand-in
+    clang that reports a finding while exiting 0, exits nonzero, or is missing.
   - Measured: on clang 18 the gate takes 149 s, BCIR Make building and running its 639 targets
     in 85 s with two workers, where the gate before took 213 s one command at a time; it prints
     every PASS line the gate before printed (the ring's injected-race line up to its declared

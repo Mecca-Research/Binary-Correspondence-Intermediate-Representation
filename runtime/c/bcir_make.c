@@ -705,7 +705,12 @@ static int file_digest(const char *path, char hex[65], int *error) {
     return 0;
   }
   bcir_sha256_init(&h);
-  while ((n = fread(chunk, 1u, sizeof chunk, f)) > 0) bcir_sha256_update(&h, chunk, n);
+  /* fread returns short only at the end of the file or on an error (C11 7.21.8.1), so a short read
+   * is the last one -- never read a stream again in that state -- and ferror tells the two apart */
+  do {
+    n = fread(chunk, 1u, sizeof chunk, f);
+    if (n) bcir_sha256_update(&h, chunk, n);
+  } while (n == sizeof chunk);
   if (ferror(f)) {
     *error = errno ? errno : EIO;
     fclose(f);
@@ -1349,7 +1354,7 @@ static mk_map load_state(mk_ctx *mk, const char *path) {
   if (!f) mk_unusable(path, strerror(errno));
   data = (unsigned char *)mk_alloc(mk, cap);
   for (;;) {
-    size_t got;
+    size_t want, got;
     if (n == cap) {
       unsigned char *grown;
       if (cap >= MK_MAX_STATE) {
@@ -1361,9 +1366,10 @@ static mk_map load_state(mk_ctx *mk, const char *path) {
       data = grown;
       cap *= 2u;
     }
-    got = fread(data + n, 1u, cap - n, f);
+    want = cap - n;
+    got = fread(data + n, 1u, want, f);
     n += got;
-    if (!got) break;
+    if (got < want) break; /* the end of the file or an error, as file_digest reads: ferror below */
   }
   if (ferror(f)) {
     fclose(f);

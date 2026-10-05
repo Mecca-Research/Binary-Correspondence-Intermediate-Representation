@@ -264,31 +264,10 @@ jobs:
         run: CLANG=clang-23 SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis with clang 23's analyzer
+        # tools/c/analyze_hosted.sh holds the one list of units, run here, in the clang-18 C
+        # analysis job and by tools/local/check_latest.sh's `analyze` leg; any diagnostic fails it.
         if: matrix.cell == 'analysis'
-        run: |
-          workdir="$(mktemp -d)"
-          trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c bcir_make.c"
-          for source in ${sources}; do
-            (
-              if clang-23 --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
-                   2>"${workdir}/${source}.log"; then
-                [ -s "${workdir}/${source}.log" ] && echo failed > "${workdir}/${source}.rc"
-              else
-                echo failed > "${workdir}/${source}.rc"
-              fi
-            ) &
-          done
-          wait
-          status=0
-          for source in ${sources}; do
-            if [ -f "${workdir}/${source}.rc" ]; then
-              echo "::error::clang-23 --analyze reported diagnostics in runtime/c/${source}" >&2
-              cat "${workdir}/${source}.log" >&2
-              status=1
-            fi
-          done
-          exit "${status}"
+        run: CLANG=clang-23 ANALYZE_JOBS="$(nproc)" bash tools/c/analyze_hosted.sh
 
       - name: Binary trust-boundary fuzz on clang 23 (libFuzzer + ASan/UBSan on all ten decoders, bounded)
         # The deep campaign (500,000 runs per decoder) stays in the clang-18 `c-analysis` job; here
@@ -412,35 +391,12 @@ jobs:
         run: SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis
-        # Ten independent whole-file analyses (clang --analyze is single-threaded per TU and
-        # bcir_cfront.c alone dominates), so they fan out across the runner's cores instead of
-        # queueing. Each still fails the gate on a nonzero exit OR on any diagnostic at all --
-        # `--analyze` reports findings on stderr while exiting 0, so the emptiness check is the
-        # part that actually enforces "no ownership diagnostics".
-        run: |
-          workdir="$(mktemp -d)"
-          trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c bcir_make.c"
-          for source in ${sources}; do
-            (
-              if clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
-                   2>"${workdir}/${source}.log"; then
-                [ -s "${workdir}/${source}.log" ] && echo failed > "${workdir}/${source}.rc"
-              else
-                echo failed > "${workdir}/${source}.rc"
-              fi
-            ) &
-          done
-          wait
-          status=0
-          for source in ${sources}; do
-            if [ -f "${workdir}/${source}.rc" ]; then
-              echo "::error::clang --analyze reported diagnostics in runtime/c/${source}" >&2
-              cat "${workdir}/${source}.log" >&2
-              status=1
-            fi
-          done
-          exit "${status}"
+        # Eleven independent whole-file analyses (clang --analyze is single-threaded per TU and
+        # bcir_cfront.c alone dominates), fanned out across the runner's cores. Each fails the gate
+        # on a nonzero exit OR on any diagnostic at all -- `--analyze` reports findings on stderr
+        # while exiting 0, so the emptiness check is the part that actually enforces "no ownership
+        # diagnostics". tools/c/analyze_hosted.sh holds the list, which the clang 23 cell runs too.
+        run: CLANG=clang ANALYZE_JOBS="$(nproc)" bash tools/c/analyze_hosted.sh
 
       - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all ten decoders)
         # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART

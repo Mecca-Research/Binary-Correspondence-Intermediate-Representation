@@ -65,6 +65,7 @@ bash tools/local/check_latest.sh --legs cmake,gate   # while iterating
 | `confirm` | the oracle's resolver finds one coherent LLVM 23; node is 24; clang 23's fuzzer, ASan/UBSan and TSan runtimes link and run | every `*-llvm-latest` job's confirmation step |
 | `cmake` | a fresh `clang23` preset tree with `BCIR_REQUIRE_TSAN=ON`: build (`-Werror`), `ctest -L section`, `ctest -L build` (section and build parity) | `cmake-build` (clang23 cell) |
 | `fuzz` | the `fuzzer` preset on clang 23, `ctest -L fuzz` | `c-rails-llvm-latest` (analysis) |
+| `analyze` | clang 23's static analyzer over the hosted C units (`tools/c/analyze_hosted.sh`, the one list both CI analyzer steps run); any diagnostic fails it | `c-rails-llvm-latest` (analysis) |
 | `gate` | `tools/c/check_runtime.sh` on clang 23 with `BCIR_REQUIRE_TSAN=1` (`--cfront-sanitize` adds the cfront ASan/UBSan sweep) | `c-rails-llvm-latest` (runtime) |
 | `thorough` | the thorough tier with LLVM 23 first on PATH and Node 24, `BCIR_REQUIRE_LLVM=1` | `oracle-llvm-latest` |
 | `mlir` | the `mlir` preset on MLIR 23: `bcir-opt` under the top-level project, `ctest -L mlir` | `mlir-rail-validate` (LLVM 23) |

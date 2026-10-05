@@ -17,6 +17,7 @@
 #             ASan/UBSan and TSan runtimes link and run (TSan through tools/build/sanitizer.py)
 #   cmake     a fresh `clang23` preset tree, BCIR_REQUIRE_TSAN=ON: build, ctest -L section, -L build
 #   fuzz      a fresh `fuzzer` preset tree on clang 23: ctest -L fuzz
+#   analyze   clang 23's static analyzer over the hosted C units (tools/c/analyze_hosted.sh)
 #   gate      tools/c/check_runtime.sh on clang 23, BCIR_REQUIRE_TSAN=1
 #   thorough  the thorough tier on LLVM 23 + Node 24, BCIR_REQUIRE_LLVM=1
 #   mlir      a fresh `mlir` preset tree on MLIR 23: bcir-opt under the top-level project, -L mlir
@@ -28,7 +29,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LEGS_ALL="status confirm cmake fuzz gate thorough mlir"
+LEGS_ALL="status confirm cmake fuzz analyze gate thorough mlir"
 PY="${PYTHON:-python3}"
 legs="${LEGS_ALL}"; out=""; allow_outdated=0; cfront_sanitize=0
 usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
@@ -122,6 +123,11 @@ leg_fuzz() {
   ctest --test-dir "${dir}" -L fuzz -j 2 --output-on-failure || return 1
 }
 
+leg_analyze() {
+  # the hosted units under clang 23's static analyzer, the list CI's two analyzer steps run
+  env PATH="${LATEST_PATH}" CLANG="${LLVM_BIN}/clang" ANALYZE_JOBS=2 bash tools/c/analyze_hosted.sh
+}
+
 leg_gate() {
   local skip=()
   [ "${cfront_sanitize}" -eq 1 ] || skip=(BCIR_SKIP_CFRONT_SANITIZE=1)
@@ -160,6 +166,7 @@ detail() {  # <leg> <log> -> the one line a reader needs from it
       "$(grep -E '^section-parity: [0-9]' "${ROOT}/build/cmake-clang23/Testing/Temporary/LastTest.log" 2>/dev/null | head -1)" \
       "$(grep -c 'warning:' "$2")" ;;
     fuzz|mlir) grep -E 'tests passed' "$2" | tail -1 ;;
+    analyze) grep -E '^analyze-hosted: ' "$2" | tail -1 | cut -c1-160 ;;
     gate) printf 'PASS lines=%s SKIP=%s FAIL=%s' "$(grep -c 'PASS' "$2")" "$(grep -c 'SKIP' "$2")" "$(grep -c 'FAIL' "$2")" ;;
     thorough) grep -E 'passed, ' "$2" | tail -1 ;;
   esac
