@@ -6,8 +6,9 @@
  *   python -m bcir.abi.q8_tables --emit
  * (a drift gate keeps this == a fresh emission). MemTier order, L1=16/16; L2=32/48; L3=96/96; DRAM=256/256; HBM=64/192; CXL=384/512; SSD=1024/4096.
  *
- * C23 #embed (6.10.3) bakes runtime/c/q8_tiers.bin directly when the toolchain
- * supports it; otherwise the identical fallback bytes below (selected by __has_embed).
+ * C23 #embed (6.10.3) bakes runtime/c/q8_tiers.bin directly in a C23 build whose
+ * toolchain has it; every other build (an earlier standard, or a pre-#embed toolchain)
+ * takes the identical fallback bytes below.
  *===----------------------------------------------------------------------===*/
 #ifndef BCIR_Q8_TABLES_H
 #define BCIR_Q8_TABLES_H
@@ -17,10 +18,11 @@
 #define BCIR_Q8_NTIERS 7
 #define BCIR_Q8_ONE 256  /* x1.0 in Q8 */
 
-/* __has_embed must be probed in a NESTED #if: on a pre-#embed toolchain it is not a
- * defined macro, and `defined(__has_embed) && __has_embed(...)` would still try to
- * expand the right operand. The nested form leaves it unparsed when unsupported. */
-#if defined(__has_embed)
+/* #embed only in C23 mode (bcir/abi/embed.py): a compiler that offers it to C11 as an
+ * extension warns, and a strict C11 consumer's -Werror makes that an error. __has_embed
+ * is probed in a NESTED #if: on a pre-#embed toolchain it is not a defined macro, and
+ * `defined(__has_embed) && __has_embed(...)` would still try to expand the right operand. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L && defined(__has_embed)
 #  if __has_embed("q8_tiers.bin")
 #    define BCIR_Q8_EMBED 1
 #  endif

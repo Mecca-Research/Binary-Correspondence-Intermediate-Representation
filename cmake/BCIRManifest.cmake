@@ -21,11 +21,14 @@
 #   BCIR_MANIFEST_sections          the gate sections that run as scripts over built harnesses
 #   BCIR_sections_<name>_SCRIPT     the script (a path under the source tree)
 #   BCIR_sections_<name>_HARNESSES  the binaries it takes (harnesses or variants), in argument order
-#   BCIR_MANIFEST_variants          harnesses rebuilt with their closure: extra options or one mutation
+#   BCIR_MANIFEST_variants          harnesses rebuilt with their closure: extra options, one
+#                                   mutation, another C standard or a sanitizer
 #   BCIR_variants_<name>_OF         the harness a variant rebuilds
 #   BCIR_variants_<name>_OPTIONS    options appended after the build's own (-O0, -O3)
 #   BCIR_variants_<name>_MUTATION_FILE  the one source a mutant edits (the edit itself is applied by
 #                                   tools/build/mutate.py at build time; CMake never spells it)
+#   BCIR_variants_<name>_STANDARD   the C standard it builds in when not the harness's C23 (11, 17)
+#   BCIR_variants_<name>_SANITIZER  the sanitizer it builds with (thread), empty when none
 include_guard(GLOBAL)
 
 set(BCIR_MANIFEST_KINDS libraries tools harnesses fuzzers seam_libraries seam_tests)
@@ -117,7 +120,7 @@ function(bcir_manifest_load path)
     endforeach()
   endif()
   set(BCIR_MANIFEST_sections "${_section_names}" PARENT_SCOPE)
-  # variants: {name: {of, options?, mutation?: {file, find, replace}}}
+  # variants: {name: {of, options?, mutation?: {file, find, replace}, standard?, sanitizer?}}
   set(_variant_names "")
   string(JSON _nvar ERROR_VARIABLE _err LENGTH "${_json}" variants)
   if(NOT _err AND _nvar GREATER 0)
@@ -131,13 +134,25 @@ function(bcir_manifest_load path)
       if(_merr)
         set(_mfile "")
       endif()
-      if(NOT _of OR (NOT _vopts AND NOT _mfile))
-        message(FATAL_ERROR "BCIR: manifest variant ${_name} needs `of` and options or a mutation")
+      string(JSON _std ERROR_VARIABLE _serr GET "${_unit}" standard)
+      if(_serr)
+        set(_std "")
+      elseif(NOT _std MATCHES "^(11|17)$")
+        message(FATAL_ERROR "BCIR: manifest variant ${_name} builds in C standard '${_std}' (11 or 17; the harness's own is 23)")
+      endif()
+      _bcir_json_string("${_unit}" sanitizer _san)
+      if(_san AND NOT _san STREQUAL "thread")
+        message(FATAL_ERROR "BCIR: manifest variant ${_name} names sanitizer '${_san}' (known: thread)")
+      endif()
+      if(NOT _of OR (NOT _vopts AND NOT _mfile AND NOT _std AND NOT _san))
+        message(FATAL_ERROR "BCIR: manifest variant ${_name} needs `of` and options, a mutation, a standard or a sanitizer")
       endif()
       list(APPEND _variant_names "${_name}")
       set(BCIR_variants_${_name}_OF "${_of}" PARENT_SCOPE)
       set(BCIR_variants_${_name}_OPTIONS "${_vopts}" PARENT_SCOPE)
       set(BCIR_variants_${_name}_MUTATION_FILE "${_mfile}" PARENT_SCOPE)
+      set(BCIR_variants_${_name}_STANDARD "${_std}" PARENT_SCOPE)
+      set(BCIR_variants_${_name}_SANITIZER "${_san}" PARENT_SCOPE)
     endforeach()
   endif()
   set(BCIR_MANIFEST_variants "${_variant_names}" PARENT_SCOPE)

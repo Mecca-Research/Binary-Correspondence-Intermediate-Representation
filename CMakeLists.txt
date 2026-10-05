@@ -22,6 +22,10 @@ option(BCIR_BUILD_HARNESSES "Build the C test harnesses (test_*.c)" ON)
 option(BCIR_BUILD_FUZZERS "Build the libFuzzer targets (Clang only)" OFF)
 option(BCIR_BUILD_CPP "Build the C++17 orchestration seam (runtime/cpp)" ON)
 option(BCIR_WERROR "Warnings are errors, as the gates build" ON)
+# A job that installed the ThreadSanitizer runtime owns its absence (docs/security/laws.md L2): ON
+# makes a host where the manifest's sanitizer variants cannot be built a configure failure instead
+# of a reported skip -- the CMake twin of the runtime gate's BCIR_REQUIRE_TSAN=1.
+option(BCIR_REQUIRE_TSAN "Fail the configure when the ThreadSanitizer variants cannot be built here" OFF)
 # OFF by default: the law rail needs a coherent MLIR major built by the compiler that builds it,
 # and a package the host happens to carry on PATH must not decide what `cmake --preset default`
 # builds. The `mlir` preset turns it ON; AUTO builds it whenever an MLIR package is found.

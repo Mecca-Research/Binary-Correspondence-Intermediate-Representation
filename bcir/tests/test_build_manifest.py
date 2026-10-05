@@ -40,6 +40,7 @@ manifest_tool = _load_tool("manifest")
 parity_tool = _load_tool("build_parity")
 section_tool = _load_tool("section_parity")
 mutate_tool = _load_tool("mutate")
+sanitizer_tool = _load_tool("sanitizer")
 
 _TREE = None
 
@@ -232,6 +233,31 @@ _FAULTS = (
             "test_runtime", {"of": "test_exec", "options": ["-O1"]}
         ),
     ),
+    (
+        "M14",
+        "a variant in an unknown C standard",
+        lambda m: m["variants"]["test_x86_interrupt_c11"].__setitem__("standard", 99),
+    ),
+    (
+        "M14",
+        "a variant in its harness's own standard (no change)",
+        lambda m: m["variants"]["test_x86_interrupt_c11"].__setitem__("standard", 23),
+    ),
+    (
+        "M14",
+        "a standard spelled as a boolean",
+        lambda m: m["variants"]["test_q8_tables_c11"].__setitem__("standard", True),
+    ),
+    (
+        "M14",
+        "a variant with a sanitizer the probe does not know",
+        lambda m: m["variants"]["test_ring_tsan"].__setitem__("sanitizer", "address"),
+    ),
+    (
+        "M13",
+        "a section mixing a sanitizer build with a plain one",
+        lambda m: m["sections"]["ring_tsan"]["harnesses"].__setitem__(1, "test_ring_O0"),
+    ),
 )
 
 
@@ -256,6 +282,60 @@ def test_the_gate_must_generate_every_mutant_with_the_shared_applier():
     assert any(
         f.startswith("M14:") and "test_kplan_mutant" in f and "mutate.py" in f for f in findings
     ), findings
+
+
+def test_the_gate_must_probe_before_it_builds_a_sanitizer_variant():
+    """A gate that builds the TSan binaries on a probe of its own can disagree with the CMake
+    build about the host (L12); asking tools/build/sanitizer.py is part of M14."""
+    tree = manifest_tool.Tree()
+    tree.runtime_gate_text = tree.runtime_gate_text.replace(
+        manifest_tool.SANITIZER_PROBE, "tools/c/own_probe.sh"
+    )
+    findings = manifest_tool.check(_manifest(), tree)
+    assert any(
+        f.startswith("M14:") and "test_ring_tsan" in f and "sanitizer.py" in f for f in findings
+    ), findings
+
+
+def test_the_sanitizer_probe_answers_one_question_for_every_build():
+    """sanitizer.probe: available only when a trivial -fsanitize program builds AND runs (the
+    gate's predicate). A compiler that cannot run, one that refuses the flag, and a binary that
+    builds but does not start are each unavailable with a reason (L1); the checker's sanitizer
+    list is the probe's (one list, L14)."""
+    assert manifest_tool.SANITIZERS == sanitizer_tool.NAMES
+    ok, why = sanitizer_tool.probe(str(_ROOT / "no-such-compiler"), "thread")
+    assert not ok and "could not be run" in why, why
+    ok, why = sanitizer_tool.probe(sys.executable, "thread")
+    assert not ok and "does not build a trivial program" in why, why
+    try:
+        sanitizer_tool.probe(sys.executable, "address")
+    except ValueError as exc:
+        assert "unknown sanitizer" in str(exc)
+    else:
+        raise AssertionError("an unknown sanitizer was probed")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert sanitizer_tool.main(["--cc", sys.executable, "address"]) == 2
+        assert sanitizer_tool.main(["--cc", sys.executable, "thread"]) == 1
+    assert "UNUSABLE" in out.getvalue() and "UNAVAILABLE" in out.getvalue(), out.getvalue()
+    if os.name != "posix":
+        return  # the fake compiler below is an executable script
+    with tempfile.TemporaryDirectory() as tmp:
+        for status, expected in ((3, False), (0, True)):
+            fake = Path(tmp) / f"fakecc{status}"
+            fake.write_text(
+                f"#!{sys.executable}\n"
+                "import os, sys\n"
+                "out = sys.argv[sys.argv.index('-o') + 1]\n"
+                f"open(out, 'w').write('#!/bin/sh\\nexit {status}\\n')\n"
+                "os.chmod(out, 0o755)\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            ok, why = sanitizer_tool.probe(str(fake), "thread")
+            assert ok is expected, (status, why)
+            if not expected:
+                assert "built but did not run" in why and "status 3" in why, why
 
 
 def test_the_applier_edits_once_or_refuses():
@@ -487,6 +567,32 @@ def test_the_section_parity_gate_refuses_before_it_compiles():
         mutation = manifest["variants"]["test_kplan_mutant"]["mutation"]
         assert mutated[0].read_text(encoding="utf-8").count(mutation["replace"]) >= 1
         assert mutation["find"] not in mutated[0].read_text(encoding="utf-8")
+        # another standard and a sanitizer come after the recipe's -std=c23 -O2, so they win
+        _sources, _link, opts = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "test_x86_interrupt_c11", work
+        )
+        assert opts == ["-ffreestanding", "-std=c11"], opts
+        sources, _link, opts = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "test_ring_plain", work
+        )
+        assert opts[-4:] == ["-O1", "-g", "-std=c11", "-fsanitize=thread"], opts
+        assert [p for p in sources if p.name == "bcir_ring.c"][0].is_relative_to(work)
+
+
+def test_an_unbuilt_variant_is_reported_by_name_never_compared_or_hidden():
+    """The CMake build passes the variants it could not build (`--unbuilt VARIANT=REASON`): their
+    sections are reported as not compared, with the reason; a malformed or unknown entry is
+    unusable, and a run left with nothing to compare is vacuous, not a pass (L1, L2)."""
+    base = ["--harness-dir", str(_ROOT / "runtime" / "c"), "--cc", sys.executable]
+    for extra, code, needle in (
+        (["--unbuilt", "test_nowhere=no reason"], 2, "UNUSABLE"),
+        (["--unbuilt", "test_ring_tsan="], 2, "UNUSABLE"),
+        (["--section", "ring_tsan", "--unbuilt", "test_ring_plain=no runtime"], 2, "INVALID"),
+    ):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = section_tool.main(base + extra)
+        assert rc == code and needle in out.getvalue(), (extra, rc, out.getvalue())
 
 
 def test_the_presets_hold_the_two_worker_law():
@@ -565,6 +671,17 @@ def test_the_cmake_reader_and_the_checker_agree():
     )
     assert "CMAKE_CONFIGURE_DEPENDS" in cmake, (
         "an edit to the manifest would not re-run the configure"
+    )
+    assert '"${_unit}" standard' in cmake and "sanitizer _san" in cmake, (
+        "the CMake reader does not read a variant's standard and sanitizer"
+    )
+    deps = (_ROOT / "cmake" / "BCIRDependencies.cmake").read_text(encoding="utf-8")
+    assert manifest_tool.SANITIZER_PROBE in deps and "BCIR_REQUIRE_TSAN" in deps, (
+        "the configure must ask the gate's sanitizer predicate, and own its absence when required"
+    )
+    tests = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
+    assert "BCIR_UNBUILT_VARIANTS" in tests and "--unbuilt" in tests, (
+        "the section-parity gate is not told which variants this tree did not build"
     )
     kinds = re.search(r"set\(BCIR_MANIFEST_KINDS ([^)]*)\)", cmake)
     assert kinds is not None
@@ -685,4 +802,7 @@ def test_the_ci_owns_the_build_gate():
     assert re.search(r"ctest .*-L section", body), "the job does not run the migrated sections"
     assert "BCIR_BUILD_MLIR=OFF" in body, (
         "the MLIR law has its own job; this one must not depend on a found package"
+    )
+    assert "BCIR_REQUIRE_TSAN=ON" in body and "libclang-rt" in body, (
+        "the job installs the ThreadSanitizer runtime, so it must own its absence (L2)"
     )

@@ -1256,14 +1256,17 @@ jobs:
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
             | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
 
-      - name: Install ninja and the clang toolchain (compiler-rt for the fuzz preset)
+      - name: Install ninja and the clang toolchain (compiler-rt for the fuzz preset and TSan)
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: ninja-build clang lld llvm libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
 
-      - name: Configure (the ${{ matrix.compiler }} preset, MLIR off)
-        run: cmake --preset ${{ matrix.compiler }} -DBCIR_BUILD_MLIR=OFF
+      # This job installed the ThreadSanitizer runtimes (compiler-rt for clang; gcc carries libtsan),
+      # so it owns their absence (laws.md L2): BCIR_REQUIRE_TSAN makes a host where the manifest's
+      # sanitizer variants cannot be built a configure failure here, not the skip it is elsewhere.
+      - name: Configure (the ${{ matrix.compiler }} preset, MLIR off, ThreadSanitizer required)
+        run: cmake --preset ${{ matrix.compiler }} -DBCIR_BUILD_MLIR=OFF -DBCIR_REQUIRE_TSAN=ON
 
       - name: Build everything the manifest lists (two workers, as the presets say)
         run: cmake --build --preset ${{ matrix.compiler }}

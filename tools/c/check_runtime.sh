@@ -57,10 +57,8 @@ for std in c11 c23; do
   "${CC}" -ffreestanding -std=${std} -Wall -Wextra -Werror -I "${C}" \
     "${C}/test_x86_interrupt.c" -o "${tmp}/test_x86_interrupt_${std}" \
     || { echo "  FAIL: x86 interrupt-frame ABI under -std=${std}"; exit 1; }
-  "${tmp}/test_x86_interrupt_${std}" \
-    || { echo "  FAIL: x86 interrupt-frame layout/helper under -std=${std}"; exit 1; }
 done
-echo "  PASS x86 interrupt-frame ABI (fixed 176-byte long-mode frame)"
+bash "${ROOT}/tools/c/sections/x86_interrupt.sh" "${tmp}/test_x86_interrupt_c11" "${tmp}/test_x86_interrupt_c23" || exit 1
 
 echo "[c-runtime] build harness (C23) + Python->C ABI parity"
 "${CC}" -std=c23 -O2 "${C}/bcir_runtime.c" "${C}/test_runtime.c" -I "${C}" -o "${tmp}/test_runtime" \
@@ -152,54 +150,25 @@ python3 "${ROOT}/tools/build/mutate.py" --variant test_ring_torn --out "${tmp}/b
 "${CC}" -std=c23 -O2 -pthread -I "${C}" "${tmp}/bcir_ring_torn.c" "${ring_sources[@]}" \
   -o "${tmp}/test_ring_torn" || { echo "  FAIL: ring mutant harness build"; exit 1; }
 bash "${ROOT}/tools/c/sections/ring.sh" "${tmp}/test_ring" "${tmp}/test_ring_O0" "${tmp}/test_ring_O3" "${tmp}/test_ring_torn" || exit 1
-# The ThreadSanitizer leg below stays here: it compiles sanitizer builds of the ring (and a
-# plain-store mutant) and runs their stress, which is build and run in one -- BUILD-2 group 3.
-# ThreadSanitizer models C11 atomics: the stress runs must report no data race, and a ring whose
-# relaxed atomic stores are made plain must be REPORTED as racing (not merely fail). TSan needs the
-# compiler-rt runtime. The x86 C runtime job installs it and sets BCIR_REQUIRE_TSAN=1, so there an
-# unavailable TSan is a failure (L2: the job that installed the tool owns its absence); on a host
-# or runner without it (the aarch64 job installs clang/lld/llvm only) this leg is an explicit,
-# reported skip -- the concurrent rows above still ran there, natively. Available means a trivial
-# TSan program builds AND runs. ASLR is disabled for the runs (setarch -R) because older TSan
-# runtimes reject the high-entropy mappings newer kernels hand out.
-norandom=()
-if command -v setarch >/dev/null 2>&1 && setarch "$(uname -m)" -R true 2>/dev/null; then
-  norandom=(setarch "$(uname -m)" -R)
-fi
-printf 'int main(void) { return 0; }\n' > "${tmp}/tsan_probe.c"
-tsan_available=0
-if "${CC}" -fsanitize=thread "${tmp}/tsan_probe.c" -o "${tmp}/tsan_probe" >/dev/null 2>&1 \
-   && "${norandom[@]}" "${tmp}/tsan_probe" >/dev/null 2>&1; then
-  tsan_available=1
-fi
-ring_tsan() {  # <ring source> <binary> -> exit 0 when both stress runs are race-free and clean
-  "${CC}" -std=c11 -O1 -g -fsanitize=thread -pthread -I "${C}" "$1" "${ring_sources[@]}" -o "$2" \
-    || return 3
-  for mode in bp ow; do
-    if ! "${norandom[@]}" "$2" --stress "${mode}" 40000 7 > "$2.${mode}.log" 2>&1; then return 1; fi
-    if grep -q "WARNING: ThreadSanitizer" "$2.${mode}.log"; then return 1; fi
-  done
-  return 0
-}
-if [ "${tsan_available}" -eq 1 ]; then
-  ring_tsan "${C}/bcir_ring.c" "${tmp}/test_ring_tsan"; tsan_status=$?
-  if [ "${tsan_status}" -eq 3 ]; then
-    echo "  FAIL: the ThreadSanitizer build of the ring harness failed (a trivial TSan program built)"; exit 1
-  elif [ "${tsan_status}" -ne 0 ]; then
-    echo "  FAIL: ThreadSanitizer or the stress laws failed on the ring:"; cat "${tmp}/test_ring_tsan".*.log | tail -40; exit 1
-  fi
-  echo "  PASS live ring under ThreadSanitizer (backpressure + overwrite stress: no data race, nothing torn or unaccounted)"
-  sed 's/  atomic_store_explicit(word_at(r, off), (unsigned long long)v, memory_order_relaxed);/  *(unsigned long long *)(void *)(r + off) = (unsigned long long)v;/' \
-    "${C}/bcir_ring.c" > "${tmp}/bcir_ring_plain.c"
-  if cmp -s "${C}/bcir_ring.c" "${tmp}/bcir_ring_plain.c"; then
-    echo "  FAIL: the plain-store fault injection did not apply (st_rlx changed)"; exit 1
-  fi
-  if ring_tsan "${tmp}/bcir_ring_plain.c" "${tmp}/test_ring_plain"; then
-    echo "  FAIL: ThreadSanitizer passed a ring whose shared words are written with plain stores"; exit 1
-  fi
-  grep -q "WARNING: ThreadSanitizer" "${tmp}/test_ring_plain".*.log \
-    || { echo "  FAIL: the plain-store ring failed, but not with a ThreadSanitizer race report"; exit 1; }
-  echo "  PASS ThreadSanitizer fires on an injected race (relaxed atomic stores made plain)"
+# The ThreadSanitizer leg: the ring harness built with -fsanitize=thread, and the same build of a
+# ring whose relaxed atomic stores are made plain (the manifest's sanitizer variants), judged by
+# tools/c/sections/ring_tsan.sh -- the stress runs must report no data race, and the plain-store
+# ring must be REPORTED as racing. TSan needs the compiler-rt runtime. The x86 C runtime job
+# installs it and sets BCIR_REQUIRE_TSAN=1, so there an unavailable TSan is a failure (L2: the job
+# that installed the tool owns its absence); on a host or runner without it (the aarch64 job
+# installs clang/lld/llvm only) this leg is an explicit, reported skip -- the concurrent rows above
+# still ran there, natively. Available means a trivial TSan program builds AND runs:
+# tools/build/sanitizer.py, the one predicate the CMake configure and the section-parity gate ask.
+if python3 "${ROOT}/tools/build/sanitizer.py" --cc "${CC}" thread >/dev/null 2>&1; then
+  "${CC}" -std=c11 -O1 -g -fsanitize=thread -pthread -I "${C}" "${C}/bcir_ring.c" "${ring_sources[@]}" \
+    -o "${tmp}/test_ring_tsan" \
+    || { echo "  FAIL: the ThreadSanitizer build of the ring harness failed (a trivial TSan program built)"; exit 1; }
+  python3 "${ROOT}/tools/build/mutate.py" --variant test_ring_plain --out "${tmp}/bcir_ring_plain.c" \
+    || { echo "  FAIL: the plain-store fault injection did not apply (st_rlx changed)"; exit 1; }
+  "${CC}" -std=c11 -O1 -g -fsanitize=thread -pthread -I "${C}" "${tmp}/bcir_ring_plain.c" "${ring_sources[@]}" \
+    -o "${tmp}/test_ring_plain" \
+    || { echo "  FAIL: the ThreadSanitizer build of the plain-store ring failed"; exit 1; }
+  bash "${ROOT}/tools/c/sections/ring_tsan.sh" "${tmp}/test_ring_tsan" "${tmp}/test_ring_plain" || exit 1
 elif [ "${BCIR_REQUIRE_TSAN:-0}" = "1" ]; then
   echo "  FAIL: ThreadSanitizer is required here (BCIR_REQUIRE_TSAN=1), but a trivial TSan program does not build and run"; exit 1
 else
@@ -266,9 +235,8 @@ fi
 for std in c11 c23; do
   "${CC}" -std=${std} -Wall -Wextra -I "${C}" "${C}/test_q8_tables.c" -o "${tmp}/q8_${std}" \
     || { echo "  FAIL: Q8 table build under -std=${std}"; exit 1; }
-  "${tmp}/q8_${std}" | grep -q "^OK q8" || { echo "  FAIL: Q8 self-check under -std=${std}"; exit 1; }
 done
-echo "  PASS Q8 table (#embed-guarded; fallback self-check OK under C11 + C23)"
+bash "${ROOT}/tools/c/sections/q8_tables.sh" "${tmp}/q8_c11" "${tmp}/q8_c23" || exit 1
 
 echo "[c-runtime] plug-in C frontend (bcir_cfront): IR freestanding + Python<->C parity"
 # bcir_cir.h is the freestanding BCIR claim-graph IR; bcir_cfront.c is the host compiler

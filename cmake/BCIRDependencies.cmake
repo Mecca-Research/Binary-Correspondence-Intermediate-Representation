@@ -21,6 +21,9 @@ function(_bcir_dep_record name found detail)
     set(_state "absent")
     set(_json_found "false")
   endif()
+  # A detail is one JSON string: a probe's diagnostic can span lines, and a raw control character
+  # would make the whole index unreadable.
+  string(REGEX REPLACE "[\r\n\t]+" " " detail "${detail}")
   string(REPLACE "\\" "/" detail "${detail}")
   string(REPLACE "\"" "'" detail "${detail}")
   set(_row "    {\"name\": \"${name}\", \"found\": ${_json_found}, \"detail\": \"${detail}\"}")
@@ -53,6 +56,29 @@ if(MLIR_FOUND)
   _bcir_dep_record(MLIR ON " (LLVM ${LLVM_PACKAGE_VERSION} at ${MLIR_DIR})")
 else()
   _bcir_dep_record(MLIR OFF " (set MLIR_DIR to an MLIRConfig.cmake to build bcir-opt)")
+endif()
+
+# ThreadSanitizer: the runtime the ring's sanitizer variants need (runtime/manifest.json). Present
+# means a trivial -fsanitize=thread program builds AND runs here, the predicate of
+# tools/build/sanitizer.py -- the one tools/c/check_runtime.sh asks before it builds the same
+# binaries -- so the gate and this build cannot disagree about the host (laws.md L12, L14). Where
+# a job installed the runtime, BCIR_REQUIRE_TSAN turns its absence into a configure failure (L2).
+if(BCIR_HAVE_PYTHON3)
+  execute_process(
+    COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/sanitizer.py" --cc "${CMAKE_C_COMPILER}" thread
+    RESULT_VARIABLE _bcir_tsan_rc OUTPUT_VARIABLE _bcir_tsan_out ERROR_VARIABLE _bcir_tsan_err
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_STRIP_TRAILING_WHITESPACE TIMEOUT 300)
+  string(REGEX REPLACE "^sanitizer thread: [A-Z]+: " "" _bcir_tsan_why "${_bcir_tsan_out}")
+  if(_bcir_tsan_rc EQUAL 0)
+    _bcir_dep_record(TSAN ON " (${_bcir_tsan_why})")
+  else()
+    _bcir_dep_record(TSAN OFF " (${_bcir_tsan_why}${_bcir_tsan_err})")
+  endif()
+else()
+  _bcir_dep_record(TSAN OFF " (the probe, tools/build/sanitizer.py, needs Python)")
+endif()
+if(BCIR_REQUIRE_TSAN AND NOT BCIR_HAVE_TSAN)
+  message(FATAL_ERROR "BCIR: ThreadSanitizer is required here (BCIR_REQUIRE_TSAN=ON), but a trivial TSan program does not build and run with ${CMAKE_C_COMPILER}")
 endif()
 
 # The numeric libraries the twin's link-flag rules name (tools/c/check_runtime.sh #linkflags-*):

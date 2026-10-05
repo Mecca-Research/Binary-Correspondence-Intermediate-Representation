@@ -36,11 +36,14 @@ The rules, each with the code its findings carry:
   M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
                    manifest harnesses or variants in argument order; every script in that directory
                    is one section; tools/c/check_runtime.sh calls each script (the gate and the
-                   CTest entry run one text)
-  M14 variants     every `variants` entry rebuilds a manifest harness (`of`) with flag `options`, one
-                   `mutation` (file, find, replace) or both; a mutation's file is in the harness's
+                   CTest entry run one text); a section's binaries share one sanitizer or none (a
+                   host without the runtime skips a whole section, never half of one)
+  M14 variants     every `variants` entry rebuilds a manifest harness (`of`) with any of: flag
+                   `options`, one `mutation` (file, find, replace), another C `standard` (the
+                   harness's own is C23) or a `sanitizer`; a mutation's file is in the harness's
                    closure and its anchor occurs exactly once there (the fault still applies, and
-                   unambiguously); the gate generates every mutant with tools/build/mutate.py; every
+                   unambiguously); the gate generates every mutant with tools/build/mutate.py and
+                   asks tools/build/sanitizer.py before it builds a sanitizer variant; every
                    variant is run by a section; no variant shadows a unit name
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
@@ -71,8 +74,14 @@ KINDS = C_KINDS + CPP_KINDS
 LIBRARY_KINDS = ("libraries", "seam_libraries")
 UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len")
 TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", "variants", *KINDS)
-VARIANT_KEYS = ("of", "options", "mutation")
+VARIANT_KEYS = ("of", "options", "mutation", "standard", "sanitizer")
 MUTATION_KEYS = ("file", "find", "replace")
+# The C standards a variant may rebuild its harness in (C23, the harness's own, would change
+# nothing) and the sanitizers it may build with: tools/build/sanitizer.py's NAMES, the probe that
+# decides whether one runs on a host (a test holds the two lists equal).
+STANDARDS = (11, 17)
+SANITIZERS = ("thread",)
+SANITIZER_PROBE = "tools/build/sanitizer.py"
 SECTIONS_DIR = "tools/c/sections"
 RUNTIME_GATE = "tools/c/check_runtime.sh"
 LINK_NAMES = ("m", "pthread")
@@ -662,6 +671,14 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
                 )
         if len(set(names)) != len(names):
             errors.append(f"M13: {where} names a harness twice")
+        sanitized = {
+            repr(variants[h].get("sanitizer")) if isinstance(variants.get(h), dict) else "None"
+            for h in names
+        }
+        if len(sanitized) > 1:
+            errors.append(
+                f"M13: {where} mixes sanitizer builds with others: a host without the runtime would run half of it"
+            )
     for basename in tree.section_scripts:
         if basename not in registered:
             errors.append(f"M13: {SECTIONS_DIR}/{basename} is not a manifest section")
@@ -690,7 +707,7 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
     for name, variant in variants.items():
         where = f"variants/{name}"
         if not isinstance(variant, dict) or not set(variant) <= set(VARIANT_KEYS):
-            errors.append(f"M14: {where} is not {{of, options?, mutation?}}")
+            errors.append(f"M14: {where} is not {{of, options?, mutation?, standard?, sanitizer?}}")
             continue
         if name in unit_names:
             errors.append(f"M14: {where} shadows a manifest unit of the same name")
@@ -700,8 +717,28 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
             continue
         options = variant.get("options")
         mutation = variant.get("mutation")
-        if options is None and mutation is None:
-            errors.append(f"M14: {where} changes nothing (no options, no mutation)")
+        standard = variant.get("standard")
+        sanitizer = variant.get("sanitizer")
+        if options is None and mutation is None and standard is None and sanitizer is None:
+            errors.append(
+                f"M14: {where} changes nothing (no options, mutation, standard or sanitizer)"
+            )
+        if standard is not None and (
+            isinstance(standard, bool) or not isinstance(standard, int) or standard not in STANDARDS
+        ):
+            errors.append(
+                f"M14: {where}.standard {standard!r} is not one of {', '.join(map(str, STANDARDS))} "
+                f"(the harness's own is 23)"
+            )
+        if sanitizer is not None:
+            if not isinstance(sanitizer, str) or sanitizer not in SANITIZERS:
+                errors.append(
+                    f"M14: {where}.sanitizer {sanitizer!r} is not one of {', '.join(SANITIZERS)}"
+                )
+            if SANITIZER_PROBE not in tree.runtime_gate_text:
+                errors.append(
+                    f"M14: {RUNTIME_GATE} builds {where} without asking {SANITIZER_PROBE} whether the sanitizer runs here"
+                )
         if options is not None and (
             not isinstance(options, list)
             or not options
