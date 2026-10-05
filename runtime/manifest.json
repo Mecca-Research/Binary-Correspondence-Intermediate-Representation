@@ -234,7 +234,11 @@
     },
     "ring_tsan": {"script": "tools/c/sections/ring_tsan.sh", "harnesses": ["test_ring_tsan", "test_ring_plain"]},
     "handoff": {"script": "tools/c/sections/handoff.sh", "harnesses": ["test_handoff", "test_handoff_O0", "test_handoff_O3", "test_handoff_mutant"]},
-    "kplan": {"script": "tools/c/sections/kplan.sh", "harnesses": ["test_kplan", "test_kplan_O0", "test_kplan_O3", "test_kplan_mutant"]}
+    "kplan": {"script": "tools/c/sections/kplan.sh", "harnesses": ["test_kplan", "test_kplan_O0", "test_kplan_O3", "test_kplan_mutant"]},
+    "cfront": {"script": "tools/c/sections/cfront.sh", "harnesses": ["test_cfront"]},
+    "cfront_abi": {"script": "tools/c/sections/cfront_abi.sh", "harnesses": ["test_cfront"]},
+    "cfront_loop": {"script": "tools/c/sections/cfront_loop.sh", "harnesses": ["test_cfront_loop"]},
+    "channel": {"script": "tools/c/sections/channel.sh", "harnesses": ["test_channel"]}
   },
   "freestanding_checks": [
     "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",
