@@ -5,9 +5,9 @@ runner to the roadmap's gate -- a no-change second run executes nothing, a one-f
 exactly the targets that read it and their readers -- and to the rest of the contract: the artifact
 cache restores a generation without running it, a task that writes a file no target claims or
 leaves a claimed one unwritten fails (the observed footprint, MK3), a failure stops its readers,
-at most `workers` tasks run at once and never two that write into one directory, and every task
-that ran or was restored left one telemetry record, bound to its generation, that came back
-through the ring.
+at most `workers` tasks run at once and never two that write into one directory, the ready
+targets start longest measured path first, and every task that ran or was restored left one
+telemetry record, bound to its generation, that came back through the ring.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from bcir.make import lower, parse
 from bcir.make.__main__ import main
-from bcir.make.run import execute
+from bcir.make.run import execute, upward_ranks
 
 
 def _posix() -> bool:
@@ -233,6 +233,60 @@ def test_two_targets_writing_into_one_directory_never_run_at_once():
             "b.txt",
             "c.txt",
         ]
+
+
+def test_the_upward_rank_is_the_longest_measured_path_ahead():
+    """BUILD-8b: a target's rank is its measured duration plus the largest rank among the targets
+    that read what it writes; a target never measured takes the median of the measured ones, and
+    with nothing measured the rank is the length of the longest chain ahead."""
+    order = ["x", "y", "z", "w"]
+    deps = {"x": [], "y": ["x"], "z": [], "w": ["y", "z"]}  # x -> y -> w <- z
+    assert upward_ranks(order, deps, {"x": 5, "y": 1, "z": 40, "w": 2}) == {
+        "w": 2,
+        "y": 3,
+        "x": 8,
+        "z": 42,
+    }
+    assert upward_ranks(order, deps, {}) == {"w": 1, "y": 2, "x": 3, "z": 2}
+    # z unmeasured: the median of 1, 2 and 5 is 2
+    assert upward_ranks(order, deps, {"x": 5, "y": 1, "w": 2})["z"] == 2 + 2
+
+
+def test_the_measured_durations_order_the_ready_targets_and_nothing_else():
+    """BUILD-8b: of the targets ready to start, the one with the longest measured path ahead starts
+    first. With nothing measured that is the longest chain (a and b, which ab reads, before c);
+    once c has been measured slow, c starts first. The durations order the work and decide
+    nothing else -- the same targets run and write the same bytes -- and a durations file that
+    cannot be read is no measurement."""
+    if not _posix():
+        return
+    chain = ["out/a.txt", "out/b.txt", "out/c.txt", "out/ab/ab.txt"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root, text = _project(tmp, {"c": "slow"})
+        meta = root.parent / "meta"
+
+        def again() -> None:  # the same work from nothing: no outputs, no state, no cache
+            shutil.rmtree(root / "out")
+            shutil.rmtree(meta / "cache")
+            (meta / "state.json").unlink()
+            (root / "counter" / "runs").unlink()
+
+        first = _run(root, text, workers=1)
+        assert first.ok and _runs(root) == chain, _runs(root)
+        durations = json.loads((meta / "state.durations.json").read_text(encoding="utf-8"))
+        assert set(durations) == {"a", "b", "c", "ab"}, durations
+        assert all(type(v) is int and v > 0 for v in durations.values()), durations
+        assert durations["c"] > durations["a"] + durations["ab"], durations  # 0.3 s against copies
+        outputs = {p: (root / p).read_bytes() for p in chain}
+        again()
+        second = _run(root, text, workers=1)
+        assert second.ok and _runs(root)[0] == "out/c.txt", _runs(root)
+        assert sorted(second.executed()) == sorted(first.executed())
+        assert {p: (root / p).read_bytes() for p in chain} == outputs
+        (meta / "state.durations.json").write_text("{not json", encoding="utf-8", newline="\n")
+        again()
+        third = _run(root, text, workers=1)
+        assert third.ok and _runs(root) == chain, _runs(root)
 
 
 def test_every_task_leaves_one_record_through_the_ring():

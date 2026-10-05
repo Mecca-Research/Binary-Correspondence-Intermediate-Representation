@@ -1880,6 +1880,28 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     twin agrees with the oracle on 401 cases (400 generated and the rails' own BCIRfile); build
     parity holds 1920 rows. On LLVM 23 (`check_latest.sh`): the clang23 tree 107/107 and 8/8, the
     gate 406 PASS lines, the thorough tier 4245 passed; the quick tier passes (4245 passed).
+  BUILD-8b (2026-10-05): the runner starts the ready targets by measured priority, as the
+  roadmap's scheduling design said it would (§8): of the targets ready to start, the one with
+  the longest measured path still ahead of it goes first (`bcir.make.run.upward_ranks`, HEFT's
+  upward rank over the durations earlier runs measured, kept beside the state and read by
+  nothing else; the canonical order breaks ties).
+  - The durations order the work and decide nothing else: no tag, law, plan or verdict reads
+    them, and a file that cannot be read is no measurement. A test drives a slow target to the
+    front once it has been measured, with the same targets run and the same bytes written; with
+    the ranks flattened it stays at the back.
+  - Measured (a `wall` metric, indicative only), gcc, two workers, interleaved samples: the
+    rails' BCIRfile with its sections built from nothing took 96.9 s and 92.5 s with nothing
+    measured and 97.9 s and 93.1 s with the first run's durations as priors; an edit to
+    `runtime/c/bcir_diag.c` (116 targets re-run) took 44.6, 45.3 and 46.2 s against 46.8, 46.7
+    and 45.4 s. No change beyond the noise, and the bounds say why: the full build's work is
+    169 s (two workers need 84 s) and the edit's 68 s (34 s), each far above its critical path
+    (20 s; for the edit at least the 17 s of `kplan` alone), and the manifest already lists the
+    longest sections early (`ring`, `ring_tsan`, `handoff` and `kplan` are its 11th to 14th of
+    107), so the canonical order starts them early too. What is left
+    above the bound is the runner's own cost per task and the one-writer-per-directory rule over
+    `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
+    tasks a property of what was measured rather than of the manifest's listing order.
+  - The quick tier passes (4248 passed).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

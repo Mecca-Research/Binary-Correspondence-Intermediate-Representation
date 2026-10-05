@@ -1,7 +1,10 @@
 """The BCIR Make runner (BUILD-7): execute a judged plan -- content-addressed reuse, the two-worker
 scheduler, the observed footprint, and one telemetry record per task through the ring.
 
-Per target, in the IR's canonical order, at most ``workers`` at once:
+Per target, readers after their producers, at most ``workers`` at once -- of the targets ready to
+start, the one with the longest path still ahead of it first, by the durations earlier runs measured
+(``upward_ranks``: HEFT's upward rank, the canonical order breaking ties; the durations order the
+work and decide nothing else):
 
 - **Up to date** when the recorded generation tag is its tag and every output is there: nothing runs.
 - **From the cache** when the artifact cache holds its tag (``<cache>/<tag>/``): the outputs are
@@ -221,6 +224,53 @@ def previous_path(state_path: Path) -> Path:
     return state_path.with_name(state_path.stem + ".prev" + state_path.suffix)
 
 
+def durations_path(state_path: Path) -> Path:
+    """Where the runner keeps each target's last measured run time, in nanoseconds: beside the
+    state, apart from it (the planner and its C twin read the state; neither reads this)."""
+    return state_path.with_name(state_path.stem + ".durations" + state_path.suffix)
+
+
+def load_durations(path: Path) -> dict[str, int]:
+    """The measured durations of earlier runs. They are a wall metric: they order the targets that
+    are ready, and nothing else -- no tag, law, plan or verdict reads them -- so a file that cannot
+    be read, or a value that is no positive integer, is simply no measurement."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and type(v) is int and v > 0}
+
+
+def upward_ranks(
+    order: list[str], deps: dict[str, list[str]], durations: dict[str, int]
+) -> dict[str, int]:
+    """HEFT's upward rank over the task DAG: a target's measured duration plus the largest rank
+    among the targets that read what it writes -- the longest measured path from its start to the
+    end of the build. A target never measured takes the median of the measured ones (1 ns when
+    none is), so with nothing measured the rank is the length of the longest chain still ahead.
+    Within one phase of a K_BCIR plan the same priority degenerates to the longest-duration-first
+    rule bcir.gem.schedule dispatches by."""
+    known = sorted(durations[n] for n in order if n in durations)
+    prior = known[len(known) // 2] if known else 1
+    readers: dict[str, list[str]] = {n: [] for n in order}
+    for n in order:
+        for d in deps[n]:
+            readers[d].append(n)
+    waiting = {n: len(readers[n]) for n in order}
+    todo = [n for n in order if waiting[n] == 0]  # the sinks: nothing reads them
+    ranks: dict[str, int] = {}
+    while todo:  # Kahn's walk backwards: a target is ranked once every reader of it is
+        n = todo.pop()
+        ranks[n] = durations.get(n, prior) + max((ranks[r] for r in readers[n]), default=0)
+        for d in deps[n]:
+            waiting[d] -= 1
+            if waiting[d] == 0:
+                todo.append(d)
+    return ranks
+
+
 def rollback(root: Path, state_path: Path, cache_dir: Path) -> tuple[int, str]:
     """Put the previous generation back, whole or not at all: every target it recorded comes back
     from the cache by its tag (each entry checked before any file moves), then the two states
@@ -419,6 +469,11 @@ def execute(
     report = RunReport()
     order = [t.name for t in bf.targets]
     rank = {name: i for i, name in enumerate(order)}
+    # The ready targets start longest measured path first (BUILD-8b), the canonical order breaking
+    # ties; the durations order the work and decide nothing else.
+    measured = load_durations(durations_path(state_path))
+    upward = upward_ranks(order, deps, measured)
+    priority = {name: (-upward[name], rank[name]) for name in order}
     pending = set(order)
     running: dict[Future, str] = {}
     stopped = False
@@ -469,7 +524,8 @@ def execute(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while pending or running:
             ready = sorted(
-                (n for n in pending if all(d in report.results for d in deps[n])), key=rank.get
+                (n for n in pending if all(d in report.results for d in deps[n])),
+                key=priority.get,
             )
             busy = set().union(*(dirs[n] for n in running.values()))
             for name in ready:
@@ -509,8 +565,20 @@ def execute(
                     if result.outcome in ("ran", "cache", "up-to-date"):
                         state[name] = result.tag
                         save_state()
+                    if result.outcome == "ran":  # a restore's time is not the target's
+                        measured[name] = max(1, round(result.seconds * 1e9))
                     elif result.outcome == "failed" and not keep_going:
                         stopped = True
+    if any(r.outcome == "ran" for r in report.results.values()):
+        path = durations_path(state_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(
+            json.dumps({n: measured[n] for n in order if n in measured}, sort_keys=True, indent=0),
+            encoding="utf-8",
+            newline="\n",
+        )
+        os.replace(tmp, path)
     report.results = {name: report.results[name] for name in order if name in report.results}
     report.telemetry = telemetry.records
     return report

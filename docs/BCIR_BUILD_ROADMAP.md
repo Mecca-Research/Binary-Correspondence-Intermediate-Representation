@@ -199,9 +199,12 @@ the oracle with BUILD-6 (the grammar, the laws, the dry-run planner, §8.1) and 
   identity (R11's per-resource generation vectors); a target is rebuilt when a tag differs, and
   never otherwise -- no timestamps. Artifacts are immutable within a generation (invariant 6 of the
   engineering method), promoted at quiescent boundaries, rolled back as a whole.
-- **Scheduling is the existing schedulers.** The wave/token/EFT schedulers over the task DAG under
-  the two-worker cap, with the measured durations of earlier runs as the cost model's priors
-  (a `wall` metric: indicative, never gating).
+- **Scheduling.** The plan's waves (`--dry-run`) are the unit-time wave rule over the task DAG
+  under the two-worker cap. The runner starts the ready targets by HEFT's upward rank over the
+  durations earlier runs measured (BUILD-8b): the longest-duration-first priority that
+  `bcir.gem.schedule`'s EFT placer reduces to inside one phase, with the measured durations as the
+  cost model's priors (a `wall` metric: indicative, never gating). Measured on the rails' own
+  build, the order changes nothing yet (§10): that build sits near its work bound.
 - **The runner lands in the oracle first** (`bcir/make/`: the BCIRfile grammar, the DAG model, the
   dry-run planner, `bcir-make` as a module entry point), then its C twin, then the parity gate
   between them, as every rail here has landed.
@@ -256,8 +259,12 @@ runner only ever sees a lawful BCIRfile.
   tampered entry is a miss, never a restore); otherwise the target runs, and its outputs are
   stored under its tag. The state is written after every target, so an interrupted run keeps what
   it finished.
-- **Two workers.** Targets start in the IR's canonical order as their producers finish, at most
-  `--workers` at once (two, the cap AGENTS.md sets), and never two that write into one directory.
+- **Two workers.** Targets start as their producers finish, at most `--workers` at once (two, the
+  cap AGENTS.md sets), and never two that write into one directory. Of the targets ready to start,
+  the one with the longest path still ahead of it goes first: its upward rank over the durations
+  earlier runs measured, kept beside the state (`state.durations.json`) and read by nothing else,
+  so they order the work and decide nothing (BUILD-8b). A target never measured counts as the
+  median of the measured ones, and the canonical order breaks ties.
   A failed target stops the run unless `--keep-going`, and its readers are skipped with the reason.
 - **The observed footprint.** Before a target runs, its outputs are removed. Afterwards each must
   exist, and a file that appeared or changed beside them which no target claims fails the target:
@@ -384,6 +391,7 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | BUILD-8: the twin (gcc, clang 18, clang 23) | `make_parity.py` over 400 generated cases and the rails' own BCIRfile: 0 differ, every grammar refusal, MK1-MK5 finding and refused state among them; a twin that words one finding otherwise, or schedules a wave one wider, fails it |
 | BUILD-8: the retired runtime gate (gcc, clang 18; clang 23 through `check_latest.sh --legs gate`) | BCIR Make builds the rails and runs the 107 sections (152 s on gcc, 149 s on clang 18, the delegated gates included; the gate before took 213 s on clang 18, one command at a time); on clang 18 every PASS line it printed still prints (the ring's injected-race line up to its declared varying count), and 17 more (the freestanding section's per-unit lines and the twin's plan of the finished tree); under GCC 13, where the gate before could not run, it passes; a second run reuses every target; the twin plans the finished tree as the oracle does; with an earlier run's verdicts on disk, a failing section, a unit that does not compile (one the sections take, and one they do not) and a BCIRfile that breaks a law each fail it |
 | BUILD-8: the parity gates on BCIR Make's build (gcc, clang 18) | `build-section-parity`: 107 sections identical under BCIR Make's and CMake's builds; `build-parity`: 1920 rows, 0 differ; `build-pins` and `build-make-parity` pass; `ctest -L build` 8/8 on each tree |
+| BUILD-8b: measured priorities (gcc, two workers; a `wall` metric) | the rails built from nothing: 96.9 s and 92.5 s with nothing measured, 97.9 s and 93.1 s with the first run's durations as priors; a one-unit edit (116 targets): 44.6, 45.3 and 46.2 s against 46.8, 46.7 and 45.4 s. No change beyond the noise: the work is 169 s and 68 s (two workers need 84 s and 34 s), far above either critical path, and the manifest already lists the longest sections early; the rest is the runner's per-task cost and the one-writer-per-directory rule |
 | BUILD-2 group 3e: the twelve new sections (gcc) | `ctest -L section` runs them 12/12; `build-section-parity` holds them identical, the kernels' recipes written by the same writer; a no-op build re-emits no kernel, an edit to an oracle module the emitters import re-emits all seven, an edit to one they do not import re-emits none, an edit to a driver re-emits its kernel alone |
 | BUILD-2 group 3d's `cexpr` (gcc, clang 18, clang 23) | the emit builds under `-std=c11 -pedantic-errors` with each compiler, and the section prints its PASS line; the `bcir-cc` before CF-CASELABEL fails the emitted build under all three, GCC included, which had accepted the C23 form silently |
 | `clang` preset (system Clang 18.1.3) | 0 warnings; `ctest -L build` 2/2; `fuzzer` preset `ctest -L fuzz` 20/20 |
