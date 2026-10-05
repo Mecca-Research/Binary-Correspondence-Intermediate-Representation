@@ -385,536 +385,78 @@ bash "${ROOT}/tools/c/sections/effects.sh" "${tmp}/bcir-cc" || exit 1
 
 echo "[c-runtime] automatic link-flag emission (bcir-cc --emit-link-flags): derived flags == oracle (#linkflags)"
 bash "${ROOT}/tools/c/sections/linkflags.sh" "${tmp}/bcir-cc" || exit 1
-# B2 FFTW link-flag rule (dual-rail): the trusted-library edges (cblas_*/fftwf_*) are NOT reachable from a
-# cfront SOURCE (an unknown callee lowers to an in-unit `c.call:` edge, not `c.call.libm:`) -- they are
-# minted by the kernel EMITTERS (emit_blas_gemm_c / emit_fftw_fft_c). So this probe drives the C twin's
-# bcir_cfront_link_flags over a FABRICATED unit carrying a `c.call.libm:fftwf_execute` edge and asserts it
-# derives `-lfftw3` (the B2 rule), with a cblas edge -> -lcblas (no B5 regression), a libm edge -> -lm,
-# and an unknown edge -> no flag. The oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py.
 echo "[c-runtime] B2 FFTW link-flag rule (bcir_cfront_link_flags twin): fftwf_* -> -lfftw3 (#linkflags-fftw)"
-cat > "${tmp}/lf_fftw.c" <<'PROBE'
-#include <stdio.h>
-#include <string.h>
-#include "bcir_cir.h"
-#include "bcir_cfront.h"
-/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
-static const char *derive(const char *op) {
-  static char buf[128];
-  bcir_claim cl; memset(&cl, 0, sizeof cl);
-  snprintf(cl.op, sizeof cl.op, "%s", op);
-  bcir_func f; memset(&f, 0, sizeof f);
-  f.claims = &cl; f.n_claims = 1;
-  bcir_unit u; memset(&u, 0, sizeof u);
-  u.funcs = &f; u.n_funcs = 1;
-  bcir_cfront_link_flags(&u, buf, sizeof buf);
-  return buf;
-}
-static int eq(const char *op, const char *want) {
-  const char *got = derive(op);
-  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
-  return 1;
-}
-int main(void) {
-  int ok = 1;
-  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* the B2 rule */
-  ok &= eq("c.call.libm:fftwf_plan_dft_1d", "-lfftw3");  /* any fftwf_* */
-  ok &= eq("c.call.libm:fftw_execute", "-lfftw3");       /* the double-prec fftw_* prefix */
-  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
-  ok &= eq("c.call.libm:sqrt", "-lm");                   /* libm (no regression) */
-  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
-  if (ok) puts("OK linkflags-fftw");
-  return ok ? 0 : 1;
-}
-PROBE
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_fftw.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_fftw" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_fftw.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_fftw" \
-  || { echo "  FAIL: FFTW link-flag probe build"; exit 1; }
-"${tmp}/lf_fftw" | grep -q "^OK linkflags-fftw" \
-  && echo "  PASS linkflags-fftw: C twin derives fftwf_*/fftw_* -> -lfftw3 (cblas/-lm/unknown unchanged)" \
-  || { echo "  FAIL: FFTW link-flag rule diverged on the C twin"; "${tmp}/lf_fftw"; exit 1; }
+"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/test_link_flag_rules.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/test_link_flag_rules" 2>/dev/null \
+  || "${CC}" -std=c11 -O2 -I "${C}" "${C}/test_link_flag_rules.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
+       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/test_link_flag_rules" \
+  || { echo "  FAIL: link-flag rules harness build"; exit 1; }
+bash "${ROOT}/tools/c/sections/linkflags_fftw.sh" "${tmp}/test_link_flag_rules" || exit 1
 
-# B-breadth (#61) LAPACK link-flag rule (dual-rail): the LAPACK edge (LAPACKE_sgesv) is minted by the kernel
-# EMITTER (emit_lapack_solve_c), not reachable from a cfront source. So this probe drives the C twin's
-# bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:LAPACKE_sgesv` edge and asserts it
-# derives `-llapack` (the LAPACK rule), with a Fortran-ABI `sgesv_` edge -> -llapack too, and no regression
-# on fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
-# (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_lapack.py.
 echo "[c-runtime] LAPACK link-flag rule (bcir_cfront_link_flags twin): LAPACKE_*/sgesv_ -> -llapack (#linkflags-lapack)"
-cat > "${tmp}/lf_lapack.c" <<'PROBE'
-#include <stdio.h>
-#include <string.h>
-#include "bcir_cir.h"
-#include "bcir_cfront.h"
-/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
-static const char *derive(const char *op) {
-  static char buf[128];
-  bcir_claim cl; memset(&cl, 0, sizeof cl);
-  snprintf(cl.op, sizeof cl.op, "%s", op);
-  bcir_func f; memset(&f, 0, sizeof f);
-  f.claims = &cl; f.n_claims = 1;
-  bcir_unit u; memset(&u, 0, sizeof u);
-  u.funcs = &f; u.n_funcs = 1;
-  bcir_cfront_link_flags(&u, buf, sizeof buf);
-  return buf;
-}
-static int eq(const char *op, const char *want) {
-  const char *got = derive(op);
-  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
-  return 1;
-}
-int main(void) {
-  int ok = 1;
-  ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* the LAPACK rule (the wrapper's actual callee) */
-  ok &= eq("c.call.libm:LAPACKE_dgesv", "-llapack");     /* any LAPACKE_* */
-  ok &= eq("c.call.libm:LAPACKE_sgels", "-llapack");     /* E1 OLS: LAPACKE_sgels rides the SAME LAPACKE_* rule */
-  ok &= eq("c.call.libm:LAPACKE_ssyev", "-llapack");     /* E2 PCA: LAPACKE_ssyev rides the SAME LAPACKE_* rule */
-  ok &= eq("c.call.libm:sgesv_", "-llapack");            /* the Fortran-ABI driver symbol */
-  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
-  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
-  ok &= eq("c.call.libm:sqrt", "-lm");                   /* libm (no regression) */
-  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
-  if (ok) puts("OK linkflags-lapack");
-  return ok ? 0 : 1;
-}
-PROBE
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_lapack.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_lapack" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_lapack.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_lapack" \
-  || { echo "  FAIL: LAPACK link-flag probe build"; exit 1; }
-"${tmp}/lf_lapack" | grep -q "^OK linkflags-lapack" \
-  && echo "  PASS linkflags-lapack: C twin derives LAPACKE_*/sgels/sgesv_ -> -llapack (fftw/cblas/-lm/unknown unchanged)" \
-  || { echo "  FAIL: LAPACK link-flag rule diverged on the C twin"; "${tmp}/lf_lapack"; exit 1; }
+bash "${ROOT}/tools/c/sections/linkflags_lapack.sh" "${tmp}/test_link_flag_rules" || exit 1
 
-# E1 (ML-breadth) OLS portable fallback (#ols): the OVERDETERMINED least-squares wrap (emit_lapack_ols_c)
-# generalizes the square sgesv solve to linear regression (minimize ||A x - b||_2). The linked path is the
-# QR-based LAPACKE_sgels (~cond(A)); the portable fallback forms the NORMAL EQUATIONS G = A^T A (~cond(A)^2,
-# the textbook OLS twin of kbcir.ols.ols_reference). This probe compiles + runs the FALLBACK (no LAPACK
-# needed -- CI is LAPACK-free, exactly the Area-B norm) over a CONSISTENT overdetermined system b = A x_true
-# and checks it RECOVERS x_true on a well-conditioned A. The LAPACKE_sgels -> -llapack dual-rail is confirmed
-# by the #linkflags-lapack probe above (LAPACKE_sgels rides the SAME LAPACKE_* rule -- no linkflags change).
 echo "[c-runtime] E1 OLS portable fallback (emit_lapack_ols_c): normal-equations recovers a known x (#ols)"
 # Emit the fallback OLS kernel from the oracle, append a main that fits y = 2x + 1 (m=8, n=2 -> [1, x] rows,
 # recovers [c0=1, c1=2]), and assert the recovered coefficients match to float round-off.
-python3 - > "${tmp}/ols_kernel.c" <<'PY' || { echo "  FAIL: python OLS emit"; exit 1; }
-from bcir.lower.c_kernel import emit_lapack_ols_c
-print(emit_lapack_ols_c(8, 2, 1, "ols"))
-PY
-cat >> "${tmp}/ols_kernel.c" <<'MAIN'
-#include <stdio.h>
-#include <math.h>
-int main(void) {
-  /* fit y = 2x + 1 over 8 points exactly on the line: design rows [1, x_i], b_i = 2*x_i + 1. */
-  float A[16], b[8], x[2] = {0.0f, 0.0f};
-  for (int i = 0; i < 8; ++i) { A[i*2+0] = 1.0f; A[i*2+1] = (float)i; b[i] = 2.0f*(float)i + 1.0f; }
-  ols(A, b, x);                                   /* x = [c0, c1] */
-  printf("c0=%.6f c1=%.6f\n", x[0], x[1]);
-  /* recovered coefficients must be [1, 2] to float round-off (consistent, well-conditioned). */
-  return (fabsf(x[0] - 1.0f) < 1e-3f && fabsf(x[1] - 2.0f) < 1e-3f) ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_ols > "${tmp}/ols_kernel.c" || { echo "  FAIL: python OLS emit"; exit 1; }
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/ols_kernel.c" -lm -o "${tmp}/ols" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/ols_kernel.c" -lm -o "${tmp}/ols" \
   || { echo "  FAIL: OLS fallback build"; exit 1; }
-ols_out="$("${tmp}/ols")"; ols_rc=$?    # rc=0 IS the recovery check: |c0-1|<1e-3 && |c1-2|<1e-3 (in the driver)
-{ [ "${ols_rc}" = "0" ] && printf '%s' "${ols_out}" | grep -q "^c0=.* c1=.*"; } \
-  && echo "  PASS ols: normal-equations fallback recovers y=2x+1 (${ols_out}; LAPACKE_sgels -> -llapack via #linkflags-lapack)" \
-  || { echo "  FAIL: OLS fallback did not recover [1,2] (rc=${ols_rc}: ${ols_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/ols.sh" "${tmp}/ols" || exit 1
 
-# E2 (ML-breadth) PCA portable fallback (#pca): the SYMMETRIC EIGENDECOMPOSITION wrap (emit_lapack_eigh_c) is
-# the PCA sibling of E1's OLS solve -- where OLS forms a symmetric Gram matrix and SOLVES it, PCA forms a
-# symmetric covariance and EIGENDECOMPOSES it. The linked path is LAPACKE_ssyev (Householder + implicit-QR);
-# the portable fallback is the classic JACOBI rotation sweep (the C twin of kbcir.pca._jacobi_eigh). This probe
-# compiles + runs the FALLBACK (no LAPACK needed -- CI is LAPACK-free, exactly the Area-B norm) on a hand-built
-# DIAGONAL symmetric matrix diag(5,3,1) with DISTINCT (well-separated) eigenvalues, and checks it recovers the
-# eigenvalues DESCENDING [5,3,1] and the standard-basis eigenvectors (sign convention: largest-magnitude entry
-# positive). The LAPACKE_ssyev -> -llapack dual-rail is confirmed by the #linkflags-lapack probe above
-# (LAPACKE_ssyev rides the SAME LAPACKE_* rule -- no linkflags change).
 echo "[c-runtime] E2 PCA portable fallback (emit_lapack_eigh_c): Jacobi recovers a known spectrum (#pca)"
-python3 - > "${tmp}/eigh_kernel.c" <<'PY' || { echo "  FAIL: python PCA eigh emit"; exit 1; }
-from bcir.lower.c_kernel import emit_lapack_eigh_c
-print(emit_lapack_eigh_c(3, "eigh"))
-PY
-cat >> "${tmp}/eigh_kernel.c" <<'MAIN'
-#include <stdio.h>
-#include <math.h>
-int main(void) {
-  /* a hand-built symmetric matrix diag(5,3,1): eigenvalues [5,3,1] DESCENDING, eigenvectors = standard basis. */
-  float C[9] = {5.0f, 0.0f, 0.0f,  0.0f, 3.0f, 0.0f,  0.0f, 0.0f, 1.0f};
-  float vals[3] = {0}, vecs[9] = {0};
-  eigh(C, vals, vecs);                            /* vals descending, vecs[t*3+j] = component t coord j */
-  printf("l0=%.6f l1=%.6f l2=%.6f\n", vals[0], vals[1], vals[2]);
-  int ok = fabsf(vals[0] - 5.0f) < 1e-4f && fabsf(vals[1] - 3.0f) < 1e-4f && fabsf(vals[2] - 1.0f) < 1e-4f;
-  for (int t = 0; t < 3 && ok; ++t)               /* eigenvectors are the standard basis, sign convention */
-    for (int j = 0; j < 3; ++j) {
-      float want = (j == t) ? 1.0f : 0.0f;
-      if (fabsf(fabsf(vecs[t*3+j]) - want) >= 1e-4f) ok = 0;
-    }
-  ok = ok && vecs[0] > 0.0f && vecs[4] > 0.0f && vecs[8] > 0.0f;   /* largest-magnitude entry positive */
-  return ok ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_pca > "${tmp}/eigh_kernel.c" || { echo "  FAIL: python PCA eigh emit"; exit 1; }
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/eigh_kernel.c" -lm -o "${tmp}/eigh" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/eigh_kernel.c" -lm -o "${tmp}/eigh" \
   || { echo "  FAIL: PCA eigh fallback build"; exit 1; }
-eigh_out="$("${tmp}/eigh")"; eigh_rc=$?    # rc=0 IS the recovery check: eigenvalues [5,3,1] + standard-basis vecs
-{ [ "${eigh_rc}" = "0" ] && printf '%s' "${eigh_out}" | grep -q "^l0=.* l1=.* l2=.*"; } \
-  && echo "  PASS pca: Jacobi fallback recovers diag(5,3,1) (${eigh_out}; LAPACKE_ssyev -> -llapack via #linkflags-lapack)" \
-  || { echo "  FAIL: PCA fallback did not recover [5,3,1] (rc=${eigh_rc}: ${eigh_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/pca.sh" "${tmp}/eigh" || exit 1
 
-# E3 (ML-breadth) full Transformer block's ONE new numeric primitive (#layernorm): the LAYERNORM kernel
-# (emit_layernorm_c). Unlike E1/E2 (each a wrap of one external LAPACK kernel), the Transformer block is a
-# COMPOSITION -- its per-head matmuls + scale + softmax are the EXISTING emit_attention_c C twin, the
-# projections/feed-forward are the EXISTING matmul emitters, so the ONLY net-new C kernel is the per-row
-# layernorm: out = gamma*(x-mean)/sqrtf(var+eps) + beta (POPULATION /dim variance). Its only transcendental is
-# the 1/sqrtf(var+eps), which rides the c.call.libm:sqrtf edge (-lm, ALREADY mapped -- no linkflags change,
-# confirmed by #linkflags-* probes: sqrtf rides the libm rule). This probe compiles + runs the kernel (no
-# external library needed -- only libm) on a known matrix with gamma=1/beta=0 and checks each output row is
-# normalized to mean~0 / var~1 (the property layernorm guarantees), the C twin of kbcir.transformer.layernorm_
-# reference + its layernorm_stats independent verifier.
 echo "[c-runtime] E3 Transformer layernorm (emit_layernorm_c): per-row normalize to mean~0/var~1 (#layernorm)"
-python3 - > "${tmp}/ln_kernel.c" <<'PY' || { echo "  FAIL: python layernorm emit"; exit 1; }
-from bcir.lower.c_kernel import emit_layernorm_c
-print(emit_layernorm_c(2, 4, "ln"))
-PY
-cat >> "${tmp}/ln_kernel.c" <<'MAIN'
-#include <stdio.h>
-#include <math.h>
-int main(void) {
-  /* two rows over a dim=4 feature axis; gamma=1/beta=0 -> a pure normalization (mean 0, var 1 per row). */
-  float X[8] = {1.0f, 2.0f, 3.0f, 4.0f,  -2.0f, 0.0f, 2.0f, 4.0f};
-  float G[4] = {1.0f, 1.0f, 1.0f, 1.0f}, B[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  float O[8] = {0};
-  ln(X, G, B, 1e-5f, O);                         /* out[r*4+c] = (X[r,c]-mean)/sqrtf(var+eps) */
-  int ok = 1;
-  for (int r = 0; r < 2 && ok; ++r) {
-    float mean = 0.0f; for (int c = 0; c < 4; ++c) mean += O[r*4+c]; mean /= 4.0f;
-    float var = 0.0f;  for (int c = 0; c < 4; ++c) { float d = O[r*4+c] - mean; var += d*d; } var /= 4.0f;
-    printf("r%d mean=%.6f var=%.6f\n", r, mean, var);
-    if (fabsf(mean) >= 1e-3f || fabsf(var - 1.0f) >= 1e-2f) ok = 0;   /* normalized: mean~0, var~1 */
-  }
-  return ok ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_layernorm > "${tmp}/ln_kernel.c" || { echo "  FAIL: python layernorm emit"; exit 1; }
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/ln_kernel.c" -lm -o "${tmp}/ln" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/ln_kernel.c" -lm -o "${tmp}/ln" \
   || { echo "  FAIL: layernorm kernel build"; exit 1; }
-ln_out="$("${tmp}/ln")"; ln_rc=$?    # rc=0 IS the check: each output row has mean~0 and var~1 (in the driver)
-{ [ "${ln_rc}" = "0" ] && printf '%s' "${ln_out}" | grep -q "^r0 mean=.* var=.*"; } \
-  && echo "  PASS layernorm: rows normalize to mean~0/var~1 (${ln_out//$'\n'/ }; sqrtf -> -lm via the libm rule, no linkflags change)" \
-  || { echo "  FAIL: layernorm did not normalize rows (rc=${ln_rc}: ${ln_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/layernorm.sh" "${tmp}/ln" || exit 1
 
-# E4 (ML-breadth) recurrent cells: the LSTM CELL kernel (emit_lstm_cell_c) -- the recurrent-cell executable seam
-# (#lstm). E4 is a TWO-TIER design: Tier A (the closed-set relu-RNN) is already lowerable through the EXISTING
-# autodiff/closed-set machinery (relu = select, exact, no libm), so the net-new C seam is the TRANSCENDENTAL
-# tier, of which the LSTM cell is the canonical gate-rich representative: per unit f=sigmoid(Wf x+Uf h+bf),
-# i,o likewise, g=tanhf(Wg x+Ug h+bg), c=f*c_prev+i*g, h=o*tanhf(c). Its only transcendentals are tanhf + the
-# expf inside the (numerically-guarded) sigmoid, BOTH riding the c.call.libm: edge (-lm, ALREADY mapped -- no
-# linkflags change; sqrtf/tanhf/expf all ride the libm rule, confirmed by the #linkflags-* probes). This probe
-# compiles + runs the kernel (only libm needed) on a 1x1 cell with KNOWN weights (W_*=1, U_*=0, b_*=0, x=0.5,
-# h_prev=0, c_prev=0) and asserts it matches the hand-computed output to float round-off -- the C twin of
-# kbcir.recurrent.lstm_cell_reference.
 echo "[c-runtime] E4 recurrent LSTM cell (emit_lstm_cell_c): 1x1 cell matches hand-computed forward (#lstm)"
-python3 - > "${tmp}/lstm_kernel.c" <<'PY' || { echo "  FAIL: python lstm emit"; exit 1; }
-from bcir.lower.c_kernel import emit_lstm_cell_c
-print(emit_lstm_cell_c(1, 1, "lstm_cell"))
-PY
-cat >> "${tmp}/lstm_kernel.c" <<'MAIN'
-#include <stdio.h>
-#include <math.h>
-int main(void) {
-  /* a 1x1 LSTM with W_*=1, U_*=0, b_*=0, x=0.5, h_prev=0, c_prev=0: every gate pre-activation is 0.5. */
-  float X[1] = {0.5f}, HP[1] = {0.0f}, CP[1] = {0.0f};
-  float Wf[1]={1.0f}, Uf[1]={0.0f}, bf[1]={0.0f};
-  float Wi[1]={1.0f}, Ui[1]={0.0f}, bi[1]={0.0f};
-  float Wo[1]={1.0f}, Uo[1]={0.0f}, bo[1]={0.0f};
-  float Wg[1]={1.0f}, Ug[1]={0.0f}, bg[1]={0.0f};
-  float H[1], C[1];
-  lstm_cell(X, HP, CP, Wf,Uf,bf, Wi,Ui,bi, Wo,Uo,bo, Wg,Ug,bg, H, C);
-  /* hand-computed reference: f=i=o=sigmoid(0.5), g=tanhf(0.5); c=i*g; h=o*tanhf(c). */
-  float s = 1.0f/(1.0f+expf(-0.5f));
-  float g = tanhf(0.5f);
-  float c_exp = s*g;
-  float h_exp = s*tanhf(c_exp);
-  printf("h=%.6f c=%.6f (exp h=%.6f c=%.6f)\n", H[0], C[0], h_exp, c_exp);
-  int ok = (fabsf(H[0]-h_exp) < 1e-4f) && (fabsf(C[0]-c_exp) < 1e-4f);
-  return ok ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_lstm > "${tmp}/lstm_kernel.c" || { echo "  FAIL: python lstm emit"; exit 1; }
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/lstm_kernel.c" -lm -o "${tmp}/lstm" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/lstm_kernel.c" -lm -o "${tmp}/lstm" \
   || { echo "  FAIL: lstm kernel build"; exit 1; }
-lstm_out="$("${tmp}/lstm")"; lstm_rc=$?    # rc=0 IS the check: H/C match the hand-computed reference (driver)
-{ [ "${lstm_rc}" = "0" ] && printf '%s' "${lstm_out}" | grep -q "^h=.* c=.*"; } \
-  && echo "  PASS lstm: 1x1 cell matches hand-computed forward (${lstm_out}; tanhf/expf -> -lm via the libm rule, no linkflags change)" \
-  || { echo "  FAIL: lstm cell did not match the reference (rc=${lstm_rc}: ${lstm_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/lstm.sh" "${tmp}/lstm" || exit 1
 
-# E5 (ML-breadth) CLASSICAL-ML PREDICT path: the baked-model fixed-shape predict kernels (#classical). The
-# honest framing E7 cites: classical-ML TRAINING (tree induction, the SVM QP solve, NB fitting) is iterative/
-# combinatorial -- a POOR fit for BCIR's fixed-shape claim model (library/Python). PREDICT over a BAKED model is
-# the opposite: a deterministic, fixed-shape kernel = the G5 baked-weights pattern. Two probes show the Area-B
-# pattern covers BOTH halves: the RBF-SVM (transcendental -- its only external is expf on the c.call.libm: edge,
-# -lm, ALREADY mapped -- no linkflags change) and the decision tree (EXACT -- pure comparisons + a leaf return,
-# NO transcendental, NO libm). C twins of kbcir.classical.svm_decision_rbf / tree_predict.
 echo "[c-runtime] E5 classical-ML RBF-SVM predict (emit_svm_rbf_predict_c): decision function matches reference (#classical #svm)"
-python3 - > "${tmp}/svm_rbf_kernel.c" <<'PY' || { echo "  FAIL: python svm-rbf emit"; exit 1; }
-from bcir.lower.c_kernel import emit_svm_rbf_predict_c
-print(emit_svm_rbf_predict_c(1, 2, "svm_rbf"))
-PY
-cat >> "${tmp}/svm_rbf_kernel.c" <<'MAIN'
-#include <stdio.h>
-#include <math.h>
-int main(void) {
-  /* one SV at the origin, alpha_y=2, b=0.5, gamma=1: f(x)=2*expf(-||x||^2)+0.5. At x=(1,0): 2*exp(-1)+0.5. */
-  float X[2] = {1.0f, 0.0f};
-  float SV[2] = {0.0f, 0.0f};
-  float AY[1] = {2.0f};
-  float f = svm_rbf(X, SV, AY, 0.5f, 1.0f);
-  float exp_f = 2.0f * expf(-1.0f) + 0.5f;
-  printf("f=%.6f (exp=%.6f)\n", f, exp_f);
-  return (fabsf(f - exp_f) < 1e-4f) ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_svm > "${tmp}/svm_rbf_kernel.c" || { echo "  FAIL: python svm-rbf emit"; exit 1; }
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/svm_rbf_kernel.c" -lm -o "${tmp}/svm_rbf" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/svm_rbf_kernel.c" -lm -o "${tmp}/svm_rbf" \
   || { echo "  FAIL: svm-rbf kernel build"; exit 1; }
-svm_out="$("${tmp}/svm_rbf")"; svm_rc=$?    # rc=0 IS the check: f matches the hand-computed value (driver)
-{ [ "${svm_rc}" = "0" ] && printf '%s' "${svm_out}" | grep -q "^f=.*"; } \
-  && echo "  PASS svm: RBF decision matches reference (${svm_out}; expf -> -lm via the libm rule, no linkflags change)" \
-  || { echo "  FAIL: svm RBF decision did not match the reference (rc=${svm_rc}: ${svm_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/svm.sh" "${tmp}/svm_rbf" || exit 1
 
 echo "[c-runtime] E5 classical-ML decision-tree predict (emit_tree_predict_c): exact threshold traversal, NO libm (#classical #tree)"
-python3 - > "${tmp}/tree_kernel.c" <<'PY' || { echo "  FAIL: python tree emit"; exit 1; }
-from bcir.lower.c_kernel import emit_tree_predict_c
-print(emit_tree_predict_c(5, 2, "tree_p"))
-PY
-cat >> "${tmp}/tree_kernel.c" <<'MAIN'
-#include <stdio.h>
-#include <math.h>
-int main(void) {
-  /* the toy 5-node tree (test_classical._toy_tree): node0 split x[0]<=0.5 -> node1 else leaf2(30);
-     node1 split x[1]<=0.5 -> leaf3(10) else leaf4(20). */
-  int   FE[5] = {0, 1, -1, -1, -1};
-  float TH[5] = {0.5f, 0.5f, 0.0f, 0.0f, 0.0f};
-  int   LE[5] = {1, 3, 0, 0, 0};
-  int   RI[5] = {2, 4, 0, 0, 0};
-  float LV[5] = {0.0f, 0.0f, 30.0f, 10.0f, 20.0f};
-  float X0[2] = {0.2f, 0.2f};   /* -> leaf3 = 10 */
-  float X1[2] = {0.2f, 0.9f};   /* -> leaf4 = 20 */
-  float X2[2] = {0.9f, 0.0f};   /* -> leaf2 = 30 */
-  float a = tree_p(X0, FE, TH, LE, RI, LV);
-  float b = tree_p(X1, FE, TH, LE, RI, LV);
-  float c = tree_p(X2, FE, TH, LE, RI, LV);
-  printf("a=%.1f b=%.1f c=%.1f\n", a, b, c);
-  /* the tree is EXACT (no transcendental) -- the leaf values match bit-for-bit. */
-  return (a == 10.0f && b == 20.0f && c == 30.0f) ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_tree > "${tmp}/tree_kernel.c" || { echo "  FAIL: python tree emit"; exit 1; }
 # the tree kernel is EXACT -- no libm needed (we still link -lm only for the harness fabsf-free main; not required).
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/tree_kernel.c" -o "${tmp}/tree" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/tree_kernel.c" -o "${tmp}/tree" \
   || { echo "  FAIL: tree kernel build"; exit 1; }
-tree_out="$("${tmp}/tree")"; tree_rc=$?    # rc=0 IS the check: the three leaves match exactly (driver)
-{ [ "${tree_rc}" = "0" ] && printf '%s' "${tree_out}" | grep -q "^a=.* b=.* c=.*"; } \
-  && echo "  PASS tree: exact threshold traversal returns the known leaves (${tree_out}; NO libm -- the EXACT half of the Area-B pattern)" \
-  || { echo "  FAIL: tree predict did not return the known leaves (rc=${tree_rc}: ${tree_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/tree.sh" "${tmp}/tree" || exit 1
 
-# E6 (ML-breadth) UNSUPERVISED K-means nearest-centroid ASSIGN (#kmeans): the unsupervised analog of the E5 EXACT
-# tree kernel. K-means FIT is a bounded iterative optimization (Lloyd's, library/Python-shaped); ASSIGN over
-# BAKED centroids is the fixed-shape PREDICT kernel (G5 baked-weights pattern). It is the EXACT half of the
-# Area-B pattern -- argmin_c ||x-centroid[c]||^2 by squared distance: pure subtract/multiply/add + comparisons,
-# NO transcendental, NO libm (needs no -lm). It returns an int cluster id, so the C-vs-oracle check is
-# INTEGER-EXACT (the same argmin). C twin of kbcir.unsupervised.kmeans_assign.
 echo "[c-runtime] E6 unsupervised K-means assign (emit_kmeans_assign_c): nearest-centroid argmin, NO libm (#kmeans)"
-python3 - > "${tmp}/kmeans_kernel.c" <<'PY' || { echo "  FAIL: python kmeans emit"; exit 1; }
-from bcir.lower.c_kernel import emit_kmeans_assign_c
-print(emit_kmeans_assign_c(3, 2, "km_assign"))
-PY
-cat >> "${tmp}/kmeans_kernel.c" <<'MAIN'
-#include <stdio.h>
-int main(void) {
-  /* three baked centroids: (0,0), (10,10), (-5,5). Points off any exact equidistant tie. */
-  float C[6] = {0.0f, 0.0f,  10.0f, 10.0f,  -5.0f, 5.0f};
-  float X0[2] = {0.3f, 0.1f};    /* -> centroid 0 (near origin) */
-  float X1[2] = {9.7f, 10.2f};   /* -> centroid 1 (near (10,10)) */
-  float X2[2] = {-4.8f, 5.1f};   /* -> centroid 2 (near (-5,5)) */
-  int a = km_assign(X0, C);
-  int b = km_assign(X1, C);
-  int c = km_assign(X2, C);
-  printf("a=%d b=%d c=%d\n", a, b, c);
-  /* the assign kernel is EXACT (integer cluster id) -- the argmin matches kmeans_assign exactly. */
-  return (a == 0 && b == 1 && c == 2) ? 0 : 1;
-}
-MAIN
+python3 "${ROOT}/tools/build/emit_kernel.py" kernel_kmeans > "${tmp}/kmeans_kernel.c" || { echo "  FAIL: python kmeans emit"; exit 1; }
 # the K-means assign kernel is EXACT -- no libm needed (no -lm; the EXACT half of the Area-B pattern).
 "${CC}" -std=c11 -O2 -Wall -Wextra "${tmp}/kmeans_kernel.c" -o "${tmp}/kmeans" 2>/dev/null \
   || "${CC}" -std=c23 -O2 "${tmp}/kmeans_kernel.c" -o "${tmp}/kmeans" \
   || { echo "  FAIL: kmeans assign kernel build"; exit 1; }
-kmeans_out="$("${tmp}/kmeans")"; kmeans_rc=$?    # rc=0 IS the check: the three argmins match exactly (driver)
-{ [ "${kmeans_rc}" = "0" ] && printf '%s' "${kmeans_out}" | grep -q "^a=.* b=.* c=.*"; } \
-  && echo "  PASS kmeans: exact nearest-centroid argmin returns the known clusters (${kmeans_out}; NO libm -- the EXACT half of the Area-B pattern, integer-exact)" \
-  || { echo "  FAIL: kmeans assign did not return the known clusters (rc=${kmeans_rc}: ${kmeans_out})"; exit 1; }
+bash "${ROOT}/tools/c/sections/kmeans.sh" "${tmp}/kmeans" || exit 1
 
-# Area-B breadth (#62) GSL link-flag rule (dual-rail): the GSL edge (gsl_stats_mean) is minted by the kernel
-# EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's
-# bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:gsl_stats_mean` edge and asserts it
-# derives `-lgsl` (the GSL rule), with any gsl_* -> -lgsl too, and no regression on LAPACKE_* -> -llapack,
-# fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
-# (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_gsl.py.
 echo "[c-runtime] GSL link-flag rule (bcir_cfront_link_flags twin): gsl_* -> -lgsl (#linkflags-gsl)"
-cat > "${tmp}/lf_gsl.c" <<'PROBE'
-#include <stdio.h>
-#include <string.h>
-#include "bcir_cir.h"
-#include "bcir_cfront.h"
-/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
-static const char *derive(const char *op) {
-  static char buf[128];
-  bcir_claim cl; memset(&cl, 0, sizeof cl);
-  snprintf(cl.op, sizeof cl.op, "%s", op);
-  bcir_func f; memset(&f, 0, sizeof f);
-  f.claims = &cl; f.n_claims = 1;
-  bcir_unit u; memset(&u, 0, sizeof u);
-  u.funcs = &f; u.n_funcs = 1;
-  bcir_cfront_link_flags(&u, buf, sizeof buf);
-  return buf;
-}
-static int eq(const char *op, const char *want) {
-  const char *got = derive(op);
-  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
-  return 1;
-}
-int main(void) {
-  int ok = 1;
-  ok &= eq("c.call.libm:gsl_stats_mean", "-lgsl");       /* the GSL rule (the wrapper's actual callee) */
-  ok &= eq("c.call.libm:gsl_stats_variance", "-lgsl");   /* any gsl_* */
-  ok &= eq("c.call.libm:gsl_sf_erf", "-lgsl");           /* a special-function gsl_* too */
-  ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* #61 LAPACK (no regression) */
-  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
-  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
-  ok &= eq("c.call.libm:sqrt", "-lm");                   /* libm (no regression) */
-  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
-  if (ok) puts("OK linkflags-gsl");
-  return ok ? 0 : 1;
-}
-PROBE
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_gsl.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_gsl" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_gsl.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_gsl" \
-  || { echo "  FAIL: GSL link-flag probe build"; exit 1; }
-"${tmp}/lf_gsl" | grep -q "^OK linkflags-gsl" \
-  && echo "  PASS linkflags-gsl: C twin derives gsl_* -> -lgsl (lapack/fftw/cblas/-lm/unknown unchanged)" \
-  || { echo "  FAIL: GSL link-flag rule diverged on the C twin"; "${tmp}/lf_gsl"; exit 1; }
+bash "${ROOT}/tools/c/sections/linkflags_gsl.sh" "${tmp}/test_link_flag_rules" || exit 1
 
-# Area-B breadth (#63) SLEEF link-flag rule (dual-rail): the SLEEF edge (Sleef_expf1_u10) is minted by the
-# kernel EMITTER (emit_sleef_exp_c), not reachable from a cfront source. So this probe drives the C twin's
-# bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:Sleef_expf1_u10` edge and asserts it
-# derives `-lsleef` (the SLEEF rule), with any Sleef_* -> -lsleef too, and no regression on gsl_* -> -lgsl,
-# LAPACKE_* -> -llapack, fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The
-# oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_sleef.py.
 echo "[c-runtime] SLEEF link-flag rule (bcir_cfront_link_flags twin): Sleef_* -> -lsleef (#linkflags-sleef)"
-cat > "${tmp}/lf_sleef.c" <<'PROBE'
-#include <stdio.h>
-#include <string.h>
-#include "bcir_cir.h"
-#include "bcir_cfront.h"
-/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
-static const char *derive(const char *op) {
-  static char buf[128];
-  bcir_claim cl; memset(&cl, 0, sizeof cl);
-  snprintf(cl.op, sizeof cl.op, "%s", op);
-  bcir_func f; memset(&f, 0, sizeof f);
-  f.claims = &cl; f.n_claims = 1;
-  bcir_unit u; memset(&u, 0, sizeof u);
-  u.funcs = &f; u.n_funcs = 1;
-  bcir_cfront_link_flags(&u, buf, sizeof buf);
-  return buf;
-}
-static int eq(const char *op, const char *want) {
-  const char *got = derive(op);
-  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
-  return 1;
-}
-int main(void) {
-  int ok = 1;
-  ok &= eq("c.call.libm:Sleef_expf1_u10", "-lsleef");    /* the SLEEF rule (the wrapper's actual callee) */
-  ok &= eq("c.call.libm:Sleef_sinf1_u10", "-lsleef");    /* any Sleef_* */
-  ok &= eq("c.call.libm:gsl_stats_mean", "-lgsl");       /* #62 GSL (no regression) */
-  ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* #61 LAPACK (no regression) */
-  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
-  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
-  ok &= eq("c.call.libm:expf", "-lm");                   /* libm (no regression -- the SLEEF fallback's twin) */
-  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
-  if (ok) puts("OK linkflags-sleef");
-  return ok ? 0 : 1;
-}
-PROBE
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_sleef.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_sleef" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_sleef.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_sleef" \
-  || { echo "  FAIL: SLEEF link-flag probe build"; exit 1; }
-"${tmp}/lf_sleef" | grep -q "^OK linkflags-sleef" \
-  && echo "  PASS linkflags-sleef: C twin derives Sleef_* -> -lsleef (gsl/lapack/fftw/cblas/-lm/unknown unchanged)" \
-  || { echo "  FAIL: SLEEF link-flag rule diverged on the C twin"; "${tmp}/lf_sleef"; exit 1; }
+bash "${ROOT}/tools/c/sections/linkflags_sleef.sh" "${tmp}/test_link_flag_rules" || exit 1
 
-# Area-B breadth (#64) libcerf link-flag rule (dual-rail): the libcerf edge (erfcxf) is minted by the
-# kernel EMITTER (emit_cerf_erfcx_c), not reachable from a cfront source. So this probe drives the C twin's
-# bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:erfcxf` edge and asserts it derives
-# `-lcerf` (the libcerf rule), with the bare erfcx too, and no regression on Sleef_* -> -lsleef, gsl_* ->
-# -lgsl, LAPACKE_* -> -llapack, fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm (incl. erfcf -- erfcx is a
-# symbol libm LACKS, so erfcf/erfc still map to -lm, NOT -lcerf) -> -lm, and unknown -> no flag. The oracle
-# (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_cerf.py.
 echo "[c-runtime] libcerf link-flag rule (bcir_cfront_link_flags twin): erfcx* -> -lcerf (#linkflags-cerf)"
-cat > "${tmp}/lf_cerf.c" <<'PROBE'
-#include <stdio.h>
-#include <string.h>
-#include "bcir_cir.h"
-#include "bcir_cfront.h"
-/* Build a one-function unit whose single claim is the given external-call edge op, then derive its flags. */
-static const char *derive(const char *op) {
-  static char buf[128];
-  bcir_claim cl; memset(&cl, 0, sizeof cl);
-  snprintf(cl.op, sizeof cl.op, "%s", op);
-  bcir_func f; memset(&f, 0, sizeof f);
-  f.claims = &cl; f.n_claims = 1;
-  bcir_unit u; memset(&u, 0, sizeof u);
-  u.funcs = &f; u.n_funcs = 1;
-  bcir_cfront_link_flags(&u, buf, sizeof buf);
-  return buf;
-}
-static int eq(const char *op, const char *want) {
-  const char *got = derive(op);
-  if (strcmp(got, want)) { printf("FAIL %s -> '%s' want '%s'\n", op, got, want); return 0; }
-  return 1;
-}
-int main(void) {
-  int ok = 1;
-  ok &= eq("c.call.libm:erfcxf", "-lcerf");              /* the libcerf rule (the wrapper's actual callee) */
-  ok &= eq("c.call.libm:erfcx", "-lcerf");               /* the bare/double erfcx too */
-  ok &= eq("c.call.libm:erfcf", "-lm");                  /* erfcf/erfc are still libm (NOT shadowed by -lcerf) */
-  ok &= eq("c.call.libm:Sleef_expf1_u10", "-lsleef");    /* #63 SLEEF (no regression) */
-  ok &= eq("c.call.libm:gsl_stats_mean", "-lgsl");       /* #62 GSL (no regression) */
-  ok &= eq("c.call.libm:LAPACKE_sgesv", "-llapack");     /* #61 LAPACK (no regression) */
-  ok &= eq("c.call.libm:fftwf_execute", "-lfftw3");      /* B2 (no regression) */
-  ok &= eq("c.call.libm:cblas_sgemm", "-lcblas");        /* B5 (no regression) */
-  ok &= eq("c.call.libm:expf", "-lm");                   /* libm (no regression -- the erfcx fallback's twin) */
-  ok &= eq("c.call.libm:totally_unknown_fn", "");        /* unknown -> no flag (no regression) */
-  if (ok) puts("OK linkflags-cerf");
-  return ok ? 0 : 1;
-}
-PROBE
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${tmp}/lf_cerf.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-  "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_cerf" 2>/dev/null \
-  || "${CC}" -std=c11 -O2 -I "${C}" "${tmp}/lf_cerf.c" "${C}/bcir_cfront.c" "${C}/bcir_cpp.c" \
-       "${C}/bcir_verify.c" "${C}/bcir_runtime.c" -o "${tmp}/lf_cerf" \
-  || { echo "  FAIL: libcerf link-flag probe build"; exit 1; }
-"${tmp}/lf_cerf" | grep -q "^OK linkflags-cerf" \
-  && echo "  PASS linkflags-cerf: C twin derives erfcx* -> -lcerf (sleef/gsl/lapack/fftw/cblas/-lm/unknown unchanged)" \
-  || { echo "  FAIL: libcerf link-flag rule diverged on the C twin"; "${tmp}/lf_cerf"; exit 1; }
+bash "${ROOT}/tools/c/sections/linkflags_cerf.sh" "${tmp}/test_link_flag_rules" || exit 1
 
 # Scalable IR (no fixed BCIR_MAX_*): a unit that busts every OLD ceiling -- 43 functions (> the old
 # BCIR_MAX_FUNCS 16), many12 with 12 params (> 8), agg with 40 calls (> 32), big with 7500 claims

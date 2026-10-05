@@ -35,7 +35,7 @@ The rules, each with the code its findings carry:
   M11 seam         the C++ seam's units equal handoff_fixtures/check_handoff.sh's (the #719 pair)
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
   M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
-                   manifest harnesses, variants or tools in argument order; every script in that directory
+                   manifest harnesses, variants, tools or kernels in argument order; every script in that directory
                    is one section; tools/c/check_runtime.sh calls each script (the gate and the
                    CTest entry run one text); a section's binaries share one sanitizer or none (a
                    host without the runtime skips a whole section, never half of one)
@@ -46,6 +46,13 @@ The rules, each with the code its findings carry:
                    unambiguously); the gate generates every mutant with tools/build/mutate.py and
                    asks tools/build/sanitizer.py before it builds a sanitizer variant; every
                    variant is run by a section; no variant shadows a unit name
+  M15 kernels      every `kernels` entry is a program the Python oracle emits: `emit` names a
+                   function of bcir/lower/c_kernel.py, `args` are its integer and string arguments,
+                   `main` is the driver under runtime/c/kernels/ appended to the emitted text, `link`
+                   names m or pthread; every driver in that directory is one kernel's; the gate
+                   writes every kernel with tools/build/emit_kernel.py (which asks the same
+                   predicate, `kernel_problems`), every kernel is run by a section, and no kernel
+                   shadows a unit or variant name
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
                    names unique, PYTHON3 / THREADS / MLIR among them
@@ -74,7 +81,7 @@ CPP_KINDS = ("seam_libraries", "seam_tests")
 KINDS = C_KINDS + CPP_KINDS
 LIBRARY_KINDS = ("libraries", "seam_libraries")
 UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len")
-TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", "variants", *KINDS)
+TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", "variants", "kernels", *KINDS)
 VARIANT_KEYS = ("of", "options", "mutation", "standard", "sanitizer")
 MUTATION_KEYS = ("file", "find", "replace")
 # The C standards a variant may rebuild its harness in (C23, the harness's own, would change
@@ -84,6 +91,14 @@ STANDARDS = (11, 17)
 SANITIZERS = ("thread",)
 SANITIZER_PROBE = "tools/build/sanitizer.py"
 SECTIONS_DIR = "tools/c/sections"
+# The programs the Python oracle emits (BUILD-2h): their drivers, the module whose functions emit them,
+# and the one writer the gate and the CMake build both run.
+KERNELS_DIR = "runtime/c/kernels"
+KERNEL_KEYS = ("emit", "args", "main", "link")
+KERNEL_EMITTERS = "bcir/lower/c_kernel.py"
+KERNEL_WRITER = "tools/build/emit_kernel.py"
+EMITTER_NAME = re.compile(r"emit_[a-z0-9_]+")
+DRIVER_NAME = re.compile(r"[a-z0-9_]+\.c")
 RUNTIME_GATE = "tools/c/check_runtime.sh"
 LINK_NAMES = ("m", "pthread")
 CLASSES = ("freestanding_core", "hosted_tool", "driver_adapter")
@@ -272,12 +287,29 @@ def python_groups(text: str) -> list[list[str]]:
     return groups
 
 
-class Tree:
+class KernelFacts:
+    """What a kernel entry is judged against (M15): the drivers under runtime/c/kernels/ and the
+    functions bcir/lower/c_kernel.py defines at module level, read as text -- nothing is imported.
+    tools/build/emit_kernel.py reads only these; the checker's `Tree` carries them too."""
+
+    def __init__(self, root: Path = ROOT) -> None:
+        self.kernel_mains = sorted(p.name for p in (root / KERNELS_DIR).glob("*.c"))
+        try:
+            module = ast.parse((root / KERNEL_EMITTERS).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            module = ast.Module(body=[], type_ignores=[])
+        self.kernel_emitters = {
+            node.name for node in module.body if isinstance(node, ast.FunctionDef)
+        }
+
+
+class Tree(KernelFacts):
     """What the checker reads from the repository: the source directories, the memory classes,
     the gates' link groups, the Python modules' source literals, the seam's two lists and the
     presets. Read once; `check()` holds any manifest to it."""
 
     def __init__(self, root: Path = ROOT, presets: Path | None = PRESETS) -> None:
+        super().__init__(root)
         self.root = root
         self.c_dir = root / "runtime" / "c"
         self.cpp_dir = root / "runtime" / "cpp"
@@ -629,7 +661,13 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
         errors.append("M13: sections is not an object")
         return
     variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
-    harnesses = set(_units(manifest, "harnesses")) | set(variants) | set(_units(manifest, "tools"))
+    kernels = manifest.get("kernels") if isinstance(manifest.get("kernels"), dict) else {}
+    harnesses = (
+        set(_units(manifest, "harnesses"))
+        | set(variants)
+        | set(_units(manifest, "tools"))
+        | set(kernels)
+    )
     registered: list[str] = []
     for name, section in sections.items():
         where = f"sections/{name}"
@@ -674,7 +712,7 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
         for harness in names:
             if harness not in harnesses:
                 errors.append(
-                    f"M13: {where} names {harness!r}, which is no manifest harness, variant or tool"
+                    f"M13: {where} names {harness!r}, which is no manifest harness, variant, tool or kernel"
                 )
         if len(set(names)) != len(names):
             errors.append(f"M13: {where} names a harness twice")
@@ -784,6 +822,81 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
             )
 
 
+def kernel_problems(manifest: dict, name: str, facts: KernelFacts) -> list[str]:
+    """What keeps the manifest kernel `name` from being written (empty when nothing does): its shape,
+    its emitter, its arguments, its driver and its system libraries. The one predicate the checker
+    (M15) and tools/build/emit_kernel.py ask, so the writer refuses exactly what the checker reports."""
+    where = f"kernels/{name}"
+    kernels = manifest.get("kernels")
+    entry = kernels.get(name) if isinstance(kernels, dict) else None
+    if entry is None:
+        return [f"M15: no manifest kernel named {name!r}"]
+    if not isinstance(entry, dict) or not {"emit", "args", "main"} <= set(entry) <= set(
+        KERNEL_KEYS
+    ):
+        return [f"M15: {where} is not {{emit, args, main, link?}}"]
+    problems: list[str] = []
+    emit = entry["emit"]
+    if not isinstance(emit, str) or not EMITTER_NAME.fullmatch(emit):
+        problems.append(f"M15: {where}.emit {emit!r} is not an emit_* function name")
+    elif emit not in facts.kernel_emitters:
+        problems.append(f"M15: {where}.emit {emit} is no function of {KERNEL_EMITTERS}")
+    args = entry["args"]
+    if not isinstance(args, list) or any(
+        isinstance(a, bool) or not isinstance(a, (int, str)) for a in args
+    ):
+        problems.append(f"M15: {where}.args is not a list of integers and strings")
+    main = entry["main"]
+    if not isinstance(main, str) or not DRIVER_NAME.fullmatch(main):
+        problems.append(f"M15: {where}.main {main!r} is not a driver basename (name.c)")
+    elif main not in facts.kernel_mains:
+        problems.append(f"M15: {where}.main {main} does not exist under {KERNELS_DIR}/")
+    if "link" in entry and (
+        not isinstance(entry["link"], list)
+        or not entry["link"]
+        or any(lib not in LINK_NAMES for lib in entry["link"])
+    ):
+        problems.append(f"M15: {where}.link is not a non-empty list of {', '.join(LINK_NAMES)}")
+    return problems
+
+
+def check_kernels(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    kernels = manifest.get("kernels")
+    if kernels is None:
+        kernels = {}
+    if not isinstance(kernels, dict):
+        errors.append("M15: kernels is not an object")
+        return
+    variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
+    taken = {name for kind in KINDS for name in _units(manifest, kind)} | set(variants)
+    sections = manifest.get("sections") if isinstance(manifest.get("sections"), dict) else {}
+    run = {
+        h
+        for s in sections.values()
+        if isinstance(s, dict)
+        for h in (s.get("harnesses") or [])
+        if isinstance(h, str)
+    }
+    drivers: list[str] = []
+    for name, entry in kernels.items():
+        where = f"kernels/{name}"
+        errors.extend(kernel_problems(manifest, name, tree))
+        if isinstance(entry, dict) and isinstance(entry.get("main"), str):
+            drivers.append(entry["main"])
+        if name in taken:
+            errors.append(f"M15: {where} shadows a manifest unit or variant of the same name")
+        if name not in run:
+            errors.append(f"M15: {where} is run by no section (a binary nothing judges)")
+        if not re.search(
+            rf'{re.escape(KERNEL_WRITER)}"?\s+{re.escape(name)}(?=\s)', tree.runtime_gate_text
+        ):
+            errors.append(f"M15: {RUNTIME_GATE} does not write {where} with {KERNEL_WRITER}")
+    for main in tree.kernel_mains:
+        count = drivers.count(main)
+        if count != 1:
+            errors.append(f"M15: {KERNELS_DIR}/{main} is the driver of {count} kernels, not one")
+
+
 def check_presets(presets: dict | str | None, errors: list[str], workers: int = WORKERS) -> None:
     if presets is None:
         return
@@ -838,6 +951,7 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     check_seam(manifest, tree, errors)
     check_sections(manifest, tree, errors)
     check_variants(manifest, tree, errors)
+    check_kernels(manifest, tree, errors)
     check_presets(tree.presets, errors)
     return errors
 
@@ -939,6 +1053,8 @@ def main(argv: list[str] | None = None) -> int:
     summary += f", {len(sections) if isinstance(sections, dict) else 0} sections"
     variants = manifest.get("variants")
     summary += f", {len(variants) if isinstance(variants, dict) else 0} variants"
+    kernels = manifest.get("kernels")
+    summary += f", {len(kernels) if isinstance(kernels, dict) else 0} kernels"
     free = (
         len(manifest.get("freestanding_checks", []))
         if isinstance(manifest.get("freestanding_checks"), list)

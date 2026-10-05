@@ -1587,6 +1587,31 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       and `build-section-parity` 29 sections identical; the clang 23 tree the same.
     - The gate prints 398 PASS lines on clang 18 and 387 on clang 23, as before the move, and
       no C23-extension warning. The gate's 3,571 lines are 3,544.
+  BUILD-2h (2026-10-05) moved group 3e: the sections whose programs the gate wrote out itself.
+  - The five link-flag rules (#linkflags-fftw, -lapack, -gsl, -sleef, -cerf) had been five probe
+    files written from heredocs, one helper copied five times. They are now one harness,
+    `runtime/c/test_link_flag_rules.c`: its argument picks a rule's table, each row the probe's own
+    edge and comment, and it prints the probe's own `OK linkflags-<rule>`. The gate builds it once;
+    `tools/c/sections/linkflags_<rule>.sh` runs one table each.
+  - The seven E-series sections (#ols, #pca, #layernorm, #lstm, #classical #svm, #classical #tree,
+    #kmeans) compile C the Python oracle emits, a driver `main` appended. A program that exists only
+    once the oracle has run needed a manifest kind of its own, `kernels`. Each entry names the
+    emitter, its arguments, its driver under `runtime/c/kernels/` and its system libraries.
+  - One writer for the unit: `tools/build/emit_kernel.py` writes it for the gate, for CMake and for
+    the section-parity recipe. CMake writes it at build time with a depfile naming every oracle module
+    the emitter imported.
+  - M15 holds each entry to the oracle (the emitter is a function of `bcir/lower/c_kernel.py`, read
+    as text), each driver to one entry, each kernel to a section and the gate's own writing.
+    `emit_kernel.py` asks the same predicate (`kernel_problems`), so the writer refuses exactly what
+    the checker reports.
+  - Measured:
+    - The gate's text for each kernel is the old heredoc text, the driver's two-line comment aside.
+    - On the gcc tree the twelve sections pass under CTest, and `build-section-parity` holds them
+      identical, the kernels' recipes written by the same writer.
+    - A no-op build re-emits no kernel. Touching `bcir/lower/alias_facts.py`, which the emitters
+      import, re-emits all seven; touching an ASN.1 module re-emits none; touching `ols`'s driver
+      re-emits `kernel_ols` alone.
+    - With M15's call removed, all fourteen injected kernel faults go unreported.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

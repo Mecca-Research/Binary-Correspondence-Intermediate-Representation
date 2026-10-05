@@ -29,6 +29,10 @@
 #                                   tools/build/mutate.py at build time; CMake never spells it)
 #   BCIR_variants_<name>_STANDARD   the C standard it builds in when not the harness's C23 (11, 17)
 #   BCIR_variants_<name>_SANITIZER  the sanitizer it builds with (thread), empty when none
+#   BCIR_MANIFEST_kernels           programs the Python oracle emits (bcir.lower.c_kernel), each with a
+#                                   driver appended: tools/build/emit_kernel.py writes the unit
+#   BCIR_kernels_<name>_MAIN        the driver (a basename under runtime/c/kernels)
+#   BCIR_kernels_<name>_LINK        system libraries it links (m, pthread)
 include_guard(GLOBAL)
 
 set(BCIR_MANIFEST_KINDS libraries tools harnesses fuzzers seam_libraries seam_tests)
@@ -156,6 +160,27 @@ function(bcir_manifest_load path)
     endforeach()
   endif()
   set(BCIR_MANIFEST_variants "${_variant_names}" PARENT_SCOPE)
+  # kernels: {name: {emit, args, main, link?}} -- C the Python oracle emits with a driver appended.
+  # The emitter and its arguments are tools/build/emit_kernel.py's to read; the build needs the
+  # driver (a dependency of the unit) and the system libraries.
+  set(_kernel_names "")
+  string(JSON _nker ERROR_VARIABLE _err LENGTH "${_json}" kernels)
+  if(NOT _err AND _nker GREATER 0)
+    math(EXPR _last "${_nker} - 1")
+    foreach(_i RANGE 0 ${_last})
+      string(JSON _name MEMBER "${_json}" kernels ${_i})
+      string(JSON _unit GET "${_json}" kernels ${_name})
+      _bcir_json_string("${_unit}" main _kmain)
+      _bcir_json_list("${_unit}" link _klink)
+      if(NOT _kmain)
+        message(FATAL_ERROR "BCIR: manifest kernel ${_name} names no driver (main)")
+      endif()
+      list(APPEND _kernel_names "${_name}")
+      set(BCIR_kernels_${_name}_MAIN "${_kmain}" PARENT_SCOPE)
+      set(BCIR_kernels_${_name}_LINK "${_klink}" PARENT_SCOPE)
+    endforeach()
+  endif()
+  set(BCIR_MANIFEST_kernels "${_kernel_names}" PARENT_SCOPE)
   _bcir_json_list("${_json}" freestanding_checks _free)
   if(NOT _free)
     message(FATAL_ERROR "BCIR: ${path} lists no freestanding_checks (the freestanding core is unproven)")
@@ -164,7 +189,8 @@ function(bcir_manifest_load path)
   list(LENGTH _free _nfree)
   list(LENGTH _section_names _nsections)
   list(LENGTH _variant_names _nvariants)
-  message(STATUS "BCIR manifest: ${_total} units, ${_nvariants} variants, ${_nfree} freestanding checks, ${_nsections} sections (${path})")
+  list(LENGTH _kernel_names _nkernels)
+  message(STATUS "BCIR manifest: ${_total} units, ${_nvariants} variants, ${_nkernels} kernels, ${_nfree} freestanding checks, ${_nsections} sections (${path})")
 endfunction()
 
 # The manifest's basenames as paths under runtime/c (bcir_manifest_paths) or runtime/cpp

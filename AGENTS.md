@@ -40,6 +40,9 @@ live in `CONTRIBUTING.md`.
 - Changing a fault-injection witness, an optimisation sweep, a C11 build or a sanitizer build → the
   manifest's `variants` (one spelling of each injected fault, applied by `tools/build/mutate.py` for
   the gate and CMake alike; one sanitizer predicate, `tools/build/sanitizer.py`).
+- Changing a test of C the Python oracle emits (the E-series kernels) → the manifest's `kernels` and
+  its driver under `runtime/c/kernels/` (one writer, `tools/build/emit_kernel.py`, for the gate,
+  CMake and the section-parity recipe alike).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

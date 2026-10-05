@@ -20,7 +20,10 @@
     "binaries: each is a regex whose one capture group is the varying value, masked before",
     "tools/build/section_parity.py compares the two builds' outputs byte for byte (the ring's count of",
     "concurrent runs that caught the injected race varies from run to run; every other byte of every",
-    "section must not)."
+    "section must not). `kernels` are programs the Python oracle emits (bcir.lower.c_kernel): `emit`",
+    "names the emitter, `args` its arguments, `main` the driver under runtime/c/kernels appended to the",
+    "emitted text, `link` the system libraries; tools/build/emit_kernel.py writes the unit for the gate,",
+    "CMake and the section-parity recipe alike."
   ],
   "libraries": {
     "bcir_base": {
@@ -143,7 +146,8 @@
     },
     "test_ai_kernels": {"sources": ["test_ai_kernels.c"], "libraries": ["bcir_models"], "link": ["m"], "options": ["-ffp-contract=off"]},
     "test_q8_tables": {"sources": ["test_q8_tables.c"]},
-    "test_x86_interrupt": {"sources": ["test_x86_interrupt.c"], "options": ["-ffreestanding"]}
+    "test_x86_interrupt": {"sources": ["test_x86_interrupt.c"], "options": ["-ffreestanding"]},
+    "test_link_flag_rules": {"sources": ["test_link_flag_rules.c"], "libraries": ["bcir_cfront"]}
   },
   "fuzzers": {
     "fuzz_q8_model": {"sources": ["fuzz_q8_model.c"], "libraries": ["bcir_models"], "max_len": "16384"},
@@ -218,6 +222,15 @@
       "mutation": {"file": "bcir_ring.c", "find": "  atomic_store_explicit(word_at(r, off), (unsigned long long)v, memory_order_relaxed);", "replace": "  *(unsigned long long *)(void *)(r + off) = (unsigned long long)v;"}
     }
   },
+  "kernels": {
+    "kernel_ols": {"emit": "emit_lapack_ols_c", "args": [8, 2, 1, "ols"], "main": "ols.c", "link": ["m"]},
+    "kernel_pca": {"emit": "emit_lapack_eigh_c", "args": [3, "eigh"], "main": "pca.c", "link": ["m"]},
+    "kernel_layernorm": {"emit": "emit_layernorm_c", "args": [2, 4, "ln"], "main": "layernorm.c", "link": ["m"]},
+    "kernel_lstm": {"emit": "emit_lstm_cell_c", "args": [1, 1, "lstm_cell"], "main": "lstm.c", "link": ["m"]},
+    "kernel_svm": {"emit": "emit_svm_rbf_predict_c", "args": [1, 2, "svm_rbf"], "main": "svm.c", "link": ["m"]},
+    "kernel_tree": {"emit": "emit_tree_predict_c", "args": [5, 2, "tree_p"], "main": "tree.c"},
+    "kernel_kmeans": {"emit": "emit_kmeans_assign_c", "args": [3, 2, "km_assign"], "main": "kmeans.c"}
+  },
   "sections": {
     "x86_interrupt": {"script": "tools/c/sections/x86_interrupt.sh", "harnesses": ["test_x86_interrupt_c11", "test_x86_interrupt"]},
     "runtime": {"script": "tools/c/sections/runtime.sh", "harnesses": ["test_runtime"]},
@@ -251,7 +264,19 @@
     "project": {"script": "tools/c/sections/project.sh", "harnesses": ["bcir-cc"]},
     "link": {"script": "tools/c/sections/link.sh", "harnesses": ["bcir-cc"]},
     "effects": {"script": "tools/c/sections/effects.sh", "harnesses": ["bcir-cc"]},
-    "linkflags": {"script": "tools/c/sections/linkflags.sh", "harnesses": ["bcir-cc"]}
+    "linkflags": {"script": "tools/c/sections/linkflags.sh", "harnesses": ["bcir-cc"]},
+    "linkflags_fftw": {"script": "tools/c/sections/linkflags_fftw.sh", "harnesses": ["test_link_flag_rules"]},
+    "linkflags_lapack": {"script": "tools/c/sections/linkflags_lapack.sh", "harnesses": ["test_link_flag_rules"]},
+    "ols": {"script": "tools/c/sections/ols.sh", "harnesses": ["kernel_ols"]},
+    "pca": {"script": "tools/c/sections/pca.sh", "harnesses": ["kernel_pca"]},
+    "layernorm": {"script": "tools/c/sections/layernorm.sh", "harnesses": ["kernel_layernorm"]},
+    "lstm": {"script": "tools/c/sections/lstm.sh", "harnesses": ["kernel_lstm"]},
+    "svm": {"script": "tools/c/sections/svm.sh", "harnesses": ["kernel_svm"]},
+    "tree": {"script": "tools/c/sections/tree.sh", "harnesses": ["kernel_tree"]},
+    "kmeans": {"script": "tools/c/sections/kmeans.sh", "harnesses": ["kernel_kmeans"]},
+    "linkflags_gsl": {"script": "tools/c/sections/linkflags_gsl.sh", "harnesses": ["test_link_flag_rules"]},
+    "linkflags_sleef": {"script": "tools/c/sections/linkflags_sleef.sh", "harnesses": ["test_link_flag_rules"]},
+    "linkflags_cerf": {"script": "tools/c/sections/linkflags_cerf.sh", "harnesses": ["test_link_flag_rules"]}
   },
   "freestanding_checks": [
     "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",

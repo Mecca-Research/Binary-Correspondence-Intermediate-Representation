@@ -122,6 +122,38 @@ if(BCIR_BUILD_HARNESSES)
   endforeach()
 endif()
 
+# --- kernels: C the Python oracle emits (bcir.lower.c_kernel) with a driver appended, the E-series
+# programs. tools/build/emit_kernel.py -- the writer tools/c/check_runtime.sh runs -- writes each
+# unit at build time with a depfile naming the oracle modules the emitter imported, so an edit to any
+# of them re-emits the kernel, and only such an edit does. The unit is built in C11, as the gate
+# builds it. A host without Python records each kernel as not built, with the reason, and its section
+# as not run here. ---
+if(BCIR_BUILD_HARNESSES)
+  foreach(_k IN LISTS BCIR_MANIFEST_kernels)
+    if(NOT BCIR_HAVE_PYTHON3)
+      set(_why "the Python oracle emits its source (tools/build/emit_kernel.py)")
+      message(STATUS "BCIR: kernel ${_k} is not built: ${_why}")
+      set_property(GLOBAL PROPERTY BCIR_UNBUILT_${_k} "${_why}")
+      set_property(GLOBAL APPEND PROPERTY BCIR_UNBUILT_VARIANTS "${_k}=${_why}")
+      continue()
+    endif()
+    set(_unit "${CMAKE_BINARY_DIR}/kernels/${_k}.c")
+    add_custom_command(OUTPUT "${_unit}"
+      COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/emit_kernel.py" "${_k}"
+              -o "${_unit}" --depfile "${_unit}.d"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tools/build/emit_kernel.py" "${CMAKE_SOURCE_DIR}/runtime/manifest.json"
+              "${BCIR_C_DIR}/kernels/${BCIR_kernels_${_k}_MAIN}"
+      DEPFILE "${_unit}.d"
+      COMMENT "BCIR: emitting kernel ${_k}"
+      VERBATIM)
+    add_executable(${_k} "${_unit}")
+    set_target_properties(${_k} PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/harnesses")
+    target_compile_options(${_k} PRIVATE ${BCIR_C_WARNINGS})
+    bcir_manifest_link(${_k} PRIVATE "" "${BCIR_kernels_${_k}_LINK}")
+  endforeach()
+endif()
+
 # --- fuzz targets: Clang's libFuzzer with ASan+UBSan, the library closure compiled into each
 # target so the code under test is instrumented (tools/c/fuzz_streampack.sh's one-command build) ---
 if(BCIR_BUILD_FUZZERS)

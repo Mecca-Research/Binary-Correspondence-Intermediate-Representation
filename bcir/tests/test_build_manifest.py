@@ -263,6 +263,67 @@ _FAULTS = (
         "a section mixing a sanitizer build with a plain one",
         lambda m: m["sections"]["ring_tsan"]["harnesses"].__setitem__(1, "test_ring_O0"),
     ),
+    (
+        "M13",
+        "a section taking a kernel the manifest lacks",
+        lambda m: m["sections"]["ols"].__setitem__("harnesses", ["kernel_nope"]),
+    ),
+    ("M15", "kernels that are no object", lambda m: m.__setitem__("kernels", [])),
+    ("M15", "a kernel without its driver", lambda m: m["kernels"]["kernel_ols"].pop("main")),
+    (
+        "M15",
+        "a kernel with a key no kernel has",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("options", ["-O3"]),
+    ),
+    (
+        "M15",
+        "an emitter the oracle lacks",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("emit", "emit_nothing_c"),
+    ),
+    (
+        "M15",
+        "an emitter that is no emit_* name",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("emit", "os.system"),
+    ),
+    (
+        "M15",
+        "a floating kernel argument",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("args", [8, 2.5]),
+    ),
+    (
+        "M15",
+        "a kernel argument spelled as a boolean",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("args", [True]),
+    ),
+    (
+        "M15",
+        "a driver that does not exist",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("main", "absent.c"),
+    ),
+    (
+        "M15",
+        "a driver named by a path",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("main", "../ols.c"),
+    ),
+    (
+        "M15",
+        "a kernel linking a library outside m and pthread",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("link", ["lapack"]),
+    ),
+    ("M15", "an empty link list", lambda m: m["kernels"]["kernel_tree"].__setitem__("link", [])),
+    (
+        "M15",
+        "a kernel no section runs",
+        lambda m: m["kernels"].__setitem__(
+            "kernel_extra", {"emit": "emit_tree_predict_c", "args": [5, 2, "t"], "main": "tree.c"}
+        ),
+    ),
+    (
+        "M15",
+        "a kernel that shadows a unit",
+        lambda m: m["kernels"].__setitem__("test_runtime", m["kernels"].pop("kernel_tree")),
+    ),
+    ("M15", "a driver no kernel names", lambda m: m["kernels"].pop("kernel_kmeans")),
 )
 
 
@@ -287,6 +348,105 @@ def test_the_gate_must_generate_every_mutant_with_the_shared_applier():
     assert any(
         f.startswith("M14:") and "test_kplan_mutant" in f and "mutate.py" in f for f in findings
     ), findings
+
+
+def test_the_gate_must_write_every_kernel_with_the_shared_writer():
+    """A kernel the gate writes its own way (a heredoc of its own) is a second spelling of the unit
+    that can drift from the one CMake builds (L14): each kernel's writing through
+    tools/build/emit_kernel.py is part of M15."""
+    tree = manifest_tool.Tree()
+    tree.runtime_gate_text = tree.runtime_gate_text.replace(
+        'emit_kernel.py" kernel_ols ', 'emit_kernel.py" kernel_other '
+    )
+    findings = manifest_tool.check(_manifest(), tree)
+    assert any(
+        f.startswith("M15:") and "kernel_ols" in f and "emit_kernel.py" in f for f in findings
+    ), findings
+
+
+def _writer_with(manifest: dict, tmp: str):
+    """The kernel writer reading `manifest` instead of the checkout's."""
+    writer = _load_tool("emit_kernel")
+    path = Path(tmp) / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    writer.MANIFEST = path
+    return writer
+
+
+def test_the_kernel_writer_appends_the_driver_to_the_emitters_text():
+    """emit_kernel.py writes a kernel's unit -- the emitter's text, a newline, the driver -- and a
+    depfile naming the emitter's modules and the driver; it refuses what M15 refuses (2), an
+    emitter that raises is its FAIL (1), and --depfile without -o is a usage error."""
+    from bcir.lower.c_kernel import emit_tree_predict_c
+
+    writer = _load_tool("emit_kernel")
+    driver = _ROOT / "runtime" / "c" / "kernels" / "tree.c"
+    with tempfile.TemporaryDirectory() as tmp:
+        unit, dep = Path(tmp) / "k" / "kernel_tree.c", Path(tmp) / "k" / "kernel_tree.c.d"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = writer.main(["kernel_tree", "-o", str(unit), "--depfile", str(dep)])
+        assert rc == 0, err.getvalue()
+        want = emit_tree_predict_c(5, 2, "tree_p") + "\n" + driver.read_text(encoding="utf-8")
+        assert unit.read_text(encoding="utf-8") == want
+        rule = dep.read_text(encoding="utf-8")
+        assert rule.startswith(f"{unit}:"), rule[:200]
+        for made_from in (
+            driver,
+            _ROOT / "bcir" / "lower" / "c_kernel.py",
+            _ROOT / "runtime" / "manifest.json",
+        ):
+            assert str(made_from) in rule, (made_from, rule)
+        for argv, code, said in (
+            (["kernel_nope"], 2, "no manifest kernel named 'kernel_nope'"),
+            (["kernel_tree", "--depfile", str(dep)], 2, "pass -o"),
+        ):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = writer.main(argv)
+            assert rc == code and said in err.getvalue(), (argv, rc, err.getvalue())
+        broken = copy.deepcopy(_manifest())
+        broken["kernels"]["kernel_tree"]["args"] = []  # the emitter is called with none and raises
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = _writer_with(broken, tmp).main(["kernel_tree", "-o", str(unit)])
+        assert rc == 1 and "emit_tree_predict_c raised TypeError" in err.getvalue(), (
+            rc,
+            err.getvalue(),
+        )
+        refused = copy.deepcopy(_manifest())
+        refused["kernels"]["kernel_tree"]["emit"] = "emit_nothing_c"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = _writer_with(refused, tmp).main(["kernel_tree"])
+        assert rc == 2 and "M15:" in err.getvalue(), (rc, err.getvalue())
+
+
+def test_the_section_parity_recipe_for_a_kernel_is_the_writers_unit():
+    """The gate's recipe for a kernel is the one unit the shared writer emits, compiled in C11 first
+    (KERNEL_RECIPE_FLAGS), with the kernel's own system libraries; a kernel the writer refuses or
+    whose emitter raises is a RecipeError, which the gate reports as UNUSABLE."""
+    manifest = _manifest()
+    writer = _load_tool("emit_kernel")
+    with tempfile.TemporaryDirectory() as tmp:
+        sources, link, options = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "kernel_ols", Path(tmp)
+        )
+        assert len(sources) == 1 and link == ["m"] and options == [], (sources, link, options)
+        assert sources[0].read_text(encoding="utf-8") == writer.unit_text(manifest, "kernel_ols")
+        assert section_tool.KERNEL_RECIPE_FLAGS[0] == ("-std=c11", "-O2")
+        broken = copy.deepcopy(manifest)
+        broken["kernels"]["kernel_ols"]["args"] = []
+        for bad in (
+            broken,
+            {**manifest, "kernels": {**manifest["kernels"], "kernel_ols": {"emit": "x"}}},
+        ):
+            try:
+                section_tool.recipe_plan(manifest_tool, mutate_tool, bad, "kernel_ols", Path(tmp))
+            except section_tool.RecipeError as exc:
+                assert str(exc), exc
+            else:
+                raise AssertionError("a kernel the writer cannot write made a recipe")
 
 
 def test_the_gate_must_probe_before_it_builds_a_sanitizer_variant():
@@ -736,6 +896,15 @@ def test_the_cmake_reader_and_the_checker_agree():
     )
     assert '"CC=${CMAKE_C_COMPILER}"' in tests and "--tool-dir" in tests, (
         "the section entries need the configured compiler, the parity gate the tools' directory"
+    )
+    assert (
+        "BCIR_MANIFEST_kernels" in cmake
+        and '"${_unit}" main' in cmake
+        and '"${_unit}" link' in cmake
+    ), "the CMake reader does not read the kernels' drivers and libraries"
+    runtime = (_ROOT / "runtime" / "c" / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert manifest_tool.KERNEL_WRITER in runtime and "DEPFILE" in runtime, (
+        "the CMake build must write each kernel with the gate's writer, and rebuild it from its depfile"
     )
     kinds = re.search(r"set\(BCIR_MANIFEST_KINDS ([^)]*)\)", cmake)
     assert kinds is not None
