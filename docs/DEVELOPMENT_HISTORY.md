@@ -1612,6 +1612,18 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       import, re-emits all seven; touching an ASN.1 module re-emits none; touching `ols`'s driver
       re-emits `kernel_ols` alone.
     - With M15's call removed, all fourteen injected kernel faults go unreported.
+  BUILD-2i (2026-10-05) moved group 3f, the "emit == Clang" family: 52 sections, `#scale` through
+  `#stmtexpr`, each running `bcir-cc` over a unit. Fifty of them compile what it emits beside the
+  source and a driver and run both, so their scripts take CC; `scale` and `pscale` compare the
+  tool's counts with the oracle's and take `bcir-cc` alone.
+  - The scripts are generated from the gate's lines, with two substitutions: the binary path became
+    the script's argument, and `python3` became `"${PYTHON}"`. None used a variable or function the
+    gate defined outside it, which the generator checked before it moved anything.
+  - `test_the_scanners_examined_the_real_gates` required 150 compile groups of the runtime gate
+    alone. With most of the gate's text in the section scripts, which M9 scans as gate text, it now
+    counts the two together (72 and 145) and requires 100 of the sections' own.
+  - Measured: `build-section-parity` holds the 52 identical under both builds with gcc and again
+    with clang, so no diagnostic names a temporary path, and the gate's 3,086 lines are 1,633.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

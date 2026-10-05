@@ -805,13 +805,25 @@ def test_the_presets_hold_the_two_worker_law():
 
 
 def test_the_scanners_examined_the_real_gates():
-    """A scanner that matched nothing would make M8-M11 vacuous (L2)."""
+    """A scanner that matched nothing would make M8-M11 vacuous (L2). BUILD-2 moved most of the
+    runtime gate's text into the section scripts, which are scanned as gate text, so the two are
+    counted together: what moved must still have been examined."""
     tree = _tree()
     assert tree.missing_gates == [], tree.missing_gates
     runtime_groups = tree.gates["tools/c/check_runtime.sh"]
+    section_groups = [
+        group
+        for rel, groups in tree.gates.items()
+        if rel.startswith(manifest_tool.SECTIONS_DIR + "/")
+        for group in groups
+    ]
     with_main = [g for g in runtime_groups if any(t.startswith("test_") for t in g[1])]
 
-    assert len(runtime_groups) >= 150, len(runtime_groups)
+    assert len(runtime_groups) + len(section_groups) >= 150, (
+        len(runtime_groups),
+        len(section_groups),
+    )
+    assert len(section_groups) >= 100, len(section_groups)
     assert len(with_main) >= 25, len(with_main)
     assert tree.fuzz is not None and len(tree.fuzz) == len(_manifest()["fuzzers"]), tree.fuzz
     assert {"bcir_runtime.c", "bcir_kplan.c", "bcir_jer.c", "bcir_per.c"} <= tree.freestanding, (
