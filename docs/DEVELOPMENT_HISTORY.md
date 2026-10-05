@@ -1529,6 +1529,27 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     early-accent ratio read 0.96 every time, where 32 calls ranged from 0.84 to 4.21. The real
     test failed 1 run in 40 at 32 calls (`19.8x -> 5.2x`) and 0 in 40 at 512. The three speed
     tests take about 7 s together.
+  BUILD-2f (2026-10-05) moved group 3d: seven `bcir-cc` contracts that compare the twin with the
+  Python oracle.
+  - `tools/c/sections/{diag,fallback,r21policy,project,link,effects,linkflags}.sh`, generated from
+    the gate's lines. `diag` checks the caret renderer over the `test_diag` harness, whose build
+    stays in the gate. The other six take `bcir-cc`, for the fallback decision, the R21 policy,
+    project mode, linking, the effect and escape reports, and the derived link flags. `link`
+    compiles what the tool emits and so takes CC. The oracle runs under `"${PYTHON}"` with the
+    checkout on `PYTHONPATH`, so a CTest entry in the build tree imports the checkout's `bcir`.
+  - `#cexpr` stays in the gate. The twin's `--emit-c` puts a declaration right after a `case`
+    label, a C23-only form: GCC 13 accepts it silently, and Clang 18 and 23 warn. The warning
+    names the section's temp file, which differs between two runs, so the section-parity gate
+    would call the section unstable. The emitter fix, on both rails, comes before the move.
+  - Measured:
+    - gcc and clang 18 trees with `BCIR_REQUIRE_TSAN=ON`: 0 warnings, `ctest -L section` 28/28,
+      and `build-section-parity` 28 sections identical; the clang 23 tree the same.
+    - The new seven print 22, 6, 10, 5, 6, 2 and 5 PASS lines.
+    - Each new section fails on a binary that corrupts one of its answers: a shifted caret, a
+      fallback that always exits 0, a reject that exits 2, DIRTY rewritten to CLEAN, missing
+      link flags, a dropped escape, a dropped `-lm`.
+    - The gate on clang 18 prints the same 398 PASS lines as before the move. The gate's 3,921
+      lines are 3,571.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
