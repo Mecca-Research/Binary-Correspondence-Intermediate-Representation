@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""The section-parity gate: a migrated gate section judges the CMake-built harnesses exactly as it
-judges the gate's own.
+"""The section-parity gate: a gate section judges BCIR Make's build of its binaries exactly as it
+judges the CMake build's.
 
-tools/c/check_runtime.sh compiles each harness in one compiler command and runs the section's
-script over it; the CMake project builds the same harness from runtime/manifest.json and runs the
-same script as a CTest entry (docs/BCIR_BUILD_ROADMAP.md, BUILD-2). This gate builds the gate's
-recipe for every binary a section takes (a manifest harness, variant, tool or kernel), runs the
-section script once over those binaries and once over the CMake-built ones, and requires stdout, stderr and
-the exit status to agree byte for byte -- and the section to pass, printing at least one PASS
-line, so an empty or failing section cannot read as parity. Both runs get the recipe's compiler as
-CC, so a section that compiles what a tool emits (the bcir-cc sections) compiles it alike. A value a section prints that is not a function of its binaries (the
+BCIR Make builds the C rails from runtime/manifest.json (tools/build/bcirfile.py), and the runtime
+gate, tools/c/check_runtime.sh, shows each section's verdict as BCIR Make recorded it over that
+build; the CMake project builds the same binaries and runs the same scripts as CTest entries
+(docs/BCIR_BUILD_ROADMAP.md, BUILD-2 and BUILD-8). This gate builds the rails with BCIR Make into
+--make-dir, a directory of the source tree, runs each section's script once over BCIR Make's
+binaries and once over the CMake-built ones, and requires stdout, stderr and the exit status to
+agree byte for byte -- and the section to pass, printing at least one PASS line, so an empty or
+failing section cannot read as parity. Both runs get the compiler as CC, so a section that compiles
+what a tool emits (the bcir-cc sections) compiles it alike. Until BUILD-8 the comparison was with
+the gate's own one-command recipes; those compile lines are retired, and BCIR Make's build is the
+one the gate runs. A value a section prints that is not a function of its binaries (the
 ring's count of concurrent runs that caught an injected race) is declared in the manifest as a
 `varies` pattern: a regex whose one capture group is the varying value, masked in both outputs
 before they are compared. A declaration that matches nothing is stale and fails; an output that
@@ -19,13 +22,14 @@ oracle emits under CC -- so there is no build to compare: it is run twice all th
 two outputs must agree and pass, which holds its verdict to its inputs.
 
     section_parity.py --harness-dir build/cmake/harnesses --tool-dir build/cmake/runtime/c \
-        --cc gcc [--section runtime ...]
+        --cc gcc [--cxx g++] [--make-dir build/bcir-make-parity] [--section runtime ...]
 
-Exit 0 when every section agrees and passes, 1 when a section's two runs differ or the section
-fails, 2 when the gate cannot run (no sections, a missing binary, no compiler, no POSIX shell, a
-recipe that does not build): a skipped gate never reads as a passing one. The shell is probed
-before it is trusted: on a Windows runner `bash` on PATH is the WSL launcher, which prints a
-UTF-16 notice and exits 1 -- an engine that is no engine (docs/security/laws.md L2).
+Exit 0 when every section agrees and passes, 1 when a section's two runs differ, the section fails,
+or one build made a binary the other did not, 2 when the gate cannot run (no sections, a missing
+binary, no compiler, no POSIX shell, a BCIR Make build that fails): a skipped gate never reads as a
+passing one. The shell is probed before it is trusted: on a Windows runner `bash` on PATH is the
+WSL launcher, which prints a UTF-16 notice and exits 1 -- an engine that is no engine
+(docs/security/laws.md L2).
 """
 
 from __future__ import annotations
@@ -41,16 +45,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-C_DIR = ROOT / "runtime" / "c"
-# The gate compiles every migrated harness with -std=c23 -O2 (its -Wall/-Wextra/-Werror choices do
-# not change the code); a compiler that predates the c23 spelling takes the gate's own fallbacks.
-RECIPE_FLAGS = (("-std=c23", "-O2"), ("-std=c2x", "-O2"), ("-std=c11", "-O2"))
-# A kernel -- C the Python oracle emits, its driver appended -- the gate compiles in C11 first.
-KERNEL_RECIPE_FLAGS = (("-std=c11", "-O2"), ("-std=c23", "-O2"), ("-std=c2x", "-O2"))
-
-
-class RecipeError(Exception):
-    """The gate's recipe for a binary cannot be made (a kernel the writer refuses or whose emitter raises)."""
+# BCIR Make's build of the rails, under the source tree (a BCIRfile names repo-relative paths).
+MAKE_DIR = "build/bcir-make-parity"
 
 
 STREAMS = ("status", "stdout", "stderr")
@@ -68,127 +64,6 @@ def _load_tool(name: str):
 
 def _load_manifest_tool():
     return _load_tool("manifest")
-
-
-def recipe_plan(
-    manifest_tool, mutate_tool, manifest: dict, name: str, work: Path
-) -> tuple[list[Path], list[str], list[str]]:
-    """The gate's one-command build for a binary a section takes, derived from the manifest: a
-    harness or a tool is its closure's sources (dependents first), system libraries and compiler
-    options; a variant is its harness's plan with the variant's options appended -- after the recipe's
-    -std/-O2, so the last -O wins -- then its C standard (-std=c11, which likewise wins over the
-    recipe's c23) and its sanitizer (-fsanitize=..., one command compiles and links), and its
-    mutated source generated by tools/build/mutate.py, the applier the gate and the CMake build use
-    (mutate.MutationError when the fault no longer applies). A kernel is the one unit
-    tools/build/emit_kernel.py writes -- the gate's own writer -- and the system libraries it links
-    (RecipeError when the writer refuses it or its emitter raises)."""
-    variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
-    tools = manifest.get("tools") if isinstance(manifest.get("tools"), dict) else {}
-    kernels = manifest.get("kernels") if isinstance(manifest.get("kernels"), dict) else {}
-    if name in kernels:
-        writer = _load_tool("emit_kernel")
-        problems = manifest_tool.kernel_problems(manifest, name, manifest_tool.KernelFacts(ROOT))
-        if problems:
-            raise RecipeError("; ".join(problems))
-        try:
-            text = writer.unit_text(manifest, name)
-        except Exception as exc:  # noqa: BLE001 -- the emitter's failure is the recipe's
-            raise RecipeError(
-                f"{kernels[name]['emit']} raised {type(exc).__name__}: {exc}"
-            ) from exc
-        unit = work / name / f"{name}.c"
-        unit.parent.mkdir(parents=True, exist_ok=True)
-        unit.write_text(text, encoding="utf-8", newline="\n")
-        return [unit], list(kernels[name].get("link", [])), []
-    variant = variants.get(name)
-    if name in tools:
-        data = manifest_tool.closure(manifest, "tools", name)
-    else:
-        data = manifest_tool.closure(manifest, "harnesses", variant["of"] if variant else name)
-    paths = [C_DIR / source for source in data["sources"]]
-    options = list(data["options"])
-    if variant:
-        options += list(variant.get("options", []))
-        if variant.get("standard") is not None:
-            options.append(f"-std=c{variant['standard']}")
-        if variant.get("sanitizer"):
-            options.append(f"-fsanitize={variant['sanitizer']}")
-        mutation = variant.get("mutation")
-        if mutation:
-            original = C_DIR / mutation["file"]
-            mutant = work / name / mutation["file"]
-            mutant.parent.mkdir(parents=True, exist_ok=True)
-            mutant.write_bytes(mutate_tool.mutant_bytes(manifest, name))
-            paths = [mutant if path == original else path for path in paths]
-    return paths, list(data["link"]), options
-
-
-def compiler_options(options: list[str], cc_id: str) -> list[str]:
-    """The manifest's options for this compiler (`gcc:`/`clang:` prefixes scope one to a compiler)."""
-    out: list[str] = []
-    for option in options:
-        if option.startswith("gcc:"):
-            if cc_id == "gcc":
-                out.append(option[4:])
-        elif option.startswith("clang:"):
-            if cc_id == "clang":
-                out.append(option[6:])
-        else:
-            out.append(option)
-    return out
-
-
-def compiler_id(cc: str) -> str:
-    try:
-        text = subprocess.run([cc, "--version"], capture_output=True, timeout=30).stdout.decode(
-            "utf-8", "replace"
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return "unknown"
-    lowered = text.lower()
-    if "clang" in lowered:
-        return "clang"
-    if "gcc" in lowered or "free software foundation" in lowered:
-        return "gcc"
-    return "unknown"
-
-
-def build_recipe(
-    cc: str,
-    cc_id: str,
-    sources: list[Path],
-    link: list[str],
-    options: list[str],
-    out: Path,
-    log: list[str],
-    standards: tuple[tuple[str, ...], ...] = RECIPE_FLAGS,
-) -> bool:
-    paths = [str(source) for source in sources]
-    link_flags = ["-lm" if lib == "m" else "-pthread" for lib in link]
-    for flags in standards:
-        cmd = [
-            cc,
-            *flags,
-            *compiler_options(options, cc_id),
-            "-I",
-            str(C_DIR),
-            *paths,
-            "-o",
-            str(out),
-            *link_flags,
-        ]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=600)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log.append(f"recipe {out.name}: {cc} {' '.join(flags)}: {exc}")
-            continue
-        if proc.returncode == 0:
-            log.append(f"recipe {out.name}: {cc} {' '.join(flags)} over {len(paths)} sources")
-            return True
-        log.append(
-            f"recipe {out.name}: {cc} {' '.join(flags)} failed:\n{proc.stderr.decode('utf-8', 'replace')[-1500:]}"
-        )
-    return False
 
 
 def posix_shell() -> str | None:
@@ -251,7 +126,7 @@ def mask(output: bytes, varies: list[str]) -> tuple[bytes, list[str]]:
 
 def compare_section(
     script: Path,
-    gate_binaries: list[Path],
+    make_binaries: list[Path],
     cmake_binaries: list[Path],
     python: str = sys.executable,
     timeout: float = 600.0,
@@ -262,27 +137,27 @@ def compare_section(
     """One section over two builds: the streams that differ (stdout after the declared `varies`
     masks), whether the CMake run is a pass (exit 0 with at least one PASS line; an empty or failing
     section is not parity), the declarations that matched nothing, and -- when the builds differ --
-    whether a second run of the gate's own binaries differs from the first (`unstable`: the output
+    whether a second run over BCIR Make's binaries differs from the first (`unstable`: the output
     is not a function of the binaries, so the difference is undeclared nondeterminism, not the
     build). `shell` is a probed POSIX shell (posix_shell()); without one there is nothing to run."""
     if shell is None:
         raise RuntimeError("compare_section needs a probed POSIX shell (posix_shell() found none)")
     varies = list(varies)
-    gate = run_section(shell, script, gate_binaries, python, timeout, cc)
+    make = run_section(shell, script, make_binaries, python, timeout, cc)
     cmake = run_section(shell, script, cmake_binaries, python, timeout, cc)
-    gate_out, stale_gate = mask(gate[1], varies)
+    make_out, stale_make = mask(make[1], varies)
     cmake_out, stale_cmake = mask(cmake[1], varies)
-    masked_gate = (gate[0], gate_out, gate[2])
+    masked_make = (make[0], make_out, make[2])
     masked_cmake = (cmake[0], cmake_out, cmake[2])
-    differ = [name for name, a, b in zip(STREAMS, masked_gate, masked_cmake) if a != b]
+    differ = [name for name, a, b in zip(STREAMS, masked_make, masked_cmake) if a != b]
     unstable = False
     if differ:
-        again = run_section(shell, script, gate_binaries, python, timeout, cc)
-        unstable = (again[0], mask(again[1], varies)[0], again[2]) != masked_gate
+        again = run_section(shell, script, make_binaries, python, timeout, cc)
+        unstable = (again[0], mask(again[1], varies)[0], again[2]) != masked_make
     passed = cmake[0] == 0 and b"PASS" in cmake[1]
-    stale = sorted(set(stale_gate) | set(stale_cmake))
+    stale = sorted(set(stale_make) | set(stale_cmake))
     return {
-        "gate": gate,
+        "make": make,
         "cmake": cmake,
         "differ": differ,
         "passed": passed,
@@ -303,7 +178,13 @@ def main(argv: list[str] | None = None) -> int:
         help="the CMake build's tool directory (needed when a section takes a manifest tool)",
     )
     parser.add_argument(
-        "--cc", default=os.environ.get("CC") or "cc", help="the compiler for the gate's recipes"
+        "--cc", default=os.environ.get("CC") or "cc", help="the C compiler: BCIR Make's, and CC"
+    )
+    parser.add_argument("--cxx", help="the C++ compiler BCIR Make builds the seam with (optional)")
+    parser.add_argument(
+        "--make-dir",
+        default=MAKE_DIR,
+        help=f"where BCIR Make builds, relative to the source tree (default {MAKE_DIR})",
     )
     parser.add_argument(
         "--section", action="append", default=[], help="only this section (repeatable)"
@@ -322,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     manifest_tool = _load_manifest_tool()
-    mutate_tool = _load_tool("mutate")
+    generator = _load_tool("bcirfile")
     try:
         manifest = manifest_tool.load()
     except manifest_tool.ManifestError as exc:
@@ -373,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             "section-parity: UNUSABLE: no POSIX shell (a `bash` that runs `echo ok`; set BCIR_SHELL)"
         )
         return 2
-    cc_id = compiler_id(cc)
+    family = generator.compiler_family(cc)
     tools = manifest.get("tools") if isinstance(manifest.get("tools"), dict) else {}
 
     def cmake_binary(name: str) -> Path | None:
@@ -402,100 +283,85 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
-    log: list[str] = []
+    # BCIR Make builds every binary once; a rerun over an unchanged tree runs nothing.
+    try:
+        built = generator.build(cc, args.cxx, args.make_dir)
+    except generator.BuildError as exc:
+        print(f"section-parity: UNUSABLE: BCIR Make did not build the rails: {exc}")
+        return 2
     failures: list[str] = []
-    # One recipe build per binary per run: several sections take the same binary (every bcir-cc
-    # section takes bcir-cc), and a recipe is a function of the manifest and the compiler alone.
-    built: dict[str, Path] = {}
     compiler_only = 0
-    with tempfile.TemporaryDirectory(prefix="bcir-section-parity-") as tmp:
-        work = Path(tmp)
-        for name, section in wanted.items():
-            gate_binaries: list[Path] = []
-            for harness in section["harnesses"]:
-                if harness in built:
-                    gate_binaries.append(built[harness])
-                    continue
-                try:
-                    sources, link, options = recipe_plan(
-                        manifest_tool, mutate_tool, manifest, harness, work
-                    )
-                except (mutate_tool.MutationError, mutate_tool.UnusableError, RecipeError) as exc:
-                    print(f"section-parity: UNUSABLE: the gate's recipe for {harness}: {exc}")
-                    return 2
-                out = work / f"{harness}-recipe"
-                standards = KERNEL_RECIPE_FLAGS if harness in kernels else RECIPE_FLAGS
-                if not build_recipe(cc, cc_id, sources, link, options, out, log, standards):
-                    print("\n".join(log))
-                    print(
-                        f"section-parity: UNUSABLE: the gate's recipe for {harness} did not build"
-                    )
-                    return 2
-                built[harness] = out
-                gate_binaries.append(out)
-            cmake_binaries = [cmake_binary(h) for h in section["harnesses"]]
-            result = compare_section(
-                ROOT / section["script"],
-                gate_binaries,
-                cmake_binaries,
-                args.python,
-                args.timeout,
-                shell,
-                section.get("varies", []),
-                cc,
+    for name, section in wanted.items():
+        unmade = [h for h in section["harnesses"] if h not in built]
+        if unmade:
+            failures.append(
+                f"{name}: the CMake build made {', '.join(unmade)} and BCIR Make did not: "
+                "the two builds disagree about this host"
             )
-            if result["stale"]:
-                failures.append(
-                    f"{name}: declared `varies` pattern(s) match nothing: {result['stale']}"
-                )
-            if result["differ"] and result["unstable"]:
-                failures.append(
-                    f"{name}: the output differs between two runs of the same binaries -- declare the varying "
-                    f"value as a `varies` pattern in the manifest (value-level, line-scoped); not a build difference"
-                )
-                for label, run in (("gate", result["gate"]), ("cmake", result["cmake"])):
-                    print(f"--- {name} under the {label} build (status {run[0]}) ---")
-                    print(run[1].decode("utf-8", "replace")[-2000:])
-            elif result["differ"]:
-                failures.append(
-                    f"{name}: {', '.join(result['differ'])} differ (gate status {result['gate'][0]}, cmake status {result['cmake'][0]})"
-                )
-                for label, run in (("gate", result["gate"]), ("cmake", result["cmake"])):
-                    print(f"--- {name} under the {label} build (status {run[0]}) ---")
-                    print(run[1].decode("utf-8", "replace")[-2000:])
-                    print(run[2].decode("utf-8", "replace")[-1000:])
-            elif not result["passed"]:
-                failures.append(
-                    f"{name}: the section does not pass under either build (status {result['cmake'][0]}; identical output)"
-                )
-                print(f"--- {name} (status {result['cmake'][0]}) ---")
-                print(result["cmake"][1].decode("utf-8", "replace")[-2000:])
-                print(result["cmake"][2].decode("utf-8", "replace")[-1000:])
-            elif not result["stale"] and section.get("compiler_only") is True:
-                passes = sum(1 for line in result["cmake"][1].splitlines() if b"PASS" in line)
-                compiler_only += 1
-                print(
-                    f"section {name}: compiler-only, the same over two runs ({passes} PASS line(s), no binary)"
-                )
-            elif not result["stale"]:
-                passes = sum(1 for line in result["cmake"][1].splitlines() if b"PASS" in line)
-                masked = (
-                    f", {len(section.get('varies', []))} declared varying value(s) masked"
-                    if section.get("varies")
-                    else ""
-                )
-                print(
-                    f"section {name}: identical under both builds ({passes} PASS line(s), {len(section['harnesses'])} binary(ies){masked})"
-                )
+            continue
+        make_binaries = [built[h] for h in section["harnesses"]]
+        cmake_binaries = [cmake_binary(h) for h in section["harnesses"]]
+        result = compare_section(
+            ROOT / section["script"],
+            make_binaries,
+            cmake_binaries,
+            args.python,
+            args.timeout,
+            shell,
+            section.get("varies", []),
+            cc,
+        )
+        if result["stale"]:
+            failures.append(
+                f"{name}: declared `varies` pattern(s) match nothing: {result['stale']}"
+            )
+        if result["differ"] and result["unstable"]:
+            failures.append(
+                f"{name}: the output differs between two runs of the same binaries -- declare the varying "
+                f"value as a `varies` pattern in the manifest (value-level, line-scoped); not a build difference"
+            )
+            for label, run in (("BCIR Make", result["make"]), ("CMake", result["cmake"])):
+                print(f"--- {name} under the {label} build (status {run[0]}) ---")
+                print(run[1].decode("utf-8", "replace")[-2000:])
+        elif result["differ"]:
+            failures.append(
+                f"{name}: {', '.join(result['differ'])} differ (BCIR Make status {result['make'][0]}, CMake status {result['cmake'][0]})"
+            )
+            for label, run in (("BCIR Make", result["make"]), ("CMake", result["cmake"])):
+                print(f"--- {name} under the {label} build (status {run[0]}) ---")
+                print(run[1].decode("utf-8", "replace")[-2000:])
+                print(run[2].decode("utf-8", "replace")[-1000:])
+        elif not result["passed"]:
+            failures.append(
+                f"{name}: the section does not pass under either build (status {result['cmake'][0]}; identical output)"
+            )
+            print(f"--- {name} (status {result['cmake'][0]}) ---")
+            print(result["cmake"][1].decode("utf-8", "replace")[-2000:])
+            print(result["cmake"][2].decode("utf-8", "replace")[-1000:])
+        elif not result["stale"] and section.get("compiler_only") is True:
+            passes = sum(1 for line in result["cmake"][1].splitlines() if b"PASS" in line)
+            compiler_only += 1
+            print(
+                f"section {name}: compiler-only, the same over two runs ({passes} PASS line(s), no binary)"
+            )
+        elif not result["stale"]:
+            passes = sum(1 for line in result["cmake"][1].splitlines() if b"PASS" in line)
+            masked = (
+                f", {len(section.get('varies', []))} declared varying value(s) masked"
+                if section.get("varies")
+                else ""
+            )
+            print(
+                f"section {name}: identical under both builds ({passes} PASS line(s), {len(section['harnesses'])} binary(ies){masked})"
+            )
     for name, why in skipped.items():
         print(
             f"section {name}: NOT COMPARED here -- its binaries were not built ({'; '.join(why)})"
         )
-    print("\n".join(log))
     not_compared = f", {len(skipped)} not built here" if skipped else ""
     of_which = f" ({compiler_only} compiler-only)" if compiler_only else ""
     print(
-        f"section-parity: {len(wanted)} section(s) compared{of_which}, {len(failures)} failing{not_compared}, compiler {cc} ({cc_id}), shell {shell}"
+        f"section-parity: {len(wanted)} section(s) compared{of_which}, {len(failures)} failing{not_compared}, compiler {cc} ({family}), shell {shell}"
     )
     if failures:
         for line in failures:

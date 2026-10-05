@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # jer: X.697 bounded JER reader: strict-warning and freestanding build (#jer)
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-jer` CTest entry. The body is the gate's section text
-# moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The binaries are the
-# manifest variants test_jer_O0 and test_jer_O3: the twin's harness with its whole library closure
-# rebuilt at -O0 and at -O3, whose answers must not depend on the optimiser.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the `c-section-jer` CTest
+# entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so
+# the two run one text, and tools/build/section_parity.py holds the two builds' outputs
+# byte-identical. The binaries are the manifest variants test_jer_O0 and test_jer_O3: the twin's
+# harness with its whole library closure rebuilt at -O0 and at -O3, whose answers must not depend on
+# the optimiser.
 #
 #   usage: jer.sh <test_jer_O0> <test_jer_O3>
 set -uo pipefail

@@ -87,7 +87,9 @@ include = ["bcir*"]
 line-length = 100
 target-version = "py311"
 include = ["*.py", "*.pyi"]
-extend-exclude = ["build", "training/llvm/dataset"]
+# Anchored at the root: a bare "build" names every directory called build, and so skipped
+# tools/build -- the build tooling -- in every lint and format check.
+extend-exclude = ["./build", "training/llvm/dataset"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP"]

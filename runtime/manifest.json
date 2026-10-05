@@ -112,6 +112,10 @@
       "sources": ["bcir_llama_cli.c"],
       "libraries": ["bcir_models", "bcir_streampack", "bcir_base"],
       "options": ["-ffp-contract=off"]
+    },
+    "bcir-make": {
+      "sources": ["bcir_make.c"],
+      "libraries": ["bcir_base"]
     }
   },
   "harnesses": {
@@ -250,6 +254,7 @@
     "kernel_kmeans": {"emit": "emit_kmeans_assign_c", "args": [3, 2, "km_assign"], "main": "kmeans.c"}
   },
   "sections": {
+    "freestanding": {"script": "tools/c/sections/freestanding.sh", "harnesses": [], "compiler_only": true},
     "x86_interrupt": {"script": "tools/c/sections/x86_interrupt.sh", "harnesses": ["test_x86_interrupt_c11", "test_x86_interrupt"]},
     "runtime": {"script": "tools/c/sections/runtime.sh", "harnesses": ["test_runtime"]},
     "artifact_bundle": {"script": "tools/c/sections/artifact_bundle.sh", "harnesses": ["test_sha256", "test_artifact_bundle", "test_asn1"]},

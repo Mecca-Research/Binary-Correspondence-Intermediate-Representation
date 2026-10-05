@@ -315,6 +315,11 @@ DEPS_INDEX_ENV = "BCIR_DEPS_INDEX"
 DEPS_SCHEMA = "bcir-deps.v1"
 # The rows every index carries: the configure's own needs, then the optional numeric libraries.
 DEPS_REQUIRED = ("PYTHON3", "THREADS", "MLIR")
+# The pins (BUILD-8): the tools the build and the rails' BCIRfile run, each by resolved path and by
+# the sha256 of its bytes -- R1, registry-first: a compiler is named by what it is. tools/build/pins.py
+# holds the host to them; tools/build/bcirfile.py --pins writes a BCIRfile naming exactly these.
+DEPS_TOOLS = ("cc", "cxx", "ar", "python")
+_IDENTITY = re.compile(r"sha256:[0-9a-f]{64}", re.ASCII)
 
 
 class DepsIndexError(Exception):
@@ -475,7 +480,32 @@ def deps_index_problems(data: object) -> list[str]:
     for name in (*DEPS_REQUIRED, *OPTIONAL_LIBRARIES):
         if name not in names:
             problems.append(f"dependency {name} is not recorded")
+    pins = data.get("tools")
+    if not isinstance(pins, list):
+        return problems + ["tools is missing: the index pins no tool"]
+    pinned: list[str] = []
+    for i, row in enumerate(pins):
+        if not isinstance(row, dict) or set(row) != {"name", "path", "identity"}:
+            problems.append(f"tool row {i} is not {{name, path, identity}}")
+            continue
+        name, path, ident = row["name"], row["path"], row["identity"]
+        if name not in DEPS_TOOLS:
+            problems.append(f"tool row {i} pins {name!r}, which is none of {', '.join(DEPS_TOOLS)}")
+            continue
+        pinned.append(name)
+        if not isinstance(path, str) or not path.startswith("/"):
+            problems.append(f"tool {name} has path {path!r}, not an absolute path")
+        if not isinstance(ident, str) or not _IDENTITY.fullmatch(ident):
+            problems.append(f"tool {name} has identity {ident!r}, not sha256:<64 hex>")
+    for name in DEPS_TOOLS:
+        if pinned.count(name) != 1:
+            problems.append(f"tool {name} is pinned {pinned.count(name)} times, not once")
     return problems
+
+
+def deps_pins(data: dict) -> dict[str, tuple[str, str]]:
+    """A well-formed index's pins: tool name -> (resolved path, sha256 identity)."""
+    return {row["name"]: (row["path"], row["identity"]) for row in data["tools"]}
 
 
 def load_deps_index(path: str | os.PathLike[str]) -> dict:

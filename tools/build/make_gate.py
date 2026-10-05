@@ -113,14 +113,11 @@ def main(argv: list[str] | None = None) -> int:
         ("python", sys.executable),
         ("bash", "bash"),
     ):
-        if value is None:
-            tools[key] = None
-            continue
-        found = generator.tool_path(value)
-        if not found:
-            print(f"make-gate: UNUSABLE: no {key} {value!r}")
+        try:
+            tools[key] = None if value is None else generator.resolve_tool(value, key)
+        except LookupError as exc:
+            print(f"make-gate: UNUSABLE: {exc}")
             return 2
-        tools[key] = found
     tsan, _why = sanitizer.probe(tools["cc"], "thread")
     text, planned = generator.generate(
         tools["cc"],

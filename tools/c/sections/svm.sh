@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # svm: E5 classical-ML RBF-SVM predict (emit_svm_rbf_predict_c): decision function matches reference (#classical #svm)
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-svm` CTest entry. The body is the gate's section text
-# moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The binary is the
-# manifest kernel kernel_svm: C the Python oracle emits (bcir.lower.c_kernel) with its driver
-# appended by tools/build/emit_kernel.py, the writer the gate and the CMake build share.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the `c-section-svm` CTest
+# entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so
+# the two run one text, and tools/build/section_parity.py holds the two builds' outputs
+# byte-identical. The binary is the manifest kernel kernel_svm: C the Python oracle emits
+# (bcir.lower.c_kernel) with its driver appended by tools/build/emit_kernel.py, the writer BCIR Make
+# and the CMake build share.
 #
 #   usage: svm.sh <kernel_svm>
 set -uo pipefail

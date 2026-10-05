@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # barrier: memory-fence intrinsics: typed kinded barriered edge, per-ISA emit, native assemble (#barrier)
 #
-# One section of tools/c/check_runtime.sh: the gate calls this script, and the CMake project runs it
-# as the `c-section-barrier` CTest entry. The body is the gate's section text moved here (BUILD-2,
-# docs/BCIR_BUILD_ROADMAP.md), so the two run one text. It takes no binary: it judges what the
-# Python oracle emits for a C source under CC, which the caller names -- the gate passes its own,
-# the CTest entry the configured C compiler -- and under the gcc and clang on PATH. The manifest
-# marks it compiler_only, and tools/build/section_parity.py holds its output stable over two runs.
+# One section of tools/c/check_runtime.sh: BCIR Make runs this script as a task, whose verdict the
+# gate shows, and the CMake project runs it as the `c-section-barrier` CTest entry. The body is the
+# gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text. It
+# takes no binary: it judges what the Python oracle emits for a C source under CC, which the caller
+# names -- BCIR Make passes the gate's, the CTest entry the configured C compiler -- and under the
+# gcc and clang on PATH. The manifest marks it compiler_only, and tools/build/section_parity.py
+# holds its output stable over two runs.
 #
 #   usage: CC=<compiler> barrier.sh
 set -uo pipefail

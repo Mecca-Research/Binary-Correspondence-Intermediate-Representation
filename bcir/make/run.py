@@ -130,6 +130,137 @@ class Cache:
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
+    # --- the manager (BUILD-8): what the cache holds, what is wrong with it, what it may drop ---
+
+    def entries(self) -> list[tuple[str, Path]]:
+        """Every entry by its tag, in tag order; a scratch directory (a store in flight, or one
+        killed mid-way) is no entry."""
+        found: list[tuple[str, Path]] = []
+        if not self.root.is_dir():
+            return found
+        for shard in sorted(self.root.iterdir()):
+            if not shard.is_dir() or shard.name.startswith("."):
+                continue
+            for entry in sorted(shard.iterdir()):
+                if entry.is_dir() and not entry.name.startswith("."):
+                    found.append((entry.name, entry))
+        return found
+
+    def verify(self) -> list[str]:
+        """What is wrong with each entry: a name that is no tag or sits in another tag's shard, an
+        index that is not a JSON object of path -> sha256, a file whose bytes are not its digest,
+        a file the index does not name. An entry with a finding is never restored (``restore``
+        checks the digests too); this says so before a run finds it."""
+        problems: list[str] = []
+        for tag, entry in self.entries():
+            label = f"entry {tag[:16]}"
+            if (
+                len(tag) != 64
+                or any(c not in "0123456789abcdef" for c in tag)
+                or entry.parent.name != tag[:2]
+            ):
+                problems.append(
+                    f"{label}: {entry.relative_to(self.root).as_posix()} is no tag's place"
+                )
+                continue
+            try:
+                index = json.loads((entry / "index.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                problems.append(f"{label}: no readable index")
+                continue
+            if not isinstance(index, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) and len(v) == 64 for k, v in index.items()
+            ):
+                problems.append(f"{label}: the index is not path -> sha256")
+                continue
+            held = {
+                f.relative_to(entry / "files").as_posix()
+                for f in (entry / "files").rglob("*")
+                if f.is_file() or f.is_symlink()
+            }
+            for rel in sorted(held - set(index)):
+                problems.append(f"{label}: {rel} is held and not indexed")
+            for rel, digest in sorted(index.items()):
+                try:
+                    if file_digest(entry / "files" / rel) != digest:
+                        problems.append(f"{label}: {rel} is not its recorded bytes")
+                except OSError:
+                    problems.append(f"{label}: {rel} is indexed and not held")
+        return problems
+
+    def prune(self, keep: set[str]) -> tuple[int, int]:
+        """Remove every entry whose tag ``keep`` lacks; the entries and bytes removed."""
+        removed = freed = 0
+        for tag, entry in self.entries():
+            if tag in keep:
+                continue
+            freed += sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+            shutil.rmtree(entry)
+            removed += 1
+        return removed, freed
+
+    def files_of(self, tag: str) -> dict[str, str] | None:
+        """The entry's index (path -> sha256) when every file in it is its recorded bytes."""
+        entry = self._entry(tag)
+        try:
+            index = json.loads((entry / "index.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(index, dict):
+            return None
+        try:
+            if any(file_digest(entry / "files" / rel) != d for rel, d in index.items()):
+                return None
+        except OSError:
+            return None
+        return index
+
+
+def previous_path(state_path: Path) -> Path:
+    """Where the generation a run replaced is kept whole (BUILD-8): beside the state."""
+    return state_path.with_name(state_path.stem + ".prev" + state_path.suffix)
+
+
+def rollback(root: Path, state_path: Path, cache_dir: Path) -> tuple[int, str]:
+    """Put the previous generation back, whole or not at all: every target it recorded comes back
+    from the cache by its tag (each entry checked before any file moves), then the two states
+    swap, so a second rollback rolls forward. Exit 0 rolled back, 1 refused, with the text."""
+    from .plan import load_state
+
+    prev_path = previous_path(state_path)
+    if not prev_path.is_file():
+        return 1, f"bcir-make: no previous generation to roll back to ({prev_path})\n"
+    previous = load_state(prev_path)
+    current = load_state(state_path) if state_path.is_file() else {}
+    cache = Cache(cache_dir)
+    plan: list[tuple[str, dict[str, str]]] = []
+    for name, tag in sorted(previous.items()):
+        index = cache.files_of(tag)
+        if index is None:
+            return 1, (
+                f"bcir-make: rollback refused: the cache holds no whole entry for {name} "
+                f"({tag[:16]}); nothing was changed\n"
+            )
+        plan.append((name, index))
+    restored = 0
+    for name, index in plan:
+        if current.get(name) == previous[name] and all((root / rel).is_file() for rel in index):
+            continue
+        cache.restore(previous[name], sorted(index), root)
+        restored += 1
+    tmp = state_path.with_name(state_path.name + ".tmp")
+    tmp.write_text(json.dumps(previous, sort_keys=True, indent=0), encoding="utf-8", newline="\n")
+    prev_tmp = prev_path.with_name(prev_path.name + ".tmp")
+    prev_tmp.write_text(
+        json.dumps(current, sort_keys=True, indent=0), encoding="utf-8", newline="\n"
+    )
+    os.replace(prev_tmp, prev_path)
+    os.replace(tmp, state_path)
+    return 0, (
+        f"bcir-make: rolled back to the previous generation: {len(plan)} target(s), {restored} "
+        "restored from the cache\n"
+    )
+
 
 class TaskTelemetry:
     """One envelope per task, published through a live ring and drained as it goes."""
@@ -293,6 +424,21 @@ def execute(
     stopped = False
     lock = threading.Lock()
 
+    previous = dict(state)
+    kept = [False]
+
+    def keep_previous() -> None:
+        """The generation this run replaces, kept whole before the first change (rollback)."""
+        if kept[0] or not state_path.is_file():
+            return
+        kept[0] = True
+        prev = previous_path(state_path)
+        tmp = prev.with_name(prev.name + ".tmp")
+        tmp.write_text(
+            json.dumps(previous, sort_keys=True, indent=0), encoding="utf-8", newline="\n"
+        )
+        os.replace(tmp, prev)
+
     def save_state() -> None:
         state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = state_path.with_name(state_path.name + ".tmp")
@@ -358,6 +504,8 @@ def execute(
                 result = future.result()
                 with lock:
                     report.results[name] = result
+                    if result.outcome in ("ran", "cache"):
+                        keep_previous()
                     if result.outcome in ("ran", "cache", "up-to-date"):
                         state[name] = result.tag
                         save_state()

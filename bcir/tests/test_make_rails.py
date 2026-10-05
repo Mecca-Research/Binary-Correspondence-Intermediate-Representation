@@ -67,6 +67,63 @@ def test_the_rails_build_plans_the_manifests_targets():
         assert not set(manifest["fuzzers"]) & names, "the fuzzers are the fuzzer preset's"
         waves = schedule(bf, lower(bf), 2)
         assert all(len(w) <= 2 for w in waves) and sum(map(len, waves)) == len(bf.targets)
+        # BUILD-8: the runtime gate builds nothing of its own; the BCIRfile writes every mutant
+        # with the shared applier and every kernel with the shared writer, so a fault or a kernel
+        # has one spelling for BCIR Make and the CMake build alike (L14)
+        runs = {t.name: t.runs for t in bf.targets}
+        for name, variant in manifest["variants"].items():
+            if "mutation" in variant and name in planned["variants"]:
+                (run,) = runs[f"{name}.mutant"]
+                assert run[:4] == ("python", "tools/build/mutate.py", "--variant", name), run
+        for name in manifest["kernels"]:
+            (run,) = runs[f"{name}.unit"]
+            assert run[:3] == ("python", "tools/build/emit_kernel.py", name), run
+
+
+def test_every_section_is_a_task_of_the_rails_build():
+    """BUILD-8: tools/c/check_runtime.sh shows the verdicts BCIR Make records, so the BCIRfile it
+    runs must plan every manifest section as a task -- a compiler-only one too -- where the host
+    builds its binaries: a section left out would be one the gate cannot show."""
+    if not _posix():
+        return
+    cc = shutil.which("gcc") or shutil.which("clang") or shutil.which("cc")
+    ar, bash = shutil.which("ar"), shutil.which("bash")
+    if cc is None or ar is None or bash is None:
+        return  # no compiler visible here (a test tier that hides the toolchain)
+    generator = _load("bcirfile")
+    manifest = json.loads((_ROOT / "runtime" / "manifest.json").read_text(encoding="utf-8"))
+    text, planned = generator.generate(
+        cc, None, ar, shutil.which("python3") or "python3", True, bash=bash
+    )
+    bf = parse(text.encode("ascii"))
+    assert check(bf, _ROOT, check_tools=True) == [], "the rails' BCIRfile breaks a law"
+    assert sorted(planned["sections"]) == sorted(manifest["sections"]), sorted(
+        set(manifest["sections"]) ^ set(planned["sections"])
+    )
+    tasks = {t.name: t for t in bf.targets if t.name.startswith("section.")}
+    for name, section in manifest["sections"].items():
+        task = tasks[f"section.{name}"]
+        (run,) = task.runs
+        assert run[:2] == ("bash", "tools/build/run_section.sh") and section["script"] in run, run
+        assert "cc" in task.uses and "python" in task.uses, task.uses
+
+
+def test_the_rails_build_refuses_before_it_builds():
+    """bcirfile.build: an output directory a BCIRfile cannot name, or a compiler that resolves to
+    nothing, is a BuildError naming it -- never a partial build (L1)."""
+    generator = _load("bcirfile")
+    for out, cc, needle in (
+        ("/tmp/elsewhere", "cc", "not a repo-relative directory"),
+        ("../outside", "cc", "not a repo-relative directory"),
+        ("build/bcir-make-refused", "no-such-compiler-bcir", "no cc"),
+    ):
+        try:
+            generator.build(cc, None, out)
+        except generator.BuildError as exc:
+            assert needle in str(exc), (out, cc, str(exc))
+        else:
+            raise AssertionError(f"built with out={out!r} cc={cc!r}")
+    assert not (_ROOT / "build" / "bcir-make-refused").exists()
 
 
 def test_a_tool_keeps_the_name_it_is_run_by():

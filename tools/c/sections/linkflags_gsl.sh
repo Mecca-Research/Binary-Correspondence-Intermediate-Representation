@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # linkflags_gsl: GSL link-flag rule (bcir_cfront_link_flags twin): gsl_* -> -lgsl (#linkflags-gsl)
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-linkflags_gsl` CTest entry. The body is the gate's section
-# text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The binary is the
-# test_link_flag_rules harness, built once by the gate for the five link-flag sections, and this
-# section runs its `gsl` table.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the
+# `c-section-linkflags_gsl` CTest entry. The body is the gate's section text moved here (BUILD-2,
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical. The binary is the test_link_flag_rules harness, built once by
+# BCIR Make for the five link-flag sections, and this section runs its `gsl` table.
 #
 #   usage: linkflags_gsl.sh <test_link_flag_rules>
 set -uo pipefail

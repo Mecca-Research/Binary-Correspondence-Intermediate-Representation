@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # atomicring: OOB ring counter is atomic under concurrent events (#atomicring)
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-atomicring` CTest entry. The body is the gate's section
-# text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The binary is the
-# test_oob_counter harness, the probe program the gate used to write out from a heredoc.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the
+# `c-section-atomicring` CTest entry. The body is the gate's section text moved here (BUILD-2,
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical. The binary is the test_oob_counter harness, the probe program
+# the gate used to write out from a heredoc.
 #
 #   usage: atomicring.sh <test_oob_counter>
 set -uo pipefail

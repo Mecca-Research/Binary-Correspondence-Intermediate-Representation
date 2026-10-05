@@ -257,14 +257,12 @@ def test_the_carry_and_the_wide_path_fixtures_bite():
 
 
 def test_the_gate_and_the_harness_link_the_same_sources():
-    """The #719 trap: tools/c/check_runtime.sh's planner section and planner_fixtures build the
-    harness from one source list, read out of both files."""
-    with open(os.path.join(_ROOT, "tools", "c", "check_runtime.sh"), encoding="utf-8") as f:
-        script = f.read()
-    line = re.search(r"^kplan_sources=\(([^)]*)\)", script, re.M)
-    assert line, "check_runtime.sh has no kplan_sources"
-    gate = sorted(re.findall(r"\$\{C\}/([\w.]+)", line.group(1)))
-    assert gate == sorted((*pf.C_UNITS, pf.HARNESS))
+    """The #719 trap: the planner section's harness, which BCIR Make links from the manifest
+    closure of `harnesses/test_kplan`, and planner_fixtures' build compile one main and link
+    nothing the gate does not."""
+    from bcir.tests.gate_links import assert_fixture_links
+
+    assert_fixture_links("harnesses", "test_kplan", (*pf.C_UNITS, pf.HARNESS))
 
 
 def test_the_native_planner_is_the_compact_planner_byte_for_byte():

@@ -37,8 +37,8 @@ TAG_HEADER = "bcir-make generation 1"
 
 def _tree_digest(root: Path, directory: str) -> str:
     h = hashlib.sha256()
-    for rel in walk_tree(root, directory):
-        h.update(f"{rel}\0{file_digest(root / rel)}\n".encode("ascii", "backslashreplace"))
+    for rel in walk_tree(root, directory).files:
+        h.update(f"{rel}\0{file_digest(root / rel)}\n".encode("ascii"))
     return h.hexdigest()
 
 
@@ -139,9 +139,18 @@ def decide(
     return out
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("a key is recorded twice")
+    return dict(pairs)
+
+
 def load_state(path: Path) -> dict[str, str]:
-    """A recorded state: a JSON object of target name -> 64-hex tag. Anything else is refused."""
-    data = json.loads(path.read_text(encoding="utf-8"))
+    """A recorded state: a JSON object of target name -> 64-hex tag, each name once, as the runner
+    writes it. Anything else is refused -- a key recorded twice too, which would otherwise mean
+    whichever came last (a second spelling of one state: docs/security/laws.md, class A)."""
+    data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
     if not isinstance(data, dict) or not all(
         isinstance(k, str)
         and isinstance(v, str)

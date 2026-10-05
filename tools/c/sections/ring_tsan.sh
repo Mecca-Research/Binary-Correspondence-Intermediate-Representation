@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # ring_tsan: live SPSC ring under ThreadSanitizer: backpressure + overwrite stress race-free, and an injected race reported
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them (the ring harness built with -fsanitize=thread, and the same build of a ring whose
-# relaxed atomic stores are made plain) and calls this script; the CMake project builds the same
-# binaries from runtime/manifest.json (sanitizer `variants`) and runs this script as the
-# `c-section-ring_tsan` CTest entry. The body is the gate's section text moved here (BUILD-2,
-# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds
-# the two builds' outputs byte-identical. Whether ThreadSanitizer is available here -- a trivial
-# TSan program builds AND runs -- is the builder's question, answered by tools/build/sanitizer.py
-# before these binaries exist (BCIR_REQUIRE_TSAN makes its absence a failure where a job installed
-# the runtime, laws.md L2).
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them (the ring harness built with -fsanitize=thread, and the same build of a ring whose
+# relaxed atomic stores are made plain) and runs this script as a task, whose verdict the gate
+# shows; the CMake project builds the same binaries from the same manifest (sanitizer `variants`)
+# and runs this script as the `c-section-ring_tsan` CTest entry. The body is the gate's section text
+# moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
+# tools/build/section_parity.py holds the two builds' outputs byte-identical. Whether
+# ThreadSanitizer is available here -- a trivial TSan program builds AND runs -- is the builder's
+# question, answered by tools/build/sanitizer.py before these binaries exist (BCIR_REQUIRE_TSAN
+# makes its absence a failure where a job installed the runtime, laws.md L2).
 #
 #   usage: ring_tsan.sh <test_ring_tsan> <test_ring_plain>
 set -uo pipefail

@@ -268,7 +268,7 @@ jobs:
         run: |
           workdir="$(mktemp -d)"
           trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
+          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c bcir_make.c"
           for source in ${sources}; do
             (
               if clang-23 --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
@@ -420,7 +420,7 @@ jobs:
         run: |
           workdir="$(mktemp -d)"
           trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
+          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c bcir_make.c"
           for source in ${sources}; do
             (
               if clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \

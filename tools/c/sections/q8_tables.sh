@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # q8_tables: frozen Q8 table (#embed / fallback): build + self-check (C11 + C23)
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them (the harness once per C standard, from the real source) and calls this script; the
-# CMake project builds the same binaries from runtime/manifest.json (the harness and its C11
-# `variant`) and runs this script as the `c-section-q8_tables` CTest entry. The body is the gate's
-# section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The table's drift
-# check stays in the gate: it regenerates tracked files, which a CTest entry must not write, and
-# bcir/tests/test_q8_embed.py holds the committed files to a fresh emission as well.
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them (the harness once per C standard, from the real source) and runs this script as a
+# task, whose verdict the gate shows; the CMake project builds the same binaries from the same
+# manifest (the harness and its C11 `variant`) and runs this script as the `c-section-q8_tables`
+# CTest entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md),
+# so the two run one text, and tools/build/section_parity.py holds the two builds' outputs
+# byte-identical. The table's drift check is bcir/tests/test_q8_embed.py's: it holds the committed
+# files to a fresh emission without writing into the tree, where the gate's regenerate-and-diff,
+# retired with its compile lines (BUILD-8), wrote tracked files.
 #
 #   usage: q8_tables.sh <test_q8_tables_c11> <test_q8_tables>
 set -uo pipefail

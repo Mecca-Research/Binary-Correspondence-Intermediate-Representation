@@ -16,11 +16,13 @@ anti-cycle and ownership laws apply unchanged").
                      named by one of its commands: the command's static footprint agrees with its
                      claims (BUILD-7's runner checks the observed footprint)
     MK4  tags        every read exists -- a file in the tree or one a target writes -- and every
-                     ``reads-tree`` is a directory, so each target's generation tag is computable
-                     from what it declares and nothing else
+                     ``reads-tree`` is a directory whose every directory lists and whose every file
+                     has a path the grammar spells, so each target's generation tag is computable
+                     from what it declares and nothing else, and names it in one spelling
     MK5  tools       every command starts with a declared tool, every ``uses`` names one, every
                      declared tool is used, and, when the tools are checked, each one's bytes have
-                     the identity it declares
+                     the identity it declares (a relative PATH is under the root, as the runner
+                     finds it)
 
 Every law is checked over every target -- none stops at the first finding of another -- and the
 findings come out in file order, so two runs over one BCIRfile report one text.
@@ -212,6 +214,25 @@ def check(bf: BcirFile, root: Path, *, check_tools: bool = False) -> list[Findin
         for d in t.reads_tree:
             if not (root / d).is_dir():
                 findings.append(Finding("MK4", t.name, f"reads-tree {d}: no such directory"))
+                continue
+            walk = walk_tree(root, d)
+            if walk.unspellable:
+                findings.append(
+                    Finding(
+                        "MK4",
+                        t.name,
+                        f"reads-tree {d}: {walk.unspellable} file(s) under it have paths the "
+                        "grammar cannot spell",
+                    )
+                )
+            if walk.unlistable:
+                findings.append(
+                    Finding(
+                        "MK4",
+                        t.name,
+                        f"reads-tree {d}: {walk.unlistable} director(ies) under it cannot be listed",
+                    )
+                )
     # MK5 tools
     used: set[str] = set()
     for t in bf.targets:
@@ -229,7 +250,7 @@ def check(bf: BcirFile, root: Path, *, check_tools: bool = False) -> list[Findin
         if tool.name not in used:
             findings.append(Finding("MK5", tool.name, "is declared and never run"))
         elif check_tools:
-            path = Path(tool.path)
+            path = tool_path(root, tool.path)
             try:
                 digest = file_digest(path)
             except OSError as exc:
@@ -269,17 +290,41 @@ def _under_tree(path: str, trees: list[str]) -> bool:
     return any(path == d or path.startswith(d.rstrip("/") + "/") for d in trees)
 
 
-def walk_tree(root: Path, directory: str) -> list[str]:
-    """The files under ``directory`` a ``reads-tree`` claims: every regular file, by repo path, in
-    sorted order, skipping a path any of whose components starts with `.` or is `__pycache__`."""
+@dataclass(frozen=True)
+class TreeWalk:
+    """What a ``reads-tree`` claims: its files by repo path, sorted, and what the walk could not take
+    -- files whose path the grammar cannot spell (a tag names every file it digests by a path the
+    grammar spells, so the twin and the oracle name it alike) and directories it could not list
+    (never a silent skip: MK4 reports both)."""
+
+    files: list[str]
+    unspellable: int
+    unlistable: int
+
+
+def walk_tree(root: Path, directory: str) -> TreeWalk:
+    """Every regular file under ``directory`` -- never a symlink, never under a component that starts
+    with `.` or is a `__pycache__` directory -- by repo path, in sorted order."""
     base = root / directory
     out: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(base):
+    unspellable = 0
+    errors: list[OSError] = []
+    for dirpath, dirnames, filenames in os.walk(base, onerror=errors.append):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d != "__pycache__")
         for name in sorted(filenames):
             if name.startswith("."):
                 continue
             full = Path(dirpath) / name
             if full.is_file() and not full.is_symlink():
-                out.append(full.relative_to(root).as_posix())
-    return sorted(out)
+                rel = full.relative_to(root).as_posix()
+                if is_repo_path(rel):
+                    out.append(rel)
+                else:
+                    unspellable += 1
+    return TreeWalk(sorted(out), unspellable, len(errors))
+
+
+def tool_path(root: Path, path: str) -> Path:
+    """Where a tool is: an absolute PATH as written, a relative one under the root -- where the
+    runner, which runs every command in the root, finds it too (L12: one answer on both paths)."""
+    return Path(path) if path.startswith("/") else root / path

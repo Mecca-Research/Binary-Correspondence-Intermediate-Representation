@@ -98,7 +98,8 @@ def _is_tool_path(token: str) -> bool:
 def parse(data: bytes) -> BcirFile:
     """The BcirFile ``data`` spells, or GrammarError at the first departure from version 1."""
     if len(data) > MAX_BYTES:
-        raise GrammarError(0, f"the file is {len(data)} bytes; the bound is {MAX_BYTES}")
+        # Over the bound, not its size: a reader stops at MAX_BYTES + 1 (L3), so the size is unknown.
+        raise GrammarError(0, f"the file is over the bound of {MAX_BYTES} bytes")
     if any(b > 0x7E or (b < 0x20 and b != 0x0A) for b in data):
         bad = next(i for i, b in enumerate(data) if b > 0x7E or (b < 0x20 and b != 0x0A))
         line = data.count(b"\n", 0, bad) + 1

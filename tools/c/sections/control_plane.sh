@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # control_plane: ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them (the harness, its optimisation variants and the fault-injected mutant, from the
-# real source) and calls this script; the CMake project builds the same binaries from
-# runtime/manifest.json (`harnesses` and `variants`) and runs this script as the
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them (the harness, its optimisation variants and the fault-injected mutant, from the real
+# source) and runs this script as a task, whose verdict the gate shows; the CMake project builds the
+# same binaries from the same manifest (`harnesses` and `variants`) and runs this script as the
 # `c-section-control_plane` CTest entry. The body is the gate's section text moved here (BUILD-2,
-# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds
-# the two builds' outputs byte-identical.
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical.
 #
 #   usage: control_plane.sh <test_control_plane> <test_control_plane_mutant>
 set -uo pipefail

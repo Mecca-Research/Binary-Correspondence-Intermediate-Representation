@@ -187,9 +187,40 @@ foreach(_name IN LISTS _bcir_optional_libraries)
 endforeach()
 set(_bcir_dep_link_row OFF)
 
+# The pins (BUILD-8): every tool the build and the rails' BCIRfile run, by the path the build runs it
+# by and by the sha256 of the bytes that path reaches (R1, registry-first: a compiler is named by what
+# it is). The path keeps its symlinks: Clang's driver picks C or C++ from the name it is run by. tools/build/pins.py --
+# CTest build-pins -- holds the host to them, so a compiler replaced under a configured tree is a
+# finding, never a silent rebuild with another one; tools/build/bcirfile.py --pins names exactly these.
+set(_bcir_pin_rows "")
+foreach(_bcir_pin IN ITEMS "cc|${CMAKE_C_COMPILER}" "cxx|${CMAKE_CXX_COMPILER}" "ar|${CMAKE_AR}"
+                           "python|${BCIR_PYTHON}")
+  string(FIND "${_bcir_pin}" "|" _bcir_bar)
+  string(SUBSTRING "${_bcir_pin}" 0 ${_bcir_bar} _bcir_pin_name)
+  math(EXPR _bcir_bar "${_bcir_bar} + 1")
+  string(SUBSTRING "${_bcir_pin}" ${_bcir_bar} -1 _bcir_pin_path)
+  if(_bcir_pin_path AND NOT IS_ABSOLUTE "${_bcir_pin_path}")
+    find_program(_bcir_pin_found_${_bcir_pin_name} NAMES "${_bcir_pin_path}")
+    set(_bcir_pin_path "${_bcir_pin_found_${_bcir_pin_name}}")
+  endif()
+  set(_bcir_pin_identity "")
+  set(_bcir_pin_real "")
+  if(_bcir_pin_path AND EXISTS "${_bcir_pin_path}")
+    file(REAL_PATH "${_bcir_pin_path}" _bcir_pin_real)
+    file(SHA256 "${_bcir_pin_real}" _bcir_pin_sha)
+    set(_bcir_pin_identity "sha256:${_bcir_pin_sha}")
+  endif()
+  # An unresolved tool is pinned empty, and D1 (build-deps-index) says so.
+  if(NOT _bcir_pin_identity)
+    set(_bcir_pin_path "")
+  endif()
+  string(APPEND _bcir_pin_rows ",\n    {\"name\": \"${_bcir_pin_name}\", \"path\": \"${_bcir_pin_path}\", \"identity\": \"${_bcir_pin_identity}\"}")
+endforeach()
+string(REGEX REPLACE "^,\n" "" _bcir_pin_rows "${_bcir_pin_rows}")
+
 # The index: one file a harness reads instead of re-probing.
 list(JOIN _bcir_deps_rows ",\n" _bcir_deps_body)
 string(REGEX REPLACE "^,\n" "" _bcir_deps_body "${_bcir_deps_body}")
 file(WRITE "${CMAKE_BINARY_DIR}/bcir-deps.json"
-  "{\n  \"schema\": \"bcir-deps.v1\",\n  \"c_compiler\": \"${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}\",\n  \"cxx_compiler\": \"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\",\n  \"system\": \"${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}\",\n  \"dependencies\": [\n${_bcir_deps_body}\n  ]\n}\n")
+  "{\n  \"schema\": \"bcir-deps.v1\",\n  \"c_compiler\": \"${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}\",\n  \"cxx_compiler\": \"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\",\n  \"system\": \"${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}\",\n  \"dependencies\": [\n${_bcir_deps_body}\n  ],\n  \"tools\": [\n${_bcir_pin_rows}\n  ]\n}\n")
 message(STATUS "BCIR dependency index: ${CMAKE_BINARY_DIR}/bcir-deps.json")

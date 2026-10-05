@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # asn1bench: native ASN.1 decode microbench: strict-warning build (#asn1bench)
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-asn1bench` CTest entry. The body is the gate's section
-# text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The binary is the
-# manifest tool bcir_asn1_bench, which the gate builds -Werror.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the `c-section-asn1bench`
+# CTest entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md),
+# so the two run one text, and tools/build/section_parity.py holds the two builds' outputs
+# byte-identical. The binary is the manifest tool bcir_asn1_bench, which BCIR Make builds -Werror.
 #
 #   usage: asn1bench.sh <bcir_asn1_bench>
 set -uo pipefail

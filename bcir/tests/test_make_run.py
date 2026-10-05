@@ -276,3 +276,49 @@ def test_the_cli_runs_and_says_so():
             "ab",
         }
         assert os.path.isdir(root / "build/bcir-make/cache")
+
+
+def test_the_cache_manager_verifies_prunes_and_rolls_back_a_generation_whole():
+    """BUILD-8's manager: --cache-verify holds every entry to its index; --cache-prune keeps the
+    current and the two recorded generations and drops the rest; --rollback puts the previous
+    generation back from the cache -- all of it, or nothing when an entry is not whole -- and swaps
+    the two, so a second rollback rolls forward."""
+    if not _posix():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        root, text = _project(tmp)
+        bcirfile = Path(tmp) / "BCIRfile"
+        bcirfile.write_text(text, encoding="ascii")
+        base = ["-f", str(bcirfile), "--root", str(root)]
+        meta = root / "build" / "bcir-make"
+        assert main(base) == 0  # generation A
+        a_bytes = (root / "out/b.txt").read_bytes()
+        (root / "src/b.txt").write_text("b two\n")
+        assert main(base) == 0  # generation B: b and ab ran
+        assert (meta / "state.prev.json").is_file()
+        assert main([*base, "--cache-verify"]) == 0
+        # rollback: A's bytes come back from the cache and the states swap
+        assert main([*base, "--rollback"]) == 0
+        assert (root / "out/b.txt").read_bytes() == a_bytes
+        a_state = json.loads((meta / "state.json").read_text())
+        assert main([*base, "--rollback"]) == 0  # and forward again
+        assert (root / "out/b.txt").read_text() == "b two\n"
+        assert json.loads((meta / "state.prev.json").read_text()) == a_state
+        # a third generation; prune keeps C (current), B (the recorded previous) and nothing else
+        (root / "src/b.txt").write_text("b three\n")
+        assert main(base) == 0
+        before = len(list((meta / "cache").glob("*/*")))
+        assert main([*base, "--cache-prune"]) == 0
+        after = sorted(p.name for p in (meta / "cache").glob("*/*"))
+        assert 0 < len(after) < before, (before, after)
+        # a tampered entry is a finding, and a rollback that needs it changes nothing
+        prev = json.loads((meta / "state.prev.json").read_text())
+        entry = meta / "cache" / prev["b"][:2] / prev["b"] / "files" / "out" / "b.txt"
+        entry.write_text("tampered\n")
+        (meta / "cache" / prev["b"][:2] / prev["b"] / "files" / "stray.txt").write_text("x")
+        assert main([*base, "--cache-verify"]) == 1
+        state_before = (meta / "state.json").read_bytes()
+        out_before = (root / "out/b.txt").read_bytes()
+        assert main([*base, "--rollback"]) == 1
+        assert (meta / "state.json").read_bytes() == state_before
+        assert (root / "out/b.txt").read_bytes() == out_before

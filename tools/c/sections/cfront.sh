@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # cfront: plug-in C frontend (bcir_cfront): IR freestanding + Python<->C parity
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them its own way and calls this script; the CMake project builds them from
-# runtime/manifest.json and runs this script as the `c-section-cfront` CTest entry. The body is the
-# gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text,
-# and tools/build/section_parity.py holds the two builds' outputs byte-identical. The freestanding
-# probe of bcir_cir.h stays in the gate with the harness build: both are compiles.
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them from runtime/manifest.json and runs this script as a task, whose verdict the gate
+# shows; the CMake project builds them from the same manifest and runs this script as the
+# `c-section-cfront` CTest entry. The body is the gate's section text moved here (BUILD-2,
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical. The freestanding probe of bcir_cir.h is the freestanding
+# section's.
 #
 #   usage: cfront.sh <test_cfront>
 set -uo pipefail

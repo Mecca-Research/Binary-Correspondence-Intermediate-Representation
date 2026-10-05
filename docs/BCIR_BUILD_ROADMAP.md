@@ -176,14 +176,16 @@ judged, only who schedules it.
 - **CI/CD glue:** `.github/workflows/*` and the scripts they call in sequence.
 - **Ad-hoc utilities and interfaces:** `tools/c/streampack_corrupt.py`-style one-offs, the
   sanitizer sweeps' orchestration, the campaign drivers under `tools/security/`.
-- **The gates' content** until each section has migrated (BUILD-2): the migration is section by
-  section with a byte-identity proof per section, never a rewrite.
+- **The runtime gate, as glue.** `tools/c/check_runtime.sh` resolves the compiler, runs BCIR Make
+  over the rails' BCIRfile, shows each section's recorded verdict in order and runs the gates it
+  delegates to (BUILD-8). Its content moved out section by section, with a byte-identity proof per
+  section (BUILD-2), and its compile lines retired once BCIR Make built what the sections take.
 
 ## 8. The BCIR Make file and the smart task runner (BUILD-6..8)
 
 The build is itself a graph problem BCIR already knows how to state. The design below landed in
 the oracle with BUILD-6 (the grammar, the laws, the dry-run planner, §8.1) and BUILD-7 (the runner,
-§8.2); the twin and the managers follow (BUILD-8):
+§8.2), and BUILD-8 added the twin, the managers and the gate's retirement (§8.3):
 
 - **A task is a claim over file resources.** A BCIRfile declares targets whose inputs and outputs
   are files (content-addressed by digest), whose command is a tool identity from the registry
@@ -284,6 +286,59 @@ runner only ever sees a lawful BCIRfile.
   exactly the targets whose tag the edit changed, and those exactly the unit's readers in the
   lowered graph, computed apart.
 
+### 8.3 The twin and the managers (BUILD-8)
+
+- **The C twin.** `bcir-make` (runtime/c/bcir_make.c, a manifest tool) judges and plans as the
+  oracle does: the grammar check by check in the parser's order, the laws target by target, the
+  lowering, the IR's three depth-first walks (the cycle check, its witness, the canonical order),
+  the tags, the decisions and the waves -- and prints `--dry-run`'s text byte for byte. It plans;
+  the oracle's runner runs. A hosted tool: one arena over the host allocator, no recursion.
+- **Its parity gate**, `tools/build/make_parity.py` (CTest `build-make-parity`), generates a seeded
+  corpus: scratch trees with tools by identity, sources and a `reads-tree` directory holding what a
+  tree walk must skip; BCIRfiles generated as lawful DAGs, two in three broken one way -- every
+  grammar refusal, every MK1-MK5 finding, every state the planner must refuse, each once before any
+  repeats -- with outputs partly present, the workers and the tool check varied, and the rails' own
+  BCIRfile as one more case. Both rails get the same argv; their exit statuses must agree, and their
+  stdout too unless nothing could be judged. A corpus that made no law fire is refused as vacuous.
+- **Laws both rails gained.** A `reads-tree` whose files include one the grammar cannot spell
+  (a space, a byte outside ASCII), or whose directories include one that cannot be listed, is an MK4
+  finding: a tag names every file it digests in the grammar's one spelling, and a walk never skips
+  in silence. A relative tool PATH is under the root for the identity check as for the runner. The
+  file is read to one byte past its bound and no further. A recorded state that names a target twice
+  is refused.
+- **The artifact cache's manager.** `--cache-verify` holds every entry to its index; `--cache-prune`
+  drops every entry neither the current generation nor the two recorded ones name; `--rollback`
+  puts the previous generation -- the one the last changing run replaced, kept whole beside the
+  state -- back from the cache, every entry checked before a file moves, all of it or nothing, and
+  swaps the two, so a second rollback rolls forward.
+- **The pins.** The configure records every tool the build and the rails' BCIRfile run (cc, cxx,
+  ar, python) by resolved path and by the sha256 of its bytes (`tools` in `bcir-deps.json`, held by
+  D1). `tools/build/pins.py` (CTest `build-pins`) hashes them again -- a tool whose bytes moved
+  since the configure is a finding, and the fix is to reconfigure -- and judges the rails'
+  BCIRfile written from the pins (`bcirfile.py --pins`: each tool declared by its pin) with the
+  tools checked.
+- **The runtime gate retired its builds.** `tools/c/check_runtime.sh` no longer compiles anything:
+  `tools/build/bcirfile.py --sections` writes the rails' BCIRfile and BCIR Make runs it -- every
+  binary the sections take, and every section as a task -- and the gate shows each section's
+  recorded verdict (`show_section NAME`) where its block stands, then has the C twin plan the
+  finished tree, which must be the oracle's plan byte for byte. A verdict on disk from an earlier
+  run is never shown as this run's: the gate fails unless the laws passed and every target but a
+  failing section ran, was restored or was up to date, and it shows only a section this run's
+  BCIRfile plans. What is left in the gate is glue:
+  resolving the compiler, the BCIR Make run, the verdicts shown in order, the ThreadSanitizer
+  decision and the delegated gates. The gate's freestanding compiles became one compiler-only
+  section, `freestanding` (each unit and the claim-graph IR header compiled with no libc at C11
+  and C23, as the gate compiled them, in the C23 spelling CC accepts), and its Q8 drift check -- which regenerated tracked files
+  and diffed them -- left with the compile lines: `bcir/tests/test_q8_embed.py` holds both files
+  to a fresh emission without writing. M13 now holds the gate to showing every section once,
+  running no section script itself, building through BCIR Make with the sections planned and
+  keeping the three guards that keep an earlier run's verdict from being shown as this run's; the
+  gate-side clauses of M14 and M15 (mutants through `mutate.py`, kernels through
+  `emit_kernel.py`) retired with the lines they read, and the rails' BCIRfile is held to both
+  instead. `build-section-parity` and `build-parity` compare the CMake build with BCIR Make's
+  (`bcirfile.build`, shared, one gate at a time), where they compared it with the gate's
+  one-command recipes.
+
 What this is not: a general build language. It is a build *law* for this repository's own
 rails, judged like everything else here by the oracle, the twin and their parity.
 
@@ -299,7 +354,7 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | **BUILD-5** (landed) | the MLIR rail under the top-level project in CI (`mlir-rail-validate` uses the `mlir` preset; `bcir-opt`'s lit suite as CTest) | the rail's own gates green from the top-level tree on LLVM 22 and 23 |
 | **BUILD-6** (landed) | the BCIRfile grammar and the DAG model in the oracle, with its laws (claims, anti-cycle, footprint agreement, generation tags), `bcir-make --dry-run` | negative fixtures per law; the C rails' build expressed as a BCIRfile planning the same targets the manifest lists |
 | **BUILD-7** (landed) | the smart task runner executing the gates: content-addressed reuse, the two-worker scheduler, task telemetry through the ring | a no-change second run executes zero tasks; a one-unit change executes exactly its dependents; the gates' verdicts byte-identical to their shell runs |
-| **BUILD-8** | the C twin of `bcir-make`, its parity with the oracle, the artifact cache and the pinning manager; the migrated shell sections retired | twin/oracle parity over a generated corpus of BCIRfiles; `check_runtime.sh` reduced to what §7 keeps |
+| **BUILD-8** (landed) | the C twin of `bcir-make`, its parity with the oracle, the artifact cache and the pinning manager; the migrated shell sections retired | twin/oracle parity over a generated corpus of BCIRfiles; `check_runtime.sh` reduced to what §7 keeps |
 
 ## 10. State (BUILD-1's own runs, 2026-10-04)
 
@@ -326,6 +381,9 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | BUILD-5: the `mlir` preset on MLIR 23 (clang 23, `BCIR_REQUIRE_LIT=ON`) | `bcir-opt` built under the top-level project; `ctest -L mlir` 5/5: the IRDL round trip, the ODS examples, the passes, bytecode and the lit suite (131/131); a broken CHECK line, a fixture with no RUN line and a FileCheck of another major each fail the suite, and the configure fails without lit's tools when they are required |
 | BUILD-6: the rails' BCIRfile (gcc, clang 18) | `tools/build/bcirfile.py` plans every manifest library, tool, harness, seam unit, kernel and buildable variant (546 targets) and, with `--sections`, every section as a task (652 in all); each BCIRfile passes MK0-MK5 with the tools checked by identity |
 | BUILD-7: the runner (`tools/build/make_gate.py` on gcc and clang 18; CTest `build-make` on clang 23) | all 652 targets run and pass (212 s on gcc, 198 s on clang 18, two workers); a second run executes none; the 106 sections' recorded verdicts equal their shell runs; editing `runtime/c/bcir_diag.c` executes exactly its 115 dependents |
+| BUILD-8: the twin (gcc, clang 18, clang 23) | `make_parity.py` over 400 generated cases and the rails' own BCIRfile: 0 differ, every grammar refusal, MK1-MK5 finding and refused state among them; a twin that words one finding otherwise, or schedules a wave one wider, fails it |
+| BUILD-8: the retired runtime gate (gcc, clang 18; clang 23 through `check_latest.sh --legs gate`) | BCIR Make builds the rails and runs the 107 sections (152 s on gcc, 149 s on clang 18, the delegated gates included; the gate before took 213 s on clang 18, one command at a time); on clang 18 every PASS line it printed still prints (the ring's injected-race line up to its declared varying count), and 17 more (the freestanding section's per-unit lines and the twin's plan of the finished tree); under GCC 13, where the gate before could not run, it passes; a second run reuses every target; the twin plans the finished tree as the oracle does; with an earlier run's verdicts on disk, a failing section, a unit that does not compile (one the sections take, and one they do not) and a BCIRfile that breaks a law each fail it |
+| BUILD-8: the parity gates on BCIR Make's build (gcc, clang 18) | `build-section-parity`: 107 sections identical under BCIR Make's and CMake's builds; `build-parity`: 1920 rows, 0 differ; `build-pins` and `build-make-parity` pass; `ctest -L build` 8/8 on each tree |
 | BUILD-2 group 3e: the twelve new sections (gcc) | `ctest -L section` runs them 12/12; `build-section-parity` holds them identical, the kernels' recipes written by the same writer; a no-op build re-emits no kernel, an edit to an oracle module the emitters import re-emits all seven, an edit to one they do not import re-emits none, an edit to a driver re-emits its kernel alone |
 | BUILD-2 group 3d's `cexpr` (gcc, clang 18, clang 23) | the emit builds under `-std=c11 -pedantic-errors` with each compiler, and the section prints its PASS line; the `bcir-cc` before CF-CASELABEL fails the emitted build under all three, GCC included, which had accepted the C23 form silently |
 | `clang` preset (system Clang 18.1.3) | 0 warnings; `ctest -L build` 2/2; `fuzzer` preset `ctest -L fuzz` 20/20 |
@@ -402,7 +460,8 @@ where it compiles, CC. Group 3g (landed) took the rest, in four shapes:
   gate calls that is neither a section nor a delegated gate (the cfront sanitizer keeps its own
   switch).
 
-BUILD-2 is complete. `check_runtime.sh` now holds its compile lines (the gate's own recipes, which
-the section-parity gate holds to the CMake build), the freestanding compiles (whose CMake twin is
-`freestanding_checks`, M8), and the calls: every check it makes runs as a CTest entry too.
-BUILD-8 retires the compile lines once BCIR Make builds what the sections take.
+BUILD-2 is complete. After it, `check_runtime.sh` held its compile lines (the gate's own recipes,
+which the section-parity gate held to the CMake build), the freestanding compiles (whose CMake twin
+is `freestanding_checks`, M8), and the calls: every check it made ran as a CTest entry too. BUILD-8
+retired the compile lines: BCIR Make builds what the sections take, the freestanding compiles are a
+section of their own, and the section-parity gate holds BCIR Make's build to the CMake build (§8.3).

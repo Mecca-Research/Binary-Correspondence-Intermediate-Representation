@@ -37,6 +37,7 @@ hosted_tool bcir_cpp.c
 hosted_tool bcir_diag.c
 hosted_tool bcir_llama.c
 hosted_tool bcir_llama_cli.c
+hosted_tool bcir_make.c
 hosted_tool bcir_microbench.c
 hosted_tool bcir_q8_model.c
 hosted_tool bcir_q4_kernel.c

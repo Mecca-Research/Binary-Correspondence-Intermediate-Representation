@@ -35,11 +35,32 @@ add_test(NAME build-deps-index
          COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/manifest.py" --deps-index "${CMAKE_BINARY_DIR}/bcir-deps.json"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(build-deps-index PROPERTIES LABELS "build" TIMEOUT 60)
-add_test(NAME build-parity
-         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/build_parity.py"
-                 --bcir-cc "$<TARGET_FILE:bcir-cc>" --cc "${CMAKE_C_COMPILER}"
+# The pins (BUILD-8): the tools this tree builds with are the tools it was configured with.
+add_test(NAME build-pins
+         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/pins.py"
+                 --deps-index "${CMAKE_BINARY_DIR}/bcir-deps.json"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 900)
+set_tests_properties(build-pins PROPERTIES LABELS "build" TIMEOUT 300)
+# The parity gates hold the CMake build to BCIR Make's (BUILD-8), the build tools/c/check_runtime.sh
+# runs its sections over: build-parity bcir-cc over the corpus, build-section-parity every section.
+# They share one BCIR Make build under this tree, one gate at a time (a rerun over an unchanged tree
+# runs nothing). A BCIRfile names repo-relative paths, so the two are registered only when this
+# tree is inside the source tree, as the presets put it.
+file(RELATIVE_PATH _make_parity "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/bcir-make-parity")
+set(_make_parity_ok TRUE)
+if(_make_parity MATCHES "^\\.\\./")
+  set(_make_parity_ok FALSE)
+  message(STATUS "BCIR: build-parity and build-section-parity are not registered: the build tree is outside the source tree")
+endif()
+set(_make_parity_args --make-dir "${_make_parity}" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+if(_make_parity_ok)
+  add_test(NAME build-parity
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/build_parity.py"
+                   --bcir-cc "$<TARGET_FILE:bcir-cc>" ${_make_parity_args}
+           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800
+                       RESOURCE_LOCK bcir-make-parity)
+endif()
 
 # --- build: the install gate (BUILD-3) -- the configured build installed into a scratch prefix and an
 # out-of-tree consumer built against it with find_package(BCIR); the harness it rebuilds must give
@@ -53,10 +74,11 @@ if(BCIR_BUILD_HARNESSES)
 endif()
 
 # --- section: the gate sections that moved into tools/c/sections/, over the binaries built here ---
-# Each script is the section's own text (tools/c/check_runtime.sh calls the same file over the
-# binaries it compiles), so the entry and the gate judge one thing; build-section-parity holds the
-# two builds' outputs byte-identical. A section's binaries are manifest harnesses, variants or
-# tools; a section that compiles what a tool emits uses CC, the compiler configured here.
+# Each script is the section's own text (BCIR Make runs the same file as a task over the binaries
+# it builds, and tools/c/check_runtime.sh shows that task's verdict), so the entry and the gate
+# judge one thing; build-section-parity holds the two builds' outputs byte-identical. A section's
+# binaries are manifest harnesses, variants, tools or kernels; a section that compiles what a tool
+# emits uses CC, the compiler configured here; a compiler-only section takes no binary.
 if(BCIR_BUILD_HARNESSES)
   set(_section_binaries "")
   foreach(_sec IN LISTS BCIR_MANIFEST_sections)
@@ -92,14 +114,24 @@ if(BCIR_BUILD_HARNESSES)
   foreach(_u IN LISTS _unbuilt_variants)
     list(APPEND _parity_unbuilt --unbuilt "${_u}")
   endforeach()
-  add_test(NAME build-section-parity
-           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
-                   --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --tool-dir "${CMAKE_BINARY_DIR}/runtime/c"
-                   --cc "${CMAKE_C_COMPILER}"
-                   ${_parity_unbuilt}
-           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-  set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
+  if(_make_parity_ok)
+    add_test(NAME build-section-parity
+             COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
+                     --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --tool-dir "${CMAKE_BINARY_DIR}/runtime/c"
+                     ${_make_parity_args} ${_parity_unbuilt}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 2400
+                         RESOURCE_LOCK bcir-make-parity)
+  endif()
 endif()
+
+# --- build: the twin of BCIR Make (BUILD-8) -- bcir-make (runtime/c/bcir_make.c) judges and plans a
+# generated corpus of BCIRfiles byte for byte as the oracle does (tools/build/make_parity.py) ---
+add_test(NAME build-make-parity
+         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_parity.py"
+                 --twin "$<TARGET_FILE:bcir-make>"
+         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_tests_properties(build-make-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
 
 # --- build: BCIR Make (BUILD-7) -- bcir-make builds the C rails from the manifest's BCIRfile and runs
 # the sections as tasks: every target runs and passes, a no-change second run executes nothing, each

@@ -36,21 +36,28 @@ The rules, each with the code its findings carry:
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
   M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
                    manifest harnesses, variants, tools or kernels in argument order; every script in that directory
-                   is one section; tools/c/check_runtime.sh calls each script (the gate and the
-                   CTest entry run one text); a section's binaries share one sanitizer or none (a
-                   host without the runtime skips a whole section, never half of one); a section
-                   names no binary only when it is `compiler_only` and its script runs ${CC}
+                   is one section; tools/c/check_runtime.sh builds through BCIR Make with every
+                   section a task (tools/build/bcirfile.py --sections, python3 -m bcir.make), shows
+                   each section's recorded verdict exactly once, and only this run's (the laws
+                   passed, nothing but a section failed or was skipped, the section is planned),
+                   and runs no section script itself (the gate's task and the CTest entry run one
+                   text); a section's binaries share
+                   one sanitizer or none (a host without the runtime skips a whole section, never
+                   half of one); a section names no binary only when it is `compiler_only` and its
+                   script runs ${CC}
   M14 variants     every `variants` entry rebuilds a manifest harness (`of`) with any of: flag
                    `options`, one `mutation` (file, find, replace), another C `standard` (the
                    harness's own is C23) or a `sanitizer`; a mutation's file is in the harness's
                    closure and its anchor occurs exactly once there (the fault still applies, and
-                   unambiguously); the gate generates every mutant with tools/build/mutate.py and
-                   asks tools/build/sanitizer.py before it builds a sanitizer variant; every
-                   variant is run by a section; no variant shadows a unit name
+                   unambiguously); BCIR Make writes every mutant with tools/build/mutate.py and
+                   plans a sanitizer variant only where tools/build/sanitizer.py finds the runtime
+                   working, and the gate asks the same predicate before it shows a sanitizer
+                   variant's section; every variant is run by a section; no variant shadows a
+                   unit name
   M15 kernels      every `kernels` entry is a program the Python oracle emits: `emit` names a
                    function of bcir/lower/c_kernel.py, `args` are its integer and string arguments,
                    `main` is the driver under runtime/c/kernels/ appended to the emitted text, `link`
-                   names m or pthread; every driver in that directory is one kernel's; the gate
+                   names m or pthread; every driver in that directory is one kernel's; BCIR Make
                    writes every kernel with tools/build/emit_kernel.py (which asks the same
                    predicate, `kernel_problems`), every kernel is run by a section, and no kernel
                    shadows a unit or variant name
@@ -131,6 +138,18 @@ SANITIZER_GATE = "tools/c/sanitize_cfront.sh"
 SANITIZER_SWITCH = "BCIR_SKIP_CFRONT_SANITIZE"
 TESTS_CMAKE = "cmake/BCIRTests.cmake"
 GATE_CALL = re.compile(r'bash "\$\{ROOT\}/(tools/[A-Za-z0-9_/.-]+\.sh)"')
+# BUILD-8: the runtime gate builds through BCIR Make with every section a task, and shows each
+# section's recorded verdict with this one call.
+SHOW_SECTION = re.compile(r"^\s*show_section ([A-Za-z0-9_]+) \|\| exit 1$", re.M)
+GATE_MAKE = ('tools/build/bcirfile.py" --cc "${CC}" --sections', "python3 -m bcir.make -f")
+# ... and shows no verdict but this run's, though an earlier run's lies on disk: nothing ran unless
+# the laws passed; a target that failed or was skipped fails the gate unless it is a section, whose
+# verdict is then shown; a section the run's BCIRfile does not plan has no verdict to show.
+GATE_GUARDS = (
+    "grep -cx 'laws: PASS (MK0-MK5)'",
+    "grep -E '^(failed|skipped) '",
+    'grep -Fxq "target section.$1"',
+)
 LINK_NAMES = ("m", "pthread")
 CLASSES = ("freestanding_core", "hosted_tool", "driver_adapter")
 WORKERS = 2
@@ -741,10 +760,6 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
             if basename not in tree.section_scripts:
                 errors.append(f"M13: {where} script {script} does not exist")
             registered.append(basename)
-            if script not in tree.runtime_gate_text:
-                errors.append(
-                    f"M13: {RUNTIME_GATE} does not call {script}; the gate and the CTest entry would judge different text"
-                )
         names = section["harnesses"]
         if compiler_only:
             # A section that takes no binary judges what the oracle emits under CC; one whose
@@ -784,6 +799,33 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
     for basename in sorted(set(registered)):
         if registered.count(basename) > 1:
             errors.append(f"M13: {SECTIONS_DIR}/{basename} is registered by two sections")
+    # BUILD-8: BCIR Make runs every section as a task; the gate shows each recorded verdict once.
+    gate = tree.runtime_gate_text
+    if not all(token in gate for token in GATE_MAKE):
+        errors.append(
+            f"M13: {RUNTIME_GATE} does not build through BCIR Make with the sections planned "
+            f"({'; '.join(GATE_MAKE)}): the verdicts it shows would come from no run"
+        )
+    missing = [token for token in GATE_GUARDS if token not in gate]
+    if missing:
+        errors.append(
+            f"M13: {RUNTIME_GATE} could show an earlier run's verdict as this run's: it lacks "
+            f"{'; '.join(missing)}"
+        )
+    shown = SHOW_SECTION.findall(gate)
+    for name in sections:
+        if shown.count(name) != 1:
+            errors.append(
+                f"M13: {RUNTIME_GATE} shows section {name} {shown.count(name)} time(s), not once"
+            )
+    for name in sorted(set(shown) - set(sections)):
+        errors.append(f"M13: {RUNTIME_GATE} shows {name!r}, which is no manifest section")
+    for script in sorted(set(GATE_CALL.findall(gate))):
+        if script.startswith(SECTIONS_DIR + "/"):
+            errors.append(
+                f"M13: {RUNTIME_GATE} runs {script} itself; BCIR Make runs every section as a "
+                "task, and the gate shows the verdict it recorded"
+            )
 
 
 def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
@@ -836,7 +878,7 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
                 )
             if SANITIZER_PROBE not in tree.runtime_gate_text:
                 errors.append(
-                    f"M14: {RUNTIME_GATE} builds {where} without asking {SANITIZER_PROBE} whether the sanitizer runs here"
+                    f"M14: {RUNTIME_GATE} shows {where}'s section without asking {SANITIZER_PROBE} whether the sanitizer runs here"
                 )
         if options is not None and (
             not isinstance(options, list)
@@ -869,10 +911,6 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
         if count != 1:
             errors.append(
                 f"M14: {where}: the anchor occurs {count} time(s) in {mutation['file']}, not once"
-            )
-        if f"--variant {name} " not in tree.runtime_gate_text:
-            errors.append(
-                f"M14: {RUNTIME_GATE} does not generate {where} with tools/build/mutate.py"
             )
 
 
@@ -941,10 +979,6 @@ def check_kernels(manifest: dict, tree: Tree, errors: list[str]) -> None:
             errors.append(f"M15: {where} shadows a manifest unit or variant of the same name")
         if name not in run:
             errors.append(f"M15: {where} is run by no section (a binary nothing judges)")
-        if not re.search(
-            rf'{re.escape(KERNEL_WRITER)}"?\s+{re.escape(name)}(?=\s)', tree.runtime_gate_text
-        ):
-            errors.append(f"M15: {RUNTIME_GATE} does not write {where} with {KERNEL_WRITER}")
     for main in tree.kernel_mains:
         count = drivers.count(main)
         if count != 1:

@@ -205,6 +205,10 @@ def _index(**overrides) -> dict:
         "cxx_compiler": "GNU 13.3.0",
         "system": "Linux x86_64",
         "dependencies": rows,
+        "tools": [
+            {"name": n, "path": f"/usr/bin/{n}", "identity": "sha256:" + "0" * 64}
+            for n in toolchain.DEPS_TOOLS
+        ],
     }
 
 
@@ -347,3 +351,26 @@ def test_the_configures_question_is_the_harness_question():
         cwd=str(Path(toolchain.__file__).resolve().parents[1]),
     )
     assert refused.returncode == 2 and "UNUSABLE" in refused.stderr, refused
+
+
+def test_the_index_pins_each_tool_once_by_an_absolute_path_and_its_bytes():
+    """BUILD-8's pins: cc, cxx, ar and python, each once, by an absolute path and a sha256 identity;
+    an index without them pins nothing, and each malformed row is a finding that names it."""
+    good = _index()
+    assert toolchain.deps_index_problems(good) == []
+    assert toolchain.deps_pins(good)["cc"] == ("/usr/bin/cc", "sha256:" + "0" * 64)
+    faults = {
+        "the index pins no tool": lambda pins: None,
+        "tool ar is pinned 0 times": lambda pins: [p for p in pins if p["name"] != "ar"],
+        "tool cc is pinned 2 times": lambda pins: [*pins, pins[0]],
+        "not an absolute path": lambda pins: [{**pins[0], "path": "bin/cc"}, *pins[1:]],
+        "not sha256:<64 hex>": lambda pins: [{**pins[0], "identity": "sha256:ABC"}, *pins[1:]],
+        "which is none of": lambda pins: [*pins, {"name": "ld", "path": "/x", "identity": "y"}],
+        "is not {name, path, identity}": lambda pins: [{"name": "cc"}, *pins[1:]],
+    }
+    for what, fault in faults.items():
+        bad = {**good, "tools": fault(good["tools"])}
+        if bad["tools"] is None:
+            del bad["tools"]
+        problems = toolchain.deps_index_problems(bad)
+        assert any(what in p for p in problems), (what, problems)

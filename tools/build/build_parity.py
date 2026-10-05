@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
-"""The build-parity gate: a CMake-built bcir-cc behaves exactly as the shell gate's recipe builds it.
+"""The build-parity gate: the CMake-built bcir-cc behaves exactly as BCIR Make builds it.
 
-The C twin is judged by its bytes (docs/PARITY.md): tools/c/check_runtime.sh builds bcir-cc in
-one compiler command, and until every gate section runs against the CMake targets (BUILD-2),
-this proves the two builds are the same compiler over the same sources with the same outcome.
-The gate's recipe is compiled here, under the same compiler the CMake build used, and both
-binaries run every mode over every fixture of the corpus; stdout, stderr, the exit status and
-the --emit-pack bytes must agree on every row.
+The C twin is judged by its bytes (docs/PARITY.md). BCIR Make builds bcir-cc from
+runtime/manifest.json (tools/build/bcirfile.py) -- the build tools/c/check_runtime.sh's sections
+run over -- and the CMake project builds it from the same manifest; this proves the two builds are
+the same compiler over the same sources with the same outcome. Both binaries run every mode over
+every fixture of the corpus; stdout, stderr, the exit status and the --emit-pack bytes must agree
+on every row. Until BUILD-8 the comparison was with the gate's own one-command recipe; those
+compile lines are retired, and BCIR Make's build is the one the gate runs.
 
-    build_parity.py --bcir-cc build/cmake/runtime/c/bcir-cc --cc gcc
+    build_parity.py --bcir-cc build/cmake/runtime/c/bcir-cc --cc gcc [--make-dir DIR]
 
 Exit 0 when every row agrees, 1 when a row differs (the rows are printed), 2 when the gate
-cannot run -- no compiler, the recipe does not build, no fixtures (an empty corpus is not a
+cannot run -- no compiler, a BCIR Make build that fails, no fixtures (an empty corpus is not a
 pass; docs/security/laws.md L2) -- so a skipped gate never reads as a passing one.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -27,18 +29,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 C_DIR = ROOT / "runtime" / "c"
-# tools/c/check_runtime.sh's bcir-cc recipe: the sources in its order, -std=c23 -O2 -Wall -Wextra,
-# with its fallback to -std=c11 -O2 for a compiler that predates the c23 spelling.
-RECIPE_SOURCES = (
-    "bcir_cc.c",
-    "bcir_cpp.c",
-    "bcir_cfront.c",
-    "bcir_verify.c",
-    "bcir_runtime.c",
-    "bcir_plan.c",
-    "bcir_hydrate.c",
-)
-RECIPE_FLAGS = (("-std=c23", "-O2", "-Wall", "-Wextra"), ("-std=c11", "-O2"))
+# BCIR Make's build of the rails, under the source tree (shared with the section-parity gate).
+MAKE_DIR = "build/bcir-make-parity"
 # Every bcir-cc mode whose output the oracle's harnesses compare; --emit-pack writes bytes to -o.
 MODES: tuple[tuple[str, ...], ...] = (
     (),
@@ -52,22 +44,14 @@ MODES: tuple[tuple[str, ...], ...] = (
 )
 
 
-def build_recipe(cc: str, out: Path, log: list[str]) -> bool:
-    sources = [str(C_DIR / s) for s in RECIPE_SOURCES]
-    for flags in RECIPE_FLAGS:
-        cmd = [cc, *flags, "-I", str(C_DIR), *sources, "-o", str(out)]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=600)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log.append(f"recipe: {cc} {' '.join(flags)}: {exc}")
-            continue
-        if proc.returncode == 0:
-            log.append(f"recipe: {cc} {' '.join(flags)} over {len(sources)} sources")
-            return True
-        log.append(
-            f"recipe: {cc} {' '.join(flags)} failed:\n{proc.stderr.decode('utf-8', 'replace')[-2000:]}"
-        )
-    return False
+def _generator():
+    spec = importlib.util.spec_from_file_location(
+        "bcir_build_bcirfile", ROOT / "tools" / "build" / "bcirfile.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def run_mode(
@@ -95,7 +79,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--bcir-cc", required=True, type=Path, help="the CMake-built bcir-cc")
     parser.add_argument(
-        "--cc", default=os.environ.get("CC") or "cc", help="the compiler for the gate's recipe"
+        "--cc", default=os.environ.get("CC") or "cc", help="the C compiler BCIR Make builds with"
+    )
+    parser.add_argument("--cxx", help="the C++ compiler, as the section-parity gate passes it")
+    parser.add_argument(
+        "--make-dir",
+        default=MAKE_DIR,
+        help=f"where BCIR Make builds, relative to the source tree (default {MAKE_DIR})",
     )
     parser.add_argument(
         "--fixtures", type=Path, default=C_DIR, help="directory of cfront_*.c fixtures"
@@ -122,21 +112,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    log: list[str] = []
+    generator = _generator()
+    try:
+        made = generator.build(cc, args.cxx, args.make_dir).get("bcir-cc")
+    except generator.BuildError as exc:
+        print(f"build-parity: UNUSABLE: BCIR Make did not build the rails: {exc}")
+        return 2
+    if made is None or not os.access(made, os.X_OK):
+        print("build-parity: UNUSABLE: BCIR Make's build has no bcir-cc")
+        return 2
     differ: list[str] = []
     rows = 0
     with tempfile.TemporaryDirectory(prefix="bcir-build-parity-") as tmp:
         workdir = Path(tmp)
-        recipe = workdir / "bcir-cc-recipe"
-        if not build_recipe(cc, recipe, log):
-            print("build-parity: UNUSABLE: the gate's recipe did not build")
-            print("\n".join(log))
-            return 2
         for fixture in fixtures:
             for mode in MODES:
                 rows += 1
                 ours = run_mode(args.bcir_cc.resolve(), mode, fixture, workdir, args.timeout)
-                theirs = run_mode(recipe, mode, fixture, workdir, args.timeout)
+                theirs = run_mode(made, mode, fixture, workdir, args.timeout)
                 if ours != theirs:
                     what = [
                         name
@@ -145,12 +138,11 @@ def main(argv: list[str] | None = None) -> int:
                     ]
                     differ.append(
                         f"{fixture.name} {' '.join(mode) or '(summary)'}: {', '.join(what)} differ"
-                        f" (cmake status {ours[0]}, recipe status {theirs[0]})"
+                        f" (CMake status {ours[0]}, BCIR Make status {theirs[0]})"
                     )
-    print("\n".join(log))
     print(
         f"build-parity: {len(fixtures)} fixtures x {len(MODES)} modes = {rows} rows, {len(differ)} differ"
-        f" (cmake {args.bcir_cc} vs the gate's recipe under {cc})"
+        f" (CMake's {args.bcir_cc} vs BCIR Make's {made} under {cc})"
     )
     if differ:
         for line in differ[:40]:

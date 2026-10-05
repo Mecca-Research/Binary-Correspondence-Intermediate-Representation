@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # pca: E2 PCA portable fallback (emit_lapack_eigh_c): Jacobi recovers a known spectrum (#pca)
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-pca` CTest entry. The body is the gate's section text
-# moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The binary is the
-# manifest kernel kernel_pca: C the Python oracle emits (bcir.lower.c_kernel) with its driver
-# appended by tools/build/emit_kernel.py, the writer the gate and the CMake build share.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the `c-section-pca` CTest
+# entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so
+# the two run one text, and tools/build/section_parity.py holds the two builds' outputs
+# byte-identical. The binary is the manifest kernel kernel_pca: C the Python oracle emits
+# (bcir.lower.c_kernel) with its driver appended by tools/build/emit_kernel.py, the writer BCIR Make
+# and the CMake build share.
 #
 #   usage: pca.sh <kernel_pca>
 set -uo pipefail

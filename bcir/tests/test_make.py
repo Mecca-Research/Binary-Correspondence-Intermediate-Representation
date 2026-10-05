@@ -17,7 +17,7 @@ from pathlib import Path
 
 from bcir.make import GrammarError, check, decide, generation_tags, lower, parse, schedule
 from bcir.make.__main__ import dry_run, main
-from bcir.make.laws import Finding
+from bcir.make.laws import Finding, walk_tree
 from bcir.model.graph import phase_graph_has_cycle
 
 TOOL_BYTES = b"#!/bin/sh\nexit 0\n"
@@ -268,3 +268,60 @@ def test_the_cli_says_unusable_rather_than_guessing():
         assert main(["--dry-run", "-f", str(bcirfile), "--root", str(root), "--workers", "0"]) == 2
         assert main(["--dry-run", "-f", str(bcirfile), "--root", str(Path(tmp) / "nodir")]) == 2
         assert main(["--dry-run", "-f", str(bcirfile), "--root", str(root)]) == 0
+
+
+def test_a_tree_names_every_file_it_digests_in_one_spelling():
+    """MK4 over a `reads-tree`: a file whose path the grammar cannot spell (a space, a byte outside
+    ASCII) is a finding -- the tag would have to name it in some second spelling -- and a directory
+    that cannot be listed is one too, never a silent skip (L2). Dot names, `__pycache__` and symlinks
+    are outside a tree's claim and count for nothing either way."""
+    if not _posix():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _tree(tmp)
+        (root / "lib" / "deep").mkdir(parents=True)
+        (root / "lib" / "deep" / "ok.txt").write_text("1\n")
+        (root / "lib" / ".hidden").write_text("dot\n")
+        (root / "lib" / "__pycache__").mkdir()
+        (root / "lib" / "__pycache__" / "x y.pyc").write_bytes(b"\0")
+        (root / "lib" / "link").symlink_to(root / "lib" / "deep" / "ok.txt")
+        text = _good(root).replace(
+            "  reads src/a.c src/h.h\n", "  reads src/a.c src/h.h\n  reads-tree lib\n", 1
+        )
+        assert _findings(text, root) == []
+        walk = walk_tree(root, "lib")
+        assert walk.files == ["lib/deep/ok.txt"] and (walk.unspellable, walk.unlistable) == (0, 0)
+        (root / "lib" / "deep" / "two words.txt").write_text("2\n")
+        (root / "lib" / "café.txt").write_text("3\n")
+        assert [str(f) for f in _findings(text, root)] == [
+            "MK4 a.o: reads-tree lib: 2 file(s) under it have paths the grammar cannot spell"
+        ]
+        # a directory the walk cannot list: os.walk's own error path, reached by walking a file
+        assert walk_tree(root, "src/a.c").unlistable == 1
+
+
+def test_a_relative_tool_is_under_the_root_for_the_laws_as_for_the_runner():
+    """The runner runs every command in the root, where a relative tool PATH resolves; the identity
+    check reads the same file, wherever the process that judges it stands (L12)."""
+    if not _posix():
+        return
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _tree(tmp)
+        text = _good(root).replace(f"tool cc {root}/bin/cc", "tool cc bin/cc")
+        assert Path.cwd() != root and not (Path.cwd() / "bin" / "cc").exists()
+        assert _findings(text, root, check_tools=True) == []
+        (root / "bin" / "cc").write_bytes(b"#!/bin/sh\nexit 1\n")
+        found = [str(f) for f in _findings(text, root, check_tools=True)]
+        assert len(found) == 1 and found[0].startswith("MK5 cc: bin/cc is sha256:"), found
+
+
+def test_the_file_is_refused_past_its_bound_without_being_read_whole():
+    """The CLI reads one byte past the bound and no more (L3), so the refusal cannot name the
+    size it did not read: the grammar's message says over the bound, on both paths."""
+    big = b"bcirfile 1\n" + b"#" * (16 * 1024 * 1024)
+    try:
+        parse(big)
+    except GrammarError as exc:
+        assert str(exc) == "the file is over the bound of 16777216 bytes", str(exc)
+    else:
+        raise AssertionError("an over-bound file parsed")

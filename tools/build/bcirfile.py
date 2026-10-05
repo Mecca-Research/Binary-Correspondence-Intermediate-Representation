@@ -148,15 +148,17 @@ def scoped(options: list[str], family: str) -> list[str]:
 
 
 class Writer:
-    def __init__(self) -> None:
+    def __init__(self, identities: dict[str, str] | None = None) -> None:
         self.lines: list[str] = ["bcirfile 1"]
         self.names: set[str] = set()
+        self.identities = identities or {}
 
     def comment(self, text: str) -> None:
         self.lines.append(f"# {text}")
 
     def tool(self, name: str, path: str) -> None:
-        self.lines.append(f"tool {name} {path} {identity(path)}")
+        # a pinned tool is declared by its pin, not re-hashed: --check-tools then holds the host to it
+        self.lines.append(f"tool {name} {path} {self.identities.get(name) or identity(path)}")
 
     def target(
         self,
@@ -194,18 +196,20 @@ def generate(
     out: str = OUT,
     bash: str | None = None,
     path_compilers: dict[str, str] | None = None,
+    identities: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     """The BCIRfile text, and what it planned: {kind: [manifest names]}. Its outputs go under
     ``out``; with ``bash``, every manifest section whose binaries it plans is a task too: the
     section's script run over those binaries by tools/build/run_section.sh, its verdict the
     task's outputs (BUILD-7). ``path_compilers`` ({"gcc": path, "clang": path}, each where PATH has
     one) are the compilers a compiler-only section runs besides CC: declared by identity and used
-    by those sections, so a different gcc or clang on PATH is a different tag."""
+    by those sections, so a different gcc or clang on PATH is a different tag. ``identities`` (tool
+    name -> sha256 identity, the configure's pins) declares those tools by their pins."""
     manifest_tool = _load("manifest")
     manifest = manifest_tool.load()
     family = compiler_family(cc)
     std23 = c23_spelling(cc)
-    w = Writer()
+    w = Writer(identities)
     w.comment("The C rails' build, written by tools/build/bcirfile.py from runtime/manifest.json.")
     w.tool("cc", cc)
     w.tool("ar", ar)
@@ -428,6 +432,76 @@ def generate(
     return w.text(), planned
 
 
+class BuildError(Exception):
+    """BCIR Make did not build the rails: a tool is missing, the BCIRfile breaks a law, or a target
+    failed. The message says which."""
+
+
+def resolve_tool(value: str, what: str) -> str:
+    """:func:`tool_path`, or LookupError naming what PATH did not find."""
+    found = tool_path(value)
+    if not found:
+        raise LookupError(f"no {what} {value!r}")
+    return found
+
+
+# The kinds of manifest unit that are programs: what a build of the rails hands a section.
+BINARY_KINDS = ("tools", "harnesses", "seam_tests", "variants", "kernels")
+
+
+def build(cc: str, cxx: str | None, out: str, *, workers: int = 2) -> dict[str, Path]:
+    """Build the C rails with BCIR Make under ``out``, a repo-relative directory: the BCIRfile
+    :func:`generate` writes, no section planned, judged with its tools checked (MK0-MK5) and run --
+    every target up to date, restored from the artifact cache, or run, so a second build of an
+    unchanged tree runs nothing. Returns every program it built, by manifest name. The parity gates
+    compare these binaries with the CMake build's: they are the ones tools/c/check_runtime.sh's
+    sections run (BUILD-8). Raises BuildError naming what failed."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from bcir.make import check, lower, parse
+    from bcir.make.grammar import is_repo_path
+    from bcir.make.run import execute
+
+    if not is_repo_path(out):
+        raise BuildError(
+            f"{out!r} is not a repo-relative directory: a BCIRfile names no other path"
+        )
+    try:
+        cc_path = resolve_tool(cc, "cc")
+        cxx_path = resolve_tool(cxx, "cxx") if cxx else None
+        ar_path = resolve_tool("ar", "ar")
+        python_path = resolve_tool(sys.executable, "python")
+    except LookupError as exc:
+        raise BuildError(str(exc)) from exc
+    tsan, _why = _load("sanitizer").probe(cc_path, "thread")
+    text, planned = generate(cc_path, cxx_path, ar_path, python_path, tsan, out=out)
+    home = ROOT / out
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "BCIRfile").write_text(text, encoding="ascii", newline="\n")
+    bf = parse(text.encode("ascii"))
+    findings = check(bf, ROOT, check_tools=True)
+    if findings:
+        raise BuildError(f"the rails' BCIRfile breaks a law: {'; '.join(findings[:5])}")
+    meta = home / ".bcir-make"
+    report = execute(
+        bf,
+        lower(bf),
+        ROOT,
+        state_path=meta / "state.json",
+        cache_dir=meta / "cache",
+        log_dir=meta / "logs",
+        workers=workers,
+    )
+    if not report.ok:
+        bad = [r for r in report.results.values() if r.outcome in ("failed", "skipped")]
+        first = bad[0]
+        raise BuildError(
+            f"{len(bad)} target(s) did not build; {first.target} {first.outcome}: "
+            f"{first.detail[-1500:]} (logs under {meta / 'logs'})"
+        )
+    return {name: home / "bin" / name for kind in BINARY_KINDS for name in planned.get(kind, [])}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--cc", default="cc", help="the C compiler")
@@ -440,19 +514,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--sections", action="store_true", help="plan the gate's sections as tasks (needs bash)"
     )
+    parser.add_argument(
+        "--pins",
+        type=Path,
+        help="the configure's bcir-deps.json: its pinned cc, cxx, ar and python, by their pins",
+    )
     args = parser.parse_args(argv)
+    identities: dict[str, str] = {}
+    if args.pins is not None:
+        sys.path.insert(0, str(ROOT))
+        from bcir.toolchain import DepsIndexError, deps_pins, load_deps_index
+
+        try:
+            pins = deps_pins(load_deps_index(args.pins))
+        except DepsIndexError as exc:
+            print(f"bcirfile: UNUSABLE: {exc}", file=sys.stderr)
+            return 2
+        for name, (path, ident) in pins.items():
+            setattr(args, name, path)
+            identities[name] = ident
     resolved = {}
     args.bash = "bash" if args.sections else None
     for key in ("cc", "cxx", "ar", "python", "bash"):
         value = getattr(args, key)
-        if value is None:
-            resolved[key] = None
-            continue
-        found = tool_path(value)
-        if not found:
-            print(f"bcirfile: UNUSABLE: no {key} {value!r}", file=sys.stderr)
+        try:
+            resolved[key] = None if value is None else resolve_tool(value, key)
+        except LookupError as exc:
+            print(f"bcirfile: UNUSABLE: {exc}", file=sys.stderr)
             return 2
-        resolved[key] = found
     sanitizer = _load("sanitizer")
     tsan, _why = sanitizer.probe(resolved["cc"], "thread")
     try:
@@ -465,6 +554,7 @@ def main(argv: list[str] | None = None) -> int:
             out=args.out_dir,
             bash=resolved["bash"],
             path_compilers=path_compilers() if resolved["bash"] else None,
+            identities=identities,
         )
     except (OSError, ValueError, KeyError) as exc:
         print(f"bcirfile: UNUSABLE: {exc}", file=sys.stderr)

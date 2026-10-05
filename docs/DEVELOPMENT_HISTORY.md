@@ -1806,6 +1806,72 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Measured: `make_gate.py` passes on gcc (212 s for the 652 targets) and clang 18 (198 s);
     the edit executes exactly its 115 dependents. The quick tier passes (4238 passed), and the
     thorough tier on LLVM 23 (4238 passed).
+  BUILD-8 (2026-10-05) landed the C twin of `bcir-make`, its parity with the oracle, the artifact
+  cache's manager and the pins, and retired the runtime gate's own builds.
+  - `bcir-make` (runtime/c/bcir_make.c, a manifest tool) judges and plans as the oracle does: the
+    grammar check by check in the parser's order, the laws target by target, the lowering, the
+    IR's three depth-first walks (the cycle check, its witness, the canonical order), the tags, the
+    decisions and the waves, and it prints `--dry-run`'s text byte for byte. It plans; the oracle's
+    runner runs. A hosted tool: one arena over the host allocator, no recursion.
+  - `tools/build/make_parity.py` (CTest `build-make-parity`) generates a seeded corpus: scratch
+    trees, BCIRfiles generated as lawful DAGs, two in three broken one way -- every grammar
+    refusal, every MK1-MK5 finding and every state the planner refuses, each once before any
+    repeats -- and the rails' own BCIRfile; both rails get the same argv and must print the same
+    and exit the same. A twin that words one finding otherwise, or schedules a wave one target
+    wider, fails it (`test_make_twin`).
+  - Laws both rails gained while the twin was written: a `reads-tree` holding a file the grammar
+    cannot spell, or a directory that cannot be listed, is an MK4 finding (a tag names every file
+    it digests); a relative tool path is under the root for the identity check as for the runner;
+    the file is read to one byte past its bound and no further; a recorded state that names a
+    target twice is refused.
+  - The artifact cache's manager: `--cache-verify` holds every entry to its index,
+    `--cache-prune` drops what neither the current nor the two recorded generations name, and
+    `--rollback` puts the previous generation back from the cache, every entry checked first, all
+    of it or nothing, swapping the two so a second rollback rolls forward.
+  - The pins: the configure records every tool the build and the rails' BCIRfile run (cc, cxx, ar,
+    python) by resolved path and by the sha256 of its bytes (`tools` in `bcir-deps.json`, held by
+    D1); `tools/build/pins.py` (CTest `build-pins`) hashes them again -- a tool whose bytes moved
+    since the configure is a finding -- and judges the BCIRfile written from the pins.
+  - The runtime gate retired its builds: `check_runtime.sh` runs BCIR Make over the rails' BCIRfile
+    with every section a task and shows each recorded verdict in order, then has the C twin plan
+    the finished tree, which must be the oracle's plan. Its freestanding compiles became one
+    compiler-only section, `freestanding`; its Q8 drift check, which regenerated tracked files, left
+    for `test_q8_embed`, which compares without writing. What is left in the gate is glue.
+  - M13 holds the gate to showing every section once, running no section script itself,
+    building through BCIR Make and keeping the guards below; M14's and M15's gate clauses retired
+    with the lines they read, and the rails' BCIRfile is held to mutants through `mutate.py` and
+    kernels through `emit_kernel.py` instead. `build-section-parity` and `build-parity` compare the
+    CMake build with BCIR Make's, where they compared it with the gate's one-command recipes.
+  - The #719 tests (`test_the_gate_and_the_harness_link_the_same_sources`, in four modules) read
+    the gate's source list where it is now decided, the manifest closure BCIR Make links
+    (`bcir/tests/gate_links.py`): a fixture that compiles a unit outside the closure, or builds
+    without the unit's main, fails. The M9 witness, whose fault sat in a link line of the runtime
+    gate, now injects it into `check_memory_discipline.sh`, which still links.
+  - Found by re-reading the retired gate before the commit, fixed: the gate showed each section's
+    verdict as it lay on disk, so after a BCIRfile that broke a law (BCIR Make ran nothing) or a
+    build target no section takes that did not compile, the previous run's verdicts stood in for
+    this run's and the gate printed `ok`. It now fails unless the laws passed and every target but
+    a failing section ran, was restored or was up to date, and it shows a verdict only for a
+    section this run's BCIRfile plans. RED in a scratch copy holding an earlier run's verdicts:
+    both faults passed the gate as it was, and fail it now.
+  - Found by `test_line_endings`, fixed: nine writes in the cache manager and the parity corpus
+    let the host choose the line ending.
+  - Found while formatting the parity gate, fixed: ruff's `extend-exclude` named `build`, which
+    excludes every directory called build, so `tools/build/` -- the build tooling -- was never
+    linted or format-checked, locally or in CI. The exclusion is anchored at the root now, and the
+    one file it would have flagged, `make_parity.py`, is formatted.
+  - Found by the new gate's first run under GCC, fixed: the freestanding compiles, moved verbatim
+    from a gate that only ever ran under Clang, asked for `-std=c23`, which GCC 13 spells
+    `-std=c2x`. The section now takes the spelling CC accepts, as every compiling section does;
+    the gate before BUILD-8 could not run under GCC 13 at all, failing at the same compiles.
+  - Measured: on clang 18 the gate takes 149 s, BCIR Make building and running its 639 targets
+    in 85 s with two workers, where the gate before took 213 s one command at a time; it prints
+    every PASS line the gate before printed (the ring's injected-race line up to its declared
+    varying count) and 17 more. Under GCC 13 it passes in 152 s. A second run executes nothing.
+    `ctest -L build` passes 8/8 and `ctest -L section` 107/107 on the gcc and clang trees; the
+    twin agrees with the oracle on 401 cases (400 generated and the rails' own BCIRfile); build
+    parity holds 1920 rows. On LLVM 23 (`check_latest.sh`): the clang23 tree 107/107 and 8/8, the
+    gate 406 PASS lines, the thorough tier 4245 passed; the quick tier passes (4245 passed).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
