@@ -171,6 +171,11 @@ _FAULTS = (
     ),
     (
         "M13",
+        "a section taking a fuzzer (harnesses, variants and tools are the section binaries)",
+        lambda m: m["sections"]["bcir_cc"].__setitem__("harnesses", ["fuzz_asn1"]),
+    ),
+    (
+        "M13",
         "a section's missing script",
         lambda m: m["sections"]["runtime"].__setitem__("script", "tools/c/sections/absent.sh"),
     ),
@@ -451,6 +456,17 @@ def test_the_section_parity_gate_sees_a_differing_output():
             script, [a], [b], python=sys.executable, timeout=30, shell=shell
         )
         assert diff["differ"] == ["stdout"] and diff["passed"], diff
+        # a section that compiles what a tool emits gets the recipe's compiler, on both runs
+        cc_script = work / "cc.sh"
+        cc_script.write_text(
+            '#!/usr/bin/env bash\necho "  PASS compiled with ${CC:-unset}"\n', encoding="utf-8"
+        )
+        named = section_tool.compare_section(
+            cc_script, [a], [b], python=sys.executable, timeout=30, shell=shell, cc="cc-under-test"
+        )
+        assert named["differ"] == [] and named["passed"], named
+        for run in (named["gate"], named["cmake"]):
+            assert run[1] == b"  PASS compiled with cc-under-test\n", run
         a.write_text("nothing judged\n", encoding="utf-8")
         b.write_text("nothing judged\n", encoding="utf-8")
         vacuous = section_tool.compare_section(
@@ -541,6 +557,14 @@ def test_the_section_parity_gate_refuses_before_it_compiles():
                 ["--harness-dir", str(empty), "--cc", sys.executable, "--section", "nowhere"]
             )
         assert rc == 2 and "no manifest section" in out.getvalue(), (rc, out.getvalue())
+        if section_tool.posix_shell() is not None:
+            # a section that takes a tool, and no tool directory to find the CMake build's copy in
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = section_tool.main(
+                    ["--harness-dir", str(empty), "--cc", sys.executable, "--section", "bcir_cc"]
+                )
+            assert rc == 2 and "pass --tool-dir" in out.getvalue(), (rc, out.getvalue())
         assert not list(empty.iterdir())
     options = section_tool.compiler_options(
         ["-ffp-contract=off", "gcc:-Wno-x", "clang:-Wno-y"], "gcc"
@@ -555,6 +579,11 @@ def test_the_section_parity_gate_refuses_before_it_compiles():
         names = [path.name for path in sources]
         assert names[0] == "test_execution_plan.c" and "bcir_runtime.c" in names, names
         assert link == [] and opts == [], (link, opts)
+        sources, _link, opts = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "bcir-cc", work
+        )
+        names = [path.name for path in sources]
+        assert names[0] == "bcir_cc.c" and {"bcir_cfront.c", "bcir_runtime.c"} <= set(names), names
         sources, _link, opts = section_tool.recipe_plan(
             manifest_tool, mutate_tool, manifest, "test_kplan_O0", work
         )
@@ -632,6 +661,28 @@ def test_the_scanners_examined_the_real_gates():
     assert all(lists is not None for lists in tree.seam.values()), tree.seam
 
 
+def test_a_section_script_is_scanned_as_gate_text():
+    """A section script is gate text moved out of tools/c/check_runtime.sh, so M9 reads it as it read
+    the gate: a unit a section compiles is held to the manifest as the gate's own lines were (L15).
+    The bcir-cc sections compile what the tool emits against runtime units, and the scan must have
+    found those lines, or M9 is vacuous over them (L2)."""
+    tree = manifest_tool.Tree()  # its own: the fault below must not reach the shared tree
+    rel = "tools/c/sections/recover.sh"
+    assert rel in tree.gates and rel not in tree.missing_gates, sorted(tree.gates)
+    named = {token for _tag, tokens in tree.gates[rel] for token in tokens}
+    assert {"bcir_quarantine.c", "bcir_quarantine_recover.c"} <= named, named
+    # a section's compile line that links a harness main with a unit outside its closure (two
+    # names, never one literal: M10 holds this file's literals to the manifest too)
+    main = "test_runtime.c"
+    outside = "bcir_quarantine.c"
+    tree.gates[rel] = [*tree.gates[rel], ("line 1", [main, outside])]
+    findings = manifest_tool.check(_manifest(), tree)
+    assert any(
+        f.startswith("M9:") and rel in f and "bcir_quarantine.c" in f and "outside" in f
+        for f in findings
+    ), findings
+
+
 def test_python_groups_follow_the_literal_containers():
     source = (
         'A = ("bcir_runtime.c", "test_runtime.c")\n'
@@ -682,6 +733,9 @@ def test_the_cmake_reader_and_the_checker_agree():
     tests = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
     assert "BCIR_UNBUILT_VARIANTS" in tests and "--unbuilt" in tests, (
         "the section-parity gate is not told which variants this tree did not build"
+    )
+    assert '"CC=${CMAKE_C_COMPILER}"' in tests and "--tool-dir" in tests, (
+        "the section entries need the configured compiler, the parity gate the tools' directory"
     )
     kinds = re.search(r"set\(BCIR_MANIFEST_KINDS ([^)]*)\)", cmake)
     assert kinds is not None

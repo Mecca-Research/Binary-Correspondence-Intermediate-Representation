@@ -26,15 +26,16 @@ The rules, each with the code its findings carry:
                    of it carries that class there; every tool main is a hosted_tool
   M8  freestanding every freestanding check is a freestanding_core library unit, listed once, and
                    the set covers every unit the shell gates compile -ffreestanding
-  M9  gates        every runtime source a shell gate names is a manifest unit; wherever a gate's
-                   compile line or array names a main, the units beside it lie in that unit's
-                   closure; fuzz targets match tools/c/fuzz_streampack.sh's sources and -max_len
+  M9  gates        every runtime source a shell gate or a section script names is a manifest unit;
+                   wherever a gate's compile line or array names a main, the units beside it lie in
+                   that unit's closure; fuzz targets match tools/c/fuzz_streampack.sh's sources and
+                   -max_len
   M10 harnesses    the same for every Python module under bcir/ and tools/ that names a source,
                    per list, tuple or set literal that names it
   M11 seam         the C++ seam's units equal handoff_fixtures/check_handoff.sh's (the #719 pair)
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
   M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
-                   manifest harnesses or variants in argument order; every script in that directory
+                   manifest harnesses, variants or tools in argument order; every script in that directory
                    is one section; tools/c/check_runtime.sh calls each script (the gate and the
                    CTest entry run one text); a section's binaries share one sanitizer or none (a
                    host without the runtime skips a whole section, never half of one)
@@ -287,8 +288,15 @@ class Tree:
         self.gate_tokens: dict[str, list[str]] = {}
         self.missing_gates: list[str] = []
         self.freestanding: set[str] = set()
-        for rel in GATES:
-            text = self._read(root / rel)
+        self.section_scripts = sorted(p.name for p in (root / SECTIONS_DIR).glob("*.sh"))
+        scanned = [(rel, self._read(root / rel)) for rel in GATES]
+        # A section script is gate text moved out of tools/c/check_runtime.sh (BUILD-2): what it
+        # compiles is held to the manifest as the gate's own lines were.
+        scanned += [
+            (f"{SECTIONS_DIR}/{name}", self._read(root / SECTIONS_DIR / name))
+            for name in self.section_scripts
+        ]
+        for rel, text in scanned:
             if text is None:
                 self.missing_gates.append(rel)
                 continue
@@ -334,7 +342,6 @@ class Tree:
                     set(re.findall(r"(\w+\.cpp)", cpp_match.group(1))),
                     set(re.findall(r"(\w+\.c)\b", c_match.group(1))),
                 )
-        self.section_scripts = sorted(p.name for p in (root / SECTIONS_DIR).glob("*.sh"))
         self.runtime_gate_text = self._read(root / RUNTIME_GATE) or ""
         self.presets: dict | str | None = None
         if presets is not None:
@@ -622,7 +629,7 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
         errors.append("M13: sections is not an object")
         return
     variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
-    harnesses = set(_units(manifest, "harnesses")) | set(variants)
+    harnesses = set(_units(manifest, "harnesses")) | set(variants) | set(_units(manifest, "tools"))
     registered: list[str] = []
     for name, section in sections.items():
         where = f"sections/{name}"
@@ -667,7 +674,7 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
         for harness in names:
             if harness not in harnesses:
                 errors.append(
-                    f"M13: {where} names {harness!r}, which is no manifest harness or variant"
+                    f"M13: {where} names {harness!r}, which is no manifest harness, variant or tool"
                 )
         if len(set(names)) != len(names):
             errors.append(f"M13: {where} names a harness twice")

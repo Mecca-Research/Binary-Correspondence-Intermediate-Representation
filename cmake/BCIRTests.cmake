@@ -40,10 +40,11 @@ add_test(NAME build-parity
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 900)
 
-# --- section: the gate sections that moved into tools/c/sections/, over the harnesses built here ---
+# --- section: the gate sections that moved into tools/c/sections/, over the binaries built here ---
 # Each script is the section's own text (tools/c/check_runtime.sh calls the same file over the
 # binaries it compiles), so the entry and the gate judge one thing; build-section-parity holds the
-# two builds' outputs byte-identical.
+# two builds' outputs byte-identical. A section's binaries are manifest harnesses, variants or
+# tools; a section that compiles what a tool emits uses CC, the compiler configured here.
 if(BCIR_BUILD_HARNESSES)
   set(_section_binaries "")
   foreach(_sec IN LISTS BCIR_MANIFEST_sections)
@@ -67,7 +68,8 @@ if(BCIR_BUILD_HARNESSES)
       continue()
     endif()
     add_test(NAME c-section-${_sec}
-             COMMAND ${CMAKE_COMMAND} -E env "PYTHON=${BCIR_PYTHON}" bash "${CMAKE_SOURCE_DIR}/${BCIR_sections_${_sec}_SCRIPT}" ${_args}
+             COMMAND ${CMAKE_COMMAND} -E env "PYTHON=${BCIR_PYTHON}" "CC=${CMAKE_C_COMPILER}"
+                     bash "${CMAKE_SOURCE_DIR}/${BCIR_sections_${_sec}_SCRIPT}" ${_args}
              WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     set_tests_properties(c-section-${_sec} PROPERTIES LABELS "c;section" TIMEOUT 900)
   endforeach()
@@ -80,7 +82,8 @@ if(BCIR_BUILD_HARNESSES)
   endforeach()
   add_test(NAME build-section-parity
            COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
-                   --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --cc "${CMAKE_C_COMPILER}"
+                   --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --tool-dir "${CMAKE_BINARY_DIR}/runtime/c"
+                   --cc "${CMAKE_C_COMPILER}"
                    ${_parity_unbuilt}
            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
   set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)

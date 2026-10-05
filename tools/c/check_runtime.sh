@@ -288,125 +288,16 @@ echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + e
   || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_cc.c" "${C}/bcir_cpp.c" "${C}/bcir_cfront.c" \
        "${C}/bcir_verify.c" "${C}/bcir_runtime.c" "${C}/bcir_plan.c" "${C}/bcir_hydrate.c" -o "${tmp}/bcir-cc" \
   || { echo "  FAIL: bcir-cc build"; exit 1; }
-ccsum="$("${tmp}/bcir-cc" "${C}/cfront_driver_uart.c")" || { echo "  FAIL: bcir-cc compile"; echo "${ccsum}"; exit 1; }
-# Phase 3 breadth: the CMSIS-style GPIO fixture (__IO macro, RESERVED pads, write-only BSRR,
-# RCC gate-first) must ALSO compile clean through the C rail -- real header shapes, not just
-# the synthetic UART block.
-gpsum="$("${tmp}/bcir-cc" "${C}/cfront_driver_gpio.c")" || { echo "  FAIL: bcir-cc gpio compile"; echo "${gpsum}"; exit 1; }
-case "${gpsum}" in
-  *ok=1*) echo "  PASS bcir-cc CMSIS gpio fixture (${gpsum##*: })" ;;
-  *) echo "  FAIL: bcir-cc gpio: ${gpsum}"; exit 1 ;;
-esac
-case "${ccsum}" in
-  *ok=1*) echo "  PASS bcir-cc compile (${ccsum##*: })" ;;
-  *) echo "  FAIL: bcir-cc compile: ${ccsum}"; exit 1 ;;
-esac
+bash "${ROOT}/tools/c/sections/bcir_cc.sh" "${tmp}/bcir-cc" || exit 1
 
-"${tmp}/bcir-cc" --emit-pack -o "${tmp}/uart.pack" "${C}/cfront_driver_uart.c" || { echo "  FAIL: bcir-cc --emit-pack"; exit 1; }
-[ "$(head -c4 "${tmp}/uart.pack")" = "BSPK" ] \
-  && echo "  PASS bcir-cc --emit-pack (valid StreamPack)" \
-  || { echo "  FAIL: bcir-cc --emit-pack: bad magic"; exit 1; }
-
-# The bcir-cc driver links the runtime (#emitlink, §5.12): a masked (bounds-promoted) access emits
-# `a[BCIR_CHK(...)]`, which references the bounds-quarantine runtime ABI. The driver's --emit-c output is
-# a SELF-CONTAINED translation unit -- it pulls in bcir_quarantine.h -- so `--emit-c | cc -I runtime/c -
-# runtime/c/bcir_quarantine.c` compiles AND links on its own (no hand-supplied guard). In-bounds the guard
-# is transparent (returns the value); out-of-bounds it calls the weak handler, which records the provenance
-# (naming the `<func>:<array>` site) and aborts. A unit with no masked access pulls in nothing.
 echo "[c-runtime] bcir-cc --emit-c links the runtime: self-contained masked unit (#emitlink)"
-printf 'unsigned el_pick(unsigned i){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*3u; return a[i]; }\n' \
-  > "${tmp}/el.c"
-"${tmp}/bcir-cc" --emit-c "${tmp}/el.c" > "${tmp}/el_emit.c" || { echo "  FAIL: --emit-c"; exit 1; }
-grep -q '#include "bcir_quarantine.h"' "${tmp}/el_emit.c" \
-  || { echo "  FAIL: emit not self-contained (no runtime include for a masked unit)"; exit 1; }
-{ echo '#include <stdio.h>'; echo '#include <stdlib.h>'
-  cat "${tmp}/el_emit.c"
-  echo 'int main(int c, char **v){ (void)c; printf("%u\n", bcir_el_pick((unsigned)atoi(v[1]))); return 0; }'
-} > "${tmp}/el_main.c"
-# compile + link the driver's emit against ONLY the runtime (-I runtime/c, link bcir_quarantine.c) -- proof
-# the output is standalone-linkable, no injected stub.
-"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/el_main.c" "${C}/bcir_quarantine.c" -o "${tmp}/el_h" 2>/dev/null \
-  || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/el_main.c" "${C}/bcir_quarantine.c" -o "${tmp}/el_h" \
-  || { echo "  FAIL: --emit-c output did not link against the runtime"; exit 1; }
-elr_in="$("${tmp}/el_h" 3)"                                   # in-bounds: a[3] = 9
-[ "${elr_in}" = "9" ] || { echo "  FAIL: in-bounds masked access (got '${elr_in}', want 9)"; exit 1; }
-elr_oob="$("${tmp}/el_h" 99 2>&1 1>/dev/null)"; elr_rc=$?     # out-of-bounds: the weak handler aborts
-{ [ "${elr_rc}" != "0" ] && printf '%s' "${elr_oob}" | grep -q "el_pick:a"; } \
-  && echo "  PASS emitlink: --emit-c links the runtime; in-bounds value + OOB quarantine (site el_pick:a)" \
-  || { echo "  FAIL: OOB did not quarantine via the linked runtime (rc=${elr_rc}: ${elr_oob})"; exit 1; }
+CC="${CC}" bash "${ROOT}/tools/c/sections/emitlink.sh" "${tmp}/bcir-cc" || exit 1
 
-# The ML-layer / debugger RECOVERY override (#recover, §5.12): the same masked emit, linked against the
-# reference strong override (bcir_quarantine_recover.c) instead of relying on the weak abort default. A
-# frozen per-site policy proposes (action, confidence); the crossing collapses it at a frozen threshold into
-# a CLASSICAL action (clamp / abort) and RECORDS the decide -- the only sanctioned two-truth crossing. An
-# admitted clamp survives on a valid element (el_pick fills a[k]=k*3, so a[7]=21); an under-confident
-# proposal fail-fasts.
 echo "[c-runtime] bcir-cc masked emit + recovery override: the recorded two-truth crossing (#recover)"
-{ echo '#include <stdio.h>'; echo '#include <stdlib.h>'; echo '#include "bcir_quarantine_recover.h"'
-  cat "${tmp}/el_emit.c"
-  cat <<'DRV'
-int main(int c, char **v){
-  static const bcir_recover_rule confident[] = {{"el_pick:a", BCIR_RECOVER_CLAMP, 900}};
-  static const bcir_recover_rule underconf[] = {{"el_pick:a", BCIR_RECOVER_CLAMP, 300}};
-  int abort_mode = c > 1 && v[1][0] == '1';
-  bcir_recover_set_policy(abort_mode ? underconf : confident, 1, 500);  /* threshold 500 */
-  printf("%u\n", bcir_el_pick(99u));            /* index 99 out of [0,8): the handler decides */
-  bcir_decide_report(stdout);
-  return 0; }
-DRV
-} > "${tmp}/rec_main.c"
-"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/rec_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/rec_h" 2>/dev/null \
-  || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/rec_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/rec_h" \
-  || { echo "  FAIL: recovery override build"; exit 1; }
-rec_clamp="$("${tmp}/rec_h" 0)"                                # admitted: confidence 900 >= threshold 500
-{ printf '%s' "${rec_clamp}" | grep -q "^21$" \
-  && printf '%s' "${rec_clamp}" | grep -q "admitted, clamp to index 7"; } \
-  || { echo "  FAIL: admitted clamp recovery (got '${rec_clamp}')"; exit 1; }
-rec_abrt="$("${tmp}/rec_h" 1 2>&1 1>/dev/null)"; rec_rc=$?     # rejected: confidence 300 < threshold 500
-{ [ "${rec_rc}" != "0" ] && printf '%s' "${rec_abrt}" | grep -q "recovery rejected"; } \
-  && echo "  PASS recover: frozen-policy decide -> admitted clamp (a[7]=21) / under-confident abort (#recover)" \
-  || { echo "  FAIL: rejected path did not fail-fast (rc=${rec_rc}: ${rec_abrt})"; exit 1; }
+CC="${CC}" bash "${ROOT}/tools/c/sections/recover.sh" "${tmp}/bcir-cc" || exit 1
 
-# WRITE-guard adversarial test (#writeguard, §5.12): a clamped OOB *store* silently redirects the write onto
-# a valid element (a[extent-1]) -- data corruption disguised as recovery. So a STORE index site emits the
-# WRITE guard `BCIR_CHK_W`, whose handler is `noreturn` and NEVER clamps: under the SAME confident clamp
-# policy that recovers a read, an OOB store must ABORT (not corrupt a[7]). The emit names the store site
-# `BCIR_CHK_W(...)` and the load site `BCIR_CHK(...)` -- both rails identically (gated in test_c_cfront.py).
 echo "[c-runtime] bcir-cc WRITE-guard: an OOB store fails-fast, never clamps (#writeguard)"
-printf 'unsigned el_sw(unsigned i, unsigned j, unsigned v){ unsigned a[8]; for(unsigned k=0u;k<8u;k++) a[k]=k*3u; a[i]=v; return a[j]; }\n' \
-  > "${tmp}/sw.c"
-"${tmp}/bcir-cc" --emit-c "${tmp}/sw.c" > "${tmp}/sw_emit.c" || { echo "  FAIL: --emit-c (write-guard)"; exit 1; }
-# the STORE sites use BCIR_CHK_W, the LOAD site uses the read BCIR_CHK -- distinguished per site.
-{ grep -q 'a\[BCIR_CHK_W(.*) *\] *= *v;' "${tmp}/sw_emit.c" \
-  && grep -q '= a\[BCIR_CHK(.*"el_sw:a")\]' "${tmp}/sw_emit.c"; } \
-  || { echo "  FAIL: store site not WRITE-guarded / load site not READ-guarded"; cat "${tmp}/sw_emit.c"; exit 1; }
-{ echo '#include <stdio.h>'; echo '#include <stdlib.h>'; echo '#include "bcir_quarantine_recover.h"'
-  cat "${tmp}/sw_emit.c"
-  cat <<'DRV'
-int main(int c, char **v){
-  /* the SAME confident clamp policy used for the read-recovery test above (threshold 500, conf 900). */
-  static const bcir_recover_rule clampall[] = {{"el_sw:a", BCIR_RECOVER_CLAMP, 900}};
-  bcir_recover_set_policy(clampall, 1, 500);
-  int mode = c > 1 ? atoi(v[1]) : 0;
-  if (mode == 0) {                          /* an OOB READ still clamps to a[7] = 7*3 = 21 */
-    printf("%u\n", bcir_el_sw(0u, 99u, 555u));
-  } else {                                  /* an OOB STORE must abort BEFORE the redirect corrupts a[7] */
-    (void)bcir_el_sw(99u, 7u, 777u);
-    printf("NO-ABORT a[7]=%u\n", 777u);     /* reaching here means the store was silently clamped -> BUG */
-  }
-  return 0; }
-DRV
-} > "${tmp}/sw_main.c"
-"${CC}" -std=c23 -O2 -I "${C}" "${tmp}/sw_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/sw_h" 2>/dev/null \
-  || "${CC}" -std=c2x -O2 -I "${C}" "${tmp}/sw_main.c" "${C}/bcir_quarantine.c" "${C}/bcir_quarantine_recover.c" -o "${tmp}/sw_h" \
-  || { echo "  FAIL: write-guard override build"; exit 1; }
-sw_read="$("${tmp}/sw_h" 0)"                                   # OOB read: clamps to a[7] = 21
-[ "${sw_read}" = "21" ] || { echo "  FAIL: OOB read did not clamp (got '${sw_read}', want 21)"; exit 1; }
-sw_wr="$("${tmp}/sw_h" 1 2>&1 1>/dev/null)"; sw_rc=$?          # OOB store: must abort, never reach NO-ABORT
-{ [ "${sw_rc}" != "0" ] && ! printf '%s' "${sw_wr}" | grep -q "NO-ABORT" \
-  && printf '%s' "${sw_wr}" | grep -q "out-of-bounds store cannot be clamped"; } \
-  && echo "  PASS writeguard: OOB read clamps (a[7]=21) but OOB store ABORTS (no a[7] corruption) (#writeguard)" \
-  || { echo "  FAIL: OOB store did not fail-fast (rc=${sw_rc}: ${sw_wr})"; exit 1; }
+CC="${CC}" bash "${ROOT}/tools/c/sections/writeguard.sh" "${tmp}/bcir-cc" || exit 1
 
 # Atomic OOB ring (#atomicring, §5.12): the counter and payload publication must both be synchronized.
 # An atomic fetch-add alone gives writers distinct slots but still lets a reporter race a non-atomic struct

@@ -1488,6 +1488,36 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     under both builds (the new four with 122, 6, 26 and 1 PASS lines); each new section fails on a
     harness that corrupts one answer (a digest, a target's data model, a loop that does not execute,
     a route). The gate's 4,120 lines are 4,030.
+  BUILD-2e (2026-10-05) moved group 3c: the first four `bcir-cc` sections, the first sections over
+  a tool and a compiler.
+  - `tools/c/sections/{bcir_cc,emitlink,recover,writeguard}.sh`, generated from the gate's lines.
+    `bcir_cc` runs the driver over the UART and CMSIS GPIO fixtures and `--emit-pack`. The other
+    three compile what `bcir-cc --emit-c` emits against the bounds-quarantine runtime:
+    `emitlink` the self-contained masked unit, `recover` the recorded two-truth crossing, and
+    `writeguard` the out-of-bounds store that must abort, never clamp. `recover` regenerates the
+    masked unit `emitlink` used to leave in the gate's temp directory, from `emitlink`'s own
+    lines. The gate keeps the `bcir-cc` build, which 69 later lines still use.
+  - A section binary may be a manifest tool. The CTest entry passes the CMake-built `bcir-cc`, and
+    the section-parity gate builds the gate's recipe from the tool's closure and finds the
+    CMake build's copy through `--tool-dir`; a section that takes a tool without one is exit 2.
+  - A script that compiles takes the compiler as CC, and refuses to run without one (exit 2). The
+    gate passes its own, every CTest section entry gets the configured C compiler, and the
+    section-parity gate hands its `--cc` to both runs, so the two builds' sections compile what
+    `bcir-cc` emits with one compiler.
+  - M9 reads the section scripts as it reads the gates. Until now the moved text only ran
+    binaries; these scripts compile runtime units, and moving their lines out of the gate would
+    have taken them out of M9's view (laws.md L15). M13 accepts a manifest tool as a section
+    binary, and a fuzzer, still, as none.
+  - `#atomicring` and `#extentassert` stay in the gate between them: they compile and run the
+    runtime header's own contract with no binary to take, like the freestanding probes.
+  - Measured: gcc tree with `BCIR_REQUIRE_TSAN=ON`, 0 warnings, `ctest -L section` 21/21 in 23 s;
+    `build-section-parity` 21 sections identical under both builds, the new four with 3, 1, 1 and
+    1 PASS lines; the clang 18 and clang 23 trees the same. Each new section fails on a `bcir-cc`
+    that corrupts one of its answers: a GPIO compile reporting `ok=0`, an emitted unit without
+    its runtime include, an unguarded masked read, a store under the read guard. The gate on
+    clang 18 prints the same 398 PASS lines as before the move. The section-parity gate now
+    builds each binary's recipe once per run (every `bcir-cc` section takes `bcir-cc`): 195 s
+    on the gcc tree, against 249 s building it four times. The gate's 4,030 lines are 3,921.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
