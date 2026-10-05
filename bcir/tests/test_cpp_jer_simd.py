@@ -223,7 +223,7 @@ def test_the_resolved_tier_is_reported_by_name_so_a_measurement_can_say_which():
 
 
 def _paired_gain(
-    binary: str, document: bytes, baseline: str = "scalar", pairs: int = 15, iterations: int = 32
+    binary: str, document: bytes, baseline: str = "scalar", pairs: int = 15, iterations: int = 512
 ) -> float:
     """How many times faster the resolved tier validates `document` than `baseline` -- the
     adapter's `scalar` tier, or `rail`, the scalar rail itself with no adapter: the MEDIAN over
@@ -244,6 +244,16 @@ def _paired_gain(
     roadmap, section 7.3.2), with the same driver command, so the suite and the runbook measure
     one way. `test_the_paired_gain_cancels_a_load_that_moves_between_windows` holds the
     estimator to that property on a driver whose answers are known.
+
+    WHY 512 CALLS A ROUND. Each command warms up with `iterations` calls, then times a round of as
+    many. With 32, a vector round on the all-ASCII document lasted about 18 us. Measured right
+    after a scalar round -- milliseconds of scalar work -- that round's median was bimodal on an
+    x86-64 AVX2 host: about one round in ten read 4.3x slow, which is the shape of a vector unit
+    waking up. When a trial's slow rounds reached a majority of its pairs, the whole gain read
+    5.5x instead of 24x, and the early-accent ratio of ratios failed at 0.2 on one document and
+    passed at 4.2 on the other. A round of 512 calls is long enough that the measured round never
+    starts cold. Ten trials then read the early-accent ratio as 0.96 every time, where 32 calls
+    ranged from 0.84 to 4.21.
 
     Every reply is checked before it is believed: a missing, malformed or zero-nanosecond round
     is a failed measurement, never a speedup.

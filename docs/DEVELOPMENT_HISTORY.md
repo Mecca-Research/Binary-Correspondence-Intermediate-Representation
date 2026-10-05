@@ -1518,6 +1518,17 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     clang 18 prints the same 398 PASS lines as before the move. The section-parity gate now
     builds each binary's recipe once per run (every `bcir-cc` section takes `bcir-cc`): 195 s
     on the gcc tree, against 249 s building it four times. The gate's 4,030 lines are 3,921.
+  JER-WARM (2026-10-05) gave the JER SIMD speed floors rounds long enough to start warm.
+  - Found by the LLVM 23 thorough leg while validating BUILD-2e: the early-accent floor read
+    `27.1x -> 5.3x` and failed. Since JER-PAIRED each pair's vector round follows milliseconds of
+    scalar work, and with 32 calls a round on the all-ASCII document lasted about 18 us. Its median
+    was bimodal on an x86-64 AVX2 host: p50 576 ns, p90 2,504 ns, about one round in ten 4.3x
+    slow, the shape of a vector unit waking up. When the slow rounds reached a majority of a
+    trial's pairs, the whole gain read about 5.5x instead of 24x.
+  - `_paired_gain` now times 512 calls a round, after as many warm-up calls. Across ten trials the
+    early-accent ratio read 0.96 every time, where 32 calls ranged from 0.84 to 4.21. The real
+    test failed 1 run in 40 at 32 calls (`19.8x -> 5.2x`) and 0 in 40 at 512. The three speed
+    tests take about 7 s together.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

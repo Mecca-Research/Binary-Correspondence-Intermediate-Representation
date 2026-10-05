@@ -822,6 +822,9 @@ all-ASCII ratio, so a return to a single hand-off fails rather than merely slows
 **The suite's speed floors measure the way the runbook does (§7.3.2).** Each ratio is the
 median over interleaved pairs: a baseline round and a vector round, one process, the order
 alternating. A load that arrives mid-measurement reaches both halves of a pair and cancels.
+Each round is 512 calls, after as many warm-up calls. With rounds of 32, a vector round on the
+all-ASCII document lasted about 18 µs after milliseconds of scalar work, and about one in ten read
+4.3× slow, enough to fail the early-accent ratio in roughly one run in forty.
 Measured as two medians one after the other, the CJK document read 0.70× on a CI runner in a
 run that changed nothing in the rail, under the 0.75× floor. The multi-byte floor is judged
 against `rail`, the scalar rail itself (`bcir_jer_validate_utf8` over the whole document). The
