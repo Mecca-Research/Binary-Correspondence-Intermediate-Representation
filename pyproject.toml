@@ -103,8 +103,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# lit injects `config` into its configuration module; the name is defined by the runner.
+# lit injects `config` and `lit_config` into its configuration module; the runner defines them.
 "training/llvm/tests/lit.cfg.py" = ["F821"]
+"mlir/lit.cfg.py" = ["F821"]
 
 [tool.ruff.format]
 quote-style = "double"

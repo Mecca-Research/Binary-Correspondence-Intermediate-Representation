@@ -20,6 +20,7 @@
 #   gate      tools/c/check_runtime.sh on clang 23, BCIR_REQUIRE_TSAN=1
 #   thorough  the thorough tier on LLVM 23 + Node 24, BCIR_REQUIRE_LLVM=1
 #   mlir      a fresh `mlir` preset tree on MLIR 23: bcir-opt under the top-level project, -L mlir
+#             with its lit suite required (BCIR_REQUIRE_LIT=ON)
 #
 # Each leg's log stays in the output directory. The summary names every leg PASS, FAIL or WAIVED
 # (only `status`, only by --allow-outdated, and the summary says so); the exit status is 0 only
@@ -146,7 +147,7 @@ leg_mlir() {
   [ -d "${prefix}/conda-meta" ] && libs="${prefix}/lib${libs:+:${libs}}"
   env PATH="${LATEST_PATH}" LD_LIBRARY_PATH="${libs}" MLIR_DIR="${prefix}/lib/cmake/mlir" \
     cmake --preset mlir -B "${dir}" -DCMAKE_C_COMPILER=clang-23 -DCMAKE_CXX_COMPILER=clang++-23 \
-    -DLLVM_DIR="${prefix}/lib/cmake/llvm" || return 1
+    -DLLVM_DIR="${prefix}/lib/cmake/llvm" -DBCIR_REQUIRE_LIT=ON || return 1
   env PATH="${LATEST_PATH}" LD_LIBRARY_PATH="${libs}" cmake --build "${dir}" -j 2 || return 1
   env LD_LIBRARY_PATH="${libs}" ctest --test-dir "${dir}" -L mlir -j 2 --output-on-failure || return 1
 }

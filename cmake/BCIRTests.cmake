@@ -138,6 +138,21 @@ if(TARGET bcir-opt)
     bcir_add_shell_gate(${_name} ${_script} LABELS "mlir" TIMEOUT 1800 ENV "BCIR_OPT=$<TARGET_FILE:bcir-opt>")
   endforeach()
   bcir_add_shell_gate(mlir-irdl-corpus tools/irdl/check_corpus.sh LABELS "mlir" TIMEOUT 600)
+  # BUILD-5: bcir-opt's lit suite -- every fixture's own RUN lines, against this bcir-opt and the
+  # FileCheck and mlir-opt of its LLVM (mlir/lit.cfg.py refuses a missing tool or a mixed major).
+  if(BCIR_HAVE_LIT)
+    add_test(NAME mlir-lit
+             COMMAND "${BCIR_PYTHON}" "${BCIR_LIT}" -sv -j 2
+                     --param "bcir_opt=$<TARGET_FILE:bcir-opt>" --param "filecheck=${BCIR_FILECHECK}"
+                     --param "mlir_opt=${BCIR_MLIR_OPT}" --param "exec_root=${CMAKE_BINARY_DIR}/mlir-lit"
+                     "${CMAKE_SOURCE_DIR}/mlir")
+    # lit runs two workers of its own, so CTest counts the entry as two of its two
+    set_tests_properties(mlir-lit PROPERTIES LABELS "mlir" PROCESSORS 2 TIMEOUT 1800)
+  elseif(BCIR_REQUIRE_LIT)
+    message(FATAL_ERROR "BCIR_REQUIRE_LIT=ON, but bcir-opt's lit suite cannot run here:${BCIR_LIT_WHY}")
+  else()
+    message(STATUS "BCIR: mlir-lit is not registered:${BCIR_LIT_WHY}")
+  endif()
 endif()
 
 # --- docs governance ---

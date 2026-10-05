@@ -74,6 +74,54 @@ else()
   _bcir_dep_record(MLIR OFF " (set MLIR_DIR to an MLIRConfig.cmake to build bcir-opt)")
 endif()
 
+# lit, FileCheck and mlir-opt: bcir-opt's lit suite (mlir/lit.cfg.py, BUILD-5) runs each fixture's
+# RUN lines with the FileCheck and mlir-opt of the LLVM the MLIR package belongs to. They are looked
+# for beside it (apt's llvm-N-tools and mlir-N-tools, a conda prefix's libexec/llvm), never on PATH,
+# where another major can sit. lit is version-free Python: beside that LLVM (apt's
+# build/utils/lit/lit.py), else an LLVM lit on PATH (pip's), else the newest apt lit.py. LIT is
+# found when all three are; the row says which is missing, and BCIR_REQUIRE_LIT makes that fatal.
+if(MLIR_FOUND)
+  set(_bcir_llvm_bins "${LLVM_TOOLS_BINARY_DIR}" "${LLVM_TOOLS_BINARY_DIR}/../libexec/llvm"
+                      "/usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin")
+  find_program(BCIR_FILECHECK NAMES FileCheck PATHS ${_bcir_llvm_bins} NO_DEFAULT_PATH)
+  find_program(BCIR_MLIR_OPT NAMES mlir-opt PATHS ${_bcir_llvm_bins} NO_DEFAULT_PATH)
+  find_program(BCIR_LIT NAMES lit.py PATHS "${LLVM_TOOLS_BINARY_DIR}/../build/utils/lit"
+               "/usr/lib/llvm-${LLVM_VERSION_MAJOR}/build/utils/lit" NO_DEFAULT_PATH)
+  if(NOT BCIR_LIT)
+    # A Windows runner's PATH can carry Microsoft's unrelated lit.exe: take a PATH lit only when
+    # it runs under this Python and its banner is LLVM lit's.
+    find_program(_bcir_path_lit NAMES lit llvm-lit)
+    if(_bcir_path_lit)
+      execute_process(COMMAND "${BCIR_PYTHON}" "${_bcir_path_lit}" --version
+                      OUTPUT_VARIABLE _bcir_lit_banner ERROR_VARIABLE _bcir_lit_banner
+                      RESULT_VARIABLE _bcir_lit_rc TIMEOUT 60)
+      if(_bcir_lit_rc EQUAL 0 AND _bcir_lit_banner MATCHES "^lit( version)? [0-9]")
+        set(BCIR_LIT "${_bcir_path_lit}" CACHE FILEPATH "lit, for bcir-opt's lit suite" FORCE)
+      endif()
+    endif()
+  endif()
+  if(NOT BCIR_LIT)
+    file(GLOB _bcir_lits "/usr/lib/llvm-*/build/utils/lit/lit.py")
+    if(_bcir_lits)
+      list(SORT _bcir_lits COMPARE NATURAL ORDER DESCENDING)
+      list(GET _bcir_lits 0 _bcir_lit)
+      set(BCIR_LIT "${_bcir_lit}" CACHE FILEPATH "lit, for bcir-opt's lit suite" FORCE)
+    endif()
+  endif()
+  set(BCIR_LIT_WHY "")
+  foreach(_bcir_tool BCIR_LIT BCIR_FILECHECK BCIR_MLIR_OPT)
+    if(NOT ${_bcir_tool})
+      string(APPEND BCIR_LIT_WHY " no ${_bcir_tool}")
+    endif()
+  endforeach()
+  if(BCIR_LIT_WHY)
+    set(BCIR_LIT_WHY "${BCIR_LIT_WHY} for LLVM ${LLVM_VERSION_MAJOR} (apt's llvm-${LLVM_VERSION_MAJOR}-tools and mlir-${LLVM_VERSION_MAJOR}-tools carry all three)")
+    _bcir_dep_record(LIT OFF "${BCIR_LIT_WHY}")
+  else()
+    _bcir_dep_record(LIT ON " (lit ${BCIR_LIT}, FileCheck ${BCIR_FILECHECK}, mlir-opt ${BCIR_MLIR_OPT})")
+  endif()
+endif()
+
 # ThreadSanitizer: the runtime the ring's sanitizer variants need (runtime/manifest.json). Present
 # means a trivial -fsanitize=thread program builds AND runs here, the predicate of
 # tools/build/sanitizer.py -- the one tools/c/check_runtime.sh asks before it builds the same

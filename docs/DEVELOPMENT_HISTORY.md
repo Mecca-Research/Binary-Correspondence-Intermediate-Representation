@@ -1716,6 +1716,41 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     index -- passes on each tree; the quick tier with no index passes (4213 passed), as do the
     thorough tier on LLVM 23 (4213 passed) and the changed modules probing with the host's own
     compiler.
+  BUILD-5 (2026-10-05) put the MLIR rail under the top-level project in CI and made the fixtures'
+  own RUN lines a test.
+  - `mlir-rail-validate` builds `bcir-opt` with the `mlir` preset (MLIR_DIR from the matrix
+    major) instead of `tools/wsl/build_mlir.sh`'s tree of its own, and runs the rail's gates as
+    CTest entries: `ctest --preset mlir` runs the IRDL round trip, the ODS examples, the passes,
+    bytecode and the lit suite. The WSL scripts stay for the WSL route (§7 of the build roadmap).
+  - `mlir/lit.cfg.py` runs every `.mlir` under `mlir/` as a lit test against the `bcir-opt` the
+    build made and the FileCheck and mlir-opt of its LLVM, each pinned by path through a
+    substitution that replaces command words only. Two files are another gate's input and are
+    excluded by name, each name naming one file. Until now nothing ran the fixtures' RUN lines
+    as written: `check_passes.sh` runs the same files with invocations of its own. A missing
+    tool, a path that is not an executable, a tool with no LLVM version and three tools of two
+    majors are each a lit fatal, never a smaller suite or a mixed toolset (L1, L2).
+  - The configure looks for lit, FileCheck and mlir-opt beside the LLVM the MLIR package belongs
+    to, never on PATH, and records a LIT row in `bcir-deps.json`. `BCIR_REQUIRE_LIT=ON`, passed by
+    the CI job that installs them and by the local check's mlir leg, makes their absence a
+    configure failure instead of a status line (L2).
+  - Found by the first run on MLIR 23, fixed before the commit: the config had defined its own
+    test format class to select the test directories. lit pickles every test, with its config
+    and so its format, to hand it to a worker, and a class defined in the config is not
+    importable by name there, so the suite died before its first test. The stub-based unit
+    tests had passed: they executed the config but never pickled it. The config now uses lit's
+    own `ShTest` and `excludes`, and the unit test pickles the config as lit's pool does, with a
+    witness that a config-defined format fails it (L11).
+  - Found by the suite's first full run, fixed: `test/irdl/codegen_targets_generic.mlir` checked
+    a capability's triple after the lower contract printed below it, and FileCheck matches in
+    order, so the file could never pass as written. `tools/irdl/check_corpus.sh` reads the same
+    CHECK lines as unordered literal substrings and had passed it. The fixture now checks in
+    order, each op's own attributes with CHECK-SAME, which both readers accept.
+  - Measured on MLIR 23 (clang 23 tree, `BCIR_REQUIRE_LIT=ON`): `ctest -L mlir` 5/5, the lit
+    suite 131/131. RED: a CHECK line broken in a scratch copy of the suite fails it and names
+    the fixture; a fixture with no RUN line is UNRESOLVED; the fixture as it was fails; FileCheck
+    18 beside `bcir-opt` 23 is a lit fatal; with FileCheck made unfindable the configure fails
+    under `BCIR_REQUIRE_LIT=ON` and, without it, leaves `mlir-lit` unregistered and says why. The
+    index passes D1 with the LIT row; the quick tier passes (4220 passed).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

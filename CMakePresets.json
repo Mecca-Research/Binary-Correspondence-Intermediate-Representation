@@ -119,6 +119,14 @@
       "execution": {"jobs": 2}
     },
     {
+      "name": "mlir",
+      "displayName": "The MLIR rail's gates and bcir-opt's lit suite",
+      "configurePreset": "mlir",
+      "filter": {"include": {"label": "^mlir$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
       "name": "all",
       "displayName": "Everything registered, two workers, heavy gates serialized",
       "configurePreset": "default",

@@ -39,6 +39,9 @@ option(BCIR_WERROR "Warnings are errors, as the gates build" ON)
 # makes a host where the manifest's sanitizer variants cannot be built a configure failure instead
 # of a reported skip -- the CMake twin of the runtime gate's BCIR_REQUIRE_TSAN=1.
 option(BCIR_REQUIRE_TSAN "Fail the configure when the ThreadSanitizer variants cannot be built here" OFF)
+# Likewise for bcir-opt's lit suite: the CI job that installed lit, FileCheck and mlir-opt owns their
+# absence, so ON makes a build of bcir-opt without them a configure failure instead of a status line.
+option(BCIR_REQUIRE_LIT "Fail the configure when bcir-opt is built here and its lit suite cannot run" OFF)
 # OFF by default: the law rail needs a coherent MLIR major built by the compiler that builds it,
 # and a package the host happens to carry on PATH must not decide what `cmake --preset default`
 # builds. The `mlir` preset turns it ON; AUTO builds it whenever an MLIR package is found.

@@ -248,11 +248,13 @@ python -m bcir.tests.run_all
 # runtime/c + runtime/cpp (the C rails and the seam) -- CMake over runtime/manifest.json:
 cmake --preset default && cmake --build --preset default && ctest --preset build
 
-# mlir/ (the dialect law) -- needs libmlir-NN-dev + llvm-NN-dev:
+# mlir/ (the dialect law) -- needs libmlir-NN-dev + llvm-NN-dev (+ llvm-NN-tools, mlir-NN-tools):
 bash tools/wsl/tblgen_check.sh        # ODS generators
-bash tools/wsl/build_mlir.sh          # build bcir-opt
-bash tools/wsl/check_ods_examples.sh  # pretty ODS corpus via bcir-opt
-bash tools/irdl/check_corpus.sh       # IRDL projection on stock mlir-opt
+MLIR_DIR=/usr/lib/llvm-NN/lib/cmake/mlir cmake --preset mlir -DBCIR_REQUIRE_LIT=ON
+cmake --build --preset mlir --target bcir-opt
+ctest --preset mlir                   # (the label `mlir`, two workers)
+                                      # IRDL projection, ODS examples, passes, bytecode, and the
+                                      # lit suite: every fixture's RUN lines (mlir/lit.cfg.py)
 ```
 
 Some training scripts intentionally skip when optional tools such as `llvm-as`,
