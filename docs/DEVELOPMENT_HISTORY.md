@@ -1473,6 +1473,21 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Proven by fault injection: the witness fails when the estimator reverts to sequential windows
     or ignores its baseline, and the floor fails on the injected walk overhead that the
     previous test passed.
+  BUILD-2d (2026-10-05) moved group 3b: the four sections that drive the C twin and its Python
+  parity.
+  - `tools/c/sections/{cfront,cfront_abi,cfront_loop,channel}.sh`, generated from the gate's lines as
+    the earlier groups were. `cfront` checks the twin's per-fixture summary and structural digest
+    against the oracle's, over `test_cfront`. `cfront_abi` checks the `--target` data-model matrix
+    over the same binary. `cfront_loop` runs the compile-to-execute loop over `test_cfront_loop`,
+    and `channel` the routing decision over `test_channel`. The gate keeps the freestanding probes
+    of `bcir_cir.h`, `bcir_plan.c` and `bcir_hydrate.c` and the harness builds, and calls the scripts.
+  - No new variants or checker rules: the harnesses were already manifest units. The scripts run the
+    oracle beside the harness with `PYTHONPATH` set, as `runtime` does, so a CTest entry running in
+    the build tree imports the checkout's `bcir`.
+  - Measured: gcc tree `ctest -L section` 17/17 in 16 s; `build-section-parity` 17 sections identical
+    under both builds (the new four with 122, 6, 26 and 1 PASS lines); each new section fails on a
+    harness that corrupts one answer (a digest, a target's data model, a loop that does not execute,
+    a route). The gate's 4,120 lines are 4,030.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

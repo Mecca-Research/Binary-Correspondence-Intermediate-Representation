@@ -254,79 +254,10 @@ CFRONT_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_verify.c ${C}/bcir_run
 "${CC}" -std=c23 -O2 -Wall -Wextra ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" 2>/dev/null \
   || "${CC}" -std=c11 -O2 ${CFRONT_SRCS} "${C}/test_cfront.c" -I "${C}" -o "${tmp}/test_cfront" \
   || { echo "  FAIL: C frontend build"; exit 1; }
-# L1-L8 + type-model + casts + char literals + interleaved decls + funcptr dispatch + §5.8 + Phase D driver + str ops + hex-float + math.h (#320-#324) + ABI data model (#abi) + scalar global r/w (#globals) + effects (#effects) + integer promotions/UAC (#intpromote) + designated init (#designated) + local aggregate init (#aggregate) + restrict (#restrict) + array stores (#astore) + local arrays (#localarr)
-FIXTURES="cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_branch.c cfront_while.c cfront_for.c cfront_dowhile.c cfront_continue.c cfront_switch.c cfront_goto.c cfront_incdec.c cfront_macros.c cfront_ppinc.c cfront_structret.c cfront_packed.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_signed.c cfront_signedcmp.c cfront_longunary.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_float.c cfront_floatcast.c cfront_rmw.c cfront_bitfield.c cfront_bfcompound.c cfront_union.c cfront_interleave.c cfront_funcptr.c cfront_dispatch.c cfront_integration.c cfront_regdriver.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c cfront_strsizeof.c cfront_strval.c cfront_hexfloat.c cfront_mathh.c cfront_mathh_mixed.c cfront_mathh_long.c cfront_mathh_ptr.c cfront_calltyped.c cfront_comments.c cfront_abi.c cfront_global_rw.c cfront_effects.c cfront_intpromote.c cfront_dispatch_table.c cfront_agginit.c cfront_restrict.c cfront_arraystore.c cfront_localarray.c cfront_shiftassign.c cfront_extern.c cfront_switchfall.c cfront_ptrarith.c cfront_threadlocal.c cfront_multidecl.c cfront_commastep.c cfront_structmulti.c cfront_memberarray.c cfront_emptystmt.c cfront_ptrstore.c cfront_loopreuse.c cfront_loopscope.c cfront_blockscope.c cfront_localmd.c cfront_nestmember.c cfront_boolnorm.c cfront_unarypromote.c cfront_floatsigncast.c cfront_intsigncast.c cfront_boolcast.c cfront_signedbf.c cfront_signedload.c cfront_enumtype.c cfront_ptrlocal.c cfront_ptrvalue.c cfront_ptrfield.c cfront_ptr2ptr.c cfront_fieldderef.c cfront_ptrsign.c cfront_fnptrchain.c cfront_multiptr.c cfront_chartypes.c \
-cfront_complit.c cfront_typeof.c cfront_structinit.c cfront_arraylit.c cfront_variadic.c cfront_compoundwide.c cfront_extvariadic.c cfront_longdouble.c cfront_generic.c cfront_designate.c cfront_nestoffset.c cfront_addrmember.c cfront_atomiclocal.c cfront_builtins.c cfront_stmtexpr.c \
-cfront_bitint.c cfront_bitint_member.c cfront_bitint_mixed.c cfront_bitint_bitfield.c"
-# + C23 `_BitInt(N)` (#bitint / #bitintmember / #bitintmixed / #bitintbitfield): exact-width bit-precise
-# ints -- same-type + MIXED-WIDTH arithmetic (the wider `_BitInt` wins the C23 rank), PLAIN members, and
-# `_BitInt(N) m:W` BITFIELDS; the result type + bitfield layout are verified == Clang in test_c_cfront.py.
-# Precompute EVERY oracle summary in one python process (import compile_unit once) -- the old
-# python-per-fixture loop paid ~0.3s of interpreter+import startup each (~30s over the fixture set).
-python3 - "${C}" ${FIXTURES} > "${tmp}/py_sums.txt" <<'PY' || { echo "  FAIL: python lowering (batch)"; exit 1; }
-import os, re, sys
-from bcir.frontends.cfront import compile_unit
-from bcir.model import Domain
-from bcir.verify import cfront_structural_digest          # the cross-rail per-claim STRUCTURAL digest
-cdir = sys.argv[1]
-for fx in sys.argv[2:]:
-    try:
-        src = open(os.path.join(cdir, fx)).read()
-        inc = {h: open(os.path.join(cdir, h)).read() for h in re.findall(r'#include\s+"([^"]+)"', src)
-               if os.path.exists(os.path.join(cdir, h))}
-        r = compile_unit(src, check_clang=False, includes=inc or None)
-        fns = r.lowered.functions; lf = fns[next(reversed(fns))]
-        mmio = sum(1 for c in lf.claims if c.op == 'c.load' and c.domain == Domain.MMIO)
-        bf = sum(1 for c in lf.claims if c.op == 'c.bf.get'); kn = sum(1 for c in lf.claims if c.op == 'c.const')
-        bo = sum(1 for c in lf.claims if c.op.startswith('c.bin.')); ca = sum(1 for c in lf.claims if c.op.startswith('c.call'))
-        repro = sum(1 for f in fns.values() if getattr(f, 'reproducible', False))  # A1.3: matches the C twin's repro=N
-        dg = cfront_structural_digest(r.lowered)           # byte-identical to the C twin's bcir_cfront_digest
-        print(f"{fx}\tfuncs={len(fns)} claims={len(lf.claims)} mmio={mmio} bf={bf} const={kn} binop={bo} call={ca} repro={repro} ok={1 if r.is_clean else 0} digest={dg:016x}")
-    except Exception as e:
-        sys.stderr.write(f"oracle lowering failed for {fx}: {e}\n"); sys.exit(1)
-PY
-for fx in ${FIXTURES}; do
-  c_sum="$("${tmp}/test_cfront" "${C}/${fx}" | sed -n '1p')" || { echo "  FAIL: C run ${fx}: ${c_sum}"; exit 1; }
-  py_sum="$(awk -F'\t' -v f="${fx}" '$1==f{print $2; exit}' "${tmp}/py_sums.txt")"
-  [ -n "${py_sum}" ] || { echo "  FAIL: no precomputed oracle summary for ${fx}"; exit 1; }
-  [ "${c_sum}" = "${py_sum}" ] \
-    && echo "  PASS parity ${fx} (oracle == C: ${c_sum})" \
-    || { echo "  FAIL: parity ${fx} (C='${c_sum}' PY='${py_sum}')"; exit 1; }
-done
+bash "${ROOT}/tools/c/sections/cfront.sh" "${tmp}/test_cfront" || exit 1
 
-# Target-ABI matrix (#abi): the C twin's `--target` data model lays `long` / pointer / size_t-class
-# types out exactly like the oracle's TargetABI, for every named target. The summary counts are
-# target-invariant, so this compares the FOLDED sizeof constants (which carry the data-model widths):
-# the C twin emits them as `= Nu;` literals; the oracle exposes them as the c.const immediates. The
-# vectors must agree per target AND differ across LP64 / LLP64 / ILP32 (so the gate has teeth).
 echo "[c-runtime] target-ABI matrix (bcir_cfront --target): sizeof data model == oracle (#abi)"
-ABI_TARGETS="x86_64-linux aarch64-linux riscv64-linux x86_64-windows i386-linux"
-# One python process for every target (was one per target): import compile_unit once.
-python3 - "${C}" ${ABI_TARGETS} > "${tmp}/abi_sums.txt" <<'PY' || { echo "  FAIL: python ABI (batch)"; exit 1; }
-import sys
-from bcir.frontends.cfront import compile_unit
-src = open(sys.argv[1] + "/cfront_abi.c").read()
-for t in sys.argv[2:]:
-    r = compile_unit(src, check_clang=False, target=t)
-    lf = r.lowered.functions[next(reversed(r.lowered.functions))]
-    print(f"{t}\t" + ','.join(str(c.imm[0]) for c in lf.claims if c.op == 'c.const'))
-PY
-abi_seen=""
-for t in ${ABI_TARGETS}; do
-  c_vals="$("${tmp}/test_cfront" --target "${t}" "${C}/cfront_abi.c" | sed -n '/----EMIT----/,$p' \
-            | grep -oE '= [0-9]+u;' | grep -oE '[0-9]+' | paste -sd, -)" \
-    || { echo "  FAIL: C ABI run ${t}"; exit 1; }
-  py_vals="$(awk -F'\t' -v f="${t}" '$1==f{print $2; exit}' "${tmp}/abi_sums.txt")"
-  [ "${c_vals}" = "${py_vals}" ] \
-    && echo "  PASS ABI ${t} (sizeof model oracle == C: [${c_vals}])" \
-    || { echo "  FAIL: ABI ${t} (C='[${c_vals}]' PY='[${py_vals}]')"; exit 1; }
-  abi_seen="${abi_seen}${c_vals};"
-done
-# the three data models must produce distinct vectors (LP64 8/8/8, LLP64 long=4, ILP32 ptr=4 too).
-echo "${abi_seen}" | grep -q "8,8,8,4,8;" && echo "${abi_seen}" | grep -q "4,8,8,4,8;" \
-  && echo "${abi_seen}" | grep -q "4,4,4,4,8;" \
-  && echo "  PASS ABI matrix spans LP64 / LLP64 / ILP32 (distinct data models)" \
-  || { echo "  FAIL: ABI matrix did not span the three data models: ${abi_seen}"; exit 1; }
+bash "${ROOT}/tools/c/sections/cfront_abi.sh" "${tmp}/test_cfront" || exit 1
 
 echo "[c-runtime] full C compile->execute loop (cfront -> plan -> hydrate -> exec, no Python)"
 # bcir_plan.c + bcir_hydrate.c are freestanding (the driver-embeddable planner + StreamPack
@@ -341,34 +272,13 @@ LOOP_SRCS="${C}/bcir_cfront.c ${C}/bcir_cpp.c ${C}/bcir_plan.c ${C}/bcir_hydrate
 "${CC}" -std=c23 -O2 -I "${C}" ${LOOP_SRCS} -o "${tmp}/loop" 2>/dev/null \
   || "${CC}" -std=c11 -O2 -I "${C}" ${LOOP_SRCS} -o "${tmp}/loop" \
   || { echo "  FAIL: loop build"; exit 1; }
-for fx in cfront_regmap.c cfront_array.c cfront_array2d.c cfront_widerow.c cfront_deref.c cfront_callgraph.c cfront_typedef.c cfront_enum.c cfront_ternary.c cfront_sizeof.c cfront_cast.c cfront_alignof.c cfront_charlit.c cfront_strtab.c cfront_strconcat.c cfront_widelit.c cfront_static.c cfront_global.c cfront_compound.c cfront_logic.c cfront_atomic.c cfront_cmpxchg.c cfront_atomic11.c cfront_atomic_xchg.c cfront_driver.c cfront_driver_uart.c; do
-  out="$("${tmp}/loop" "${C}/${fx}")" || { echo "  FAIL: loop ${fx}: ${out}"; exit 1; }
-  case "${out}" in
-    loop:*executed=*) echo "  PASS loop ${fx} (${out#loop: })" ;;
-    *) echo "  FAIL: loop ${fx}: ${out}"; exit 1 ;;
-  esac
-done
+bash "${ROOT}/tools/c/sections/cfront_loop.sh" "${tmp}/loop" || exit 1
 
 echo "[c-runtime] multi-channel lowering decision (bcir_channel): channel.json -> backend pick"
-# bcir_channel.c is the C twin of bcir/channels' routing seam -- it consumes channel.json and
-# routes each claim to a backend; the Python<->C parity is gated in bcir/tests/test_c_channel.py.
 "${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" "${C}/bcir_channel.c" "${C}/test_channel.c" -o "${tmp}/tch" 2>/dev/null \
   || "${CC}" -std=c11 -O2 -I "${C}" "${C}/bcir_channel.c" "${C}/test_channel.c" -o "${tmp}/tch" \
   || { echo "  FAIL: channel router build"; exit 1; }
-CHJSON="${ROOT}/channels/example_cpu.channel.json ${ROOT}/channels/example_tpu.channel.json ${ROOT}/channels/example_pim.channel.json"
-c_route="$(printf 'matmul.acc 4\ngather.load 5\nscalar.mov 0\n' | "${tmp}/tch" ${CHJSON} | sed -n 's/.*route=\([^|]*\).*/\1/p' | paste -sd, -)" \
-  || { echo "  FAIL: channel route run"; exit 1; }
-py_route="$(python3 -c "
-from bcir.channel_plugin import load_manifest
-from bcir.channels import route_claim
-from bcir.model import Claim, Opcode, StrideClass
-mans=[load_manifest('${ROOT}/channels/%s.channel.json'%n) for n in ('example_cpu','example_tpu','example_pim')]
-cl=[('matmul.acc',StrideClass.TILE),('gather.load',StrideClass.RANDOM),('scalar.mov',StrideClass.SCALAR)]
-print(','.join(route_claim(Claim(id=1,opcode=Opcode.LOAD,op=o,stride_class=s),mans).name for o,s in cl))
-")" || { echo "  FAIL: python route"; exit 1; }
-[ "${c_route}" = "${py_route}" ] \
-  && echo "  PASS channel routing parity (Python route_claim == C bcir_channel_route: ${c_route})" \
-  || { echo "  FAIL: channel routing parity (C='${c_route}' PY='${py_route}')"; exit 1; }
+bash "${ROOT}/tools/c/sections/channel.sh" "${tmp}/tch" || exit 1
 
 echo "[c-runtime] bcir-cc compiler driver: compile a driver (sibling header) + emit artifacts"
 # bcir_cc.c is the cc-like driver over the full C pipeline (bcir_cpp_run_ex -I/-D -> bcir_cfront ->
