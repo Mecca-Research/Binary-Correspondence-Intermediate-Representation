@@ -33,8 +33,9 @@ def test_blob_matches_the_oracle_table():
 
 
 def test_committed_files_match_a_fresh_emission():
-    """Drift gate (CI also enforces it in check_runtime.sh): the committed blob +
-    header are a deterministic function of the oracle table."""
+    """The drift gate: the committed blob + header are a deterministic function of the
+    oracle table. It compares without writing; tools/c/check_runtime.sh regenerated the
+    files in the tree and diffed them until BUILD-8, which left this the one drift check."""
     with open(os.path.join(_RUNTIME_C, "q8_tiers.bin"), "rb") as f:
         assert f.read() == q8_tables.q8_tiers_blob(), "q8_tiers.bin is stale (--emit)"
     with open(os.path.join(_RUNTIME_C, "bcir_q8_tables.h"), encoding="utf-8") as f:

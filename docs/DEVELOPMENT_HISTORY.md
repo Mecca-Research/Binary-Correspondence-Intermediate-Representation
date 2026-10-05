@@ -1550,6 +1550,358 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       link flags, a dropped escape, a dropped `-lm`.
     - The gate on clang 18 prints the same 398 PASS lines as before the move. The gate's 3,921
       lines are 3,571.
+  CF-CASELABEL (2026-10-05) ended every `case` and `default:` label of an emitted switch in a null
+  statement, on both rails: the oracle's `_walk` (`bcir/frontends/cfront/emit.py`) and the twin's
+  emitter (`runtime/c/bcir_cfront.c`).
+  - Both emits had put an arm's first temporary right after its label. A label labels a statement
+    (C11 6.8.1), and a declaration is no statement before C23, so nearly every emitted switch was
+    C23. Clang 18 and 23 warned by default, GCC 13 only under `-Wpedantic`, and
+    `-std=c11 -pedantic-errors` refused it.
+  - The null statement keeps the declarations after a label in the switch body's scope, as the
+    source's are. A brace around each arm would have ended that scope at the next label, which a
+    fallthrough reads past.
+  - Witness: `test_an_emitted_switch_is_c11_on_both_rails`. Its unit has five labels, a
+    fallthrough, a C23 declaration after a label, and two labels at the switch's end. Each rail's
+    emit ends every label in `: ;`, builds under `-std=c11 -pedantic-errors` with Clang and GCC,
+    and returns what the original does for 0 to 39.
+  - RED: either rail reverted fails the spelling check. With that check removed, the reverted
+    rail's emit fails the build ("label followed by a declaration is a C23 extension").
+  - `tools/testing/faults/cfront-caselabel.json` holds four faults, a case label and a `default:`
+    on each rail, and each fails the witness. CF-ENUMFOLD's EF11 anchors on the new spelling.
+  - Found beside it and not fixed here (CF-VLASCOPE): the emit flattens a braced block, so a VLA
+    declared in one is still in scope at a later `case` label, a loop's continue label or a
+    `goto` target that the source kept outside the block. Neither GCC nor Clang builds such an
+    emit, and the oracle's Clang check reports the failed build as `skip:build-failed`, so the
+    unit stays CLEAN. `docs/languages/CFRONT_GUIDE.md` records it under Known limits.
+  BUILD-2g (2026-10-05) moved `#cexpr`, the constant folds, the last of group 3d, once
+  CF-CASELABEL made its emit C11.
+  - `tools/c/sections/cexpr.sh`, generated from the gate's lines like group 3d's, takes `bcir-cc`
+    and CC.
+  - The gate first builds the emit with `-pedantic-errors`, so the section refuses the C23 form
+    under GCC too. The `bcir-cc` before CF-CASELABEL fails the emitted build under GCC 13,
+    Clang 18 and Clang 23.
+  - With the emit clean, the warning that named the section's temp file is gone, and the
+    section-parity gate compares the section like any other.
+  - Measured:
+    - gcc and clang 18 trees with `BCIR_REQUIRE_TSAN=ON`: 0 warnings, `ctest -L section` 29/29,
+      and `build-section-parity` 29 sections identical; the clang 23 tree the same.
+    - The gate prints 398 PASS lines on clang 18 and 387 on clang 23, as before the move, and
+      no C23-extension warning. The gate's 3,571 lines are 3,544.
+  BUILD-2h (2026-10-05) moved group 3e: the sections whose programs the gate wrote out itself.
+  - The five link-flag rules (#linkflags-fftw, -lapack, -gsl, -sleef, -cerf) had been five probe
+    files written from heredocs, one helper copied five times. They are now one harness,
+    `runtime/c/test_link_flag_rules.c`: its argument picks a rule's table, each row the probe's own
+    edge and comment, and it prints the probe's own `OK linkflags-<rule>`. The gate builds it once;
+    `tools/c/sections/linkflags_<rule>.sh` runs one table each.
+  - The seven E-series sections (#ols, #pca, #layernorm, #lstm, #classical #svm, #classical #tree,
+    #kmeans) compile C the Python oracle emits, a driver `main` appended. A program that exists only
+    once the oracle has run needed a manifest kind of its own, `kernels`. Each entry names the
+    emitter, its arguments, its driver under `runtime/c/kernels/` and its system libraries.
+  - One writer for the unit: `tools/build/emit_kernel.py` writes it for the gate, for CMake and for
+    the section-parity recipe. CMake writes it at build time with a depfile naming every oracle module
+    the emitter imported.
+  - M15 holds each entry to the oracle (the emitter is a function of `bcir/lower/c_kernel.py`, read
+    as text), each driver to one entry, each kernel to a section and the gate's own writing.
+    `emit_kernel.py` asks the same predicate (`kernel_problems`), so the writer refuses exactly what
+    the checker reports.
+  - Measured:
+    - The gate's text for each kernel is the old heredoc text, the driver's two-line comment aside.
+    - On the gcc tree the twelve sections pass under CTest, and `build-section-parity` holds them
+      identical, the kernels' recipes written by the same writer.
+    - A no-op build re-emits no kernel. Touching `bcir/lower/alias_facts.py`, which the emitters
+      import, re-emits all seven; touching an ASN.1 module re-emits none; touching `ols`'s driver
+      re-emits `kernel_ols` alone.
+    - With M15's call removed, all fourteen injected kernel faults go unreported.
+  BUILD-2i (2026-10-05) moved group 3f, the "emit == Clang" family: 52 sections, `#scale` through
+  `#stmtexpr`, each running `bcir-cc` over a unit. Fifty of them compile what it emits beside the
+  source and a driver and run both, so their scripts take CC; `scale` and `pscale` compare the
+  tool's counts with the oracle's and take `bcir-cc` alone.
+  - The scripts are generated from the gate's lines, with two substitutions: the binary path became
+    the script's argument, and `python3` became `"${PYTHON}"`. None used a variable or function the
+    gate defined outside it, which the generator checked before it moved anything.
+  - `test_the_scanners_examined_the_real_gates` required 150 compile groups of the runtime gate
+    alone. With most of the gate's text in the section scripts, which M9 scans as gate text, it now
+    counts the two together (72 and 145) and requires 100 of the sections' own.
+  - Measured: `build-section-parity` holds the 52 identical under both builds with gcc and again
+    with clang, so no diagnostic names a temporary path, and the gate's 3,086 lines are 1,633.
+  BUILD-2j (2026-10-05) moved group 3g, the rest of the gate, and with it BUILD-2 is complete:
+  every check `tools/c/check_runtime.sh` makes now also runs as a CTest entry.
+  - The ASN.1 twins: `per`, `xer`, `jer`, `asn1_emit`, `per_plan` and `oer` compare their twin at
+    `-O0` with it at `-O3`, over twelve new manifest variants; `asn1bench` takes the
+    `bcir_asn1_bench` tool and `asn1fast` its harness. The gate's sweeps had turned a failed `-O0`
+    or `-O3` build into a SKIP, and the `asn1_emit` sweep into nothing at all, where the CMake
+    build of the same variants fails; the gate fails on it now too (laws.md L12, L21).
+  - The probe programs became harnesses: `#atomicring`'s heredoc is `runtime/c/test_oob_counter.c`
+    and `#extentassert` is `runtime/c/test_extent_assert.c`. Found moving the latter: the gate
+    compiled the tampered extent with `-std=c23` alone. GCC 13 refuses that option, so under GCC
+    the compile failed on the flag, the assertion was never reached, and the section printed its
+    PASS line having judged nothing (L2). The section now compiles the tampered unit in the
+    standard the correct one compiled in and requires the assertion's own diagnostic. RED: with the
+    macro made a no-op the old check still passes under GCC 13 and the new one fails; a macro that
+    fails another way (a negative array) fails the new one too.
+  - `#inlineasm`, `#portio` and `#barrier` judge what the Python oracle emits for a C source under
+    CC and the gcc and clang on `PATH`, so they take no binary. They are `compiler_only` sections:
+    M13 lets a section name no binary only then, and only if its script runs `${CC}`; the
+    section-parity gate runs such a section twice and holds the runs identical.
+  - The delegated gates: the seven scripts the gate calls that build and judge binaries of their
+    own (memory discipline, the StreamPack semantic boundary, the target ABI, the JER index and
+    SIMD rails, the C++ hand-off, SYCL) are the manifest's `delegated` entries. CMake registers
+    each as a CTest entry of its own, and the gate skips them under `BCIR_SKIP_DELEGATED_GATES=1`,
+    which the `c-runtime` entry sets, so `ctest` runs each once. M16 holds the gate's guarded
+    calls, each SKIP line naming its entry, the manifest and `cmake/BCIRTests.cmake` in step, and
+    refuses a script the gate calls that is neither a section nor a delegated gate. RED: with M16's
+    call removed, its eleven manifest faults and seven tree faults go unreported.
+  - Found by the CTest runs: `asn1_emit` ended on `ok:` where every other section prints a PASS
+    line, so the section-parity gate, which requires one, failed it under every compiler; it
+    prints PASS now. Two delegated gates compiled with `-std=c23`, which GCC 13 spells `c2x`: they
+    passed under clang and failed as CTest entries under GCC, and now ask the compiler (L12).
+  - Measured: on the gcc, clang 18 and clang 23 trees `ctest -L section` runs 106/106 and
+    `build-section-parity` holds all 106 identical, the three compiler-only sections over two runs;
+    the seven delegated entries pass on each tree. The gate prints 399 PASS lines on clang 18 and
+    388 on clang 23, 0 FAIL; its 1,633 lines are 879.
+  BUILD-3 (2026-10-05) made the C rails installable: `cmake --install` lays down the manifest's
+  libraries and tools, every public header and a version header, and a CMake package an out-of-tree
+  project finds with `find_package(BCIR)` (`cmake/BCIRInstall.cmake`, `cmake/BCIRConfig.cmake.in`).
+  - One version. The CMake project had said 0.1.0 while the package said 0.2.0; it now reads
+    `pyproject.toml`'s version line, `bcir_version.h` is written from it, and a test holds
+    `bcir.__version__` to the same number.
+  - The public headers are every `runtime/c/bcir_*.h` and the seam's `bcir_*.h`/`.hpp`; the
+    cfront fixtures' headers stay out. Each compiles on its own, which the consumer proves.
+  - The gate, `tools/build/install_consumer.py` (CTest `build-install`), installs the configured
+    build into a scratch prefix and holds the prefix to the manifest: an archive per library, every
+    tool, every public header and nothing more, and the package files. It then builds
+    `tools/build/consumer` against the prefix with the build's own compilers, from a scratch
+    directory holding that project and a copy of the harness, so a quoted include cannot reach the
+    tree: every library and tool must be an imported target, every header compiles alone, the
+    version header agrees, and `test_runtime` links against `BCIR::*` alone. A consumer asking for
+    the next major version must fail to configure, and the `runtime` section must print the same
+    output over the consumer's `test_runtime` as over the tree's.
+  - Found by the gate's own RED: a version file that accepted every request still saw the next
+    major refused -- by the consumer's check that it got the version it asked for, which runs
+    after `find_package` -- so the refusal the gate required never tested the version file. The
+    gate counts the refusal only when `find_package` itself refuses the package for its version
+    (laws.md L11). RED: a public header left out of the install, and a version file that accepts
+    every request, each fail the gate; the rules restored, it passes.
+  - Measured: `build-install` passes on the gcc, clang 18 and clang 23 trees -- 12 libraries
+    (the seam's included), 5 tools, 52 public headers and the package files, the consumer
+    linking `test_runtime` against `BCIR::*` alone -- and the `fuzzer` and `asan` presets
+    configure with the install rules in place.
+  BUILD-4 (2026-10-05) gave the host's dependencies one predicate, `bcir.toolchain`, asked by
+  the configure and by every Python harness that needs to know.
+  - `optional_library(NAME)` answers for FFTW3F, LAPACKE, GSL, SLEEF and libcerf with the link
+    flags that work, or None. Its probe includes the header and calls a function, so the link must
+    resolve the symbol. Nine tests had carried a probe of their own: eight copies across the
+    link-flag rule modules and one inline in the Area-B red team. The FFTW copy only declared
+    `fftwf_execute`, so any `libfftw3` passed it, symbol or not.
+  - `host_c_compiler()` is the one compiler pick: `$CC` when it is set, and then only it, else
+    clang, gcc, cc. native_bench had ignored `$CC`; the model gates took it unresolved. Each had
+    chosen in its own order.
+  - The configure runs the predicate (`python -m bcir.toolchain probe-libraries`) in place of
+    `find_library`/`pkg-config`, and `bcir-deps.json` records each library's flags. A harness run
+    with `BCIR_DEPS_INDEX` at the index -- the CTest Python entries are -- reads the configure's
+    answer and probes nothing; an index missing a row, or malformed, raises instead of falling back
+    to a probe. D1 asks the same schema predicate the harnesses read the index with.
+  - Found and recorded, not fixed here (FFTW-PRECISION): both rails' link-flag rules map `fftwf_*`
+    to `-lfftw3`, but FFTW builds its single precision as `libfftw3f`. No CI host has FFTW, so the
+    linked path has never run.
+  - Found by the first configure that ran the predicate: a probe's detail read "tried -lfftw3f;
+    -lfftw3", and CMake keeps the index's rows in a list whose separator is the semicolon, so
+    the row split and the join put a raw line feed inside a JSON string. D1 (`build-deps-index`)
+    refused the index. The row recorder now maps the semicolon, and any byte outside printable
+    ASCII, to a safe one, for every caller (L14); the probe also writes its detail without one.
+  - Found by the quick tier: the probe wrote its C source without pinning the line ending
+    (`test_line_endings`), so the bytes it compiled depended on the host; it pins `\n` now.
+  - Measured: the gcc and clang 18 configures record all five libraries absent on this host, the
+    index passes D1, and CTest's `python-quick` -- the quick tier with `BCIR_DEPS_INDEX` at the
+    index -- passes on each tree; the quick tier with no index passes (4213 passed), as do the
+    thorough tier on LLVM 23 (4213 passed) and the changed modules probing with the host's own
+    compiler.
+  BUILD-5 (2026-10-05) put the MLIR rail under the top-level project in CI and made the fixtures'
+  own RUN lines a test.
+  - `mlir-rail-validate` builds `bcir-opt` with the `mlir` preset (MLIR_DIR from the matrix
+    major) instead of `tools/wsl/build_mlir.sh`'s tree of its own, and runs the rail's gates as
+    CTest entries: `ctest --preset mlir` runs the IRDL round trip, the ODS examples, the passes,
+    bytecode and the lit suite. The WSL scripts stay for the WSL route (§7 of the build roadmap).
+  - `mlir/lit.cfg.py` runs every `.mlir` under `mlir/` as a lit test against the `bcir-opt` the
+    build made and the FileCheck and mlir-opt of its LLVM, each pinned by path through a
+    substitution that replaces command words only. Two files are another gate's input and are
+    excluded by name, each name naming one file. Until now nothing ran the fixtures' RUN lines
+    as written: `check_passes.sh` runs the same files with invocations of its own. A missing
+    tool, a path that is not an executable, a tool with no LLVM version and three tools of two
+    majors are each a lit fatal, never a smaller suite or a mixed toolset (L1, L2).
+  - The configure looks for lit, FileCheck and mlir-opt beside the LLVM the MLIR package belongs
+    to, never on PATH, and records a LIT row in `bcir-deps.json`. `BCIR_REQUIRE_LIT=ON`, passed by
+    the CI job that installs them and by the local check's mlir leg, makes their absence a
+    configure failure instead of a status line (L2).
+  - Found by the first run on MLIR 23, fixed before the commit: the config had defined its own
+    test format class to select the test directories. lit pickles every test, with its config
+    and so its format, to hand it to a worker, and a class defined in the config is not
+    importable by name there, so the suite died before its first test. The stub-based unit
+    tests had passed: they executed the config but never pickled it. The config now uses lit's
+    own `ShTest` and `excludes`, and the unit test pickles the config as lit's pool does, with a
+    witness that a config-defined format fails it (L11).
+  - Found by the suite's first full run, fixed: `test/irdl/codegen_targets_generic.mlir` checked
+    a capability's triple after the lower contract printed below it, and FileCheck matches in
+    order, so the file could never pass as written. `tools/irdl/check_corpus.sh` reads the same
+    CHECK lines as unordered literal substrings and had passed it. The fixture now checks in
+    order, each op's own attributes with CHECK-SAME, which both readers accept.
+  - Measured on MLIR 23 (clang 23 tree, `BCIR_REQUIRE_LIT=ON`): `ctest -L mlir` 5/5, the lit
+    suite 131/131. RED: a CHECK line broken in a scratch copy of the suite fails it and names
+    the fixture; a fixture with no RUN line is UNRESOLVED; the fixture as it was fails; FileCheck
+    18 beside `bcir-opt` 23 is a lit fatal; with FileCheck made unfindable the configure fails
+    under `BCIR_REQUIRE_LIT=ON` and, without it, leaves `mlir-lit` unregistered and says why. The
+    index passes D1 with the LIT row; the quick tier passes (4220 passed).
+  BUILD-6 (2026-10-05) landed BCIR Make in the oracle: `bcir/make/` (the BCIRfile grammar, the
+  MK0-MK5 laws, the planner) and `bcir-make --dry-run`.
+  - The BCIRfile is line-oriented ASCII with one spelling for everything, parsed by its own
+    grammar before anything is converted, bounded, and refused at the first departure (MK0).
+  - It is judged on the IR: files are resources, targets phases with one dispatch claim each, and
+    a reader depends on the writer of what it reads. The anti-cycle law and the plan's order are
+    the verifier's own predicates, `phase_graph_has_cycle` and `topological_phase_ids`.
+  - MK1 claims, MK2 anti-cycle, MK3 the static footprint (a command's file arguments, a flag's
+    attached value included, against its claims), MK4 every input exists, MK5 tools by identity.
+    Each law has negative fixtures that fire with its own code.
+  - A generation tag is the sha256 of a canonical text of what a target is made from: tools by
+    identity, commands, reads by bytes (or by their producer's tag), trees, writes. A test asks of
+    every kind of input whether two trees differing only in it differ in the tags, and of a file
+    nobody reads and of an `after` edge that they do not.
+  - The C rails' build is the first BCIRfile: `tools/build/bcirfile.py` writes it from the
+    manifest, 546 targets, every manifest library, tool, harness, seam unit, kernel and buildable
+    variant by its manifest name, passing every law with the tools' identities checked.
+  BUILD-7 (2026-10-05) landed the runner: `bcir-make` without `--dry-run` runs the plan
+  (`bcir/make/run.py`), and the runtime gate's sections run as its tasks.
+  - A target whose recorded tag is its tag and whose outputs are there is up to date; otherwise
+    the artifact cache restores it when it holds the tag, every file checked against the entry's
+    index (a tampered entry is a miss); otherwise it runs and its outputs are stored. The state
+    is written after every target.
+  - Two workers, in the IR's canonical order as producers finish; a failure stops the run unless
+    `--keep-going`, and skips its readers with the reason. A command runs its declared tool by
+    path, never by PATH; a tool a command reaches without starting with it (a section's compiler)
+    is one the target `uses`, handed to it as `BCIR_TOOL_<NAME>` and counted in its tag.
+  - The observed footprint: a target's outputs are removed before it runs and must exist after,
+    and a file that appeared or changed beside them which no target claims fails it.
+  - Every target that ran or was restored is one TelemetryEnvelopeV0 `datadna` record through
+    the live ring (`bcir.gem.ring`), drained in order; `--telemetry` appends them.
+  - `bcirfile.py --sections` plans every manifest section as a task: `tools/build/run_section.sh`
+    runs the script over the BCIRfile's binaries, and its stdout, stderr and status are the
+    task's outputs. A section reads its script, its binaries and, whole, the trees its scripts
+    reach, so an edit anywhere in them re-runs the sections: never too few.
+  - The gate, `tools/build/make_gate.py` (CTest `build-make`): every target runs and passes, a
+    second run executes none, each section's recorded verdict is its direct shell run's, and an
+    edit to one runtime unit executes exactly that unit's readers in the lowered graph.
+  - Found by the gate's first run with Clang, fixed before the commit: Clang stages an object as
+    `<name>.o.tmp` beside it, and a neighbour compiling into the same directory at the same time
+    saw the temporary and failed as if it had written a file nothing claims (GCC writes in place,
+    so the GCC run passed). The runner now never runs two targets that write into one directory,
+    so what appears there is the target's own, and the rails' BCIRfile gives each object and each
+    section's verdict a directory of its own to keep two at once. A test stages outputs the way
+    Clang does; it fails without the rule.
+  - Found by the same run, fixed: a tool was declared by its resolved path, and `clang++` is a
+    link to `clang`, whose driver picks C or C++ from the name it is run by, so run by the
+    resolved name it linked the C++ seam as C. A tool is now declared where PATH finds it, its
+    symlinks kept (its identity hashes the bytes the name reaches either way), and a test links
+    a C++ unit through the declared `clang++`.
+  - Found by the quick tier, fixed: five writes (the state, the cache index, the telemetry log,
+    the gate's edit, the planned list) let the host choose the line ending (`test_line_endings`).
+  - Measured: `make_gate.py` passes on gcc (212 s for the 652 targets) and clang 18 (198 s);
+    the edit executes exactly its 115 dependents. The quick tier passes (4238 passed), and the
+    thorough tier on LLVM 23 (4238 passed).
+  BUILD-8 (2026-10-05) landed the C twin of `bcir-make`, its parity with the oracle, the artifact
+  cache's manager and the pins, and retired the runtime gate's own builds.
+  - `bcir-make` (runtime/c/bcir_make.c, a manifest tool) judges and plans as the oracle does: the
+    grammar check by check in the parser's order, the laws target by target, the lowering, the
+    IR's three depth-first walks (the cycle check, its witness, the canonical order), the tags, the
+    decisions and the waves, and it prints `--dry-run`'s text byte for byte. It plans; the oracle's
+    runner runs. A hosted tool: one arena over the host allocator, no recursion.
+  - `tools/build/make_parity.py` (CTest `build-make-parity`) generates a seeded corpus: scratch
+    trees, BCIRfiles generated as lawful DAGs, two in three broken one way -- every grammar
+    refusal, every MK1-MK5 finding and every state the planner refuses, each once before any
+    repeats -- and the rails' own BCIRfile; both rails get the same argv and must print the same
+    and exit the same. A twin that words one finding otherwise, or schedules a wave one target
+    wider, fails it (`test_make_twin`).
+  - Laws both rails gained while the twin was written: a `reads-tree` holding a file the grammar
+    cannot spell, or a directory that cannot be listed, is an MK4 finding (a tag names every file
+    it digests); a relative tool path is under the root for the identity check as for the runner;
+    the file is read to one byte past its bound and no further; a recorded state that names a
+    target twice is refused.
+  - The artifact cache's manager: `--cache-verify` holds every entry to its index,
+    `--cache-prune` drops what neither the current nor the two recorded generations name, and
+    `--rollback` puts the previous generation back from the cache, every entry checked first, all
+    of it or nothing, swapping the two so a second rollback rolls forward.
+  - The pins: the configure records every tool the build and the rails' BCIRfile run (cc, cxx, ar,
+    python) by resolved path and by the sha256 of its bytes (`tools` in `bcir-deps.json`, held by
+    D1); `tools/build/pins.py` (CTest `build-pins`) hashes them again -- a tool whose bytes moved
+    since the configure is a finding -- and judges the BCIRfile written from the pins.
+  - The runtime gate retired its builds: `check_runtime.sh` runs BCIR Make over the rails' BCIRfile
+    with every section a task and shows each recorded verdict in order, then has the C twin plan
+    the finished tree, which must be the oracle's plan. Its freestanding compiles became one
+    compiler-only section, `freestanding`; its Q8 drift check, which regenerated tracked files, left
+    for `test_q8_embed`, which compares without writing. What is left in the gate is glue.
+  - M13 holds the gate to showing every section once, running no section script itself,
+    building through BCIR Make and keeping the guards below; M14's and M15's gate clauses retired
+    with the lines they read, and the rails' BCIRfile is held to mutants through `mutate.py` and
+    kernels through `emit_kernel.py` instead. `build-section-parity` and `build-parity` compare the
+    CMake build with BCIR Make's, where they compared it with the gate's one-command recipes.
+  - The #719 tests (`test_the_gate_and_the_harness_link_the_same_sources`, in four modules) read
+    the gate's source list where it is now decided, the manifest closure BCIR Make links
+    (`bcir/tests/gate_links.py`): a fixture that compiles a unit outside the closure, or builds
+    without the unit's main, fails. The M9 witness, whose fault sat in a link line of the runtime
+    gate, now injects it into `check_memory_discipline.sh`, which still links.
+  - Found by re-reading the retired gate before the commit, fixed: the gate showed each section's
+    verdict as it lay on disk, so after a BCIRfile that broke a law (BCIR Make ran nothing) or a
+    build target no section takes that did not compile, the previous run's verdicts stood in for
+    this run's and the gate printed `ok`. It now fails unless the laws passed and every target but
+    a failing section ran, was restored or was up to date, and it shows a verdict only for a
+    section this run's BCIRfile plans. RED in a scratch copy holding an earlier run's verdicts:
+    both faults passed the gate as it was, and fail it now.
+  - Found by `test_line_endings`, fixed: nine writes in the cache manager and the parity corpus
+    let the host choose the line ending.
+  - Found while formatting the parity gate, fixed: ruff's `extend-exclude` named `build`, which
+    excludes every directory called build, so `tools/build/` -- the build tooling -- was never
+    linted or format-checked, locally or in CI. The exclusion is anchored at the root now, and the
+    one file it would have flagged, `make_parity.py`, is formatted.
+  - Found by the new gate's first run under GCC, fixed: the freestanding compiles, moved verbatim
+    from a gate that only ever ran under Clang, asked for `-std=c23`, which GCC 13 spells
+    `-std=c2x`. The section now takes the spelling CC accepts, as every compiling section does;
+    the gate before BUILD-8 could not run under GCC 13 at all, failing at the same compiles.
+  - Found by CI's clang 23 analysis cell, fixed: clang 23's stream checker (`unix.Stream`) flagged
+    the twin's two read loops, which read a stream again after a short read -- the end of the
+    file or an error, after which C11 leaves the position indeterminate. Each now stops at its
+    first short read and asks `ferror`; the parity corpus is unchanged (401 cases, 0 differ). The
+    analysis ran only on CI: its unit list lived twice in `ci.yml` and in no local check. It is
+    one script now, `tools/c/analyze_hosted.sh`, which both CI steps and a new `analyze` leg of
+    `tools/local/check_latest.sh` run (two workers locally); a test drives it with a stand-in
+    clang that reports a finding while exiting 0, exits nonzero, or is missing.
+  - Measured: on clang 18 the gate takes 149 s, BCIR Make building and running its 639 targets
+    in 85 s with two workers, where the gate before took 213 s one command at a time; it prints
+    every PASS line the gate before printed (the ring's injected-race line up to its declared
+    varying count) and 17 more. Under GCC 13 it passes in 152 s. A second run executes nothing.
+    `ctest -L build` passes 8/8 and `ctest -L section` 107/107 on the gcc and clang trees; the
+    twin agrees with the oracle on 401 cases (400 generated and the rails' own BCIRfile); build
+    parity holds 1920 rows. On LLVM 23 (`check_latest.sh`): the clang23 tree 107/107 and 8/8, the
+    gate 406 PASS lines, the thorough tier 4245 passed; the quick tier passes (4245 passed).
+  BUILD-8b (2026-10-05): the runner starts the ready targets by measured priority, as the
+  roadmap's scheduling design said it would (§8): of the targets ready to start, the one with
+  the longest measured path still ahead of it goes first (`bcir.make.run.upward_ranks`, HEFT's
+  upward rank over the durations earlier runs measured, kept beside the state and read by
+  nothing else; the canonical order breaks ties).
+  - The durations order the work and decide nothing else: no tag, law, plan or verdict reads
+    them, and a file that cannot be read is no measurement. A test drives a slow target to the
+    front once it has been measured, with the same targets run and the same bytes written; with
+    the ranks flattened it stays at the back.
+  - Measured (a `wall` metric, indicative only), gcc, two workers, interleaved samples: the
+    rails' BCIRfile with its sections built from nothing took 96.9 s and 92.5 s with nothing
+    measured and 97.9 s and 93.1 s with the first run's durations as priors; an edit to
+    `runtime/c/bcir_diag.c` (116 targets re-run) took 44.6, 45.3 and 46.2 s against 46.8, 46.7
+    and 45.4 s. No change beyond the noise, and the bounds say why: the full build's work is
+    169 s (two workers need 84 s) and the edit's 68 s (34 s), each far above its critical path
+    (20 s; for the edit at least the 17 s of `kplan` alone), and the manifest already lists the
+    longest sections early (`ring`, `ring_tsan`, `handoff` and `kplan` are its 11th to 14th of
+    107), so the canonical order starts them early too. What is left
+    above the bound is the runner's own cost per task and the one-writer-per-directory rule over
+    `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
+    tasks a property of what was measured rather than of the manifest's listing order.
+  - The quick tier passes (4248 passed).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

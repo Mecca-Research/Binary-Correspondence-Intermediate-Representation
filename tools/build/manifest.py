@@ -35,20 +35,45 @@ The rules, each with the code its findings carry:
   M11 seam         the C++ seam's units equal handoff_fixtures/check_handoff.sh's (the #719 pair)
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
   M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
-                   manifest harnesses, variants or tools in argument order; every script in that directory
-                   is one section; tools/c/check_runtime.sh calls each script (the gate and the
-                   CTest entry run one text); a section's binaries share one sanitizer or none (a
-                   host without the runtime skips a whole section, never half of one)
+                   manifest harnesses, variants, tools or kernels in argument order; every script in that directory
+                   is one section; tools/c/check_runtime.sh builds through BCIR Make with every
+                   section a task (tools/build/bcirfile.py --sections, python3 -m bcir.make), shows
+                   each section's recorded verdict exactly once, and only this run's (the laws
+                   passed, nothing but a section failed or was skipped, the section is planned),
+                   and runs no section script itself (the gate's task and the CTest entry run one
+                   text); a section's binaries share
+                   one sanitizer or none (a host without the runtime skips a whole section, never
+                   half of one); a section names no binary only when it is `compiler_only` and its
+                   script runs ${CC}
   M14 variants     every `variants` entry rebuilds a manifest harness (`of`) with any of: flag
                    `options`, one `mutation` (file, find, replace), another C `standard` (the
                    harness's own is C23) or a `sanitizer`; a mutation's file is in the harness's
                    closure and its anchor occurs exactly once there (the fault still applies, and
-                   unambiguously); the gate generates every mutant with tools/build/mutate.py and
-                   asks tools/build/sanitizer.py before it builds a sanitizer variant; every
-                   variant is run by a section; no variant shadows a unit name
+                   unambiguously); BCIR Make writes every mutant with tools/build/mutate.py and
+                   plans a sanitizer variant only where tools/build/sanitizer.py finds the runtime
+                   working, and the gate asks the same predicate before it shows a sanitizer
+                   variant's section; every variant is run by a section; no variant shadows a
+                   unit name
+  M15 kernels      every `kernels` entry is a program the Python oracle emits: `emit` names a
+                   function of bcir/lower/c_kernel.py, `args` are its integer and string arguments,
+                   `main` is the driver under runtime/c/kernels/ appended to the emitted text, `link`
+                   names m or pthread; every driver in that directory is one kernel's; BCIR Make
+                   writes every kernel with tools/build/emit_kernel.py (which asks the same
+                   predicate, `kernel_problems`), every kernel is run by a section, and no kernel
+                   shadows a unit or variant name
+  M16 delegated    every `delegated` entry is a gate tools/c/check_runtime.sh calls -- one of the
+                   gates M9 reads, under a CTest name `c-*` or `cpp-*` with `c`/`cpp` labels --
+                   and the gate calls its script exactly once, in the guarded form: skipped, with
+                   a SKIP line naming the entry, when BCIR_SKIP_DELEGATED_GATES=1; every other
+                   script the gate calls is a section, a delegated gate or the cfront sanitizer
+                   under its own switch; cmake/BCIRTests.cmake registers the entries from the
+                   manifest and hands the CTest c-runtime entry the switch, so `ctest` runs each
+                   delegated gate once
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
-                   names unique, PYTHON3 / THREADS / MLIR among them
+                   names unique, PYTHON3 / THREADS / MLIR and every optional library among them,
+                   each optional library's row with its link flags (non-empty exactly when found);
+                   the predicate is bcir.toolchain's, the one a harness reading the index asks
 
 Scope: the checker reads the gates and the Python modules as text (string literals and compile
 lines); a source list assembled at run time is outside it, and a gate that links a unit the
@@ -74,7 +99,16 @@ CPP_KINDS = ("seam_libraries", "seam_tests")
 KINDS = C_KINDS + CPP_KINDS
 LIBRARY_KINDS = ("libraries", "seam_libraries")
 UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len")
-TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", "variants", *KINDS)
+TOP_KEYS = (
+    "schema",
+    "comment",
+    "freestanding_checks",
+    "sections",
+    "variants",
+    "kernels",
+    "delegated",
+    *KINDS,
+)
 VARIANT_KEYS = ("of", "options", "mutation", "standard", "sanitizer")
 MUTATION_KEYS = ("file", "find", "replace")
 # The C standards a variant may rebuild its harness in (C23, the harness's own, would change
@@ -84,7 +118,38 @@ STANDARDS = (11, 17)
 SANITIZERS = ("thread",)
 SANITIZER_PROBE = "tools/build/sanitizer.py"
 SECTIONS_DIR = "tools/c/sections"
+# The programs the Python oracle emits (BUILD-2h): their drivers, the module whose functions emit them,
+# and the one writer the gate and the CMake build both run.
+KERNELS_DIR = "runtime/c/kernels"
+KERNEL_KEYS = ("emit", "args", "main", "link")
+KERNEL_EMITTERS = "bcir/lower/c_kernel.py"
+KERNEL_WRITER = "tools/build/emit_kernel.py"
+EMITTER_NAME = re.compile(r"emit_[a-z0-9_]+")
+DRIVER_NAME = re.compile(r"[a-z0-9_]+\.c")
 RUNTIME_GATE = "tools/c/check_runtime.sh"
+# The gates the runtime gate delegates to (BUILD-2j): each runs as a CTest entry of its own, and the
+# gate skips them under one switch when CTest's c-runtime entry, which sets it, runs the gate. The
+# cfront sanitizer keeps the switch it had before (BUILD-1), which CI's c-runtime job sets.
+DELEGATED_KEYS = ("script", "labels")
+DELEGATED_NAME = re.compile(r"(?:c|cpp)-[a-z0-9]+(?:-[a-z0-9]+)*")
+DELEGATED_LABELS = ("c", "cpp")
+DELEGATED_SWITCH = "BCIR_SKIP_DELEGATED_GATES"
+SANITIZER_GATE = "tools/c/sanitize_cfront.sh"
+SANITIZER_SWITCH = "BCIR_SKIP_CFRONT_SANITIZE"
+TESTS_CMAKE = "cmake/BCIRTests.cmake"
+GATE_CALL = re.compile(r'bash "\$\{ROOT\}/(tools/[A-Za-z0-9_/.-]+\.sh)"')
+# BUILD-8: the runtime gate builds through BCIR Make with every section a task, and shows each
+# section's recorded verdict with this one call.
+SHOW_SECTION = re.compile(r"^\s*show_section ([A-Za-z0-9_]+) \|\| exit 1$", re.M)
+GATE_MAKE = ('tools/build/bcirfile.py" --cc "${CC}" --sections', "python3 -m bcir.make -f")
+# ... and shows no verdict but this run's, though an earlier run's lies on disk: nothing ran unless
+# the laws passed; a target that failed or was skipped fails the gate unless it is a section, whose
+# verdict is then shown; a section the run's BCIRfile does not plan has no verdict to show.
+GATE_GUARDS = (
+    "grep -cx 'laws: PASS (MK0-MK5)'",
+    "grep -E '^(failed|skipped) '",
+    'grep -Fxq "target section.$1"',
+)
 LINK_NAMES = ("m", "pthread")
 CLASSES = ("freestanding_core", "hosted_tool", "driver_adapter")
 WORKERS = 2
@@ -272,12 +337,29 @@ def python_groups(text: str) -> list[list[str]]:
     return groups
 
 
-class Tree:
+class KernelFacts:
+    """What a kernel entry is judged against (M15): the drivers under runtime/c/kernels/ and the
+    functions bcir/lower/c_kernel.py defines at module level, read as text -- nothing is imported.
+    tools/build/emit_kernel.py reads only these; the checker's `Tree` carries them too."""
+
+    def __init__(self, root: Path = ROOT) -> None:
+        self.kernel_mains = sorted(p.name for p in (root / KERNELS_DIR).glob("*.c"))
+        try:
+            module = ast.parse((root / KERNEL_EMITTERS).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            module = ast.Module(body=[], type_ignores=[])
+        self.kernel_emitters = {
+            node.name for node in module.body if isinstance(node, ast.FunctionDef)
+        }
+
+
+class Tree(KernelFacts):
     """What the checker reads from the repository: the source directories, the memory classes,
     the gates' link groups, the Python modules' source literals, the seam's two lists and the
     presets. Read once; `check()` holds any manifest to it."""
 
     def __init__(self, root: Path = ROOT, presets: Path | None = PRESETS) -> None:
+        super().__init__(root)
         self.root = root
         self.c_dir = root / "runtime" / "c"
         self.cpp_dir = root / "runtime" / "cpp"
@@ -292,6 +374,9 @@ class Tree:
         scanned = [(rel, self._read(root / rel)) for rel in GATES]
         # A section script is gate text moved out of tools/c/check_runtime.sh (BUILD-2): what it
         # compiles is held to the manifest as the gate's own lines were.
+        self.section_texts = {
+            name: self._read(root / SECTIONS_DIR / name) or "" for name in self.section_scripts
+        }
         scanned += [
             (f"{SECTIONS_DIR}/{name}", self._read(root / SECTIONS_DIR / name))
             for name in self.section_scripts
@@ -343,6 +428,7 @@ class Tree:
                     set(re.findall(r"(\w+\.c)\b", c_match.group(1))),
                 )
         self.runtime_gate_text = self._read(root / RUNTIME_GATE) or ""
+        self.tests_cmake_text = self._read(root / TESTS_CMAKE) or ""
         self.presets: dict | str | None = None
         if presets is not None:
             try:
@@ -629,7 +715,13 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
         errors.append("M13: sections is not an object")
         return
     variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
-    harnesses = set(_units(manifest, "harnesses")) | set(variants) | set(_units(manifest, "tools"))
+    kernels = manifest.get("kernels") if isinstance(manifest.get("kernels"), dict) else {}
+    harnesses = (
+        set(_units(manifest, "harnesses"))
+        | set(variants)
+        | set(_units(manifest, "tools"))
+        | set(kernels)
+    )
     registered: list[str] = []
     for name, section in sections.items():
         where = f"sections/{name}"
@@ -637,9 +729,14 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
             "script",
             "harnesses",
             "varies",
+            "compiler_only",
         }:
-            errors.append(f"M13: {where} is not {{script, harnesses, varies?}}")
+            errors.append(f"M13: {where} is not {{script, harnesses, varies?, compiler_only?}}")
             continue
+        compiler_only = section.get("compiler_only", False)
+        if "compiler_only" in section and compiler_only is not True:
+            errors.append(f"M13: {where}.compiler_only is {compiler_only!r}; it is true or absent")
+            compiler_only = False
         for pattern in (
             section.get("varies", []) if isinstance(section.get("varies", []), list) else [None]
         ):
@@ -663,18 +760,28 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
             if basename not in tree.section_scripts:
                 errors.append(f"M13: {where} script {script} does not exist")
             registered.append(basename)
-            if script not in tree.runtime_gate_text:
-                errors.append(
-                    f"M13: {RUNTIME_GATE} does not call {script}; the gate and the CTest entry would judge different text"
-                )
         names = section["harnesses"]
+        if compiler_only:
+            # A section that takes no binary judges what the oracle emits under CC; one whose
+            # script never runs a compiler would judge nothing the build or the compiler does (L2).
+            if names != []:
+                errors.append(
+                    f"M13: {where} is compiler_only yet names binaries; a section takes binaries or none"
+                )
+            elif isinstance(script, str) and '"${CC}"' not in tree.section_texts.get(
+                script[len(SECTIONS_DIR) + 1 :], ""
+            ):
+                errors.append(
+                    f"M13: {where} is compiler_only but its script never runs ${{CC}}: it would judge nothing"
+                )
+            continue
         if not isinstance(names, list) or not names or any(not isinstance(h, str) for h in names):
             errors.append(f"M13: {where} needs a non-empty list of harness names")
             continue
         for harness in names:
             if harness not in harnesses:
                 errors.append(
-                    f"M13: {where} names {harness!r}, which is no manifest harness, variant or tool"
+                    f"M13: {where} names {harness!r}, which is no manifest harness, variant, tool or kernel"
                 )
         if len(set(names)) != len(names):
             errors.append(f"M13: {where} names a harness twice")
@@ -692,6 +799,33 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
     for basename in sorted(set(registered)):
         if registered.count(basename) > 1:
             errors.append(f"M13: {SECTIONS_DIR}/{basename} is registered by two sections")
+    # BUILD-8: BCIR Make runs every section as a task; the gate shows each recorded verdict once.
+    gate = tree.runtime_gate_text
+    if not all(token in gate for token in GATE_MAKE):
+        errors.append(
+            f"M13: {RUNTIME_GATE} does not build through BCIR Make with the sections planned "
+            f"({'; '.join(GATE_MAKE)}): the verdicts it shows would come from no run"
+        )
+    missing = [token for token in GATE_GUARDS if token not in gate]
+    if missing:
+        errors.append(
+            f"M13: {RUNTIME_GATE} could show an earlier run's verdict as this run's: it lacks "
+            f"{'; '.join(missing)}"
+        )
+    shown = SHOW_SECTION.findall(gate)
+    for name in sections:
+        if shown.count(name) != 1:
+            errors.append(
+                f"M13: {RUNTIME_GATE} shows section {name} {shown.count(name)} time(s), not once"
+            )
+    for name in sorted(set(shown) - set(sections)):
+        errors.append(f"M13: {RUNTIME_GATE} shows {name!r}, which is no manifest section")
+    for script in sorted(set(GATE_CALL.findall(gate))):
+        if script.startswith(SECTIONS_DIR + "/"):
+            errors.append(
+                f"M13: {RUNTIME_GATE} runs {script} itself; BCIR Make runs every section as a "
+                "task, and the gate shows the verdict it recorded"
+            )
 
 
 def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
@@ -744,7 +878,7 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
                 )
             if SANITIZER_PROBE not in tree.runtime_gate_text:
                 errors.append(
-                    f"M14: {RUNTIME_GATE} builds {where} without asking {SANITIZER_PROBE} whether the sanitizer runs here"
+                    f"M14: {RUNTIME_GATE} shows {where}'s section without asking {SANITIZER_PROBE} whether the sanitizer runs here"
                 )
         if options is not None and (
             not isinstance(options, list)
@@ -778,10 +912,77 @@ def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
             errors.append(
                 f"M14: {where}: the anchor occurs {count} time(s) in {mutation['file']}, not once"
             )
-        if f"--variant {name} " not in tree.runtime_gate_text:
-            errors.append(
-                f"M14: {RUNTIME_GATE} does not generate {where} with tools/build/mutate.py"
-            )
+
+
+def kernel_problems(manifest: dict, name: str, facts: KernelFacts) -> list[str]:
+    """What keeps the manifest kernel `name` from being written (empty when nothing does): its shape,
+    its emitter, its arguments, its driver and its system libraries. The one predicate the checker
+    (M15) and tools/build/emit_kernel.py ask, so the writer refuses exactly what the checker reports."""
+    where = f"kernels/{name}"
+    kernels = manifest.get("kernels")
+    entry = kernels.get(name) if isinstance(kernels, dict) else None
+    if entry is None:
+        return [f"M15: no manifest kernel named {name!r}"]
+    if not isinstance(entry, dict) or not {"emit", "args", "main"} <= set(entry) <= set(
+        KERNEL_KEYS
+    ):
+        return [f"M15: {where} is not {{emit, args, main, link?}}"]
+    problems: list[str] = []
+    emit = entry["emit"]
+    if not isinstance(emit, str) or not EMITTER_NAME.fullmatch(emit):
+        problems.append(f"M15: {where}.emit {emit!r} is not an emit_* function name")
+    elif emit not in facts.kernel_emitters:
+        problems.append(f"M15: {where}.emit {emit} is no function of {KERNEL_EMITTERS}")
+    args = entry["args"]
+    if not isinstance(args, list) or any(
+        isinstance(a, bool) or not isinstance(a, (int, str)) for a in args
+    ):
+        problems.append(f"M15: {where}.args is not a list of integers and strings")
+    main = entry["main"]
+    if not isinstance(main, str) or not DRIVER_NAME.fullmatch(main):
+        problems.append(f"M15: {where}.main {main!r} is not a driver basename (name.c)")
+    elif main not in facts.kernel_mains:
+        problems.append(f"M15: {where}.main {main} does not exist under {KERNELS_DIR}/")
+    if "link" in entry and (
+        not isinstance(entry["link"], list)
+        or not entry["link"]
+        or any(lib not in LINK_NAMES for lib in entry["link"])
+    ):
+        problems.append(f"M15: {where}.link is not a non-empty list of {', '.join(LINK_NAMES)}")
+    return problems
+
+
+def check_kernels(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    kernels = manifest.get("kernels")
+    if kernels is None:
+        kernels = {}
+    if not isinstance(kernels, dict):
+        errors.append("M15: kernels is not an object")
+        return
+    variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
+    taken = {name for kind in KINDS for name in _units(manifest, kind)} | set(variants)
+    sections = manifest.get("sections") if isinstance(manifest.get("sections"), dict) else {}
+    run = {
+        h
+        for s in sections.values()
+        if isinstance(s, dict)
+        for h in (s.get("harnesses") or [])
+        if isinstance(h, str)
+    }
+    drivers: list[str] = []
+    for name, entry in kernels.items():
+        where = f"kernels/{name}"
+        errors.extend(kernel_problems(manifest, name, tree))
+        if isinstance(entry, dict) and isinstance(entry.get("main"), str):
+            drivers.append(entry["main"])
+        if name in taken:
+            errors.append(f"M15: {where} shadows a manifest unit or variant of the same name")
+        if name not in run:
+            errors.append(f"M15: {where} is run by no section (a binary nothing judges)")
+    for main in tree.kernel_mains:
+        count = drivers.count(main)
+        if count != 1:
+            errors.append(f"M15: {KERNELS_DIR}/{main} is the driver of {count} kernels, not one")
 
 
 def check_presets(presets: dict | str | None, errors: list[str], workers: int = WORKERS) -> None:
@@ -821,6 +1022,92 @@ def check_presets(presets: dict | str | None, errors: list[str], workers: int = 
             )
 
 
+def check_delegated(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    delegated = manifest.get("delegated")
+    if delegated is None:
+        delegated = {}
+    if not isinstance(delegated, dict):
+        errors.append("M16: delegated is not an object")
+        return
+    gate = tree.runtime_gate_text
+    scripts: dict[str, str] = {}
+    for name, entry in delegated.items():
+        where = f"delegated/{name}"
+        if not DELEGATED_NAME.fullmatch(name):
+            errors.append(f"M16: {where} is no CTest name `c-*` or `cpp-*` (lower case, hyphens)")
+        if not isinstance(entry, dict) or set(entry) != set(DELEGATED_KEYS):
+            errors.append(f"M16: {where} is not {{script, labels}}")
+            continue
+        labels = entry["labels"]
+        if (
+            not isinstance(labels, list)
+            or not labels
+            or any(label not in DELEGATED_LABELS for label in labels)
+            or len(set(labels)) != len(labels)
+        ):
+            errors.append(f"M16: {where}.labels is not a non-empty list of {DELEGATED_LABELS}")
+        script = entry["script"]
+        if not isinstance(script, str) or script not in GATES:
+            errors.append(
+                f"M16: {where} script {script!r} is not one of the gates M9 reads ({', '.join(GATES)})"
+            )
+            continue
+        if script in (RUNTIME_GATE, FUZZ_GATE, SANITIZER_GATE):
+            errors.append(
+                f"M16: {where} delegates to {script}, which the runtime gate does not delegate to"
+            )
+            continue
+        if script in tree.missing_gates:
+            errors.append(f"M16: {where} script {script} does not exist")
+        if script in scripts.values():
+            errors.append(f"M16: {where} delegates to {script}, as another entry does")
+        scripts[name] = script
+        calls = gate.count(f'"${{ROOT}}/{script}"')
+        if calls != 1:
+            errors.append(f"M16: {RUNTIME_GATE} calls {script} {calls} times, not once")
+            continue
+        guarded = re.compile(
+            r'if \[ "\$\{'
+            + DELEGATED_SWITCH
+            + r':-0\}" = "1" \]; then\n  echo "  SKIP [^"\n]*\('
+            + DELEGATED_SWITCH
+            + r"=1; CTest runs it as "
+            + re.escape(name)
+            + r'\)"\nelif (?:CC="\$\{CC\}" )?bash "\$\{ROOT\}/'
+            + re.escape(script)
+            + '"'
+        )
+        if not guarded.search(gate):
+            errors.append(
+                f"M16: {RUNTIME_GATE} calls {script} outside the {DELEGATED_SWITCH} guard naming {name}: "
+                "CTest would run it twice, or the gate's log would not say where it ran"
+            )
+    # The closed world: every script the gate calls is accounted for.
+    for script in sorted(set(GATE_CALL.findall(gate))):
+        if script.startswith(SECTIONS_DIR + "/") or script in scripts.values():
+            continue
+        if script == SANITIZER_GATE:
+            if f'if [ "${{{SANITIZER_SWITCH}:-0}}" = "1" ]; then' not in gate:
+                errors.append(
+                    f"M16: {RUNTIME_GATE} calls {script} without its {SANITIZER_SWITCH} guard"
+                )
+            continue
+        errors.append(
+            f"M16: {RUNTIME_GATE} calls {script}, which is no section and no `delegated` entry: "
+            "CTest would run it only inside c-runtime"
+        )
+    # CMake registers the entries from the manifest, and the c-runtime entry carries the switch.
+    cmake = tree.tests_cmake_text
+    if scripts and "IN LISTS BCIR_MANIFEST_delegated" not in cmake:
+        errors.append(f"M16: {TESTS_CMAKE} does not register the manifest's delegated gates")
+    runtime_entry = re.search(r"bcir_add_shell_gate\(c-runtime [^)]*\)", cmake)
+    if scripts and (runtime_entry is None or f"{DELEGATED_SWITCH}=1" not in runtime_entry.group(0)):
+        errors.append(
+            f"M16: {TESTS_CMAKE}'s c-runtime entry does not set {DELEGATED_SWITCH}=1: ctest would run "
+            "every delegated gate twice"
+        )
+
+
 def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     """Every finding over `manifest` against the tree (empty when clean)."""
     if tree is None:
@@ -838,14 +1125,23 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     check_seam(manifest, tree, errors)
     check_sections(manifest, tree, errors)
     check_variants(manifest, tree, errors)
+    check_kernels(manifest, tree, errors)
+    check_delegated(manifest, tree, errors)
     check_presets(tree.presets, errors)
     return errors
 
 
 # --- D1: the dependency index -------------------------------------------------------------------
+# The index's schema is the package's (bcir.toolchain.deps_index_problems): a harness that reads the
+# index with BCIR_DEPS_INDEX set holds it to the same predicate this rule does (BUILD-4, laws.md L14).
 
-DEPS_SCHEMA = "bcir-deps.v1"
-DEPS_REQUIRED = ("PYTHON3", "THREADS", "MLIR")
+
+def _toolchain():
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    import bcir.toolchain as toolchain
+
+    return toolchain
 
 
 def check_deps_index(path: Path) -> list[str]:
@@ -858,40 +1154,7 @@ def check_deps_index(path: Path) -> list[str]:
         data = json.loads(text)
     except ValueError as exc:
         return [f"D1: {path} is not JSON ({exc})"]
-    errors: list[str] = []
-    if not isinstance(data, dict):
-        return [f"D1: {path} is not a JSON object"]
-    if data.get("schema") != DEPS_SCHEMA:
-        errors.append(f"D1: schema is {data.get('schema')!r}, not {DEPS_SCHEMA!r}")
-    for key in ("c_compiler", "cxx_compiler", "system"):
-        if not isinstance(data.get(key), str) or not data[key].strip():
-            errors.append(f"D1: {key} is missing or empty")
-    rows = data.get("dependencies")
-    if not isinstance(rows, list) or not rows:
-        return errors + [
-            "D1: dependencies is missing or empty (an index that records nothing indexes nothing)"
-        ]
-    names: list[str] = []
-    for i, row in enumerate(rows):
-        if not isinstance(row, dict) or set(row) != {"name", "found", "detail"}:
-            errors.append(f"D1: dependency row {i} is not {{name, found, detail}}")
-            continue
-        if not isinstance(row["name"], str) or not row["name"]:
-            errors.append(f"D1: dependency row {i} has no name")
-        if not isinstance(row["found"], bool):
-            errors.append(
-                f"D1: dependency {row.get('name')!r} has found={row['found']!r}, not a JSON boolean"
-            )
-        if not isinstance(row["detail"], str):
-            errors.append(f"D1: dependency {row.get('name')!r} detail is not a string")
-        names.append(str(row["name"]))
-    for name in sorted(set(names)):
-        if names.count(name) > 1:
-            errors.append(f"D1: dependency {name} is recorded twice")
-    for name in DEPS_REQUIRED:
-        if name not in names:
-            errors.append(f"D1: dependency {name} is not recorded")
-    return errors
+    return [f"D1: {problem}" for problem in _toolchain().deps_index_problems(data)]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -939,6 +1202,10 @@ def main(argv: list[str] | None = None) -> int:
     summary += f", {len(sections) if isinstance(sections, dict) else 0} sections"
     variants = manifest.get("variants")
     summary += f", {len(variants) if isinstance(variants, dict) else 0} variants"
+    kernels = manifest.get("kernels")
+    summary += f", {len(kernels) if isinstance(kernels, dict) else 0} kernels"
+    delegated = manifest.get("delegated")
+    summary += f", {len(delegated) if isinstance(delegated, dict) else 0} delegated gates"
     free = (
         len(manifest.get("freestanding_checks", []))
         if isinstance(manifest.get("freestanding_checks"), list)

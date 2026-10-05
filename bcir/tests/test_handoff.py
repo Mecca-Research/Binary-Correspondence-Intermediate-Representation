@@ -573,15 +573,15 @@ def test_an_oracle_that_cannot_build_its_corpus_fails_the_rows_it_feeds():
 
 
 def test_the_gates_and_the_harnesses_link_the_same_sources():
-    """check_runtime.sh's handoff link line, check_handoff.sh's C++ build and the fuzz target are
-    lists each, and nothing but this test makes them agree with the fixtures' (the #719 trap)."""
+    """What the runtime gate links for the handoff harness (the manifest closure BCIR Make links),
+    check_handoff.sh's C++ build and the fuzz target are lists each, and nothing but this test
+    makes them agree with the fixtures' (the #719 trap)."""
+    from bcir.tests.gate_links import assert_fixture_links
     from bcir.tests.run_all import _is_source_checkout
 
     if not _is_source_checkout():
         return  # the wheel ships neither tools/ nor runtime/
-    gate = open(os.path.join(_ROOT, "tools", "c", "check_runtime.sh"), encoding="utf-8").read()
-    line = re.search(r"handoff_sources=\(([^)]*)\)", gate).group(1)
-    assert set(re.findall(r"(\w+\.c)", line)) == set(hf.C_UNITS) | {"test_handoff.c"}
+    assert_fixture_links("harnesses", "test_handoff", (*hf.C_UNITS, "test_handoff.c"))
     cpp = open(os.path.join(_ROOT, "tools", "cpp", "check_handoff.sh"), encoding="utf-8").read()
     line = re.search(r"seam_cpp=\(([^)]*)\)", cpp).group(1)
     assert set(re.findall(r"(\w+\.cpp)", line)) == set(hf.CPP_UNITS)

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # encoder: StreamPack encoder: freestanding compile (C11 + C23) + byte-identical re-encode
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them its own way and calls this script; the CMake project builds them from
-# runtime/manifest.json and runs this script as the `c-section-encoder` CTest entry. The body is the
-# gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text,
-# and tools/build/section_parity.py holds the two builds' outputs byte-identical.
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them from runtime/manifest.json and runs this script as a task, whose verdict the gate
+# shows; the CMake project builds them from the same manifest and runs this script as the
+# `c-section-encoder` CTest entry. The body is the gate's section text moved here (BUILD-2,
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical.
 #
 #   usage: encoder.sh <test_encode>
 set -uo pipefail

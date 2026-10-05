@@ -1,0 +1,13 @@
+/* The version of an installed BCIR, written at configure from pyproject.toml's -- the repository's
+ * one version, which the CMake project reads (cmake/BCIRInstall.cmake, BUILD-3 of
+ * docs/BCIR_BUILD_ROADMAP.md). A consumer that needs a feature checks it here, or asks
+ * find_package(BCIR <version>), which the package's version file answers from the same number. */
+#ifndef BCIR_VERSION_H
+#define BCIR_VERSION_H
+
+#define BCIR_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define BCIR_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define BCIR_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define BCIR_VERSION_STRING "@PROJECT_VERSION@"
+
+#endif /* BCIR_VERSION_H */

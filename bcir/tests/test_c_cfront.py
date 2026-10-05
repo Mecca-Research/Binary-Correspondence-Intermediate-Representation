@@ -12588,6 +12588,81 @@ def test_the_enumerators_the_triage_found_fold_as_c_does_on_both_rails():
     )
 
 
+# CF-CASELABEL: both emits put an arm's first temporary right after `case N:` or `default:`. A label labels a statement
+# (C11 6.8.1), and a declaration is no statement before C23, so an emitted switch -- nearly every arm begins with a
+# temporary -- was C23: Clang 18 and 23 warn by default, GCC under `-Wpedantic`, and `-std=c11 -pedantic-errors`
+# refused it. Each label now ends in a null statement, which keeps the declarations after it in the switch body's
+# scope, as the source's are (a brace around each arm would end that scope at the next label, which a fallthrough
+# reads past). The unit's arms return, fall through, declare a local right after a label, and end on two labels with
+# nothing after them: the two C23 forms of a label the front takes, each emitted as C11.
+_CASELABEL_UNIT = """#include <stdint.h>
+uint32_t cl_arm(uint32_t x)
+{
+    uint32_t s = 1u;
+    switch (x) {
+    case 16:
+        return x + 1u;
+    case 18:
+        s = x * 3u;
+    case 19:
+        uint32_t k = s + 2u;
+        s = k ^ x;
+        break;
+    case 20:
+    default:
+    }
+    return s;
+}
+"""
+
+
+def test_an_emitted_switch_is_c11_on_both_rails():
+    """CF-CASELABEL: each rail's emit of `_CASELABEL_UNIT` ends all five of its labels in a null statement, builds
+    under `-std=c11 -pedantic-errors` with Clang and GCC, and returns what the original does for every value the
+    switch tells apart. Without a compiler only the oracle's spelling is checked."""
+    oracle_summary, r, _entry = _oracle(_CASELABEL_UNIT)
+    emits = [("oracle", "\n".join(r.emitted[name] for name in r.lowered.functions))]
+    if _CC:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "caselabel.c")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(_CASELABEL_UNIT)
+            c_summary, c_emit = _c_run(_build_frontend(_session_build_dir()), path)
+        assert c_summary == oracle_summary and "ok=1" in c_summary, (c_summary, oracle_summary)
+        emits.append(("twin", c_emit))
+    for rail, emit in emits:
+        labels = re.findall(r"^\s*(?:case [^:\n]+|default):.*$", emit, re.M)
+        assert len(labels) == 5 and all(line.endswith(": ;") for line in labels), (rail, labels)
+    if not _CC:
+        return
+    ran = 0
+    with tempfile.TemporaryDirectory() as d:
+        for name in ("clang", "gcc"):
+            cc = shutil.which(name)
+            if not cc:
+                continue
+            for rail, emit in emits:
+                path = os.path.join(d, f"{rail}.c")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(f"#include <stdint.h>\n{emit}\n")
+                b = subprocess.run(
+                    [cc, "-std=c11", "-pedantic-errors", "-fsyntax-only", path],
+                    capture_output=True,
+                    text=True,
+                )
+                assert b.returncode == 0, f"the {rail} emit is not C11 under {cc}:\n{b.stderr}"
+            ran += 1
+    assert ran, "no compiler of the pair"
+    driver = (
+        _GAPS_SAME
+        + "int main(void) {\n  for (uint32_t x = 0u; x < 40u; x++) SAME(cl_arm, x);\n"
+        + '  puts("MATCH");\n  return 0;\n}\n'
+    )
+    _run_against_original_werror(
+        "caselabel.c", _CASELABEL_UNIT, emits, driver, {"clang": ("-Werror",), "gcc": ("-Werror",)}
+    )
+
+
 def _enumerator_names(src: str) -> list:
     """Every enumerator the `enum` definitions of `src` declare, in order (its comments dropped first)."""
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)

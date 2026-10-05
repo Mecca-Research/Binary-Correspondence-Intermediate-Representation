@@ -31,15 +31,22 @@ live in `CONTRIBUTING.md`.
 ## Where to work
 
 - Changing the IR semantics/optimizer → `bcir/` (with parity in `mlir/`).
-- Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/`).
+- Changing the IR law (ops/types/attrs) → `mlir/` (validate with `tools/` and the `mlir` preset's
+  `ctest -L mlir`, whose lit suite runs every fixture's RUN lines as written: `mlir/lit.cfg.py`).
 - Writing/curating training material → `training/<subject>/` (compiler material: `training/llvm/`).
 - Adding or moving a C/C++ source → `runtime/manifest.json` (the one source list; CMake reads it,
   `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
-- Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (the gate and the
-  `c-section-<name>` CTest entry run that one file; `build-section-parity` proves the two builds agree).
+- Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (BCIR Make runs that
+  one file as a task whose verdict the gate shows, and the `c-section-<name>` CTest entry runs it too;
+  `build-section-parity` proves BCIR Make's and CMake's builds agree).
 - Changing a fault-injection witness, an optimisation sweep, a C11 build or a sanitizer build → the
   manifest's `variants` (one spelling of each injected fault, applied by `tools/build/mutate.py` for
-  the gate and CMake alike; one sanitizer predicate, `tools/build/sanitizer.py`).
+  BCIR Make and CMake alike; one sanitizer predicate, `tools/build/sanitizer.py`).
+- Changing a test of C the Python oracle emits (the E-series kernels) → the manifest's `kernels` and
+  its driver under `runtime/c/kernels/` (one writer, `tools/build/emit_kernel.py`, for BCIR Make
+  and CMake alike).
+- Adding a gate `tools/c/check_runtime.sh` calls that builds its own binaries → the manifest's
+  `delegated` (its own CTest entry; the gate calls it under `BCIR_SKIP_DELEGATED_GATES`, M16).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

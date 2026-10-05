@@ -22,8 +22,11 @@
   lane = "u", stride_class = "unit", opcode = "alu64.add", legal_if = "integer_only",
   preserves = "bounds,hazard"} : () -> ()
 
+// FileCheck matches in order (the lit suite), and tools/irdl/check_corpus.sh finds each CHECK
+// line as a literal: each capability's triple is on its own op's line, before the contract.
 // CHECK: "bcir.target_capability"
+// CHECK-SAME: triple = "riscv64"
 // CHECK: "bcir.target_lower_contract"
-// CHECK: triple = "riscv64"
+// CHECK-SAME: target = "riscv"
 // CHECK: triple = "nvptx64-nvidia-cuda"
 // CHECK: triple = "bpfel"

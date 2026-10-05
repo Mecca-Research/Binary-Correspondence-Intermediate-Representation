@@ -536,20 +536,16 @@ def test_every_g15_row_is_zero_on_both_rails():
 
 
 def test_the_gate_and_the_harnesses_link_the_same_sources():
-    """check_runtime.sh's ring and control link lines and the Python fixtures' source lists are
-    two lists each, and nothing but this test makes them agree (the #719 wiring trap)."""
+    """What the runtime gate links for the ring and control harnesses (the manifest closures BCIR
+    Make links), the fuzz target and the Python fixtures' source lists are lists each, and nothing
+    but this test makes them agree (the #719 wiring trap)."""
+    from bcir.tests.gate_links import assert_fixture_links
     from bcir.tests.run_all import _is_source_checkout
 
-    gate_path = os.path.join(_ROOT, "tools", "c", "check_runtime.sh")
     if not _is_source_checkout():
         return  # the wheel ships neither tools/ nor runtime/c
-    gate = open(gate_path, encoding="utf-8").read()
-    ring_line = re.search(r"ring_sources=\(([^)]*)\)", gate).group(1)
-    ring_linked = set(re.findall(r"(\w+\.c)", ring_line)) | {"bcir_ring.c"}
-    assert ring_linked == set(rf.C_SOURCES), (ring_linked, rf.C_SOURCES)
-    control_line = re.search(r"ctl_sources=\(([^)]*)\)", gate).group(1)
-    control_linked = set(re.findall(r"(\w+\.c)", control_line)) | {"bcir_control_plane.c"}
-    assert control_linked == set(cf.C_SOURCES), (control_linked, cf.C_SOURCES)
+    assert_fixture_links("harnesses", "test_ring", rf.C_SOURCES)
+    assert_fixture_links("harnesses", "test_control_plane", cf.C_SOURCES)
     fuzz = open(os.path.join(_ROOT, "tools", "c", "fuzz_streampack.sh"), encoding="utf-8").read()
     target = re.search(r'add_target ring "[^"]*" "[^"]*" \\\n\s*(.*)', fuzz).group(1)
     assert set(re.findall(r"(\w+\.c)", target)) == {

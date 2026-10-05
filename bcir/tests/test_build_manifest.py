@@ -11,6 +11,7 @@ module is registered repository-only in run_all.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import copy
 import importlib.util
@@ -145,9 +146,10 @@ _FAULTS = (
         lambda m: m["freestanding_checks"].append("bcir_cfront.c"),
     ),
     (
+        # the runtime gate links nothing since BUILD-8; check_memory_discipline.sh still does
         "M9",
         "a gate link outside the closure",
-        lambda m: m["harnesses"]["test_control_plane"].__setitem__("libraries", ["bcir_base"]),
+        lambda m: m["harnesses"]["test_memory_discipline"].__setitem__("libraries", []),
     ),
     (
         "M9",
@@ -263,6 +265,135 @@ _FAULTS = (
         "a section mixing a sanitizer build with a plain one",
         lambda m: m["sections"]["ring_tsan"]["harnesses"].__setitem__(1, "test_ring_O0"),
     ),
+    (
+        "M13",
+        "a section taking a kernel the manifest lacks",
+        lambda m: m["sections"]["ols"].__setitem__("harnesses", ["kernel_nope"]),
+    ),
+    ("M15", "kernels that are no object", lambda m: m.__setitem__("kernels", [])),
+    ("M15", "a kernel without its driver", lambda m: m["kernels"]["kernel_ols"].pop("main")),
+    (
+        "M15",
+        "a kernel with a key no kernel has",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("options", ["-O3"]),
+    ),
+    (
+        "M15",
+        "an emitter the oracle lacks",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("emit", "emit_nothing_c"),
+    ),
+    (
+        "M15",
+        "an emitter that is no emit_* name",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("emit", "os.system"),
+    ),
+    (
+        "M15",
+        "a floating kernel argument",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("args", [8, 2.5]),
+    ),
+    (
+        "M15",
+        "a kernel argument spelled as a boolean",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("args", [True]),
+    ),
+    (
+        "M15",
+        "a driver that does not exist",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("main", "absent.c"),
+    ),
+    (
+        "M15",
+        "a driver named by a path",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("main", "../ols.c"),
+    ),
+    (
+        "M15",
+        "a kernel linking a library outside m and pthread",
+        lambda m: m["kernels"]["kernel_ols"].__setitem__("link", ["lapack"]),
+    ),
+    ("M15", "an empty link list", lambda m: m["kernels"]["kernel_tree"].__setitem__("link", [])),
+    (
+        "M15",
+        "a kernel no section runs",
+        lambda m: m["kernels"].__setitem__(
+            "kernel_extra", {"emit": "emit_tree_predict_c", "args": [5, 2, "t"], "main": "tree.c"}
+        ),
+    ),
+    (
+        "M15",
+        "a kernel that shadows a unit",
+        lambda m: m["kernels"].__setitem__("test_runtime", m["kernels"].pop("kernel_tree")),
+    ),
+    ("M15", "a driver no kernel names", lambda m: m["kernels"].pop("kernel_kmeans")),
+    (
+        "M13",
+        "a compiler-only section that names a binary",
+        lambda m: m["sections"]["inlineasm"].__setitem__("harnesses", ["test_runtime"]),
+    ),
+    (
+        "M13",
+        "a compiler_only flag that is not true",
+        lambda m: m["sections"]["portio"].__setitem__("compiler_only", "yes"),
+    ),
+    (
+        "M13",
+        "a compiler_only flag of false on a section without binaries",
+        lambda m: m["sections"]["barrier"].__setitem__("compiler_only", False),
+    ),
+    ("M16", "delegated gates that are no object", lambda m: m.__setitem__("delegated", [])),
+    (
+        "M16",
+        "a delegated entry with an unknown key",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("timeout", 60),
+    ),
+    (
+        "M16",
+        "a delegated entry without labels",
+        lambda m: m["delegated"]["cpp-sycl"].pop("labels"),
+    ),
+    (
+        "M16",
+        "a delegated name that is no CTest name",
+        lambda m: m["delegated"].__setitem__("SYCL", m["delegated"].pop("cpp-sycl")),
+    ),
+    (
+        "M16",
+        "a delegated label outside c and cpp",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("labels", ["fuzz"]),
+    ),
+    (
+        "M16",
+        "a delegated script M9 does not read",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("script", "tools/cpp/check_other.sh"),
+    ),
+    (
+        "M16",
+        "delegating to the runtime gate itself",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("script", "tools/c/check_runtime.sh"),
+    ),
+    (
+        "M16",
+        "delegating to the cfront sanitizer, which keeps its own switch",
+        lambda m: m["delegated"]["cpp-sycl"].__setitem__("script", "tools/c/sanitize_cfront.sh"),
+    ),
+    (
+        "M16",
+        "two entries delegating to one script",
+        lambda m: m["delegated"].__setitem__(
+            "c-memory-classes", dict(m["delegated"]["c-memory-discipline"])
+        ),
+    ),
+    (
+        "M16",
+        "a gate the runtime gate calls with no entry (CTest would run it only inside c-runtime)",
+        lambda m: m["delegated"].pop("cpp-sycl"),
+    ),
+    (
+        "M16",
+        "an entry renamed away from the name the gate's SKIP line gives",
+        lambda m: m["delegated"].__setitem__("cpp-sycl-oracle", m["delegated"].pop("cpp-sycl")),
+    ),
 )
 
 
@@ -275,23 +406,67 @@ def test_every_injected_violation_is_a_finding():
         )
 
 
-def test_the_gate_must_generate_every_mutant_with_the_shared_applier():
-    """A mutant the gate spells its own way (a sed of its own) is a second spelling of the fault
-    that can drift from the one CMake builds (L14): each mutation variant's generation through
-    tools/build/mutate.py is part of the rule."""
-    tree = manifest_tool.Tree()
-    tree.runtime_gate_text = tree.runtime_gate_text.replace(
-        "--variant test_kplan_mutant ", "--variant other "
-    )
-    findings = manifest_tool.check(_manifest(), tree)
-    assert any(
-        f.startswith("M14:") and "test_kplan_mutant" in f and "mutate.py" in f for f in findings
-    ), findings
+def _writer_with(manifest: dict, tmp: str):
+    """The kernel writer reading `manifest` instead of the checkout's."""
+    writer = _load_tool("emit_kernel")
+    path = Path(tmp) / "manifest.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    writer.MANIFEST = path
+    return writer
 
 
-def test_the_gate_must_probe_before_it_builds_a_sanitizer_variant():
-    """A gate that builds the TSan binaries on a probe of its own can disagree with the CMake
-    build about the host (L12); asking tools/build/sanitizer.py is part of M14."""
+def test_the_kernel_writer_appends_the_driver_to_the_emitters_text():
+    """emit_kernel.py writes a kernel's unit -- the emitter's text, a newline, the driver -- and a
+    depfile naming the emitter's modules and the driver; it refuses what M15 refuses (2), an
+    emitter that raises is its FAIL (1), and --depfile without -o is a usage error."""
+    from bcir.lower.c_kernel import emit_tree_predict_c
+
+    writer = _load_tool("emit_kernel")
+    driver = _ROOT / "runtime" / "c" / "kernels" / "tree.c"
+    with tempfile.TemporaryDirectory() as tmp:
+        unit, dep = Path(tmp) / "k" / "kernel_tree.c", Path(tmp) / "k" / "kernel_tree.c.d"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = writer.main(["kernel_tree", "-o", str(unit), "--depfile", str(dep)])
+        assert rc == 0, err.getvalue()
+        want = emit_tree_predict_c(5, 2, "tree_p") + "\n" + driver.read_text(encoding="utf-8")
+        assert unit.read_text(encoding="utf-8") == want
+        rule = dep.read_text(encoding="utf-8")
+        assert rule.startswith(f"{unit}:"), rule[:200]
+        for made_from in (
+            driver,
+            _ROOT / "bcir" / "lower" / "c_kernel.py",
+            _ROOT / "runtime" / "manifest.json",
+        ):
+            assert str(made_from) in rule, (made_from, rule)
+        for argv, code, said in (
+            (["kernel_nope"], 2, "no manifest kernel named 'kernel_nope'"),
+            (["kernel_tree", "--depfile", str(dep)], 2, "pass -o"),
+        ):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                rc = writer.main(argv)
+            assert rc == code and said in err.getvalue(), (argv, rc, err.getvalue())
+        broken = copy.deepcopy(_manifest())
+        broken["kernels"]["kernel_tree"]["args"] = []  # the emitter is called with none and raises
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = _writer_with(broken, tmp).main(["kernel_tree", "-o", str(unit)])
+        assert rc == 1 and "emit_tree_predict_c raised TypeError" in err.getvalue(), (
+            rc,
+            err.getvalue(),
+        )
+        refused = copy.deepcopy(_manifest())
+        refused["kernels"]["kernel_tree"]["emit"] = "emit_nothing_c"
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = _writer_with(refused, tmp).main(["kernel_tree"])
+        assert rc == 2 and "M15:" in err.getvalue(), (rc, err.getvalue())
+
+
+def test_the_gate_must_probe_before_it_shows_a_sanitizer_variants_section():
+    """A gate that decides on the TSan section by a probe of its own can disagree with BCIR Make and
+    the CMake build about the host (L12); asking tools/build/sanitizer.py is part of M14."""
     tree = manifest_tool.Tree()
     tree.runtime_gate_text = tree.runtime_gate_text.replace(
         manifest_tool.SANITIZER_PROBE, "tools/c/own_probe.sh"
@@ -402,18 +577,117 @@ def test_a_varying_value_is_masked_only_where_declared():
     assert stale == [r"never=([0-9]+)"], stale
 
 
-def test_the_gate_must_call_every_section_script():
-    """A section the gate stopped calling would still pass as a CTest entry while the gate judged
-    other text (L12): the delegation is part of the rule."""
+def test_a_compiler_only_section_must_run_the_compiler():
+    """A section that takes no binary judges what the oracle emits under CC; a script that never
+    runs ${CC} would judge nothing at all, and pass (L2)."""
     tree = manifest_tool.Tree()
-    tree.runtime_gate_text = tree.runtime_gate_text.replace(
-        "tools/c/sections/runtime.sh", "tools/c/sections/other.sh"
-    )
+    assert '"${CC}"' in tree.section_texts["barrier.sh"]
+    tree.section_texts["barrier.sh"] = tree.section_texts["barrier.sh"].replace('"${CC}"', '"cc"')
     findings = manifest_tool.check(_manifest(), tree)
     assert any(
-        f.startswith("M13:") and "does not call tools/c/sections/runtime.sh" in f for f in findings
+        f.startswith("M13:") and "sections/barrier" in f and "never runs" in f for f in findings
     ), findings
-    assert manifest_tool.check(_manifest(), _tree()) == []
+
+
+def test_every_delegated_gate_runs_once_under_ctest():
+    """The runtime gate skips the gates it delegates to when CTest's c-runtime entry sets
+    BCIR_SKIP_DELEGATED_GATES=1, and CMake registers each as its own entry: a call outside the
+    guard runs twice, a guard naming another entry sends the log's reader to the wrong place, a
+    second call or a missing switch on the CMake side breaks the once, and a missing registration
+    loses the gate from ctest altogether (L12). Each is an M16 finding."""
+    gate_rel = "tools/cpp/check_sycl.sh"
+    faults = {
+        "the guard removed": lambda g: g.replace(
+            'if [ "${BCIR_SKIP_DELEGATED_GATES:-0}" = "1" ]; then\n'
+            '  echo "  SKIP SYCL backend differential oracle (BCIR_SKIP_DELEGATED_GATES=1; '
+            'CTest runs it as cpp-sycl)"\nelif bash',
+            "if bash",
+        ),
+        "the SKIP line naming another entry": lambda g: g.replace(
+            "CTest runs it as cpp-sycl)", "CTest runs it as cpp-handoff)"
+        ),
+        "a second call": lambda g: g + f'\nbash "${{ROOT}}/{gate_rel}"\n',
+        "an unregistered script": lambda g: g + '\nbash "${ROOT}/tools/c/check_other.sh"\n',
+        "the sanitizer's own guard removed": lambda g: g.replace(
+            'if [ "${BCIR_SKIP_CFRONT_SANITIZE:-0}" = "1" ]; then', "if false; then"
+        ),
+    }
+    clean = _tree()
+    assert manifest_tool.check(_manifest(), clean) == []
+    for what, fault in faults.items():
+        tree = copy.copy(clean)  # a Tree is read once; each fault edits its own copy's text
+        tree.runtime_gate_text = fault(clean.runtime_gate_text)
+        assert tree.runtime_gate_text != clean.runtime_gate_text, f"{what}: the fault did not apply"
+        findings = manifest_tool.check(_manifest(), tree)
+        assert any(f.startswith("M16:") for f in findings), f"{what} is no finding: {findings}"
+    cmake_faults = {
+        "c-runtime without the switch": lambda c: c.replace('"BCIR_SKIP_DELEGATED_GATES=1"', ""),
+        "the registration loop removed": lambda c: c.replace(
+            "IN LISTS BCIR_MANIFEST_delegated", "IN LISTS BCIR_MANIFEST_other"
+        ),
+    }
+    for what, fault in cmake_faults.items():
+        tree = copy.copy(clean)
+        tree.tests_cmake_text = fault(clean.tests_cmake_text)
+        assert tree.tests_cmake_text != clean.tests_cmake_text, f"{what}: the fault did not apply"
+        findings = manifest_tool.check(_manifest(), tree)
+        assert any(f.startswith("M16:") for f in findings), f"{what} is no finding: {findings}"
+
+
+def test_the_gate_shows_every_section_once_and_builds_through_bcir_make():
+    """BUILD-8: BCIR Make runs every section as a task, and the runtime gate shows each recorded
+    verdict once. A section the gate stopped showing would still pass as a CTest entry while the
+    gate judged less (L12); one shown twice, an unknown name, a section script the gate runs itself
+    (a second run beside the task's), a gate that no longer builds through BCIR Make with the
+    sections planned, and one without a guard that keeps an earlier run's verdict (on disk after
+    a law break or a failed build) from being shown as this run's are each an M13 finding."""
+    clean = _tree()
+    assert manifest_tool.check(_manifest(), clean) == []
+    faults = {
+        "a section not shown": (
+            lambda g: g.replace("show_section runtime || exit 1", ""),
+            "shows section runtime 0 time(s)",
+        ),
+        "a section shown twice": (
+            lambda g: g + "\nshow_section runtime || exit 1\n",
+            "shows section runtime 2 time(s)",
+        ),
+        "an unknown name shown": (
+            lambda g: g + "\nshow_section nowhere || exit 1\n",
+            "shows 'nowhere', which is no manifest section",
+        ),
+        "a section script run by the gate": (
+            lambda g: g + '\nbash "${ROOT}/tools/c/sections/runtime.sh" x || exit 1\n',
+            "runs tools/c/sections/runtime.sh itself",
+        ),
+        "the sections not planned": (
+            lambda g: g.replace('--cc "${CC}" --sections', '--cc "${CC}"'),
+            "does not build through BCIR Make",
+        ),
+        "no BCIR Make run": (
+            lambda g: g.replace("python3 -m bcir.make -f", "python3 -m bcir.other -f"),
+            "does not build through BCIR Make",
+        ),
+        # an earlier run's verdicts lie on disk; each guard keeps the gate from showing them
+        "the laws not asked": (
+            lambda g: g.replace("grep -cx 'laws: PASS (MK0-MK5)'", "grep -cx 'laws: PASS'"),
+            "could show an earlier run's verdict",
+        ),
+        "a failed build not stopping the gate": (
+            lambda g: g.replace("grep -E '^(failed|skipped) '", "grep -E '^(failed) '"),
+            "could show an earlier run's verdict",
+        ),
+        "an unplanned section's verdict shown": (
+            lambda g: g.replace('grep -Fxq "target section.$1"', "true"),
+            "could show an earlier run's verdict",
+        ),
+    }
+    for what, (fault, needle) in faults.items():
+        tree = copy.copy(clean)
+        tree.runtime_gate_text = fault(clean.runtime_gate_text)
+        assert tree.runtime_gate_text != clean.runtime_gate_text, f"{what}: the fault did not apply"
+        findings = manifest_tool.check(_manifest(), tree)
+        assert any(f.startswith("M13:") and needle in f for f in findings), (what, findings)
 
 
 def test_the_section_parity_gate_sees_a_differing_output():
@@ -456,7 +730,7 @@ def test_the_section_parity_gate_sees_a_differing_output():
             script, [a], [b], python=sys.executable, timeout=30, shell=shell
         )
         assert diff["differ"] == ["stdout"] and diff["passed"], diff
-        # a section that compiles what a tool emits gets the recipe's compiler, on both runs
+        # a section that compiles what a tool emits gets the one compiler, on both runs
         cc_script = work / "cc.sh"
         cc_script.write_text(
             '#!/usr/bin/env bash\necho "  PASS compiled with ${CC:-unset}"\n', encoding="utf-8"
@@ -465,7 +739,7 @@ def test_the_section_parity_gate_sees_a_differing_output():
             cc_script, [a], [b], python=sys.executable, timeout=30, shell=shell, cc="cc-under-test"
         )
         assert named["differ"] == [] and named["passed"], named
-        for run in (named["gate"], named["cmake"]):
+        for run in (named["make"], named["cmake"]):
             assert run[1] == b"  PASS compiled with cc-under-test\n", run
         a.write_text("nothing judged\n", encoding="utf-8")
         b.write_text("nothing judged\n", encoding="utf-8")
@@ -511,6 +785,16 @@ def test_the_section_parity_gate_sees_a_differing_output():
             failing, [a], [b], python=sys.executable, timeout=30, shell=shell
         )
         assert failed["differ"] == [] and not failed["passed"] and failed["cmake"][0] == 1, failed
+        # a compiler-only section takes no binary: its two runs must still agree and pass, so a
+        # verdict that is not a function of its inputs is a finding there too
+        alone = section_tool.compare_section(
+            cc_script, [], [], python=sys.executable, timeout=30, shell=shell, cc="cc-under-test"
+        )
+        assert alone["differ"] == [] and alone["passed"], alone
+        drifting = section_tool.compare_section(
+            varying, [], [], python=sys.executable, timeout=30, shell=shell
+        )
+        assert drifting["differ"] == ["stdout"] and drifting["unstable"], drifting
 
 
 def test_a_bash_that_is_not_a_shell_is_not_a_shell():
@@ -566,46 +850,6 @@ def test_the_section_parity_gate_refuses_before_it_compiles():
                 )
             assert rc == 2 and "pass --tool-dir" in out.getvalue(), (rc, out.getvalue())
         assert not list(empty.iterdir())
-    options = section_tool.compiler_options(
-        ["-ffp-contract=off", "gcc:-Wno-x", "clang:-Wno-y"], "gcc"
-    )
-    assert options == ["-ffp-contract=off", "-Wno-x"], options
-    manifest = _manifest()
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp)
-        sources, link, opts = section_tool.recipe_plan(
-            manifest_tool, mutate_tool, manifest, "test_execution_plan", work
-        )
-        names = [path.name for path in sources]
-        assert names[0] == "test_execution_plan.c" and "bcir_runtime.c" in names, names
-        assert link == [] and opts == [], (link, opts)
-        sources, _link, opts = section_tool.recipe_plan(
-            manifest_tool, mutate_tool, manifest, "bcir-cc", work
-        )
-        names = [path.name for path in sources]
-        assert names[0] == "bcir_cc.c" and {"bcir_cfront.c", "bcir_runtime.c"} <= set(names), names
-        sources, _link, opts = section_tool.recipe_plan(
-            manifest_tool, mutate_tool, manifest, "test_kplan_O0", work
-        )
-        assert opts[-1] == "-O0" and sources[0].name == "test_kplan.c", (opts, sources[:2])
-        sources, _link, _opts = section_tool.recipe_plan(
-            manifest_tool, mutate_tool, manifest, "test_kplan_mutant", work
-        )
-        mutated = [path for path in sources if path.name == "bcir_kplan.c"]
-        assert len(mutated) == 1 and mutated[0].is_relative_to(work), mutated
-        mutation = manifest["variants"]["test_kplan_mutant"]["mutation"]
-        assert mutated[0].read_text(encoding="utf-8").count(mutation["replace"]) >= 1
-        assert mutation["find"] not in mutated[0].read_text(encoding="utf-8")
-        # another standard and a sanitizer come after the recipe's -std=c23 -O2, so they win
-        _sources, _link, opts = section_tool.recipe_plan(
-            manifest_tool, mutate_tool, manifest, "test_x86_interrupt_c11", work
-        )
-        assert opts == ["-ffreestanding", "-std=c11"], opts
-        sources, _link, opts = section_tool.recipe_plan(
-            manifest_tool, mutate_tool, manifest, "test_ring_plain", work
-        )
-        assert opts[-4:] == ["-O1", "-g", "-std=c11", "-fsanitize=thread"], opts
-        assert [p for p in sources if p.name == "bcir_ring.c"][0].is_relative_to(work)
 
 
 def test_an_unbuilt_variant_is_reported_by_name_never_compared_or_hidden():
@@ -645,14 +889,27 @@ def test_the_presets_hold_the_two_worker_law():
 
 
 def test_the_scanners_examined_the_real_gates():
-    """A scanner that matched nothing would make M8-M11 vacuous (L2)."""
+    """A scanner that matched nothing would make M8-M11 vacuous (L2). BUILD-2 moved the runtime
+    gate's section text into the section scripts, which are scanned as gate text, and BUILD-8
+    retired the gate's compile lines (BCIR Make builds from the manifest), so the runtime gate
+    itself names no source -- a compile line put back would show here -- and what moved must still
+    have been examined."""
     tree = _tree()
     assert tree.missing_gates == [], tree.missing_gates
     runtime_groups = tree.gates["tools/c/check_runtime.sh"]
-    with_main = [g for g in runtime_groups if any(t.startswith("test_") for t in g[1])]
+    section_groups = [
+        group
+        for rel, groups in tree.gates.items()
+        if rel.startswith(manifest_tool.SECTIONS_DIR + "/")
+        for group in groups
+    ]
+    every_group = [group for groups in tree.gates.values() for group in groups]
+    with_main = [g for g in every_group if any(t.startswith("test_") for t in g[1])]
 
-    assert len(runtime_groups) >= 150, len(runtime_groups)
-    assert len(with_main) >= 25, len(with_main)
+    assert runtime_groups == [], runtime_groups[:3]
+    assert len(section_groups) >= 150, len(section_groups)
+    assert len(every_group) >= 230, len(every_group)
+    assert len(with_main) >= 15, len(with_main)
     assert tree.fuzz is not None and len(tree.fuzz) == len(_manifest()["fuzzers"]), tree.fuzz
     assert {"bcir_runtime.c", "bcir_kplan.c", "bcir_jer.c", "bcir_per.c"} <= tree.freestanding, (
         tree.freestanding
@@ -711,6 +968,29 @@ def test_the_closure_is_dependents_first_and_once():
     assert all(opt.startswith(("-", "gcc:", "clang:")) for opt in data["options"]), data["options"]
 
 
+def test_a_fixture_is_held_to_what_the_gate_links():
+    """bcir/tests/gate_links.py, which the #719 tests read the gate's link list through now that
+    the gate has none of its own (BUILD-8), refuses both drifts it exists for (L11): a fixture
+    compiling a unit the closure lacks -- the `bcir_oer.c` case -- and a fixture that builds
+    without the unit's main. Its own list passes."""
+    from bcir.tests import planner_fixtures as pf
+    from bcir.tests.gate_links import assert_fixture_links, manifest_links
+
+    own, linked = manifest_links("harnesses", "test_kplan")
+    assert own == {"test_kplan.c"} and {"bcir_kplan.c", "bcir_runtime.c"} <= linked, linked
+    assert_fixture_links("harnesses", "test_kplan", (*pf.C_UNITS, pf.HARNESS))
+    for fixture, refusal in (
+        ((*pf.C_UNITS, pf.HARNESS, "bcir_oer.c"), "compiles ['bcir_oer.c']"),
+        (pf.C_UNITS, "without its main ['test_kplan.c']"),
+    ):
+        try:
+            assert_fixture_links("harnesses", "test_kplan", fixture)
+        except AssertionError as exc:
+            assert refusal in str(exc), exc
+        else:
+            raise AssertionError(f"{fixture} passed")
+
+
 def test_the_cmake_reader_and_the_checker_agree():
     """CMake reads the same manifest; the two readers must agree on its kinds and keys (L12)."""
     cmake = (_ROOT / "cmake" / "BCIRManifest.cmake").read_text(encoding="utf-8")
@@ -736,6 +1016,27 @@ def test_the_cmake_reader_and_the_checker_agree():
     )
     assert '"CC=${CMAKE_C_COMPILER}"' in tests and "--tool-dir" in tests, (
         "the section entries need the configured compiler, the parity gate the tools' directory"
+    )
+    assert (
+        "BCIR_MANIFEST_kernels" in cmake
+        and '"${_unit}" main' in cmake
+        and '"${_unit}" link' in cmake
+    ), "the CMake reader does not read the kernels' drivers and libraries"
+    assert '"${_unit}" compiler_only' in cmake, (
+        "the CMake reader does not read a section's compiler_only, so it would refuse one or accept "
+        "an empty section"
+    )
+    assert (
+        "BCIR_MANIFEST_delegated" in cmake
+        and '"${_unit}" script _dscript' in cmake
+        and '"${_unit}" labels' in cmake
+    ), "the CMake reader does not read the delegated gates"
+    assert "IN LISTS BCIR_MANIFEST_delegated" in tests and "BCIR_SKIP_DELEGATED_GATES=1" in tests, (
+        "CMake must register every delegated gate and let c-runtime skip them"
+    )
+    runtime = (_ROOT / "runtime" / "c" / "CMakeLists.txt").read_text(encoding="utf-8")
+    assert manifest_tool.KERNEL_WRITER in runtime and "DEPFILE" in runtime, (
+        "the CMake build must write each kernel with the gate's writer, and rebuild it from its depfile"
     )
     kinds = re.search(r"set\(BCIR_MANIFEST_KINDS ([^)]*)\)", cmake)
     assert kinds is not None
@@ -821,12 +1122,44 @@ def test_the_dependency_index_is_held_to_its_schema():
             {"name": "PYTHON3", "found": True, "detail": " (3.11 at /usr/bin/python3)"},
             {"name": "THREADS", "found": True, "detail": ""},
             {"name": "MLIR", "found": False, "detail": " (set MLIR_DIR)"},
+            {"name": "FFTW3F", "found": True, "detail": " (links)", "link": ["-lfftw3f"]},
+            {"name": "LAPACKE", "found": False, "detail": " (absent)", "link": []},
+            {"name": "GSL", "found": False, "detail": " (absent)", "link": []},
+            {"name": "SLEEF", "found": False, "detail": " (absent)", "link": []},
+            {"name": "CERF", "found": False, "detail": " (absent)", "link": []},
+        ],
+        "tools": [
+            {"name": n, "path": f"/usr/bin/{n}", "identity": "sha256:" + "0" * 64}
+            for n in ("cc", "cxx", "ar", "python")
         ],
     }
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "bcir-deps.json"
         path.write_text(json.dumps(good), encoding="utf-8")
         assert manifest_tool.check_deps_index(path) == []
+        # an optional library's row is the one a harness reads in place of its own probe (BUILD-4):
+        # missing, flagless while found, or flagged while absent, it is a finding
+        for fault, what in (
+            (
+                [r for r in good["dependencies"] if r["name"] != "LAPACKE"],
+                "LAPACKE is not recorded",
+            ),
+            (
+                [{**r, "link": []} if r["name"] == "FFTW3F" else r for r in good["dependencies"]],
+                "FFTW3F is found=True",
+            ),
+            (
+                [
+                    {**r, "link": ["-lgsl"]} if r["name"] == "GSL" else r
+                    for r in good["dependencies"]
+                ],
+                "GSL is found=False",
+            ),
+        ):
+            path.write_text(json.dumps({**good, "dependencies": fault}), encoding="utf-8")
+            findings = manifest_tool.check_deps_index(path)
+            assert any(what in f for f in findings), (what, findings)
+        path.write_text(json.dumps(good), encoding="utf-8")
         path.write_text(json.dumps(good).replace("true", "ON"), encoding="utf-8")
         findings = manifest_tool.check_deps_index(path)
         assert findings and all(f.startswith("D1:") for f in findings), findings
@@ -845,6 +1178,43 @@ def test_the_dependency_index_is_held_to_its_schema():
     assert "--deps-index" in cmake, "ctest does not validate the index"
 
 
+def test_one_predicate_answers_what_the_host_has():
+    """The optional libraries are probed in one place, bcir.toolchain's (BUILD-4): the configure
+    asks it, and so does every harness. A module that writes its own probe program -- a C string
+    carrying one of the libraries' headers and a main -- is a second answer to the same question,
+    the shape that let the FFTW probe pass on a library that lacks the symbol (laws.md L14). And
+    the configure runs the predicate rather than a find_library of its own."""
+    headers = ("<fftw3.h>", "<lapacke.h>", "<gsl/", "<sleef.h>", "<cerf.h>")
+    owner = _ROOT / "bcir" / "toolchain.py"
+    found: list[str] = []
+    for tree in ("bcir", "tools"):
+        for path in sorted((_ROOT / tree).rglob("*.py")):
+            if path == owner or "__pycache__" in path.parts:
+                continue
+            try:
+                module = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                continue
+            for node in ast.walk(module):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and "main(" in node.value
+                    and any(f"#include {h}" in node.value for h in headers)
+                ):
+                    found.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
+    assert found == [], f"library probes outside bcir.toolchain: {found}"
+    deps = (_ROOT / "cmake" / "BCIRDependencies.cmake").read_text(encoding="utf-8")
+    assert "-m bcir.toolchain probe-libraries" in deps, "the configure does not ask the predicate"
+    assert "find_library" not in deps and "pkg_check_modules" not in deps, (
+        "the configure answers the library question its own way"
+    )
+    tests = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
+    assert "BCIR_DEPS_INDEX=${CMAKE_BINARY_DIR}/bcir-deps.json" in tests, (
+        "the Python entries do not read the tree's index"
+    )
+
+
 def test_the_ci_owns_the_build_gate():
     """The gate's CI owner (L2): a job configures with both compilers and runs the build label."""
     workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
@@ -860,3 +1230,20 @@ def test_the_ci_owns_the_build_gate():
     assert "BCIR_REQUIRE_TSAN=ON" in body and "libclang-rt" in body, (
         "the job installs the ThreadSanitizer runtime, so it must own its absence (L2)"
     )
+
+
+def test_a_pinned_tool_whose_bytes_moved_is_a_finding():
+    """BUILD-8's pins gate: a tool whose bytes are still its pin passes; one rewritten since the
+    configure -- a compiler upgraded under a configured tree -- and one that is gone each fail it,
+    naming the tool and saying reconfigure."""
+    pins_tool = _load_tool("pins")
+    with tempfile.TemporaryDirectory() as tmp:
+        tool = Path(tmp) / "cc"
+        tool.write_bytes(b"#!/bin/sh\nexit 0\n")
+        pinned = "sha256:" + __import__("hashlib").sha256(tool.read_bytes()).hexdigest()
+        assert pins_tool.drift({"cc": (str(tool), pinned)}) == []
+        tool.write_bytes(b"#!/bin/sh\nexit 1\n")
+        moved = pins_tool.drift({"cc": (str(tool), pinned)})
+        assert len(moved) == 1 and moved[0].startswith("cc ") and "reconfigure" in moved[0], moved
+        gone = pins_tool.drift({"cc": (str(Path(tmp) / "absent"), pinned)})
+        assert len(gone) == 1 and "cannot be read" in gone[0], gone

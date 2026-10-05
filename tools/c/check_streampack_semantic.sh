@@ -33,12 +33,16 @@ fi
 
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 
+# C23 as the compiler spells it: GCC 13 knows only -std=c2x, and refusing the option would read as a
+# failed harness build (the CTest entry runs this under the configured compiler, GCC included).
+c23=c23
+printf 'int main(void){return 0;}\n' | "${CC}" -std=c23 -x c -fsyntax-only - 2>/dev/null || c23=c2x
 echo "[streampack-sem] build the semantic harness (C23) + the decode-differential harness"
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" \
+"${CC}" -std=${c23} -O2 -Wall -Wextra -I "${C}" \
   "${C}/bcir_exec.c" "${C}/bcir_runtime.c" "${C}/bcir_verify.c" \
   "${C}/test_streampack_semantic.c" -o "${tmp}/test_sem" \
   || { echo "  FAIL: semantic harness build"; exit 1; }
-"${CC}" -std=c23 -O2 -Wall -Wextra -I "${C}" \
+"${CC}" -std=${c23} -O2 -Wall -Wextra -I "${C}" \
   "${C}/bcir_runtime.c" "${C}/test_runtime.c" -o "${tmp}/test_runtime" \
   || { echo "  FAIL: decode harness build"; exit 1; }
 

@@ -123,11 +123,13 @@ def _host_link_args() -> list[str]:
 
 
 def _build_c_cli(output: Path) -> None:
-    compiler = (
-        os.environ.get("CC") or shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    )
+    from bcir.toolchain import host_c_compiler  # the one compiler pick (BUILD-4)
+
+    compiler = host_c_compiler()
     if not compiler:
-        raise RuntimeError("hosted model gate requires a C11 compiler")
+        raise RuntimeError(
+            "hosted model gate requires a C11 compiler ($CC, or clang/gcc/cc on PATH)"
+        )
     runtime = ROOT / "runtime" / "c"
     command = [
         compiler,

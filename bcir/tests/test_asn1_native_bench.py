@@ -564,28 +564,19 @@ def test_the_directed_table_reports_why_each_candidate_is_absent():
 
 
 def test_the_gate_and_the_harness_link_the_same_sources():
-    """`native_bench._SOURCES` and `check_runtime.sh`'s `#asn1bench` link line are two lists
-    that must agree, and nothing made them.
+    """`native_bench._SOURCES` and what the `#asn1bench` gate links are two lists that must
+    agree, and nothing made them.
 
     They drifted the moment `bcir_oer.c` joined one of them: the Python harness built fine and
     the C gate failed with an undefined reference to `bcir_oer_decode_sequence` — a link error,
     minutes into a slow gate, for a one-word omission. This asserts the agreement in the fast
-    tier instead.
+    tier instead. The gate's list is the manifest closure of `tools/bcir_asn1_bench`, which BCIR
+    Make links (BUILD-8).
     """
-    import re
-
     from bcir.asn1.native_bench import _SOURCES
+    from bcir.tests.gate_links import assert_fixture_links
 
-    gate = pathlib.Path(__file__).resolve().parents[2] / "tools" / "c" / "check_runtime.sh"
-    text = gate.read_text()
-    start = text.index("bcir_asn1_bench.c")
-    # The link line runs to the -o that names the binary.
-    line = text[start : text.index('-o "${tmp}/asn1_bench"', start)]
-    linked = set(re.findall(r"bcir_[a-z0-9_]+\.c", line))
-    assert linked == set(_SOURCES), (
-        f"the #asn1bench gate links {sorted(linked)} and native_bench._SOURCES has "
-        f"{sorted(_SOURCES)}; they must be the same set"
-    )
+    assert_fixture_links("tools", "bcir_asn1_bench", _SOURCES)
 
 
 def test_the_directed_table_now_has_something_to_select_against():

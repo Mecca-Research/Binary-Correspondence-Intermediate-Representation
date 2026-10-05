@@ -30,34 +30,10 @@ import tempfile
 
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
-from bcir.toolchain import host_link_args
+from bcir.toolchain import host_c_compiler, host_link_args, optional_library
 from bcir.kbcir.vecmath import exp_reference, exp_via_bridge
 from bcir.lower.c_kernel import emit_sleef_exp_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
-
-
-def _sleef_link():
-    """A SLEEF lib flag set that links (with the sleef header present), or None (the real-SLEEF path
-    self-skips). SLEEF is rarely installed on CI, so this almost always returns None -- the fallback path
-    is the one that does the real reference-verification work, exactly as in test_gsl/test_fftw."""
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    if not cc:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write(
-            "#include <sleef.h>\nint main(void){return (int)Sleef_expf1_u10(0.0f)*0;}\n"
-        )
-        for lib in (["-lsleef"],):
-            if (
-                subprocess.run(
-                    host_link_args([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")]),
-                    capture_output=True,
-                ).returncode
-                == 0
-            ):
-                return lib
-    return None
 
 
 def _independent_exp(data):
@@ -200,10 +176,12 @@ def test_fallback_path_compiles_runs_and_is_correct():
 
 
 def test_linked_sleef_path_agrees_when_sleef_is_present():
-    libs = _sleef_link()
+    libs = optional_library("SLEEF")  # the one predicate (bcir.toolchain, BUILD-4)
     if not libs:
         return  # no SLEEF here -> the real-link path self-skips
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    cc = host_c_compiler()
+    if not cc:
+        return  # no compiler visible here (a test tier that hides the toolchain)
     data = [2.5, -1.0, 3.0, 0.5, 0.0, -2.0, 1.0, -0.25, 1.75, -3.0]
     ref = exp_reference(data)
     got = _run_exp_kernel(

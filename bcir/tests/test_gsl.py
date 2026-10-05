@@ -30,30 +30,7 @@ from bcir.kbcir.gsl_kernels import GSL_STATS, stats_reference, stats_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_gsl_stats_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
-from bcir.toolchain import host_link_args
-
-
-def _gsl_link():
-    """A GSL lib flag set that links (with the gsl headers present), or None (the real-GSL path self-skips)."""
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    if not cc:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write(
-            "#include <gsl/gsl_statistics.h>\n"
-            "int main(void){double x[2]={1,2}; return (int)gsl_stats_mean(x,1,2)*0;}\n"
-        )
-        for lib in (["-lgsl", "-lgslcblas"], ["-lgsl"]):
-            if (
-                subprocess.run(
-                    host_link_args([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")]),
-                    capture_output=True,
-                ).returncode
-                == 0
-            ):
-                return lib
-    return None
+from bcir.toolchain import host_c_compiler, host_link_args, optional_library
 
 
 def _independent_stats(data, kind):
@@ -220,10 +197,12 @@ def test_fallback_path_compiles_runs_and_is_correct():
 
 
 def test_linked_gsl_path_agrees_when_gsl_is_present():
-    libs = _gsl_link()
+    libs = optional_library("GSL")  # the one predicate (bcir.toolchain, BUILD-4)
     if not libs:
         return  # no GSL here -> the real-link path self-skips
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    cc = host_c_compiler()
+    if not cc:
+        return  # no compiler visible here (a test tier that hides the toolchain)
     data = [2.5, -1.0, 3.0, 4.5, 0.0, -2.0, 1.0, 6.0, 3.5, -0.5]
     for kind in GSL_STATS:
         ref = stats_reference(data, kind)

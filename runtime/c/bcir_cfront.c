@@ -9723,8 +9723,10 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.ptrsub")){IND();w+=snprintf(o+EO,on-EO,"%s -= %s;\n",rname(f,cl->wr[0],a),rname(f,cl->rd[1],b));continue;}  /* pointer p -= n */
     if(!strcmp(cl->op,"c.break")){IND();w+=snprintf(o+EO,on-EO,"break;\n");continue;}
     if(!strcmp(cl->op,"c.switch")){IND();w+=snprintf(o+EO,on-EO,"switch (%s) {\n",rname(f,cl->rd[0],a));depth++;continue;}
-    if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+EO,on-EO,"case %s:\n",cl->op+7);continue;}  /* a real case label */
-    if(!strcmp(cl->op,"c.default")){IND();w+=snprintf(o+EO,on-EO,"default:\n");continue;}
+    /* a case label and `default:` end in a null statement: the block item after one is usually a declaration, and
+     * until C23 a label labels a statement, which a declaration is not (the oracle's `_walk`, CF-CASELABEL) */
+    if(!strncmp(cl->op,"c.case:",7)){IND();w+=snprintf(o+EO,on-EO,"case %s: ;\n",cl->op+7);continue;}  /* a real case label */
+    if(!strcmp(cl->op,"c.default")){IND();w+=snprintf(o+EO,on-EO,"default: ;\n");continue;}
     if(!strcmp(cl->op,"c.endswitch")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
     if(!strcmp(cl->op,"c.continue")){IND();
       w+=snprintf(o+EO,on-EO,"goto %s;\n",cont_label(f,own_cont,nls?lstk[nls-1]:0,cb,sizeof cb));continue;}

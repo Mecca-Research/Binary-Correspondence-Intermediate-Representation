@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # bcir_cc: bcir-cc compiler driver: compile a driver (sibling header) + emit artifacts
 #
-# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: the gate compiles
-# them its own way and calls this script; the CMake project builds them from runtime/manifest.json
-# and runs this script as the `c-section-bcir_cc` CTest entry. The body is the gate's section text
-# moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and
-# tools/build/section_parity.py holds the two builds' outputs byte-identical. The driver's build
-# stays in the gate with its other compile lines.
+# One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
+# them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
+# CMake project builds them from the same manifest and runs this script as the `c-section-bcir_cc`
+# CTest entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md),
+# so the two run one text, and tools/build/section_parity.py holds the two builds' outputs
+# byte-identical.
 #
 #   usage: bcir_cc.sh <bcir-cc>
 set -uo pipefail

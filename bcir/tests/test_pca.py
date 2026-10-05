@@ -30,7 +30,7 @@ import shutil
 import subprocess
 import tempfile
 
-from bcir.toolchain import host_link_args
+from bcir.toolchain import host_c_compiler, host_link_args, optional_library
 
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.pca import (
@@ -44,27 +44,6 @@ from bcir.kbcir.pca import (
 )
 from bcir.kbcir.precision import quantization_error_bound
 from bcir.lower.c_kernel import emit_lapack_eigh_c
-
-
-def _lapack_link():
-    """A LAPACK lib flag that links (with lapacke.h present), or None (the real-LAPACK path self-skips)."""
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    if not cc:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write(
-            "#include <lapacke.h>\nint main(void){return (int)LAPACK_ROW_MAJOR*0;}\n"
-        )
-        for lib in (["-llapacke", "-llapack"], ["-llapacke"], ["-llapack"]):
-            if (
-                subprocess.run(
-                    [cc, src, *lib, "-o", os.path.join(d, "p")], capture_output=True
-                ).returncode
-                == 0
-            ):
-                return lib
-    return None
 
 
 def _axis_dataset(m: int, axis, spread: float, jitter: float, seed: int):
@@ -367,10 +346,12 @@ def test_fallback_recovers_a_hand_built_diagonal_spectrum():
 
 
 def test_linked_lapack_path_agrees_when_lapack_is_present():
-    libs = _lapack_link()
+    libs = optional_library("LAPACKE")  # the one predicate (bcir.toolchain, BUILD-4)
     if not libs:
         return  # no LAPACK here -> the real-link path self-skips
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    cc = host_c_compiler()
+    if not cc:
+        return  # no compiler visible here (a test tier that hides the toolchain)
     m, n = 12, 3
     scales = [3.0, 2.0, 1.0]
     patterns = [[math.cos((j + 1) * (i + 0.5) * math.pi / m) for i in range(m)] for j in range(n)]

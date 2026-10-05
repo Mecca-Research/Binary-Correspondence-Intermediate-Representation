@@ -2,11 +2,12 @@
 #
 # `ctest -j 2` is the bounded local run; every heavy gate declares PROCESSORS 2 so two of them
 # never run at once, as AGENTS.md requires. Labels:
-#   build     the manifest reconciliation, the dependency index, the build-parity gate and the
-#             section-parity gate (`ctest --preset build`)
+#   build     the manifest reconciliation, the dependency index, the build-parity gate, the
+#             section-parity gate and the install gate (`ctest --preset build`)
 #   section   the gate sections that moved into tools/c/sections/, over the harnesses built here
 #   python    the oracle's quick tier
-#   shell     the shell gates, wrapped as they are until their sections migrate (BUILD-2)
+#   shell     the shell gates, wrapped as they are: c-runtime, the gates it delegates to (one entry
+#             each, from the manifest's `delegated`), the cfront sanitizer and the fuzzers
 #   c / cpp / fuzz / mlir / docs   what each gate is about
 # CC/CXX are handed to the shell gates from the configured compilers, so `cmake --preset clang`
 # followed by `ctest` runs them under the same compiler the targets were built with.
@@ -34,17 +35,50 @@ add_test(NAME build-deps-index
          COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/manifest.py" --deps-index "${CMAKE_BINARY_DIR}/bcir-deps.json"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(build-deps-index PROPERTIES LABELS "build" TIMEOUT 60)
-add_test(NAME build-parity
-         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/build_parity.py"
-                 --bcir-cc "$<TARGET_FILE:bcir-cc>" --cc "${CMAKE_C_COMPILER}"
+# The pins (BUILD-8): the tools this tree builds with are the tools it was configured with.
+add_test(NAME build-pins
+         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/pins.py"
+                 --deps-index "${CMAKE_BINARY_DIR}/bcir-deps.json"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 900)
+set_tests_properties(build-pins PROPERTIES LABELS "build" TIMEOUT 300)
+# The parity gates hold the CMake build to BCIR Make's (BUILD-8), the build tools/c/check_runtime.sh
+# runs its sections over: build-parity bcir-cc over the corpus, build-section-parity every section.
+# They share one BCIR Make build under this tree, one gate at a time (a rerun over an unchanged tree
+# runs nothing). A BCIRfile names repo-relative paths, so the two are registered only when this
+# tree is inside the source tree, as the presets put it.
+file(RELATIVE_PATH _make_parity "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/bcir-make-parity")
+set(_make_parity_ok TRUE)
+if(_make_parity MATCHES "^\\.\\./")
+  set(_make_parity_ok FALSE)
+  message(STATUS "BCIR: build-parity and build-section-parity are not registered: the build tree is outside the source tree")
+endif()
+set(_make_parity_args --make-dir "${_make_parity}" --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}")
+if(_make_parity_ok)
+  add_test(NAME build-parity
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/build_parity.py"
+                   --bcir-cc "$<TARGET_FILE:bcir-cc>" ${_make_parity_args}
+           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800
+                       RESOURCE_LOCK bcir-make-parity)
+endif()
+
+# --- build: the install gate (BUILD-3) -- the configured build installed into a scratch prefix and an
+# out-of-tree consumer built against it with find_package(BCIR); the harness it rebuilds must give
+# its section the same output as the tree's own build of it ---
+if(BCIR_BUILD_HARNESSES)
+  add_test(NAME build-install
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/install_consumer.py"
+                   --build-dir "${CMAKE_BINARY_DIR}"
+           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(build-install PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1200)
+endif()
 
 # --- section: the gate sections that moved into tools/c/sections/, over the binaries built here ---
-# Each script is the section's own text (tools/c/check_runtime.sh calls the same file over the
-# binaries it compiles), so the entry and the gate judge one thing; build-section-parity holds the
-# two builds' outputs byte-identical. A section's binaries are manifest harnesses, variants or
-# tools; a section that compiles what a tool emits uses CC, the compiler configured here.
+# Each script is the section's own text (BCIR Make runs the same file as a task over the binaries
+# it builds, and tools/c/check_runtime.sh shows that task's verdict), so the entry and the gate
+# judge one thing; build-section-parity holds the two builds' outputs byte-identical. A section's
+# binaries are manifest harnesses, variants, tools or kernels; a section that compiles what a tool
+# emits uses CC, the compiler configured here; a compiler-only section takes no binary.
 if(BCIR_BUILD_HARNESSES)
   set(_section_binaries "")
   foreach(_sec IN LISTS BCIR_MANIFEST_sections)
@@ -80,25 +114,62 @@ if(BCIR_BUILD_HARNESSES)
   foreach(_u IN LISTS _unbuilt_variants)
     list(APPEND _parity_unbuilt --unbuilt "${_u}")
   endforeach()
-  add_test(NAME build-section-parity
-           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
-                   --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --tool-dir "${CMAKE_BINARY_DIR}/runtime/c"
-                   --cc "${CMAKE_C_COMPILER}"
-                   ${_parity_unbuilt}
+  if(_make_parity_ok)
+    add_test(NAME build-section-parity
+             COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
+                     --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --tool-dir "${CMAKE_BINARY_DIR}/runtime/c"
+                     ${_make_parity_args} ${_parity_unbuilt}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 2400
+                         RESOURCE_LOCK bcir-make-parity)
+  endif()
+endif()
+
+# --- build: the twin of BCIR Make (BUILD-8) -- bcir-make (runtime/c/bcir_make.c) judges and plans a
+# generated corpus of BCIRfiles byte for byte as the oracle does (tools/build/make_parity.py) ---
+add_test(NAME build-make-parity
+         COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_parity.py"
+                 --twin "$<TARGET_FILE:bcir-make>"
+         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+set_tests_properties(build-make-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
+
+# --- build: BCIR Make (BUILD-7) -- bcir-make builds the C rails from the manifest's BCIRfile and runs
+# the sections as tasks: every target runs and passes, a no-change second run executes nothing, each
+# section's verdict is its shell run's, and a one-unit edit executes exactly the edited unit's
+# dependents (tools/build/make_gate.py). A BCIRfile names repo-relative paths, so its outputs go
+# under the build tree only when that tree is inside the source tree, as the presets put it. ---
+file(RELATIVE_PATH _make_out "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/bcir-make-gate")
+if(BCIR_BUILD_HARNESSES AND NOT _make_out MATCHES "^\\.\\./")
+  add_test(NAME build-make
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_gate.py"
+                   --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}" --out-dir "${_make_out}"
            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-  set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
+  set_tests_properties(build-make PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 3600)
+elseif(BCIR_BUILD_HARNESSES)
+  message(STATUS "BCIR: build-make is not registered: the build tree is outside the source tree")
 endif()
 
 # --- python: the oracle's quick tier (bounded, toolchain-hidden) ---
+# BCIR_DEPS_INDEX: a harness that asks what the host has (bcir.toolchain.optional_library) reads
+# the configure's answers from this tree's index instead of probing, so the two cannot disagree
+# (BUILD-4).
 add_test(NAME python-quick
          COMMAND "${BCIR_PYTHON}" -m bcir.tests.run_all --tier quick -j 2
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOUT 1800)
+set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOUT 1800
+                     ENVIRONMENT "BCIR_DEPS_INDEX=${CMAKE_BINARY_DIR}/bcir-deps.json")
 
-# --- shell: the gates as they are (BUILD-2 migrates their sections) ---
-bcir_add_shell_gate(c-runtime tools/c/check_runtime.sh LABELS "c" ENV "BCIR_SKIP_CFRONT_SANITIZE=1")
-bcir_add_shell_gate(c-memory-discipline tools/c/check_memory_discipline.sh LABELS "c" TIMEOUT 900)
-bcir_add_shell_gate(cpp-handoff tools/cpp/check_handoff.sh LABELS "cpp" TIMEOUT 900)
+# --- shell: the gates as they are ---
+# c-runtime runs tools/c/check_runtime.sh without the gates it delegates to: each of those is an entry
+# of its own here, read from the manifest's `delegated`, so `ctest` runs every one once (BUILD-2j;
+# M16 of tools/build/manifest.py holds the gate, the manifest and this file in step). The cfront
+# sanitizer is skipped by its own switch: on Clang it is the cfront-sanitize entry below.
+bcir_add_shell_gate(c-runtime tools/c/check_runtime.sh LABELS "c"
+                    ENV "BCIR_SKIP_CFRONT_SANITIZE=1" "BCIR_SKIP_DELEGATED_GATES=1")
+foreach(_gate IN LISTS BCIR_MANIFEST_delegated)
+  bcir_add_shell_gate(${_gate} ${BCIR_delegated_${_gate}_SCRIPT} LABELS "${BCIR_delegated_${_gate}_LABELS}"
+                      TIMEOUT 1800)
+endforeach()
 if(CMAKE_C_COMPILER_ID MATCHES "Clang")
   bcir_add_shell_gate(cfront-sanitize tools/c/sanitize_cfront.sh LABELS "c" TIMEOUT 1800
                       ENV "SANITIZE_SKIP_VALGRIND=1" "SANITIZE_ENGINES_PARALLEL=1")
@@ -115,6 +186,21 @@ if(TARGET bcir-opt)
     bcir_add_shell_gate(${_name} ${_script} LABELS "mlir" TIMEOUT 1800 ENV "BCIR_OPT=$<TARGET_FILE:bcir-opt>")
   endforeach()
   bcir_add_shell_gate(mlir-irdl-corpus tools/irdl/check_corpus.sh LABELS "mlir" TIMEOUT 600)
+  # BUILD-5: bcir-opt's lit suite -- every fixture's own RUN lines, against this bcir-opt and the
+  # FileCheck and mlir-opt of its LLVM (mlir/lit.cfg.py refuses a missing tool or a mixed major).
+  if(BCIR_HAVE_LIT)
+    add_test(NAME mlir-lit
+             COMMAND "${BCIR_PYTHON}" "${BCIR_LIT}" -sv -j 2
+                     --param "bcir_opt=$<TARGET_FILE:bcir-opt>" --param "filecheck=${BCIR_FILECHECK}"
+                     --param "mlir_opt=${BCIR_MLIR_OPT}" --param "exec_root=${CMAKE_BINARY_DIR}/mlir-lit"
+                     "${CMAKE_SOURCE_DIR}/mlir")
+    # lit runs two workers of its own, so CTest counts the entry as two of its two
+    set_tests_properties(mlir-lit PROPERTIES LABELS "mlir" PROCESSORS 2 TIMEOUT 1800)
+  elseif(BCIR_REQUIRE_LIT)
+    message(FATAL_ERROR "BCIR_REQUIRE_LIT=ON, but bcir-opt's lit suite cannot run here:${BCIR_LIT_WHY}")
+  else()
+    message(STATUS "BCIR: mlir-lit is not registered:${BCIR_LIT_WHY}")
+  endif()
 endif()
 
 # --- docs governance ---

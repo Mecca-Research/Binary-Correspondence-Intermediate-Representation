@@ -1,0 +1,25 @@
+# The BCIR package (BUILD-3, docs/BCIR_BUILD_ROADMAP.md): find_package(BCIR) from an installed tree.
+#
+# Imported targets: BCIR::<library> for every library of runtime/manifest.json (and the C++ seam's
+# libraries when the install carries them), BCIR::<tool> for its tools (bcir-cc, the benches, the
+# llama CLI). A library's include directory is <prefix>/include/bcir, so a source that includes
+# "bcir_runtime.h", as the harnesses do, compiles against the package unchanged.
+#
+#   BCIR_VERSION        the package version (pyproject.toml's)
+#   BCIR_LIBRARIES      the exported library names, without the BCIR:: namespace
+#   BCIR_TOOLS          the exported tool names, without the namespace
+#   BCIR_INCLUDE_DIRS   <prefix>/include/bcir
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+# The libraries that publish a thread dependency carry Threads::Threads in their interface.
+if(@BCIR_EXPORTS_THREADS@)
+  find_dependency(Threads)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/BCIRTargets.cmake")
+
+set(BCIR_LIBRARIES @BCIR_EXPORTED_LIBRARIES@)
+set(BCIR_TOOLS @BCIR_EXPORTED_TOOLS@)
+set_and_check(BCIR_INCLUDE_DIRS "@PACKAGE_BCIR_INSTALL_INCLUDEDIR@")
+check_required_components(BCIR)

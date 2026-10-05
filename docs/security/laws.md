@@ -1324,8 +1324,10 @@ survives verbatim only as `realize_reference`, which only the parity gate reads,
 and that gate holds the two to identical plans. The native planner shares one
 source list between the gate and the harness (`kplan_sources` /
 `planner_fixtures.C_UNITS`, read out of both files by
-`test_the_gate_and_the_harness_link_the_same_sources`), and one UTF-8 predicate
-with the runtime (`bcir_utf8_valid`, made public for the op table).
+`test_the_gate_and_the_harness_link_the_same_sources`; since BUILD-8 the gate's
+list is the manifest closure BCIR Make links, which the test reads through
+`bcir/tests/gate_links.py`), and one UTF-8 predicate with the runtime
+(`bcir_utf8_valid`, made public for the op table).
 S4-B instance (2026-09-24): an incremental mechanism is a second derivation of a
 full one, which is exactly where second spellings are born. Five were avoided, and
 one was found:

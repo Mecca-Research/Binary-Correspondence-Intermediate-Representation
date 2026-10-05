@@ -39,6 +39,7 @@ bcir-bundle = "bcir.abi.artifact_tool:main"
 bcir-registry = "bcir.registry_tool:main"
 bcir-model-assess = "bcir.frontends.models.assess_tool:main"
 bcir-asn1c = "bcir.frontends.asn1.__main__:main"
+bcir-make = "bcir.make.__main__:main"
 bcir-ham-plan = "bcir.kbcir.ham_tool:main"
 bcir-performance-audit = "bcir.performance_audit:main"
 bcir-tmsao-audit = "bcir.performance_audit:main_compat"   # alias; prints that it is not a TMSAO certificate
@@ -86,7 +87,9 @@ include = ["bcir*"]
 line-length = 100
 target-version = "py311"
 include = ["*.py", "*.pyi"]
-extend-exclude = ["build", "training/llvm/dataset"]
+# Anchored at the root: a bare "build" names every directory called build, and so skipped
+# tools/build -- the build tooling -- in every lint and format check.
+extend-exclude = ["./build", "training/llvm/dataset"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP"]
@@ -103,8 +106,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# lit injects `config` into its configuration module; the name is defined by the runner.
+# lit injects `config` and `lit_config` into its configuration module; the runner defines them.
 "training/llvm/tests/lit.cfg.py" = ["F821"]
+"mlir/lit.cfg.py" = ["F821"]
 
 [tool.ruff.format]
 quote-style = "double"

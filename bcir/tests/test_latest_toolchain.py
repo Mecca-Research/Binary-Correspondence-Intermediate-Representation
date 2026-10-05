@@ -269,6 +269,59 @@ def test_the_rule_is_stated_where_agents_and_ci_read_it():
     assert f"add_llvm_apt_repo.sh {tool.LLVM_MAJOR}" in cmake and "BCIR_REQUIRE_TSAN=ON" in cmake
 
 
+def test_the_analyzer_leg_fails_on_any_diagnostic():
+    """tools/c/analyze_hosted.sh holds the one list of hosted units that CI's two analyzer steps and
+    the `analyze` leg run. `--analyze` reports its findings on stderr and still exits 0, so a unit
+    with any diagnostic fails the script, as does one whose analysis exits nonzero or never ran; a
+    clean run passes, and a missing clang or a worker count that is no count is UNUSABLE (2),
+    never a pass (L1, L2). The clang here is a stand-in, so nothing is analysed for real."""
+    bash = shutil.which("bash")
+    if (
+        bash is None
+        or subprocess.run([bash, "-c", "echo ok"], capture_output=True).stdout != b"ok\n"
+    ):
+        return  # no POSIX shell here (a Windows runner's bash is the WSL launcher)
+    script = _ROOT / "tools" / "c" / "analyze_hosted.sh"
+    workflow = (_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert workflow.count("bash tools/c/analyze_hosted.sh") == 2, "both CI analyzer steps run it"
+    inline = [ln for ln in workflow.splitlines() if "--analyze" in ln and "#" not in ln]
+    assert not inline, f"ci.yml runs the analyzer over a list of its own: {inline}"
+    with tempfile.TemporaryDirectory() as tmp:
+        clang = Path(tmp) / "clang"
+
+        def run(body: str, **env: str) -> subprocess.CompletedProcess:
+            clang.write_text(
+                '#!/bin/sh\ncase "$1" in --version) echo "stand-in clang 1"; exit 0 ;; esac\n'
+                + body,
+                encoding="utf-8",
+                newline="\n",
+            )
+            clang.chmod(0o755)
+            return subprocess.run(
+                [bash, str(script)],
+                env={"PATH": "/usr/bin:/bin", "CLANG": str(clang), **env},
+                capture_output=True,
+                timeout=120,
+            )
+
+        clean = run("exit 0\n")
+        assert clean.returncode == 0, clean
+        assert re.search(rb"analyze-hosted: PASS \(\d+ units", clean.stdout), clean.stdout
+        noisy = run('case "$*" in *bcir_make.c*) echo "warning: a finding" >&2 ;; esac\nexit 0\n')
+        assert noisy.returncode == 1 and b"runtime/c/bcir_make.c" in noisy.stderr, noisy
+        assert b"a finding" in noisy.stderr and b"bcir_cfront.c" not in noisy.stderr, noisy
+        assert run("exit 3\n").returncode == 1
+        assert run("exit 0\n", ANALYZE_JOBS="0").returncode == 2
+        assert run("exit 0\n", ANALYZE_JOBS="two").returncode == 2
+        absent = subprocess.run(
+            [bash, str(script)],
+            env={"PATH": "/usr/bin:/bin", "CLANG": str(Path(tmp) / "absent")},
+            capture_output=True,
+            timeout=60,
+        )
+        assert absent.returncode == 2 and b"UNUSABLE" in absent.stderr, absent
+
+
 def test_the_check_refuses_what_it_cannot_run():
     """A usage error is exit 2 before any leg runs: an unknown leg is not silently dropped (the
     run would otherwise pass while judging less than asked)."""

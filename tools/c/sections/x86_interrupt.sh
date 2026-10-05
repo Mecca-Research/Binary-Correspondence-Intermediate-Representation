@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # x86_interrupt: x86 interrupt-frame ABI header (C11 + C23)
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them (the harness once per C standard the header promises, from the real source) and
-# calls this script; the CMake project builds the same binaries from runtime/manifest.json (the
-# harness and its C11 `variant`) and runs this script as the `c-section-x86_interrupt` CTest
-# entry. The body is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so
-# the two run one text, and tools/build/section_parity.py holds the two builds' outputs
-# byte-identical.
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them (the harness once per C standard the header promises, from the real source) and runs
+# this script as a task, whose verdict the gate shows; the CMake project builds the same binaries
+# from the same manifest (the harness and its C11 `variant`) and runs this script as the
+# `c-section-x86_interrupt` CTest entry. The body is the gate's section text moved here (BUILD-2,
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical.
 #
 #   usage: x86_interrupt.sh <test_x86_interrupt_c11> <test_x86_interrupt>
 set -uo pipefail

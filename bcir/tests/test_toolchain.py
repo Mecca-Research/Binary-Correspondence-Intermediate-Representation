@@ -1,11 +1,18 @@
 """Resident-host link adaptation and coherent versioned LLVM discovery."""
 
 import os
+import sys
 from pathlib import Path
 import stat
 import tempfile
 from unittest import mock
 
+import functools
+import json
+import shutil
+import subprocess
+
+from bcir import toolchain
 from bcir.toolchain import host_bash, host_link_args, resolve_llvm_tools
 
 
@@ -176,3 +183,194 @@ def test_llvm_resolution_reports_attempted_names():
         r = _resolve("llc", pipeline="codegen", env={"PATH": d})
         assert not r.ok and r.missing == ("llc",)
         assert "attempted llc" in r.message
+
+
+# --- the host's dependencies: one predicate for every harness and the configure (BUILD-4) ---------
+
+
+def _index(**overrides) -> dict:
+    rows = [
+        {"name": "PYTHON3", "found": True, "detail": ""},
+        {"name": "THREADS", "found": True, "detail": ""},
+        {"name": "MLIR", "found": False, "detail": ""},
+    ]
+    for name in toolchain.OPTIONAL_LIBRARIES:
+        link = overrides.get(name)
+        rows.append(
+            {"name": name, "found": link is not None, "detail": "", "link": list(link or [])}
+        )
+    return {
+        "schema": toolchain.DEPS_SCHEMA,
+        "c_compiler": "GNU 13.3.0",
+        "cxx_compiler": "GNU 13.3.0",
+        "system": "Linux x86_64",
+        "dependencies": rows,
+        "tools": [
+            {"name": n, "path": f"/usr/bin/{n}", "identity": "sha256:" + "0" * 64}
+            for n in toolchain.DEPS_TOOLS
+        ],
+    }
+
+
+def _no_probe(*_args, **_kwargs):
+    raise AssertionError("the index was set, and a probe ran anyway")
+
+
+def test_with_an_index_a_harness_takes_the_configures_answer_and_never_probes():
+    """The index's row is the answer: found with its flags, absent as None -- and nothing is probed
+    either way, so a harness cannot disagree with the configure that wrote the index."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "bcir-deps.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(_index(LAPACKE=["-llapacke", "-llapack"]), handle)
+        env = {toolchain.DEPS_INDEX_ENV: path}
+        got = toolchain.optional_library("LAPACKE", env=env, run=_no_probe)
+        assert got == ("-llapacke", "-llapack"), got
+        assert toolchain.optional_library("CERF", env=env, run=_no_probe) is None
+
+
+def test_an_index_missing_a_row_is_refused_and_never_answered_by_a_probe():
+    """The roadmap's gate: inject a missing row. The harness raises; it does not fall back to a
+    probe of its own, which is the disagreement the index exists to rule out."""
+    data = _index()
+    data["dependencies"] = [r for r in data["dependencies"] if r["name"] != "GSL"]
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "bcir-deps.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        for broken in (path, os.path.join(d, "absent.json")):
+            try:
+                toolchain.optional_library(
+                    "GSL", env={toolchain.DEPS_INDEX_ENV: broken}, run=_no_probe
+                )
+            except toolchain.DepsIndexError:
+                continue
+            raise AssertionError(f"{broken} answered")
+        # the refusal names the row, not only the file
+        try:
+            toolchain.load_deps_index(path)
+        except toolchain.DepsIndexError as exc:
+            assert "GSL is not recorded" in str(exc), exc
+        else:
+            raise AssertionError("an index without its GSL row loaded")
+
+
+def test_the_index_schema_refuses_each_inconsistent_row():
+    good = _index(FFTW3F=["-lfftw3f"])
+    assert toolchain.deps_index_problems(good) == []
+    faults = {
+        "FFTW3F is found=True": lambda rows: [
+            {**r, "link": []} if r["name"] == "FFTW3F" else r for r in rows
+        ],
+        "SLEEF is found=False": lambda rows: [
+            {**r, "link": ["-lsleef"]} if r["name"] == "SLEEF" else r for r in rows
+        ],
+        "CERF link is not a list of flags": lambda rows: [
+            {**r, "link": ["cerf"]} if r["name"] == "CERF" else r for r in rows
+        ],
+        "row 0 is not": lambda rows: [{"name": "PYTHON3", "found": True}, *rows[1:]],
+        "recorded twice": lambda rows: [*rows, rows[0]],
+        "MLIR is not recorded": lambda rows: [r for r in rows if r["name"] != "MLIR"],
+    }
+    for what, fault in faults.items():
+        problems = toolchain.deps_index_problems(
+            {**good, "dependencies": fault(good["dependencies"])}
+        )
+        assert any(what in p for p in problems), (what, problems)
+    assert toolchain.deps_index_problems({**good, "schema": "v0"})
+    assert toolchain.deps_index_problems([]) == ["the index is not a JSON object"]
+
+
+def test_the_compiler_pick_honours_cc_and_never_substitutes():
+    """$CC, when set, is the compiler or there is none; unset, clang then gcc then cc."""
+    found = {"clang": "/opt/bin/clang", "gcc": "/usr/bin/gcc", "cc": "/usr/bin/cc", "tcc": "/x/tcc"}
+    with mock.patch.object(shutil, "which", side_effect=found.get):
+        assert toolchain.host_c_compiler(env={}) == "/opt/bin/clang"
+        assert toolchain.host_c_compiler(env={"CC": "tcc"}) == "/x/tcc"
+        assert toolchain.host_c_compiler(env={"CC": "absent-cc"}) is None
+    with mock.patch.object(shutil, "which", side_effect={"gcc": "/usr/bin/gcc"}.get):
+        assert toolchain.host_c_compiler(env={}) == "/usr/bin/gcc"
+    with mock.patch.object(shutil, "which", return_value=None):
+        assert toolchain.host_c_compiler(env={}) is None
+        assert toolchain.optional_library("SLEEF", env={}, run=_no_probe) is None
+
+
+def test_the_probe_links_a_real_library_and_resolves_its_symbol():
+    """Without an index the predicate probes, and the probe CALLS a function, so a library file that
+    lacks the symbol is no library: a fabricated libcerf with erfcxf links, one without it does not.
+    (The old FFTW probe only declared fftwf_execute, so any libfftw3 at all passed it.)"""
+    cc = toolchain.host_c_compiler()
+    if cc is None:
+        return  # no compiler visible here (a test tier that hides the toolchain)
+    if os.name != "posix":
+        return  # `-lcerf` finds libcerf.a by the POSIX linker's convention; the libraries are POSIX's
+    lib = toolchain.OPTIONAL_LIBRARIES["CERF"]
+    for symbol, links in (("erfcxf", True), ("erfcx_other", False)):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "cerf.h"), "w", encoding="utf-8") as handle:
+                handle.write("float erfcxf(float x);\n")
+            src = os.path.join(d, "cerf.c")
+            with open(src, "w", encoding="utf-8") as handle:
+                handle.write(f"float {symbol}(float x) {{ return x; }}\n")
+            obj = os.path.join(d, "cerf.o")
+            assert subprocess.run([cc, "-c", src, "-o", obj], capture_output=True).returncode == 0
+            ar = shutil.which("ar") or shutil.which("llvm-ar")
+            if ar is None:
+                return
+            assert subprocess.run([ar, "rcs", os.path.join(d, "libcerf.a"), obj]).returncode == 0
+            run = functools.partial(
+                subprocess.run, env={**os.environ, "CPATH": d, "LIBRARY_PATH": d}
+            )
+            flags, detail = toolchain.probe_library(lib, cc, run)
+            assert (flags == ("-lcerf",)) is links, (symbol, flags, detail)
+
+
+def test_the_configures_question_is_the_harness_question():
+    """`python -m bcir.toolchain probe-libraries`, which the configure runs, answers each library
+    with what probe_library answers, and refuses a compiler that is not there."""
+    cc = toolchain.host_c_compiler()
+    if cc is None:
+        return
+    out = subprocess.run(
+        [sys.executable, "-m", "bcir.toolchain", "probe-libraries", "--cc", cc],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(toolchain.__file__).resolve().parents[1]),
+    )
+    assert out.returncode == 0, out.stderr
+    answers = json.loads(out.stdout)
+    assert sorted(answers) == sorted(toolchain.OPTIONAL_LIBRARIES)
+    for name, lib in toolchain.OPTIONAL_LIBRARIES.items():
+        flags, _detail = toolchain.probe_library(lib, cc)
+        assert answers[name]["found"] is (flags is not None), name
+        assert answers[name]["link"] == list(flags or ()), name
+    refused = subprocess.run(
+        [sys.executable, "-m", "bcir.toolchain", "probe-libraries", "--cc", "no-such-cc-anywhere"],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(toolchain.__file__).resolve().parents[1]),
+    )
+    assert refused.returncode == 2 and "UNUSABLE" in refused.stderr, refused
+
+
+def test_the_index_pins_each_tool_once_by_an_absolute_path_and_its_bytes():
+    """BUILD-8's pins: cc, cxx, ar and python, each once, by an absolute path and a sha256 identity;
+    an index without them pins nothing, and each malformed row is a finding that names it."""
+    good = _index()
+    assert toolchain.deps_index_problems(good) == []
+    assert toolchain.deps_pins(good)["cc"] == ("/usr/bin/cc", "sha256:" + "0" * 64)
+    faults = {
+        "the index pins no tool": lambda pins: None,
+        "tool ar is pinned 0 times": lambda pins: [p for p in pins if p["name"] != "ar"],
+        "tool cc is pinned 2 times": lambda pins: [*pins, pins[0]],
+        "not an absolute path": lambda pins: [{**pins[0], "path": "bin/cc"}, *pins[1:]],
+        "not sha256:<64 hex>": lambda pins: [{**pins[0], "identity": "sha256:ABC"}, *pins[1:]],
+        "which is none of": lambda pins: [*pins, {"name": "ld", "path": "/x", "identity": "y"}],
+        "is not {name, path, identity}": lambda pins: [{"name": "cc"}, *pins[1:]],
+    }
+    for what, fault in faults.items():
+        bad = {**good, "tools": fault(good["tools"])}
+        if bad["tools"] is None:
+            del bad["tools"]
+        problems = toolchain.deps_index_problems(bad)
+        assert any(what in p for p in problems), (what, problems)

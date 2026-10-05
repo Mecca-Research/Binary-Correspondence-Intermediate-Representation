@@ -10,6 +10,8 @@ include_guard(GLOBAL)
 
 set(_bcir_deps_rows "")
 
+# An optional library's row also carries its link flags (ARGN): the flag set the probe linked
+# with, empty when it is absent (BUILD-4).
 function(_bcir_dep_record name found detail)
   set(BCIR_HAVE_${name} ${found} PARENT_SCOPE)
   # JSON spells the verdict true/false; CMake's ON/OFF in its place made the index unreadable
@@ -26,7 +28,21 @@ function(_bcir_dep_record name found detail)
   string(REGEX REPLACE "[\r\n\t]+" " " detail "${detail}")
   string(REPLACE "\\" "/" detail "${detail}")
   string(REPLACE "\"" "'" detail "${detail}")
-  set(_row "    {\"name\": \"${name}\", \"found\": ${_json_found}, \"detail\": \"${detail}\"}")
+  # A semicolon would split the row in the list the rows are kept in, and the JSON join would put a
+  # raw line feed inside the string (found by D1 on a probe's "tried -lfftw3f; -lfftw3"); any byte
+  # outside printable ASCII is no JSON string either. One rule for every caller (L14).
+  string(REPLACE ";" "," detail "${detail}")
+  string(REGEX REPLACE "[^ -~]" "?" detail "${detail}")
+  set(_link_json "")
+  if(_bcir_dep_link_row)
+    set(_flags "")
+    foreach(_flag IN LISTS ARGN)
+      list(APPEND _flags "\"${_flag}\"")
+    endforeach()
+    list(JOIN _flags ", " _flags)
+    set(_link_json ", \"link\": [${_flags}]")
+  endif()
+  set(_row "    {\"name\": \"${name}\", \"found\": ${_json_found}, \"detail\": \"${detail}\"${_link_json}}")
   set(_bcir_deps_rows "${_bcir_deps_rows};${_row}" PARENT_SCOPE)
   message(STATUS "BCIR dependency ${name}: ${_state}${detail}")
 endfunction()
@@ -58,6 +74,54 @@ else()
   _bcir_dep_record(MLIR OFF " (set MLIR_DIR to an MLIRConfig.cmake to build bcir-opt)")
 endif()
 
+# lit, FileCheck and mlir-opt: bcir-opt's lit suite (mlir/lit.cfg.py, BUILD-5) runs each fixture's
+# RUN lines with the FileCheck and mlir-opt of the LLVM the MLIR package belongs to. They are looked
+# for beside it (apt's llvm-N-tools and mlir-N-tools, a conda prefix's libexec/llvm), never on PATH,
+# where another major can sit. lit is version-free Python: beside that LLVM (apt's
+# build/utils/lit/lit.py), else an LLVM lit on PATH (pip's), else the newest apt lit.py. LIT is
+# found when all three are; the row says which is missing, and BCIR_REQUIRE_LIT makes that fatal.
+if(MLIR_FOUND)
+  set(_bcir_llvm_bins "${LLVM_TOOLS_BINARY_DIR}" "${LLVM_TOOLS_BINARY_DIR}/../libexec/llvm"
+                      "/usr/lib/llvm-${LLVM_VERSION_MAJOR}/bin")
+  find_program(BCIR_FILECHECK NAMES FileCheck PATHS ${_bcir_llvm_bins} NO_DEFAULT_PATH)
+  find_program(BCIR_MLIR_OPT NAMES mlir-opt PATHS ${_bcir_llvm_bins} NO_DEFAULT_PATH)
+  find_program(BCIR_LIT NAMES lit.py PATHS "${LLVM_TOOLS_BINARY_DIR}/../build/utils/lit"
+               "/usr/lib/llvm-${LLVM_VERSION_MAJOR}/build/utils/lit" NO_DEFAULT_PATH)
+  if(NOT BCIR_LIT)
+    # A Windows runner's PATH can carry Microsoft's unrelated lit.exe: take a PATH lit only when
+    # it runs under this Python and its banner is LLVM lit's.
+    find_program(_bcir_path_lit NAMES lit llvm-lit)
+    if(_bcir_path_lit)
+      execute_process(COMMAND "${BCIR_PYTHON}" "${_bcir_path_lit}" --version
+                      OUTPUT_VARIABLE _bcir_lit_banner ERROR_VARIABLE _bcir_lit_banner
+                      RESULT_VARIABLE _bcir_lit_rc TIMEOUT 60)
+      if(_bcir_lit_rc EQUAL 0 AND _bcir_lit_banner MATCHES "^lit( version)? [0-9]")
+        set(BCIR_LIT "${_bcir_path_lit}" CACHE FILEPATH "lit, for bcir-opt's lit suite" FORCE)
+      endif()
+    endif()
+  endif()
+  if(NOT BCIR_LIT)
+    file(GLOB _bcir_lits "/usr/lib/llvm-*/build/utils/lit/lit.py")
+    if(_bcir_lits)
+      list(SORT _bcir_lits COMPARE NATURAL ORDER DESCENDING)
+      list(GET _bcir_lits 0 _bcir_lit)
+      set(BCIR_LIT "${_bcir_lit}" CACHE FILEPATH "lit, for bcir-opt's lit suite" FORCE)
+    endif()
+  endif()
+  set(BCIR_LIT_WHY "")
+  foreach(_bcir_tool BCIR_LIT BCIR_FILECHECK BCIR_MLIR_OPT)
+    if(NOT ${_bcir_tool})
+      string(APPEND BCIR_LIT_WHY " no ${_bcir_tool}")
+    endif()
+  endforeach()
+  if(BCIR_LIT_WHY)
+    set(BCIR_LIT_WHY "${BCIR_LIT_WHY} for LLVM ${LLVM_VERSION_MAJOR} (apt's llvm-${LLVM_VERSION_MAJOR}-tools and mlir-${LLVM_VERSION_MAJOR}-tools carry all three)")
+    _bcir_dep_record(LIT OFF "${BCIR_LIT_WHY}")
+  else()
+    _bcir_dep_record(LIT ON " (lit ${BCIR_LIT}, FileCheck ${BCIR_FILECHECK}, mlir-opt ${BCIR_MLIR_OPT})")
+  endif()
+endif()
+
 # ThreadSanitizer: the runtime the ring's sanitizer variants need (runtime/manifest.json). Present
 # means a trivial -fsanitize=thread program builds AND runs here, the predicate of
 # tools/build/sanitizer.py -- the one tools/c/check_runtime.sh asks before it builds the same
@@ -82,36 +146,81 @@ if(BCIR_REQUIRE_TSAN AND NOT BCIR_HAVE_TSAN)
 endif()
 
 # The numeric libraries the twin's link-flag rules name (tools/c/check_runtime.sh #linkflags-*):
-# their presence decides which E-series fallbacks a host can judge natively.
-find_package(PkgConfig QUIET)
-macro(_bcir_optional_lib name lib pkg)
-  set(_found OFF)
-  set(_detail "")
-  if(PKG_CONFIG_FOUND AND NOT "${pkg}" STREQUAL "")
-    pkg_check_modules(BCIR_PC_${name} QUIET ${pkg})
-    if(BCIR_PC_${name}_FOUND)
-      set(_found ON)
-      set(_detail " (${pkg} ${BCIR_PC_${name}_VERSION})")
-    endif()
+# their presence decides which E-series fallbacks a host can judge natively. Asked of the one
+# predicate the Python harnesses use, bcir.toolchain's (BUILD-4): a probe that includes the header
+# and calls a function, so the link must resolve the symbol, under the configured compiler. Each row
+# records the flag set that linked; a harness run with BCIR_DEPS_INDEX at this index reads it
+# instead of probing, so the two cannot disagree (docs/security/laws.md L12, L14).
+set(_bcir_optional_libraries FFTW3F LAPACKE GSL SLEEF CERF)
+set(_bcir_dep_link_row ON)
+set(_bcir_probe_json "")
+if(BCIR_HAVE_PYTHON3)
+  execute_process(
+    COMMAND "${BCIR_PYTHON}" -m bcir.toolchain probe-libraries --cc "${CMAKE_C_COMPILER}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE _bcir_probe_rc OUTPUT_VARIABLE _bcir_probe_json ERROR_VARIABLE _bcir_probe_err
+    OUTPUT_STRIP_TRAILING_WHITESPACE TIMEOUT 600)
+  if(NOT _bcir_probe_rc EQUAL 0)
+    message(FATAL_ERROR "BCIR: the optional-library probe (python -m bcir.toolchain probe-libraries) failed: ${_bcir_probe_err}")
   endif()
-  if(NOT _found)
-    find_library(BCIR_LIB_${name} NAMES ${lib})
-    if(BCIR_LIB_${name})
-      set(_found ON)
-      set(_detail " (${BCIR_LIB_${name}})")
-    endif()
+endif()
+foreach(_name IN LISTS _bcir_optional_libraries)
+  if(NOT _bcir_probe_json)
+    _bcir_dep_record(${_name} OFF " (the probe, bcir.toolchain, needs Python)")
+    continue()
   endif()
-  _bcir_dep_record(${name} ${_found} "${_detail}")
-endmacro()
-_bcir_optional_lib(FFTW3F fftw3f fftw3f)
-_bcir_optional_lib(LAPACKE lapacke lapacke)
-_bcir_optional_lib(GSL gsl gsl)
-_bcir_optional_lib(SLEEF sleef sleef)
-_bcir_optional_lib(CERF cerf libcerf)
+  string(JSON _found ERROR_VARIABLE _err GET "${_bcir_probe_json}" ${_name} found)
+  if(_err)
+    message(FATAL_ERROR "BCIR: the optional-library probe gave no answer for ${_name}: ${_err}")
+  endif()
+  string(JSON _detail GET "${_bcir_probe_json}" ${_name} detail)
+  string(JSON _nflags LENGTH "${_bcir_probe_json}" ${_name} link)
+  set(_flags "")
+  if(_nflags GREATER 0)
+    math(EXPR _last "${_nflags} - 1")
+    foreach(_i RANGE 0 ${_last})
+      string(JSON _flag GET "${_bcir_probe_json}" ${_name} link ${_i})
+      list(APPEND _flags "${_flag}")
+    endforeach()
+  endif()
+  _bcir_dep_record(${_name} ${_found} " (${_detail})" ${_flags})
+endforeach()
+set(_bcir_dep_link_row OFF)
+
+# The pins (BUILD-8): every tool the build and the rails' BCIRfile run, by the path the build runs it
+# by and by the sha256 of the bytes that path reaches (R1, registry-first: a compiler is named by what
+# it is). The path keeps its symlinks: Clang's driver picks C or C++ from the name it is run by. tools/build/pins.py --
+# CTest build-pins -- holds the host to them, so a compiler replaced under a configured tree is a
+# finding, never a silent rebuild with another one; tools/build/bcirfile.py --pins names exactly these.
+set(_bcir_pin_rows "")
+foreach(_bcir_pin IN ITEMS "cc|${CMAKE_C_COMPILER}" "cxx|${CMAKE_CXX_COMPILER}" "ar|${CMAKE_AR}"
+                           "python|${BCIR_PYTHON}")
+  string(FIND "${_bcir_pin}" "|" _bcir_bar)
+  string(SUBSTRING "${_bcir_pin}" 0 ${_bcir_bar} _bcir_pin_name)
+  math(EXPR _bcir_bar "${_bcir_bar} + 1")
+  string(SUBSTRING "${_bcir_pin}" ${_bcir_bar} -1 _bcir_pin_path)
+  if(_bcir_pin_path AND NOT IS_ABSOLUTE "${_bcir_pin_path}")
+    find_program(_bcir_pin_found_${_bcir_pin_name} NAMES "${_bcir_pin_path}")
+    set(_bcir_pin_path "${_bcir_pin_found_${_bcir_pin_name}}")
+  endif()
+  set(_bcir_pin_identity "")
+  set(_bcir_pin_real "")
+  if(_bcir_pin_path AND EXISTS "${_bcir_pin_path}")
+    file(REAL_PATH "${_bcir_pin_path}" _bcir_pin_real)
+    file(SHA256 "${_bcir_pin_real}" _bcir_pin_sha)
+    set(_bcir_pin_identity "sha256:${_bcir_pin_sha}")
+  endif()
+  # An unresolved tool is pinned empty, and D1 (build-deps-index) says so.
+  if(NOT _bcir_pin_identity)
+    set(_bcir_pin_path "")
+  endif()
+  string(APPEND _bcir_pin_rows ",\n    {\"name\": \"${_bcir_pin_name}\", \"path\": \"${_bcir_pin_path}\", \"identity\": \"${_bcir_pin_identity}\"}")
+endforeach()
+string(REGEX REPLACE "^,\n" "" _bcir_pin_rows "${_bcir_pin_rows}")
 
 # The index: one file a harness reads instead of re-probing.
 list(JOIN _bcir_deps_rows ",\n" _bcir_deps_body)
 string(REGEX REPLACE "^,\n" "" _bcir_deps_body "${_bcir_deps_body}")
 file(WRITE "${CMAKE_BINARY_DIR}/bcir-deps.json"
-  "{\n  \"schema\": \"bcir-deps.v1\",\n  \"c_compiler\": \"${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}\",\n  \"cxx_compiler\": \"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\",\n  \"system\": \"${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}\",\n  \"dependencies\": [\n${_bcir_deps_body}\n  ]\n}\n")
+  "{\n  \"schema\": \"bcir-deps.v1\",\n  \"c_compiler\": \"${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}\",\n  \"cxx_compiler\": \"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\",\n  \"system\": \"${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}\",\n  \"dependencies\": [\n${_bcir_deps_body}\n  ],\n  \"tools\": [\n${_bcir_pin_rows}\n  ]\n}\n")
 message(STATUS "BCIR dependency index: ${CMAKE_BINARY_DIR}/bcir-deps.json")

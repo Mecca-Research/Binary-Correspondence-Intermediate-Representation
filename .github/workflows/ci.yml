@@ -264,31 +264,10 @@ jobs:
         run: CLANG=clang-23 SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis with clang 23's analyzer
+        # tools/c/analyze_hosted.sh holds the one list of units, run here, in the clang-18 C
+        # analysis job and by tools/local/check_latest.sh's `analyze` leg; any diagnostic fails it.
         if: matrix.cell == 'analysis'
-        run: |
-          workdir="$(mktemp -d)"
-          trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
-          for source in ${sources}; do
-            (
-              if clang-23 --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
-                   2>"${workdir}/${source}.log"; then
-                [ -s "${workdir}/${source}.log" ] && echo failed > "${workdir}/${source}.rc"
-              else
-                echo failed > "${workdir}/${source}.rc"
-              fi
-            ) &
-          done
-          wait
-          status=0
-          for source in ${sources}; do
-            if [ -f "${workdir}/${source}.rc" ]; then
-              echo "::error::clang-23 --analyze reported diagnostics in runtime/c/${source}" >&2
-              cat "${workdir}/${source}.log" >&2
-              status=1
-            fi
-          done
-          exit "${status}"
+        run: CLANG=clang-23 ANALYZE_JOBS="$(nproc)" bash tools/c/analyze_hosted.sh
 
       - name: Binary trust-boundary fuzz on clang 23 (libFuzzer + ASan/UBSan on all ten decoders, bounded)
         # The deep campaign (500,000 runs per decoder) stays in the clang-18 `c-analysis` job; here
@@ -412,35 +391,12 @@ jobs:
         run: SANITIZE_SKIP_VALGRIND=1 SANITIZE_ENGINES_PARALLEL=1 bash tools/c/sanitize_cfront.sh
 
       - name: Hosted C ownership static analysis
-        # Ten independent whole-file analyses (clang --analyze is single-threaded per TU and
-        # bcir_cfront.c alone dominates), so they fan out across the runner's cores instead of
-        # queueing. Each still fails the gate on a nonzero exit OR on any diagnostic at all --
-        # `--analyze` reports findings on stderr while exiting 0, so the emptiness check is the
-        # part that actually enforces "no ownership diagnostics".
-        run: |
-          workdir="$(mktemp -d)"
-          trap 'rm -rf "${workdir}"' EXIT
-          sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c"
-          for source in ${sources}; do
-            (
-              if clang --analyze -std=c11 -I runtime/c "runtime/c/${source}" -o /dev/null \
-                   2>"${workdir}/${source}.log"; then
-                [ -s "${workdir}/${source}.log" ] && echo failed > "${workdir}/${source}.rc"
-              else
-                echo failed > "${workdir}/${source}.rc"
-              fi
-            ) &
-          done
-          wait
-          status=0
-          for source in ${sources}; do
-            if [ -f "${workdir}/${source}.rc" ]; then
-              echo "::error::clang --analyze reported diagnostics in runtime/c/${source}" >&2
-              cat "${workdir}/${source}.log" >&2
-              status=1
-            fi
-          done
-          exit "${status}"
+        # Eleven independent whole-file analyses (clang --analyze is single-threaded per TU and
+        # bcir_cfront.c alone dominates), fanned out across the runner's cores. Each fails the gate
+        # on a nonzero exit OR on any diagnostic at all -- `--analyze` reports findings on stderr
+        # while exiting 0, so the emptiness check is the part that actually enforces "no ownership
+        # diagnostics". tools/c/analyze_hosted.sh holds the list, which the clang 23 cell runs too.
+        run: CLANG=clang ANALYZE_JOBS="$(nproc)" bash tools/c/analyze_hosted.sh
 
       - name: Binary trust-boundary fuzz (libFuzzer + ASan/UBSan on all ten decoders)
         # StreamPack decoder/executor/encoder, the ETL binary-record decoder, the UART
@@ -1157,11 +1113,11 @@ jobs:
     # The gating MLIR rail tracks the LATEST LLVM/MLIR release (23; 22 stays in the matrix
     # for one release cycle, as the 21->22 move did in PRs #243-#246). Ubuntu's default
     # repos on ubuntu-latest top out near LLVM 18/19, so the toolchain comes from
-    # apt.llvm.org (the llvm.sh helper adds the signed repo). The scripts auto-resolve
-    # the toolchain version-agnostically (build_mlir.sh picks the highest installed
-    # /usr/lib/llvm-*; FileCheck / mlir-opt / mlir-tblgen resolve the same way; the
-    # training grader grades against the LLVM_SUFFIX major), so bumping the major is a
-    # one-line matrix change. The Symbol-container ops (registry / kbcir.plan /
+    # apt.llvm.org (the llvm.sh helper adds the signed repo). bcir-opt builds under the
+    # top-level project's `mlir` preset with MLIR_DIR set from the matrix major, and the
+    # configure takes lit, FileCheck and mlir-opt from beside that LLVM (mlir-tblgen
+    # resolves the same way; the training grader grades against the LLVM_SUFFIX major),
+    # so bumping the major is a one-line matrix change. The Symbol-container ops (registry / kbcir.plan /
     # gem.stream_pack / parse.grammar / fsm.machine / binary.format) carry the
     # SymbolTable trait, satisfying the "symbol's parent must be a SymbolTable"
     # verifier that has only tightened since LLVM 19.
@@ -1203,26 +1159,32 @@ jobs:
       - name: Validate ODS dialect family (mlir-tblgen)
         run: bash tools/wsl/tblgen_check.sh
 
-      - name: Validate IRDL projection round-trip (stock mlir-opt)
-        run: bash tools/irdl/check_corpus.sh
+      - name: Build the compiled bcir-opt under the top-level project (LangRef M3; the mlir preset)
+        # BUILD-5: the law rail builds where the C rails build, as the local check builds it on
+        # MLIR 23 (tools/local/check_latest.sh). This job installed lit, FileCheck and mlir-opt
+        # (llvm-N-tools, mlir-N-tools), so it owns their absence: BCIR_REQUIRE_LIT=ON fails the
+        # configure instead of leaving bcir-opt's lit suite unregistered (docs/security/laws.md L2).
+        env:
+          MLIR_DIR: /usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/mlir
+        run: |
+          cmake --preset mlir -DBCIR_REQUIRE_LIT=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build --preset mlir --target bcir-opt
+          bo="$(find build/cmake-mlir -name bcir-opt -type f -perm -u+x | head -1)"
+          if [ -z "${bo}" ]; then echo "the build made no bcir-opt"; exit 1; fi
+          echo "BCIR_OPT=${GITHUB_WORKSPACE}/${bo}" >> "${GITHUB_ENV}"
 
-      - name: Build the compiled bcir-opt (LangRef M3)
-        run: bash tools/wsl/build_mlir.sh
-
-      - name: Validate pretty ODS examples (bcir-opt + FileCheck)
-        run: bash tools/wsl/check_ods_examples.sh
-
-      - name: Validate Phase-6 passes (verify / promote / lower)
-        run: bash tools/wsl/check_passes.sh
+      - name: The rail's gates as CTest entries (IRDL round-trip, ODS examples, passes, bytecode, lit)
+        # mlir-irdl-corpus (stock mlir-opt), mlir-ods-examples, mlir-passes (verify / promote /
+        # lower), mlir-bytecode (Properties survive text<->bytecode) and mlir-lit, every fixture's
+        # own RUN lines against this bcir-opt (mlir/lit.cfg.py): cmake/BCIRTests.cmake.
+        run: ctest --preset mlir
 
       - name: Malformed-input differential with the compiled rail required
-        # This job just built bcir-opt (build/mlir-build/bin), so here the
+        # This job just built bcir-opt (BCIR_OPT, set above), so here the
         # compiled/python law comparison must actually run - an absent binary
         # fails the step instead of skipping every compiled case.
         run: python3 tools/security/run_malformed_differential.py --require-compiled
-
-      - name: Validate MLIR bytecode round-trip (Properties survive text<->bytecode)
-        run: bash tools/wsl/check_bytecode.sh
 
       - name: Grade training MLIR conversion and LLVM translation tiers (required tools)
         env:

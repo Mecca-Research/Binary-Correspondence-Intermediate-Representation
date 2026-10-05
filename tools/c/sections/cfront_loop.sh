@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # cfront_loop: full C compile->execute loop (cfront -> plan -> hydrate -> exec, no Python)
 #
-# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: the gate
-# compiles them its own way and calls this script; the CMake project builds them from
-# runtime/manifest.json and runs this script as the `c-section-cfront_loop` CTest entry. The body
-# is the gate's section text moved here (BUILD-2, docs/BCIR_BUILD_ROADMAP.md), so the two run one
-# text, and tools/build/section_parity.py holds the two builds' outputs byte-identical. The
-# freestanding compiles of bcir_plan.c and bcir_hydrate.c stay in the gate with the harness build.
+# One section of tools/c/check_runtime.sh, run against harness binaries built elsewhere: BCIR Make
+# builds them from runtime/manifest.json and runs this script as a task, whose verdict the gate
+# shows; the CMake project builds them from the same manifest and runs this script as the
+# `c-section-cfront_loop` CTest entry. The body is the gate's section text moved here (BUILD-2,
+# docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
+# two builds' outputs byte-identical. The freestanding compiles of bcir_plan.c and bcir_hydrate.c
+# are the freestanding section's.
 #
 #   usage: cfront_loop.sh <test_cfront_loop>
 set -uo pipefail

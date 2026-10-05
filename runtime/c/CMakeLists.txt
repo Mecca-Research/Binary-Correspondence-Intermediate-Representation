@@ -7,7 +7,11 @@ foreach(_lib IN LISTS BCIR_MANIFEST_libraries)
   bcir_manifest_paths(_srcs ${BCIR_libraries_${_lib}_SOURCES})
   add_library(${_lib} STATIC ${_srcs})
   bcir_c_target(${_lib})
-  target_include_directories(${_lib} PUBLIC "${BCIR_C_DIR}")
+  # The source directory in the tree, <prefix>/include/bcir once installed (BUILD-3): a consumer's
+  # "bcir_runtime.h" resolves in both, and the version header is the build tree's own.
+  target_include_directories(${_lib} PUBLIC "$<BUILD_INTERFACE:${BCIR_C_DIR}>"
+                             "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>"
+                             "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/bcir>")
   bcir_manifest_link(${_lib} PUBLIC "${BCIR_libraries_${_lib}_LIBRARIES}" "${BCIR_libraries_${_lib}_LINK}")
   bcir_manifest_options(${_lib} "${BCIR_libraries_${_lib}_OPTIONS}")
   set_target_properties(${_lib} PROPERTIES BCIR_MEMORY_CLASS "${BCIR_libraries_${_lib}_CLASS}")
@@ -23,8 +27,8 @@ foreach(_tool IN LISTS BCIR_MANIFEST_tools)
   bcir_manifest_options(${_tool} "${BCIR_tools_${_tool}_OPTIONS}")
 endforeach()
 
-# --- harnesses: the gates' test executables, built (the manifest's link proof); the gates run
-# them with their own argv until BUILD-2 registers each as a CTest entry ---
+# --- harnesses: the gates' test executables, built (the manifest's link proof); the migrated
+# sections run them as c-section-* entries, as the gate runs its own builds (BUILD-2) ---
 if(BCIR_BUILD_HARNESSES)
   foreach(_h IN LISTS BCIR_MANIFEST_harnesses)
     bcir_manifest_paths(_srcs ${BCIR_harnesses_${_h}_SOURCES})
@@ -119,6 +123,38 @@ if(BCIR_BUILD_HARNESSES)
       target_compile_options(${_v} PRIVATE -fsanitize=${_san})
       target_link_options(${_v} PRIVATE -fsanitize=${_san})
     endif()
+  endforeach()
+endif()
+
+# --- kernels: C the Python oracle emits (bcir.lower.c_kernel) with a driver appended, the E-series
+# programs. tools/build/emit_kernel.py -- the writer tools/c/check_runtime.sh runs -- writes each
+# unit at build time with a depfile naming the oracle modules the emitter imported, so an edit to any
+# of them re-emits the kernel, and only such an edit does. The unit is built in C11, as the gate
+# builds it. A host without Python records each kernel as not built, with the reason, and its section
+# as not run here. ---
+if(BCIR_BUILD_HARNESSES)
+  foreach(_k IN LISTS BCIR_MANIFEST_kernels)
+    if(NOT BCIR_HAVE_PYTHON3)
+      set(_why "the Python oracle emits its source (tools/build/emit_kernel.py)")
+      message(STATUS "BCIR: kernel ${_k} is not built: ${_why}")
+      set_property(GLOBAL PROPERTY BCIR_UNBUILT_${_k} "${_why}")
+      set_property(GLOBAL APPEND PROPERTY BCIR_UNBUILT_VARIANTS "${_k}=${_why}")
+      continue()
+    endif()
+    set(_unit "${CMAKE_BINARY_DIR}/kernels/${_k}.c")
+    add_custom_command(OUTPUT "${_unit}"
+      COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/emit_kernel.py" "${_k}"
+              -o "${_unit}" --depfile "${_unit}.d"
+      DEPENDS "${CMAKE_SOURCE_DIR}/tools/build/emit_kernel.py" "${CMAKE_SOURCE_DIR}/runtime/manifest.json"
+              "${BCIR_C_DIR}/kernels/${BCIR_kernels_${_k}_MAIN}"
+      DEPFILE "${_unit}.d"
+      COMMENT "BCIR: emitting kernel ${_k}"
+      VERBATIM)
+    add_executable(${_k} "${_unit}")
+    set_target_properties(${_k} PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/harnesses")
+    target_compile_options(${_k} PRIVATE ${BCIR_C_WARNINGS})
+    bcir_manifest_link(${_k} PRIVATE "" "${BCIR_kernels_${_k}_LINK}")
   endforeach()
 endif()
 

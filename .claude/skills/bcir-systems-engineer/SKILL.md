@@ -139,10 +139,11 @@ These are load-bearing across every subsystem; a PR that bends one will be rever
   a one-rail change makes the rails silently disagree about a content address, which
   is worse than the gap it fixes (this is why the provenance-hash memory-hierarchy gap
   was deliberately left open in the 2026-08-12 audit).
-- **New C sources feeding a gate**: update `tools/c/check_runtime.sh`'s gate block AND
-  the Python harness source list together (`native_bench._SOURCES`). This exact drift
-  broke PR #719 mid-session; `test_the_gate_and_the_harness_link_the_same_sources`
-  guards it now — extend that pattern for new gate/harness pairs.
+- **New C sources feeding a gate**: `runtime/manifest.json` is the one source list — BCIR
+  Make, CMake and the runtime gate build from it (the gate compiles nothing itself since
+  BUILD-8) — and a Python harness's own list must agree with it (`native_bench._SOURCES`).
+  That exact drift broke PR #719 mid-session; `test_the_gate_and_the_harness_link_the_same_sources`
+  guards it now, through `bcir/tests/gate_links.py` — extend that pattern for a new pair.
 - **New test files** must be registered in `bcir/tests/run_all.py`
   (`test_registry_complete` fails otherwise) — and registration is a claim about the
   **shipped package**, not only the checkout. If a test needs an asset, ask first
