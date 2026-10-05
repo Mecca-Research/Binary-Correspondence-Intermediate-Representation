@@ -246,6 +246,7 @@
     "writeguard": {"script": "tools/c/sections/writeguard.sh", "harnesses": ["bcir-cc"]},
     "diag": {"script": "tools/c/sections/diag.sh", "harnesses": ["test_diag"]},
     "fallback": {"script": "tools/c/sections/fallback.sh", "harnesses": ["bcir-cc"]},
+    "cexpr": {"script": "tools/c/sections/cexpr.sh", "harnesses": ["bcir-cc"]},
     "r21policy": {"script": "tools/c/sections/r21policy.sh", "harnesses": ["bcir-cc"]},
     "project": {"script": "tools/c/sections/project.sh", "harnesses": ["bcir-cc"]},
     "link": {"script": "tools/c/sections/link.sh", "harnesses": ["bcir-cc"]},

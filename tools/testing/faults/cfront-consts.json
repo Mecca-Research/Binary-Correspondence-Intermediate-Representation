@@ -83,8 +83,8 @@
     {
       "expects": "test_enumerators_case_labels_and_dimensions_fold_in_c_types_on_both_rails",
       "label": "EF11 the oracle's emit spells a case label past LLONG_MAX without u",
-      "new": "                    out.append(f\"{ind}case {item.value}:\")\n",
-      "old": "                    out.append(f\"{ind}case {_const_spelling(item.value)}:\")\n",
+      "new": "                    out.append(f\"{ind}case {item.value}: ;\")\n",
+      "old": "                    out.append(f\"{ind}case {_const_spelling(item.value)}: ;\")\n",
       "path": "bcir/frontends/cfront/emit.py"
     },
     {

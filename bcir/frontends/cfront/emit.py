@@ -824,11 +824,13 @@ def _walk(
             loops.pop()
         elif isinstance(node, SwitchNode):  # a real C switch (fallthrough preserved)
             out.append(f"{ind}switch ({ref(node.disc)}) {{")
+            # each label is followed by a null statement: the block item after it is usually a declaration, and
+            # until C23 a label labels a statement, which a declaration is not (CF-CASELABEL)
             for item in node.body:
                 if isinstance(item, CaseLabel):  # exact: `Nu` past LLONG_MAX (CF-ENUMFOLD)
-                    out.append(f"{ind}case {_const_spelling(item.value)}:")
+                    out.append(f"{ind}case {_const_spelling(item.value)}: ;")
                 elif isinstance(item, DefaultLabel):
-                    out.append(f"{ind}default:")
+                    out.append(f"{ind}default: ;")
                 else:
                     out += _walk(lf, [item], ref, depth + 1, loops, cont)
             out.append(f"{ind}}}")

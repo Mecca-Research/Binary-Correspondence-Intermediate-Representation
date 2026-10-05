@@ -1550,6 +1550,43 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       link flags, a dropped escape, a dropped `-lm`.
     - The gate on clang 18 prints the same 398 PASS lines as before the move. The gate's 3,921
       lines are 3,571.
+  CF-CASELABEL (2026-10-05) ended every `case` and `default:` label of an emitted switch in a null
+  statement, on both rails: the oracle's `_walk` (`bcir/frontends/cfront/emit.py`) and the twin's
+  emitter (`runtime/c/bcir_cfront.c`).
+  - Both emits had put an arm's first temporary right after its label. A label labels a statement
+    (C11 6.8.1), and a declaration is no statement before C23, so nearly every emitted switch was
+    C23. Clang 18 and 23 warned by default, GCC 13 only under `-Wpedantic`, and
+    `-std=c11 -pedantic-errors` refused it.
+  - The null statement keeps the declarations after a label in the switch body's scope, as the
+    source's are. A brace around each arm would have ended that scope at the next label, which a
+    fallthrough reads past.
+  - Witness: `test_an_emitted_switch_is_c11_on_both_rails`. Its unit has five labels, a
+    fallthrough, a C23 declaration after a label, and two labels at the switch's end. Each rail's
+    emit ends every label in `: ;`, builds under `-std=c11 -pedantic-errors` with Clang and GCC,
+    and returns what the original does for 0 to 39.
+  - RED: either rail reverted fails the spelling check. With that check removed, the reverted
+    rail's emit fails the build ("label followed by a declaration is a C23 extension").
+  - `tools/testing/faults/cfront-caselabel.json` holds four faults, a case label and a `default:`
+    on each rail, and each fails the witness. CF-ENUMFOLD's EF11 anchors on the new spelling.
+  - Found beside it and not fixed here (CF-VLASCOPE): the emit flattens a braced block, so a VLA
+    declared in one is still in scope at a later `case` label, a loop's continue label or a
+    `goto` target that the source kept outside the block. Neither GCC nor Clang builds such an
+    emit, and the oracle's Clang check reports the failed build as `skip:build-failed`, so the
+    unit stays CLEAN. `docs/languages/CFRONT_GUIDE.md` records it under Known limits.
+  BUILD-2g (2026-10-05) moved `#cexpr`, the constant folds, the last of group 3d, once
+  CF-CASELABEL made its emit C11.
+  - `tools/c/sections/cexpr.sh`, generated from the gate's lines like group 3d's, takes `bcir-cc`
+    and CC.
+  - The gate first builds the emit with `-pedantic-errors`, so the section refuses the C23 form
+    under GCC too. The `bcir-cc` before CF-CASELABEL fails the emitted build under GCC 13,
+    Clang 18 and Clang 23.
+  - With the emit clean, the warning that named the section's temp file is gone, and the
+    section-parity gate compares the section like any other.
+  - Measured:
+    - gcc and clang 18 trees with `BCIR_REQUIRE_TSAN=ON`: 0 warnings, `ctest -L section` 29/29,
+      and `build-section-parity` 29 sections identical; the clang 23 tree the same.
+    - The gate prints 398 PASS lines on clang 18 and 387 on clang 23, as before the move, and
+      no C23-extension warning. The gate's 3,571 lines are 3,544.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

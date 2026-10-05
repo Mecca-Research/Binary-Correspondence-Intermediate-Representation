@@ -579,6 +579,11 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   definition`); define the enumeration first.
 - In `#if`, a multi-character constant (`'\xff\xff\xff\xff'`) where plain `char` is unsigned reads as Clang reads it,
   by `char`'s signedness; GCC reads it as a signed `int` whatever `char` is.
+- A variable-length array declared in a braced block that a later `case` or `default:` label, a `continue` or a
+  `goto` jumps past (`case 1: { uint32_t a[n]; ... } default: ...`) lowers on both rails, but its emit does not
+  build: the emit flattens the block, so the jump enters the array's scope (C11 6.8.4.2p2, 6.8.6.1p1), which GCC
+  and Clang both refuse. The Python reference's Clang check reports the failed build as a skip, so the unit's
+  verdict stays clean -- a recorded follow-up (CF-VLASCOPE).
 - The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
   *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
   through a cast; and the C twin's `--linkable` emits the unit's functions alone. Both are recorded follow-ups.
