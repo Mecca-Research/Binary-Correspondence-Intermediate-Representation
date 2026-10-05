@@ -1442,6 +1442,37 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     refusals (unsigned, tampered, escaping tarball; unsupported platform; another major), and one
     statement of the rule across the skill, the entry points, the check's legs, the preset and the
     workflow.
+  JER-PAIRED (2026-10-05) made the JER SIMD rail's speed floors immune to runner load, and gave
+  the multi-byte floor the baseline its claim names.
+  - Found on CI: `test_multi_byte_text_does_not_regress_against_the_scalar_rail` read
+    `cjk: 0.70x` against its 0.75 floor on one run of a commit that touched neither rail. The
+    same job on the same commit passed in its other run. Every speed ratio in
+    `test_cpp_jer_simd.py` divided two medians measured one after the other, so a load reaching
+    one window and not the other moved the ratio as far as it liked.
+  - `_paired_gain` measures the way `tools/silicon/measure_jer_simd.sh` already did for the
+    dedicated-host evidence: a baseline round and a vector round back to back in one process,
+    the order alternating pair by pair, judged by the median per-pair ratio. All three speed
+    tests use it (laws.md L14).
+  - Measured: on this host, idle, five estimates each, the paired ratio held to 2.75-2.84x on
+    accents where the sequential one ranged 2.09-4.47x. Under a phased load on the
+    measurement's CPU (20 estimates), the sequential CJK ratio ranged 1.01-2.74x and the
+    paired one 1.65-1.92x.
+  - Found while proving it: the floor could not see the regression it named. The driver's
+    `scalar` tier is the adapter pinned to scalar, the same alternating walk with byte-loop
+    runs, so a cost the walk adds landed on both sides and cancelled. Validating every
+    multi-byte run twice more read 1.21x and passed, and eight times more read 1.06x; no
+    overhead in the walk could take the ratio below 1.
+  - The driver's `bench` now takes `rail`, `bcir_jer_validate_utf8` over the whole document
+    with no adapter, and the multi-byte floor is judged against it: the same injection reads
+    0.72x and fails (0.65x through the test itself).
+  - A witness, `test_the_paired_gain_cancels_a_load_that_moves_between_windows`, runs on a fake
+    driver with known costs, so it needs no compiler and runs in every tier on POSIX. A load
+    that steps from 1x to 5x breaks the sequential estimator (0.6x on a true 3.0x). The paired
+    one reads exactly 3.0x wherever the step falls, reads a true 0.5x regression as 0.5x, honors
+    the baseline asked for, and refuses a zero-nanosecond round.
+  - Proven by fault injection: the witness fails when the estimator reverts to sequential windows
+    or ignores its baseline, and the floor fails on the injected walk overhead that the
+    previous test passed.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -31,6 +31,7 @@ import random
 import shutil
 import statistics
 import subprocess
+import sys
 import tempfile
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -221,11 +222,51 @@ def test_the_resolved_tier_is_reported_by_name_so_a_measurement_can_say_which():
 # --- what the rail actually buys, including where it buys nothing ------------------------------
 
 
-def _median_ns(
-    binary: str, tier: str, document: bytes, rounds: int = 15, iterations: int = 32
+def _paired_gain(
+    binary: str, document: bytes, baseline: str = "scalar", pairs: int = 15, iterations: int = 32
 ) -> float:
-    replies = _drive(binary, [f"bench {tier} {rounds} {iterations} {document.hex()}"])
-    return statistics.median(int(reply.split()[3]) for reply in replies)
+    """How many times faster the resolved tier validates `document` than `baseline` -- the
+    adapter's `scalar` tier, or `rail`, the scalar rail itself with no adapter: the MEDIAN over
+    `pairs` of baseline_ns / vector_ns, where each pair is one baseline round and one vector
+    round measured back to back in one process, the order alternating pair by pair.
+
+    WHY PAIRS. The first version timed every baseline round, then every vector round, and divided
+    the two medians. On a shared runner those two windows run on different machines in all but
+    name: other workers start and stop, a sibling hyperthread fills and empties, the clock moves.
+    A load that reaches one window and not the other moves the ratio as far as it likes. The
+    CJK document section 7.3 measured at 2.74x on an idle host read 0.70x on a CI runner, under
+    the 0.75 floor, in a run that changed nothing here (the same commit passed in its other
+    run). A pair's two rounds sit a few milliseconds apart, so whatever the host is doing
+    reaches both halves and cancels in their ratio. Alternating which
+    tier goes first keeps a drift inside a pair from biasing every pair the same way, and the
+    median over pairs discards the one pair a change of load happens to split. It is the interleaving
+    tools/silicon/measure_jer_simd.sh already uses for the dedicated-host evidence (the JER
+    roadmap, section 7.3.2), with the same driver command, so the suite and the runbook measure
+    one way. `test_the_paired_gain_cancels_a_load_that_moves_between_windows` holds the
+    estimator to that property on a driver whose answers are known.
+
+    Every reply is checked before it is believed: a missing, malformed or zero-nanosecond round
+    is a failed measurement, never a speedup.
+    """
+    assert baseline in ("scalar", "rail"), baseline
+    hexed = document.hex()
+    lines = []
+    for pair in range(pairs):
+        order = (baseline, "auto") if pair % 2 == 0 else ("auto", baseline)
+        lines += [f"bench {tier} 1 {iterations} {hexed}" for tier in order]
+    replies = _drive(binary, lines)
+    assert len(replies) == len(lines), f"{len(replies)} replies to {len(lines)} bench commands"
+    rounds: dict[str, list[int]] = {baseline: [], "auto": []}
+    for reply in replies:
+        fields = reply.split()
+        assert len(fields) >= 4 and fields[0] == "sample" and fields[1] in rounds, reply
+        assert fields[3].isascii() and fields[3].isdigit() and int(fields[3]) > 0, (
+            f"a round that measured no time is a failed measurement: {reply}"
+        )
+        rounds[fields[1]].append(int(fields[3]))
+    return statistics.median(
+        base / vector for base, vector in zip(rounds[baseline], rounds["auto"], strict=True)
+    )
 
 
 def _ascii_document(nodes: int = 400) -> bytes:
@@ -242,17 +283,14 @@ def test_the_rail_is_faster_on_the_documents_it_targets():
     JER text is ASCII-dominant, which is the case this rail accelerates. Asserted as a
     generous ratio rather than a tight one: the claim under test is "the vector path is
     doing something", and a threshold tuned to this container would fail on a slower one for
-    reasons that have nothing to do with the code.
+    reasons that have nothing to do with the code. Measured in pairs (`_paired_gain`), so
+    the ratio is the code's and not the runner's.
     """
     if not _available():
         return
     with tempfile.TemporaryDirectory() as tmp:
-        binary = _build(tmp)
-        document = _ascii_document()
-        scalar = _median_ns(binary, "scalar", document)
-        best = _median_ns(binary, "auto", document)
-    assert best < scalar, f"the resolved tier ({best}ns) did not beat scalar ({scalar}ns)"
-    assert scalar / best > 2.0, f"only {scalar / best:.1f}x on an all-ASCII document"
+        gain = _paired_gain(_build(tmp), _ascii_document())
+    assert gain > 2.0, f"only {gain:.1f}x on an all-ASCII document"
 
 
 def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
@@ -268,7 +306,9 @@ def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
     than a convenience. An absolute `early_gain > 2.0` was here first and failed under
     `-j 2` while the same binary measured well past it standalone: contention inflates the
     scalar and vector medians together, so a fixed multiple is a claim about the runner.
-    Dividing one gain by the other cancels whatever the host is doing to both.
+    Dividing one gain by the other cancels whatever the host does to both documents, and each
+    gain is itself measured in pairs (`_paired_gain`), which cancels what the host does
+    between a document's scalar and vector rounds.
 
     §8 settles this: shared CI gates *"validity and trend evidence, not noisy timing
     thresholds"*, and the absolute numbers live in §7.3 with the host that produced them.
@@ -282,8 +322,8 @@ def test_one_multi_byte_octet_no_longer_costs_the_whole_document():
         binary = _build(tmp)
         clean = _ascii_document()
         early = _ascii_document().replace(b'"add"', '"café"'.encode(), 1)
-        clean_gain = _median_ns(binary, "scalar", clean) / _median_ns(binary, "auto", clean)
-        early_gain = _median_ns(binary, "scalar", early) / _median_ns(binary, "auto", early)
+        clean_gain = _paired_gain(binary, clean)
+        early_gain = _paired_gain(binary, early)
     assert early_gain > clean_gain * 0.4, (
         f"an early accent cost {clean_gain:.1f}x -> {early_gain:.1f}x; the two should be "
         f"close, because only the short multi-byte run goes scalar. The pre-fix behaviour "
@@ -307,6 +347,16 @@ def test_multi_byte_text_does_not_regress_against_the_scalar_rail():
     documents would be *slower* than plain scalar, and this is what would catch it. The
     speedups themselves live in §7.3 with the host they were measured on, which is where a
     performance number belongs.
+
+    **Against the rail itself, and in pairs.** The floor used to compare the vector tier with
+    the adapter's `scalar` tier. That tier is the same alternating walk, with its runs found
+    by byte loops, so whatever the walk costs landed on both sides and cancelled: validating
+    every multi-byte run twice more read 1.21x on CJK and passed, and no overhead in the walk
+    could take that ratio below 1. It now compares with `rail`, which is `bcir_jer_validate_utf8`
+    over the whole document with no adapter, the thing the walk must not lose to. Against the
+    rail the same injection reads 0.72x and fails (x86-64, AVX2). The ratio is measured in
+    pairs (`_paired_gain`). Taken as two medians one after the other, it read `cjk: 0.70x` on a
+    CI runner in a run that changed nothing here, while the same commit passed in its other run.
     """
     if not _available():
         return
@@ -318,11 +368,85 @@ def test_multi_byte_text_does_not_regress_against_the_scalar_rail():
             ("emoji", "\U0001f600\U0001f601"),
         ):
             document = _ascii_document().replace(b'"add"', replacement.encode())
-            gain = _median_ns(binary, "scalar", document) / _median_ns(binary, "auto", document)
+            gain = _paired_gain(binary, document, baseline="rail")
             assert gain > 0.75, (
-                f"{label}: {gain:.2f}x — the vector rail is materially SLOWER than scalar on "
-                f"multi-byte text, so run detection is costing more than it saves"
+                f"{label}: {gain:.2f}x — the vector tier is materially SLOWER than the scalar rail "
+                f"on multi-byte text, so run detection is costing more than it saves"
             )
+
+
+_FAKE_DRIVER = """
+import sys
+
+COST = {{"scalar": {scalar}, "rail": {rail}, "auto": {vector}}}
+for index, line in enumerate(sys.stdin):
+    _op, tier, rounds, _iterations, _hex = line.split()
+    load = {heavy} if index >= {step} else 1
+    for r in range(int(rounds)):
+        print(f"sample {{tier}} {{r}} {{COST[tier] * load}} -1")
+"""
+
+
+def test_the_paired_gain_cancels_a_load_that_moves_between_windows():
+    """The estimator's own property, on a driver whose answers are known.
+
+    The fake driver charges a fixed cost per tier and multiplies it by a load that steps
+    from 1 to 5 at a chosen command: a busy neighbour arriving mid-measurement. With a true
+    gain of 3.0, the old estimator (every scalar round, then every vector round) reads the
+    step as 0.6x, below the 0.75 floor. So the witness's load is strong enough to break what
+    it replaces, and a pass here is not vacuous. The paired gain reads exactly 3.0 wherever the
+    step falls, including in the middle of a pair. And it still sees a real regression: a vector
+    tier that truly costs twice scalar reads 0.5x under every load. The baseline it is asked for
+    is the one it measures. Needs no compiler; the driver is a script, so a POSIX host runs it
+    in every tier.
+    """
+    if os.name != "posix":
+        return  # the fake driver is an executable script
+    document = _ascii_document(nodes=4)
+
+    def driver(tmp: str, scalar: int, vector: int, step: int, rail: int = 0, heavy: int = 5) -> str:
+        rail = rail or scalar
+        path = os.path.join(tmp, f"driver_{scalar}_{rail}_{vector}_{step}")
+        with open(path, "w", encoding="utf-8") as script:
+            script.write(f"#!{sys.executable}\n")
+            script.write(
+                _FAKE_DRIVER.format(scalar=scalar, rail=rail, vector=vector, step=step, heavy=heavy)
+            )
+        os.chmod(path, 0o755)
+        return path
+
+    def sequential(binary: str) -> float:
+        replies = _drive(
+            binary, [f"bench {tier} 15 32 {document.hex()}" for tier in ("scalar", "auto")]
+        )
+        medians = {
+            tier: statistics.median(int(r.split()[3]) for r in replies if r.split()[1] == tier)
+            for tier in ("scalar", "auto")
+        }
+        return medians["scalar"] / medians["auto"]
+
+    pairs = 15
+    with tempfile.TemporaryDirectory() as tmp:
+        old = sequential(driver(tmp, 30000, 10000, step=1))
+        assert old < 0.75, f"the load did not break the sequential estimator ({old:.2f}x)"
+        for step in range(2 * pairs + 1):
+            gain = _paired_gain(driver(tmp, 30000, 10000, step), document, pairs=pairs)
+            assert gain == 3.0, f"a load arriving at command {step} moved the gain to {gain}x"
+        for step in (0, pairs, pairs + 1, 2 * pairs):
+            gain = _paired_gain(driver(tmp, 10000, 20000, step), document, pairs=pairs)
+            assert gain == 0.5, f"a true 0.5x regression read {gain}x (load at {step})"
+        both = driver(tmp, 30000, 10000, step=pairs + 1, rail=60000)
+        gain = _paired_gain(both, document, pairs=pairs)
+        assert gain == 3.0, f"the scalar baseline read {gain}x, not 3.0x"
+        gain = _paired_gain(both, document, baseline="rail", pairs=pairs)
+        assert gain == 6.0, f"the rail baseline read {gain}x, not 6.0x: not the baseline asked for"
+        refused = driver(tmp, 0, 10000, step=0)
+        try:
+            _paired_gain(refused, document, pairs=pairs)
+        except AssertionError as exc:
+            assert "no time" in str(exc), exc
+        else:
+            raise AssertionError("a zero-nanosecond round was believed")
 
 
 def test_the_adapter_contains_no_utf8_decision_of_its_own():
