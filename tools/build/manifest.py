@@ -34,9 +34,14 @@ The rules, each with the code its findings carry:
   M11 seam         the C++ seam's units equal handoff_fixtures/check_handoff.sh's (the #719 pair)
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
   M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
-                   manifest harnesses in argument order; every script in that directory is one
-                   section; tools/c/check_runtime.sh calls each script (the gate and the CTest entry
-                   run one text)
+                   manifest harnesses or variants in argument order; every script in that directory
+                   is one section; tools/c/check_runtime.sh calls each script (the gate and the
+                   CTest entry run one text)
+  M14 variants     every `variants` entry rebuilds a manifest harness (`of`) with flag `options`, one
+                   `mutation` (file, find, replace) or both; a mutation's file is in the harness's
+                   closure and its anchor occurs exactly once there (the fault still applies, and
+                   unambiguously); the gate generates every mutant with tools/build/mutate.py; every
+                   variant is run by a section; no variant shadows a unit name
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
                    names unique, PYTHON3 / THREADS / MLIR among them
@@ -65,7 +70,9 @@ CPP_KINDS = ("seam_libraries", "seam_tests")
 KINDS = C_KINDS + CPP_KINDS
 LIBRARY_KINDS = ("libraries", "seam_libraries")
 UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len")
-TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", *KINDS)
+TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", "variants", *KINDS)
+VARIANT_KEYS = ("of", "options", "mutation")
+MUTATION_KEYS = ("file", "find", "replace")
 SECTIONS_DIR = "tools/c/sections"
 RUNTIME_GATE = "tools/c/check_runtime.sh"
 LINK_NAMES = ("m", "pthread")
@@ -334,6 +341,13 @@ class Tree:
         except (OSError, UnicodeDecodeError):
             return None
 
+    def source_text(self, source: str) -> str | None:
+        """A runtime/c source's text (cached), or None when it cannot be read."""
+        cache = self.__dict__.setdefault("_source_text", {})
+        if source not in cache:
+            cache[source] = self._read(self.c_dir / source) if self.exists(source) else None
+        return cache[source]
+
     def exists(self, source: str) -> bool:
         return source in (self.cpp_files if source.endswith(".cpp") else self.c_files)
 
@@ -598,13 +612,29 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
     if not isinstance(sections, dict):
         errors.append("M13: sections is not an object")
         return
-    harnesses = set(_units(manifest, "harnesses"))
+    variants = manifest.get("variants") if isinstance(manifest.get("variants"), dict) else {}
+    harnesses = set(_units(manifest, "harnesses")) | set(variants)
     registered: list[str] = []
     for name, section in sections.items():
         where = f"sections/{name}"
-        if not isinstance(section, dict) or set(section) != {"script", "harnesses"}:
-            errors.append(f"M13: {where} is not {{script, harnesses}}")
+        if not isinstance(section, dict) or not {"script", "harnesses"} <= set(section) <= {
+            "script",
+            "harnesses",
+            "varies",
+        }:
+            errors.append(f"M13: {where} is not {{script, harnesses, varies?}}")
             continue
+        for pattern in (
+            section.get("varies", []) if isinstance(section.get("varies", []), list) else [None]
+        ):
+            try:
+                groups = re.compile(pattern).groups if isinstance(pattern, str) and pattern else -1
+            except re.error:
+                groups = -1
+            if groups != 1:
+                errors.append(
+                    f"M13: {where}.varies entry {pattern!r} is not a regex with exactly one capture group"
+                )
         script = section["script"]
         if (
             not isinstance(script, str)
@@ -628,7 +658,7 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
         for harness in names:
             if harness not in harnesses:
                 errors.append(
-                    f"M13: {where} names harness {harness!r}, which the manifest does not build"
+                    f"M13: {where} names {harness!r}, which is no manifest harness or variant"
                 )
         if len(set(names)) != len(names):
             errors.append(f"M13: {where} names a harness twice")
@@ -638,6 +668,76 @@ def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
     for basename in sorted(set(registered)):
         if registered.count(basename) > 1:
             errors.append(f"M13: {SECTIONS_DIR}/{basename} is registered by two sections")
+
+
+def check_variants(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    variants = manifest.get("variants")
+    if variants is None:
+        return
+    if not isinstance(variants, dict):
+        errors.append("M14: variants is not an object")
+        return
+    harnesses = _units(manifest, "harnesses")
+    unit_names = {name for kind in KINDS for name in _units(manifest, kind)}
+    sections = manifest.get("sections") if isinstance(manifest.get("sections"), dict) else {}
+    run = {
+        h
+        for s in sections.values()
+        if isinstance(s, dict)
+        for h in (s.get("harnesses") or [])
+        if isinstance(h, str)
+    }
+    for name, variant in variants.items():
+        where = f"variants/{name}"
+        if not isinstance(variant, dict) or not set(variant) <= set(VARIANT_KEYS):
+            errors.append(f"M14: {where} is not {{of, options?, mutation?}}")
+            continue
+        if name in unit_names:
+            errors.append(f"M14: {where} shadows a manifest unit of the same name")
+        of = variant.get("of")
+        if not isinstance(of, str) or of not in harnesses:
+            errors.append(f"M14: {where} rebuilds {of!r}, which is not a manifest harness")
+            continue
+        options = variant.get("options")
+        mutation = variant.get("mutation")
+        if options is None and mutation is None:
+            errors.append(f"M14: {where} changes nothing (no options, no mutation)")
+        if options is not None and (
+            not isinstance(options, list)
+            or not options
+            or any(not isinstance(o, str) or not OPTION.match(o) for o in options)
+        ):
+            errors.append(f"M14: {where}.options is not a non-empty list of flags")
+        if name not in run:
+            errors.append(f"M14: {where} is run by no section (a binary nothing judges)")
+        if mutation is None:
+            continue
+        if (
+            not isinstance(mutation, dict)
+            or set(mutation) != set(MUTATION_KEYS)
+            or any(not isinstance(mutation[k], str) or not mutation[k] for k in MUTATION_KEYS)
+        ):
+            errors.append(
+                f"M14: {where}.mutation is not {{file, find, replace}} of non-empty strings"
+            )
+            continue
+        if mutation["find"] == mutation["replace"]:
+            errors.append(f"M14: {where}.mutation changes nothing (replace == find)")
+        if mutation["file"] not in closure(manifest, "harnesses", of)["sources"]:
+            errors.append(
+                f"M14: {where} mutates {mutation['file']}, which {of}'s closure does not compile"
+            )
+            continue
+        text = tree.source_text(mutation["file"])
+        count = text.count(mutation["find"]) if text is not None else 0
+        if count != 1:
+            errors.append(
+                f"M14: {where}: the anchor occurs {count} time(s) in {mutation['file']}, not once"
+            )
+        if f"--variant {name} " not in tree.runtime_gate_text:
+            errors.append(
+                f"M14: {RUNTIME_GATE} does not generate {where} with tools/build/mutate.py"
+            )
 
 
 def check_presets(presets: dict | str | None, errors: list[str], workers: int = WORKERS) -> None:
@@ -693,6 +793,7 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     check_python_harnesses(manifest, tree, errors)
     check_seam(manifest, tree, errors)
     check_sections(manifest, tree, errors)
+    check_variants(manifest, tree, errors)
     check_presets(tree.presets, errors)
     return errors
 
@@ -792,6 +893,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = ", ".join(f"{n} {kind}" for kind, n in counts.items())
     sections = manifest.get("sections")
     summary += f", {len(sections) if isinstance(sections, dict) else 0} sections"
+    variants = manifest.get("variants")
+    summary += f", {len(variants) if isinstance(variants, dict) else 0} variants"
     free = (
         len(manifest.get("freestanding_checks", []))
         if isinstance(manifest.get("freestanding_checks"), list)
