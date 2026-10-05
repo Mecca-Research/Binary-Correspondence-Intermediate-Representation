@@ -101,6 +101,22 @@ if(BCIR_BUILD_HARNESSES)
   set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
 endif()
 
+# --- build: BCIR Make (BUILD-7) -- bcir-make builds the C rails from the manifest's BCIRfile and runs
+# the sections as tasks: every target runs and passes, a no-change second run executes nothing, each
+# section's verdict is its shell run's, and a one-unit edit executes exactly the edited unit's
+# dependents (tools/build/make_gate.py). A BCIRfile names repo-relative paths, so its outputs go
+# under the build tree only when that tree is inside the source tree, as the presets put it. ---
+file(RELATIVE_PATH _make_out "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/bcir-make-gate")
+if(BCIR_BUILD_HARNESSES AND NOT _make_out MATCHES "^\\.\\./")
+  add_test(NAME build-make
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/make_gate.py"
+                   --cc "${CMAKE_C_COMPILER}" --cxx "${CMAKE_CXX_COMPILER}" --out-dir "${_make_out}"
+           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(build-make PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 3600)
+elseif(BCIR_BUILD_HARNESSES)
+  message(STATUS "BCIR: build-make is not registered: the build tree is outside the source tree")
+endif()
+
 # --- python: the oracle's quick tier (bounded, toolchain-hidden) ---
 # BCIR_DEPS_INDEX: a harness that asks what the host has (bcir.toolchain.optional_library) reads
 # the configure's answers from this tree's index instead of probing, so the two cannot disagree

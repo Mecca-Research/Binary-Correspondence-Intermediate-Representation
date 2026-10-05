@@ -1751,6 +1751,61 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     18 beside `bcir-opt` 23 is a lit fatal; with FileCheck made unfindable the configure fails
     under `BCIR_REQUIRE_LIT=ON` and, without it, leaves `mlir-lit` unregistered and says why. The
     index passes D1 with the LIT row; the quick tier passes (4220 passed).
+  BUILD-6 (2026-10-05) landed BCIR Make in the oracle: `bcir/make/` (the BCIRfile grammar, the
+  MK0-MK5 laws, the planner) and `bcir-make --dry-run`.
+  - The BCIRfile is line-oriented ASCII with one spelling for everything, parsed by its own
+    grammar before anything is converted, bounded, and refused at the first departure (MK0).
+  - It is judged on the IR: files are resources, targets phases with one dispatch claim each, and
+    a reader depends on the writer of what it reads. The anti-cycle law and the plan's order are
+    the verifier's own predicates, `phase_graph_has_cycle` and `topological_phase_ids`.
+  - MK1 claims, MK2 anti-cycle, MK3 the static footprint (a command's file arguments, a flag's
+    attached value included, against its claims), MK4 every input exists, MK5 tools by identity.
+    Each law has negative fixtures that fire with its own code.
+  - A generation tag is the sha256 of a canonical text of what a target is made from: tools by
+    identity, commands, reads by bytes (or by their producer's tag), trees, writes. A test asks of
+    every kind of input whether two trees differing only in it differ in the tags, and of a file
+    nobody reads and of an `after` edge that they do not.
+  - The C rails' build is the first BCIRfile: `tools/build/bcirfile.py` writes it from the
+    manifest, 546 targets, every manifest library, tool, harness, seam unit, kernel and buildable
+    variant by its manifest name, passing every law with the tools' identities checked.
+  BUILD-7 (2026-10-05) landed the runner: `bcir-make` without `--dry-run` runs the plan
+  (`bcir/make/run.py`), and the runtime gate's sections run as its tasks.
+  - A target whose recorded tag is its tag and whose outputs are there is up to date; otherwise
+    the artifact cache restores it when it holds the tag, every file checked against the entry's
+    index (a tampered entry is a miss); otherwise it runs and its outputs are stored. The state
+    is written after every target.
+  - Two workers, in the IR's canonical order as producers finish; a failure stops the run unless
+    `--keep-going`, and skips its readers with the reason. A command runs its declared tool by
+    path, never by PATH; a tool a command reaches without starting with it (a section's compiler)
+    is one the target `uses`, handed to it as `BCIR_TOOL_<NAME>` and counted in its tag.
+  - The observed footprint: a target's outputs are removed before it runs and must exist after,
+    and a file that appeared or changed beside them which no target claims fails it.
+  - Every target that ran or was restored is one TelemetryEnvelopeV0 `datadna` record through
+    the live ring (`bcir.gem.ring`), drained in order; `--telemetry` appends them.
+  - `bcirfile.py --sections` plans every manifest section as a task: `tools/build/run_section.sh`
+    runs the script over the BCIRfile's binaries, and its stdout, stderr and status are the
+    task's outputs. A section reads its script, its binaries and, whole, the trees its scripts
+    reach, so an edit anywhere in them re-runs the sections: never too few.
+  - The gate, `tools/build/make_gate.py` (CTest `build-make`): every target runs and passes, a
+    second run executes none, each section's recorded verdict is its direct shell run's, and an
+    edit to one runtime unit executes exactly that unit's readers in the lowered graph.
+  - Found by the gate's first run with Clang, fixed before the commit: Clang stages an object as
+    `<name>.o.tmp` beside it, and a neighbour compiling into the same directory at the same time
+    saw the temporary and failed as if it had written a file nothing claims (GCC writes in place,
+    so the GCC run passed). The runner now never runs two targets that write into one directory,
+    so what appears there is the target's own, and the rails' BCIRfile gives each object and each
+    section's verdict a directory of its own to keep two at once. A test stages outputs the way
+    Clang does; it fails without the rule.
+  - Found by the same run, fixed: a tool was declared by its resolved path, and `clang++` is a
+    link to `clang`, whose driver picks C or C++ from the name it is run by, so run by the
+    resolved name it linked the C++ seam as C. A tool is now declared where PATH finds it, its
+    symlinks kept (its identity hashes the bytes the name reaches either way), and a test links
+    a C++ unit through the declared `clang++`.
+  - Found by the quick tier, fixed: five writes (the state, the cache index, the telemetry log,
+    the gate's edit, the planned list) let the host choose the line ending (`test_line_endings`).
+  - Measured: `make_gate.py` passes on gcc (212 s for the 652 targets) and clang 18 (198 s);
+    the edit executes exactly its 115 dependents. The quick tier passes (4238 passed), and the
+    thorough tier on LLVM 23 (4238 passed).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

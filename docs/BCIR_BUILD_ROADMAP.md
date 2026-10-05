@@ -179,9 +179,11 @@ judged, only who schedules it.
 - **The gates' content** until each section has migrated (BUILD-2): the migration is section by
   section with a byte-identity proof per section, never a rewrite.
 
-## 8. The BCIR Make file and the smart task runner (design; BUILD-6..8)
+## 8. The BCIR Make file and the smart task runner (BUILD-6..8)
 
-The build is itself a graph problem BCIR already knows how to state. The design, not landed:
+The build is itself a graph problem BCIR already knows how to state. The design below landed in
+the oracle with BUILD-6 (the grammar, the laws, the dry-run planner, §8.1) and BUILD-7 (the runner,
+§8.2); the twin and the managers follow (BUILD-8):
 
 - **A task is a claim over file resources.** A BCIRfile declares targets whose inputs and outputs
   are files (content-addressed by digest), whose command is a tool identity from the registry
@@ -208,6 +210,80 @@ The build is itself a graph problem BCIR already knows how to state. The design,
   tagged), the dependency pinning manager (the `bcir-deps.json` index with recorded tool
   identities), and the task telemetry (one envelope per task run, through the existing ring).
 
+### 8.1 The oracle (BUILD-6)
+
+`bcir/make/` holds the grammar (`grammar.py`), the laws (`laws.py`) and the planner (`plan.py`);
+`bcir-make --dry-run` (`python -m bcir.make`) prints the verdict and the plan.
+
+- **The BCIRfile, version 1.** Line-oriented ASCII with one spelling for everything: `bcirfile 1`,
+  then `tool NAME PATH sha256:<hex>` and `target NAME` at column 0, each target's `reads`,
+  `reads-tree`, `writes`, `after` and `run` lines indented by exactly two spaces, tokens separated
+  by exactly one space. Paths are repo-relative and never `.` or `..`; a command is an argv whose
+  first token is a declared tool. The parser enforces the grammar before converting anything,
+  bounds what it reads, and stops at the first error with its line (MK0).
+- **Lowered onto the IR.** Files are resources, targets are phases holding one dispatch claim over
+  their reads and writes, and a target depends on the writers of what it reads and on what it is
+  declared `after`. The anti-cycle law is `phase_graph_has_cycle` over that module, and the plan's
+  order is `topological_phase_ids`, the verifier's own predicates, unchanged.
+- **The laws.** MK1 claims (a target writes and runs something, a file has one writer, nothing
+  reads what it writes, `after` names a target); MK2 anti-cycle; MK3 footprint (every argument of a
+  command that names a file of the tree or a target's output, a flag's attached value included, is
+  a declared read or write, and every declared write is named by a command); MK4 tags (every read
+  exists or is produced, every `reads-tree` is a directory); MK5 tools (every command's tool is
+  declared, every declared tool is used, and with `--check-tools` its bytes have its identity).
+- **Generation tags.** A target's tag is the sha256 of a canonical text: its tools' identities, its
+  commands, each read by its bytes (or, when a target writes it, by that target's tag), each
+  `reads-tree` by the paths and bytes under it, and its writes. A change to any of them changes the
+  tag of the target and of its readers, and nothing else does; `after` orders without feeding.
+- **The plan.** Run a target when its recorded tag differs or an output is missing, reuse it
+  otherwise; waves of at most two targets in the IR's canonical order.
+- **The C rails as the first BCIRfile.** `tools/build/bcirfile.py` writes one from the manifest:
+  every library, tool, harness, seam unit, kernel and buildable variant, named as the manifest
+  names it, over targets that compile each unit (reading the headers its source reaches), archive
+  the libraries, write the mutants and emit the kernels, with the compilers, the archiver and the
+  interpreter declared by identity. It plans 546 targets that pass every law.
+
+### 8.2 The runner (BUILD-7)
+
+`bcir-make` without `--dry-run` runs the plan (`bcir/make/run.py`); the laws pass first, so the
+runner only ever sees a lawful BCIRfile.
+
+- **Reuse by tag.** A target whose recorded tag is its tag and whose outputs are all there is up to
+  date. Otherwise the artifact cache restores its outputs when it holds its tag
+  (`<cache>/<tag[:2]>/<tag>/`, every file checked against the index stored beside it, so a
+  tampered entry is a miss, never a restore); otherwise the target runs, and its outputs are
+  stored under its tag. The state is written after every target, so an interrupted run keeps what
+  it finished.
+- **Two workers.** Targets start in the IR's canonical order as their producers finish, at most
+  `--workers` at once (two, the cap AGENTS.md sets), and never two that write into one directory.
+  A failed target stops the run unless `--keep-going`, and its readers are skipped with the reason.
+- **The observed footprint.** Before a target runs, its outputs are removed. Afterwards each must
+  exist, and a file that appeared or changed beside them which no target claims fails the target:
+  MK3's static check reads the command line, this one watches what the command did. Because no two
+  targets writing into one directory run at once, what appears there is the target's own -- a
+  compiler's temporary beside a neighbour's object is never mistaken for it -- and the rails'
+  BCIRfile gives each object and each section's verdict a directory of its own, so they still run
+  two at once.
+- **Tools by path.** A command starts with a declared tool and runs it by its declared path, never
+  by PATH. A tool a command reaches without starting with it -- a section script's compiler -- is
+  one the target `uses`: handed to the command as `BCIR_TOOL_<NAME>` and counted in its tag.
+- **Task telemetry.** Every target that ran or was restored is one TelemetryEnvelopeV0 `datadna`
+  record -- its claim, its duration, the bytes it wrote -- produced through the live ring
+  (`bcir.gem.ring`) and drained in order; `--telemetry FILE` appends them as JSON lines.
+- **The sections as tasks.** `tools/build/bcirfile.py --sections` plans every manifest section whose
+  binaries it plans as a task: `tools/build/run_section.sh` runs the script over the BCIRfile's
+  binaries with CC and PYTHON its tools, and the section's stdout, stderr and status are the task's
+  outputs. A section reads its script, its binaries and, whole, the trees its scripts reach
+  (`bcir`, `channels`, `runtime/c`, `tools`), so an edit anywhere in them re-runs the sections:
+  never too few. A compiler-only section also uses the gcc and clang on PATH, declared by identity.
+- **The gate**, `tools/build/make_gate.py` (CTest `build-make`), holds the runner to this ladder's
+  promises over the rails' own BCIRfile with the sections planned. Every target runs and passes,
+  and a second run with nothing changed executes nothing. Each section's recorded verdict is what
+  its script prints run directly over the same binaries, with the same argv. Then, in a scratch
+  copy carrying the run's outputs, state and cache, one runtime unit is edited: what runs must be
+  exactly the targets whose tag the edit changed, and those exactly the unit's readers in the
+  lowered graph, computed apart.
+
 What this is not: a general build language. It is a build *law* for this repository's own
 rails, judged like everything else here by the oracle, the twin and their parity.
 
@@ -221,8 +297,8 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | **BUILD-3** (landed) | install and export: `install(TARGETS …)`, `BCIRConfig.cmake`, versioned headers; `find_package(BCIR)` from an installed tree | an out-of-tree consumer builds `test_runtime` against the installed package on both compilers |
 | **BUILD-4** (landed) | the dependency index consumed by the Python harnesses (`native_bench`, the link-flag rules, the model gates) instead of per-harness probing | a harness and the configure cannot disagree about a dependency: the harness reads the index, and a test injects a missing row |
 | **BUILD-5** (landed) | the MLIR rail under the top-level project in CI (`mlir-rail-validate` uses the `mlir` preset; `bcir-opt`'s lit suite as CTest) | the rail's own gates green from the top-level tree on LLVM 22 and 23 |
-| **BUILD-6** | the BCIRfile grammar and the DAG model in the oracle, with its laws (claims, anti-cycle, footprint agreement, generation tags), `bcir-make --dry-run` | negative fixtures per law; the C rails' build expressed as a BCIRfile planning the same targets the manifest lists |
-| **BUILD-7** | the smart task runner executing the gates: content-addressed reuse, the two-worker scheduler, task telemetry through the ring | a no-change second run executes zero tasks; a one-unit change executes exactly its dependents; the gates' verdicts byte-identical to their shell runs |
+| **BUILD-6** (landed) | the BCIRfile grammar and the DAG model in the oracle, with its laws (claims, anti-cycle, footprint agreement, generation tags), `bcir-make --dry-run` | negative fixtures per law; the C rails' build expressed as a BCIRfile planning the same targets the manifest lists |
+| **BUILD-7** (landed) | the smart task runner executing the gates: content-addressed reuse, the two-worker scheduler, task telemetry through the ring | a no-change second run executes zero tasks; a one-unit change executes exactly its dependents; the gates' verdicts byte-identical to their shell runs |
 | **BUILD-8** | the C twin of `bcir-make`, its parity with the oracle, the artifact cache and the pinning manager; the migrated shell sections retired | twin/oracle parity over a generated corpus of BCIRfiles; `check_runtime.sh` reduced to what §7 keeps |
 
 ## 10. State (BUILD-1's own runs, 2026-10-04)
@@ -248,6 +324,8 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | BUILD-3: the install gate (gcc, clang 18, clang 23) | `build-install` passes on each tree: 12 libraries, 5 tools, 52 public headers and the package files installed and nothing else; the consumer builds every header alone and links `test_runtime` against `BCIR::*` alone, and the `runtime` section prints the same over both builds. A public header left out of the install, and a version file that accepts every request, each fail it |
 | BUILD-4: the dependency index (gcc, clang 18, clang 23) | the configure answers through `bcir.toolchain` (all five libraries absent on this host) and writes an index D1 passes; the quick tier through CTest reads it (`BCIR_DEPS_INDEX`) and passes on each tree; the quick tier without it (4213 passed) and the thorough tier on LLVM 23 (4213 passed) pass; an index missing a row raises instead of probing |
 | BUILD-5: the `mlir` preset on MLIR 23 (clang 23, `BCIR_REQUIRE_LIT=ON`) | `bcir-opt` built under the top-level project; `ctest -L mlir` 5/5: the IRDL round trip, the ODS examples, the passes, bytecode and the lit suite (131/131); a broken CHECK line, a fixture with no RUN line and a FileCheck of another major each fail the suite, and the configure fails without lit's tools when they are required |
+| BUILD-6: the rails' BCIRfile (gcc, clang 18) | `tools/build/bcirfile.py` plans every manifest library, tool, harness, seam unit, kernel and buildable variant (546 targets) and, with `--sections`, every section as a task (652 in all); each BCIRfile passes MK0-MK5 with the tools checked by identity |
+| BUILD-7: the runner (`tools/build/make_gate.py` on gcc and clang 18; CTest `build-make` on clang 23) | all 652 targets run and pass (212 s on gcc, 198 s on clang 18, two workers); a second run executes none; the 106 sections' recorded verdicts equal their shell runs; editing `runtime/c/bcir_diag.c` executes exactly its 115 dependents |
 | BUILD-2 group 3e: the twelve new sections (gcc) | `ctest -L section` runs them 12/12; `build-section-parity` holds them identical, the kernels' recipes written by the same writer; a no-op build re-emits no kernel, an edit to an oracle module the emitters import re-emits all seven, an edit to one they do not import re-emits none, an edit to a driver re-emits its kernel alone |
 | BUILD-2 group 3d's `cexpr` (gcc, clang 18, clang 23) | the emit builds under `-std=c11 -pedantic-errors` with each compiler, and the section prints its PASS line; the `bcir-cc` before CF-CASELABEL fails the emitted build under all three, GCC included, which had accepted the C23 form silently |
 | `clang` preset (system Clang 18.1.3) | 0 warnings; `ctest -L build` 2/2; `fuzzer` preset `ctest -L fuzz` 20/20 |
