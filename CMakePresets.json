@@ -79,6 +79,14 @@
       "execution": {"jobs": 2}
     },
     {
+      "name": "section",
+      "displayName": "The migrated gate sections over the harnesses built here",
+      "configurePreset": "default",
+      "filter": {"include": {"label": "^section$"}},
+      "output": {"outputOnFailure": true},
+      "execution": {"jobs": 2}
+    },
+    {
       "name": "quick",
       "displayName": "build + the oracle's quick tier",
       "configurePreset": "default",

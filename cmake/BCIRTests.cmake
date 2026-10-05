@@ -2,7 +2,9 @@
 #
 # `ctest -j 2` is the bounded local run; every heavy gate declares PROCESSORS 2 so two of them
 # never run at once, as AGENTS.md requires. Labels:
-#   build     the manifest reconciliation and the build-parity gate (fast; `ctest --preset build`)
+#   build     the manifest reconciliation, the dependency index, the build-parity gate and the
+#             section-parity gate (`ctest --preset build`)
+#   section   the gate sections that moved into tools/c/sections/, over the harnesses built here
 #   python    the oracle's quick tier
 #   shell     the shell gates, wrapped as they are until their sections migrate (BUILD-2)
 #   c / cpp / fuzz / mlir / docs   what each gate is about
@@ -37,6 +39,32 @@ add_test(NAME build-parity
                  --bcir-cc "$<TARGET_FILE:bcir-cc>" --cc "${CMAKE_C_COMPILER}"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 900)
+
+# --- section: the gate sections that moved into tools/c/sections/, over the harnesses built here ---
+# Each script is the section's own text (tools/c/check_runtime.sh calls the same file over the
+# binaries it compiles), so the entry and the gate judge one thing; build-section-parity holds the
+# two builds' outputs byte-identical.
+if(BCIR_BUILD_HARNESSES)
+  set(_section_binaries "")
+  foreach(_sec IN LISTS BCIR_MANIFEST_sections)
+    set(_args "")
+    foreach(_h IN LISTS BCIR_sections_${_sec}_HARNESSES)
+      if(NOT TARGET ${_h})
+        message(FATAL_ERROR "BCIR: section ${_sec} names harness ${_h}, which the manifest does not build")
+      endif()
+      list(APPEND _args "$<TARGET_FILE:${_h}>")
+    endforeach()
+    add_test(NAME c-section-${_sec}
+             COMMAND ${CMAKE_COMMAND} -E env "PYTHON=${BCIR_PYTHON}" bash "${CMAKE_SOURCE_DIR}/${BCIR_sections_${_sec}_SCRIPT}" ${_args}
+             WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(c-section-${_sec} PROPERTIES LABELS "c;section" TIMEOUT 900)
+  endforeach()
+  add_test(NAME build-section-parity
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/section_parity.py"
+                   --harness-dir "${CMAKE_BINARY_DIR}/harnesses" --cc "${CMAKE_C_COMPILER}"
+           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(build-section-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1800)
+endif()
 
 # --- python: the oracle's quick tier (bounded, toolchain-hidden) ---
 add_test(NAME python-quick

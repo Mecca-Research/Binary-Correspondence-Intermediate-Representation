@@ -1268,8 +1268,11 @@ jobs:
       - name: Build everything the manifest lists (two workers, as the presets say)
         run: cmake --build --preset ${{ matrix.compiler }}
 
-      - name: Manifest reconciliation + build parity (ctest, label build)
+      - name: Manifest reconciliation + dependency index + build parity + section parity (ctest, label build)
         run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L build -j 2 --output-on-failure
+
+      - name: The migrated gate sections over the CMake-built harnesses (ctest, label section)
+        run: ctest --test-dir build/cmake-${{ matrix.compiler }} -L section -j 2 --output-on-failure
 
       - name: Fuzz preset (clang only; the 19 libFuzzer targets under ASan/UBSan, bounded runs)
         if: matrix.compiler == 'clang'

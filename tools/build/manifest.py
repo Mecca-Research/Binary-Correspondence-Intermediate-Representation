@@ -33,6 +33,10 @@ The rules, each with the code its findings carry:
                    per list, tuple or set literal that names it
   M11 seam         the C++ seam's units equal handoff_fixtures/check_handoff.sh's (the #719 pair)
   M12 presets      CMakePresets.json builds and tests with two workers (AGENTS.md's cap)
+  M13 sections     every `sections` entry names a script under tools/c/sections/ that exists and
+                   manifest harnesses in argument order; every script in that directory is one
+                   section; tools/c/check_runtime.sh calls each script (the gate and the CTest entry
+                   run one text)
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
                    names unique, PYTHON3 / THREADS / MLIR among them
@@ -61,7 +65,9 @@ CPP_KINDS = ("seam_libraries", "seam_tests")
 KINDS = C_KINDS + CPP_KINDS
 LIBRARY_KINDS = ("libraries", "seam_libraries")
 UNIT_KEYS = ("sources", "libraries", "link", "options", "class", "max_len")
-TOP_KEYS = ("schema", "comment", "freestanding_checks", *KINDS)
+TOP_KEYS = ("schema", "comment", "freestanding_checks", "sections", *KINDS)
+SECTIONS_DIR = "tools/c/sections"
+RUNTIME_GATE = "tools/c/check_runtime.sh"
 LINK_NAMES = ("m", "pthread")
 CLASSES = ("freestanding_core", "hosted_tool", "driver_adapter")
 WORKERS = 2
@@ -312,6 +318,8 @@ class Tree:
                     set(re.findall(r"(\w+\.cpp)", cpp_match.group(1))),
                     set(re.findall(r"(\w+\.c)\b", c_match.group(1))),
                 )
+        self.section_scripts = sorted(p.name for p in (root / SECTIONS_DIR).glob("*.sh"))
+        self.runtime_gate_text = self._read(root / RUNTIME_GATE) or ""
         self.presets: dict | str | None = None
         if presets is not None:
             try:
@@ -583,6 +591,55 @@ def check_seam(manifest: dict, tree: Tree, errors: list[str]) -> None:
             errors.append(f"M11: {rel} links {unit} into the seam, outside bcir_seam's closure")
 
 
+def check_sections(manifest: dict, tree: Tree, errors: list[str]) -> None:
+    sections = manifest.get("sections")
+    if sections is None:
+        sections = {}
+    if not isinstance(sections, dict):
+        errors.append("M13: sections is not an object")
+        return
+    harnesses = set(_units(manifest, "harnesses"))
+    registered: list[str] = []
+    for name, section in sections.items():
+        where = f"sections/{name}"
+        if not isinstance(section, dict) or set(section) != {"script", "harnesses"}:
+            errors.append(f"M13: {where} is not {{script, harnesses}}")
+            continue
+        script = section["script"]
+        if (
+            not isinstance(script, str)
+            or not script.startswith(SECTIONS_DIR + "/")
+            or not script.endswith(".sh")
+        ):
+            errors.append(f"M13: {where} script {script!r} is not a tools/c/sections/*.sh path")
+        else:
+            basename = script[len(SECTIONS_DIR) + 1 :]
+            if basename not in tree.section_scripts:
+                errors.append(f"M13: {where} script {script} does not exist")
+            registered.append(basename)
+            if script not in tree.runtime_gate_text:
+                errors.append(
+                    f"M13: {RUNTIME_GATE} does not call {script}; the gate and the CTest entry would judge different text"
+                )
+        names = section["harnesses"]
+        if not isinstance(names, list) or not names or any(not isinstance(h, str) for h in names):
+            errors.append(f"M13: {where} needs a non-empty list of harness names")
+            continue
+        for harness in names:
+            if harness not in harnesses:
+                errors.append(
+                    f"M13: {where} names harness {harness!r}, which the manifest does not build"
+                )
+        if len(set(names)) != len(names):
+            errors.append(f"M13: {where} names a harness twice")
+    for basename in tree.section_scripts:
+        if basename not in registered:
+            errors.append(f"M13: {SECTIONS_DIR}/{basename} is not a manifest section")
+    for basename in sorted(set(registered)):
+        if registered.count(basename) > 1:
+            errors.append(f"M13: {SECTIONS_DIR}/{basename} is registered by two sections")
+
+
 def check_presets(presets: dict | str | None, errors: list[str], workers: int = WORKERS) -> None:
     if presets is None:
         return
@@ -635,6 +692,7 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
     check_gates(manifest, tree, errors)
     check_python_harnesses(manifest, tree, errors)
     check_seam(manifest, tree, errors)
+    check_sections(manifest, tree, errors)
     check_presets(tree.presets, errors)
     return errors
 
@@ -732,6 +790,8 @@ def main(argv: list[str] | None = None) -> int:
     for error in errors:
         print(f"FAIL: {error}")
     summary = ", ".join(f"{n} {kind}" for kind, n in counts.items())
+    sections = manifest.get("sections")
+    summary += f", {len(sections) if isinstance(sections, dict) else 0} sections"
     free = (
         len(manifest.get("freestanding_checks", []))
         if isinstance(manifest.get("freestanding_checks"), list)

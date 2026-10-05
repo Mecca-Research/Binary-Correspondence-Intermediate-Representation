@@ -8,7 +8,8 @@
     "units of this file; `link` names system libraries (m, pthread); `class` is the unit's memory",
     "class from runtime/c/MEMORY_CLASSIFICATION.txt, one per library; `options` are GNU-style compile",
     "options the gates pass for that unit (`gcc:`/`clang:` prefixes scope one to that compiler);",
-    "`max_len` is libFuzzer's -max_len, absent when unbounded."
+    "`max_len` is libFuzzer's -max_len, absent when unbounded. `sections` are the gate sections that",
+    "moved into tools/c/sections/*.sh (BUILD-2): the script and the manifest harnesses it takes, in order."
   ],
   "libraries": {
     "bcir_base": {
@@ -171,6 +172,14 @@
     "test_artifact_bundle_cpp": {"sources": ["test_artifact_bundle.cpp"], "libraries": ["bcir_artifact", "bcir_base"]},
     "test_jer_index": {"sources": ["test_jer_index.cpp"], "libraries": ["bcir_jer_index"]},
     "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]}
+  },
+  "sections": {
+    "runtime": {"script": "tools/c/sections/runtime.sh", "harnesses": ["test_runtime"]},
+    "artifact_bundle": {"script": "tools/c/sections/artifact_bundle.sh", "harnesses": ["test_sha256", "test_artifact_bundle", "test_asn1"]},
+    "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
+    "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
+    "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
+    "telemetry_frame": {"script": "tools/c/sections/telemetry_frame.sh", "harnesses": ["test_telemetry_frame"]}
   },
   "freestanding_checks": [
     "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",

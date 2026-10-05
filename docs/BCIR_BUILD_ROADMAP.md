@@ -73,6 +73,8 @@ cmake/BCIRCompilerFlags.cmake  C23 (c2x where needed), C++17 -Wpedantic, -Wall -
 cmake/BCIRDependencies.cmake   Python, Threads, MLIR/LLVM, FFTW3F/LAPACKE/GSL/SLEEF/libcerf -> bcir-deps.json
 cmake/BCIRManifest.cmake       the manifest reader, closures, link-name and option mapping
 cmake/BCIRTests.cmake          CTest registration (labels, PROCESSORS 2, the gates as entries)
+tools/c/sections/*.sh          the gate sections that migrated (BUILD-2): one script each, run by the
+                               gate over its own binaries and by CTest over the manifest's harnesses
 runtime/manifest.json          libraries / tools / harnesses / fuzzers / seam_libraries / seam_tests
 runtime/c/CMakeLists.txt       targets from the manifest; nothing listed by hand
 runtime/cpp/CMakeLists.txt     the seam's libraries and tests over the C libraries built as C
@@ -96,7 +98,8 @@ under `harnesses/`, fuzz targets under `fuzzers/`, the dependency index at `bcir
 
 | Label | Entries (BUILD-1) | Owner on CI |
 |---|---|---|
-| `build` | `build-manifest` (the checker), `build-parity` (the `bcir-cc` parity gate) | `cmake-build` (gcc + clang) |
+| `build` | `build-manifest` (the checker), `build-deps-index` (the dependency index), `build-parity` (the `bcir-cc` parity gate), `build-section-parity` (every migrated section byte-identical over the gate-built and the CMake-built harnesses) | `cmake-build` (gcc + clang) |
+| `section` + `c` | `c-section-<name>` for every `sections` entry of the manifest: the gate section's own script over the harnesses built here | `cmake-build` |
 | `python` | `python-quick` (the oracle's quick tier, `-j 2`) | the oracle jobs |
 | `shell` + `c` / `cpp` / `fuzz` | the shell gates as entries under the configured compilers: `c-runtime`, `c-memory-discipline`, `cpp-handoff`; on Clang `cfront-sanitize`, `fuzz-streampack` | the C-rails jobs |
 | `fuzz` + `c` | `fuzz-<target>` for the 19 libFuzzer targets, `-runs=BCIR_FUZZ_RUNS` (bounded, > 0) | `cmake-build` (clang cell, the `fuzzer` preset) |
@@ -187,7 +190,7 @@ rails, judged like everything else here by the oracle, the twin and their parity
 |---|---|---|
 | **BUILD-0** | this roadmap with the measured inventory | linked from the README, the repo-structure map and AGENTS.md |
 | **BUILD-1** (landed) | top-level CMake, the four modules, `runtime/manifest.json`, the presets, CTest registration, `tools/build/manifest.py`, `tools/build/build_parity.py`, the `cmake-build` CI job | the checker clean and every injected violation a finding; build parity over every fixture and mode on GCC and Clang with 0 rows differing; every CTest label runs; the MLIR law builds under the top-level project |
-| **BUILD-2** | `check_runtime.sh`'s sections as CTest entries, one group of sections per PR, each harness's argv registered once | per section: the CTest entry's outputs byte-identical to the shell section's on both compilers; the section deleted from the script only after that proof |
+| **BUILD-2** (group 1 landed) | `check_runtime.sh`'s sections as CTest entries, one group of sections per PR: each section's text moves into `tools/c/sections/<name>.sh`, the gate compiles its harnesses and calls the script, the manifest's `sections` registers script + harnesses, CMake runs it as `c-section-<name>`. Group 1: `runtime`, `artifact_bundle`, `executor`, `encoder`, `execution_plan`, `telemetry_frame` | per section: `build-section-parity` holds the script's stdout, stderr and status byte-identical over the gate-built and the CMake-built harnesses on both compilers, and requires a PASS line; the gate's compile lines go only after that proof has run on CI for the group |
 | **BUILD-3** | install and export: `install(TARGETS …)`, `BCIRConfig.cmake`, versioned headers; `find_package(BCIR)` from an installed tree | an out-of-tree consumer builds `test_runtime` against the installed package on both compilers |
 | **BUILD-4** | the dependency index consumed by the Python harnesses (`native_bench`, the link-flag rules, the model gates) instead of per-harness probing | a harness and the configure cannot disagree about a dependency: the harness reads the index, and a test injects a missing row |
 | **BUILD-5** | the MLIR rail under the top-level project in CI (`mlir-rail-validate` uses the `mlir` preset; `bcir-opt`'s lit suite as CTest) | the rail's own gates green from the top-level tree on LLVM 22 and 23 |
@@ -207,9 +210,14 @@ rails, judged like everything else here by the oracle, the twin and their parity
 | `fuzzer` preset (Clang 23) | 19 targets built; `ctest -L fuzz` 20/20 at 1,000 runs each |
 | `mlir` preset (Clang 23, MLIR 23.1.2) | `bcir-opt` built under the top-level project; `ctest -L mlir` 4/4 |
 | `ctest -L build` (gcc) | 2/2 |
+| BUILD-2 group 1: `ctest -L section` (gcc) | 6/6, 1.5 s; `build-section-parity` 6 sections identical under both builds, 11 PASS lines, 12 s |
 | `clang` preset (system Clang 18.1.3) | 0 warnings; `ctest -L build` 2/2; `fuzzer` preset `ctest -L fuzz` 20/20 |
 | The shell gates as CTest entries (gcc tree) | `cpp-handoff` and `c-memory-discipline` pass; the latter only after the gate's strict compile took its own compatibility warnings (it had passed under clang and failed under gcc: laws.md L12, found by the wrap) |
 
-The next slice is BUILD-2; its first group is the sections that already have a harness built here
-(`test_runtime`, `test_sha256`, `test_exec`, `test_encode`, `test_telemetry_frame`) because their
-argv is a fixture path and their verdict is their exit status.
+BUILD-2 continues group by group. Group 1 (landed) took the six sections whose argv is a fixture
+path and whose verdict is a PASS line. Group 2 is the sections that compile a second binary of
+their own (`control_plane`'s mutant, `ring`'s `-O0`/`-O3` and TSan variants, `handoff`'s `-O0`/`-O3`,
+`kplan`'s optimization sweep): their scripts take the gate's variants as further arguments, and the
+manifest grows a `variants` field so CMake builds them too. The two-standard sections
+(`x86_interrupt`, `q8_tables`) wait on C11 harness variants in the manifest. The `bcir-cc` sections
+(#emitlink onward) are the last group; `build-parity` already covers the tool they drive.
