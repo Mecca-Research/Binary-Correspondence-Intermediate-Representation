@@ -30,26 +30,8 @@ from bcir.kbcir.fft import dft_reference  # for the separable-composition cross-
 from bcir.kbcir.fft2 import dft2_reference, fft2_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_fftw_fft2_c
-from bcir.toolchain import host_link_args
+from bcir.toolchain import host_c_compiler, host_link_args, optional_library
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
-
-
-def _fftw_link():
-    """An FFTW lib flag that links, or None (the real-FFTW path then self-skips honestly)."""
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    if not cc:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write("void fftwf_execute();\nint main(void){return 0;}\n")
-        if (
-            subprocess.run(
-                [cc, src, "-lfftw3", "-o", os.path.join(d, "p")], capture_output=True
-            ).returncode
-            == 0
-        ):
-            return "-lfftw3"
-    return None
 
 
 def _interleave(signal):
@@ -249,10 +231,12 @@ def test_fallback_path_compiles_and_matches_the_reference():
 
 
 def test_linked_fftw2_path_agrees_when_fftw_is_present():
-    lib = _fftw_link()
+    lib = optional_library("FFTW3F")  # the one predicate (bcir.toolchain, BUILD-4)
     if not lib:
         return  # no FFTW here -> the real-link path self-skips
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    cc = host_c_compiler()
+    if not cc:
+        return  # no compiler visible here (a test tier that hides the toolchain)
     rng = random.Random(0xF7BA2)
     n0, n1 = 4, 4
     grid = [[complex(rng.uniform(-3, 3), rng.uniform(-3, 3)) for _ in range(n1)] for _ in range(n0)]
@@ -271,7 +255,7 @@ def test_linked_fftw2_path_agrees_when_fftw_is_present():
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
         bld = subprocess.run(
-            host_link_args([cc, "-std=c11", "-O2", "-DBCIR_USE_FFTW", src, lib, "-lm", "-o", exe]),
+            host_link_args([cc, "-std=c11", "-O2", "-DBCIR_USE_FFTW", src, *lib, "-lm", "-o", exe]),
             capture_output=True,
             text=True,
         )

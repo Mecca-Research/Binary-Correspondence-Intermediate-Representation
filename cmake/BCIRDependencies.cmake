@@ -10,6 +10,8 @@ include_guard(GLOBAL)
 
 set(_bcir_deps_rows "")
 
+# An optional library's row also carries its link flags (ARGN): the flag set the probe linked
+# with, empty when it is absent (BUILD-4).
 function(_bcir_dep_record name found detail)
   set(BCIR_HAVE_${name} ${found} PARENT_SCOPE)
   # JSON spells the verdict true/false; CMake's ON/OFF in its place made the index unreadable
@@ -26,7 +28,21 @@ function(_bcir_dep_record name found detail)
   string(REGEX REPLACE "[\r\n\t]+" " " detail "${detail}")
   string(REPLACE "\\" "/" detail "${detail}")
   string(REPLACE "\"" "'" detail "${detail}")
-  set(_row "    {\"name\": \"${name}\", \"found\": ${_json_found}, \"detail\": \"${detail}\"}")
+  # A semicolon would split the row in the list the rows are kept in, and the JSON join would put a
+  # raw line feed inside the string (found by D1 on a probe's "tried -lfftw3f; -lfftw3"); any byte
+  # outside printable ASCII is no JSON string either. One rule for every caller (L14).
+  string(REPLACE ";" "," detail "${detail}")
+  string(REGEX REPLACE "[^ -~]" "?" detail "${detail}")
+  set(_link_json "")
+  if(_bcir_dep_link_row)
+    set(_flags "")
+    foreach(_flag IN LISTS ARGN)
+      list(APPEND _flags "\"${_flag}\"")
+    endforeach()
+    list(JOIN _flags ", " _flags)
+    set(_link_json ", \"link\": [${_flags}]")
+  endif()
+  set(_row "    {\"name\": \"${name}\", \"found\": ${_json_found}, \"detail\": \"${detail}\"${_link_json}}")
   set(_bcir_deps_rows "${_bcir_deps_rows};${_row}" PARENT_SCOPE)
   message(STATUS "BCIR dependency ${name}: ${_state}${detail}")
 endfunction()
@@ -82,32 +98,46 @@ if(BCIR_REQUIRE_TSAN AND NOT BCIR_HAVE_TSAN)
 endif()
 
 # The numeric libraries the twin's link-flag rules name (tools/c/check_runtime.sh #linkflags-*):
-# their presence decides which E-series fallbacks a host can judge natively.
-find_package(PkgConfig QUIET)
-macro(_bcir_optional_lib name lib pkg)
-  set(_found OFF)
-  set(_detail "")
-  if(PKG_CONFIG_FOUND AND NOT "${pkg}" STREQUAL "")
-    pkg_check_modules(BCIR_PC_${name} QUIET ${pkg})
-    if(BCIR_PC_${name}_FOUND)
-      set(_found ON)
-      set(_detail " (${pkg} ${BCIR_PC_${name}_VERSION})")
-    endif()
+# their presence decides which E-series fallbacks a host can judge natively. Asked of the one
+# predicate the Python harnesses use, bcir.toolchain's (BUILD-4): a probe that includes the header
+# and calls a function, so the link must resolve the symbol, under the configured compiler. Each row
+# records the flag set that linked; a harness run with BCIR_DEPS_INDEX at this index reads it
+# instead of probing, so the two cannot disagree (docs/security/laws.md L12, L14).
+set(_bcir_optional_libraries FFTW3F LAPACKE GSL SLEEF CERF)
+set(_bcir_dep_link_row ON)
+set(_bcir_probe_json "")
+if(BCIR_HAVE_PYTHON3)
+  execute_process(
+    COMMAND "${BCIR_PYTHON}" -m bcir.toolchain probe-libraries --cc "${CMAKE_C_COMPILER}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE _bcir_probe_rc OUTPUT_VARIABLE _bcir_probe_json ERROR_VARIABLE _bcir_probe_err
+    OUTPUT_STRIP_TRAILING_WHITESPACE TIMEOUT 600)
+  if(NOT _bcir_probe_rc EQUAL 0)
+    message(FATAL_ERROR "BCIR: the optional-library probe (python -m bcir.toolchain probe-libraries) failed: ${_bcir_probe_err}")
   endif()
-  if(NOT _found)
-    find_library(BCIR_LIB_${name} NAMES ${lib})
-    if(BCIR_LIB_${name})
-      set(_found ON)
-      set(_detail " (${BCIR_LIB_${name}})")
-    endif()
+endif()
+foreach(_name IN LISTS _bcir_optional_libraries)
+  if(NOT _bcir_probe_json)
+    _bcir_dep_record(${_name} OFF " (the probe, bcir.toolchain, needs Python)")
+    continue()
   endif()
-  _bcir_dep_record(${name} ${_found} "${_detail}")
-endmacro()
-_bcir_optional_lib(FFTW3F fftw3f fftw3f)
-_bcir_optional_lib(LAPACKE lapacke lapacke)
-_bcir_optional_lib(GSL gsl gsl)
-_bcir_optional_lib(SLEEF sleef sleef)
-_bcir_optional_lib(CERF cerf libcerf)
+  string(JSON _found ERROR_VARIABLE _err GET "${_bcir_probe_json}" ${_name} found)
+  if(_err)
+    message(FATAL_ERROR "BCIR: the optional-library probe gave no answer for ${_name}: ${_err}")
+  endif()
+  string(JSON _detail GET "${_bcir_probe_json}" ${_name} detail)
+  string(JSON _nflags LENGTH "${_bcir_probe_json}" ${_name} link)
+  set(_flags "")
+  if(_nflags GREATER 0)
+    math(EXPR _last "${_nflags} - 1")
+    foreach(_i RANGE 0 ${_last})
+      string(JSON _flag GET "${_bcir_probe_json}" ${_name} link ${_i})
+      list(APPEND _flags "${_flag}")
+    endforeach()
+  endif()
+  _bcir_dep_record(${_name} ${_found} " (${_detail})" ${_flags})
+endforeach()
+set(_bcir_dep_link_row OFF)
 
 # The index: one file a harness reads instead of re-probing.
 list(JOIN _bcir_deps_rows ",\n" _bcir_deps_body)

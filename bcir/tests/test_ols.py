@@ -28,28 +28,7 @@ from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.ols import normal_equation_residual, ols_reference, ols_via_bridge
 from bcir.kbcir.precision import quantization_error_bound
 from bcir.lower.c_kernel import emit_lapack_ols_c
-from bcir.toolchain import host_link_args
-
-
-def _lapack_link():
-    """A LAPACK lib flag that links (with lapacke.h present), or None (the real-LAPACK path self-skips)."""
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    if not cc:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write(
-            "#include <lapacke.h>\nint main(void){return (int)LAPACK_ROW_MAJOR*0;}\n"
-        )
-        for lib in (["-llapacke", "-llapack"], ["-llapacke"], ["-llapack"]):
-            if (
-                subprocess.run(
-                    [cc, src, *lib, "-o", os.path.join(d, "p")], capture_output=True
-                ).returncode
-                == 0
-            ):
-                return lib
-    return None
+from bcir.toolchain import host_c_compiler, host_link_args, optional_library
 
 
 def _design(m: int, n: int):
@@ -348,10 +327,12 @@ def test_fallback_path_handles_multiple_right_hand_sides():
 
 
 def test_linked_lapack_path_agrees_when_lapack_is_present():
-    libs = _lapack_link()
+    libs = optional_library("LAPACKE")  # the one predicate (bcir.toolchain, BUILD-4)
     if not libs:
         return  # no LAPACK here -> the real-link path self-skips
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    cc = host_c_compiler()
+    if not cc:
+        return  # no compiler visible here (a test tier that hides the toolchain)
     m, n = 8, 3
     a = _design(m, n)
     x_true = [2.0, -1.5, 0.75]

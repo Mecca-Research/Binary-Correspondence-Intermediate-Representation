@@ -11,6 +11,7 @@ module is registered repository-only in run_all.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import copy
 import importlib.util
@@ -1149,12 +1150,40 @@ def test_the_dependency_index_is_held_to_its_schema():
             {"name": "PYTHON3", "found": True, "detail": " (3.11 at /usr/bin/python3)"},
             {"name": "THREADS", "found": True, "detail": ""},
             {"name": "MLIR", "found": False, "detail": " (set MLIR_DIR)"},
+            {"name": "FFTW3F", "found": True, "detail": " (links)", "link": ["-lfftw3f"]},
+            {"name": "LAPACKE", "found": False, "detail": " (absent)", "link": []},
+            {"name": "GSL", "found": False, "detail": " (absent)", "link": []},
+            {"name": "SLEEF", "found": False, "detail": " (absent)", "link": []},
+            {"name": "CERF", "found": False, "detail": " (absent)", "link": []},
         ],
     }
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "bcir-deps.json"
         path.write_text(json.dumps(good), encoding="utf-8")
         assert manifest_tool.check_deps_index(path) == []
+        # an optional library's row is the one a harness reads in place of its own probe (BUILD-4):
+        # missing, flagless while found, or flagged while absent, it is a finding
+        for fault, what in (
+            (
+                [r for r in good["dependencies"] if r["name"] != "LAPACKE"],
+                "LAPACKE is not recorded",
+            ),
+            (
+                [{**r, "link": []} if r["name"] == "FFTW3F" else r for r in good["dependencies"]],
+                "FFTW3F is found=True",
+            ),
+            (
+                [
+                    {**r, "link": ["-lgsl"]} if r["name"] == "GSL" else r
+                    for r in good["dependencies"]
+                ],
+                "GSL is found=False",
+            ),
+        ):
+            path.write_text(json.dumps({**good, "dependencies": fault}), encoding="utf-8")
+            findings = manifest_tool.check_deps_index(path)
+            assert any(what in f for f in findings), (what, findings)
+        path.write_text(json.dumps(good), encoding="utf-8")
         path.write_text(json.dumps(good).replace("true", "ON"), encoding="utf-8")
         findings = manifest_tool.check_deps_index(path)
         assert findings and all(f.startswith("D1:") for f in findings), findings
@@ -1171,6 +1200,43 @@ def test_the_dependency_index_is_held_to_its_schema():
         assert rc == 1 and "D1:" in out.getvalue(), (rc, out.getvalue())
     cmake = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
     assert "--deps-index" in cmake, "ctest does not validate the index"
+
+
+def test_one_predicate_answers_what_the_host_has():
+    """The optional libraries are probed in one place, bcir.toolchain's (BUILD-4): the configure
+    asks it, and so does every harness. A module that writes its own probe program -- a C string
+    carrying one of the libraries' headers and a main -- is a second answer to the same question,
+    the shape that let the FFTW probe pass on a library that lacks the symbol (laws.md L14). And
+    the configure runs the predicate rather than a find_library of its own."""
+    headers = ("<fftw3.h>", "<lapacke.h>", "<gsl/", "<sleef.h>", "<cerf.h>")
+    owner = _ROOT / "bcir" / "toolchain.py"
+    found: list[str] = []
+    for tree in ("bcir", "tools"):
+        for path in sorted((_ROOT / tree).rglob("*.py")):
+            if path == owner or "__pycache__" in path.parts:
+                continue
+            try:
+                module = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                continue
+            for node in ast.walk(module):
+                if (
+                    isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                    and "main(" in node.value
+                    and any(f"#include {h}" in node.value for h in headers)
+                ):
+                    found.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
+    assert found == [], f"library probes outside bcir.toolchain: {found}"
+    deps = (_ROOT / "cmake" / "BCIRDependencies.cmake").read_text(encoding="utf-8")
+    assert "-m bcir.toolchain probe-libraries" in deps, "the configure does not ask the predicate"
+    assert "find_library" not in deps and "pkg_check_modules" not in deps, (
+        "the configure answers the library question its own way"
+    )
+    tests = (_ROOT / "cmake" / "BCIRTests.cmake").read_text(encoding="utf-8")
+    assert "BCIR_DEPS_INDEX=${CMAKE_BINARY_DIR}/bcir-deps.json" in tests, (
+        "the Python entries do not read the tree's index"
+    )
 
 
 def test_the_ci_owns_the_build_gate():

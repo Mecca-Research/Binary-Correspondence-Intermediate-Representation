@@ -49,7 +49,7 @@ from bcir.kbcir.gsl_kernels import GSL_STATS, stats_reference
 from bcir.kbcir.linsolve import residual, solve_reference
 from bcir.kbcir.matmul import matmul_reference
 from bcir.kbcir.vecmath import exp_reference
-from bcir.toolchain import host_link_args
+from bcir.toolchain import host_link_args, optional_library
 from bcir.lower.c_kernel import (
     emit_blas_gemm_c,
     emit_cerf_erfcx_c,
@@ -197,18 +197,7 @@ def test_cerf_linked_path_is_robust_only_if_libcerf_is_present():
     cc = _cc()
     if not cc:
         return
-    libs = None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write("#include <cerf.h>\nint main(void){return (int)erfcxf(0.0f)*0;}\n")
-        if (
-            subprocess.run(
-                host_link_args([cc, src, "-lcerf", "-lm", "-o", os.path.join(d, "p")]),
-                capture_output=True,
-            ).returncode
-            == 0
-        ):
-            libs = ["-lcerf"]
+    libs = optional_library("CERF")  # the one predicate (bcir.toolchain, BUILD-4)
     if not libs:
         return  # no libcerf here -> the robust path self-skips
     n = 2

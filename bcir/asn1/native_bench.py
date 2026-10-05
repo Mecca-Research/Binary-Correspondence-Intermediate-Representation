@@ -47,6 +47,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 
+from ..toolchain import host_c_compiler
 from .certified import MIN_SAMPLES, CostRow, EncodingCostTable, interval_of
 from .selection import ALL_CANDIDATES
 from .tags import Asn1Error
@@ -270,11 +271,11 @@ def observed_encode_partition() -> dict[str, bool]:
 
 def native_available() -> bool:
     """Whether this host can build the harness at all. Absence is a clean skip."""
-    return (shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")) is not None
+    return host_c_compiler() is not None
 
 
 def build_harness(tmp: str) -> str | None:
-    cc = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
+    cc = host_c_compiler()  # the one compiler pick (bcir.toolchain, BUILD-4)
     if cc is None:
         return None
     out = os.path.join(tmp, "bcir_asn1_bench")

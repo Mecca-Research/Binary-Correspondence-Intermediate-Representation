@@ -102,10 +102,14 @@ if(BCIR_BUILD_HARNESSES)
 endif()
 
 # --- python: the oracle's quick tier (bounded, toolchain-hidden) ---
+# BCIR_DEPS_INDEX: a harness that asks what the host has (bcir.toolchain.optional_library) reads
+# the configure's answers from this tree's index instead of probing, so the two cannot disagree
+# (BUILD-4).
 add_test(NAME python-quick
          COMMAND "${BCIR_PYTHON}" -m bcir.tests.run_all --tier quick -j 2
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOUT 1800)
+set_tests_properties(python-quick PROPERTIES LABELS "python" PROCESSORS 2 TIMEOUT 1800
+                     ENVIRONMENT "BCIR_DEPS_INDEX=${CMAKE_BINARY_DIR}/bcir-deps.json")
 
 # --- shell: the gates as they are ---
 # c-runtime runs tools/c/check_runtime.sh without the gates it delegates to: each of those is an entry

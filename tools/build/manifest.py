@@ -64,7 +64,9 @@ The rules, each with the code its findings carry:
                    delegated gate once
   D1  deps index   bcir-deps.json (written at configure) is JSON of schema bcir-deps.v1 with the
                    compilers named and one {name, found: true|false, detail} row per dependency,
-                   names unique, PYTHON3 / THREADS / MLIR among them
+                   names unique, PYTHON3 / THREADS / MLIR and every optional library among them,
+                   each optional library's row with its link flags (non-empty exactly when found);
+                   the predicate is bcir.toolchain's, the one a harness reading the index asks
 
 Scope: the checker reads the gates and the Python modules as text (string literals and compile
 lines); a source list assembled at run time is outside it, and a gate that links a unit the
@@ -1096,9 +1098,16 @@ def check(manifest: dict, tree: Tree | None = None) -> list[str]:
 
 
 # --- D1: the dependency index -------------------------------------------------------------------
+# The index's schema is the package's (bcir.toolchain.deps_index_problems): a harness that reads the
+# index with BCIR_DEPS_INDEX set holds it to the same predicate this rule does (BUILD-4, laws.md L14).
 
-DEPS_SCHEMA = "bcir-deps.v1"
-DEPS_REQUIRED = ("PYTHON3", "THREADS", "MLIR")
+
+def _toolchain():
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    import bcir.toolchain as toolchain
+
+    return toolchain
 
 
 def check_deps_index(path: Path) -> list[str]:
@@ -1111,40 +1120,7 @@ def check_deps_index(path: Path) -> list[str]:
         data = json.loads(text)
     except ValueError as exc:
         return [f"D1: {path} is not JSON ({exc})"]
-    errors: list[str] = []
-    if not isinstance(data, dict):
-        return [f"D1: {path} is not a JSON object"]
-    if data.get("schema") != DEPS_SCHEMA:
-        errors.append(f"D1: schema is {data.get('schema')!r}, not {DEPS_SCHEMA!r}")
-    for key in ("c_compiler", "cxx_compiler", "system"):
-        if not isinstance(data.get(key), str) or not data[key].strip():
-            errors.append(f"D1: {key} is missing or empty")
-    rows = data.get("dependencies")
-    if not isinstance(rows, list) or not rows:
-        return errors + [
-            "D1: dependencies is missing or empty (an index that records nothing indexes nothing)"
-        ]
-    names: list[str] = []
-    for i, row in enumerate(rows):
-        if not isinstance(row, dict) or set(row) != {"name", "found", "detail"}:
-            errors.append(f"D1: dependency row {i} is not {{name, found, detail}}")
-            continue
-        if not isinstance(row["name"], str) or not row["name"]:
-            errors.append(f"D1: dependency row {i} has no name")
-        if not isinstance(row["found"], bool):
-            errors.append(
-                f"D1: dependency {row.get('name')!r} has found={row['found']!r}, not a JSON boolean"
-            )
-        if not isinstance(row["detail"], str):
-            errors.append(f"D1: dependency {row.get('name')!r} detail is not a string")
-        names.append(str(row["name"]))
-    for name in sorted(set(names)):
-        if names.count(name) > 1:
-            errors.append(f"D1: dependency {name} is recorded twice")
-    for name in DEPS_REQUIRED:
-        if name not in names:
-            errors.append(f"D1: dependency {name} is not recorded")
-    return errors
+    return [f"D1: {problem}" for problem in _toolchain().deps_index_problems(data)]
 
 
 def main(argv: list[str] | None = None) -> int:

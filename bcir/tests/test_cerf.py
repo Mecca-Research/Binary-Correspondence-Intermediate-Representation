@@ -36,31 +36,9 @@ import tempfile
 from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
 from bcir.kbcir.cerf_kernels import erfcx_reference, erfcx_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
-from bcir.toolchain import host_link_args
+from bcir.toolchain import host_c_compiler, host_link_args, optional_library
 from bcir.lower.c_kernel import emit_cerf_erfcx_c
 from bcir.model import Claim, Domain, Lane, Opcode, StrideClass
-
-
-def _cerf_link():
-    """A libcerf lib flag set that links (with the cerf header present), or None (the real-libcerf path
-    self-skips). libcerf is rarely installed on CI, so this almost always returns None -- the fallback path
-    is the one that does the real reference-verification work, exactly as in test_sleef/test_gsl/test_fftw."""
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
-    if not cc:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        src = os.path.join(d, "p.c")
-        open(src, "w").write("#include <cerf.h>\nint main(void){return (int)erfcxf(0.0f)*0;}\n")
-        for lib in (["-lcerf"],):
-            if (
-                subprocess.run(
-                    host_link_args([cc, src, *lib, "-lm", "-o", os.path.join(d, "p")]),
-                    capture_output=True,
-                ).returncode
-                == 0
-            ):
-                return lib
-    return None
 
 
 def _independent_erfcx(data):
@@ -211,10 +189,12 @@ def test_fallback_path_compiles_runs_and_is_correct():
 
 
 def test_linked_cerf_path_agrees_when_cerf_is_present():
-    libs = _cerf_link()
+    libs = optional_library("CERF")  # the one predicate (bcir.toolchain, BUILD-4)
     if not libs:
         return  # no libcerf here -> the real-link path self-skips
-    cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    cc = host_c_compiler()
+    if not cc:
+        return  # no compiler visible here (a test tier that hides the toolchain)
     data = [2.5, -1.0, 3.0, 0.5, 0.0, -2.0, 1.0, -0.25, 1.75, -3.0]
     ref = erfcx_reference(data)
     got = _run_erfcx_kernel(

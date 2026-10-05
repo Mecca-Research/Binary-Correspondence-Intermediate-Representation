@@ -1686,6 +1686,36 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     (the seam's included), 5 tools, 52 public headers and the package files, the consumer
     linking `test_runtime` against `BCIR::*` alone -- and the `fuzzer` and `asan` presets
     configure with the install rules in place.
+  BUILD-4 (2026-10-05) gave the host's dependencies one predicate, `bcir.toolchain`, asked by
+  the configure and by every Python harness that needs to know.
+  - `optional_library(NAME)` answers for FFTW3F, LAPACKE, GSL, SLEEF and libcerf with the link
+    flags that work, or None. Its probe includes the header and calls a function, so the link must
+    resolve the symbol. Nine tests had carried a probe of their own: eight copies across the
+    link-flag rule modules and one inline in the Area-B red team. The FFTW copy only declared
+    `fftwf_execute`, so any `libfftw3` passed it, symbol or not.
+  - `host_c_compiler()` is the one compiler pick: `$CC` when it is set, and then only it, else
+    clang, gcc, cc. native_bench had ignored `$CC`; the model gates took it unresolved. Each had
+    chosen in its own order.
+  - The configure runs the predicate (`python -m bcir.toolchain probe-libraries`) in place of
+    `find_library`/`pkg-config`, and `bcir-deps.json` records each library's flags. A harness run
+    with `BCIR_DEPS_INDEX` at the index -- the CTest Python entries are -- reads the configure's
+    answer and probes nothing; an index missing a row, or malformed, raises instead of falling back
+    to a probe. D1 asks the same schema predicate the harnesses read the index with.
+  - Found and recorded, not fixed here (FFTW-PRECISION): both rails' link-flag rules map `fftwf_*`
+    to `-lfftw3`, but FFTW builds its single precision as `libfftw3f`. No CI host has FFTW, so the
+    linked path has never run.
+  - Found by the first configure that ran the predicate: a probe's detail read "tried -lfftw3f;
+    -lfftw3", and CMake keeps the index's rows in a list whose separator is the semicolon, so
+    the row split and the join put a raw line feed inside a JSON string. D1 (`build-deps-index`)
+    refused the index. The row recorder now maps the semicolon, and any byte outside printable
+    ASCII, to a safe one, for every caller (L14); the probe also writes its detail without one.
+  - Found by the quick tier: the probe wrote its C source without pinning the line ending
+    (`test_line_endings`), so the bytes it compiled depended on the host; it pins `\n` now.
+  - Measured: the gcc and clang 18 configures record all five libraries absent on this host, the
+    index passes D1, and CTest's `python-quick` -- the quick tier with `BCIR_DEPS_INDEX` at the
+    index -- passes on each tree; the quick tier with no index passes (4213 passed), as do the
+    thorough tier on LLVM 23 (4213 passed) and the changed modules probing with the host's own
+    compiler.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
