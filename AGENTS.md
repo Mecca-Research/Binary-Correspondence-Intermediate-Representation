@@ -61,12 +61,17 @@ Python, C sanitizer/fuzzer, model, LLVM-training, or MLIR gates concurrently.
 
 1. Run focused regressions and the bounded complete quick oracle locally. Run
    broader local gates only when the host and resource budget support them.
-2. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,
+2. Judge the change on the newest LLVM/Clang/MLIR 23 and Node 24 as well as on the
+   CI-default Clang 18 / GCC 13: `python3 tools/local/latest_toolchain.py status`, then
+   `bash tools/local/check_latest.sh`
+   ([`.claude/skills/bcir-latest-toolchain`](.claude/skills/bcir-latest-toolchain/SKILL.md)).
+   A Clang-18-only pass is not evidence about 23.
+3. Delegate the full Python/differential/fuzz, C runtime/model, LLVM training,
    MLIR, Windows, and native ARM matrix to GitHub Actions as appropriate.
-3. Treat hardware-only validation that neither the local host nor CI provides as
+4. Treat hardware-only validation that neither the local host nor CI provides as
    an explicit, documented skip. Never hide it or replace it with unsafe emulation.
-4. Confirm tests leave tracked files unchanged and run `git diff --check`.
-5. After publishing, wait for the full Actions run and fix every failure before
+5. Confirm tests leave tracked files unchanged and run `git diff --check`.
+6. After publishing, wait for the full Actions run and fix every failure before
    handing off the PR as complete.
 
 The command inventory and tool-gated rules live in

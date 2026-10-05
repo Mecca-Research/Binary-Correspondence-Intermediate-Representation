@@ -1242,10 +1242,13 @@ jobs:
     # over every fixture, byte-identical). The MLIR law is OFF here on purpose: mlir-rail-validate
     # owns it with a coherent toolset, and a package the runner happens to carry must not decide
     # what this job builds. Clang also builds the fuzz preset and runs its bounded CTest entries.
+    # The clang23 cell builds the same tree with apt.llvm.org's clang 23, the newest LLVM major
+    # (.claude/skills/bcir-latest-toolchain): a pass on Clang 18 says nothing about 23 -- BUILD-2c's
+    # C11 Q8 build was green on 18 and GCC and failed on 23.1.2 (#embed offered to C11).
     strategy:
       fail-fast: false
       matrix:
-        compiler: [gcc, clang]
+        compiler: [gcc, clang, clang23]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1261,6 +1264,29 @@ jobs:
         with:
           packages: ninja-build clang lld llvm libclang-rt-18-dev
           version: train-${{ runner.arch }}-v1
+
+      - name: Add the apt.llvm.org signed repo (LLVM 23; clang23 cell)
+        if: matrix.compiler == 'clang23'
+        run: bash tools/ci/add_llvm_apt_repo.sh 23
+
+      - name: Install clang 23 + lld + compiler-rt (clang23 cell; the TSan runtime the variants need)
+        if: matrix.compiler == 'clang23'
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: clang-23 lld-23 llvm-23 libclang-rt-23-dev
+          version: cmake23-${{ runner.arch }}-v1
+
+      - name: Confirm the clang23 cell's compiler is 23 and its TSan runtime runs (anti-vacuity)
+        # The preset names clang-23 / clang++-23, so a silent fall back to 18 is impossible; this
+        # step makes an install that did not take fail here, by name, instead of in the configure.
+        if: matrix.compiler == 'clang23'
+        run: |
+          set -euo pipefail
+          case "$(clang-23 --version)" in
+            *"clang version 23."*) clang-23 --version | head -1 ;;
+            *) echo "::error::clang-23 is not 23: $(clang-23 --version | head -1)"; exit 1 ;;
+          esac
+          python3 tools/build/sanitizer.py --cc clang-23 thread
 
       # This job installed the ThreadSanitizer runtimes (compiler-rt for clang; gcc carries libtsan),
       # so it owns their absence (laws.md L2): BCIR_REQUIRE_TSAN makes a host where the manifest's

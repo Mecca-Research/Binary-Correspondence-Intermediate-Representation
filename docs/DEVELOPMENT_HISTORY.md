@@ -1419,6 +1419,29 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
   - Measured: gcc tree with `BCIR_REQUIRE_TSAN=ON`: 0 warnings, `ctest -L section` 13/13 in 15 s
     (`ring_tsan` 5.4 s); each new section fails on the binary it must reject. The gate's 4,152 lines
     are 4,120.
+  LATEST-TOOLCHAIN (2026-10-05) made the newest LLVM/Clang/MLIR 23 and Node 24 part of every
+  change's validation, after BUILD-2c's C11 `#embed` defect showed what a Clang-18-only pass misses.
+  - `.claude/skills/bcir-latest-toolchain/SKILL.md` states the rule: validate on the CI-default Clang
+    18 / GCC 13 AND on the newest release of the tracked majors; a failure only 23 shows is a finding
+    to root-cause, never a reason to pin back. AGENTS.md (pre-PR step 2), CONTRIBUTING.md (the first
+    row of the gate table), the digest and the two existing skills point at it.
+  - `tools/local/latest_toolchain.py`: `status` reads the installed clang / llvm-config / mlir-opt
+    and the highest Node 24, and compares them with the newest releases read from the sources (the
+    highest `llvmorg-23.x.y` tag; nodejs.org's index) -- an unreachable source is UNKNOWN, exit 2,
+    never current; `env` prints the PATH exports; `install-node` fetches the newest Node 24 and
+    checks the tarball against a checksum list whose signature it verifies against the Node release
+    keys before anything is extracted (the data filter refuses members escaping the directory).
+  - `tools/local/check_latest.sh` runs the legs CI's 23 jobs own -- toolchain confirmation, a
+    `clang23` preset tree with section and build parity, the `fuzzer` preset, `check_runtime.sh`, the
+    thorough tier with `BCIR_REQUIRE_LLVM=1` on Node 24, the `mlir` preset -- serially at two workers,
+    one verdict line per leg.
+  - CI: the `cmake-build` job gained a `clang23` cell (apt.llvm.org's clang 23 + compiler-rt,
+    `BCIR_REQUIRE_TSAN=ON`, a version and TSan confirmation step); until now the CMake project was
+    built only with GCC 13 and Clang 18. `CMakePresets.json` gained the `clang23` preset it uses.
+  - `bcir/tests/test_latest_toolchain.py` holds the tool's decisions offline (mocked upstream), its
+    refusals (unsigned, tampered, escaping tarball; unsupported platform; another major), and one
+    statement of the rule across the skill, the entry points, the check's legs, the preset and the
+    workflow.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

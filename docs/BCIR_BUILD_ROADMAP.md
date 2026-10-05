@@ -67,7 +67,7 @@ utilities, and the gates' own content until each section has been migrated with 
 
 ```
 CMakeLists.txt                 project BCIR (C, CXX), options, presets' home
-CMakePresets.json              default / gcc / clang / asan / ubsan / tsan / fuzzer / mlir
+CMakePresets.json              default / gcc / clang / clang23 / asan / ubsan / tsan / fuzzer / mlir
 cmake/BCIRCompilerFlags.cmake  C23 (c2x where needed), C++17 -Wpedantic, -Wall -Wextra [-Werror],
                                -O2 without NDEBUG, BCIR_SANITIZE, the freestanding object check
 cmake/BCIRDependencies.cmake   Python, Threads, MLIR/LLVM, TSan, FFTW3F/LAPACKE/GSL/SLEEF/libcerf -> bcir-deps.json

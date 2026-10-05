@@ -194,7 +194,9 @@ runner, tool discovery, compiler harnesses, or workflows affect all oracle and
 host-portability cells even when those cells execute remotely.
 
 At minimum, run focused regressions and the complete quick oracle locally when
-the host supports them. The complete thorough oracle, generated differential/fuzz
+the host supports them, and judge the change on the newest LLVM/Clang/MLIR 23 and
+Node 24 as well (`bash tools/local/check_latest.sh`, the first row below): a pass on
+the CI-default Clang 18 / GCC 13 alone is not evidence about 23. The complete thorough oracle, generated differential/fuzz
 campaigns, C runtime and pinned model gate, LLVM training, MLIR rail, docs
 governance, Python 3.12 host matrix, and native aarch64 jobs remain required CI
 evidence when affected. Do not emulate a missing architecture on a constrained
@@ -208,6 +210,7 @@ pending required check is not ready for handoff.
 
 | Change type | Required checks |
 |---|---|
+| Any change, before it is committed or published (the newest toolchain) | `python3 tools/local/latest_toolchain.py status` (the installed LLVM/Clang/MLIR 23 and Node 24 are the newest releases; `install-node` and `BCIR_LOCAL_FULL=1 bash tools/local/setup_mlir.sh` fetch them), then `bash tools/local/check_latest.sh`: a `clang23` preset tree with section and build parity, the `fuzzer` preset, `check_runtime.sh`, the thorough tier with `BCIR_REQUIRE_LLVM=1` on Node 24, and the `mlir` preset, all on 23 (`.claude/skills/bcir-latest-toolchain/SKILL.md`; CI's `*-llvm-latest` jobs and the `cmake-build` `clang23` cell are the remote half) |
 | Any known-good `training/llvm/**/examples/*.ll` file | `./training/llvm/tools/verify-examples.sh` and `./training/llvm/tools/verify-manifest.sh` |
 | Exercise `.solution.ll` files | `./training/llvm/tools/verify-exercises.sh` |
 | Invalid fixtures (`.invalid.ll.txt` or other expected failures) | `./training/llvm/tools/verify-invalid-fixtures.sh` |
