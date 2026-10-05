@@ -9,7 +9,14 @@
     "class from runtime/c/MEMORY_CLASSIFICATION.txt, one per library; `options` are GNU-style compile",
     "options the gates pass for that unit (`gcc:`/`clang:` prefixes scope one to that compiler);",
     "`max_len` is libFuzzer's -max_len, absent when unbounded. `sections` are the gate sections that",
-    "moved into tools/c/sections/*.sh (BUILD-2): the script and the manifest harnesses it takes, in order."
+    "moved into tools/c/sections/*.sh (BUILD-2): the script and the binaries it takes, in order -- manifest",
+    "harnesses or `variants`. A variant is a harness rebuilt with its whole library closure: with extra",
+    "`options` (the optimisation sweeps) or with one `mutation` of one source (the fault-injection",
+    "witnesses, applied by tools/build/mutate.py for the gate and the CMake build alike). A section's",
+    "`varies` patterns name values its output prints that are not a function of its binaries: each is",
+    "a regex whose one capture group is the varying value, masked before tools/build/section_parity.py",
+    "compares the two builds' outputs byte for byte (the ring's count of concurrent runs that caught",
+    "the injected race varies from run to run; every other byte of every section must not)."
   ],
   "libraries": {
     "bcir_base": {
@@ -173,13 +180,45 @@
     "test_jer_index": {"sources": ["test_jer_index.cpp"], "libraries": ["bcir_jer_index"]},
     "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]}
   },
+  "variants": {
+    "test_control_plane_mutant": {
+      "of": "test_control_plane",
+      "mutation": {"file": "bcir_control_plane.c", "find": "s->in_flight != 0u || s->boundary < r.hdr.boundary", "replace": "s->boundary < r.hdr.boundary"}
+    },
+    "test_ring_O0": {"of": "test_ring", "options": ["-O0"]},
+    "test_ring_O3": {"of": "test_ring", "options": ["-O3"]},
+    "test_ring_torn": {
+      "of": "test_ring",
+      "mutation": {"file": "bcir_ring.c", "find": "  if (seq != c->cur_seq) return overwrite ? lose(c, q, 1) : refused(BCIR_ERR_RING, q);", "replace": "  (void)seq;"}
+    },
+    "test_handoff_O0": {"of": "test_handoff", "options": ["-O0"]},
+    "test_handoff_O3": {"of": "test_handoff", "options": ["-O3"]},
+    "test_handoff_mutant": {
+      "of": "test_handoff",
+      "mutation": {"file": "bcir_handoff.c", "find": "if (s->admitted_generation != gen ||", "replace": "if (0 && (s->admitted_generation != gen) ||"}
+    },
+    "test_kplan_O0": {"of": "test_kplan", "options": ["-O0"]},
+    "test_kplan_O3": {"of": "test_kplan", "options": ["-O3"]},
+    "test_kplan_mutant": {
+      "of": "test_kplan",
+      "mutation": {"file": "bcir_kplan.c", "find": "r.hi = a.hi + b.hi + (r.lo < a.lo ? 1u : 0u);", "replace": "r.hi = a.hi + b.hi;"}
+    }
+  },
   "sections": {
     "runtime": {"script": "tools/c/sections/runtime.sh", "harnesses": ["test_runtime"]},
     "artifact_bundle": {"script": "tools/c/sections/artifact_bundle.sh", "harnesses": ["test_sha256", "test_artifact_bundle", "test_asn1"]},
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
-    "telemetry_frame": {"script": "tools/c/sections/telemetry_frame.sh", "harnesses": ["test_telemetry_frame"]}
+    "telemetry_frame": {"script": "tools/c/sections/telemetry_frame.sh", "harnesses": ["test_telemetry_frame"]},
+    "control_plane": {"script": "tools/c/sections/control_plane.sh", "harnesses": ["test_control_plane", "test_control_plane_mutant"]},
+    "ring": {
+      "script": "tools/c/sections/ring.sh",
+      "harnesses": ["test_ring", "test_ring_O0", "test_ring_O3", "test_ring_torn"],
+      "varies": ["injected fault .*concurrent\\.violations=([0-9]+)"]
+    },
+    "handoff": {"script": "tools/c/sections/handoff.sh", "harnesses": ["test_handoff", "test_handoff_O0", "test_handoff_O3", "test_handoff_mutant"]},
+    "kplan": {"script": "tools/c/sections/kplan.sh", "harnesses": ["test_kplan", "test_kplan_O0", "test_kplan_O3", "test_kplan_mutant"]}
   },
   "freestanding_checks": [
     "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",

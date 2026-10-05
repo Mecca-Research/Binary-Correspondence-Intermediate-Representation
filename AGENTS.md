@@ -37,6 +37,8 @@ live in `CONTRIBUTING.md`.
   `tools/build/manifest.py --check` holds the gates and harnesses to it) → [`docs/BCIR_BUILD_ROADMAP.md`](docs/BCIR_BUILD_ROADMAP.md).
 - Changing a migrated runtime-gate section → its `tools/c/sections/<name>.sh` (the gate and the
   `c-section-<name>` CTest entry run that one file; `build-section-parity` proves the two builds agree).
+- Changing a fault-injection witness or an optimisation sweep → the manifest's `variants` (one
+  spelling of each injected fault; `tools/build/mutate.py` applies it for the gate and CMake alike).
 - Architecture → [`docs/BCIR_Repo_Structure.md`](docs/BCIR_Repo_Structure.md).
 
 ## Non-negotiable pre-PR validation

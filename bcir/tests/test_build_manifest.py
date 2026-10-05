@@ -39,6 +39,7 @@ def _load_tool(name: str):
 manifest_tool = _load_tool("manifest")
 parity_tool = _load_tool("build_parity")
 section_tool = _load_tool("section_parity")
+mutate_tool = _load_tool("mutate")
 
 _TREE = None
 
@@ -178,6 +179,59 @@ _FAULTS = (
         "a section without harnesses",
         lambda m: m["sections"]["executor"].__setitem__("harnesses", []),
     ),
+    (
+        "M13",
+        "a varies pattern without its one capture group",
+        lambda m: m["sections"]["ring"].__setitem__("varies", ["concurrent.violations=[0-9]+"]),
+    ),
+    (
+        "M14",
+        "a variant of no harness",
+        lambda m: m["variants"]["test_kplan_O0"].__setitem__("of", "test_nowhere"),
+    ),
+    (
+        "M14",
+        "a mutation whose anchor is gone",
+        lambda m: m["variants"]["test_kplan_mutant"]["mutation"].__setitem__("find", "no such law"),
+    ),
+    (
+        "M14",
+        "a mutation whose anchor repeats",
+        lambda m: m["variants"]["test_kplan_mutant"]["mutation"].__setitem__("find", "return"),
+    ),
+    (
+        "M14",
+        "a mutation that changes nothing",
+        lambda m: m["variants"]["test_kplan_mutant"]["mutation"].__setitem__(
+            "replace", m["variants"]["test_kplan_mutant"]["mutation"]["find"]
+        ),
+    ),
+    (
+        "M14",
+        "a mutation outside the harness's closure",
+        lambda m: m["variants"]["test_kplan_mutant"]["mutation"].__setitem__(
+            "file", "bcir_cfront.c"
+        ),
+    ),
+    (
+        "M14",
+        "a variant no section runs",
+        lambda m: m["variants"].__setitem__(
+            "test_extra", {"of": "test_runtime", "options": ["-O1"]}
+        ),
+    ),
+    (
+        "M14",
+        "a variant that changes nothing",
+        lambda m: m["variants"].__setitem__("test_kplan_O0", {"of": "test_kplan"}),
+    ),
+    (
+        "M14",
+        "a variant that shadows a unit",
+        lambda m: m["variants"].__setitem__(
+            "test_runtime", {"of": "test_exec", "options": ["-O1"]}
+        ),
+    ),
 )
 
 
@@ -188,6 +242,79 @@ def test_every_injected_violation_is_a_finding():
         assert any(f.startswith(f"{code}:") for f in findings), (
             f"{code} ({what}) did not fire: {findings}"
         )
+
+
+def test_the_gate_must_generate_every_mutant_with_the_shared_applier():
+    """A mutant the gate spells its own way (a sed of its own) is a second spelling of the fault
+    that can drift from the one CMake builds (L14): each mutation variant's generation through
+    tools/build/mutate.py is part of the rule."""
+    tree = manifest_tool.Tree()
+    tree.runtime_gate_text = tree.runtime_gate_text.replace(
+        "--variant test_kplan_mutant ", "--variant other "
+    )
+    findings = manifest_tool.check(_manifest(), tree)
+    assert any(
+        f.startswith("M14:") and "test_kplan_mutant" in f and "mutate.py" in f for f in findings
+    ), findings
+
+
+def test_the_applier_edits_once_or_refuses():
+    """mutate.py writes the mutant only when its anchor occurs exactly once and the edit changes the
+    source; an anchor that is gone or that repeats, or a no-op edit, is exit 1 with nothing
+    written; an unknown variant or a variant without a mutation is exit 2."""
+    manifest = _manifest()
+    mutation = manifest["variants"]["test_kplan_mutant"]["mutation"]
+    original = (_ROOT / "runtime" / "c" / mutation["file"]).read_bytes()
+    mutant = mutate_tool.mutant_bytes(manifest, "test_kplan_mutant")
+    assert mutant == original.replace(mutation["find"].encode(), mutation["replace"].encode(), 1)
+    assert mutant != original and mutation["find"].encode() not in mutant
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        out = work / "mutant.c"
+        assert mutate_tool.main(["--variant", "test_kplan_mutant", "--out", str(out)]) == 0
+        assert out.read_bytes() == mutant
+        cases = {
+            "gone": ("no such law", 1),
+            "repeats": ("return", 1),
+            "no-op": (None, 1),
+        }
+        for label, (find, expected) in cases.items():
+            broken = copy.deepcopy(manifest)
+            edit = broken["variants"]["test_kplan_mutant"]["mutation"]
+            if find is None:
+                edit["replace"] = edit["find"]
+            else:
+                edit["find"] = find
+            path = work / f"{label}.json"
+            path.write_text(json.dumps(broken), encoding="utf-8")
+            target = work / f"{label}.c"
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = mutate_tool.main(
+                    [
+                        "--variant",
+                        "test_kplan_mutant",
+                        "--out",
+                        str(target),
+                        "--manifest",
+                        str(path),
+                    ]
+                )
+            assert rc == expected and not target.exists(), (label, rc)
+        for variant in ("test_nowhere", "test_kplan_O0"):
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = mutate_tool.main(["--variant", variant, "--out", str(work / "x.c")])
+            assert rc == 2 and not (work / "x.c").exists(), (variant, rc)
+
+
+def test_a_varying_value_is_masked_only_where_declared():
+    """mask(): only the capture group of a declared pattern is replaced, on the lines it matches; a
+    pattern that matches nothing is reported stale."""
+    output = b"  PASS rows (violations=0)\n  PASS fires (fault: violations=3)\n"
+    masked, stale = section_tool.mask(output, [r"fault: violations=([0-9]+)", r"never=([0-9]+)"])
+    assert masked == b"  PASS rows (violations=0)\n  PASS fires (fault: violations=<varies>)\n", (
+        masked
+    )
+    assert stale == [r"never=([0-9]+)"], stale
 
 
 def test_the_gate_must_call_every_section_script():
@@ -252,6 +379,38 @@ def test_the_section_parity_gate_sees_a_differing_output():
         assert vacuous["differ"] == [] and not vacuous["passed"], vacuous
         failing = work / "failing.sh"
         failing.write_text('#!/usr/bin/env bash\necho "  FAIL: x"; exit 1\n', encoding="utf-8")
+        varying = work / "varying.sh"
+        varying.write_text(
+            "#!/usr/bin/env bash\n"
+            'n=$(cat "$(dirname "$0")/count" 2>/dev/null || echo 0); n=$((n + 1))\n'
+            'echo "$n" > "$(dirname "$0")/count"\n'
+            'echo "  PASS fires (fault: violations=$n)"\n',
+            encoding="utf-8",
+        )
+        undeclared = section_tool.compare_section(
+            varying, [a], [b], python=sys.executable, timeout=30, shell=shell
+        )
+        assert undeclared["differ"] == ["stdout"] and undeclared["unstable"], undeclared
+        declared = section_tool.compare_section(
+            varying,
+            [a],
+            [b],
+            python=sys.executable,
+            timeout=30,
+            shell=shell,
+            varies=[r"fault: violations=([0-9]+)"],
+        )
+        assert declared["differ"] == [] and declared["stale"] == [] and declared["passed"], declared
+        stale = section_tool.compare_section(
+            script,
+            [a],
+            [b],
+            python=sys.executable,
+            timeout=30,
+            shell=shell,
+            varies=[r"never=([0-9]+)"],
+        )
+        assert stale["stale"] == [r"never=([0-9]+)"], stale
         failed = section_tool.compare_section(
             failing, [a], [b], python=sys.executable, timeout=30, shell=shell
         )
@@ -307,15 +466,27 @@ def test_the_section_parity_gate_refuses_before_it_compiles():
         ["-ffp-contract=off", "gcc:-Wno-x", "clang:-Wno-y"], "gcc"
     )
     assert options == ["-ffp-contract=off", "-Wno-x"], options
-    sources, link, opts = section_tool.recipe_sources(
-        manifest_tool, _manifest(), "test_execution_plan"
-    )
-    assert (
-        sources[0] == "test_execution_plan.c"
-        and "bcir_runtime.c" in sources
-        and link == []
-        and opts == []
-    ), (sources, link, opts)
+    manifest = _manifest()
+    with tempfile.TemporaryDirectory() as tmp:
+        work = Path(tmp)
+        sources, link, opts = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "test_execution_plan", work
+        )
+        names = [path.name for path in sources]
+        assert names[0] == "test_execution_plan.c" and "bcir_runtime.c" in names, names
+        assert link == [] and opts == [], (link, opts)
+        sources, _link, opts = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "test_kplan_O0", work
+        )
+        assert opts[-1] == "-O0" and sources[0].name == "test_kplan.c", (opts, sources[:2])
+        sources, _link, _opts = section_tool.recipe_plan(
+            manifest_tool, mutate_tool, manifest, "test_kplan_mutant", work
+        )
+        mutated = [path for path in sources if path.name == "bcir_kplan.c"]
+        assert len(mutated) == 1 and mutated[0].is_relative_to(work), mutated
+        mutation = manifest["variants"]["test_kplan_mutant"]["mutation"]
+        assert mutated[0].read_text(encoding="utf-8").count(mutation["replace"]) >= 1
+        assert mutation["find"] not in mutated[0].read_text(encoding="utf-8")
 
 
 def test_the_presets_hold_the_two_worker_law():
@@ -388,6 +559,12 @@ def test_the_cmake_reader_and_the_checker_agree():
     cmake = (_ROOT / "cmake" / "BCIRManifest.cmake").read_text(encoding="utf-8")
     assert "BCIR_MANIFEST_sections" in cmake and '"${_unit}" script' in cmake, (
         "the CMake reader does not read sections"
+    )
+    assert "BCIR_MANIFEST_variants" in cmake and "mutation file" in cmake, (
+        "the CMake reader does not read variants"
+    )
+    assert "CMAKE_CONFIGURE_DEPENDS" in cmake, (
+        "an edit to the manifest would not re-run the configure"
     )
     kinds = re.search(r"set\(BCIR_MANIFEST_KINDS ([^)]*)\)", cmake)
     assert kinds is not None

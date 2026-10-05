@@ -37,6 +37,61 @@ if(BCIR_BUILD_HARNESSES)
   endforeach()
 endif()
 
+# --- variants: a harness rebuilt with its whole library closure compiled in, so the change reaches
+# the code under test and not only the harness: extra options (the gates' -O0/-O3 sweeps, appended
+# after the build's -O2 so the last one wins) or one mutated source (the fault-injection witnesses
+# a gate section must see fail). A mutant's source is generated at build time by
+# tools/build/mutate.py, the applier tools/c/check_runtime.sh uses, from the manifest's one spelling
+# of the fault; a mutant is built without the warning policy, as the gate builds it. ---
+if(BCIR_BUILD_HARNESSES)
+  foreach(_v IN LISTS BCIR_MANIFEST_variants)
+    set(_of "${BCIR_variants_${_v}_OF}")
+    set(_mfile "${BCIR_variants_${_v}_MUTATION_FILE}")
+    if(NOT DEFINED BCIR_harnesses_${_of}_SOURCES)
+      message(FATAL_ERROR "BCIR: variant ${_v} rebuilds '${_of}', which is not a manifest harness")
+    endif()
+    if(_mfile AND NOT BCIR_HAVE_PYTHON3)
+      message(STATUS "BCIR: variant ${_v} is not built: its fault-injected source needs Python (tools/build/mutate.py)")
+      continue()
+    endif()
+    bcir_manifest_closure(_closure ${BCIR_harnesses_${_of}_LIBRARIES})
+    set(_srcs "")
+    set(_mutated OFF)
+    foreach(_s IN LISTS BCIR_harnesses_${_of}_SOURCES _closure)
+      if(_mfile AND _s STREQUAL _mfile)
+        set(_mutant "${CMAKE_BINARY_DIR}/mutants/${_v}/${_s}")
+        add_custom_command(OUTPUT "${_mutant}"
+          COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/mutate.py" --variant "${_v}" --out "${_mutant}"
+          DEPENDS "${BCIR_C_DIR}/${_s}" "${CMAKE_SOURCE_DIR}/tools/build/mutate.py" "${CMAKE_SOURCE_DIR}/runtime/manifest.json"
+          COMMENT "BCIR: fault-injecting ${_s} for ${_v}"
+          VERBATIM)
+        list(APPEND _srcs "${_mutant}")
+        set(_mutated ON)
+      else()
+        list(APPEND _srcs "${BCIR_C_DIR}/${_s}")
+      endif()
+    endforeach()
+    if(_mfile AND NOT _mutated)
+      message(FATAL_ERROR "BCIR: variant ${_v} mutates ${_mfile}, which ${_of}'s closure does not compile")
+    endif()
+    add_executable(${_v} ${_srcs})
+    set_target_properties(${_v} PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+                          RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/harnesses")
+    if(NOT _mfile)
+      target_compile_options(${_v} PRIVATE ${BCIR_C_WARNINGS})
+    endif()
+    target_include_directories(${_v} PRIVATE "${BCIR_C_DIR}")
+    set(_link ${_closure_LINK} ${BCIR_harnesses_${_of}_LINK})
+    if(_link)
+      list(REMOVE_DUPLICATES _link)
+    endif()
+    bcir_manifest_link(${_v} PRIVATE "" "${_link}")
+    set(_opts ${_closure_OPTIONS} ${BCIR_harnesses_${_of}_OPTIONS})
+    bcir_manifest_options(${_v} "${_opts}")
+    bcir_manifest_options(${_v} "${BCIR_variants_${_v}_OPTIONS}")
+  endforeach()
+endif()
+
 # --- fuzz targets: Clang's libFuzzer with ASan+UBSan, the library closure compiled into each
 # target so the code under test is instrumented (tools/c/fuzz_streampack.sh's one-command build) ---
 if(BCIR_BUILD_FUZZERS)

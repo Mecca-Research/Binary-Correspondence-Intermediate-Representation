@@ -49,7 +49,7 @@
       "inherits": "clang",
       "displayName": "Clang, the libFuzzer targets (bounded by BCIR_FUZZ_RUNS)",
       "binaryDir": "${sourceDir}/build/cmake-fuzzer",
-      "cacheVariables": {"BCIR_BUILD_FUZZERS": "ON", "BCIR_FUZZ_RUNS": "1000"}
+      "cacheVariables": {"BCIR_BUILD_FUZZERS": "ON", "BCIR_BUILD_HARNESSES": "OFF", "BCIR_FUZZ_RUNS": "1000"}
     },
     {
       "name": "mlir",

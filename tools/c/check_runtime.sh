@@ -118,14 +118,6 @@ echo "[c-runtime] ExecutionPlanV1 (G11): freestanding decode + Python->C->Python
 bash "${ROOT}/tools/c/sections/execution_plan.sh" "${tmp}/test_execution_plan" || exit 1
 
 echo "[c-runtime] ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces"
-# bcir_control_plane.h is the C twin of bcir/abi/control_abi.py (the wire laws, in the same order)
-# and bcir/gem/control.py (the resident plane): lease, generation, quiesce, activate, rollback and
-# cancel, decided by their bytes. It links the shared SHA-256 / HMAC-SHA256 (bcir_sha256.c) and the
-# StreamPack / plan verifiers (bcir_runtime.c). The grading is bcir/tests/control_fixtures.py::
-# measure -- the function the tests and the G14 harness rows use: every corpus record round-trips
-# byte for byte with its MAC accepted, every malformed variant is refused with its declared status
-# on both rails, every scenario decides as specified on both rails, and the two rails' traces
-# (verdicts, refusals, statuses and the resident state digest after every operation) are identical.
 for std in c11 c23; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Werror -I "${C}" \
     -c "${C}/bcir_control_plane.c" -o /dev/null \
@@ -134,50 +126,13 @@ done
 ctl_sources=("${C}/bcir_ring.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/test_control_plane.c")
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${C}/bcir_control_plane.c" "${ctl_sources[@]}" \
   -o "${tmp}/test_control_plane" || { echo "  FAIL: control harness build"; exit 1; }
-ctl_api="$("${tmp}/test_control_plane" --api)" || { echo "  FAIL: control API laws"; echo "${ctl_api}"; exit 1; }
-[ "${ctl_api}" = "OK" ] || { echo "  FAIL: unexpected control API output"; echo "${ctl_api}"; exit 1; }
-ctl_measure() {  # <harness> -> prints the six rows; exit 0 only when every row is zero
-  python3 - "$1" "${tmp}" <<'PY'
-import sys
-from bcir.tests.control_fixtures import ROWS, measure
-rows = measure(sys.argv[1], sys.argv[2])
-if set(rows) != set(ROWS):
-    print(f"rows {sorted(rows)} != {sorted(ROWS)}")
-    sys.exit(2)
-print(" ".join(f"{key.removeprefix('control.')}={int(value)}" for key, value in rows.items()))
-sys.exit(1 if any(rows.values()) else 0)
-PY
-}
-ctl_rows="$(ctl_measure "${tmp}/test_control_plane")" \
-  || { echo "  FAIL: a G14 row is not zero: ${ctl_rows}"; exit 1; }
-echo "  PASS ControlRecordV1 (freestanding C11 + C23; API fail-closed laws; ${ctl_rows})"
-# The gate must be able to fail (L2): a plane that applies a switch mid-phase -- the deferral law
-# removed -- must turn a row red. The mutant is built from the real source; if the law's line
-# ever changes, the injection fails loudly instead of grading an unmutated copy.
-sed 's/s->in_flight != 0u || s->boundary < r\.hdr\.boundary/s->boundary < r.hdr.boundary/' \
-  "${C}/bcir_control_plane.c" > "${tmp}/bcir_control_plane_mutant.c"
-if cmp -s "${C}/bcir_control_plane.c" "${tmp}/bcir_control_plane_mutant.c"; then
-  echo "  FAIL: the deferral-law fault injection did not apply (the law's line changed)"; exit 1
-fi
+python3 "${ROOT}/tools/build/mutate.py" --variant test_control_plane_mutant --out "${tmp}/bcir_control_plane_mutant.c" \
+  || { echo "  FAIL: the deferral-law fault injection did not apply (the law's line changed)"; exit 1; }
 "${CC}" -std=c23 -O2 -I "${C}" "${tmp}/bcir_control_plane_mutant.c" "${ctl_sources[@]}" \
   -o "${tmp}/test_control_plane_mutant" || { echo "  FAIL: mutant harness build"; exit 1; }
-if mutant_rows="$(ctl_measure "${tmp}/test_control_plane_mutant")"; then
-  echo "  FAIL: a plane that applies a switch mid-phase passed the G14 gate: ${mutant_rows}"; exit 1
-fi
-echo "  PASS ControlRecordV1 gate fires on an injected fault (deferral law removed: ${mutant_rows})"
+bash "${ROOT}/tools/c/sections/control_plane.sh" "${tmp}/test_control_plane" "${tmp}/test_control_plane_mutant" || exit 1
 
 echo "[c-runtime] live SPSC ring + TelemetryEnvelopeV0 (G15): freestanding ring/envelope + generated signal table + two-rail scenario traces + concurrency under ThreadSanitizer"
-# bcir_ring.h is the C twin of bcir/gem/ring.py (the version-zero live ring: acquire/release
-# publication, a per-slot seqlock, backpressure or overwrite, exact loss accounting, epochs and
-# takeover) and bcir_telemetry_envelope.h of bcir/abi/telemetry_envelope.py + bcir/telemetry_intake.py
-# (the identity-carrying record and the host intake). The grading is
-# bcir/tests/ring_fixtures.py::measure -- the function the tests and the G15 harness rows use:
-# every scripted scenario decides as specified on both rails with identical traces (the region's
-# CRC after every operation included), the accounting is exact, nothing torn is delivered, the
-# continuity report is the declared one, every malformed or stale fixture is refused as declared,
-# the 52 G14 control scenarios decide identically through a live control ring, and the concurrent
-# runs (threads; processes with a peer SIGKILLed and taken over) end with nothing torn or
-# unaccounted.
 for std in c11 c23; do
   for unit in bcir_ring.c bcir_telemetry_envelope.c; do
     "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Wconversion -Wpedantic -Werror \
@@ -185,63 +140,20 @@ for std in c11 c23; do
       || { echo "  FAIL: ${unit} not freestanding-clean under -std=${std}"; exit 1; }
   done
 done
-python3 -m bcir.signal_table --check >/dev/null \
-  || { echo "  FAIL: runtime/c/bcir_signal_table.h differs from its generator (python -m bcir.signal_table --emit)"; exit 1; }
 ring_sources=("${C}/bcir_telemetry_envelope.c" "${C}/bcir_runtime.c" "${C}/test_ring.c")
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -pthread -I "${C}" "${C}/bcir_ring.c" "${ring_sources[@]}" \
   -o "${tmp}/test_ring" || { echo "  FAIL: ring harness build"; exit 1; }
-ring_api="$("${tmp}/test_ring" --api)" || { echo "  FAIL: ring API laws"; echo "${ring_api}"; exit 1; }
-[ "${ring_api}" = "OK" ] || { echo "  FAIL: unexpected ring API output"; echo "${ring_api}"; exit 1; }
-ring_measure() {  # <harness> -> prints the row summary; exits as tools/c/check_ring.py does
-  # check_ring.py is the one grading entry point (tools/testing/faults/ring.json runs it too):
-  # 0 every row zero, 1 a row fired, 2 UNAVAILABLE. Its findings stay in ${tmp}/ring_rows.txt.
-  python3 "${ROOT}/tools/c/check_ring.py" --exe "$1" --tmp "${tmp}" > "${tmp}/ring_rows.txt" 2>&1
-  local status=$?
-  tail -1 "${tmp}/ring_rows.txt" | sed 's/^rows: //'
-  return "${status}"
-}
-ring_rows="$(ring_measure "${tmp}/test_ring")" \
-  || { echo "  FAIL: a G15 row is not zero: ${ring_rows}"; grep '^  - ' "${tmp}/ring_rows.txt"; exit 1; }
-echo "  PASS live ring (freestanding C11 + C23; generated signal table current; API fail-closed laws; ${ring_rows})"
-# The twin's answers must not depend on the optimiser, the discipline every C twin here gets: the
-# reader runs u64 position arithmetic over offsets a hostile region chose, and undefined behaviour
-# there would entitle -O3 to decide differently from -O0 exactly where a malformed region lives.
 for opt in O0 O3; do
   "${CC}" -std=c23 -${opt} -Wall -Wextra -Werror -pthread -I "${C}" "${C}/bcir_ring.c" "${ring_sources[@]}" \
     -o "${tmp}/test_ring_${opt}" || { echo "  FAIL: ring harness build at -${opt}"; exit 1; }
 done
-ring_opt="$(python3 - "${tmp}/test_ring_O0" "${tmp}/test_ring_O3" "${tmp}" <<'PY'
-import sys
-from bcir.tests import ring_fixtures as rf
-o0, o3, tmp = sys.argv[1:]
-scenarios = rf.all_scenarios()
-blobs = [data for _, data in rf.envelope_corpus()] + [data for _, data, _ in rf.malformed_envelopes()]
-answers = [(rf.run_c(exe, tmp, scenarios), rf.c_envelopes(exe, tmp, blobs), rf.c_signals(exe))
-           for exe in (o0, o3)]
-oracle = [rf.run_python(scenario, index) for index, scenario in enumerate(scenarios)]
-if answers[0] != answers[1] or answers[0][0] != oracle:
-    sys.exit(1)
-print(f"{len(scenarios)} scenarios, {len(blobs)} envelopes")
-PY
-)" || { echo "  FAIL: the ring twin's answers depend on the optimisation level (or leave the oracle's)"; exit 1; }
-echo "  PASS live ring optimisation parity (-O0 == -O3 == the oracle over ${ring_opt})"
-# The rows must be able to fail (L2): a consumer that trusts a slot it copied while the producer
-# rewrote it (the seqlock re-check removed) must turn rows red. The mutant is built from the real
-# source; if the anchor ever changes, the injection fails loudly instead of grading a copy.
-sed 's/  if (seq != c->cur_seq) return overwrite ? lose(c, q, 1) : refused(BCIR_ERR_RING, q);/  (void)seq;/' \
-  "${C}/bcir_ring.c" > "${tmp}/bcir_ring_torn.c"
-if cmp -s "${C}/bcir_ring.c" "${tmp}/bcir_ring_torn.c"; then
-  echo "  FAIL: the seqlock fault injection did not apply (the re-check's line changed)"; exit 1
-fi
+python3 "${ROOT}/tools/build/mutate.py" --variant test_ring_torn --out "${tmp}/bcir_ring_torn.c" \
+  || { echo "  FAIL: the seqlock fault injection did not apply (the re-check's line changed)"; exit 1; }
 "${CC}" -std=c23 -O2 -pthread -I "${C}" "${tmp}/bcir_ring_torn.c" "${ring_sources[@]}" \
   -o "${tmp}/test_ring_torn" || { echo "  FAIL: ring mutant harness build"; exit 1; }
-torn_rows="$(ring_measure "${tmp}/test_ring_torn")"; torn_status=$?
-if [ "${torn_status}" -eq 0 ]; then
-  echo "  FAIL: a ring that delivers what a writer tore passed the G15 gate: ${torn_rows}"; exit 1
-elif [ "${torn_status}" -ne 1 ]; then  # UNAVAILABLE is not a catch (L1)
-  echo "  FAIL: the mutant could not be graded (exit ${torn_status}): ${torn_rows}"; exit 1
-fi
-echo "  PASS live-ring gate fires on an injected fault (seqlock re-check removed: ${torn_rows})"
+bash "${ROOT}/tools/c/sections/ring.sh" "${tmp}/test_ring" "${tmp}/test_ring_O0" "${tmp}/test_ring_O3" "${tmp}/test_ring_torn" || exit 1
+# The ThreadSanitizer leg below stays here: it compiles sanitizer builds of the ring (and a
+# plain-store mutant) and runs their stress, which is build and run in one -- BUILD-2 group 3.
 # ThreadSanitizer models C11 atomics: the stress runs must report no data race, and a ring whose
 # relaxed atomic stores are made plain must be REPORTED as racing (not merely fail). TSan needs the
 # compiler-rt runtime. The x86 C runtime job installs it and sets BCIR_REQUIRE_TSAN=1, so there an
@@ -295,18 +207,6 @@ else
 fi
 
 echo "[c-runtime] data-plane hand-off (G16): freestanding pack table + shard manifest + per-step freeze + oracle/C traces"
-# bcir_handoff.h is the C twin of bcir/gem/handoff.py (a pack table whose handles carry an epoch:
-# a view that outlives its owner is refused; admission is the live control plane's predicate and
-# dispatch runs only what was admitted at the resident generation, as a phase of the plane),
-# bcir_shard_manifest.h of bcir/abi/shard_manifest.py (BSHM version zero: runnable shards and a
-# frame named by digest, reassembling to the whole pack's bytes) and bcir_hydrate_generations of
-# handoff.freeze_claims (the dynamic-graph builder's per-step freeze, bound to the live registry).
-# The same harness runs the Stage 3 exit flow (test_stage3.h): one generation through the control
-# ring, the plane, the pack table, the telemetry ring and the intake, and the old generation offered
-# at every boundary after the switch -- which is why the rings and the envelope codec link here.
-# The grading is tools/c/check_handoff.py -> bcir/tests/handoff_fixtures.py::measure, the function
-# the tests, the G16 harness rows, the C++ gate (tools/cpp/check_handoff.sh) and the fault table
-# (tools/testing/faults/handoff.json) use; this section grades the oracle and the C twin.
 for std in c11 c23; do
   for unit in bcir_handoff.c bcir_shard_manifest.c bcir_hydrate.c; do
     "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Wconversion -Wpedantic -Werror \
@@ -317,59 +217,18 @@ done
 handoff_sources=("${C}/bcir_handoff.c" "${C}/bcir_shard_manifest.c" "${C}/bcir_hydrate.c" "${C}/bcir_plan.c" "${C}/bcir_control_plane.c" "${C}/bcir_sha256.c" "${C}/bcir_runtime.c" "${C}/bcir_ring.c" "${C}/bcir_telemetry_envelope.c" "${C}/test_handoff.c")
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${handoff_sources[@]}" -o "${tmp}/test_handoff" \
   || { echo "  FAIL: hand-off harness build"; exit 1; }
-handoff_api="$("${tmp}/test_handoff" --api)" \
-  || { echo "  FAIL: hand-off API laws"; echo "${handoff_api}"; exit 1; }
-case "${handoff_api}" in
-  OK\ *) ;;
-  *) echo "  FAIL: unexpected hand-off API output"; echo "${handoff_api}"; exit 1 ;;
-esac
-handoff_measure() {  # <C harness> -> prints the row summary; exits as tools/c/check_handoff.py does
-  python3 "${ROOT}/tools/c/check_handoff.py" --exe "$1" --no-cpp --tmp "${tmp}" \
-    > "${tmp}/handoff_rows.txt" 2>&1
-  local status=$?
-  tail -n 1 "${tmp}/handoff_rows.txt"
-  return "${status}"
-}
-handoff_rows="$(handoff_measure "${tmp}/test_handoff")" \
-  || { echo "  FAIL: a G16 row is not zero: ${handoff_rows}"; cat "${tmp}/handoff_rows.txt"; exit 1; }
-echo "  PASS data-plane hand-off (freestanding C11 + C23; API fail-closed laws, ${handoff_api#OK } checks; ${handoff_rows#rows })"
-# -O0 == -O3 == the oracle: the twin's traces, freeze bytes, split bytes and refusals do not depend
-# on the optimizer (a fast path that reads an uninitialized byte would diverge here first).
 "${CC}" -std=c23 -O0 -Wall -Wextra -Werror -I "${C}" "${handoff_sources[@]}" -o "${tmp}/test_handoff_o0" \
   || { echo "  FAIL: -O0 hand-off harness build"; exit 1; }
 "${CC}" -std=c23 -O3 -Wall -Wextra -Werror -I "${C}" "${handoff_sources[@]}" -o "${tmp}/test_handoff_o3" \
   || { echo "  FAIL: -O3 hand-off harness build"; exit 1; }
-for opt in o0 o3; do
-  opt_rows="$(handoff_measure "${tmp}/test_handoff_${opt}")" \
-    || { echo "  FAIL: the -${opt^^} hand-off harness diverges from the oracle: ${opt_rows}"; exit 1; }
-done
-echo "  PASS data-plane hand-off optimisation parity (-O0 == -O3 == the oracle)"
-# The gate must be able to fail (L2): a table that dispatches a pack admitted in a generation the
-# plane has left -- the admission's generation no longer re-checked at dispatch -- must turn a row
-# red. Built from the real source; if the law's line changes, the injection fails loudly.
-sed 's/if (s->admitted_generation != gen ||/if (0 \&\& (s->admitted_generation != gen) ||/' \
-  "${C}/bcir_handoff.c" > "${tmp}/bcir_handoff_mutant.c"
-if cmp -s "${C}/bcir_handoff.c" "${tmp}/bcir_handoff_mutant.c"; then
-  echo "  FAIL: the dispatch-generation fault injection did not apply (the law's line changed)"; exit 1
-fi
+python3 "${ROOT}/tools/build/mutate.py" --variant test_handoff_mutant --out "${tmp}/bcir_handoff_mutant.c" \
+  || { echo "  FAIL: the dispatch-generation fault injection did not apply (the law's line changed)"; exit 1; }
 mutant_handoff=("${tmp}/bcir_handoff_mutant.c" "${handoff_sources[@]:1}")
 "${CC}" -std=c23 -O2 -I "${C}" "${mutant_handoff[@]}" -o "${tmp}/test_handoff_mutant" \
   || { echo "  FAIL: hand-off mutant harness build"; exit 1; }
-mutant_rows="$(handoff_measure "${tmp}/test_handoff_mutant")"; mutant_status=$?
-if [ "${mutant_status}" -ne 1 ]; then
-  echo "  FAIL: a table that dispatches across a generation switch passed the G16 gate (exit ${mutant_status}): ${mutant_rows}"; exit 1
-fi
-echo "  PASS hand-off gate fires on an injected fault (dispatch-generation law removed: ${mutant_rows#rows })"
+bash "${ROOT}/tools/c/sections/handoff.sh" "${tmp}/test_handoff" "${tmp}/test_handoff_o0" "${tmp}/test_handoff_o3" "${tmp}/test_handoff_mutant" || exit 1
 
 echo "[c-runtime] native K_BCIR planner (G17): freestanding compile (C11 + C23) + byte parity with the oracle"
-# bcir_kplan.c is the C twin of bcir/kbcir/realize.py's planner (the compact offer and the min-plus
-# path) and of bcir/abi/planner_abi.py (the BKPI input and BKPR realization records, version zero).
-# The grading is tools/c/check_planner.py -> bcir/tests/planner_fixtures.py::measure, the function the
-# tests, the G17 harness rows and the fault table (tools/testing/faults/planner.json) use: the compact
-# planner held to the pre-G17 reference (bcir/kbcir/realize_reference.py) and this planner held to
-# both, byte for byte, over the fixed corpus under every target, Theta and policy and a seeded
-# generated corpus; one malformed record per wire and planning law refused with its declared status on
-# both rails.
 for std in c11 c23; do
   "${CC}" -ffreestanding -nostdlib -std=${std} -Wall -Wextra -Wconversion -Wpedantic -Werror \
     -I "${C}" -c "${C}/bcir_kplan.c" -o /dev/null \
@@ -378,51 +237,15 @@ done
 kplan_sources=("${C}/bcir_kplan.c" "${C}/bcir_runtime.c" "${C}/test_kplan.c")
 "${CC}" -std=c23 -O2 -Wall -Wextra -Werror -I "${C}" "${kplan_sources[@]}" -o "${tmp}/test_kplan" \
   || { echo "  FAIL: planner harness build"; exit 1; }
-python3 - "${ROOT}" "${tmp}/kplan_seed.bkpi" <<'PY' || { echo "  FAIL: the planner's seed record"; exit 1; }
-import sys
-sys.path.insert(0, sys.argv[1])
-from bcir.tests.planner_fixtures import _seed_input
-with open(sys.argv[2], "wb") as f:
-    f.write(_seed_input()[0])
-PY
-kplan_api="$("${tmp}/test_kplan" --api "${tmp}/kplan_seed.bkpi")" \
-  || { echo "  FAIL: planner API laws"; echo "${kplan_api}"; exit 1; }
-case "${kplan_api}" in
-  API\ OK\ *) ;;
-  *) echo "  FAIL: unexpected planner API output"; echo "${kplan_api}"; exit 1 ;;
-esac
-kplan_measure() {  # <C harness> -> prints the row summary; exits as tools/c/check_planner.py does
-  python3 "${ROOT}/tools/c/check_planner.py" --exe "$1" --tmp "${tmp}" > "${tmp}/kplan_rows.txt" 2>&1
-  local status=$?
-  tail -n 1 "${tmp}/kplan_rows.txt"
-  return "${status}"
-}
-kplan_rows="$(kplan_measure "${tmp}/test_kplan")" \
-  || { echo "  FAIL: a G17 row is not zero: ${kplan_rows}"; cat "${tmp}/kplan_rows.txt"; exit 1; }
-echo "  PASS native planner (freestanding C11 + C23; API fail-closed laws, ${kplan_api#API OK } checks; ${kplan_rows#rows })"
-# -O0 == -O3 == the oracle: the plans and refusals do not depend on the optimizer.
 for opt in O0 O3; do
   "${CC}" -std=c23 -${opt} -Wall -Wextra -Werror -I "${C}" "${kplan_sources[@]}" -o "${tmp}/test_kplan_${opt}" \
     || { echo "  FAIL: -${opt} planner harness build"; exit 1; }
-  opt_rows="$(kplan_measure "${tmp}/test_kplan_${opt}")" \
-    || { echo "  FAIL: the -${opt} planner diverges from the oracle: ${opt_rows}"; exit 1; }
 done
-echo "  PASS native planner optimisation parity (-O0 == -O3 == the oracle)"
-# The gate must be able to fail (L2): a planner whose 128-bit addition drops its carry wraps a path
-# weight past 2**64 (bcir/tests/planner_fixtures.py::wide_path_case) and must turn a row red. Built
-# from the real source; if the line changes, the injection fails loudly.
-sed 's/r.hi = a.hi + b.hi + (r.lo < a.lo ? 1u : 0u);/r.hi = a.hi + b.hi;/' \
-  "${C}/bcir_kplan.c" > "${tmp}/bcir_kplan_mutant.c"
-if cmp -s "${C}/bcir_kplan.c" "${tmp}/bcir_kplan_mutant.c"; then
-  echo "  FAIL: the carry fault injection did not apply (the line changed)"; exit 1
-fi
+python3 "${ROOT}/tools/build/mutate.py" --variant test_kplan_mutant --out "${tmp}/bcir_kplan_mutant.c" \
+  || { echo "  FAIL: the carry fault injection did not apply (the line changed)"; exit 1; }
 "${CC}" -std=c23 -O2 -I "${C}" "${tmp}/bcir_kplan_mutant.c" "${C}/bcir_runtime.c" "${C}/test_kplan.c" \
   -o "${tmp}/test_kplan_mutant" || { echo "  FAIL: planner mutant harness build"; exit 1; }
-mutant_rows="$(kplan_measure "${tmp}/test_kplan_mutant")"; mutant_status=$?
-if [ "${mutant_status}" -ne 1 ]; then
-  echo "  FAIL: a planner that wraps a path weight passed the G17 gate (exit ${mutant_status}): ${mutant_rows}"; exit 1
-fi
-echo "  PASS planner gate fires on an injected fault (the 128-bit carry dropped: ${mutant_rows#rows })"
+bash "${ROOT}/tools/c/sections/kplan.sh" "${tmp}/test_kplan" "${tmp}/test_kplan_O0" "${tmp}/test_kplan_O3" "${tmp}/test_kplan_mutant" || exit 1
 
 echo "[c-runtime] UART telemetry frame (#telemetry-frame): freestanding compile (C11 + C23) + byte-identical re-encode"
 for std in c11 c23; do

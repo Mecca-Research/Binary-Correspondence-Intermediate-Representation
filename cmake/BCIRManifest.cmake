@@ -20,7 +20,12 @@
 #   BCIR_MANIFEST_FREESTANDING      the sources compiled -ffreestanding -nostdlib at C11 and C23
 #   BCIR_MANIFEST_sections          the gate sections that run as scripts over built harnesses
 #   BCIR_sections_<name>_SCRIPT     the script (a path under the source tree)
-#   BCIR_sections_<name>_HARNESSES  the manifest harnesses it takes, in argument order
+#   BCIR_sections_<name>_HARNESSES  the binaries it takes (harnesses or variants), in argument order
+#   BCIR_MANIFEST_variants          harnesses rebuilt with their closure: extra options or one mutation
+#   BCIR_variants_<name>_OF         the harness a variant rebuilds
+#   BCIR_variants_<name>_OPTIONS    options appended after the build's own (-O0, -O3)
+#   BCIR_variants_<name>_MUTATION_FILE  the one source a mutant edits (the edit itself is applied by
+#                                   tools/build/mutate.py at build time; CMake never spells it)
 include_guard(GLOBAL)
 
 set(BCIR_MANIFEST_KINDS libraries tools harnesses fuzzers seam_libraries seam_tests)
@@ -52,6 +57,9 @@ function(_bcir_json_string json key outvar)
 endfunction()
 
 function(bcir_manifest_load path)
+  # The manifest is the build's input: an edit to it re-runs the configure, as an edit to a
+  # CMakeLists.txt does (without this, `cmake --build` kept building the old unit lists).
+  set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${path}")
   file(READ "${path}" _json)
   string(JSON _schema ERROR_VARIABLE _err GET "${_json}" schema)
   if(_err OR NOT _schema STREQUAL "bcir-build-manifest.v1")
@@ -109,6 +117,30 @@ function(bcir_manifest_load path)
     endforeach()
   endif()
   set(BCIR_MANIFEST_sections "${_section_names}" PARENT_SCOPE)
+  # variants: {name: {of, options?, mutation?: {file, find, replace}}}
+  set(_variant_names "")
+  string(JSON _nvar ERROR_VARIABLE _err LENGTH "${_json}" variants)
+  if(NOT _err AND _nvar GREATER 0)
+    math(EXPR _last "${_nvar} - 1")
+    foreach(_i RANGE 0 ${_last})
+      string(JSON _name MEMBER "${_json}" variants ${_i})
+      string(JSON _unit GET "${_json}" variants ${_name})
+      _bcir_json_string("${_unit}" of _of)
+      _bcir_json_list("${_unit}" options _vopts)
+      string(JSON _mfile ERROR_VARIABLE _merr GET "${_unit}" mutation file)
+      if(_merr)
+        set(_mfile "")
+      endif()
+      if(NOT _of OR (NOT _vopts AND NOT _mfile))
+        message(FATAL_ERROR "BCIR: manifest variant ${_name} needs `of` and options or a mutation")
+      endif()
+      list(APPEND _variant_names "${_name}")
+      set(BCIR_variants_${_name}_OF "${_of}" PARENT_SCOPE)
+      set(BCIR_variants_${_name}_OPTIONS "${_vopts}" PARENT_SCOPE)
+      set(BCIR_variants_${_name}_MUTATION_FILE "${_mfile}" PARENT_SCOPE)
+    endforeach()
+  endif()
+  set(BCIR_MANIFEST_variants "${_variant_names}" PARENT_SCOPE)
   _bcir_json_list("${_json}" freestanding_checks _free)
   if(NOT _free)
     message(FATAL_ERROR "BCIR: ${path} lists no freestanding_checks (the freestanding core is unproven)")
@@ -116,7 +148,8 @@ function(bcir_manifest_load path)
   set(BCIR_MANIFEST_FREESTANDING "${_free}" PARENT_SCOPE)
   list(LENGTH _free _nfree)
   list(LENGTH _section_names _nsections)
-  message(STATUS "BCIR manifest: ${_total} units, ${_nfree} freestanding checks, ${_nsections} sections (${path})")
+  list(LENGTH _variant_names _nvariants)
+  message(STATUS "BCIR manifest: ${_total} units, ${_nvariants} variants, ${_nfree} freestanding checks, ${_nsections} sections (${path})")
 endfunction()
 
 # The manifest's basenames as paths under runtime/c (bcir_manifest_paths) or runtime/cpp
