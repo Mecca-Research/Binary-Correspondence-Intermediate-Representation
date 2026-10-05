@@ -2,8 +2,8 @@
 #
 # `ctest -j 2` is the bounded local run; every heavy gate declares PROCESSORS 2 so two of them
 # never run at once, as AGENTS.md requires. Labels:
-#   build     the manifest reconciliation, the dependency index, the build-parity gate and the
-#             section-parity gate (`ctest --preset build`)
+#   build     the manifest reconciliation, the dependency index, the build-parity gate, the
+#             section-parity gate and the install gate (`ctest --preset build`)
 #   section   the gate sections that moved into tools/c/sections/, over the harnesses built here
 #   python    the oracle's quick tier
 #   shell     the shell gates, wrapped as they are: c-runtime, the gates it delegates to (one entry
@@ -40,6 +40,17 @@ add_test(NAME build-parity
                  --bcir-cc "$<TARGET_FILE:bcir-cc>" --cc "${CMAKE_C_COMPILER}"
          WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 set_tests_properties(build-parity PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 900)
+
+# --- build: the install gate (BUILD-3) -- the configured build installed into a scratch prefix and an
+# out-of-tree consumer built against it with find_package(BCIR); the harness it rebuilds must give
+# its section the same output as the tree's own build of it ---
+if(BCIR_BUILD_HARNESSES)
+  add_test(NAME build-install
+           COMMAND "${BCIR_PYTHON}" "${CMAKE_SOURCE_DIR}/tools/build/install_consumer.py"
+                   --build-dir "${CMAKE_BINARY_DIR}"
+           WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  set_tests_properties(build-install PROPERTIES LABELS "build;c" PROCESSORS 2 TIMEOUT 1200)
+endif()
 
 # --- section: the gate sections that moved into tools/c/sections/, over the binaries built here ---
 # Each script is the section's own text (tools/c/check_runtime.sh calls the same file over the

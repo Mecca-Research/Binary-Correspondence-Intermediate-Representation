@@ -7,7 +7,11 @@ foreach(_lib IN LISTS BCIR_MANIFEST_libraries)
   bcir_manifest_paths(_srcs ${BCIR_libraries_${_lib}_SOURCES})
   add_library(${_lib} STATIC ${_srcs})
   bcir_c_target(${_lib})
-  target_include_directories(${_lib} PUBLIC "${BCIR_C_DIR}")
+  # The source directory in the tree, <prefix>/include/bcir once installed (BUILD-3): a consumer's
+  # "bcir_runtime.h" resolves in both, and the version header is the build tree's own.
+  target_include_directories(${_lib} PUBLIC "$<BUILD_INTERFACE:${BCIR_C_DIR}>"
+                             "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>"
+                             "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/bcir>")
   bcir_manifest_link(${_lib} PUBLIC "${BCIR_libraries_${_lib}_LIBRARIES}" "${BCIR_libraries_${_lib}_LINK}")
   bcir_manifest_options(${_lib} "${BCIR_libraries_${_lib}_OPTIONS}")
   set_target_properties(${_lib} PROPERTIES BCIR_MEMORY_CLASS "${BCIR_libraries_${_lib}_CLASS}")

@@ -1659,6 +1659,33 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `build-section-parity` holds all 106 identical, the three compiler-only sections over two runs;
     the seven delegated entries pass on each tree. The gate prints 399 PASS lines on clang 18 and
     388 on clang 23, 0 FAIL; its 1,633 lines are 879.
+  BUILD-3 (2026-10-05) made the C rails installable: `cmake --install` lays down the manifest's
+  libraries and tools, every public header and a version header, and a CMake package an out-of-tree
+  project finds with `find_package(BCIR)` (`cmake/BCIRInstall.cmake`, `cmake/BCIRConfig.cmake.in`).
+  - One version. The CMake project had said 0.1.0 while the package said 0.2.0; it now reads
+    `pyproject.toml`'s version line, `bcir_version.h` is written from it, and a test holds
+    `bcir.__version__` to the same number.
+  - The public headers are every `runtime/c/bcir_*.h` and the seam's `bcir_*.h`/`.hpp`; the
+    cfront fixtures' headers stay out. Each compiles on its own, which the consumer proves.
+  - The gate, `tools/build/install_consumer.py` (CTest `build-install`), installs the configured
+    build into a scratch prefix and holds the prefix to the manifest: an archive per library, every
+    tool, every public header and nothing more, and the package files. It then builds
+    `tools/build/consumer` against the prefix with the build's own compilers, from a scratch
+    directory holding that project and a copy of the harness, so a quoted include cannot reach the
+    tree: every library and tool must be an imported target, every header compiles alone, the
+    version header agrees, and `test_runtime` links against `BCIR::*` alone. A consumer asking for
+    the next major version must fail to configure, and the `runtime` section must print the same
+    output over the consumer's `test_runtime` as over the tree's.
+  - Found by the gate's own RED: a version file that accepted every request still saw the next
+    major refused -- by the consumer's check that it got the version it asked for, which runs
+    after `find_package` -- so the refusal the gate required never tested the version file. The
+    gate counts the refusal only when `find_package` itself refuses the package for its version
+    (laws.md L11). RED: a public header left out of the install, and a version file that accepts
+    every request, each fail the gate; the rules restored, it passes.
+  - Measured: `build-install` passes on the gcc, clang 18 and clang 23 trees -- 12 libraries
+    (the seam's included), 5 tools, 52 public headers and the package files, the consumer
+    linking `test_runtime` against `BCIR::*` alone -- and the `fuzzer` and `asan` presets
+    configure with the install rules in place.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
