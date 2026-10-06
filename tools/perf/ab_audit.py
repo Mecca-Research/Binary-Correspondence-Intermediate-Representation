@@ -383,7 +383,7 @@ def child_main(tree: str, rows: list[str], samples: int, out_path: str) -> int:
             records.append(
                 {"row": name, "status": "unavailable", "why": f"{type(exc).__name__}: {exc}"}
             )
-    with open(out_path, "w", encoding="utf-8") as fh:
+    with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
         json.dump({"tree": tree, "rows": records}, fh)
     return 0
 
@@ -940,11 +940,11 @@ def parent_main(args) -> int:
         "findings": [dataclasses.asdict(f) for f in findings],
     }
     if args.json:
-        with open(args.json, "w", encoding="utf-8") as fh:
+        with open(args.json, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(report, fh, indent=1)
     text = render_markdown(report)
     if args.markdown:
-        with open(args.markdown, "w", encoding="utf-8") as fh:
+        with open(args.markdown, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text + "\n")
     print(text)
     return code
