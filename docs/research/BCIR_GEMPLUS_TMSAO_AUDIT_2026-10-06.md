@@ -16,7 +16,7 @@ audit, with a reproduction).
 
 ## 1. Verdict
 
-**The roadmap as written is done. Your original plan is not.**
+**The roadmap as written is done. The original plan is not.**
 
 Everything the roadmap committed to has landed and is gated: Stage 0, the G0–G18 slices
 (Stages 1–5) and SP-ENC. The only open stage is Stage 6, the physical calibration, and it needs
@@ -26,7 +26,7 @@ rows is a miss. Five are parity or guard rows held at 0. The other two
 (`optimize_scheduled.quality` and `eft.mean.2domains`) reached their bound of 1.0, but by less
 than the 2% band an exact row must move.
 
-Your original plan asked for more than the 2026-09-04 re-staging carried into the roadmap, and
+The original plan asked for more than the 2026-09-04 re-staging carried into the roadmap, and
 several of those items never became slices. Of the 22 items below (item 13 is split in two):
 
 - **7 are met**;
@@ -81,7 +81,7 @@ Two places that guide future work are stale: the session digest and the systems-
 
 ---
 
-## 3. Item-by-item audit of your original plan
+## 3. Item-by-item audit of the original plan
 
 ### A. The issues before GEM+
 
@@ -110,7 +110,7 @@ Two places that guide future work are stale: the session digest and the systems-
 |---|---|---|---|---|
 | 7 | Tropical min-plus, max-plus and Boolean algebra | **Met** (oracle) | `kbcir.objectives` (G6, #788) admits min_plus, max_plus, min_max, boolean, lexicographic and pareto only after `verify_objective` proves their laws, each with a declared overflow policy. `dag_best_path` reproduces the planner's min-plus path and the exact scheduler's max-plus critical path. `kbcir/tropical.py` (pre-#758) adds the Kleene closure and Karp's minimum mean cycle. | The law rail spells only `min_plus` and `max_plus` (`BCIR_Semiring`). |
 | 8 | Expected cost from branch probabilities (stochastic models) | **Missing** | Only the pre-#758 `kbcir/compose.py`: `Cond.prob_then_milli` weights two branches. It is declared rather than measured, defaults to 500, and silently clamps an out-of-range value. | No registered stochastic or robust objective. No profile-derived branch probabilities. No Markov expectation over loops. Scope component `U` is still "intervals for JER J6 only". `tropical.py` deliberately offers no expected-cost objective, "because the cost model does not carry branch probabilities". |
-| 9 | Optimally solve joint scheduling and memory allocation layouts | **Partial** | Each part is exact on small instances, separately: the schedule by G4's branch-and-bound, the layout by G5's. G8 (#795) plans movement and compute jointly, reaching the exact optimum on 11 fixtures (`movement.excess` 597,840 → 0, TMSAO-1). | No joint schedule × placement × memory solver: memory is planned after the schedule, from its intervals. The 2026-09-04 dispatch table's "schedule + placement + memory jointly" row and the CXX3 joint solvers are not built. (I read "join scheduling" as joint scheduling; say if you meant something else.) |
+| 9 | Optimally solve joint scheduling and memory allocation layouts | **Partial** | Each part is exact on small instances, separately: the schedule by G4's branch-and-bound, the layout by G5's. G8 (#795) plans movement and compute jointly, reaching the exact optimum on 11 fixtures (`movement.excess` 597,840 → 0, TMSAO-1). | No joint schedule × placement × memory solver: memory is planned after the schedule, from its intervals. The 2026-09-04 dispatch table's "schedule + placement + memory jointly" row and the CXX3 joint solvers are not built. ("Join scheduling" in the plan is read as joint scheduling.) |
 | 10 | Expand GEM into a DAG of typed regions | **Partial** | `kbcir.regions` (G6, #788). Every region has a verifier, a conservative expansion (the identity on the carrier), a cost floor and named refusals. `regions.unexpanded.claims` 542 → 0. | **Two kinds only**: affine (1-D maps, static trip counts) and opaque. `RegionGraph` is a per-phase partition with no edges between regions and no nesting. The layer is read-only: regions bound and certify a plan but never change a decision. |
 | 11 | Synchronous dataflow semantics for fixed-rate streams | **Missing** | Nothing in the code (no repetition vectors, balance equations or bounded FIFOs). | An SDF/CSDF region kind. Fixed-rate claims fall to opaque today. |
 | 12 | Timed-event semantics for time-critical processes | **Missing** | The max-plus objective, Karp's minimum mean cycle, and the pre-#758 R19/R20 timing laws exist. | No timed-event region, no cycle-time bound, no network calculus. |
@@ -195,7 +195,7 @@ The front end lowers the self-reference to a `_LazyType`.
 | PER | `Asn1Error: PER: expected bytes`, which **misattributes** the cause |
 
 This is the repository's most common defect shape: a mechanism landed on one rail of six (L14).
-It is also exactly your containment-graph item.
+It is also exactly the plan's containment-graph item.
 
 ---
 
@@ -243,8 +243,7 @@ and 120 B with slots (−29%), and constructs in 555 vs 470 ns (−15%). The 3.1
   verification, schedulers), re-enabling it in `finally`. Add a witness that each call leaves
   zero cyclic garbage, and a harness row. The results stay byte-identical, so it needs no parity
   gate. It is the largest, cheapest win available: up to 3.1× on hydrate at 32k claims.
-- **Use `slots=True` on the hot frozen dataclasses.** This is the "dictionary of attributes" cost
-  you named.
+- **Use `slots=True` on the hot frozen dataclasses.** This is the plan's "dictionary of attributes" cost.
 - **Send throughput work to the C twins that already exist, and port the next ones:**
   StreamPack hydrate and the G18 delta chain first (CXX4), then the exact solvers (CXX3) when
   certificates are needed at production scale.
