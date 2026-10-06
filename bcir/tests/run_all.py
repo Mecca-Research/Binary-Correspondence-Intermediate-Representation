@@ -320,6 +320,7 @@ _MODULES = [
     "bcir.tests.test_train_graph",
     "bcir.tests.test_train_pack_exec",
     "bcir.tests.test_train_c_kernels",
+    "bcir.tests.test_native_decoder",
     "bcir.tests.test_model_manifest",
     "bcir.tests.test_model_tokenizer",
     "bcir.tests.test_model_decode",
@@ -586,6 +587,7 @@ _REPO_ONLY_MODULES = frozenset(
         "bcir.tests.test_telemetry_frame",
         "bcir.tests.test_toolchain",
         "bcir.tests.test_train_c_kernels",
+        "bcir.tests.test_native_decoder",
         "bcir.tests.test_train_pack_exec",
         "bcir.tests.test_verify_differential",
     }

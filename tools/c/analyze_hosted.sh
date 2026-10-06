@@ -17,7 +17,7 @@ JOBS="${ANALYZE_JOBS:-2}"
 [ $# -eq 0 ] || { echo "usage: CLANG=<clang> [ANALYZE_JOBS=N] $(basename "$0")" >&2; exit 2; }
 [[ "${JOBS}" =~ ^[1-9][0-9]{0,2}$ ]] || { echo "analyze-hosted: UNUSABLE: ANALYZE_JOBS=${JOBS} is no count of workers" >&2; exit 2; }
 command -v "${CLANG}" > /dev/null 2>&1 || { echo "analyze-hosted: UNUSABLE: no ${CLANG}" >&2; exit 2; }
-sources="bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c bcir_make.c"
+sources="bcir_tensor.c bcir_decoder_train.c bcir_cpp.c bcir_cfront.c bcir_artifact_bundle.c bcir_q8_model.c bcir_q4_kernel.c bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_runtime_channel.c bcir_verify.c bcir_make.c"
 workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 export CLANG ROOT workdir

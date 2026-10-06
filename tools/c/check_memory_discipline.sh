@@ -54,7 +54,7 @@ fi
 # families (misleading-indentation, format-truncation), so its verdict depended on which compiler
 # PATH named first -- a gate disagreeing with itself across two paths (docs/security/laws.md L12),
 # found when the CMake project handed it the configured compiler (BUILD-1).
-for unit in bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c \
+for unit in bcir_tensor.c bcir_decoder_train.c bcir_runtime_channel.c bcir_cpp.c bcir_q8_model.c bcir_q4_kernel.c \
             bcir_ai_kernels.c bcir_ai_microbench.c bcir_llama.c bcir_verify.c \
             bcir_cc.c bcir_llama_cli.c bcir_microbench.c; do
   "${CC_BIN}" "${strict[@]}" "${compat_warnings[@]}" -c "${C}/${unit}" -o "${tmp}/${unit%.c}.o"
