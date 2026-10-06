@@ -1902,6 +1902,69 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  ASN1-R (2026-10-06): recursive types on every encoding rule, held to one bound, from one
+  containment graph (audit §4.2; the completion ladder's second P0).
+  - RED on the parent (`bc2c1d7`), in every witness of `bcir/tests/test_asn1_recursion.py`:
+    - OER, XER and JER had no case for the front end's forward reference;
+    - the JER plan refused a recursive type as an open type, and the write plan as a SET;
+    - a recursive CHOICE (`Expr ::= CHOICE { lit INTEGER, neg Expr }`) did not lower at all.
+      The front end took "the referenced type is not built yet" for "tag it IMPLICITly",
+      behind a `pragma: no cover - guarded`, and an implicit tag over a CHOICE needs the tag a
+      CHOICE does not have;
+    - nothing bounded a recursion. DER encoded a 256-deep value its own reader refuses past
+      64, a 1,000-deep one raised `RecursionError` from the DER and PER encoders, and a crafted
+      input of a few kilobytes did the same to the PER, OER, XER and JER decoders;
+    - `decode_jer` let a deeply nested JSON text raise `RecursionError` from the parser,
+      recursive schema or not.
+  - Found by reviewing the fix, in the front end:
+    - a recursive X.683 instance of a CHOICE template (`E {T} ::= CHOICE { lit T, neg E {T} }`)
+      did not lower, here or imported (§9.8). The first version of the fix read the tag over an
+      unbuilt reference from the module's assignments only, and an instance is not one;
+    - a type defined only as a reference to itself (`A ::= B` with `B ::= A`, `A ::= [0] A`)
+      lowered with no type behind it, and failed only when a value was encoded;
+    - a recursive reference to a type with an assignment-level tag lost the tag:
+      `next T` inside `T ::= [APPLICATION 5] IMPLICIT SEQUENCE {...}` went out as `30`, not
+      `65`, because the tag was recorded after the type was built;
+    - a contained subtype naming an alias of a recursive type (`B ::= A` inside `A`) was
+      refused as "a contained subtype of itself".
+  - The audit's table had PER failing too. That row was the reproduction's own error: it passed
+    `decode_per` its arguments in the wrong order. PER already resolved the reference, with a
+    private predicate the other rails did not share, so the defect was a mechanism on two
+    rails of six (L14). §4.2 is corrected.
+  - What landed:
+    - `schema.Reference`: the one placeholder, where the cycle closes. `schema.resolve` is the
+      one predicate every rail follows it by, and `schema.through` the one guard. A level is
+      a context variable, so concurrent codecs do not share a count. The bound,
+      `MAX_RECURSION`, is the BER reader's nesting bound.
+    - Every rail's dispatcher handles a reference at the END of its chain, so a non-recursive
+      value pays nothing. PER's old resolver ran on every dispatch; `asn1_codec:flat` makes
+      1.1% fewer calls than the parent.
+    - The front end decides §31.2.7's EXPLICIT tag over an unbuilt reference from the
+      definition being built: the reference names the lowerer building its target, which
+      reads the assignment or the instance's substituted body, through names, templates and
+      their actuals. Once the module is complete, every such decision is checked against the
+      type built, so a misreading is refused, never encoded (a witness injects one). The same
+      pass, over the lowerers of imported templates too, refuses a type defined only as
+      itself by its cycle and checks a deferred CHOICE's §29.3 distinct tags. An untagged
+      CHOICE that contains itself is refused by name.
+    - `lower.containment_graph` / `recursive_types`: the containment graph's strongly connected
+      components (iterative Tarjan), computed when asked. A reference carries the cycle it
+      closes.
+    - The JER plan compiles a recursive type with a `ref` back-edge to the ancestor's node.
+      Such a plan is version 2, refused by a version-1 reader; a plan without recursion is
+      version 1, byte for byte. The write plan refuses one by naming its cycle
+      (`A is recursive (A -> B -> A)`).
+  - Measured against `bc2c1d7` (`ab_audit.py`, groups `sp`, `sched` and `asn1`; the `asn1`
+    group gains two codec rows): PASS.
+    - `asn1_codec:recursive` (DER and PER over recursive values, which both trees carry) makes
+      8.1% more calls (15,038 to 16,258): the bound, three context-variable operations per
+      level. It takes 1.12x the time over nine interleaved rounds;
+    - `asn1_codec:flat` makes 1.1% fewer calls, PER's per-dispatch resolver gone;
+    - the compile rows make 0.1% to 0.3% more calls, with identical digests;
+    - every harness row, the audit digests and the `sp`/`sched` hot paths are unchanged.
+    The first version of the guard was a generator-based context manager at +18.8%. Making
+    the containment graph lazy and re-checking only the deferred CHOICEs took the compile rows
+    back from +25%.
   ASN1-H (2026-10-06): X.683 parameterization made hygienic, and every name a constraint
   mentions resolved or refused (audit §4.1; the completion ladder's first P0).
   - RED on the parent (`1d4c58a`), in each of the sixteen witnesses of

@@ -328,6 +328,83 @@ def row_asn1_compile(which):
     return run
 
 
+#: A module of every common shape and no recursion, for the codecs' own cost on every rule.
+_ASN1_FLAT = """Flat DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+  Colour ::= ENUMERATED { red, green, blue }
+  Item ::= SEQUENCE { id INTEGER (0..65535), name UTF8String, flag BOOLEAN, colour Colour,
+                      blob OCTET STRING OPTIONAL }
+  Pick ::= CHOICE { small INTEGER (0..255), item Item, text IA5String }
+  Batch ::= SEQUENCE { items SEQUENCE (SIZE (0..64)) OF Item, picks SEQUENCE OF Pick }
+END
+"""
+
+#: Recursive types every tree since the front end landed encodes on DER and PER.
+_ASN1_RECURSIVE = """Rec DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+  Node ::= SEQUENCE { label INTEGER (0..255), children SEQUENCE (SIZE (0..4)) OF Node }
+  List ::= SEQUENCE { value INTEGER (0..1), next List OPTIONAL }
+END
+"""
+
+
+def row_asn1_codec(which):
+    """Round trips through the encoding rules -- the codecs, not the front end. `flat` takes
+    every rule both trees carry for a non-recursive type; `recursive` the two (DER, PER)
+    every tree carries for a recursive one."""
+    from bcir.asn1 import jer, oer, per, xer
+    from bcir.frontends.asn1 import compile_module
+
+    if which == "flat":
+        module = compile_module(_ASN1_FLAT, "Flat").module
+        item = {"id": 7, "name": "seven", "flag": True, "colour": 2, "blob": b"\x01\x02"}
+        batch = {
+            "items": [dict(item, id=i, name=f"n{i}") for i in range(16)],
+            "picks": [("small", 3), ("item", item), ("text", "abc")] * 4,
+        }
+        kind = module.types["Batch"]
+        rails = (
+            (lambda v: module.encode("Batch", v), lambda d: module.decode("Batch", d)),
+            (lambda v: per.encode_per(kind, v), lambda d: per.decode_per(d, kind)),
+            (lambda v: oer.encode_oer(kind, v), lambda d: oer.decode_oer(kind, d)),
+            (lambda v: xer.encode_xer(kind, v), lambda d: xer.decode_xer(d, kind)),
+            (lambda v: jer.encode_jer(kind, v), lambda d: jer.decode_jer(d, kind)),
+        )
+        cases = [batch]
+    else:
+        module = compile_module(_ASN1_RECURSIVE, "Rec").module
+        node = {"label": 0, "children": []}
+        for depth in range(1, 6):
+            node = {"label": depth, "children": [node, {"label": 255, "children": []}]}
+        chain = {"value": 0}
+        for _ in range(40):
+            chain = {"value": 1, "next": chain}
+        rails = []
+        for name in ("Node", "List"):
+            kind = module.types[name]
+            rails.append(
+                (
+                    lambda v, n=name: module.encode(n, v),
+                    lambda d, n=name: module.decode(n, d),
+                )
+            )
+            rails.append(
+                (lambda v, k=kind: per.encode_per(k, v), lambda d, k=kind: per.decode_per(d, k))
+            )
+        rails = tuple(rails)
+        cases = [node, node, chain, chain]
+
+    def run():
+        out = []
+        for index, (encode, decode) in enumerate(rails):
+            value = cases[index % len(cases)]
+            data = encode(value)
+            if decode(data) != value:
+                raise RuntimeError("asn1_codec: a round trip changed the value")
+            out.append(data)
+        return out
+
+    return run
+
+
 def row_selftest(_scale):
     """A row that needs no fixture: what the unit test drives the child through."""
     return lambda: sum(i * i for i in range(2000))
@@ -369,6 +446,8 @@ ROWS = {
     "asn1_compile:bcir": lambda: row_asn1_compile("bcir"),
     "asn1_compile:pkix": lambda: row_asn1_compile("pkix"),
     "asn1_compile:x683": lambda: row_asn1_compile("x683"),
+    "asn1_codec:flat": lambda: row_asn1_codec("flat"),
+    "asn1_codec:recursive": lambda: row_asn1_codec("recursive"),
     "selftest": lambda: row_selftest(0),
 }
 for _case in AUDIT_CASES:
@@ -388,7 +467,13 @@ GROUPS = {
     "sp8": ["plan@8", "hydrate@8", "decode@8"],
     "sched": ["sched_waves@4", "sched_tokens@4", "sched_eft@4", "dag_exec@4", "dag_verify@4"],
     "audit": [f"audit:{c}@4" for c in AUDIT_CASES],
-    "asn1": ["asn1_compile:bcir", "asn1_compile:pkix", "asn1_compile:x683"],
+    "asn1": [
+        "asn1_compile:bcir",
+        "asn1_compile:pkix",
+        "asn1_compile:x683",
+        "asn1_codec:flat",
+        "asn1_codec:recursive",
+    ],
 }
 
 

@@ -48,13 +48,29 @@ from .jer import (
     _Opts,
 )
 from .jer_bounded import JerErrorCode, JerLimits, _fail, decode_bounded
-from .schema import Asn1Type, Choice, OpenType, Primitive, Sequence, SequenceOf, Set, SetOf
+from .schema import (
+    Asn1Type,
+    Choice,
+    OpenType,
+    Primitive,
+    Reference,
+    Sequence,
+    SequenceOf,
+    Set,
+    SetOf,
+    resolve,
+)
 from .tags import Asn1Error, Universal
 
 #: §5.1's "deterministic schema-plan version and compiler identity". Both are serialized,
 #: so a descriptor produced by a different compiler is recognisable as such rather than
 #: silently trusted.
 PLAN_VERSION: int = 1
+#: The version a plan carries when it holds a `ref` node -- a recursive type's back-edge to
+#: the node of the type it names. A plan with no `ref` is version 1, byte-identical to the
+#: descriptor before recursion was carried; one with a `ref` is refused by a version-1 reader
+#: (§5.1: unknown required descriptor features fail closed).
+PLAN_VERSION_RECURSIVE: int = 2
 PLAN_COMPILER: str = "bcir-asn1c/jer-plan/1"
 
 #: §5.3's family/profile naming, which the MLIR attribute will mirror.
@@ -101,12 +117,17 @@ class PlanNode:
     #: The JER-*visible* constraint only (§7.2.1). Rendered as text: a descriptor is data.
     constraint: str = ""
     extensible: bool = False
-    #: §5.1's "recursion bounds": the deepest JSON nesting a value of this type can reach.
-    max_depth: int = 1
+    #: §5.1's "recursion bounds": the deepest JSON nesting a value of this type can reach, or
+    #: None when a recursive type reaches any depth (bounded at decode time instead, by
+    #: JerLimits.depth and the shared recursion bound).
+    max_depth: int | None = 1
     #: §5.1's "exact scratch/output upper bounds where statically derivable", or None. See
     #: the module docstring for why None is the usual answer.
     bounded_octets: int | None = None
     enumeration: tuple[str, ...] = ()
+    #: For a `ref` node, the plan path of the ancestor node whose type a recursive reference
+    #: names: the plan's back-edge, so a descriptor of a recursive type stays finite.
+    ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,10 +180,11 @@ def _serialize_node(node: PlanNode, path: str, out: list[str]) -> None:
     here = path or "."
     out.append(
         f"node {here} kind={node.kind} json={'|'.join(node.json_kinds)} "
-        f"depth={node.max_depth} octets={'?' if node.bounded_octets is None else node.bounded_octets} "
+        f"depth={'?' if node.max_depth is None else node.max_depth} "
+        f"octets={'?' if node.bounded_octets is None else node.bounded_octets} "
         f"dup={node.duplicate_policy} ext={'1' if node.extensible else '0'} "
         f"instr={'|'.join(node.instructions)} constraint={node.constraint or '-'} "
-        f"enum={'|'.join(node.enumeration) or '-'}"
+        f"enum={'|'.join(node.enumeration) or '-'}" + (f" ref={node.ref}" if node.ref else "")
     )
     for name, index in node.dispatch:
         out.append(f"dispatch {here} {name} {index}")
@@ -234,7 +256,34 @@ def _bounded(node_kind: str, kind, opts: _Opts) -> int | None:
     return None
 
 
-def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNode:
+def _deeper(a: int | None, b: int | None) -> int | None:
+    return None if a is None or b is None else max(a, b)
+
+
+def _compile_node(
+    kind: Asn1Type,
+    opts: _Opts,
+    path: str,
+    depth: int,
+    ancestors: dict | None = None,
+    at: str = ".",
+) -> PlanNode:
+    """`ancestors` maps each type being compiled on the way here to its plan path, so a
+    recursive reference back to one of them compiles to a `ref` node rather than forever;
+    `at` is this node's plan path, the one `serialize` writes."""
+    ancestors = {} if ancestors is None else ancestors
+    if isinstance(kind, Reference):
+        target = kind.resolved()
+        back = ancestors.get(id(target))
+        if back is not None:
+            return PlanNode(
+                "ref", tuple(sorted(_json_kinds(target, opts))), max_depth=None, ref=back
+            )
+        ancestors[id(target)] = at
+        try:
+            return _compile_node(target, opts, path, depth, ancestors, at)
+        finally:
+            del ancestors[id(target)]
     if depth > 64:
         raise _fail(
             JerErrorCode.SCHEMA,
@@ -288,8 +337,10 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
         deepest = 0
         total: int | None = 2  # the braces
         for index, comp in enumerate(_flatten(kind.components)):
-            child = _compile_node(comp.type, opts, f"{path}/{comp.name}", depth + 1)
             name = _member_name(opts, comp)
+            child = _compile_node(
+                comp.type, opts, f"{path}/{comp.name}", depth + 1, ancestors, f"{at}/{name}"
+            )
             members.append(
                 PlanMember(
                     name,
@@ -301,7 +352,7 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
                     child,
                 )
             )
-            deepest = max(deepest, child.max_depth)
+            deepest = _deeper(deepest, child.max_depth)
             if total is not None and child.bounded_octets is not None:
                 total += child.bounded_octets + len(name) + 4  # "name": plus a comma
             else:
@@ -324,12 +375,12 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
             dispatch,
             instructions=instructions,
             extensible=kind.extensible,
-            max_depth=deepest + 1,
+            max_depth=None if deepest is None else deepest + 1,
             bounded_octets=total,
         )
 
     if isinstance(kind, (SequenceOf, SetOf)):
-        element = _compile_node(kind.element, opts, f"{path}[]", depth + 1)
+        element = _compile_node(kind.element, opts, f"{path}[]", depth + 1, ancestors, f"{at}[]")
         node_kind = (
             "object-map"
             if "OBJECT" in instructions
@@ -342,20 +393,27 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
             kinds,
             element=element,
             instructions=instructions,
-            max_depth=element.max_depth + 1,
+            max_depth=None if element.max_depth is None else element.max_depth + 1,
         )
 
     if isinstance(kind, Choice):
         members = []
         deepest = 0
         for index, alt in enumerate(_flatten(kind.alternatives)):
-            child = _compile_node(alt.type, opts, f"{path}/{alt.name}", depth + 1)
+            child = _compile_node(
+                alt.type,
+                opts,
+                f"{path}/{alt.name}",
+                depth + 1,
+                ancestors,
+                f"{at}/{_member_name(opts, alt)}",
+            )
             members.append(
                 PlanMember(
                     _member_name(opts, alt), alt.name, index, False, False, alt.extension, child
                 )
             )
-            deepest = max(deepest, child.max_depth)
+            deepest = _deeper(deepest, child.max_depth)
         dispatch = tuple(sorted((m.name, m.index) for m in members))
         unwrapped = "UNWRAPPED" in instructions
         if unwrapped:
@@ -383,7 +441,7 @@ def _compile_node(kind: Asn1Type, opts: _Opts, path: str, depth: int) -> PlanNod
             dispatch,
             instructions=instructions,
             extensible=kind.extensible,
-            max_depth=deepest + (0 if unwrapped else 1),
+            max_depth=None if deepest is None else deepest + (0 if unwrapped else 1),
         )
 
     raise _fail(
@@ -411,7 +469,7 @@ def compile_plan(
     """
     octets = source.encode("utf-8") if isinstance(source, str) else bytes(source)
     opts = _Opts(rules, instructions)
-    root = _compile_node(kind, opts, "", 0)
+    root = _compile_node(kind, opts, "", 0, {id(resolve(kind)): "."})
     return JerSchemaPlan(
         module=module,
         type_name=type_name,
@@ -420,9 +478,18 @@ def compile_plan(
         profile=PROFILE_CANONICAL if rules is JerRules.CANONICAL else PROFILE_BASIC,
         instruction_hash=_instruction_hash(root),
         root=root,
+        plan_version=PLAN_VERSION_RECURSIVE if _has_ref(root) else PLAN_VERSION,
         direct_builder=direct_builder,
         _kind=kind,
         _instructions=instructions,
+    )
+
+
+def _has_ref(node: PlanNode) -> bool:
+    if node.ref:
+        return True
+    return any(_has_ref(m.node) for m in node.members) or (
+        node.element is not None and _has_ref(node.element)
     )
 
 
@@ -460,27 +527,41 @@ def trace_of(plan: JerSchemaPlan, value) -> tuple[str, ...]:
     same order, so a J3 wrapper has something concrete to be equal to.
     """
     events: list[str] = []
-    _trace(plan.root, value, "", events)
+    nodes: dict[str, PlanNode] = {}
+
+    def collect(node: PlanNode, at: str) -> None:
+        nodes[at] = node
+        for member in node.members:
+            collect(member.node, f"{at}/{member.name}")
+        if node.element is not None:
+            collect(node.element, f"{at}[]")
+
+    collect(plan.root, ".")
+    _trace(plan.root, value, "", events, nodes)
     return tuple(events)
 
 
-def _trace(node: PlanNode, value, path: str, events: list[str]) -> None:
+def _trace(node: PlanNode, value, path: str, events: list[str], nodes: dict) -> None:
+    if node.kind == "ref":  # a recursive type's back-edge: the node it names, at this path
+        node = nodes[node.ref]
     here = path or "."
     events.append(f"enter {here} {node.kind}")
     if node.kind in ("sequence", "set", "array"):
         for member in node.members:
             if member.identifier in value:
                 events.append(f"member {here}/{member.name}")
-                _trace(member.node, value[member.identifier], f"{here}/{member.name}", events)
+                _trace(
+                    member.node, value[member.identifier], f"{here}/{member.name}", events, nodes
+                )
     elif node.kind in ("sequence-of", "set-of", "object-map"):
         for index, item in enumerate(value):
             events.append(f"element {here}[{index}]")
-            _trace(node.element, item, f"{here}[]", events)
+            _trace(node.element, item, f"{here}[]", events, nodes)
     elif node.kind in ("choice", "unwrapped-choice"):
         chosen, payload = value
         member = next(m for m in node.members if m.identifier == chosen)
         events.append(f"alternative {here}/{member.name}")
-        _trace(member.node, payload, f"{here}/{member.name}", events)
+        _trace(member.node, payload, f"{here}/{member.name}", events, nodes)
     else:
         events.append(f"value {here} {node.kind}")
     events.append(f"leave {here}")
@@ -512,6 +593,7 @@ __all__ = [
     "FAMILY",
     "PLAN_COMPILER",
     "PLAN_VERSION",
+    "PLAN_VERSION_RECURSIVE",
     "PROFILE_BASIC",
     "PROFILE_CANONICAL",
     "JerSchemaPlan",

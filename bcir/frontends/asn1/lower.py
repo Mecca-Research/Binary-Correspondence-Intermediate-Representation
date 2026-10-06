@@ -16,9 +16,11 @@ module in view:
   order. The "none of them are tagged" precondition matters -- a partially tagged list
   keeps the author's tags untouched.
 
-Recursion is handled with a lazy reference (`_LazyType`) rather than refused: real
+Recursion is handled with a lazy reference (`schema.Reference`) rather than refused: real
 modules define mutually recursive types, and the encoder model is eager dataclasses
-that cannot be built bottom-up for a cycle.
+that cannot be built bottom-up for a cycle. Every encoding rule follows the reference through
+`schema.resolve` and holds a value to `schema.MAX_RECURSION` levels of it; the containment
+graph (`containment_graph`, `recursive_types`) names each cycle for a rail that cannot carry one.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from dataclasses import dataclass, field, replace
 from bcir.asn1 import constraints as _constraints
 
 from bcir.asn1.schema import (
+    MAX_RECURSION,
     Asn1Type,
     Choice,
     Component,
@@ -39,12 +42,14 @@ from bcir.asn1.schema import (
     ObjectSetTable,
     OpenType,
     Primitive,
+    Reference,
     Sequence,
     SequenceOf,
     Set,
     SetOf,
+    resolve,
 )
-from bcir.asn1.tags import Asn1Error, Tag, TagClass, Universal
+from bcir.asn1.tags import Asn1Error, TagClass, Universal
 
 from . import ast
 from .lexer import Asn1SyntaxError
@@ -93,36 +98,18 @@ class Asn1SemanticError(Exception):
     """A module that parses but does not describe a usable type."""
 
 
-@dataclass
-class _LazyType(Asn1Type):
-    """A forward reference to a type still being built (a recursive definition)."""
+class _Forward(Reference):
+    """A forward reference to a type still being built (a recursive definition).
 
-    target_name: str
-    registry: dict
-    name: str = "?"
+    It is the one placeholder every encoding rule follows (`bcir.asn1.schema.Reference`),
+    and it also names the lowerer building its target. A tag over the reference has to be
+    decided before that target exists (X.680 §31.2.7: EXPLICIT over a CHOICE or an open
+    type), and only that lowerer can read the definition it is building
+    (`Lowerer._forward_choice_or_open`). The link is dropped once the module is complete."""
 
-    def _resolved(self) -> Asn1Type:
-        try:
-            resolved = self.registry[self.target_name]
-        except KeyError:  # pragma: no cover - guarded
-            raise Asn1SemanticError(
-                f"unresolved forward reference to {self.target_name!r}"
-            ) from None
-        if resolved is self:  # pragma: no cover - guarded
-            raise Asn1SemanticError(f"type {self.target_name!r} is defined as itself")
-        return resolved
-
-    def base_tag(self) -> Tag:
-        return self._resolved().base_tag()
-
-    def alternative_tags(self) -> tuple[Tag, ...]:
-        return self._resolved().alternative_tags()
-
-    def encode(self, value):
-        return self._resolved().encode(value)
-
-    def decode(self, tlv, *, strictness):
-        return self._resolved().decode(tlv, strictness=strictness)
+    def __init__(self, target_name: str, registry: dict, name: str, cycle, lowerer):
+        super().__init__(target_name, registry, name, cycle)
+        self.lowerer = lowerer
 
 
 @dataclass
@@ -147,6 +134,17 @@ class LoweredModule:
         if item in ("module", "imports", "node"):  # never delegate the fields themselves
             raise AttributeError(item)
         return getattr(self.module, item)
+
+    @property
+    def recursive(self) -> dict[str, tuple[str, ...]]:
+        """Every recursive type, with the strongly connected component of the containment
+        graph it belongs to (`recursive_types`): `{"A": ("A", "B"), "B": ("A", "B")}`.
+        Computed when asked, so lowering a module does not pay for it."""
+        cached = self.__dict__.get("_recursive")
+        if cached is None:
+            cached = recursive_types(self.node) if self.node is not None else {}
+            self.__dict__["_recursive"] = cached
+        return cached
 
 
 class Lowerer:
@@ -179,11 +177,24 @@ class Lowerer:
         #: own tables under a dummy's name, which is what made the old memo capture names.
         self._instances: dict[str, Asn1Type] = {}
         self._instances_in_progress: set[str] = set()
+        #: The substituted body of each instance being built, by key: what a tag over a
+        #: recursive reference to that instance is decided from (§31.2.7).
+        self._instance_bodies: dict[str, object] = {}
         #: Lowerers of imported modules whose templates this module instantiates, by name.
         self._children: dict[str, Lowerer] = {}
         #: Rows of objects lowered in ANOTHER module and handed in as actuals (§9.8).
         self._prebuilt_rows: dict[str, dict] = {}
         self._in_progress: set[str] = set()
+        #: The types and instances being built, in the order their definitions were entered,
+        #: as (key, name): the path a recursive reference's containment cycle is read from.
+        self._building: list[tuple[str, str]] = []
+        #: Every recursive reference this lowerer made, checked once the module is complete.
+        self._forwards: list[_Forward] = []
+        #: The CHOICEs whose distinct-tag check waited for a recursive alternative's type.
+        self._deferred_choices: list[Choice] = []
+        #: Tags decided over a reference before its type was built, with the decision:
+        #: confirmed against the built type once the module is complete.
+        self._decided_early: list[tuple[_Forward, bool]] = []
         #: Value assignments being lowered: `a INTEGER ::= b` with `b INTEGER ::= a` names
         #: itself, and is refused rather than recursed (`_assigned_value`).
         self._values_in_progress: set[str] = set()
@@ -196,6 +207,7 @@ class Lowerer:
     def run(self) -> LoweredModule:
         for name in self.assignments:
             self._type_by_name(name)
+        self._finish(self.node.name)
         oid = self._oid(self.node.oid) if self.node.oid else ()
         module = Module(self.node.name, oid, dict(self.types))
         return LoweredModule(
@@ -206,6 +218,53 @@ class Lowerer:
             dict(self.assigned_tags),
             dict(self.imported),
         )
+
+    def _finish(self, module: str) -> None:
+        """What waited for the module to be complete, decided now -- over this lowerer and the
+        lowerers of imported modules whose templates it instantiated (§9.8), each check over
+        all of them before the next:
+
+          * every recursive reference names a type: `A ::= B` with `B ::= A` passes through
+            no constructor, so it names no type at all and has no value to encode;
+          * a tag decided over a reference before its type existed agrees with the type built
+            (§31.2.7), so a definition the syntax was misread from is refused, never encoded;
+          * X.680 §29.3 for every CHOICE whose alternatives' tags needed a type still being
+            built when the CHOICE was."""
+        lowerers: list[Lowerer] = []
+        pending = [self]
+        while pending:
+            lowerer = pending.pop()
+            if all(lowerer is not done for done in lowerers):
+                lowerers.append(lowerer)
+                pending.extend(lowerer._children.values())
+        for forward in (f for lowerer in lowerers for f in lowerer._forwards):
+            try:
+                resolve(forward)
+            except Asn1Error:
+                raise Asn1SemanticError(
+                    f"module {module}: {forward.name} is defined only as a reference to itself "
+                    f"({' -> '.join(forward.cycle)}); a recursive definition has to pass "
+                    f"through a SEQUENCE, SET, CHOICE, SEQUENCE OF or SET OF, or it names no "
+                    f"type"
+                ) from None
+        for reference, decided in (d for lowerer in lowerers for d in lowerer._decided_early):
+            if _needs_explicit_tag(reference) != decided:
+                raise Asn1SemanticError(
+                    f"module {module}: a tag over {reference.name} was decided "
+                    f"{'EXPLICIT' if decided else 'IMPLICIT'} before {reference.name} was "
+                    f"built, and the type built disagrees (X.680 31.2.7); tag the reference "
+                    f"EXPLICITly"
+                )
+        for kind in (c for lowerer in lowerers for c in lowerer._deferred_choices):
+            try:
+                kind.check_tags()
+            except Asn1Error as exc:
+                raise Asn1SemanticError(f"module {module}: {exc}") from None
+            kind.tags_checked = True
+        for lowerer in lowerers:
+            for forward in lowerer._forwards:
+                forward.lowerer = None  # the schema does not keep a lowerer alive
+            lowerer._forwards, lowerer._decided_early, lowerer._deferred_choices = [], [], []
 
     def _oid(self, value: ast.OidValue) -> tuple[int, ...]:
         arcs: list[int] = []
@@ -229,7 +288,7 @@ class Lowerer:
         if name in self.types:
             return self.types[name]
         if name in self._in_progress:
-            return _LazyType(name, self.types, name)  # a recursive definition
+            return self._forward(name, self.types, name)  # a recursive definition
         if name not in self.assignments:
             for module in self.imported.values():
                 if name in module.types:
@@ -239,12 +298,24 @@ class Lowerer:
                 f"assigned, and no IMPORTS provides it"
             )
         self._in_progress.add(name)
+        self._building.append((name, name))
         try:
             built = self._type(self.assignments[name], name)
         finally:
             self._in_progress.discard(name)
+            self._building.pop()
         self.types[name] = built
         return built
+
+    def _forward(self, key: str, registry: dict, name: str) -> _Forward:
+        """A reference to the type or instance `key`, still being built: it closes the
+        containment cycle from `key` through everything entered since, back to `key`."""
+        keys = [entry[0] for entry in self._building]
+        start = keys.index(key) if key in keys else len(keys)
+        cycle = tuple(entry[1] for entry in self._building[start:]) + (name,)
+        forward = _Forward(key, registry, name, cycle, self)
+        self._forwards.append(forward)
+        return forward
 
     def _type(self, node, label: str) -> Asn1Type:
         if isinstance(node, ast.PreLowered):
@@ -290,10 +361,12 @@ class Lowerer:
             # type model does not have. That is recorded rather than papered over:
             # `LoweredModule.assigned_tags` exposes it, and PER is unaffected either way
             # because X.691 §10.4.1/§10.6.3 make tagging invisible to it.
+            # Recorded before the inner type is built: a recursive reference inside it
+            # (`T ::= [APPLICATION 5] IMPLICIT SEQUENCE { next T OPTIONAL }`) carries the tag
+            # too, and it is looked up while T is still being built.
             inner, number, mode, cls = _peel_tag(node)
-            built = self._type(inner, label)
             self.assigned_tags[label] = (cls, number, mode)
-            return built
+            return self._type(inner, label)
 
         if isinstance(node, ast.SequenceOfType):
             element = self._type(node.element, f"{label} element")
@@ -313,7 +386,10 @@ class Lowerer:
 
         if isinstance(node, ast.ChoiceType):
             alts, ext = self._components(node.alternatives, label, choice=True)
-            return Choice(alts, label, ext)
+            built = Choice(alts, label, ext)
+            if not built.tags_checked:  # a recursive alternative: decided once the module is
+                self._deferred_choices.append(built)
+            return built
 
         raise Asn1SemanticError(f"{label}: unsupported type node {type(node).__name__}")
 
@@ -428,10 +504,12 @@ class Lowerer:
     def _contained_subtype(self, name: str, context: str, built: Asn1Type, label: str):
         """§51.3: the element is every value of the named type -- its constraint, or MIN..MAX."""
         target = self._type_by_name(name)
-        if isinstance(target, _LazyType):
-            raise Asn1SemanticError(
-                f"{label}: {name} is used as a contained subtype of itself (X.680 51.3)"
-            )
+        if isinstance(target, Reference):
+            if not target.ready():
+                raise Asn1SemanticError(
+                    f"{label}: {name} is used as a contained subtype of itself (X.680 51.3)"
+                )
+            target = resolve(target)
         if (
             context == "value"
             and isinstance(built, Primitive)
@@ -782,7 +860,7 @@ class Lowerer:
         if key in self._instances_in_progress:
             # A template that refers to itself with the same actuals is a recursive TYPE,
             # which X.680 permits; it is a lazy reference to the instance being built.
-            return _LazyType(key, self._instances, f"{template.name}{{...}}")
+            return self._forward(key, self._instances, f"{template.name}{{...}}")
         if len(self._instances_in_progress) >= _MAX_INSTANCE_DEPTH:
             raise Asn1SemanticError(
                 f"{label}: instantiating {template.name} nests {_MAX_INSTANCE_DEPTH} templates "
@@ -791,10 +869,14 @@ class Lowerer:
             )
         substituted = _substitute(template.body.type, bindings)
         self._instances_in_progress.add(key)
+        self._instance_bodies[key] = substituted
+        self._building.append((key, f"{template.name}{{...}}"))
         try:
             built = self._type(substituted, f"{label}[{template.name}]")
         finally:
             self._instances_in_progress.discard(key)
+            del self._instance_bodies[key]
+            self._building.pop()
         self._instances[key] = built
         return built
 
@@ -1197,12 +1279,113 @@ class Lowerer:
             return False
         return all(_peel_tag(item.type)[1] is None for item in entries)
 
+    def _needs_explicit_tag(self, built: Asn1Type) -> bool:
+        """§31.2.7 for `built`, including a recursive reference whose type is not built yet.
+
+        That one is read from the definition it is being built from, by the lowerer building
+        it, and the decision is confirmed against the type built once the module is complete
+        (`_finish`), so a definition the syntax is misread from is refused, never encoded.
+        Taking "not built yet" for "not a CHOICE" made `neg [1] Expr` inside
+        `Expr ::= CHOICE {...}` an IMPLICIT tag over a CHOICE, and the module failed to lower."""
+        if not isinstance(built, Reference):
+            return isinstance(built, (Choice, OpenType))
+        decided = self._built_choice_or_open(built, frozenset())
+        self._decided_early.append((built, decided))
+        return decided
+
+    def _built_choice_or_open(self, built: Asn1Type, seen: frozenset) -> bool:
+        """Whether `built` is a CHOICE or an open type, through any chain of references -- one
+        still being built is answered by the lowerer building it."""
+        for _ in range(MAX_RECURSION):
+            if not isinstance(built, Reference):
+                return isinstance(built, (Choice, OpenType))
+            if not built.ready():
+                lowerer = getattr(built, "lowerer", None)
+                return lowerer is not None and lowerer._forward_choice_or_open(built, seen)
+            built = built.resolved()
+        return False
+
+    def _forward_choice_or_open(self, forward: Reference, seen: frozenset) -> bool:
+        """Whether the type or instance this lowerer is still building under `forward`'s name
+        is a CHOICE or an open type, read from its definition."""
+        key = (id(self), forward.target_name)
+        if key in seen:
+            return False  # no constructor on the way round: refused when the module completes
+        if forward.registry is self._instances:
+            definition = self._instance_bodies.get(forward.target_name)
+        else:
+            definition = self.assignments.get(forward.target_name)
+        return self._reads_as_choice_or_open(definition, {}, seen | {key})
+
+    def _reads_as_choice_or_open(self, node, dummies: dict, seen: frozenset) -> bool:
+        """Whether the type the syntax `node` denotes in this module is a CHOICE or an open
+        type, following what `_type` builds from it: constraints and an assignment's own tag
+        are looked through (the type built is the inner one), names are followed to their
+        definitions, and a template's dummies -- `dummies` maps each to (the lowerer that
+        wrote the actual, the actual, that lowerer's dummies) -- are read as their actuals."""
+        while True:
+            if isinstance(node, (ast.Constrained, ast.Tagged)):
+                node = node.inner
+            elif isinstance(node, ast.ChoiceType):
+                return True
+            elif isinstance(node, ast.OpenTypeNode):
+                # `ANY` and `CLASS.&Type` are open; `CLASS.&id` is the type the class
+                # declared for that value field, as `_open_type` builds it.
+                declared = self._class(node.object_class) if node.object_class else None
+                field = next(
+                    (f for f in getattr(declared, "fields", ()) if f.name == node.field), None
+                )
+                if field is None or field.is_type_field or field.type is None:
+                    return True
+                node, dummies = field.type, {}
+            elif isinstance(node, ast.PreLowered):
+                return node.kind == _TYPE and self._built_choice_or_open(node.payload, seen)
+            elif isinstance(node, (str, ast.TypeRef)):
+                ref = ast.TypeRef(node) if isinstance(node, str) else node
+                if ref.module is None and ref.name in dummies:
+                    lowerer, actual, outer = dummies[ref.name]
+                    return lowerer._reads_as_choice_or_open(actual, outer, seen)
+                if ref.module is not None:
+                    found = getattr(self.imported.get(ref.module), "types", {}).get(ref.name)
+                    return found is not None and self._built_choice_or_open(found, seen)
+                if ref.name in self.types:
+                    return self._built_choice_or_open(self.types[ref.name], seen)
+                if ref.name not in self.assignments:
+                    found = next(
+                        (m.types[ref.name] for m in self.imported.values() if ref.name in m.types),
+                        None,
+                    )
+                    return found is not None and self._built_choice_or_open(found, seen)
+                key = (id(self), ref.name)
+                if key in seen:
+                    return False
+                node, dummies, seen = self.assignments[ref.name], {}, seen | {key}
+            elif isinstance(node, ast.ParameterizedRef):
+                try:
+                    template, owner = self._template(node, "X.680 31.2.7")
+                except Asn1SemanticError:
+                    return False  # refused where the reference itself is lowered
+                key = (id(owner), "template", template.name)
+                if (
+                    key in seen
+                    or not isinstance(template.body, ast.TypeAssignment)
+                    or len(template.params) != len(node.actuals)
+                ):
+                    return False
+                inner = {
+                    param: (self, actual, dummies)
+                    for param, actual in zip(template.params, node.actuals)
+                }
+                return owner._reads_as_choice_or_open(template.body.type, inner, seen | {key})
+            else:  # SEQUENCE, SET, their OFs and every builtin have a base tag
+                return False
+
     def _explicit(self, mode: str | None, built: Asn1Type) -> bool:
         """Resolve IMPLICIT/EXPLICIT for a component tag (§31.2.1 + §31.2.7)."""
         if mode == "EXPLICIT":
             return True
         if mode == "IMPLICIT":
-            if _needs_explicit_tag(built):
+            if self._needs_explicit_tag(built):
                 raise Asn1SemanticError(
                     "IMPLICIT cannot tag a CHOICE or an open type: an implicit tag "
                     "replaces the base tag and neither has one (X.680 29.1/31.2.7)"
@@ -1210,7 +1393,7 @@ class Lowerer:
             return False
         # No keyword: the module's default decides -- except that §31.2.7 forces
         # EXPLICIT over a CHOICE or an open type even in an IMPLICIT/AUTOMATIC module.
-        if _needs_explicit_tag(built):
+        if self._needs_explicit_tag(built):
             return True
         return self.node.tag_default == "EXPLICIT"
 
@@ -1372,6 +1555,100 @@ def _peel_tag(node):
     return node, None, None, None
 
 
+def containment_graph(node: ast.ModuleNode) -> dict[str, tuple[str, ...]]:
+    """Each type (or parameterized type) the module assigns -> the ones its definition names.
+
+    The edges are the references a value's encoding follows: components, elements,
+    alternatives, tagged and constrained types, and the template a parameterized reference
+    instantiates. A name in a constraint (a contained subtype) is not containment, and a
+    reference into another module cannot close a cycle in this one."""
+    names = set(node.type_assignments())
+    names |= {a.name for a in node.assignments if isinstance(a, ast.ParameterizedAssignment)}
+    graph: dict[str, tuple[str, ...]] = {}
+    for assignment in node.assignments:
+        if isinstance(assignment, ast.TypeAssignment):
+            body = assignment.type
+        elif isinstance(assignment, ast.ParameterizedAssignment) and isinstance(
+            assignment.body, ast.TypeAssignment
+        ):
+            body = assignment.body.type
+        else:
+            continue
+        found: set[str] = set()
+        stack = [body]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, (ast.TypeRef, ast.ParameterizedRef)):
+                if item.module is None and item.name in names:
+                    found.add(item.name)
+                if isinstance(item, ast.ParameterizedRef):
+                    stack.extend(item.actuals)
+            elif isinstance(item, ast.Constrained):
+                stack.append(item.inner)  # the constraints are not containment
+            elif isinstance(item, (tuple, list)):
+                stack.extend(item)
+            elif dataclasses.is_dataclass(item) and not isinstance(item, type):
+                stack.extend(getattr(item, f.name) for f in dataclasses.fields(item))
+        graph[assignment.name] = tuple(sorted(found))
+    return graph
+
+
+def recursive_types(node: ast.ModuleNode) -> dict[str, tuple[str, ...]]:
+    """Every type on a cycle of the containment graph, with its strongly connected component
+    (Tarjan's algorithm, iterative so a long chain of definitions cannot exhaust the stack).
+    A type is recursive when its component has more than one member or it names itself."""
+    graph = containment_graph(node)
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    out: dict[str, tuple[str, ...]] = {}
+    counter = 0
+    for root in sorted(graph):
+        if root in index:
+            continue
+        work = [(root, iter(graph[root]))]
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        while work:
+            name, edges = work[-1]
+            advanced = False
+            for nxt in edges:
+                if nxt not in graph:
+                    continue
+                if nxt not in index:
+                    index[nxt] = low[nxt] = counter
+                    counter += 1
+                    stack.append(nxt)
+                    on_stack.add(nxt)
+                    work.append((nxt, iter(graph[nxt])))
+                    advanced = True
+                    break
+                if nxt in on_stack:
+                    low[name] = min(low[name], index[nxt])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[name])
+            if low[name] == index[name]:
+                members = []
+                while True:
+                    top = stack.pop()
+                    on_stack.discard(top)
+                    members.append(top)
+                    if top == name:
+                        break
+                component = tuple(sorted(members))
+                if len(component) > 1 or name in graph[name]:
+                    for member in component:
+                        out[member] = component
+    return dict(sorted(out.items()))
+
+
 def _needs_explicit_tag(built: Asn1Type) -> bool:
     """X.680 §31.2.7: a tag over a CHOICE or an OPEN TYPE is always EXPLICIT.
 
@@ -1379,14 +1656,9 @@ def _needs_explicit_tag(built: Asn1Type) -> bool:
     an open type the contained value's -- so an implicit tag would have nothing to
     replace and would erase the only discriminator on the wire.
     """
-    if isinstance(built, (Choice, OpenType)):
-        return True
-    if isinstance(built, _LazyType):
-        try:
-            return isinstance(built._resolved(), (Choice, OpenType))
-        except Asn1SemanticError:  # pragma: no cover - guarded
-            return False
-    return False
+    if isinstance(built, Reference):
+        built = resolve(built)
+    return isinstance(built, (Choice, OpenType))
 
 
 def _element_of(built: Asn1Type | None):
@@ -1709,5 +1981,7 @@ __all__ = [
     "Lowerer",
     "UNIVERSAL_OF",
     "compile_module",
+    "containment_graph",
     "lower",
+    "recursive_types",
 ]

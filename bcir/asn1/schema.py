@@ -24,11 +24,41 @@ a constructed tag.
 
 from __future__ import annotations
 
+import contextvars
 from dataclasses import dataclass, field
 
 from .codec import Strictness, from_tlv, to_tlv
 from .tags import Asn1Error, Tag, TagClass, Universal
-from .tlv import Tlv, decode_one, encode_tlv
+from .tlv import DEFAULT_MAX_DEPTH, Tlv, decode_one, encode_tlv
+
+#: How many times one value may pass through a recursive type reference, on every encoding
+#: rule and in both directions. A recursive type admits values of any depth; a codec that
+#: follows attacker-chosen depth by recursion is a stack-exhaustion surface, and one that
+#: follows a caller's cyclic value never returns. The bound is the constructed nesting the BER
+#: reader follows (`tlv.DEFAULT_MAX_DEPTH`), so no rail admits a recursion every other rail
+#: refuses for depth alone.
+MAX_RECURSION = DEFAULT_MAX_DEPTH
+
+_RECURSION_LEVEL = contextvars.ContextVar("bcir_asn1_recursion_level", default=0)
+
+
+def through(rail: str, reference: "Reference", fn, *args, **kwargs):
+    """`fn(*args, **kwargs)` one level deeper into the recursive `reference`, refused past
+    MAX_RECURSION: the one guard every rail takes when it passes through a `Reference`
+    (laws.md L14). The level is a context variable, restored on every exit, so concurrent
+    codecs do not share a count and a refusal unwinds it. A plain call rather than a context
+    manager: it runs once per level of every recursive value."""
+    level = _RECURSION_LEVEL.get()
+    if level >= MAX_RECURSION:
+        raise Asn1Error(
+            f"{rail}: {reference.target_name} recurses deeper than {MAX_RECURSION} levels, "
+            f"the bound every rail keeps on a recursive type (the BER reader's nesting bound)"
+        )
+    token = _RECURSION_LEVEL.set(level + 1)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _RECURSION_LEVEL.reset(token)
 
 
 class _NoDefault:
@@ -104,9 +134,12 @@ class Component:
         lets `[4] Name` work when `Name` is a CHOICE and has no base tag to ask for.
         """
         if self.tag is None:
-            if isinstance(self.type, (Choice, OpenType)):
+            kind = self.type
+            if isinstance(kind, Reference):  # a recursive reference shows what it names
+                kind = kind.resolved()
+            if isinstance(kind, (Choice, OpenType)):
                 return None
-            return self.type.base_tag()
+            return kind.base_tag()
         if self.explicit:  # §8.14.3
             return Tag(self.tag_class, self.tag, True)
         return Tag(
@@ -168,6 +201,87 @@ class Asn1Type:
                 f"{self.name}: expected {want} but the encoding carries {tlv.tag} (X.690 8.1.2)",
                 tlv.offset,
             )
+
+
+class IncompleteReference(Asn1Error):
+    """A recursive reference asked about before the type it names was finished."""
+
+
+class Reference(Asn1Type):
+    """A reference to a type that is still being defined: a recursive definition (X.680 §17).
+
+    The front end builds `Node ::= SEQUENCE { children SEQUENCE OF Node }` while `Node` is
+    not yet a type, so the inner `Node` is this placeholder, resolved through `registry` once
+    the module is complete. Every rail follows it the same way: `resolve` for what it names,
+    and `through` for each pass through it, so a value is held to MAX_RECURSION levels
+    whichever encoding rule carries it.
+
+    `cycle` is the containment cycle the reference closes (`Node -> Node`, `A -> B -> A`),
+    for the diagnostics of a rail that cannot carry recursion."""
+
+    def __init__(self, target_name: str, registry: dict, name: str | None = None, cycle=()):
+        self.target_name = target_name
+        self.registry = registry
+        self.name = name or target_name
+        self.cycle = tuple(cycle)
+
+    def __repr__(self) -> str:
+        return f"Reference({self.target_name!r})"
+
+    def ready(self) -> bool:
+        return self.target_name in self.registry and self.registry[self.target_name] is not self
+
+    def resolved(self) -> Asn1Type:
+        target = self.registry.get(self.target_name)
+        if target is None:
+            raise IncompleteReference(
+                f"{self.target_name} is referenced while it is still being defined, where "
+                f"its tags are needed (an untagged CHOICE alternative, or an IMPLICIT tag "
+                f"on a type that contains itself); tag the reference EXPLICITly "
+                f"(X.680 31.2.7)"
+            )
+        if target is self:
+            raise Asn1Error(f"type {self.target_name!r} is defined as itself")
+        return target
+
+    # The tag-first rails (BER/DER) go through these, so they take the same guard.
+    def base_tag(self) -> Tag:
+        return self.resolved().base_tag()
+
+    def alternative_tags(self) -> tuple[Tag, ...]:
+        target = self.resolved()
+        if id(target) in _TAGS_IN_PROGRESS.get():
+            raise Asn1Error(
+                f"{self.target_name} contains itself as an untagged CHOICE alternative, so "
+                f"its set of tags is not defined (X.680 29.3); tag that alternative"
+            )
+        token = _TAGS_IN_PROGRESS.set(_TAGS_IN_PROGRESS.get() | {id(target)})
+        try:
+            return target.alternative_tags()
+        finally:
+            _TAGS_IN_PROGRESS.reset(token)
+
+    def encode(self, value) -> Tlv:
+        return through("BER", self, self.resolved().encode, value)
+
+    def decode(self, tlv: Tlv, *, strictness: Strictness):
+        return through("BER", self, self.resolved().decode, tlv, strictness=strictness)
+
+
+#: The types (by identity) whose CHOICE tag set is being computed: a recursive untagged
+#: CHOICE would otherwise ask itself forever.
+_TAGS_IN_PROGRESS: contextvars.ContextVar = contextvars.ContextVar(
+    "bcir_asn1_tags_in_progress", default=frozenset()
+)
+
+
+def resolve(kind: Asn1Type) -> Asn1Type:
+    """The type `kind` names, through any chain of references (every rail's one predicate)."""
+    for _ in range(MAX_RECURSION):
+        if not isinstance(kind, Reference):
+            return kind
+        kind = kind.resolved()
+    raise Asn1Error("a chain of type references never reaches a type -- a reference cycle")
 
 
 @dataclass
@@ -619,6 +733,17 @@ class Choice(Asn1Type):
                     f"{self.name}: alternative {alt.name!r} tags a CHOICE implicitly; "
                     f"X.680 31.2.7 requires EXPLICIT"
                 )
+        try:
+            self.check_tags()
+        except IncompleteReference:
+            # A recursive alternative whose tags need the type still being built: the front
+            # end checks again once the module is complete (`check_tags`).
+            self.tags_checked = False
+        else:
+            self.tags_checked = True
+
+    def check_tags(self) -> None:
+        """X.680 §29.3: the alternatives' tags are distinct."""
         tags = [t for alt in self.alternatives for t in alt.expected_tags()]
         duplicate = {t for t in tags if tags.count(t) > 1}
         if duplicate:
@@ -811,14 +936,19 @@ class Module:
 
 
 __all__ = [
+    "MAX_RECURSION",
     "Asn1Type",
     "Choice",
     "Component",
+    "IncompleteReference",
     "Module",
     "OpenType",
     "Primitive",
+    "Reference",
     "Sequence",
     "SequenceOf",
     "Set",
     "SetOf",
+    "resolve",
+    "through",
 ]

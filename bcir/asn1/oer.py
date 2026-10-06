@@ -43,10 +43,12 @@ from .schema import (
     Component,
     OpenType,
     Primitive,
+    Reference,
     Sequence,
     SequenceOf,
     Set,
     SetOf,
+    through,
 )
 from .tags import Asn1Error, Tag, TagClass, Universal
 
@@ -562,6 +564,8 @@ def encode_value(kind: Asn1Type, value, *, rules: OerRules = OerRules.CANONICAL)
             return encode_tag(tag) + encode_value(alt.type, payload, rules=rules)
         raise Asn1Error(f"{kind.name}: {chosen!r} is not an alternative")
 
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through("OER", kind, encode_value, kind.resolved(), value, rules=rules)
     raise Asn1Error(f"no OER encoding for {type(kind).__name__}")
 
 
@@ -608,6 +612,8 @@ def decode_value(
                 return (alt.name, item), cursor
         raise Asn1Error(f"{kind.name}: {tag} matches no alternative (X.696 20.1)", offset)
 
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through("OER", kind, decode_value, kind.resolved(), data, offset, rules=rules)
     raise Asn1Error(f"no OER decoding for {type(kind).__name__}")
 
 

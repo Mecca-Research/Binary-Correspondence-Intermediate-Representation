@@ -166,6 +166,22 @@ program. Third-party validation: parse the X.509 `AuthorityKeyIdentifier` and
 Stop condition: if the parsed subset cannot express X.509 without X.681 information
 objects, stop and take phase F first rather than inventing a dialect.
 
+**Recursive types are carried by every encoding rule.** A type that contains itself
+(`Node ::= SEQUENCE { children SEQUENCE OF Node }`, a mutually recursive pair, a recursive
+CHOICE, or a recursive instance of a parameterized type) is lowered with one placeholder,
+`schema.Reference`, where the cycle closes; a type defined only as a reference to itself
+(`A ::= B`, `B ::= A`) names no type and is refused by its cycle. BER/DER,
+PER, OER, XER and JER all follow it through the same predicate. They also hold a value to the
+same bound, `schema.MAX_RECURSION`, which is the BER reader's nesting bound: a value nested
+deeper is refused on encode, and a crafted input nested deeper is refused on decode. Neither
+direction raises `RecursionError`.
+
+`lower.recursive_types` computes the containment graph's strongly connected components, so a
+module states which of its types are recursive, and with which others. The JER plan compiles a
+recursive type with a `ref` back-edge (plan version 2; a plan with no recursion is still
+version 1, byte for byte). The write plan, a finite descriptor for the C emitters, refuses one
+by naming its cycle (`A -> B -> A`). `bcir/tests/test_asn1_recursion.py` holds the witnesses.
+
 ### B. X.682 constraints · **BUILT**
 
 X.680 clauses 49–51 (subtype constraints) landed first, because OER and PER choose an

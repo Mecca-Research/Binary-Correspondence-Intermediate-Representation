@@ -64,7 +64,7 @@ from .constraints import (
     root_size_bounds,
     root_value_bounds,
 )
-from .schema import Asn1Type, Choice, Primitive, Sequence, SequenceOf
+from .schema import Asn1Type, Choice, Primitive, Reference, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
 
 PLAN_VERSION = 5
@@ -388,6 +388,13 @@ def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
             members=_compile_members(kind, path, depth),
             constraint=constraint,
             extensible=bool(getattr(kind, "extensible", False)),
+        )
+    if isinstance(kind, Reference):
+        cycle = " -> ".join(kind.cycle) if kind.cycle else kind.target_name
+        raise Asn1Error(
+            f"{path}: {kind.target_name} is recursive ({cycle}); the write plan is a finite "
+            f"descriptor with no back-edge, so a recursive type is refused here and encoded "
+            f"by the Python rails, which follow it to the shared recursion bound"
         )
     raise Asn1Error(
         f"{path}: the write plan does not compile {type(kind).__name__}; SET, SET OF and "

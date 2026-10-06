@@ -398,6 +398,7 @@ _MODULES = [
     "bcir.tests.test_asn1_per_value_model",
     "bcir.tests.test_asn1_objects",
     "bcir.tests.test_asn1_parameterization",
+    "bcir.tests.test_asn1_recursion",
     "bcir.tests.test_asn1_xer",
     "bcir.tests.test_c_xer",
     "bcir.tests.test_asn1_ecn",

@@ -39,8 +39,8 @@ The audit also found three things no gate catches today:
 1. **ASN.1 parameterization is not hygienic** (confirmed defect, §4.1). A template used inside
    another template picks up the outer template's dummy-parameter bindings. The meaning of a
    module then depends on the order its assignments are lowered in.
-2. **Recursive ASN.1 types work only on BER/DER** (confirmed gap, §4.2). PER, OER, XER, JER and
-   the JER plan compiler all refuse a self-referential type, and three of them give a misleading
+2. **Recursive ASN.1 types work only on BER/DER and PER** (confirmed gap, §4.2). OER, XER, JER
+   and the JER plan compiler all refuse a self-referential type, and two of them give a misleading
    error.
 3. **The garbage collector costs the Python oracle up to 68% of its hot-path time** (measured,
    §5). Those paths create no cyclic garbage at all, so the collector's work there is pure
@@ -52,6 +52,14 @@ read with:
 4. **The call counts merged functions that share a label** (confirmed defect, §4.3, fixed with
    the ladder's AUDIT-0). `planner.calls` read 589,856 at scale 8 while the planner makes 655,393,
    and the 65,537 calls lost were the constructor calls its emission floor is made of.
+
+Landing the ladder's ASN1-R slice found two more wrong-output defects, which the ladder now
+carries as P0 slices:
+
+5. **A component's own tag drops the tag of the type it names** (§4.4): `ticket [3] Ticket`, with
+   `Ticket ::= [APPLICATION 1] SEQUENCE {...}`, goes out without the `[APPLICATION 1]`.
+6. **NULL has two abstract values** (§4.5): BER/DER, PER and OER use `codec.NULL`, XER and JER
+   use `None`, and each side refuses the other's.
 
 Two places that guide future work are stale: the session digest and the systems-engineer skill
 (§6).
@@ -184,7 +192,7 @@ So the module's meaning depends on assignment order.
 never through a shared table. Include the resolved environment in the memo key. Add the two
 repros above, plus an order-independence check, as witnesses.
 
-### 4.2 Recursive types work only on BER/DER (confirmed)
+### 4.2 Recursive types work only on BER/DER and PER (confirmed, fixed by ASN1-R)
 
 ```asn1
 Node ::= SEQUENCE { label INTEGER (0..255), children SEQUENCE (SIZE (0..4)) OF Node }
@@ -199,10 +207,22 @@ The front end lowers the self-reference to a `_LazyType`.
 | JER plan `compile_plan` | refused with "19.2.4 forbids an open type as an alternative of an unwrapped choice", which **misattributes** the cause |
 | OER | `Asn1Error: no OER encoding for _LazyType` |
 | XER | refused as if it were an open type, which **misattributes** the cause |
-| PER | `Asn1Error: PER: expected bytes`, which **misattributes** the cause |
+| PER | round trip OK (`PER: expected bytes` in the first version of this table was the reproduction's own error: it passed `decode_per` its arguments in the wrong order; PER already had a private resolver for the reference) |
 
-This is the repository's most common defect shape: a mechanism landed on one rail of six (L14).
+This is the repository's most common defect shape: a mechanism landed on two rails of six (L14).
 It is also exactly the plan's containment-graph item.
+
+ASN1-R found three more while building the fix. A recursive CHOICE
+(`Expr ::= CHOICE { lit INTEGER, neg Expr }`) did not lower at all. Nothing bounded a recursion:
+a 256-deep value encoded under DER and a 1,000-deep one raised `RecursionError`, and a crafted
+input of a few kilobytes did the same to the PER, OER, XER and JER decoders. And `decode_jer` let
+a deeply nested JSON text raise `RecursionError` from the parser, recursive schema or not.
+
+Reviewing the fix found four more, all in the front end. A recursive instance of a CHOICE
+template (`E {T} ::= CHOICE { lit T, neg E {T} }`) did not lower. `A ::= B` with `B ::= A`
+lowered with no type behind it. A recursive reference to a type with an assignment-level tag
+lost the tag. And a contained subtype naming an alias of a recursive type was refused as one of
+itself. The same review found the two defects of §4.4 and §4.5, which are not about recursion.
 
 ### 4.3 The call counts merged functions that share a label (confirmed, fixed)
 
@@ -250,6 +270,38 @@ totals: merging only drops calls, so each is a lower bound on its exact count, a
 against it is understated, never overstated.
 
 ---
+
+### 4.4 A component's own tag drops the tag of the type it names (confirmed; ASN1-T)
+
+```asn1
+K DEFINITIONS EXPLICIT TAGS ::= BEGIN
+  Ticket ::= [APPLICATION 1] SEQUENCE { tkt-vno [0] INTEGER }
+  AP-REQ ::= SEQUENCE { ticket [3] Ticket }
+  Holder ::= SEQUENCE { ticket Ticket }
+END
+```
+
+`[3] Ticket` tags the type `Ticket`, which is itself tagged (X.680 §31), so X.690 nests both
+tags: `30 0b a3 09 61 07 30 05 a0 03 02 01 05`. The front end gives
+`30 09 a3 07 30 05 a0 03 02 01 05`: the `[APPLICATION 1]` is gone. `Holder`, whose component
+carries no tag of its own, is right (`61 07 ...`). The type model carries one tag per component,
+and a component's own tag replaces the one the assignment gave the type. The shape is Kerberos'
+(RFC 4120's `ticket [3] Ticket`). A related gap was already recorded: the direct encode of a
+tagged assigned type omits its tag (`LoweredModule.assigned_tags`). Both need the same thing, a
+tagged type the type model can hold.
+
+### 4.5 NULL has two abstract values (confirmed; ASN1-N)
+
+| Rail | takes `codec.NULL` | takes `None` | decodes NULL to |
+|---|---|---|---|
+| BER/DER | yes | refused ("no ASN.1 universal type is mapped to NoneType") | `codec.NULL` |
+| PER, OER | yes | yes | `codec.NULL` |
+| XER, JER | refused ("a NULL value is None, got NULL") | yes | `None` |
+
+A value one rail decodes is refused by another rail's encoder. `codec.Asn1Null` exists because
+`None` means "absent" in the value model, and PER's decoder was moved to it for that reason; the
+text rails never were. This is the semantic value mapping of item 20 failing at its smallest
+value.
 
 ## 5. The Python oracle: what the measurements say about migration
 
@@ -333,6 +385,12 @@ Sizes for context: the non-test oracle is 141,994 Python lines (130,804 more in 
 2. **ASN1-RECURSION.** A type containment graph with SCC detection. Recursion support on PER,
    OER, XER and JER, and cyclic nodes in the JER plan. Until then, honest refusals that name
    recursion rather than open types.
+
+Found while landing ASN1-R, and P0 for the same reason:
+
+- **ASN1-TAGS** (§4.4). A tagged type the type model can hold, so a component's own tag over a
+  tagged type keeps both tags, and a tagged assignment encodes with its tag.
+- **ASN1-NULL** (§4.5). One abstract value for NULL, `codec.NULL`, on every rail.
 
 **P1: TMSAO honesty and speed**
 
