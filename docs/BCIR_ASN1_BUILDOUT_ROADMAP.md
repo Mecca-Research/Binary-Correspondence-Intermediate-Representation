@@ -52,7 +52,7 @@ rule.
 | X.680 | 8824-1:2021 | Basic notation | **supported subset built** — parser/printer/lowering consume the module and type surface used by the current rails; unsupported notation fails closed |
 | X.681 | 8824-2:2021 | Information object specification | **built** — classes, WITH SYNTAX, objects, object sets, associated tables (cl. 13). The one exclusion is X.683 parameterization applied to *objects*; §10.1 explains why that is narrower than it reads, now that Annex C's parameterization is built for ECN objects and the front-end has parameterized object/object-set assignments |
 | X.682 | 8824-3:2021 | Constraint specification | **built** — table + component relation (cl. 10), user-defined (cl. 9), contents (cl. 11) |
-| X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references; cross-module tag-default nuance (§9.8) excluded |
+| X.683 | 8824-4:2021 | Parameterization | **built** — parameterized type/object/object-set assignments and references, hygienic: every kind of dummy (type, value, value set, class, object, object set) substituted lexically, actuals of every form, and §9.8's templates of another module with the actual's tagging environment |
 | X.690 | 8825-1:2021 | BER / CER / DER | **built** (DER out, BER in; CER by design excluded) |
 | X.691 | 8825-2:2021 | PER | **built** (CANONICAL-PER out, BASIC-PER in; both variants; validated against Annex A.1–A.4) |
 | X.692 | 8825-3:2021 | ECN | **parts 1, 2 and 3 built** — class/object/object-set model (cl. 9-18), EDM/ELM, the seven built-in BER/PER object sets; and [`ecn_user.py`](../bcir/asn1/ecn_user.py) for the user-defined half (cl. 19-25): bit-level encoding spaces, justification, `#PAD`, stated transmission order, `INT-TO-INT`/`INT-TO-BITS` `#TRANSFORM`s and `#OUTER`. The §6 gate's reopening condition is **met and executed** — see section G. Part 3 adds [`ecn_syntax.py`](../bcir/asn1/ecn_syntax.py): clause 20's defined syntax read from an `ENCODING-DEFINITIONS` module, with [`BCIR-FrameHeader.ecn`](../bcir/asn1/BCIR-FrameHeader.ecn) reproducing the gate's octets from text, and a canonical serialization so an ECN specification can finally be hashed. §21.3/§22.3/§22.8's determinants, §21.11's range conditions, §22.12's bit reversal and §22.1's replacement semantics are all built, and ECN is on the law rail as **R25** (`bcir.ecn.*`, statically decidable X.692 rules citing 43 distinct subclauses, 27 of them fixture-pinned). Clause 24's nineteen transforms, §22.7's repetition, the string/null/tag categories, and the constructor categories (§23.1 alternatives, §23.11 optionality, §22.9 identification handles, §22.5/§22.6 determination, §22.10 concatenation order) are all built. §22.11's contained types and §21.3.6/§21.5.6/§21.7.8's `container` determination are built too, clause 19's six value mappings are in [`ecn_mapping.py`](../bcir/asn1/ecn_mapping.py), and clause 12's encoding link module with clause 13's application-point algorithm is in [`ecn_link.py`](../bcir/asn1/ecn_link.py) — which retires the `AUXILIARY` and `BOUNDS` stated deviations by deriving both from the link rather than declaring them. Annex C's parameterization — X.683 as ECN rewrites it, `{<`/`>}` delimiters and all — is in [`ecn_param.py`](../bcir/asn1/ecn_param.py), together with §22.1.2's rules on the definitions a `REPLACE` names and §17.5.17's breadth-first `ComponentIdList` scan; C.2's three parameterized assignments now parse from module text and reach the digest. §17.5.1's `EncodeStructure` — the `ENCODE STRUCTURE { <field> <object>, ... } WITH <set>` object body that names an encoding per component — is in [`ecn_encode.py`](../bcir/asn1/ecn_encode.py) and readable from module text. §16.5's `OPTIONAL-ENCODING` marker with its `#OPTIONAL` objects, and §16.3's `AlternativesStructure` with its `#ALTERNATIVES` objects, are both readable. §22.1's `REPLACE` defined syntax reads from module text too, so a replacement is a specification rather than a Python assembly, and `_UNSUPPORTED_KEYWORDS` is down to one row. **A module now declares more than one encoding structure** — `EcnModule.structures` holds a `Structure` each — which made §22.1.2.7's `INSERT AT HEAD` readable from text, and §16.2.1's nested structures parse and reach the digest under their path, and §16.2.1's nested structures parse, reach the digest under their path and **encode at their own level** (§16.5.6). §23.14's `#CONDITIONAL-REPETITION`, §23.2's `#BITS`, §23.9's `#OCTETS`, §18.1's encoding object sets, §22.11's `CONTENTS-ENCODING` and §16.4's `RepetitionStructure` all read from module text, at `SYNTAX_VERSION` 13, and `_UNSUPPORTED_KEYWORDS` holds no unbuilt group at all. Clause 21.7's eight repetition-space determinations are complete with §21.7.6/§21.7.7's per-element continuation flag, and clause 22's five replacement actions with §22.1.1.7 e)'s second group. <!-- claim: ecn-refusal-list-empty --><!-- claim: r25-covers-parameterization -->**No refusal remains.** R25's law-rail coverage of Annex C parameterization landed with `bcir.ecn.parameterized`, the operation that carries a dummy parameter — this row used to say the ECN dialect had `ecn.module`, `.class`, `.structure`, `.field`, `.object` and `.condition` and nothing for a parameter, which stopped being true when that op was added and is corrected here |
@@ -333,23 +333,55 @@ and the decoded value appears alongside them under `<name>.resolved`. An unmatch
 produces no key at all rather than a guess — X.681 §12.9 explicitly permits a peer to use an
 object outside an extensible set, so an unresolvable open type is ordinary traffic.
 
-**X.683 parameterization is built.** A parameterized assignment keeps its body
-UNRESOLVED — §9.7 makes instantiation a substitution of actuals for dummy references, so
-lowering the body eagerly would have to invent a type for each dummy and any type it
-invented would be wrong for some instantiation. A reference substitutes structurally over
-the AST and lowers the result, memoised on the ACTUALS rather than the name so two
-instantiations of one template stay independent.
+**X.683 parameterization is built, and hygienic.** A parameterized assignment keeps its body
+UNRESOLVED -- §9.7 makes instantiation a substitution of actuals for dummy references, so
+lowering the body eagerly would have to invent a meaning for each dummy, and any meaning it
+invented would be wrong for some instantiation.
 
-That is what makes X.681/682 fire on real modules. RFC 5280 writes
-`AttributeTypeAndValue {ATTRIBUTE:Supported}` with its table constraints naming the DUMMY
-set, so instantiation has to rewrite `{Supported}` to the actual before the associated table
-can be built. Before this the machinery was correct and simply never triggered.
+**Substitution is lexical.** Each dummy is classified by its governor and spelling (§8.3/§8.4)
+as a type, a value, a value set, a class, an object or an object set. Every occurrence is
+substituted structurally: type references, the actuals of nested references, table
+constraints, a governing class, value references in constraints, and object-set elements.
+Nothing is installed in the module's own tables under a dummy's name. An object set or object
+written in place gets a content-addressed synthetic name (`Bcir-<stem>-<hex16>`). So a template
+used inside another resolves its names where it is written, and a module's meaning does not
+depend on the order of its assignments. That order dependence was the defect the 2026-10-06
+audit found (§4.1): actuals had been installed under the dummy's name for the duration of an
+instantiation.
 
-**Not built.** §9.8's NOTE — the actual parameter's TAGGING ENVIRONMENT applies, not the
-dummy's, which differs only when the actual crosses a module boundary with a different tag
-default. This front-end lowers one module at a time, so the two coincide. Also
-`ObjectFromObject` (§15) and the self-referential link fields of §13.2 b), whose column set
-is deliberately infinite.
+**An instance is memoised by what its actuals mean, not by how they are spelled.** The key is
+built from the substituted actuals' structure (never a `repr`), so `Pair {T}` written inside
+`Wrap` is a distinct instance in every instance of `Wrap`, while `Bounded {5}` and
+`Bounded {five}` are one. A template that recurses through itself terminates. A family that
+grows without bound (`Grow {SEQUENCE OF T}`) is refused by name.
+
+**Every form of actual.** Values (`Bounded {64}`), braced object sets (`AV {{ o1 | o2 }}`),
+unions, parameterized and inline object sets, value sets, and braced actuals that name a
+dummy, substituted token by token. An actual must fit the dummy it binds (§9.6): a type where
+a value is required is refused, as is a set where an object is required.
+
+**Names in constraints are resolved or refused, never dropped (X.680 §51).** A bound written as
+a value reference (`INTEGER (0..ub)`, `SIZE (1..ub-name)`) resolves against a dummy, a value of
+this module (read against the type *it* was assigned, so `x C ::= red` is C's `red`), or a
+value of an imported module. So do a contained subtype (`INTEGER (Small ^ 0..3)`,
+`INCLUDES Small`) and a value-set assignment (`Valid INTEGER ::= {1 | 2 | 3}`). A name that
+resolves to nothing, to the wrong kind or to a negative size is refused. The parser used to
+drop such a constraint, which left BER and DER alone but changed the PER and OER octets: under
+`ub INTEGER ::= 255`, 200 encoded as `0200c8` where every conforming encoder writes `c8`.
+
+**§9.8 is built.** A template imported from another module lowers in that module's environment:
+its own names, classes and tag default. Each actual is lowered first in the module that wrote
+it (`PreLowered`), with its own tagging environment, which is what the NOTE requires. `Wrap`
+written in an EXPLICIT TAGS module and instantiated as `Wrap {[1] INTEGER}` in an IMPLICIT TAGS
+one tags `a` IMPLICITly (`30 03 81 01 05`, not the template's `30 05 a1 03 02 01 05`). The
+template's own rules stay its module's: a template from an AUTOMATIC TAGS module still tags an
+untagged actual automatically, and a tagged actual switches automatic tagging off for that
+SEQUENCE (X.680 §25.3, decided after substitution).
+
+`bcir/tests/test_asn1_parameterization.py` holds the witnesses. Each one was RED on the parent.
+
+**Not built.** `ObjectFromObject` (§15), and the self-referential link fields of §13.2 b),
+whose column set is deliberately infinite.
 
 ### G. X.692 ECN · **BUILT-IN MODEL LANDED; USER-DEFINED HALF REOPENED ON EVIDENCE**
 

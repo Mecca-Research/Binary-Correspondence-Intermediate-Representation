@@ -258,6 +258,76 @@ def row_audit_case(name, scale):
     raise KeyError(f"the performance audit has no case {name!r}")
 
 
+#: The repository's own ASN.1 modules: the four BCIR projections and the PKIX test data.
+_ASN1_MODULES = {
+    "bcir": (
+        "bcir/asn1/BCIR-ArtifactBundle.asn1",
+        "bcir/asn1/BCIR-ControlPlane.asn1",
+        "bcir/asn1/BCIR-ExecutionPlan.asn1",
+        "bcir/asn1/BCIR-StreamPack.asn1",
+    ),
+    "pkix": (
+        "bcir/frontends/asn1/testdata/PKIX1Explicit88.asn1",
+        "bcir/frontends/asn1/testdata/PKIX1Implicit88.asn1",
+    ),
+}
+
+#: X.683 as RFC 5280 writes it -- a class, object sets, a template over an object-set dummy with
+#: table constraints, a type template instantiated several times -- in the subset every tree
+#: since the ASN.1 front end landed compiles, so both trees of an A/B measure the same work.
+_ASN1_TEMPLATES = """X683 DEFINITIONS ::= BEGIN
+  ATTRIBUTE ::= CLASS { &id OBJECT IDENTIFIER UNIQUE, &Type } WITH SYNTAX {&Type IDENTIFIED BY &id}
+  Names ATTRIBUTE ::= { {UTF8String IDENTIFIED BY {2 5 4 3}} | {PrintableString IDENTIFIED BY {2 5 4 6}} }
+  Flags ATTRIBUTE ::= { {BOOLEAN IDENTIFIED BY {2 5 4 99}} }
+  AttributeTypeAndValue {ATTRIBUTE:IOSet} ::= SEQUENCE {
+    type ATTRIBUTE.&id ({IOSet}), value ATTRIBUTE.&Type ({IOSet}{@type}) }
+  Pair {T} ::= SEQUENCE { a T, b T OPTIONAL }
+  NameAttribute ::= AttributeTypeAndValue {Names}
+  FlagAttribute ::= AttributeTypeAndValue {Flags}
+  IntPair ::= Pair {INTEGER}
+  NamePair ::= Pair {NameAttribute}
+  Pairs ::= SEQUENCE OF Pair {IntPair}
+END
+"""
+
+
+def _asn1_shape(t, depth=0):
+    """What a lowered type is, by kind, name, constraint and components: canonical text only."""
+    out = [type(t).__name__, getattr(t, "name", None), str(getattr(t, "constraint", None))]
+    if depth < 6:
+        for c in getattr(t, "components", None) or getattr(t, "alternatives", None) or ():
+            out.append((getattr(c, "name", None), _asn1_shape(getattr(c, "type", c), depth + 1)))
+        element = getattr(t, "element", None)
+        if element is not None:
+            out.append(_asn1_shape(element, depth + 1))
+    return out
+
+
+def row_asn1_compile(which):
+    """The ASN.1 front end over fixed modules: parse, lower, resolve every constraint. The output
+    is what each type lowered to, by name."""
+    from bcir.frontends.asn1 import compile_module
+
+    if which == "x683":
+        texts = [("X683", _ASN1_TEMPLATES)]
+    else:
+        texts = []
+        for path in _ASN1_MODULES[which]:
+            with open(path, encoding="utf-8") as fh:
+                texts.append((os.path.basename(path), fh.read()))
+
+    def run():
+        return [
+            sorted(
+                (name, _asn1_shape(t))
+                for name, t in compile_module(text, source).module.types.items()
+            )
+            for source, text in texts
+        ]
+
+    return run
+
+
 def row_selftest(_scale):
     """A row that needs no fixture: what the unit test drives the child through."""
     return lambda: sum(i * i for i in range(2000))
@@ -296,6 +366,9 @@ ROWS = {
     "sched_eft@4": lambda: row_sched_eft(4),
     "dag_exec@4": lambda: row_dag_exec(4),
     "dag_verify@4": lambda: row_dag_verify(4),
+    "asn1_compile:bcir": lambda: row_asn1_compile("bcir"),
+    "asn1_compile:pkix": lambda: row_asn1_compile("pkix"),
+    "asn1_compile:x683": lambda: row_asn1_compile("x683"),
     "selftest": lambda: row_selftest(0),
 }
 for _case in AUDIT_CASES:
@@ -315,6 +388,7 @@ GROUPS = {
     "sp8": ["plan@8", "hydrate@8", "decode@8"],
     "sched": ["sched_waves@4", "sched_tokens@4", "sched_eft@4", "dag_exec@4", "dag_verify@4"],
     "audit": [f"audit:{c}@4" for c in AUDIT_CASES],
+    "asn1": ["asn1_compile:bcir", "asn1_compile:pkix", "asn1_compile:x683"],
 }
 
 

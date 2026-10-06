@@ -369,3 +369,18 @@ def test_no_perf_tool_reads_the_merged_pstats_total():
                     if _reads_pstats(fh.read()):
                         offenders.append(os.path.relpath(path, _ROOT))
     assert offenders == [], offenders
+
+
+def test_the_asn1_rows_measure_the_front_end_over_fixed_modules():
+    """The `asn1` group times the ASN.1 front end, which no other row reaches: the repository's
+    own modules and an X.683 module every tree since the front end landed compiles. Each row
+    measures in a checkout and gives one digest per output."""
+    here = os.getcwd()
+    os.chdir(_ROOT)  # the child runs in the tree it measures; the rows read its modules
+    try:
+        for name in ab_audit.GROUPS["asn1"]:
+            record = ab_audit.measure_row(name, 1)
+            assert record["status"] == "measured" and record["calls"] > 0, record
+            assert record["digest"] == ab_audit.digest(ab_audit.ROWS[name]()()), name
+    finally:
+        os.chdir(here)

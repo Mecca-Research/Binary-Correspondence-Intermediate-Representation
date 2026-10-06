@@ -157,7 +157,11 @@ python tools/perf/ab_audit.py --before origin/main --group sp,sched --markdown a
 Every `exact` row and every output digest must match, or move only where the slice declares it
 (`--expect-change`); between two trees on one interpreter an `exact` row is bit-identical unless
 the change moved it, so it is graded with zero tolerance. A hot path's call count is exact for
-one interpreter and graded the same way. A `ratio` row is held to its 25% band, and a time is
+one interpreter and graded the same way: both trees are read with this checkout's counter
+(`bcir/tests/call_counts.py`), one entry per code object. The row groups are `sp` and `sp8` (the
+K_BCIR -> StreamPack chain), `sched` (the schedulers and the phase DAG), `audit` (the
+performance audit's cases) and `asn1` (the ASN.1 front end over the repository's own modules and
+an X.683 module). A `ratio` row is held to its 25% band, and a time is
 reported as the before/after ratio and never graded. A metric present before and gone after is a
 failure: it is coverage lost. A regression lands only with its explanation recorded
 (`--explain ROW=reason`), and the table goes into the PR. The first run of the tool proved the
@@ -1386,7 +1390,7 @@ numbers are in the second column.
 | Slice | Item | Content | Gate | Status |
 |---|---|---|---|---|
 | **AUDIT-0** | — | the audit, this ladder, `tools/perf/ab_audit.py` | the tool fails on each kind of change it grades (`test_ab_audit.py`); RED on an injected planner change | **landed** |
-| **ASN1-H** (P0) | 21 | hygienic X.683 substitution: dummies substituted structurally everywhere they appear, nothing installed in the module's shared tables, a memo key that names what was substituted | both captures of audit §4.1 resolve lexically; lowering is independent of assignment order | open |
+| **ASN1-H** (P0) | 21 | hygienic X.683 substitution: dummies substituted structurally everywhere they appear, nothing installed in the module's shared tables, a memo key that names what was substituted; value parameters and every form of actual; names in constraints resolved or refused (X.680 §51); §9.8's templates of another module | both captures of audit §4.1 resolve lexically; lowering is independent of assignment order; a named bound gives the literal's PER/OER octets (`test_asn1_parameterization.py`, each test RED on the parent) | **landed** |
 | **ASN1-R** (P0) | 18 | recursive types on every encoding rule, from a type containment graph | the audit's §4.2 type round-trips on PER, OER, XER and JER and compiles to a JER plan; nesting is bounded on untrusted input; a refusal names recursion | open |
 | **G19 EXEC-EXACT** (P1) | 1 | the proved optimum is the plan that runs | `eft.executed.suboptimal.2domains` 11.07% -> 0 on the proof rail; R13 holds an explicit placement by its legality, the canonical one by equality as before | open |
 | **OR-GC** (P1) | 17 | the cyclic collector out of the oracle's pure hot paths; slots on its hot value types | collections inside the planner, hydrate, decode and plan-verify rows -> 0; zero cyclic garbage per call held by a witness; every output byte-identical | open |

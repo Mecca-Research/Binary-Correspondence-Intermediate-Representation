@@ -1902,6 +1902,52 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  ASN1-H (2026-10-06): X.683 parameterization made hygienic, and every name a constraint
+  mentions resolved or refused (audit §4.1; the completion ladder's first P0).
+  - RED on the parent (`1d4c58a`), in each of the sixteen witnesses of
+    `bcir/tests/test_asn1_parameterization.py`:
+    - instantiation used dynamic scope. An object-set actual was installed in the module's own
+      table under the dummy's name while the body lowered, so a nested template resolved its
+      names through the enclosing instance's bindings. The name-keyed caches kept what it found,
+      and a module's meaning depended on the order of its assignments;
+    - a bound written as a value reference was dropped. Under PER and OER, `INTEGER (0..ub)` with
+      `ub INTEGER ::= 255` encoded 200 as `0200c8`, not `c8`;
+    - value parameters did not parse (`Bounded {5}`), and a braced actual was looked up as a name
+      made of its own text;
+    - a table constraint over a union, or over a parameterized or inline object set, was silently
+      left untabled;
+    - contained subtypes and value-set assignments were dropped or refused, and a template could
+      not be imported, because imports carried types only.
+  - What landed:
+    - `bcir/frontends/asn1/lower.py`: each dummy is classified by governor and spelling (§8.3)
+      and substituted structurally wherever it can stand, including nested actuals, table
+      constraints, a governing class, value references and object-set elements. Nothing is
+      installed under a dummy's name. Inline sets and objects get content-addressed synthetic
+      names, and instances are memoised by a structural key, never a `repr`. A template that
+      recurses through itself terminates, and an infinite family is refused.
+    - §9.8: an imported template lowers in its own module, and each actual is lowered first in
+      the module that wrote it (`ast.PreLowered`), keeping that module's tagging environment.
+    - `bcir/asn1/constraints.py`: `ValueReference` and `TypeReference`. `require_satisfiable`
+      refuses a reference that survives, so an unresolved name is a refusal, never a different
+      encoding.
+    - The parser reads value references, value actuals, table object-set specs, contained
+      subtypes and value sets; the printer writes them back, and the round-trip law holds.
+  - Found by reviewing the fix, both older than it and hidden while bounds were dropped:
+    - the parser read every `lower-name Type ::= ...` as an information object, so
+      `v Count ::= 7` was no value at all;
+    - a named value was read against the type that named it, not its own (`x C ::= red`).
+    The first version of the fix refused modules the parent had compiled by dropping the bound. A
+    governor seen as a type, or spelled with a lower-case letter, now makes a value; a literal
+    body is never an object; a value resolves against the type it was assigned; and a value
+    defined in terms of itself is refused.
+  - Measured:
+    - the six tracked ASN.1 modules lower to the same types on both trees;
+    - the 52 ASN.1 test modules pass (1,021 tests);
+    - the new `asn1` rows of `ab_audit.py` give identical digests in both trees;
+    - the front end makes 1.0% more calls on the BCIR modules, 1.1% more on PKIX and 7.4% more on
+      the X.683 row. That is the price of the walk visiting every position a dummy can occupy
+      and of the structural keys. Classifying each template's dummies once, rather than at every
+      instantiation, took the X.683 row down from 11.8%.
   AUDIT-0 (2026-10-06): the GEM+/TMSAO audit of #758–#808 against the original plan
   ([`BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md`](research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md))
   and the completion ladder it implies (GEM+ roadmap §9). Every slice the roadmap carried had

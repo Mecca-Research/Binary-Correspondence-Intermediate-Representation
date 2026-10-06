@@ -312,6 +312,53 @@ class TableConstraintNode:
 
     object_set: str
     at_notations: tuple[str, ...] = ()
+    #: X.682 §10.3 makes a SimpleTableConstraint an ObjectSet, so the braces may hold more
+    #: than one name: a union (`{A | B}`), a parameterized object set (`{Pick {cn}}`), an
+    #: inline object. One plain reference keeps the historical shape (`object_set` names it
+    #: and `spec` is None); anything else is the spec, and `object_set` is empty.
+    spec: "ObjectSetSpec | None" = None
+
+
+@dataclass(frozen=True)
+class BracedActual:
+    """X.683 §9.5 a braced actual parameter, kept as its tokens: an object, an object set, a
+    value set or a braced value, which only the dummy it binds can tell apart (§9.6)."""
+
+    raw: str
+
+
+@dataclass(frozen=True)
+class ObjectSetSpec:
+    """X.681 §12.3 the elements of an object set written in place: references to objects and
+    object sets (`str`), parameterized references (`ParameterizedRef`), inline objects (a tuple
+    of `FieldSetting`), and whether the set carries the extension marker."""
+
+    elements: tuple[object, ...] = ()
+    extensible: bool = False
+    #: The braces as normalized tokens: an inline object of a class with WITH SYNTAX can only
+    #: be printed the way it was written, so the printer reproduces this rather than guessing.
+    raw: str = ""
+
+
+@dataclass(frozen=True)
+class PreLowered:
+    """An actual parameter already lowered in the module that wrote it (X.683 §9.8).
+
+    A parameterized assignment imported from another module is instantiated in ITS module's
+    environment -- its own references, classes and tag default -- while the actual
+    parameters keep the meaning they have where the instantiation is written: §9.8's NOTE
+    says the actual's tagging environment applies, not the dummy's. So the instantiating
+    module lowers each actual and hands it over in this node: `kind` is what the dummy
+    stands for, `payload` the lowered thing (an `Asn1Type`, a value, an associated table, an
+    object row, a class definition), `key` its structural identity for memoising, and `tag`
+    the actual's own tag as `(class, number, explicit)` resolved in the writer's module.
+    It exists only inside the front end; nothing prints or parses it.
+    """
+
+    kind: str
+    payload: object = field(compare=False, hash=False)
+    key: str = ""
+    tag: tuple | None = None
 
 
 @dataclass(frozen=True)
@@ -417,6 +464,7 @@ class ModuleNode:
 __all__ = [
     "BitsValue",
     "BoolValue",
+    "BracedActual",
     "BracedValue",
     "Builtin",
     "ChoiceType",
@@ -431,9 +479,11 @@ __all__ = [
     "NullValue",
     "ObjectAssignment",
     "ObjectSetAssignment",
+    "ObjectSetSpec",
     "OidArc",
     "OidValue",
     "OpenTypeNode",
+    "PreLowered",
     "RefValue",
     "SequenceOfType",
     "SequenceType",

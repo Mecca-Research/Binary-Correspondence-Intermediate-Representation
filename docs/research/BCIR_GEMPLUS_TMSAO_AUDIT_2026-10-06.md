@@ -148,7 +148,7 @@ Two places that guide future work are stale: the session digest and the systems-
 
 The reproductions below were run against `5cd8e03`; ASN1-H and ASN1-R carry them as witnesses.
 
-### 4.1 X.683 substitution captures names (confirmed)
+### 4.1 X.683 substitution captures names (confirmed, fixed by ASN1-H)
 
 `bcir/frontends/asn1/lower.py` `_instantiate` installs each object-set actual into the
 module-wide `self.object_sets` table under the dummy's name while the body is lowered. That is
