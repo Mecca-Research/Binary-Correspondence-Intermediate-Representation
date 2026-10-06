@@ -76,7 +76,7 @@ from __future__ import annotations
 from decimal import Decimal
 from enum import Enum
 
-from .codec import Strictness
+from .codec import NULL, Strictness, require_null
 from .schema import (
     Asn1Type,
     Choice,
@@ -607,8 +607,7 @@ def _primitive_value(kind: Primitive, value, rules: XerRules, names: XerTypeName
         return _real_value(value)
 
     if universal == Universal.NULL:
-        if value is not None:
-            raise Asn1Error(f"{kind.name}: a NULL value is None, got {value!r}")
+        require_null(value, kind.name)
         return ""  # X.680 §24.3: `empty`
 
     if universal == Universal.BIT_STRING:  # §8.3.9, §9.3
@@ -1160,7 +1159,7 @@ def _decode_typed(
 def _decode_empty(kind: Asn1Type, name: str, reader: _Reader):
     if isinstance(kind, Primitive):
         if kind.universal == Universal.NULL:
-            return None
+            return NULL
         if kind.universal in _STRING_UNIVERSALS or kind.universal in (
             Universal.OID_IRI,
             Universal.RELATIVE_OID_IRI,
@@ -1256,7 +1255,7 @@ def _decode_primitive(
         body = reader.read_plain_text(name)
         if body:
             raise reader.error(f"a NULL value has no content (X.680 24.3); got {body!r}")
-        return None
+        return NULL
 
     if universal == Universal.INTEGER:  # §8.3.6
         tag = reader.peek_tag()
@@ -1519,7 +1518,7 @@ def _decode_list(reader: _Reader, kind, rules: XerRules, names: XerTypeNames | N
                         f"expected <{element_name}/> for a NULL element (X.680 26.4); "
                         f"found a {found_kind} tag for {found!r}"
                     )
-                values.append(None)
+                values.append(NULL)
                 continue
             values.append(_decode_primitive(reader, element, element_name, rules, names))
             continue

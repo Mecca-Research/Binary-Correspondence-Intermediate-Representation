@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from .codec import Asn1Error
+from .codec import NULL, Asn1Error, require_null
 from .constraints import UNBOUNDED, root_size_bounds, root_value_bounds
 from .schema import (
     Asn1Type,
@@ -795,7 +795,8 @@ def _encode_primitive(writer: BitWriter, kind: Primitive, value) -> None:
             raise Asn1Error(f"{kind.name}: expected bool")
         writer.put_bit(1 if value else 0)
         return
-    if universal == Universal.NULL:  # §18: no encoding at all
+    if universal == Universal.NULL:  # §18: no encoding at all -- of the one NULL value
+        require_null(value, kind.name)
         return
     if universal == Universal.INTEGER:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -879,8 +880,6 @@ def _decode_primitive(reader: BitReader, kind: Primitive):
         # reserves Python `None` for ABSENCE, which is what DER and OER both return. Returning
         # `None` here collapsed the two, so a PER-decoded NULL could not be handed to another
         # rail's encoder and a present NULL component read the same as a missing one.
-        from .codec import NULL
-
         return NULL
     if universal == Universal.INTEGER:
         return _decode_integer(reader, kind)

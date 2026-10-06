@@ -186,47 +186,41 @@ def test_ber_differs_from_der_exactly_where_the_standard_says_it_may():
 # --- the finding the neutral stream exposed ---------------------------------------------------
 
 
-def test_the_oracle_encoders_disagree_about_how_python_spells_null():
-    """Pinned, not fixed: there is no single Python value all three encoders accept.
+def test_every_oracle_encoder_takes_the_one_null_spelling():
+    """There is one Python value for ASN.1 NULL, `codec.NULL`, and every encoder takes it.
 
-    `codec` wants its `NULL` sentinel and refuses `None`; `encode_jer` wants `None` and
-    refuses `NULL`; `encode_oer` takes either. The ambiguity is in the value mapping rather
-    than in any encoding, and it stays invisible until something drives every encoder from
-    one input — which is precisely what a matched cost comparison has to do.
-
-    This test exists so that unifying the spelling is a deliberate act with a visible
-    dependent, rather than a change that quietly makes a passing harness pass differently.
-    """
+    This test used to pin the opposite: `codec` wanted `NULL` and refused `None`,
+    `encode_jer` wanted `None` and refused `NULL`, and `encode_oer` took either -- so no one
+    value could be handed to all three. It was pinned so that unifying the spelling would be a
+    deliberate act with a visible dependent; ASN1-N was that act (audit 2026-10-06 §4.5).
+    `None` is refused everywhere, because the value model reserves it for an ABSENT
+    component."""
     kind = _seq(Component("v", _N))
     assert encode_tlv(kind.encode({"v": NULL}))
     assert encode_oer(kind, {"v": NULL}) is not None
-    assert encode_jer(kind, {"v": None})
-    for spelling, encoder in (
-        (NULL, lambda v: encode_jer(kind, v)),
-        (None, lambda v: encode_tlv(kind.encode(v))),
+    assert encode_jer(kind, {"v": NULL})
+    for encoder in (
+        lambda v: encode_tlv(kind.encode(v)),
+        lambda v: encode_oer(kind, v),
+        lambda v: encode_jer(kind, v),
     ):
         try:
-            encoder({"v": spelling})
-        except Asn1Error:
-            pass
-        else:
-            raise AssertionError(
-                f"the NULL spelling {spelling!r} is now accepted where it was not; if that "
-                f"was deliberate, the harness below can stop special-casing it"
-            )
+            encoder({"v": None})
+        except Asn1Error as exc:
+            assert "None means an absent component" in str(exc), exc
+        else:  # pragma: no cover - a regression
+            raise AssertionError("None was accepted as the value of a NULL")
 
 
 def test_the_neutral_stream_has_no_null_ambiguity_to_disagree_about():
     """A NULL contributes zero octets, so every emitter agrees from the same input."""
     kind = _seq(Component("a", _I), Component("v", _N), Component("b", _I))
     plan = _plan(kind, "null")
-    der_value = {"a": 1, "v": NULL, "b": 2}
-    jer_value = {"a": 1, "v": None, "b": 2}
-    stream = flatten(plan, der_value)
-    assert stream == flatten(plan, jer_value), "the stream must not carry the spelling"
-    assert emit(plan, stream, rules=EmitRules.DER) == encode_tlv(kind.encode(der_value))
-    assert emit(plan, stream, rules=EmitRules.JER) == encode_jer(kind, jer_value)
-    assert emit(plan, stream, rules=EmitRules.COER) == encode_oer(kind, der_value)
+    value = {"a": 1, "v": NULL, "b": 2}
+    stream = flatten(plan, value)
+    assert emit(plan, stream, rules=EmitRules.DER) == encode_tlv(kind.encode(value))
+    assert emit(plan, stream, rules=EmitRules.JER) == encode_jer(kind, value)
+    assert emit(plan, stream, rules=EmitRules.COER) == encode_oer(kind, value)
 
 
 # --- the plan refuses what it cannot emit ------------------------------------------------------

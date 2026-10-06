@@ -400,6 +400,7 @@ _MODULES = [
     "bcir.tests.test_asn1_parameterization",
     "bcir.tests.test_asn1_recursion",
     "bcir.tests.test_asn1_tagged_types",
+    "bcir.tests.test_asn1_null",
     "bcir.tests.test_asn1_xer",
     "bcir.tests.test_c_xer",
     "bcir.tests.test_asn1_ecn",

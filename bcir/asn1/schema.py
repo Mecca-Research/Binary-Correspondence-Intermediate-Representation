@@ -29,7 +29,7 @@ import reprlib
 from dataclasses import dataclass, field, fields
 from dataclasses import field as _field  # OpenType has a member named `field`
 
-from .codec import Strictness, from_tlv, to_tlv
+from .codec import Strictness, from_tlv, require_null, to_tlv
 from .tags import Asn1Error, Tag, TagClass, Universal
 from .tlv import DEFAULT_MAX_DEPTH, Tlv, decode_one, encode_tlv
 
@@ -414,6 +414,8 @@ class Primitive(Asn1Type):
             tlv = Tlv(self.untagged_tag(), encode_string(self.universal, value))
             return _with_own_tags(self, tlv) if self.tags else tlv
 
+        if self.universal == Universal.NULL:
+            require_null(value, self.name)
         tlv = to_tlv(value)
         if tlv.tag.is_universal and tlv.tag.number == self.universal:
             tlv = tlv

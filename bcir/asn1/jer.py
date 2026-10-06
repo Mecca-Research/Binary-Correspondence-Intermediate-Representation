@@ -77,7 +77,7 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 
-from .codec import Strictness
+from .codec import NULL, Strictness, require_null
 from .schema import (
     Asn1Type,
     Choice,
@@ -578,8 +578,7 @@ def _encode_primitive(kind: Primitive, value, opts: "_Opts") -> str:
         return _encode_real(kind, value)
 
     if universal == Universal.NULL:  # §26
-        if value is not None:
-            raise Asn1Error(f"{kind.name}: a NULL value is None, got {value!r}")
+        require_null(value, kind.name)
         return "null"
 
     if universal == Universal.BIT_STRING:  # §24
@@ -1100,7 +1099,7 @@ def _decode_primitive(node, kind: Primitive, opts: "_Opts"):
             raise Asn1Error(
                 f"{kind.name}: expected the JSON token null (26), got {_describe(node)}"
             )
-        return None
+        return NULL
 
     if universal == Universal.BIT_STRING:  # §24
         return _decode_bitstring(node, kind, opts)

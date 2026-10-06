@@ -17,16 +17,16 @@ at the site, because the whole value of a plan-driven encoder is that a reader c
 against the standard without holding the oracle in their head at the same time.
 
 **A finding the neutral stream exposed, which is an argument for having one.** The oracle's
-three encoders disagree about how a Python value spells ASN.1 NULL: `codec` wants its `NULL`
-sentinel and refuses `None`; `encode_jer` wants `None` and refuses `NULL`; `encode_oer`
-accepts either. **There is no single Python value that can be handed to all three.** That
-ambiguity lives in the *value mapping*, not in any encoding — and it is invisible until
-something tries to drive every encoder from one input, which is exactly what a matched
-comparison must do. The stream has nothing to disagree about, because a NULL contributes zero
-octets to it, so all three plan-driven emitters produce the right answer from one value.
+three encoders disagreed about how a Python value spells ASN.1 NULL: `codec` wanted its `NULL`
+sentinel and refused `None`; `encode_jer` wanted `None` and refused `NULL`; `encode_oer`
+accepted either. There was no single Python value that could be handed to all three. That
+ambiguity lived in the *value mapping*, not in any encoding, and it was invisible until
+something drove every encoder from one input, which is exactly what a matched comparison must
+do. The stream has nothing to disagree about, because a NULL contributes zero octets to it.
 
-Nothing here changes the oracle: the disagreement is pinned by a test rather than papered
-over, so whoever unifies the spelling does it deliberately and sees what depended on it.
+The disagreement was pinned by a test rather than papered over, so unifying the spelling was a
+deliberate act with a visible dependent: ASN1-N made `codec.NULL` the one value every encoder
+takes and every decoder returns (`codec.require_null`).
 """
 
 from __future__ import annotations

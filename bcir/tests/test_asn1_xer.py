@@ -16,7 +16,7 @@ set.
 
 from __future__ import annotations
 
-from bcir.asn1.codec import Asn1Error
+from bcir.asn1.codec import NULL, Asn1Error
 from bcir.asn1.schema import (
     Choice,
     Component,
@@ -412,7 +412,7 @@ def test_enumerated_has_no_numeric_spelling_at_all():
 
 def test_null_and_every_empty_value_use_the_empty_element_tag():
     """X.680 §17.8 as an option, §9.1.4 as a requirement."""
-    assert encode_xer(Primitive(Universal.NULL, "NULL"), None, name="T").decode() == "<T/>"
+    assert encode_xer(Primitive(Universal.NULL, "NULL"), NULL, name="T").decode() == "<T/>"
     assert (
         encode_xer(Primitive(Universal.UTF8_STRING, "UTF8String"), "", name="T").decode() == "<T/>"
     )
@@ -421,7 +421,7 @@ def test_null_and_every_empty_value_use_the_empty_element_tag():
         == "<T/>"
     )
     # X.680 §17.8: `<T></T>` denotes the same value and is what the option replaces.
-    assert decode_xer("<T></T>", Primitive(Universal.NULL, "NULL"), name="T") is None
+    assert decode_xer("<T></T>", Primitive(Universal.NULL, "NULL"), name="T") is NULL
     assert (
         decode_xer("<T></T>", SequenceOf(Primitive(Universal.INTEGER, "INTEGER")), name="T") == []
     )
@@ -430,8 +430,8 @@ def test_null_and_every_empty_value_use_the_empty_element_tag():
 def test_sequence_of_null_spells_each_element_as_an_empty_element():
     """X.680 §26.4 and its NOTE: "This occurs only for SEQUENCE OF NULL"."""
     kind = SequenceOf(Primitive(Universal.NULL, "NULL"))
-    assert encode_xer(kind, [None, None], name="T").decode() == "<T><NULL/><NULL/></T>"
-    assert decode_xer("<T><NULL/><NULL/></T>", kind, name="T") == [None, None]
+    assert encode_xer(kind, [NULL, NULL], name="T").decode() == "<T><NULL/><NULL/></T>"
+    assert decode_xer("<T><NULL/><NULL/></T>", kind, name="T") == [NULL, NULL]
 
 
 def test_the_list_notation_follows_table_5():

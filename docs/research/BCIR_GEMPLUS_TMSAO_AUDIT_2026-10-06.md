@@ -305,7 +305,7 @@ tag, on both of its rails. `CHOICE { a INTEGER, b BOOLEAN }` under EXPLICIT TAGS
 `80 01 03` where the oracle writes `02 01 03`. The C twin agreed with the Python emitter, which
 is why the differential between them never saw it.
 
-### 4.5 NULL has two abstract values (confirmed; ASN1-N)
+### 4.5 NULL has two abstract values (confirmed, fixed by ASN1-N)
 
 | Rail | takes `codec.NULL` | takes `None` | decodes NULL to |
 |---|---|---|---|
@@ -316,7 +316,8 @@ is why the differential between them never saw it.
 A value one rail decodes is refused by another rail's encoder. `codec.Asn1Null` exists because
 `None` means "absent" in the value model, and PER's decoder was moved to it for that reason; the
 text rails never were. This is the semantic value mapping of item 20 failing at its smallest
-value.
+value. ASN1-N also found PER and OER encoding a value of any type as a NULL: they put nothing on
+the wire for one and never looked at the value, so `5` went out as a NULL on both.
 
 ## 5. The Python oracle: what the measurements say about migration
 

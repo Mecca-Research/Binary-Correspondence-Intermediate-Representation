@@ -1902,6 +1902,25 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  ASN1-N (2026-10-06): ASN.1 NULL has one abstract value, `codec.NULL`, on every encoding rule
+  (audit §4.5, found by ASN1-R's review; a P0 slice of the completion ladder).
+  - RED on the parent (`935cb97`), in every witness of `bcir/tests/test_asn1_null.py`:
+    - BER/DER took `codec.NULL` and refused `None`;
+    - PER and OER took any value at all and decoded `codec.NULL`. They put nothing on the
+      wire for a NULL and never looked at the value, so `5` went out as a NULL on both;
+    - XER and JER took `None`, refused `codec.NULL` and decoded `None`.
+    So a value one rule decoded was refused by another rule's encoder, and `None` -- which
+    the value model reserves for an absent component -- was a NULL on two rules.
+  - What landed: one predicate, `codec.require_null`, asked by every encoder (DER's message
+    now says what it means). Every decoder returns `codec.NULL`. `test_asn1_emit` had pinned
+    the disagreement on purpose, so that unifying the spelling would be a deliberate act
+    with a visible dependent. It now pins the one spelling, and the write-plan parity test
+    drives every emitter from one value instead of two.
+  - Found by the latest-toolchain check's thorough tier: `test_c_per_plan`, which needs a C
+    compiler and so is skipped by the quick tier, spelled a NULL as `None`. It now spells
+    `codec.NULL`.
+  - Measured against `935cb97` (`ab_audit.py`, groups `sp`, `sched` and `asn1`): PASS, every
+    ASN.1 row's calls and digests unchanged (the measured modules hold no NULL).
   ASN1-T (2026-10-06): a tagged type is a type, so its tags go wherever it goes (audit §4.4,
   found by ASN1-R's review; a P0 slice of the completion ladder).
   - RED on the parent (`94b82df`), in seven of the eight witnesses of

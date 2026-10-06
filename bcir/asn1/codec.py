@@ -75,6 +75,17 @@ class Asn1Null:
 NULL = Asn1Null()
 
 
+def require_null(value, where: str) -> None:
+    """ASN.1 NULL has one abstract value, `NULL`, on every encoding rule (audit 2026-10-06
+    §4.5). `None` is not it -- the value model reserves `None` for an ABSENT component -- and
+    neither is anything else: PER and OER encoded any value of a NULL type as nothing, and
+    XER and JER took `None` and refused `NULL`, so a value one rule decoded was refused by
+    another's encoder. Every encoder asks this one predicate."""
+    if value is not NULL:
+        absent = "; None means an absent component" if value is None else ""
+        raise Asn1Error(f"{where}: the value of a NULL is codec.NULL, not {value!r}{absent}")
+
+
 class Oid(tuple):
     """An OBJECT IDENTIFIER, so it is distinguishable from a plain tuple."""
 
@@ -207,6 +218,7 @@ def reencode_as_der(data: bytes) -> bytes:
 __all__ = [
     "NULL",
     "Asn1Null",
+    "require_null",
     "Oid",
     "RelativeOid",
     "SetOf",

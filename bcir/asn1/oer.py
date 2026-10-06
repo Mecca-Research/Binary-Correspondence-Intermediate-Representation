@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from enum import Enum
 
+from .codec import NULL, require_null
 from .constraints import effective_size_constraint, effective_value_constraint
 from .schema import (
     Asn1Type,
@@ -269,6 +270,7 @@ def _encode_primitive(kind: Primitive, value, rules: OerRules) -> bytes:
         return bytes([0x80 | len(octets)]) + octets
 
     if universal == Universal.NULL:  # §15
+        require_null(value, kind.name)
         return b""
 
     if universal == Universal.OCTET_STRING:  # §14
@@ -363,8 +365,6 @@ def _decode_primitive(
         return int.from_bytes(data[offset + 1 : end], "big", signed=True), end
 
     if universal == Universal.NULL:  # §15
-        from .codec import NULL
-
         return NULL, offset
 
     if universal == Universal.OCTET_STRING:  # §14
