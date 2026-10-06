@@ -271,7 +271,7 @@ against it is understated, never overstated.
 
 ---
 
-### 4.4 A component's own tag drops the tag of the type it names (confirmed; ASN1-T)
+### 4.4 A component's own tag drops the tag of the type it names (confirmed, fixed by ASN1-T)
 
 ```asn1
 K DEFINITIONS EXPLICIT TAGS ::= BEGIN
@@ -289,6 +289,21 @@ and a component's own tag replaces the one the assignment gave the type. The sha
 (RFC 4120's `ticket [3] Ticket`). A related gap was already recorded: the direct encode of a
 tagged assigned type omits its tag (`LoweredModule.assigned_tags`). Both need the same thing, a
 tagged type the type model can hold.
+
+ASN1-T found the rest of the family while building that. Every place a tagged type can stand
+other than an untagged component dropped a tag:
+
+| Shape | X.690 | The front end gave |
+|---|---|---|
+| `SEQUENCE OF [0] INTEGER`, value `{1, 2}` | `30 0a a0 03 02 01 01 a0 03 02 01 02` | `30 06 02 01 01 02 01 02` |
+| `A ::= [1] B`, `B ::= [2] INTEGER`, A directly | `a1 05 a2 03 02 01 05` | `02 01 05` |
+| the same A as an untagged component | `a1 05 a2 03 02 01 05` | `a1 03 02 01 05` |
+| `[1] IMPLICIT T`, `T ::= [5] CHOICE {...}` | `a1 03 02 01 03` | refused, as if T were an untagged CHOICE |
+
+It also found the write plan's OER emitter writing an untagged CHOICE alternative's index as its
+tag, on both of its rails. `CHOICE { a INTEGER, b BOOLEAN }` under EXPLICIT TAGS went out as
+`80 01 03` where the oracle writes `02 01 03`. The C twin agreed with the Python emitter, which
+is why the differential between them never saw it.
 
 ### 4.5 NULL has two abstract values (confirmed; ASN1-N)
 

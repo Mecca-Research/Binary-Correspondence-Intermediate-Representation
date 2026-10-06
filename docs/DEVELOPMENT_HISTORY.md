@@ -1902,6 +1902,49 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  ASN1-T (2026-10-06): a tagged type is a type, so its tags go wherever it goes (audit §4.4,
+  found by ASN1-R's review; a P0 slice of the completion ladder).
+  - RED on the parent (`94b82df`), in seven of the eight witnesses of
+    `bcir/tests/test_asn1_tagged_types.py`. The type model carried tags on components only: a
+    tagged assignment's tag was copied onto each untagged component that named it. Every other
+    place a tagged type can stand dropped a tag:
+    - a component's own tag over a tagged type replaced it. RFC 4120's `ticket [3] Ticket`, with
+      `Ticket ::= [APPLICATION 1] SEQUENCE {...}`, went out without the `[APPLICATION 1]`;
+    - an element of SEQUENCE OF lost it (`SEQUENCE OF [0] INTEGER`, `SEQUENCE OF Ticket`);
+    - a chain of tagged aliases kept the outermost tag at best, and none encoded directly;
+    - a direct encode of a tagged assignment carried no tag;
+    - `[1] IMPLICIT T` with `T ::= [5] CHOICE {...}` was refused, as if T were untagged.
+    The eighth witness pins what the component copy already got right: a SET ordered, and an
+    OER CHOICE alternative told apart, by the outermost tag.
+  - Found while building it: the write plan's OER emitter wrote an untagged CHOICE
+    alternative's INDEX as its tag, on both rails (`emit.py` and the C twin `bcir_emit.c`), so
+    `CHOICE { a INTEGER, ... }` under EXPLICIT TAGS went out as `80 01 03`, not `02 01 03`. The
+    twin agreed with the Python emitter, so their differential never saw it; the new witness
+    compares the twin with the oracle. The twin also admitted tag number 63, which OER's
+    one-octet form spells as its escape (X.696 §8.7); both rails now refuse 63 and up.
+  - What landed:
+    - `Asn1Type.tags`: a type's own tags, outermost first. Every type applies them in
+      `encode`, checks and removes them in `decode`, and shows the outermost in `base_tag`;
+      `untagged_tag` is the universal tag (`require_tag` checks it). The repr of an untagged
+      type is byte-identical to before (`certified.py` digests it), and a tagged one differs.
+    - The front end builds an assignment-level or element tag into the type (`_with_tag`, a
+      copy), and an IMPLICIT tag over a tagged type replaces its outermost and keeps that
+      layer's form (X.690 §8.14.4). It no longer copies an assigned tag onto components.
+      §31.2.7's forced EXPLICIT applies to an UNTAGGED CHOICE or open type only.
+    - The write plan keeps a tag a member shows on the member, where version 5 put it. Any
+      other layer goes in a `tags` line of a version-6 plan, which the twin refuses (fail
+      closed) rather than encode without it. A plan with no such layer is version 5, byte for
+      byte.
+  - Measured against `94b82df` (`ab_audit.py`, groups `sp`, `sched` and `asn1`): PASS.
+    - The codec rows are unchanged: `asn1_codec:flat` 49,392 calls and `asn1_codec:recursive`
+      16,258, identical digests.
+    - The compile rows: `pkix` 14 and `x683` 10 fewer calls (no assigned tag is looked up
+      per component); `bcir` 9 more, because `dataclasses.replace` reads one more field of
+      each of the nine types it copies. Digests are identical.
+    - The first run graded two rows. `asn1_codec:recursive` made 80 more calls, a real cost:
+      `Reference` had inherited a `base_tag` that made two calls. It now makes one.
+      `verify.plan.scope.overhead` left its band (0.80 to 1.07, confirmed). Its code path
+      loads no ASN.1 module, and the re-run measured 1.155 and 1.086, inside the band.
   ASN1-R (2026-10-06): recursive types on every encoding rule, held to one bound, from one
   containment graph (audit §4.2; the completion ladder's second P0).
   - RED on the parent (`bc2c1d7`), in every witness of `bcir/tests/test_asn1_recursion.py`:

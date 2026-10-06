@@ -54,7 +54,7 @@ rule reads; see its docstring for why the OER and PER bound pairs are separate f
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .constraints import (
     Constraint,
@@ -68,6 +68,12 @@ from .schema import Asn1Type, Choice, Primitive, Reference, Sequence, SequenceOf
 from .tags import Asn1Error, TagClass, Universal
 
 PLAN_VERSION = 5
+#: The version a plan carries when a node holds tags of its own that no member shows: an
+#: element's (`SEQUENCE OF [0] INTEGER`), the root's (`Ticket ::= [APPLICATION 1] SEQUENCE`),
+#: or a layer under a component's own EXPLICIT tag (`ticket [3] Ticket`). A plan without one
+#: is version 5, byte for byte, and a version-5 reader refuses this one (§5.1: unknown required
+#: descriptor features fail closed).
+PLAN_VERSION_TAGGED = 6
 PLAN_COMPILER = "bcir-encode-plan/1"
 
 #: The longest DEFAULT value recorded, in neutral-stream octets. Stated rather than
@@ -225,6 +231,11 @@ class EncodeNode:
     #: X.691 §19.1, §23.5 and §14.3 each emit a leading bit for it, so two schemas differing
     #: only here encode differently under PER and identically everywhere else. Version 4.
     extensible: bool = False
+    #: The type's own tags no member shows, outermost first, as (class, number, explicit):
+    #: X.680 §31 makes a tagged type a type (`Asn1Type.tags`). The outermost of a member's
+    #: type is folded into the member, where version 5 already put it, so this holds only
+    #: what version 5 could not say. Version 6.
+    tags: tuple[tuple[str, int, bool], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -283,6 +294,9 @@ def _serialize_node(node: EncodeNode, path: str, out: list[str]) -> None:
     )
     if node.constraint is not None:
         out.append(_serialize_constraint(node.constraint, here))
+    if node.tags:
+        layers = " ".join(f"{cls}:{number}:{'1' if exp else '0'}" for cls, number, exp in node.tags)
+        out.append(f"tags {here} {layers}")
     for member in node.members:
         out.append(
             f"member {here} {member.index} name={member.name} id={member.identifier} "
@@ -332,16 +346,38 @@ def compile_encode_plan(
     kind: Asn1Type, *, module: str, type_name: str, source: bytes = b""
 ) -> EncodePlan:
     """Compile one type into a write-side plan, refusing what it cannot emit."""
+    root = _compile_node(kind, type_name, 0)
     return EncodePlan(
         module=module,
         type_name=type_name,
         source_sha256=hashlib.sha256(source).hexdigest(),
-        root=_compile_node(kind, type_name, 0),
+        root=root,
+        plan_version=PLAN_VERSION_TAGGED if _has_node_tags(root) else PLAN_VERSION,
         _kind=kind,
     )
 
 
+def _has_node_tags(node: EncodeNode) -> bool:
+    if node.tags:
+        return True
+    return any(_has_node_tags(m.node) for m in node.members) or (
+        node.element is not None and _has_node_tags(node.element)
+    )
+
+
 def _compile_node(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
+    """`kind`'s node, carrying the type's own tags (`Asn1Type.tags`)."""
+    node = _compile_untagged(kind, path, depth)
+    own = getattr(kind, "tags", ())
+    if not own:
+        return node
+    return replace(
+        node,
+        tags=tuple((_TAG_CLASS_NAME[cls], int(number), bool(exp)) for cls, number, exp in own),
+    )
+
+
+def _compile_untagged(kind: Asn1Type, path: str, depth: int) -> EncodeNode:
     if depth > 32:
         raise Asn1Error(
             f"{path}: the write plan refuses recursion beyond depth 32; a descriptor whose "
@@ -518,6 +554,21 @@ def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
         # whose declared default IS None undefaulted, and X.690 §11.5 makes that the
         # difference between emitting the component and omitting it.
         node = _compile_node(component.type, f"{path}/{component.name}", depth + 1)
+        tag = component.tag
+        tag_class = _TAG_CLASS_NAME[getattr(component, "tag_class", TagClass.CONTEXT)]
+        explicit = bool(getattr(component, "explicit", False))
+        if node.tags:
+            # The member shows the outermost tag on the wire, which is where version 5 put
+            # an assigned tag: an untagged member shows its type's own; an IMPLICIT member
+            # tag replaces it and keeps the form of the layer it replaces (X.690 §8.14.4);
+            # an EXPLICIT one wraps them all.
+            if tag is None:
+                (tag_class, tag, explicit), rest = node.tags[0], node.tags[1:]
+            elif not explicit:
+                explicit, rest = node.tags[0][2], node.tags[1:]
+            else:
+                rest = node.tags
+            node = replace(node, tags=rest)
         out.append(
             EncodeMember(
                 name=component.name,
@@ -525,9 +576,9 @@ def _compile_members(kind, path: str, depth: int) -> tuple[EncodeMember, ...]:
                 index=index,
                 optional=bool(getattr(component, "optional", False)),
                 has_default=bool(component.has_default),
-                tag=component.tag,
-                tag_class=_TAG_CLASS_NAME[getattr(component, "tag_class", TagClass.CONTEXT)],
-                explicit=bool(getattr(component, "explicit", False)),
+                tag=tag,
+                tag_class=tag_class,
+                explicit=explicit,
                 node=node,
                 default_stream=_record_default(component, node, f"{path}/{component.name}"),
             )
@@ -567,6 +618,7 @@ __all__ = [
     "BOUND_MAX",
     "PLAN_COMPILER",
     "PLAN_VERSION",
+    "PLAN_VERSION_TAGGED",
     "EncodeConstraint",
     "EncodeMember",
     "EncodeNode",

@@ -1609,12 +1609,25 @@ static int oer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
        * tag on the wire (8.7.1). */
       const bcir_emit_member *m;
       uint32_t tag;
+      uint8_t tag_class;
       if (!rd_u32(c, &count)) return 0;
       if (count >= node->member_count) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
       m = &c->plan->members[node->first_member + count];
-      tag = (m->tag >= 0) ? (uint32_t)m->tag : count;
-      if (tag >= 0x40u) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
-      put(c, (uint8_t)(m->tag_class | tag));
+      if (m->tag >= 0) {
+        tag = (uint32_t)m->tag;
+        tag_class = m->tag_class;
+      } else if (c->plan->nodes[m->node].kind == BCIR_EMIT_CHOICE) {
+        /* 20.1 NOTE 3: an untagged CHOICE alternative has no outermost tag of its own. */
+        return ctx_fail(c, BCIR_EMIT_UNSUPPORTED);
+      } else {
+        /* An untagged alternative shows its type's universal tag -- never its index, which
+         * made `CHOICE { a INTEGER, ... }` under EXPLICIT TAGS `80 01 03` where the oracle
+         * writes `02 01 03`. */
+        tag = c->plan->nodes[m->node].universal;
+        tag_class = 0x00u;
+      }
+      if (tag >= 0x3Fu) return ctx_fail(c, BCIR_EMIT_UNSUPPORTED); /* 8.7: multi-octet form */
+      put(c, (uint8_t)(tag_class | tag));
       return oer_node(c, m->node, depth + 1);
     }
     default:

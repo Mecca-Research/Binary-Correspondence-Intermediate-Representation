@@ -182,6 +182,19 @@ recursive type with a `ref` back-edge (plan version 2; a plan with no recursion 
 version 1, byte for byte). The write plan, a finite descriptor for the C emitters, refuses one
 by naming its cycle (`A -> B -> A`). `bcir/tests/test_asn1_recursion.py` holds the witnesses.
 
+**A tagged type is a type.** X.680 §31 makes `Ticket ::= [APPLICATION 1] SEQUENCE {...}` a
+SEQUENCE carrying a tag, so the type model carries it there (`Asn1Type.tags`, outermost first)
+and it goes wherever the type goes: a direct encode, a component, an element of SEQUENCE OF, a
+chain of tagged aliases. A tag written over a tagged type is one more layer, or, IMPLICIT,
+replaces the outermost and keeps that layer's form (X.690 §8.14.4); an IMPLICIT tag is refused
+only over an UNTAGGED CHOICE or open type (§31.2.7). BER and DER put every layer on the wire;
+OER and PER read the outermost through `base_tag` for CHOICE alternatives and SET order; the
+text rules never see tags. The write plan keeps a tag a member shows on the member, where
+version 5 put it, and states any other layer in a version-6 `tags` line
+(`bcir/tests/test_asn1_tagged_types.py`). The C twin of the plan-driven encoder
+(`bcir_emit.c`) reads version 5 and refuses version 6, so a native encode of an element's,
+a root's or a nested tag is not built; it is refused, never written without the tag.
+
 ### B. X.682 constraints · **BUILT**
 
 X.680 clauses 49–51 (subtype constraints) landed first, because OER and PER choose an

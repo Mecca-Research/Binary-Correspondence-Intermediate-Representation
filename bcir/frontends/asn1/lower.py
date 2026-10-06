@@ -107,8 +107,8 @@ class _Forward(Reference):
     type), and only that lowerer can read the definition it is building
     (`Lowerer._forward_choice_or_open`). The link is dropped once the module is complete."""
 
-    def __init__(self, target_name: str, registry: dict, name: str, cycle, lowerer):
-        super().__init__(target_name, registry, name, cycle)
+    def __init__(self, target_name: str, registry: dict, name: str, cycle, lowerer, tags=()):
+        super().__init__(target_name, registry, name, cycle, tags)
         self.lowerer = lowerer
 
 
@@ -122,9 +122,9 @@ class LoweredModule:
     enumerations: dict[str, dict[str, int]] = field(default_factory=dict)
     node: ast.ModuleNode | None = None
     #: type name -> (TagClass, number, mode) for a type ASSIGNED a tag
-    #: (`Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {...}`). Components that reference the
-    #: name already carry the tag; this is the record for an outermost direct encode, which
-    #: the component-shaped type model cannot express.
+    #: (`Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {...}`), as written. The type itself
+    #: carries the tag (`Asn1Type.tags`), so a direct encode, a component and an element
+    #: naming it all put it on the wire; this is the record of what the source said.
     assigned_tags: dict[str, tuple] = field(default_factory=dict)
     #: The modules this one was lowered against, so a parameterized assignment it defines
     #: can be instantiated by another module in THIS module's environment (X.683 §9.8).
@@ -323,7 +323,13 @@ class Lowerer:
                 raise Asn1SemanticError(
                     f"{label}: a {node.kind} actual is used where a type is required"
                 )
-            return node.payload
+            if node.tag is None:
+                return node.payload
+            # A tagged actual standing where no component peels its tag -- the whole body of
+            # `Id {T} ::= T`, an element of SEQUENCE OF T: the tag goes with the type, as
+            # resolved in the module that wrote it (X.683 9.8).
+            cls, number, explicit = node.tag
+            return self._with_tag(node.payload, cls, number, explicit)
         if isinstance(node, ast.TypeRef):
             if node.module is not None:
                 target = self.imported.get(node.module)
@@ -349,24 +355,17 @@ class Lowerer:
             return self._builtin(node, label)
 
         if isinstance(node, ast.Tagged):
-            # A tagged type at ASSIGNMENT level (`Name ::= [APPLICATION 1] IMPLICIT
-            # SEQUENCE {...}`). The encoder model carries tags on COMPONENTS, so the tag is
-            # recorded against the assigned name and picked up by every component that
-            # references it (see `_components`). That is where the tag is observable: it is
-            # what X.690 puts on the wire for such a component and what X.691 §21 / X.696
-            # §18.2 sort a SET on.
-            #
-            # The one place it is NOT reinstated is a direct encode of the assigned type as
-            # an outermost value under a tag-visible rule, which would need a wrapper the
-            # type model does not have. That is recorded rather than papered over:
-            # `LoweredModule.assigned_tags` exposes it, and PER is unaffected either way
-            # because X.691 §10.4.1/§10.6.3 make tagging invisible to it.
-            # Recorded before the inner type is built: a recursive reference inside it
-            # (`T ::= [APPLICATION 5] IMPLICIT SEQUENCE { next T OPTIONAL }`) carries the tag
-            # too, and it is looked up while T is still being built.
+            # A tagged type (`Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {...}`, or an
+            # element's `SEQUENCE OF [0] INTEGER`). X.680 §31 makes it a type, so the tag is
+            # the built type's own (`Asn1Type.tags`) and goes wherever the type goes: a
+            # direct encode, every component and element naming it, and the tag-ordered SETs
+            # and CHOICEs of X.691 §21 / X.696 §18.2. The type model used to carry tags on
+            # components only, so a component's own tag over a tagged type, an element's tag
+            # and an outermost encode all dropped one (audit 2026-10-06 §4.4).
             inner, number, mode, cls = _peel_tag(node)
             self.assigned_tags[label] = (cls, number, mode)
-            return self._type(inner, label)
+            built = self._type(inner, label)
+            return self._with_tag(built, cls, number, self._explicit(mode, built))
 
         if isinstance(node, ast.SequenceOfType):
             element = self._type(node.element, f"{label} element")
@@ -797,12 +796,6 @@ class Lowerer:
             node = ast.TypeRef(actual) if isinstance(actual, str) else actual
             inner, number, mode, cls = _peel_tag(node)
             built = self._type(inner, label)
-            if (
-                number is None
-                and isinstance(inner, ast.TypeRef)
-                and inner.name in self.assigned_tags
-            ):
-                cls, number, mode = self.assigned_tags[inner.name]
             tag = None if number is None else (cls, number, self._explicit(mode, built))
             return ast.PreLowered(_TYPE, built, key=f"{here}:{_key(node)}", tag=tag)
         if kind == _VALUE:
@@ -1212,16 +1205,10 @@ class Lowerer:
             inner, tag, mode, tag_cls = _peel_tag(item.type)
             if tag is None and automatic:
                 tag, mode, tag_cls = position, None, TagClass.CONTEXT  # §12.3
+            # A type ASSIGNED a tag carries it itself (`Asn1Type.tags`), so a component that
+            # names one shows it untagged, and a tag of the component's own is one more layer
+            # (or, IMPLICIT, replaces the type's outermost).
             built = self._type(inner, f"{label}.{item.name}")
-            if tag is None and isinstance(inner, ast.TypeRef):
-                # The component is untagged, but the type it names may have been ASSIGNED
-                # a tag (`Name ::= [APPLICATION 1] IMPLICIT SEQUENCE {...}`). X.680 §31
-                # makes that tag part of the referenced type, so the component carries it
-                # -- and it is what X.691 §21 / X.696 §18.2 sort a SET on, which is why
-                # dropping it would silently reorder a SET's components.
-                assigned = self.assigned_tags.get(inner.name)
-                if assigned is not None:
-                    tag_cls, tag, mode = assigned
             explicit = self._explicit(mode, built)
             default, has_default = self._default(item, built, f"{label}.{item.name}")
             out.append(
@@ -1288,7 +1275,7 @@ class Lowerer:
         Taking "not built yet" for "not a CHOICE" made `neg [1] Expr` inside
         `Expr ::= CHOICE {...}` an IMPLICIT tag over a CHOICE, and the module failed to lower."""
         if not isinstance(built, Reference):
-            return isinstance(built, (Choice, OpenType))
+            return isinstance(built, (Choice, OpenType)) and not built.tags
         decided = self._built_choice_or_open(built, frozenset())
         self._decided_early.append((built, decided))
         return decided
@@ -1297,6 +1284,8 @@ class Lowerer:
         """Whether `built` is a CHOICE or an open type, through any chain of references -- one
         still being built is answered by the lowerer building it."""
         for _ in range(MAX_RECURSION):
+            if built.tags:  # a tagged type has a tag an IMPLICIT one can replace
+                return False
             if not isinstance(built, Reference):
                 return isinstance(built, (Choice, OpenType))
             if not built.ready():
@@ -1324,8 +1313,10 @@ class Lowerer:
         definitions, and a template's dummies -- `dummies` maps each to (the lowerer that
         wrote the actual, the actual, that lowerer's dummies) -- are read as their actuals."""
         while True:
-            if isinstance(node, (ast.Constrained, ast.Tagged)):
+            if isinstance(node, ast.Constrained):
                 node = node.inner
+            elif isinstance(node, ast.Tagged):  # a tagged type is built with a tag of its own
+                return False
             elif isinstance(node, ast.ChoiceType):
                 return True
             elif isinstance(node, ast.OpenTypeNode):
@@ -1339,7 +1330,9 @@ class Lowerer:
                     return True
                 node, dummies = field.type, {}
             elif isinstance(node, ast.PreLowered):
-                return node.kind == _TYPE and self._built_choice_or_open(node.payload, seen)
+                if node.kind != _TYPE or node.tag is not None:  # a tagged actual is tagged
+                    return False
+                return self._built_choice_or_open(node.payload, seen)
             elif isinstance(node, (str, ast.TypeRef)):
                 ref = ast.TypeRef(node) if isinstance(node, str) else node
                 if ref.module is None and ref.name in dummies:
@@ -1379,6 +1372,32 @@ class Lowerer:
                 return owner._reads_as_choice_or_open(template.body.type, inner, seen | {key})
             else:  # SEQUENCE, SET, their OFs and every builtin have a base tag
                 return False
+
+    def _with_tag(self, built: Asn1Type, cls, number: int, explicit: bool) -> Asn1Type:
+        """`built` under one more tag of its own, outermost (X.680 §31), as a copy: the type
+        it was built from keeps its own tags. IMPLICIT over a tagged type replaces that type's
+        outermost tag and keeps the form of the layer it replaces (X.690 §8.14.4); over an
+        untagged type it replaces the universal tag."""
+        own = built.tags
+        if explicit or not own:
+            tags = ((cls, number, explicit),) + tuple(own)
+        else:
+            tags = ((cls, number, own[0][2]),) + tuple(own[1:])
+        if isinstance(built, Reference):  # a type still being built: tag the reference
+            forward = _Forward(
+                built.target_name,
+                built.registry,
+                built.name,
+                built.cycle,
+                getattr(built, "lowerer", None),
+                tags,
+            )
+            self._forwards.append(forward)
+            return forward
+        tagged = replace(built, tags=tags)
+        if isinstance(tagged, Choice) and not tagged.tags_checked:
+            self._deferred_choices.append(tagged)
+        return tagged
 
     def _explicit(self, mode: str | None, built: Asn1Type) -> bool:
         """Resolve IMPLICIT/EXPLICIT for a component tag (§31.2.1 + §31.2.7)."""
@@ -1656,8 +1675,12 @@ def _needs_explicit_tag(built: Asn1Type) -> bool:
     an open type the contained value's -- so an implicit tag would have nothing to
     replace and would erase the only discriminator on the wire.
     """
-    if isinstance(built, Reference):
-        built = resolve(built)
+    for _ in range(MAX_RECURSION):
+        if built.tags:  # a tagged CHOICE has a tag an IMPLICIT one can replace
+            return False
+        if not isinstance(built, Reference):
+            break
+        built = built.resolved()
     return isinstance(built, (Choice, OpenType))
 
 
