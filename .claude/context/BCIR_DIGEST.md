@@ -65,11 +65,13 @@ Cortex-A520, same phone, deliberately per-core tables). GEM+ G0 (ExecutionScopeV
 identity + TMSAO-1..4 ladder) landed; G9 landed (S5-A: one derivation of the declared alias
 facts -- `noalias`, alias scopes from the RID partition, TBAA, `volatile`, a barrier's fences --
 on every emitter of the elementwise kernel, R12-held, `docs/kernel/BCIR_ALIAS_FACTS.md`);
-everything BCIR emits is TMSAO-4 until G4's lower-bound stack. Open, deliberately:
-GEM+ G1–G8/G10 plus the 2026-09-04 re-staging's G11–G18 (plan ABI, dispatch law with work-unit
-budgets, workload `W`, control-record ABI, live SPSC ring, data-plane hand-off, compact/native
-planner parity, incremental re-verification) and its Stage 0 closure items S0-1…S0-10 (landed so
-far: S0-4/S0-7/S0-10 as S0-A, S0-3/S0-5/S0-9 as S0-B, S0-6 as S0-C, S0-1 as S0-D, and S0-2 as
+since G4 the proof rail issues TMSAO-1/TMSAO-2 certificates (the fast rail and virtualized
+measurements stay TMSAO-4; TMSAO-3 is Stage 6, hardware-gated). All of the 2026-09-04
+re-staging has landed -- GEM+ G1–G18 (plan ABI, dispatch law with work-unit budgets, workload
+`W`, control-record ABI, live SPSC ring, data-plane hand-off, compact/native planner parity,
+incremental re-verification) and its Stage 0 closure items S0-1…S0-10; what remains is the
+2026-10-06 audit's completion ladder (`docs/research/BCIR_GEMPLUS_ROADMAP.md` §9, every slice
+closed by a before/after `tools/perf/ab_audit.py` run) (landed, in order: S0-4/S0-7/S0-10 as S0-A, S0-3/S0-5/S0-9 as S0-B, S0-6 as S0-C, S0-1 as S0-D, and S0-2 as
 S0-E — StreamPack v4's per-resource generation vector, R11 per resource on three rails; G7
 as S0-F — the native rig's full-cycle walk, census, raw samples and attested tenancy; S0-8 as
 S0-G — the LLVM kernel's runtime-n tail contract; Stage 0 is closed; Stage 1's G1 landed as

@@ -17,6 +17,9 @@ Grounded in three documents, all in this tree:
   — the 2026-09-04 review that re-staged this roadmap: the disposition of the earlier
   assessment's findings against the tree, today's re-measurement, the contracts the slices
   were missing (G11–G18), and the PR-sized sections in order.
+- [`BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md`](BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md) — the audit
+  of #758–#808 against the original plan: every roadmap slice landed, and what the plan asked
+  for that no slice carried, which is the completion ladder of §9.
 
 ---
 
@@ -138,6 +141,29 @@ floor only by doing less interpretation per record. The native planner is the ex
 3.73 ms where the Python planner takes 65 ms for the same plan on the same host. A slice that
 improves one of these rows now states its gap to a measured floor (TMSAO-2 for that row's
 number), not a TMSAO-4 claim.
+
+### 0.4 Before and after, on one host
+
+The frozen harness grades a tree against numbers measured on another machine. A slice also has
+to show what it changed against its own parent, on one host, and that is a different question:
+`tools/perf/ab_audit.py --before <parent>` answers it. It runs the harness and the bounded
+performance audit in both trees, and times the hot paths the slice touches in alternating
+rounds, each tree in its own process so each imports its own `bcir`:
+
+```
+python tools/perf/ab_audit.py --before origin/main --group sp,sched --markdown ab.md
+```
+
+Every `exact` row and every output digest must match, or move only where the slice declares it
+(`--expect-change`); between two trees on one interpreter an `exact` row is bit-identical unless
+the change moved it, so it is graded with zero tolerance. A hot path's call count is exact for
+one interpreter and graded the same way. A `ratio` row is held to its 25% band, and a time is
+reported as the before/after ratio and never graded. A metric present before and gone after is a
+failure: it is coverage lost. A regression lands only with its explanation recorded
+(`--explain ROW=reason`), and the table goes into the PR. The first run of the tool proved the
+point of the exact rows: fifty calls injected into the planner read 1.04x *faster* on the clock
+and were refused by the call count (73,761 -> 73,811). `bcir/tests/test_ab_audit.py` feeds the
+tool each kind of change it exists to catch.
 
 ---
 
@@ -1343,3 +1369,34 @@ Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail. Since 
 measured rail exists, but it grants TMSAO-3 to nothing on this host: the two-target rule keeps
 it hardware-gated (Stage 6). Since 2026-09-30 every row of the table has a floor (§0.3). What
 remains without one is only what needs hardware: the PMU and energy rows of Stage 6.
+
+---
+
+## 9. The completion ladder (2026-10-06)
+
+The [2026-10-06 audit](BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md) found every slice above landed
+and named what the original plan asked for that none of them carried. This is that work, in
+priority order: P0 is correctness, P1 is the honesty of a certificate and the oracle's own cost,
+P2 widens the portfolio, P3 needs hardware. One gated slice per entry, the slice ID in the PR
+title, and every slice ends with the before/after audit of §0.4 in its PR. The audit's item
+numbers are in the second column.
+
+| Slice | Item | Content | Gate | Status |
+|---|---|---|---|---|
+| **AUDIT-0** | — | the audit, this ladder, `tools/perf/ab_audit.py` | the tool fails on each kind of change it grades (`test_ab_audit.py`); RED on an injected planner change | **landed** |
+| **ASN1-H** (P0) | 21 | hygienic X.683 substitution: dummies substituted structurally everywhere they appear, nothing installed in the module's shared tables, a memo key that names what was substituted | both captures of audit §4.1 resolve lexically; lowering is independent of assignment order | open |
+| **ASN1-R** (P0) | 18 | recursive types on every encoding rule, from a type containment graph | the audit's §4.2 type round-trips on PER, OER, XER and JER and compiles to a JER plan; nesting is bounded on untrusted input; a refusal names recursion | open |
+| **G19 EXEC-EXACT** (P1) | 1 | the proved optimum is the plan that runs | `eft.executed.suboptimal.2domains` 11.07% -> 0 on the proof rail; R13 holds an explicit placement by its legality, the canonical one by equality as before | open |
+| **OR-GC** (P1) | 17 | the cyclic collector out of the oracle's pure hot paths; slots on its hot value types | collections inside the planner, hydrate, decode and plan-verify rows -> 0; zero cyclic garbage per call held by a witness; every output byte-identical | open |
+| **G21 PLAN-SIGN** (P1) | 6 | the plan bound by SHA-256 and signed | ExecutionPlan v4 binding (scope, module, pack, certificate); Ed25519 on both rails over the RFC 8032 vectors; a trust store with rotation, revocation and expiry; every forgery refused | open |
+| **G22** (P2) | 8 | expected cost: an expectation objective with its laws, Markov loops, `U` in the scope | the registry admits it only with its laws; exact expectations against hand-derived means | open |
+| **G23 / G24** (P2) | 11, 12 | SDF/CSDF and timed-event (max-plus cycle-time) regions | each kind verified, expanded to the identity, floored and refused on its own corpus | open |
+| **G25 / G26** (P2) | 15, 3 | red-blue pebble / communication-cut and hierarchical-roofline bounds; exact memory at production scale | the bounds in the stack and held sound; the 512-resource fixture proved, or its gap reduced and stated | open |
+| **G27** (P2) | 14 | the depth of optimization priced by its value; straight-line modules delegated to LLVM | the dispatch law weighs the gap against the work; a delegated module's output equals the planned one | open |
+| **G28** (P2) | 9, 14 | a dependency-free exact ILP/CSP; the joint schedule × memory optimum; an optional hosted CP-SAT adapter | held to brute force on small fixtures (TMSAO-1); the adapter held to the in-tree solver | open |
+| **G29** (P2) | 13b | LLVM's poison: no-wrap and in-bounds facts the verifier proves, exported under R12 | LLVM judges each fact; a forged fact is refused | open |
+| **G30 / G31 / G32** (P2) | 14 | polyhedral depth two; MLIR Transform export; the 38 unprojected IRDL operations | per slice | open |
+| **CXX0 / CXX4** (P2) | 17 | the oracle inventory, regenerated by a tool; native hydrate | a committed inventory; the C hydrate byte-identical to the oracle's | open |
+| **ASN1-B** (P2) | 19, 20 | semantic bounds at the point of application: canonical-JER sizes from value constraints after substitution | bounds checked against the encoder on generated values | open |
+| **DOCS** | — | the current-state audit's GEM+ section | docs governance | open |
+| **S6** (P3) | 16 | TMSAO-3 | two materially different physical targets with PMU counters | hardware-gated: an explicit skip, never simulated |

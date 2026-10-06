@@ -1902,6 +1902,25 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  AUDIT-0 (2026-10-06): the GEM+/TMSAO audit of #758–#808 against the original plan
+  ([`BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md`](research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md))
+  and the completion ladder it implies (GEM+ roadmap §9). Every slice the roadmap carried had
+  landed; of the 22 items the original plan named, 7 were met, 9 partial and 6 missing, and three
+  findings sat where no gate looked: X.683 substitution captured names through the module's
+  shared object-set table, recursive types survived only BER/DER, and the cyclic collector was up
+  to 68% of the oracle's hot-path time at 32,768 claims while those paths left no cyclic garbage.
+  - `tools/perf/ab_audit.py`, the before/after audit each slice of the ladder now ends with
+    (roadmap §0.4): the harness and the bounded performance audit in both trees, the touched hot
+    paths timed in alternating rounds with each tree in its own process; `exact` rows, call
+    counts and output digests graded with zero tolerance, a `ratio` row held to its band, a time
+    never graded; a removed metric fails, and a regression lands only with its explanation.
+  - RED, on its first run: fifty calls injected into `realize.optimize` in a scratch tree read
+    1.04x *faster* on the clock and were refused by the exact call count (73,761 -> 73,811, exit
+    1). `bcir/tests/test_ab_audit.py` feeds the grader each kind of change it exists to catch, and
+    runs the real child and two-tree paths over a fixture-free row; an unreachable ref comes back
+    as a structured UNAVAILABLE report.
+  - The session digest and the systems-engineer skill said everything BCIR emits was TMSAO-4 and
+    that G1–G18 were open; both now say what landed and point at the ladder.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:
