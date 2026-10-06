@@ -386,6 +386,7 @@ _MODULES = [
     "bcir.tests.test_gemplus_baseline",
     "bcir.tests.test_gemplus_floors",
     "bcir.tests.test_ab_audit",
+    "bcir.tests.test_call_counts",
     "bcir.tests.test_irdl_inventory",
     "bcir.tests.test_mlir_fixture_inventory",
     "bcir.tests.test_mlir_lit_suite",

@@ -1173,12 +1173,15 @@ METRICS: tuple[Metric, ...] = (
     # The 2026-09-04 profile's 6.06 M was the whole K_BCIR->StreamPack chain at scale 8 before
     # S0-A made R9 re-derive the planner's offer; this row is the planner alone, the thing G17
     # rewrites, on the parent under CPython 3.11.15 (call counts differ between interpreters: the
-    # tests compare two planners in one process instead, and state the factor).
+    # tests compare two planners in one process instead, and state the factor). Recounted at
+    # AUDIT-0 per code object (bcir/tests/call_counts.py) over the parent's planner, which
+    # `realize_reference` keeps verbatim: the frozen 3,419,172 was a `pstats` total, which merged
+    # every dataclass `__init__` into one row (the same tree re-measures 3,419,168 that way).
     Metric(
         "planner.calls",
         "kplan",
-        "calls (cProfile total, builtins included) planning the audit's K_BCIR->StreamPack fixture at scale 8 (32,768 claims), CPython 3.11",
-        3419172,
+        "calls (cProfile, builtins included, one entry per code object) planning the audit's K_BCIR->StreamPack fixture at scale 8 (32,768 claims), CPython 3.11",
+        3549217,
         "calls",
         "exact",
         floor_key="planner.calls.floor",
@@ -1273,7 +1276,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "kbcir-streampack.delta.calls",
         "delta",
-        "calls (cProfile total, builtins included) of one one-claim delta of the audit fixture at scale 8 (32,768 claims), CPython 3.11: on the parent, the chain from scratch",
+        "calls (cProfile, builtins included, one entry per code object) of one one-claim delta of the audit fixture at scale 8 (32,768 claims), CPython 3.11: on the parent, the chain from scratch -- a `pstats` total, which merged same-label constructors, so a lower bound on the parent's count and a conservative GAIN",
         10855666,
         "calls",
         "exact",
@@ -1478,7 +1481,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "streampack.encode.calls",
         "encode",
-        "calls (cProfile total, builtins included) of one encode of the audit fixture's pipelined StreamPack at scale 8 (32,768 claims, 5.76 MB, wire v4), CPython 3.11",
+        "calls (cProfile, builtins included, one entry per code object) of one encode of the audit fixture's pipelined StreamPack at scale 8 (32,768 claims, 5.76 MB, wire v4), CPython 3.11",
         7543875,
         "calls",
         "exact",
@@ -1506,7 +1509,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "kbcir-streampack.full.calls",
         "encode",
-        "calls (cProfile total, builtins included) of the K_BCIR -> StreamPack chain from scratch -- plan, hydrate, encode and the three verdicts -- on the audit fixture's one-claim delta module at scale 8 (32,768 claims), CPython 3.11",
+        "calls (cProfile, builtins included, one entry per code object) of the K_BCIR -> StreamPack chain from scratch -- plan, hydrate, encode and the three verdicts -- on the audit fixture's one-claim delta module at scale 8 (32,768 claims), CPython 3.11; the parent's figure is a `pstats` total, which merged same-label constructors, so a lower bound on its count and a conservative GAIN",
         10110215,
         "calls",
         "exact",

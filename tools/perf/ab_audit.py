@@ -16,8 +16,9 @@ three questions the per-slice analysis protocol (§0.2) asks, on evidence a revi
   * **what did it cost or buy on the hot paths?** Each row builds its fixture outside the timed
     interval and times the call in a child process that imports `bcir` from that tree. The
     trees alternate round by round (before first, then after first), so drift on a busy host
-    lands on both sides. The call count (cProfile, builtins included) is exact for one
-    interpreter, so it is graded like an `exact` row. The time is INDICATIVE.
+    lands on both sides. The call count (cProfile, builtins included, one entry per code
+    object, both trees counted by this checkout's counter) is exact for one interpreter, so it is
+    graded like an `exact` row. The time is INDICATIVE.
 
 **A regression is not landable until it is explained** (§0.2). `--explain ROW=reason` records
 the explanation in the report and lets the audit pass. Without it, a REGRESSION, an unexpected
@@ -320,13 +321,31 @@ GROUPS = {
 # --- the child: measure rows in one tree ---------------------------------------------------------
 
 
+def _call_counter():
+    """The one call counter (`bcir/tests/call_counts.py`), loaded by path from THIS checkout under
+    a private name: importing it as `bcir.tests.call_counts` would bind `bcir` to this checkout
+    before the child imports the measured tree's, and counting each tree with its own counter
+    would compare two instruments rather than two trees."""
+    module = sys.modules.get("_ab_audit_call_counts")
+    if module is None:
+        import importlib.util
+
+        path = os.path.join(_ROOT, "bcir", "tests", "call_counts.py")
+        spec = importlib.util.spec_from_file_location("_ab_audit_call_counts", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules["_ab_audit_call_counts"] = module
+    return module
+
+
 def measure_row(name: str, samples: int) -> dict:
     """Time one row: one warm run, then `samples` timed runs from a collected heap, one profiled
     run for the call count. A row whose output changes between runs is refused, because its
-    digest would then compare nothing."""
-    import cProfile
+    digest would then compare nothing. The count is the one counter's (`_call_counter`): one
+    entry per code object, never `pstats`' total, which merges two functions that share a label
+    -- every dataclass `__init__` -- into one row and keeps one of their counts, which one
+    depending on where the code objects were allocated."""
     import gc
-    import pstats
 
     run = ROWS[name]()
     out = digest(run())
@@ -338,15 +357,12 @@ def measure_row(name: str, samples: int) -> dict:
         times.append(time.perf_counter_ns() - t0)
         if digest(result) != out:
             raise RuntimeError(f"{name}: the output changed between runs of one tree")
-    profile = cProfile.Profile()
-    profile.enable()
-    run()
-    profile.disable()
+    calls, _value = _call_counter().profiled(run)
     return {
         "row": name,
         "status": "measured",
         "times_ns": times,
-        "calls": pstats.Stats(profile).total_calls,
+        "calls": calls,
         "digest": out,
     }
 

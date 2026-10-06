@@ -1926,6 +1926,27 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     earns confirming measurements of its harness group in both trees and is graded on their
     median, every measuring process runs under one hash seed, and a nondeterministic row
     names the quantity that moved; each has a witness that feeds it the case.
+  - The moving quantity was a call count, and the instrument was again the defect (audit §4.3).
+    `sched_eft@4` counted 34,368 calls in one process and 36,415 in the next, with the collector
+    on or off. A per-function diff named one row, `<string>:2:__init__`: `pstats` re-keys
+    cProfile's per-code-object entries by (file, line, name), so it merges every dataclass
+    `__init__` into one row and keeps one class's count, which one depending on allocation.
+    Every call-count row read its count that way, the frozen harness's included. `planner.calls`
+    read 589,856 at scale 8 while the planner makes 655,393, and the lost 65,537 were the
+    constructor calls its emission floor counts. G17's factor is 5.42×, not 5.80×; its gate of
+    5× holds.
+    - One counter now, `bcir/tests/call_counts.py`: one entry per code object, with the collector
+      paused across the call. Both fixtures count through it, and `ab_audit.py` loads it by path
+      from its own checkout, so the two trees of an A/B are read with one instrument.
+    - `test_call_counts.py` and three tests in `test_ab_audit.py` were proven RED three ways:
+      against the `pstats` total, without the collector pause, and with the fixtures on their old
+      counters. Two of them are AST scans that refuse a `pstats` total anywhere in the package or
+      in `tools/`.
+    - `planner.calls`'s frozen baseline is re-counted over `realize_reference`, the parent's
+      planner kept verbatim; counted the old way, that code reproduces the frozen 3,419,172 to
+      within four calls. The parent's delta and full-chain baselines keep their numbers, labelled
+      as `pstats` totals: lower bounds, so a GAIN graded against them is understated, never
+      overstated.
   - The session digest and the systems-engineer skill said everything BCIR emits was TMSAO-4 and
     that G1–G18 were open; both now say what landed and point at the ladder.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them

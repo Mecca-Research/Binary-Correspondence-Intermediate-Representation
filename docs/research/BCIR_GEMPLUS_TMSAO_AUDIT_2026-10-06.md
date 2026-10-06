@@ -46,6 +46,13 @@ The audit also found three things no gate catches today:
    §5). Those paths create no cyclic garbage at all, so the collector's work there is pure
    overhead.
 
+The audit's own before/after run then found a fourth, in the instrument every call-count row is
+read with:
+
+4. **The call counts merged functions that share a label** (confirmed defect, §4.3, fixed with
+   the ladder's AUDIT-0). `planner.calls` read 589,856 at scale 8 while the planner makes 655,393,
+   and the 65,537 calls lost were the constructor calls its emission floor is made of.
+
 Two places that guide future work are stale: the session digest and the systems-engineer skill
 (§6).
 
@@ -196,6 +203,51 @@ The front end lowers the self-reference to a `_LazyType`.
 
 This is the repository's most common defect shape: a mechanism landed on one rail of six (L14).
 It is also exactly the plan's containment-graph item.
+
+### 4.3 The call counts merged functions that share a label (confirmed, fixed)
+
+Found by the audit's own tool. The first before/after run of the AUDIT-0 commit graded
+`sched_eft@4` as nondeterministic: the same tree counted 34,368 calls in one round and 36,415 in
+the next. The garbage collector was the first suspect, and it was wrong: the row counts 36,415
+with the collector disabled. A per-function diff of the two profiles named the cause, one row:
+`<string>:2:__init__`, called 2,048 times in one process and once in the other.
+
+cProfile keeps one entry per code object. `pstats.Stats` re-keys those entries by their label,
+(file, first line, name), so two functions that share a label become one row, and the entry
+written second replaces the first. On CPython 3.11 every dataclass-generated `__init__` has the
+label `("<string>", 2, "__init__")`. `pstats.Stats(profile).total_calls` therefore kept one
+class's constructor calls and dropped every other class's. Which class survived depended on
+where the code objects were allocated, which is why the count moved between processes with
+nothing changed.
+
+Every call-count row read its count this way: the before/after audit's hot-path rows, and the
+frozen harness's `planner.calls`, `kbcir-streampack.delta.calls`, `kbcir-streampack.full.calls`
+and `streampack.encode.calls` through `planner_fixtures.call_count` and `delta_fixtures._profiled`.
+
+| Row (scale 8) | `pstats` total | Exact | Floor |
+|---|---:|---:|---:|
+| `planner.calls` | 589,856 | 655,393 | 65,539 |
+| `kbcir-streampack.delta.calls` | 472 | 489 | 13 |
+| `kbcir-streampack.full.calls` | 3,490,034 | 3,689,720 | 166,923 |
+| `streampack.encode.calls` | 989,245 | 989,245 | 1 |
+| the parent planner (`realize_reference`) | 3,419,168 | 3,549,217 | |
+
+The undercount was not noise. The emission floors count one constructor call per record the
+output must carry, and those are exactly the calls the merge dropped. The headroom above each
+floor was therefore understated. G17's factor is 5.42× (5.38× at scale 4), not the 5.80× it
+quoted. The stated gate of 5× still holds.
+
+The fix is one predicate (L14), `bcir/tests/call_counts.py`. It sums cProfile's entries per code
+object before any label can merge them, and pauses the collector across the counted call. Every
+fixture counts through it, and `tools/perf/ab_audit.py` loads it by path from its own checkout,
+so both trees of an A/B are read with one instrument.
+
+`planner.calls`'s frozen baseline is re-counted over the parent's planner, which
+`realize_reference` keeps verbatim. Counted the old way, that code reproduces the frozen
+3,419,172 to within four calls, so the recount measures the same code. The delta and full-chain
+baselines came from the parent tree and keep their numbers. They are labelled as `pstats`
+totals: merging only drops calls, so each is a lower bound on its exact count, and a GAIN graded
+against it is understated, never overstated.
 
 ---
 

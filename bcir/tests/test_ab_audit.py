@@ -329,3 +329,43 @@ def test_measuring_processes_share_one_hash_seed():
         [sys.executable, "-c", "import os; print(os.environ['PYTHONHASHSEED'])"], _ROOT, 60
     )
     assert proc.stdout.strip() == "0", proc.stdout
+
+
+def test_a_rows_call_count_counts_two_functions_that_share_a_label():
+    """The count is per code object. `pstats` merged two functions with one (file, line, name)
+    label -- every dataclass `__init__` -- and kept one count, which one depending on where the
+    code objects were allocated: the audit's own run read `sched_eft@4` as 34,368 calls in one
+    process and 36,415 in the next."""
+    from bcir.tests.call_counts import profiled
+    from bcir.tests.test_call_counts import _work
+
+    for shared in (False, True):
+        ab_audit.ROWS["twins"] = lambda shared=shared: _work(shared_label=shared)
+        try:
+            measured = ab_audit.measure_row("twins", 1)["calls"]
+        finally:
+            del ab_audit.ROWS["twins"]
+        assert measured == profiled(_work(shared_label=False))[0], (shared, measured)
+
+
+def test_the_child_counts_with_this_checkouts_counter_whatever_tree_it_measures():
+    """One instrument for both arms: the counter is loaded by path from the tool's checkout, so
+    importing it cannot bind `bcir` to this checkout before the measured tree is imported."""
+    counter = ab_audit._call_counter()
+    assert counter.__file__ == os.path.join(_ROOT, "bcir", "tests", "call_counts.py")
+    assert counter.__name__ == "_ab_audit_call_counts"
+
+
+def test_no_perf_tool_reads_the_merged_pstats_total():
+    from bcir.tests.test_call_counts import _reads_pstats
+
+    tools = os.path.join(_ROOT, "tools")
+    offenders = []
+    for folder, _dirs, files in os.walk(tools):
+        for name in sorted(files):
+            if name.endswith(".py"):
+                path = os.path.join(folder, name)
+                with open(path, encoding="utf-8") as fh:
+                    if _reads_pstats(fh.read()):
+                        offenders.append(os.path.relpath(path, _ROOT))
+    assert offenders == [], offenders
