@@ -276,3 +276,56 @@ def test_two_trees_give_one_report_on_every_path():
         assert proc.returncode == UNAVAILABLE, proc.stdout[-800:] + proc.stderr[-800:]
         report = json.load(open(js, encoding="utf-8"))
         assert report["verdict"] == "UNAVAILABLE" and "cannot check out" in report["unavailable"][0]
+
+
+def test_a_nondeterministic_row_names_what_moved():
+    """A row unstable between rounds says WHICH exact quantity moved, so the finding can be
+    followed up rather than re-measured blind."""
+    rounds = [
+        [{"row": "r", "status": "measured", "times_ns": [1], "calls": 10, "digest": "d"}],
+        [{"row": "r", "status": "measured", "times_ns": [1], "calls": 11, "digest": "d"}],
+    ]
+    merged = merge_rounds(rounds)
+    assert "call count 10 vs 11" in merged[0]["why"], merged[0]
+    (finding,) = grade_rows(merge_rounds([rounds[0]]), merged)
+    assert "call count 10 vs 11" in finding.note and finding.verdict == "CHANGED"
+
+
+def test_a_ratio_regression_is_confirmed_before_it_is_graded():
+    """One timed ratio per tree can leave its band on a busy host with no change in the code.
+    It earns confirming measurements, and is graded on their median: noise becomes NO-CHANGE,
+    a real slowdown stays a REGRESSION."""
+    import types
+
+    graded = grade_harness([_row("r", "ratio", 1.0, 0.5)], [_row("r", "ratio", 1.5, 0.25)])
+    assert [f.verdict for f in graded] == ["REGRESSION"]
+    rows = [dict(_row("r", "ratio", 1.0, 0.5), group="g")]
+    args = types.SimpleNamespace(ratio_confirm=2, timeout=10)
+    real = ab_audit.run_harness
+    try:
+        for after_values, want in (([1.02, 1.05], "NO-CHANGE"), ([1.6, 1.55], "REGRESSION")):
+            calls = []
+
+            def fake(tree, scratch, label, timeout, group="", _after=after_values, _calls=calls):
+                _calls.append((tree, group))
+                side = 1 if tree == "AFTER" else 0
+                value = (
+                    _after[min(len([c for c in _calls if c[0] == tree]) - 1, 1)] if side else 1.0
+                )
+                return [dict(_row("r", "ratio", value, 0.5), group="g")]
+
+            ab_audit.run_harness = fake
+            (confirmed,) = ab_audit.confirm_ratios(
+                graded, rows, rows, "BEFORE", "AFTER", "/tmp", args
+            )
+            assert confirmed.verdict == want, (after_values, confirmed)
+            assert {g for _t, g in calls} == {"g"} and len(calls) == 4, calls
+    finally:
+        ab_audit.run_harness = real
+
+
+def test_measuring_processes_share_one_hash_seed():
+    proc = ab_audit._run(
+        [sys.executable, "-c", "import os; print(os.environ['PYTHONHASHSEED'])"], _ROOT, 60
+    )
+    assert proc.stdout.strip() == "0", proc.stdout

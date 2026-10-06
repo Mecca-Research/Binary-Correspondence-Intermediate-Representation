@@ -1919,6 +1919,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     1). `bcir/tests/test_ab_audit.py` feeds the grader each kind of change it exists to catch, and
     runs the real child and two-tree paths over a fixture-free row; an unreachable ref comes back
     as a structured UNAVAILABLE report.
+  - The tool's first audit of this slice -- no runtime change on either side -- failed twice,
+    and both were the instrument: a `ratio` row measured once per tree left its 25% band under
+    load (`verify.plan.scope.overhead` 1.02 -> 1.47), and one hot path read as nondeterministic
+    between rounds with nothing kept to say what moved. A ratio row that leaves its band now
+    earns confirming measurements of its harness group in both trees and is graded on their
+    median, every measuring process runs under one hash seed, and a nondeterministic row
+    names the quantity that moved; each has a witness that feeds it the case.
   - The session digest and the systems-engineer skill said everything BCIR emits was TMSAO-4 and
     that G1–G18 were open; both now say what landed and point at the ladder.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them

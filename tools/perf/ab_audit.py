@@ -529,6 +529,11 @@ def grade_rows(before: list[dict], after: list[dict]) -> list[Finding]:
             if r and r.get("status") == "nondeterministic"
         ]
         if unstable:
+            why = "; ".join(
+                f"{t} tree: {r.get('why', '')}"
+                for t, r in (("before", b), ("after", a))
+                if r and r.get("status") == "nondeterministic"
+            )
             out.append(
                 Finding(
                     "rows",
@@ -537,7 +542,7 @@ def grade_rows(before: list[dict], after: list[dict]) -> list[Finding]:
                     None,
                     None,
                     "CHANGED",
-                    f"nondeterministic in the {' and '.join(unstable)} tree: its digest compares nothing",
+                    f"nondeterministic ({why}): its digest compares nothing",
                 )
             )
             continue
@@ -624,7 +629,11 @@ def merge_rounds(rounds: list[list[dict]]) -> list[dict]:
                 continue
             if r["calls"] != m["calls"] or r["digest"] != m["digest"]:
                 m["status"] = "nondeterministic"
-                m["why"] = "call count or digest differs between rounds"
+                m["why"] = (
+                    f"call count {m['calls']} vs {r['calls']}"
+                    if r["calls"] != m["calls"]
+                    else f"digest {m['digest']} vs {r['digest']}"
+                ) + " between rounds"
                 continue
             m["times_ns"].extend(r["times_ns"])
     return list(merged.values())
@@ -666,28 +675,66 @@ def materialized(ref_or_dir: str, label: str, keep: list[str]):
 
 
 def _run(cmd: list[str], cwd: str, timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    # One hash seed for every measuring process, so set and str-keyed dict order -- and with
+    # them a call count -- cannot differ between two processes that run the same code.
+    env = dict(os.environ, PYTHONHASHSEED="0")
+    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
 
 
-def run_harness(tree: str, scratch: str, label: str, timeout: int) -> list[dict]:
+def run_harness(tree: str, scratch: str, label: str, timeout: int, group: str = "") -> list[dict]:
     path = os.path.join(scratch, f"harness-{label}.json")
-    proc = _run(
-        [
-            sys.executable,
-            os.path.join("tools", "perf", "gemplus_baseline.py"),
-            "--compare",
-            "--json",
-            path,
-        ],
-        tree,
-        timeout,
-    )
+    cmd = [sys.executable, os.path.join("tools", "perf", "gemplus_baseline.py"), "--compare"]
+    if group:
+        cmd += ["--group", group]
+    proc = _run(cmd + ["--json", path], tree, timeout)
     if not os.path.exists(path):
         raise RuntimeError(
             f"{label}: the harness wrote no table (exit {proc.returncode}): {proc.stderr[-400:]}"
         )
     with open(path, encoding="utf-8") as fh:
         return json.load(fh)["rows"]
+
+
+def confirm_ratios(graded, before_rows, after_rows, before, after, scratch, args):
+    """A `ratio` row that left its band earns confirming measurements before it is graded.
+
+    A timed ratio cancels the machine's speed, not its load: one sample per tree on a busy host
+    can leave the 25% band with no change in the code (bcir-cicd: a ratio row earns a confirming
+    re-run, and a second failure is real). Each regressed ratio row's harness group is measured
+    again `--ratio-confirm` times per tree, alternating which tree goes first, and the row is
+    graded on the median of every measurement it has."""
+    suspects = [f for f in graded if f.kind == "ratio" and f.verdict == "REGRESSION"]
+    if not suspects or args.ratio_confirm < 1:
+        return graded
+    group_of = {r["key"]: r.get("group", "") for r in after_rows}
+    samples = {f.key: ([f.before], [f.after]) for f in suspects}
+    groups = sorted({group_of.get(f.key, "") for f in suspects} - {""})
+    for i in range(args.ratio_confirm):
+        for group in groups:
+            order = (("before", before, 0), ("after", after, 1))
+            for label, tree, side in order if i % 2 else order[::-1]:
+                rows = run_harness(
+                    tree, scratch, f"confirm-{label}-{group}-{i}", args.timeout, group
+                )
+                for row in rows:
+                    if row["key"] in samples and row.get("measured") is not None:
+                        samples[row["key"]][side].append(row["measured"])
+    out = []
+    for f in graded:
+        if f not in suspects:
+            out.append(f)
+            continue
+        b_med = statistics.median(samples[f.key][0])
+        a_med = statistics.median(samples[f.key][1])
+        # The first grading called before -> after worse, which fixes the row's direction.
+        lower_is_better = f.after > f.before
+        worse = a_med > b_med if lower_is_better else a_med < b_med
+        outside = bool(b_med) and abs(a_med - b_med) / abs(b_med) > RATIO_BAND
+        verdict = "REGRESSION" if outside and worse else ("GAIN" if outside else "NO-CHANGE")
+        n = len(samples[f.key][0])
+        note = f"median of {n} measurements per tree, confirmed after the first left the band"
+        out.append(Finding("harness", f.key, f.kind, b_med, a_med, verdict, note))
+    return out
 
 
 def run_audit(tree: str, scratch: str, label: str, repeats: int, timeout: int) -> dict:
@@ -825,9 +872,11 @@ def parent_main(args) -> int:
         ):
             if not args.no_harness:
                 try:
-                    findings += grade_harness(
-                        run_harness(before, scratch, "before", args.timeout),
-                        run_harness(after, scratch, "after", args.timeout),
+                    before_rows = run_harness(before, scratch, "before", args.timeout)
+                    after_rows = run_harness(after, scratch, "after", args.timeout)
+                    graded = grade_harness(before_rows, after_rows)
+                    findings += confirm_ratios(
+                        graded, before_rows, after_rows, before, after, scratch, args
                     )
                 except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
                     unavailable.append(f"harness: {exc}")
@@ -900,6 +949,12 @@ def main(argv=None) -> int:
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--audit-repeats", type=int, default=3)
+    ap.add_argument(
+        "--ratio-confirm",
+        type=int,
+        default=2,
+        help="confirming measurements per tree for a ratio row that leaves its band",
+    )
     ap.add_argument("--timeout", type=int, default=1800, help="seconds per measuring process")
     ap.add_argument("--no-harness", action="store_true")
     ap.add_argument("--no-audit", action="store_true")
@@ -930,6 +985,9 @@ def main(argv=None) -> int:
             "ab_audit: --rounds, --samples, --audit-repeats and --timeout must be positive",
             file=sys.stderr,
         )
+        return UNAVAILABLE
+    if args.ratio_confirm < 0:
+        print("ab_audit: --ratio-confirm must not be negative", file=sys.stderr)
         return UNAVAILABLE
     if args.child:
         if not args.tree or not args.json:
