@@ -5,7 +5,8 @@ normative spec is docs/kernel/BCIR_EXECUTION_PLAN_ABI.md and the C view
 runtime/c/bcir_execution_plan.h):
 
     Header (64 bytes, cache-line; every u64 at an 8-aligned offset):
-      magic[4]="BPLN"  version:u16  flags:u16
+      magic[4]="BPLN"  version:u16  flags:u16 (bit 0: an explicit placement, G19; the
+                                            rest reserved zero)
       mode:u8 @8 (0 = eft phase-barriered, 1 = tokens pipelined)
       [v2] liveness:u8 @9 (0 = phase positions, 1 = the placement's ticks; reserved on v1)
       reserved:u8[2] @10
@@ -71,6 +72,8 @@ from ..gem.execution_plan import (
     MOVE_HAS_CLAIM,
     MOVE_HAS_PRODUCER,
     MOVE_KINDS,
+    PLAN_FLAG_EXPLICIT_PLACEMENT,
+    PLAN_FLAGS,
     PLAN_MODES,
     TAIL_STREAM,
     ExecutionPlan,
@@ -134,6 +137,11 @@ def validate_plan(plan: ExecutionPlan, version: int | None = None) -> None:
     than read as the v2 plan it would re-encode to."""
     if plan.mode not in _MODE_WIRE:
         raise AbiError(f"unknown plan mode {plan.mode!r}; expected one of {PLAN_MODES}")
+    flags = _checked_uint("flags", plan.flags, 16)
+    if flags & ~PLAN_FLAGS:
+        raise AbiError(f"undefined ExecutionPlan flags 0x{flags:04x}")
+    if flags & PLAN_FLAG_EXPLICIT_PLACEMENT and plan.mode != "eft":
+        raise AbiError("an explicit placement is a phase-barriered (eft) placement")
     if plan.liveness not in _LIVENESS_WIRE:
         raise AbiError(
             f"unknown plan liveness {plan.liveness!r}; expected one of {LIVENESS_DOMAINS}"
@@ -405,7 +413,7 @@ def encode_plan(plan: ExecutionPlan) -> bytes:
         _HEADER.pack(
             PLAN_MAGIC,
             version,
-            0,
+            plan.flags,
             _MODE_WIRE[plan.mode],
             plan.streams,
             plan.knee,
@@ -465,8 +473,8 @@ def decode_plan(data: bytes) -> ExecutionPlan:
             f"unsupported ExecutionPlan version {version} "
             f"(this reader handles v{PLAN_VERSION}..v{PLAN_VERSION_MAX})"
         )
-    if flags:
-        raise AbiError(f"reserved ExecutionPlan flags must be zero, got 0x{flags:04x}")
+    if flags & ~PLAN_FLAGS:
+        raise AbiError(f"undefined ExecutionPlan flags 0x{flags:04x}")
     reserved_lo = data[10:12] if version >= 2 else data[9:12]
     if any(reserved_lo) or any(data[36:40]):
         raise AbiError("reserved ExecutionPlan header bytes must be zero")
@@ -489,6 +497,7 @@ def decode_plan(data: bytes) -> ExecutionPlan:
         makespan=makespan,
         module_hash=module_hash,
         target_hash=target_hash,
+        flags=flags,
     )
     for _ in range(n_steps):
         claim_id = r.u64()

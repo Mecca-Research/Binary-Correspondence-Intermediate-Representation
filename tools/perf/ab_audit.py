@@ -209,6 +209,23 @@ def row_chain(scale):
     return run
 
 
+def row_xplan(scale):
+    """The plan as bytes (G11) on the StreamPack fixture: the canonical eft plan minted,
+    encoded, decoded and verified against its target -- the path every reader of a plan
+    takes. Its output is the plan's bytes and the verdict."""
+    from bcir.abi.execution_plan_abi import decode_plan, encode_plan
+    from bcir.gem.execution_plan import plan_from_realization
+    from bcir.verify import verify_execution_plan
+
+    module, target, _theta, result, _pack, _wire = _sp_chain(scale)
+
+    def run():
+        read = decode_plan(encode_plan(plan_from_realization(module, result, target, "eft")))
+        return encode_plan(read), verify_execution_plan(module, read, target=target)
+
+    return run
+
+
 def row_sched_waves(scale):
     from bcir.gem.concurrency import schedule_concurrent
     from bcir.performance_audit import scheduler_fixture
@@ -438,6 +455,7 @@ ROWS = {
     "verify_plan@4": lambda: row_verify_plan(4),
     "verify_pack@4": lambda: row_verify_pack(4),
     "chain@4": lambda: row_chain(4),
+    "xplan@4": lambda: row_xplan(4),
     "sched_waves@4": lambda: row_sched_waves(4),
     "sched_tokens@4": lambda: row_sched_tokens(4),
     "sched_eft@4": lambda: row_sched_eft(4),
@@ -465,6 +483,7 @@ GROUPS = {
         "chain@4",
     ],
     "sp8": ["plan@8", "hydrate@8", "decode@8"],
+    "xplan": ["xplan@4"],
     "sched": ["sched_waves@4", "sched_tokens@4", "sched_eft@4", "dag_exec@4", "dag_verify@4"],
     "audit": [f"audit:{c}@4" for c in AUDIT_CASES],
     "asn1": [

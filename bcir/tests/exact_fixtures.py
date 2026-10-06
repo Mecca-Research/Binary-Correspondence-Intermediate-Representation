@@ -2,7 +2,8 @@
 
 `six_job_module` / `six_job_corpus` is the 2026-08-12 report's section 6.1 corpus, pinned:
 six independent unit-stride claims on disjoint resources, every nondecreasing six-job
-duration multiset with values 1..8 (1,716 instances), placed on 2 and 3 affinity domains.
+duration multiset with values 1..8 (1,716 instances), placed on 2 and 3 affinity domains
+(`six_job_realization` is an instance as the realization a plan is minted from).
 `schedule_eft` reproduces the report on it exactly -- 190 suboptimal (11.07%), mean 1.0078,
 worst 17/15 on two domains; 18 (1.05%), 1.0013, 7/6 on three -- and `partition_optimum` is
 the INDEPENDENT oracle the exact scheduler is held to there (independent jobs on identical
@@ -67,6 +68,21 @@ def six_job_corpus() -> list[tuple[int, ...]]:
 
 def six_job_target(domains: int):
     return replace(TARGETS["x86_avx2"], affinity_domains=domains)
+
+
+def six_job_realization(durations):
+    """A realization of `six_job_module` whose step costs are `durations` -- what a plan is
+    minted from (G19: `gem.execution_plan.exact_plan`), so the plan's own step costs are the
+    instance."""
+    from bcir.kbcir.cost import CostVector
+    from bcir.kbcir.realize import Candidate, ChosenStep, RealizationResult
+
+    zero = CostVector.zero()
+    steps = [
+        ChosenStep(index + 1, 0, Candidate(lane=Lane.U, width=1, name="scalar", base=zero), d)
+        for index, d in enumerate(durations)
+    ]
+    return RealizationResult(steps=steps, score=sum(durations))
 
 
 def partition_optimum(durations, machines: int) -> int:

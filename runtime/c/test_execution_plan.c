@@ -152,10 +152,10 @@ int main(int argc, char **argv) {
   if (ok) {
     uint16_t sp_len = 0;
     const char *sp = bcir_ep_source_plan(buf, n, &sp_len);
-    printf("header version=%u mode=%u liveness=%u streams=%u knee=%u makespan=%" PRIu64
+    printf("header version=%u mode=%u liveness=%u flags=%u streams=%u knee=%u makespan=%" PRIu64
            " module_hash=%" PRIu64 " target_hash=%" PRIu64
            " n_steps=%u n_lifetimes=%u n_moves=%u n_gens=%u source_plan=",
-           hdr.version, hdr.mode, hdr.liveness, hdr.streams, hdr.knee, hdr.makespan,
+           hdr.version, hdr.mode, hdr.liveness, hdr.flags, hdr.streams, hdr.knee, hdr.makespan,
            hdr.module_hash, hdr.target_hash, hdr.n_steps, hdr.n_lifetimes, hdr.n_moves,
            hdr.n_gens);
     hex(sp ? sp : "", sp ? sp_len : 0);

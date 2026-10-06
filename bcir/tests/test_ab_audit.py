@@ -384,3 +384,21 @@ def test_the_asn1_rows_measure_the_front_end_over_fixed_modules():
             assert record["digest"] == ab_audit.digest(ab_audit.ROWS[name]()()), name
     finally:
         os.chdir(here)
+
+
+def test_the_xplan_row_measures_the_plan_path_every_reader_takes():
+    """The `xplan` group times the ExecutionPlan path -- mint, encode, decode, verify against
+    the target -- which no StreamPack row reaches, so a slice that touches the plan's codec or
+    its verifier (G19's header flag) is measured where it costs. The output is the plan's
+    bytes and the verdict: a clean one."""
+    here = os.getcwd()
+    os.chdir(_ROOT)
+    try:
+        for name in ab_audit.GROUPS["xplan"]:
+            record = ab_audit.measure_row(name, 1)
+            assert record["status"] == "measured" and record["calls"] > 0, record
+            blob, verdict = ab_audit.ROWS[name]()()
+            assert blob[:4] == b"BPLN" and verdict == [], (name, verdict)
+            assert record["digest"] == ab_audit.digest((blob, verdict)), name
+    finally:
+        os.chdir(here)

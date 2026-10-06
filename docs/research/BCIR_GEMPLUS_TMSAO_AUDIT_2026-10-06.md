@@ -64,6 +64,20 @@ carries as P0 slices:
 Two places that guide future work are stale: the session digest and the systems-engineer skill
 (§6).
 
+**Since the audit.** The completion ladder (§9 of
+[`BCIR_GEMPLUS_ROADMAP.md`](BCIR_GEMPLUS_ROADMAP.md)) closes these slice by slice. The item
+table in §3 stays as measured on `5cd8e03`; what has changed since:
+
+- **Item 1** (heuristics that fail 11% of the time): Partial → **Met**, by G19. A plan may state
+  its placement, `exact_plan` mints the solver's optimum wherever it beats the dispatch, and the
+  verifier holds such a plan to the legality of a placement rather than to the dispatch's:
+  `eft.executed.suboptimal.2domains` 11.07% → 0 and `.3domains` 1.05% → 0.
+- **Item 18** (containment graphs): Missing → **Met**, by ASN1-R (§4.2).
+- **Item 21** (hygienic substitution): its confirmed defect is fixed by ASN1-H (§4.1). It stays
+  Partial for what was never built: the §9.8 tagging environment across modules,
+  ObjectFromObject (§15) and a parameterized object set used as a table constraint.
+- **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
+
 ---
 
 ## 2. What landed, PR by PR (#758 to #808, training excluded)

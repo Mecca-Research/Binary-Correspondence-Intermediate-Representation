@@ -599,12 +599,16 @@ bcir_status bcir_ep_validate(const uint8_t *BCIR_RESTRICT data, size_t len,
     uint16_t version = rd16(data + 4);
     if (version < BCIR_EP_VERSION || version > BCIR_EP_VERSION_MAX) return BCIR_ERR_VERSION;
   }
-  if (rd16(data + 6) != 0u) return BCIR_ERR_RESERVED;
+  if ((rd16(data + 6) & ~BCIR_EP_FLAGS) != 0u) return BCIR_ERR_RESERVED;
   /* v2 carved the liveness byte out of offset 9; on a v1 plan it is reserved (0). */
   if ((rd16(data + 4) < 2u && data[9]) || data[10] || data[11] ||
       data[36] || data[37] || data[38] || data[39])
     return BCIR_ERR_RESERVED;
   if (data[8] > (uint8_t)BCIR_EP_MODE_MAX) return BCIR_ERR_PLAN;
+  /* G19: an explicit placement is a phase-barriered (eft) placement. */
+  if ((rd16(data + 6) & BCIR_EP_FLAG_EXPLICIT_PLACEMENT) != 0u &&
+      data[8] != (uint8_t)BCIR_EP_MODE_EFT)
+    return BCIR_ERR_PLAN;
   if (rd16(data + 4) >= 2u && data[9] > (uint8_t)BCIR_EP_LIVENESS_MAX) return BCIR_ERR_PLAN;
   if (bcir_crc32(data, len - 4) != rd32(data + len - 4)) return BCIR_ERR_CRC;
   if (hdr) {

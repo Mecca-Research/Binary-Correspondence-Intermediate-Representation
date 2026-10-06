@@ -1902,6 +1902,52 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  G19 EXEC-EXACT (2026-10-06): the proved optimum is the plan that runs (audit item 1; the
+  first P1 slice of the completion ladder).
+  - The defect: G4's exact rail proved every instance of the report's section 6.1 corpus, but
+    certified the dispatch's placement without replacing it. `verify_execution_plan` re-derived
+    the placement with the canonical dispatch and refused any other, so the solver's shorter
+    and equally legal placement could be proved but never carried. On the parent (`d16ea67`) a
+    plan carrying the 9-tick optimum of durations (1, 3, 3, 3, 4, 4) on two domains, where the
+    dispatch takes 10, is refused by R9 ("the plan's placement is not what the canonical
+    dispatch produces"). 190 of 1,716 instances on two domains, and 18 on three, ran
+    suboptimal with a certificate saying so.
+  - What landed:
+    - a plan may STATE its placement: header flag bit 0, `PLAN_FLAG_EXPLICIT_PLACEMENT`, legal
+      on an eft plan only. A flag, not a wire version: the record families are unchanged, and a
+      reader that predates it refuses the bit as reserved, so none runs the plan as the
+      canonical placement;
+    - `gem.schedule.placement_violations`, the legality of a phase-barriered placement read
+      from where the dispatch reads it: every claim placed once, on a stream it is eligible for,
+      for its duration, no earlier than its phase's barrier or its hazard predecessors, one claim
+      at a time per stream, and the makespan the last finish. The verifier (R9) holds an
+      explicit placement to it, and the canonical one to equality as before;
+      `plan_from_realization(placement=)` reads it before minting;
+    - `gem.execution_plan.exact_plan` mints the solver's incumbent where it beats the dispatch,
+      the canonical plan byte for byte everywhere else, and returns the certificate with it. A
+      schedule-liveness memory plan must be bound (`schedule_digest`) to the placement the plan
+      carries;
+    - the flag on the native codec, the ASN.1 projection (version 4, `flags [15]`) and the C
+      twin (`bcir_ep_validate`: any other bit `BCIR_ERR_RESERVED`, the flag on a token plan
+      `BCIR_ERR_PLAN`), and in the `execution_plan` gate section, which BCIR Make and CMake
+      both run.
+  - Found while building it: the first version of `placement_violations` read a slot on stream
+    number `domains` -- one past the last -- as the tail, which the dispatch indexes there, so a
+    claim the tail would take was accepted on a stream the target does not have. The witness
+    pins the exact message list, which is how it surfaced.
+  - Gates: `eft.executed.suboptimal.2domains` 11.07% -> 0 and `.3domains` 1.05% -> 0, read
+    through each plan's bytes and the verifier. Every witness of `bcir/tests/test_exec_exact.py`
+    fails on the parent (the API and the flag did not exist), and so does the section's new leg
+    against the parent's C runtime (`BCIR_ERR_RESERVED`). A generated differential over seeded
+    random modules with intra-phase hazards and random step costs mints every plan and admits
+    it, explicit placements among them. Every corpus program's plan is byte-identical to the
+    canonical one: the dispatch is already optimal on all of them.
+  - Measured against `98fcec6` (`ab_audit.py`, groups `sp`, `sched` and the new `xplan`, which
+    times the plan path -- mint, encode, decode, verify -- that no StreamPack row reached):
+    PASS. Every StreamPack and scheduler row's calls and digests are unchanged; `xplan@4`'s
+    digest is unchanged and it makes 14 more calls of 1,583,094, the flag checked in each
+    `validate_plan` and read by the verifier. That row also shows the plan path costing 19
+    times the planner's calls at 4,096 claims, which is the oracle's cost to look at next.
   ASN1-N (2026-10-06): ASN.1 NULL has one abstract value, `codec.NULL`, on every encoding rule
   (audit §4.5, found by ASN1-R's review; a P0 slice of the completion ladder).
   - RED on the parent (`935cb97`), in every witness of `bcir/tests/test_asn1_null.py`:

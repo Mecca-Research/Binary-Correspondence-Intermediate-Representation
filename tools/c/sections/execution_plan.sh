@@ -134,3 +134,37 @@ print(
     f"plan/pack/vector bound; {len(variants)} malformed moves/bindings refused on both rails"
 )
 PY
+# G19: a plan that STATES its placement -- header flag bit 0, the exact solver's optimum on the
+# section 6.1 corpus's first instance the dispatch places suboptimally -- decodes, verifies and
+# re-encodes byte for byte on the C rail; an undefined flag is refused as reserved and the flag
+# on a token-pipelined plan as a plan law (bcir/tests/test_exec_exact.py holds the Python rail).
+"${PYTHON}" - "${tmp}" "${HARNESS}" <<'PY' || { echo "  FAIL: ExecutionPlan explicit placement (G19)"; exit 1; }
+import struct
+import sys
+from bcir.abi import encode_plan
+from bcir.gem.execution_plan import exact_plan
+from bcir.tests.exact_fixtures import six_job_module, six_job_realization, six_job_target
+from bcir.tests.plan_fixtures import c_roundtrip, parse_c_dump, reseal, run_harness
+tmp, exe = sys.argv[1], sys.argv[2]
+module, target = six_job_module(), six_job_target(2)
+plan, cert = exact_plan(module, six_job_realization((1, 3, 3, 3, 4, 4)), target)
+blob = encode_plan(plan)
+dump = c_roundtrip(exe, tmp, blob)
+if not plan.explicit_placement or " flags=1 " not in dump or encode_plan(parse_c_dump(dump)) != blob:
+    print("  the explicit plan did not survive the C rail")
+    sys.exit(1)
+for flags, mode, status in ((2, 0, "BCIR_ERR_RESERVED"), (1, 1, "BCIR_ERR_PLAN")):
+    wire = bytearray(blob)
+    struct.pack_into("<H", wire, 6, flags)
+    wire[8] = mode
+    code, out = run_harness(exe, tmp, reseal(bytes(wire)))
+    if code == 0 or f"status={status}" not in out:
+        print(f"  flags={flags} mode={mode}: expected {status}")
+        print(out)
+        sys.exit(1)
+print(
+    f"  PASS ExecutionPlan explicit placement (G19): the optimum ({plan.makespan} ticks against the "
+    f"dispatch's {cert.heuristic}) Python -> C -> Python byte-identical; an undefined flag "
+    "BCIR_ERR_RESERVED, an explicit token plan BCIR_ERR_PLAN"
+)
+PY

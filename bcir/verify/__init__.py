@@ -1394,7 +1394,9 @@ def verify_execution_plan(
       identity API; the cached identity is re-validated by content) and, with `target`,
       `target_hash` is the target's, the header's stream geometry is the target's, and the
       placement is what the canonical dispatch produces from the plan's own step costs
-      (`schedule_plan(module, realization_of(plan), target, plan.mode)`);
+      (`schedule_plan(module, realization_of(plan), target, plan.mode)`) -- or, for a plan
+      that states its placement (`PLAN_FLAG_EXPLICIT_PLACEMENT`, G19: the exact solver's
+      optimum), a legal phase-barriered placement (`gem.schedule.placement_violations`);
     * with `result`, the steps are the realization's (claim, phase, candidate, lane, width,
       cost), in order;
     * the lifetimes cover the schedule (G5): under schedule liveness each lifetime's ticks
@@ -1490,6 +1492,18 @@ def verify_execution_plan(
                     f"({streams}, {knee})",
                 )
             )
+        elif structural and getattr(plan, "explicit_placement", False):
+            # G19: a plan that STATES its placement (the exact solver's proved optimum) is held
+            # to the legality of a phase-barriered placement -- eligibility, durations, the
+            # phase barrier, the hazard edges, one claim at a time per stream, the makespan --
+            # and not to equality with the canonical dispatch, which would refuse the optimum.
+            # (only an eft plan carries the flag: a wire law, refused above as malformed)
+            from ..gem.schedule import Slot, placement_violations
+
+            slots = [Slot(s.claim_id, s.stream, s.start, s.start + s.duration) for s in plan.steps]
+            durations = {s.claim_id: max(0, s.cost) for s in plan.steps}
+            for why in placement_violations(module, durations, target, slots, plan.makespan):
+                diags.append(Diagnostic("R9", f"explicit placement: {why}"))
         elif structural:
             from ..gem.execution_plan import realization_of
             from ..gem.schedule import schedule_plan

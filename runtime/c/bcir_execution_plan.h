@@ -40,6 +40,7 @@
  * plan that moves nothing is never v3.
  *
  * The wire laws (bcir_ep_verify; the Python codec applies the same predicate): mode legal;
+ * header flags within BCIR_EP_FLAGS, and an explicit placement only on an eft plan;
  * streams >= 1 and 1 <= knee <= streams; per step a legal lane, a nonzero power-of-two
  * width, a stream below `streams` or the tail sentinel, duration == max(0, cost),
  * start + duration <= makespan; claim ids unique; lifetimes with ascending RIDs, a
@@ -103,6 +104,15 @@ typedef enum bcir_ep_coherence {
 } bcir_ep_coherence;
 #define BCIR_EP_COHERENCE_MAX 3
 
+/* Header flags (G19). An explicit placement is a plan that STATES its placement -- the exact
+ * solver's proved optimum (bcir/gem/execution_plan.py::exact_plan) -- instead of carrying the
+ * canonical dispatch's; the Python verifier holds it to the legality of a phase-barriered
+ * placement (bcir/gem/schedule.py::placement_violations), so only an eft plan carries it
+ * (BCIR_ERR_PLAN otherwise). Every other bit is reserved zero (BCIR_ERR_RESERVED), and a
+ * reader that predates the flag refuses the plan, so none runs it as the canonical placement. */
+#define BCIR_EP_FLAG_EXPLICIT_PLACEMENT 1u
+#define BCIR_EP_FLAGS                   1u
+
 /* v3 move flags: which optional claim references an edge carries (a v1/v2 edge spelled
  * "unconstrained" as claim id 0, which is also a legal claim; v3 says it). */
 #define BCIR_EP_MOVE_HAS_AFTER    1u
@@ -115,7 +125,7 @@ typedef enum bcir_ep_coherence {
 typedef struct bcir_ep_header {
   uint8_t  magic[4];        /* "BPLN" */
   uint16_t version;         /* 1..BCIR_EP_VERSION_MAX */
-  uint16_t flags;           /* reserved (0) */
+  uint16_t flags;           /* BCIR_EP_FLAG_* (G19); the other bits reserved (0) */
   uint8_t  mode;            /* bcir_ep_mode */
   uint8_t  liveness;        /* @9 v2: bcir_ep_liveness (reads PHASE on a v1 plan; reserved there) */
   uint8_t  reserved0[2];    /* 10..11 (0) */

@@ -39,6 +39,15 @@ from .streampack import Generation, generation_vector
 #: The two placements `gem.schedule.schedule_plan` produces (phase-barriered, token-pipelined).
 PLAN_MODES = ("eft", "tokens")
 
+#: Header flag (G19): the plan STATES its placement -- the exact solver's proved optimum
+#: (`exact_plan`) -- instead of carrying the canonical dispatch's. A reader holds such a plan
+#: to the legality of a phase-barriered placement (`gem.schedule.placement_violations`), not to
+#: equality with `schedule_eft`; only an eft-mode plan may carry it. A reader that predates the
+#: flag refuses the plan (the header's flags were reserved zero), so no reader runs it believing
+#: it is the canonical placement.
+PLAN_FLAG_EXPLICIT_PLACEMENT = 1
+PLAN_FLAGS = PLAN_FLAG_EXPLICIT_PLACEMENT
+
 #: The decoupled GGG/random tail's stream, as `gem.schedule.TAIL_STREAM` reports it (the
 #: wire spells it 0xFFFFFFFF; the model keeps the scheduler's -1).
 TAIL_STREAM = -1
@@ -164,6 +173,13 @@ class ExecutionPlan:
     # was planned under (`kbcir.movement`); 0 on a plan that moves nothing.
     source_hash: int = 0
     spec_hash: int = 0
+    #: Header flags (`PLAN_FLAGS`): `PLAN_FLAG_EXPLICIT_PLACEMENT` (G19) or 0.
+    flags: int = 0
+
+    @property
+    def explicit_placement(self) -> bool:
+        """Whether the plan states its placement rather than carrying the canonical one."""
+        return bool(self.flags & PLAN_FLAG_EXPLICIT_PLACEMENT)
 
     @property
     def serial(self) -> int:
@@ -194,18 +210,37 @@ def plan_from_realization(
     static_plan=None,
     identity=None,
     locality: bool = True,
+    placement=None,
 ) -> ExecutionPlan:
     """Mint the plan of a K_BCIR realization: its steps placed by the canonical schedule
     artifact (`gem.schedule.schedule_plan`, the same placement `price_scheduled` reads and
     the executors run), bound to the module (R13 digest, computed once via the S1-B
     identity API) and the target, carrying the registry's generation vector and, when a
-    static memory plan is supplied, its lifetimes and addresses."""
+    static memory plan is supplied, its lifetimes and addresses.
+
+    `placement` (G19) is a phase-barriered `GemSchedule` to carry instead -- the exact
+    solver's incumbent (`exact_plan`) -- and marks the plan `PLAN_FLAG_EXPLICIT_PLACEMENT`, so
+    a reader holds it to the legality of a placement rather than to the canonical one."""
     from ..kbcir.provenance import digest_of, hash_target
     from .schedule import TAIL_STREAM as _TAIL, schedule_plan, stream_geometry
 
     if mode not in PLAN_MODES:
         raise ValueError(f"unknown plan mode {mode!r}; expected one of {PLAN_MODES}")
-    sched = schedule_plan(module, result, target, mode, locality)
+    if placement is not None:
+        from .schedule import durations_from, placement_violations
+
+        if mode != "eft":
+            raise ValueError("an explicit placement is a phase-barriered (eft) placement")
+        why = placement_violations(
+            module, durations_from(result), target, placement.slots, placement.makespan
+        )
+        if why:
+            raise ValueError(f"the explicit placement is not a legal placement: {'; '.join(why)}")
+    sched = (
+        placement
+        if placement is not None
+        else schedule_plan(module, result, target, mode, locality)
+    )
     slot_of = {s.claim_id: s for s in sched.slots}
     streams, knee = stream_geometry(target)
     steps: list[PlanStep] = []
@@ -266,7 +301,63 @@ def plan_from_realization(
         lifetimes=lifetimes,
         moves=[],
         generations=generation_vector(module),
+        flags=PLAN_FLAG_EXPLICIT_PLACEMENT if placement is not None else 0,
     )
+
+
+def exact_plan(
+    module: Module,
+    result,
+    target=None,
+    *,
+    budget: int | None = None,
+    plan: str = "plan0",
+    static_plan=None,
+    identity=None,
+):
+    """The plan that runs on the proof rail (G19): `(plan, certificate)`.
+
+    The exact solver (`gem.exact.exact_schedule`) certifies the canonical placement of the
+    realization's own step costs. Where its incumbent is shorter than the canonical dispatch's
+    makespan, the plan carries the incumbent -- the proved optimum when the search closed --
+    as an explicit placement; otherwise it is the canonical plan, byte for byte. Either way
+    the certificate says how far the plan that runs is from optimal. A static memory plan under
+    schedule liveness is bound to the placement whose ticks it was planned against
+    (`schedule_digest`); when the plan carries the solver's placement, the memory plan must be
+    bound to that one (plan it with `schedule=certificate.schedule`), and is refused otherwise
+    rather than carried against the wrong ticks."""
+    from ..kbcir.static_memory import schedule_digest
+    from .exact import DEFAULT_EXACT_BUDGET, exact_schedule
+    from .schedule import durations_from
+
+    certificate = exact_schedule(
+        module,
+        durations_from(result),
+        target,
+        budget=DEFAULT_EXACT_BUDGET if budget is None else budget,
+    )
+    placement = certificate.schedule if certificate.incumbent < certificate.heuristic else None
+    if (
+        placement is not None
+        and getattr(static_plan, "liveness", "phase") == "schedule"
+        and static_plan.schedule_digest != schedule_digest(placement)
+    ):
+        raise ValueError(
+            "the schedule-liveness memory plan was planned against another placement than the "
+            "solver's, which the plan carries; plan it with schedule=certificate.schedule, or "
+            "under phase liveness"
+        )
+    minted = plan_from_realization(
+        module,
+        result,
+        target,
+        "eft",
+        plan=plan,
+        static_plan=static_plan,
+        identity=identity,
+        placement=placement,
+    )
+    return minted, certificate
 
 
 # --- readers ----------------------------------------------------------------------------

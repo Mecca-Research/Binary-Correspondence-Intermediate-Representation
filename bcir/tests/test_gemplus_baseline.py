@@ -248,12 +248,16 @@ def test_the_general_case_rows_are_measured_through_the_sweep():
 
 def test_the_exact_rail_rows_are_measured_through_the_solver():
     """G4 / S2-B: the scheduler group proves the section 6.1 corpus instance by instance --
-    the proof-rail rows at their bounds, the heuristic's own numbers kept as the report's
-    witness, the Stage 2 exit rows at zero, the section 6.3 sweep held to the enumeration."""
+    the proof-rail rows at their bounds (and, G19, the plan that runs at the optimum), the
+    heuristic's own numbers kept as the report's witness, the Stage 2 exit rows at zero, the
+    section 6.3 sweep held to the enumeration."""
     from tools.perf.gemplus_baseline import measure_scheduler
 
     out = measure_scheduler()
     assert out["eft.suboptimal.2domains"] == 0.0 and out["eft.suboptimal.3domains"] == 0.0
+    # G19: the proved optimum is also the plan that runs -- read from its bytes, admitted
+    assert out["eft.executed.suboptimal.2domains"] == 0.0
+    assert out["eft.executed.suboptimal.3domains"] == 0.0
     assert out["eft.worst.2domains"] == 1.0 and out["eft.worst.3domains"] == 1.0
     assert out["eft.mean.2domains"] == 1.0 and out["eft.mean.3domains"] == 1.0
     assert abs(out["eft.heuristic.suboptimal.2domains"] - 190 / 1716) < 1e-12

@@ -406,6 +406,35 @@ METRICS: tuple[Metric, ...] = (
         bound_source="exact branch-and-bound (§6.1)",
         slice_owner="G4",
     ),
+    # --- G19: the plan that runs. The rows above prove the corpus; these two measure what
+    # executes -- the placement a plan's readers take from its bytes (`schedule_of`), once the
+    # verifier admits it. The baseline is the parent tree, where the only placement a plan
+    # could carry and the verifier admit was the canonical dispatch's: the heuristic's own 190
+    # and 18 suboptimal instances, certified but run.
+    Metric(
+        "eft.executed.suboptimal.2domains",
+        "scheduler",
+        "fraction of 1,716 six-job instances whose executed plan is suboptimal, 2 domains",
+        190 / 1716,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the exact rail's proved optimum, carried by the plan as an explicit "
+        "placement (§6.1)",
+        slice_owner="G19",
+    ),
+    Metric(
+        "eft.executed.suboptimal.3domains",
+        "scheduler",
+        "fraction of 1,716 six-job instances whose executed plan is suboptimal, 3 domains",
+        18 / 1716,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the exact rail's proved optimum, carried by the plan as an explicit "
+        "placement (§6.1)",
+        slice_owner="G19",
+    ),
     Metric(
         "solver.unproved.fraction",
         "scheduler",
@@ -2272,12 +2301,17 @@ def measure_scheduler() -> dict[str, float]:
     from the heuristic's placement and reports its incumbent, so the rows are the incumbent
     against the independent partition oracle (`exact_fixtures.partition_optimum`) -- zero
     suboptimal, ratio 1.0 -- while `eft.heuristic.*` keeps the heuristic's own numbers as the
-    witness that the corpus still exhibits what the report measured. `solver.unproved.fraction`
+    witness that the corpus still exhibits what the report measured. `eft.executed.*` (G19) is
+    the plan that RUNS: the one `exact_plan` mints for the instance, read back from its bytes
+    the way every reader takes a placement (`schedule_of`), counted suboptimal when the
+    verifier refuses it or its makespan is above the oracle's. `solver.unproved.fraction`
     and `solver.gap.p95` are the Stage 2 exit rows; `optimize_scheduled.quality` is the
     one-sweep re-selection against the exhaustive enumeration over `exact_fixtures.quality_corpus`
     (worst ratio).
     """
-    from bcir.gem.exact import exact_schedule, exact_selection
+    from bcir.abi.execution_plan_abi import decode_plan, encode_plan
+    from bcir.gem.exact import exact_selection
+    from bcir.gem.execution_plan import exact_plan, schedule_of
     from bcir.kbcir import TARGETS
     from bcir.kbcir.cost import Theta
     from bcir.kbcir.weights import ENERGY, PERF
@@ -2286,8 +2320,10 @@ def measure_scheduler() -> dict[str, float]:
         quality_corpus,
         six_job_corpus,
         six_job_module,
+        six_job_realization,
         six_job_target,
     )
+    from bcir.verify import verify_execution_plan
 
     out: dict[str, float] = {}
     module = six_job_module()
@@ -2296,13 +2332,16 @@ def measure_scheduler() -> dict[str, float]:
     gaps: list[float] = []
     for domains in (2, 3):
         target = six_job_target(domains)
-        suboptimal = heuristic_suboptimal = 0
+        suboptimal = heuristic_suboptimal = executed_suboptimal = 0
         worst = heuristic_worst = 1.0
         mean = heuristic_mean = 0.0
         for durs in corpus:
-            durations = {index + 1: d for index, d in enumerate(durs)}
-            certified = exact_schedule(module, durations, target)
+            # the proof rail's plan and the certificate of its own step costs (the instance)
+            plan, certified = exact_plan(module, six_job_realization(durs), target)
             optimum = partition_optimum(durs, domains)
+            read = decode_plan(encode_plan(plan))
+            refused = bool(verify_execution_plan(module, read, target=target))
+            executed_suboptimal += refused or schedule_of(read).makespan > optimum
             ratio = certified.incumbent / optimum
             heuristic = certified.heuristic / optimum
             suboptimal += ratio > 1
@@ -2318,6 +2357,7 @@ def measure_scheduler() -> dict[str, float]:
         out[f"eft.heuristic.suboptimal.{domains}domains"] = heuristic_suboptimal / len(corpus)
         out[f"eft.heuristic.worst.{domains}domains"] = heuristic_worst
         out[f"eft.heuristic.mean.{domains}domains"] = heuristic_mean / len(corpus)
+        out[f"eft.executed.suboptimal.{domains}domains"] = executed_suboptimal / len(corpus)
     out["solver.unproved.fraction"] = unproved / (2 * len(corpus))
     gaps.sort()
     out["solver.gap.p95"] = gaps[min(len(gaps) - 1, int(round(0.95 * (len(gaps) - 1))))]

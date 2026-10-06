@@ -196,7 +196,11 @@ and the law rail always recomputes from the IR. Since G11 (S1-C) the plan itself
 byte form, `ExecutionPlanV1` ([`kernel/BCIR_EXECUTION_PLAN_ABI.md`](kernel/BCIR_EXECUTION_PLAN_ABI.md)):
 `verify_execution_plan` holds R9 over it (every claim the module declares is stepped once,
 in the declared phase and in topological phase order; the placement is what the canonical
-dispatch produces from the plan's own step costs), R13 (the plan's `module_hash` and
+dispatch produces from the plan's own step costs -- or, for a plan that states its placement
+(header flag bit 0, G19: the exact solver's optimum, minted by `gem.execution_plan.exact_plan`),
+a legal phase-barriered placement of those costs, `gem.schedule.placement_violations`:
+eligibility, durations, the phase barrier, the hazard edges, one claim at a time per stream,
+the makespan), R13 (the plan's `module_hash` and
 `target_hash` are this module's and this target's, validated through the identity API),
 R11 (the carried generation vector is the live registry's, entry for entry) and R10/R11
 across artifacts (the pack is the lowering of its plan — one segment per step with the
