@@ -2,7 +2,9 @@
  * backward, optimizer or multi-step run. FP32 weights/activations; FP64 loss/norm.
  * HF row-major projections and half-split RoPE (ingest permutes only at export).
  * The checked state owns no memory; arenas must be disjoint and float aligned.
- * Caller serializes access; tensor providers must honor bcir_tensor.h contracts. */
+ * Caller serializes access; tensor providers must honor bcir_tensor.h contracts.
+ * The plan's three counts are the arena sums of the step program in
+ * bcir/hosted/models/native_program.py (NDT-GEM), held to it by train.plan.mismatch. */
 #ifndef BCIR_DECODER_TRAIN_H
 #define BCIR_DECODER_TRAIN_H
 #include "bcir_tensor.h"

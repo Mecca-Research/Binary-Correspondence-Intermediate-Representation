@@ -2166,6 +2166,52 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       overstated.
   - The session digest and the systems-engineer skill said everything BCIR emits was TMSAO-4 and
     that G1–G18 were open; both now say what landed and point at the ladder.
+  NDT-GEM (2026-10-09): the native C decoder trainer (#810) wired into GEM+, reviewed and made
+  faster without changing one output bit.
+  - The trainer's step stood outside GEM+: no lower bound priced it, and nothing but the
+    parameter count held the C plan to a second statement of what it allocates.
+    `bcir.hosted.models.native_program.training_step_program` states the step from the spec
+    alone: every arena span in the C plan's order, the values the spans hold (an overwrite
+    starts one, an accumulation keeps the one it reads), and one step per kernel call with its
+    reads, writes, GEMMs and counted contraction work. G25/G26 then price it:
+    `TrainingStepProgram.roofline` is the hierarchical roofline over the C order, and
+    `transient_lower_bound` the concurrent-live bound over the activation and workspace values.
+    `bcir_decoder_train.h` names the program, so the oracle inventory lists the C unit as its
+    twin under the `decoder_train` section.
+  - Four harness rows (`--group train`, graded by `bcir/tests/native_decoder_fixtures.py`):
+    `train.plan.mismatch` 12 -> 0 (the program against `bcir_decoder_make_plan` over six specs;
+    the parent held only the parameter count to Python), `train.mm.mismatch` held at 0 (the GEMM
+    against an independent binary32 emulation of its contract on 20 cases),
+    `train.memory.transient` 1.326 (999,424 bytes held over a 753,664-byte bound) (headroom recorded for NDT-MEM: GEM+'s incumbent
+    layout reaches the bound on the program, the C ABI's fixed spans do not), and
+    `train.step.ms` against a floor measured beside it (G26's compute term at the best rate the
+    same kernel reaches on the step's own GEMM shapes: TMSAO-3, a bound on this host's kernel).
+  - Profiled (callgrind, two bench steps): 278.2M instructions, 69% in `bcir_tensor_mm`, whose
+    B^T path -- every forward linear -- strode through B by k per multiply-add; 16% in the AdamW
+    update; 2% in the finiteness scans. Three changes, each bit-identical by construction and
+    checked so:
+    - the B^T path packs a 32x32 tile of B transposed once per (column, depth) tile and reuses
+      it for every row; each output still adds alpha*a times b for k ascending, tile by tile;
+    - the update's preflight folds every refusal into one flag (`!(|x| <= FLT_MAX)` is exactly
+      "not finite or above FLT_MAX") and the commit is its own loop, so neither branches per
+      element; a moment out of float's range is refused before it is converted;
+    - the finiteness scan checks 1,024-element blocks branch-free.
+    175.0M instructions after (-37%); on this container the step went from 10.0 to 6.9 ms (two runs of seven interleaved rounds: 10.17 / 9.93 -> 6.97 / 6.89 ms), the B^T GEMMs 3.0-3.5x faster and now at the other paths' ~16 GFLOP/s, against a floor of 2.8 ms measured beside them (the gap 3.6x -> 2.5x). Twelve training steps from one
+    initial state are byte-identical before and after in every arena and every event, under
+    GCC 13, clang 18 and clang 23 alike.
+  - Witnesses: the C harness checks the GEMM bit for bit against the ascending-k loop over every
+    transpose pair (C11 and C23), a finite gradient whose second moment leaves float's range is
+    refused with nothing written, and a non-finite weight or accumulated gradient in a later
+    block of its span is refused before the forward pass; the tree's tile offset, a descending
+    or fused accumulation, an untransposed A, two plan counts off by a span, the dropped moment
+    refusal and a one-block scan are each caught (`test_native_decoder.py`,
+    `test_native_program.py`).
+  - Found by the review, fixed: the binding built from the checkout's C sources with no check
+    that they exist -- an installed wheel ships none -- so `NativeDecoder.build` failed inside
+    the compiler; it now names the missing units. Recorded, not changed: the attention backward
+    computes each probability adjoint twice (removing it needs a t-float workspace row, an ABI
+    change, for ~1% of the bench step), and `sqrt`'s errno semantics keep the update scalar
+    unless the build contract adds `-fno-math-errno`.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

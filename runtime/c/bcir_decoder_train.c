@@ -93,7 +93,15 @@ static int ids(bcir_decoder_state *s,const uint32_t *x,size_t n) {
   return 1;
 }
 static int finite_span(const float *x,size_t n) {
-  size_t i; for (i=0;i<n;i++) if (!isfinite(x[i])) return 0;
+  /* !(|x| <= FLT_MAX) is exactly !isfinite(x); a block with no exit vectorizes */
+  size_t i=0,j,end;
+  while (i<n) {
+    int bad=0;
+    end=n-i<1024 ? n : i+1024;
+    for (j=i;j<end;j++) bad|=!(fabsf(x[j])<=FLT_MAX);
+    if (bad) return 0;
+    i=end;
+  }
   return 1;
 }
 typedef struct geometry { size_t n,d,k,f,v,b,t,h,kh,hd,l,nd,nk,nf,nv,a,lp,la; } geometry;
@@ -220,7 +228,7 @@ static int optimizer_valid(const bcir_decoder_adamw *o) {
 }
 int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
     double gs,double *grad_norm) {
-  size_t i,pass; double norm=0.0,scale,b1,b2; int rc=valid(s);
+  size_t i; double norm=0.0,scale,b1,b2; int rc=valid(s);
   bcir_decoder_adamw options;
   if (rc) return rc;
   if (!o) return BCIR_DT_INVALID;
@@ -241,19 +249,31 @@ int bcir_decoder_update(bcir_decoder_state *s,const bcir_decoder_adamw *o,
   scale=gs;
   if (o->grad_clip>0 && norm>o->grad_clip) scale*=o->grad_clip/(norm+1e-6);
   b1=s->beta1_power*o->beta1; b2=s->beta2_power*o->beta2;
-  /* Round moments before using them; preflight every candidate before any commit. */
-  for (pass=0;pass<2;pass++) for (i=0;i<s->plan.parameters;i++) {
-    double g=s->gradients[i]*scale;
-    double mc=o->beta1*s->moment1[i]+(1-o->beta1)*g;
-    double vc=o->beta2*s->moment2[i]+(1-o->beta2)*g*g,wc;
-    float m,v,w;
-    if (!isfinite(mc) || !isfinite(vc) || fabs(mc)>FLT_MAX || vc>FLT_MAX) return BCIR_DT_NUMERIC;
-    m=(float)mc; v=(float)vc;
-    wc=(double)s->weights[i]*(1-o->lr*o->weight_decay)-
-        o->lr*((double)m/(1-b1))/(sqrt((double)v/(1-b2))+o->epsilon);
-    if (!isfinite(wc) || fabs(wc)>FLT_MAX) return BCIR_DT_NUMERIC;
-    w=(float)wc;
-    if (pass) { s->weights[i]=w; s->moment1[i]=m; s->moment2[i]=v; }
+  /* Round moments before using them; preflight every candidate before any commit. The
+   * preflight folds every refusal into one flag -- !(|x| <= FLT_MAX) is exactly "not finite
+   * or above FLT_MAX", NaN included -- so neither loop has an early exit or a branch per
+   * element; the commit recomputes the candidates the preflight admitted, operation for
+   * operation. */
+  {
+    const float *gr=s->gradients; float *wt=s->weights,*m1=s->moment1,*m2=s->moment2;
+    double d1=o->beta1,d2=o->beta2,decay=1-o->lr*o->weight_decay,lr=o->lr,eps=o->epsilon;
+    size_t n=s->plan.parameters; int bad=0;
+    for (i=0;i<n;i++) {
+      double g=gr[i]*scale,mc=d1*m1[i]+(1-d1)*g,vc=d2*m2[i]+(1-d2)*g*g,wc;
+      int in=fabs(mc)<=FLT_MAX && fabs(vc)<=FLT_MAX;
+      /* a moment out of float's range is refused, and only an in-range one is converted
+       * (C11 6.3.1.5 leaves the conversion undefined outside Annex F) */
+      float m=in ? (float)mc : 0.0f,v=in ? (float)vc : 0.0f;
+      wc=(double)wt[i]*decay-lr*((double)m/(1-b1))/(sqrt((double)v/(1-b2))+eps);
+      bad|=!in | !(fabs(wc)<=FLT_MAX);
+    }
+    if (bad) return BCIR_DT_NUMERIC;
+    for (i=0;i<n;i++) {
+      double g=gr[i]*scale,mc=d1*m1[i]+(1-d1)*g,vc=d2*m2[i]+(1-d2)*g*g;
+      float m=(float)mc,v=(float)vc;
+      wt[i]=(float)((double)wt[i]*decay-lr*((double)m/(1-b1))/(sqrt((double)v/(1-b2))+eps));
+      m1[i]=m; m2[i]=v;
+    }
   }
   s->step++; s->beta1_power=b1; s->beta2_power=b2; *grad_norm=norm;
   return BCIR_DT_OK;

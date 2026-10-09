@@ -9,7 +9,7 @@ executes in C. PyTorch remains an independent optional reference.
 
 | Component | Native implementation |
 |---|---|
-| Tensor linear algebra | Blocked row-major GEMM, transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter |
+| Tensor linear algebra | Blocked row-major GEMM (B^T tiles packed once per tile and reused by every row, bit-identical to the ascending-k loop), transpose variants, linear forward, input and accumulated weight VJPs; optional explicit LP64 CBLAS adapter |
 | Vector math | Stable sigmoid/SiLU, SwiGLU VJP, RMSNorm and gamma VJP, half-split RoPE and its transpose; standard libm without fast-math |
 | Attention | Causal softmax attention, Q/K/V backward, GQA group-gradient accumulation, output projection backward |
 | Decoder | Embedding scatter-add backward, both residual paths, both per-layer norms, gate/up/down projections, final norm, tied or untied vocabulary head, mean token cross-entropy |
@@ -65,6 +65,39 @@ fallback. The C ABI accepts native GEMM and SiLU function pointers: C++ belongs 
 framework/vendor/SYCL adapter when that integration requires it. The core contains
 no C++ objects, accelerator discovery or framework runtime.
 
+## The step as a GEM+ program (NDT-GEM)
+
+[`native_program.training_step_program`](../../bcir/hosted/models/native_program.py) states one
+training step from the spec alone, in the vocabulary GEM+'s bounds read: every span of the six
+arenas in the C plan's order, the values those spans hold (an overwrite starts one, an
+accumulation keeps the one it reads), and one step per kernel call in the C rail's order with the
+values it reads and writes, its GEMMs and its counted work. Counted work is two units per
+multiply-add of the contractions every implementation performs: each linear's product and its two
+VJPs, and the causal attention's six contractions. Normalization, softmax, RoPE, SwiGLU, the loss
+and the optimizer are not counted, so the count bounds the step's work from below.
+
+Four rows of the frozen GEM+ harness (`python tools/perf/gemplus_baseline.py --compare --group
+train`, graded by [`native_decoder_fixtures`](../../bcir/tests/native_decoder_fixtures.py)) hold
+the C rail to it:
+
+| Row | Kind | What it holds | Reading |
+|---|---|---|---|
+| `train.plan.mismatch` | exact | the program's arena sums against `bcir_decoder_make_plan` over a six-spec corpus (tied and untied, MHA and GQA, context one, tile-crossing widths) | 0 of 36 (spec, arena) pairs; the parent checked the 24 parameter pairs only |
+| `train.mm.mismatch` | exact | `bcir_tensor_mm` against an independent binary32 emulation of its contract, bit for bit, on 20 cases (every transpose pair, the tiles' edges) | 0 of 20, and 0 on the parent kernel: the contract both keep |
+| `train.memory.transient` | exact | the bytes the C plan reserves for activations and workspace over G26's concurrent-live bound on the same values | 1.326x: 999,424 bytes held over a 753,664-byte bound at the bench shape |
+| `train.step.ms` | wall, floor in the same run | one native step of the bench decoder against G26's roofline compute term: the counted work at the best rate the same kernel reaches on any of the step's own GEMM shapes | 6.9 ms against a 2.8 ms floor measured beside it (the parent: 10.0 ms against the same 2.8 ms) |
+
+The step's floor is a bound on this host's kernel (TMSAO-3), not on the silicon: its peak is a
+rate the kernel was measured to reach, not a declared hardware peak. The memory terms of the
+roofline are not applied to the timed loop, because the bench step's working set stays
+cache-resident from one step to the next and first-touch traffic is not the loop's.
+`TrainingStepProgram.roofline` takes declared peaks and memory levels for a bound on a machine.
+
+The memory row records headroom, not a change: GEM+'s incumbent layout portfolio lays the same
+values out at the bound, so a plan that places the transient values by lifetime instead of one
+span per buffer would hold 245,760 bytes (25%) less at the bench shape. That changes the C ABI's fixed
+spans, so it is its own slice (NDT-MEM, open).
+
 ## Evidence and scope
 
 `tools/models/test_native_decoder.py` compares native logits, every named gradient,
@@ -74,7 +107,8 @@ for gradient trajectories: fused SDPA can leave rounding noise in theoretically 
 context-one Q/K gradients, which Adam's small epsilon amplifies. The timed reference
 uses PyTorch's default eager path and `torch.optim.AdamW` without foreach/fused updates.
 
-`runtime/c/test_decoder_train.c` checks finite differences for every parameter,
+`runtime/c/test_decoder_train.c` checks the GEMM contract bit for bit against the
+ascending-k loop over every transpose pair, finite differences for every parameter,
 gradient accumulation, invalid IDs/capacities/aliasing, atomic numerical update
 rejection and falling loss in the complete native loop. It runs under C11 and
 C23 via `tools/c/sections/decoder_train.sh`; the Python oracle also exercises it.

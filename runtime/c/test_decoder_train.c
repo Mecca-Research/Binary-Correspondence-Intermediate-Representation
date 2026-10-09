@@ -1,6 +1,7 @@
 /* Complete decoder gradients, memory contracts, atomic updates and learning. */
 #include "bcir_decoder_train.h"
 #include <assert.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -66,7 +67,7 @@ static void refusals(void) {
   float oldw[4096],oldm[4096],oldv[4096]; bcir_decoder_event event;
   union { bcir_decoder_event event; uint32_t ids[6]; } aliased={.ids={1,2,3,4}};
   bcir_decoder_plan oldplan=s.plan,p=s.plan; bcir_decoder_spec shape=p.spec;
-  size_t done=99;
+  size_t done=99,i;
   shape.heads=3;
   assert(bcir_decoder_make_plan(&shape,&p)==BCIR_DT_INVALID && p.parameters==oldplan.parameters);
   shape=oldplan.spec; shape.rms_eps=1e300;
@@ -80,6 +81,16 @@ static void refusals(void) {
   bad=s; bad.gradients=w;
   assert(bcir_decoder_loss_backward(&bad,x,y,4,0,&loss)==BCIR_DT_INVALID);
   assert(bcir_decoder_forward(&s,badx,4)==BCIR_DT_INVALID && act[0]==123);
+  /* a non-finite weight or accumulated gradient in any block of its span, the last element
+   * included, is refused before the forward pass runs: the activations stay untouched */
+  for (i=0;i<3;i++) {
+    size_t at=i==0 ? 5 : i==1 ? 1300 : s.plan.parameters-1; float keep=w[at];
+    w[at]=i==1 ? NAN : INFINITY; act[0]=777;
+    assert(bcir_decoder_forward(&s,x,4)==BCIR_DT_NUMERIC && act[0]==777);
+    w[at]=keep; grad[at]=i==1 ? NAN : -INFINITY;
+    assert(bcir_decoder_loss_backward(&s,x,y,4,1,&loss)==BCIR_DT_NUMERIC && act[0]==777);
+    grad[at]=0;
+  }
   assert(bcir_decoder_loss_backward(&s,x,y,4,0,&loss)==0);
   memcpy(oldw,w,sizeof(w)); memcpy(oldm,m,sizeof(m)); memcpy(oldv,v,sizeof(v));
   opt.lr=1e300; opt.weight_decay=1e300;
@@ -90,6 +101,11 @@ static void refusals(void) {
   v[0]=0; grad[0]=NAN;
   assert(bcir_decoder_update(&s,&opt,1,&norm)==BCIR_DT_NUMERIC && s.step==0);
   grad[0]=0;
+  /* a finite gradient whose second moment leaves float's range: refused, nothing written */
+  opt.grad_clip=0; grad[7]=FLT_MAX;
+  assert(bcir_decoder_update(&s,&opt,1,&norm)==BCIR_DT_NUMERIC && s.step==0);
+  assert(!memcmp(oldw,w,sizeof(w)) && !memcmp(oldm,m,sizeof(m)) && !memcmp(oldv,v,sizeof(v)));
+  grad[7]=0; opt.grad_clip=1.0;
   assert(bcir_decoder_run(&s,&opt,badx,y,4,NULL,1,&event,1,&done)==BCIR_DT_INVALID);
   assert(done==99 && !memcmp(oldw,w,sizeof(w)));
   assert(bcir_decoder_run(&s,&opt,x,y,4,NULL,1,&event,0,&done)==BCIR_DT_CAPACITY);
@@ -98,4 +114,28 @@ static void refusals(void) {
   assert(s.step==0 && done==99);
   puts("  PASS native decoder bounds/IDs/alias and atomic optimizer refusals");
 }
-int main(void) { finite_differences(); refusals(); learning(); return 0; }
+/* The GEMM contract every provider path keeps (bcir_tensor.h): beta first, then alpha*a
+ * times b added for k ascending, each operation rounded, no contraction -- checked bit for
+ * bit against the naive loop over every transpose pair and the 32-wide tiles' edges. */
+static void gemm_contract(void) {
+  static float a[65*65],b[65*65],c[65*65],want[65*65];
+  static const size_t shapes[][3]={{1,1,1},{3,33,5},{33,31,65},{32,32,32},{7,65,40},{64,1,33}};
+  size_t s,i,j,l,ta,tb;
+  for (i=0;i<65*65;i++) {
+    a[i]=sinf((float)i*0.71f)*(i%3 ? 4.0f : 0.125f); b[i]=cosf((float)i*1.37f)-0.25f;
+  }
+  for (s=0;s<sizeof(shapes)/sizeof(shapes[0]);s++) for (ta=0;ta<2;ta++) for (tb=0;tb<2;tb++) {
+    size_t m=shapes[s][0],n=shapes[s][1],k=shapes[s][2];
+    float alpha=s%2 ? 0.75f : 1.0f,beta=s%3==1 ? 1.0f : s%3==2 ? 0.5f : 0.0f;
+    for (i=0;i<m*n;i++) want[i]=c[i]=0.01f*(float)(i%17)-0.05f;
+    for (i=0;i<m*n;i++) want[i]=beta==0.0f ? 0.0f : beta*want[i];
+    for (i=0;i<m;i++) for (j=0;j<n;j++) for (l=0;l<k;l++) {
+      float av=alpha*a[ta ? l*m+i : i*k+l];
+      want[i*n+j]+=av*b[tb ? j*k+l : l*n+j];
+    }
+    bcir_tensor_mm(NULL,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,c);
+    assert(!memcmp(c,want,m*n*sizeof(float)));
+  }
+  puts("  PASS native GEMM contract: bit-identical to the ascending-k loop, every transpose");
+}
+int main(void) { gemm_contract(); finite_differences(); refusals(); learning(); return 0; }

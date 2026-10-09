@@ -23,6 +23,11 @@ from bcir.hosted.models.native import (
 )
 
 
+#: The compiler the NDT-GEM witnesses build with (`bcir.toolchain.host_c_compiler`), or None: the
+#: capability their fault table (tools/testing/faults/ndt-gem.json) requires.
+_CC = __import__("bcir.toolchain", fromlist=["host_c_compiler"]).host_c_compiler()
+
+
 def _spec():
     return DecoderSpec(16, 8, 2, 2, 16, activation="silu_gate", n_kv_heads=1)
 
@@ -149,7 +154,7 @@ def test_native_c_harness_c11_and_c23():
             result = subprocess.run(
                 [str(exe)], check=True, capture_output=True, text=True, timeout=60
             )
-            assert result.stdout.count("PASS") == 3
+            assert result.stdout.count("PASS") == 4
 
 
 def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
@@ -182,3 +187,95 @@ def test_native_provider_c_abi_keeps_frameworks_off_execution_path():
             check=True,
             timeout=60,
         )
+
+
+# --- NDT-GEM: the step held to its GEM+ program (bcir/tests/native_decoder_fixtures.py) -----
+
+
+def _ndt_library(tmp, sources=None):
+    from bcir.tests import native_decoder_fixtures as nf
+
+    path = nf.build_library(tmp, sources=sources)
+    return None if path is None else __import__("ctypes").CDLL(str(path))
+
+
+def test_the_compiled_plan_and_gemm_are_the_programs():
+    """Both exact rows at zero: the C plan's arenas are the program's over the corpus, and
+    bcir_tensor_mm is its binary32 contract bit for bit on all 20 cases."""
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        lib = _ndt_library(tmp)
+        if lib is None:
+            return  # no C compiler: the native rows are a skip, never a pass
+        assert nf.plan_mismatch(lib) == 0
+        assert nf.mm_mismatch(lib) == 0
+        assert len(nf.MM_CASES) == 20 and len(nf.PLAN_CORPUS) == 6
+
+
+def test_the_rows_fire_on_wrong_kernels_and_plans():
+    """Wrong copies of the C units, built from copies of their sources (never by editing the
+    tree): the packed B^T tile read without its depth offset, accumulated in descending order,
+    or fused into one rounding; the tb=0 path reading A untransposed; the plan's workspace or
+    cache count off by one span. Each turns its row red."""
+    from bcir.tests import native_decoder_fixtures as nf
+
+    if nf.compiler() is None:
+        return
+    tensor, train = nf.source("bcir_tensor.c"), nf.source("bcir_decoder_train.c")
+    mutants = (
+        ("mm", "bcir_tensor.c", tensor,
+         "bt[l*32+j]=b[(jb+j)*k+lb+l];", "bt[l*32+j]=b[(jb+j)*k+l];"),
+        ("mm", "bcir_tensor.c", tensor,
+         "for (i=0;i<m;i++) for (l=0;l<nl;l++) {", "for (i=0;i<m;i++) for (l=nl;l-->0;) {"),
+        ("mm", "bcir_tensor.c", tensor,
+         "for (j=0;j<nj;j++) ci[j]+=av*bl[j];", "for (j=0;j<nj;j++) ci[j]=fmaf(av,bl[j],ci[j]);"),
+        ("mm", "bcir_tensor.c", tensor,
+         "float av=alpha*a[ta ? l*m+i : i*k+l];", "float av=alpha*a[i*k+l];"),
+        ("plan", "bcir_decoder_train.c", train,
+         "!term(&p.scratch,5,nd)", "!term(&p.scratch,6,nd)"),
+        ("plan", "bcir_decoder_train.c", train,
+         "!term(&la,3,nf)", "!term(&la,4,nf)"),
+    )  # fmt: skip
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        for i, (row, unit, text, old, new) in enumerate(mutants):
+            assert text.count(old) == 1, old
+            lib = _ndt_library(Path(tmp) / str(i), {unit: text.replace(old, new)})
+            fired = nf.mm_mismatch(lib) if row == "mm" else nf.plan_mismatch(lib)
+            assert fired > 0, f"train.{row}.mismatch cannot see {new!r}"
+
+
+def test_the_step_floor_is_measured_beside_the_step():
+    """`train.step.ms`'s floor is G26's compute term at the best rate the same library reaches on
+    the step's own GEMM shapes, in the same run: positive and below the step on a small bench."""
+    from bcir.tests import native_decoder_fixtures as nf
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = nf.build_library(tmp)
+        if path is None:
+            return
+        small = (DecoderSpec(64, 32, 4, 1, 64, activation="silu_gate", n_kv_heads=2), 2, 16)
+        rows = nf.measure_step(path, small)
+        assert 0 < rows["train.step.ms.floor"] < rows["train.step.ms"], rows
+
+
+def test_the_harness_rows_are_the_programs_numbers():
+    """`train.memory.transient`'s frozen baseline is the bench program's own ratio, and every
+    NDT-GEM row the harness declares is one the fixtures measure -- a change to the program or
+    the C plan cannot leave the harness quoting a stale number."""
+    import sys
+
+    from bcir.tests import native_decoder_fixtures as nf
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.perf.gemplus_baseline import METRICS
+
+    rows = {m.key: m for m in METRICS if m.group == "train"}
+    assert set(rows) == {"train.plan.mismatch", "train.mm.mismatch", "train.memory.transient",
+                         "train.step.ms"}  # fmt: skip
+    ratio, held, bound, incumbent = nf.transient_ratio()
+    assert rows["train.memory.transient"].baseline == ratio == held / bound
+    assert (held, bound, incumbent) == (999_424, 753_664, 753_664)
+    assert rows["train.mm.mismatch"].what.startswith(f"of {len(nf.MM_CASES)} GEMM cases")
+    pairs = len(nf.PLAN_CORPUS) * 2  # the parent stated activations and scratch only in C
+    assert rows["train.plan.mismatch"].baseline == pairs

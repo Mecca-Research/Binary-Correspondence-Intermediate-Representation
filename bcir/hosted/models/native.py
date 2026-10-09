@@ -27,6 +27,7 @@ from ...toolchain import host_link_args
 
 _ROOT = Path(__file__).resolve().parents[3]
 _C = _ROOT / "runtime" / "c"
+_UNITS = ("bcir_tensor.h", "bcir_tensor.c", "bcir_decoder_train.h", "bcir_decoder_train.c")
 _FP = ct.POINTER(ct.c_float)
 _UP = ct.POINTER(ct.c_uint32)
 _SZ = ct.c_size_t
@@ -196,6 +197,12 @@ class NativeDecoder:
         compiler = cc or os.environ.get("CC") or shutil.which("clang") or shutil.which("cc")
         if not compiler:
             raise RuntimeError("native decoder training requires a C11 compiler")
+        missing = [u for u in _UNITS if not (_C / u).is_file()]
+        if missing:  # the C units ship with the repository, not with the wheel
+            raise RuntimeError(
+                f"native decoder sources not found under {_C} ({', '.join(missing)}): build "
+                "from a BCIR source checkout"
+            )
         target_dir = Path(directory)
         target_dir.mkdir(parents=True, exist_ok=True)
         suffix = (

@@ -67,6 +67,9 @@ MEASURED_FLOORS = (
     "verify.plan.scope.overhead",
     # added with its row: the native hydrate (CXX4) writes a StreamPack, so writing it once
     "hydrate.native.scale4",
+    # added with its row: the native training step (NDT-GEM), G26's roofline compute term at the
+    # best rate its own kernel reaches on the step's GEMM shapes
+    "train.step.ms",
 )
 
 

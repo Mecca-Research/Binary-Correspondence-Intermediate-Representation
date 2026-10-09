@@ -19,10 +19,27 @@ void bcir_tensor_mm(void *ctx, int ta, int tb, size_t m, size_t n, size_t k,
   for (i=0;i<m*n;i++) c[i]=beta==0.0f ? 0.0f : beta*c[i];
   /* Bounded loops, not scalar source expansion. Ascending k accumulation is retained
    * across blocks; contraction is disabled by the build contract. */
+  if (tb) {
+    /* B^T (every forward linear): a 32x32 tile of B is packed transposed once per (jb, lb)
+     * and reused by every row, so the inner loop is contiguous like the tb=0 path. Each
+     * c[i][j] still adds (alpha*a[i][l])*b[j][l] for l ascending, block by block -- the same
+     * rounded operations in the same order, so the result is bit-identical. */
+    float bt[32*32];
+    for (jb=0;jb<n;jb+=32) for (lb=0;lb<k;lb+=32) {
+      size_t nj=n-jb<32 ? n-jb : 32,nl=k-lb<32 ? k-lb : 32;
+      for (j=0;j<nj;j++) for (l=0;l<nl;l++) bt[l*32+j]=b[(jb+j)*k+lb+l];
+      for (i=0;i<m;i++) for (l=0;l<nl;l++) {
+        float av=alpha*a[ta ? (lb+l)*m+i : i*k+lb+l],*ci=c+i*n+jb;
+        const float *bl=bt+l*32;
+        for (j=0;j<nj;j++) ci[j]+=av*bl[j];
+      }
+    }
+    return;
+  }
   for (ib=0;ib<m;ib+=32) for (lb=0;lb<k;lb+=32) for (jb=0;jb<n;jb+=32)
     for (i=ib;i<m && i<ib+32;i++) for (l=lb;l<k && l<lb+32;l++) {
       float av=alpha*a[ta ? l*m+i : i*k+l];
-      for (j=jb;j<n && j<jb+32;j++) c[i*n+j]+=av*b[tb ? j*k+l : l*n+j];
+      for (j=jb;j<n && j<jb+32;j++) c[i*n+j]+=av*b[l*n+j];
     }
 }
 static bcir_tensor_mm_fn mm(const bcir_tensor_provider *p) {

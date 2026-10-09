@@ -1,0 +1,63 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_native_decoder:_CC",
+    "bcir.tests.test_native_decoder:test_the_compiled_plan_and_gemm_are_the_programs",
+    "bcir.tests.test_native_decoder:test_native_c_harness_c11_and_c23",
+    "bcir.tests.test_native_program:test_the_arenas_are_the_plans_closed_forms",
+    "bcir.tests.test_native_program:test_the_counted_work_is_the_contractions_worked_by_hand"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NG1 the packed B^T tile reads B without its depth offset",
+      "new": "bt[l*32+j]=b[(jb+j)*k+l];",
+      "old": "bt[l*32+j]=b[(jb+j)*k+lb+l];",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NG2 the packed B^T path accumulates each tile's depth in descending order",
+      "new": "for (i=0;i<m;i++) for (l=nl;l-->0;) {",
+      "old": "for (i=0;i<m;i++) for (l=0;l<nl;l++) {",
+      "path": "runtime/c/bcir_tensor.c"
+    },
+    {
+      "expects": "test_the_compiled_plan_and_gemm_are_the_programs",
+      "label": "NG3 the C plan reserves one workspace span too many",
+      "new": "!term(&p.scratch,6,nd)",
+      "old": "!term(&p.scratch,5,nd)",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NG4 the update's preflight no longer refuses a moment out of float's range",
+      "new": "      bad|=!(fabs(wc)<=FLT_MAX);",
+      "old": "      bad|=!in | !(fabs(wc)<=FLT_MAX);",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_native_c_harness_c11_and_c23",
+      "label": "NG5 the finiteness scan stops after its first block",
+      "new": "    if (bad) return 0;\n    break;",
+      "old": "    if (bad) return 0;\n    i=end;",
+      "path": "runtime/c/bcir_decoder_train.c"
+    },
+    {
+      "expects": "test_the_arenas_are_the_plans_closed_forms",
+      "label": "NG6 the program sizes a layer's normed input as a KV span",
+      "new": "cache = {\"n1\": nk,",
+      "old": "cache = {\"n1\": nd,",
+      "path": "bcir/hosted/models/native_program.py"
+    },
+    {
+      "expects": "test_the_counted_work_is_the_contractions_worked_by_hand",
+      "label": "NG7 the program counts one of the causal attention's two forward contractions",
+      "new": "new=(c(\"p\"), c(\"ctx\")), work=2 * causal)",
+      "old": "new=(c(\"p\"), c(\"ctx\")), work=4 * causal)",
+      "path": "bcir/hosted/models/native_program.py"
+    }
+  ]
+}
