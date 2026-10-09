@@ -116,6 +116,16 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   byte for byte to the planned kernel's under clang. Still Partial: the MLIR Transform
   export, the unprojected IRDL operations, polyhedral depth and the ILP/CSP rail are G28 and
   G30 to G32.
+- **Item 9** (joint scheduling and memory): G28 solves a region's schedule and layout as
+  one model on a dependency-free exact CSP (`kbcir.csp`, `kbcir.joint`): every start and
+  offset together, `w_time x makespan + w_memory x extent` minimized, certified against a
+  reference that enumerates every start vector. On 40 generated regions the parent's
+  schedule-then-layout pipeline loses 26 objective units in all; the joint rail none. Met for
+  one region (one phase) at small size; the placement axis (G8's movement) is not in the same
+  model, and nothing larger than the brute-force-checked sizes is claimed.
+- **Item 14**, continued: the CSP/ILP rail and the optional CP-SAT adapter (`hosted.cpsat`,
+  held to the in-tree solver) are G28; MLIR Transform export, the unprojected IRDL operations
+  and polyhedral depth remain (G30 to G32).
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

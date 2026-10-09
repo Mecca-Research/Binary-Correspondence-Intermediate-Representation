@@ -38,7 +38,7 @@ from fractions import Fraction
 
 from ..model import Module
 
-REGION_KINDS = ("path", "schedule", "memory", "selection")
+REGION_KINDS = ("path", "schedule", "memory", "selection", "joint")
 CERTIFICATE_CLASSES = ("TMSAO-1", "TMSAO-2", "TMSAO-3", "TMSAO-4")
 RAILS = ("fast", "proof", "measured")
 
@@ -59,6 +59,10 @@ SOLVERS: dict[tuple[str, str], tuple[str, str]] = {
     ("selection", "fast"): ("optimize_scheduled", "trials"),
     ("selection", "proof"): ("exact_selection", "assignments"),
     ("selection", "measured"): ("measured_best", "samples"),
+    # the joint schedule x memory region (G28): the parent's pipeline -- schedule, then lay
+    # out -- is the fast rail; the CSP branch and bound over both at once is the proof rail
+    ("joint", "fast"): ("sequential_plan", "placements"),
+    ("joint", "proof"): ("joint_optimum", "nodes"),
 }
 
 #: The instance size (claims, items, claims) up to which the proof rail is expected to close
@@ -69,6 +73,7 @@ BOUNDED_SIZE = {
     "schedule": 64,
     "memory": 512,
     "selection": 12,
+    "joint": 4,
 }  # a DP closes at any size
 
 #: `value`: the value law (G27) priced the search at zero work units -- the gap over every
@@ -365,6 +370,23 @@ def solve_selection(request: DispatchRequest, module: Module, h, theta, policy, 
     granted = "TMSAO-1" if selection.stop_reason == "optimal" else "TMSAO-2"
     return selection, DispatchRecord(
         decision, selection.stop_reason, selection.assignments, "enumeration", granted
+    )
+
+
+def solve_joint(request: DispatchRequest, inst):
+    """Dispatch a joint schedule x memory region (G28): the parent's pipeline
+    (`kbcir.joint.sequential_plan`) or the exact joint optimum on the CSP rail
+    (`kbcir.joint.joint_optimum`, seeded with that pipeline's plan)."""
+    from ..kbcir.joint import joint_optimum, sequential_plan
+
+    decision = dispatch(request)
+    if decision.rail == "fast":
+        plan = sequential_plan(inst)
+        return plan, DispatchRecord(decision, "heuristic", len(inst.tasks), "none", "TMSAO-4")
+    plan = joint_optimum(inst, budget=decision.budget)
+    granted = "TMSAO-1" if plan.optimal else "TMSAO-2"
+    return plan, DispatchRecord(
+        decision, plan.stop_reason, plan.nodes, "csp objective bound", granted
     )
 
 
@@ -669,6 +691,7 @@ __all__ = [
     "policy_ranking",
     "priced_budget",
     "ranked",
+    "solve_joint",
     "solve_measured",
     "solve_memory",
     "solve_memory_by_value",

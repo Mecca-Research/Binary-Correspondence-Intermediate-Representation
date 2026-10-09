@@ -589,6 +589,46 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G27",
     ),
     Metric(
+        "csp.optimum.disagreements",
+        "csp",
+        "of 150 generated finite-domain models (linear rows of every relation, cumulatives, 2-D "
+        "no-overlaps), those where the in-tree CSP's verdict or certified optimum is not brute "
+        "force's (the parent had no constraint or integer-programming solver)",
+        150,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a complete branch and bound over finite domains is exact (TMSAO-1); "
+        "brute force enumerates every assignment (bcir/tests/test_csp.py)",
+        slice_owner="G28",
+    ),
+    Metric(
+        "joint.optimum.disagreements",
+        "csp",
+        "of 40 generated schedule x memory regions, those whose joint plan is not legal, not "
+        "certified optimal, or not the reference optimum (every start vector enumerated, each "
+        "laid out by the exact layout); the parent had no joint rail",
+        40,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the joint CSP is exact on a region; the reference shares no code with it",
+        slice_owner="G28",
+    ),
+    Metric(
+        "joint.excess",
+        "csp",
+        "the planner's objective over the joint optimum, summed over the same 40 regions "
+        "(w_time x makespan + w_memory x extent; the parent's pipeline -- schedule first, lay "
+        "out after -- leaves 26)",
+        26,
+        "objective units",
+        "exact",
+        bound=0,
+        bound_source="the joint optimum itself (kbcir.joint.joint_optimum, certified)",
+        slice_owner="G28",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3486,6 +3526,15 @@ def measure_io() -> dict[str, float]:
     return {"io.pebble.unsound": float(unsound), "io.pebble.loose.fraction": loose / len(instances)}
 
 
+def measure_csp() -> dict[str, float]:
+    """G28: the in-tree CSP against brute force, and the joint planner against the reference
+    optimum (bcir/tests/joint_fixtures.py::measure, which the tests grade the same way). Pure
+    Python: measured wherever the interpreter runs."""
+    from bcir.tests.joint_fixtures import measure
+
+    return measure()
+
+
 def measure_value_dispatch() -> dict[str, float]:
     """G27: the priced memory rail's overspend on the memory corpus, and the delegated modules'
     output against the planned kernels' under clang (bcir/tests/value_fixtures.py::measure,
@@ -3565,6 +3614,7 @@ _MEASURERS = {
     "dataflow": measure_dataflow,
     "io": measure_io,
     "value": measure_value_dispatch,
+    "csp": measure_csp,
     "memory-production": measure_memory_production,
 }
 
