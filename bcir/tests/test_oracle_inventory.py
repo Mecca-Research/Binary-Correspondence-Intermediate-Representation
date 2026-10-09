@@ -37,7 +37,10 @@ def test_a_stale_inventory_fails_the_check():
     tmp = tempfile.mkdtemp(prefix="bcir-inventory-")
     original = oi.OUT
     try:
-        oi.OUT = os.path.relpath(os.path.join(tmp, "inventory.md"), oi.ROOT)
+        # absolute: `_rel` joins it onto ROOT, which keeps an absolute path (and its drive) as it
+        # is -- a path relative to ROOT does not exist when the temp directory is on another
+        # drive, as on GitHub's Windows runners (C: against the D: workspace)
+        oi.OUT = os.path.join(tmp, "inventory.md")
         assert oi.main(["--check"]) == 1  # missing
         assert oi.main([]) == 0 and oi.main(["--check"]) == 0
         with open(os.path.join(oi.ROOT, oi.OUT), "a", encoding="utf-8") as f:
