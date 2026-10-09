@@ -393,6 +393,10 @@ against the runner scripts both ways (a fixture nothing runs, a runner reference
 fixture), and `tools/irdl/check_inventory.py` reconciles the ODS dialect, the IRDL projection
 and `mlir/irdl/MANIFEST.json` — every operation projected under the one naming rule or
 declared unprojected with its reason, no stale entry, ghost, orphan or naming collision.
+Since G32 the projection covers 132 of the dialect's 133 operations, the newly projected ones
+with their operand and result constraints, and a mistyped twin of each constraint is refused by
+stock `mlir-opt` (`test_irdl_inventory.py`); `bcir.asm` is the one declared gap, for the IRDL
+limit its manifest entry names.
 The structural laws themselves are held to ONE corpus (S0-6, `bcir/verify/structural_corpus.py`):
 every case is a rail-neutral spec with the law family and the diagnostic each rail must
 produce; the quick tier runs the oracle over all of it, `mlir/test/passes/structural_corpus.mlir`

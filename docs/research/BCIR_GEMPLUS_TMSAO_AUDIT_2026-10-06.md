@@ -133,6 +133,12 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   dropped or widened fact; and LLVM's own range reasoning re-derives every exported flag (77
   over 120 generated claims, none missed, none extra). Met for i32 elementwise claims on the
   oracle's lowering; `freeze`, other widths, the C emitters and the law rail are not built.
+- **Item 14**, continued: G32 projects 37 of the 38 unprojected IRDL operations -- the
+  driver-subset core with the integer widths ODS declares, the GEM model seams, the ECN
+  objects -- each round-tripped by stock `mlir-opt` and each constraint shown to refuse a
+  mistyped program. `bcir.asm` stays declared unprojected for the reason IRDL itself gives: a
+  constraint variable binds one type for a whole variadic group, and `asm`'s operands are
+  heterogeneous. MLIR Transform export and polyhedral depth remain (G31, G30).
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

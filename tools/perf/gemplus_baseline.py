@@ -682,6 +682,19 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G29",
     ),
     Metric(
+        "irdl.unprojected",
+        "irdl",
+        "ODS operations the IRDL projection does not define (declared in mlir/irdl/MANIFEST.json "
+        "with their reason; tools/irdl/check_inventory.py reconciles the three sources)",
+        38,
+        "operations",
+        "exact",
+        bound=1,
+        bound_source="bcir.asm has no IRDL spelling: a constraint variable binds one type for a "
+        "whole variadic group, and its operands are heterogeneous (checked on MLIR 23)",
+        slice_owner="G32",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3588,6 +3601,18 @@ def measure_poison() -> dict[str, float]:
     return measure()
 
 
+def measure_irdl() -> dict[str, float]:
+    """G32: the operations the IRDL projection leaves undefined, from the inventory gate over
+    the dialect's own sources. Pure text: measured on every host."""
+    sys.path.insert(0, str(ROOT))
+    from tools.irdl.check_inventory import audit
+
+    report = audit(ROOT)
+    if report["state"] != "PASS":
+        raise AssertionError(f"the IRDL inventory does not reconcile: {report['findings'][:4]}")
+    return {"irdl.unprojected": float(report["counts"]["unprojected_declared"])}
+
+
 def measure_csp() -> dict[str, float]:
     """G28: the in-tree CSP against brute force, and the joint planner against the reference
     optimum (bcir/tests/joint_fixtures.py::measure, which the tests grade the same way). Pure
@@ -3678,6 +3703,7 @@ _MEASURERS = {
     "value": measure_value_dispatch,
     "csp": measure_csp,
     "poison": measure_poison,
+    "irdl": measure_irdl,
     "memory-production": measure_memory_production,
 }
 
