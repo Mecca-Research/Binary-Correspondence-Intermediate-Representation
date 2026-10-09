@@ -584,3 +584,30 @@ def test_the_c_twin_reads_every_planned_v3_plan_and_refuses_every_malformed_edge
         for name, blob, _plan in variants:
             assert wire_refuses(blob), name
             assert c_refuses(exe, tmp, blob), name
+
+
+def test_the_c_twin_reads_an_explicit_placement_and_refuses_undefined_flags():
+    """G19 on the C rail: a plan that states its placement (header flag bit 0, the exact
+    solver's optimum) decodes, verifies and re-encodes byte for byte; an undefined flag is
+    refused as reserved and the flag on a token-pipelined plan as a plan law -- the statuses
+    the Python codec's refusals correspond to."""
+    from bcir.gem.execution_plan import exact_plan
+    from bcir.tests.exact_fixtures import six_job_module, six_job_realization, six_job_target
+
+    if compiler() is None:
+        return
+    module, target = six_job_module(), six_job_target(2)
+    plan, _certificate = exact_plan(module, six_job_realization((1, 3, 3, 3, 4, 4)), target)
+    assert plan.explicit_placement
+    blob = encode_plan(plan)
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build_harness(tmp)
+        dump = c_roundtrip(exe, tmp, blob)
+        assert " flags=1 " in dump, dump[:300]
+        assert encode_plan(parse_c_dump(dump)) == blob
+        for flags, mode, status in ((2, 0, "BCIR_ERR_RESERVED"), (1, 1, "BCIR_ERR_PLAN")):
+            wire = bytearray(blob)
+            struct.pack_into("<H", wire, 6, flags)
+            wire[8] = mode
+            code, out = run_harness(exe, tmp, reseal(bytes(wire)))
+            assert code != 0 and f"status={status}" in out, (flags, mode, out)

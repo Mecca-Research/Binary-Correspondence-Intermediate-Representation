@@ -25,7 +25,9 @@ That is the one place in this module where raising is correct: there is no cost 
 the best case, which is the wrong answer for expected cost — so `Semiring.MIN_PLUS` is a
 choice a caller makes, `Semiring.MAX_PLUS` is available for worst-case real-time work, and
 neither is the default hidden inside a function. A module that hard-coded `min` would be
-answering a question the caller did not ask.
+answering a question the caller did not ask. The expected cost lives where the branch
+probabilities do (G22): `kbcir.expectation` solves it as the absorbing Markov chain it is, and
+the registry's `expectation` semiring (`kbcir.objectives`) is its path sum on a DAG.
 
 **Legality first, unchanged.** §5's second limit: this is a legality-preserving optimization
 only over a graph that was legality-checked first. Nothing here consults a verifier, and
@@ -56,7 +58,7 @@ class Semiring(Enum):
     worst case, which is what a real-time budget needs. Neither is the expected cost, and
     this module deliberately does not offer one: expectation needs branch probabilities, at
     which point it is a Markov chain rather than a shortest path, and pretending otherwise
-    is exactly the overclaim §5 warns about.
+    is exactly the overclaim §5 warns about -- `kbcir.expectation` is where it lives.
     """
 
     MIN_PLUS = "min-plus"

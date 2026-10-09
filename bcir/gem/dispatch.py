@@ -22,15 +22,23 @@ The learned ranker (`kbcir.moegate`, the L2 gate over the policy portfolio) may 
 rail enumerates and may never remove a member: `ranked` holds any ranker to a permutation of
 the census, so the set of candidates a certificate ranges over is the same with the ranker and
 without it.
+
+The value law (G27) prices the depth: with an `OptimizationValue` -- expected executions and
+the declared price of a work unit -- a proof-rail search is granted at most
+`executions x gap / price` work units of the caller's budget, none at a closed gap, so no
+search spends more than its gap could repay (`dispatch_by_value`). And a straight-line module
+-- one executable claim in the LLVM lowering subset, nothing for K_BCIR to price but the lane
+width -- is delegated to LLVM (`delegation`), whose vectorizer makes that one decision itself.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from fractions import Fraction
 
 from ..model import Module
 
-REGION_KINDS = ("path", "schedule", "memory", "selection")
+REGION_KINDS = ("path", "schedule", "memory", "selection", "joint")
 CERTIFICATE_CLASSES = ("TMSAO-1", "TMSAO-2", "TMSAO-3", "TMSAO-4")
 RAILS = ("fast", "proof", "measured")
 
@@ -51,6 +59,10 @@ SOLVERS: dict[tuple[str, str], tuple[str, str]] = {
     ("selection", "fast"): ("optimize_scheduled", "trials"),
     ("selection", "proof"): ("exact_selection", "assignments"),
     ("selection", "measured"): ("measured_best", "samples"),
+    # the joint schedule x memory region (G28): the parent's pipeline -- schedule, then lay
+    # out -- is the fast rail; the CSP branch and bound over both at once is the proof rail
+    ("joint", "fast"): ("sequential_plan", "placements"),
+    ("joint", "proof"): ("joint_optimum", "nodes"),
 }
 
 #: The instance size (claims, items, claims) up to which the proof rail is expected to close
@@ -61,9 +73,12 @@ BOUNDED_SIZE = {
     "schedule": 64,
     "memory": 512,
     "selection": 12,
+    "joint": 4,
 }  # a DP closes at any size
 
-STOP_REASONS = ("optimal", "budget", "heuristic", "measured")
+#: `value`: the value law (G27) priced the search at zero work units -- the gap over every
+#: execution repays less than one -- so the fast rail's incumbent stands with its gap stated.
+STOP_REASONS = ("optimal", "budget", "heuristic", "measured", "value")
 
 
 @dataclass(frozen=True)
@@ -358,6 +373,23 @@ def solve_selection(request: DispatchRequest, module: Module, h, theta, policy, 
     )
 
 
+def solve_joint(request: DispatchRequest, inst):
+    """Dispatch a joint schedule x memory region (G28): the parent's pipeline
+    (`kbcir.joint.sequential_plan`) or the exact joint optimum on the CSP rail
+    (`kbcir.joint.joint_optimum`, seeded with that pipeline's plan)."""
+    from ..kbcir.joint import joint_optimum, sequential_plan
+
+    decision = dispatch(request)
+    if decision.rail == "fast":
+        plan = sequential_plan(inst)
+        return plan, DispatchRecord(decision, "heuristic", len(inst.tasks), "none", "TMSAO-4")
+    plan = joint_optimum(inst, budget=decision.budget)
+    granted = "TMSAO-1" if plan.optimal else "TMSAO-2"
+    return plan, DispatchRecord(
+        decision, plan.stop_reason, plan.nodes, "csp objective bound", granted
+    )
+
+
 def solve_measured(
     request: DispatchRequest, corpus, module: Module, h, theta, census, *, workload, incumbent=None
 ):
@@ -410,6 +442,188 @@ def solve_measured(
         decision, "measured", spent, "corpus median", "TMSAO-3" if silicon else "TMSAO-4"
     )
     return (policy, result), record
+
+
+# --- the value of optimization (G27) -----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OptimizationValue:
+    """What deeper optimization is worth (G27): how many times the plan is expected to execute,
+    and the declared exchange rate -- the cost units of the region's own objective (bytes of
+    extent, ticks of makespan) that one work unit of search is worth. A gap of `g` units over
+    `n` executions repays at most `n * g` cost units, so no search of more than `n * g / price`
+    work units is ever worth running. Exact: an integer or a Fraction, never a float."""
+
+    executions: int
+    price: int | Fraction = 1
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.executions, int)
+            or isinstance(self.executions, bool)
+            or self.executions < 0
+        ):
+            raise ValueError("executions must be a non-negative integer")
+        if (
+            isinstance(self.price, bool)
+            or not isinstance(self.price, (int, Fraction))
+            or self.price <= 0
+        ):
+            raise ValueError("the price of a work unit must be a positive integer or Fraction")
+
+    def affordable(self, gap: int) -> int:
+        """The whole work units a gap of `gap` cost units repays over every execution."""
+        price = Fraction(self.price)
+        return (self.executions * gap * price.denominator) // price.numerator
+
+
+def priced_budget(
+    requested: int, incumbent: int, lower_bound: int, value: OptimizationValue
+) -> int:
+    """The work the value law grants (G27): none when the incumbent meets its bound (nothing
+    is left to find), otherwise the smaller of the caller's budget and what the gap repays. A
+    bound above its incumbent is unsound and refused."""
+    gap = incumbent - lower_bound
+    if gap < 0:
+        raise ValueError(
+            f"the lower bound {lower_bound} is above the incumbent {incumbent}: unsound"
+        )
+    if gap == 0:
+        return 0
+    return min(requested, value.affordable(gap))
+
+
+def dispatch_by_value(
+    request: DispatchRequest, incumbent: int, lower_bound: int, value: OptimizationValue
+) -> DispatchDecision:
+    """The dispatch law with the depth of optimization priced by its value (G27): the table
+    (`dispatch`) decides the rail; a proof-rail request is then granted only the work its
+    gap repays (`priced_budget`). A closed gap needs no search -- the fast rail's incumbent is
+    optimal (TMSAO-1); a gap that repays less than one work unit is stated, not searched
+    (TMSAO-2, stop reason `value`); otherwise the proof rail runs on the priced budget. A
+    heuristic or measured request is the table's answer unchanged: the value law prices
+    search, it does not invent one."""
+    base = dispatch(request)
+    if base.rail != "proof":
+        return base
+    gap = incumbent - lower_bound
+    budget = priced_budget(request.budget, incumbent, lower_bound, value)
+    fast_solver, fast_units = SOLVERS[(request.kind, "fast")]
+    if gap == 0:
+        return DispatchDecision(
+            request.kind,
+            request.size,
+            request.requested,
+            0,
+            "fast",
+            fast_solver,
+            fast_units,
+            "TMSAO-1",
+            f"the fast rail's incumbent {incumbent} meets the lower bound: it is optimal and "
+            "no search is priced",
+        )
+    if budget == 0:
+        return DispatchDecision(
+            request.kind,
+            request.size,
+            request.requested,
+            0,
+            "fast",
+            fast_solver,
+            fast_units,
+            "TMSAO-2",
+            f"a gap of {gap} over {value.executions} executions repays {value.executions * gap} "
+            f"cost units, less than one work unit at {value.price}: no search is priced and "
+            "the gap is stated",
+        )
+    priced = dispatch(replace(request, budget=budget))
+    return replace(
+        priced,
+        reason=f"{priced.reason}; the budget is priced by value: min({request.budget}, "
+        f"{value.executions} x {gap} / {value.price}) = {budget} {priced.units}",
+    )
+
+
+def _priced_out(decision: DispatchDecision) -> tuple[str, str]:
+    """The stop reason and class of a fast-rail answer under the value law."""
+    if decision.expected == "TMSAO-1":
+        return "optimal", "TMSAO-1"
+    if decision.expected == "TMSAO-2":
+        return "value", "TMSAO-2"
+    return "heuristic", "TMSAO-4"
+
+
+def solve_memory_by_value(request: DispatchRequest, items, value: OptimizationValue):
+    """Dispatch a memory region by value: first-fit and its alignment-aware bound price the
+    search (`dispatch_by_value`), and the exact layout runs only on the work its gap repays.
+    Returns (layout, record); the record's `spent` never exceeds the priced budget."""
+    from ..kbcir.static_memory import exact_layout, first_fit_layout
+
+    rows = list(items)
+    fast = first_fit_layout(rows)
+    decision = dispatch_by_value(request, fast.extent, fast.lower_bound, value)
+    if decision.rail == "fast":
+        stop, granted = _priced_out(decision)
+        return fast, DispatchRecord(decision, stop, 0, "concurrent-live", granted)
+    layout = exact_layout(rows, decision.budget)
+    granted = "TMSAO-1" if layout.stop_reason == "optimal" else "TMSAO-2"
+    return layout, DispatchRecord(
+        decision, layout.stop_reason, layout.expansions, "concurrent-live", granted
+    )
+
+
+def solve_schedule_by_value(
+    request: DispatchRequest,
+    module: Module,
+    durations: dict[int, int],
+    value: OptimizationValue,
+    target=None,
+):
+    """Dispatch a schedule region by value: the root of the exact search (budget zero: the
+    artifact's makespan and the bound stack) prices the search, and the search resumes from
+    that root on the priced budget -- the same answer the uninterrupted run would give."""
+    from .exact import exact_schedule
+
+    root = exact_schedule(module, durations, target, budget=0)
+    decision = dispatch_by_value(request, root.heuristic, root.lower_bound, value)
+    if decision.rail == "fast":
+        stop, granted = _priced_out(decision)
+        return root, DispatchRecord(decision, stop, 0, _strongest(root.bounds), granted)
+    exact = exact_schedule(module, durations, target, budget=decision.budget, resume=root.state)
+    granted = "TMSAO-1" if exact.optimal else "TMSAO-2"
+    return exact, DispatchRecord(
+        decision, exact.stop_reason, exact.expansions, _strongest(exact.bounds), granted
+    )
+
+
+@dataclass(frozen=True)
+class Delegation:
+    """Whether a module is handed to LLVM instead of planned (G27), and why."""
+
+    delegated: bool
+    reason: str
+
+
+def delegation(module: Module) -> Delegation:
+    """Delegate a straight-line module to LLVM (G27). A module whose one executable claim is
+    in the LLVM lowering subset (`lower.llvm.straight_line_claim`) has no schedule, memory or
+    selection region for K_BCIR to price, and the subset realizes only the candidate's lane
+    width -- the decision LLVM's own loop vectorizer makes. Deep optimization does not pay
+    there: the module is lowered without a plan (`lower.llvm.emit_delegated_ll`), and its
+    output equals the planned kernel's (`lower.llvm.compare_delegated`). Every other module
+    is planned, with the reason it is not straight-line."""
+    from ..lower.llvm import straight_line_claim
+
+    try:
+        claim = straight_line_claim(module)
+    except NotImplementedError as exc:
+        return Delegation(False, f"planned: not straight-line ({exc})")
+    return Delegation(
+        True,
+        f"delegated to LLVM: one executable claim ({claim.opcode.name.lower()}, claim "
+        f"{claim.id}) and no region to price; the lane width is LLVM's vectorizer's to choose",
+    )
 
 
 # --- the census and the ranker ----------------------------------------------------------------
@@ -466,15 +680,23 @@ __all__ = [
     "SOLVERS",
     "STOP_REASONS",
     "CensusError",
+    "Delegation",
     "DispatchDecision",
     "DispatchRecord",
     "DispatchRequest",
+    "OptimizationValue",
+    "delegation",
     "dispatch",
+    "dispatch_by_value",
     "policy_ranking",
+    "priced_budget",
     "ranked",
+    "solve_joint",
     "solve_measured",
     "solve_memory",
+    "solve_memory_by_value",
     "solve_path",
     "solve_schedule",
+    "solve_schedule_by_value",
     "solve_selection",
 ]

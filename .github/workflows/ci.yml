@@ -1305,6 +1305,8 @@ jobs:
 
       - name: Hot/cold import quarantine (research organs stay off the simple path)
         run: python3 tools/perf/import_graph.py --check
+      - name: Oracle inventory is current (CXX0)
+        run: python3 tools/perf/oracle_inventory.py --check
 
   python-style:
     name: Python style (ruff format --check + ruff check)

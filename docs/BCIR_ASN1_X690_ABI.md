@@ -233,6 +233,12 @@ OER and JER decoders admit exactly the plans `decode_plan` and the C twin admit.
 decoders read the 18 malformed documents its projection could spell (a same-bank "move", a lossy
 or remat writeback); every one of the 87 is refused now (`movement.asn1.accepted`).
 
+Projection version 4 (G19) adds the plan's `flags`, the native header's: bit 0 says the plan
+states its placement (the exact solver's optimum, `gem.execution_plan.exact_plan`) instead of
+carrying the canonical dispatch's. It defaults to 0, so a plan with the canonical placement
+projects as before apart from the version, and the native laws apply here as there: an undefined
+bit, or bit 0 on a token-pipelined plan, is refused by every encoder and decoder.
+
 ```asn1
 BCIR-ExecutionPlan { iso(1) identified-organization(3) dod(6) internet(1)
                      private(4) enterprise(1) 62596 3 }
@@ -253,7 +259,8 @@ DEFINITIONS IMPLICIT TAGS ::= BEGIN
       generations   [11] SEQUENCE OF Generation   DEFAULT {},
       liveness      [12] Liveness DEFAULT phase,
       sourceHash    [13] INTEGER DEFAULT 0,
-      specHash      [14] INTEGER DEFAULT 0 }
+      specHash      [14] INTEGER DEFAULT 0,
+      flags         [15] INTEGER DEFAULT 0 }
 
   Mode     ::= ENUMERATED { eft(0), tokens(1) }
   Liveness ::= ENUMERATED { phase(0), schedule(1) }

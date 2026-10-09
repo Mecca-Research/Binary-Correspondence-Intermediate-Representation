@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .._collector import paused
 from ..abi.streampack_abi import encode
 from ..kbcir.cost import HProfile, Theta
 from ..kbcir.delta import Delta, IncrementalPlan
@@ -77,6 +78,7 @@ class DeltaChain:
     __slots__ = ("h", "theta", "policy", "plan", "depth", "link", "_plan", "_pack", "_verify")
 
     @classmethod
+    @paused
     def build(
         cls,
         module: Module,
@@ -120,6 +122,7 @@ class DeltaChain:
         """How many times the verdict was re-derived from scratch (a delta outside v0's shape)."""
         return self._verify.rebuilds
 
+    @paused
     def apply(self, delta: Delta) -> Link:
         """Advance the chain by `delta` and return the new link."""
         plan = self._plan

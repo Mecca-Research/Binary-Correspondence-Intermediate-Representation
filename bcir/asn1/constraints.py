@@ -37,6 +37,30 @@ Bounds = tuple[int | None, int | None]
 UNBOUNDED: Bounds = (None, None)
 
 
+@dataclass(frozen=True)
+class ValueReference:
+    """A value written by NAME in a constraint: X.680 §51 lets every `Value` be a DefinedValue.
+
+    `INTEGER (0..ub)` and `SEQUENCE (SIZE (1..maxNrofCells)) OF ...` are how real modules are
+    written -- PKIX names its upper bounds, 3GPP its maxima -- and the parser cannot know what
+    `ub` is: a value assigned later in the module, one imported from another, or a dummy of a
+    parameterized assignment that only an instantiation binds (X.683 §9.7). So it records the
+    name, and the front end resolves it before the constraint is attached.
+
+    The parser used to treat a named endpoint as unrepresentable and DROP the constraint. That
+    was harmless for BER/DER, which encode a value the same way whatever constrains it, and
+    wrong for PER and OER, which choose the encoding from the constraint: `INTEGER (0..ub)`
+    with `ub INTEGER ::= 255` encoded 200 as `0200c8` where every conforming encoder writes
+    `c8`. A constraint that still carries a reference is refused (`require_satisfiable`), so
+    an unresolved name is a refusal and never a different encoding.
+    """
+
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Constraint:
     """Base of the constraint model. Subclasses describe a set of permitted values."""
 
@@ -54,6 +78,30 @@ class Constraint:
 
     def permits(self, value) -> bool:  # pragma: no cover - abstract
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class TypeReference(Constraint):
+    """§51.3 a ContainedSubtype written by name: `INTEGER (Small ^ 0..3)`, `(INCLUDES Small)`.
+
+    The element is every value of the named type, which only the front end can look up; it
+    is replaced by that type's own constraint before the constraint is attached, and refused
+    if it survives (`require_satisfiable`), for the same reason a `ValueReference` is: the
+    parser used to drop the whole constraint, and under PER that changed the octets."""
+
+    name: str
+
+    def value_bounds(self) -> Bounds:  # pragma: no cover - never attached unresolved
+        raise Asn1Error(f"contained subtype {self.name!r} was never resolved")
+
+    def size_bounds(self) -> Bounds:  # pragma: no cover - never attached unresolved
+        raise Asn1Error(f"contained subtype {self.name!r} was never resolved")
+
+    def permits(self, value) -> bool:  # pragma: no cover - never attached unresolved
+        raise Asn1Error(f"contained subtype {self.name!r} was never resolved")
+
+    def __str__(self) -> str:
+        return f"({self.name})"
 
 
 @dataclass(frozen=True)
@@ -370,6 +418,8 @@ def _render(value) -> str:
     requires it to be size 1), so it must keep its quotes: printing `FROM ("0".."9")` as
     `FROM (0..9)` re-parses as an integer range, and the alphabet silently becomes None.
     """
+    if isinstance(value, ValueReference):
+        return value.name  # an unresolved name prints as the reference the module wrote
     if isinstance(value, str):
         return '"' + value.replace('"', '""') + '"'
     if isinstance(value, bool):
@@ -475,7 +525,87 @@ def is_unsatisfiable(constraint: Constraint | None) -> bool:
     return False
 
 
+def references(constraint: Constraint | None) -> tuple[str, ...]:
+    """Every value the constraint names rather than states, in the order written."""
+    found: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, TypeReference):
+            found.append(node.name)
+        elif isinstance(node, SingleValue):
+            if isinstance(node.value, ValueReference):
+                found.append(node.value.name)
+        elif isinstance(node, ValueRange):
+            for end in (node.lower, node.upper):
+                if isinstance(end, ValueReference):
+                    found.append(end.name)
+        elif isinstance(node, (Size, PermittedAlphabet)):
+            walk(node.inner)
+        elif isinstance(node, (Union, Intersection)):
+            for part in node.parts:
+                walk(part)
+        elif isinstance(node, Extensible):
+            walk(node.root)
+
+    walk(constraint)
+    return tuple(found)
+
+
+def resolve_references(constraint: Constraint | None, lookup, subtype=None) -> Constraint | None:
+    """A copy of `constraint` with each named element replaced.
+
+    `lookup(reference, context)` answers a `ValueReference`; `context` says what the value
+    bounds: `"size"` inside SIZE (a length, so a non-negative integer), `"alphabet"` inside FROM
+    (a character string), `"value"` elsewhere (a value of the constrained type). `subtype(
+    reference, context)` answers a `TypeReference` with a constraint element (or returns the
+    reference to leave it). Either may return the reference itself to leave a name for a later
+    pass; the lookups decide and refuse, and this walk only rebuilds the tree, so a constraint
+    with nothing to replace is returned as the same object."""
+
+    def go(node, context: str):
+        if isinstance(node, TypeReference):
+            return node if subtype is None else subtype(node, context)
+        if isinstance(node, SingleValue):
+            if isinstance(node.value, ValueReference):
+                value = lookup(node.value, context)
+                return node if value is node.value else SingleValue(value)
+            return node
+        if isinstance(node, ValueRange):
+            low, high = node.lower, node.upper
+            if isinstance(low, ValueReference):
+                low = lookup(low, context)
+            if isinstance(high, ValueReference):
+                high = lookup(high, context)
+            if low is node.lower and high is node.upper:
+                return node
+            return ValueRange(low, high, node.lower_open, node.upper_open)
+        if isinstance(node, Size):
+            inner = go(node.inner, "size")
+            return node if inner is node.inner else Size(inner)
+        if isinstance(node, PermittedAlphabet):
+            inner = go(node.inner, "alphabet")
+            return node if inner is node.inner else PermittedAlphabet(inner)
+        if isinstance(node, (Union, Intersection)):
+            parts = tuple(go(part, context) for part in node.parts)
+            if all(a is b for a, b in zip(parts, node.parts)):
+                return node
+            return type(node)(parts)
+        if isinstance(node, Extensible):
+            root = go(node.root, context)
+            return node if root is node.root else Extensible(root)
+        return node
+
+    return None if constraint is None else go(constraint, "value")
+
+
 def require_satisfiable(constraint: Constraint | None, where: str) -> None:
+    named = references(constraint)
+    if named:
+        raise Asn1Error(
+            f"{where}: constraint {constraint} names {named[0]!r}, a value that was never "
+            f"resolved; under PER and OER the constraint decides the octets, so it is "
+            f"refused rather than dropped (X.680 51)"
+        )
     if is_unsatisfiable(constraint):
         raise Asn1Error(
             f"{where}: constraint {constraint} permits no value at all (X.680 49); a "
@@ -491,11 +621,15 @@ __all__ = [
     "PermittedAlphabet",
     "Size",
     "SingleValue",
+    "TypeReference",
     "UNBOUNDED",
     "Union",
     "ValueRange",
+    "ValueReference",
     "effective_size_constraint",
     "effective_value_constraint",
     "is_unsatisfiable",
+    "references",
     "require_satisfiable",
+    "resolve_references",
 ]

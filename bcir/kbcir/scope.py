@@ -240,6 +240,10 @@ def scope_for(
 
     if workload is not None and callable(getattr(workload, "component", None)):
         workload = workload.component()  # a `kbcir.workload.Workload` (G13): its W component
+    if uncertainty is not None and callable(getattr(uncertainty, "component", None)):
+        # a `kbcir.expectation.BranchProfile` (G22): the measured branch counts an expected
+        # cost was priced under, so two plans priced under different profiles differ in U
+        uncertainty = uncertainty.component()
 
     return ExecutionScope(
         P=program,

@@ -1,6 +1,7 @@
 /*===- bcir_hydrate.h - claim graph + plan -> StreamPack bytes -------------===
  *
- * The C twin of bcir/gem/hydrate: serializes a planned claim graph (bcir_cir.h +
+ * The C twin of bcir/gem/streampack.py's hydrate, for the C front end's single-phase claim
+ * graphs: serializes a planned claim graph (bcir_cir.h +
  * bcir_plan.h) into the frozen StreamPack binary ABI (bcir_streampack.h) -- one segment
  * per claim, in claim order. The bytes it writes are accepted by the bounds-checked
  * decoder (bcir_runtime.c) and run by the executor (bcir_exec.c), so this closes the

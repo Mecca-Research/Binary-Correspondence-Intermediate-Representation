@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 
+from .._collector import paused
 from ..model import (
     ATOMIC_OPCODES,
     ISOLATED_DOMAINS,
@@ -48,7 +49,7 @@ from .semiring import dag_shortest_path
 from .weights import PERF, Policy, weights
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Candidate:
     lane: Lane
     width: int  # vector element lanes (1 = scalar)
@@ -782,6 +783,7 @@ def _relax_column(crow, k, w, hot, shares, pn, dn, pw, dw, dist, pred, first):
     return narrow, wide
 
 
+@paused
 def optimize(module: Module, h: HProfile, theta: Theta, policy: Policy = PERF) -> RealizationResult:
     """The min-plus shortest path over the layered realization DAG (one column per claim,
     one node per realization, SOURCE before the first column and SINK after the last), over

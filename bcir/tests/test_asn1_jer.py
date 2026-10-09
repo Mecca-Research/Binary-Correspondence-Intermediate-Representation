@@ -17,7 +17,7 @@ completes the set: one abstract value now has a checked encoding under five rule
 
 from __future__ import annotations
 
-from bcir.asn1.codec import Asn1Error
+from bcir.asn1.codec import NULL, Asn1Error
 from bcir.asn1.constraints import Extensible, Size, ValueRange
 from bcir.asn1.jer import (
     JER_OID,
@@ -262,7 +262,7 @@ def test_the_scalar_encodings():
     assert encode_jer(Primitive(Universal.BOOLEAN, "BOOLEAN"), False) == b"false"
     assert encode_jer(Primitive(Universal.INTEGER, "INTEGER"), -42) == b"-42"  # §21
     assert encode_jer(Primitive(Universal.INTEGER, "INTEGER"), 0) == b"0"
-    assert encode_jer(Primitive(Universal.NULL, "NULL"), None) == b"null"  # §26
+    assert encode_jer(Primitive(Universal.NULL, "NULL"), NULL) == b"null"  # §26
     oid = Primitive(Universal.OBJECT_IDENTIFIER, "OBJECT IDENTIFIER")
     assert encode_jer(oid, (2, 1, 7)) == b'"2.1.7"'  # §32
     assert decode_jer(b'"2.1.7"', oid) == (2, 1, 7)
@@ -740,7 +740,7 @@ def test_unwrapped_drops_the_wrapping_object():
         (("n", 5), b"5"),
         (("s", "hi"), b'"hi"'),
         (("l", [1, 2]), b"[1,2]"),
-        (("z", None), b"null"),
+        (("z", NULL), b"null"),
     ):
         assert encode_jer(kind, value, instructions=instructions) == text
         assert decode_jer(text, kind, instructions=instructions) == value

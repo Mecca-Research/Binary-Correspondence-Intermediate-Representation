@@ -14,6 +14,18 @@
  *   test_kplan --bench-floor IN REPS ROUNDS   the same median for writing the realization's bytes
  *                                    once -- the floor of `planner.native.scale4`; prints
  *                                    "FLOOR <ns> <bytes>"
+ *   test_kplan --hydrate IN PLAN BIND OUT   the native hydrate (CXX4): BKPI + BKPR + BKPB ->
+ *                                    the StreamPack in OUT; prints the first refusal's status
+ *                                    name, or "OK <bytes>"
+ *   test_kplan --hydrate-batch IN OUT  IN: a sequence of (u32 length, BKPI, u32 length, BKPR,
+ *                                    u32 length, BKPB); OUT: for each, (u32 status, u32 length,
+ *                                    StreamPack bytes)
+ *   test_kplan --api-hydrate IN      the hydrate's fail-closed API laws over the seed's own plan
+ *                                    and a binding built here; prints "API OK <checks>"
+ *   test_kplan --bench-hydrate IN PLAN BIND REPS ROUNDS   the median hydrate, in ns
+ *   test_kplan --bench-hydrate-floor IN PLAN BIND REPS ROUNDS   the same median for writing the
+ *                                    pack's bytes once -- the floor of `hydrate.native.scale4`;
+ *                                    prints "FLOOR <ns> <bytes>"
  *===----------------------------------------------------------------------===*/
 #define _POSIX_C_SOURCE 200809L /* clock_gettime under a strict -std */
 #include <stdint.h>
@@ -364,6 +376,285 @@ static int run_bench_floor(const char *path, long reps, long rounds) {
   return 0;
 }
 
+/* ---- the native hydrate (CXX4) --------------------------------------------------------- */
+
+static void put32m(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)v;
+  p[1] = (uint8_t)(v >> 8);
+  p[2] = (uint8_t)(v >> 16);
+  p[3] = (uint8_t)(v >> 24);
+}
+
+/* A binding for a decoded input with RID i + 1 at index i, a generation for each declared
+ * resource and the plan "plan0" (what the oracle writes for a module whose RIDs are those). */
+static uint8_t *make_binding(const bcir_kp_input *in, size_t *len) {
+  uint32_t n_gens = 0;
+  for (uint32_t r = 0; r < in->n_resources; r++)
+    if (in->data[in->off_resources + BCIR_KP_RESOURCE_SIZE * (size_t)r]) n_gens++;
+  size_t n = BCIR_KP_BINDING_HEADER_SIZE + 4u * (size_t)in->n_resources + 12u * (size_t)n_gens +
+             5u + BCIR_KP_CRC_SIZE;
+  uint8_t *b = (uint8_t *)calloc(n, 1);
+  if (!b) return NULL;
+  memcpy(b, "BKPB", 4);
+  put32m(b + 8, in->n_resources);
+  put32m(b + 12, n_gens);
+  put32m(b + 16, 1u);
+  put32m(b + 20, 5u);
+  size_t at = BCIR_KP_BINDING_HEADER_SIZE;
+  for (uint32_t r = 0; r < in->n_resources; r++, at += 4u) put32m(b + at, r + 1u);
+  for (uint32_t r = 0; r < in->n_resources; r++) {
+    if (!in->data[in->off_resources + BCIR_KP_RESOURCE_SIZE * (size_t)r]) continue;
+    put32m(b + at, r + 1u);
+    put32m(b + at + 4u, r % 3u);
+    put32m(b + at + 8u, r % 5u);
+    at += 12u;
+  }
+  memcpy(b + at, "plan0", 5);
+  at += 5u;
+  put32m(b + at, bcir_crc32(b, at));
+  *len = n;
+  return b;
+}
+
+/* Decode the three records and hydrate; the first refusal's status. A pack the native hydrate
+ * writes must be one the runtime's own reader accepts in full (bcir_sp_verify_semantic). */
+static bcir_status hydrate_one(const uint8_t *ki, size_t ki_len, const uint8_t *kr, size_t kr_len,
+                               const uint8_t *kb, size_t kb_len, uint8_t **out, size_t *out_len) {
+  bcir_kp_input in;
+  bcir_kp_realization r;
+  bcir_kp_binding b;
+  *out = NULL;
+  *out_len = 0;
+  bcir_status st = bcir_kp_decode_input(ki, ki_len, &in);
+  if (st == BCIR_OK) st = bcir_kp_decode_realization(kr, kr_len, &r);
+  if (st == BCIR_OK) st = bcir_kp_decode_binding(kb, kb_len, &b);
+  size_t scratch_len = 0, cap = 0;
+  if (st == BCIR_OK) st = bcir_kp_hydrate_scratch_size(&in, &b, &scratch_len);
+  if (st != BCIR_OK) return st;
+  void *scratch = malloc(scratch_len ? scratch_len : 1u);
+  if (!scratch) return BCIR_ERR_NOSPACE;
+  st = bcir_kp_hydrate_size(&in, &r, &b, scratch, scratch_len, &cap);
+  uint8_t *buf = st == BCIR_OK ? (uint8_t *)malloc(cap) : NULL;
+  if (st == BCIR_OK && !buf) st = BCIR_ERR_NOSPACE;
+  if (st == BCIR_OK) st = bcir_kp_hydrate(&in, &r, &b, scratch, scratch_len, buf, cap, out_len);
+  free(scratch);
+  if (st != BCIR_OK) {
+    free(buf);
+    *out_len = 0;
+    return st;
+  }
+  bcir_streampack_header hdr;
+  bcir_status back = bcir_sp_validate(buf, *out_len, &hdr);
+  if (back == BCIR_OK) back = bcir_sp_verify_semantic(buf, *out_len, hdr.map_gen, hdr.data_gen);
+  if (back != BCIR_OK || *out_len != cap) {
+    fprintf(stderr, "the native hydrate wrote a StreamPack the runtime refuses (%s)\n",
+            status_name(back));
+    exit(3);
+  }
+  *out = buf;
+  return BCIR_OK;
+}
+
+static int run_hydrate_batch(const char *in_path, const char *out_path) {
+  size_t len = 0;
+  uint8_t *all = read_file(in_path, &len);
+  if (!all) return 2;
+  FILE *out = fopen(out_path, "wb");
+  if (!out) {
+    free(all);
+    return 2;
+  }
+  size_t pos = 0, cases = 0;
+  int ok = 1;
+  while (ok && pos < len) {
+    const uint8_t *rec[3];
+    size_t rec_len[3];
+    for (int k = 0; k < 3; k++) {
+      if (len - pos < 4u || rd32(all + pos) > len - pos - 4u) {
+        ok = 0;
+        break;
+      }
+      rec_len[k] = rd32(all + pos);
+      rec[k] = all + pos + 4u;
+      pos += 4u + rec_len[k];
+    }
+    if (!ok) {
+      fprintf(stderr, "hydrate-batch: a record runs past the end\n");
+      break;
+    }
+    uint8_t *pack = NULL;
+    size_t pack_len = 0;
+    bcir_status st =
+        hydrate_one(rec[0], rec_len[0], rec[1], rec_len[1], rec[2], rec_len[2], &pack, &pack_len);
+    put32(out, (uint32_t)st);
+    put32(out, (uint32_t)pack_len);
+    if (pack_len) fwrite(pack, 1, pack_len, out);
+    free(pack);
+    cases++;
+  }
+  if (fclose(out) != 0) ok = 0;
+  free(all);
+  printf("BATCH %zu\n", cases);
+  return ok ? 0 : 2;
+}
+
+/* The hydrate's fail-closed API laws, over the seed record, its own plan and a built binding. */
+static int run_api_hydrate(const char *path) {
+  size_t len = 0, plan_len = 0, bind_len = 0;
+  uint8_t *data = read_file(path, &len), *plan = NULL;
+  bcir_kp_input in;
+  if (!data || bcir_kp_decode_input(data, len, &in) != BCIR_OK ||
+      plan_one(data, len, &plan, &plan_len) != BCIR_OK) {
+    free(data);
+    return 2;
+  }
+  uint8_t *bind = make_binding(&in, &bind_len);
+  bcir_kp_realization r;
+  bcir_kp_binding b, zero_b;
+  memset(&zero_b, 0, sizeof zero_b);
+  if (!bind || bcir_kp_decode_realization(plan, plan_len, &r) != BCIR_OK) {
+    free(data);
+    free(plan);
+    free(bind);
+    return 2;
+  }
+  CHECK(bcir_kp_decode_binding(bind, bind_len, NULL) == BCIR_ERR_NOSPACE, "binding decode, no out");
+  memset(&b, 0x5A, sizeof b);
+  CHECK(bcir_kp_decode_binding(bind, bind_len - 1u, &b) != BCIR_OK &&
+            all_zero((const uint8_t *)&b, sizeof b),
+        "a refused binding zeroes its view");
+  CHECK(bcir_kp_decode_binding(bind, bind_len, &b) == BCIR_OK, "binding decode");
+  size_t scratch_len = 0, cap = 0, out_len = 7;
+  CHECK(bcir_kp_hydrate_scratch_size(&in, &zero_b, &scratch_len) == BCIR_ERR_NOSPACE &&
+            scratch_len == 0,
+        "hydrate_scratch_size of an undecoded binding");
+  CHECK(bcir_kp_hydrate_scratch_size(&in, &b, &scratch_len) == BCIR_OK, "hydrate_scratch_size");
+  uint8_t *scratch = (uint8_t *)malloc(scratch_len + 1u);
+  if (!scratch) return 2;
+  CHECK(bcir_kp_hydrate_size(&in, &r, &b, scratch, scratch_len, &cap) == BCIR_OK && cap,
+        "hydrate_size");
+  uint8_t *out = (uint8_t *)malloc(cap + 16u), *again = (uint8_t *)malloc(cap);
+  if (!out || !again) return 2;
+  memset(out, 0xA5, cap + 16u);
+  CHECK(bcir_kp_hydrate(&in, &r, &b, scratch, scratch_len, out, cap, NULL) == BCIR_ERR_NOSPACE &&
+            all_zero(out, cap),
+        "hydrate with no out_len zeroes the output");
+  memset(out, 0xA5, cap + 16u);
+  if (scratch_len) {
+    CHECK(bcir_kp_hydrate(&in, &r, &b, scratch, scratch_len - 1u, out, cap, &out_len) ==
+                  BCIR_ERR_NOSPACE &&
+              out_len == 0 && all_zero(out, cap),
+          "a short scratch zeroes the output");
+  }
+  memset(out, 0xA5, cap + 16u);
+  out_len = 7;
+  CHECK(bcir_kp_hydrate(&in, &r, &b, scratch, scratch_len, out, cap - 1u, &out_len) ==
+                BCIR_ERR_NOSPACE &&
+            out_len == 0 && all_zero(out, cap - 1u),
+        "a short output is zeroed");
+  CHECK(bcir_kp_hydrate(&in, &r, &b, NULL, scratch_len, out, cap, &out_len) == BCIR_ERR_NOSPACE,
+        "hydrate with no scratch");
+  CHECK(bcir_kp_hydrate(&in, &r, &b, scratch, scratch_len, out, cap, &out_len) == BCIR_OK &&
+            out_len == cap,
+        "hydrate");
+  memset(scratch, 0xFF, scratch_len + 1u);
+  size_t again_len = 0;
+  CHECK(bcir_kp_hydrate(&in, &r, &b, scratch + 1, scratch_len, again, cap, &again_len) ==
+                BCIR_OK &&
+            again_len == cap && memcmp(out, again, cap) == 0,
+        "a rehydrate over dirty, misaligned scratch writes the same bytes");
+  bcir_streampack_header hdr;
+  CHECK(bcir_sp_validate(out, out_len, &hdr) == BCIR_OK &&
+            bcir_sp_verify_semantic(out, out_len, hdr.map_gen, hdr.data_gen) == BCIR_OK,
+        "the runtime's reader accepts the pack");
+  /* a binding for another input: one resource fewer (when there is one to drop) */
+  if (in.n_resources) {
+    bcir_kp_binding short_b = b;
+    short_b.n_resources--;
+    size_t bad = 1;
+    CHECK(bcir_kp_hydrate_size(&in, &r, &short_b, scratch, scratch_len, &bad) ==
+                  BCIR_ERR_PLANNER &&
+              bad == 0,
+          "a binding of another resource count");
+  }
+  free(again);
+  free(out);
+  free(scratch);
+  free(bind);
+  free(plan);
+  free(data);
+  if (failures) return 1;
+  printf("API OK %d\n", checks);
+  return 0;
+}
+
+static int run_bench_hydrate(char **argv, long reps, long rounds) {
+  size_t lens[3];
+  uint8_t *rec[3];
+  for (int k = 0; k < 3; k++) rec[k] = read_file(argv[k], &lens[k]);
+  bcir_kp_input in;
+  bcir_kp_realization r;
+  bcir_kp_binding b;
+  if (!rec[0] || !rec[1] || !rec[2] || reps < 1 || rounds < 1 || rounds > 64 ||
+      bcir_kp_decode_input(rec[0], lens[0], &in) != BCIR_OK ||
+      bcir_kp_decode_realization(rec[1], lens[1], &r) != BCIR_OK ||
+      bcir_kp_decode_binding(rec[2], lens[2], &b) != BCIR_OK)
+    return 2;
+  size_t scratch_len = 0, cap = 0, out_len = 0;
+  if (bcir_kp_hydrate_scratch_size(&in, &b, &scratch_len) != BCIR_OK) return 2;
+  void *scratch = malloc(scratch_len ? scratch_len : 1u);
+  if (!scratch || bcir_kp_hydrate_size(&in, &r, &b, scratch, scratch_len, &cap) != BCIR_OK)
+    return 2;
+  uint8_t *out = (uint8_t *)malloc(cap);
+  if (!out) return 2;
+  uint64_t per[64];
+  for (long k = 0; k < rounds; k++) {
+    uint64_t t0 = now_ns();
+    for (long i = 0; i < reps; i++)
+      if (bcir_kp_hydrate(&in, &r, &b, scratch, scratch_len, out, cap, &out_len) != BCIR_OK)
+        return 2;
+    per[k] = (now_ns() - t0) / (uint64_t)reps;
+  }
+  qsort(per, (size_t)rounds, sizeof per[0], cmp_u64);
+  printf("BENCH %llu %zu\n", (unsigned long long)per[rounds / 2], out_len);
+  free(out);
+  free(scratch);
+  for (int k = 0; k < 3; k++) free(rec[k]);
+  return 0;
+}
+
+/* The floor of `hydrate.native.scale4` (tools/perf/gemplus_baseline.py): writing the pack once.
+ * The hydrate writes every byte of the StreamPack (records, blocks, notes, the CRC over them), so
+ * storing that many bytes into a warm buffer is work no hydrate avoids -- `--bench-floor`'s
+ * convention, under the bench's conditions: the same three records (one hydrate fixes the pack's
+ * length), the same clock and median. */
+static int run_bench_hydrate_floor(char **argv, long reps, long rounds) {
+  size_t lens[3];
+  uint8_t *rec[3];
+  for (int k = 0; k < 3; k++) rec[k] = read_file(argv[k], &lens[k]);
+  uint8_t *pack = NULL;
+  size_t wrote = 0;
+  int ok = rec[0] && rec[1] && rec[2] && reps >= 1 && rounds >= 1 && rounds <= 64 &&
+           hydrate_one(rec[0], lens[0], rec[1], lens[1], rec[2], lens[2], &pack, &wrote) ==
+               BCIR_OK;
+  for (int k = 0; k < 3; k++) free(rec[k]);
+  if (!ok) {
+    free(pack);
+    return 2;
+  }
+  floor_memset(pack, 0, wrote); /* warm, as the bench's output buffer is after its first pack */
+  uint64_t per[64];
+  for (long r = 0; r < rounds; r++) {
+    uint64_t t0 = now_ns();
+    for (long i = 0; i < reps; i++) floor_memset(pack, (int)(i & 0xFF), wrote);
+    per[r] = (now_ns() - t0) / (uint64_t)reps;
+  }
+  qsort(per, (size_t)rounds, sizeof per[0], cmp_u64);
+  printf("FLOOR %llu %zu\n", (unsigned long long)per[rounds / 2], wrote);
+  free(pack);
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc == 4 && strcmp(argv[1], "--plan") == 0) {
     size_t len = 0;
@@ -398,8 +689,39 @@ int main(int argc, char **argv) {
     return run_bench(argv[2], strtol(argv[3], NULL, 10), strtol(argv[4], NULL, 10));
   if (argc == 5 && strcmp(argv[1], "--bench-floor") == 0)
     return run_bench_floor(argv[2], strtol(argv[3], NULL, 10), strtol(argv[4], NULL, 10));
+  if (argc == 6 && strcmp(argv[1], "--hydrate") == 0) {
+    size_t lens[3];
+    uint8_t *rec[3];
+    for (int k = 0; k < 3; k++) rec[k] = read_file(argv[2 + k], &lens[k]);
+    if (!rec[0] || !rec[1] || !rec[2]) return 2;
+    uint8_t *pack = NULL;
+    size_t pack_len = 0;
+    bcir_status st =
+        hydrate_one(rec[0], lens[0], rec[1], lens[1], rec[2], lens[2], &pack, &pack_len);
+    for (int k = 0; k < 3; k++) free(rec[k]);
+    if (st != BCIR_OK) {
+      printf("%s\n", status_name(st));
+      return 0;
+    }
+    int ok = write_file(argv[5], pack, pack_len);
+    free(pack);
+    if (!ok) return 2;
+    printf("OK %zu\n", pack_len);
+    return 0;
+  }
+  if (argc == 4 && strcmp(argv[1], "--hydrate-batch") == 0)
+    return run_hydrate_batch(argv[2], argv[3]);
+  if (argc == 3 && strcmp(argv[1], "--api-hydrate") == 0) return run_api_hydrate(argv[2]);
+  if (argc == 7 && strcmp(argv[1], "--bench-hydrate") == 0)
+    return run_bench_hydrate(argv + 2, strtol(argv[5], NULL, 10), strtol(argv[6], NULL, 10));
+  if (argc == 7 && strcmp(argv[1], "--bench-hydrate-floor") == 0)
+    return run_bench_hydrate_floor(argv + 2, strtol(argv[5], NULL, 10),
+                                   strtol(argv[6], NULL, 10));
   fprintf(stderr,
           "usage: test_kplan --plan IN OUT | --batch IN OUT | --decode-realization IN |"
-          " --api IN | --bench IN REPS ROUNDS | --bench-floor IN REPS ROUNDS\n");
+          " --api IN | --bench IN REPS ROUNDS | --bench-floor IN REPS ROUNDS |"
+          " --hydrate IN PLAN BIND OUT | --hydrate-batch IN OUT | --api-hydrate IN |"
+          " --bench-hydrate IN PLAN BIND REPS ROUNDS |"
+          " --bench-hydrate-floor IN PLAN BIND REPS ROUNDS\n");
   return 2;
 }

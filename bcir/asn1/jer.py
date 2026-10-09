@@ -72,22 +72,26 @@ semantics are the standard's even where the notation is not.
 from __future__ import annotations
 
 import base64 as _base64
+import contextvars
 import json
 from dataclasses import dataclass
 from enum import Enum
 
-from .codec import Strictness
+from .codec import NULL, Strictness, require_null
 from .schema import (
     Asn1Type,
     Choice,
     Component,
     OpenType,
     Primitive,
+    Reference,
     Sequence,
     SequenceOf,
     Set,
     SetOf,
     _resolve_open_type,
+    resolve,
+    through,
 )
 from .tags import Asn1Error, Universal
 from .tlv import decode_one, encode_tlv
@@ -549,6 +553,8 @@ def _encode(kind: Asn1Type, value, opts: "_Opts", context: dict | None = None) -
         return _encode_choice(kind, value, opts)
     if isinstance(kind, OpenType):
         return _encode_open_type(kind, value, opts, context)
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through("JER", kind, _encode, kind.resolved(), value, opts, context)
     raise Asn1Error(f"JER: no encoding for schema type {type(kind).__name__}")
 
 
@@ -572,8 +578,7 @@ def _encode_primitive(kind: Primitive, value, opts: "_Opts") -> str:
         return _encode_real(kind, value)
 
     if universal == Universal.NULL:  # §26
-        if value is not None:
-            raise Asn1Error(f"{kind.name}: a NULL value is None, got {value!r}")
+        require_null(value, kind.name)
         return "null"
 
     if universal == Universal.BIT_STRING:  # §24
@@ -992,6 +997,14 @@ def _parse(text: str):
         )
     except json.JSONDecodeError as error:
         raise Asn1Error(f"JER: not a JSON text (ECMA-404): {error}") from None
+    except RecursionError:
+        # The parser recurses on nesting, and an untrusted text chooses the nesting: a
+        # verdict, never a traceback (laws.md L1). `decode_bounded` refuses far earlier,
+        # at JerLimits.depth; a value of a recursive type is held to MAX_RECURSION levels.
+        raise Asn1Error(
+            "JER: the JSON text nests deeper than this decoder follows; "
+            "decode_bounded holds a document to an explicit depth limit"
+        ) from None
 
 
 def _decode(node, kind: Asn1Type, opts: "_Opts", context: dict | None = None):
@@ -1005,6 +1018,8 @@ def _decode(node, kind: Asn1Type, opts: "_Opts", context: dict | None = None):
         return _decode_choice(node, kind, opts)
     if isinstance(kind, OpenType):
         return _decode_open_type(node, kind, opts, context)
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through("JER", kind, _decode, node, kind.resolved(), opts, context)
     raise Asn1Error(f"JER: no decoding for schema type {type(kind).__name__}")
 
 
@@ -1084,7 +1099,7 @@ def _decode_primitive(node, kind: Primitive, opts: "_Opts"):
             raise Asn1Error(
                 f"{kind.name}: expected the JSON token null (26), got {_describe(node)}"
             )
-        return None
+        return NULL
 
     if universal == Universal.BIT_STRING:  # §24
         return _decode_bitstring(node, kind, opts)
@@ -1306,7 +1321,20 @@ def _json_kinds(kind: Asn1Type, opts: "_Opts") -> frozenset:
     has to name the alternative. Anything this function gets wrong is a value silently
     decoded as the wrong alternative, which is why it is derived from the same branches the
     encoder takes rather than guessed at.
+
+    A recursive unwrapped choice asks for its own kinds through its alternatives; the answer
+    is the least fixpoint, so a type already being asked contributes nothing new.
     """
+    if isinstance(kind, Reference):
+        kind = resolve(kind)
+        asking = _KINDS_IN_PROGRESS.get()
+        if id(kind) in asking:
+            return frozenset()
+        token = _KINDS_IN_PROGRESS.set(asking | {id(kind)})
+        try:
+            return _json_kinds(kind, opts)
+        finally:
+            _KINDS_IN_PROGRESS.reset(token)
     if isinstance(kind, Primitive):
         universal = kind.universal
         if universal == Universal.BOOLEAN:
@@ -1355,6 +1383,13 @@ def _json_kinds(kind: Asn1Type, opts: "_Opts") -> frozenset:
             kinds |= _json_kinds(alt.type, opts)
         return frozenset(kinds)
     raise Asn1Error("JER: 19.2.4 forbids an open type as an alternative of an unwrapped choice")
+
+
+#: The types (by identity) whose JSON kinds are being computed: `_json_kinds` over a
+#: recursive choice.
+_KINDS_IN_PROGRESS: contextvars.ContextVar = contextvars.ContextVar(
+    "bcir_jer_kinds_in_progress", default=frozenset()
+)
 
 
 def _mandatory_names(kind, opts: "_Opts") -> frozenset:
@@ -1416,7 +1451,8 @@ def _decode_unwrapped(node, kind: Choice, opts: "_Opts") -> tuple:
         matched = [
             alt
             for alt in candidates
-            if isinstance(alt.type, (Sequence, Set)) and _mandatory_names(alt.type, opts) <= present
+            if isinstance(resolve(alt.type), (Sequence, Set))
+            and _mandatory_names(resolve(alt.type), opts) <= present
         ]
         if len(matched) != 1:
             raise Asn1Error(

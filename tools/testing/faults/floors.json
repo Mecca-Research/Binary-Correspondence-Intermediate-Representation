@@ -154,8 +154,8 @@
     {
       "expects": "test_the_roadmap_lists_the_harness_floors",
       "label": "the roadmap's list of measured-floor rows drifts from the harness (a row dropped from \u00a70.3)",
-      "new": "audit.mixed-wave-token-eft.scale4     audit.iterative-phase-dag.scale4\n```",
-      "old": "audit.mixed-wave-token-eft.scale4     audit.iterative-phase-dag.scale4\nverify.plan.scope.overhead\n```",
+      "new": "verify.plan.scope.overhead\n```",
+      "old": "verify.plan.scope.overhead            hydrate.native.scale4\n```",
       "path": "docs/research/BCIR_GEMPLUS_ROADMAP.md"
     }
   ]

@@ -671,7 +671,11 @@ Witnesses: `test_bounded_runner_expires_and_caps`,
 `test_flooding_c_campaign_is_bounded`,
 `test_reviewer_put_down_kills_the_tree_on_windows`,
 `test_put_down_never_raises_from_the_tree_terminator`,
-`test_compiled_verifier_descendants_are_a_structured_failure`.
+`test_compiled_verifier_descendants_are_a_structured_failure`,
+`test_c_campaign_timeout_covers_every_target_the_wrapper_runs` (the bound
+is every registered target at its own time bound over the workers, read
+from the wrapper that runs them: a fixed multiple sized for 16 targets fell
+short at 20).
 **Port note:** `posix_spawn` + process groups / Job Objects; the shape is
 identical, the primitives change.
 

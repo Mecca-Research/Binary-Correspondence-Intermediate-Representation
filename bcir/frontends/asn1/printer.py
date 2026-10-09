@@ -93,9 +93,13 @@ def _type(node, depth: int) -> str:
             return f"{keyword} {rendered} OF {rest}"
         return f"{_type(node.inner, depth)} {rendered}"
 
+    if isinstance(node, ast.ParameterizedRef):
+        head = f"{node.module}.{node.name}" if node.module else node.name
+        return head + " { " + ", ".join(_actual(a) for a in node.actuals) + " }"
+
     if isinstance(node, ast.OpenTypeNode):
         if node.object_class is not None:
-            return f"{node.object_class}.{node.field}"
+            return f"{node.object_class}.{node.field}{_table(node.table)}"
         if node.governed_by is not None:
             return f"ANY DEFINED BY {node.governed_by}"
         return "ANY"
@@ -118,6 +122,65 @@ def _type(node, depth: int) -> str:
     raise TypeError(f"cannot print type {type(node).__name__}")
 
 
+def _actual(actual) -> str:
+    """X.683 §9.5 an actual parameter as written: a name, a braced actual's tokens, a value, a
+    type."""
+    if isinstance(actual, str):
+        return actual
+    if isinstance(actual, ast.BracedActual):
+        return actual.raw
+    if isinstance(actual, _VALUES):
+        return _value(actual)
+    return _type(actual, 1)
+
+
+def _table(table) -> str:
+    """X.682 §10.3/§10.7 the table constraint after `CLASS.&field`, or nothing."""
+    if table is None:
+        return ""
+    body = table.spec.raw if table.spec is not None else "{" + table.object_set + "}"
+    ats = "{" + ", ".join(table.at_notations) + "}" if table.at_notations else ""
+    return f" ({body}{ats})"
+
+
+def _parameters(assignment: ast.ParameterizedAssignment) -> str:
+    """X.683 §8.3 `{ [Governor :] DummyReference, ... }`."""
+    parts = []
+    for index, name in enumerate(assignment.params):
+        governor = assignment.governors[index] if index < len(assignment.governors) else None
+        parts.append(f"{_type(governor, 1)} : {name}" if governor is not None else name)
+    return "{ " + ", ".join(parts) + " }"
+
+
+def _assignment(assignment, params: str = "") -> str:
+    """One assignment as written; `params` is a parameterized assignment's ParameterList."""
+    name = assignment.name + (f" {params}" if params else "")
+    if isinstance(assignment, ast.TypeAssignment):
+        return f"{name} ::= {_type(assignment.type, 0)}"
+    if isinstance(assignment, ast.ValueAssignment):
+        return f"{name} {_type(assignment.type, 0)} ::= {_value(assignment.value)}"
+    if isinstance(assignment, ast.ClassAssignment):
+        syntax = ""
+        if assignment.with_syntax:
+            syntax = " WITH SYNTAX { " + " ".join(assignment.with_syntax) + " }"
+        return f"{name} ::= CLASS {_class_fields(assignment)}{syntax}"
+    if isinstance(assignment, (ast.ObjectAssignment, ast.ObjectSetAssignment)):
+        return f"{name} {assignment.object_class} ::= {assignment.raw}"
+    raise TypeError(f"cannot print assignment {type(assignment).__name__}")
+
+
+_VALUES = (
+    ast.IntValue,
+    ast.StrValue,
+    ast.BoolValue,
+    ast.NullValue,
+    ast.BitsValue,
+    ast.OidValue,
+    ast.BracedValue,
+    ast.RefValue,
+)
+
+
 def _components(items: tuple[object, ...], depth: int) -> str:
     if not items:
         return "{}"
@@ -137,9 +200,9 @@ def _components(items: tuple[object, ...], depth: int) -> str:
 
 
 def _class_fields(assignment: ast.ClassAssignment) -> str:
-    """X.681 §9.1. WITH SYNTAX is deliberately not reproduced: it defines an alternative
-    NOTATION for writing objects of the class, never an encoding, and the parser discards
-    it — so printing one would invent text the AST does not carry."""
+    """X.681 §9.1 the field list. WITH SYNTAX follows it in `_assignment`: the parser keeps
+    its tokens (an object of the class is READ by them, §11.4), so the printer reproduces
+    them, or a module printed and re-read would lose the syntax its objects are written in."""
     parts = []
     for field in assignment.fields:
         piece = field.name
@@ -175,16 +238,10 @@ def print_module(node: ast.ModuleNode) -> str:
         lines.append("")
 
     for assignment in node.assignments:
-        if isinstance(assignment, ast.TypeAssignment):
-            lines.append(f"{assignment.name} ::= {_type(assignment.type, 0)}")
-        elif isinstance(assignment, ast.ValueAssignment):
-            lines.append(
-                f"{assignment.name} {_type(assignment.type, 0)} ::= {_value(assignment.value)}"
-            )
-        elif isinstance(assignment, ast.ClassAssignment):
-            lines.append(f"{assignment.name} ::= CLASS {_class_fields(assignment)}")
-        elif isinstance(assignment, (ast.ObjectAssignment, ast.ObjectSetAssignment)):
-            lines.append(f"{assignment.name} {assignment.object_class} ::= {assignment.raw}")
+        if isinstance(assignment, ast.ParameterizedAssignment):
+            lines.append(_assignment(assignment.body, _parameters(assignment)))
+        else:
+            lines.append(_assignment(assignment))
         lines.append("")
 
     lines.append("END")

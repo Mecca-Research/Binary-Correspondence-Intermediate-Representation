@@ -248,12 +248,16 @@ def test_the_general_case_rows_are_measured_through_the_sweep():
 
 def test_the_exact_rail_rows_are_measured_through_the_solver():
     """G4 / S2-B: the scheduler group proves the section 6.1 corpus instance by instance --
-    the proof-rail rows at their bounds, the heuristic's own numbers kept as the report's
-    witness, the Stage 2 exit rows at zero, the section 6.3 sweep held to the enumeration."""
+    the proof-rail rows at their bounds (and, G19, the plan that runs at the optimum), the
+    heuristic's own numbers kept as the report's witness, the Stage 2 exit rows at zero, the
+    section 6.3 sweep held to the enumeration."""
     from tools.perf.gemplus_baseline import measure_scheduler
 
     out = measure_scheduler()
     assert out["eft.suboptimal.2domains"] == 0.0 and out["eft.suboptimal.3domains"] == 0.0
+    # G19: the proved optimum is also the plan that runs -- read from its bytes, admitted
+    assert out["eft.executed.suboptimal.2domains"] == 0.0
+    assert out["eft.executed.suboptimal.3domains"] == 0.0
     assert out["eft.worst.2domains"] == 1.0 and out["eft.worst.3domains"] == 1.0
     assert out["eft.mean.2domains"] == 1.0 and out["eft.mean.3domains"] == 1.0
     assert abs(out["eft.heuristic.suboptimal.2domains"] - 190 / 1716) < 1e-12
@@ -491,3 +495,90 @@ def test_the_volatile_rows_are_exact_and_measured_or_not():
         else:
             expected = "GAIN"
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
+
+
+def test_the_io_rows_hold_the_pebble_bound_sound_and_mostly_tight() -> None:
+    """G25: never above the exact optimum, and below it on about a tenth of the instances (the
+    parent's absent bound -- zero -- on all but the five where nothing moves)."""
+    from tools.perf.gemplus_baseline import measure_io
+
+    measured = measure_io()
+    assert measured["io.pebble.unsound"] == 0.0, measured
+    assert measured["io.pebble.loose.fraction"] <= 0.15, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    assert rows["io.pebble.loose.fraction"]["verdict"] == "GAIN", rows
+
+
+def test_the_dataflow_rows_hold_every_region_and_cycle_time() -> None:
+    """G23 / G24: every corpus case is its hand-derived region and every generated cycle time
+    the enumerated maximum cycle ratio -- both rows at their bound of 0."""
+    from tools.perf.gemplus_baseline import measure_dataflow
+
+    measured = measure_dataflow()
+    assert measured == {
+        "regions.dataflow.misjudged": 0.0,
+        "regions.timed.cycle_time.disagreements": 0.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+
+
+def test_the_expectation_rows_hold_every_mean_exact() -> None:
+    """G22: every hand-derived mean reproduced and compose agreeing with the Markov solve on
+    every generated region -- both rows at their bound of 0 (the parent stated none of them)."""
+    from tools.perf.gemplus_baseline import measure_expectation
+
+    measured = measure_expectation()
+    assert measured == {
+        "expectation.corpus.misstated": 0.0,
+        "expectation.compose.disagreements": 0.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+
+
+def test_the_signature_rows_hold_every_forgery_refused_and_every_verdict_named() -> None:
+    """G21: the reference verifier accepts none of the 29 forgeries and names every case's verdict
+    -- both rows at their bound of 0, where the parent (no signature) passed every forgery. The
+    two rows together refuse the trivial verifiers (L23), measured: a verifier that accepts every
+    statement over a decoded store accepts 19 forgeries (the 10 store forgeries die in the
+    decoder), and one that refuses every statement with one code misjudges 15 -- never fewer than
+    the 3 genuine statements."""
+    from tools.perf.gemplus_baseline import measure_signature
+
+    measured = measure_signature()
+    assert measured == {
+        "plan_sign.forgeries.accepted": 0.0,
+        "plan_sign.verdicts.misjudged": 0.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN", rows[key]
+        assert rows[key]["headroom"] == 0.0, rows[key]
+    from unittest.mock import patch
+
+    from bcir.abi import plan_sign_abi
+
+    def refuse(*_args, **_kwargs):
+        raise plan_sign_abi.PlanSignError("refused", "signature")
+
+    with patch.object(plan_sign_abi, "verify_statement", lambda *a, **k: None):
+        assert measure_signature()["plan_sign.forgeries.accepted"] == 19.0
+    with patch.object(plan_sign_abi, "verify_statement", refuse):
+        assert measure_signature()["plan_sign.verdicts.misjudged"] >= 3.0
+
+
+def test_the_collector_rows_count_no_collection_inside_a_hot_path() -> None:
+    """OR-GC: the paused paths start no collection at scale 4 (the parent started 24 to 75 per
+    call) and leave no cyclic garbage, so every row sits at its floor of 0."""
+    from tools.perf.gemplus_baseline import measure_collector
+
+    measured = measure_collector()
+    assert len(measured) == 7 and set(measured.values()) == {0.0}, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["headroom"] == 0.0, rows[key]
+        if key.startswith("gc.collections."):
+            assert rows[key]["verdict"] == "GAIN", rows[key]

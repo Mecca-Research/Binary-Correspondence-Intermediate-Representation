@@ -105,7 +105,9 @@ def test_a_duplicate_claim_id_plans_as_the_id_keyed_map_always_did():
 
 def test_the_planner_makes_a_stated_factor_fewer_calls():
     """planner.calls: the call count is per interpreter, so the gate compares the two planners in
-    one process. The stated factor is 5: 5.8x at scale 8 and 5.76x at scale 4 on CPython 3.11."""
+    one process. The stated factor is 5: 5.42x at scale 8 and 5.38x at scale 4 on CPython 3.11,
+    counted per code object (`bcir/tests/call_counts.py`; the 5.8x quoted at G17 was a `pstats`
+    total, which merged every dataclass `__init__` into one row)."""
     reference = pf.call_count(realize_reference.optimize, scale=4)
     compact = pf.call_count(realize.optimize, scale=4)
     assert reference >= 5 * compact, (reference, compact)

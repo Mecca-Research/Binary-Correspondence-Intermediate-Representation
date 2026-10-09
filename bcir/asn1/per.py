@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from .codec import Asn1Error
+from .codec import NULL, Asn1Error, require_null
 from .constraints import UNBOUNDED, root_size_bounds, root_value_bounds
 from .schema import (
     Asn1Type,
@@ -37,10 +37,12 @@ from .schema import (
     Component,
     OpenType,
     Primitive,
+    Reference,
     Sequence,
     SequenceOf,
     Set,
     SetOf,
+    through,
 )
 from .tags import Tag, Universal
 
@@ -793,7 +795,8 @@ def _encode_primitive(writer: BitWriter, kind: Primitive, value) -> None:
             raise Asn1Error(f"{kind.name}: expected bool")
         writer.put_bit(1 if value else 0)
         return
-    if universal == Universal.NULL:  # §18: no encoding at all
+    if universal == Universal.NULL:  # §18: no encoding at all -- of the one NULL value
+        require_null(value, kind.name)
         return
     if universal == Universal.INTEGER:
         if isinstance(value, bool) or not isinstance(value, int):
@@ -877,8 +880,6 @@ def _decode_primitive(reader: BitReader, kind: Primitive):
         # reserves Python `None` for ABSENCE, which is what DER and OER both return. Returning
         # `None` here collapsed the two, so a PER-decoded NULL could not be handed to another
         # rail's encoder and a present NULL component read the same as a missing one.
-        from .codec import NULL
-
         return NULL
     if universal == Universal.INTEGER:
         return _decode_integer(reader, kind)
@@ -1307,30 +1308,7 @@ def _decode_choice(reader: BitReader, kind, rules: PerRules) -> tuple:
     return (comp.name, _decode(reader, comp.type, rules))
 
 
-def _resolve(kind: Asn1Type) -> Asn1Type:
-    """Follow a front-end forward reference to the type it actually names.
-
-    `compile_module` represents a RECURSIVE definition with a lazy placeholder that forwards
-    `encode`/`decode` to its target once the module is complete. The tag-first rails never
-    notice it, because they go through those methods; PER dispatches on the schema CLASS, so
-    the placeholder fell off the end of the chain and
-    `Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL }` encoded only while `next` was
-    absent -- supplying a nested node raised "no encoding for schema type _LazyType".
-
-    Resolved here rather than in the front-end, because the placeholder has to STAY lazy until
-    the module finishes building. The depth cap catches a reference cycle that never reaches a
-    concrete type; a directly self-defined type is already refused where it is resolved.
-    """
-    for _ in range(64):
-        resolved = getattr(kind, "_resolved", None)
-        if resolved is None:
-            return kind
-        kind = resolved()
-    raise Asn1Error("PER: forward references nested deeper than 64 -- a reference cycle")
-
-
 def _encode(writer: BitWriter, kind: Asn1Type, value, rules: PerRules) -> None:
-    kind = _resolve(kind)
     if isinstance(kind, Primitive):
         _encode_primitive(writer, kind, value)
     elif isinstance(kind, (Sequence, Set)):
@@ -1354,11 +1332,12 @@ def _encode(writer: BitWriter, kind: Asn1Type, value, rules: PerRules) -> None:
             lambda start, stop: (writer.align(), writer.put_octets(octets[start:stop])),
         )
     else:
+        if isinstance(kind, Reference):  # a recursive definition: the shared resolve, bound
+            return through("PER", kind, _encode, writer, kind.resolved(), value, rules)
         raise Asn1Error(f"PER: no encoding for schema type {type(kind).__name__}")
 
 
 def _decode(reader: BitReader, kind: Asn1Type, rules: PerRules):
-    kind = _resolve(kind)
     if isinstance(kind, Primitive):
         return _decode_primitive(reader, kind)
     if isinstance(kind, (Sequence, Set)):
@@ -1376,6 +1355,8 @@ def _decode(reader: BitReader, kind: Asn1Type, rules: PerRules):
 
         _decode_length_and_payload(reader, 0, None, consume)
         return b"".join(chunks)
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through("PER", kind, _decode, reader, kind.resolved(), rules)
     raise Asn1Error(f"PER: no decoding for schema type {type(kind).__name__}")
 
 

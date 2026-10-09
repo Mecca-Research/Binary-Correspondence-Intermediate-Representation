@@ -30,6 +30,12 @@ class Resource:
     map_gen: int = 0
     data_gen: int = 0
     name: str = ""
+    #: OPTIONAL declared range of the resource's integer element values, inclusive (GEM+ G29):
+    #: the contract a caller keeps for every element read, from which the verifier proves the
+    #: no-wrap facts (`nsw` / `nuw`) an integer claim's lowering may carry. Absent
+    #: (`value_range is None`) on every existing resource -- no fact is proved, none emitted --
+    #: and outside the R13 digest, like a claim's `timing` and `stream`.
+    value_range: Optional[tuple[int, int]] = None
 
     @property
     def count(self) -> int:
@@ -66,6 +72,37 @@ class Timing:
     sync_type: str = ""  # "" | "synchronous" | "asynchronous" | "mixed"
     clock_frequency_mhz: int = 0  # target clock (0 = unspecified)
     setup_hold_margin: int = 0  # extra setup/hold safety margin in cycles
+
+
+@dataclass(frozen=True)
+class StreamRate:
+    """OPTIONAL fixed-rate stream metadata (GEM+ G23): the claim is an ACTOR of a (cyclo-static)
+    synchronous dataflow graph. Each firing consumes `consume` tokens from each FIFO resource it
+    reads and produces `produce` tokens on each FIFO it writes, given per port as (rid, rates):
+    one rate is synchronous dataflow, several are the phases a cyclo-static actor fires in turn
+    (every port of one actor lists the same number). `initial` are the tokens a FIFO this actor
+    produces into holds before the first firing (its delays). Absent (`Claim.stream is None`)
+    on every existing claim: the regions recognize a dataflow region only from claims that
+    declare it, and the field is digest-excluded from R13 like `timing`, so the default is
+    non-disturbing over the whole corpus."""
+
+    consume: tuple[tuple[int, tuple[int, ...]], ...] = ()
+    produce: tuple[tuple[int, tuple[int, ...]], ...] = ()
+    initial: tuple[tuple[int, int], ...] = ()
+
+
+@dataclass(frozen=True)
+class LoopNest:
+    """OPTIONAL depth-two iteration space (GEM+ G30): the claim is a 2-D loop nest over
+    `extents` (rows, cols), run in lexicographic order, each iteration reading every operand it
+    reads before it writes any. `maps` gives each operand's affine access, one per operand in
+    `rd` then `wr` order: (rid, offset, row stride, col stride) -- iteration (i, j) touches
+    element `offset + i * row_stride + j * col_stride` of the resource. Absent
+    (`Claim.nest is None`) on every existing claim -- a tile claim without it stays opaque --
+    and digest-excluded from R13 like `timing` and `stream`."""
+
+    extents: tuple[int, int]
+    maps: tuple[tuple[int, int, int, int], ...]
 
 
 @dataclass
@@ -120,6 +157,10 @@ class Claim:
     # reordered / fused / bundled / elided). Digest-excluded (R13's
     # hash_module folds a fixed field list), so the False default is
     # non-disturbing over the whole existing corpus.
+    stream: Optional["StreamRate"] = None  # OPTIONAL fixed-rate stream rates (GEM+ G23): the
+    # claim is a dataflow actor; None = the vacuous default (no dataflow region; digest-excluded)
+    nest: Optional["LoopNest"] = None  # OPTIONAL depth-two loop nest (GEM+ G30): the claim is a
+    # 2-D affine nest; None = the vacuous default (no nest region; digest-excluded)
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

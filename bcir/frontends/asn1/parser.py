@@ -83,6 +83,10 @@ class Parser:
         #: before the objects of that class. An object whose class has not been seen falls
         #: back to the §7 capitalisation rule rather than failing.
         self.classes_seen: dict[str, ast.ClassAssignment] = {}
+        #: Type names assigned so far: `v Count ::= 7` is a value of the type `Count`, never an
+        #: object of a class `Count`, and the spelling cannot say so when the name is all
+        #: capitals (`x C ::= red`), so a type already seen settles it (`_names_a_class`).
+        self.types_seen: set[str] = set()
 
     # --- token plumbing ---------------------------------------------------------------
 
@@ -163,7 +167,11 @@ class Parser:
         while not self.at_word("END"):
             if self.current.kind == "end":
                 raise self.error("module is missing its END (X.680 13.1)")
-            module.assignments.append(self.parse_assignment())
+            assignment = self.parse_assignment()
+            body = getattr(assignment, "body", assignment)
+            if isinstance(body, ast.TypeAssignment):
+                self.types_seen.add(assignment.name)
+            module.assignments.append(assignment)
         self.expect("reserved", "END")
         return module
 
@@ -213,6 +221,8 @@ class Parser:
             tok.kind in ("typereference", "identifier")
             and self.peek(1).kind == "typereference"
             and self.at_punct("::=", 2)
+            and self._names_a_class(self.peek(1).text)
+            and not (tok.kind == "identifier" and self._starts_a_literal(3))
         ):
             return self.parse_object_or_set()
         # X.683 §8.2: a parameterized assignment is an ordinary one with a ParameterList
@@ -229,6 +239,15 @@ class Parser:
             self.index = save
         if tok.kind == "typereference":
             name = self.take().text
+            if not self.at_punct("::="):
+                # X.680 §15.6 ValueSetTypeAssignment `Name Type ::= { ElementSetSpecs }`: a
+                # type whose values are the set. It is a constrained type, and lowered as one.
+                value_type = self.parse_type()
+                self.expect_punct("::=")
+                spec = self._value_set()
+                if spec is None:
+                    return ast.TypeAssignment(name, value_type)
+                return ast.TypeAssignment(name, ast.Constrained(value_type, (spec,)))
             self.expect_punct("::=")
             if self.at_word("CLASS"):
                 assignment = self.parse_class(name)
@@ -245,9 +264,58 @@ class Parser:
             return ast.ValueAssignment(name, value_type, self.parse_value())
         raise self.error(f"expected an assignment, found {tok.text!r}")
 
+    def _names_a_class(self, name: str) -> bool:
+        """X.681 §7.1: an objectclassreference has no lower-case letter. A class seen so far is
+        a class and a type seen so far a type, whatever the spelling; an unseen name with a
+        lower-case letter is a TYPE. That makes `Name Type ::= {...}` a value set rather than an
+        object set, and `v Type ::= 7` a value rather than an object."""
+        if name in self.classes_seen:
+            return True
+        if name in self.types_seen:
+            return False
+        return not any(c.islower() for c in name)
+
+    def _starts_a_literal(self, offset: int) -> bool:
+        """Whether the token at `offset` begins a value no information object can be (X.681 §11:
+        an object is braced or a reference): a number, a string, a sign, or a value keyword."""
+        tok = self.peek(offset)
+        if tok.kind in ("number", "cstring", "bstring", "hstring"):
+            return True
+        if tok.kind == "punct" and tok.text == "-":
+            return True
+        return tok.kind == "reserved" and tok.text in (
+            "TRUE",
+            "FALSE",
+            "NULL",
+            "PLUS-INFINITY",
+            "MINUS-INFINITY",
+            "NOT-A-NUMBER",
+        )
+
+    def _value_set(self):
+        """X.680 §16.7 `ValueSet ::= "{" ElementSetSpecs "}"`, as a constraint (None if the
+        model cannot represent its root)."""
+        self.expect_punct("{")
+        root = self._unions()
+        extensible = False
+        if self.accept("punct", ","):
+            self.expect_punct("...")
+            extensible = True
+            if self.accept("punct", ","):
+                self._unions()
+        self.expect_punct("}")
+        if root is None:
+            return None
+        return constraints.Extensible(root) if extensible else root
+
     def parse_assignment_body(self, name: str):
         """Parse whatever follows an assignment's (already consumed) reference name."""
-        if self.at("typereference") and self.at_punct("::=", 1):
+        if (
+            self.at("typereference")
+            and self.at_punct("::=", 1)
+            and self._names_a_class(self.current.text)
+            and not (name[:1].islower() and self._starts_a_literal(2))
+        ):
             return self.parse_object_or_set(name)
         if self.at_punct("::="):
             self.take()
@@ -486,7 +554,11 @@ class Parser:
             elif self.at_punct("{"):
                 elements.append(tuple(self._parse_object_body(cls)))
             elif self.at("typereference") or self.at("identifier"):
-                elements.append(self.take().text)  # a defined object / object set
+                name = self.take().text  # a defined object / object set
+                if self.at_punct("{"):  # X.683 §9.2 a parameterized one
+                    elements.append(ast.ParameterizedRef(name, self._actual_parameter_list()))
+                else:
+                    elements.append(name)
             else:
                 raise self.error(
                     "an object set element must be an object, a reference or '...' (X.681 12.3)"
@@ -496,7 +568,7 @@ class Parser:
         self.expect_punct("}")
         return elements, extensible
 
-    def _parse_table_constraint(self):
+    def _parse_table_constraint(self, class_name: str | None = None):
         """X.682 §10.3/§10.7, when the next tokens are `({ObjectSet} [{@...}])`.
 
         Returns None when there is no table constraint, leaving the ordinary constraint path
@@ -506,15 +578,13 @@ class Parser:
             return None
         save = self.index
         self.take()  # "("
-        self.take()  # "{"
-        if not self.at("typereference"):
+        try:
+            spec = self._table_object_set(class_name)
+        except Asn1SyntaxError:
+            spec = None
+        if spec is None:
             self.index = save  # a braced VALUE, not an ObjectSet
             return None
-        object_set = self.take().text
-        if not self.at_punct("}"):
-            self.index = save
-            return None
-        self.take()  # "}"
         ats: list[str] = []
         if self.at_punct("{"):  # §10.7 ComponentRelationConstraint
             self.take()
@@ -541,7 +611,51 @@ class Parser:
             self.index = save
             return None
         self.take()  # ")"
-        return ast.TableConstraintNode(object_set, tuple(ats))
+        if (
+            len(spec.elements) == 1
+            and isinstance(spec.elements[0], str)
+            and spec.elements[0][:1].isupper()
+            and not spec.extensible
+        ):
+            # One plain object set reference: the historical shape, unchanged.
+            return ast.TableConstraintNode(spec.elements[0], tuple(ats))
+        return ast.TableConstraintNode("", tuple(ats), spec)
+
+    def _table_object_set(self, class_name):
+        """X.681 §12.3 `{ ObjectSetSpec }` inside a table constraint, or None for a braced value.
+
+        Elements: a defined object set or object, a parameterized one (`Pick {cn}`), an inline
+        object of the constrained class, the extension marker. `|`, `UNION` and `,` separate
+        them (§12.3 NOTE 1). A first element that is none of these -- `({1 2 3})` -- means the
+        braces were a value, and the caller falls back to the subtype path.
+        """
+        start = self.index
+        self.expect_punct("{")
+        cls = self.classes_seen.get(class_name) if class_name else None
+        elements: list[object] = []
+        extensible = False
+        while not self.at_punct("}"):
+            if self.at_punct("..."):
+                self.take()
+                extensible = True
+            elif self.at_punct("{"):
+                elements.append(tuple(self._parse_object_body(cls)))
+            elif self.at("typereference") or self.at("identifier"):
+                name = self.take().text
+                if self.at_punct("{"):  # X.683 §9.2 a parameterized object (set)
+                    elements.append(ast.ParameterizedRef(name, self._actual_parameter_list()))
+                else:
+                    elements.append(name)
+            else:
+                return None
+            if self.at_word("UNION"):
+                self.take()
+            elif not (self.accept("punct", "|") or self.accept("punct", ",")):
+                break
+        self.expect_punct("}")
+        if not elements and not extensible:
+            return None
+        return ast.ObjectSetSpec(tuple(elements), extensible, self._raw_span(start, self.index))
 
     def _raw_span(self, start: int, stop: int) -> str:
         """The tokens in [start, stop) as normalized text.
@@ -551,11 +665,7 @@ class Parser:
         string yields the same tokens, so the law holds without the parser having to keep
         byte offsets.
         """
-        out: list[str] = []
-        for index in range(start, stop):
-            tok = self.tokens[index]
-            out.append(f'"{tok.text}"' if tok.kind == "cstring" else tok.text)
-        return " ".join(out)
+        return render_tokens(self.tokens[start:stop])
 
     # --- clauses 16-31: types ---------------------------------------------------------
 
@@ -653,7 +763,7 @@ class Parser:
                 # here rather than by the general constraint path because `({Set}{@a})` is
                 # not an ElementSetSpec -- the general path would read `{Set}` as a braced
                 # value and lose the AtNotation entirely.
-                table = self._parse_table_constraint()
+                table = self._parse_table_constraint(class_name)
                 return ast.OpenTypeNode(object_class=class_name, field=field, table=table)
             # `Module.Type` -- an external type reference (§14.1).
             if self.at_punct(".", 1) and self.peek(2).kind == "typereference":
@@ -678,14 +788,26 @@ class Parser:
         self.expect_punct("{")
         actuals: list[object] = []
         while not self.at_punct("}"):
-            if self.current.kind in ("typereference", "identifier") and (
+            tok = self.current
+            if tok.kind in ("typereference", "identifier") and (
                 self.at_punct(",", 1) or self.at_punct("}", 1)
             ):
                 actuals.append(self.take().text)
             elif self.at_punct("{"):
+                # A braced actual is an object, an object set, a value set or a braced value,
+                # and only the dummy it binds says which (§9.6): kept as its tokens, read by
+                # the lowering in the production the dummy's kind names.
                 start = self.index
                 self._skip_balanced("{", "}")
-                actuals.append(self._raw_span(start, self.index))
+                actuals.append(ast.BracedActual(self._raw_span(start, self.index)))
+            elif (
+                tok.kind in ("number", "cstring", "bstring", "hstring")
+                or self.at_punct("-")
+                or (tok.kind == "reserved" and tok.text in ("TRUE", "FALSE"))
+            ):
+                # §9.5: an ActualParameter may be a Value -- `Bounded {64}`. NULL stays a
+                # type here (it is both); a value dummy reads the NULL type as the value.
+                actuals.append(self.parse_value())
             else:
                 actuals.append(self.parse_type())
             if not self.accept("punct", ","):
@@ -1124,6 +1246,12 @@ class Parser:
             self.take()
             inner = self._element_set_specs()
             return None if inner is None else constraints.PermittedAlphabet(inner)
+        if self.at_word("INCLUDES") and self.at("typereference", offset=1):
+            self.take()  # §51.3 `INCLUDES Type`: the same element as a bare `Type`
+        if self.at("typereference") and not self.at_punct(".", 1) and not self.at_punct("{", 1):
+            # §51.3 a ContainedSubtype by name: every value of that type. Resolved against
+            # the type's own constraint in the lowering; dropping it was the old answer.
+            return constraints.TypeReference(self.take().text)
         if (
             self.at_word("ALL")
             or self.at_word("WITH")
@@ -1163,6 +1291,13 @@ class Parser:
         if tok.kind == "reserved" and tok.text in ("TRUE", "FALSE"):
             self.take()
             return tok.text == "TRUE"
+        if tok.kind == "identifier":
+            # §51: an endpoint may be a DefinedValue -- `(0..ub)`, `SIZE (1..ub-name)`.
+            # What `ub` denotes (a module value, an imported one, a dummy an instantiation
+            # binds) is the lowering's question; dropping the constraint here was the old
+            # answer, and under PER and OER it changed the octets.
+            self.take()
+            return constraints.ValueReference(tok.text)
         return _UNREPRESENTABLE
 
     def _skip_element(self) -> None:
@@ -1193,6 +1328,24 @@ class Parser:
         raise self.error(f"unterminated {opener}")
 
 
+def render_tokens(tokens) -> str:
+    """Tokens as text that re-lexes to the same tokens: a string keeps its quotes, its doubled
+    inner quotes (§12.14) and its B/H suffix, which the lexer strips from `Token.text`."""
+    out: list[str] = []
+    for tok in tokens:
+        if tok.kind == "end":
+            continue
+        if tok.kind == "cstring":
+            out.append('"' + tok.text.replace('"', '""') + '"')
+        elif tok.kind == "bstring":
+            out.append(f"'{tok.text}'B")
+        elif tok.kind == "hstring":
+            out.append(f"'{tok.text}'H")
+        else:
+            out.append(tok.text)
+    return " ".join(out)
+
+
 def parse_module(text: str, source: str = "<asn1>") -> ast.ModuleNode:
     """Parse exactly one ModuleDefinition; trailing text is an error, not ignored."""
     parser = Parser(text, source)
@@ -1211,4 +1364,4 @@ def parse_modules(text: str, source: str = "<asn1>") -> list[ast.ModuleNode]:
     return out
 
 
-__all__ = ["Parser", "parse_module", "parse_modules"]
+__all__ = ["Parser", "parse_module", "parse_modules", "render_tokens"]

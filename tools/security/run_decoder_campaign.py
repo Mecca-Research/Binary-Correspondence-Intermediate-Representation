@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded malformed-input campaign over StreamPack, BCAB, BCIRQ8, ControlRecordV1,
-ExecutionPlan and C decoders.
+ExecutionPlan, PlanStatementV1/TrustStoreV1 and C decoders.
 
 Python surfaces always run. The C sanitizer/libFuzzer rail is invoked when clang
 and compiler-rt are available; otherwise it is recorded as UNAVAILABLE/SKIPPED.
@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import struct
@@ -40,6 +41,8 @@ REQUIRED_PYTHON = (
     "planner",
     "realization",
     "plan",
+    "statement",
+    "store",
 )
 DECODE_TIMEOUT = 10.0
 # Each surface's DELIBERATE rejection type, and only that. A blanket tuple
@@ -68,6 +71,9 @@ _DECLARED_REJECTIONS = {
     "realization": ("bcir.abi.planner_abi", "PlannerAbiError"),
     # an ExecutionPlan (G11; v3 moves and binding, G8) with the codec's AbiError, likewise
     "plan": ("bcir.abi.streampack_abi", "AbiError"),
+    # a signed plan's statement and the trust store that judges it (G21) with PlanSignError
+    "statement": ("bcir.abi.plan_sign_abi", "PlanSignError"),
+    "store": ("bcir.abi.plan_sign_abi", "PlanSignError"),
 }
 
 
@@ -367,6 +373,36 @@ def _decode_plan_sealed(data: bytes) -> Any:
     return decode_plan(data)
 
 
+def _statement_seed() -> bytes:
+    """A PlanStatementV1 (G21) binding a plan, its scope, module, pack and certificate -- every
+    digest nonzero, so every field a mutation reaches is one the decoder reads. The statement
+    carries no checksum: its signature is checked by the verifier, not the decoder, so a
+    mutation reaches every wire law as it is."""
+    from bcir.tests import plan_sign_fixtures as fx
+
+    return fx.genuine().encode()
+
+
+def _store_seed() -> bytes:
+    """A TrustStoreV1 (G21) of three keys -- a rotation pair and a revoked key -- so the
+    ordering, window, flag and small-order laws each have an entry to break."""
+    from bcir.tests import plan_sign_fixtures as fx
+
+    return fx.store().encode()
+
+
+def _decode_statement(data: bytes) -> Any:
+    from bcir.abi.plan_sign_abi import decode_statement
+
+    return decode_statement(data)
+
+
+def _decode_store(data: bytes) -> Any:
+    from bcir.abi.plan_sign_abi import decode_store
+
+    return decode_store(data)
+
+
 def _decode_manifest_sealed(data: bytes) -> Any:
     """Decode a shard manifest with its CRC repaired first -- the control surface's lesson: a
     random mutation dies at the CRC long before a range or length law, so every mutant is sealed
@@ -496,6 +532,16 @@ def run_python_campaign(mutations: int, seed: int) -> list[dict[str, Any]]:
         results.append(_seed_failure("plan", exc))
     else:
         results.append(_probe("plan", _decode_plan_sealed, plan, rng, mutations))
+    for surface, seed_of, decoder in (
+        ("statement", _statement_seed, _decode_statement),
+        ("store", _store_seed, _decode_store),
+    ):
+        try:
+            blob = seed_of()
+        except Exception as exc:  # noqa: BLE001
+            results.append(_seed_failure(surface, exc))
+        else:
+            results.append(_probe(surface, decoder, blob, rng, mutations))
     return results
 
 
@@ -527,6 +573,21 @@ def _drain_capped(stream: Any, chunks: list[bytes], state: dict[str, Any]) -> No
         chunks.append(chunk)
 
 
+def campaign_timeout(script: Path, seconds: int, workers: int) -> int:
+    """The C rail's wall bound: every target the wrapper registers (`add_target <key> ...` at the
+    start of a line) can run to its own `seconds` bound, `workers` at a time, after up to 180 s of
+    compiling (L8: the timeout scales to the whole campaign). Read from the script that runs, so a
+    target added there is a target the bound covers -- a fixed multiple sized for 16 targets fell
+    short once the wrapper held 20, and a campaign whose every target used its bound was killed
+    healthy. An unreadable script counts as one target: the launch reports it."""
+    try:
+        text = script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    targets = sum(1 for line in text.splitlines() if re.match(r"add_target [A-Za-z0-9_]+ ", line))
+    return 180 + seconds * -(-max(targets, 1) // workers)
+
+
 def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
     script = root / "tools" / "c" / "fuzz_streampack.sh"
     bash = shutil.which("bash")
@@ -554,9 +615,7 @@ def run_c_campaign(root: Path, runs: int, seconds: int) -> dict[str, Any]:
             "FUZZ_JOBS": "2",
         }
     )
-    # 16 targets on 2 workers can each reach the per-target time bound, plus
-    # compile time — a timeout sized to one target aborts healthy campaigns.
-    timeout = 180 + seconds * 8
+    timeout = campaign_timeout(script, seconds, workers=2)
     # Its own session: the wrapper backgrounds per-target subshells, and
     # only a process-group kill enforces the wall bound on the whole tree.
     # Bytes, not text=True: sanitizer and fuzzer binaries write raw bytes,

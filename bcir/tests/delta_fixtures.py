@@ -1378,27 +1378,15 @@ def delta_ratio(scale: int = RATIO_SCALE, rounds: int = 9, floor: dict | None = 
 
 
 def _profiled(fn, *args) -> tuple[int, object]:
-    """(cProfile's total for one call of `fn`, its value), with the collector run first and paused
-    during it: a finalizer the collector happens to run inside the window is a call the code did
-    not make."""
-    import cProfile
-    import gc
-    import pstats
+    """(the calls one call of `fn` makes, its value), counted by the one counter
+    (`bcir.tests.call_counts.profiled`): per code object, with the collector paused."""
+    from bcir.tests.call_counts import profiled
 
-    gc.collect()
-    gc.disable()
-    profile = cProfile.Profile()
-    try:
-        profile.enable()
-        value = fn(*args)
-        profile.disable()
-    finally:
-        gc.enable()
-    return pstats.Stats(profile).total_calls, value
+    return profiled(fn, *args)
 
 
 def _profiled_calls(fn, *args) -> int:
-    """cProfile's total for one call of `fn` (`_profiled` without the value)."""
+    """The calls one call of `fn` makes (`_profiled` without the value)."""
     return _profiled(fn, *args)[0]
 
 

@@ -34,6 +34,7 @@ from dataclasses import dataclass
 import struct
 import zlib
 
+from .._collector import paused
 from ..gem.streampack import (
     Block,
     Generation,
@@ -714,6 +715,7 @@ def _array_layout(cache: dict, code: str, count: int) -> struct.Struct:
     return layout
 
 
+@paused
 def decode(data: bytes) -> StreamPack:
     """Parse the v1..v4 wire format back into a StreamPack (magic/version/CRC)."""
     if len(data) < _HEADER_SIZE + 4:
