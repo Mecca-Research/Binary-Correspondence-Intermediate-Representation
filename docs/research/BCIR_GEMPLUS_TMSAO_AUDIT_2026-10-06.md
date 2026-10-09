@@ -80,6 +80,11 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   OR-GC -- the collector paused inside the pure hot paths, with the zero-cyclic-garbage witness
   and harness rows, and slots on `CostVector` and `Candidate`. The item stays Partial for the
   C ports (CXX3, CXX4).
+- **Item 6** (a signed plan): (a) and (b) closed by G21 -- a PlanStatementV1 binds the plan's
+  bytes, the scope, the module, the pack and the certificate by SHA-256 under an Ed25519
+  signature, verified on both rails against a trust store with rotation, revocation and expiry.
+  It stays Partial for (c) and (d): the objective's identity is bound only through the scope and
+  the certificate, and the law rail has no plan op.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

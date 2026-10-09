@@ -32,7 +32,7 @@
   "libraries": {
     "bcir_base": {
       "class": "freestanding_core",
-      "sources": ["bcir_runtime.c", "bcir_sha256.c"]
+      "sources": ["bcir_runtime.c", "bcir_sha256.c", "bcir_ed25519.c", "bcir_plan_sign.c"]
     },
     "bcir_streampack": {
       "class": "freestanding_core",
@@ -122,6 +122,7 @@
     "test_runtime": {"sources": ["test_runtime.c"], "libraries": ["bcir_base"]},
     "test_sha256": {"sources": ["test_sha256.c"], "libraries": ["bcir_base"]},
     "test_execution_plan": {"sources": ["test_execution_plan.c"], "libraries": ["bcir_base"]},
+    "test_plan_sign": {"sources": ["test_plan_sign.c"], "libraries": ["bcir_base"]},
     "test_exec": {"sources": ["test_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_encode": {"sources": ["test_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_decode": {"sources": ["test_decode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -174,6 +175,7 @@
     "fuzz_handoff": {"sources": ["fuzz_handoff.c"], "libraries": ["bcir_plane", "bcir_streampack", "bcir_base"], "max_len": "16384"},
     "fuzz_kplan": {"sources": ["fuzz_kplan.c"], "libraries": ["bcir_plane", "bcir_base"], "max_len": "16384"},
     "fuzz_streampack": {"sources": ["fuzz_streampack.c"], "libraries": ["bcir_base"]},
+    "fuzz_plan_sign": {"sources": ["fuzz_plan_sign.c"], "libraries": ["bcir_base"], "max_len": "1024"},
     "fuzz_artifact_bundle": {"sources": ["fuzz_artifact_bundle.c"], "libraries": ["bcir_artifact", "bcir_base"], "max_len": "16384"},
     "fuzz_exec": {"sources": ["fuzz_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_encode": {"sources": ["fuzz_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -261,6 +263,7 @@
     "executor": {"script": "tools/c/sections/executor.sh", "harnesses": ["test_exec"]},
     "encoder": {"script": "tools/c/sections/encoder.sh", "harnesses": ["test_encode"]},
     "execution_plan": {"script": "tools/c/sections/execution_plan.sh", "harnesses": ["test_execution_plan"]},
+    "plan_sign": {"script": "tools/c/sections/plan_sign.sh", "harnesses": ["test_plan_sign"]},
     "telemetry_frame": {"script": "tools/c/sections/telemetry_frame.sh", "harnesses": ["test_telemetry_frame"]},
     "q8_tables": {"script": "tools/c/sections/q8_tables.sh", "harnesses": ["test_q8_tables_c11", "test_q8_tables"]},
     "control_plane": {"script": "tools/c/sections/control_plane.sh", "harnesses": ["test_control_plane", "test_control_plane_mutant"]},
@@ -376,7 +379,7 @@
     "cpp-sycl": {"script": "tools/cpp/check_sycl.sh", "labels": ["cpp"]}
   },
   "freestanding_checks": [
-    "bcir_runtime.c", "bcir_sha256.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",
+    "bcir_runtime.c", "bcir_sha256.c", "bcir_ed25519.c", "bcir_plan_sign.c", "bcir_plan.c", "bcir_hydrate.c", "bcir_exec.c", "bcir_encode.c",
     "bcir_decode.c", "bcir_binrec.c", "bcir_train.c", "bcir_telemetry_frame.c", "bcir_provenance.c",
     "bcir_control_plane.c", "bcir_ring.c", "bcir_telemetry_envelope.c", "bcir_handoff.c",
     "bcir_shard_manifest.c", "bcir_kplan.c", "bcir_artifact_bundle.c", "bcir_asn1.c",

@@ -518,6 +518,34 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="OR-GC",
     ),
     Metric(
+        "plan_sign.forgeries.accepted",
+        "signature",
+        "forged, mis-bound or malformed statements and stores of the G21 corpus (29 cases: trust, "
+        "binding, every signed field, the statement's and the store's wire) the verifier accepts",
+        29,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every case breaks a law the verifier checks; the parent has no signature, "
+        "only a CRC-32 anyone recomputes, so every one of them passed",
+        slice_owner="G21",
+    ),
+    Metric(
+        "plan_sign.verdicts.misjudged",
+        "signature",
+        "cases of the G21 corpus (32: the 29 forgeries and 3 genuine statements) whose verdict is "
+        "not the one law the case breaks, or `ok` for a genuine one -- the two rows refuse the "
+        "trivial verifiers: one that accepts every statement over a decoded store accepts 19 "
+        "forgeries, one that refuses everything misjudges at least the 3 genuine statements",
+        32,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one verdict per case, named alike on both rails (docs/kernel/"
+        "BCIR_PLAN_SIGNATURE_ABI.md); the parent names none",
+        slice_owner="G21",
+    ),
+    Metric(
         "solver.unproved.fraction",
         "scheduler",
         "six-job instances (2 and 3 domains) the exact rail did not prove within its budget",
@@ -3301,6 +3329,29 @@ def measure_collector() -> dict[str, float]:
     return out
 
 
+def measure_signature() -> dict[str, float]:
+    """G21: the reference verifier over every case of bcir/tests/plan_sign_fixtures.py -- the
+    forgeries it accepts and the verdicts it misnames (the C twin is held to the same verdicts by
+    bcir/tests/test_c_plan_sign.py and the plan_sign gate section). Pure Python: measured
+    wherever the interpreter runs."""
+    from bcir.abi.plan_sign_abi import PlanSignError, decode_store, verify_statement
+    from bcir.tests.plan_sign_fixtures import cases
+
+    accepted = misjudged = 0
+    for _name, statement, store, plan, pack, now, want in cases():
+        try:
+            verify_statement(statement, decode_store(store), plan, now, pack_bytes=pack)
+            got = "ok"
+        except PlanSignError as exc:
+            got = exc.code
+        accepted += want != "ok" and got == "ok"
+        misjudged += got != want
+    return {
+        "plan_sign.forgeries.accepted": float(accepted),
+        "plan_sign.verdicts.misjudged": float(misjudged),
+    }
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
@@ -3325,6 +3376,7 @@ _MEASURERS = {
     "movement": measure_movement,
     "memory": measure_memory,
     "collector": measure_collector,
+    "signature": measure_signature,
 }
 
 

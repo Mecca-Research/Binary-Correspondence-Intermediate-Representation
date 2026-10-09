@@ -206,7 +206,11 @@ R11 (the carried generation vector is the live registry's, entry for entry) and 
 across artifacts (the pack is the lowering of its plan — one segment per step with the
 step's claim, phase, lane and width — and a pack whose plan carries an older vector is
 stale); the freestanding C twin (`bcir_ep_verify`, `bcir_ep_check_generation_vector`,
-`bcir_ep_check_pack`) refuses the same bytes. Since G5 (S1-D) a static memory plan names the
+`bcir_ep_check_pack`) refuses the same bytes. Since G21 a plan is signed by a detached
+`PlanStatementV1` ([`kernel/BCIR_PLAN_SIGNATURE_ABI.md`](kernel/BCIR_PLAN_SIGNATURE_ABI.md)):
+SHA-256 binds the plan's bytes, its scope, module, pack and certificate, and an Ed25519
+signature (RFC 8032) is checked on both rails against a trust store with rotation, revocation and
+expiry that admits no small-order key. Since G5 (S1-D) a static memory plan names the
 liveness domain its lifetimes live in — topological phase positions, or the canonical
 placement's own half-open ticks (`kbcir.static_memory.schedule_intervals`) — and is held to
 the placement it is composed with: a phase-liveness plan the placement does not refine is

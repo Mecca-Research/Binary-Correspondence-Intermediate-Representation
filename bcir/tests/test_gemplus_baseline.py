@@ -497,6 +497,37 @@ def test_the_volatile_rows_are_exact_and_measured_or_not():
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
 
 
+def test_the_signature_rows_hold_every_forgery_refused_and_every_verdict_named() -> None:
+    """G21: the reference verifier accepts none of the 29 forgeries and names every case's verdict
+    -- both rows at their bound of 0, where the parent (no signature) passed every forgery. The
+    two rows together refuse the trivial verifiers (L23), measured: a verifier that accepts every
+    statement over a decoded store accepts 19 forgeries (the 10 store forgeries die in the
+    decoder), and one that refuses every statement with one code misjudges 15 -- never fewer than
+    the 3 genuine statements."""
+    from tools.perf.gemplus_baseline import measure_signature
+
+    measured = measure_signature()
+    assert measured == {
+        "plan_sign.forgeries.accepted": 0.0,
+        "plan_sign.verdicts.misjudged": 0.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN", rows[key]
+        assert rows[key]["headroom"] == 0.0, rows[key]
+    from unittest.mock import patch
+
+    from bcir.abi import plan_sign_abi
+
+    def refuse(*_args, **_kwargs):
+        raise plan_sign_abi.PlanSignError("refused", "signature")
+
+    with patch.object(plan_sign_abi, "verify_statement", lambda *a, **k: None):
+        assert measure_signature()["plan_sign.forgeries.accepted"] == 19.0
+    with patch.object(plan_sign_abi, "verify_statement", refuse):
+        assert measure_signature()["plan_sign.verdicts.misjudged"] >= 3.0
+
+
 def test_the_collector_rows_count_no_collection_inside_a_hot_path() -> None:
     """OR-GC: the paused paths start no collection at scale 4 (the parent started 24 to 75 per
     call) and leave no cyclic garbage, so every row sits at its floor of 0."""

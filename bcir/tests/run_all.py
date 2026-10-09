@@ -240,6 +240,8 @@ _MODULES = [
     "bcir.tests.test_execution_plan",
     "bcir.tests.test_exec_exact",
     "bcir.tests.test_collector",
+    "bcir.tests.test_plan_sign",
+    "bcir.tests.test_c_plan_sign",
     "bcir.tests.test_control_plane",
     "bcir.tests.test_live_ring",
     "bcir.tests.test_telemetry_replay",
@@ -524,6 +526,7 @@ _REPO_ONLY_MODULES = frozenset(
     {
         "bcir.tests.test_artifact_bundle",
         "bcir.tests.test_execution_plan",
+        "bcir.tests.test_c_plan_sign",
         "bcir.tests.test_asn1_calibration",
         "bcir.tests.test_asn1_dialect",
         "bcir.tests.test_asn1_ecn_law_parity",
