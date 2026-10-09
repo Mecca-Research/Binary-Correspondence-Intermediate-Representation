@@ -518,6 +518,47 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="OR-GC",
     ),
     Metric(
+        "io.pebble.unsound",
+        "io",
+        "of 300 generated two-level instances (up to seven resources, eight steps, a random "
+        "live-out set), those where the red-blue pebble bound exceeds the exact optimal I/O "
+        "(dynamic programming over every eviction policy)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a lower bound is never above the optimum; the witness shows the check fires "
+        "on three unsound variants (bcir/tests/test_io_bounds.py)",
+        slice_owner="G25",
+    ),
+    Metric(
+        "io.pebble.loose.fraction",
+        "io",
+        "fraction of the same 300 instances where the pebble bound is below the exact optimal I/O "
+        "(the parent stated no data-movement bound: zero, exact only where nothing moves)",
+        295 / 300,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the bound equal to the optimum everywhere; the residual is what a larger "
+        "bound family (a bound over every order, per-value reuse distance) would close",
+        slice_owner="G25",
+    ),
+    Metric(
+        "memory.production.gap.512",
+        "memory-production",
+        "the exact rail's stated gap on the 512-resource audit fixture: its layout minus the "
+        "proved lower bound, bytes (the parent: first-fit 6,908 over the plain concurrent-live "
+        "sum 5,400)",
+        1508,
+        "bytes",
+        "exact",
+        bound=0,
+        bound_source="a layout that meets the alignment-aware concurrent-live bound is proved "
+        "optimal (G26 reduces and states the gap; the search stops on its budget)",
+        slice_owner="G26",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3327,6 +3368,20 @@ def measure_memory() -> dict[str, float]:
     return out
 
 
+def measure_memory_production() -> dict[str, float]:
+    """G26: the exact rail's stated gap on the 512-resource audit fixture -- the layout the
+    best-fit portfolio and the budgeted search reach, minus the alignment-aware bound. Its own
+    group: the search spends its whole default budget (~11 s on this host)."""
+    from bcir.kbcir.static_memory import plan_static_memory
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    module = static_memory_module(1)
+    bank = plan_static_memory(
+        module, {rid: "ram" for rid in module.resources}, _AuditHardware(), layout="exact"
+    ).banks[0]
+    return {"memory.production.gap.512": float(bank.gap_bytes)}
+
+
 def measure_collector() -> dict[str, float]:
     """OR-GC: collections inside each paused hot path at scale 4, and the cyclic garbage the
     paths leave (both 0 once the collector is paused; the garbage was 0 before too)."""
@@ -3384,6 +3439,21 @@ def measure_collector() -> dict[str, float]:
         (gc.enable if enabled else gc.disable)()
     out["gc.cyclic_garbage.hot_paths.4"] = float(garbage)
     return out
+
+
+def measure_io() -> dict[str, float]:
+    """G25: the red-blue pebble bound against the exact optimal I/O over the generated
+    instances bcir/tests/test_io_bounds.py holds it to. Pure Python."""
+    from bcir.kbcir.io_bounds import optimal_io, pebble_bound
+    from bcir.tests.test_io_bounds import generated
+
+    instances = generated()
+    unsound = loose = 0
+    for inst in instances:
+        bound, optimum = pebble_bound(*inst).total, optimal_io(*inst)
+        unsound += bound > optimum
+        loose += bound < optimum
+    return {"io.pebble.unsound": float(unsound), "io.pebble.loose.fraction": loose / len(instances)}
 
 
 def measure_dataflow() -> dict[str, float]:
@@ -3454,6 +3524,8 @@ _MEASURERS = {
     "signature": measure_signature,
     "expectation": measure_expectation,
     "dataflow": measure_dataflow,
+    "io": measure_io,
+    "memory-production": measure_memory_production,
 }
 
 

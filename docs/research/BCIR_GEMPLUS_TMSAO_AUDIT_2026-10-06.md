@@ -98,6 +98,16 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   reason named. Network calculus (arrival and service curves) is not built: item 12 asked for
   timed-event semantics and a cycle-time bound, which are; the law rail carries no stream
   attribute yet.
+- **Item 15** (hard lower bounds): G25 adds the data-movement members -- the red-blue pebble
+  I/O bound for an order (held to an exact optimal-I/O dynamic program, sound on every
+  generated instance and equal to the optimum on 269 of 300) and the hierarchical roofline
+  over it. Still Partial: the communication cut between affinity domains, queue and network
+  calculus, occupancy and energy at minimum work are not built, and the pebble bound is for
+  the order given, not over every order.
+- **Item 3** (memory waste, at production scale): G26 makes the concurrent-live bound
+  alignment-aware and gives the exact rail a best-fit incumbent portfolio; on the
+  512-resource fixture the bound rises 5,400 -> 6,468 bytes and the layout falls 6,908 -> 6,820,
+  so the stated gap is 352 bytes where it was 1,508 -- reduced and stated, not proved.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

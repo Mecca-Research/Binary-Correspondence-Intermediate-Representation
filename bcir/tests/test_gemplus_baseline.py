@@ -497,6 +497,18 @@ def test_the_volatile_rows_are_exact_and_measured_or_not():
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
 
 
+def test_the_io_rows_hold_the_pebble_bound_sound_and_mostly_tight() -> None:
+    """G25: never above the exact optimum, and below it on about a tenth of the instances (the
+    parent's absent bound -- zero -- on all but the five where nothing moves)."""
+    from tools.perf.gemplus_baseline import measure_io
+
+    measured = measure_io()
+    assert measured["io.pebble.unsound"] == 0.0, measured
+    assert measured["io.pebble.loose.fraction"] <= 0.15, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    assert rows["io.pebble.loose.fraction"]["verdict"] == "GAIN", rows
+
+
 def test_the_dataflow_rows_hold_every_region_and_cycle_time() -> None:
     """G23 / G24: every corpus case is its hand-derived region and every generated cycle time
     the enumerated maximum cycle ratio -- both rows at their bound of 0."""

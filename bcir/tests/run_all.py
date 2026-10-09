@@ -243,6 +243,7 @@ _MODULES = [
     "bcir.tests.test_plan_sign",
     "bcir.tests.test_expectation",
     "bcir.tests.test_dataflow",
+    "bcir.tests.test_io_bounds",
     "bcir.tests.test_c_plan_sign",
     "bcir.tests.test_control_plane",
     "bcir.tests.test_live_ring",
