@@ -6,7 +6,9 @@
  * the target's cost constants, Theta and the policy) and writes the plan as one record (BKPR:
  * per step the claim, the phase, the realization with its coupled base cost and its realized
  * cost, and the score). A native planner may own a certificate only after it reproduces the
- * Python plan byte for byte over a generated corpus; `planner.parity` is that gate.
+ * Python plan byte for byte over a generated corpus; `planner.parity` is that gate. Its plan
+ * then becomes the pack that runs natively too: bcir_kp_hydrate (below, CXX4) is the C twin of
+ * bcir/gem/streampack.py's hydrate, held to it by `hydrate.native.parity`.
  *
  * The algorithm is the oracle's, step for step:
  *   - the phases in the canonical dependency-first order (model.topological_phase_ids);
@@ -120,6 +122,66 @@ BCIR_NODISCARD bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch,
  * score is not the sum of the step costs. `out` is zeroed on failure. */
 BCIR_NODISCARD bcir_status bcir_kp_decode_realization(const uint8_t *data, size_t len,
                                                       bcir_kp_realization *out);
+
+/* ---- the native hydrate (CXX4): BKPI + BKPR + BKPB -> the oracle's StreamPack bytes --------
+ *
+ * The C twin of bcir/gem/streampack.py::hydrate followed by bcir/abi/streampack_abi.py::encode:
+ * the planner's own input and realization, with the binding below, become the StreamPack the
+ * oracle writes for the same module and plan -- byte for byte (`hydrate.native.parity`). BKPI
+ * carries the claims and their operands as indices into a resource table; what it does not carry
+ * is the binding (BKPB, version zero, docs/kernel/BCIR_PLANNER_ABI.md):
+ *
+ *     header (32): magic "BKPB"  version:u16=0  flags:u16=0  n_resources:u32 @8  n_gens:u32 @12
+ *       topo_gen:u32 @16  plan_len:u32 @20  reserved:u64 @24
+ *     rids n_resources x u32 -- the RID of each BKPI resource index
+ *     gens n_gens x (rid, map_gen, data_gen):u32 -- the registry's generation vector, RID order
+ *     plan plan_len bytes (UTF-8) -- the pack's source_plan | crc32:u32
+ *
+ * The laws, in order: TRUNCATED, MAGIC, VERSION, CRC, RESERVED; PLANNER for a count over its
+ * bound (REFS_MAX) or a plan over 65535 bytes; TRUNCATED/TRAILING for the size; UTF8 for the
+ * plan; GENERATION for RIDs not strictly ascending. Against the input (bcir_kp_hydrate): PLANNER
+ * when the resource counts differ, two indices name one RID, or a resource is declared without a
+ * generation (or undeclared with one). Then the oracle hydrate's own laws, each PROVENANCE: a
+ * step naming no claim or a claim twice, a step whose phase is not its claim's, a step out of
+ * the canonical phase order, a claim no step plans. Then the encoder's: WIDTH for a width that
+ * is not a power of two, OVERFLOW for a negative offset or stride (a block field is a u64). */
+
+#define BCIR_KP_BINDING_MAGIC       "BKPB"
+#define BCIR_KP_BINDING_HEADER_SIZE 32u
+#define BCIR_KP_PLAN_NAME_MAX       65535u
+
+typedef struct bcir_kp_binding {
+  const uint8_t *data;
+  size_t len;
+  uint32_t n_resources, n_gens, topo_gen, plan_len;
+  size_t off_rids, off_gens, off_plan;
+} bcir_kp_binding;
+
+/* Decode and validate a BKPB record (bcir.abi.planner_abi.decode_binding's laws, in order).
+ * `out` is zeroed on every failure. */
+BCIR_NODISCARD bcir_status bcir_kp_decode_binding(const uint8_t *data, size_t len,
+                                                  bcir_kp_binding *out);
+
+/* The scratch bytes bcir_kp_hydrate needs for `in` and `b`. */
+BCIR_NODISCARD bcir_status bcir_kp_hydrate_scratch_size(const bcir_kp_input *in,
+                                                        const bcir_kp_binding *b, size_t *bytes);
+
+/* Check every law and size the StreamPack bcir_kp_hydrate would write (0 on failure). */
+BCIR_NODISCARD bcir_status bcir_kp_hydrate_size(const bcir_kp_input *in,
+                                                const bcir_kp_realization *plan,
+                                                const bcir_kp_binding *b, void *scratch,
+                                                size_t scratch_len, size_t *bytes);
+
+/* Write the StreamPack of `in` planned by `plan` under `b` into `out[0..cap)`. Every law is
+ * checked before the first byte is written; BCIR_ERR_NOSPACE when the scratch or `cap` is short
+ * (bcir_kp_hydrate_size gives the size the pack needs).
+ * `*out_len` is the pack's size on success and 0 on failure, and the output is zeroed on
+ * failure. */
+BCIR_NODISCARD bcir_status bcir_kp_hydrate(const bcir_kp_input *in,
+                                           const bcir_kp_realization *plan,
+                                           const bcir_kp_binding *b, void *scratch,
+                                           size_t scratch_len, uint8_t *out, size_t cap,
+                                           size_t *out_len);
 
 #ifdef __cplusplus
 }

@@ -223,6 +223,10 @@
       "of": "test_kplan",
       "mutation": {"file": "bcir_kplan.c", "find": "r.hi = a.hi + b.hi + (r.lo < a.lo ? 1u : 0u);", "replace": "r.hi = a.hi + b.hi;"}
     },
+    "test_kplan_hydrate_mutant": {
+      "of": "test_kplan",
+      "mutation": {"file": "bcir_kplan.c", "find": "  int v4 = b->n_gens != 0;", "replace": "  int v4 = 1;"}
+    },
     "test_per_O0": {"of": "test_per", "options": ["-O0"]},
     "test_per_O3": {"of": "test_per", "options": ["-O3"]},
     "test_xer_O0": {"of": "test_xer", "options": ["-O0"]},
@@ -274,7 +278,7 @@
     },
     "ring_tsan": {"script": "tools/c/sections/ring_tsan.sh", "harnesses": ["test_ring_tsan", "test_ring_plain"]},
     "handoff": {"script": "tools/c/sections/handoff.sh", "harnesses": ["test_handoff", "test_handoff_O0", "test_handoff_O3", "test_handoff_mutant"]},
-    "kplan": {"script": "tools/c/sections/kplan.sh", "harnesses": ["test_kplan", "test_kplan_O0", "test_kplan_O3", "test_kplan_mutant"]},
+    "kplan": {"script": "tools/c/sections/kplan.sh", "harnesses": ["test_kplan", "test_kplan_O0", "test_kplan_O3", "test_kplan_mutant", "test_kplan_hydrate_mutant"]},
     "cfront": {"script": "tools/c/sections/cfront.sh", "harnesses": ["test_cfront"]},
     "cfront_abi": {"script": "tools/c/sections/cfront_abi.sh", "harnesses": ["test_cfront"]},
     "cfront_loop": {"script": "tools/c/sections/cfront_loop.sh", "harnesses": ["test_cfront_loop"]},

@@ -1,0 +1,155 @@
+{
+  "command": [
+    "@python",
+    "tools/c/check_hydrate.py"
+  ],
+  "faults": [
+    {
+      "label": "native hydrate: a scalar step with reads names a prefetch",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "if (width > 1u && n_rd) kh_str(w, label, kh_label(label, \"pf\", n)); /* its prefetch */",
+      "new": "if (n_rd) kh_str(w, label, kh_label(label, \"pf\", n)); /* its prefetch */"
+    },
+    {
+      "label": "native hydrate: the header's map_gen is the first generation's, not the maximum",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (kp_rd32(g + 4) > map_gen) map_gen = kp_rd32(g + 4);",
+      "new": "    if (!i) map_gen = kp_rd32(g + 4);"
+    },
+    {
+      "label": "native hydrate: an empty op is written as its empty string, not the realization's name",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (op_len) {\n      kh_str(w, in->data + in->off_ops",
+      "new": "    if (1) {\n      kh_str(w, in->data + in->off_ops"
+    },
+    {
+      "label": "native hydrate: a vector realization's name loses its width",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "      kh_str(w, label, kh_label(label, \"vec\", width));",
+      "new": "      kh_str(w, (const uint8_t *)\"vec\", 3);"
+    },
+    {
+      "label": "native hydrate: a pack with no generation vector written as v4",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  int v4 = b->n_gens != 0;",
+      "new": "  int v4 = 1;"
+    },
+    {
+      "label": "native hydrate: the plan's name dropped",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  kh_str(w, b->data + b->off_plan, b->plan_len);",
+      "new": "  kh_str(w, b->data + b->off_plan, 0);"
+    },
+    {
+      "label": "native hydrate: a block's stride written as its count",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    kh_u64(w, CL_STRIDE_K(cl));",
+      "new": "    kh_u64(w, CL_COUNT(cl));"
+    },
+    {
+      "label": "native hydrate: a read's RID taken as its resource index",
+      "expects": "hydrate.native.parity",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    for (uint32_t k = 0; k < n_rd; k++) kh_u32(w, kh_rid(h, kp_ref(x, (uint64_t)ref0 + k)));\n    kh_u16(w, (uint16_t)n_wr);",
+      "new": "    for (uint32_t k = 0; k < n_rd; k++) kh_u32(w, kp_ref(x, (uint64_t)ref0 + k));\n    kh_u16(w, (uint16_t)n_wr);"
+    },
+    {
+      "label": "native hydrate: steps out of the canonical phase order accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (n && at < last) return BCIR_ERR_PROVENANCE;",
+      "new": "    if (0 && at < last) return BCIR_ERR_PROVENANCE;"
+    },
+    {
+      "label": "native hydrate: a step's phase not checked against its claim's",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (kp_rd32(st + 4) != kp_rd32(in->data + in->off_phases + 12u * (size_t)p))\n      return BCIR_ERR_PROVENANCE;",
+      "new": "    if (0)\n      return BCIR_ERR_PROVENANCE;"
+    },
+    {
+      "label": "native hydrate: a claim planned twice accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (c == 0xFFFFFFFFu || x->s[h->H.seen + c]) return BCIR_ERR_PROVENANCE;",
+      "new": "    if (c == 0xFFFFFFFFu) return BCIR_ERR_PROVENANCE;"
+    },
+    {
+      "label": "native hydrate: a claim no step plans accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  if (planned != in->n_claims) return BCIR_ERR_PROVENANCE;",
+      "new": "  if (planned > in->n_claims) return BCIR_ERR_PROVENANCE;"
+    },
+    {
+      "label": "native hydrate: a negative offset written as a u64",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if (CL_OFFSET(cl) > (uint64_t)INT64_MAX || CL_STRIDE_K(cl) > (uint64_t)INT64_MAX)",
+      "new": "    if (CL_STRIDE_K(cl) > (uint64_t)INT64_MAX)"
+    },
+    {
+      "label": "binding: two indices naming one RID accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "      if (kh_rid(h, e - 1u) == rid) return BCIR_ERR_PLANNER;",
+      "new": "      if (0 && kh_rid(h, e - 1u) == rid) return BCIR_ERR_PLANNER;"
+    },
+    {
+      "label": "binding: a declared resource without a generation accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "    if ((kp_resource(x, r)[0] != 0) != kh_has_generation(h, rid)) return BCIR_ERR_PLANNER;",
+      "new": "    if (!kp_resource(x, r)[0] && kh_has_generation(h, rid)) return BCIR_ERR_PLANNER;"
+    },
+    {
+      "label": "binding decoder: RIDs out of order accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "        kp_rd32(data + v.off_gens + 12u * (size_t)(i - 1u)))\n      return BCIR_ERR_GENERATION;",
+      "new": "        kp_rd32(data + v.off_gens + 12u * (size_t)(i - 1u)) && 0)\n      return BCIR_ERR_GENERATION;"
+    },
+    {
+      "label": "binding decoder: the plan's UTF-8 unchecked",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  if (!bcir_utf8_valid(data + v.off_plan, v.plan_len)) return BCIR_ERR_UTF8;",
+      "new": "  if (0 && !bcir_utf8_valid(data + v.off_plan, v.plan_len)) return BCIR_ERR_UTF8;"
+    },
+    {
+      "label": "binding decoder: the reserved word unchecked",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "runtime/c/bcir_kplan.c",
+      "old": "  if (kp_rd16(data + 6) != 0 || kp_rd64(data + 24) != 0) return BCIR_ERR_RESERVED;\n  bcir_kp_binding v;",
+      "new": "  if (kp_rd16(data + 6) != 0) return BCIR_ERR_RESERVED;\n  bcir_kp_binding v;"
+    },
+    {
+      "label": "Python binding: the primary resource left out of the RID table",
+      "expects": "hydrate.native.parity",
+      "path": "bcir/abi/planner_abi.py",
+      "old": "            if _indexes_primary(c, module):\n                seen.setdefault(c.primary_rid, None)",
+      "new": "            if False:\n                seen.setdefault(c.primary_rid, None)"
+    },
+    {
+      "label": "Python binding decoder: RIDs out of order accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "bcir/abi/planner_abi.py",
+      "old": "        if gens[i][0] <= gens[i - 1][0]:",
+      "new": "        if gens[i][0] < gens[i - 1][0] and False:"
+    },
+    {
+      "label": "Python binding check: two indices naming one RID accepted",
+      "expects": "hydrate.native.malformed.accepted",
+      "path": "bcir/abi/planner_abi.py",
+      "old": "    if len(set(binding.rids)) != len(binding.rids):",
+      "new": "    if False:"
+    }
+  ]
+}

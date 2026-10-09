@@ -65,11 +65,13 @@ MEASURED_FLOORS = (
     "audit.mixed-wave-token-eft.scale4",
     "audit.iterative-phase-dag.scale4",
     "verify.plan.scope.overhead",
+    # added with its row: the native hydrate (CXX4) writes a StreamPack, so writing it once
+    "hydrate.native.scale4",
 )
 
 
 def test_every_row_has_a_frozen_bound_or_a_floor_measured_beside_it() -> None:
-    """No row is left without a floor, and the ones measured in-run are exactly these thirteen:
+    """No row is left without a floor, and the ones measured in-run are exactly these:
     `--list` has no "no lower bound yet" section to print."""
     keys = {m.key for m in METRICS}
     measured = {m.key for m in METRICS if m.floor_key}

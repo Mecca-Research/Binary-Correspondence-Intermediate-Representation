@@ -423,6 +423,12 @@ for name, blob, _status in malformed_inputs():           # one per law
     open(os.path.join(d, "bad_input_" + name + ".bin"), "wb").write(b"\x00" + blob)
 for name, blob, _status in malformed_realizations():
     open(os.path.join(d, "bad_plan_" + name + ".bin"), "wb").write(b"\x01" + blob)
+from bcir.abi.planner_abi import encode_binding               # mode 3: bindings (CXX4)
+from bcir.tests.hydrate_fixtures import malformed
+for i, case in enumerate(corpus_cases()[::97][:32]):
+    open(os.path.join(d, f"binding_{i}.bin"), "wb").write(b"\x03" + encode_binding(case.module))
+for i, (_label, _module, (_bkpi, _bkpr, bkpb), _status) in enumerate(malformed()):
+    open(os.path.join(d, f"bad_binding_{i}.bin"), "wb").write(b"\x03" + bkpb)
 PY
 
 # The fast path takes the same projections as the X.690 harness -- seed both.

@@ -694,6 +694,55 @@ METRICS: tuple[Metric, ...] = (
         "whole variadic group, and its operands are heterogeneous (checked on MLIR 23)",
         slice_owner="G32",
     ),
+    # --- CXX4: the native hydrate. `bcir_kp_hydrate` (runtime/c/bcir_kplan.c) writes, from the
+    # planner's input, its realization and a binding (BKPB), the StreamPack the oracle writes for
+    # the same module and plan (bcir/tests/hydrate_fixtures.py::measure, which the tests and
+    # tools/c/check_runtime.sh grade the same way). RED is the parent, which had no native hydrate:
+    # every case and every record on the native rail fails.
+    Metric(
+        "hydrate.native.parity",
+        "hydrate",
+        "cases whose native StreamPack differs from encode(hydrate(module, result, plan)) -- the "
+        "bytes, or the same refusal -- over the planner's corpus (every target, Theta and policy; "
+        "240 generated modules) and the hydrate's own cases (each realization name as an opcode, "
+        "generations above zero, v1 packs, empty modules, RIDs at the top of their range, plan "
+        "names of 0, 13 and 65535 bytes)",
+        3375,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one pack per plan on both rails (the roadmap's CXX4 gate)",
+        slice_owner="CXX4",
+    ),
+    Metric(
+        "hydrate.native.malformed.accepted",
+        "hydrate",
+        "(malformed record, rail) pairs not refused with the declared status: one BKPB variant "
+        "per wire law and per law against the input, one BKPR forgery per hydrate law, a width "
+        "and a block field the StreamPack cannot carry (24), on the Python oracle and the C twin",
+        48,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own violation with one status on both rails",
+        slice_owner="CXX4",
+    ),
+    Metric(
+        "hydrate.native.scale4",
+        "hydrate",
+        "native hydrate (bcir_kplan.c, -O2) median time per StreamPack of the audit fixture at "
+        "scale 4 (4,096 claims), the three records decoded once; the baseline is the oracle's "
+        "encode(hydrate(...)) on the same plan, same host -- the parent's only way to the pack",
+        26.5,
+        "ms",
+        "wall",
+        floor_key="hydrate.native.scale4.floor",
+        bound_source="writing the pack once, same harness and run (`test_kplan "
+        "--bench-hydrate-floor`): the hydrate writes every byte of the StreamPack -- its records, "
+        "blocks, notes and the CRC over them -- so one store of that many bytes into the same "
+        "warm buffer is work no hydrate avoids. A memory roofline, not a hydrate",
+        slice_owner="CXX4",
+    ),
     Metric(
         "transform.export.mismatch",
         "transform",
@@ -3427,6 +3476,29 @@ def measure_kplan() -> dict[str, float]:
     return out
 
 
+def measure_hydrate() -> dict[str, float]:
+    """The CXX4 rows: the native hydrate against the oracle (bcir/tests/hydrate_fixtures.py::
+    measure, which the tests and tools/c/check_runtime.sh grade the same way) and its time. Both
+    need the C twin: without a C compiler they are NOT-MEASURED, never estimated from one rail."""
+    import shutil
+    import tempfile
+
+    from bcir.tests.hydrate_fixtures import measure, native_floor, native_ms
+    from bcir.tests.planner_fixtures import build_harness
+
+    out: dict[str, float] = {}
+    tmp = tempfile.mkdtemp(prefix="bcir-khydrate-")
+    try:
+        exe = build_harness(tmp)
+        if exe is not None:
+            out.update(measure(exe, tmp))
+            out["hydrate.native.scale4"] = native_ms(exe, tmp)
+            out["hydrate.native.scale4.floor"] = native_floor(exe, tmp)[0]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
 def measure_delta() -> dict[str, float]:
     """The G18 rows (S4-B): the chain advanced by declared deltas against the chain from scratch
     (bcir/tests/delta_fixtures.py::measure, which the tests and tools/perf/check_delta.py grade the
@@ -3745,6 +3817,7 @@ _MEASURERS = {
     "ring": measure_ring,
     "handoff": measure_handoff,
     "kplan": measure_kplan,
+    "hydrate": measure_hydrate,
     "delta": measure_delta,
     "alias": measure_alias,
     "encode": measure_encode,

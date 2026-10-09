@@ -217,6 +217,13 @@ def _theta_fields(theta) -> tuple[int, ...]:
     )
 
 
+def _indexes_primary(c, module) -> bool:
+    """Whether BKPI gives claim `c` a primary resource index: when it reads nothing and the
+    module declares its primary resource. One predicate for the encoder and the binding's RID
+    table (`resource_rids`), so the two cannot disagree about a resource index."""
+    return not c.rd and c.primary_rid is not None and c.primary_rid in module.resources
+
+
 def encode_input(module, h, theta, policy=None) -> bytes:
     """The planner's input as a BKPI record: exactly what `realize.optimize(module, h, theta,
     policy)` reads. Refused (`PlannerAbiError`) outside the declared domain -- a module the
@@ -257,7 +264,7 @@ def encode_input(module, h, theta, policy=None) -> bytes:
             reads = tuple(index(r) for r in c.rd)
             writes = tuple(index(r) for r in c.wr)
             primary = NO_RESOURCE
-            if not c.rd and c.primary_rid is not None and c.primary_rid in module.resources:
+            if _indexes_primary(c, module):
                 primary = index(c.primary_rid)
             flags = (
                 (F_VOLATILE if c.volatile else 0)
@@ -730,3 +737,124 @@ def decode_realization(data: bytes) -> Realization:
     if total != score:
         raise _refuse(f"the score {score} is not the sum of the step costs {total}")
     return Realization(score, tuple(steps))
+
+
+# --- BKPB: the binding (CXX4) ------------------------------------------------------------------
+#
+# What the native hydrate needs beyond BKPI and BKPR to write the oracle's StreamPack
+# (`bcir_kp_hydrate`, runtime/c/bcir_kplan.h): the RID of each BKPI resource index, the
+# registry's generation vector and the pack's source plan.
+#
+#     header (32): magic "BKPB"  version:u16=0  flags:u16=0  n_resources:u32 @8  n_gens:u32 @12
+#       topo_gen:u32 @16  plan_len:u32 @20  reserved:u64 @24
+#     rids n_resources x u32 | gens n_gens x (rid, map_gen, data_gen):u32 | plan bytes | crc32:u32
+
+BINDING_MAGIC = b"BKPB"
+BINDING_HEADER_SIZE = 32
+PLAN_NAME_MAX = 0xFFFF
+_B_HEADER = struct.Struct("<4sHHIIIIQ")
+assert _B_HEADER.size == BINDING_HEADER_SIZE
+
+
+@dataclass(frozen=True)
+class Binding:
+    """A decoded BKPB record."""
+
+    topo_gen: int
+    rids: tuple[int, ...]  # the RID of each BKPI resource index
+    gens: tuple[tuple[int, int, int], ...]  # (rid, map_gen, data_gen), RIDs strictly ascending
+    plan: str
+
+
+def resource_rids(module) -> tuple[int, ...]:
+    """The RIDs of BKPI's resource table, by index: `encode_input`'s first-reference order --
+    phases in module order, each claim's reads, then its writes, then its primary resource when
+    the claim reads nothing and the module declares it."""
+    seen: dict = {}
+    for ph in module.phases:
+        for c in ph.claims:
+            for rid in (*c.rd, *c.wr):
+                seen.setdefault(rid, None)
+            if _indexes_primary(c, module):
+                seen.setdefault(c.primary_rid, None)
+    return tuple(seen)
+
+
+def encode_binding(module, plan: str = "plan0", topo_gen: int = 1) -> bytes:
+    """The binding of `module` for a pack named `plan`: what `gem.streampack.hydrate(module,
+    result, plan)` reads besides the planner's input and its realization."""
+    rids = resource_rids(module)
+    gens = tuple(
+        (r.rid, r.map_gen, r.data_gen)
+        for r in sorted(module.resources.values(), key=lambda r: r.rid)
+    )
+    raw = plan.encode("utf-8")
+    if len(raw) > PLAN_NAME_MAX:
+        raise _refuse(f"a plan name of {len(raw)} bytes is over {PLAN_NAME_MAX}")
+    body = _B_HEADER.pack(
+        BINDING_MAGIC,
+        VERSION,
+        0,
+        _u32(len(rids), "a resource count"),
+        _u32(len(gens), "a generation count"),
+        _u32(topo_gen, "topo_gen"),
+        len(raw),
+        0,
+    )
+    body += b"".join(struct.pack("<I", _u32(rid, "a RID")) for rid in rids)
+    body += b"".join(
+        struct.pack("<III", _u32(rid, "a RID"), _u32(m, "a map_gen"), _u32(d, "a data_gen"))
+        for rid, m, d in gens
+    )
+    body += raw
+    data = body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
+    decode_binding(data)
+    return data
+
+
+def decode_binding(data: bytes) -> Binding:
+    """Decode a BKPB record, the laws in `bcir_kp_decode_binding`'s order."""
+    _framing(data, BINDING_MAGIC, BINDING_HEADER_SIZE)
+    _magic, _version, flags, n_res, n_gens, topo_gen, plan_len, reserved = _B_HEADER.unpack_from(
+        data
+    )
+    if flags or reserved:
+        raise PlannerAbiError("BCIR_ERR_RESERVED", "the header's reserved fields are not zero")
+    if n_res > REFS_MAX or n_gens > REFS_MAX or plan_len > PLAN_NAME_MAX:
+        raise _refuse("a binding count or the plan name is over its bound")
+    size = BINDING_HEADER_SIZE + 4 * n_res + 12 * n_gens + plan_len + CRC_SIZE
+    if len(data) < size:
+        raise PlannerAbiError("BCIR_ERR_TRUNCATED", f"{len(data)} bytes; the binding needs {size}")
+    if len(data) > size:
+        raise PlannerAbiError("BCIR_ERR_TRAILING", f"{len(data) - size} bytes after the binding")
+    at = BINDING_HEADER_SIZE
+    rids = struct.unpack_from(f"<{n_res}I", data, at)
+    at += 4 * n_res
+    flat = struct.unpack_from(f"<{3 * n_gens}I", data, at)
+    gens = tuple(flat[i : i + 3] for i in range(0, len(flat), 3))
+    at += 12 * n_gens
+    try:
+        plan = bytes(data[at : at + plan_len]).decode("utf-8")
+    except UnicodeDecodeError:
+        raise PlannerAbiError("BCIR_ERR_UTF8", "the plan name is not UTF-8") from None
+    for i in range(1, n_gens):
+        if gens[i][0] <= gens[i - 1][0]:
+            raise PlannerAbiError(
+                "BCIR_ERR_GENERATION", f"generation {i}: RIDs are not strictly ascending"
+            )
+    return Binding(topo_gen, rids, gens, plan)
+
+
+def check_binding(binding: Binding, value: PlannerInput) -> None:
+    """The binding against the input (`bcir_kp_hydrate`'s first laws): one resource count, one
+    RID per index, and a generation for exactly the declared resources."""
+    if len(binding.rids) != len(value.resources):
+        raise _refuse(
+            f"the binding names {len(binding.rids)} resources, the input {len(value.resources)}"
+        )
+    if len(set(binding.rids)) != len(binding.rids):
+        raise _refuse("two resource indices name one RID")
+    generated = {g[0] for g in binding.gens}
+    for rid, row in zip(binding.rids, value.resources):
+        if bool(row.declared) != (rid in generated):
+            raise _refuse(f"resource {rid}: declared and generation vector disagree")

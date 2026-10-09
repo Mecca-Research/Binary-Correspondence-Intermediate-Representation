@@ -843,3 +843,76 @@ int main(void){
         assert build.returncode == 0, build.stderr
         run = subprocess.run([exe], capture_output=True, text=True)
         assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+
+
+_CRC_DRIVER = r"""
+#include <stdio.h>
+#include <stdlib.h>
+#include "bcir_runtime.h"
+int main(int argc, char **argv) {
+  /* argv[1]: a file of (u32 length, bytes) records; prints each record's CRC in hex */
+  FILE *f = fopen(argv[1], "rb");
+  if (!f || argc != 2) return 2;
+  unsigned char hdr[4];
+  while (fread(hdr, 1, 4, f) == 4) {
+    size_t n = (size_t)hdr[0] | (size_t)hdr[1] << 8 | (size_t)hdr[2] << 16 | (size_t)hdr[3] << 24;
+    unsigned char *buf = malloc(n ? n : 1);
+    if (!buf || fread(buf, 1, n, f) != n) return 2;
+    printf("%08x\n", (unsigned)bcir_crc32(buf, n));
+    free(buf);
+  }
+  printf("%08x\n", (unsigned)bcir_crc32(NULL, 0));
+  return fclose(f) != 0;
+}
+"""
+
+
+def test_the_runtime_crc_is_zlibs():
+    """`bcir_crc32` (table-driven since CXX4) is zlib's CRC-32 over random buffers of every
+    length class -- empty, one byte, around the table's byte step, large -- and over NULL with no
+    bytes; a table entry flipped is caught. Every pack, plan and record digest on the C rail
+    rests on it."""
+    import random
+    import struct
+    import zlib
+
+    cc = which("clang") or which("cc") or which("gcc")
+    if cc is None:
+        return
+    rng = random.Random(4)
+    buffers = [b"", b"\x00", b"\xff", b"123456789"]
+    buffers += [
+        bytes(rng.randrange(256) for _ in range(n)) for n in (2, 7, 8, 9, 255, 256, 257, 4099)
+    ]
+    buffers.append(bytes(rng.randrange(256) for _ in range(1 << 18)))
+    want = [f"{zlib.crc32(b) & 0xFFFFFFFF:08x}" for b in buffers] + ["00000000"]
+    assert want[3] == "cbf43926"  # the standard check value of CRC-32 over "123456789"
+    with open(os.path.join(_C_DIR, "bcir_runtime.c"), encoding="utf-8") as f:
+        source = f.read()
+    with tempfile.TemporaryDirectory() as d:
+        data = os.path.join(d, "crc.in")
+        with open(data, "wb") as f:
+            for b in buffers:
+                f.write(struct.pack("<I", len(b)) + b)
+        driver = os.path.join(d, "crc.c")
+        with open(driver, "w", encoding="utf-8") as f:
+            f.write(_CRC_DRIVER)
+        for label, text in (
+            ("the runtime", source),
+            ("a table entry flipped", source.replace("0x77073096u", "0x77073097u", 1)),
+        ):
+            unit = os.path.join(d, "bcir_runtime.c")
+            with open(unit, "w", encoding="utf-8") as f:
+                f.write(text)
+            exe = os.path.join(d, "crc")
+            build = subprocess.run(
+                [cc, "-std=c11", "-O2", "-I", _C_DIR, unit, driver, "-o", exe],
+                capture_output=True, text=True, timeout=120,
+            )  # fmt: skip
+            assert build.returncode == 0, build.stderr
+            run = subprocess.run([exe, data], capture_output=True, text=True, timeout=60)
+            got = run.stdout.split()
+            if label == "the runtime":
+                assert run.returncode == 0 and got == want, label
+            else:
+                assert got != want, "a corrupted table went unnoticed"

@@ -9,19 +9,20 @@
 # docs/BCIR_BUILD_ROADMAP.md), so the two run one text, and tools/build/section_parity.py holds the
 # two builds' outputs byte-identical.
 #
-#   usage: kplan.sh <test_kplan> <test_kplan_O0> <test_kplan_O3> <test_kplan_mutant>
+#   usage: kplan.sh <test_kplan> <test_kplan_O0> <test_kplan_O3> <test_kplan_mutant> <test_kplan_hydrate_mutant>
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 C="${ROOT}/runtime/c"
 PYTHON="${PYTHON:-python3}"
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
-[ $# -eq 4 ] || { echo "usage: $(basename "$0") <test_kplan> <test_kplan_O0> <test_kplan_O3> <test_kplan_mutant>" >&2; exit 2; }
+[ $# -eq 5 ] || { echo "usage: $(basename "$0") <test_kplan> <test_kplan_O0> <test_kplan_O3> <test_kplan_mutant> <test_kplan_hydrate_mutant>" >&2; exit 2; }
 abs() { printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd)" "$(basename "$1")"; }
 HARNESS="$(abs "$1")"; [ -x "${HARNESS}" ] || { echo "  FAIL: HARNESS: ${HARNESS} is not an executable harness"; exit 2; }
 O0="$(abs "$2")"; [ -x "${O0}" ] || { echo "  FAIL: O0: ${O0} is not an executable harness"; exit 2; }
 O3="$(abs "$3")"; [ -x "${O3}" ] || { echo "  FAIL: O3: ${O3} is not an executable harness"; exit 2; }
 MUTANT="$(abs "$4")"; [ -x "${MUTANT}" ] || { echo "  FAIL: MUTANT: ${MUTANT} is not an executable harness"; exit 2; }
+HMUTANT="$(abs "$5")"; [ -x "${HMUTANT}" ] || { echo "  FAIL: HMUTANT: ${HMUTANT} is not an executable harness"; exit 2; }
 declare -A VARIANT=([O0]="${O0}" [O3]="${O3}")
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 
@@ -69,3 +70,35 @@ if [ "${mutant_status}" -ne 1 ]; then
   echo "  FAIL: a planner that wraps a path weight passed the G17 gate (exit ${mutant_status}): ${mutant_rows}"; exit 1
 fi
 echo "  PASS planner gate fires on an injected fault (the 128-bit carry dropped: ${mutant_rows#rows })"
+
+# The native hydrate (CXX4): BKPI + BKPR + BKPB -> the oracle's StreamPack, byte for byte. The grading
+# is tools/c/check_hydrate.py -> bcir/tests/hydrate_fixtures.py::measure, the function the tests, the
+# CXX4 harness rows and the fault table (tools/testing/faults/hydrate.json) use: every corpus case's
+# native pack against encode(hydrate(...)), and one malformed record per law refused alike on both rails.
+hydrate_api="$("${HARNESS}" --api-hydrate "${tmp}/kplan_seed.bkpi")" \
+  || { echo "  FAIL: hydrate API laws"; echo "${hydrate_api}"; exit 1; }
+case "${hydrate_api}" in
+  API\ OK\ *) ;;
+  *) echo "  FAIL: unexpected hydrate API output"; echo "${hydrate_api}"; exit 1 ;;
+esac
+hydrate_measure() {  # <C harness> -> prints the row summary; exits as tools/c/check_hydrate.py does
+  "${PYTHON}" "${ROOT}/tools/c/check_hydrate.py" --exe "$1" --tmp "${tmp}" > "${tmp}/khydrate_rows.txt" 2>&1
+  local status=$?
+  tail -n 1 "${tmp}/khydrate_rows.txt"
+  return "${status}"
+}
+hydrate_rows="$(hydrate_measure "${HARNESS}")" \
+  || { echo "  FAIL: a CXX4 row is not zero: ${hydrate_rows}"; cat "${tmp}/khydrate_rows.txt"; exit 1; }
+echo "  PASS native hydrate (API fail-closed laws, ${hydrate_api#API OK } checks; ${hydrate_rows#rows })"
+for opt in O0 O3; do
+  opt_rows="$(hydrate_measure "${VARIANT[${opt}]}")" \
+    || { echo "  FAIL: the -${opt} hydrate diverges from the oracle: ${opt_rows}"; exit 1; }
+done
+echo "  PASS native hydrate optimisation parity (-O0 == -O3 == the oracle)"
+# The gate must be able to fail (L2): a hydrate that writes every pack as v4 -- a header pad and a
+# generation count where a pack without a vector has neither -- must turn the parity row red.
+hmutant_rows="$(hydrate_measure "${HMUTANT}")"; hmutant_status=$?
+if [ "${hmutant_status}" -ne 1 ]; then
+  echo "  FAIL: a hydrate that writes v1 packs as v4 passed the CXX4 gate (exit ${hmutant_status}): ${hmutant_rows}"; exit 1
+fi
+echo "  PASS hydrate gate fires on an injected fault (a v1 pack written as v4: ${hmutant_rows#rows })"
