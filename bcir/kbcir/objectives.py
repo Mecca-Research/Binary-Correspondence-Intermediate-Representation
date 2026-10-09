@@ -20,16 +20,30 @@ scheduler's critical-path bound is (`gem.exact._critical_path`, reproduced exact
 Overflow is a policy, not an accident: the `checked` policy refuses any value outside the
 signed 64-bit range (the plan's costs are `i64` on every rail), `saturate` clamps to it and
 says so. No entry is admitted with an undeclared policy.
+
+Two KINDS of objective, each with its own law set (G22). A `select` objective chooses: its
+`select` is idempotent and realizes a strict order `better` -- every entry above. A `sum`
+objective accumulates: its `select` adds alternatives weighted by how likely they are, so it is
+neither idempotent nor ordered, and an entry that claimed either would be lying. The
+expectation semiring (Eisner 2002) is the one `sum` entry: a value is a pair (p, r) -- the
+probability of the paths it stands for and their probability-weighted cost -- `combine` is
+(p1 p2, p1 r2 + p2 r1) and `select` is (p1 + p2, r1 + r2). Its laws are the semiring's own:
+both operations associative and commutative with their identities, `combine` distributing
+over `select`, and `zero` annihilating. The carrier is exact non-negative rationals, so no
+value overflows and the policy is declared but never reached; the expected cost a path sum
+names is a rational, and `bcir.kbcir.expectation` owns how it is projected.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fractions import Fraction
 from typing import Callable
 
 I64_MAX = (1 << 63) - 1
 I64_MIN = -(1 << 63)
 OVERFLOW_POLICIES = ("checked", "saturate")
+KINDS = ("select", "sum")
 
 INF = float("inf")
 
@@ -44,7 +58,9 @@ class Objective:
     alternatives, `one` / `zero` are their identities, `better(a, b)` is the strict order
     `select` realizes (`select(a, b) is a` iff not `better(b, a)` for scalars), `laws` are the
     properties claimed beyond the semiring's own (`distributive`, `commutative_combine`),
-    and `overflow` the declared policy for values leaving the i64 range."""
+    and `overflow` the declared policy for values leaving the i64 range. `kind` names the law
+    set: `select` (the default) chooses and is ordered; `sum` accumulates, has no `better`
+    (None), and is held to the semiring laws instead (module docstring)."""
 
     name: str
     carrier: str
@@ -56,10 +72,13 @@ class Objective:
     laws: frozenset = field(default_factory=frozenset)
     overflow: str = "checked"
     describe: str = ""
+    kind: str = "select"
 
     def __post_init__(self) -> None:
         if self.overflow not in OVERFLOW_POLICIES:
             raise ObjectiveError(f"overflow policy must be one of {OVERFLOW_POLICIES}")
+        if self.kind not in KINDS:
+            raise ObjectiveError(f"objective kind must be one of {KINDS}")
 
 
 def _clamp(value, policy: str):
@@ -214,6 +233,36 @@ def _pareto(policy: str) -> Objective:
     )
 
 
+# --- the expectation semiring (a sum objective, G22) ----------------------------------------
+
+
+def _expectation(policy: str) -> Objective:
+    """(p, r): the probability of a set of paths and their probability-weighted cost. A branch
+    taken with probability q at cost c is (q, q c); a path multiplies probabilities and adds
+    its weighted costs; alternatives add. The path sum from entry to exit is (P[reach], E[cost
+    ; reach]) -- `bcir.kbcir.expectation` solves it over cycles too."""
+
+    def combine(a, b):
+        return (a[0] * b[0], a[0] * b[1] + b[0] * a[1])
+
+    def select(a, b):
+        return (a[0] + b[0], a[1] + b[1])
+
+    return Objective(
+        "expectation",
+        "expectation",
+        combine,
+        select,
+        (Fraction(1), Fraction(0)),
+        (Fraction(0), Fraction(0)),
+        None,
+        frozenset({"distributive", "commutative_combine"}),
+        policy,
+        "probability-weighted path costs; alternatives add (the expectation semiring, Eisner 2002)",
+        "sum",
+    )
+
+
 _FACTORIES = {
     "min_plus": _min_plus,
     "max_plus": _max_plus,
@@ -221,6 +270,7 @@ _FACTORIES = {
     "boolean": _boolean,
     "lexicographic": _lexicographic,
     "pareto": _pareto,
+    "expectation": _expectation,
 }
 
 #: The names the law rail shares (`BCIR_Semiring` in `mlir/include/BCIR/BCIRAttrs.td`): the
@@ -266,6 +316,28 @@ def _samples(entry: Objective, count: int = 24, seed: int = 7) -> list:
             (0, 1, 0),
             (0, 0, 1),
         ]
+    if entry.carrier == "expectation":
+        # Specials first (the law loops run over the first six): a certain path with no cost,
+        # an impossible path with cost, and pairs whose probability and cost disagree on which
+        # is larger -- a componentwise max passes distributivity on any sample where p and r
+        # rise together, so the samples must not let them.
+        values = [
+            (Fraction(1), Fraction(0)),
+            (Fraction(0), Fraction(5)),
+            (Fraction(1), Fraction(1)),
+            (Fraction(1, 2), Fraction(3)),
+            (Fraction(2), Fraction(1, 3)),
+            (Fraction(0), Fraction(0)),
+            (Fraction(1), Fraction(7)),
+        ]
+        for _ in range(count):
+            values.append(
+                (
+                    Fraction(rng.randrange(0, 17), rng.randrange(1, 9)),
+                    Fraction(rng.randrange(0, 1 << 20), rng.randrange(1, 9)),
+                )
+            )
+        return values
     if entry.carrier == "frontier":
         points = [tuple(rng.randrange(0, 50) for _ in range(2)) for _ in range(6 * count)]
         return [frontier(points[i : i + 6]) for i in range(0, len(points), 6)] + [
@@ -282,6 +354,14 @@ def _member(entry: Objective, value) -> bool:
         return isinstance(value, bool)
     if entry.carrier == "tuple":
         return isinstance(value, tuple) and all(_in_range(v) for v in value)
+    if entry.carrier == "expectation":
+        return (
+            isinstance(value, tuple)
+            and len(value) == 2
+            and all(isinstance(v, (int, Fraction)) and not isinstance(v, bool) for v in value)
+            and value[0] >= 0
+            and value[1] >= 0
+        )
     if entry.carrier == "frontier":
         return (
             isinstance(value, frozenset)
@@ -293,10 +373,14 @@ def _member(entry: Objective, value) -> bool:
 
 def verify_objective(entry: Objective, samples=None) -> list[str]:
     """Every law the entry claims, checked on samples. Returns the failures (empty = admitted)."""
-    problems: list[str] = []
     xs = list(samples) if samples is not None else _samples(entry)
     if not xs:
         return ["no samples"]
+    if entry.kind == "sum":
+        return _verify_sum(entry, xs)
+    if entry.better is None:
+        return ["a select objective needs the order its select realizes"]
+    problems: list[str] = []
     combine, select, better = entry.combine, entry.select, entry.better
     one, zero = identity_for(entry, xs[0])
     # closure under the overflow policy
@@ -363,6 +447,51 @@ def verify_objective(entry: Objective, samples=None) -> list[str]:
     return sorted(set(problems))
 
 
+def _verify_sum(entry: Objective, xs: list) -> list[str]:
+    """The semiring laws of a `sum` objective: closure, both identities, both operations
+    associative and `select` commutative (`combine` too when claimed), `combine` distributing
+    over `select` from both sides, and `zero` annihilating. No order: an entry that offers one
+    claims to choose, which a sum does not."""
+    problems: list[str] = []
+    combine, select, one, zero = entry.combine, entry.select, entry.one, entry.zero
+    if entry.better is not None:
+        problems.append("a sum objective has no order: it accumulates alternatives, never chooses")
+    if not _member(entry, one) or not _member(entry, zero):
+        problems.append("an identity is outside the carrier")
+    for a in xs:
+        for b in xs[:8]:
+            if not _member(entry, combine(a, b)) or not _member(entry, select(a, b)):
+                problems.append(f"closure: combine({a!r},{b!r}) or select left the carrier")
+        if combine(a, one) != a or combine(one, a) != a:
+            problems.append(f"combine identity fails on {a!r}")
+        if select(a, zero) != a or select(zero, a) != a:
+            problems.append(f"select identity fails on {a!r}")
+        if combine(a, zero) != zero or combine(zero, a) != zero:
+            problems.append(f"zero does not annihilate {a!r}")
+    trio = xs[:6]
+    for a in trio:
+        for b in trio:
+            if select(a, b) != select(b, a):
+                problems.append("select is not commutative")
+            if "commutative_combine" in entry.laws and combine(a, b) != combine(b, a):
+                problems.append("combine is not commutative")
+            for c in trio:
+                if combine(combine(a, b), c) != combine(a, combine(b, c)):
+                    problems.append("combine is not associative")
+                if select(select(a, b), c) != select(a, select(b, c)):
+                    problems.append("select is not associative")
+                if "distributive" in entry.laws and (
+                    combine(a, select(b, c)) != select(combine(a, b), combine(a, c))
+                    or combine(select(b, c), a) != select(combine(b, a), combine(c, a))
+                ):
+                    problems.append("combine does not distribute over select")
+    if "distributive" not in entry.laws:
+        problems.append("a sum objective is a semiring: it must claim distributivity")
+    if all(select(a, a) == a for a in xs):
+        problems.append("select is idempotent: an objective that chooses is a select objective")
+    return sorted(set(problems))
+
+
 # --- the one relaxation over a layered DAG ---------------------------------------------------
 
 
@@ -373,8 +502,8 @@ def dag_best_path(
     value of a path is the `combine` of its edge weights, a node's value the `select` over
     its paths. Under `min_plus` this is `semiring.dag_shortest_path` to the digit (the same
     first-wins tie-break); under `max_plus` the longest path."""
-    if entry.carrier not in ("int", "bool", "tuple"):
-        raise ObjectiveError("dag_best_path relaxes scalar objectives (int, bool, tuple)")
+    if entry.kind != "select" or entry.carrier not in ("int", "bool", "tuple"):
+        raise ObjectiveError("dag_best_path relaxes scalar select objectives (int, bool, tuple)")
     probe = next((w for edges in adj for _v, w in edges), None)
     one, zero = identity_for(entry, probe if probe is not None else entry.one)
     best: list = [zero] * n
@@ -391,8 +520,29 @@ def dag_best_path(
     return best, pred
 
 
+def dag_path_sum(n: int, adj: list[list[tuple[int, object]]], entry: Objective, source: int = 0):
+    """The path sum over a DAG whose edges only go to higher node ids, under a `sum` objective:
+    a node's value is the `select` (sum) over its incoming paths of their `combine`. Under
+    `expectation`, with an edge taken with probability q at cost c weighted as (q, q c), a
+    node's value is (P[reach it], E[cost of the paths to it ; reach it]) -- the acyclic case of
+    `bcir.kbcir.expectation.expected_cost`, which the tests hold the two to."""
+    if entry.kind != "sum":
+        raise ObjectiveError("dag_path_sum sums under a sum objective; a select one chooses")
+    value: list = [entry.zero] * n
+    value[source] = entry.one
+    for u in range(source, n):
+        if value[u] == entry.zero:
+            continue
+        for v, w in adj[u]:
+            if v <= u:
+                raise ObjectiveError("dag_path_sum needs edges to higher node ids (a DAG)")
+            value[v] = entry.select(value[v], entry.combine(value[u], w))
+    return value
+
+
 __all__ = [
     "I64_MAX",
+    "KINDS",
     "I64_MIN",
     "INF",
     "LAW_RAIL_NAMES",
@@ -400,6 +550,7 @@ __all__ = [
     "Objective",
     "ObjectiveError",
     "dag_best_path",
+    "dag_path_sum",
     "dominates",
     "frontier",
     "identity_for",

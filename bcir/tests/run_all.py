@@ -241,6 +241,7 @@ _MODULES = [
     "bcir.tests.test_exec_exact",
     "bcir.tests.test_collector",
     "bcir.tests.test_plan_sign",
+    "bcir.tests.test_expectation",
     "bcir.tests.test_c_plan_sign",
     "bcir.tests.test_control_plane",
     "bcir.tests.test_live_ring",

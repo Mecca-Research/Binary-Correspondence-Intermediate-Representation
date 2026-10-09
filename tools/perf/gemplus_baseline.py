@@ -518,6 +518,33 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="OR-GC",
     ),
     Metric(
+        "expectation.corpus.misstated",
+        "expectation",
+        "programs of the G22 corpus (8: branches, a do-while, a test-first while, nested loops, a "
+        "loop with two exits, a random walk, an unrolled bounded loop, a zero-probability "
+        "branch) whose exact expected cost is not the mean derived by hand",
+        8,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="each mean is derived by hand in bcir/tests/expectation_fixtures.py; the "
+        "parent had no expectation over a control-flow graph, so it stated none of them",
+        slice_owner="G22",
+    ),
+    Metric(
+        "expectation.compose.disagreements",
+        "expectation",
+        "of 60 generated region trees (branches, bounded loops, sequences), those on which "
+        "compose's exact mean differs from the Markov solve of the region's unrolled graph",
+        60,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="two independent derivations of one mean; the parent had no loop region and "
+        "floored at every branch (the witness splits 17 of the 60 under that floor)",
+        slice_owner="G22",
+    ),
+    Metric(
         "plan_sign.forgeries.accepted",
         "signature",
         "forged, mis-bound or malformed statements and stores of the G21 corpus (29 cases: trust, "
@@ -2657,7 +2684,9 @@ def measure_regions() -> dict[str, float]:
         for entry in registry().values():
             unverified += bool(verify_objective(entry))
     except Exception:
-        unverified += 6
+        from bcir.kbcir.objectives import _FACTORIES
+
+        unverified += len(_FACTORIES)  # the registry could not be built: none is verified
     return {
         "regions.unexpanded.claims": float(unexpanded),
         "objectives.unverified": float(unverified),
@@ -3329,6 +3358,15 @@ def measure_collector() -> dict[str, float]:
     return out
 
 
+def measure_expectation() -> dict[str, float]:
+    """G22: the exact expected cost over the hand-derived corpus and against compose's
+    region semantics (bcir/tests/expectation_fixtures.py::measure, which the tests grade the
+    same way). Pure Python: measured wherever the interpreter runs."""
+    from bcir.tests.expectation_fixtures import measure
+
+    return measure()
+
+
 def measure_signature() -> dict[str, float]:
     """G21: the reference verifier over every case of bcir/tests/plan_sign_fixtures.py -- the
     forgeries it accepts and the verdicts it misnames (the C twin is held to the same verdicts by
@@ -3377,6 +3415,7 @@ _MEASURERS = {
     "memory": measure_memory,
     "collector": measure_collector,
     "signature": measure_signature,
+    "expectation": measure_expectation,
 }
 
 

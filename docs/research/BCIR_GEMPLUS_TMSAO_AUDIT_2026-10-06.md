@@ -85,6 +85,12 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   signature, verified on both rails against a trust store with rotation, revocation and expiry.
   It stays Partial for (c) and (d): the objective's identity is bound only through the scope and
   the certificate, and the law rail has no plan op.
+- **Item 8** (expected cost): Met by G22 -- the registry's `expectation` semiring, held to the
+  semiring laws; the exact Markov expectation over loops (`kbcir.expectation`); measured branch
+  probabilities (`BranchProfile`) recorded as the scope's `U`; and `compose.Cond` refusing an
+  out-of-range probability instead of clamping it, its mean exact instead of floored per branch.
+  The C front still lowers a `while` to one body iteration: its trip probability is not yet
+  measured, so its loops carry no expectation of their own.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

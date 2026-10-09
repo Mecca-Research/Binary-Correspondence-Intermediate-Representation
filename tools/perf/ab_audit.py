@@ -422,6 +422,73 @@ def row_asn1_codec(which):
     return run
 
 
+def row_compose(kind):
+    """compose's region planning over shapes both trees have (Leaf, Seq, Cond, Call with
+    summaries): `regions` plans 40 seeded region trees, `train` a 16-step training run
+    (`kbcir.train_graph`). The output is each result's (worst, expected, leaves, reused) --
+    the values, not the record, so a field a slice adds to the record is not a change."""
+    import random
+
+    from bcir.kbcir import TARGETS
+    from bcir.kbcir.compose import Call, Cond, Function, Leaf, Seq, plan_composite, summarize
+    from bcir.kbcir.cost import Theta
+    from bcir.model import Claim, Domain, Lane, Opcode, Resource, StrideClass
+
+    target, theta = TARGETS["x86_avx512"], Theta.cool()
+
+    def values(r):
+        return (r.worst_cost, r.expected_cost, r.leaves, r.reused)
+
+    if kind == "train":
+        from bcir.kbcir.train_graph import TrainStepSpec, plan_train_run
+
+        spec = TrainStepSpec()
+        return lambda: values(plan_train_run(spec, 16, target, theta))
+
+    resources = {r: Resource(rid=r, domain=Domain.RAM, shape=(1024,)) for r in range(32)}
+    rng = random.Random(20261009)
+    ids = iter(range(1, 1 << 20))
+
+    def leaf():
+        claims = []
+        for _ in range(rng.randint(1, 2)):
+            a, b, c = rng.sample(range(32), 3)
+            claims.append(
+                Claim(
+                    id=next(ids),
+                    opcode=Opcode.ADD,
+                    lane=Lane.U,
+                    stride_class=rng.choice((StrideClass.UNIT, StrideClass.STRIDED)),
+                    count=rng.choice((256, 1024, 4096)),
+                    rd=(a, b),
+                    wr=(c,),
+                    op="vector.add",
+                    domain=Domain.RAM,
+                )
+            )
+        return Leaf(tuple(claims))
+
+    def region(depth=0):
+        if depth >= 3 or rng.random() < 0.35:
+            return Call(rng.choice(("f", "g")), ()) if rng.random() < 0.2 else leaf()
+        if rng.random() < 0.5:
+            return Seq(tuple(region(depth + 1) for _ in range(rng.randint(1, 3))))
+        return Cond("p", region(depth + 1), region(depth + 1), rng.randint(0, 1000))
+
+    functions = {
+        "f": Function("f", Cond("q", leaf(), Seq((leaf(), leaf())), 333)),
+        "g": Function("g", Seq((leaf(), Cond("r", leaf(), leaf(), 777)))),
+    }
+    summaries = {
+        name: summarize(fn, functions, resources, target, theta) for name, fn in functions.items()
+    }
+    regions = [region() for _ in range(40)]
+    return lambda: [
+        values(plan_composite(r, functions, resources, target, theta, summaries=summaries))
+        for r in regions
+    ]
+
+
 def row_selftest(_scale):
     """A row that needs no fixture: what the unit test drives the child through."""
     return lambda: sum(i * i for i in range(2000))
@@ -466,6 +533,8 @@ ROWS = {
     "asn1_compile:x683": lambda: row_asn1_compile("x683"),
     "asn1_codec:flat": lambda: row_asn1_codec("flat"),
     "asn1_codec:recursive": lambda: row_asn1_codec("recursive"),
+    "compose:regions": lambda: row_compose("regions"),
+    "compose:train": lambda: row_compose("train"),
     "selftest": lambda: row_selftest(0),
 }
 for _case in AUDIT_CASES:
@@ -486,6 +555,7 @@ GROUPS = {
     "xplan": ["xplan@4"],
     "sched": ["sched_waves@4", "sched_tokens@4", "sched_eft@4", "dag_exec@4", "dag_verify@4"],
     "audit": [f"audit:{c}@4" for c in AUDIT_CASES],
+    "compose": ["compose:regions", "compose:train"],
     "asn1": [
         "asn1_compile:bcir",
         "asn1_compile:pkix",

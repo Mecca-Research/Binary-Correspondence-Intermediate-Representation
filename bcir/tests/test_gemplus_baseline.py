@@ -497,6 +497,21 @@ def test_the_volatile_rows_are_exact_and_measured_or_not():
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
 
 
+def test_the_expectation_rows_hold_every_mean_exact() -> None:
+    """G22: every hand-derived mean reproduced and compose agreeing with the Markov solve on
+    every generated region -- both rows at their bound of 0 (the parent stated none of them)."""
+    from tools.perf.gemplus_baseline import measure_expectation
+
+    measured = measure_expectation()
+    assert measured == {
+        "expectation.corpus.misstated": 0.0,
+        "expectation.compose.disagreements": 0.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+
+
 def test_the_signature_rows_hold_every_forgery_refused_and_every_verdict_named() -> None:
     """G21: the reference verifier accepts none of the 29 forgeries and names every case's verdict
     -- both rows at their bound of 0, where the parent (no signature) passed every forgery. The

@@ -10,9 +10,19 @@ straight-line array kernels:
   * `Seq(parts...)`       -- sequential composition: cost is the **sum** of the parts.
   * `Cond(pred, t, e)`    -- control flow: a worst-case **max** over the two branches (a hard
                             latency bound) and a probability-weighted **expected** cost.
+  * `Loop(body, pred)`    -- a do-while loop: the body runs once, then again with the predicate's
+                            continue probability, at most `max_trips` times -- the worst case
+                            is the bound, the expectation the exact geometric mean (G22).
   * `Call(fn, arg_map)`   -- function reuse: plan the callee's region with the caller's actual
                             resources substituted for its formals (inline-substitution, so the
                             planner sees the real graph; bounded recursion-free depth).
+
+Expected costs are exact (G22): a region's `expected` is a `Fraction`, a branch's probability
+is an exact rational -- declared in thousandths, or MEASURED, from a `kbcir.expectation.
+BranchProfile` keyed by the predicate's name -- and `expected_cost` is the floor of the exact
+mean, taken once, never at every branch. An out-of-range declared probability is refused, not
+clamped. Every expectation here equals `kbcir.expectation.expected_cost` over the region's
+control-flow graph, which the tests hold the two to.
 
 `Function` is a named region. **Dynamic shapes** are a per-claim contract: a claim marked
 `dynamic` carries `count` as a *static upper bound*, so its leaf cost is the worst case and
@@ -25,10 +35,12 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, replace
+from fractions import Fraction
 from typing import Union
 
 from ..model import Claim, Module, Phase, Resource
 from .cost import HProfile, Theta
+from .expectation import BranchProfile, ProbabilityError, loop_trips
 from .rcsp import Budget, optimize_constrained
 from .realize import RealizationResult, optimize
 from .weights import PERF, Policy
@@ -65,6 +77,41 @@ class Cond:
     else_: "Region"
     prob_then_milli: int = 500
 
+    def __post_init__(self) -> None:
+        _milli("prob_then_milli", self.prob_then_milli)
+
+
+def _milli(name: str, value) -> Fraction:
+    """A declared probability in thousandths, refused outside [0, 1000] -- the parent clamped
+    it, so a typo of 5000 silently became a certain branch."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1000:
+        raise ProbabilityError(f"{name} is an integer in [0, 1000] (thousandths), got {value!r}")
+    return Fraction(value, 1000)
+
+
+@dataclass(frozen=True)
+class Loop:
+    """A do-while loop: `body` runs once, then the predicate `pred` (costing `PRED_COST`)
+    decides to run it again with probability `prob_continue_milli`/1000 -- or the measured
+    probability a `BranchProfile` names `pred` with -- at most `max_trips` times in all. The
+    bound is what makes the worst case finite; the expectation is the exact geometric mean of
+    the trips (`expectation.loop_trips`) times one trip's mean cost (Wald: the trips are decided
+    independently of what the body did, the Markov assumption)."""
+
+    body: "Region"
+    pred: str
+    prob_continue_milli: int
+    max_trips: int
+
+    def __post_init__(self) -> None:
+        _milli("prob_continue_milli", self.prob_continue_milli)
+        if (
+            isinstance(self.max_trips, bool)
+            or not isinstance(self.max_trips, int)
+            or self.max_trips < 1
+        ):
+            raise ProbabilityError(f"a loop runs at least once, got max_trips={self.max_trips!r}")
+
 
 @dataclass(frozen=True)
 class Call:
@@ -76,7 +123,7 @@ class Call:
     arg_map: tuple[tuple[int, int], ...] = ()
 
 
-Region = Union[Leaf, Seq, Cond, Call]
+Region = Union[Leaf, Seq, Cond, Loop, Call]
 
 
 @dataclass(frozen=True)
@@ -92,16 +139,44 @@ class CompositeResult:
     """The compositional cost of a region: a hard worst-case bound (max over branches) and
     a probability-weighted expected cost, plus the planned-leaf count (a compile-time bound
     witness -- finite iff there are no recursive calls) and the number of leaves served from
-    a function *summary* instead of being re-planned (`reused`: the inter-procedural win)."""
+    a function *summary* instead of being re-planned (`reused`: the inter-procedural win).
+    `expected` is the exact mean -- an int while it is one, a Fraction once a probability
+    makes it fractional -- and `expected_cost` its floor."""
 
     worst_cost: int
     expected_cost: int
     leaves: int
     reused: int = 0
+    expected: "int | Fraction" = None
+
+    def __post_init__(self) -> None:
+        if self.expected is None:
+            object.__setattr__(self, "expected", self.expected_cost)
+        elif self.expected_cost != _floor(self.expected):
+            raise ValueError("expected_cost is the floor of the exact expected cost")
 
     @property
     def branch_spread(self) -> int:
         return self.worst_cost - self.expected_cost
+
+
+def _floor(value) -> int:
+    return value if type(value) is int else value.numerator // value.denominator
+
+
+def _result(worst: int, expected, leaves: int, reused: int = 0) -> CompositeResult:
+    if type(expected) is not int and expected.denominator == 1:
+        expected = expected.numerator
+    return CompositeResult(worst, _floor(expected), leaves, reused, expected)
+
+
+def _weighted(a: int, b: int, then_, else_):
+    """(a/b) then_ + (1 - a/b) else_, exactly: one rational built from integers, an int when it
+    is one -- the branch's mean without a Fraction operation per term."""
+    tn, td = (then_, 1) if type(then_) is int else (then_.numerator, then_.denominator)
+    en, ed = (else_, 1) if type(else_) is int else (else_.numerator, else_.denominator)
+    num, den = a * tn * ed + (b - a) * en * td, b * td * ed
+    return num // den if num % den == 0 else Fraction(num, den)
 
 
 @dataclass(frozen=True)
@@ -167,6 +242,7 @@ def plan_composite(
     *,
     summaries: dict = None,
     budget: Budget = None,
+    profile: BranchProfile = None,
     _depth: int = 0,
     _active: frozenset = frozenset(),
 ) -> CompositeResult:
@@ -181,10 +257,33 @@ def plan_composite(
     `min M(pi,Theta) s.t. R(pi,Theta) <= B` -- a per-block thermal/power cap makes wide SIMD
     *infeasible* (the parallel block re-prices to a feasible narrower lane), and a block that
     cannot fit raises `rcsp.Infeasible`. An unbounded/None budget is exactly the old behavior
-    (the pinned straight-line scores are unchanged). Raises on recursion (bounded compile)."""
+    (the pinned straight-line scores are unchanged). Raises on recursion (bounded compile).
+
+    With `profile` (a `kbcir.expectation.BranchProfile`), a `Cond` or `Loop` whose predicate
+    the profile measured is priced with the measured probability instead of the declared one.
+    A profiled call site is planned, not served from a summary: the summary was priced under
+    the declared probabilities."""
     if _depth > 64:
         raise RecursionError("compose: region nesting too deep (>64)")
     summaries = summaries or {}
+
+    # One argument tuple and one keyword dict for every recursive call, so a child costs one
+    # call frame -- the arguments do not change below this region except depth and calls.
+    args = (functions, resources, h, theta, policy)
+    kw = {
+        "summaries": summaries,
+        "budget": budget,
+        "profile": profile,
+        "_depth": _depth + 1,
+        "_active": _active,
+    }
+
+    def chance(pred: str, declared_milli: int) -> tuple[int, int]:
+        """The branch's probability as (numerator, denominator): measured when the profile
+        names the predicate, declared in thousandths otherwise."""
+        if profile is not None and pred in profile:
+            return profile.counts[pred]
+        return declared_milli, 1000
 
     if isinstance(region, Leaf):
         if not region.claims:
@@ -198,55 +297,31 @@ def plan_composite(
         return CompositeResult(score, score, 1)
 
     if isinstance(region, Seq):
-        worst = expected = leaves = reused = 0
+        worst = leaves = reused = expected = 0  # an int until a branch makes the mean a fraction
         for part in region.parts:
-            sub = plan_composite(
-                part,
-                functions,
-                resources,
-                h,
-                theta,
-                policy,
-                summaries=summaries,
-                budget=budget,
-                _depth=_depth + 1,
-                _active=_active,
-            )
-            worst += sub.worst_cost
-            expected += sub.expected_cost
-            leaves += sub.leaves
-            reused += sub.reused
-        return CompositeResult(worst, expected, leaves, reused)
+            r = plan_composite(part, *args, **kw)
+            worst += r.worst_cost
+            expected += r.expected
+            leaves += r.leaves
+            reused += r.reused
+        return _result(worst, expected, leaves, reused)
 
     if isinstance(region, Cond):
-        t = plan_composite(
-            region.then_,
-            functions,
-            resources,
-            h,
-            theta,
-            policy,
-            summaries=summaries,
-            budget=budget,
-            _depth=_depth + 1,
-            _active=_active,
+        t = plan_composite(region.then_, *args, **kw)
+        e = plan_composite(region.else_, *args, **kw)
+        expected = PRED_COST + _weighted(
+            *chance(region.pred, region.prob_then_milli), t.expected, e.expected
         )
-        e = plan_composite(
-            region.else_,
-            functions,
-            resources,
-            h,
-            theta,
-            policy,
-            summaries=summaries,
-            budget=budget,
-            _depth=_depth + 1,
-            _active=_active,
-        )
-        p = max(0, min(1000, region.prob_then_milli))
-        expected = PRED_COST + (p * t.expected_cost + (1000 - p) * e.expected_cost) // 1000
         worst = PRED_COST + max(t.worst_cost, e.worst_cost)
-        return CompositeResult(worst, expected, t.leaves + e.leaves, t.reused + e.reused)
+        return _result(worst, expected, t.leaves + e.leaves, t.reused + e.reused)
+
+    if isinstance(region, Loop):
+        b = plan_composite(region.body, *args, **kw)
+        trips = loop_trips(
+            Fraction(*chance(region.pred, region.prob_continue_milli)), region.max_trips
+        )
+        worst = region.max_trips * (b.worst_cost + PRED_COST)
+        return _result(worst, trips * (b.expected + PRED_COST), b.leaves, b.reused)
 
     if isinstance(region, Call):
         if region.fn not in functions:
@@ -255,25 +330,40 @@ def plan_composite(
             raise RecursionError(f"compose: recursive call to {region.fn!r} (unbounded)")
         amap = dict(region.arg_map)
         summary = summaries.get(region.fn)
-        if summary is not None and _summary_applies(summary, amap, resources):
+        if (
+            summary is not None
+            and _summary_applies(summary, amap, resources)
+            and not (profile is not None and _measured_inside(region.fn, functions, profile))
+        ):
             # Inter-procedural reuse: the body was planned once; serve its cost, plan nothing.
             c = summary.cost
-            return CompositeResult(c.worst_cost, c.expected_cost, 0, c.reused + c.leaves)
+            return _result(c.worst_cost, c.expected, 0, c.reused + c.leaves)
         body = _inline(functions[region.fn].region, amap)
-        return plan_composite(
-            body,
-            functions,
-            resources,
-            h,
-            theta,
-            policy,
-            summaries=summaries,
-            budget=budget,
-            _depth=_depth + 1,
-            _active=_active | {region.fn},
-        )
+        kw["_active"] = _active | {region.fn}
+        return plan_composite(body, *args, **kw)
 
     raise TypeError(f"compose: unknown region node {type(region).__name__}")
+
+
+def _measured_inside(fn: str, functions: dict[str, Function], profile: BranchProfile) -> bool:
+    """Whether a predicate the profile measured is reached from `fn`'s body (through its calls):
+    a summary priced under the declared probabilities is then stale for this profile."""
+    seen: set[str] = set()
+    stack: list = [functions[fn].region]
+    while stack:
+        region = stack.pop()
+        if isinstance(region, (Cond, Loop)) and region.pred in profile:
+            return True
+        if isinstance(region, Seq):
+            stack.extend(region.parts)
+        elif isinstance(region, Cond):
+            stack.extend((region.then_, region.else_))
+        elif isinstance(region, Loop):
+            stack.append(region.body)
+        elif isinstance(region, Call) and region.fn in functions and region.fn not in seen:
+            seen.add(region.fn)
+            stack.append(functions[region.fn].region)
+    return False
 
 
 # --- alias / effect modeling -----------------------------------------------------
@@ -297,6 +387,8 @@ def effect(
         return effect(region.then_, functions, _active=_active).union(
             effect(region.else_, functions, _active=_active)
         )
+    if isinstance(region, Loop):
+        return effect(region.body, functions, _active=_active)
     if isinstance(region, Call):
         if region.fn not in functions or region.fn in _active:
             return _EMPTY_EFFECT  # undefined/recursive: no statically-known footprint
@@ -366,6 +458,13 @@ def _inline(region: Region, amap: dict[int, int]) -> Region:
             _inline(region.then_, amap),
             _inline(region.else_, amap),
             region.prob_then_milli,
+        )
+    if isinstance(region, Loop):
+        return Loop(
+            _inline(region.body, amap),
+            region.pred,
+            region.prob_continue_milli,
+            region.max_trips,
         )
     if isinstance(region, Call):
         # compose the substitutions: the inner call's actuals are themselves remapped.
