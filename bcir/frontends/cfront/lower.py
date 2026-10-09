@@ -1252,6 +1252,20 @@ class LabelNode:
 
 
 @dataclass
+class ScopeOpen:
+    """`{` -- the start of a block kept as its own scope in the emit (emit-only; CF-VLASCOPE). A block that declares a
+    variably modified object -- a stack VLA -- is emitted inside braces of its own: the body tree inlines every other
+    block, and a VLA inlined into its parent puts the labels after the block (a later `case`, a loop's continue label,
+    a `goto` target) inside the array's scope, which C forbids a jump to enter (C11 6.8.4.2p2, 6.8.6.1p1). The twin's
+    `c.scope` marker."""
+
+
+@dataclass
+class ScopeClose:
+    """`}` -- the end of a `ScopeOpen` block (emit-only; the twin's `c.endscope`)."""
+
+
+@dataclass
 class ComputedGotoNode:
     target: int  # `goto *<target>;` -- an indirect jump to a label address (GNU)
 
@@ -1294,6 +1308,20 @@ class CaseLabel:
 @dataclass
 class DefaultLabel:
     pass  # `default:`
+
+
+def _declares_vla(block: list) -> bool:
+    """The block declares a stack VLA of its own: a `c.vladecl` at its top level, outside every inner block already
+    kept as a scope (a bare `{ ... }` is spliced into its parent, its markers with it). The twin's `p_block`."""
+    depth = 0
+    for node in block:
+        if isinstance(node, ScopeOpen):
+            depth += 1
+        elif isinstance(node, ScopeClose):
+            depth -= 1
+        elif depth == 0 and isinstance(node, Claim) and node.op == "c.vladecl":
+            return True
+    return False
 
 
 def _flatten_block(block: list) -> list:
@@ -5175,6 +5203,9 @@ class _FuncLowerer:
             self._stmt(s)  # block (so a shadow does not clobber an
         self.env = saved_env  # outer same-named var read after the block)
         self.block_stack.pop()
+        if _declares_vla(block):  # its own scope in the emit (CF-VLASCOPE)
+            block.insert(0, ScopeOpen())
+            block.append(ScopeClose())
         return block
 
     def _stmt(self, st):
@@ -5561,6 +5592,8 @@ def _block_region(block: list, functions: dict, calls_iter: list) -> "compose.Re
                 LabelNode,
                 CaseLabel,
                 DefaultLabel,
+                ScopeOpen,
+                ScopeClose,
             ),
         ):
             continue

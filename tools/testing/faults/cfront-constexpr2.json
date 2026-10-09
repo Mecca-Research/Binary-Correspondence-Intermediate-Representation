@@ -401,8 +401,8 @@
     {
       "expects": "test_case_labels_widths_and_constants_c_rejects_are_refused_alike_on_both_rails",
       "label": "KT16 the twin lets a block's enumerators outlive it",
-      "new": "    eat(c,\"}\"); c->nenv=env_mark;}",
-      "old": "    eat(c,\"}\"); c->nenv=env_mark; c->nec=ec_mark;}",
+      "new": "    eat(c,\"}\"); c->nenv=env_mark;   /* pop the block scope",
+      "old": "    eat(c,\"}\"); c->nenv=env_mark; c->nec=ec_mark;   /* pop the block scope",
       "path": "runtime/c/bcir_cfront.c"
     },
     {

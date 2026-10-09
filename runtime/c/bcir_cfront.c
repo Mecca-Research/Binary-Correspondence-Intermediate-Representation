@@ -270,6 +270,7 @@ typedef struct {
    * unsoundly. Reset (mut_n=0) per function. */
   mutent mut[512]; int mut_n;
   int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
+  int vla_block;     /* the innermost block being parsed has declared a stack VLA of its own (CF-VLASCOPE; `p_block`) */
   int decl_seq;      /* the unit's declarations of block-scope names and enumerators so far, in order (CF-CONSTEXPR2) */
   struct { const char *s; int n, frame; } uph[16]; int nuph;   /* the typedef names the token pre-pass has seen a
                                           * block's declaration bind as objects, to the end of that block, and the
@@ -2953,6 +2954,7 @@ static int is_value_ender(const tok *t) {
 static void scan_mutations(CC *c, int start) {
   c->mut_n = 0;
   c->ext_ctr = 0;                                         /* §5.12 reset the per-function snapshot counter */
+  c->vla_block = 0;                                       /* no block open yet (CF-VLASCOPE) */
   int depth = 1;                                           /* `start` is just past the opening `{` */
   for (int i = start; c->t[i].k != T_END && depth > 0; i++) {
     const tok *t = &c->t[i];
@@ -7861,12 +7863,28 @@ static int enum_only_spec(CC *c,int from){
     if(tok_is(t,"enum")) e=1; }
   return e;
 }
+/* A block that declares a stack VLA is emitted inside braces of its own: `c.scope` at `at`, its first claim, and
+ * `c.endscope` after its last (CF-VLASCOPE; the oracle's `_block`, `ScopeOpen` / `ScopeClose`). The emit inlines every
+ * other block, and a VLA inlined into its parent puts the labels after the block -- a later `case`, a loop's continue
+ * label, a `goto` target -- inside the array's scope, which C forbids a jump to enter (C11 6.8.4.2p2, 6.8.6.1p1).
+ * Both are markers: no claim the digest, the plan or the hydrate reads. */
+static void scope_wrap(CC *c,size_t at){
+  bcir_func *f=c->fn;
+  if(!f || at>f->n_claims || !new_claim(c,"c.scope",BCIR_OP_NOP)) return;   /* appended, then moved to `at` */
+  bcir_claim open=f->claims[f->n_claims-1];
+  memmove(&f->claims[at+1],&f->claims[at],(f->n_claims-1-at)*sizeof *f->claims);
+  f->claims[at]=open;
+  marker(c,"c.endscope",0,0);
+}
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }   /* depth guard: p_block<->p_stmt nesting cycle */
   if(is(c,"{")){c->i++; int env_mark=c->nenv, ec_mark=c->nec;   /* a block is a scope: its locals, enumerators
                                                 * and enumeration tags (CF-CONSTEXPR2) do not leak out */
+    size_t at=c->fn?c->fn->n_claims:0; int outer_vla=c->vla_block; c->vla_block=0;   /* its own VLAs, not an inner block's */
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);
-    eat(c,"}"); c->nenv=env_mark; c->nec=ec_mark;}   /* pop the block scope -- restore outer name bindings */
+    eat(c,"}"); c->nenv=env_mark; c->nec=ec_mark;   /* pop the block scope -- restore outer name bindings */
+    if(c->vla_block && !c->failed) scope_wrap(c,at);
+    c->vla_block=outer_vla;}
   else p_stmt(c);
   LEAVE_REC(c);
 }
@@ -8288,6 +8306,7 @@ static void p_stmt_inner(CC *c) {
         { bcir_resource *ar=&c->fn->res[c->fn->n_res-1];
           ar->is_signed=(uint8_t)(ty.signd?1:0); ar->is_vla=1; ar->ext_var=ext;
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
+        c->vla_block=1;   /* its block is emitted as a scope of its own (CF-VLASCOPE) */
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;
             if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
@@ -8330,6 +8349,7 @@ static void p_stmt_inner(CC *c) {
           ar->is_signed=(uint8_t)(nsgn?1:0); ar->is_vla=1; ar->ext_var=ext_total;
           ar->vla_ndims=(uint8_t)dim_nd; for(int d=0;d<dim_nd;d++) ar->vla_strides[d]=dim_exts[d];
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
+        c->vla_block=1;   /* its block is emitted as a scope of its own (CF-VLASCOPE) */
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext_total;vd->n_wr=1;vd->wr[0]=arid;
             if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i][j]` indexes via emit_index */
@@ -9715,6 +9735,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.cont.tgt")){IND();
       w+=snprintf(o+EO,on-EO,"%s: ;\n",cont_label(f,own_cont,nls?lstk[nls-1]:0,cb,sizeof cb));continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
+    if(!strcmp(cl->op,"c.scope")){IND();w+=snprintf(o+EO,on-EO,"{\n");depth++;continue;}   /* a block that declares a VLA,
+                                                                                    * kept as its own scope (CF-VLASCOPE) */
+    if(!strcmp(cl->op,"c.endscope")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
     if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
       { const bcir_resource *vr=res_of(f,cl->wr[0]);   /* a volatile VLA keeps its qualifier (the oracle's decl) */
         w+=snprintf(o+EO,on-EO,"%s%s %s[%s];\n",vr&&vr->is_volatile?"volatile ":"",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b)); }

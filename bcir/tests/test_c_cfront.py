@@ -254,6 +254,7 @@ _PTRVALUE = [
     "cfront_vlasizeof.c",  # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
     "cfront_vlaparam.c",  # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
     "cfront_vlamd.c",  # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
+    "cfront_vlascope.c",  # a block that declares a VLA is its own scope in the emit: no jump enters it (#vlascope)
     "cfront_lvassignexpr.c",  # array/deref/nested lvalue assignment used as a value (#lvassignexpr)
     "cfront_narrowcompound.c",  # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
     "cfront_bfassignexpr.c",  # a BITFIELD member assignment used as a value (#bfassignexpr)
@@ -12660,6 +12661,55 @@ def test_an_emitted_switch_is_c11_on_both_rails():
     )
     _run_against_original_werror(
         "caselabel.c", _CASELABEL_UNIT, emits, driver, {"clang": ("-Werror",), "gcc": ("-Werror",)}
+    )
+
+
+# CF-VLASCOPE: both rails inline a block into its parent, and a stack VLA inlined so put the labels after its block --
+# a later `case`, a loop's continue label, a `goto` target -- inside the array's scope, which C forbids a jump to enter
+# (C11 6.8.4.2p2, 6.8.6.1p1): Clang and GCC refused the emit. A block that declares a VLA of its own is now emitted as a
+# scope (the oracle's `ScopeOpen` / `ScopeClose`, the twin's `c.scope` / `c.endscope`), on both rails alike.
+# vs_case, vs_continue, vs_for, vs_goto, vs_inner (its inner block alone) and vs_if one each; vs_nested two
+# (the loop body, its inner block)
+_VLASCOPE_SCOPES = 8
+_VLASCOPE_DRIVER = (
+    _GAPS_SAME
+    + r"""int main(void) {
+  for (unsigned i = 0; i < GAPS_N; i++) {
+    uint32_t v = gaps_in[i], c = v & 63u;
+    for (uint32_t n = 1u; n <= 8u; n++) {
+      SAME(vs_case, n, v); SAME(vs_continue, n, c); SAME(vs_for, n, v); SAME(vs_goto, n, c);
+      SAME(vs_nested, n, (v & 3u) + 1u); SAME(vs_inner, n, v); SAME(vs_if, n, v); SAME(vlascope, v, n);
+    }
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_a_block_that_declares_a_vla_is_its_own_scope_on_both_rails():
+    """CF-VLASCOPE: `cfront_vlascope.c` -- a VLA in a braced case arm before more labels, in a loop body after a
+    `continue` (`while` and `for`), in a block a `goto` passes, two in one loop body with an inner block of its own,
+    one in an inner block of a loop body that declares none itself, one in an `if` branch. Each rail emits exactly
+    one scope per block that declares a VLA (none for a block that does not, none twice for an inner block's), the
+    rails lower the unit to one claim graph on the four targets, and each emit builds as C11 under Clang and GCC with
+    errors for warnings and returns what the original does."""
+    if not _CC:
+        return
+    fx = "cfront_vlascope.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    for rail, emit in (("oracle", oracle_emit), ("twin", c_emit)):
+        functions = len(re.findall(r"^static .*\)$", emit, re.M))
+        scopes = len(re.findall(r"^\s*\{$", emit, re.M)) - functions
+        assert functions == 8 and scopes == _VLASCOPE_SCOPES, (rail, functions, scopes)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx,
+        src,
+        (("twin", c_emit), ("oracle", oracle_emit)),
+        _VLASCOPE_DRIVER,
+        {name: ("-std=c11", "-pedantic-errors", "-Werror") for name in ("clang", "gcc")},
     )
 
 

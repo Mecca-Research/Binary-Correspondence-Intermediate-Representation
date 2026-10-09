@@ -325,7 +325,8 @@ _mm_sfence();                      //                   store (release) fence ->
   parameter and a global. Case labels are compared in the switch's promoted type -- 255 and -1 are two labels on a
   `uint8_t`, one on a `uint32_t`'s 4294967295u -- and a `_BitInt(N)` is promoted to nothing. Both emits spell a
   negative constant signed (`-3`, not `-3u` or its 64-bit two's complement) and a case label past `LLONG_MAX` with
-  `u`.
+  `u`. A block that declares a stack VLA is emitted as a scope of its own, so a later `case`, a `continue` or a
+  `goto` that the source keeps outside the array's scope stays outside it in the emit (CF-VLASCOPE).
 - Character constants as Clang reads them on the target: a plain one an `int` of its byte as the target's plain
   `char` holds it (`'\xff'` is 255 on AArch64, where `char` is unsigned, and -1 elsewhere), a multi-character one
   its last four bytes packed big-endian (`'abcde'` is `'bcde'`); a prefixed one of its prefix's type -- `u8` an
@@ -579,11 +580,6 @@ These are reported as diagnostics, or — with `--fallback` — as a fallback-to
   definition`); define the enumeration first.
 - In `#if`, a multi-character constant (`'\xff\xff\xff\xff'`) where plain `char` is unsigned reads as Clang reads it,
   by `char`'s signedness; GCC reads it as a signed `int` whatever `char` is.
-- A variable-length array declared in a braced block that a later `case` or `default:` label, a `continue` or a
-  `goto` jumps past (`case 1: { uint32_t a[n]; ... } default: ...`) lowers on both rails, but its emit does not
-  build: the emit flattens the block, so the jump enters the array's scope (C11 6.8.4.2p2, 6.8.6.1p1), which GCC
-  and Clang both refuse. The Python reference's Clang check reports the failed build as a skip, so the unit's
-  verdict stays clean -- a recorded follow-up (CF-VLASCOPE).
 - The linkable emit's definitions drop a parameter's qualifiers below its top level (`uint32_t f(const uint32_t
   *p)` is defined taking `uint32_t *`), so a function pointer of the source's type takes such a function only
   through a cast; and the C twin's `--linkable` emits the unit's functions alone. Both are recorded follow-ups.
