@@ -229,10 +229,10 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 ### STATUS.md counts (generated source of truth)
 | Metric | Value |
 |---|---|
-| Static Python `test_*` function inventory | **4393** across 309 files |
+| Static Python `test_*` function inventory | **4397** across 310 files |
 | Static MLIR ODS op-definition inventory (`mlir/include/BCIR/*.td`) | **133** |
 | Static registered-pass inventory | **37** |
-| Static MLIR fixture inventory (`mlir/test/`) | **128** files; 386 `expected-error` markers |
+| Static MLIR fixture inventory (`mlir/test/`) | **131** files; 386 `expected-error` markers |
 | Static runtime C source/header inventory (`runtime/c/`) | **395** files |
 | Verifier-law negative-fixture tag inventory | **R1–R25** (25/25 present) |
 | Registered hardware-channel inventory | **9** (cpu, fpga, gpu, memory, storage) |
@@ -266,7 +266,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/BCIR_TARGET_ACCESS.md** (133L): 1. Privilege is not capability · 2. What the two available hosts actually provide · 3. What each open phase needs · 4. The bare-metal targets that would unblock it · 5. How to record a new host
 - **docs/DEVELOPMENT_HISTORY.md** (4963L): 1. The development method · 2. The PR arc (eras) · 3. Condensed dated changelog · 4. Capability closure ledger migrated from the former master · 5. Where the detailed notes live now
 - **docs/ONBOARDING_DEEP_DIVE.md** (320L): 1. Read this first · 2. The three implementation rails · 3. From source to execution · 4. Core semantic and optimizer packages · 5. Frontends, lowering, and machine boundary · 6. Runtime memory and ownership · 7. Models, training, and BCIRQ8 · 8. Drivers, kernel, telemetry, and IPC · 9. Current evidence boundary · 10. Validation workflow · 11. Reading and change-placement map
-- **docs/PARITY.md** (509L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
+- **docs/PARITY.md** (510L): Enum value parity (normative) · Concept parity · Python ↔ C artifact and runtime parity · Python ↔ C frontend twin (`runtime/c/`) · Worked-example parity · Generated, adversarial parity (the proof, not the hope) · How parity is enforced today
 - **docs/PERFORMANCE_AUDIT.md** (149L): 1. Gate and evidence contract · 2. Defects and bottlenecks found · 3. Local before/after evidence · 4. What remains hardware- and workload-gated
 - **docs/RELEASE_NOTES_0.3b.md** (147L): Candidate baseline already landed · Release blockers · Explicit non-goals · Candidate validation
 - **docs/REPO_CURRENT_STATE_AUDIT.md** (364L): Snapshot · Confirmed strengths · Confirmed limitations · Recommended next milestones · Changelog
@@ -308,7 +308,7 @@ Top-level: ./bcir ./channels ./cmake ./docs ./mlir ./runtime ./tools ./training
 - **docs/research/BCIR_ADVANCED_TECHNIQUE_TRIAGE.md** (257L): The framing that decides most of the list · A. Already built · B. Already in the GEM+ roadmap · C. LLVM's job — BCIR's job is to supply the fact · D. Genuinely new — the roadmap additions · Summary: what changes in the roadmap
 - **docs/research/BCIR_GAME_OPTIMIZATION_ROADMAP.md** (442L): 1. The exact-vs-approximate split — the load-bearing thesis · 2. The overlap — what BCIR already embodies (map, don't re-b · 3. Per-game principles — the full ledger · 4. Lessons applied to **GEM** (the StreamPack hot path) · 5. Lessons applied to **K_BCIR** (the tropical cost model, e · 6. Lessons applied to the **StreamPack ABI** (frozen artifac · 7. Ranked build slices · 8. Risks & myth-flags · 9. The bottom line
 - **docs/research/BCIR_GEMPLUS_ROADMAP.md** (1410L): 0. The measurement discipline, and why it comes first · 1. Scope identity: `S` · 2. Certificate classes · 3. The slices · 4. The sublinearity question, answered precisely · 5. The learned-optimization boundary · 6. Order of work — the six stages · 7. What this roadmap will not claim · 8. Current state, 2026-09-30 · 9. The completion ladder (2026-10-06)
-- **docs/research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md** (536L): 1. Verdict · 2. What landed, PR by PR (#758 to #808, training excluded) · 3. Item-by-item audit of the original plan · 4. Defects and gaps found by this audit · 5. The Python oracle: what the measurements say about migrat · 6. Documentation debt · 7. Remaining work, in priority order · 8. How this was checked
+- **docs/research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md** (546L): 1. Verdict · 2. What landed, PR by PR (#758 to #808, training excluded) · 3. Item-by-item audit of the original plan · 4. Defects and gaps found by this audit · 5. The Python oracle: what the measurements say about migrat · 6. Documentation debt · 7. Remaining work, in priority order · 8. How this was checked
 - **docs/research/BCIR_GEMPLUS_TMSAO_STAGED_PLAN_2026-09-04.md** (346L): 0. Inputs · 1. Executive summary · 2. Disposition of the assessment against `main` at #757 · 3. Measurement today · 4. What the assessment lacks · 5. The three emphases · 6. The re-staged program · 7. The sections, in order · 8. Decision rules and what this plan will not claim · 9. Sources
 - **docs/research/BCIR_NATIVE_BACKEND_FEASIBILITY.md** (217L): 1. What "native backend" means here · 2. Current state — the codegen spectrum BCIR already populat · 3. What a *general* native backend requires (and why it is e · 4. The gate, restated and assessed (status: all GO criteria  · 5. The candidate bounded targets, priced and ranked · 6. Development roadmap (executed ONLY if the gate opens for  · 7. What to do *now* (and how it de-risks any future native w · 8. Bottom line
 - **docs/research/BCIR_SECURITY_AUDIT_2026-08-12.md** (173L): 1. The two failure classes · 2. Class A — canonical-byte defects · 3. Class B — vacuous checks · 4. The one finding left half-closed · 5. Not reproduced · 6. Verification · 7. Recommended next

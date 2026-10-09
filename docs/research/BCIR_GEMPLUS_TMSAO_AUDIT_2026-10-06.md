@@ -139,6 +139,16 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   mistyped program. `bcir.asm` stays declared unprojected for the reason IRDL itself gives: a
   constraint variable binds one type for a whole variadic group, and `asm`'s operands are
   heterogeneous. MLIR Transform export and polyhedral depth remain (G31, G30).
+- **Item 14**, continued: G31 exports a K_BCIR decision to stock MLIR. The matmul's tiling
+  plan (tile extents and loop order) becomes a Transform-dialect script --
+  `tile_using_for` with the plan's tile sizes and its loop order as the `interchange` --
+  beside a `linalg.matmul` payload of the planned shape, and stock `mlir-opt
+  --transform-interpreter` applies it. Held to MLIR's own output, not to the script's text:
+  the `scf.for` nest MLIR builds visits exactly the plan's tile origins in the plan's order,
+  on 24 plans (the planner's own over 8 shapes, every loop order, ragged tiles); the inverse
+  interchange a careless export would emit is caught on both 3-cycles. Met for the matmul's
+  tiling; vectorization, packing and other plans are not exported. Polyhedral depth remains
+  (G30).
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

@@ -695,6 +695,21 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G32",
     ),
     Metric(
+        "transform.export.mismatch",
+        "transform",
+        "of 24 K_BCIR matmul tiling plans (the planner's own over 8 shapes, and two more per "
+        "shape in the other loop orders with tiles that leave a remainder), those whose tile "
+        "origins, read back from the scf.for nest stock mlir-opt --transform-interpreter "
+        "produces from the exported Transform script, are not the plan's in order (the parent "
+        "exported no Transform script: none could be applied); unmeasured without mlir-opt",
+        24,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the export is the plan: MLIR's own loops visit exactly its tile origins",
+        slice_owner="G31",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3592,6 +3607,14 @@ def measure_io() -> dict[str, float]:
     return {"io.pebble.unsound": float(unsound), "io.pebble.loose.fraction": loose / len(instances)}
 
 
+def measure_transform() -> dict[str, float]:
+    """G31: the Transform export of K_BCIR's matmul plans, applied by stock mlir-opt
+    (bcir/tests/transform_fixtures.py::measure, which the tests grade the same way)."""
+    from bcir.tests.transform_fixtures import measure
+
+    return measure()
+
+
 def measure_poison() -> dict[str, float]:
     """G29: R12 over the forged kernels, the proofs against wrapped arithmetic, and -- where
     LLVM is -- LLVM's own verdict on each fact (bcir/tests/poison_fixtures.py::measure, which
@@ -3704,6 +3727,7 @@ _MEASURERS = {
     "csp": measure_csp,
     "poison": measure_poison,
     "irdl": measure_irdl,
+    "transform": measure_transform,
     "memory-production": measure_memory_production,
 }
 

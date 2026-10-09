@@ -247,6 +247,7 @@ _MODULES = [
     "bcir.tests.test_value_dispatch",
     "bcir.tests.test_csp",
     "bcir.tests.test_poison",
+    "bcir.tests.test_transform_export",
     "bcir.tests.test_c_plan_sign",
     "bcir.tests.test_control_plane",
     "bcir.tests.test_live_ring",
