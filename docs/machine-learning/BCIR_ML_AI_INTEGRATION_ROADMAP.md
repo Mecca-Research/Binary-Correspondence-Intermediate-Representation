@@ -1367,3 +1367,13 @@ Current order: **packed low-bit contract and measured schedule evidence → resi
 telemetry/calibration service after driver traces → durable C1/C2 ingestion/index recovery →
 physical HAM adapters only after their driver prerequisites → 8.6 intent-synthesis seed**. Each
 slice is bounded, oracle-first, and parity/certificate-gated.
+
+## Native C decoder training
+
+The opt-in [native decoder trainer](BCIR_NATIVE_DECODER_TRAINING.md) now implements
+complete FP32 Llama/SwiGLU forward, every parameter gradient, clipped AdamW,
+micro-batch accumulation and checkpoint continuation. Checked caller-owned arenas
+retain forward caches and reuse one backward workspace. An explicit CBLAS provider
+can accelerate GEMM; selective framework/vendor integrations use the C ABI.
+Accelerator backward, mixed precision, recomputation and distributed training remain
+open. This path preserves the existing scalar Tape and planned logistic trainers.

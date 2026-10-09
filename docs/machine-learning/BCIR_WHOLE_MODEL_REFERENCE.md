@@ -299,3 +299,13 @@ from the other roadmaps, importing no new subsystem:
   cross-token alignment cannot normalize them implicitly. Expansion and growth plans account for
   added rows, vocabulary projection work, active parameters, and optimizer state before hosted
   mutation. Learned tokenizer/probe scores can rank evidence but cannot become a verifier law.
+
+## Native C decoder training
+
+The opt-in [native decoder trainer](BCIR_NATIVE_DECODER_TRAINING.md) now implements
+complete FP32 Llama/SwiGLU forward, every parameter gradient, clipped AdamW,
+micro-batch accumulation and checkpoint continuation. Checked caller-owned arenas
+retain forward caches and reuse one backward workspace. An explicit CBLAS provider
+can accelerate GEMM; selective framework/vendor integrations use the C ABI.
+Accelerator backward, mixed precision, recomputation and distributed training remain
+open. This path preserves the existing scalar Tape and planned logistic trainers.

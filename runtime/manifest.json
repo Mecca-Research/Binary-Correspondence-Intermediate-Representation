@@ -82,6 +82,12 @@
       "link": ["m"],
       "options": ["-ffp-contract=off"]
     },
+    "bcir_decoder_training": {
+      "class": "hosted_tool",
+      "sources": ["bcir_tensor.c", "bcir_decoder_train.c"],
+      "link": ["m"],
+      "options": ["-ffp-contract=off"]
+    },
     "bcir_channel": {
       "class": "hosted_tool",
       "sources": ["bcir_channel.c"]
@@ -119,6 +125,7 @@
     }
   },
   "harnesses": {
+    "test_decoder_train": {"sources": ["test_decoder_train.c"], "libraries": ["bcir_decoder_training"], "options": ["-ffp-contract=off"]},
     "test_runtime": {"sources": ["test_runtime.c"], "libraries": ["bcir_base"]},
     "test_sha256": {"sources": ["test_sha256.c"], "libraries": ["bcir_base"]},
     "test_execution_plan": {"sources": ["test_execution_plan.c"], "libraries": ["bcir_base"]},
@@ -201,6 +208,7 @@
     "test_jer_simd": {"sources": ["test_jer_simd.cpp"], "libraries": ["bcir_jer_index"]}
   },
   "variants": {
+    "test_decoder_train_c11": {"of": "test_decoder_train", "standard": 11},
     "test_control_plane_mutant": {
       "of": "test_control_plane",
       "mutation": {"file": "bcir_control_plane.c", "find": "s->in_flight != 0u || s->boundary < r.hdr.boundary", "replace": "s->boundary < r.hdr.boundary"}
@@ -260,6 +268,7 @@
     "kernel_kmeans": {"emit": "emit_kmeans_assign_c", "args": [3, 2, "km_assign"], "main": "kmeans.c"}
   },
   "sections": {
+    "decoder_train": {"script": "tools/c/sections/decoder_train.sh", "harnesses": ["test_decoder_train_c11", "test_decoder_train"]},
     "freestanding": {"script": "tools/c/sections/freestanding.sh", "harnesses": [], "compiler_only": true},
     "x86_interrupt": {"script": "tools/c/sections/x86_interrupt.sh", "harnesses": ["test_x86_interrupt_c11", "test_x86_interrupt"]},
     "runtime": {"script": "tools/c/sections/runtime.sh", "harnesses": ["test_runtime"]},
