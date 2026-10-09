@@ -394,6 +394,8 @@ _MODULES = [
     "bcir.tests.test_asn1_frontend",
     "bcir.tests.test_c_asn1_streampack",
     "bcir.tests.test_asn1_oer",
+    "bcir.tests.test_asn1_cgen",
+    "bcir.tests.test_its_security",
     "bcir.tests.test_asn1_constraints",
     "bcir.tests.test_asn1_per",
     "bcir.tests.test_asn1_per_strictness",

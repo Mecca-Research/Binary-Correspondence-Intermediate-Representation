@@ -2263,6 +2263,88 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     computes each probability adjoint twice (removing it needs a t-float workspace row, an ABI
     change, for ~1% of the bench step), and `sqrt`'s errno semantics keep the update scalar
     unless the build contract adds `-fno-math-errno`.
+  ITS (2026-10-09): the 2015 security-envelope study (Bittl et al.) re-asked with BCIR's ASN.1
+  machinery, its conclusion inverted on the same content
+  ([`BCIR_ITS_ASN1_BINARY_STUDY.md`](research/BCIR_ITS_ASN1_BINARY_STUDY.md)).
+  - The paper found TS 103 097 V1.1.1's binary encoding shorter than ASN.1 UPER in three of four
+    envelopes and "significantly faster", but its two columns encoded different data models
+    (V1.1.1, and a draft of the ASN.1 successor) through different codecs. `its_security`
+    reconstructs V1.1.1's binary rules -- ETSI's server is blocked by this environment's egress
+    policy, so the reconstruction is held to the paper's Table VI and reproduces all four lengths
+    and the 133-octet authorization ticket they imply -- and transcribes the data model into
+    ASN.1 one construct at a time. `ITS-SecuredMessage-TMSAO.asn1` moves V1.1.1's prose rules
+    into the schema: field lists as sets of OPTIONALs in canonical order, shaped integers, and an
+    X.683 instance per rule family. `its_study.framing` attributes every bit to content or to
+    one kind of framing, exactly.
+  - Size: the transcription under UPER is 92/212/223/220 octets against binary's 96/222/233/230,
+    and the TMSAO PER instance under UPER is 86/203/213/212 -- 97.7 on the paper's Table VII
+    average, against binary's 108.6 and the paper's winner (optimized EXI) at 98.4. Every TMSAO
+    encoding but DER is shorter than binary in every profile. Binary frames the CAM envelope with
+    88 bits (eight type codes and three lengths) around 680 bits of content; TMSAO UPER frames
+    the same 680 with 32.
+  - Time: `bcir.asn1.cgen` compiles the modules to straight-line C for COER, UPER and the
+    V1.1.1 byte rule (`ByteRule`) from one value model, so the binary codec comes from the same
+    generator as the ASN.1 ones. TMSAO-COER encodes and decodes every envelope in 0.59-0.78 of
+    binary's time under clang 18, GCC 13 and clang 23 (0.60-0.73 of its instructions) and is
+    smaller than binary everywhere too; UPER, the smallest, costs 1.20-1.94x, its 32-octet runs
+    at arbitrary bit offsets. No generated codec references an allocator, and the deepest stack
+    measured is 1,008 octets, where the paper measured 12-20 KB.
+  - Witnesses: `test_its_security.py` -- the reconstruction against Table VI, IntX's single
+    spelling, every malformed envelope refused, the size and Table VII results, the canonical
+    order and the bijection to the TMSAO schema, the exact partition. `test_asn1_cgen.py` --
+    octet and value parity with the oracle for every codec and envelope, an oracle differential
+    on damaged input (the same under ASan/UBSan, and a libFuzzer campaign reporting a second
+    spelling like a crash, in the thorough tier), a cyclic value refused by every encoder, no
+    allocator symbol, measured memory, a bench that refuses to time a refusing decoder, and every
+    generated file compiling alone with every name prefixed. GEM+ rows under `--group its`.
+  - Recorded, not built: an ECN replica of V1.1.1's rules. X.692 can state IntX (§19.7's `TO
+    BITS` mapping exists for self-delimiting integer codes), but BCIR's ECN rail writes fixed
+    encoding spaces and refuses §21.2.7's `self-delimiting-values`; the byte rule is a
+    `cgen.ByteRule` over the ASN.1 module instead.
+  OER-EXT (2026-10-09): X.696 extensibility on every OER rail, found by the ITS study's schema,
+  the first extensible SEQUENCEs the OER rails had been given.
+  - `oer.py`, the E1 emitter, its C twin (`bcir_emit.c`) and the plan-driven C decoder
+    (`bcir_oer.c`) wrote no §16.2.2 extension bit ahead of an extensible SEQUENCE's presence
+    bitmap, and spelled §16.4/§16.5 extension additions and §20.2 extension alternatives as root
+    ones. All four agreed, which is what a round trip cannot see. The preamble now leads with the
+    bit; additions follow the root behind a length-prefixed bitmap as open types, a version
+    bracket being one addition (its members a SEQUENCE, X.691 §19.9's structure); an extension
+    alternative is an open type; the C decoder gained `bcir_oer_decode_sequence_ext`. The vectors
+    were cross-checked against asn1tools 0.169.0's OER codec, and the one disagreement (it
+    flattens a version bracket into separate additions, which its own PER codec does not) is
+    stated in the test.
+  - Found on the way: the native bench's OER and PER field builders read attributes plan
+    version 3 had removed, so every field was described as unconstrained, and the bench timed
+    decodes that failed; each case is now decoded once before it is timed. With SIZE ranges
+    declared, the C PER plan decoder read a SIZE(2..10) length two too long (11.9.3.3's offset
+    from the lower bound, passed as 0) and applied 17.6's more-than-two-octets alignment rule to
+    length-determined strings, which 17.8 aligns whatever their count.
+  C-PERF (2026-10-09): the C ASN.1 rails faster with identical outputs.
+  - The plan-driven PER decoder reads bit fields an octet at a time and skips a string body
+    instead of reading it 64 bits at a time and discarding it: a 200-octet record 1.9 -> 0.36 µs
+    ALIGNED, 2.0 -> 0.27 µs UNALIGNED.
+  - The generated codecs: word-at-a-time bit I/O, each function's cursor in a local with only
+    the fields a call can change synchronized, single byte-swapped loads for fixed widths. GCC's
+    inliner reported `inline-unit-growth limit reached` on the generated files and left the bit
+    writer out of line, so every field went through memory -- UPER ran 1.8-3.8x slower under
+    GCC 13 than under clang; the per-field primitives are now forced inline behind a
+    `__GNUC__` guard. One bounds test serves the bit reader's fast path and its truncation
+    check, and the slow-path window takes values rather than the reader, whose escaping address
+    had kept clang's decoder cursor in memory (the same instruction count, 32-38% slower).
+    Interleaved before/after: TMSAO UPER encode 0.30-0.34x and decode 0.56-0.62x under GCC 13,
+    0.64-0.68x and 0.57-0.60x under clang 18; the binary codec, generated too, gained alike.
+  - Found and fixed in the generator: its helper selection could keep a byte-order `#if` and
+    drop its `#endif`, and dropped the cursor typedef from a file of fixed octets alone (neither
+    compiled); its macros leaked unprefixed (`P_BSWAP16`, `P_NATIVE_WORDS`). Each has a witness
+    that fails on the old generator. The stack harness read a freed pointer (GCC 13's
+    `-Werror=use-after-free`). `gemplus_baseline.py --group`'s help listed fewer than half of
+    the groups; it is now generated from the registry.
+  - RED: `tools/testing/faults/its.json` holds 13 faults across the oracle, both C twins, the
+    generator and the harness, each caught by its own witness. The first sweep missed one: a bit
+    reader over-reading its input, refused only by the final length check and so as MALFORMED,
+    which the accept/refuse differential cannot tell from TRUNC. Every cut of every encoding is
+    now held to TRUNC. Phase H's selector, given the paper's objective, selects canonical
+    UNALIGNED PER at exactly the study's sizes (`test_its_security.py`).
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -296,6 +296,101 @@ def test_a_default_component_equal_to_its_default_is_encoded_absent():
     assert decode_oer(kind, encode_oer(kind, {"a": 1})) == {"a": 1, "b": 7}
 
 
+# --- §16.2.2 / §16.4 / §16.5 extensibility ---------------------------------------------
+#
+# Every vector below except the version bracket's was cross-checked against an independent
+# implementation (asn1tools 0.169.0's OER codec) when this rail was fixed; none comes from a
+# round trip, because a round trip is what let four BCIR OER rails agree on a missing bit.
+
+
+def _extensible_types():
+    from bcir.frontends.asn1 import compile_module
+
+    source = """T DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+      S  ::= SEQUENCE { a INTEGER (0..255) OPTIONAL, b INTEGER (0..255), ... }
+      S2 ::= SEQUENCE { a INTEGER (0..255) OPTIONAL, b INTEGER (0..255) }
+      S3 ::= SEQUENCE { b INTEGER (0..255), ... }
+      Y  ::= SEQUENCE { a INTEGER (0..255), ..., c INTEGER (0..255) OPTIONAL,
+                        d INTEGER (0..255) OPTIONAL }
+      Y0 ::= SEQUENCE { a INTEGER (0..255), ... }
+      W  ::= SEQUENCE { a INTEGER (0..255), ..., [[ d INTEGER (0..255), e BOOLEAN OPTIONAL ]] }
+      C  ::= CHOICE { x INTEGER (0..255), ..., y INTEGER (0..255) }
+      C0 ::= CHOICE { x INTEGER (0..255), ... }
+    END"""
+    return compile_module(source, "t.asn1").module.types
+
+
+def test_an_extensible_sequence_leads_its_preamble_with_the_extension_bit():
+    """§16.2.2. The rail used to write the presence bitmap alone, so `S` with `a` present
+    was `80 05 06`: to a conforming decoder, "extension additions present" followed by octets
+    that are no addition bitmap. The non-extensible twin `S2` is the control -- same
+    components, no marker, and its spelling must not move."""
+    t = _extensible_types()
+    assert encode_oer(t["S"], {"a": 5, "b": 6}) == bytes.fromhex("400506")
+    assert encode_oer(t["S"], {"b": 6}) == bytes.fromhex("0006")
+    assert encode_oer(t["S2"], {"a": 5, "b": 6}) == bytes.fromhex("800506")
+    # An extensible type with no OPTIONAL component still has a preamble: the bit alone.
+    assert encode_oer(t["S3"], {"b": 6}) == bytes.fromhex("0006")
+    for name, value in (("S", {"a": 5, "b": 6}), ("S", {"b": 6}), ("S3", {"b": 6})):
+        assert decode_oer(t[name], encode_oer(t[name], value)) == value
+    # The old spelling now reads as "additions present", and no addition bitmap follows.
+    for old in ("800506", "06"):
+        try:
+            decode_oer(t["S" if old != "06" else "S3"], bytes.fromhex(old))
+            raise AssertionError(f"{old}: the pre-fix spelling decoded")
+        except Asn1Error:
+            pass
+
+
+def test_extension_additions_follow_the_root_behind_a_bitmap_as_open_types():
+    """§16.4: a length-prefixed BIT STRING, its first octet counting the unused bits, one bit
+    per addition IN THE TYPE; §16.5: each present addition as an open type."""
+    t = _extensible_types()
+    vectors = {
+        "80010206800102": {"a": 1, "c": 2},
+        "80010206400103": {"a": 1, "d": 3},
+        "80010206c001020103": {"a": 1, "c": 2, "d": 3},
+        "0001": {"a": 1},
+    }
+    for octets, value in vectors.items():
+        assert encode_oer(t["Y"], value).hex() == octets, value
+        assert decode_oer(t["Y"], bytes.fromhex(octets), rules=OerRules.CANONICAL) == value
+
+
+def test_a_version_bracket_is_one_addition_encoded_as_a_sequence():
+    """A `[[ ]]` group is ONE addition: one bitmap bit and one open type holding the group's
+    members as a SEQUENCE (with that SEQUENCE's own preamble for `e`) -- §16.5's reading, and
+    the one X.691 §19.9 states for PER, where BCIR's PER rail and asn1tools' agree. asn1tools'
+    OER codec flattens a group into separate additions instead, which its own PER codec does
+    not; this rail keeps the two rules' structure parallel."""
+    t = _extensible_types()
+    assert encode_oer(t["W"], {"a": 1, "d": 3}) == bytes.fromhex("8001020780020003")
+    assert encode_oer(t["W"], {"a": 1, "d": 3, "e": True}) == bytes.fromhex("8001020780038003ff")
+    for value in ({"a": 1, "d": 3}, {"a": 1, "d": 3, "e": True}):
+        assert decode_oer(t["W"], encode_oer(t["W"], value)) == value
+
+
+def test_an_older_decoder_skips_a_newer_peers_addition():
+    """The point of the open-type wrapper: `Y0` is `Y` before its additions were written, and
+    it reads `Y`'s encoding by skipping exactly the octets it cannot name."""
+    t = _extensible_types()
+    assert decode_oer(t["Y0"], encode_oer(t["Y"], {"a": 1, "c": 2, "d": 3})) == {"a": 1}
+
+
+def test_an_extension_bit_with_no_addition_in_the_bitmap_is_refused():
+    """§16.2.2 sets the bit only when an addition is present, so a set bit over an all-zero
+    bitmap is a second spelling of "no additions" -- Class A, refused on both rule sets.
+    So is a bitmap that cannot be one: no initial octet, or more than seven unused bits."""
+    t = _extensible_types()
+    for octets in ("8001020600", "80010201", "800100", "8001020880"):
+        for rules in (OerRules.BASIC, OerRules.CANONICAL):
+            try:
+                decode_oer(t["Y"], bytes.fromhex(octets), rules=rules)
+                raise AssertionError(f"{octets} decoded under {rules}")
+            except Asn1Error:
+                pass
+
+
 # --- §17 SEQUENCE OF quantity field -----------------------------------------------------
 
 
@@ -345,6 +440,29 @@ def test_choice_encodes_the_outermost_tag_then_the_value():
     assert encode_oer(kind, ("txt", "hi")) == b"\x81\x02hi"
     for value in (("num", 5), ("txt", "hi")):
         assert decode_oer(kind, encode_oer(kind, value)) == value
+
+
+def test_an_extension_alternative_is_an_open_type_and_an_unknown_one_is_refused():
+    """§20.2: an alternative after the `...` carries a length, so a decoder of an older
+    version can step over it. The rail used to write it bare (`81 07`), leaving every octet
+    after it unreadable to such a decoder. A tag no version known here defines is refused by
+    name -- the PER rail's posture (X.691 23.8): a CHOICE has one value and this type has no
+    name for it."""
+    t = _extensible_types()
+    assert encode_oer(t["C"], ("x", 7)) == bytes.fromhex("8007")
+    assert encode_oer(t["C"], ("y", 7)) == bytes.fromhex("810107")
+    assert decode_oer(t["C"], bytes.fromhex("810107")) == ("y", 7)
+    try:
+        decode_oer(t["C0"], bytes.fromhex("810107"))
+        raise AssertionError("an unknown extension alternative decoded")
+    except Asn1Error as exc:
+        assert "unknown to this version" in str(exc), exc
+    # A length that disagrees with the alternative's own encoding is not skipped past.
+    try:
+        decode_oer(t["C"], bytes.fromhex("81020700"))
+        raise AssertionError("octets after an alternative inside its open type decoded")
+    except Asn1Error as exc:
+        assert "20.2" in str(exc), exc
 
 
 def test_an_untagged_choice_alternative_is_refused_rather_than_guessed():

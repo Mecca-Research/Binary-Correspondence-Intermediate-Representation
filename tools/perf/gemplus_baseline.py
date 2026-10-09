@@ -2508,6 +2508,124 @@ METRICS: tuple[Metric, ...] = (
         "are above it",
         slice_owner="G17",
     ),
+    # --- ITS: the security-envelope study (docs/research/BCIR_ITS_ASN1_BINARY_STUDY.md) -------
+    Metric(
+        "its.reconstruction.mismatch",
+        "its",
+        "of the five binary lengths the TS 103 097 V1.1.1 reconstruction must reproduce -- Table "
+        "VI's four envelopes (96, 222, 233, 230) and the 133-octet authorization ticket they "
+        "imply -- those it misses",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="Bittl et al. 2015, Table VI: the reconstruction of a format whose text this "
+        "environment cannot reach is held to the paper's own published numbers, so a miss is a "
+        "defect in the reconstruction",
+        slice_owner="ITS",
+    ),
+    Metric(
+        "its.size.binary.wins",
+        "its",
+        "of 12 (envelope, encoding) pairs -- the four Table VI envelopes under the transcription's "
+        "UPER and the TMSAO schema's UPER and COER -- those where the V1.1.1 binary encoding is "
+        "the shorter (the paper's draft-schema UPER lost three of four)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the study's size result: the same values under standard ASN.1 rules are "
+        "never longer than V1.1.1's own binary",
+        slice_owner="ITS",
+    ),
+    Metric(
+        "its.size.uper.avg",
+        "its",
+        "Table VII's average CAM envelope (10 Hz, certificate at 1 Hz) in octets, under UPER on "
+        "the TMSAO schema's PER instance (binary 108.6, the paper's ASN.1 103.2, EXI-opt 98.4)",
+        97.7,
+        "bytes",
+        "exact",
+        bound=96.1,
+        bound_source="the envelopes' fields at V1.1.1's own widths with no framing at all "
+        "(`its_study.content_floor`: 85 and 196 octets, averaged the same way). Every octet "
+        "above it is framing; the shaped integers carry some fields in fewer bits than V1.1.1's "
+        "widths, which is why a schema-level reduction can in principle pass it (TMSAO-3)",
+        slice_owner="ITS",
+    ),
+    Metric(
+        "its.codec.parity.mismatch",
+        "its",
+        "of 40 checks -- five generated C codecs (V1.1.1, COER and UPER on the transcription; "
+        "COER and UPER on the TMSAO schema), four envelopes, encode and decode -- those where the "
+        "C differs from the oracle's octets or value",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the oracle: each generated codec is a second realization of one rule",
+        slice_owner="ITS",
+    ),
+    Metric(
+        "its.coer.encode.floor",
+        "its",
+        "the TMSAO schema's generated COER encoder on the certificate envelope over memcpy of its "
+        "216 octets, both timed in the same harness and run",
+        4.5,
+        "x",
+        "ratio",
+        bound=1.0,
+        bound_source="writing the encoding's octets once from warm memory: no encoder writes "
+        "fewer. A memory roofline, not an encoder",
+        slice_owner="C-PERF",
+        # a memcpy of 216 octets is a few nanoseconds, so this ratio's denominator is the
+        # noisiest number in the run: 4.4 to 7.1 over six runs on one host
+        noise=0.5,
+    ),
+    Metric(
+        "its.coer.decode.floor",
+        "its",
+        "the TMSAO schema's generated COER decoder on the certificate envelope over memcpy of its "
+        "216 octets, both timed in the same harness and run",
+        4.5,
+        "x",
+        "ratio",
+        bound=1.0,
+        bound_source="reading the encoding's octets once: no decoder reads fewer. A memory "
+        "roofline, not a decoder",
+        slice_owner="C-PERF",
+        noise=0.5,
+    ),
+    Metric(
+        "its.coer.vs.binary",
+        "its",
+        "TMSAO-schema COER encode + decode over V1.1.1 binary encode + decode on the certificate "
+        "envelope: the same generator, compiler and value model, timed in the same run",
+        0.64,
+        "x",
+        "ratio",
+        floor_key="its.coer.vs.binary.floor",
+        bound_source="the COER codec at its memory roofline, same run: writing its 216 octets "
+        "once and reading them once (two memcpy of the encoding) over the same binary encode + "
+        "decode. Below 1.0 the ASN.1 codec is the faster one -- the 2015 study's runtime "
+        "conclusion inverted",
+        slice_owner="ITS",
+    ),
+    Metric(
+        "its.uper.vs.binary",
+        "its",
+        "TMSAO-schema UPER (the PER instance, the study's smallest encoding) encode + decode over "
+        "V1.1.1 binary encode + decode on the certificate envelope, timed in the same run",
+        1.41,
+        "x",
+        "ratio",
+        floor_key="its.uper.vs.binary.floor",
+        bound_source="the UPER codec at its memory roofline, same run: writing its 203 octets "
+        "once and reading them once over the same binary encode + decode. Above 1.0 the "
+        "smallest encoding still costs more time than binary: the bit-aligned octet runs (keys, "
+        "digests, signatures at any bit offset) are the remaining gap",
+        slice_owner="C-PERF",
+    ),
 )
 
 _BY_KEY = {metric.key: metric for metric in METRICS}
@@ -3614,6 +3732,68 @@ def measure_train() -> dict[str, float]:
     return measure_ndt(timed=True)
 
 
+def measure_its() -> dict[str, float]:
+    """ITS: the security-envelope study. The size and reconstruction rows are pure Python; the
+    parity and timing rows compile the generated codecs and need a C compiler -- without one
+    they are NOT-MEASURED."""
+    import shutil
+    import tempfile
+
+    from bcir.asn1 import its_native as nat
+    from bcir.asn1 import its_security as its
+    from bcir.asn1 import its_study as st
+
+    out: dict[str, float] = {}
+    hits = [
+        len(its.encode_binary(value)) == its.PAPER_TABLE_VI["binary"][profile]
+        for profile, value in its.envelopes().items()
+    ]
+    hits.append(len(its.encode_binary(its.authorization_ticket(), "Certificate")) == 133)
+    out["its.reconstruction.mismatch"] = float(hits.count(False))
+    sizes = st.sizes()
+    out["its.size.binary.wins"] = float(
+        sum(
+            1
+            for name in ("transcription-uper", "tmsao-uper", "tmsao-coer")
+            for profile in its.PROFILES
+            if sizes["binary-v111"][profile] < sizes[name][profile]
+        )
+    )
+    out["its.size.uper.avg"] = round(st.average_size(sizes["tmsao-per-uper"]), 4)
+    if not nat.native_available():
+        return out
+    tmp = tempfile.mkdtemp(prefix="bcir-its-")
+    try:
+        binary = nat.build(tmp)
+        want = nat.oracle_octets()
+        keys = [(c, i) for c, _m, _r in nat.CODECS for i in range(len(its.PROFILES))]
+        enc = nat.run(binary, [f"enc {c} {i}" for c, i in keys])
+        dec = nat.run(binary, [f"dec {c} {want[(c, i)].hex()}" for c, i in keys])
+        bad = sum(1 for k, line in zip(keys, enc) if line != "OK " + want[k].hex())
+        bad += sum(
+            1
+            for k, line in zip(keys, dec)
+            if line.split()[:2] != ["OK", str(k[1])] or line.split()[3] != want[k].hex()
+        )
+        out["its.codec.parity.mismatch"] = float(bad)
+        t = {(r.codec, r.envelope, r.op): r.median_ns for r in nat.bench(binary, rounds=24)}
+        floor = t[("tmsao-coer", 1, "floor")]
+        out["its.coer.encode.floor"] = t[("tmsao-coer", 1, "encode")] / floor
+        out["its.coer.decode.floor"] = t[("tmsao-coer", 1, "decode")] / floor
+        binary_ns = t[("v111", 1, "encode")] + t[("v111", 1, "decode")]
+        out["its.coer.vs.binary"] = (
+            t[("tmsao-coer", 1, "encode")] + t[("tmsao-coer", 1, "decode")]
+        ) / binary_ns
+        out["its.coer.vs.binary.floor"] = 2 * floor / binary_ns
+        out["its.uper.vs.binary"] = (
+            t[("tmsao-uper", 1, "encode")] + t[("tmsao-uper", 1, "decode")]
+        ) / binary_ns
+        out["its.uper.vs.binary.floor"] = 2 * t[("tmsao-uper", 1, "floor")] / binary_ns
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
 def measure_jer_bounds() -> dict[str, float]:
     """ASN1-B: the semantic canonical-JER bound against the encoder
     (bcir/tests/jer_bounds_fixtures.py::measure, which the tests grade the same way)."""
@@ -3962,6 +4142,7 @@ _MEASURERS = {
     "jerbounds": measure_jer_bounds,
     "memory-production": measure_memory_production,
     "train": measure_train,
+    "its": measure_its,
 }
 
 
@@ -4144,7 +4325,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, delta, memory, train)",
+        help=f"limit measurement to a group ({', '.join(_MEASURERS)})",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

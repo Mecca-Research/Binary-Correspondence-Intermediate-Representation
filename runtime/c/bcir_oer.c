@@ -169,6 +169,15 @@ bcir_oer_status bcir_oer_decode_sequence(const uint8_t *data, size_t len, size_t
                                          const bcir_oer_field *fields, size_t count,
                                          bcir_oer_value *out, size_t *end,
                                          int *canonical, bcir_oer_diag *diag) {
+  return bcir_oer_decode_sequence_ext(data, len, pos, fields, count, 0, out, end, canonical,
+                                      diag);
+}
+
+bcir_oer_status bcir_oer_decode_sequence_ext(const uint8_t *data, size_t len, size_t pos,
+                                             const bcir_oer_field *fields, size_t count,
+                                             int extensible, bcir_oer_value *out,
+                                             size_t *end, int *canonical,
+                                             bcir_oer_diag *diag) {
   unsigned optional_count = 0;
   unsigned optional_seen = 0;
   uint64_t present = 0;
@@ -197,14 +206,31 @@ bcir_oer_status bcir_oer_decode_sequence(const uint8_t *data, size_t len, size_t
       return fail(diag, BCIR_OER_INVALID, BCIR_OER_NO_OFFSET, 0);
     if (f->optional) optional_count++;
   }
+  /* 16.2.2 puts the extension bit in the same 64-bit preamble word as the presence bits. */
+  if (extensible && optional_count > 63)
+    return fail(diag, BCIR_OER_INVALID, BCIR_OER_NO_OFFSET, 0);
 
   {
     size_t after = pos;
     int preamble_canonical = 1;
-    st = bcir_oer_preamble(data, len, pos, optional_count, &present, &after,
-                           &preamble_canonical, diag);
+    unsigned bits = optional_count + (extensible ? 1u : 0u);
+    st = bcir_oer_preamble(data, len, pos, bits, &present, &after, &preamble_canonical,
+                           diag);
     if (st != BCIR_OER_OK) return st;
     if (canonical != 0 && !preamble_canonical) *canonical = 0;
+    if (extensible) {
+      /* 16.2.2: an extensible type's preamble LEADS with the extension bit, so it is bit 0
+       * of the word and the presence bits follow it. Reading the presence bits from bit 0
+       * regardless (as this decoder did before it took `extensible`) shifted every one of
+       * them onto its neighbour's component.
+       *
+       * A set bit means extension additions follow the root (16.4/16.5). They are
+       * well-formed OER that a root-only plan cannot describe, so this is a refusal about
+       * the PLAN and not the octets -- bcir_per_decode_sequence's posture for X.691 19.1,
+       * kept identical so the two plan-driven twins answer the same question the same way. */
+      if (present & 1u) return fail(diag, BCIR_OER_MALFORMED, pos, 0);
+      present >>= 1;
+    }
     pos = after;
   }
 

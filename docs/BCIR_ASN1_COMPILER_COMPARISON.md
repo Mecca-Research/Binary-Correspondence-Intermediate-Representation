@@ -187,9 +187,15 @@ The other three turn a schema into compilable source: C structs mirroring the AS
 per-type encoders, decoders and constraint validators. asn1c does this for C; asn1scc for C,
 Ada and Scala; FFASN1 for C.
 
-BCIR's C twins are hand-written and speak BCIR's plan format, not per-schema generated code.
-This is the one entry on this list that is a **category difference and should stay one** — see
-§7.
+BCIR's C twins are hand-written and speak BCIR's plan format, not per-schema generated code,
+and they stay that way — see §7. Since the ITS security-envelope study
+([`research/BCIR_ITS_ASN1_BINARY_STUDY.md`](research/BCIR_ITS_ASN1_BINARY_STUDY.md)) BCIR also
+has the fourth rail §7 allows for: `bcir.asn1.cgen` compiles a module to straight-line C for
+CANONICAL-OER, UNALIGNED PER and a byte-oriented rule (no heap, an arena for decoded variable
+data, a bounded depth, canonical-only decoders), and holds every generated codec to the Python
+oracle by octet parity, an ASan/UBSan differential and a libFuzzer campaign that reports a
+second spelling of one value like a crash (`test_asn1_cgen.py`). It is a study-scale rail: no
+StreamPack path, plan format or R-law consumes it.
 
 ### 5.8 Formal verification of generated code (asn1scc)
 
@@ -254,6 +260,9 @@ a fuzz finding or a sanitizer run says something about the codec rather than abo
 generated instance. Generated code multiplies the attack surface by the number of schemas and
 gives the law rail nothing fixed to constrain. If BCIR ever wants generated codecs, they should
 be a *fourth* rail with its own equivalence obligation against the twins, not a replacement.
+`cgen` (§5.7) is that rail, with one refinement: its obligation is to the oracle, the reference
+the twins are themselves held to, so a generated codec and a twin that disagree cannot both
+pass.
 
 **CER.** Already excluded with a recorded reason; asn1c decodes it and encodes nothing, which is
 the same posture BCIR takes with BER.

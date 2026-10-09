@@ -102,7 +102,9 @@ bcir_oer_status bcir_oer_integer(const uint8_t *data, size_t len, size_t pos,
  *
  * One presence bit per OPTIONAL-or-DEFAULT root component, most significant bit first,
  * padded to an octet boundary. `optional_count` is how many such components the type has;
- * a type with none has no preamble at all and this returns a zero-length read.
+ * a type with none has no preamble at all and this returns a zero-length read. An extensible
+ * type's preamble also carries 16.2.2's extension bit FIRST: pass the presence-bit count plus
+ * one and bit 0 of `present` is the extension bit (bcir_oer_decode_sequence_ext does this).
  *
  * 16.2.2's trailing padding bits "shall be zero" under CANONICAL-OER. `canonical` reports
  * whether they were, for the same reason the length determinant does. */
@@ -153,6 +155,23 @@ bcir_oer_status bcir_oer_decode_sequence(const uint8_t *data, size_t len, size_t
                                          const bcir_oer_field *fields, size_t count,
                                          bcir_oer_value *out, size_t *end,
                                          int *canonical, bcir_oer_diag *diag);
+
+/* The same decode for a SEQUENCE whose type may be EXTENSIBLE (`extensible` non-zero when
+ * the type has an extension marker). 16.2.2 makes the extension bit the FIRST bit of the
+ * preamble, ahead of the presence bits, so a plan that does not know the type is extensible
+ * reads every presence bit one component early -- the plan must say so, and this is where it
+ * does. `bcir_oer_decode_sequence` is this with `extensible` zero.
+ *
+ * When the bit is set the value carries extension additions after the root (16.4/16.5),
+ * which a root-only plan cannot describe: decoding stops with BCIR_OER_MALFORMED at the
+ * preamble rather than guessing, exactly as bcir_per_decode_sequence does for X.691 19.1.
+ * An extensible type has at most 63 OPTIONAL/DEFAULT root components here, because the
+ * extension bit shares the preamble's 64-bit word; more is BCIR_OER_INVALID. */
+bcir_oer_status bcir_oer_decode_sequence_ext(const uint8_t *data, size_t len, size_t pos,
+                                             const bcir_oer_field *fields, size_t count,
+                                             int extensible, bcir_oer_value *out,
+                                             size_t *end, int *canonical,
+                                             bcir_oer_diag *diag);
 
 #ifdef __cplusplus
 }

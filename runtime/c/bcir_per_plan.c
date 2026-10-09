@@ -43,10 +43,10 @@ static bcir_per_status per_integer(bcir_per_reader *r, const bcir_per_field *f, 
 /* 17's octet string. `fixed_len` names the SIZE-fixed count for the fixed form and the SIZE
  * upper bound for the variable one; zero there means an unbounded length determinant.
  *
- * ALIGNMENT. 15.6 and 16.6 align a string of more than two octets to an octet boundary in
- * ALIGNED PER and never in UNALIGNED, which is the whole of the difference between the two
- * variants at this point in the walk -- so it is one branch on the call's flag, not a second
- * decoder. */
+ * ALIGNMENT. 17.6/17.7 align a SIZE-fixed string of more than two octets to an octet
+ * boundary in ALIGNED PER, 17.8 aligns every non-empty length-determined one, and UNALIGNED
+ * aligns neither -- which is the whole of the difference between the two variants at this
+ * point in the walk, so it is one branch on the call's flag, not a second decoder. */
 static bcir_per_status per_octets(bcir_per_reader *r, const bcir_per_field *f, int aligned,
                                   size_t base_bit, bcir_per_value *out) {
   uint64_t octets;
@@ -64,14 +64,24 @@ static bcir_per_status per_octets(bcir_per_reader *r, const bcir_per_field *f, i
      * constrained whole number where the encoder had written a single-octet determinant, and
      * every such string was refused: a decode failure on conforming input. */
     int has_ub = (f->fixed_len != 0u && f->fixed_len < 65536u);
-    st = bcir_per_length(r, 0, (int64_t)f->fixed_len, has_ub, &octets, &more);
+    /* `lb` is the SIZE lower bound: 11.9.3.3 encodes the length as a constrained whole number
+     * OFFSET from it, so SIZE(2..10) writes `n - 2`. Passing zero (as this did) read every
+     * such length two too long. bcir_per_length ignores `lb` when `has_ub` is clear, which is
+     * where 11.9.1 makes the bounds stop mattering. */
+    st = bcir_per_length(r, f->lb, (int64_t)f->fixed_len, has_ub, &octets, &more);
     if (st != BCIR_PER_OK) return st;
     /* 11.9.3.8's fragmentation moves in 16K blocks. A plan-driven fast path is for the
      * bounded fields a driver reads, so a fragmented string is refused by name rather than
      * half-assembled -- the caller can fall back to the general decoder. */
     if (more) return BCIR_PER_MALFORMED;
   }
-  if (aligned && octets > 2) {
+  /* 17.6/17.7 align a SIZE-fixed string only when it is longer than two octets; 17.8 puts a
+   * length-determined string's octets in "a bit-field (octet-aligned in the ALIGNED variant)"
+   * whatever their count. This used to apply the fixed rule to both, so a SIZE(2..10) string
+   * holding one or two octets was read from the bits before the alignment padding -- found
+   * when the bench's field builder first declared a SIZE range. An empty string has no octets
+   * and so nothing to align, which is also where per.py's emitter stops. */
+  if (aligned && (f->kind == BCIR_PER_K_FIXED_OCTETS ? octets > 2 : octets > 0)) {
     st = bcir_per_align(r);
     if (st != BCIR_PER_OK) return st;
   }
@@ -88,14 +98,11 @@ static bcir_per_status per_octets(bcir_per_reader *r, const bcir_per_field *f, i
     out->offset = (here % 8u == 0u) ? here / 8u : BCIR_PER_NO_OFFSET;
     out->length = (size_t)octets;
     /* Skip the body without copying it: the caller owns the buffer, and a decoder that copied
-     * would be choosing an allocation policy on its behalf. */
-    while (bits > 0) {
-      unsigned take = bits > 64u ? 64u : (unsigned)bits;
-      uint64_t sink;
-      st = bcir_per_get_bits(r, take, &sink);
-      if (st != BCIR_PER_OK) return st;
-      bits -= take;
-    }
+     * would be choosing an allocation policy on its behalf. Nor does it READ it: the body was
+     * read 64 bits at a time and thrown away, which made a string's cost proportional to its
+     * length for no value -- the bound above is the only fact about it this decoder needs. */
+    st = bcir_per_skip(r, bits);
+    if (st != BCIR_PER_OK) return st;
   }
   return BCIR_PER_OK;
 }

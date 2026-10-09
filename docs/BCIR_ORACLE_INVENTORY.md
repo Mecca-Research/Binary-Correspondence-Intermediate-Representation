@@ -16,7 +16,7 @@ that build it. The measured numbers are not here: they live in the GEM+ harness
 |---|---:|---:|---:|
 | `bcir` | 22 | 4 | 0 |
 | `bcir.abi` | 14 | 8 | 2 |
-| `bcir.asn1` | 42 | 8 | 0 |
+| `bcir.asn1` | 46 | 8 | 0 |
 | `bcir.codegen` | 4 | 0 | 0 |
 | `bcir.etl` | 5 | 1 | 0 |
 | `bcir.frontends` | 42 | 5 | 1 |
@@ -27,7 +27,7 @@ that build it. The measured numbers are not here: they live in the GEM+ harness
 | `bcir.make` | 6 | 0 | 0 |
 | `bcir.model` | 4 | 1 | 0 |
 | `bcir.verify` | 5 | 1 | 1 |
-| **all** | **299** | **41** | **13** |
+| **all** | **303** | **41** | **13** |
 
 ## Hot paths
 
@@ -105,7 +105,7 @@ migration proposal keeps in Python (its §8.2), and the candidates for the next 
 
 - `bcir` (18): `bcir`, `bcir._artifact_json`, `bcir._collector`, `bcir.api`, `bcir.bench`, `bcir.channel_plugin`, `bcir.clang_compare`, `bcir.examples`, `bcir.perf_budget`, `bcir.performance_audit`, `bcir.registry_tool`, `bcir.run`, `bcir.signal_registry`, `bcir.signal_table`, `bcir.silicon`, `bcir.telemetry_export`, `bcir.telemetry_replay`, `bcir.toolchain`
 - `bcir.abi` (6): `bcir.abi`, `bcir.abi.artifact_bundle`, `bcir.abi.artifact_tool`, `bcir.abi.embed`, `bcir.abi.q8_tables`, `bcir.abi.streampack_tool`
-- `bcir.asn1` (34): `bcir.asn1.artifact_bundle`, `bcir.asn1.calibration`, `bcir.asn1.certified`, `bcir.asn1.codec`, `bcir.asn1.constraints`, `bcir.asn1.control_plane`, `bcir.asn1.der`, `bcir.asn1.dialect`, `bcir.asn1.ecn`, `bcir.asn1.ecn_encode`, `bcir.asn1.ecn_link`, `bcir.asn1.ecn_mapping`, `bcir.asn1.ecn_param`, `bcir.asn1.ecn_props`, `bcir.asn1.ecn_syntax`, `bcir.asn1.ecn_transform`, `bcir.asn1.ecn_user`, `bcir.asn1.encode_plan`, `bcir.asn1.execution_plan`, `bcir.asn1.graph`, `bcir.asn1.jer`, `bcir.asn1.jer_bounds`, `bcir.asn1.length`, `bcir.asn1.manifest`, `bcir.asn1.native_bench`, `bcir.asn1.program`, `bcir.asn1.schema`, `bcir.asn1.selection`, `bcir.asn1.simd_hosts`, `bcir.asn1.staged`, `bcir.asn1.surface`, `bcir.asn1.tags`, `bcir.asn1.tlv`, `bcir.asn1.values`
+- `bcir.asn1` (38): `bcir.asn1.artifact_bundle`, `bcir.asn1.calibration`, `bcir.asn1.certified`, `bcir.asn1.cgen`, `bcir.asn1.codec`, `bcir.asn1.constraints`, `bcir.asn1.control_plane`, `bcir.asn1.der`, `bcir.asn1.dialect`, `bcir.asn1.ecn`, `bcir.asn1.ecn_encode`, `bcir.asn1.ecn_link`, `bcir.asn1.ecn_mapping`, `bcir.asn1.ecn_param`, `bcir.asn1.ecn_props`, `bcir.asn1.ecn_syntax`, `bcir.asn1.ecn_transform`, `bcir.asn1.ecn_user`, `bcir.asn1.encode_plan`, `bcir.asn1.execution_plan`, `bcir.asn1.graph`, `bcir.asn1.its_native`, `bcir.asn1.its_security`, `bcir.asn1.its_study`, `bcir.asn1.jer`, `bcir.asn1.jer_bounds`, `bcir.asn1.length`, `bcir.asn1.manifest`, `bcir.asn1.native_bench`, `bcir.asn1.program`, `bcir.asn1.schema`, `bcir.asn1.selection`, `bcir.asn1.simd_hosts`, `bcir.asn1.staged`, `bcir.asn1.surface`, `bcir.asn1.tags`, `bcir.asn1.tlv`, `bcir.asn1.values`
 - `bcir.codegen` (4): `bcir.codegen`, `bcir.codegen.artifact_bundle`, `bcir.codegen.codegen`, `bcir.codegen.targets`
 - `bcir.etl` (4): `bcir.etl`, `bcir.etl.events`, `bcir.etl.fsm`, `bcir.etl.parse`
 - `bcir.frontends` (37): `bcir.frontends`, `bcir.frontends.asn1`, `bcir.frontends.asn1.__main__`, `bcir.frontends.asn1.ast`, `bcir.frontends.asn1.lexer`, `bcir.frontends.asn1.lower`, `bcir.frontends.asn1.parser`, `bcir.frontends.asn1.printer`, `bcir.frontends.cfront`, `bcir.frontends.cfront.__main__`, `bcir.frontends.cfront.abi`, `bcir.frontends.cfront.cast`, `bcir.frontends.cfront.cfuzz`, `bcir.frontends.cfront.cparse`, `bcir.frontends.cfront.cperf`, `bcir.frontends.cfront.ctype_model`, `bcir.frontends.cfront.emit`, `bcir.frontends.cfront.linkflags`, `bcir.frontends.cfront.lower`, `bcir.frontends.cfront.pipeline`, `bcir.frontends.map`, `bcir.frontends.models`, `bcir.frontends.models.assess_tool`, `bcir.frontends.models.assessment`, `bcir.frontends.models.execution_plan`, `bcir.frontends.models.hf_ingest`, `bcir.frontends.models.inventory`, `bcir.frontends.models.manifest`, `bcir.frontends.models.model_microbench`, `bcir.frontends.models.paged_kv`, `bcir.frontends.models.quantized`, `bcir.frontends.models.safetensors_io`, `bcir.frontends.models.serve`, `bcir.frontends.models.spm`, `bcir.frontends.models.tokenizer`, `bcir.frontends.models.weights_io`, `bcir.frontends.rop`

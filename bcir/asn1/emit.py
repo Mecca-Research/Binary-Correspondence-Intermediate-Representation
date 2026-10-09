@@ -598,8 +598,11 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
     if kind == "sequence":
         # §16.2: a preamble of one bit per OPTIONAL/DEFAULT component, MSB first, padded
         # with zeroes to an octet boundary. §16.2.2 makes the padding zero in CANONICAL-OER.
-        optional = [m for m in node.members if m.optional or m.has_default]
-        bits: list[int] = []
+        # An extensible type's preamble LEADS with the extension bit (§16.2.2). This plan
+        # refuses extension additions, so the bit is always zero -- but it must be there,
+        # for the reason the PER emitter below writes X.691 §19.1's: a decoder built from
+        # the same schema reads one. Leaving it out moved every presence bit up by one.
+        bits: list[int] = [0] if node.extensible else []
         body = bytearray()
         present: dict[int, bool] = {}
         for member in node.members:
@@ -614,7 +617,7 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
                     continue
             body += _emit_oer(member.node, reader)
         preamble = bytearray()
-        if optional:
+        if bits:
             padded = bits + [0] * (-len(bits) % 8)
             for start in range(0, len(padded), 8):
                 octet = 0

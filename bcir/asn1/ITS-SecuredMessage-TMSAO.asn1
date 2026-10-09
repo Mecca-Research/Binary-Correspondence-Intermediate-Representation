@@ -1,0 +1,211 @@
+-- ITS-SecuredMessage-TMSAO.asn1: the V1.1.1 security envelope's value space, written for the
+-- encoding rules that read the schema (the ITS study, docs/research/BCIR_ITS_ASN1_BINARY_STUDY.md).
+--
+-- What changes against ITS-SecuredMessage-V111.asn1, and what does not. The transcription is
+-- the presentation language converted one construct at a time, so a field list is a SEQUENCE OF
+-- a CHOICE and every element pays a selector and every list a count. V1.1.1's prose is stricter
+-- than its presentation language: header fields, trailer fields, subject attributes and
+-- validity restrictions each carry every type at most once, in ascending order of type (signer
+-- information first among the header fields). Under those rules a field list is a set of
+-- optional fields in a fixed order, and a SEQUENCE of OPTIONAL components carries exactly that
+-- set: one presence bit replaces a type code, and the list's length disappears. The study's
+-- `to_tmsao` and `from_tmsao` are the bijection between the two modules' values, and they
+-- refuse a list the prose rules forbid rather than reordering it.
+--
+-- Nothing is narrowed. Every opaque keeps its size and every CHOICE its alternatives and its
+-- extension marker, and every INTEGER still carries its whole V1.1.1 range, so every V1.1.1
+-- value the prose rules admit maps here and back unchanged. Some integers are SHAPED: an
+-- extensible constraint whose root is the range the protocol actually produces, with the rest
+-- of the V1.1.1 range as an extension addition. PER spends the root's width plus one bit on a
+-- value inside the root and a length-prefixed form outside it; OER does not see extensible
+-- constraints at all and spells such a value as a length and its octets.
+--
+-- IntX is shaped everywhere: root 0..127, the values IntX itself spells in one octet, so PER
+-- spends eight bits on a small one as IntX does and OER two octets, as for (0..MAX).
+--
+-- The rest is shaped per encoding rule, through X.683. A shaped integer costs PER bits and costs
+-- OER a length octet and a variable-size read, so the envelope is one parameterized type
+-- instantiated twice: SecuredMessage keeps V1.1.1's fixed widths (OER's best, and the
+-- rule-neutral reading), and SecuredMessagePer shapes the version and the profile (root 0..7),
+-- the generation time (root 0..2^53-1 microseconds, every instant before the year 2289) and
+-- the message type (root 0..255, every ITS message identifier assigned).
+
+ITS-SecuredMessage-TMSAO DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+  Uint8  ::= INTEGER (0..255)
+  Uint16 ::= INTEGER (0..65535)
+  Uint32 ::= INTEGER (0..4294967295)
+  Uint64 ::= INTEGER (0..18446744073709551615)
+  IntX   ::= INTEGER (0..127, ..., 128..72057594037927935)
+
+  -- The shapes SecuredMessagePer takes; V1.1.1's full range lives in each extension addition.
+  SmallUint8        ::= INTEGER (0..7, ..., 8..255)
+  ShapedTime64      ::= INTEGER (0..9007199254740991, ..., 9007199254740992..18446744073709551615)
+  ShapedMessageType ::= INTEGER (0..255, ..., 256..65535)
+
+  Time64 ::= Uint64
+  Time32 ::= Uint32
+  HashedId8 ::= OCTET STRING (SIZE(8))
+  HashedId3 ::= OCTET STRING (SIZE(3))
+
+  ThreeDLocation ::= SEQUENCE {
+    latitude   INTEGER (-2147483648..2147483647),
+    longitude  INTEGER (-2147483648..2147483647),
+    elevation  OCTET STRING (SIZE(2))
+  }
+
+  Time64WithStandardDeviation ::= SEQUENCE {
+    time        Time64,
+    logStdDev   Uint8
+  }
+
+  -- The envelope, once per rule family (X.683): see the module header.
+  SecuredMessage    ::= SecuredMessageOf{Uint8, Time64, Uint16}
+  SecuredMessagePer ::= SecuredMessageOf{SmallUint8, ShapedTime64, ShapedMessageType}
+
+  SecuredMessageOf{Version, Time, MessageId} ::= SEQUENCE {
+    protocolVersion  Version,
+    securityProfile  Version,
+    headerFields     HeaderFieldsOf{Time, MessageId},
+    payloadField     Payload,
+    trailerFields    TrailerFields
+  }
+
+  -- The header fields in the order the prose fixes: signer information first, then ascending
+  -- HeaderFieldType. The extension marker is the presentation language's unknown type.
+  HeaderFieldsOf{Time, MessageId} ::= SEQUENCE {
+    signerInfo                          SignerInfo OPTIONAL,
+    generationTime                      Time OPTIONAL,
+    generationTimeWithStandardDeviation Time64WithStandardDeviation OPTIONAL,
+    expiration                          Time32 OPTIONAL,
+    generationLocation                  ThreeDLocation OPTIONAL,
+    requestUnrecognizedCertificate      SEQUENCE OF HashedId3 OPTIONAL,
+    messageType                         MessageId OPTIONAL,
+    recipientInfo                       OCTET STRING OPTIONAL,
+    encryptionParameters                OCTET STRING OPTIONAL,
+    ...
+  }
+
+  -- The rule-neutral header set, by name (the study reads the canonical order off it).
+  HeaderFields ::= HeaderFieldsOf{Time64, Uint16}
+
+  SignerInfo ::= CHOICE {
+    self                                NULL,
+    certificateDigestWithEcdsap256      HashedId8,
+    certificate                         Certificate,
+    certificateChain                    SEQUENCE OF Certificate,
+    certificateDigestWithOtherAlgorithm DigestWithAlgorithm,
+    ...
+  }
+
+  DigestWithAlgorithm ::= SEQUENCE {
+    algorithm  PublicKeyAlgorithm,
+    digest     HashedId8
+  }
+
+  Certificate ::= SEQUENCE {
+    version               Uint8,
+    signerInfo            SignerInfo,
+    subjectInfo           SubjectInfo,
+    subjectAttributes     SubjectAttributes,
+    validityRestrictions  ValidityRestrictions,
+    signature             Signature
+  }
+
+  SubjectType ::= ENUMERATED {
+    enrollmentCredential(0), authorizationTicket(1), authorizationAuthority(2),
+    enrollmentAuthority(3), rootCa(4), crlSigner(5), ...
+  }
+
+  SubjectInfo ::= SEQUENCE {
+    subjectType  SubjectType,
+    subjectName  OCTET STRING
+  }
+
+  -- Ascending SubjectAttributeType, each at most once.
+  SubjectAttributes ::= SEQUENCE {
+    verificationKey      PublicKey OPTIONAL,
+    encryptionKey        PublicKey OPTIONAL,
+    assuranceLevel       Uint8 OPTIONAL,
+    reconstructionValue  EccPoint OPTIONAL,
+    itsAidList           SEQUENCE OF IntX OPTIONAL,
+    itsAidSspList        SEQUENCE OF ItsAidSsp OPTIONAL,
+    ...
+  }
+
+  ItsAidSsp ::= SEQUENCE {
+    itsAid                      IntX,
+    serviceSpecificPermissions  OCTET STRING
+  }
+
+  PublicKeyAlgorithm ::= ENUMERATED { ecdsaNistp256WithSha256(0), eciesNistp256(1), ... }
+
+  PublicKey ::= CHOICE {
+    ecdsaNistp256WithSha256  EccPoint,
+    eciesNistp256            EciesKey,
+    ...
+  }
+
+  EciesKey ::= SEQUENCE {
+    supportedSymmAlg  ENUMERATED { aes128Ccm(0), ... },
+    publicKey         EccPoint
+  }
+
+  EccPoint ::= CHOICE {
+    xCoordinateOnly  OCTET STRING (SIZE(32)),
+    compressedLsbY0  OCTET STRING (SIZE(32)),
+    compressedLsbY1  OCTET STRING (SIZE(32)),
+    uncompressed     UncompressedPoint,
+    ...
+  }
+
+  UncompressedPoint ::= SEQUENCE {
+    x  OCTET STRING (SIZE(32)),
+    y  OCTET STRING (SIZE(32))
+  }
+
+  -- Ascending ValidityRestrictionType, each at most once.
+  ValidityRestrictions ::= SEQUENCE {
+    timeEnd               Time32 OPTIONAL,
+    timeStartAndEnd       TimeStartAndEnd OPTIONAL,
+    timeStartAndDuration  TimeStartAndDuration OPTIONAL,
+    region                OCTET STRING OPTIONAL,
+    ...
+  }
+
+  TimeStartAndEnd ::= SEQUENCE {
+    startValidity  Time32,
+    endValidity    Time32
+  }
+
+  TimeStartAndDuration ::= SEQUENCE {
+    startValidity  Time32,
+    duration       Uint16
+  }
+
+  Signature ::= CHOICE {
+    ecdsaNistp256WithSha256  EcdsaSignature,
+    ...
+  }
+
+  EcdsaSignature ::= SEQUENCE {
+    r  EccPoint,
+    s  OCTET STRING (SIZE(32))
+  }
+
+  Payload ::= CHOICE {
+    unsecured           OCTET STRING,
+    signed              OCTET STRING,
+    encrypted           OCTET STRING,
+    signedExternal      NULL,
+    signedAndEncrypted  OCTET STRING,
+    ...
+  }
+
+  -- Each TrailerFieldType at most once.
+  TrailerFields ::= SEQUENCE {
+    signature  Signature OPTIONAL,
+    ...
+  }
+
+END

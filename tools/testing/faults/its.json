@@ -1,0 +1,114 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_asn1_cgen:_CC",
+    "bcir.tests.test_its_security:test_intx_is_the_shortest_spelling_and_refuses_every_other",
+    "bcir.tests.test_its_security:test_a_list_the_prose_forbids_is_refused_not_reordered",
+    "bcir.tests.test_asn1_oer:test_an_extensible_sequence_leads_its_preamble_with_the_extension_bit",
+    "bcir.tests.test_asn1_emit:test_an_extensible_sequence_carries_its_extension_bit_under_oer",
+    "bcir.tests.test_c_emit:test_the_twin_reaches_the_same_octets_for_a_constrained_type",
+    "bcir.tests.test_c_oer:test_an_extensible_sequence_is_read_with_its_extension_bit_first",
+    "bcir.tests.test_c_per_plan:test_a_size_lower_bound_offsets_the_constrained_length",
+    "bcir.tests.test_asn1_cgen:test_nothing_a_generated_file_defines_escapes_its_prefix",
+    "bcir.tests.test_asn1_cgen:test_a_file_compiles_alone_however_few_helpers_it_needs",
+    "bcir.tests.test_asn1_cgen:test_the_bench_refuses_to_time_a_decoder_that_refuses",
+    "bcir.tests.test_asn1_cgen:test_every_generated_codec_writes_and_reads_the_oracles_octets",
+    "bcir.tests.test_asn1_cgen:test_a_cut_encoding_is_refused_as_truncated_by_every_decoder",
+    "bcir.tests.test_asn1_cgen:test_the_generated_decoders_agree_with_the_oracle_on_damaged_input"
+  ],
+  "faults": [
+    {
+      "expects": "test_intx_is_the_shortest_spelling_and_refuses_every_other",
+      "label": "IT1 IntX accepts a longer spelling of a value the shorter one carries",
+      "new": "    if False:\n",
+      "old": "    if n and value < 1 << (7 + 7 * (n - 1)):\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_a_list_the_prose_forbids_is_refused_not_reordered",
+      "label": "IT2 the TMSAO mapping takes a field list out of V1.1.1's canonical order",
+      "new": "        if at == last:\n",
+      "old": "        if at <= last:\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_an_extensible_sequence_leads_its_preamble_with_the_extension_bit",
+      "label": "OE1 the oracle's OER preamble omits an extensible SEQUENCE's extension bit",
+      "new": "    if False:  # \u00a716.2.2\n        bits.append(1 if present_additions else 0)\n",
+      "old": "    if kind.extensible:  # \u00a716.2.2\n        bits.append(1 if present_additions else 0)\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_an_extensible_sequence_carries_its_extension_bit_under_oer",
+      "label": "OE2 the E1 emitter's OER preamble omits the extension bit",
+      "new": "        bits: list[int] = []\n",
+      "old": "        bits: list[int] = [0] if node.extensible else []\n",
+      "path": "bcir/asn1/emit.py"
+    },
+    {
+      "expects": "test_the_twin_reaches_the_same_octets_for_a_constrained_type",
+      "label": "OE3 the E1 emitter's C twin sizes and fills the preamble without the extension bit",
+      "new": "      size_t seen = 0u;\n",
+      "old": "      size_t seen = node->extensible ? 1u : 0u;\n",
+      "path": "runtime/c/bcir_emit.c"
+    },
+    {
+      "expects": "test_an_extensible_sequence_is_read_with_its_extension_bit_first",
+      "label": "OE4 the plan-driven C OER decoder reads presence bits from bit 0 of an extensible preamble",
+      "new": "      (void)0;\n",
+      "old": "      if (present & 1u) return fail(diag, BCIR_OER_MALFORMED, pos, 0);\n      present >>= 1;\n",
+      "path": "runtime/c/bcir_oer.c"
+    },
+    {
+      "expects": "test_a_size_lower_bound_offsets_the_constrained_length",
+      "label": "PP1 the C PER plan decoder reads a constrained length with no SIZE lower bound",
+      "new": "    st = bcir_per_length(r, 0, (int64_t)f->fixed_len, has_ub, &octets, &more);\n",
+      "old": "    st = bcir_per_length(r, f->lb, (int64_t)f->fixed_len, has_ub, &octets, &more);\n",
+      "path": "runtime/c/bcir_per_plan.c"
+    },
+    {
+      "expects": "test_nothing_a_generated_file_defines_escapes_its_prefix",
+      "label": "CG1 the generator's macros keep the library's unprefixed P_ spelling",
+      "new": "    text = re.sub(r\"\\bP_(OK|E_[A-Z]+|MAX_DEPTH|INTX_MAX|NEED|HAVE)\\b\", lambda m: f\"{up}{m.group(1)}\", text)\n",
+      "old": "    text = re.sub(r\"\\bP_([A-Z][A-Z0-9_]*)\\b\", lambda m: f\"{up}{m.group(1)}\", text)\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_file_compiles_alone_however_few_helpers_it_needs",
+      "label": "CG2 the helper selection splits a preprocessor conditional into its macros",
+      "new": "        if False:\n            depth += 1\n",
+      "old": "        if top and line.startswith(\"#if\"):\n            depth += 1\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_file_compiles_alone_however_few_helpers_it_needs",
+      "label": "CG3 the emitter names its cursor types already prefixed, out of the helper selection's sight",
+      "new": "        self.W = f\"{self.P}bw\" if self.byte else f\"{self.P}pw\"\n",
+      "old": "        self.W = \"P_bw\" if self.byte else \"P_pw\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_bench_refuses_to_time_a_decoder_that_refuses",
+      "label": "CG4 the bench times a decode its guard saw fail",
+      "new": "        (void)0;\n",
+      "old": "        printf(\"ERR bench-decode %s %d\\n\", CODECS[c], e);\n        return;\n",
+      "path": "bcir/asn1/its_native.py"
+    },
+    {
+      "expects": "test_every_generated_codec_writes_and_reads_the_oracles_octets",
+      "label": "CG5 the UPER writer's unaligned octet run carries one bit too few into the next word",
+      "new": "    P_put_be64(w->p, hi | (x >> s));\n    hi = x << (63u - s);\n",
+      "old": "    P_put_be64(w->p, hi | (x >> s));\n    hi = x << (64u - s);\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_cut_encoding_is_refused_as_truncated_by_every_decoder",
+      "label": "CG6 the bit reader takes its one-load path at the input's end, past the input",
+      "new": "  if (1) {\n    w = P_be64(r->base + byte);\n",
+      "old": "  if (byte + 8u <= r->nbytes) {\n    w = P_be64(r->base + byte);\n",
+      "path": "bcir/asn1/cgen.py"
+    }
+  ]
+}

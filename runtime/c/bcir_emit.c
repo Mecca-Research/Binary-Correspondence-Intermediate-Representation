@@ -1549,14 +1549,21 @@ static int oer_node(emit_ctx *c, uint32_t node_index, uint32_t depth) {
        * The preamble's SIZE, though, comes from the PLAN -- it is the number of optional
        * components, which no value can change. So the space is reserved, the body is
        * emitted in one pass, and the bits are patched into the reserved octets as each
-       * presence flag is read. */
-      size_t optional_count = 0, preamble_octets, preamble_at, seen = 0;
+       * presence flag is read.
+       *
+       * 16.2.2: an extensible type's preamble LEADS with the extension bit. The plan
+       * refuses extension additions, so the bit is always zero and needs no patch -- but it
+       * occupies the first position, so the presence bits start at position one. Without
+       * it every presence bit sat one position early, which a conforming decoder reads as
+       * the extension bit and the bits of the wrong components. */
+      size_t optional_count = 0, preamble_octets, preamble_at;
+      size_t seen = node->extensible ? 1u : 0u;
 
       for (i = 0; i < node->member_count; i++) {
         const bcir_emit_member *m = &c->plan->members[node->first_member + i];
         if (m->optional || m->has_default) optional_count++;
       }
-      preamble_octets = (optional_count + 7u) / 8u;
+      preamble_octets = (optional_count + seen + 7u) / 8u;
       preamble_at = c->written;
       for (i = 0; i < preamble_octets; i++) put(c, 0x00);
 

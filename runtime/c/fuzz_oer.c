@@ -76,5 +76,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   /* A count larger than the caller's output array must be a refusal, not a write past it. */
   (void)bcir_oer_decode_sequence(buffer, len, 0, fields, MAX_FIELDS, values, &end,
                                  &canonical, &diag);
+  /* The extensible form: the same plan with 16.2.2's extension bit leading the preamble, so
+   * the 63-component limit and the extension-present refusal are both reachable. */
+  (void)bcir_oer_decode_sequence_ext(buffer, len, 0, fields, count, 1, values, &end,
+                                     &canonical, &diag);
   return 0;
 }

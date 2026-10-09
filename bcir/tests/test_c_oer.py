@@ -392,6 +392,50 @@ def test_a_fixed_size_string_carries_no_length_determinant():
         assert got.split()[3] == "sdeadbeef", got
 
 
+def test_an_extensible_sequence_is_read_with_its_extension_bit_first():
+    """X.696 §16.2.2: an extensible type's preamble LEADS with the extension bit, and only a
+    plan can say a type is extensible. `sequencex` is the decode told so.
+
+    Driven three ways. The oracle's octets decode field for field. The SAME octets under the
+    non-extensible plan misread -- the extension bit is taken for `a`'s presence bit, which
+    is exactly what the plan-driven bench did to an extensible root before it carried the
+    flag. And a value whose bit is set (additions follow the root) is refused at the
+    preamble, as bcir_per_decode_sequence refuses X.691 §19.1's: a root-only plan cannot
+    describe what follows.
+    """
+    byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
+    kind = Sequence(
+        (Component("a", byte, optional=True), Component("b", byte)), name="X", extensible=True
+    )
+    plan = _plan((_INTEGER, 1, 0, 1, 0), (_INTEGER, 1, 0, 0, 0))
+    present = encode_oer(kind, {"a": 5, "b": 6}, rules=OerRules.CANONICAL)
+    absent = encode_oer(kind, {"b": 6}, rules=OerRules.CANONICAL)
+    assert present == bytes.fromhex("400506") and absent == bytes.fromhex("0006")
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return
+        got = _run(
+            binary,
+            [
+                f"sequencex {_hex(present)} {plan}",
+                f"sequencex {_hex(absent)} {plan}",
+                f"sequence {_hex(present)} {plan}",
+                # The extension bit set: `80` is "additions present, `a` absent".
+                f"sequencex 8006 {plan}",
+                # 63 OPTIONAL components plus the extension bit fill the preamble word; 64
+                # do not, and that is a plan refusal before any octet is read.
+                f"sequencex 00 {_plan(*[(_INTEGER, 1, 0, 1, 0)] * 64)}",
+            ],
+        )
+    assert got[0].split() == ["OK", "3", "1", "i5", "i6"], got[0]
+    assert got[1].split() == ["OK", "2", "1", "-", "i6"], got[1]
+    # The bit taken for `a`'s: `a` reads absent and `b` takes `a`'s octet, ending early.
+    assert got[2].split()[:5] == ["OK", "2", "0", "-", "i5"], got[2]
+    assert got[3].split()[:3] == ["ERR", "2", "0"], got[3]
+    assert got[4].split()[:2] == ["ERR", "5"], got[4]
+
+
 def test_a_plan_the_decoder_cannot_execute_is_refused_before_any_octet_is_read():
     """Fail closed, and fail *early*.
 

@@ -8,6 +8,7 @@
  *   integer <hex> <pos> <width> <signed>   10.3 / 10.4
  *   preamble <hex> <pos> <optional_count>  16.2
  *   sequence <hex> <plan>                  the plan-driven decode
+ *   sequencex <hex> <plan>                 the same, for an EXTENSIBLE SEQUENCE (16.2.2)
  *
  * `<plan>` is a comma-separated field list, each `kind:width:signed:optional:fixed`, so a
  * test can build any schema the decoder claims to support without a second encoder here.
@@ -145,7 +146,8 @@ int main(void) {
       continue;
     }
 
-    if (strcmp(op, "sequence") == 0) {
+    if (strcmp(op, "sequence") == 0 || strcmp(op, "sequencex") == 0) {
+      int extensible = strcmp(op, "sequencex") == 0;
       long count;
       size_t end = 0;
       int canonical = 1;
@@ -159,8 +161,9 @@ int main(void) {
         printf("ERR %d -1 0\n", (int)BCIR_OER_INVALID);
         continue;
       }
-      if (bcir_oer_decode_sequence(input, (size_t)len, 0, fields, (size_t)count, values,
-                                   &end, &canonical, &diag) != BCIR_OER_OK) {
+      if (bcir_oer_decode_sequence_ext(input, (size_t)len, 0, fields, (size_t)count,
+                                       extensible, values, &end, &canonical,
+                                       &diag) != BCIR_OER_OK) {
         print_err(&diag);
         continue;
       }

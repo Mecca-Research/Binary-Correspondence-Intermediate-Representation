@@ -278,7 +278,12 @@ whose §1.1 carries each item's status after the ladder. What the tree holds now
   sources (CXX0, [`BCIR_ORACLE_INVENTORY.md`](BCIR_ORACLE_INVENTORY.md)).
 - **ASN.1.** Hygienic X.683 substitution (ASN1-H), recursive types on every rule (ASN1-R), a
   tagged type the model holds (ASN1-T), one NULL (ASN1-N), and the canonical-JER bound a valid
-  value fixes, taken at the point of application (ASN1-B).
+  value fixes, taken at the point of application (ASN1-B). X.696 extensibility on every OER rail
+  (OER-EXT). `bcir.asn1.cgen` compiles a module to straight-line C for COER, UPER and byte rules,
+  held to the oracle by parity, a sanitized differential and libFuzzer; it is a study-scale rail
+  that no StreamPack path consumes. The ITS security-envelope study is built on it
+  ([`research/BCIR_ITS_ASN1_BINARY_STUDY.md`](research/BCIR_ITS_ASN1_BINARY_STUDY.md)) (ITS).
+  The C ASN.1 rails are faster with identical outputs (C-PERF).
 
 Not built, and said so where each lives: CXX3 (native exact solvers), a native delta chain, the
 communication cut between domains, queue/network calculus, depth three and beyond for nests, the
