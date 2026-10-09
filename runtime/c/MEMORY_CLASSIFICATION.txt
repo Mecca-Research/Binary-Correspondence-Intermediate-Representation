@@ -31,6 +31,8 @@ freestanding_core bcir_train.c
 
 hosted_tool bcir_cc.c
 hosted_tool bcir_ai_kernels.c
+hosted_tool bcir_tensor.c
+hosted_tool bcir_decoder_train.c
 hosted_tool bcir_ai_microbench.c
 hosted_tool bcir_asn1_bench.c
 hosted_tool bcir_cfront.c

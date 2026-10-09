@@ -31,11 +31,11 @@ pattern is a single split, observed independently in E5 and E6 and named in both
 
 Read concretely:
 
-- **The iterative/combinatorial halves stay in Python.** Anything with no fixed dataflow —
-  decision-tree induction, the SVM dual quadratic program, K-means' Lloyd iteration, the
-  gradient training loop, the autodiff `Tape` itself — has data-dependent control flow,
-  convergence loops, and variable-length intermediate structures. It is the oracle / source of
-  truth, and it is a *poor fit for a fixed-shape, planned-claim model* (E5's exact words).
+- **Python remains the research oracle and host controller.** Tree induction, SVM fitting,
+  Lloyd iteration and the scalar Tape rewrite engine currently live there. Iteration does
+  not require Python: D1 has a C loop and the [native decoder trainer](BCIR_NATIVE_DECODER_TRAINING.md)
+  now supplies complete tensor forward/backward and AdamW in C. Placement follows memory,
+  implementation and integration contracts.
 - **The fixed-shape PREDICT/INFERENCE/TRANSFORM halves lower to C.** Once a model is a baked set
   of constants (tree thresholds, SVM support vectors, NB mean/var, scaler `(mean,std)`, K-means
   centroids, a trained weight matrix), evaluating it is a deterministic, data-independent-control-flow
@@ -49,9 +49,9 @@ Read concretely:
   R1–R25; the C frontend twin implements its explicitly scoped R1–R18 subset, while the Python
   oracle supplies the applicable semantic checks. Crucially, **no ML module touches the verdict**
   — the two-truth quarantine holds (verified in §4.0).
-- **The performance/runtime boundary is C++.** Where C's abstractions run out — dynamic graphs,
-  distributed orchestration (the G8 hand-off), and the SYCL single-source compiler mode (`-fsycl`)
-  — the kernel/dispatcher lowers to C++.
+- **C++ is a selective integration boundary.** Vendor/framework APIs, the G8 hand-off and
+  SYCL single-source compiler mode (`-fsycl`) can require C++. Dynamic graphs and distributed
+  control can also be implemented in C; they are not intrinsic language limits.
 
 The hierarchy, in one stack:
 
@@ -68,7 +68,7 @@ The hierarchy, in one stack:
       ▼
    MLIR     the LAW rail: the gem.* tensor-op claims + R1–R25 verifier laws + CostVectors.
             (Structural/legality reasoning + cost search.)
-      │   (where C's abstractions run out)
+      │   (selective framework/vendor integration)
       ▼
    C++      the performance/runtime boundary (G8): the hand-off scaffold + the SYCL backend.
             (Templates / RAII / a runtime / vendor SDKs.)
@@ -146,7 +146,7 @@ axis. A real compiler IR + passes is the right home for structural/legality reas
 
 ### Criterion 5 — Performance/runtime boundary needing C++ abstractions (the G8 hand-off)
 
-Where C's flat, registry-oriented, freestanding rail runs out of abstractions — OO + virtual
+Where a framework or vendor interface requires C++ abstractions — OO + virtual
 dispatch, the STL, exceptions + RAII, a runtime, vendor SDKs — the kernel lowers to C++. Two
 concrete crossings exist: the **C↔C++ hand-off scaffold** ([`CPP_HANDOFF_BOUNDARY.md`](../languages/CPP_HANDOFF_BOUNDARY.md),
 `runtime/cpp/`) for dynamic-graph topology and distributed (MPI/NCCL) orchestration; and the
@@ -162,11 +162,12 @@ the two-truth quarantine extends across the boundary.
 
 ### Python — the ORACLE / source of truth / iterative-or-combinatorial trainers / planning
 
-Python defines correctness and holds everything with no fixed dataflow. It is where every
+Python supplies the conformance reference and host-side controller. It is where the
 `*_reference` source of truth lives, where the autodiff `Tape` + `grad`/`grad_graph`/`unroll_scan`
 live, where the planners + the 12-D cost model live, and — decisively — where the **FIT/TRAIN
-halves** live: tree induction, the SVM dual QP, K-means' Lloyd iteration, the gradient training
-loop (`training.py`), and the bridges (`*_via_bridge`). It freezes to Q8 (or bakes constants) to
+halves** currently live for tree induction, the SVM dual QP and K-means' Lloyd iteration,
+alongside `training.py` and the bridges. Complete decoder training also executes in C.
+Python freezes to Q8 (or bakes constants) to
 deploy; it never runs on the deterministic hot path (the L0–L3 placement law).
 
 ### C — the dual-rail TWIN + fixed-shape PREDICT kernels + the libm edge + Area-B wraps
@@ -267,7 +268,7 @@ external kernel; a portable reference fallback keeps CI free of the library. All
 | `losses.py` — `softmax_cross_entropy`, `binary_cross_entropy_with_logits`, `hinge` (transcendental, closed-form grad seed) | Python | forward value → **Python/C libm** (`exp`/`log`); **gradient → closed-set seed** | 3 | The forward needs log/exp (libm), so it cannot be a re-differentiable Tape node; the closed-form `grad_logits` (`softmax−onehot` / `sigmoid−target`) seeds the closed-set backward — the transcendental never enters the parameter gradient. |
 | `lower/optimizers.py` — `sgd_step`, `momentum_step` (pure arithmetic) | Python + C | **C** (`emit_sgd_step_c` in `autodiff_kernel.py` — the pre-existing G6 step; `emit_momentum_step_c` in `optimizers.py`; no `-lm`) | 3 | One step is a fixed-shape in-place update over the param vector; SGD/momentum are pure arithmetic (`<stddef.h>` only). |
 | `lower/optimizers.py` — `rmsprop_step`, `adam_step` (sqrt) | Python + C | **C** (`emit_rmsprop_step_c`, `emit_adam_step_c`) **on the libm edge** (`sqrtf`, `-lm`) | 3 | The `√s`/`√v̂` divisor is the one transcendental → `#include <math.h>`, `sqrtf`, link `-lm`; the bias-correction `t`-divisors stay arithmetic. |
-| `training.py` — the epoch/mini-batch loop: `train(...)`, `Dataset`, `minibatches`, `_lcg_permutation`, `EarlyStop`, metrics | Python | **Python** (must stay) | 2 | The training loop is the iterative half: a convergence loop over epochs/mini-batches with a seed-keyed shuffle and early-stop — no fixed dataflow. It composes M1+M2+autodiff; the *steps* it drives are C, the *loop* is Python. |
+| `training.py` — the epoch/mini-batch loop: `train(...)`, `Dataset`, `minibatches`, `_lcg_permutation`, `EarlyStop`, metrics | Python | **Python oracle**, with native **C** execution available | 2 | This module keeps its reference contract. D1 and the native decoder trainer execute complete loops in C; Python is not required by iteration itself. |
 
 ### 4.5 — E1–E6 (the ML-breadth ladder) and the emitted kernels
 
@@ -387,8 +388,9 @@ the answer is a clean four-tier hierarchy:
   runtime / vendor SDKs, above the rail — it schedules and dispatches but never computes a verdict or
   alters a frozen artifact.*
 
-The dominant pattern, stated once: **train stays up (Python), predict lowers down (C); exact lowers
+The original E-slice pattern placed train in Python and predict in C. Complete native
+decoder training extends the C rail; placement is a measured engineering decision. Exact lowers
 to the deterministic rail, transcendental rides the trusted libm edge; the tensor-op claim is the
-MLIR law, the legality verdict is the dual rail, and the dynamic/distributed runtime is C++.** Every
+MLIR law, the legality verdict is the dual rail, and selective framework/vendor adapters use C++. Every
 ML module sits on the cost/oracle side of the two-truth quarantine — which is precisely what frees
 each piece to live where these criteria put it.

@@ -624,6 +624,9 @@ jobs:
       - name: Hosted model configuration, checkpoint, resume, export, and train-to-C gate
         run: python tools/models/test_hosted_model_lab.py --output-dir build/hosted-model-gate
 
+      - name: Native C complete decoder gradients, AdamW, checkpoint resume, and reference parity
+        run: python tools/models/test_native_decoder.py --output-dir build/native-decoder-gate
+
       - name: Offline pretrain, alignment, reasoning, embedding, and small-model gate
         run: python tools/models/test_training_pipeline.py --output-dir build/training-pipeline-gate
 
@@ -652,6 +655,7 @@ jobs:
           name: bcir-hosted-model-parity-report-${{ runner.os }}
           path: |
             build/hosted-model-gate/parity-report.json
+            build/native-decoder-gate/report.json
             build/training-pipeline-gate/report.json
             build/adaptive-transformer-gate/report.json
             build/byte-native-model-gate/report.json

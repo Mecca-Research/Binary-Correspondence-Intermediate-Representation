@@ -139,6 +139,9 @@ show_section runtime || exit 1
 echo "[c-runtime] BCAB artifact bundle: freestanding reader + Python/C selection parity"
 show_section artifact_bundle || exit 1
 
+echo "[c-runtime] complete native decoder training: C11/C23 gradients, bounds and AdamW"
+show_section decoder_train || exit 1
+
 echo "[c-runtime] StreamPack executor: Python->C parity"
 show_section executor || exit 1
 

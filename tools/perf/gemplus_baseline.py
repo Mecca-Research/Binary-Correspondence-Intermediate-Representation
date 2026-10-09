@@ -743,6 +743,70 @@ METRICS: tuple[Metric, ...] = (
         "warm buffer is work no hydrate avoids. A memory roofline, not a hydrate",
         slice_owner="CXX4",
     ),
+    # --- NDT-GEM: the native decoder's training step as a GEM+ program ----------------------
+    Metric(
+        "train.plan.mismatch",
+        "train",
+        "(spec, arena) pairs over the six-spec plan corpus (bcir/tests/native_decoder_fixtures.py) "
+        "where the step program's arena sum differs from bcir_decoder_make_plan's count; the "
+        "parent stated the activation and workspace arenas once, in C, and held only the "
+        "parameter count to Python -- 12 of 36 pairs no second derivation checked",
+        12,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one plan, two derivations: the program sums the C plan's own spans from the "
+        "spec alone (`native_program.training_step_program`), so any disagreement is a defect",
+        slice_owner="NDT-GEM",
+    ),
+    Metric(
+        "train.mm.mismatch",
+        "train",
+        "of 20 GEMM cases (every transpose pair, the 32-wide tiles' edges, alpha and beta forms), "
+        "those whose bcir_tensor_mm output differs in any bit from an independent binary32 "
+        "emulation of the kernel's contract",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the kernel's contract, one rounded operation at a time: beta first, then "
+        "alpha*a times b added for k ascending, no contraction -- a faster kernel must keep it",
+        slice_owner="NDT-GEM",
+    ),
+    Metric(
+        "train.memory.transient",
+        "train",
+        "bytes the C plan reserves for the bench step's activations and backward workspace, over "
+        "G26's concurrent-live bound on the same values (vocab 256, width 64, 2 layers, batch 2 "
+        "x 32 tokens: 999,424 / 753,664 bytes)",
+        999_424 / 753_664,
+        "x",
+        "exact",
+        bound=1.0,
+        bound_source="the alignment-aware concurrent-live bound (`static_memory."
+        "layout_lower_bound`) over the program's values in the C order without recomputation; "
+        "GEM+'s incumbent layout portfolio reaches it on this program, so the headroom is "
+        "realizable -- by a C plan that lays the transient values out by lifetime (NDT-MEM, open)",
+        slice_owner="NDT-MEM",
+    ),
+    Metric(
+        "train.step.ms",
+        "train",
+        "one native training step (forward, mean cross-entropy, every gradient, clipped AdamW) of "
+        "the bench decoder, -O3: the median per step of nine four-step bcir_decoder_run calls on "
+        "one trainer after an untimed one",
+        10.05,
+        "ms",
+        "wall",
+        floor_key="train.step.ms.floor",
+        bound_source="G26's roofline for the step program's order, compute term, same library "
+        "and run: the step's counted contraction work (every linear's product and two VJPs, the "
+        "causal attention's six contractions) at the best rate bcir_tensor_mm reaches on any of "
+        "the step's own GEMM shapes timed alone. A bound on this host's kernel (TMSAO-3), not on "
+        "the silicon; the memory terms are not applied (the bench step's working set stays "
+        "cache-resident across steps, so first-touch traffic is not the loop's)",
+        slice_owner="NDT-GEM",
+    ),
     Metric(
         "transform.export.mismatch",
         "transform",
@@ -3541,6 +3605,15 @@ def measure_hydrate() -> dict[str, float]:
     return out
 
 
+def measure_train() -> dict[str, float]:
+    """NDT-GEM: the native decoder's training step held to its GEM+ program
+    (bcir/tests/native_decoder_fixtures.py::measure). The memory row is pure Python; the plan,
+    GEMM and step rows need the C rail -- without a compiler they are NOT-MEASURED."""
+    from bcir.tests.native_decoder_fixtures import measure as measure_ndt
+
+    return measure_ndt(timed=True)
+
+
 def measure_jer_bounds() -> dict[str, float]:
     """ASN1-B: the semantic canonical-JER bound against the encoder
     (bcir/tests/jer_bounds_fixtures.py::measure, which the tests grade the same way)."""
@@ -3888,6 +3961,7 @@ _MEASURERS = {
     "nest": measure_nest,
     "jerbounds": measure_jer_bounds,
     "memory-production": measure_memory_production,
+    "train": measure_train,
 }
 
 
@@ -4070,7 +4144,7 @@ def main(argv: list[str]) -> int:
         "--group",
         action="append",
         default=[],
-        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, delta, memory)",
+        help="limit measurement to a group (audit, planner, scheduler, dispatch, regions, workload, native, exact, verifier, digest, plan, control, ring, handoff, kplan, delta, memory, train)",
     )
     parser.add_argument("--json", help="write the verdicts to a JSON file")
     args = parser.parse_args(argv)

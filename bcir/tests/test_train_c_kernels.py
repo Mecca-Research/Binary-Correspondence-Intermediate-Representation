@@ -208,7 +208,8 @@ def test_c_training_callbacks_reject_invalid_state_before_mutation():
 int main(void){
   bcir_exec_item item;bcir_train_state st;bcir_stream_state ss;double a[8];
   memset(&item,0,sizeof item);memset(&st,0,sizeof st);memset(&ss,0,sizeof ss);
-  for(int i=0;i<8;i++)a[i]=17.0;item.claim_id=1;
+  for(int i=0;i<8;i++){a[i]=17.0;}
+  item.claim_id=1;
   if(bcir_train_kernel(0,0)!=1||bcir_train_kernel(&item,&st)!=1)return 1;
   item.claim_id=99;if(bcir_train_kernel(&item,0)!=0)return 2;
   st.nf=1;st.b=1;st.lr=NAN;st.X=a;st.y=a;st.w=a;st.z=a;st.act=a;st.lossv=a;st.grad=a;
