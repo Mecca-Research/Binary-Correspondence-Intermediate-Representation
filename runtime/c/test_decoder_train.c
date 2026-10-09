@@ -130,8 +130,11 @@ static void gemm_contract(void) {
     for (i=0;i<m*n;i++) want[i]=c[i]=0.01f*(float)(i%17)-0.05f;
     for (i=0;i<m*n;i++) want[i]=beta==0.0f ? 0.0f : beta*want[i];
     for (i=0;i<m;i++) for (j=0;j<n;j++) for (l=0;l<k;l++) {
-      float av=alpha*a[ta ? l*m+i : i*k+l];
-      want[i*n+j]+=av*b[tb ? j*k+l : l*n+j];
+      /* each product rounded on its own, whatever contraction the harness is built with:
+       * clang's default -ffp-contract=on fuses a*b+c into one FMA where the target has one
+       * (every aarch64), which is not the contract the kernel keeps */
+      volatile float prod=alpha*a[ta ? l*m+i : i*k+l]*b[tb ? j*k+l : l*n+j];
+      want[i*n+j]+=prod;
     }
     bcir_tensor_mm(NULL,(int)ta,(int)tb,m,n,k,alpha,a,b,beta,c);
     assert(!memcmp(c,want,m*n*sizeof(float)));

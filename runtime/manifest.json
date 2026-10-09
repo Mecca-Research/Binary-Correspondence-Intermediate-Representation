@@ -125,7 +125,7 @@
     }
   },
   "harnesses": {
-    "test_decoder_train": {"sources": ["test_decoder_train.c"], "libraries": ["bcir_decoder_training"]},
+    "test_decoder_train": {"sources": ["test_decoder_train.c"], "libraries": ["bcir_decoder_training"], "options": ["-ffp-contract=off"]},
     "test_runtime": {"sources": ["test_runtime.c"], "libraries": ["bcir_base"]},
     "test_sha256": {"sources": ["test_sha256.c"], "libraries": ["bcir_base"]},
     "test_execution_plan": {"sources": ["test_execution_plan.c"], "libraries": ["bcir_base"]},

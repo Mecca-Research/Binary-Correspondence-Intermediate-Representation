@@ -2206,6 +2206,13 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     or fused accumulation, an untransposed A, two plan counts off by a span, the dropped moment
     refusal and a one-block scan are each caught (`test_native_decoder.py`,
     `test_native_program.py`).
+  - Found by CI's aarch64 runtime job: the harness's own GEMM reference (`want += av*b`) was fused
+    into one FMA by clang's default `-ffp-contract=on` on a target that has one, so the reference,
+    not the kernel, left the contract; x86-64 builds have no FMA at the baseline ISA and never
+    showed it. Reproduced on x86 with `-mfma`. The reference now rounds each product through a
+    volatile, and the manifest gives the harness the trainer's `-ffp-contract=off`, as
+    `test_ai_kernels` has; the check passes under on/fast/off with FMA on clang and GCC and still
+    fails on the tile-offset fault.
   - Found by the review, fixed: the binding built from the checkout's C sources with no check
     that they exist -- an installed wheel ships none -- so `NativeDecoder.build` failed inside
     the compiler; it now names the missing units. Recorded, not changed: the attention backward
