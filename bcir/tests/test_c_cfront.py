@@ -926,6 +926,45 @@ def test_storage_extent_parity_catches_oversizing():
     assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
 
 
+def test_the_fftw_rule_is_one_table_on_both_rails():
+    """FFTW-PRECISION: FFTW 3 builds one library per precision -- `fftw_` libfftw3, `fftwf_` libfftw3f,
+    `fftwl_` libfftw3l, `fftwq_` libfftw3q, an `mpi_` entry point its precision's MPI library -- and libfftw3
+    defines no `fftwf_` symbol, yet both rails mapped `fftwf_*` to `-lfftw3`. The twin's rows are the C
+    harness's own table (`runtime/c/test_link_flag_rules.c`, `fftw_edges`, which the `linkflags_fftw` section
+    holds the twin to); this holds the oracle to the same rows, read out of that source rather than mirrored."""
+    from bcir.frontends.cfront.linkflags import library_for_callee
+
+    with open(os.path.join(_C, "test_link_flag_rules.c"), encoding="utf-8") as fh:
+        source = fh.read()
+    table = source.split("fftw_edges[] = {", 1)[1].split("};", 1)[0]
+    rows = re.findall(r'\{"c\.call\.libm:(\w+)", "([^"]*)"\}', table)
+    assert len(rows) >= 12, rows
+    names = {name for name, _flag in rows}
+    for prefix in ("fftw_", "fftwf_", "fftwl_", "fftwq_"):  # every precision is in the table
+        assert any(n.startswith(prefix) and "mpi_" not in n for n in names), prefix
+    assert any("threads" in n for n in names) and any("mpi_" in n for n in names)
+    for name, flag in rows:
+        assert (library_for_callee(name) or "") == flag, (name, library_for_callee(name), flag)
+    if not _CC:
+        return  # the twin's side is then the `linkflags_fftw` section's alone
+    harness = _compile_once(
+        "linkflags",
+        "tlfr",
+        (
+            "test_link_flag_rules.c",
+            "bcir_cfront.c",
+            "bcir_cpp.c",
+            "bcir_verify.c",
+            "bcir_runtime.c",
+        ),
+        "link-flag rules",
+    )
+    run = subprocess.run([harness, "fftw"], capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0 and run.stdout.startswith("OK linkflags-fftw"), (
+        run.stdout + run.stderr
+    )
+
+
 def test_link_flag_derivation_dual_rail():
     """B1 (`bcir-cc --emit-link-flags`): the compiler DERIVES the linker flags a translation unit needs
     from the external-call edges it uses, instead of every harness hard-coding `-lm`. The callee->library
@@ -953,9 +992,13 @@ def test_link_flag_derivation_dual_rail():
         assert library_for_callee(name) == NO_FLAG, name
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS (the existing path's choice)
     assert library_for_callee("cblas_dgemm") == "-lcblas"  # any cblas_*
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW (single-prec edge)
-    assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3"  # any fftwf_*
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # B2 FFTW (single-prec edge)
+    assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3f"  # any fftwf_*
     assert library_for_callee("fftw_execute") == "-lfftw3"  # the double-prec fftw_* prefix too
+    assert library_for_callee("fftwl_execute") == "-lfftw3l"  # long double (FFTW-PRECISION)
+    assert library_for_callee("fftwq_execute") == "-lfftw3q"  # quad
+    assert library_for_callee("fftwf_mpi_init") == "-lfftw3f_mpi"  # an MPI entry point
+    assert library_for_callee("fftw_init_threads") is None  # pthreads or OpenMP: unknown
     assert (
         library_for_callee("LAPACKE_sgesv") == "-llapack"
     )  # #61 LAPACK (the linear-solve wrap's callee)

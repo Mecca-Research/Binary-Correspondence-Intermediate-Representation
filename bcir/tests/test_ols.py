@@ -372,7 +372,7 @@ def test_ols_link_flag_rule_reuses_the_existing_lapack_rule():
     # no regression on the other five library rules + libm + libc + unknown.
     assert library_for_callee("gsl_stats_mean") == "-lgsl"  # #62 GSL still maps
     assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF still maps
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW still maps
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # B2 FFTW still maps
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
     assert library_for_callee("sqrtf") == "-lm"  # libm still maps
     assert library_for_callee("free") == NO_FLAG  # libc-implicit, known (not unknown)

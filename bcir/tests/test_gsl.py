@@ -248,7 +248,7 @@ def test_gsl_link_flag_rule():
     assert library_for_callee("gsl_sf_erf") == "-lgsl"  # a special-function gsl_* too
     # no regression on the existing classifications.
     assert library_for_callee("LAPACKE_sgesv") == "-llapack"  # #61 LAPACK still maps
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW still maps
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # B2 FFTW still maps
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
     assert library_for_callee("sqrtf") == "-lm"  # libm still maps
     assert library_for_callee("free") == NO_FLAG  # libc-implicit, known (not unknown)

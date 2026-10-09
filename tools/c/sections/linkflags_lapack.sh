@@ -25,7 +25,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # EMITTER (emit_lapack_solve_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:LAPACKE_sgesv` edge and asserts it
 # derives `-llapack` (the LAPACK rule), with a Fortran-ABI `sgesv_` edge -> -llapack too, and no regression
-# on fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
+# on fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
 # (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_lapack.py.
 "${HARNESS}" lapack | grep -q "^OK linkflags-lapack" \
   && echo "  PASS linkflags-lapack: C twin derives LAPACKE_*/sgels/sgesv_ -> -llapack (fftw/cblas/-lm/unknown unchanged)" \

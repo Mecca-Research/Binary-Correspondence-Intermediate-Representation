@@ -11,8 +11,8 @@ requirement — the same unit always yields byte-identical flags).
 
 EXTENSIBILITY (the B2 hook): the classification is a single ordered table of `(matcher, flag)` rules,
 `_LIBRARY_RULES`. B2 (wrapping FFTW / LAPACK / GSL / SLEEF) adds one rule per library here (and the
-byte-identical twin in `runtime/c/bcir_cfront.c`'s `bcir_lib_for_callee`), e.g. a `fftw_*`-prefix rule
--> `-lfftw3`. Nothing else changes: the derivation, the `--emit-link-flags` surface, and the parity
+byte-identical twin in `runtime/c/bcir_cfront.c`'s `bcir_lib_for_callee`), e.g. a `fftwf_*`-prefix rule
+-> `-lfftw3f`. Nothing else changes: the derivation, the `--emit-link-flags` surface, and the parity
 gate all read this table.
 
 The C twin (`bcir_cfront.c`: `bcir_lib_for_callee` + `bcir_cfront_link_flags`) mirrors this table and
@@ -70,8 +70,49 @@ def _is_libc_implicit(callee: str) -> bool:
 # touches, so an unrelated `foo_` callee is NOT swept into -llapack. The C twin lists the identical names.
 _LAPACK_FORTRAN = frozenset({"sgesv", "dgesv", "sgetrf", "dgetrf", "sgetrs", "dgetrs"})
 
+# FFTW 3 builds one library per precision, each prefixing its symbols (FFTW-PRECISION): double `fftw_`
+# (libfftw3), single `fftwf_` (libfftw3f), long double `fftwl_` (libfftw3l), quad `fftwq_` (libfftw3q), and
+# the MPI interface `<prefix>mpi_` in `libfftw3<p>_mpi` (no quad one). Read from the libraries' own dynamic
+# symbol tables (FFTW 3.3.10): libfftw3 defines no `fftwf_` symbol. The threading entry points are defined
+# alike by the POSIX-threads library (`libfftw3<p>_threads`) and the OpenMP one (`libfftw3<p>_omp`), so they
+# name no one library: unknown, the build's choice (the unknown-callee policy of `library_for_callee`).
+_FFTW_PRECISIONS = (
+    ("fftw_", "-lfftw3", "-lfftw3_mpi"),
+    ("fftwf_", "-lfftw3f", "-lfftw3f_mpi"),
+    ("fftwl_", "-lfftw3l", "-lfftw3l_mpi"),
+    ("fftwq_", "-lfftw3q", None),
+)
+_FFTW_THREADS = frozenset(
+    {
+        "init_threads",
+        "cleanup_threads",
+        "plan_with_nthreads",
+        "planner_nthreads",
+        "make_planner_thread_safe",
+        "threads_set_callback",
+    }
+)
+
+
+def _is_fftw(callee: str) -> bool:
+    return callee.startswith(tuple(prefix for prefix, _lib, _mpi in _FFTW_PRECISIONS))
+
+
+def _fftw_library(callee: str) -> str | None:
+    """The FFTW library a `fftw*_` callee resolves in: its precision's, or that precision's MPI library for
+    an `mpi_` entry point; None (unknown) for a threading entry point, which two libraries define alike."""
+    for prefix, lib, mpi in _FFTW_PRECISIONS:
+        if callee.startswith(prefix):
+            rest = callee[len(prefix) :]
+            if rest in _FFTW_THREADS:
+                return None
+            return mpi if rest.startswith("mpi_") else lib
+    return None
+
+
 # The callee -> library classification, an ORDERED list of `(matcher, flag)` rules. The first matching
-# rule wins; `flag` is the `-l...` string, or `NO_FLAG` ("") for a known-but-implicit symbol. This is
+# rule wins; `flag` is the `-l...` string, `NO_FLAG` ("") for a known-but-implicit symbol, or a function of the
+# callee giving one of those or None (FFTW's, whose library depends on the rest of the name). This is
 # the single EXTENSION POINT: B2 adds one rule per newly-wrapped library here (and its byte-identical
 # twin in bcir_cfront.c). Keep both rails' tables in the SAME ORDER -- the first-match semantics make
 # order significant, and the parity gate compares the derived flags, not the rule list.
@@ -85,11 +126,13 @@ _LIBRARY_RULES: tuple[tuple, ...] = (
     # (bcir/lower/c_kernel.py emit_blas_gemm_c links `-lcblas`); stay consistent so a BLAS unit links
     # with one flag regardless of which emitter produced the call.
     (lambda c: c.startswith("cblas_"), "-lcblas"),
-    # B2 FFTW: fftwf_* (single-precision) and fftw_* (double) -> -lfftw3. The B2 wrap
-    # (bcir/lower/c_kernel.py emit_fftw_fft_c) links `-lfftw3` for the trusted fftwf_plan_dft_1d /
-    # fftwf_execute / fftwf_destroy_plan edge; this rule makes a unit with an FFTW edge link it
-    # automatically. (libfftw3 is the single-prec build too -- fftwf_* lives in -lfftw3, not -lfftw3f.)
-    (lambda c: c.startswith("fftw_") or c.startswith("fftwf_"), "-lfftw3"),
+    # B2 FFTW: each precision's library (`_fftw_library`): fftwf_* -> -lfftw3f, the single-precision
+    # library the B2 wrap (bcir/lower/c_kernel.py emit_fftw_fft_c) calls -- fftwf_plan_dft_1d /
+    # fftwf_execute / fftwf_destroy_plan -- and the one the dependency index probes first
+    # (`bcir.toolchain`'s FFTW3F); fftw_* -> -lfftw3, fftwl_* -> -lfftw3l, fftwq_* -> -lfftw3q, and an
+    # `mpi_` entry point its precision's MPI library. Until FFTW-PRECISION both fftw_* and fftwf_* mapped to
+    # -lfftw3, which defines no fftwf_ symbol: a unit with a single-precision edge did not link.
+    (_is_fftw, _fftw_library),
     # B-breadth (#61) LAPACK: the LAPACKE C interface (LAPACKE_sgesv et al.) and the Fortran-ABI driver
     # symbols (sgesv_/dgesv_/sgetrf_/...) -> -llapack. The linear-solve wrap (bcir/lower/c_kernel.py
     # emit_lapack_solve_c) calls `LAPACKE_sgesv` and links `-llapacke -llapack`; libllapacke depends on
@@ -139,7 +182,7 @@ def library_for_callee(callee: str) -> str | None:
     treats both as "adds no flag", so the result stays deterministic and never silently wrong."""
     for matcher, flag in _LIBRARY_RULES:
         if matcher(callee):
-            return flag
+            return flag(callee) if callable(flag) else flag
     return None
 
 

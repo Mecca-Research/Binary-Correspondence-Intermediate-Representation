@@ -36,9 +36,16 @@ static int eq(const char *op, const char *want) {
 struct edge { const char *op, *want; };
 
 static const struct edge fftw_edges[] = {
-  {"c.call.libm:fftwf_execute", "-lfftw3"},      /* the B2 rule */
-  {"c.call.libm:fftwf_plan_dft_1d", "-lfftw3"},  /* any fftwf_* */
+  {"c.call.libm:fftwf_execute", "-lfftw3f"},     /* the B2 rule: single precision is libfftw3f (FFTW-PRECISION) */
+  {"c.call.libm:fftwf_plan_dft_1d", "-lfftw3f"}, /* any fftwf_* */
   {"c.call.libm:fftw_execute", "-lfftw3"},       /* the double-prec fftw_* prefix */
+  {"c.call.libm:fftwl_execute", "-lfftw3l"},     /* long double */
+  {"c.call.libm:fftwq_execute", "-lfftw3q"},     /* quad */
+  {"c.call.libm:fftw_mpi_init", "-lfftw3_mpi"},  /* an MPI entry point: its precision's MPI library */
+  {"c.call.libm:fftwf_mpi_init", "-lfftw3f_mpi"},
+  {"c.call.libm:fftwq_mpi_init", ""},            /* no quad MPI library: unknown */
+  {"c.call.libm:fftwf_init_threads", ""},        /* pthreads or OpenMP alike: unknown, the build's choice */
+  {"c.call.libm:fftw_plan_with_nthreads", ""},
   {"c.call.libm:cblas_sgemm", "-lcblas"},        /* B5 (no regression) */
   {"c.call.libm:sqrt", "-lm"},                   /* libm (no regression) */
   {"c.call.libm:totally_unknown_fn", ""},        /* unknown -> no flag (no regression) */
@@ -50,7 +57,7 @@ static const struct edge lapack_edges[] = {
   {"c.call.libm:LAPACKE_sgels", "-llapack"},     /* E1 OLS: LAPACKE_sgels rides the SAME LAPACKE_* rule */
   {"c.call.libm:LAPACKE_ssyev", "-llapack"},     /* E2 PCA: LAPACKE_ssyev rides the SAME LAPACKE_* rule */
   {"c.call.libm:sgesv_", "-llapack"},            /* the Fortran-ABI driver symbol */
-  {"c.call.libm:fftwf_execute", "-lfftw3"},      /* B2 (no regression) */
+  {"c.call.libm:fftwf_execute", "-lfftw3f"},     /* B2 (no regression) */
   {"c.call.libm:cblas_sgemm", "-lcblas"},        /* B5 (no regression) */
   {"c.call.libm:sqrt", "-lm"},                   /* libm (no regression) */
   {"c.call.libm:totally_unknown_fn", ""},        /* unknown -> no flag (no regression) */
@@ -61,7 +68,7 @@ static const struct edge gsl_edges[] = {
   {"c.call.libm:gsl_stats_variance", "-lgsl"},   /* any gsl_* */
   {"c.call.libm:gsl_sf_erf", "-lgsl"},           /* a special-function gsl_* too */
   {"c.call.libm:LAPACKE_sgesv", "-llapack"},     /* #61 LAPACK (no regression) */
-  {"c.call.libm:fftwf_execute", "-lfftw3"},      /* B2 (no regression) */
+  {"c.call.libm:fftwf_execute", "-lfftw3f"},     /* B2 (no regression) */
   {"c.call.libm:cblas_sgemm", "-lcblas"},        /* B5 (no regression) */
   {"c.call.libm:sqrt", "-lm"},                   /* libm (no regression) */
   {"c.call.libm:totally_unknown_fn", ""},        /* unknown -> no flag (no regression) */
@@ -72,7 +79,7 @@ static const struct edge sleef_edges[] = {
   {"c.call.libm:Sleef_sinf1_u10", "-lsleef"},    /* any Sleef_* */
   {"c.call.libm:gsl_stats_mean", "-lgsl"},       /* #62 GSL (no regression) */
   {"c.call.libm:LAPACKE_sgesv", "-llapack"},     /* #61 LAPACK (no regression) */
-  {"c.call.libm:fftwf_execute", "-lfftw3"},      /* B2 (no regression) */
+  {"c.call.libm:fftwf_execute", "-lfftw3f"},     /* B2 (no regression) */
   {"c.call.libm:cblas_sgemm", "-lcblas"},        /* B5 (no regression) */
   {"c.call.libm:expf", "-lm"},                   /* libm (no regression -- the SLEEF fallback's twin) */
   {"c.call.libm:totally_unknown_fn", ""},        /* unknown -> no flag (no regression) */
@@ -85,7 +92,7 @@ static const struct edge cerf_edges[] = {
   {"c.call.libm:Sleef_expf1_u10", "-lsleef"},    /* #63 SLEEF (no regression) */
   {"c.call.libm:gsl_stats_mean", "-lgsl"},       /* #62 GSL (no regression) */
   {"c.call.libm:LAPACKE_sgesv", "-llapack"},     /* #61 LAPACK (no regression) */
-  {"c.call.libm:fftwf_execute", "-lfftw3"},      /* B2 (no regression) */
+  {"c.call.libm:fftwf_execute", "-lfftw3f"},     /* B2 (no regression) */
   {"c.call.libm:cblas_sgemm", "-lcblas"},        /* B5 (no regression) */
   {"c.call.libm:expf", "-lm"},                   /* libm (no regression -- the erfcx fallback's twin) */
   {"c.call.libm:totally_unknown_fn", ""},        /* unknown -> no flag (no regression) */

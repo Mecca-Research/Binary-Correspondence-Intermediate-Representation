@@ -7,18 +7,19 @@ Covers: the bridged FFT tracks the float DFT reference within the quantization e
 bound); the emitted C wraps fftwf_plan_dft_1d/execute/destroy with a naive O(n^2) DFT reference fallback;
 the fallback path compiles and reproduces the DFT reference under clang (no FFTW needed -- it IS a DFT, so
 linked-vs-fallback agree to float round-off); only if an FFTW lib is present, the linked path agrees too;
-and the B2 FFTW link-flag rule resolves fftwf_*/fftw_* -> -lfftw3 (with the C twin agreeing). The point:
+and the B2 FFTW link-flag rule resolves fftwf_* -> -lfftw3f and fftw_* -> -lfftw3 (with the C twin agreeing). The point:
 the win is on the calling side, not a reimplemented FFT."""
 
 import cmath
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import tempfile
 
-from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee
+from bcir.frontends.cfront.linkflags import NO_FLAG, library_for_callee, link_flags_for_callees
 from bcir.kbcir.fft import dft_reference, fft_via_bridge
 from bcir.kbcir.precision import accuracy_bound, quantization_error_bound
 from bcir.lower.c_kernel import emit_fftw_fft_c
@@ -179,6 +180,10 @@ def test_linked_fftw_path_agrees_when_fftw_is_present():
     x = _interleave(signal)
     ref = dft_reference(x, n)
     kernel = emit_fftw_fft_c(n, "fft")
+    # the flags BCIR derives for the wrap's own FFTW callees are what it links with (FFTW-PRECISION: they named
+    # -lfftw3, which defines no fftwf_ symbol), not the probe's choice
+    derived = link_flags_for_callees(set(re.findall(r"\b(fftw\w*?_\w+)\s*\(", kernel)))
+    assert derived == ["-lfftw3f"], derived
     main = (
         f"\n#include <stdio.h>\nint main(void){{\n"
         f"  float in[{2 * n}] = {{{', '.join(f'{v:.6f}f' for v in x)}}};\n"
@@ -190,7 +195,9 @@ def test_linked_fftw_path_agrees_when_fftw_is_present():
         open(src, "w").write(kernel + main)
         exe = os.path.join(d, "f")
         bld = subprocess.run(
-            host_link_args([cc, "-std=c11", "-O2", "-DBCIR_USE_FFTW", src, *lib, "-lm", "-o", exe]),
+            host_link_args(
+                [cc, "-std=c11", "-O2", "-DBCIR_USE_FFTW", src, *derived, "-lm", "-o", exe]
+            ),
             capture_output=True,
             text=True,
         )
@@ -226,12 +233,12 @@ def test_r17_certifies_the_bridge_on_a_quantized_fft_call():
     assert quantization_error_bound() == 1  # the R17 grid bound the bridge is held to
 
 
-# --- the B2 link-flag rule: an FFTW edge resolves to -lfftw3 (the C twin agrees in check_runtime.sh) --
+# --- the B2 link-flag rule: an FFTW edge resolves to its precision's library (the C twin agrees in check_runtime.sh) --
 
 
 def test_fftw_link_flag_rule():
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # the B2 rule (the task's assertion)
-    assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3"  # any fftwf_* (single-prec)
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # the B2 rule (the task's assertion)
+    assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3f"  # any fftwf_* (single-prec)
     assert library_for_callee("fftw_execute") == "-lfftw3"  # the double-prec fftw_* prefix too
     # no regression on the existing classifications.
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps

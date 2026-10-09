@@ -4154,8 +4154,32 @@ static int lapack_is_fortran(const char *s, int n) {
  * what BCIR knows about its own emitted external seams.
  *
  * EXTENSION POINT (roadmap B2): add one branch per newly-wrapped trusted library here, in the SAME
- * ORDER as the oracle's _LIBRARY_RULES (e.g. fftw_*->"-lfftw3", LAPACKE_*->"-llapack", gsl_*->"-lgsl",
+ * ORDER as the oracle's _LIBRARY_RULES (e.g. fftwf_*->"-lfftw3f", LAPACKE_*->"-llapack", gsl_*->"-lgsl",
  * Sleef_*->"-lsleef", erfcx*->"-lcerf"). First match wins, so order is significant. */
+/* FFTW 3 builds one library per precision, each prefixing its symbols (FFTW-PRECISION; the oracle's
+ * `_FFTW_PRECISIONS` / `_fftw_library`): double `fftw_` (libfftw3), single `fftwf_` (libfftw3f), long double
+ * `fftwl_` (libfftw3l), quad `fftwq_` (libfftw3q), and the MPI interface `<prefix>mpi_` in `libfftw3<p>_mpi`
+ * (no quad one). libfftw3 defines no `fftwf_` symbol. A threading entry point is defined alike by the
+ * POSIX-threads and the OpenMP library, so it names no one library: NULL, unknown. Sets *is_fftw when `s` has an
+ * FFTW prefix, whatever it returns (the rule matches; first match wins). */
+static const char *fftw_library(const char *s, int n, int *is_fftw) {
+  static const struct { const char *prefix, *lib, *mpi; } P[] = {
+    {"fftw_", "-lfftw3", "-lfftw3_mpi"}, {"fftwf_", "-lfftw3f", "-lfftw3f_mpi"},
+    {"fftwl_", "-lfftw3l", "-lfftw3l_mpi"}, {"fftwq_", "-lfftw3q", NULL}};
+  static const char *const T[] = {"init_threads", "cleanup_threads", "plan_with_nthreads", "planner_nthreads",
+                                  "make_planner_thread_safe", "threads_set_callback"};
+  *is_fftw = 0;
+  for (size_t k = 0; k < sizeof P / sizeof P[0]; k++) {
+    int pn = (int)strlen(P[k].prefix);
+    if (n < pn || memcmp(s, P[k].prefix, (size_t)pn)) continue;
+    *is_fftw = 1;
+    const char *r = s + pn; int rn = n - pn;
+    for (size_t t = 0; t < sizeof T / sizeof T[0]; t++)
+      if ((size_t)rn == strlen(T[t]) && !memcmp(r, T[t], (size_t)rn)) return NULL;
+    return rn >= 4 && !memcmp(r, "mpi_", 4) ? P[k].mpi : P[k].lib;
+  }
+  return NULL;
+}
 static const char *bcir_lib_for_callee(const char *s, int n) {
   if(n<=0) return NULL;
   /* <math.h> / <complex.h> (incl. the f/l-suffixed + fixed-int/long variants) -> -lm. */
@@ -4165,10 +4189,11 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
   if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || is_extern_variadic(s,n)) return "";
   /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
   if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
-  /* B2 FFTW: fftwf_* (single-prec) and fftw_* (double) -> -lfftw3 (the B2 wrap's choice -- fftwf_* also
-   * lives in -lfftw3). Matches linkflags.py's fftw rule, in the SAME order (first match wins). */
-  if(n>=6 && !strncmp("fftwf_",s,6)) return "-lfftw3";
-  if(n>=5 && !strncmp("fftw_",s,5))  return "-lfftw3";
+  /* B2 FFTW: each precision's library (`fftw_library`): fftwf_* -> -lfftw3f, the B2 wrap's single-precision
+   * library; fftw_* -> -lfftw3, fftwl_* -> -lfftw3l, fftwq_* -> -lfftw3q, an `mpi_` entry point its precision's
+   * MPI library, a threading one unknown. Matches linkflags.py's fftw rule, in the SAME order (first match
+   * wins). */
+  { int is_fftw; const char *lib = fftw_library(s, n, &is_fftw); if (is_fftw) return lib; }
   /* B-breadth (#61) LAPACK: the LAPACKE C interface (LAPACKE_sgesv et al.) and the Fortran-ABI driver
    * symbols (sgesv_/...) -> -llapack (the linear-solve wrap emit_lapack_solve_c calls LAPACKE_sgesv and
    * links -llapacke -llapack; -llapack is the load-bearing dep). Matches linkflags.py's LAPACK rule, in

@@ -58,10 +58,13 @@ jobs:
         # to v1.6.3 by commit SHA (supply-chain). Bump `version` to invalidate the cache.
         # mono-devel supplies ilasm + the mono runtime so the stackify CIL emit is ASSEMBLED AND
         # EXECUTED on a real CLR (test_stackify_exec.py), closing the H5 "documented skip".
+        # libfftw3-dev puts FFTW's libraries on the runner, so the B2 wraps' linked paths
+        # (test_fftw / test_fftw2) run here with the flags BCIR derives -- `-lfftw3f` for the
+        # single-precision wrap -- instead of self-skipping on every host (FFTW-PRECISION).
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
-          packages: clang lld llvm libclang-rt-18-dev mono-devel
-          version: train-${{ runner.arch }}-v2
+          packages: clang lld llvm libclang-rt-18-dev mono-devel libfftw3-dev
+          version: train-${{ runner.arch }}-v3
 
       - name: Node.js LTS for the WASM tests (replaces apt's end-of-life 18 line; 2026-09-04 audit F6)
         # The WASM lowering tests execute the emitted module under `node`. Ubuntu's `nodejs`
@@ -76,6 +79,17 @@ jobs:
 
       - name: Node.js in use for the WASM tests
         run: command -v node && node --version
+
+      # This job installs FFTW for the linked B2 wrap tests, which self-skip where the probe finds
+      # no FFTW: here an absent FFTW is the install's failure, never a skip (L2). Asked of the
+      # predicate the tests use (`bcir.toolchain`'s FFTW3F).
+      - name: FFTW single precision links (the linked FFTW tests' owner)
+        run: |
+          python3 -m bcir.toolchain probe-libraries --cc clang | python3 -c '
+          import json, sys
+          row = json.load(sys.stdin)["FFTW3F"]
+          print(row["detail"])
+          sys.exit(0 if row["found"] and row["link"] == ["-lfftw3f"] else 1)'
 
       - name: BCIR oracle (Python conformance tests)
         # -j0 = every core. run_all's own default is a deliberately safe min(cpu, 2) for a

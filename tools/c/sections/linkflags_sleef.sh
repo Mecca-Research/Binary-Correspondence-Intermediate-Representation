@@ -25,7 +25,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # kernel EMITTER (emit_sleef_exp_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:Sleef_expf1_u10` edge and asserts it
 # derives `-lsleef` (the SLEEF rule), with any Sleef_* -> -lsleef too, and no regression on gsl_* -> -lgsl,
-# LAPACKE_* -> -llapack, fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The
+# LAPACKE_* -> -llapack, fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The
 # oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_sleef.py.
 "${HARNESS}" sleef | grep -q "^OK linkflags-sleef" \
   && echo "  PASS linkflags-sleef: C twin derives Sleef_* -> -lsleef (gsl/lapack/fftw/cblas/-lm/unknown unchanged)" \

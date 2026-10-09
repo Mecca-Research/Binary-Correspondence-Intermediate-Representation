@@ -451,7 +451,7 @@ def test_sycl_reduce_matmul_is_not_a_link_flag_edge():
     assert library_for_callee("bcir_matmul") is None
     # the existing five library rules (+ libm + libc-implicit) still resolve -- no regression.
     assert library_for_callee("cblas_sgemm") == "-lcblas"
-    assert library_for_callee("fftwf_execute") == "-lfftw3"
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"
     assert library_for_callee("LAPACKE_sgesv") == "-llapack"
     assert library_for_callee("gsl_stats_mean") == "-lgsl"
     assert library_for_callee("Sleef_expf1_u10") == "-lsleef"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# linkflags_fftw: B2 FFTW link-flag rule (bcir_cfront_link_flags twin): fftwf_* -> -lfftw3 (#linkflags-fftw)
+# linkflags_fftw: B2 FFTW link-flag rule (bcir_cfront_link_flags twin): fftwf_* -> -lfftw3f (#linkflags-fftw)
 #
 # One section of tools/c/check_runtime.sh, run against binaries built elsewhere: BCIR Make builds
 # them from runtime/manifest.json and runs this script as a task, whose verdict the gate shows; the
@@ -25,8 +25,8 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # cfront SOURCE (an unknown callee lowers to an in-unit `c.call:` edge, not `c.call.libm:`) -- they are
 # minted by the kernel EMITTERS (emit_blas_gemm_c / emit_fftw_fft_c). So this probe drives the C twin's
 # bcir_cfront_link_flags over a FABRICATED unit carrying a `c.call.libm:fftwf_execute` edge and asserts it
-# derives `-lfftw3` (the B2 rule), with a cblas edge -> -lcblas (no B5 regression), a libm edge -> -lm,
-# and an unknown edge -> no flag. The oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py.
+# derives `-lfftw3f` for fftwf_* (the B2 rule) and each other precision's library (FFTW-PRECISION), with a
+# cblas edge -> -lcblas (no B5 regression), a libm edge -> -lm, and an unknown edge -> no flag. The oracle (linkflags.library_for_callee) is pinned in test_c_cfront.py.
 "${HARNESS}" fftw | grep -q "^OK linkflags-fftw" \
-  && echo "  PASS linkflags-fftw: C twin derives fftwf_*/fftw_* -> -lfftw3 (cblas/-lm/unknown unchanged)" \
+  && echo "  PASS linkflags-fftw: C twin derives fftwf_* -> -lfftw3f, fftw_* -> -lfftw3, l/q/mpi/threads (cblas/-lm/unknown unchanged)" \
   || { echo "  FAIL: FFTW link-flag rule diverged on the C twin"; "${HARNESS}" fftw; exit 1; }
