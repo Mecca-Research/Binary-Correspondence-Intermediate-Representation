@@ -181,6 +181,36 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   encoding instructions and a decoder that sizes its own buffer from the bound are not built.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
+### 1.1 Each item after the ladder
+
+The §3 table stays as measured on `5cd8e03`. This is where each item stands after the completion
+ladder, by the slice that moved it; the "since the audit" list above carries the evidence.
+
+| # | Item | At the audit | Now | By |
+|---|---|---|---|---|
+| 1 | Heuristics that fail 11% of the time | Partial | **Met** | G19 |
+| 2 | Quadratic scaling | Met | Met | — |
+| 3 | Memory waste | Met (opt-in) | Met; the 512-resource gap reduced to 352 bytes and stated | G26 |
+| 4 | CPU cache microbenchmark misread | Met | Met | — |
+| 5 | Pricing, execution, memory and token schedules disagreed | Met | Met | — |
+| 6 | A content-addressed, signed plan | Partial | Partial, narrowed: (a) and (b) met (SHA-256 binding, Ed25519 on both rails); (c) the objective bound only through the scope, (d) no plan op on the law rail | G21 |
+| 7 | Tropical min-plus, max-plus, Boolean | Met (oracle) | Met (oracle) | — |
+| 8 | Expected cost from branch probabilities | Missing | **Met** | G22 |
+| 9 | Joint scheduling and memory layout | Partial | **Met** for one region at the checked sizes; placement outside the model | G28 |
+| 10 | GEM as a DAG of typed regions | Partial | **Met** (oracle): affine, sdf, timed, nest, opaque | G23, G24, G30 |
+| 11 | Synchronous dataflow | Missing | **Met** | G23 |
+| 12 | Timed-event semantics | Missing | **Met** | G24 |
+| 13a | Fallback to unguaranteed optimality | Met | Met | — |
+| 13b | A poison feature from LLVM | Missing | **Met** for i32 elementwise claims (`nsw`/`nuw`, `!range`, R12, judged by LLVM); `freeze` not built | G29 |
+| 14 | Optimization depth priced by its value | Partial | **Met**: the value law and delegation, the CSP rail, polyhedral depth two, the Transform export, IRDL 132 of 133 | G27, G28, G30, G31, G32 |
+| 15 | Hard lower bounds | Partial | Partial, narrowed: the pebble bound and roofline added; the communication cut and queue calculus not built | G25 |
+| 16 | The four-tier ladder | Met (TMSAO-3 hardware-gated) | Met; TMSAO-3 an explicit hardware skip (S6) | — |
+| 17 | Oracle audit and C migration | Partial | Partial, narrowed: OR-GC, the inventory (CXX0) and the native hydrate (CXX4); CXX3 open | OR-GC, CXX0, CXX4 |
+| 18 | Containment graphs | Missing, with a confirmed gap | **Met** | ASN1-R |
+| 19 | Lifetime bounds for memory guarantees | Partial | **Met** for canonical JER | ASN1-B |
+| 20 | Bounds from the point of application | Missing | **Met** for canonical JER; ECN value mappings not in a bound | ASN1-B |
+| 21 | Hygienic substitution | Partial, with a defect | Partial, defect fixed; §9.8's tagging environment and ObjectFromObject not built | ASN1-H |
+
 ---
 
 ## 2. What landed, PR by PR (#758 to #808, training excluded)
@@ -506,6 +536,10 @@ Sizes for context: the non-test oracle is 141,994 Python lines (130,804 more in 
 - `docs/REPO_CURRENT_STATE_AUDIT.md` (header dated 2026-07-22) has no GEM+ section. Item 9 is
   still true for target certificates, but it does not say that TMSAO-1 and TMSAO-2 now exist on
   the proof rail.
+
+The digest and the skill were reconciled with the ladder's first commit; the current-state audit
+has had its GEM+ section since the ladder's DOCS slice, and its item 9 now names the proof-rail
+certificates.
 
 ---
 
