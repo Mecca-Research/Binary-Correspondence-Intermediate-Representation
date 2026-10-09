@@ -91,6 +91,20 @@ class StreamRate:
     initial: tuple[tuple[int, int], ...] = ()
 
 
+@dataclass(frozen=True)
+class LoopNest:
+    """OPTIONAL depth-two iteration space (GEM+ G30): the claim is a 2-D loop nest over
+    `extents` (rows, cols), run in lexicographic order, each iteration reading every operand it
+    reads before it writes any. `maps` gives each operand's affine access, one per operand in
+    `rd` then `wr` order: (rid, offset, row stride, col stride) -- iteration (i, j) touches
+    element `offset + i * row_stride + j * col_stride` of the resource. Absent
+    (`Claim.nest is None`) on every existing claim -- a tile claim without it stays opaque --
+    and digest-excluded from R13 like `timing` and `stream`."""
+
+    extents: tuple[int, int]
+    maps: tuple[tuple[int, int, int, int], ...]
+
+
 @dataclass
 class Claim:
     """The primitive object of BCIR (LangRef Sec. 5): op + resources + contract."""
@@ -145,6 +159,8 @@ class Claim:
     # non-disturbing over the whole existing corpus.
     stream: Optional["StreamRate"] = None  # OPTIONAL fixed-rate stream rates (GEM+ G23): the
     # claim is a dataflow actor; None = the vacuous default (no dataflow region; digest-excluded)
+    nest: Optional["LoopNest"] = None  # OPTIONAL depth-two loop nest (GEM+ G30): the claim is a
+    # 2-D affine nest; None = the vacuous default (no nest region; digest-excluded)
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

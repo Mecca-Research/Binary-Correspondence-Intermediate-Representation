@@ -303,6 +303,22 @@ dataflow model refuses -- inconsistent rates, deadlock, an open stream -- is an 
 naming why, exactly as an affine refusal is. The model lives on the oracle rail
 (`kbcir.dataflow`); the law rail carries no stream attribute yet.
 
+**Depth-two loop nests (GEM+ G30).** A claim may declare the 2-D loop nest it is with the
+*optional* `LoopNest` (`model.graph.LoopNest`): extents `(R, C)` and, per operand in the
+claim's own order (its reads, then its writes), an affine map `(rid, offset, row stride, col
+stride)` -- iteration `(i, j)` touches `offset + i * row stride + j * col stride`. Iterations
+run in lexicographic order and each reads every operand before it writes any. Like `stream`
+it is absent by default and digest-excluded from R13, so no existing claim, plan or content
+address moves, and it is **not a legality law**: `kbcir.regions` recognizes the claim as a
+`nest` region whose local model (`kbcir.polyhedral.nest_model`) is the exact set of
+dependence distances (flow, anti, output) and what they make legal -- interchange iff no
+distance has a negative column component, rectangular tiling iff every distance is
+non-negative in both, the outer loop parallel iff no dependence is carried by it, the inner
+iff none is carried by it. A nest that is malformed, whose maps do not name the claim's
+operands, or whose map leaves its resource is an opaque region with the refusal `nest`.
+Depth three and beyond, skewing, fusion across claims and symbolic extents are not built; the
+law rail carries no nest attribute yet.
+
 **ASN.1 encoding-rule legality (R24).** Over the `bcir.asn1.*` schema operations
 (§17's ASN.1 rail and §18's profile, [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md)). R24 checks the
 faults decidable from the **type alone**, before any value exists — which is why they

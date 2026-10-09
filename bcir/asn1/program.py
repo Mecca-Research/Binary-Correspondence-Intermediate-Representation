@@ -213,6 +213,14 @@ def module_to_graph(module) -> Graph:
                 attributes.append(
                     ("stream.initial", ";".join(f"{rid}:{n}" for rid, n in stream.initial))
                 )
+            nest = getattr(claim, "nest", None)
+            if nest is not None:
+                # G30: a presence marker again -- a declared nest is a nest region
+                attributes.append(("nest", "1"))
+                attributes.append(("nest.extents", f"{nest.extents[0]}:{nest.extents[1]}"))
+                attributes.append(
+                    ("nest.maps", ";".join(":".join(str(v) for v in m) for m in nest.maps))
+                )
             lifetime = getattr(claim, "lifetime", None)
             if lifetime is not None:
                 attributes.append(("lifetime", "1"))
@@ -240,7 +248,16 @@ def module_to_graph(module) -> Graph:
 
 def graph_to_module(graph: Graph):
     """The inverse. Rebuilds the `Module` the laws are defined over."""
-    from ..model.graph import Claim, Lifetime, Module, Phase, Resource, StreamRate, Timing
+    from ..model.graph import (
+        Claim,
+        Lifetime,
+        LoopNest,
+        Module,
+        Phase,
+        Resource,
+        StreamRate,
+        Timing,
+    )
     from ..model import Domain, Lane, Opcode, StrideClass
 
     roots = [i for i in graph.roots if 0 <= i < len(graph.nodes) and graph.nodes[i].kind == PROGRAM]
@@ -285,6 +302,17 @@ def graph_to_module(graph: Graph):
                         )
                     ),
                 )
+            nest = None
+            if attr(c, "nest") == "1":
+                rows, _, cols = attr(c, "nest.extents").partition(":")
+                nest = LoopNest(
+                    extents=(int(rows), int(cols)),
+                    maps=tuple(
+                        tuple(int(v) for v in item.split(":"))
+                        for item in attr(c, "nest.maps").split(";")
+                        if item
+                    ),
+                )
             enums = {"Opcode": Opcode, "Lane": Lane, "StrideClass": StrideClass, "Domain": Domain}
             optional_ints = {
                 k: (None if graph.attribute(c, k, None) is None else int(attr(c, k)))
@@ -297,6 +325,7 @@ def graph_to_module(graph: Graph):
                     timing=timing,
                     lifetime=lifetime,
                     stream=stream,
+                    nest=nest,
                     **{k: enums[cls][attr(c, k)] for k, cls in _CLAIM_ENUMS},
                     **{k: _unrids(attr(c, k)) for k in _CLAIM_TUPLES},
                     **optional_ints,

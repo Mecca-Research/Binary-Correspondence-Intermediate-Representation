@@ -74,8 +74,11 @@ def _canon(value):
     """A JSON-able projection of a row's output, stable across runs and trees.
 
     Dataclasses, enums, containers and slotted objects are walked structurally, so two trees
-    that compute the same value agree byte for byte. The last fallback is `repr` with heap
-    addresses removed; a row should return canonical data rather than lean on it."""
+    that compute the same value agree byte for byte. A dataclass is its COMPARED fields: a field
+    declared `compare=False` is derived state outside the value's identity (the planner's
+    `cand_map`, a view of its offer that holds the module's claims), so a model type gaining an
+    optional field moves no row whose value did not move (G30). The last fallback is `repr`
+    with heap addresses removed; a row should return canonical data rather than lean on it."""
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, bytes):
@@ -83,7 +86,9 @@ def _canon(value):
     if isinstance(value, enum.Enum):
         return {"__enum__": type(value).__name__, "name": value.name}
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: _canon(getattr(value, f.name)) for f in dataclasses.fields(value)}
+        return {
+            f.name: _canon(getattr(value, f.name)) for f in dataclasses.fields(value) if f.compare
+        }
     if isinstance(value, dict):
         return {str(k): _canon(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
     if isinstance(value, (list, tuple)):

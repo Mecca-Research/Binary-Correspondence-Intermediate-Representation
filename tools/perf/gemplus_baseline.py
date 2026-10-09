@@ -710,6 +710,32 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G31",
     ),
     Metric(
+        "nest.dependence.disagreements",
+        "nest",
+        "of 160 generated depth-two nests (aliasing, negative and row-sized strides), those whose "
+        "dependences -- resource, kind, distance vector -- differ from a reference that "
+        "enumerates every pair of iteration instances (the parent had no 2-D model: a tile "
+        "claim was opaque)",
+        160,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the access equation solved exactly over the box (kbcir.polyhedral)",
+        slice_owner="G30",
+    ),
+    Metric(
+        "nest.legality.disagreements",
+        "nest",
+        "of the same nests, those whose interchange, tiling, outer-parallel or inner-parallel "
+        "verdict differs from the reference's simulation of each execution order",
+        160,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the classic distance-vector conditions, exact over the exact dependences",
+        slice_owner="G30",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3615,6 +3641,14 @@ def measure_transform() -> dict[str, float]:
     return measure()
 
 
+def measure_nest() -> dict[str, float]:
+    """G30: the depth-two model against the instance-pair reference
+    (bcir/tests/nest_fixtures.py::measure, which the tests grade the same way)."""
+    from bcir.tests.nest_fixtures import measure
+
+    return measure()
+
+
 def measure_poison() -> dict[str, float]:
     """G29: R12 over the forged kernels, the proofs against wrapped arithmetic, and -- where
     LLVM is -- LLVM's own verdict on each fact (bcir/tests/poison_fixtures.py::measure, which
@@ -3728,6 +3762,7 @@ _MEASURERS = {
     "poison": measure_poison,
     "irdl": measure_irdl,
     "transform": measure_transform,
+    "nest": measure_nest,
     "memory-production": measure_memory_production,
 }
 

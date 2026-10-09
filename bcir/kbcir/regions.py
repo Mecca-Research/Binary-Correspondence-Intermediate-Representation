@@ -18,8 +18,9 @@ This module lands the carrier and the first two kinds:
     local model is the family of access maps and the dependence distances between the
     region's claims (the offset difference on a shared resource). Refused -- and left to the
     opaque region -- are dynamic trip counts, `volatile`, ordering fences, atomics, gathers
-    and random strides, cacheline-indexed and tile claims (those are their own region kinds,
-    not landed here), and any map that leaves its resource.
+    and random strides, cacheline-indexed and tile claims (a tile claim that declares its
+    loop nest is the `nest` kind below; one that does not stays opaque), and any map that
+    leaves its resource.
   * **sdf** -- a maximal run of consecutive claims of one phase that each declare a
     `StreamRate` (G23): actors of a synchronous -- or cyclo-static -- dataflow graph over FIFO
     resources. The local model (`kbcir.dataflow.SdfModel`) is the repetition vector that
@@ -31,6 +32,12 @@ This module lands the carrier and the first two kinds:
     a latency (`Timing.latency_cycles`) (G24): a timed marked graph. The local model
     (`kbcir.dataflow.TimedModel`) is the max-plus recurrence's cycle time -- an exact lower
     bound on the period of every schedule -- and a critical cycle.
+  * **nest** -- one claim that declares its 2-D loop nest (`model.graph.LoopNest`, G30):
+    extents and one affine map per operand. The local model (`kbcir.polyhedral.NestModel`)
+    is the nest's exact dependence distances and what they make legal -- interchange,
+    rectangular tiling, each loop run in parallel. A nest the depth-two model refuses
+    (malformed, mismatched with the claim's operands, or a map that leaves its resource) is
+    an opaque region with the refusal `nest`. Either way the claim stands alone.
   * **opaque** -- any claims at all, the universal fallback: no local model, the claims
     themselves as the expansion.
 
@@ -57,11 +64,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..model import Claim, Lane, Module, StrideClass
+from .polyhedral import NestError, nest_model
 from .cost import IDENTITY_FACTOR, MEMORY, POWER, THERMAL, Theta
 from .dataflow import DATAFLOW_REFUSALS, DataflowError, homogeneous, sdf_model, timed_model
 from .weights import PERF, Policy, weights
 
-REGION_KINDS = ("affine", "sdf", "timed", "opaque")
+REGION_KINDS = ("affine", "sdf", "timed", "nest", "opaque")
 
 #: Why a run of claims is not an affine region (the refusal conditions, named).
 REFUSALS = (
@@ -76,6 +84,7 @@ REFUSALS = (
     "stride",
     "extent",
     "count",
+    "nest",  # a declared loop nest the depth-two model refuses (malformed, out of bounds)
     *DATAFLOW_REFUSALS,
 )
 
@@ -244,6 +253,9 @@ def _admit(
         )
     elif kind == "dataflow":
         region = _dataflow_region(pid, list(run))
+    elif kind == "nest":
+        (claim,) = run  # a nest region is one claim: its dependences are its own loops'
+        region = Region("nest", pid, (claim.id,), model=nest_model(claim, module))
     else:
         region = Region("opaque", pid, tuple(c.id for c in run), refusal=refusal)
     problems = verify_region(region, module)
@@ -268,9 +280,21 @@ def region_graph(module: Module) -> RegionGraph:
         for claim in pmap[pid].claims:
             # A claim that declares a stream is a dataflow actor whatever else it is: the
             # dataflow model is the stronger one, and its refusal is named when it refuses.
-            refusal = "" if claim.stream is not None else affine_refusal(claim, module)
-            kind = "dataflow" if claim.stream is not None else "opaque" if refusal else "affine"
-            if run and kind != run_kind:
+            # A claim that declares a loop nest is its own nest region (G30), or opaque with
+            # the refusal `nest` when the depth-two model refuses it.
+            if claim.stream is None and claim.nest is not None:
+                try:
+                    nest_model(claim, module)
+                    kind, refusal = "nest", ""
+                except NestError:
+                    kind, refusal = "opaque", "nest"
+            else:
+                refusal = "" if claim.stream is not None else affine_refusal(claim, module)
+                kind = "dataflow" if claim.stream is not None else "opaque" if refusal else "affine"
+            # a nest -- recognized or refused -- stands alone: its model, or its refusal, is
+            # the one claim's
+            alone = kind == "nest" or refusal == "nest" or run_refusal == "nest"
+            if run and (kind != run_kind or alone):
                 _admit(graph, module, pid, run, run_kind, run_refusal)
             if not run:
                 run_kind, run_refusal = kind, refusal
@@ -309,6 +333,16 @@ def verify_region(region: Region, module: Module) -> list[str]:
             problems.append("an affine region carries a dataflow model")
     elif region.kind in ("sdf", "timed"):
         problems += _verify_dataflow(region, claims)
+    elif region.kind == "nest":
+        if len(claims) != 1 or claims[0].nest is None:
+            return problems + ["a nest region is one claim that declares a loop nest"]
+        if region.maps or region.dependences or region.refusal:
+            problems.append("a nest region carries a 1-D model or a refusal")
+        try:
+            if region.model != nest_model(claims[0], module):
+                problems.append("the nest model is not the one the claim builds")
+        except NestError as exc:
+            problems.append(f"the claim is not a nest region: {exc}")
     else:
         if region.maps or region.dependences or region.model is not None:
             problems.append("an opaque region carries a local model")
@@ -316,6 +350,9 @@ def verify_region(region: Region, module: Module) -> list[str]:
             problems.append(f"unknown refusal {region.refusal!r}")
         if any(c.stream is not None for c in claims) and not region.refusal:
             problems.append("an opaque region of stream claims names no refusal")
+        if any(c.nest is not None and c.stream is None for c in claims):
+            if region.refusal != "nest":
+                problems.append("an opaque region of a declared nest names no `nest` refusal")
     return problems
 
 

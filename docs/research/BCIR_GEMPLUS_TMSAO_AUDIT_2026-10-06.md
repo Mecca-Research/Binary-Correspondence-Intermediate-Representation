@@ -149,6 +149,15 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   interchange a careless export would emit is caught on both 3-cycles. Met for the matmul's
   tiling; vectorization, packing and other plans are not exported. Polyhedral depth remains
   (G30).
+- **Item 14**, continued: G30 takes the polyhedral model to depth two. A claim may declare
+  its 2-D loop nest (`LoopNest`: extents and one affine map per operand); it is then a `nest`
+  region whose model is the nest's exact dependence distances -- the access equation solved
+  per source instance, never every instance pair -- and the interchange, tiling and
+  per-loop parallel verdicts they imply. Held to a reference that enumerates every instance
+  pair and simulates each order (interchange, five tilings, each loop parallel) on 160
+  generated nests with aliasing, negative and row-sized strides: 160 disagreements in each
+  of dependences and legality before (the tile claim was opaque), none after. Met at depth
+  two on the oracle rail; deeper nests, skewing, fusion and the law rail are not built.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

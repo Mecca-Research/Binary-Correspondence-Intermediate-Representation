@@ -120,6 +120,32 @@ def test_an_output_change_fails_unless_declared():
     assert verdict_of(same, {}, []) == PASS and _verdicts(same)["correctness_sha256"] == "SAME"
 
 
+def test_a_digest_is_a_values_identity():
+    """A dataclass digests as its compared fields: derived state declared `compare=False` (the
+    planner's `cand_map`) does not move a row, so a model type gaining an optional field leaves
+    an unchanged plan's digest alone (G30's `Claim.nest`) -- while a compared field still does,
+    and the real planner's result digests the same with or without its offer view."""
+    import dataclasses
+
+    @dataclasses.dataclass
+    class Result:
+        steps: list
+        derived: object = dataclasses.field(default=None, compare=False)
+
+    assert ab_audit.digest(Result([1, 2], derived="a")) == ab_audit.digest(
+        Result([1, 2], derived="b")
+    )
+    assert ab_audit.digest(Result([1, 2])) != ab_audit.digest(Result([1, 3]))
+
+    from bcir.kbcir.realize import optimize
+    from bcir.performance_audit import kbcir_streampack_fixture
+
+    result = optimize(*kbcir_streampack_fixture(1))
+    assert ab_audit.digest(result) == ab_audit.digest(dataclasses.replace(result, cand_map=None))
+    moved = dataclasses.replace(result, score=result.score + 1)
+    assert ab_audit.digest(moved) != ab_audit.digest(result)
+
+
 def test_a_hot_path_row_grades_its_digest_and_calls_exactly():
     b = [{"row": "r", "status": "measured", "times_ns": [10, 12], "calls": 100, "digest": "d1"}]
     worse = [{"row": "r", "status": "measured", "times_ns": [5, 6], "calls": 101, "digest": "d1"}]
