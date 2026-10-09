@@ -545,7 +545,7 @@ def build(tmp: str, *, cc: str | None = None, flags=("-O2",)) -> str | None:
     if cc is None:
         return None
     for name, text in sources().items():
-        with open(os.path.join(tmp, name), "w") as f:
+        with open(os.path.join(tmp, name), "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
     out = os.path.join(tmp, "its_harness")
     proc = subprocess.run(
