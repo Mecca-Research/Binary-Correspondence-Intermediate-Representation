@@ -497,6 +497,21 @@ def test_the_volatile_rows_are_exact_and_measured_or_not():
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
 
 
+def test_the_dataflow_rows_hold_every_region_and_cycle_time() -> None:
+    """G23 / G24: every corpus case is its hand-derived region and every generated cycle time
+    the enumerated maximum cycle ratio -- both rows at their bound of 0."""
+    from tools.perf.gemplus_baseline import measure_dataflow
+
+    measured = measure_dataflow()
+    assert measured == {
+        "regions.dataflow.misjudged": 0.0,
+        "regions.timed.cycle_time.disagreements": 0.0,
+    }, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["verdict"] == "GAIN" and rows[key]["headroom"] == 0.0, rows[key]
+
+
 def test_the_expectation_rows_hold_every_mean_exact() -> None:
     """G22: every hand-derived mean reproduced and compose agreeing with the Markov solve on
     every generated region -- both rows at their bound of 0 (the parent stated none of them)."""

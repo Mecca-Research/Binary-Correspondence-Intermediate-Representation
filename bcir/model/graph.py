@@ -68,6 +68,23 @@ class Timing:
     setup_hold_margin: int = 0  # extra setup/hold safety margin in cycles
 
 
+@dataclass(frozen=True)
+class StreamRate:
+    """OPTIONAL fixed-rate stream metadata (GEM+ G23): the claim is an ACTOR of a (cyclo-static)
+    synchronous dataflow graph. Each firing consumes `consume` tokens from each FIFO resource it
+    reads and produces `produce` tokens on each FIFO it writes, given per port as (rid, rates):
+    one rate is synchronous dataflow, several are the phases a cyclo-static actor fires in turn
+    (every port of one actor lists the same number). `initial` are the tokens a FIFO this actor
+    produces into holds before the first firing (its delays). Absent (`Claim.stream is None`)
+    on every existing claim: the regions recognize a dataflow region only from claims that
+    declare it, and the field is digest-excluded from R13 like `timing`, so the default is
+    non-disturbing over the whole corpus."""
+
+    consume: tuple[tuple[int, tuple[int, ...]], ...] = ()
+    produce: tuple[tuple[int, tuple[int, ...]], ...] = ()
+    initial: tuple[tuple[int, int], ...] = ()
+
+
 @dataclass
 class Claim:
     """The primitive object of BCIR (LangRef Sec. 5): op + resources + contract."""
@@ -120,6 +137,8 @@ class Claim:
     # reordered / fused / bundled / elided). Digest-excluded (R13's
     # hash_module folds a fixed field list), so the False default is
     # non-disturbing over the whole existing corpus.
+    stream: Optional["StreamRate"] = None  # OPTIONAL fixed-rate stream rates (GEM+ G23): the
+    # claim is a dataflow actor; None = the vacuous default (no dataflow region; digest-excluded)
 
     def io_rids(self) -> tuple[int, ...]:
         return tuple(self.rd) + tuple(self.wr)

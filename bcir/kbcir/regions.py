@@ -20,6 +20,17 @@ This module lands the carrier and the first two kinds:
     opaque region -- are dynamic trip counts, `volatile`, ordering fences, atomics, gathers
     and random strides, cacheline-indexed and tile claims (those are their own region kinds,
     not landed here), and any map that leaves its resource.
+  * **sdf** -- a maximal run of consecutive claims of one phase that each declare a
+    `StreamRate` (G23): actors of a synchronous -- or cyclo-static -- dataflow graph over FIFO
+    resources. The local model (`kbcir.dataflow.SdfModel`) is the repetition vector that
+    balances every FIFO, one live iteration's schedule, and the FIFO bounds it needs. Refused,
+    and left to the opaque region with the refusal named: malformed rates, a FIFO whose
+    producer or consumer is outside the run (`open-stream`), rates no repetition vector
+    balances (`inconsistent-rates`), and a cycle with too few initial tokens (`deadlock`).
+  * **timed** -- an sdf run that is homogeneous (every rate 1) and whose every actor declares
+    a latency (`Timing.latency_cycles`) (G24): a timed marked graph. The local model
+    (`kbcir.dataflow.TimedModel`) is the max-plus recurrence's cycle time -- an exact lower
+    bound on the period of every schedule -- and a critical cycle.
   * **opaque** -- any claims at all, the universal fallback: no local model, the claims
     themselves as the expansion.
 
@@ -47,9 +58,10 @@ from dataclasses import dataclass, field
 
 from ..model import Claim, Lane, Module, StrideClass
 from .cost import IDENTITY_FACTOR, MEMORY, POWER, THERMAL, Theta
+from .dataflow import DATAFLOW_REFUSALS, DataflowError, homogeneous, sdf_model, timed_model
 from .weights import PERF, Policy, weights
 
-REGION_KINDS = ("affine", "opaque")
+REGION_KINDS = ("affine", "sdf", "timed", "opaque")
 
 #: Why a run of claims is not an affine region (the refusal conditions, named).
 REFUSALS = (
@@ -64,6 +76,7 @@ REFUSALS = (
     "stride",
     "extent",
     "count",
+    *DATAFLOW_REFUSALS,
 )
 
 
@@ -105,7 +118,8 @@ class Region:
     claim_ids: tuple[int, ...]
     maps: tuple[AccessMap, ...] = ()
     dependences: tuple[Dependence, ...] = ()
-    refusal: str = ""  # for an opaque region: why the affine model refused its claims
+    refusal: str = ""  # for an opaque region: why the affine or dataflow model refused it
+    model: object = None  # an sdf region's SdfModel, a timed region's TimedModel
 
     def __post_init__(self) -> None:
         if self.kind not in REGION_KINDS:
@@ -200,6 +214,20 @@ def _dependences(claims: list[Claim]) -> tuple[Dependence, ...]:
     return tuple(out)
 
 
+def _dataflow_region(pid: int, run: list[Claim]) -> Region:
+    """The region a run of stream claims is: timed when homogeneous with every latency
+    declared, sdf otherwise, opaque with the refusal named when the dataflow model refuses."""
+    ids = tuple(c.id for c in run)
+    try:
+        model = sdf_model(run)
+    except DataflowError as exc:
+        return Region("opaque", pid, ids, refusal=exc.refusal)
+    latencies = {c.id: c.timing.latency_cycles if c.timing is not None else 0 for c in run}
+    if homogeneous(model) and all(v > 0 for v in latencies.values()):
+        return Region("timed", pid, ids, model=timed_model(model, latencies))
+    return Region("sdf", pid, ids, model=model)
+
+
 def _admit(
     graph: RegionGraph, module: Module, pid: int, run: list[Claim], kind: str, refusal: str
 ) -> None:
@@ -214,6 +242,8 @@ def _admit(
             tuple(m for c in run for m in _maps_of(c)),
             _dependences(list(run)),
         )
+    elif kind == "dataflow":
+        region = _dataflow_region(pid, list(run))
     else:
         region = Region("opaque", pid, tuple(c.id for c in run), refusal=refusal)
     problems = verify_region(region, module)
@@ -224,9 +254,9 @@ def _admit(
 
 
 def region_graph(module: Module) -> RegionGraph:
-    """Partition every phase (topological order) into maximal affine runs and opaque runs,
-    claims in declared order. Recognized, then verified: a region the verifier refuses is
-    never returned."""
+    """Partition every phase (topological order) into maximal affine, dataflow and opaque
+    runs, claims in declared order. Recognized, then verified: a region the verifier refuses
+    is never returned."""
     from ..gem.concurrency import _topo_phase_ids
 
     graph = RegionGraph()
@@ -236,8 +266,10 @@ def region_graph(module: Module) -> RegionGraph:
         run_kind = "affine"
         run_refusal = ""
         for claim in pmap[pid].claims:
-            refusal = affine_refusal(claim, module)
-            kind = "opaque" if refusal else "affine"
+            # A claim that declares a stream is a dataflow actor whatever else it is: the
+            # dataflow model is the stronger one, and its refusal is named when it refuses.
+            refusal = "" if claim.stream is not None else affine_refusal(claim, module)
+            kind = "dataflow" if claim.stream is not None else "opaque" if refusal else "affine"
             if run and kind != run_kind:
                 _admit(graph, module, pid, run, run_kind, run_refusal)
             if not run:
@@ -273,12 +305,44 @@ def verify_region(region: Region, module: Module) -> list[str]:
             problems.append("dependences are not the claims' dependences")
         if region.refusal:
             problems.append("an affine region carries a refusal")
+        if region.model is not None:
+            problems.append("an affine region carries a dataflow model")
+    elif region.kind in ("sdf", "timed"):
+        problems += _verify_dataflow(region, claims)
     else:
-        if region.maps or region.dependences:
+        if region.maps or region.dependences or region.model is not None:
             problems.append("an opaque region carries a local model")
         if region.refusal and region.refusal not in REFUSALS:
             problems.append(f"unknown refusal {region.refusal!r}")
+        if any(c.stream is not None for c in claims) and not region.refusal:
+            problems.append("an opaque region of stream claims names no refusal")
     return problems
+
+
+def _verify_dataflow(region: Region, claims: list[Claim]) -> list[str]:
+    """A dataflow region's laws: every claim declares a stream, the model is the one its
+    claims build -- re-derived, never trusted -- and the kind is the one that model is."""
+    if any(c.stream is None for c in claims):
+        return ["a dataflow region holds a claim that declares no stream"]
+    if region.maps or region.dependences or region.refusal:
+        return ["a dataflow region carries an affine model or a refusal"]
+    try:
+        model = sdf_model(claims)
+    except DataflowError as exc:
+        return [f"the claims are not a dataflow region: {exc}"]
+    latencies = {c.id: c.timing.latency_cycles if c.timing is not None else 0 for c in claims}
+    timed = homogeneous(model) and all(v > 0 for v in latencies.values())
+    if region.kind == "timed":
+        if not timed:
+            return ["a timed region is homogeneous with every latency declared"]
+        if region.model != timed_model(model, latencies):
+            return ["the timed model is not the one the claims build"]
+    else:
+        if timed:
+            return ["a homogeneous region with every latency declared is a timed region"]
+        if region.model != model:
+            return ["the sdf model is not the one the claims build"]
+    return []
 
 
 def expand(graph: RegionGraph, module: Module) -> list[tuple[int, Claim]]:
@@ -347,6 +411,38 @@ def region_floor(
     return total
 
 
+def iteration_floor(
+    region: Region, module: Module, h, theta: Theta, policy: Policy = PERF, cand_map=None
+) -> int:
+    """A dataflow region's floor per graph iteration: every actor fires its repetition count
+    of firings, each costing at least its claim's floor -- so no iteration of the region costs
+    less, under the planner's own edge predicate."""
+    from .realize import _flatten, fused_candidates
+
+    if region.kind not in ("sdf", "timed"):
+        raise ValueError("an iteration floor is a dataflow region's")
+    sdf = region.model.sdf if region.kind == "timed" else region.model
+    if cand_map is None:
+        cand_map = fused_candidates(module, h)
+    flat = _flatten(module)
+    index = {claim.id: i for i, (_pid, claim) in enumerate(flat)}
+    w_phase = weights(h, theta, region.phase_id, policy)
+    total = 0
+    for cid, firings in sdf.firings:
+        i = index[cid]
+        prev = flat[i - 1][1] if i else None
+        total += firings * claim_floor(flat[i][1], prev, cand_map, h, theta, w_phase)
+    return total
+
+
+def period_floor(region: Region):
+    """A timed region's floor on the period: its cycle time, in cycles per iteration -- no
+    schedule completes iterations faster on average (the max-plus recurrence's growth rate)."""
+    if region.kind != "timed":
+        raise ValueError("a period floor is a timed region's")
+    return region.model.cycle_time
+
+
 def module_floor(module: Module, h, theta: Theta, policy: Policy = PERF) -> int:
     """The graph's floor: no plan `optimize` can select scores below it."""
     from .realize import fused_candidates
@@ -368,7 +464,9 @@ __all__ = [
     "affine_refusal",
     "claim_floor",
     "expand",
+    "iteration_floor",
     "module_floor",
+    "period_floor",
     "region_floor",
     "region_graph",
     "verify_region",

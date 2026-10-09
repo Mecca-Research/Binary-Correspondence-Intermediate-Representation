@@ -76,6 +76,18 @@ def _text(value) -> str:
     return "" if value is None else str(value)
 
 
+def _ports(ports) -> str:
+    """A StreamRate's ports as text: `rid:rate,rate;rid:rate` -- order kept, every rate."""
+    return ";".join(f"{rid}:{','.join(str(r) for r in rates)}" for rid, rates in ports)
+
+
+def _unports(text: str) -> tuple:
+    return tuple(
+        (int(rid), tuple(int(r) for r in rates.split(",") if r))
+        for rid, rates in (port.split(":") for port in text.split(";") if port)
+    )
+
+
 def _rids(values) -> str:
     return ",".join(str(v) for v in values)
 
@@ -180,6 +192,16 @@ def module_to_graph(module) -> Graph:
                     (f"timing.{k}", _text(getattr(timing, k))) for k in _TIMING_INTS + _TIMING_STRS
                 ]
                 attributes.append(("timing.critical_path", "1" if timing.critical_path else "0"))
+            stream = getattr(claim, "stream", None)
+            if stream is not None:
+                # A presence marker for the same reason as timing's: an actor with no ports
+                # is a dataflow claim, a claim with no stream is not one.
+                attributes.append(("stream", "1"))
+                attributes.append(("stream.consume", _ports(stream.consume)))
+                attributes.append(("stream.produce", _ports(stream.produce)))
+                attributes.append(
+                    ("stream.initial", ";".join(f"{rid}:{n}" for rid, n in stream.initial))
+                )
             lifetime = getattr(claim, "lifetime", None)
             if lifetime is not None:
                 attributes.append(("lifetime", "1"))
@@ -207,7 +229,7 @@ def module_to_graph(module) -> Graph:
 
 def graph_to_module(graph: Graph):
     """The inverse. Rebuilds the `Module` the laws are defined over."""
-    from ..model.graph import Claim, Lifetime, Module, Phase, Resource, Timing
+    from ..model.graph import Claim, Lifetime, Module, Phase, Resource, StreamRate, Timing
     from ..model import Domain, Lane, Opcode, StrideClass
 
     roots = [i for i in graph.roots if 0 <= i < len(graph.nodes) and graph.nodes[i].kind == PROGRAM]
@@ -240,6 +262,18 @@ def graph_to_module(graph: Graph):
                 lifetime = Lifetime(
                     event=attr(c, "lifetime.event"), epoch=int(attr(c, "lifetime.epoch") or 0)
                 )
+            stream = None
+            if attr(c, "stream") == "1":
+                stream = StreamRate(
+                    consume=_unports(attr(c, "stream.consume")),
+                    produce=_unports(attr(c, "stream.produce")),
+                    initial=tuple(
+                        (int(rid), int(n))
+                        for rid, n in (
+                            item.split(":") for item in attr(c, "stream.initial").split(";") if item
+                        )
+                    ),
+                )
             enums = {"Opcode": Opcode, "Lane": Lane, "StrideClass": StrideClass, "Domain": Domain}
             optional_ints = {
                 k: (None if graph.attribute(c, k, None) is None else int(attr(c, k)))
@@ -251,6 +285,7 @@ def graph_to_module(graph: Graph):
                     wr=_unrids(attr(c, "wr")),
                     timing=timing,
                     lifetime=lifetime,
+                    stream=stream,
                     **{k: enums[cls][attr(c, k)] for k, cls in _CLAIM_ENUMS},
                     **{k: _unrids(attr(c, k)) for k in _CLAIM_TUPLES},
                     **optional_ints,

@@ -91,6 +91,13 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   out-of-range probability instead of clamping it, its mean exact instead of floored per branch.
   The C front still lowers a `while` to one body iteration: its trip probability is not yet
   measured, so its loops carry no expectation of their own.
+- **Items 11 and 12** (synchronous dataflow; timed events): Met by G23 / G24 -- a claim may
+  declare fixed stream rates (`StreamRate`), a run of them is an `sdf` region with its
+  repetition vector, a live schedule and its FIFO bounds, or a `timed` region with its max-plus
+  cycle time (a lower bound on the period), and a run the model refuses is opaque with the
+  reason named. Network calculus (arrival and service curves) is not built: item 12 asked for
+  timed-event semantics and a cycle-time bound, which are; the law rail carries no stream
+  attribute yet.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

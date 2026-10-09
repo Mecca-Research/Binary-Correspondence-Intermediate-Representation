@@ -290,6 +290,19 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   is a use-after-free, a `free` of an already-freed resource is a double-free, and a
   write (reassignment / `alloc`) re-validates.
 
+**Fixed-rate streams (GEM+ G23 / G24).** A claim may declare itself an actor of a
+synchronous -- or cyclo-static -- dataflow graph with the *optional* `StreamRate`
+(`model.graph.StreamRate`): per FIFO resource it reads, the tokens each firing consumes;
+per FIFO it writes, the tokens each firing produces and the delays it starts with. Like
+`timing` it is absent by default and digest-excluded from R13, so no existing claim, plan or
+content address moves. It is **not a legality law**: `kbcir.regions` recognizes a run of
+stream claims as an `sdf` region (the repetition vector that balances every FIFO, one live
+iteration's schedule, its FIFO bounds) or, when homogeneous with every latency declared, a
+`timed` region (the max-plus cycle time, a lower bound on every schedule's period); a run the
+dataflow model refuses -- inconsistent rates, deadlock, an open stream -- is an opaque region
+naming why, exactly as an affine refusal is. The model lives on the oracle rail
+(`kbcir.dataflow`); the law rail carries no stream attribute yet.
+
 **ASN.1 encoding-rule legality (R24).** Over the `bcir.asn1.*` schema operations
 (§17's ASN.1 rail and §18's profile, [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md)). R24 checks the
 faults decidable from the **type alone**, before any value exists — which is why they

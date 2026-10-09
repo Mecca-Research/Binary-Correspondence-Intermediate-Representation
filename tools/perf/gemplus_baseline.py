@@ -518,6 +518,34 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="OR-GC",
     ),
     Metric(
+        "regions.dataflow.misjudged",
+        "dataflow",
+        "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
+        "without delays, cyclo-static actors, four timed graphs, and each refusal) whose region "
+        "-- kind, repetition vector, firings, FIFO bounds, cycle time or refusal -- is not the "
+        "hand-derived one",
+        14,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="each case is derived by hand in bcir/tests/dataflow_fixtures.py; the parent "
+        "had no dataflow kind, so every stream claim fell to the opaque region",
+        slice_owner="G23",
+    ),
+    Metric(
+        "regions.timed.cycle_time.disagreements",
+        "dataflow",
+        "of 60 generated strongly connected timed graphs, those whose cycle time (Karp over the "
+        "max-plus recurrence) is not the maximum over every simple cycle of latency over tokens",
+        60,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="two independent derivations of one cycle time; the parent stated none (the "
+        "witness splits 15 of the 60 without the implied self-channels, 35 without the closure)",
+        slice_owner="G24",
+    ),
+    Metric(
         "expectation.corpus.misstated",
         "expectation",
         "programs of the G22 corpus (8: branches, a do-while, a test-first while, nested loops, a "
@@ -3358,6 +3386,15 @@ def measure_collector() -> dict[str, float]:
     return out
 
 
+def measure_dataflow() -> dict[str, float]:
+    """G23 / G24: the dataflow regions over the hand-derived corpus and the timed cycle time
+    against the cycle enumeration (bcir/tests/dataflow_fixtures.py::measure, which the tests
+    grade the same way). Pure Python: measured wherever the interpreter runs."""
+    from bcir.tests.dataflow_fixtures import measure
+
+    return measure()
+
+
 def measure_expectation() -> dict[str, float]:
     """G22: the exact expected cost over the hand-derived corpus and against compose's
     region semantics (bcir/tests/expectation_fixtures.py::measure, which the tests grade the
@@ -3416,6 +3453,7 @@ _MEASURERS = {
     "collector": measure_collector,
     "signature": measure_signature,
     "expectation": measure_expectation,
+    "dataflow": measure_dataflow,
 }
 
 
