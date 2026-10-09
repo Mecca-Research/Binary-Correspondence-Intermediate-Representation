@@ -224,6 +224,16 @@ Repeated compilation is byte-identical. Unknown required descriptor features fai
 closed. Descriptors are data; they contain no process pointers or executable callbacks
 when serialized.
 
+**Bounds, as built.** The plan's `bounded_octets` is the bound the ENCODING fixes, which X.697
+§7.2.2 leaves to four leaf kinds (`jer_plan._bounded`). The bound a VALID value fixes is
+derived beside it, for the canonical profile, by `bcir.asn1.jer_bounds` (ASN1-B):
+`max_octets(kind)` is the longest canonical encoding of any value the type's constraints admit
+-- `INTEGER (0..255)` 3 octets, `OCTET STRING (SIZE (4))` 10 -- taken where a parameterized
+type is applied, after substitution, and `witness(kind)` a valid value that attains it. That
+is the "a valid document of this schema needs at most N octets" guarantee; a decoder still
+takes its capacity from the caller, since a document that breaks a constraint must be read to
+be refused.
+
 ### 5.2 Native interface target
 
 The future native API is a bounded operation over a constant schema plan:

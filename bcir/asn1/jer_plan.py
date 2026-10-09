@@ -26,6 +26,12 @@ That is not a gap in this compiler; it is what JER *is*, and it is the argument 
 runtime limits. A binary rail can size a buffer from the schema. A JER rail cannot, so it
 must be told. `bounded_octets` reports `None` rather than a guess, and J3's C interface
 takes its capacity from the caller for exactly this reason.
+
+The bound a VALID value fixes is another matter, and is derived beside this one by
+`bcir.asn1.jer_bounds` (ASN1-B): a value constraint does not reach the encoder, but it does
+restrict the values, so under the canonical profile `INTEGER (0..255)` encodes in at most 3
+octets. `bounded_octets` stays the encoding's bound (and counts a comma for every member of a
+sequence, one octet over: kept, since the descriptor's bytes are what the C twin reads).
 """
 
 from __future__ import annotations

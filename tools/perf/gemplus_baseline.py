@@ -758,6 +758,48 @@ METRICS: tuple[Metric, ...] = (
         bound_source="the export is the plan: MLIR's own loops visit exactly its tile origins",
         slice_owner="G31",
     ),
+    # --- ASN1-B: semantic bounds on canonical JER at the point of application
+    # (bcir/tests/jer_bounds_fixtures.py::measure, which the tests grade the same way). The
+    # parent's rail is the J2 plan's `bounded_octets` (`plan_rail`): four leaf kinds, and a
+    # comma counted per member.
+    Metric(
+        "asn1.jer.bound.unstated",
+        "jerbounds",
+        "types of the corpus (120 generated modules -- constrained leaves, structures, templates "
+        "applied at drawn actuals -- and the repository's four ASN.1 modules) with a finite "
+        "canonical-JER maximum, shown by a valid witness that attains it, for which the rail "
+        "states no bound",
+        549,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every type whose values a constraint bounds is bounded (jer_bounds.max_octets)",
+        slice_owner="ASN1-B",
+    ),
+    Metric(
+        "asn1.jer.bound.loose",
+        "jerbounds",
+        "types whose stated bound no valid value attains (the parent's plan counts a comma for "
+        "every member of a SEQUENCE: one octet over on 3 types)",
+        3,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the bound is a maximum: a valid witness's encoding has exactly its length",
+        slice_owner="ASN1-B",
+    ),
+    Metric(
+        "asn1.jer.bound.unsound",
+        "jerbounds",
+        "sampled valid values (24 per bounded type, the size and range ends as often as the "
+        "middle) whose canonical JER encoding exceeds the bound stated for their type (a guard)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a bound no valid value exceeds",
+        slice_owner="ASN1-B",
+    ),
     Metric(
         "nest.dependence.disagreements",
         "nest",
@@ -3499,6 +3541,14 @@ def measure_hydrate() -> dict[str, float]:
     return out
 
 
+def measure_jer_bounds() -> dict[str, float]:
+    """ASN1-B: the semantic canonical-JER bound against the encoder
+    (bcir/tests/jer_bounds_fixtures.py::measure, which the tests grade the same way)."""
+    from bcir.tests.jer_bounds_fixtures import measure
+
+    return measure()
+
+
 def measure_delta() -> dict[str, float]:
     """The G18 rows (S4-B): the chain advanced by declared deltas against the chain from scratch
     (bcir/tests/delta_fixtures.py::measure, which the tests and tools/perf/check_delta.py grade the
@@ -3836,6 +3886,7 @@ _MEASURERS = {
     "irdl": measure_irdl,
     "transform": measure_transform,
     "nest": measure_nest,
+    "jerbounds": measure_jer_bounds,
     "memory-production": measure_memory_production,
 }
 

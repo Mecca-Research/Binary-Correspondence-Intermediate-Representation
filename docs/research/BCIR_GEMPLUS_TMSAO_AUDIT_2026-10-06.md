@@ -168,6 +168,17 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   idle shared host, wall time, indicative; 11x at 8,192), so the K_BCIR -> StreamPack chain
   runs natively end to end. Still Partial: the exact solvers (CXX3), the delta chain and
   pipelined hydration have no native twin, and the inventory lists what else stays Python-only.
+- **Items 19 and 20** (lifetime bounds; bounds from the point of application): ASN1-B derives
+  the canonical-JER bound a VALID value fixes (`bcir.asn1.jer_bounds`: `max_octets`, and a
+  `witness` that attains it). A value constraint bounds the values even though X.697 hides it
+  from the encoding: `INTEGER (0..255)` 3 octets, `OCTET STRING (SIZE (4))` 10, a character
+  string its SIZE times its repertoire's longest escape, structures by their members. It is
+  taken where a parameterized type is applied, after substitution (`Bounded {9}` 1 octet,
+  `Bounded {99999}` 5). On 817 types (120 generated modules and the repository's four) the
+  parent's rail -- the J2 plan's four leaf kinds -- stated no bound for 549 that have one; now
+  every bound is reached by a valid witness and exceeded by none of 15,048 sampled valid values.
+  Met for JER's canonical profile; the binary rules' bounds, ECN's value mappings, the
+  encoding instructions and a decoder that sizes its own buffer from the bound are not built.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---
