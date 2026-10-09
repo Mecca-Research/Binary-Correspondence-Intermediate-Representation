@@ -126,6 +126,13 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
 - **Item 14**, continued: the CSP/ILP rail and the optional CP-SAT adapter (`hosted.cpsat`,
   held to the in-tree solver) are G28; MLIR Transform export, the unprojected IRDL operations
   and polyhedral depth remain (G30 to G32).
+- **Item 13b** (a poison feature imported from LLVM): G29 imports poison as proved facts. A
+  resource may declare its integer value range; the verifier proves `nsw` / `nuw` for an i32
+  claim by exact interval arithmetic over the signed and unsigned readings; the lowering
+  carries exactly those flags and the ranges as `!range` on its loads; R12 refuses a forged,
+  dropped or widened fact; and LLVM's own range reasoning re-derives every exported flag (77
+  over 120 generated claims, none missed, none extra). Met for i32 elementwise claims on the
+  oracle's lowering; `freeze`, other widths, the C emitters and the law rail are not built.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

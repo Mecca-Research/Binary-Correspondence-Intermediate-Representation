@@ -30,6 +30,12 @@ class Resource:
     map_gen: int = 0
     data_gen: int = 0
     name: str = ""
+    #: OPTIONAL declared range of the resource's integer element values, inclusive (GEM+ G29):
+    #: the contract a caller keeps for every element read, from which the verifier proves the
+    #: no-wrap facts (`nsw` / `nuw`) an integer claim's lowering may carry. Absent
+    #: (`value_range is None`) on every existing resource -- no fact is proved, none emitted --
+    #: and outside the R13 digest, like a claim's `timing` and `stream`.
+    value_range: Optional[tuple[int, int]] = None
 
     @property
     def count(self) -> int:

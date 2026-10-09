@@ -195,8 +195,10 @@ class _Metadata:
         return node
 
 
-def _access_metadata(facts: KernelFacts, fn_name: str) -> tuple[dict, str]:
+def _access_metadata(facts: KernelFacts, fn_name: str, ranges=None) -> tuple[dict, str]:
     """{position: the metadata attachments of its accesses}, and the metadata block.
+    `ranges` ({read position: `!range` operands}, G29) adds each read's declared value range
+    to its loads.
 
     The alias scopes are the RID partition: one domain per kernel, one scope per resource,
     each access naming its own resource's scope in `!alias.scope` and every other resource's
@@ -223,6 +225,8 @@ def _access_metadata(facts: KernelFacts, fn_name: str) -> tuple[dict, str]:
         if others[rid] is not None:
             text += f", !noalias !{others[rid]}"
         attach[p] = text + f", !tbaa !{tag}"
+    for p, spec in (ranges or {}).items():
+        attach[p] += f", !range !{md.add(spec)}"
     return attach, "\n".join(md.lines) + "\n"
 
 
@@ -278,9 +282,22 @@ def _kernel_ll(module, claim, w: int, fn_name: str, elem: str, lane: str, proven
     facts = kernel_facts(module, claim, elem)
     ety = facts.ll_type
     op_ll = _IOP[claim.opcode] if elem == "i32" else _FOP[claim.opcode][0]
+    ranges = None
+    if elem == "i32":
+        # G29: exactly the no-wrap facts the declared read ranges prove, and those ranges on
+        # the loads -- the contract made visible to LLVM (`lower.poison`)
+        from .poison import FLAGS, prove_no_wrap, range_metadata
+
+        proof = prove_no_wrap(module, claim)
+        op_ll = " ".join([op_ll, *(f for f in FLAGS if f in proof.flags)])
+        ranges = {
+            p: spec
+            for p, rng in enumerate(proof.reads)
+            if rng is not None and (spec := range_metadata(rng)) is not None
+        }
 
     params = _alias_params(facts)
-    attach, metadata = _access_metadata(facts, fn_name)
+    attach, metadata = _access_metadata(facts, fn_name, ranges)
     a, b, c = attach[0], attach[1], attach[2]
     vol = "volatile " if facts.volatile else ""
     # A barriered claim is a full barrier: nothing crosses into or out of the kernel.

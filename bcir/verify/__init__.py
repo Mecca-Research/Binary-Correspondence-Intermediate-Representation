@@ -1967,6 +1967,7 @@ def verify_lowering(
     from ..lower.alias_facts import kernel_facts
     from ..lower.llvm import _FOP, _IOP, find_elementwise
     from .alias import ll_alias_diagnostics
+    from .poison import ll_poison_diagnostics
 
     diags: list[Diagnostic] = []
     try:
@@ -2002,7 +2003,10 @@ def verify_lowering(
     ety = "i32" if elem == "i32" else "float"
     op_ll = _IOP[claim.opcode] if elem == "i32" else _FOP[claim.opcode][0]
     kernel_ty = f"<{declared_w} x {ety}>" if declared_w > 1 else ety
-    if f"{op_ll} {kernel_ty}" not in ll_text:
+    # an i32 op may carry proved no-wrap flags between the opcode and the type (G29); which
+    # flags, and whether they are proved, is the poison reader's to judge (`verify.poison`)
+    wrap = r"(?:\s+(?:nuw|nsw))*" if elem == "i32" else ""
+    if not re.search(rf"\b{op_ll}{wrap}\s+{re.escape(kernel_ty)}(?![\w>])", ll_text):
         diags.append(
             Diagnostic(
                 "R12", f"precision not preserved: kernel op '{op_ll} {kernel_ty}' not emitted"
@@ -2035,7 +2039,7 @@ def verify_lowering(
                     f"largest multiple of the width (no `and i64 %n, -{declared_w}` mask)",
                 )
             )
-        if f"{op_ll} {ety} " not in ll_text:
+        if not re.search(rf"\b{op_ll}{wrap}\s+{ety}\s", ll_text):
             diags.append(
                 Diagnostic(
                     "R12",
@@ -2076,6 +2080,11 @@ def verify_lowering(
 
     # The declared alias facts, the hazard's fences among them (`verify.alias`).
     diags.extend(Diagnostic("R12", message) for message in ll_alias_diagnostics(facts, ll_text))
+    # The proved no-wrap facts and the declared value ranges (`verify.poison`, G29).
+    diags.extend(
+        Diagnostic("R12", message)
+        for message in ll_poison_diagnostics(module, claim, ll_text, elem)
+    )
     return diags
 
 

@@ -629,6 +629,59 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G28",
     ),
     Metric(
+        "poison.forged.accepted",
+        "poison",
+        "of 200 forged i32 kernels (a no-wrap flag the declared ranges do not prove, a proved one "
+        "dropped, a load range widened or removed, a range on a float kernel), those R12 "
+        "accepts (the parent read no flags and no ranges: it refused a flagged kernel only "
+        "because its op text no longer matched, and accepted 74)",
+        74,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="R12 reads the flags and ranges back and holds them to the proof "
+        "(verify.poison)",
+        slice_owner="G29",
+    ),
+    Metric(
+        "poison.facts.missed",
+        "poison",
+        "over 120 generated integer claims, the no-wrap flags LLVM's own range reasoning "
+        "derives from the declared ranges that BCIR does not export (the parent exported none: "
+        "77); unmeasured without LLVM",
+        77,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the proof is exact interval arithmetic over the signed and the unsigned "
+        "readings, so every flag LLVM can derive is proved",
+        slice_owner="G29",
+    ),
+    Metric(
+        "poison.facts.unjudged",
+        "poison",
+        "flags BCIR exports over the same claims that LLVM's range reasoning does not "
+        "re-derive (a guard: a flag LLVM cannot confirm is not exported); unmeasured without LLVM",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="LLVM (correlated-propagation, instcombine) re-derives each exported fact",
+        slice_owner="G29",
+    ),
+    Metric(
+        "poison.facts.unsound",
+        "poison",
+        "generated claims with a proved flag broken at a corner or sampled point of the read "
+        "ranges in wrapped i32 arithmetic (a guard)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a proof is a theorem: no point of the contract breaks it",
+        slice_owner="G29",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3526,6 +3579,15 @@ def measure_io() -> dict[str, float]:
     return {"io.pebble.unsound": float(unsound), "io.pebble.loose.fraction": loose / len(instances)}
 
 
+def measure_poison() -> dict[str, float]:
+    """G29: R12 over the forged kernels, the proofs against wrapped arithmetic, and -- where
+    LLVM is -- LLVM's own verdict on each fact (bcir/tests/poison_fixtures.py::measure, which
+    the tests grade the same way)."""
+    from bcir.tests.poison_fixtures import measure
+
+    return measure()
+
+
 def measure_csp() -> dict[str, float]:
     """G28: the in-tree CSP against brute force, and the joint planner against the reference
     optimum (bcir/tests/joint_fixtures.py::measure, which the tests grade the same way). Pure
@@ -3615,6 +3677,7 @@ _MEASURERS = {
     "io": measure_io,
     "value": measure_value_dispatch,
     "csp": measure_csp,
+    "poison": measure_poison,
     "memory-production": measure_memory_production,
 }
 

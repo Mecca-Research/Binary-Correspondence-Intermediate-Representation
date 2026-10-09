@@ -142,6 +142,17 @@ def module_to_graph(module) -> Graph:
                         [(k, _text(getattr(resource, k))) for k in _RESOURCE_INTS]
                         + [(k, _text(getattr(resource, k))) for k in _RESOURCE_STRS]
                         + [("domain", resource.domain.name), ("shape", _rids(resource.shape))]
+                        # G29: present only when declared, so absent and declared stay apart
+                        + (
+                            [
+                                (
+                                    "value_range",
+                                    f"{resource.value_range[0]}:{resource.value_range[1]}",
+                                )
+                            ]
+                            if resource.value_range is not None
+                            else []
+                        )
                     )
                 ),
             )
@@ -310,11 +321,17 @@ def graph_to_module(graph: Graph):
         if edge.label != "resource":
             continue
         at = edge.target
+        declared = attr(at, "value_range")
+        value_range = None
+        if declared:
+            lo, _, hi = declared.rpartition(":")
+            value_range = (int(lo), int(hi))
         resource = Resource(
             domain=_Domain[attr(at, "domain")],
             shape=_unrids(attr(at, "shape")),
             **{k: int(attr(at, k) or 0) for k in _RESOURCE_INTS},
             **{k: attr(at, k) for k in _RESOURCE_STRS},
+            value_range=value_range,
         )
         resources[resource.rid] = resource
 
