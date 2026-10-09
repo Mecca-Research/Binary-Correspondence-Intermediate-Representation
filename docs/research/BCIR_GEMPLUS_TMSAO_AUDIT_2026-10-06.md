@@ -108,6 +108,14 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
   alignment-aware and gives the exact rail a best-fit incumbent portfolio; on the
   512-resource fixture the bound rises 5,400 -> 6,468 bytes and the layout falls 6,908 -> 6,820,
   so the stated gap is 352 bytes where it was 1,508 -- reduced and stated, not proved.
+- **Item 14** (the depth of optimization priced by its value): G27 gives the dispatch law a
+  value model -- `OptimizationValue` (expected executions, the declared price of a work unit)
+  grants a proof-rail search at most `executions x gap / price` work units, none at a closed
+  gap -- and delegates straight-line modules (one executable claim in the LLVM lowering
+  subset) to LLVM: the scalar kernel, whose width LLVM's vectorizer picks, its output equal
+  byte for byte to the planned kernel's under clang. Still Partial: the MLIR Transform
+  export, the unprojected IRDL operations, polyhedral depth and the ILP/CSP rail are G28 and
+  G30 to G32.
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

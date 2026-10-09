@@ -79,6 +79,36 @@ def find_elementwise(module: Module, result: RealizationResult) -> tuple:
             "the single-claim elementwise LLVM AOT/JIT subset requires its "
             f"executable claim {claim.id} to have a selected realization"
         )
+    _check_subset(claim)
+    return claim, cand
+
+
+def _executable_claims(module: Module) -> list:
+    return [
+        claim for ph in module.phases for claim in ph.claims if claim.opcode not in _NON_EXECUTABLE
+    ]
+
+
+def straight_line_claim(module: Module):
+    """The module's one executable claim when the module is straight-line in the lowering
+    subset's sense -- exactly one executable claim, a 2-read/1-write add, sub or mul from index
+    0 at unit stride with a lowerable hazard -- before any plan exists (G27: the dispatch law
+    delegates such a module to LLVM). The same predicate `find_elementwise` applies to a
+    planned module, so the two cannot disagree about what the subset covers. Raises
+    NotImplementedError naming the reason otherwise."""
+    executable = _executable_claims(module)
+    if len(executable) != 1:
+        raise NotImplementedError(
+            "the single-claim elementwise LLVM AOT/JIT subset requires exactly one "
+            f"executable claim; found {len(executable)}"
+        )
+    _check_subset(executable[0])
+    return executable[0]
+
+
+def _check_subset(claim) -> None:
+    """The lowering subset's claim-level contract, shared by the planned and the delegated
+    paths (one predicate: `find_elementwise` and `straight_line_claim`)."""
     if claim.opcode not in _FOP or len(claim.rd) != 2 or len(claim.wr) != 1:
         raise NotImplementedError(
             "the single-claim elementwise LLVM AOT/JIT subset supports only a "
@@ -115,7 +145,6 @@ def find_elementwise(module: Module, result: RealizationResult) -> tuple:
         raise NotImplementedError(
             f"the elementwise lowering subset does not lower claim {claim.id}: {refusal}"
         )
-    return claim, cand
 
 
 # Back-compat alias (pre-R12 internal name).
@@ -213,7 +242,6 @@ def emit_kernel_ll(
     access of a volatile claim, and a barriered claim's fences before its first access and
     after its last. R12 (`verify.verify_lowering`) holds each of them to the declaration."""
     claim, cand = _find_elementwise(module, result)
-    facts = kernel_facts(module, claim, elem)
     base_w = width_override if width_override else cand.width
     if base_w < 1 or (base_w & (base_w - 1)):
         raise NotImplementedError(
@@ -222,7 +250,32 @@ def emit_kernel_ll(
         )
     # The selected width is realized whatever the count: a runtime `n` that is not a
     # multiple of the width finishes in the scalar epilogue (the tail contract).
-    w = base_w
+    return _kernel_ll(
+        module,
+        claim,
+        base_w,
+        fn_name,
+        elem,
+        cand.lane.name,
+        f"K_BCIR-selected; candidate={cand.name}",
+    )
+
+
+def emit_delegated_ll(module: Module, fn_name: str = "bcir_kernel", elem: str = "f32") -> str:
+    """The kernel of a module the dispatch law delegates to LLVM (G27): no plan exists, so the
+    kernel is the scalar loop -- every alias fact, fence and the tail contract as the planned
+    kernel carries them -- and LLVM's own loop vectorizer chooses the width at -O2. The module
+    must be straight-line (`straight_line_claim`); its output equals the planned kernel's
+    (`compare_delegated`)."""
+    claim = straight_line_claim(module)
+    return _kernel_ll(
+        module, claim, 1, fn_name, elem, "delegated", "delegated to LLVM; no K_BCIR plan"
+    )
+
+
+def _kernel_ll(module, claim, w: int, fn_name: str, elem: str, lane: str, provenance: str) -> str:
+    """The kernel text at lane width `w` -- shared by the planned and the delegated kernels."""
+    facts = kernel_facts(module, claim, elem)
     ety = facts.ll_type
     op_ll = _IOP[claim.opcode] if elem == "i32" else _FOP[claim.opcode][0]
 
@@ -235,9 +288,9 @@ def emit_kernel_ll(
     fence_out = fence_in
     head = (
         f"; BCIR -> LLVM IR (legal-IR-only). op={claim.op or op_ll} "
-        f"lane={cand.lane.name} width={w} elem={ety} "
+        f"lane={lane} width={w} elem={ety} "
         f"epilogue={'scalar' if w > 1 else 'none'} "
-        f"(K_BCIR-selected; candidate={cand.name})\n"
+        f"({provenance})\n"
         f'source_filename = "bcir.{module.name}.ll"\n\n'
     )
 
@@ -400,6 +453,105 @@ def compile_and_run(
         run = subprocess.run([exe], capture_output=True, text=True)
         ok = run.returncode == 0 and "OK" in run.stdout
         return ok, run.stdout + run.stderr
+    finally:
+        if created:
+            import shutil
+
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+def emit_delegation_harness_c(module: Module, result: RealizationResult) -> str:
+    """The C harness `compare_delegated` runs (G27): the planned kernel (`bcir_planned`) and
+    the delegated one (`bcir_delegated`) over the same inputs at every trip count of
+    `harness_trip_counts`, each on its own copy of one buffer per resource -- so an in-place
+    claim runs in place on both -- and every buffer compared byte for byte, the canary region
+    past `n` included. Prints `MATCH` or the first differing resource."""
+    claim, _ = _find_elementwise(module, result)
+    rids = sorted({*claim.rd, *claim.wr})
+    slot = {rid: k for k, rid in enumerate(rids)}
+    a, b, c = slot[claim.rd[0]], slot[claim.rd[1]], slot[claim.wr[0]]
+    trips = ", ".join(str(t) for t in harness_trip_counts(module, result))
+    nbuf = len(rids)
+    return f"""#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern void bcir_planned(const float *A, const float *B, float *C, long n);
+extern void bcir_delegated(const float *A, const float *B, float *C, long n);
+
+#define CANARY 64
+#define NBUF {nbuf}
+
+static float *fill(long total, int k) {{
+  float *p = malloc((size_t)total * sizeof *p);
+  if (!p) exit(3);
+  for (long i = 0; i < total; i++) p[i] = (float)((i * 7 + k * 13) % 251) * 0.5f - 31.0f;
+  return p;
+}}
+
+static int run(long n) {{
+  long total = n + CANARY;
+  float *x[NBUF], *y[NBUF];
+  for (int k = 0; k < NBUF; k++) {{ x[k] = fill(total, k); y[k] = fill(total, k); }}
+  bcir_planned(x[{a}], x[{b}], x[{c}], n);
+  bcir_delegated(y[{a}], y[{b}], y[{c}], n);
+  int rc = 0;
+  for (int k = 0; k < NBUF && !rc; k++)
+    if (memcmp(x[k], y[k], (size_t)total * sizeof(float)) != 0) {{
+      printf("DIFFER resource=%d n=%ld\\n", k, n);
+      rc = 1;
+    }}
+  for (int k = 0; k < NBUF; k++) {{ free(x[k]); free(y[k]); }}
+  return rc;
+}}
+
+int main(void) {{
+  long trips[] = {{ {trips} }};
+  for (unsigned t = 0; t < sizeof trips / sizeof trips[0]; t++)
+    if (run(trips[t])) return 1;
+  printf("MATCH trips={trips}\\n");
+  return 0;
+}}
+"""
+
+
+def compare_delegated(module: Module, result: RealizationResult, workdir: str | None = None):
+    """Build the planned and the delegated kernels with clang -O2 into one program and run
+    `emit_delegation_harness_c` (G27). Returns (verdict, vector width LLVM chose for the
+    delegated loop or None, output): verdict `match`, `MISMATCH`, or `skip:<reason>` when no
+    coherent clang is available -- a skip, never a pass."""
+    llvm = resolve_llvm_tools("clang", pipeline="AOT")
+    if not llvm.ok:
+        return f"skip:{llvm.message}", None, ""
+    clang = llvm.paths["clang"]
+    created = workdir is None
+    workdir = workdir or tempfile.mkdtemp(prefix="bcir-delegate-")
+    try:
+        files = {
+            "planned.ll": emit_kernel_ll(module, result, "bcir_planned"),
+            "delegated.ll": emit_delegated_ll(module, "bcir_delegated"),
+            "harness.c": emit_delegation_harness_c(module, result),
+        }
+        for name, text in files.items():
+            with open(os.path.join(workdir, name), "w", newline="\n") as f:
+                f.write(text)
+        exe = os.path.join(workdir, "prog")
+        # the delegated kernel alone first, so its vectorizer remark is its own
+        steps = (
+            [clang, "-O2", "-c", "-Rpass=loop-vectorize", "delegated.ll", "-o", "delegated.o"],
+            [clang, "-O2", "harness.c", "planned.ll", "delegated.o", "-o", exe],
+        )
+        width = None
+        for step in steps:
+            build = subprocess.run(step, capture_output=True, text=True, cwd=workdir)
+            if build.returncode != 0:
+                return "MISMATCH", None, "clang build failed:\n" + build.stdout + build.stderr
+            for line in build.stderr.splitlines():
+                if width is None and "vectorization width:" in line:
+                    width = int(line.split("vectorization width:")[1].split(",")[0])
+        run = subprocess.run([exe], capture_output=True, text=True)
+        ok = run.returncode == 0 and run.stdout.startswith("MATCH")
+        return ("match" if ok else "MISMATCH"), width, run.stdout + run.stderr
     finally:
         if created:
             import shutil

@@ -559,6 +559,36 @@ METRICS: tuple[Metric, ...] = (
         slice_owner="G26",
     ),
     Metric(
+        "dispatch.value.overspend",
+        "value",
+        "of the 500-instance memory corpus and the 1,716 six-job schedules, those the proof rail "
+        "searches with more work units (candidate placements, node expansions) than the "
+        "incumbent's gap repays over one execution at one cost unit per work unit (the parent's "
+        "law grants the caller's budget whatever the gap: 25 + 437)",
+        462,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the value law grants at most executions x gap / price work units "
+        "(gem.dispatch.priced_budget), so no priced search can overspend",
+        slice_owner="G27",
+    ),
+    Metric(
+        "dispatch.delegation.mismatch",
+        "value",
+        "straight-line modules delegated to LLVM (the corpus's two and the generated ones the "
+        "law delegates) whose clang -O2 output differs from the planned kernel's at any harness "
+        "trip count (the parent delegates none, so none of the 16 is shown equal); unmeasured "
+        "without clang",
+        16,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a delegated kernel computes the planned kernel's function: elementwise "
+        "IEEE add, sub and mul are exact per element, whatever width LLVM's vectorizer picks",
+        slice_owner="G27",
+    ),
+    Metric(
         "regions.dataflow.misjudged",
         "dataflow",
         "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
@@ -3456,6 +3486,15 @@ def measure_io() -> dict[str, float]:
     return {"io.pebble.unsound": float(unsound), "io.pebble.loose.fraction": loose / len(instances)}
 
 
+def measure_value_dispatch() -> dict[str, float]:
+    """G27: the priced memory rail's overspend on the memory corpus, and the delegated modules'
+    output against the planned kernels' under clang (bcir/tests/value_fixtures.py::measure,
+    which the tests grade the same way). The delegation row is absent without a C compiler."""
+    from bcir.tests.value_fixtures import measure
+
+    return measure()
+
+
 def measure_dataflow() -> dict[str, float]:
     """G23 / G24: the dataflow regions over the hand-derived corpus and the timed cycle time
     against the cycle enumeration (bcir/tests/dataflow_fixtures.py::measure, which the tests
@@ -3525,6 +3564,7 @@ _MEASURERS = {
     "expectation": measure_expectation,
     "dataflow": measure_dataflow,
     "io": measure_io,
+    "value": measure_value_dispatch,
     "memory-production": measure_memory_production,
 }
 
