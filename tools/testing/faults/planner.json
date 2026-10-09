@@ -204,8 +204,8 @@
       "label": "Python encoder: a claim with reads also writes its primary resource",
       "expects": "planner.parity",
       "path": "bcir/abi/planner_abi.py",
-      "old": "            if not c.rd and c.primary_rid is not None and c.primary_rid in module.resources:",
-      "new": "            if c.primary_rid is not None and c.primary_rid in module.resources:"
+      "old": "    return not c.rd and c.primary_rid is not None and c.primary_rid in module.resources",
+      "new": "    return c.primary_rid is not None and c.primary_rid in module.resources"
     }
   ]
 }

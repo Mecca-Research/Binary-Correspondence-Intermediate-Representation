@@ -29,6 +29,7 @@ from bcir.asn1.per import PerRules, PerVariant, decode_per, encode_per
 from bcir.asn1.schema import Primitive
 from bcir.asn1.tags import Universal
 from bcir.asn1.values import Asn1Error
+from bcir.asn1.codec import NULL
 
 _VARIANTS = (PerVariant.UNALIGNED, PerVariant.ALIGNED)
 
@@ -194,7 +195,7 @@ def test_an_empty_field_list_is_exactly_one_zero_octet() -> None:
             )
 
         # NULL is the other type that reaches this path, and it behaves the same way.
-        assert encode_per(null, None, variant=variant) == b"\x00"
+        assert encode_per(null, NULL, variant=variant) == b"\x00"
         assert "11.1.4" in _refused(
             lambda v=variant: decode_per(b"\xff", null, variant=v), "a non-zero octet for NULL"
         )

@@ -107,21 +107,23 @@ concluding they disagree.
 | | count |
 | --- | ---: |
 | operations the ODS dialect defines | 133 |
-| operations the IRDL projection declares | 95 |
-| projected under the same name | 10 |
-| projected under a renamed spelling (IRDL admits no dots) | 85 |
-| declared unprojected, each with a stated reason | 38 |
-| generic-syntax corpus files the projection is validated against | 13 |
+| operations the IRDL projection declares | 132 |
+| projected under the same name | 26 |
+| projected under a renamed spelling (IRDL admits no dots) | 106 |
+| declared unprojected, each with a stated reason | 1 |
+| generic-syntax corpus files the projection is validated against | 16 |
 <!-- /generated -->
 
 Three things in that table are worth reading slowly.
 
 **Not every operation is projected.** The projection covers the structural subset —
 registry, claim, phase, plan, GEM stream — and the driver-subset operations
-(values, registers, ports, descriptors, entry/trampoline) are outside it. Every
-one of those is listed in `mlir/irdl/MANIFEST.json` with the reason and the
-condition for projecting it: *together with an IRDL corpus fixture that exercises
-it*. An unprojected operation is a declared gap, not an omission.
+(values, registers, ports, descriptors, entry/trampoline) with their operand and
+result constraints, each exercised by an IRDL corpus fixture. The one left out,
+`bcir.asm`, is listed in `mlir/irdl/MANIFEST.json` with the reason: a constraint
+variable binds one type for a whole variadic group, and its operands are
+heterogeneous, so IRDL has no spelling for it. An unprojected operation is a
+declared gap, not an omission.
 
 **Some names are spelled differently.** IRDL admits only `[a-z0-9_]` in an
 operation name, so a dotted ODS name arrives with underscores —

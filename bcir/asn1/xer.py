@@ -76,7 +76,7 @@ from __future__ import annotations
 from decimal import Decimal
 from enum import Enum
 
-from .codec import Strictness
+from .codec import NULL, Strictness, require_null
 from .schema import (
     Asn1Type,
     Choice,
@@ -84,11 +84,13 @@ from .schema import (
     Module,
     OpenType,
     Primitive,
+    Reference,
     Sequence,
     SequenceOf,
     Set,
     SetOf,
     _resolve_open_type,
+    through,
 )
 from .tags import Asn1Error, TagClass, Universal
 from .tlv import decode_one, encode_tlv
@@ -318,11 +320,14 @@ def _builtin_xml_name(kind: Asn1Type) -> str:
 
 
 def xml_type_name(kind: Asn1Type, names: XerTypeNames | None = None) -> str:
-    """X.680 §14.2/§26.10 — the `NonParameterizedTypeName` for a type."""
+    """X.680 §14.2/§26.10 — the `NonParameterizedTypeName` for a type. A recursive reference
+    is named as the type it names: `SEQUENCE OF Node` inside `Node` writes `<Node>` items."""
     if names is not None:
         reference = names.name_of(kind)
         if reference is not None:
             return _guarded(reference)
+    if isinstance(kind, Reference):
+        return xml_type_name(kind.resolved(), names)
     return _guarded(_builtin_xml_name(kind))
 
 
@@ -575,6 +580,8 @@ def _xml_value(
                 f"encoding, so it must be bytes, not {type(value).__name__}"
             )
         return _open_type(kind, bytes(value), rules, names, context)
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through("XER", kind, _xml_value, kind.resolved(), value, rules, names, context)
     raise Asn1Error(f"XER: no encoding for schema type {type(kind).__name__}")
 
 
@@ -600,8 +607,7 @@ def _primitive_value(kind: Primitive, value, rules: XerRules, names: XerTypeName
         return _real_value(value)
 
     if universal == Universal.NULL:
-        if value is not None:
-            raise Asn1Error(f"{kind.name}: a NULL value is None, got {value!r}")
+        require_null(value, kind.name)
         return ""  # X.680 §24.3: `empty`
 
     if universal == Universal.BIT_STRING:  # §8.3.9, §9.3
@@ -766,6 +772,8 @@ def _uses_value_list(element: Asn1Type) -> bool:
         return True
     if isinstance(element, Primitive):
         return element.universal in (Universal.NULL, Universal.BOOLEAN, Universal.ENUMERATED)
+    if isinstance(element, Reference):  # the element of a recursive SEQUENCE OF
+        return _uses_value_list(element.resolved())
     return False
 
 
@@ -1151,7 +1159,7 @@ def _decode_typed(
 def _decode_empty(kind: Asn1Type, name: str, reader: _Reader):
     if isinstance(kind, Primitive):
         if kind.universal == Universal.NULL:
-            return None
+            return NULL
         if kind.universal in _STRING_UNIVERSALS or kind.universal in (
             Universal.OID_IRI,
             Universal.RELATIVE_OID_IRI,
@@ -1166,6 +1174,8 @@ def _decode_empty(kind: Asn1Type, name: str, reader: _Reader):
         return []
     if isinstance(kind, (Sequence, Set)):
         return _finish_components(kind, {}, reader)
+    if isinstance(kind, Reference):  # `<Node/>`: an empty value nests nothing
+        return _decode_empty(kind.resolved(), name, reader)
     raise reader.error(f"<{name}/> is not a value of {kind.name}")
 
 
@@ -1187,6 +1197,10 @@ def _decode_value(
         return _decode_choice(reader, kind, rules, names)
     if isinstance(kind, OpenType):
         return _decode_open_type(reader, kind, name, rules, names, context)
+    if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
+        return through(
+            "XER", kind, _decode_value, reader, kind.resolved(), name, rules, names, context
+        )
     raise reader.error(f"no decoding for schema type {type(kind).__name__}")
 
 
@@ -1241,7 +1255,7 @@ def _decode_primitive(
         body = reader.read_plain_text(name)
         if body:
             raise reader.error(f"a NULL value has no content (X.680 24.3); got {body!r}")
-        return None
+        return NULL
 
     if universal == Universal.INTEGER:  # §8.3.6
         tag = reader.peek_tag()
@@ -1477,14 +1491,23 @@ def _decode_components(reader: _Reader, kind, rules: XerRules, names: XerTypeNam
 def _decode_list(reader: _Reader, kind, rules: XerRules, names: XerTypeNames | None) -> list:
     element = kind.element
     element_name = xml_type_name(element, names)
+    # A recursive element (`SEQUENCE OF Expr` inside `Expr`) is decided once per list, and
+    # each item it nests takes the guard every recursion takes.
+    nests = isinstance(element, Reference)
+    target = element.resolved() if nests else element
     values: list = []
     while True:
         tag = reader.peek_tag()
         if tag is None or tag[0] == "end":
             return values
-        if _uses_value_list(element):
-            if isinstance(element, Choice):
-                values.append(_decode_choice(reader, element, rules, names))
+        if _uses_value_list(target):
+            if isinstance(target, Choice):
+                if nests:
+                    values.append(
+                        through("XER", element, _decode_choice, reader, target, rules, names)
+                    )
+                else:
+                    values.append(_decode_choice(reader, target, rules, names))
                 continue
             if isinstance(element, Primitive) and element.universal == Universal.NULL:
                 # §26.4: SEQUENCE OF NULL spells each element `<NULL/>` because its
@@ -1495,7 +1518,7 @@ def _decode_list(reader: _Reader, kind, rules: XerRules, names: XerTypeNames | N
                         f"expected <{element_name}/> for a NULL element (X.680 26.4); "
                         f"found a {found_kind} tag for {found!r}"
                     )
-                values.append(None)
+                values.append(NULL)
                 continue
             values.append(_decode_primitive(reader, element, element_name, rules, names))
             continue

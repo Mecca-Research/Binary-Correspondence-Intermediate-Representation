@@ -897,3 +897,49 @@ def test_a_value_outside_its_constraint_is_refused_rather_than_truncated():
                 if line != "ok"
             ]
         assert replies[0].startswith("err 9 "), f"{value}: {replies[0]}"  # UNSUPPORTED
+
+
+def test_the_twin_writes_an_untagged_alternatives_universal_tag_under_oer():
+    """X.696 §20.1 identifies a CHOICE alternative by its outermost tag. Both rails of the write
+    plan wrote an untagged alternative's INDEX instead, so `CHOICE { a INTEGER, b BOOLEAN }`
+    under EXPLICIT TAGS went out as `80 01 03`, not `02 01 03` -- and agreed with each other,
+    which is why this compares the twin with the oracle, not with the Python rail (audit
+    2026-10-06 §4.4)."""
+    if not _available():
+        return
+    from bcir.asn1 import oer
+    from bcir.frontends.asn1 import compile_module
+
+    module = compile_module(
+        "M DEFINITIONS EXPLICIT TAGS ::= BEGIN\n  C ::= CHOICE { a INTEGER, b BOOLEAN }\nEND\n",
+        "<t>",
+    ).module
+    kind = module.types["C"]
+    plan = compile_encode_plan(kind, module="M", type_name="C")
+    lines, want = ["plan " + plan.serialize().hex()], []
+    for value in (("a", 3), ("b", True)):
+        lines.append(f"emit coer {flatten(plan, value).hex()}")
+        want.append(oer.encode_oer(kind, value))
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = [line for line in _drive(_build(tmp), lines) if line != "ok"]
+    assert [bytes.fromhex(r[3:]) for r in replies] == want, (replies, [w.hex() for w in want])
+
+
+def test_a_plan_with_tags_no_member_shows_is_refused_by_this_reader():
+    """A type's own tags reach the write plan (X.680 §31). One a member shows stays on the
+    member, as version 5 wrote it; an element's, the root's or one under a member's EXPLICIT
+    tag makes the plan version 6, which this reader refuses rather than encode without it --
+    the twin wrote `SEQUENCE OF [0] INTEGER` as SEQUENCE OF INTEGER before the plan said so."""
+    if not _available():
+        return
+    from bcir.asn1.encode_plan import PLAN_VERSION_TAGGED
+    from bcir.frontends.asn1 import compile_module
+
+    module = compile_module(
+        "M DEFINITIONS EXPLICIT TAGS ::= BEGIN\n  T ::= SEQUENCE OF [0] INTEGER\nEND\n", "<t>"
+    ).module
+    plan = compile_encode_plan(module.types["T"], module="M", type_name="T")
+    assert plan.plan_version == PLAN_VERSION_TAGGED
+    with tempfile.TemporaryDirectory() as tmp:
+        replies = _drive(_build(tmp), ["plan " + plan.serialize().hex()])
+    assert replies[0].startswith("err 2 "), replies[0]  # PLAN_VERSION_BAD

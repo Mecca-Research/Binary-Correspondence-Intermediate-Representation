@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import tempfile
 
+from bcir.asn1.codec import NULL
 from bcir.asn1.constraints import Size, ValueRange
 from bcir.asn1.per import PerVariant, encode_per
 from bcir.asn1.schema import Component, Primitive, Sequence
@@ -209,7 +210,7 @@ def _cases() -> list[tuple[str, str, dict, list[str], list[tuple[str, object]]]]
                 name="F",
             ),
             [_field(_BOOLEAN), _field(_NULL), _field(_FIXED_OCTETS, fixed=2)],
-            {"flag": True, "v": None, "s": b"ok"},
+            {"flag": True, "v": NULL, "s": b"ok"},
         )
     )
 

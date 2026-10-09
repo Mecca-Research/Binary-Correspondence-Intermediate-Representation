@@ -22,6 +22,8 @@ freestanding_core bcir_provenance.c
 freestanding_core bcir_ring.c
 freestanding_core bcir_runtime.c
 freestanding_core bcir_sha256.c
+freestanding_core bcir_ed25519.c
+freestanding_core bcir_plan_sign.c
 freestanding_core bcir_shard_manifest.c
 freestanding_core bcir_telemetry_frame.c
 freestanding_core bcir_telemetry_envelope.c

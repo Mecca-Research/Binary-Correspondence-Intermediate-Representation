@@ -97,6 +97,13 @@ add_target() {  # <key> <label> <extra-flags> <sources...>
   KEYS+=("${key}"); LABEL["${key}"]="${label}"; FLAGS["${key}"]="${flags}"; SRCS["${key}"]="$*"
 }
 
+# Plan signatures (G21): Ed25519 and the PlanStatementV1 / TrustStoreV1 verifier over raw bytes,
+# and unforgeability -- a genuine statement mutated by the input verifies only as the bytes that
+# were signed. Each run may cost two Ed25519 scalar multiplications under ASan, so
+# the campaign saturates its time bound: it is measured long and starts first.
+add_target plan_sign "plan signatures (Ed25519 + PlanStatementV1)" "-max_len=1024" \
+  "${C}/fuzz_plan_sign.c" "${C}/bcir_plan_sign.c" "${C}/bcir_ed25519.c" "${C}/bcir_sha256.c"
+
 # bcir_q8_model.c parses an EXTERNAL model artifact (LangRef 16). The format is sealed by
 # a header CRC, a body CRC, and per-tensor CRCs -- right for the format, fatal for a
 # fuzzer, since a random mutation dies on a checksum long before it reaches the geometry,
@@ -416,6 +423,12 @@ for name, blob, _status in malformed_inputs():           # one per law
     open(os.path.join(d, "bad_input_" + name + ".bin"), "wb").write(b"\x00" + blob)
 for name, blob, _status in malformed_realizations():
     open(os.path.join(d, "bad_plan_" + name + ".bin"), "wb").write(b"\x01" + blob)
+from bcir.abi.planner_abi import encode_binding               # mode 3: bindings (CXX4)
+from bcir.tests.hydrate_fixtures import malformed
+for i, case in enumerate(corpus_cases()[::97][:32]):
+    open(os.path.join(d, f"binding_{i}.bin"), "wb").write(b"\x03" + encode_binding(case.module))
+for i, (_label, _module, (_bkpi, _bkpr, bkpb), _status) in enumerate(malformed()):
+    open(os.path.join(d, f"bad_binding_{i}.bin"), "wb").write(b"\x03" + bkpb)
 PY
 
 # The fast path takes the same projections as the X.690 harness -- seed both.

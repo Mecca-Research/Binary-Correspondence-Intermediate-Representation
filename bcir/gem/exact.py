@@ -16,6 +16,11 @@ gap is exact), the stop reason and the work spent, all in the solver's own work 
 expansions), never seconds. "The gap is the product, not the speed" (roadmap G4): a plan that
 carries `L`, `U` and both gaps is TMSAO-2 whatever the heuristic did.
 
+Since G19 the incumbent can also be what RUNS: `gem.execution_plan.exact_plan` mints it as an
+explicit placement (header flag bit 0) wherever it beats the dispatch -- the canonical plan,
+byte for byte, everywhere else -- and the verifier holds such a plan to the legality of a
+phase-barriered placement (`schedule.placement_violations`) rather than to the dispatch's.
+
 The search, per phase (phase barriers compose serially, so the module's optimum is the sum of
 its phases' optima and the exact solver runs one phase at a time):
 

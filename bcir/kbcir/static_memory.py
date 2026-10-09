@@ -527,24 +527,102 @@ class LayoutResult:
         return self.extent - self.lower_bound
 
 
-def layout_lower_bound(items) -> int:
-    """The concurrent-live lower bound: the heaviest set of items live at one tick. Every
-    layout needs disjoint addresses for them, so no extent goes below their size sum. A
-    sweep over the (tick, delta) events -- O(n log n), so the fast path stays fast at the
-    audit's 2,048 resources."""
-    events: list[tuple[int, int]] = []
-    for item in items:
-        events.append((item.first_tick, item.size))
-        events.append((item.last_tick, -item.size))
-    if not events:
-        return 0
-    # at one tick, releases (last_tick, half-open) come before takes: deltas sort ascending
+#: The largest single alignment `_one_alignment_bound` counts slacks for in a flat table.
+_ONE_ALIGNMENT_SLACKS = 1 << 16
+
+
+def _one_alignment_bound(rows: list[LayoutItem], alignment: int) -> int:
+    """`layout_lower_bound` when every item shares one alignment (the common case: the audit
+    fixtures): the same sweep with the events packed into integers -- (tick, take) above the
+    item's index, so releases still sort before takes at a tick -- and the slacks counted in
+    a flat table, so the fast path pays what the plain concurrent-live sweep did."""
+    shift = len(rows).bit_length()
+    mask = (1 << shift) - 1
+    rounded = [-(-item.size // alignment) * alignment for item in rows]
+    slack = [r - item.size for r, item in zip(rounded, rows)]
+    events: list[int] = []
+    for index, item in enumerate(rows):
+        events.append((item.first_tick * 2 + 1) << shift | index)
+        events.append((item.last_tick * 2) << shift | index)
     events.sort()
-    live = best = 0
-    for _tick, delta in events:
-        live += delta
-        if live > best:
-            best = live
+    counts = [0] * alignment
+    padded = best = top = 0
+    for event in events:
+        index = event & mask
+        s = slack[index]
+        if event >> shift & 1:
+            padded += rounded[index]
+            counts[s] += 1
+            if s > top:
+                top = s
+            if padded - top > best:
+                best = padded - top
+        else:
+            padded -= rounded[index]
+            counts[s] -= 1
+            if s == top and not counts[s]:
+                while top and not counts[top]:
+                    top -= 1
+    return best
+
+
+def layout_lower_bound(items) -> int:
+    """The alignment-aware concurrent-live bound (G26): over every tick, the items live at it
+    need disjoint addresses, and every offset is a multiple of the smallest alignment `A` among
+    them (the alignments are powers of two), so in address order each item but the topmost
+    ends no lower than the next multiple of `A` above it -- it occupies its size rounded up to
+    `A` -- and the topmost its own size. No extent goes below `sum(ceil_A(size)) - max(slack)`
+    for that set, slack being the rounding an item would leave. With every size a multiple of
+    its alignment this is the plain concurrent-live sum; with sizes that are not, it is the
+    bound the plain sum understates (the 512-resource audit fixture: 5,400 -> 6,468 bytes). A
+    sweep over the (tick, delta) events, keeping per alignment the padded sum and the slacks,
+    O(n log n) for a handful of distinct alignments, so the fast path stays fast at the
+    audit's 2,048 resources."""
+    rows = list(items)
+    if not rows:
+        return 0
+    aligns = sorted({item.alignment for item in rows})
+    if len(aligns) == 1 and aligns[0] <= _ONE_ALIGNMENT_SLACKS:
+        return _one_alignment_bound(rows, aligns[0])
+    return _mixed_alignment_bound(rows, aligns)
+
+
+def _mixed_alignment_bound(rows: list[LayoutItem], aligns: list[int]) -> int:
+    """`layout_lower_bound`'s general sweep: per alignment, the padded sum and the slacks."""
+    padded = {a: 0 for a in aligns}
+    slacks: dict[int, dict[int, int]] = {a: {} for a in aligns}
+    top_slack = {a: 0 for a in aligns}
+    live_aligns: dict[int, int] = {}
+    events: list[tuple[int, int, int]] = []
+    for index, item in enumerate(rows):
+        events.append((item.first_tick, 1, index))
+        events.append((item.last_tick, 0, index))
+    # at one tick, releases (last_tick, half-open) come before takes
+    events.sort()
+    best = 0
+    for _tick, take, index in events:
+        item = rows[index]
+        sign = 1 if take else -1
+        live_aligns[item.alignment] = live_aligns.get(item.alignment, 0) + sign
+        if not live_aligns[item.alignment]:
+            del live_aligns[item.alignment]
+        for a in aligns:
+            rounded = -(-item.size // a) * a
+            padded[a] += sign * rounded
+            slack = rounded - item.size
+            counts = slacks[a]
+            counts[slack] = counts.get(slack, 0) + sign
+            if not counts[slack]:
+                del counts[slack]
+                if slack == top_slack[a]:
+                    top_slack[a] = max(counts, default=0)
+            elif take and slack > top_slack[a]:
+                top_slack[a] = slack
+        if take:
+            low = min(live_aligns)
+            bound = padded[low] - top_slack[low]
+            if bound > best:
+                best = bound
     return best
 
 
@@ -589,6 +667,52 @@ def first_fit_layout(items) -> LayoutResult:
         extent = max(extent, end)
         heapq.heappush(active, (item.last_tick, item.rid, offset, end))
     return LayoutResult(offsets, extent, layout_lower_bound(rows), "first-fit", 0)
+
+
+#: The fixed orders the exact solver's incumbent portfolio places items in, best-fit each
+#: (G26): first tick then latest end, first tick then largest, and largest first. Fixed, so
+#: the incumbent -- and the plan the verifier re-derives -- is deterministic.
+_PORTFOLIO_ORDERS = (
+    lambda item: (item.first_tick, -item.last_tick, item.rid),
+    lambda item: (item.first_tick, -item.size, item.rid),
+    lambda item: (-item.size, item.first_tick, item.rid),
+)
+
+
+def best_fit_layout(items, order=_PORTFOLIO_ORDERS[0]) -> LayoutResult:
+    """Items in `order`, each at the aligned free span between the items live with it that
+    fits it most tightly (lowest offset on a tie), or above them all when none does. A
+    heuristic incumbent for the exact solver, not the default fast path."""
+    rows = sorted(items, key=order)
+    placed: list[tuple[LayoutItem, int]] = []
+    offsets: dict[int, int] = {}
+    extent = 0
+    for item in rows:
+        busy = sorted((o, o + p.size) for p, o in placed if item.conflicts(p))
+        best_offset, best_room, cursor = None, None, 0
+        for start, end in busy:
+            aligned = _align(cursor, item.alignment)
+            room = start - aligned
+            if room >= item.size and (best_room is None or room < best_room):
+                best_offset, best_room = aligned, room
+            cursor = max(cursor, end)
+        offset = best_offset if best_offset is not None else _align(cursor, item.alignment)
+        placed.append((item, offset))
+        offsets[item.rid] = offset
+        extent = max(extent, _checked_add(offset, item.size))
+    return LayoutResult(offsets, extent, layout_lower_bound(rows), "first-fit", 0)
+
+
+def incumbent_layout(rows) -> LayoutResult:
+    """The exact solver's starting incumbent: the first-fit layout, replaced only by a
+    best-fit layout of the portfolio that is strictly smaller -- never worse than the fast
+    path, and the fast path itself wherever it is already the best of them."""
+    best = first_fit_layout(rows)
+    for order in _PORTFOLIO_ORDERS:
+        candidate = best_fit_layout(rows, order)
+        if candidate.extent < best.extent:
+            best = candidate
+    return best
 
 
 def _layout_inputs_digest(rows: list[LayoutItem]) -> str:
@@ -663,8 +787,9 @@ def exact_layout(
 ) -> LayoutResult:
     """The bounded exact layout: a complete branch-and-bound over every aligned offset below
     the incumbent extent, in (first tick, size descending, rid) order, pruned by the incumbent
-    and stopped the moment the concurrent-live bound is met. The first-fit layout is the
-    starting incumbent, so the result is never worse than the fast path. `budget` counts
+    and stopped the moment the alignment-aware concurrent-live bound is met. The starting
+    incumbent is the first-fit layout, or a best-fit layout of the fixed portfolio when one is
+    strictly smaller (G26), so the result is never worse than the fast path. `budget` counts
     candidate placements expanded -- the solver's own work units, never seconds -- and an
     exhausted budget returns the incumbent with `stop_reason="budget"`: a stated gap, not a
     claimed optimum. Deterministic: equal inputs and budgets give identical layouts. The
@@ -682,7 +807,7 @@ def exact_layout(
     n = len(rows)
     conflicts = _conflict_lists(rows)
     if resume is None:
-        incumbent = first_fit_layout(rows)
+        incumbent = incumbent_layout(rows)
         lower_bound = incumbent.lower_bound
         if incumbent.extent == lower_bound:
             result = LayoutResult(
@@ -1053,6 +1178,8 @@ __all__ = [
     "StaticMemoryPlan",
     "exact_layout",
     "first_fit_layout",
+    "best_fit_layout",
+    "incumbent_layout",
     "layout_lower_bound",
     "plan_static_memory",
     "schedule_digest",

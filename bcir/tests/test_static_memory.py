@@ -18,6 +18,7 @@ exact layout rather than trust it.
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 import random
 
 from bcir.abi import decode_plan, encode_plan
@@ -31,6 +32,7 @@ from bcir.kbcir.static_memory import (
     StaticMemoryPlan,
     exact_layout,
     first_fit_layout,
+    incumbent_layout,
     layout_lower_bound,
     plan_static_memory,
     schedule_digest,
@@ -239,17 +241,117 @@ def test_the_exact_layout_matches_brute_force_and_never_loses_to_first_fit():
         assert exact_layout(items) == exact
 
 
-def test_the_exact_solver_is_bounded_in_its_own_work_units():
-    rows = WORST_FIXTURE
-    items = items_of(rows)
-    full = exact_layout(items)
-    assert full.stop_reason == "optimal" and full.extent == 13 and full.expansions > 0
-    starved = exact_layout(items, budget=1)
-    assert (
-        starved.stop_reason == "budget" and starved.extent == first_fit_layout(items).extent == 21
+def _plain_bound(items) -> int:
+    """The parent's bound: the concurrent-live byte sum, alignment ignored."""
+    events = sorted(
+        [(i.first_tick, i.size) for i in items] + [(i.last_tick, -i.size) for i in items]
     )
+    live = best = 0
+    for _tick, delta in events:
+        live += delta
+        best = max(best, live)
+    return best
+
+
+def test_the_alignment_aware_bound_is_sound_and_tighter_than_the_plain_sum():
+    """G26: with sizes that are not multiples of their alignment -- mixed 8/16/32/64-byte
+    alignments -- every live item but the topmost occupies its size rounded up to the smallest
+    live alignment. Held to the brute-force optimum on 400 generated instances (never above
+    it), never below the parent's plain sum, strictly above it on most, and equal to it where
+    every size is a multiple of its alignment."""
+    tighter = 0
+    for seed in range(400):
+        r = random.Random(seed)
+        items = []
+        for k in range(r.randint(2, 6)):
+            first = r.randint(0, 6)
+            items.append(
+                LayoutItem(
+                    k, r.randint(1, 100), r.choice((8, 16, 32, 64)), first, first + r.randint(1, 4)
+                )
+            )
+        optimum = _brute_force(items, sum(-(-i.size // 64) * 64 + 64 for i in items))
+        bound = layout_lower_bound(items)
+        assert _plain_bound(items) <= bound <= optimum, (seed, bound, optimum)
+        tighter += bound > _plain_bound(items)
+        result = exact_layout(items)
+        assert result.stop_reason != "optimal" or result.extent == optimum, seed
+        aligned = [replace(i, size=-(-i.size // i.alignment) * i.alignment) for i in items]
+        assert layout_lower_bound(aligned) == _plain_bound(aligned), seed
+    assert tighter >= 250, tighter
+
+
+def test_the_one_alignment_sweep_is_the_general_sweep():
+    """The fast path's packed sweep (every item sharing one alignment) states the general
+    sweep's bound exactly: over 600 generated instances -- ticks that tie, sizes on and off the
+    alignment, alignment one -- and the 2,048-resource audit fixture."""
+    from bcir.kbcir import static_memory as sm
+
+    cases = []
+    for seed in range(600):
+        r = random.Random(seed)
+        alignment = r.choice((1, 8, 64, 4096))
+        items = []
+        for k in range(r.randint(1, 12)):
+            first = r.randint(-3, 6)
+            items.append(
+                LayoutItem(k, r.randint(1, 300), alignment, first, first + r.randint(1, 4))
+            )
+        cases.append(items)
+    module = static_memory_module(4)
+    plan = plan_static_memory(module, {rid: "ram" for rid in module.resources}, HW)
+    cases.append(
+        [
+            LayoutItem(row.rid, row.size_bytes, row.alignment, row.first_tick, row.last_tick)
+            for row in plan.allocations
+        ]
+    )
+    for items in cases:
+        alignment = items[0].alignment
+        assert sm._one_alignment_bound(items, alignment) == sm._mixed_alignment_bound(
+            items, [alignment]
+        )
+        assert layout_lower_bound(items) == sm._mixed_alignment_bound(items, [alignment])
+
+
+def test_the_production_fixture_states_a_smaller_gap():
+    """The 512-resource audit fixture: the parent's bound read 5,400 bytes against first-fit's
+    6,908, a 1,508-byte gap; the alignment-aware bound proves 6,468, and the exact rail lays it
+    out in 6,820 -- the best-fit portfolio's incumbent (6,844, at budget 1), then the search
+    within the default budget (BCIR_THOROUGH: the search spends ~11 s): a 352-byte stated gap,
+    never a claimed optimum."""
+    module = static_memory_module(1)
+    bindings = {rid: "ram" for rid in module.resources}
+    fast = plan_static_memory(module, bindings, HW).banks[0]
+    assert fast.extent_bytes == 6908 and fast.lower_bound_bytes == 6468
+    start = plan_static_memory(module, bindings, HW, layout="exact", budget=1).banks[0]
+    assert start.extent_bytes == 6844 and start.stop_reason == "budget"
+    if os.environ.get("BCIR_THOROUGH"):
+        exact = plan_static_memory(module, bindings, HW, layout="exact").banks[0]
+        assert exact.extent_bytes == 6820 and exact.lower_bound_bytes == 6468
+        assert exact.stop_reason == "budget" and exact.gap_bytes == 352
+
+
+def test_the_exact_solver_is_bounded_in_its_own_work_units():
+    """The worst-case witness: first-fit 21 units, the exact layout 13 -- since G26 found by
+    the incumbent portfolio and proved at the root (it meets the bound). The budget mechanics
+    on a fixture the portfolio does not close: the full search proves the optimum after
+    expanding, a starved one keeps the starting incumbent and says `budget`."""
+    items = items_of(WORST_FIXTURE)
+    full = exact_layout(items)
+    assert first_fit_layout(items).extent == 21
+    assert full.stop_reason == "optimal" and full.extent == 13 == full.lower_bound
+    open_fixture = next(
+        items_of(rows) for _seed, rows in corpus() if exact_layout(items_of(rows)).expansions
+    )
+    full = exact_layout(open_fixture)
+    assert full.stop_reason == "optimal" and full.expansions > 0
+    starved = exact_layout(open_fixture, budget=1)
+    assert starved.stop_reason == "budget" and starved.extent > full.extent
+    assert starved.extent == incumbent_layout(open_fixture).extent  # the incumbent stands
+    assert incumbent_layout(open_fixture).extent <= first_fit_layout(open_fixture).extent
     assert starved.lower_bound == full.lower_bound
-    assert exact_layout(items, budget=1) == starved  # equal budgets, identical results
+    assert exact_layout(open_fixture, budget=1) == starved  # equal budgets, identical results
 
 
 def test_the_corpus_and_the_witness_reproduce_the_reports_shape():

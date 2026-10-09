@@ -142,6 +142,7 @@ def parse_c_dump(text: str) -> ExecutionPlan:
             plan.makespan = int(f["makespan"])
             plan.module_hash = int(f["module_hash"])
             plan.target_hash = int(f["target_hash"])
+            plan.flags = int(f.get("flags", "0"))
         elif kind == "step":
             f = _fields(line)
             stream = int(f["stream"])
@@ -227,7 +228,7 @@ def raw_encode(plan: ExecutionPlan, version: int | None = None) -> bytes:
     header = _HEADER.pack(
         PLAN_MAGIC,
         version,
-        0,
+        plan.flags,
         _MODE_WIRE[plan.mode],
         plan.streams,
         plan.knee,
@@ -292,9 +293,16 @@ def malformed_plan_bytes(module, plan: ExecutionPlan) -> list[tuple[str, bytes, 
     b = bytearray(good)
     struct.pack_into("<H", b, 4, PLAN_VERSION_MAX + 1)  # a newer version than the reader's
     add("version", reseal(b))
+    # the header flags: every bit but G19's explicit placement is reserved, and that one is
+    # a phase-barriered placement's (the plan here is eft, so bit 0 on its own is legal)
+    for bit in (1, 15):
+        b = bytearray(good)
+        struct.pack_into("<H", b, 6, 1 << bit)
+        add(f"flags.bit{bit}", reseal(b))
     b = bytearray(good)
     struct.pack_into("<H", b, 6, 1)
-    add("flags", reseal(b))
+    b[8] = 1  # tokens
+    add("flags.explicit-tokens", reseal(b))
     b = bytearray(good)
     b[9] = 1
     add("reserved", reseal(b))

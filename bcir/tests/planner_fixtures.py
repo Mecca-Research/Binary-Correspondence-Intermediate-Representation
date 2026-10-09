@@ -1172,23 +1172,20 @@ def audit_fixture(scale: int):
 
 
 def call_count(planner, scale: int = CALLS_SCALE, out: list | None = None) -> int:
-    """The calls `planner(module, h, theta)` makes planning the audit fixture at `scale` (cProfile's
-    total, builtins included -- the count the 2026-09-04 profile quoted). Deterministic for one
+    """The calls `planner(module, h, theta)` makes planning the audit fixture at `scale`, builtins
+    included, counted per code object (`bcir.tests.call_counts`: the 2026-09-04 profile's
+    `pstats` total merged every dataclass `__init__` into one row). Deterministic for one
     interpreter; it differs between CPython versions, so a gate compares two planners in one
     process and the recorded baseline names its interpreter. With `out`, it receives the counted
     call's plan and module -- what the row's emission floor is read from."""
-    import cProfile
-    import pstats
+    from bcir.tests.call_counts import profiled
 
     module, h, theta = audit_fixture(scale)
     planner(module, h, theta)  # warm imports and caches outside the count
-    profile = cProfile.Profile()
-    profile.enable()
-    result = planner(module, h, theta)
-    profile.disable()
+    calls, result = profiled(planner, module, h, theta)
     if out is not None:
         out[:] = [result, module]
-    return pstats.Stats(profile).total_calls
+    return calls
 
 
 def _bench(exe: str, tmp: str, scale: int, mode: str, tag: str) -> list[str]:

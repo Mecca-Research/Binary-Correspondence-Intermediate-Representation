@@ -210,9 +210,13 @@ python tools/security/independent_review.py --self-check
   `python tools/perf/gemplus_baseline.py --list|--compare`.
 - Optimality claims use the TMSAO ladder (`research/BCIR_GEMPLUS_ROADMAP.md` §2):
   TMSAO-1 exact optimum / TMSAO-2 bounded gap / TMSAO-3 best measured / TMSAO-4
-  heuristic-no-claim. **Everything BCIR emits today is TMSAO-4** until G4's
-  lower-bound stack lands. No optimality claim on a row with no lower bound; no
-  sublinear claim on an Ω(n) operation without naming the admitted work that changed.
+  heuristic-no-claim. Since G4 (S2-B) the proof rail issues TMSAO-1 and TMSAO-2
+  certificates (L, U, both gaps, stop reason, budget, bound to the scope digest); the fast
+  rail, and every measured certificate on a virtualized host, stays TMSAO-4, and TMSAO-3
+  needs two physical targets with counters (Stage 6). No optimality claim on a row with no
+  lower bound; no sublinear claim on an Ω(n) operation without naming the admitted work
+  that changed. Every slice ends with a before/after audit against its parent on one host
+  (`python tools/perf/ab_audit.py --before <parent>`, roadmap §0.4).
 - Per-slice analysis protocol: on GAIN report magnitude + remaining headroom + what the
   residual gap is made of; on NO-CHANGE find which of mis-assigned / cancelled /
   already-at-the-bound (a proved bound retires the row — that's a success); on
@@ -283,16 +287,20 @@ navigate it:
 - Deliberate unsigned wraps in the C twins are commented and well-defined;
   `-fsanitize=integer` findings there need the recorded suppressions, not "fixes".
 
-## 9. Current state and open edges (2026-09, post-#749)
+## 9. Current state and open edges (2026-10, post-#808)
 
 Landed and gated: R1–R25 dual-rail with negative fixtures; the C-front twin
 (driver-subset C23, ~21 fuzzer-found miscompiles turned into gates; `_Decimal*`
 blocked); frozen StreamPack v1 + v2/v3; BCAB v1; the ASN.1 portfolio (X.680–X.697:
 DER/BER, PER, OER, XER, JER, ECN complete with R24/R25; cost-governed encoding
 selection with measured native tables and two admitted calibration targets); BCIRQ8 +
-TinyLlama standalone-C parity; the bounded model labs; HAM metadata planning; GEM+
-G0 landed and G9 half-landed (alias facts to LLVM — the emitter no longer lies with
-blanket `noalias`); and the maintained **assurance rails** (`tools/security/`: secret
+TinyLlama standalone-C parity; the bounded model labs; HAM metadata planning; the
+whole GEM+ program of the 2026-09-04 re-staging, G0–G18 and its Stage 0 (one canonical
+schedule artifact, `ExecutionPlanV1` bytes, delta pricing, exact solvers with the first
+TMSAO-1/2 certificates, the dispatch law, typed regions, the workload, the control, ring
+and hand-off planes, the compact and native planners, incremental re-verification,
+movement, alias facts, escape analysis); the CMake build over one source manifest and BCIR
+Make (`docs/BCIR_BUILD_ROADMAP.md`); and the maintained **assurance rails** (`tools/security/`: secret
 scan, dependency audit, tool-boundary audit, decoder campaign, malformed differential,
 fail-closed independent review), each a required CI job, with their laws registered in
 `docs/security/laws.md`. Two repo-wide facts came out of that arc: the Python floor is
@@ -301,11 +309,11 @@ a tested artifact — the suite runs from an installed package, so a resource a 
 must actually ship.
 
 Open, deliberately: resident UART/virtio drivers and UAPI v1 (UART + virtio-blk
-evidence must come first); live telemetry transports; GEM+ G1–G8/G10 (one schedule
-artifact, delta pricing, digest-once, lower bounds → first TMSAO-2, exact memory,
-typed regions, movement, escape analysis); the provenance-hash memory-hierarchy
-closure (two-rail); R11 per-resource generation vectors; whole-decoder Q4, GPU
-execution, production serving. Check `REPO_CURRENT_STATE_AUDIT.md` before promising
+evidence must come first); live telemetry transports; the GEM+ completion ladder
+(`research/BCIR_GEMPLUS_ROADMAP.md` §9, from the 2026-10-06 audit: X.683 hygiene and
+recursive ASN.1 types first, then executing the proved optimum, the oracle's collector cost,
+a signed plan, and the portfolio's missing regions, objectives and bounds); Stage 6's
+physical evidence; whole-decoder Q4, GPU execution, production serving. Check `REPO_CURRENT_STATE_AUDIT.md` before promising
 any of these exists.
 
 ## 10. Writing it down

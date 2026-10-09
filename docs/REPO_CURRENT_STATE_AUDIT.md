@@ -250,6 +250,43 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     table, selection certificate, or driver path exists. The promotion sequence is
     [`BCIR_ASN1_JSON_ROADMAP.md`](BCIR_ASN1_JSON_ROADMAP.md).
 
+## GEM+ and the TMSAO ladder (2026-10)
+
+The GEM+ program ([`research/BCIR_GEMPLUS_ROADMAP.md`](research/BCIR_GEMPLUS_ROADMAP.md)) and its
+completion ladder (§9 there), audited against the original plan in
+[`research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md`](research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md),
+whose §1.1 carries each item's status after the ladder. What the tree holds now:
+
+- **Certificates on the proof rail.** TMSAO-1 (an exact optimum, `gem.exact`) and TMSAO-2 (a
+  stated gap between a lower bound and an incumbent) exist for schedules, placements, memory
+  layouts and the joint schedule × memory model at the sizes their witnesses check; G19 makes a
+  proved-optimal placement the plan that runs. Everything else BCIR emits is TMSAO-4. TMSAO-3
+  (best measured on two physical targets) is hardware-gated (S6, below).
+- **The plan.** `ExecutionPlanV1` (steps, slots, lifetimes, movement, generations) bound by
+  SHA-256 and signed with Ed25519 on both rails (PlanStatementV1 and a TrustStoreV1, G21).
+- **The portfolio.** The semiring registry with the expectation objective (G22); typed regions:
+  affine, SDF/CSDF and timed (max-plus) dataflow (G23 / G24), depth-two loop nests (G30), opaque;
+  the red-blue pebble bound and the hierarchical roofline (G25); the alignment-aware memory bound
+  (G26); the value-priced dispatch law and delegation of straight-line modules to LLVM (G27); a
+  dependency-free exact CSP and the joint schedule × memory optimum, with an optional CP-SAT
+  adapter (G28); LLVM's poison as proved `nsw`/`nuw` facts under R12 (G29).
+- **MLIR.** A K_BCIR tiling plan exported as a Transform-dialect script stock `mlir-opt` applies
+  (G31); the IRDL projection covers 132 of the dialect's 133 operations (G32).
+- **The oracle and its C rail.** The cyclic collector paused in the pure hot paths (OR-GC); the
+  native planner and now the native hydrate, byte for byte with the oracle (G17, CXX4), so the
+  K_BCIR -> StreamPack chain runs natively; the whole-oracle inventory regenerated from the
+  sources (CXX0, [`BCIR_ORACLE_INVENTORY.md`](BCIR_ORACLE_INVENTORY.md)).
+- **ASN.1.** Hygienic X.683 substitution (ASN1-H), recursive types on every rule (ASN1-R), a
+  tagged type the model holds (ASN1-T), one NULL (ASN1-N), and the canonical-JER bound a valid
+  value fixes, taken at the point of application (ASN1-B).
+
+Not built, and said so where each lives: CXX3 (native exact solvers), a native delta chain, the
+communication cut between domains, queue/network calculus, depth three and beyond for nests, the
+binary rules' semantic bounds, ECN value mappings in a bound, the §9.8 tagging environment. **S6
+is an explicit hardware skip**: two materially different physical targets with PMU counters are
+what TMSAO-3 needs; this host has no PMU (`docs/BCIR_TARGET_ACCESS.md`) and shared CI runners are
+refused for frozen calibration tables, so the stage is recorded as not run, never simulated.
+
 ## Confirmed limitations
 
 1. **No BCIR-native instruction selection** (by design — emit C/LLVM and reuse the
@@ -312,6 +349,8 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
    results and exposes algorithmic overhead, but WSL/shared-CI timings do not establish a
    theoretical hardware maximum. PMU/energy/thermal evidence, exhaustive measured
    candidates, direct devices, and target-specific confidence intervals remain rig-gated.
+   On the proof rail TMSAO-1 and TMSAO-2 certificates now exist (see "GEM+ and the TMSAO
+   ladder" above); TMSAO-3 stays an explicit hardware skip (S6).
 10. **Native AI coverage is deliberately partial.** There is no whole-decoder Q4, target-dispatched
     Q8 SIMD family, GPU kernel, native serving scheduler, or native hardware-policy engine. Those
     require their format/lifecycle ABI, differential oracle, measured target evidence, and rollback

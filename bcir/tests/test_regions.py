@@ -70,6 +70,7 @@ def test_every_registry_entry_proves_its_laws_under_both_overflow_policies():
             "boolean",
             "lexicographic",
             "pareto",
+            "expectation",
         }
         for name, entry in entries.items():
             assert verify_objective(entry) == [], name

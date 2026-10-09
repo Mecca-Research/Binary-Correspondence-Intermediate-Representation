@@ -1809,6 +1809,28 @@ def test_find_bcir_opt_searches_the_build_tree_layout() -> None:
     assert found == str(binary)
 
 
+def test_c_campaign_timeout_covers_every_target_the_wrapper_runs() -> None:
+    """L8: the C rail's wall bound is every registered target at its own time bound, two at a
+    time, plus compiling. The fixed 8x bound was sized for 16 targets; the wrapper now runs 20,
+    so a campaign whose every target used its bound was killed healthy."""
+    from tools.security import run_decoder_campaign as campaign
+
+    script = _ROOT / "tools" / "c" / "fuzz_streampack.sh"
+    text = script.read_text(encoding="utf-8")
+    targets = sum(1 for line in text.splitlines() if line.startswith("add_target "))
+    assert targets >= 20, targets
+    bound = campaign.campaign_timeout(script, 8, workers=2)
+    assert bound >= 180 + 8 * ((targets + 1) // 2), bound
+    assert bound > 180 + 8 * 8, "no better than the fixed bound it replaced"
+    with tempfile.TemporaryDirectory() as tmp:
+        fake = Path(tmp) / "fuzz.sh"
+        fake.write_text("add_target() {  # <key>\n}\nadd_target a x\nadd_target b y\n")
+        assert campaign.campaign_timeout(fake, 10, workers=2) == 190
+        fake.write_text("add_target a x\nadd_target b y\nadd_target c z\n")
+        assert campaign.campaign_timeout(fake, 10, workers=2) == 200
+        assert campaign.campaign_timeout(Path(tmp) / "missing.sh", 10, workers=2) == 190
+
+
 def test_c_campaign_timeout_keeps_the_captured_tails() -> None:
     """On TimeoutExpired the captured output is the only evidence of which
     target hung; the structured FAIL must carry it."""
@@ -2794,27 +2816,21 @@ def test_seed_construction_failure_is_a_structured_campaign_verdict() -> None:
     def broken() -> bytes:
         raise OSError("disk full")
 
-    original = campaign._q8_seed
-    campaign._q8_seed = broken
+    original = campaign._q8_seed, campaign._statement_seed
+    campaign._q8_seed = campaign._statement_seed = broken
     try:
         results = campaign.run_python_campaign(2, 20260828)
     finally:
-        campaign._q8_seed = original
+        campaign._q8_seed, campaign._statement_seed = original
     by_name = {item["surface"]: item for item in results}
-    assert set(by_name) == {
-        "streampack",
-        "bcab",
-        "bcirq8",
-        "control",
-        "envelope",
-        "manifest",
-        "planner",
-        "realization",
-        "plan",
-    }
-    assert by_name["bcirq8"]["state"] == "FAIL"
-    assert [f["kind"] for f in by_name["bcirq8"]["findings"]] == ["seed-construction-failed"]
+    # Every surface still reports, read from the campaign's own list rather than a mirror of it.
+    assert set(by_name) == set(campaign.REQUIRED_PYTHON)
+    for broken_surface in ("bcirq8", "statement"):
+        assert by_name[broken_surface]["state"] == "FAIL"
+        kinds = [f["kind"] for f in by_name[broken_surface]["findings"]]
+        assert kinds == ["seed-construction-failed"], (broken_surface, kinds)
     assert by_name["streampack"]["state"] == "PASS"
+    assert by_name["store"]["state"] == "PASS"
 
 
 def test_assignment_matcher_is_linear_time() -> None:

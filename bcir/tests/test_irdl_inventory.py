@@ -238,3 +238,58 @@ def test_a_manifest_whose_root_is_not_an_object_is_a_finding_not_a_traceback() -
             assert any(f["kind"] == "manifest-shape" for f in report["findings"]), text
             with contextlib.redirect_stdout(io.StringIO()):
                 assert main(["--root", str(tree)]) == 1
+
+
+#: Programs the projection must REFUSE: each breaks one constraint G32 projected (the address
+#: is not an integer, a register value is not i64, an MSR index is not i32, a selector is not
+#: i16, the CAS operands and result disagree, a matmul buffer is not a memref, port I/O has
+#: three operands). (name, generic-syntax body)
+_REFUSED = (
+    ("volatile_load float address", '%r = "bcir.volatile_load"(%f) : (f32) -> i32'),
+    ("creg_write i32", '"bcir.creg_write"(%i32) : (i32) -> ()'),
+    ("msr_read i64 index", '%m = "bcir.msr_read"(%i64) : (i64) -> i64'),
+    ("segment_reload i32", '"bcir.segment_reload"(%i32, %i32) : (i32, i32) -> ()'),
+    ("atomic_cas mixed", '%c = "bcir.atomic_cas"(%i64, %i32, %i64) : (i64, i32, i64) -> i32'),
+    ("matmul_buffer scalar", '"bcir.gem_matmul_buffer"(%f, %f, %f) : (f32, f32, f32) -> ()'),
+    ("portio three operands", '"bcir.portio"(%i16, %i16, %i16) : (i16, i16, i16) -> ()'),
+)
+
+
+def test_the_projection_refuses_what_ods_refuses() -> None:
+    """G32: the newly projected operations are constrained, not merely named -- stock mlir-opt
+    with the projection refuses each mistyped program above and accepts its well-typed twin
+    (the corpus). A skip without mlir-opt, never a pass."""
+    import subprocess
+
+    from bcir.toolchain import resolve_llvm_tools
+
+    tools = resolve_llvm_tools("mlir-opt", pipeline="IRDL projection")
+    if not tools.ok:
+        return
+    irdl = _ROOT / "mlir/irdl/bcir.irdl.mlir"
+    with tempfile.TemporaryDirectory(prefix="bcir-irdl-neg-") as work:
+        for name, body in _REFUSED:
+            path = Path(work) / "neg.mlir"
+            path.write_text(
+                "func.func @f(%f: f32, %i16: i16, %i32: i32, %i64: i64) {\n"
+                f"  {body}\n  return\n}}\n",
+                encoding="utf-8",
+            )
+            run = subprocess.run(
+                [tools.paths["mlir-opt"], f"--irdl-file={irdl}", str(path)],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode != 0, f"the projection accepted {name}"
+            assert "error:" in run.stderr, (name, run.stderr)
+        for corpus in ("driver_core_generic", "gem_model_generic", "ecn_generic"):
+            run = subprocess.run(
+                [
+                    tools.paths["mlir-opt"],
+                    f"--irdl-file={irdl}",
+                    str(_ROOT / f"mlir/test/irdl/{corpus}.mlir"),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert run.returncode == 0, (corpus, run.stderr)

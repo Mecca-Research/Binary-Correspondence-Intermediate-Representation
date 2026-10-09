@@ -1902,6 +1902,270 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     `bin/` and `lib/`, which no order buys back. The priority makes an early start of the long
     tasks a property of what was measured rather than of the manifest's listing order.
   - The quick tier passes (4248 passed).
+  G19 EXEC-EXACT (2026-10-06): the proved optimum is the plan that runs (audit item 1; the
+  first P1 slice of the completion ladder).
+  - The defect: G4's exact rail proved every instance of the report's section 6.1 corpus, but
+    certified the dispatch's placement without replacing it. `verify_execution_plan` re-derived
+    the placement with the canonical dispatch and refused any other, so the solver's shorter
+    and equally legal placement could be proved but never carried. On the parent (`d16ea67`) a
+    plan carrying the 9-tick optimum of durations (1, 3, 3, 3, 4, 4) on two domains, where the
+    dispatch takes 10, is refused by R9 ("the plan's placement is not what the canonical
+    dispatch produces"). 190 of 1,716 instances on two domains, and 18 on three, ran
+    suboptimal with a certificate saying so.
+  - What landed:
+    - a plan may STATE its placement: header flag bit 0, `PLAN_FLAG_EXPLICIT_PLACEMENT`, legal
+      on an eft plan only. A flag, not a wire version: the record families are unchanged, and a
+      reader that predates it refuses the bit as reserved, so none runs the plan as the
+      canonical placement;
+    - `gem.schedule.placement_violations`, the legality of a phase-barriered placement read
+      from where the dispatch reads it: every claim placed once, on a stream it is eligible for,
+      for its duration, no earlier than its phase's barrier or its hazard predecessors, one claim
+      at a time per stream, and the makespan the last finish. The verifier (R9) holds an
+      explicit placement to it, and the canonical one to equality as before;
+      `plan_from_realization(placement=)` reads it before minting;
+    - `gem.execution_plan.exact_plan` mints the solver's incumbent where it beats the dispatch,
+      the canonical plan byte for byte everywhere else, and returns the certificate with it. A
+      schedule-liveness memory plan must be bound (`schedule_digest`) to the placement the plan
+      carries;
+    - the flag on the native codec, the ASN.1 projection (version 4, `flags [15]`) and the C
+      twin (`bcir_ep_validate`: any other bit `BCIR_ERR_RESERVED`, the flag on a token plan
+      `BCIR_ERR_PLAN`), and in the `execution_plan` gate section, which BCIR Make and CMake
+      both run.
+  - Found while building it: the first version of `placement_violations` read a slot on stream
+    number `domains` -- one past the last -- as the tail, which the dispatch indexes there, so a
+    claim the tail would take was accepted on a stream the target does not have. The witness
+    pins the exact message list, which is how it surfaced.
+  - Gates: `eft.executed.suboptimal.2domains` 11.07% -> 0 and `.3domains` 1.05% -> 0, read
+    through each plan's bytes and the verifier. Every witness of `bcir/tests/test_exec_exact.py`
+    fails on the parent (the API and the flag did not exist), and so does the section's new leg
+    against the parent's C runtime (`BCIR_ERR_RESERVED`). A generated differential over seeded
+    random modules with intra-phase hazards and random step costs mints every plan and admits
+    it, explicit placements among them. Every corpus program's plan is byte-identical to the
+    canonical one: the dispatch is already optimal on all of them.
+  - Measured against `98fcec6` (`ab_audit.py`, groups `sp`, `sched` and the new `xplan`, which
+    times the plan path -- mint, encode, decode, verify -- that no StreamPack row reached):
+    PASS. Every StreamPack and scheduler row's calls and digests are unchanged; `xplan@4`'s
+    digest is unchanged and it makes 14 more calls of 1,583,094, the flag checked in each
+    `validate_plan` and read by the verifier. That row also shows the plan path costing 19
+    times the planner's calls at 4,096 claims, which is the oracle's cost to look at next.
+  ASN1-N (2026-10-06): ASN.1 NULL has one abstract value, `codec.NULL`, on every encoding rule
+  (audit §4.5, found by ASN1-R's review; a P0 slice of the completion ladder).
+  - RED on the parent (`935cb97`), in every witness of `bcir/tests/test_asn1_null.py`:
+    - BER/DER took `codec.NULL` and refused `None`;
+    - PER and OER took any value at all and decoded `codec.NULL`. They put nothing on the
+      wire for a NULL and never looked at the value, so `5` went out as a NULL on both;
+    - XER and JER took `None`, refused `codec.NULL` and decoded `None`.
+    So a value one rule decoded was refused by another rule's encoder, and `None` -- which
+    the value model reserves for an absent component -- was a NULL on two rules.
+  - What landed: one predicate, `codec.require_null`, asked by every encoder (DER's message
+    now says what it means). Every decoder returns `codec.NULL`. `test_asn1_emit` had pinned
+    the disagreement on purpose, so that unifying the spelling would be a deliberate act
+    with a visible dependent. It now pins the one spelling, and the write-plan parity test
+    drives every emitter from one value instead of two.
+  - Found by the latest-toolchain check's thorough tier: `test_c_per_plan`, which needs a C
+    compiler and so is skipped by the quick tier, spelled a NULL as `None`. It now spells
+    `codec.NULL`.
+  - Measured against `935cb97` (`ab_audit.py`, groups `sp`, `sched` and `asn1`): PASS, every
+    ASN.1 row's calls and digests unchanged (the measured modules hold no NULL).
+  ASN1-T (2026-10-06): a tagged type is a type, so its tags go wherever it goes (audit §4.4,
+  found by ASN1-R's review; a P0 slice of the completion ladder).
+  - RED on the parent (`94b82df`), in seven of the eight witnesses of
+    `bcir/tests/test_asn1_tagged_types.py`. The type model carried tags on components only: a
+    tagged assignment's tag was copied onto each untagged component that named it. Every other
+    place a tagged type can stand dropped a tag:
+    - a component's own tag over a tagged type replaced it. RFC 4120's `ticket [3] Ticket`, with
+      `Ticket ::= [APPLICATION 1] SEQUENCE {...}`, went out without the `[APPLICATION 1]`;
+    - an element of SEQUENCE OF lost it (`SEQUENCE OF [0] INTEGER`, `SEQUENCE OF Ticket`);
+    - a chain of tagged aliases kept the outermost tag at best, and none encoded directly;
+    - a direct encode of a tagged assignment carried no tag;
+    - `[1] IMPLICIT T` with `T ::= [5] CHOICE {...}` was refused, as if T were untagged.
+    The eighth witness pins what the component copy already got right: a SET ordered, and an
+    OER CHOICE alternative told apart, by the outermost tag.
+  - Found while building it: the write plan's OER emitter wrote an untagged CHOICE
+    alternative's INDEX as its tag, on both rails (`emit.py` and the C twin `bcir_emit.c`), so
+    `CHOICE { a INTEGER, ... }` under EXPLICIT TAGS went out as `80 01 03`, not `02 01 03`. The
+    twin agreed with the Python emitter, so their differential never saw it; the new witness
+    compares the twin with the oracle. The twin also admitted tag number 63, which OER's
+    one-octet form spells as its escape (X.696 §8.7); both rails now refuse 63 and up.
+  - What landed:
+    - `Asn1Type.tags`: a type's own tags, outermost first. Every type applies them in
+      `encode`, checks and removes them in `decode`, and shows the outermost in `base_tag`;
+      `untagged_tag` is the universal tag (`require_tag` checks it). The repr of an untagged
+      type is byte-identical to before (`certified.py` digests it), and a tagged one differs.
+    - The front end builds an assignment-level or element tag into the type (`_with_tag`, a
+      copy), and an IMPLICIT tag over a tagged type replaces its outermost and keeps that
+      layer's form (X.690 §8.14.4). It no longer copies an assigned tag onto components.
+      §31.2.7's forced EXPLICIT applies to an UNTAGGED CHOICE or open type only.
+    - The write plan keeps a tag a member shows on the member, where version 5 put it. Any
+      other layer goes in a `tags` line of a version-6 plan, which the twin refuses (fail
+      closed) rather than encode without it. A plan with no such layer is version 5, byte for
+      byte.
+  - Measured against `94b82df` (`ab_audit.py`, groups `sp`, `sched` and `asn1`): PASS.
+    - The codec rows are unchanged: `asn1_codec:flat` 49,392 calls and `asn1_codec:recursive`
+      16,258, identical digests.
+    - The compile rows: `pkix` 14 and `x683` 10 fewer calls (no assigned tag is looked up
+      per component); `bcir` 9 more, because `dataclasses.replace` reads one more field of
+      each of the nine types it copies. Digests are identical.
+    - The first run graded two rows. `asn1_codec:recursive` made 80 more calls, a real cost:
+      `Reference` had inherited a `base_tag` that made two calls. It now makes one.
+      `verify.plan.scope.overhead` left its band (0.80 to 1.07, confirmed). Its code path
+      loads no ASN.1 module, and the re-run measured 1.155 and 1.086, inside the band.
+  ASN1-R (2026-10-06): recursive types on every encoding rule, held to one bound, from one
+  containment graph (audit §4.2; the completion ladder's second P0).
+  - RED on the parent (`bc2c1d7`), in every witness of `bcir/tests/test_asn1_recursion.py`:
+    - OER, XER and JER had no case for the front end's forward reference;
+    - the JER plan refused a recursive type as an open type, and the write plan as a SET;
+    - a recursive CHOICE (`Expr ::= CHOICE { lit INTEGER, neg Expr }`) did not lower at all.
+      The front end took "the referenced type is not built yet" for "tag it IMPLICITly",
+      behind a `pragma: no cover - guarded`, and an implicit tag over a CHOICE needs the tag a
+      CHOICE does not have;
+    - nothing bounded a recursion. DER encoded a 256-deep value its own reader refuses past
+      64, a 1,000-deep one raised `RecursionError` from the DER and PER encoders, and a crafted
+      input of a few kilobytes did the same to the PER, OER, XER and JER decoders;
+    - `decode_jer` let a deeply nested JSON text raise `RecursionError` from the parser,
+      recursive schema or not.
+  - Found by reviewing the fix, in the front end:
+    - a recursive X.683 instance of a CHOICE template (`E {T} ::= CHOICE { lit T, neg E {T} }`)
+      did not lower, here or imported (§9.8). The first version of the fix read the tag over an
+      unbuilt reference from the module's assignments only, and an instance is not one;
+    - a type defined only as a reference to itself (`A ::= B` with `B ::= A`, `A ::= [0] A`)
+      lowered with no type behind it, and failed only when a value was encoded;
+    - a recursive reference to a type with an assignment-level tag lost the tag:
+      `next T` inside `T ::= [APPLICATION 5] IMPLICIT SEQUENCE {...}` went out as `30`, not
+      `65`, because the tag was recorded after the type was built;
+    - a contained subtype naming an alias of a recursive type (`B ::= A` inside `A`) was
+      refused as "a contained subtype of itself".
+  - The audit's table had PER failing too. That row was the reproduction's own error: it passed
+    `decode_per` its arguments in the wrong order. PER already resolved the reference, with a
+    private predicate the other rails did not share, so the defect was a mechanism on two
+    rails of six (L14). §4.2 is corrected.
+  - What landed:
+    - `schema.Reference`: the one placeholder, where the cycle closes. `schema.resolve` is the
+      one predicate every rail follows it by, and `schema.through` the one guard. A level is
+      a context variable, so concurrent codecs do not share a count. The bound,
+      `MAX_RECURSION`, is the BER reader's nesting bound.
+    - Every rail's dispatcher handles a reference at the END of its chain, so a non-recursive
+      value pays nothing. PER's old resolver ran on every dispatch; `asn1_codec:flat` makes
+      1.1% fewer calls than the parent.
+    - The front end decides §31.2.7's EXPLICIT tag over an unbuilt reference from the
+      definition being built: the reference names the lowerer building its target, which
+      reads the assignment or the instance's substituted body, through names, templates and
+      their actuals. Once the module is complete, every such decision is checked against the
+      type built, so a misreading is refused, never encoded (a witness injects one). The same
+      pass, over the lowerers of imported templates too, refuses a type defined only as
+      itself by its cycle and checks a deferred CHOICE's §29.3 distinct tags. An untagged
+      CHOICE that contains itself is refused by name.
+    - `lower.containment_graph` / `recursive_types`: the containment graph's strongly connected
+      components (iterative Tarjan), computed when asked. A reference carries the cycle it
+      closes.
+    - The JER plan compiles a recursive type with a `ref` back-edge to the ancestor's node.
+      Such a plan is version 2, refused by a version-1 reader; a plan without recursion is
+      version 1, byte for byte. The write plan refuses one by naming its cycle
+      (`A is recursive (A -> B -> A)`).
+  - Measured against `bc2c1d7` (`ab_audit.py`, groups `sp`, `sched` and `asn1`; the `asn1`
+    group gains two codec rows): PASS.
+    - `asn1_codec:recursive` (DER and PER over recursive values, which both trees carry) makes
+      8.1% more calls (15,038 to 16,258): the bound, three context-variable operations per
+      level. It takes 1.12x the time over nine interleaved rounds;
+    - `asn1_codec:flat` makes 1.1% fewer calls, PER's per-dispatch resolver gone;
+    - the compile rows make 0.1% to 0.3% more calls, with identical digests;
+    - every harness row, the audit digests and the `sp`/`sched` hot paths are unchanged.
+    The first version of the guard was a generator-based context manager at +18.8%. Making
+    the containment graph lazy and re-checking only the deferred CHOICEs took the compile rows
+    back from +25%.
+  ASN1-H (2026-10-06): X.683 parameterization made hygienic, and every name a constraint
+  mentions resolved or refused (audit §4.1; the completion ladder's first P0).
+  - RED on the parent (`1d4c58a`), in each of the sixteen witnesses of
+    `bcir/tests/test_asn1_parameterization.py`:
+    - instantiation used dynamic scope. An object-set actual was installed in the module's own
+      table under the dummy's name while the body lowered, so a nested template resolved its
+      names through the enclosing instance's bindings. The name-keyed caches kept what it found,
+      and a module's meaning depended on the order of its assignments;
+    - a bound written as a value reference was dropped. Under PER and OER, `INTEGER (0..ub)` with
+      `ub INTEGER ::= 255` encoded 200 as `0200c8`, not `c8`;
+    - value parameters did not parse (`Bounded {5}`), and a braced actual was looked up as a name
+      made of its own text;
+    - a table constraint over a union, or over a parameterized or inline object set, was silently
+      left untabled;
+    - contained subtypes and value-set assignments were dropped or refused, and a template could
+      not be imported, because imports carried types only.
+  - What landed:
+    - `bcir/frontends/asn1/lower.py`: each dummy is classified by governor and spelling (§8.3)
+      and substituted structurally wherever it can stand, including nested actuals, table
+      constraints, a governing class, value references and object-set elements. Nothing is
+      installed under a dummy's name. Inline sets and objects get content-addressed synthetic
+      names, and instances are memoised by a structural key, never a `repr`. A template that
+      recurses through itself terminates, and an infinite family is refused.
+    - §9.8: an imported template lowers in its own module, and each actual is lowered first in
+      the module that wrote it (`ast.PreLowered`), keeping that module's tagging environment.
+    - `bcir/asn1/constraints.py`: `ValueReference` and `TypeReference`. `require_satisfiable`
+      refuses a reference that survives, so an unresolved name is a refusal, never a different
+      encoding.
+    - The parser reads value references, value actuals, table object-set specs, contained
+      subtypes and value sets; the printer writes them back, and the round-trip law holds.
+  - Found by reviewing the fix, both older than it and hidden while bounds were dropped:
+    - the parser read every `lower-name Type ::= ...` as an information object, so
+      `v Count ::= 7` was no value at all;
+    - a named value was read against the type that named it, not its own (`x C ::= red`).
+    The first version of the fix refused modules the parent had compiled by dropping the bound. A
+    governor seen as a type, or spelled with a lower-case letter, now makes a value; a literal
+    body is never an object; a value resolves against the type it was assigned; and a value
+    defined in terms of itself is refused.
+  - Measured:
+    - the six tracked ASN.1 modules lower to the same types on both trees;
+    - the 52 ASN.1 test modules pass (1,021 tests);
+    - the new `asn1` rows of `ab_audit.py` give identical digests in both trees;
+    - the front end makes 1.0% more calls on the BCIR modules, 1.1% more on PKIX and 7.4% more on
+      the X.683 row. That is the price of the walk visiting every position a dummy can occupy
+      and of the structural keys. Classifying each template's dummies once, rather than at every
+      instantiation, took the X.683 row down from 11.8%.
+  AUDIT-0 (2026-10-06): the GEM+/TMSAO audit of #758–#808 against the original plan
+  ([`BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md`](research/BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md))
+  and the completion ladder it implies (GEM+ roadmap §9). Every slice the roadmap carried had
+  landed; of the 22 items the original plan named, 7 were met, 9 partial and 6 missing, and three
+  findings sat where no gate looked: X.683 substitution captured names through the module's
+  shared object-set table, recursive types survived only BER/DER, and the cyclic collector was up
+  to 68% of the oracle's hot-path time at 32,768 claims while those paths left no cyclic garbage.
+  - `tools/perf/ab_audit.py`, the before/after audit each slice of the ladder now ends with
+    (roadmap §0.4): the harness and the bounded performance audit in both trees, the touched hot
+    paths timed in alternating rounds with each tree in its own process; `exact` rows, call
+    counts and output digests graded with zero tolerance, a `ratio` row held to its band, a time
+    never graded; a removed metric fails, and a regression lands only with its explanation.
+  - RED, on its first run: fifty calls injected into `realize.optimize` in a scratch tree read
+    1.04x *faster* on the clock and were refused by the exact call count (73,761 -> 73,811, exit
+    1). `bcir/tests/test_ab_audit.py` feeds the grader each kind of change it exists to catch, and
+    runs the real child and two-tree paths over a fixture-free row; an unreachable ref comes back
+    as a structured UNAVAILABLE report.
+  - The tool's first audit of this slice -- no runtime change on either side -- failed twice,
+    and both were the instrument: a `ratio` row measured once per tree left its 25% band under
+    load (`verify.plan.scope.overhead` 1.02 -> 1.47), and one hot path read as nondeterministic
+    between rounds with nothing kept to say what moved. A ratio row that leaves its band now
+    earns confirming measurements of its harness group in both trees and is graded on their
+    median, every measuring process runs under one hash seed, and a nondeterministic row
+    names the quantity that moved; each has a witness that feeds it the case.
+  - The moving quantity was a call count, and the instrument was again the defect (audit §4.3).
+    `sched_eft@4` counted 34,368 calls in one process and 36,415 in the next, with the collector
+    on or off. A per-function diff named one row, `<string>:2:__init__`: `pstats` re-keys
+    cProfile's per-code-object entries by (file, line, name), so it merges every dataclass
+    `__init__` into one row and keeps one class's count, which one depending on allocation.
+    Every call-count row read its count that way, the frozen harness's included. `planner.calls`
+    read 589,856 at scale 8 while the planner makes 655,393, and the lost 65,537 were the
+    constructor calls its emission floor counts. G17's factor is 5.42×, not 5.80×; its gate of
+    5× holds.
+    - One counter now, `bcir/tests/call_counts.py`: one entry per code object, with the collector
+      paused across the call. Both fixtures count through it, and `ab_audit.py` loads it by path
+      from its own checkout, so the two trees of an A/B are read with one instrument.
+    - `test_call_counts.py` and three tests in `test_ab_audit.py` were proven RED three ways:
+      against the `pstats` total, without the collector pause, and with the fixtures on their old
+      counters. Two of them are AST scans that refuse a `pstats` total anywhere in the package or
+      in `tools/`.
+    - `planner.calls`'s frozen baseline is re-counted over `realize_reference`, the parent's
+      planner kept verbatim; counted the old way, that code reproduces the frozen 3,419,172 to
+      within four calls. The parent's delta and full-chain baselines keep their numbers, labelled
+      as `pstats` totals: lower bounds, so a GAIN graded against them is understated, never
+      overstated.
+  - The session digest and the systems-engineer skill said everything BCIR emits was TMSAO-4 and
+    that G1–G18 were open; both now say what landed and point at the ladder.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -127,7 +127,7 @@ def test_the_module_has_its_own_arc_and_version():
     module, target, _theta, result = audit_fixture()
     plan = plan_from_realization(module, result, target, "eft")
     value = plan_to_value(plan)
-    assert value["version"] == PROJECTION_VERSION == 3
+    assert value["version"] == PROJECTION_VERSION == 4
     without = dict(value)
     del without["version"]
     assert value_to_plan(without) == plan
@@ -142,8 +142,11 @@ def test_the_module_has_its_own_arc_and_version():
     assert value_to_plan(legacy) == plan
     # a version-2 document (no binding, no edge tails) still means a plan that moves nothing;
     # a newer version than this reader's -- or no version at all -- is refused
-    v2 = {k: v for k, v in value.items() if k not in ("sourceHash", "specHash")}
+    v2 = {k: v for k, v in value.items() if k not in ("sourceHash", "specHash", "flags")}
     assert value_to_plan({**v2, "version": 2}) == plan
+    # a version-3 document (no flags) still means a plan with the canonical placement
+    v3 = {k: v for k, v in value.items() if k != "flags"}
+    assert value["flags"] == 0 and value_to_plan({**v3, "version": 3}) == plan
     for bad in (PROJECTION_VERSION + 1, 0):
         try:
             value_to_plan({**value, "version": bad})

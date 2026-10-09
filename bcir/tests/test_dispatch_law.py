@@ -274,7 +274,12 @@ def test_a_state_is_bound_to_its_inputs():
 
 def test_resuming_the_layout_and_the_selection_reproduces_the_uninterrupted_run():
     splits = 0
-    for rows in [items_of(f) for _seed, f in list(corpus())[::25]] + [items_of(WORST_FIXTURE)]:
+    # The fixtures whose starting incumbent does not already meet the bound (since G26 the
+    # portfolio closes most of the corpus at the root): the search has work to split.
+    searched = [
+        items_of(f) for _seed, f in corpus() if exact_layout(items_of(f), 200_000).expansions
+    ][:4]
+    for rows in searched:
         full = exact_layout(rows, 200_000)
         total = full.expansions
         if total == 0:
@@ -293,7 +298,7 @@ def test_resuming_the_layout_and_the_selection_reproduces_the_uninterrupted_run(
             )
             assert b.state.digest == both.state.digest
             splits += 1
-    assert splits >= 6  # most corpus fixtures close at the root; the witness never does
+    assert splits >= 6  # four searched fixtures, up to three split points each
     module, h = quality_corpus(seeds=0)[0][1], TARGETS["x86_avx512"]
     full = exact_selection(module, h, Theta.cool(), PERF)
     for b1 in (1, 7, 40, 80):

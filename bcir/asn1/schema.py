@@ -24,11 +24,43 @@ a constructed tag.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import contextvars
+import reprlib
+from dataclasses import dataclass, field, fields
+from dataclasses import field as _field  # OpenType has a member named `field`
 
-from .codec import Strictness, from_tlv, to_tlv
+from .codec import Strictness, from_tlv, require_null, to_tlv
 from .tags import Asn1Error, Tag, TagClass, Universal
-from .tlv import Tlv, decode_one, encode_tlv
+from .tlv import DEFAULT_MAX_DEPTH, Tlv, decode_one, encode_tlv
+
+#: How many times one value may pass through a recursive type reference, on every encoding
+#: rule and in both directions. A recursive type admits values of any depth; a codec that
+#: follows attacker-chosen depth by recursion is a stack-exhaustion surface, and one that
+#: follows a caller's cyclic value never returns. The bound is the constructed nesting the BER
+#: reader follows (`tlv.DEFAULT_MAX_DEPTH`), so no rail admits a recursion every other rail
+#: refuses for depth alone.
+MAX_RECURSION = DEFAULT_MAX_DEPTH
+
+_RECURSION_LEVEL = contextvars.ContextVar("bcir_asn1_recursion_level", default=0)
+
+
+def through(rail: str, reference: "Reference", fn, *args, **kwargs):
+    """`fn(*args, **kwargs)` one level deeper into the recursive `reference`, refused past
+    MAX_RECURSION: the one guard every rail takes when it passes through a `Reference`
+    (laws.md L14). The level is a context variable, restored on every exit, so concurrent
+    codecs do not share a count and a refusal unwinds it. A plain call rather than a context
+    manager: it runs once per level of every recursive value."""
+    level = _RECURSION_LEVEL.get()
+    if level >= MAX_RECURSION:
+        raise Asn1Error(
+            f"{rail}: {reference.target_name} recurses deeper than {MAX_RECURSION} levels, "
+            f"the bound every rail keeps on a recursive type (the BER reader's nesting bound)"
+        )
+    token = _RECURSION_LEVEL.set(level + 1)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        _RECURSION_LEVEL.reset(token)
 
 
 class _NoDefault:
@@ -104,9 +136,12 @@ class Component:
         lets `[4] Name` work when `Name` is a CHOICE and has no base tag to ask for.
         """
         if self.tag is None:
-            if isinstance(self.type, (Choice, OpenType)):
+            kind = self.type
+            if isinstance(kind, Reference) and not kind.tags:  # it shows what it names
+                kind = kind.resolved()
+            if isinstance(kind, (Choice, OpenType)) and not kind.tags:
                 return None
-            return self.type.base_tag()
+            return kind.base_tag()
         if self.explicit:  # §8.14.3
             return Tag(self.tag_class, self.tag, True)
         return Tag(
@@ -132,6 +167,14 @@ class Asn1Type:
     """Base of the type model. Subclasses encode/decode a Python value."""
 
     name: str = "?"
+    #: The type's own tags, outermost first, each `(class, number, explicit)`. X.680 §31 makes
+    #: a tagged type a TYPE: `Ticket ::= [APPLICATION 1] SEQUENCE {...}` is a SEQUENCE carrying
+    #: one, and the tag travels with it into every component, element and direct encode that
+    #: names it. A tag written over a tagged type (`ticket [3] Ticket`) is one more layer on
+    #: the component -- or, IMPLICIT, replaces the outermost (§8.14.4). Only BER/DER put tags
+    #: on the wire; PER's and OER's tag-ordered choices and sets read them through `base_tag`,
+    #: and the text rules never see them.
+    tags: tuple = ()
 
     def encode(self, value) -> Tlv:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -139,8 +182,25 @@ class Asn1Type:
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> object:  # pragma: no cover
         raise NotImplementedError
 
-    def base_tag(self) -> Tag:  # pragma: no cover - abstract
+    def base_tag(self) -> Tag:
+        """The tag this type shows on the wire: its outermost own tag, else its untagged one."""
+        if self.tags:
+            return _own_tag(self, 0)
+        return self.untagged_tag()
+
+    def untagged_tag(self) -> Tag:  # pragma: no cover - abstract
+        """The tag of the type without its own tags: a universal tag, or none for a CHOICE
+        and an open type, which raise."""
         raise NotImplementedError
+
+    @reprlib.recursive_repr()
+    def __repr__(self) -> str:
+        """A dataclass's repr, with `tags` shown only when there are some: an untagged type
+        reprs exactly as it did before types carried tags, and `certified.py` digests it."""
+        shown = [f"{f.name}={getattr(self, f.name)!r}" for f in fields(self) if f.repr]
+        if self.tags:
+            shown.append(f"tags={self.tags!r}")
+        return f"{type(self).__qualname__}({', '.join(shown)})"
 
     def require_tag(self, tlv: Tlv) -> None:
         """X.690 §8.1.2: refuse an encoding whose identifier octets are not this type's.
@@ -162,7 +222,7 @@ class Asn1Type:
         open type (X.681 §14) -- override or do not call this: a CHOICE checks the tag
         against its alternatives instead, and an open type accepts what it contains.
         """
-        want = self.base_tag()
+        want = self.untagged_tag()
         if tlv.tag.cls is not want.cls or tlv.tag.number != want.number:
             raise Asn1Error(
                 f"{self.name}: expected {want} but the encoding carries {tlv.tag} (X.690 8.1.2)",
@@ -170,7 +230,101 @@ class Asn1Type:
             )
 
 
-@dataclass
+class IncompleteReference(Asn1Error):
+    """A recursive reference asked about before the type it names was finished."""
+
+
+class Reference(Asn1Type):
+    """A reference to a type that is still being defined: a recursive definition (X.680 §17).
+
+    The front end builds `Node ::= SEQUENCE { children SEQUENCE OF Node }` while `Node` is
+    not yet a type, so the inner `Node` is this placeholder, resolved through `registry` once
+    the module is complete. Every rail follows it the same way: `resolve` for what it names,
+    and `through` for each pass through it, so a value is held to MAX_RECURSION levels
+    whichever encoding rule carries it.
+
+    `cycle` is the containment cycle the reference closes (`Node -> Node`, `A -> B -> A`),
+    for the diagnostics of a rail that cannot carry recursion."""
+
+    def __init__(
+        self, target_name: str, registry: dict, name: str | None = None, cycle=(), tags=()
+    ):
+        self.target_name = target_name
+        self.registry = registry
+        self.name = name or target_name
+        self.cycle = tuple(cycle)
+        #: Tags written over the reference itself (`T2 ::= [5] T` while T is being built).
+        self.tags = tuple(tags)
+
+    def __repr__(self) -> str:
+        own = f", tags={self.tags!r}" if self.tags else ""
+        return f"Reference({self.target_name!r}{own})"
+
+    def ready(self) -> bool:
+        return self.target_name in self.registry and self.registry[self.target_name] is not self
+
+    def resolved(self) -> Asn1Type:
+        target = self.registry.get(self.target_name)
+        if target is None:
+            raise IncompleteReference(
+                f"{self.target_name} is referenced while it is still being defined, where "
+                f"its tags are needed (an untagged CHOICE alternative, or an IMPLICIT tag "
+                f"on a type that contains itself); tag the reference EXPLICITly "
+                f"(X.680 31.2.7)"
+            )
+        if target is self:
+            raise Asn1Error(f"type {self.target_name!r} is defined as itself")
+        return target
+
+    # The tag-first rails (BER/DER) go through these, so they take the same guard.
+    def untagged_tag(self) -> Tag:
+        return self.resolved().base_tag()
+
+    def base_tag(self) -> Tag:  # one call on the untagged path, as before tags were the type's
+        return _own_tag(self, 0) if self.tags else self.resolved().base_tag()
+
+    def alternative_tags(self) -> tuple[Tag, ...]:
+        if self.tags:
+            return (self.base_tag(),)
+        target = self.resolved()
+        if id(target) in _TAGS_IN_PROGRESS.get():
+            raise Asn1Error(
+                f"{self.target_name} contains itself as an untagged CHOICE alternative, so "
+                f"its set of tags is not defined (X.680 29.3); tag that alternative"
+            )
+        token = _TAGS_IN_PROGRESS.set(_TAGS_IN_PROGRESS.get() | {id(target)})
+        try:
+            return target.alternative_tags()
+        finally:
+            _TAGS_IN_PROGRESS.reset(token)
+
+    def encode(self, value) -> Tlv:
+        tlv = through("BER", self, self.resolved().encode, value)
+        return _with_own_tags(self, tlv) if self.tags else tlv
+
+    def decode(self, tlv: Tlv, *, strictness: Strictness):
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
+        return through("BER", self, self.resolved().decode, tlv, strictness=strictness)
+
+
+#: The types (by identity) whose CHOICE tag set is being computed: a recursive untagged
+#: CHOICE would otherwise ask itself forever.
+_TAGS_IN_PROGRESS: contextvars.ContextVar = contextvars.ContextVar(
+    "bcir_asn1_tags_in_progress", default=frozenset()
+)
+
+
+def resolve(kind: Asn1Type) -> Asn1Type:
+    """The type `kind` names, through any chain of references (every rail's one predicate)."""
+    for _ in range(MAX_RECURSION):
+        if not isinstance(kind, Reference):
+            return kind
+        kind = kind.resolved()
+    raise Asn1Error("a chain of type references never reaches a type -- a reference cycle")
+
+
+@dataclass(repr=False)
 class Primitive(Asn1Type):
     """A universal type named by the schema, encoded *tag-first*.
 
@@ -228,6 +382,8 @@ class Primitive(Asn1Type):
     #: True when the "Enumerations" production carried an extension marker (X.680 §20.1).
     #: X.691 §10.3.22 a) makes such a type extensible for PER, which adds the §14.3 bit.
     enum_extensible: bool = False
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
 
     def enum_indices(self) -> dict[int, int]:
         """X.691 §14.1: enumeration value -> enumeration index, root sorted ascending."""
@@ -239,7 +395,13 @@ class Primitive(Asn1Type):
         ordered = sorted({number for _name, number in self.enumeration})
         return {number: index for index, number in enumerate(ordered)}
 
+    def untagged_tag(self) -> Tag:
+        constructed = self.universal in (Universal.SEQUENCE, Universal.SET)
+        return Tag(TagClass.UNIVERSAL, self.universal, constructed)
+
     def base_tag(self) -> Tag:
+        if self.tags:
+            return _own_tag(self, 0)
         constructed = self.universal in (Universal.SEQUENCE, Universal.SET)
         return Tag(TagClass.UNIVERSAL, self.universal, constructed)
 
@@ -249,23 +411,30 @@ class Primitive(Asn1Type):
         if self.universal in _STRING_UNIVERSALS:
             if not isinstance(value, str):
                 raise Asn1Error(f"{self.name}: expected str, got {type(value).__name__}")
-            return Tlv(self.base_tag(), encode_string(self.universal, value))
+            tlv = Tlv(self.untagged_tag(), encode_string(self.universal, value))
+            return _with_own_tags(self, tlv) if self.tags else tlv
 
+        if self.universal == Universal.NULL:
+            require_null(value, self.name)
         tlv = to_tlv(value)
         if tlv.tag.is_universal and tlv.tag.number == self.universal:
-            return tlv
+            tlv = tlv
+            return _with_own_tags(self, tlv) if self.tags else tlv
         # §8.4: ENUMERATED borrows the integer contents octets.
         if (
             self.universal == Universal.ENUMERATED
             and tlv.tag.is_universal
             and tlv.tag.number == Universal.INTEGER
         ):
-            return Tlv(self.base_tag(), tlv.content)
+            tlv = Tlv(self.untagged_tag(), tlv.content)
+            return _with_own_tags(self, tlv) if self.tags else tlv
         raise Asn1Error(
             f"{self.name}: value maps to {tlv.tag}, not {Tag(TagClass.UNIVERSAL, self.universal)}"
         )
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> object:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         self.require_tag(tlv)
         return from_tlv(tlv, strictness=strictness)
 
@@ -326,7 +495,7 @@ class ObjectSetTable:
         )
 
 
-@dataclass
+@dataclass(repr=False)
 class OpenType(Asn1Type):
     """An OPEN TYPE — X.681 §14: a field whose type is not fixed by the schema.
 
@@ -364,6 +533,8 @@ class OpenType(Asn1Type):
     #: the referenced components to be ObjectClassFieldTypes of the same class, so each
     #: governing path has a column that its value must match.
     governing_fields: tuple[str, ...] = ()
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
 
     def resolve(self, context: dict):
         """The contained type, per §10.19/§10.20, or None when it cannot be determined.
@@ -389,11 +560,14 @@ class OpenType(Asn1Type):
             return None
         return selected[0].get(self.field)
 
-    def base_tag(self) -> Tag:
+    def untagged_tag(self) -> Tag:
         raise Asn1Error(
             f"{self.name}: an open type has no tag of its own (X.681 14); it shows the "
             f"tag of whatever value it contains"
         )
+
+    def base_tag(self) -> Tag:
+        return _own_tag(self, 0) if self.tags else self.untagged_tag()
 
     def encode(self, value) -> Tlv:
         if not isinstance(value, (bytes, bytearray)):
@@ -401,13 +575,16 @@ class OpenType(Asn1Type):
                 f"{self.name}: an open type value is the contained value's complete "
                 f"encoding, so it must be bytes, not {type(value).__name__}"
             )
-        return decode_one(bytes(value))
+        tlv = decode_one(bytes(value))
+        return _with_own_tags(self, tlv) if self.tags else tlv
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> bytes:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         return encode_tlv(tlv)
 
 
-@dataclass
+@dataclass(repr=False)
 class SequenceOf(Asn1Type):
     """SEQUENCE OF (X.690 §8.10): order is significant and is preserved."""
 
@@ -415,21 +592,31 @@ class SequenceOf(Asn1Type):
     name: str = "SEQUENCE OF"
     #: A SIZE constraint on the number of occurrences (X.680 §51.5).
     constraint: object | None = None
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
+
+    def untagged_tag(self) -> Tag:
+        return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
 
     def base_tag(self) -> Tag:
+        if self.tags:
+            return _own_tag(self, 0)
         return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
 
     def encode(self, value) -> Tlv:
-        return Tlv(self.base_tag(), b"", [self.element.encode(v) for v in value])
+        tlv = Tlv(self.untagged_tag(), b"", [self.element.encode(v) for v in value])
+        return _with_own_tags(self, tlv) if self.tags else tlv
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(f"{self.name} must be constructed (X.690 8.10.1)", tlv.offset)
         return [self.element.decode(c, strictness=strictness) for c in tlv.children]
 
 
-@dataclass
+@dataclass(repr=False)
 class Sequence(Asn1Type):
     """SEQUENCE (X.690 §8.9): components in definition order, OPTIONAL/DEFAULT aware.
 
@@ -441,8 +628,15 @@ class Sequence(Asn1Type):
     name: str = "SEQUENCE"
     #: True when the component list carried a `...` extension marker (X.680 §25.1).
     extensible: bool = False
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
+
+    def untagged_tag(self) -> Tag:
+        return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
 
     def base_tag(self) -> Tag:
+        if self.tags:
+            return _own_tag(self, 0)
         return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
 
     def encode(self, value: dict) -> Tlv:
@@ -460,9 +654,12 @@ class Sequence(Asn1Type):
             if comp.has_default and item == comp.default:
                 continue
             children.append(_apply_tag(comp, comp.type.encode(item)))
-        return Tlv(self.base_tag(), b"", children)
+        tlv = Tlv(self.untagged_tag(), b"", children)
+        return _with_own_tags(self, tlv) if self.tags else tlv
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(f"{self.name} must be constructed (X.690 8.9.1)", tlv.offset)
@@ -497,7 +694,7 @@ class Sequence(Asn1Type):
         return out
 
 
-@dataclass
+@dataclass(repr=False)
 class SetOf(Asn1Type):
     """SET OF (X.690 §8.12): unordered as an abstract value.
 
@@ -511,22 +708,32 @@ class SetOf(Asn1Type):
     name: str = "SET OF"
     #: A SIZE constraint on the number of occurrences (X.680 §51.5).
     constraint: object | None = None
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
+
+    def untagged_tag(self) -> Tag:
+        return Tag(TagClass.UNIVERSAL, Universal.SET, True)
 
     def base_tag(self) -> Tag:
+        if self.tags:
+            return _own_tag(self, 0)
         return Tag(TagClass.UNIVERSAL, Universal.SET, True)
 
     def encode(self, value) -> Tlv:
         children = [self.element.encode(v) for v in value]
-        return Tlv(self.base_tag(), b"", _sorted_set_of(children))
+        tlv = Tlv(self.untagged_tag(), b"", _sorted_set_of(children))
+        return _with_own_tags(self, tlv) if self.tags else tlv
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> list:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(f"{self.name} must be constructed (X.690 8.12.1)", tlv.offset)
         return [self.element.decode(c, strictness=strictness) for c in tlv.children]
 
 
-@dataclass
+@dataclass(repr=False)
 class Set(Asn1Type):
     """SET (X.690 §8.11): components identified by tag, not by position.
 
@@ -539,8 +746,15 @@ class Set(Asn1Type):
     name: str = "SET"
     #: True when the component list carried a `...` extension marker (X.680 §25.1).
     extensible: bool = False
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
+
+    def untagged_tag(self) -> Tag:
+        return Tag(TagClass.UNIVERSAL, Universal.SET, True)
 
     def base_tag(self) -> Tag:
+        if self.tags:
+            return _own_tag(self, 0)
         return Tag(TagClass.UNIVERSAL, Universal.SET, True)
 
     def encode(self, value: dict) -> Tlv:
@@ -557,9 +771,12 @@ class Set(Asn1Type):
             if comp.has_default and item == comp.default:  # §11.5
                 continue
             children.append(_apply_tag(comp, comp.type.encode(item)))
-        return Tlv(self.base_tag(), b"", _sorted_set_of(children))
+        tlv = Tlv(self.untagged_tag(), b"", _sorted_set_of(children))
+        return _with_own_tags(self, tlv) if self.tags else tlv
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> dict:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         self.require_tag(tlv)
         if not tlv.constructed:
             raise Asn1Error(f"{self.name} must be constructed (X.690 8.11.1)", tlv.offset)
@@ -589,7 +806,7 @@ class Set(Asn1Type):
         return out
 
 
-@dataclass
+@dataclass(repr=False)
 class Choice(Asn1Type):
     """CHOICE (X.680 §29): exactly one alternative, identified by its tag.
 
@@ -611,14 +828,32 @@ class Choice(Asn1Type):
     name: str = "CHOICE"
     #: True when the alternative list carried a `...` extension marker (X.680 §25.1).
     extensible: bool = False
+    #: The type's own tags (`Asn1Type.tags`), shown in the repr only when present.
+    tags: tuple = _field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         for alt in self.alternatives:
-            if alt.tag is not None and not alt.explicit and isinstance(alt.type, Choice):
+            if (
+                alt.tag is not None
+                and not alt.explicit
+                and isinstance(alt.type, Choice)
+                and not alt.type.tags
+            ):
                 raise Asn1Error(
                     f"{self.name}: alternative {alt.name!r} tags a CHOICE implicitly; "
                     f"X.680 31.2.7 requires EXPLICIT"
                 )
+        try:
+            self.check_tags()
+        except IncompleteReference:
+            # A recursive alternative whose tags need the type still being built: the front
+            # end checks again once the module is complete (`check_tags`).
+            self.tags_checked = False
+        else:
+            self.tags_checked = True
+
+    def check_tags(self) -> None:
+        """X.680 §29.3: the alternatives' tags are distinct."""
         tags = [t for alt in self.alternatives for t in alt.expected_tags()]
         duplicate = {t for t in tags if tags.count(t) > 1}
         if duplicate:
@@ -627,13 +862,18 @@ class Choice(Asn1Type):
                 f"X.680 29.3 requires distinct tags"
             )
 
-    def base_tag(self) -> Tag:
+    def untagged_tag(self) -> Tag:
         raise Asn1Error(
             f"{self.name}: a CHOICE has no tag of its own (X.680 29.1); tag the "
             f"component that references it, EXPLICITly (X.680 31.2.7)"
         )
 
+    def base_tag(self) -> Tag:
+        return _own_tag(self, 0) if self.tags else self.untagged_tag()
+
     def alternative_tags(self) -> tuple[Tag, ...]:
+        if self.tags:  # a tagged CHOICE shows its own tag (X.680 31.2.7)
+            return (self.base_tag(),)
         return tuple(t for alt in self.alternatives for t in alt.expected_tags())
 
     def encode(self, value) -> Tlv:
@@ -645,10 +885,13 @@ class Choice(Asn1Type):
         chosen, payload = value
         for alt in self.alternatives:
             if alt.name == chosen:
-                return _apply_tag(alt, alt.type.encode(payload))
+                tlv = _apply_tag(alt, alt.type.encode(payload))
+                return _with_own_tags(self, tlv) if self.tags else tlv
         raise Asn1Error(f"{self.name}: {chosen!r} is not an alternative")
 
     def decode(self, tlv: Tlv, *, strictness: Strictness) -> tuple:
+        if self.tags:
+            tlv = _without_own_tags(self, tlv)
         for alt in self.alternatives:
             if _matches_any(tlv, alt):
                 return (alt.name, alt.type.decode(_strip_tag(alt, tlv), strictness=strictness))
@@ -728,7 +971,7 @@ def _matches_any(tlv: Tlv, comp: Component) -> bool:
     # so there is nothing to compare against (X.681 14). This is what lets
     # `parameters ANY OPTIONAL` sit at the end of AlgorithmIdentifier and absorb whatever
     # the algorithm actually carries.
-    if comp.tag is None and isinstance(comp.type, OpenType):
+    if comp.tag is None and isinstance(comp.type, OpenType) and not comp.type.tags:
         return True
     return any(_matches(tlv, tag) for tag in comp.expected_tags())
 
@@ -756,6 +999,57 @@ def _refuse_present_default(
             f"{comp.default!r}; DER shall not encode it (X.690 11.5)",
             offset,
         )
+
+
+def _own_tag(kind, index: int) -> Tag:
+    """Layer `index` of `kind`'s own tags as the wire shows it: constructed when EXPLICIT
+    (§8.14.3), else with the constructed bit of what it replaces (§8.14.4)."""
+    cls, number, explicit = kind.tags[index]
+    if explicit:
+        return Tag(cls, number, True)
+    below = _own_tag(kind, index + 1) if index + 1 < len(kind.tags) else kind.untagged_tag()
+    return Tag(cls, number, below.constructed)
+
+
+def _with_own_tags(kind, tlv: Tlv) -> Tlv:
+    """`tlv` under `kind`'s own tags, innermost first (X.690 §8.14)."""
+    for cls, number, explicit in reversed(kind.tags):
+        if explicit:  # §8.14.3: wrap
+            tlv = Tlv(Tag(cls, number, True), b"", [tlv])
+        else:  # §8.14.4: replace, keeping the constructed bit
+            tlv = Tlv(
+                Tag(cls, number, tlv.tag.constructed), tlv.content, tlv.children, offset=tlv.offset
+            )
+    return tlv
+
+
+def _without_own_tags(kind, tlv: Tlv) -> Tlv:
+    """The encoding inside `kind`'s own tags, each one checked as it is taken off (X.690
+    §8.1.2, §8.14): a schema-directed decode is told the tag to expect."""
+    for index, (cls, number, explicit) in enumerate(kind.tags):
+        if tlv.tag.cls is not cls or tlv.tag.number != number:
+            raise Asn1Error(
+                f"{kind.name}: expected {Tag(cls, number, explicit)} but the encoding carries "
+                f"{tlv.tag} (X.690 8.1.2)",
+                tlv.offset,
+            )
+        if explicit:  # §8.14.3: unwrap the nesting
+            if not tlv.constructed or len(tlv.children) != 1:
+                raise Asn1Error(
+                    f"{kind.name}: explicitly tagged [{number}] must wrap exactly one "
+                    f"encoding (X.690 8.14.3)",
+                    tlv.offset,
+                )
+            tlv = tlv.children[0]
+        else:  # §8.14.4: restore the tag this one replaced
+            below = _own_tag(kind, index + 1) if index + 1 < len(kind.tags) else kind.untagged_tag()
+            tlv = Tlv(
+                Tag(below.cls, below.number, tlv.tag.constructed),
+                tlv.content,
+                tlv.children,
+                offset=tlv.offset,
+            )
+    return tlv
 
 
 def _apply_tag(comp: Component, base: Tlv) -> Tlv:
@@ -811,14 +1105,19 @@ class Module:
 
 
 __all__ = [
+    "MAX_RECURSION",
     "Asn1Type",
     "Choice",
     "Component",
+    "IncompleteReference",
     "Module",
     "OpenType",
     "Primitive",
+    "Reference",
     "Sequence",
     "SequenceOf",
     "Set",
     "SetOf",
+    "resolve",
+    "through",
 ]

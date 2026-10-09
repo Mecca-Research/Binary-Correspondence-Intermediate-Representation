@@ -33,7 +33,7 @@ The StreamPack ABI's, unchanged:
 |---|---|---|---|
 | 0 | `magic` | `u8[4]` | `"BPLN"` |
 | 4 | `version` | `u16` | `1` |
-| 6 | `flags` | `u16` | reserved (0) |
+| 6 | `flags` | `u16` | bit 0 (G19): an **explicit placement** — see [below](#the-explicit-placement-flag-g19); legal on an eft plan only. Bits 1–15 reserved (0) |
 | 8 | `mode` | `u8` | `0` = `eft` (phase-barriered LPT/EFT dispatch), `1` = `tokens` (token-pipelined) |
 | 9 | `liveness` | `u8` | **v2** (append-only): the lifetimes' liveness domain — `0` = phase positions, `1` = the placement's own ticks; reserved (0) on v1 |
 | 10 | `reserved` | `u8[2]` | pad (0) |
@@ -93,7 +93,8 @@ The C `bcir_ep_header` is this layout without padding (a static assertion locks 
 
 The encoder refuses to emit, and every decoder refuses to read, a plan that violates any of:
 
-- `mode` legal; `streams ≥ 1`; `1 ≤ knee ≤ streams`;
+- `mode` legal; header `flags` within the defined set, and an explicit placement only on an eft
+  plan; `streams ≥ 1`; `1 ≤ knee ≤ streams`;
 - per step: a legal lane, a nonzero power-of-two width, `stream < streams` or the tail
   sentinel, `duration == max(0, cost)`, `start + duration ≤ makespan` (no 64-bit overflow);
   claim ids unique;
@@ -131,8 +132,9 @@ Three laws need more than the bytes, and both rails hold them:
   order, and every claim is stepped; `module_hash` is the module's canonical digest (validated
   through the S1-B identity API, by content) and, with a target, `target_hash` and the stream
   geometry are the target's and the placement is what the canonical dispatch produces from the
-  plan's own step costs. The C twin cannot see the module; it holds the structural laws above
-  and the two below.
+  plan's own step costs -- or, for an explicit placement (G19), a legal phase-barriered
+  placement of those costs (`gem.schedule.placement_violations`). The C twin cannot see the
+  module; it holds the structural laws above and the two below.
 - **R11, the plan against the registry** (`verify_execution_plan`, `bcir_ep_check_generation_vector`):
   every carried entry must match the live registry exactly and every declared resource must
   have an entry. A plan minted under an older vector is stale ("rehydrate: repack" for
@@ -213,6 +215,35 @@ v3 lands with the movement transform (staged plan S5-C). It changes **no** v1/v2
 - The semantic laws of a move -- that the transform is correctness-neutral and the edge is the
   claim's -- need the source module and the spec, and live on the oracle (`verify_movement`,
   MV1–MV11); `verify_execution_plan` refuses a plan that moves data without them (MV11).
+
+## The explicit-placement flag (G19)
+
+The canonical placement is what `schedule_plan` produces, and before G19 that was the only
+placement a plan could carry: the verifier held the steps to equality with it, so the exact
+solver's proved optimum (`gem.exact`) -- a shorter, equally legal placement -- could be
+certified but never run. Header flag bit 0 says the plan **states** its placement instead.
+`gem.execution_plan.exact_plan` mints one when the solver's incumbent is shorter than the
+canonical makespan (otherwise it returns the canonical plan, byte for byte), and returns the
+certificate with it, so the plan that runs carries its distance from optimal.
+
+- **The verifier** (`verify_execution_plan`, R9) holds an explicit placement to the rules every
+  phase-barriered placement obeys, read from where the dispatch reads them
+  (`gem.schedule.placement_violations`): every claim of the module placed exactly once, on a
+  stream it is eligible for (the tail for a sparse GGG/random claim, the first `knee` streams
+  for a bandwidth-class claim, any domain for a compute-class claim), for its duration; no
+  earlier than its phase's barrier or its intra-phase hazard predecessors' finishes; one claim
+  at a time per stream; and a makespan equal to the last finish. Optimality is not a legality
+  rule: the makespan is the plan's price, and the certificate says how far from optimal it is.
+- **Both codecs** accept bit 0 only on an eft plan (`BCIR_ERR_PLAN` / `AbiError` on a
+  token-pipelined one) and refuse every other bit as reserved (`BCIR_ERR_RESERVED`). The ASN.1
+  projection carries the flags as `flags [15]` (projection version 4).
+- **A flag, not a version.** The record families are unchanged, so the flag rides on whatever
+  version the plan's records need (v1 for a phase-liveness plan that moves nothing). A reader
+  that predates it refuses the bit as reserved, so no reader runs an explicit placement
+  believing it is the canonical one.
+- **Readers run it as stated**: `schedule_of` returns the plan's placement, so both executors
+  and the pricer read the optimum. The pack binding is unchanged -- a segment carries the step's
+  claim, phase, lane and width, not its stream or start.
 
 ## Versioning (the freeze)
 

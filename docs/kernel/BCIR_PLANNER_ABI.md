@@ -1,4 +1,4 @@
-# The K_BCIR planner's records — BKPI and BKPR (version zero, experimental)
+# The K_BCIR planner's records — BKPI, BKPR and BKPB (version zero, experimental)
 
 A native planner may own a certificate only after it reproduces the Python plan byte for byte over
 a generated corpus — the way the C twins earn their rails (GEM+ roadmap G17, staged plan S4-A).
@@ -6,7 +6,9 @@ That needs the planner's whole input, and its whole output, as bytes:
 
 - **BKPI**, the planner input: everything `realize.optimize(module, h, theta, policy)` reads, and
   nothing else;
-- **BKPR**, the realization: the plan, one step per claim, and its score.
+- **BKPR**, the realization: the plan, one step per claim, and its score;
+- **BKPB**, the binding (CXX4): what a StreamPack needs beyond the two -- the RIDs, the
+  generation vector and the pack's name -- so the native hydrate writes the oracle's pack.
 
 The executable oracle is [`bcir/abi/planner_abi.py`](../../bcir/abi/planner_abi.py), and the
 planner it describes is [`bcir/kbcir/realize.py`](../../bcir/kbcir/realize.py). The native twin is
@@ -201,6 +203,53 @@ re-check one invariant of it, the lane-width count (1..16), because the geometry
 hand-built `bcir_kp_input` with no widths or with more than 16 is refused `BCIR_ERR_PLANNER`
 before anything is read. The harness's `--api` mode drives both counts.
 
+## BKPB — the binding, and the native hydrate (CXX4)
+
+BKPI carries a claim's operands as indices into a resource table, and BKPR carries the plan.
+What a StreamPack needs beyond them is the **binding**: the RID behind each index, the registry's
+generation vector, and the pack's name. With it, `bcir_kp_hydrate` writes the StreamPack that
+`streampack_abi.encode(gem.streampack.hydrate(module, result, plan))` writes for the same module
+and plan, byte for byte, so the native planner's plan becomes the pack that runs without Python.
+
+```
+header (32)  @0 magic "BKPB"  @4 version u16 = 0  @6 flags u16 = 0  @8 n_resources u32
+             @12 n_gens u32  @16 topo_gen u32  @20 plan_len u32  @24 reserved u64 = 0
+rids         n_resources x u32 -- the RID of each BKPI resource index
+gens         n_gens x (rid, map_gen, data_gen) u32 -- the generation vector, RID order
+plan         plan_len bytes, UTF-8 -- the pack's source_plan
+trailer      crc32 u32
+```
+
+`encode_binding(module, plan)` writes it: the RIDs in BKPI's first-reference order
+(`resource_rids`), the vector of every resource the module declares, `topo_gen` 1.
+
+Laws (`decode_binding` / `bcir_kp_decode_binding`, in order):
+
+1. the framing laws, as BKPI's; the reserved word → `BCIR_ERR_RESERVED`
+2. a count over 2²⁶, or a plan name over 65,535 bytes → `BCIR_ERR_PLANNER`
+3. the size is not `36 + 4·n_resources + 12·n_gens + plan_len` → `BCIR_ERR_TRUNCATED` or
+   `BCIR_ERR_TRAILING`
+4. the plan name is not UTF-8 → `BCIR_ERR_UTF8`
+5. the vector's RIDs not strictly ascending → `BCIR_ERR_GENERATION`
+
+`bcir_kp_hydrate` (and `check_binding` with `gem.streampack.hydrate` on the Python rail) then
+holds, in order:
+
+6. the binding against the input: another resource count, two indices naming one RID, or a
+   resource declared without a generation (or undeclared with one) → `BCIR_ERR_PLANNER`
+7. the oracle hydrate's laws over the steps: a step naming no claim or a claim twice, a step whose
+   phase is not its claim's, a step out of the canonical phase order, a claim no step plans →
+   `BCIR_ERR_PROVENANCE`
+8. the encoder's: a width that is not a power of two → `BCIR_ERR_WIDTH`; a negative offset or
+   stride (a block field is a u64) → `BCIR_ERR_OVERFLOW`
+
+The pack is the oracle's: v4 with the vector, or the frozen v1 when the module declares no
+resource; one segment per step (`seg<n>`, the claim's op, or the realization's name when the op is
+empty: `vec<width>`, `scalar`, ...); a `pf<n>` prefetch of the reads for each vector step that
+reads; one block and one trace note per step. Every law is checked, and the size counted, before
+the first byte is written (`bcir_kp_hydrate_size`). The scratch is the caller's
+(`bcir_kp_hydrate_scratch_size`), and every failure zeroes the output.
+
 ## Gates
 
 - **Rows**: `tools/perf/gemplus_baseline.py --group kplan`, graded by `tools/c/check_planner.py`
@@ -223,6 +272,22 @@ before anything is read. The harness's `--api` mode drives both counts.
   and the Python decoders are the decoder campaign's `planner` and `realization` surfaces.
 - **Faults:** `tools/testing/faults/planner.json` injects defects into the compact planner, R9,
   the C planner and both codecs. Each defect is caught by its own row.
+- **The native hydrate (CXX4)**: `tools/perf/gemplus_baseline.py --group hydrate`, graded by
+  `tools/c/check_hydrate.py` → `bcir/tests/hydrate_fixtures.py::measure`, which the `kplan`
+  section of `tools/c/check_runtime.sh` also runs at -O2, -O0 and -O3 and against a fault-injected
+  build (a v1 pack written as v4).
+  - `hydrate.native.parity` 3,375 → 0. The corpus is every case of the planner's corpus whose plan
+    the realization record carries, and the hydrate's own cases: each realization name as an
+    opcode, generations above zero, v1 packs, modules with no claims, RIDs and generations at the
+    top of their range, and plan names of 0, 13 and 65,535 bytes.
+  - `hydrate.native.malformed.accepted` 48 → 0: one BKPB variant per law above, one BKPR forgery
+    per hydrate law, and the two values a StreamPack cannot carry, on both rails.
+  - `hydrate.native.scale4`: the native hydrate's time at 4,096 claims, beside the oracle's.
+  - `fuzz_kplan.c` hydrates every plan the planner returns, under a binding consistent with its
+    input. The pack must pass the runtime's own reader (`bcir_sp_verify_semantic`) and be
+    rewritten identically over dirty scratch, or be refused only as a width or block field no
+    StreamPack can carry. A fourth mode fuzzes the binding decoder.
+    `tools/testing/faults/hydrate.json` injects 21 defects into both rails.
 
 ## Not claimed
 
@@ -233,3 +298,5 @@ before anything is read. The harness's `--api` mode drives both counts.
 - No certificate is produced natively. The native planner reproduces the plan; the certificate
   rail reads the Python plan.
 - The native wall rows are same-host, single-core, indicative measurements.
+- The native hydrate writes the pack `hydrate` writes, not `hydrate_pipelined`'s (no
+  double-buffer prefetch, pipeline depth 1), and no G18 delta pack.

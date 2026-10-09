@@ -17,16 +17,16 @@ at the site, because the whole value of a plan-driven encoder is that a reader c
 against the standard without holding the oracle in their head at the same time.
 
 **A finding the neutral stream exposed, which is an argument for having one.** The oracle's
-three encoders disagree about how a Python value spells ASN.1 NULL: `codec` wants its `NULL`
-sentinel and refuses `None`; `encode_jer` wants `None` and refuses `NULL`; `encode_oer`
-accepts either. **There is no single Python value that can be handed to all three.** That
-ambiguity lives in the *value mapping*, not in any encoding — and it is invisible until
-something tries to drive every encoder from one input, which is exactly what a matched
-comparison must do. The stream has nothing to disagree about, because a NULL contributes zero
-octets to it, so all three plan-driven emitters produce the right answer from one value.
+three encoders disagreed about how a Python value spells ASN.1 NULL: `codec` wanted its `NULL`
+sentinel and refused `None`; `encode_jer` wanted `None` and refused `NULL`; `encode_oer`
+accepted either. There was no single Python value that could be handed to all three. That
+ambiguity lived in the *value mapping*, not in any encoding, and it was invisible until
+something drove every encoder from one input, which is exactly what a matched comparison must
+do. The stream has nothing to disagree about, because a NULL contributes zero octets to it.
 
-Nothing here changes the oracle: the disagreement is pinned by a test rather than papered
-over, so whoever unifies the spelling does it deliberately and sees what depended on it.
+The disagreement was pinned by a test rather than papered over, so unifying the spelling was a
+deliberate act with a visible dependent: ASN1-N made `codec.NULL` the one value every encoder
+takes and every decoder returns (`codec.require_null`).
 """
 
 from __future__ import annotations
@@ -302,7 +302,16 @@ def _oid_octets(text: str) -> bytes:
 
 
 def _emit_x690(node: EncodeNode, reader: _Reader, *, indefinite: bool) -> bytes:
-    """One node's complete TLV. Content is built first, so the length is always known."""
+    """One node's complete TLV, under the type's own tags (plan version 6), innermost first."""
+    out = _emit_x690_untagged(node, reader, indefinite=indefinite)
+    for tag_class, number, explicit in reversed(node.tags):
+        out = _tag_over(_TAG_CLASS_BITS[tag_class], number, explicit, out, indefinite=indefinite)
+    return out
+
+
+def _emit_x690_untagged(node: EncodeNode, reader: _Reader, *, indefinite: bool) -> bytes:
+    """One node's TLV under its universal tag. Content is built first, so the length is
+    always known."""
     kind = node.kind
     if kind == "boolean":
         # §11.1: DER's true is 0xFF exactly, not "any non-zero octet".
@@ -354,16 +363,22 @@ def _member_x690(member, reader: _Reader, *, indefinite: bool) -> bytes:
     inner = _emit_x690(member.node, reader, indefinite=indefinite)
     if member.tag is None:
         return inner
-    bits = _TAG_CLASS_BITS[member.tag_class]
-    if member.explicit:
+    return _tag_over(
+        _TAG_CLASS_BITS[member.tag_class], member.tag, member.explicit, inner, indefinite=indefinite
+    )
+
+
+def _tag_over(bits: int, number: int, explicit: bool, inner: bytes, *, indefinite: bool) -> bytes:
+    """One tag over a complete encoding: a member's, or one of a type's own."""
+    if explicit:
         # §8.14.3: an explicit tag WRAPS the base encoding, so the outer is always
         # constructed whatever the inner was.
-        return _tlv(bits, True, member.tag, inner, indefinite=indefinite)
+        return _tlv(bits, True, number, inner, indefinite=indefinite)
     # §8.14.4: an implicit tag REPLACES the base tag and keeps its constructed bit — which
     # is why the inner encoding has to be taken apart rather than re-wrapped.
     constructed = bool(inner[0] & 0x20)
     body = inner[_identifier_length(inner) :]
-    return _tlv(bits, constructed, member.tag, _strip_length(body), indefinite=indefinite)
+    return _tlv(bits, constructed, number, _strip_length(body), indefinite=indefinite)
 
 
 def _identifier_length(data: bytes) -> int:
@@ -624,10 +639,24 @@ def _emit_oer(node: EncodeNode, reader: _Reader) -> bytes:
         if not chosen:
             raise Asn1Error(f"CHOICE index {index} is outside the plan's alternatives")
         # §20.1: the alternative's TAG identifies it — a CHOICE is the one place OER puts
-        # a tag on the wire (§8.7.1).
-        tag = chosen[0].tag if chosen[0].tag is not None else chosen[0].index
-        bits = _TAG_CLASS_BITS[chosen[0].tag_class]
-        return bytes((bits | tag,)) + _emit_oer(chosen[0].node, reader)
+        # a tag on the wire (§8.7.1). An untagged alternative shows its type's universal
+        # tag, never its index: writing the index made `CHOICE { a INTEGER, ... }` under
+        # EXPLICIT TAGS `80 01 03` where the oracle writes `02 01 03`, a well-formed
+        # document of another value. An untagged CHOICE alternative has no outermost tag
+        # of its own and is refused, as the oracle refuses it (§20.1 NOTE 3).
+        member = chosen[0]
+        if member.tag is not None:
+            bits, tag = _TAG_CLASS_BITS[member.tag_class], member.tag
+        elif member.node.kind == "choice":
+            raise Asn1Error(
+                f"alternative {member.name!r} is an untagged CHOICE; OER needs its outermost "
+                f"tag (X.696 20.1)"
+            )
+        else:
+            bits, tag = _TAG_CLASS_BITS["universal"], member.node.universal
+        if tag >= 0x3F:
+            raise Asn1Error(f"OER: a CHOICE tag of {tag} needs the multi-octet form (X.696 8.7)")
+        return bytes((bits | tag,)) + _emit_oer(member.node, reader)
     raise Asn1Error(f"no OER rule for plan kind {kind!r}")
 
 

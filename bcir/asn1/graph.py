@@ -2,8 +2,9 @@
 
 `docs/BCIR_JSON_PROGRAM_REPRESENTATION.md` calls P1 *"the single largest unsolved design
 question in the proposal"*: JSON is a tree and programs are graphs, so a program
-representation needs a **cycle-tolerant** descriptor. `jer_plan.py` refuses schema recursion
-beyond depth 64, and a mutually recursive pair of functions is a cycle no nesting can hold.
+representation needs a **cycle-tolerant** descriptor. `jer_plan.py` carries a recursive
+*schema* with a back-edge to an ancestor node, but a program is not a schema: a mutually
+recursive pair of functions is a cycle no nesting can hold.
 
 **The answer is a flat node table with integer index edges** — the shape LLVM bitcode and
 MLIR bytecode both use, and for the same reason. A node is a row; an edge names a row by

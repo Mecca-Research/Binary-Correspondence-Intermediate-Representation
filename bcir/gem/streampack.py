@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .._collector import paused
 from ..model import Lane, Module, topological_phase_ids
 from ..kbcir.realize import RealizationResult
 
@@ -168,6 +169,7 @@ def double_buffer(prev_pid: int, next_pid: int, phase) -> Prefetch | None:
     )
 
 
+@paused
 def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> StreamPack:
     """Lower a selected realization plan into a StreamPack with provenance + tags.
 
@@ -218,6 +220,7 @@ def hydrate(module: Module, result: RealizationResult, plan: str = "plan0") -> S
     return pack
 
 
+@paused
 def hydrate_pipelined(
     module: Module, result: RealizationResult, plan: str = "plan0", depth: int = 2
 ) -> StreamPack:

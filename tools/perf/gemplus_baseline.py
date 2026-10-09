@@ -406,6 +406,509 @@ METRICS: tuple[Metric, ...] = (
         bound_source="exact branch-and-bound (§6.1)",
         slice_owner="G4",
     ),
+    # --- G19: the plan that runs. The rows above prove the corpus; these two measure what
+    # executes -- the placement a plan's readers take from its bytes (`schedule_of`), once the
+    # verifier admits it. The baseline is the parent tree, where the only placement a plan
+    # could carry and the verifier admit was the canonical dispatch's: the heuristic's own 190
+    # and 18 suboptimal instances, certified but run.
+    Metric(
+        "eft.executed.suboptimal.2domains",
+        "scheduler",
+        "fraction of 1,716 six-job instances whose executed plan is suboptimal, 2 domains",
+        190 / 1716,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the exact rail's proved optimum, carried by the plan as an explicit "
+        "placement (§6.1)",
+        slice_owner="G19",
+    ),
+    Metric(
+        "eft.executed.suboptimal.3domains",
+        "scheduler",
+        "fraction of 1,716 six-job instances whose executed plan is suboptimal, 3 domains",
+        18 / 1716,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the exact rail's proved optimum, carried by the plan as an explicit "
+        "placement (§6.1)",
+        slice_owner="G19",
+    ),
+    # --- OR-GC: the cyclic collector out of the oracle's pure hot paths (audit section 5.1).
+    # Each row counts the collections that start inside one call on the K_BCIR -> StreamPack
+    # fixture at scale 4 (4,096 claims), after a full collection resets the generations; the
+    # baseline is the parent tree. The floor is 0 because the paths leave no cyclic garbage
+    # (`gc.cyclic_garbage.hot_paths`), so a collection inside one could free nothing.
+    Metric(
+        "gc.collections.planner.4",
+        "collector",
+        "collections inside one call of the planner (`realize.optimize`), 4,096 claims",
+        75,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.hydrate.4",
+        "collector",
+        "collections inside one call of StreamPack `hydrate_pipelined`, 4,096 claims",
+        42,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.decode.4",
+        "collector",
+        "collections inside one call of StreamPack `decode`, 4,096 claims",
+        47,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.verify_plan.4",
+        "collector",
+        "collections inside one call of R8/R9 `verify_plan`, 4,096 claims",
+        70,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.schedule_eft.4",
+        "collector",
+        "collections inside one call of the EFT dispatch (`schedule_eft`), 4,096 claims",
+        24,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.plan_path.4",
+        "collector",
+        "collections inside one call of `verify_execution_plan` with its target, 4,096 claims",
+        48,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.cyclic_garbage.hot_paths.4",
+        "collector",
+        "objects a full collection finds after one call of each paused path, 4,096 claims",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="reference counting frees everything the paths allocate (audit section 5.1)",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "io.pebble.unsound",
+        "io",
+        "of 300 generated two-level instances (up to seven resources, eight steps, a random "
+        "live-out set), those where the red-blue pebble bound exceeds the exact optimal I/O "
+        "(dynamic programming over every eviction policy)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a lower bound is never above the optimum; the witness shows the check fires "
+        "on three unsound variants (bcir/tests/test_io_bounds.py)",
+        slice_owner="G25",
+    ),
+    Metric(
+        "io.pebble.loose.fraction",
+        "io",
+        "fraction of the same 300 instances where the pebble bound is below the exact optimal I/O "
+        "(the parent stated no data-movement bound: zero, exact only where nothing moves)",
+        295 / 300,
+        "fraction",
+        "exact",
+        bound=0.0,
+        bound_source="the bound equal to the optimum everywhere; the residual is what a larger "
+        "bound family (a bound over every order, per-value reuse distance) would close",
+        slice_owner="G25",
+    ),
+    Metric(
+        "memory.production.gap.512",
+        "memory-production",
+        "the exact rail's stated gap on the 512-resource audit fixture: its layout minus the "
+        "proved lower bound, bytes (the parent: first-fit 6,908 over the plain concurrent-live "
+        "sum 5,400)",
+        1508,
+        "bytes",
+        "exact",
+        bound=0,
+        bound_source="a layout that meets the alignment-aware concurrent-live bound is proved "
+        "optimal (G26 reduces and states the gap; the search stops on its budget)",
+        slice_owner="G26",
+    ),
+    Metric(
+        "dispatch.value.overspend",
+        "value",
+        "of the 500-instance memory corpus and the 1,716 six-job schedules, those the proof rail "
+        "searches with more work units (candidate placements, node expansions) than the "
+        "incumbent's gap repays over one execution at one cost unit per work unit (the parent's "
+        "law grants the caller's budget whatever the gap: 25 + 437)",
+        462,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the value law grants at most executions x gap / price work units "
+        "(gem.dispatch.priced_budget), so no priced search can overspend",
+        slice_owner="G27",
+    ),
+    Metric(
+        "dispatch.delegation.mismatch",
+        "value",
+        "straight-line modules delegated to LLVM (the corpus's two and the generated ones the "
+        "law delegates) whose clang -O2 output differs from the planned kernel's at any harness "
+        "trip count (the parent delegates none, so none of the 16 is shown equal); unmeasured "
+        "without clang",
+        16,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a delegated kernel computes the planned kernel's function: elementwise "
+        "IEEE add, sub and mul are exact per element, whatever width LLVM's vectorizer picks",
+        slice_owner="G27",
+    ),
+    Metric(
+        "csp.optimum.disagreements",
+        "csp",
+        "of 150 generated finite-domain models (linear rows of every relation, cumulatives, 2-D "
+        "no-overlaps), those where the in-tree CSP's verdict or certified optimum is not brute "
+        "force's (the parent had no constraint or integer-programming solver)",
+        150,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a complete branch and bound over finite domains is exact (TMSAO-1); "
+        "brute force enumerates every assignment (bcir/tests/test_csp.py)",
+        slice_owner="G28",
+    ),
+    Metric(
+        "joint.optimum.disagreements",
+        "csp",
+        "of 40 generated schedule x memory regions, those whose joint plan is not legal, not "
+        "certified optimal, or not the reference optimum (every start vector enumerated, each "
+        "laid out by the exact layout); the parent had no joint rail",
+        40,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the joint CSP is exact on a region; the reference shares no code with it",
+        slice_owner="G28",
+    ),
+    Metric(
+        "joint.excess",
+        "csp",
+        "the planner's objective over the joint optimum, summed over the same 40 regions "
+        "(w_time x makespan + w_memory x extent; the parent's pipeline -- schedule first, lay "
+        "out after -- leaves 26)",
+        26,
+        "objective units",
+        "exact",
+        bound=0,
+        bound_source="the joint optimum itself (kbcir.joint.joint_optimum, certified)",
+        slice_owner="G28",
+    ),
+    Metric(
+        "poison.forged.accepted",
+        "poison",
+        "of 200 forged i32 kernels (a no-wrap flag the declared ranges do not prove, a proved one "
+        "dropped, a load range widened or removed, a range on a float kernel), those R12 "
+        "accepts (the parent read no flags and no ranges: it refused a flagged kernel only "
+        "because its op text no longer matched, and accepted 74)",
+        74,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="R12 reads the flags and ranges back and holds them to the proof "
+        "(verify.poison)",
+        slice_owner="G29",
+    ),
+    Metric(
+        "poison.facts.missed",
+        "poison",
+        "over 120 generated integer claims, the no-wrap flags LLVM's own range reasoning "
+        "derives from the declared ranges that BCIR does not export (the parent exported none: "
+        "77); unmeasured without LLVM",
+        77,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the proof is exact interval arithmetic over the signed and the unsigned "
+        "readings, so every flag LLVM can derive is proved",
+        slice_owner="G29",
+    ),
+    Metric(
+        "poison.facts.unjudged",
+        "poison",
+        "flags BCIR exports over the same claims that LLVM's range reasoning does not "
+        "re-derive (a guard: a flag LLVM cannot confirm is not exported); unmeasured without LLVM",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="LLVM (correlated-propagation, instcombine) re-derives each exported fact",
+        slice_owner="G29",
+    ),
+    Metric(
+        "poison.facts.unsound",
+        "poison",
+        "generated claims with a proved flag broken at a corner or sampled point of the read "
+        "ranges in wrapped i32 arithmetic (a guard)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a proof is a theorem: no point of the contract breaks it",
+        slice_owner="G29",
+    ),
+    Metric(
+        "irdl.unprojected",
+        "irdl",
+        "ODS operations the IRDL projection does not define (declared in mlir/irdl/MANIFEST.json "
+        "with their reason; tools/irdl/check_inventory.py reconciles the three sources)",
+        38,
+        "operations",
+        "exact",
+        bound=1,
+        bound_source="bcir.asm has no IRDL spelling: a constraint variable binds one type for a "
+        "whole variadic group, and its operands are heterogeneous (checked on MLIR 23)",
+        slice_owner="G32",
+    ),
+    # --- CXX4: the native hydrate. `bcir_kp_hydrate` (runtime/c/bcir_kplan.c) writes, from the
+    # planner's input, its realization and a binding (BKPB), the StreamPack the oracle writes for
+    # the same module and plan (bcir/tests/hydrate_fixtures.py::measure, which the tests and
+    # tools/c/check_runtime.sh grade the same way). RED is the parent, which had no native hydrate:
+    # every case and every record on the native rail fails.
+    Metric(
+        "hydrate.native.parity",
+        "hydrate",
+        "cases whose native StreamPack differs from encode(hydrate(module, result, plan)) -- the "
+        "bytes, or the same refusal -- over the planner's corpus (every target, Theta and policy; "
+        "240 generated modules) and the hydrate's own cases (each realization name as an opcode, "
+        "generations above zero, v1 packs, empty modules, RIDs at the top of their range, plan "
+        "names of 0, 13 and 65535 bytes)",
+        3375,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one pack per plan on both rails (the roadmap's CXX4 gate)",
+        slice_owner="CXX4",
+    ),
+    Metric(
+        "hydrate.native.malformed.accepted",
+        "hydrate",
+        "(malformed record, rail) pairs not refused with the declared status: one BKPB variant "
+        "per wire law and per law against the input, one BKPR forgery per hydrate law, a width "
+        "and a block field the StreamPack cannot carry (24), on the Python oracle and the C twin",
+        48,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every law refuses its own violation with one status on both rails",
+        slice_owner="CXX4",
+    ),
+    Metric(
+        "hydrate.native.scale4",
+        "hydrate",
+        "native hydrate (bcir_kplan.c, -O2) median time per StreamPack of the audit fixture at "
+        "scale 4 (4,096 claims), the three records decoded once; the baseline is the oracle's "
+        "encode(hydrate(...)) on the same plan, same host -- the parent's only way to the pack",
+        26.5,
+        "ms",
+        "wall",
+        floor_key="hydrate.native.scale4.floor",
+        bound_source="writing the pack once, same harness and run (`test_kplan "
+        "--bench-hydrate-floor`): the hydrate writes every byte of the StreamPack -- its records, "
+        "blocks, notes and the CRC over them -- so one store of that many bytes into the same "
+        "warm buffer is work no hydrate avoids. A memory roofline, not a hydrate",
+        slice_owner="CXX4",
+    ),
+    Metric(
+        "transform.export.mismatch",
+        "transform",
+        "of 24 K_BCIR matmul tiling plans (the planner's own over 8 shapes, and two more per "
+        "shape in the other loop orders with tiles that leave a remainder), those whose tile "
+        "origins, read back from the scf.for nest stock mlir-opt --transform-interpreter "
+        "produces from the exported Transform script, are not the plan's in order (the parent "
+        "exported no Transform script: none could be applied); unmeasured without mlir-opt",
+        24,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the export is the plan: MLIR's own loops visit exactly its tile origins",
+        slice_owner="G31",
+    ),
+    # --- ASN1-B: semantic bounds on canonical JER at the point of application
+    # (bcir/tests/jer_bounds_fixtures.py::measure, which the tests grade the same way). The
+    # parent's rail is the J2 plan's `bounded_octets` (`plan_rail`): four leaf kinds, and a
+    # comma counted per member.
+    Metric(
+        "asn1.jer.bound.unstated",
+        "jerbounds",
+        "types of the corpus (120 generated modules -- constrained leaves, structures, templates "
+        "applied at drawn actuals -- and the repository's four ASN.1 modules) with a finite "
+        "canonical-JER maximum, shown by a valid witness that attains it, for which the rail "
+        "states no bound",
+        549,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every type whose values a constraint bounds is bounded (jer_bounds.max_octets)",
+        slice_owner="ASN1-B",
+    ),
+    Metric(
+        "asn1.jer.bound.loose",
+        "jerbounds",
+        "types whose stated bound no valid value attains (the parent's plan counts a comma for "
+        "every member of a SEQUENCE: one octet over on 3 types)",
+        3,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the bound is a maximum: a valid witness's encoding has exactly its length",
+        slice_owner="ASN1-B",
+    ),
+    Metric(
+        "asn1.jer.bound.unsound",
+        "jerbounds",
+        "sampled valid values (24 per bounded type, the size and range ends as often as the "
+        "middle) whose canonical JER encoding exceeds the bound stated for their type (a guard)",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="a bound no valid value exceeds",
+        slice_owner="ASN1-B",
+    ),
+    Metric(
+        "nest.dependence.disagreements",
+        "nest",
+        "of 160 generated depth-two nests (aliasing, negative and row-sized strides), those whose "
+        "dependences -- resource, kind, distance vector -- differ from a reference that "
+        "enumerates every pair of iteration instances (the parent had no 2-D model: a tile "
+        "claim was opaque)",
+        160,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the access equation solved exactly over the box (kbcir.polyhedral)",
+        slice_owner="G30",
+    ),
+    Metric(
+        "nest.legality.disagreements",
+        "nest",
+        "of the same nests, those whose interchange, tiling, outer-parallel or inner-parallel "
+        "verdict differs from the reference's simulation of each execution order",
+        160,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the classic distance-vector conditions, exact over the exact dependences",
+        slice_owner="G30",
+    ),
+    Metric(
+        "regions.dataflow.misjudged",
+        "dataflow",
+        "cases of the G23/G24 corpus (14: multirate, the CD-to-DAT converter, cycles with and "
+        "without delays, cyclo-static actors, four timed graphs, and each refusal) whose region "
+        "-- kind, repetition vector, firings, FIFO bounds, cycle time or refusal -- is not the "
+        "hand-derived one",
+        14,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="each case is derived by hand in bcir/tests/dataflow_fixtures.py; the parent "
+        "had no dataflow kind, so every stream claim fell to the opaque region",
+        slice_owner="G23",
+    ),
+    Metric(
+        "regions.timed.cycle_time.disagreements",
+        "dataflow",
+        "of 60 generated strongly connected timed graphs, those whose cycle time (Karp over the "
+        "max-plus recurrence) is not the maximum over every simple cycle of latency over tokens",
+        60,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="two independent derivations of one cycle time; the parent stated none (the "
+        "witness splits 15 of the 60 without the implied self-channels, 35 without the closure)",
+        slice_owner="G24",
+    ),
+    Metric(
+        "expectation.corpus.misstated",
+        "expectation",
+        "programs of the G22 corpus (8: branches, a do-while, a test-first while, nested loops, a "
+        "loop with two exits, a random walk, an unrolled bounded loop, a zero-probability "
+        "branch) whose exact expected cost is not the mean derived by hand",
+        8,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="each mean is derived by hand in bcir/tests/expectation_fixtures.py; the "
+        "parent had no expectation over a control-flow graph, so it stated none of them",
+        slice_owner="G22",
+    ),
+    Metric(
+        "expectation.compose.disagreements",
+        "expectation",
+        "of 60 generated region trees (branches, bounded loops, sequences), those on which "
+        "compose's exact mean differs from the Markov solve of the region's unrolled graph",
+        60,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="two independent derivations of one mean; the parent had no loop region and "
+        "floored at every branch (the witness splits 17 of the 60 under that floor)",
+        slice_owner="G22",
+    ),
+    Metric(
+        "plan_sign.forgeries.accepted",
+        "signature",
+        "forged, mis-bound or malformed statements and stores of the G21 corpus (29 cases: trust, "
+        "binding, every signed field, the statement's and the store's wire) the verifier accepts",
+        29,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="every case breaks a law the verifier checks; the parent has no signature, "
+        "only a CRC-32 anyone recomputes, so every one of them passed",
+        slice_owner="G21",
+    ),
+    Metric(
+        "plan_sign.verdicts.misjudged",
+        "signature",
+        "cases of the G21 corpus (32: the 29 forgeries and 3 genuine statements) whose verdict is "
+        "not the one law the case breaks, or `ok` for a genuine one -- the two rows refuse the "
+        "trivial verifiers: one that accepts every statement over a decoded store accepts 19 "
+        "forgeries, one that refuses everything misjudges at least the 3 genuine statements",
+        32,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="one verdict per case, named alike on both rails (docs/kernel/"
+        "BCIR_PLAN_SIGNATURE_ABI.md); the parent names none",
+        slice_owner="G21",
+    ),
     Metric(
         "solver.unproved.fraction",
         "scheduler",
@@ -1173,12 +1676,15 @@ METRICS: tuple[Metric, ...] = (
     # The 2026-09-04 profile's 6.06 M was the whole K_BCIR->StreamPack chain at scale 8 before
     # S0-A made R9 re-derive the planner's offer; this row is the planner alone, the thing G17
     # rewrites, on the parent under CPython 3.11.15 (call counts differ between interpreters: the
-    # tests compare two planners in one process instead, and state the factor).
+    # tests compare two planners in one process instead, and state the factor). Recounted at
+    # AUDIT-0 per code object (bcir/tests/call_counts.py) over the parent's planner, which
+    # `realize_reference` keeps verbatim: the frozen 3,419,172 was a `pstats` total, which merged
+    # every dataclass `__init__` into one row (the same tree re-measures 3,419,168 that way).
     Metric(
         "planner.calls",
         "kplan",
-        "calls (cProfile total, builtins included) planning the audit's K_BCIR->StreamPack fixture at scale 8 (32,768 claims), CPython 3.11",
-        3419172,
+        "calls (cProfile, builtins included, one entry per code object) planning the audit's K_BCIR->StreamPack fixture at scale 8 (32,768 claims), CPython 3.11",
+        3549217,
         "calls",
         "exact",
         floor_key="planner.calls.floor",
@@ -1273,7 +1779,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "kbcir-streampack.delta.calls",
         "delta",
-        "calls (cProfile total, builtins included) of one one-claim delta of the audit fixture at scale 8 (32,768 claims), CPython 3.11: on the parent, the chain from scratch",
+        "calls (cProfile, builtins included, one entry per code object) of one one-claim delta of the audit fixture at scale 8 (32,768 claims), CPython 3.11: on the parent, the chain from scratch -- a `pstats` total, which merged same-label constructors, so a lower bound on the parent's count and a conservative GAIN",
         10855666,
         "calls",
         "exact",
@@ -1478,7 +1984,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "streampack.encode.calls",
         "encode",
-        "calls (cProfile total, builtins included) of one encode of the audit fixture's pipelined StreamPack at scale 8 (32,768 claims, 5.76 MB, wire v4), CPython 3.11",
+        "calls (cProfile, builtins included, one entry per code object) of one encode of the audit fixture's pipelined StreamPack at scale 8 (32,768 claims, 5.76 MB, wire v4), CPython 3.11",
         7543875,
         "calls",
         "exact",
@@ -1506,7 +2012,7 @@ METRICS: tuple[Metric, ...] = (
     Metric(
         "kbcir-streampack.full.calls",
         "encode",
-        "calls (cProfile total, builtins included) of the K_BCIR -> StreamPack chain from scratch -- plan, hydrate, encode and the three verdicts -- on the audit fixture's one-claim delta module at scale 8 (32,768 claims), CPython 3.11",
+        "calls (cProfile, builtins included, one entry per code object) of the K_BCIR -> StreamPack chain from scratch -- plan, hydrate, encode and the three verdicts -- on the audit fixture's one-claim delta module at scale 8 (32,768 claims), CPython 3.11; the parent's figure is a `pstats` total, which merged same-label constructors, so a lower bound on its count and a conservative GAIN",
         10110215,
         "calls",
         "exact",
@@ -2269,12 +2775,17 @@ def measure_scheduler() -> dict[str, float]:
     from the heuristic's placement and reports its incumbent, so the rows are the incumbent
     against the independent partition oracle (`exact_fixtures.partition_optimum`) -- zero
     suboptimal, ratio 1.0 -- while `eft.heuristic.*` keeps the heuristic's own numbers as the
-    witness that the corpus still exhibits what the report measured. `solver.unproved.fraction`
+    witness that the corpus still exhibits what the report measured. `eft.executed.*` (G19) is
+    the plan that RUNS: the one `exact_plan` mints for the instance, read back from its bytes
+    the way every reader takes a placement (`schedule_of`), counted suboptimal when the
+    verifier refuses it or its makespan is above the oracle's. `solver.unproved.fraction`
     and `solver.gap.p95` are the Stage 2 exit rows; `optimize_scheduled.quality` is the
     one-sweep re-selection against the exhaustive enumeration over `exact_fixtures.quality_corpus`
     (worst ratio).
     """
-    from bcir.gem.exact import exact_schedule, exact_selection
+    from bcir.abi.execution_plan_abi import decode_plan, encode_plan
+    from bcir.gem.exact import exact_selection
+    from bcir.gem.execution_plan import exact_plan, schedule_of
     from bcir.kbcir import TARGETS
     from bcir.kbcir.cost import Theta
     from bcir.kbcir.weights import ENERGY, PERF
@@ -2283,8 +2794,10 @@ def measure_scheduler() -> dict[str, float]:
         quality_corpus,
         six_job_corpus,
         six_job_module,
+        six_job_realization,
         six_job_target,
     )
+    from bcir.verify import verify_execution_plan
 
     out: dict[str, float] = {}
     module = six_job_module()
@@ -2293,13 +2806,16 @@ def measure_scheduler() -> dict[str, float]:
     gaps: list[float] = []
     for domains in (2, 3):
         target = six_job_target(domains)
-        suboptimal = heuristic_suboptimal = 0
+        suboptimal = heuristic_suboptimal = executed_suboptimal = 0
         worst = heuristic_worst = 1.0
         mean = heuristic_mean = 0.0
         for durs in corpus:
-            durations = {index + 1: d for index, d in enumerate(durs)}
-            certified = exact_schedule(module, durations, target)
+            # the proof rail's plan and the certificate of its own step costs (the instance)
+            plan, certified = exact_plan(module, six_job_realization(durs), target)
             optimum = partition_optimum(durs, domains)
+            read = decode_plan(encode_plan(plan))
+            refused = bool(verify_execution_plan(module, read, target=target))
+            executed_suboptimal += refused or schedule_of(read).makespan > optimum
             ratio = certified.incumbent / optimum
             heuristic = certified.heuristic / optimum
             suboptimal += ratio > 1
@@ -2315,6 +2831,7 @@ def measure_scheduler() -> dict[str, float]:
         out[f"eft.heuristic.suboptimal.{domains}domains"] = heuristic_suboptimal / len(corpus)
         out[f"eft.heuristic.worst.{domains}domains"] = heuristic_worst
         out[f"eft.heuristic.mean.{domains}domains"] = heuristic_mean / len(corpus)
+        out[f"eft.executed.suboptimal.{domains}domains"] = executed_suboptimal / len(corpus)
     out["solver.unproved.fraction"] = unproved / (2 * len(corpus))
     gaps.sort()
     out["solver.gap.p95"] = gaps[min(len(gaps) - 1, int(round(0.95 * (len(gaps) - 1))))]
@@ -2504,7 +3021,9 @@ def measure_regions() -> dict[str, float]:
         for entry in registry().values():
             unverified += bool(verify_objective(entry))
     except Exception:
-        unverified += 6
+        from bcir.kbcir.objectives import _FACTORIES
+
+        unverified += len(_FACTORIES)  # the registry could not be built: none is verified
     return {
         "regions.unexpanded.claims": float(unexpanded),
         "objectives.unverified": float(unverified),
@@ -2999,6 +3518,37 @@ def measure_kplan() -> dict[str, float]:
     return out
 
 
+def measure_hydrate() -> dict[str, float]:
+    """The CXX4 rows: the native hydrate against the oracle (bcir/tests/hydrate_fixtures.py::
+    measure, which the tests and tools/c/check_runtime.sh grade the same way) and its time. Both
+    need the C twin: without a C compiler they are NOT-MEASURED, never estimated from one rail."""
+    import shutil
+    import tempfile
+
+    from bcir.tests.hydrate_fixtures import measure, native_floor, native_ms
+    from bcir.tests.planner_fixtures import build_harness
+
+    out: dict[str, float] = {}
+    tmp = tempfile.mkdtemp(prefix="bcir-khydrate-")
+    try:
+        exe = build_harness(tmp)
+        if exe is not None:
+            out.update(measure(exe, tmp))
+            out["hydrate.native.scale4"] = native_ms(exe, tmp)
+            out["hydrate.native.scale4.floor"] = native_floor(exe, tmp)[0]
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
+def measure_jer_bounds() -> dict[str, float]:
+    """ASN1-B: the semantic canonical-JER bound against the encoder
+    (bcir/tests/jer_bounds_fixtures.py::measure, which the tests grade the same way)."""
+    from bcir.tests.jer_bounds_fixtures import measure
+
+    return measure()
+
+
 def measure_delta() -> dict[str, float]:
     """The G18 rows (S4-B): the chain advanced by declared deltas against the chain from scratch
     (bcir/tests/delta_fixtures.py::measure, which the tests and tools/perf/check_delta.py grade the
@@ -3117,6 +3667,190 @@ def measure_memory() -> dict[str, float]:
     return out
 
 
+def measure_memory_production() -> dict[str, float]:
+    """G26: the exact rail's stated gap on the 512-resource audit fixture -- the layout the
+    best-fit portfolio and the budgeted search reach, minus the alignment-aware bound. Its own
+    group: the search spends its whole default budget (~11 s on this host)."""
+    from bcir.kbcir.static_memory import plan_static_memory
+    from bcir.performance_audit import _AuditHardware, static_memory_module
+
+    module = static_memory_module(1)
+    bank = plan_static_memory(
+        module, {rid: "ram" for rid in module.resources}, _AuditHardware(), layout="exact"
+    ).banks[0]
+    return {"memory.production.gap.512": float(bank.gap_bytes)}
+
+
+def measure_collector() -> dict[str, float]:
+    """OR-GC: collections inside each paused hot path at scale 4, and the cyclic garbage the
+    paths leave (both 0 once the collector is paused; the garbage was 0 before too)."""
+    import gc
+
+    from bcir.abi.execution_plan_abi import decode_plan, encode_plan
+    from bcir.abi.streampack_abi import decode, encode
+    from bcir.gem.execution_plan import plan_from_realization
+    from bcir.gem.schedule import durations_from, schedule_eft
+    from bcir.gem.streampack import hydrate_pipelined
+    from bcir.kbcir.realize import optimize
+    from bcir.kbcir.weights import PERF
+    from bcir.performance_audit import kbcir_streampack_fixture
+    from bcir.verify import verify_execution_plan, verify_plan
+
+    module, target, theta = kbcir_streampack_fixture(4)
+    result = optimize(module, target, theta)
+    wire = encode(hydrate_pipelined(module, result, plan="tmsao", depth=2))
+    durations = durations_from(result)
+    read = decode_plan(encode_plan(plan_from_realization(module, result, target, "eft")))
+    paths = {
+        "planner": lambda: optimize(module, target, theta),
+        "hydrate": lambda: hydrate_pipelined(module, result, plan="tmsao", depth=2),
+        "decode": lambda: decode(wire),
+        "verify_plan": lambda: verify_plan(module, result, target, theta=theta, policy=PERF),
+        "schedule_eft": lambda: schedule_eft(module, durations, target),
+        "plan_path": lambda: verify_execution_plan(module, read, target=target),
+    }
+    started = [0]
+
+    def count(phase, _info):
+        started[0] += phase == "start"
+
+    out: dict[str, float] = {}
+    garbage = 0
+    enabled = gc.isenabled()
+    gc.enable()
+    gc.callbacks.append(count)
+    try:
+        for key, call in paths.items():
+            gc.collect()
+            started[0] = 0
+            call()
+            out[f"gc.collections.{key}.4"] = float(started[0])
+        gc.callbacks.remove(count)
+        for call in paths.values():
+            gc.collect()
+            gc.disable()
+            call()
+            garbage += gc.collect()
+            gc.enable()
+    finally:
+        if count in gc.callbacks:
+            gc.callbacks.remove(count)
+        (gc.enable if enabled else gc.disable)()
+    out["gc.cyclic_garbage.hot_paths.4"] = float(garbage)
+    return out
+
+
+def measure_io() -> dict[str, float]:
+    """G25: the red-blue pebble bound against the exact optimal I/O over the generated
+    instances bcir/tests/test_io_bounds.py holds it to. Pure Python."""
+    from bcir.kbcir.io_bounds import optimal_io, pebble_bound
+    from bcir.tests.test_io_bounds import generated
+
+    instances = generated()
+    unsound = loose = 0
+    for inst in instances:
+        bound, optimum = pebble_bound(*inst).total, optimal_io(*inst)
+        unsound += bound > optimum
+        loose += bound < optimum
+    return {"io.pebble.unsound": float(unsound), "io.pebble.loose.fraction": loose / len(instances)}
+
+
+def measure_transform() -> dict[str, float]:
+    """G31: the Transform export of K_BCIR's matmul plans, applied by stock mlir-opt
+    (bcir/tests/transform_fixtures.py::measure, which the tests grade the same way)."""
+    from bcir.tests.transform_fixtures import measure
+
+    return measure()
+
+
+def measure_nest() -> dict[str, float]:
+    """G30: the depth-two model against the instance-pair reference
+    (bcir/tests/nest_fixtures.py::measure, which the tests grade the same way)."""
+    from bcir.tests.nest_fixtures import measure
+
+    return measure()
+
+
+def measure_poison() -> dict[str, float]:
+    """G29: R12 over the forged kernels, the proofs against wrapped arithmetic, and -- where
+    LLVM is -- LLVM's own verdict on each fact (bcir/tests/poison_fixtures.py::measure, which
+    the tests grade the same way)."""
+    from bcir.tests.poison_fixtures import measure
+
+    return measure()
+
+
+def measure_irdl() -> dict[str, float]:
+    """G32: the operations the IRDL projection leaves undefined, from the inventory gate over
+    the dialect's own sources. Pure text: measured on every host."""
+    sys.path.insert(0, str(ROOT))
+    from tools.irdl.check_inventory import audit
+
+    report = audit(ROOT)
+    if report["state"] != "PASS":
+        raise AssertionError(f"the IRDL inventory does not reconcile: {report['findings'][:4]}")
+    return {"irdl.unprojected": float(report["counts"]["unprojected_declared"])}
+
+
+def measure_csp() -> dict[str, float]:
+    """G28: the in-tree CSP against brute force, and the joint planner against the reference
+    optimum (bcir/tests/joint_fixtures.py::measure, which the tests grade the same way). Pure
+    Python: measured wherever the interpreter runs."""
+    from bcir.tests.joint_fixtures import measure
+
+    return measure()
+
+
+def measure_value_dispatch() -> dict[str, float]:
+    """G27: the priced memory rail's overspend on the memory corpus, and the delegated modules'
+    output against the planned kernels' under clang (bcir/tests/value_fixtures.py::measure,
+    which the tests grade the same way). The delegation row is absent without a C compiler."""
+    from bcir.tests.value_fixtures import measure
+
+    return measure()
+
+
+def measure_dataflow() -> dict[str, float]:
+    """G23 / G24: the dataflow regions over the hand-derived corpus and the timed cycle time
+    against the cycle enumeration (bcir/tests/dataflow_fixtures.py::measure, which the tests
+    grade the same way). Pure Python: measured wherever the interpreter runs."""
+    from bcir.tests.dataflow_fixtures import measure
+
+    return measure()
+
+
+def measure_expectation() -> dict[str, float]:
+    """G22: the exact expected cost over the hand-derived corpus and against compose's
+    region semantics (bcir/tests/expectation_fixtures.py::measure, which the tests grade the
+    same way). Pure Python: measured wherever the interpreter runs."""
+    from bcir.tests.expectation_fixtures import measure
+
+    return measure()
+
+
+def measure_signature() -> dict[str, float]:
+    """G21: the reference verifier over every case of bcir/tests/plan_sign_fixtures.py -- the
+    forgeries it accepts and the verdicts it misnames (the C twin is held to the same verdicts by
+    bcir/tests/test_c_plan_sign.py and the plan_sign gate section). Pure Python: measured
+    wherever the interpreter runs."""
+    from bcir.abi.plan_sign_abi import PlanSignError, decode_store, verify_statement
+    from bcir.tests.plan_sign_fixtures import cases
+
+    accepted = misjudged = 0
+    for _name, statement, store, plan, pack, now, want in cases():
+        try:
+            verify_statement(statement, decode_store(store), plan, now, pack_bytes=pack)
+            got = "ok"
+        except PlanSignError as exc:
+            got = exc.code
+        accepted += want != "ok" and got == "ok"
+        misjudged += got != want
+    return {
+        "plan_sign.forgeries.accepted": float(accepted),
+        "plan_sign.verdicts.misjudged": float(misjudged),
+    }
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
@@ -3133,6 +3867,7 @@ _MEASURERS = {
     "ring": measure_ring,
     "handoff": measure_handoff,
     "kplan": measure_kplan,
+    "hydrate": measure_hydrate,
     "delta": measure_delta,
     "alias": measure_alias,
     "encode": measure_encode,
@@ -3140,6 +3875,19 @@ _MEASURERS = {
     "volatile": measure_volatile,
     "movement": measure_movement,
     "memory": measure_memory,
+    "collector": measure_collector,
+    "signature": measure_signature,
+    "expectation": measure_expectation,
+    "dataflow": measure_dataflow,
+    "io": measure_io,
+    "value": measure_value_dispatch,
+    "csp": measure_csp,
+    "poison": measure_poison,
+    "irdl": measure_irdl,
+    "transform": measure_transform,
+    "nest": measure_nest,
+    "jerbounds": measure_jer_bounds,
+    "memory-production": measure_memory_production,
 }
 
 

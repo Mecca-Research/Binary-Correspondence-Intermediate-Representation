@@ -26,6 +26,9 @@ The non-obvious choices, stated:
 * **v3 (G8) is additive.** The movement edge's claim/version/flags/producer/bits/cert and the
   plan's sourceHash/specHash default to 0 -- the native v1/v2 meaning -- so a plan that moves
   nothing projects exactly as before, apart from the projection version.
+* **v4 (G19) is additive too.** `flags` carries the native header's flags (bit 0: the plan
+  states its placement, the exact solver's optimum); it defaults to 0, the canonical
+  placement, so a plan that carries the canonical one projects exactly as before.
 """
 
 from __future__ import annotations
@@ -40,9 +43,10 @@ EXECUTION_PLAN_MODULE_OID: tuple[int, ...] = (*BCIR_ARC, 3)
 
 #: Bumped only when the ASN.1 module changes shape; independent of the native version.
 #: 2 since G5 (S1-D): the `liveness` component and the lifetime ticks (native v2).
-#: 3 since G8 (S5-C): the movement edge's v3 tail and the source/spec binding (native v3). A
-#: reader decodes every version up to its own and refuses a newer one, as the native reader does.
-PROJECTION_VERSION = 3
+#: 3 since G8 (S5-C): the movement edge's v3 tail and the source/spec binding (native v3).
+#: 4 since G19: the header's `flags` (an explicit placement). A reader decodes every version up
+#: to its own and refuses a newer one, as the native reader does.
+PROJECTION_VERSION = 4
 
 _INTEGER = Primitive(Universal.INTEGER, "INTEGER")
 _UTF8 = Primitive(Universal.UTF8_STRING, "UTF8String")
@@ -168,6 +172,8 @@ EXECUTION_PLAN = Sequence(
         # v3 (G8): the goal graph and the movement spec the plan was planned under
         Component("sourceHash", _INTEGER, tag=13, default=0),
         Component("specHash", _INTEGER, tag=14, default=0),
+        # v4 (G19): the header's flags -- bit 0, the plan states its placement
+        Component("flags", _INTEGER, tag=15, default=0),
     ),
     name="ExecutionPlan",
 )
@@ -293,6 +299,7 @@ def _plan_value(plan) -> dict:
         "liveness": _code(LIVENESS_VALUES, plan.liveness, "liveness"),
         "sourceHash": plan.source_hash,
         "specHash": plan.spec_hash,
+        "flags": plan.flags,
     }
 
 
@@ -379,6 +386,7 @@ def _value_to_plan(value: dict):
         ],
         source_hash=value.get("sourceHash", 0),
         spec_hash=value.get("specHash", 0),
+        flags=value.get("flags", 0),
     )
 
 

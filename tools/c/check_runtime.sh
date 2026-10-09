@@ -151,6 +151,9 @@ show_section encoder || exit 1
 echo "[c-runtime] ExecutionPlanV1 (G11): freestanding decode + Python->C->Python byte-identical round trip + plan/pack binding"
 show_section execution_plan || exit 1
 
+echo "[c-runtime] PlanStatementV1 + TrustStoreV1 (G21): freestanding Ed25519 (RFC 8032) + SHA-512, signatures byte-identical to the oracle's, every forgery the same verdict on both rails"
+show_section plan_sign || exit 1
+
 echo "[c-runtime] ControlRecordV1 (G14): freestanding plane + Python->C->Python round trip + declared refusal statuses + identical two-rail plane traces"
 show_section control_plane || exit 1
 

@@ -826,6 +826,9 @@ bcir_status bcir_kp_plan(const bcir_kp_input *in, void *scratch, size_t scratch_
   /* One pass: the offer of each column (realize.fused_offer) and its relaxation (optimize). */
   kp_u128 dist[2][BCIR_KP_WIDTHS_MAX];
   uint32_t width[2][BCIR_KP_WIDTHS_MAX];
+  /* Every row the SINK reads is written by its column first (n_claims > 0 means one column ran),
+   * but GCC 13's -O2 flow analysis cannot see that once the hydrate shares this unit. */
+  kp_zero((uint8_t *)dist, sizeof dist);
   unsigned cur = 0, prev_rows = 0;
   int narrow = -1, wide = -1; /* the previous column's cheapest narrow / wide row */
   uint32_t pos = 0, node = 0, prev_claim = 0;
@@ -1045,5 +1048,433 @@ bcir_status bcir_kp_decode_realization(const uint8_t *data, size_t len,
   out->len = len;
   out->n_steps = n;
   out->score = score;
+  return BCIR_OK;
+}
+
+/* ---- BKPB: the binding, and the native hydrate (CXX4) ------------------------------------ */
+
+bcir_status bcir_kp_decode_binding(const uint8_t *data, size_t len, bcir_kp_binding *out) {
+  if (out) kp_zero((uint8_t *)out, sizeof *out);
+  if (!out) return BCIR_ERR_NOSPACE;
+  if (!data || len < (size_t)BCIR_KP_BINDING_HEADER_SIZE + BCIR_KP_CRC_SIZE)
+    return BCIR_ERR_TRUNCATED;
+  if (data[0] != 'B' || data[1] != 'K' || data[2] != 'P' || data[3] != 'B') return BCIR_ERR_MAGIC;
+  if (kp_rd16(data + 4) != BCIR_KP_VERSION) return BCIR_ERR_VERSION;
+  if (kp_rd32(data + len - 4) != bcir_crc32(data, len - 4)) return BCIR_ERR_CRC;
+  if (kp_rd16(data + 6) != 0 || kp_rd64(data + 24) != 0) return BCIR_ERR_RESERVED;
+  bcir_kp_binding v;
+  kp_zero((uint8_t *)&v, sizeof v);
+  v.n_resources = kp_rd32(data + 8);
+  v.n_gens = kp_rd32(data + 12);
+  v.topo_gen = kp_rd32(data + 16);
+  v.plan_len = kp_rd32(data + 20);
+  if (v.n_resources > BCIR_KP_REFS_MAX || v.n_gens > BCIR_KP_REFS_MAX ||
+      v.plan_len > BCIR_KP_PLAN_NAME_MAX)
+    return BCIR_ERR_PLANNER;
+  uint64_t size = (uint64_t)BCIR_KP_BINDING_HEADER_SIZE + 4u * (uint64_t)v.n_resources +
+                  12u * (uint64_t)v.n_gens + v.plan_len + BCIR_KP_CRC_SIZE;
+  if ((uint64_t)len < size) return BCIR_ERR_TRUNCATED;
+  if ((uint64_t)len > size) return BCIR_ERR_TRAILING;
+  v.off_rids = BCIR_KP_BINDING_HEADER_SIZE;
+  v.off_gens = v.off_rids + 4u * (size_t)v.n_resources;
+  v.off_plan = v.off_gens + 12u * (size_t)v.n_gens;
+  if (!bcir_utf8_valid(data + v.off_plan, v.plan_len)) return BCIR_ERR_UTF8;
+  for (uint32_t i = 1; i < v.n_gens; i++)
+    if (kp_rd32(data + v.off_gens + 12u * (size_t)i) <=
+        kp_rd32(data + v.off_gens + 12u * (size_t)(i - 1u)))
+      return BCIR_ERR_GENERATION;
+  v.data = data;
+  v.len = len;
+  *out = v;
+  return BCIR_OK;
+}
+
+/* The hydrate's working set: the planner's phase and claim tables (kp_check, kp_topo) and its
+ * own -- each phase's place in the canonical order, each claim's phase and first operand, the
+ * claims a step has planned, a RID table and each op string's offset. */
+typedef struct kh_layout {
+  kp_layout L;
+  uint64_t pos, cl_phase, seen, rid_tab, op_off, step_claim, total;
+  uint32_t cap_r;
+} kh_layout;
+
+static bcir_status kh_plan_layout(const bcir_kp_input *in, const bcir_kp_binding *b,
+                                  kh_layout *H) {
+  kp_zero((uint8_t *)H, sizeof *H);
+  uint64_t np = in->n_phases, nc = in->n_claims, o = 0;
+  kp_layout *L = &H->L;
+  L->cap_p = kp_pow2_at_least(2u * np);
+  L->cap_c = kp_pow2_at_least(2u * nc);
+  H->cap_r = kp_pow2_at_least(2u * (uint64_t)b->n_resources);
+  L->ph_tab = o;   o += 4u * (uint64_t)L->cap_p;
+  L->ph_color = o; o += np;
+  L->ph_stack = o; o += 8u * np;
+  L->ph_dep = o;   o += 4u * np;
+  L->ph_claim = o; o += 4u * np;
+  L->topo = o;     o += 4u * np;
+  L->cl_ref = o;   o += 4u * nc;
+  L->id_tab = o;   o += 4u * (uint64_t)L->cap_c;
+  L->op_seen = o;  o += ((uint64_t)in->n_ops + 7u) / 8u;
+  H->pos = o;      o += 4u * np;
+  H->cl_phase = o; o += 4u * nc;
+  H->seen = o;     o += nc;
+  H->rid_tab = o;  o += 4u * (uint64_t)H->cap_r;
+  H->op_off = o;   o += 4u * (uint64_t)in->n_ops;
+  H->step_claim = o; o += 4u * nc; /* each step's claim, once the steps cover the claims */
+  H->total = o;
+  if (o > (uint64_t)SIZE_MAX) return BCIR_ERR_OVERFLOW;
+  return BCIR_OK;
+}
+
+bcir_status bcir_kp_hydrate_scratch_size(const bcir_kp_input *in, const bcir_kp_binding *b,
+                                         size_t *bytes) {
+  if (bytes) *bytes = 0;
+  if (!in || !in->data || !b || !b->data || !bytes) return BCIR_ERR_NOSPACE;
+  kh_layout H;
+  bcir_status st = kh_plan_layout(in, b, &H);
+  if (st != BCIR_OK) return st;
+  *bytes = (size_t)H.total;
+  return BCIR_OK;
+}
+
+/* A bounds-checked little-endian writer; a NULL buffer counts (bcir_hydrate.c's W). */
+typedef struct kh_w {
+  uint8_t *p;
+  size_t cap, n;
+  int err;
+} kh_w;
+
+static void kh_bytes(kh_w *w, const uint8_t *src, size_t n) {
+  if (w->err || n > w->cap - w->n) {
+    w->err = 1;
+    return;
+  }
+  if (w->p)
+    for (size_t i = 0; i < n; i++) w->p[w->n + i] = src[i];
+  w->n += n;
+}
+static void kh_u8(kh_w *w, uint8_t v) { kh_bytes(w, &v, 1); }
+static void kh_u16(kh_w *w, uint16_t v) {
+  uint8_t b[2] = {(uint8_t)v, (uint8_t)(v >> 8)};
+  kh_bytes(w, b, 2);
+}
+static void kh_u32(kh_w *w, uint32_t v) {
+  uint8_t b[4];
+  kp_wr32(b, v);
+  kh_bytes(w, b, 4);
+}
+static void kh_u64(kh_w *w, uint64_t v) {
+  uint8_t b[8];
+  kp_wr64(b, v);
+  kh_bytes(w, b, 8);
+}
+static void kh_str(kh_w *w, const uint8_t *s, size_t n) { /* u16 length + bytes */
+  kh_u16(w, (uint16_t)n);
+  kh_bytes(w, s, n);
+}
+/* "<prefix><n>" in decimal, the oracle's f"seg{n}" / f"pf{n}" / f"vec{width}". */
+static size_t kh_label(uint8_t *buf, const char *prefix, uint32_t n) {
+  size_t k = 0;
+  while (prefix[k]) {
+    buf[k] = (uint8_t)prefix[k];
+    k++;
+  }
+  uint8_t digits[10];
+  unsigned d = 0;
+  do {
+    digits[d++] = (uint8_t)('0' + n % 10u);
+    n /= 10u;
+  } while (n);
+  while (d) buf[k++] = digits[--d];
+  return k;
+}
+
+/* Realization names by BKPR code (bcir.abi.planner_abi.NAMES); "vec" carries its width. */
+static const char *const kh_names[BCIR_KP_NAME_COUNT] = {
+    "noop", "barrier", "atomic", "blocked", "gather", "scalar", "vec", "strided", "ux_bucket",
+    "tile"};
+
+typedef struct kh_ctx {
+  const bcir_kp_input *in;
+  const bcir_kp_realization *plan;
+  const bcir_kp_binding *b;
+  kp_ctx x; /* the planner's tables, reused */
+  kh_layout H;
+} kh_ctx;
+
+static const uint8_t *kh_step(const kh_ctx *h, uint32_t n) {
+  return h->plan->data + BCIR_KP_REALIZATION_HEADER_SIZE + (size_t)BCIR_KP_STEP_SIZE * n;
+}
+static uint32_t kh_rid(const kh_ctx *h, uint32_t index) {
+  return kp_rd32(h->b->data + h->b->off_rids + 4u * (size_t)index);
+}
+static int kh_has_generation(const kh_ctx *h, uint32_t rid) {
+  uint32_t lo = 0, hi = h->b->n_gens;
+  while (lo < hi) {
+    uint32_t mid = lo + (hi - lo) / 2u, at = kp_rd32(h->b->data + h->b->off_gens + 12u * (size_t)mid);
+    if (at == rid) return 1;
+    if (at < rid) lo = mid + 1u;
+    else hi = mid;
+  }
+  return 0;
+}
+/* The claim a step names, by id (kp_check's id table), or 0xFFFFFFFF. */
+static uint32_t kh_claim_of(const kh_ctx *h, uint32_t id) {
+  const kp_ctx *x = &h->x;
+  uint32_t cap = x->L.cap_c, i = kp_hash32(id, cap);
+  for (;;) {
+    uint32_t e = S32(x->L.id_tab, i);
+    if (!e) return 0xFFFFFFFFu;
+    if (CL_ID(kp_claim(x, e - 1u)) == id) return e - 1u;
+    i = (i + 1u) & (cap - 1u);
+  }
+}
+
+/* The binding against the input: one resource count, one RID per index, and a generation for
+ * exactly the declared resources (the oracle's vector covers every declared resource). */
+static bcir_status kh_check_binding(kh_ctx *h) {
+  const bcir_kp_input *in = h->in;
+  kp_ctx *x = &h->x;
+  if (h->b->n_resources != in->n_resources) return BCIR_ERR_PLANNER;
+  uint32_t cap = h->H.cap_r;
+  for (uint32_t i = 0; i < cap; i++) S32_SET(h->H.rid_tab, i, 0u);
+  for (uint32_t r = 0; r < in->n_resources; r++) {
+    uint32_t rid = kh_rid(h, r), i = kp_hash32(rid, cap);
+    for (;;) {
+      uint32_t e = S32(h->H.rid_tab, i);
+      if (!e) {
+        S32_SET(h->H.rid_tab, i, r + 1u);
+        break;
+      }
+      if (kh_rid(h, e - 1u) == rid) return BCIR_ERR_PLANNER;
+      i = (i + 1u) & (cap - 1u);
+    }
+    if ((kp_resource(x, r)[0] != 0) != kh_has_generation(h, rid)) return BCIR_ERR_PLANNER;
+  }
+  return BCIR_OK;
+}
+
+/* The oracle hydrate's laws over the steps (gem.streampack.hydrate), then the encoder's over
+ * the records it would write (streampack_abi._validate_encode_contract, then the blocks). */
+static bcir_status kh_check_steps(kh_ctx *h) {
+  const bcir_kp_input *in = h->in;
+  kp_ctx *x = &h->x;
+  for (uint32_t c = 0; c < in->n_claims; c++) h->x.s[h->H.seen + c] = 0;
+  uint32_t last = 0, planned = 0;
+  for (uint32_t n = 0; n < h->plan->n_steps; n++) {
+    const uint8_t *st = kh_step(h, n);
+    uint32_t c = kh_claim_of(h, kp_rd32(st));
+    if (c == 0xFFFFFFFFu || x->s[h->H.seen + c]) return BCIR_ERR_PROVENANCE;
+    S32_SET(h->H.step_claim, n, c); /* n < n_claims: a step past them names a claim twice */
+    uint32_t p = S32(h->H.cl_phase, c);
+    if (kp_rd32(st + 4) != kp_rd32(in->data + in->off_phases + 12u * (size_t)p))
+      return BCIR_ERR_PROVENANCE;
+    uint32_t at = S32(h->H.pos, p);
+    if (n && at < last) return BCIR_ERR_PROVENANCE;
+    last = at;
+    x->s[h->H.seen + c] = 1;
+    planned++;
+  }
+  if (planned != in->n_claims) return BCIR_ERR_PROVENANCE;
+  for (uint32_t n = 0; n < h->plan->n_steps; n++) {
+    uint32_t w = kp_rd32(kh_step(h, n) + 8);
+    if (w & (w - 1u)) return BCIR_ERR_WIDTH; /* nonzero: the BKPR decoder holds it */
+  }
+  for (uint32_t n = 0; n < h->plan->n_steps; n++) {
+    const uint8_t *cl = kp_claim(x, S32(h->H.step_claim, n));
+    if (CL_OFFSET(cl) > (uint64_t)INT64_MAX || CL_STRIDE_K(cl) > (uint64_t)INT64_MAX)
+      return BCIR_ERR_OVERFLOW;
+  }
+  return BCIR_OK;
+}
+
+/* gem.streampack.hydrate + streampack_abi.encode, record by record (counting when w->p is NULL). */
+static void kh_emit(kh_ctx *h, kh_w *w) {
+  const bcir_kp_input *in = h->in;
+  const bcir_kp_binding *b = h->b;
+  kp_ctx *x = &h->x;
+  int v4 = b->n_gens != 0;
+  uint32_t n_steps = h->plan->n_steps, n_pf = 0, map_gen = 0, data_gen = 0;
+  for (uint32_t i = 0; i < b->n_gens; i++) {
+    const uint8_t *g = b->data + b->off_gens + 12u * (size_t)i;
+    if (kp_rd32(g + 4) > map_gen) map_gen = kp_rd32(g + 4);
+    if (kp_rd32(g + 8) > data_gen) data_gen = kp_rd32(g + 8);
+  }
+  for (uint32_t n = 0; n < n_steps; n++) {
+    const uint8_t *st = kh_step(h, n);
+    if (kp_rd32(st + 8) > 1u && CL_NRD(kp_claim(x, S32(h->H.step_claim, n)))) n_pf++;
+  }
+  /* header (64) */
+  static const uint8_t magic[4] = {'B', 'S', 'P', 'K'};
+  kh_bytes(w, magic, 4);
+  kh_u16(w, v4 ? 4u : 1u);
+  kh_u16(w, 0);
+  kh_u32(w, b->topo_gen);
+  kh_u32(w, map_gen);
+  kh_u32(w, data_gen);
+  kh_u32(w, n_steps); /* segments, prefetches, blocks, trace notes */
+  kh_u32(w, n_pf);
+  kh_u32(w, n_steps);
+  kh_u32(w, n_steps);
+  if (v4) {
+    kh_u16(w, 1); /* pipeline_depth */
+    kh_u16(w, 0);
+    kh_u32(w, b->n_gens);
+    for (unsigned i = 0; i < 20; i++) kh_u8(w, 0);
+  } else {
+    for (unsigned i = 0; i < 28; i++) kh_u8(w, 0);
+  }
+  kh_str(w, b->data + b->off_plan, b->plan_len);
+  /* segments */
+  uint8_t label[24];
+  for (uint32_t n = 0; n < n_steps; n++) {
+    const uint8_t *st = kh_step(h, n);
+    uint32_t c = S32(h->H.step_claim, n), width = kp_rd32(st + 8);
+    const uint8_t *cl = kp_claim(x, c);
+    uint32_t ref0 = S32(x->L.cl_ref, c), n_rd = CL_NRD(cl), n_wr = CL_NWR(cl);
+    kh_str(w, label, kh_label(label, "seg", n));
+    kh_u64(w, CL_ID(cl));
+    kh_u32(w, kp_rd32(st + 4));
+    kh_u8(w, st[12]);
+    kh_u32(w, width);
+    kh_u32(w, 0); /* stride_k: reserved on the wire */
+    uint32_t op = CL_OP(cl), op_len = kp_rd16(in->data + in->off_op_lens + 2u * (size_t)op);
+    if (op_len) {
+      kh_str(w, in->data + in->off_ops + S32(h->H.op_off, op), op_len);
+    } else if (st[13] == BCIR_KP_NAME_VEC) {
+      kh_str(w, label, kh_label(label, "vec", width));
+    } else {
+      const char *name = kh_names[st[13]];
+      size_t k = 0;
+      while (name[k]) k++;
+      kh_str(w, (const uint8_t *)name, k);
+    }
+    kh_u16(w, (uint16_t)n_rd);
+    for (uint32_t k = 0; k < n_rd; k++) kh_u32(w, kh_rid(h, kp_ref(x, (uint64_t)ref0 + k)));
+    kh_u16(w, (uint16_t)n_wr);
+    for (uint32_t k = 0; k < n_wr; k++) kh_u32(w, kh_rid(h, kp_ref(x, (uint64_t)ref0 + n_rd + k)));
+    if (width > 1u && n_rd) kh_str(w, label, kh_label(label, "pf", n)); /* its prefetch */
+    else kh_u16(w, 0);
+    kh_u16(w, 0); /* fence_before */
+    kh_u16(w, 0); /* fence_after */
+    if (v4) {
+      static const uint8_t host[4] = {'h', 'o', 's', 't'};
+      kh_u8(w, 0); /* dispatch core */
+      kh_str(w, host, 4);
+    }
+  }
+  /* prefetches: a vector step with reads streams them ahead */
+  static const uint8_t t0[2] = {'T', '0'}, linear[6] = {'l', 'i', 'n', 'e', 'a', 'r'};
+  for (uint32_t n = 0; n < n_steps; n++) {
+    const uint8_t *st = kh_step(h, n);
+    uint32_t c = S32(h->H.step_claim, n);
+    const uint8_t *cl = kp_claim(x, c);
+    uint32_t ref0 = S32(x->L.cl_ref, c), n_rd = CL_NRD(cl);
+    if (kp_rd32(st + 8) <= 1u || !n_rd) continue;
+    kh_str(w, label, kh_label(label, "pf", n));
+    kh_u32(w, 4); /* distance */
+    kh_u16(w, (uint16_t)n_rd);
+    for (uint32_t k = 0; k < n_rd; k++) kh_u32(w, kh_rid(h, kp_ref(x, (uint64_t)ref0 + k)));
+    kh_str(w, t0, 2);
+    kh_str(w, linear, 6);
+    if (v4) kh_u8(w, 1); /* buffers */
+  }
+  /* blocks */
+  for (uint32_t n = 0; n < n_steps; n++) {
+    const uint8_t *cl = kp_claim(x, S32(h->H.step_claim, n));
+    kh_u64(w, CL_OFFSET(cl));
+    kh_u64(w, CL_COUNT(cl));
+    kh_u16(w, 1);
+    kh_u64(w, CL_STRIDE_K(cl));
+  }
+  /* trace notes */
+  for (uint32_t n = 0; n < n_steps; n++) {
+    kh_u64(w, kp_rd32(kh_step(h, n)));
+    kh_u64(w, 0);
+    kh_u64(w, 0);
+  }
+  /* the generation vector (v4) */
+  if (v4) kh_bytes(w, b->data + b->off_gens, 12u * (size_t)b->n_gens);
+}
+
+/* Every law; then, when `need` is not NULL, the pack's size (the counting pass). `h` is ready to
+ * emit on BCIR_OK. */
+static bcir_status kh_prepare(kh_ctx *h, const bcir_kp_input *in, const bcir_kp_realization *plan,
+                              const bcir_kp_binding *b, void *scratch, size_t scratch_len,
+                              size_t *need) {
+  if (need) *need = 0;
+  if (!in || !in->data || !plan || !plan->data || !b || !b->data || !scratch)
+    return BCIR_ERR_NOSPACE;
+  kp_zero((uint8_t *)h, sizeof *h);
+  h->in = in;
+  h->plan = plan;
+  h->b = b;
+  bcir_status st = kh_plan_layout(in, b, &h->H);
+  if (st != BCIR_OK) return st;
+  if (scratch_len < h->H.total) return BCIR_ERR_NOSPACE;
+  kp_ctx *x = &h->x;
+  x->in = in;
+  x->s = (uint8_t *)scratch;
+  x->L = h->H.L;
+  st = kp_check(x);
+  if (st == BCIR_OK) st = kh_check_binding(h);
+  if (st != BCIR_OK) return st;
+  kp_topo(x);
+  for (uint32_t t = 0; t < in->n_phases; t++) S32_SET(h->H.pos, S32(x->L.topo, t), t);
+  uint64_t ref = 0;
+  for (uint32_t p = 0, c = 0; p < in->n_phases; p++) {
+    uint32_t nc = kp_rd32(in->data + in->off_phases + 12u * (size_t)p + 8u);
+    for (uint32_t k = 0; k < nc; k++, c++) {
+      const uint8_t *cl = kp_claim(x, c);
+      S32_SET(h->H.cl_phase, c, p);
+      S32_SET(x->L.cl_ref, c, (uint32_t)ref);
+      ref += (uint32_t)CL_NRD(cl) + CL_NWR(cl);
+    }
+  }
+  uint32_t off = 0;
+  for (uint32_t i = 0; i < in->n_ops; i++) {
+    S32_SET(h->H.op_off, i, off);
+    off += kp_rd16(in->data + in->off_op_lens + 2u * (size_t)i);
+  }
+  st = kh_check_steps(h);
+  if (st != BCIR_OK || !need) return st;
+  kh_w count = {NULL, SIZE_MAX, 0, 0};
+  kh_emit(h, &count);
+  if (count.err || count.n > SIZE_MAX - BCIR_KP_CRC_SIZE) return BCIR_ERR_OVERFLOW;
+  *need = count.n + BCIR_KP_CRC_SIZE;
+  return BCIR_OK;
+}
+
+bcir_status bcir_kp_hydrate_size(const bcir_kp_input *in, const bcir_kp_realization *plan,
+                                 const bcir_kp_binding *b, void *scratch, size_t scratch_len,
+                                 size_t *bytes) {
+  if (bytes) *bytes = 0;
+  if (!bytes) return BCIR_ERR_NOSPACE;
+  kh_ctx ctx;
+  return kh_prepare(&ctx, in, plan, b, scratch, scratch_len, bytes);
+}
+
+bcir_status bcir_kp_hydrate(const bcir_kp_input *in, const bcir_kp_realization *plan,
+                            const bcir_kp_binding *b, void *scratch, size_t scratch_len,
+                            uint8_t *out, size_t cap, size_t *out_len) {
+  if (out_len) *out_len = 0;
+  kh_ctx ctx;
+  /* Every law first; the write then goes straight into `out`, bounded by `cap` -- a pack that
+   * does not fit is BCIR_ERR_NOSPACE with the output zeroed (bcir_kp_hydrate_size sizes it). */
+  bcir_status st = out_len ? kh_prepare(&ctx, in, plan, b, scratch, scratch_len, NULL)
+                           : BCIR_ERR_NOSPACE;
+  if (st == BCIR_OK && !out) st = BCIR_ERR_NOSPACE;
+  if (st != BCIR_OK) {
+    if (out && cap) kp_zero(out, cap);
+    return st;
+  }
+  kh_w w = {out, cap, 0, 0};
+  kh_emit(&ctx, &w);
+  if (!w.err) kh_u32(&w, bcir_crc32(out, w.n));
+  if (w.err) {
+    kp_zero(out, cap);
+    return BCIR_ERR_NOSPACE;
+  }
+  *out_len = w.n;
   return BCIR_OK;
 }

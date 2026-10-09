@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .._collector import paused
 from ..model import (
     ATOMIC_OPCODES,
     ISOLATED_DOMAINS,
@@ -932,6 +933,7 @@ def _admissible_offer(module: Module, h, steps):
     return offer, entry
 
 
+@paused
 def verify_plan(
     module: Module, result, h=None, theta=None, policy=None, budget=None
 ) -> list[Diagnostic]:
@@ -1183,6 +1185,7 @@ def _cost_law(step, prev, scope: _CostScope) -> Diagnostic | None:
     return None
 
 
+@paused
 def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     """GEM stream laws R10 (provenance) and R11 (generation validity).
 
@@ -1369,6 +1372,7 @@ def _pack_generation_laws(module: Module, pack) -> list[Diagnostic]:
     return diags
 
 
+@paused
 def verify_execution_plan(
     module: Module,
     plan,
@@ -1394,7 +1398,9 @@ def verify_execution_plan(
       identity API; the cached identity is re-validated by content) and, with `target`,
       `target_hash` is the target's, the header's stream geometry is the target's, and the
       placement is what the canonical dispatch produces from the plan's own step costs
-      (`schedule_plan(module, realization_of(plan), target, plan.mode)`);
+      (`schedule_plan(module, realization_of(plan), target, plan.mode)`) -- or, for a plan
+      that states its placement (`PLAN_FLAG_EXPLICIT_PLACEMENT`, G19: the exact solver's
+      optimum), a legal phase-barriered placement (`gem.schedule.placement_violations`);
     * with `result`, the steps are the realization's (claim, phase, candidate, lane, width,
       cost), in order;
     * the lifetimes cover the schedule (G5): under schedule liveness each lifetime's ticks
@@ -1490,6 +1496,18 @@ def verify_execution_plan(
                     f"({streams}, {knee})",
                 )
             )
+        elif structural and getattr(plan, "explicit_placement", False):
+            # G19: a plan that STATES its placement (the exact solver's proved optimum) is held
+            # to the legality of a phase-barriered placement -- eligibility, durations, the
+            # phase barrier, the hazard edges, one claim at a time per stream, the makespan --
+            # and not to equality with the canonical dispatch, which would refuse the optimum.
+            # (only an eft plan carries the flag: a wire law, refused above as malformed)
+            from ..gem.schedule import Slot, placement_violations
+
+            slots = [Slot(s.claim_id, s.stream, s.start, s.start + s.duration) for s in plan.steps]
+            durations = {s.claim_id: max(0, s.cost) for s in plan.steps}
+            for why in placement_violations(module, durations, target, slots, plan.makespan):
+                diags.append(Diagnostic("R9", f"explicit placement: {why}"))
         elif structural:
             from ..gem.execution_plan import realization_of
             from ..gem.schedule import schedule_plan
@@ -1949,6 +1967,7 @@ def verify_lowering(
     from ..lower.alias_facts import kernel_facts
     from ..lower.llvm import _FOP, _IOP, find_elementwise
     from .alias import ll_alias_diagnostics
+    from .poison import ll_poison_diagnostics
 
     diags: list[Diagnostic] = []
     try:
@@ -1984,7 +2003,10 @@ def verify_lowering(
     ety = "i32" if elem == "i32" else "float"
     op_ll = _IOP[claim.opcode] if elem == "i32" else _FOP[claim.opcode][0]
     kernel_ty = f"<{declared_w} x {ety}>" if declared_w > 1 else ety
-    if f"{op_ll} {kernel_ty}" not in ll_text:
+    # an i32 op may carry proved no-wrap flags between the opcode and the type (G29); which
+    # flags, and whether they are proved, is the poison reader's to judge (`verify.poison`)
+    wrap = r"(?:\s+(?:nuw|nsw))*" if elem == "i32" else ""
+    if not re.search(rf"\b{op_ll}{wrap}\s+{re.escape(kernel_ty)}(?![\w>])", ll_text):
         diags.append(
             Diagnostic(
                 "R12", f"precision not preserved: kernel op '{op_ll} {kernel_ty}' not emitted"
@@ -2017,7 +2039,7 @@ def verify_lowering(
                     f"largest multiple of the width (no `and i64 %n, -{declared_w}` mask)",
                 )
             )
-        if f"{op_ll} {ety} " not in ll_text:
+        if not re.search(rf"\b{op_ll}{wrap}\s+{ety}\s", ll_text):
             diags.append(
                 Diagnostic(
                     "R12",
@@ -2058,6 +2080,11 @@ def verify_lowering(
 
     # The declared alias facts, the hazard's fences among them (`verify.alias`).
     diags.extend(Diagnostic("R12", message) for message in ll_alias_diagnostics(facts, ll_text))
+    # The proved no-wrap facts and the declared value ranges (`verify.poison`, G29).
+    diags.extend(
+        Diagnostic("R12", message)
+        for message in ll_poison_diagnostics(module, claim, ll_text, elem)
+    )
     return diags
 
 

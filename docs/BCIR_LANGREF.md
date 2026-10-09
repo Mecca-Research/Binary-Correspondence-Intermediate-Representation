@@ -196,13 +196,21 @@ and the law rail always recomputes from the IR. Since G11 (S1-C) the plan itself
 byte form, `ExecutionPlanV1` ([`kernel/BCIR_EXECUTION_PLAN_ABI.md`](kernel/BCIR_EXECUTION_PLAN_ABI.md)):
 `verify_execution_plan` holds R9 over it (every claim the module declares is stepped once,
 in the declared phase and in topological phase order; the placement is what the canonical
-dispatch produces from the plan's own step costs), R13 (the plan's `module_hash` and
+dispatch produces from the plan's own step costs -- or, for a plan that states its placement
+(header flag bit 0, G19: the exact solver's optimum, minted by `gem.execution_plan.exact_plan`),
+a legal phase-barriered placement of those costs, `gem.schedule.placement_violations`:
+eligibility, durations, the phase barrier, the hazard edges, one claim at a time per stream,
+the makespan), R13 (the plan's `module_hash` and
 `target_hash` are this module's and this target's, validated through the identity API),
 R11 (the carried generation vector is the live registry's, entry for entry) and R10/R11
 across artifacts (the pack is the lowering of its plan — one segment per step with the
 step's claim, phase, lane and width — and a pack whose plan carries an older vector is
 stale); the freestanding C twin (`bcir_ep_verify`, `bcir_ep_check_generation_vector`,
-`bcir_ep_check_pack`) refuses the same bytes. Since G5 (S1-D) a static memory plan names the
+`bcir_ep_check_pack`) refuses the same bytes. Since G21 a plan is signed by a detached
+`PlanStatementV1` ([`kernel/BCIR_PLAN_SIGNATURE_ABI.md`](kernel/BCIR_PLAN_SIGNATURE_ABI.md)):
+SHA-256 binds the plan's bytes, its scope, module, pack and certificate, and an Ed25519
+signature (RFC 8032) is checked on both rails against a trust store with rotation, revocation and
+expiry that admits no small-order key. Since G5 (S1-D) a static memory plan names the
 liveness domain its lifetimes live in — topological phase positions, or the canonical
 placement's own half-open ticks (`kbcir.static_memory.schedule_intervals`) — and is held to
 the placement it is composed with: a phase-liveness plan the placement does not refine is
@@ -281,6 +289,35 @@ it), now carried on the dialect as the `#bcir.timing` / `#bcir.lifetime` attribu
   claim order against the freed set, a read of a freed-and-not-reallocated resource
   is a use-after-free, a `free` of an already-freed resource is a double-free, and a
   write (reassignment / `alloc`) re-validates.
+
+**Fixed-rate streams (GEM+ G23 / G24).** A claim may declare itself an actor of a
+synchronous -- or cyclo-static -- dataflow graph with the *optional* `StreamRate`
+(`model.graph.StreamRate`): per FIFO resource it reads, the tokens each firing consumes;
+per FIFO it writes, the tokens each firing produces and the delays it starts with. Like
+`timing` it is absent by default and digest-excluded from R13, so no existing claim, plan or
+content address moves. It is **not a legality law**: `kbcir.regions` recognizes a run of
+stream claims as an `sdf` region (the repetition vector that balances every FIFO, one live
+iteration's schedule, its FIFO bounds) or, when homogeneous with every latency declared, a
+`timed` region (the max-plus cycle time, a lower bound on every schedule's period); a run the
+dataflow model refuses -- inconsistent rates, deadlock, an open stream -- is an opaque region
+naming why, exactly as an affine refusal is. The model lives on the oracle rail
+(`kbcir.dataflow`); the law rail carries no stream attribute yet.
+
+**Depth-two loop nests (GEM+ G30).** A claim may declare the 2-D loop nest it is with the
+*optional* `LoopNest` (`model.graph.LoopNest`): extents `(R, C)` and, per operand in the
+claim's own order (its reads, then its writes), an affine map `(rid, offset, row stride, col
+stride)` -- iteration `(i, j)` touches `offset + i * row stride + j * col stride`. Iterations
+run in lexicographic order and each reads every operand before it writes any. Like `stream`
+it is absent by default and digest-excluded from R13, so no existing claim, plan or content
+address moves, and it is **not a legality law**: `kbcir.regions` recognizes the claim as a
+`nest` region whose local model (`kbcir.polyhedral.nest_model`) is the exact set of
+dependence distances (flow, anti, output) and what they make legal -- interchange iff no
+distance has a negative column component, rectangular tiling iff every distance is
+non-negative in both, the outer loop parallel iff no dependence is carried by it, the inner
+iff none is carried by it. A nest that is malformed, whose maps do not name the claim's
+operands, or whose map leaves its resource is an opaque region with the refusal `nest`.
+Depth three and beyond, skewing, fusion across claims and symbolic extents are not built; the
+law rail carries no nest attribute yet.
 
 **ASN.1 encoding-rule legality (R24).** Over the `bcir.asn1.*` schema operations
 (§17's ASN.1 rail and §18's profile, [`BCIR_ASN1_X690_ABI.md`](BCIR_ASN1_X690_ABI.md)). R24 checks the

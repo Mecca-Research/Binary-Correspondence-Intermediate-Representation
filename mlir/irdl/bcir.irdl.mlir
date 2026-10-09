@@ -245,4 +245,124 @@ irdl.dialect @bcir {
     %t = irdl.any
     irdl.operands(t: variadic %t)
   }
+
+  // ---- G32: the driver-subset core (values, registers, ports, descriptors, entry) ----
+  // The LOWERED accessors take a resolved integer address (any integer width); the
+  // register and descriptor operations the exact widths ODS declares. Exercised by
+  // test/irdl/driver_core_generic.mlir.
+  irdl.operation @volatile_load {
+    %addr = irdl.base "!builtin.integer"
+    %value = irdl.any
+    irdl.operands(addr: %addr)
+    irdl.results(value: %value)
+  }
+  irdl.operation @volatile_store {
+    %value = irdl.any
+    %addr = irdl.base "!builtin.integer"
+    irdl.operands(value: %value, addr: %addr)
+  }
+  irdl.operation @atomic_rmw {
+    %addr = irdl.base "!builtin.integer"
+    %value = irdl.any
+    irdl.operands(addr: %addr, value: %value)
+    irdl.results(result: %value)
+  }
+  irdl.operation @atomic_cas {
+    %addr = irdl.base "!builtin.integer"
+    %value = irdl.any
+    irdl.operands(addr: %addr, expected: %value, desired: %value)
+    irdl.results(result: %value)
+  }
+  irdl.operation @creg_read {
+    %i64 = irdl.is i64
+    irdl.results(value: %i64)
+  }
+  irdl.operation @creg_write {
+    %i64 = irdl.is i64
+    irdl.operands(value: %i64)
+  }
+  irdl.operation @msr_read {
+    %i32 = irdl.is i32
+    %i64 = irdl.is i64
+    irdl.operands(index: %i32)
+    irdl.results(value: %i64)
+  }
+  irdl.operation @msr_write {
+    %i32 = irdl.is i32
+    %i64 = irdl.is i64
+    irdl.operands(index: %i32, value: %i64)
+  }
+  irdl.operation @descriptor_load {
+    %i64 = irdl.is i64
+    irdl.operands(addr: %i64)
+  }
+  irdl.operation @segment_reload {
+    %i16 = irdl.is i16
+    irdl.operands(data_selector: %i16, code_selector: %i16)
+  }
+  irdl.operation @task_register_load {
+    %i16 = irdl.is i16
+    irdl.operands(selector: %i16)
+  }
+  // `in`: (port) -> value; `out`: (value, port) -> () -- two positional integers, the second
+  // present only for `out`, each its own constraint (an i8 value at an i16 port). ODS's one
+  // variadic `args` cannot be projected as written: an IRDL constraint variable binds one type
+  // for a whole variadic group. (The same limit keeps `bcir.asm`, whose operands are
+  // heterogeneous outputs-then-inputs, declared unprojected in the manifest.)
+  irdl.operation @portio {
+    %first = irdl.base "!builtin.integer"
+    %second = irdl.base "!builtin.integer"
+    %value = irdl.base "!builtin.integer"
+    irdl.operands(first: %first, second: optional %second)
+    irdl.results(value: optional %value)
+  }
+  irdl.operation @entry
+  irdl.operation @interrupt_trampoline
+  irdl.operation @abi_contract
+  irdl.operation @device_manifest
+
+  // ---- G32: the GEM model seams (attribute-only plan records, and the matmul buffers) ----
+  // Exercised by test/irdl/gem_model_generic.mlir.
+  irdl.operation @gem_matmul
+  irdl.operation @gem_fused_matmul_activation
+  irdl.operation @gem_activation
+  irdl.operation @gem_attention
+  irdl.operation @gem_gqa_attention
+  irdl.operation @gem_rmsnorm
+  irdl.operation @gem_rope
+  irdl.operation @gem_kv_cache
+  irdl.operation @gem_embedding
+  irdl.operation @gem_conv
+  irdl.operation @gem_autodiff
+  irdl.operation @gem_contention
+  irdl.operation @gem_layout_pivot
+  irdl.operation @gem_matmul_buffer {
+    // three memrefs of their own shapes (A is m x k, B k x n, C m x n); IRDL names are
+    // lowercase, so ODS's A / B / C are spelled a / b / c
+    %a = irdl.base "!builtin.memref"
+    %b = irdl.base "!builtin.memref"
+    %c = irdl.base "!builtin.memref"
+    irdl.operands(a: %a, b: %b, c: %c)
+  }
+
+  // ---- G32: the ECN encoding objects (X.692, R24/R25) ----
+  // Exercised by test/irdl/ecn_generic.mlir. An IRDL operation cannot declare ODS's
+  // NoTerminator, so -- as everywhere on this structural rail -- a region-bearing operation
+  // carries an empty region and its children are siblings.
+  irdl.operation @ecn_module {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @ecn_structure {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @ecn_object {
+    %body = irdl.region
+    irdl.regions(body: %body)
+  }
+  irdl.operation @ecn_class
+  irdl.operation @ecn_field
+  irdl.operation @ecn_condition
+  irdl.operation @ecn_parameterized
 }

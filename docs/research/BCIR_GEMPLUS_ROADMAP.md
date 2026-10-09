@@ -17,6 +17,9 @@ Grounded in three documents, all in this tree:
   — the 2026-09-04 review that re-staged this roadmap: the disposition of the earlier
   assessment's findings against the tree, today's re-measurement, the contracts the slices
   were missing (G11–G18), and the PR-sized sections in order.
+- [`BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md`](BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md) — the audit
+  of #758–#808 against the original plan: every roadmap slice landed, and what the plan asked
+  for that no slice carried, which is the completion ladder of §9.
 
 ---
 
@@ -105,8 +108,11 @@ kbcir-streampack.delta.calls          streampack.encode.calls
 streampack.encode                     kbcir-streampack.full.calls
 audit.kbcir-streampack.scale4         audit.static-lifetime-planner.scale4
 audit.mixed-wave-token-eft.scale4     audit.iterative-phase-dag.scale4
-verify.plan.scope.overhead
+verify.plan.scope.overhead            hydrate.native.scale4
 ```
+
+The last, `hydrate.native.scale4`, came with its row (CXX4): a row added after 2026-09-30 brings
+its floor with it.
 
 `test_the_roadmap_lists_the_harness_floors` pins this block to the harness's measured-floor
 rows, and pins the unbounded set to empty. §0.3 once listed five unbounded rows while the harness
@@ -122,8 +128,8 @@ container gave the readings below (4 vCPUs, CPython 3.11.15, `--compare`, 2026-0
 | Floor | Rows | Reading (value / floor) |
 |---|---|---|
 | **The digest's own arithmetic.** The FNV-1a chain alone over the pre-rendered canonical stream (`provenance.fnv_chain`). It returns the same digest, and the chain is sequential in its bytes, so this is the Ω(n) argument over the bytes that must be hashed, measured. | `static_memory.digest.2048` | 50.7 / 40.4 ms: within 1.26× of the floor. What remains is the walk and the rendering |
-| **Emission.** The call, plus one constructor call per record the output must carry fresh (`emission_floor`). Each distinct value is counted once, and a value the previous link or the delta already holds is not counted. The currency charges calls, not bytecode, so this is all an implementation cannot avoid: an update costs at least its change (Ramalingam and Reps' bounded incremental computation). | `planner.calls`, `kbcir-streampack.delta.calls`, `kbcir-streampack.full.calls`, `streampack.encode.calls` | 589,858 / 65,539 (a step per claim, the result, each distinct Candidate and CostVector); 472 / 13 (the one-claim delta's change: the link, result and step, candidate, cost vector, pack and block, module and phase, and the three R7 verdicts its count adds); 3,588,352 / 166,923; 989,245 / 1: the wire image is one bytes object, so an encoder that batches each layout has a constant floor |
-| **Writing the output once.** A memory roofline: the fixed-size realization (`test_kplan --bench-floor`), the delta link's pack bytes, and the wire image, each timed with its value. | `planner.native.scale4`, `kbcir-streampack.delta`, `streampack.encode` | 3.73 ms / 24 µs; 0.0112 / 0.00059; 0.335 / 0.0015 |
+| **Emission.** The call, plus one constructor call per record the output must carry fresh (`emission_floor`). Each distinct value is counted once, and a value the previous link or the delta already holds is not counted. The currency charges calls, not bytecode, so this is all an implementation cannot avoid: an update costs at least its change (Ramalingam and Reps' bounded incremental computation). | `planner.calls`, `kbcir-streampack.delta.calls`, `kbcir-streampack.full.calls`, `streampack.encode.calls` | 655,393 / 65,539 (a step per claim, the result, each distinct Candidate and CostVector); 489 / 13 (the one-claim delta's change: the link, result and step, candidate, cost vector, pack and block, module and phase, and the three R7 verdicts its count adds); 3,689,720 / 166,923; 989,245 / 1: the wire image is one bytes object, so an encoder that batches each layout has a constant floor. Every count is per code object (`bcir/tests/call_counts.py`): until AUDIT-0 they were `pstats` totals, which merge every dataclass `__init__` into one row and so dropped the very constructor calls these floors count |
+| **Writing the output once.** A memory roofline: the fixed-size realization (`test_kplan --bench-floor`), the delta link's pack bytes, and the wire image, each timed with its value; since CXX4 also the native hydrate's StreamPack (`--bench-hydrate-floor`). | `planner.native.scale4`, `kbcir-streampack.delta`, `streampack.encode`, `hydrate.native.scale4` | 3.73 ms / 24 µs; 0.0112 / 0.00059; 0.335 / 0.0015; 2.58 ms / 0.014 ms (a 712,521-byte pack: the hydrate sits 180x above storing it) |
 | **The case's own fixture.** Each audit case builds its fixture inside its timed interval (`performance_audit.AUDIT_FIXTURES`), and no GEM slice touches that work. The static-lifetime plan also carries its module digest, so the chain is output there. | the four `audit.*` rows | kbcir-streampack 209 / 13.5 ms; static-lifetime 257 / 52.0 ms; mixed-wave-token-eft 38.8 / 10.3 ms; iterative-phase-dag 20.1 / 3.7 ms |
 | **R9's own work.** Each chosen step's cost is re-derived once through the shared predicate. The re-derived costs must sum to the plan's score. | `verify.plan.scope.overhead` | 0.68 / 0.059 |
 
@@ -138,6 +144,33 @@ floor only by doing less interpretation per record. The native planner is the ex
 3.73 ms where the Python planner takes 65 ms for the same plan on the same host. A slice that
 improves one of these rows now states its gap to a measured floor (TMSAO-2 for that row's
 number), not a TMSAO-4 claim.
+
+### 0.4 Before and after, on one host
+
+The frozen harness grades a tree against numbers measured on another machine. A slice also has
+to show what it changed against its own parent, on one host, and that is a different question:
+`tools/perf/ab_audit.py --before <parent>` answers it. It runs the harness and the bounded
+performance audit in both trees, and times the hot paths the slice touches in alternating
+rounds, each tree in its own process so each imports its own `bcir`:
+
+```
+python tools/perf/ab_audit.py --before origin/main --group sp,sched --markdown ab.md
+```
+
+Every `exact` row and every output digest must match, or move only where the slice declares it
+(`--expect-change`); between two trees on one interpreter an `exact` row is bit-identical unless
+the change moved it, so it is graded with zero tolerance. A hot path's call count is exact for
+one interpreter and graded the same way: both trees are read with this checkout's counter
+(`bcir/tests/call_counts.py`), one entry per code object. The row groups are `sp` and `sp8` (the
+K_BCIR -> StreamPack chain), `sched` (the schedulers and the phase DAG), `audit` (the
+performance audit's cases) and `asn1` (the ASN.1 front end over the repository's own modules and
+an X.683 module). A `ratio` row is held to its 25% band, and a time is
+reported as the before/after ratio and never graded. A metric present before and gone after is a
+failure: it is coverage lost. A regression lands only with its explanation recorded
+(`--explain ROW=reason`), and the table goes into the PR. The first run of the tool proved the
+point of the exact rows: fifty calls injected into the planner read 1.04x *faster* on the clock
+and were refused by the call count (73,761 -> 73,811). `bcir/tests/test_ab_audit.py` feeds the
+tool each kind of change it exists to catch.
 
 ---
 
@@ -1022,7 +1055,9 @@ What landed (S4-A):
     record cannot carry, exactly when the Python encoder does. `BCIR_ERR_PLANNER` 25 is
     appended.
 - **Measured.**
-  - `planner.calls` fell from 3,419,172 to 589,858 at scale 8 (5.80×; 5.76× at scale 4). That is
+  - `planner.calls` fell from 3,419,172 to 589,858 at scale 8 (5.80×; 5.76× at scale 4) as
+    `pstats` totals; counted per code object at AUDIT-0 it is 3,549,217 to 655,393 (5.42×; 5.38×
+    at scale 4). That is
     CPython 3.11 on the parent; the tests compare the two planners in one process, because counts
     differ between interpreters.
   - `verify.plan.scope.overhead` fell from 1.07 to about 0.73.
@@ -1129,7 +1164,7 @@ Found and fixed inside the slice:
   the states refused it.
 - A `Delta` whose replacements were not tuples raised a `TypeError`, not a verdict (L1).
 - Sharing the relaxation first cost `optimize` a call per column. Weighing each phase once per run
-  of columns cancels it: `planner.calls` stays 589,858.
+  of columns cancels it: `planner.calls` stays 589,858 (655,393 counted per code object, AUDIT-0).
 
 Not claimed: a native twin of the delta chain; incremental verification on the MLIR rail; deltas
 that insert, remove or move claims or resources or change the scope; incremental event laws;
@@ -1328,10 +1363,10 @@ and then the floor.
 | `handoff.stage3.stale.accepted` / `handoff.stage3.flow.divergent` | Stage 3 exit | 18 / 75 (the parent tree) | **0 / 0** (S3-C, 2026-09-24) | GAIN, at the bound. One generation flows plan → control → data → telemetry → evidence on three rails, the old one is refused at each of six boundaries, and the telemetry ring's loss equals the intake's gap count exactly |
 | `handoff.dispatch.overhead` | G16 | 1.95× (the parent's seam) | **~1.01×** (S3-C) | GAIN. The parent verified the whole pack twice per dispatch (`shard()`, then the walk); now every per-dispatch check is O(1) and the verification runs once, at `admit()`. A single-core ratio, so the band holds across hosts |
 | `planner.parity` / `planner.malformed.accepted` / `planner.r9.misjudged` | G17 | 8,430 / 148 / 232 (the parent tree) | **0 / 0 / 0** (S4-A, 2026-09-24) | GAIN, at the bound. The native planner reproduces the Python plan byte for byte over the generated corpus, refuses every malformed input, and R9 judges every forgery |
-| `planner.calls` / `planner.native.scale4` | G17 | 3,419,172 / 3.41 ms | **589,858** (floor 65,539) / **3.73 ms** (floor 0.024 ms) | GAIN / INDICATIVE. 89% of the calls are above the emission floor; the native plan sits 155× above writing its realization once |
+| `planner.calls` / `planner.native.scale4` | G17 | 3,549,217 / 3.41 ms | **655,393** (floor 65,539) / **3.73 ms** (floor 0.024 ms) | GAIN / INDICATIVE. Counted per code object since AUDIT-0 (the `pstats` totals were 3,419,172 and 589,858). 90% of the calls are above the emission floor; the native plan sits 155× above writing its realization once |
 | `planner.delta.parity` / `pack.delta.identity` / `verify.delta.identity` / `delta.malformed.accepted` | G18 | 2,064 / 2,064 / 4,128 / 51 (the parent tree) | **0 / 0 / 0 / 0** (S4-B, 2026-09-24) | GAIN, at the bound. Every link of the delta chain equals the chain from scratch on the declared module |
-| `kbcir-streampack.delta` / `kbcir-streampack.delta.calls` | G18 | 1.0 / 10,855,666 | **0.0112** (floor 0.00059) / **472** (floor 13) | GAIN. A one-claim delta costs 1.1% of the chain from scratch; its floor is its change, 12 records at every scale |
-| `streampack.encode.parity` / `streampack.encode.calls` / `streampack.encode` / `kbcir-streampack.full.calls` | SP-ENC | 0 / 7,543,875 / 1.0 / 10,110,215 | **0 / 989,245** (floor 1) / **0.335** (floor 0.0015) / **3,588,352** (floor 166,923) | GAIN; the parity guard is held at 0. The compiled encoder is byte-identical to the one it replaced |
+| `kbcir-streampack.delta` / `kbcir-streampack.delta.calls` | G18 | 1.0 / 10,855,666 | **0.0112** (floor 0.00059) / **489** (floor 13; 472 as a `pstats` total) | GAIN. A one-claim delta costs 1.1% of the chain from scratch; its floor is its change, 12 records at every scale |
+| `streampack.encode.parity` / `streampack.encode.calls` / `streampack.encode` / `kbcir-streampack.full.calls` | SP-ENC | 0 / 7,543,875 / 1.0 / 10,110,215 | **0 / 989,245** (floor 1) / **0.335** (floor 0.0015) / **3,689,720** (floor 166,923; counted per code object, AUDIT-0) | GAIN; the parity guard is held at 0. The compiled encoder is byte-identical to the one it replaced |
 | the fifteen `alias.*` rows | G9 | 648 / 2,646 / 2,646 / … (the parent tree; the false-`noalias` guard 0) | **all 0** (S5-A, 2026-09-25) | GAIN, at the bound. The declared alias facts reach LLVM (`noalias`, alias scopes, TBAA, volatility), and LLVM judges them |
 | `escape.unproved` / `icall.unknown` / `icall.unresolved` / the five mismatch and soundness rows | G10 | 39 / 22 / 22 / 73, 20, 119, 24, 200 (the parent tree) | **0 / 15 / 18 / all 0** (S5-B, 2026-09-25) | GAIN. `escape.unproved` and `icall.unknown` are at their floors (the open world's 15); `icall.unresolved` is 2 above its floor of 16 |
 | the five `volatile.*` rows | CF-VOL | 356 / 369 / 69 / 0 / 282 (the parent tree) | **all 0** (CF-VOL, 2026-09-25) | GAIN, at the bound. Clang judges `volatile` through both cfront rails |
@@ -1343,3 +1378,36 @@ Since S2-B BCIR emits TMSAO-1 and TMSAO-2 certificates on the proof rail. Since 
 measured rail exists, but it grants TMSAO-3 to nothing on this host: the two-target rule keeps
 it hardware-gated (Stage 6). Since 2026-09-30 every row of the table has a floor (§0.3). What
 remains without one is only what needs hardware: the PMU and energy rows of Stage 6.
+
+---
+
+## 9. The completion ladder (2026-10-06)
+
+The [2026-10-06 audit](BCIR_GEMPLUS_TMSAO_AUDIT_2026-10-06.md) found every slice above landed
+and named what the original plan asked for that none of them carried. This is that work, in
+priority order: P0 is correctness, P1 is the honesty of a certificate and the oracle's own cost,
+P2 widens the portfolio, P3 needs hardware. One gated slice per entry, the slice ID in the PR
+title, and every slice ends with the before/after audit of §0.4 in its PR. The audit's item
+numbers are in the second column.
+
+| Slice | Item | Content | Gate | Status |
+|---|---|---|---|---|
+| **AUDIT-0** | — | the audit, this ladder, `tools/perf/ab_audit.py` | the tool fails on each kind of change it grades (`test_ab_audit.py`); RED on an injected planner change | **landed** |
+| **ASN1-H** (P0) | 21 | hygienic X.683 substitution: dummies substituted structurally everywhere they appear, nothing installed in the module's shared tables, a memo key that names what was substituted; value parameters and every form of actual; names in constraints resolved or refused (X.680 §51); §9.8's templates of another module | both captures of audit §4.1 resolve lexically; lowering is independent of assignment order; a named bound gives the literal's PER/OER octets (`test_asn1_parameterization.py`, each test RED on the parent) | **landed** |
+| **ASN1-R** (P0) | 18 | recursive types on every encoding rule, from a type containment graph: one `schema.Reference` every rail follows, one recursion bound on every rail in both directions, a JER plan `ref` back-edge, recursive CHOICEs and recursive template instances lowered, a type defined only as itself refused | the audit's §4.2 types round-trip on DER, PER, OER, XER and JER and compile to a JER plan; nesting is bounded on untrusted input on every decoder; the write plan's refusal names the cycle; the SCCs are exact (`test_asn1_recursion.py`, each test RED on the parent) | **landed** |
+| **ASN1-T** (P0) | — | a tagged type the type model can hold: a component's own tag over a type with an assignment-level tag keeps both (X.680 §31), and a tagged assignment encodes with its tag (audit §4.4, found by ASN1-R's review) | `ticket [3] Ticket` with `Ticket ::= [APPLICATION 1] SEQUENCE {...}` gives X.690's octets; every rail on which tags are invisible is unchanged (`test_asn1_tagged_types.py`, RED on the parent) | **landed** |
+| **ASN1-N** (P0) | 20 | one abstract value for NULL, `codec.NULL`, on every rail (audit §4.5, found by ASN1-R's review) | a value any rail decodes encodes on every other rail; `None` and a value of another type are refused as a NULL on every rail (`test_asn1_null.py`, RED on the parent) | **landed** |
+| **G19 EXEC-EXACT** (P1) | 1 | the proved optimum is the plan that runs: a plan may state its placement (header flag bit 0), `exact_plan` mints the solver's incumbent wherever it beats the dispatch (the canonical plan, byte for byte, everywhere else), and the readers take the slots from the bytes | `eft.executed.suboptimal.2domains` 11.07% -> 0 and `.3domains` 1.05% -> 0 on the proof rail; the verifier (R9) holds an explicit placement by its legality (`placement_violations`), the canonical one by equality as before; the flag on the native codec, the ASN.1 projection (v4) and the C twin, every undefined bit refused (`test_exec_exact.py`, RED on the parent) | **landed** |
+| **OR-GC** (P1) | 17 | the cyclic collector out of the oracle's pure hot paths (`bcir._collector.paused` on the planner and the scheduled planner's sweep, hydrate, decode, R8/R9 and the plan's verifier, the three schedulers, plan minting, the plan decoder and the delta chain's build and apply); slots on its hot value types (`CostVector`, `Candidate`) | `gc.collections.{planner,hydrate,decode,verify_plan,schedule_eft,plan_path}.4` 75/42/47/70/24/48 -> 0; `gc.cyclic_garbage.hot_paths.4` held at 0 and per path by a witness (`test_collector.py`, RED on the parent); every output byte-identical | **landed** |
+| **G21 PLAN-SIGN** (P1) | 6 | the plan bound by SHA-256 and signed: a detached PlanStatementV1 binds the plan's bytes, the scope, the module, the pack and the certificate (a statement rather than an ExecutionPlan v4 record -- the plan's versions are cumulative and v3's binding law cannot hold for a plan that moves nothing; `docs/kernel/BCIR_PLAN_SIGNATURE_ABI.md`) | Ed25519 on both rails over the RFC 8032 vectors, signatures byte-identical; a TrustStoreV1 with rotation, revocation and expiry that refuses small-order keys (the identity key forges every message under RFC 8032 alone); every forgery refused with the same verdict on both rails (`test_plan_sign.py`, `test_c_plan_sign.py`, the `plan_sign` section, `fuzz_plan_sign` asserting unforgeability); `plan_sign.forgeries.accepted` 29 -> 0 and `plan_sign.verdicts.misjudged` 32 -> 0 over the 32-case corpus; the statement and the store are decoder-campaign surfaces | **landed** |
+| **G22** (P2) | 8 | expected cost: an expectation objective with its laws, Markov loops, `U` in the scope (`kbcir.expectation`: the exact absorbing-chain mean; the registry's `sum` kind and its `expectation` semiring; `compose`'s `Loop` region, exact means and refused out-of-range probabilities; a measured `BranchProfile` as the scope's `U`) | the registry admits it only with its laws (an order, an idempotent choice, an unweighted combine each refused); `expectation.corpus.misstated` 8 -> 0 against hand-derived means; `expectation.compose.disagreements` 60 -> 0 against the Markov solve of the unrolled region graph (`test_expectation.py`) | **landed** |
+| **G23 / G24** (P2) | 11, 12 | SDF/CSDF and timed-event (max-plus cycle-time) regions (`model.graph.StreamRate`, optional and digest-excluded; `kbcir.dataflow`: balance equations, repetition vector, liveness, FIFO bounds; the max-plus cycle time by Karp over A0* A1; the `sdf` and `timed` region kinds) | each kind verified, expanded to the identity, floored (an iteration floor; the period floor is the cycle time) and refused (`rate`, `open-stream`, `inconsistent-rates`, `deadlock`) on its own corpus: `regions.dataflow.misjudged` 14 -> 0 against hand-derived models, `regions.timed.cycle_time.disagreements` 60 -> 0 against an enumeration of every simple cycle, and the self-timed execution periodic at exactly the cycle time (`test_dataflow.py`) | **landed** |
+| **G25 / G26** (P2) | 15, 3 | red-blue pebble / communication-cut and hierarchical-roofline bounds; exact memory at production scale (`kbcir.io_bounds`: the pebble bound for an order -- compulsory loads, compulsory stores, the capacity excess -- and the hierarchical roofline over it; `static_memory`: the alignment-aware concurrent-live bound, and a best-fit incumbent portfolio for the exact rail) | the pebble bound held to an exact optimal-I/O dynamic program: `io.pebble.unsound` 0 over 300 generated instances, `io.pebble.loose.fraction` 295/300 -> 31/300, the check shown to fire on three unsound variants; the 512-resource fixture's gap reduced and stated: `memory.production.gap.512` 1,508 -> 352 bytes (bound 5,400 -> 6,468, layout 6,908 -> 6,820); the communication cut between domains, queue/network calculus, occupancy and energy are declared not built | **landed** (gap stated) |
+| **G27** (P2) | 14 | the depth of optimization priced by its value; straight-line modules delegated to LLVM (`gem.dispatch`: `OptimizationValue`, `priced_budget`, `dispatch_by_value`, `solve_memory_by_value` / `solve_schedule_by_value`, `delegation`; `lower.llvm`: `straight_line_claim`, `emit_delegated_ll`, `compare_delegated`) | the dispatch law weighs the gap against the work: no priced search spends more than `executions x gap / price` work units (`dispatch.value.overspend` 462 -> 0 over the memory and six-job schedule corpora); a delegated module's output equals the planned one byte for byte under clang -O2 (`dispatch.delegation.mismatch` 16 -> 0) (`test_value_dispatch.py`) | **landed** |
+| **G28** (P2) | 9, 14 | a dependency-free exact ILP/CSP; the joint schedule × memory optimum; an optional hosted CP-SAT adapter (`kbcir.csp`: linear rows, cumulative, 2-D no-overlap, branch and bound with bounds propagation and a node budget; `kbcir.joint`: one region's starts and offsets solved together, seeded with the schedule-then-layout pipeline; the dispatch law's `joint` kind; `hosted.cpsat`) | held to brute force on small fixtures (TMSAO-1): `csp.optimum.disagreements` 150 -> 0, `joint.optimum.disagreements` 40 -> 0 against a reference enumerating every start vector, `joint.excess` 26 -> 0 (the parent's pipeline's loss); the adapter held to the in-tree solver on all 190 (where `ortools` is installed; `BCIR_REQUIRE_CPSAT=1` makes its absence a failure) (`test_csp.py`) | **landed** |
+| **G29** (P2) | 13b | LLVM's poison: no-wrap and in-bounds facts the verifier proves, exported under R12 (`model.graph.Resource.value_range`, optional and digest-excluded; `lower.poison`: `prove_no_wrap` by exact interval arithmetic over the signed and the unsigned readings, `!range` on the loads, `judge`; `verify.poison`: R12 reads the flags and ranges back) | LLVM judges each fact: its own range reasoning re-derives every exported flag and none BCIR misses (`poison.facts.missed` 77 -> 0, `poison.facts.unjudged` 0); a forged fact is refused: `poison.forged.accepted` 74 -> 0 over 200 forgeries; every proof survives wrapped arithmetic (`test_poison.py`) | **landed** |
+| **G30 / G31 / G32** (P2) | 14 | polyhedral depth two; MLIR Transform export; the 38 unprojected IRDL operations | per slice. G32: 37 of the 38 projected with their operand and result constraints (the driver-subset core, the GEM model seams, the ECN objects), each exercised by a generic-syntax corpus file stock `mlir-opt` round-trips and each constraint held by a refused mistyped twin (`test_irdl_inventory.py`); `bcir.asm` stays declared, its reason the IRDL limit it meets (one constraint variable binds one type for a whole variadic group, so its heterogeneous operands have no IRDL spelling). G31: the matmul's tiling plan exported as a Transform-dialect script (`lower.transform`: a `linalg.matmul` payload and `tile_using_for` with the plan's tile sizes and its loop order as the `interchange`) that stock `mlir-opt --transform-interpreter` applies; the `scf.for` nest MLIR builds visits exactly the plan's tile origins in order on 24 plans (`transform.export.mismatch` 24 -> 0), the inverse interchange caught on both 3-cycles (`test_transform_export.py`). G30: a claim may declare its 2-D loop nest (`model.graph.LoopNest`, optional and digest-excluded) and is then a `nest` region (`kbcir.polyhedral.nest_model`: the exact dependence distances, the access equation solved per source instance; interchange, rectangular tiling and per-loop parallel legality), or opaque with the refusal `nest`; held to a reference that enumerates every instance pair and simulates each order on 160 generated nests (`nest.dependence.disagreements` and `nest.legality.disagreements` 160 -> 0), three wrong analyses caught (`test_polyhedral.py`) | **landed** (`check_inventory`: 132 of 133 projected; depth two, the oracle rail) |
+| **CXX0 / CXX4** (P2) | 17 | the oracle inventory, regenerated by a tool (`tools/perf/oracle_inventory.py`: every oracle module, its twin read from the C units' own comments, the gates that build it, the A/B audit's hot paths); native hydrate (`bcir_kp_hydrate`: BKPI + BKPR + the BKPB binding to the oracle's StreamPack) | a committed inventory (`docs/BCIR_ORACLE_INVENTORY.md`, `--check` in docs governance); the C hydrate byte-identical to the oracle's over the planner's corpus and the hydrate's own cases (`hydrate.native.parity` 3,375 -> 0), every malformed record refused alike on both rails (`hydrate.native.malformed.accepted` 48 -> 0), -O0 == -O3 == the oracle and a fault-injected build caught (the `kplan` section), fuzzed with every plan the planner makes (`test_native_hydrate.py`, `test_oracle_inventory.py`) | **landed** (CXX3 open) |
+| **ASN1-B** (P2) | 19, 20 | semantic bounds at the point of application: canonical-JER sizes from value constraints after substitution (`asn1.jer_bounds`: `max_octets`, `witness`) | bounds checked against the encoder on generated values: every bound reached by a valid witness and none exceeded by 15,048 sampled valid values over 817 types, parameterized types bounded as applied (`asn1.jer.bound.unstated` 549 -> 0, `asn1.jer.bound.loose` 3 -> 0, `asn1.jer.bound.unsound` 0) (`test_asn1_jer_bounds.py`) | **landed** |
+| **DOCS** | — | the current-state audit's GEM+ section | docs governance; the audit's item table reconciled with the ladder (§1.1 there), S6 named an explicit hardware skip | **landed** |
+| **S6** (P3) | 16 | TMSAO-3 | two materially different physical targets with PMU counters | hardware-gated: an explicit skip, never simulated |

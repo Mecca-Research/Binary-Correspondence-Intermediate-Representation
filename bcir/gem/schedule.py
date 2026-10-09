@@ -50,6 +50,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from heapq import heapify, heappop, heappush
 
+from .._collector import paused
 from ..model import Claim, Module
 from .async_tokens import async_plan
 from .concurrency import (
@@ -378,6 +379,104 @@ def phase_frontiers(module: Module) -> dict[int, dict[int, list[int]]]:
     return phase_hazards(module, frontier=True)
 
 
+def placement_violations(
+    module: Module, durations: dict[int, int], target, slots, makespan: int
+) -> list[str]:
+    """Why a placement a plan STATES is not a legal phase-barriered placement, or nothing.
+
+    G19: a plan may carry a placement the canonical dispatch did not produce -- the exact
+    solver's proved optimum (`gem.exact`) -- and is then held to the rules every eft-family
+    placement obeys, rather than to equality with `schedule_eft`. The rules are the dispatch's
+    own, read from where it reads them:
+
+      * every claim of the module has exactly one slot, and no slot names another claim;
+      * a slot is as long as its claim's duration (`durations`, the plan's own step costs);
+      * a claim runs on a stream it is eligible for (`_PhaseDispatch.eligible`: the tail for
+        a sparse GGG/random claim, the first `knee` streams for a bandwidth-class claim,
+        every domain for a compute-class claim);
+      * a phase starts when every earlier phase (topological order) has finished, and a claim
+        starts no earlier than its phase;
+      * a claim starts no earlier than every intra-phase hazard predecessor finishes
+        (`phase_hazards`, the closure the exact solver and the dispatch both obey);
+      * a stream runs one claim at a time (zero-length slots occupy nothing);
+      * the makespan is the last finish.
+
+    Optimality is not a legality rule: a plan's makespan is its price, and a certificate
+    (`gem.exact.ScheduleCertificate`) is what says how far from optimal it is."""
+    domains, knee = _streams(target)
+    out: list[str] = []
+    by_claim: dict[int, Slot] = {}
+    for slot in slots:
+        if slot.claim_id in by_claim:
+            out.append(f"claim {slot.claim_id} is placed twice")
+        by_claim[slot.claim_id] = slot
+    pmap = module.phase_map()
+    hazards = phase_hazards(module)
+    known: set[int] = set()
+    barrier = 0
+    for pid in _topo_phase_ids(module):
+        claims = sorted(pmap[pid].claims, key=_claim_id)
+        eligible = _PhaseDispatch(claims, hazards[pid], domains, knee, False).eligible
+        phase_end = barrier
+        for claim in claims:
+            known.add(claim.id)
+            slot = by_claim.get(claim.id)
+            if slot is None:
+                out.append(f"claim {claim.id} has no slot")
+                continue
+            want = max(0, durations.get(claim.id, 0))
+            if slot.finish - slot.start != want:
+                out.append(
+                    f"claim {claim.id} runs {slot.finish - slot.start} ticks, its duration is "
+                    f"{want}"
+                )
+            # the dispatch indexes the tail one past the last domain; a stream number is never
+            # read as that index, so a slot past the target's streams is not taken for the tail
+            if slot.domain == TAIL_STREAM:
+                if domains not in eligible[claim.id]:
+                    out.append(f"claim {claim.id} is not eligible for the tail")
+            elif not 0 <= slot.domain < domains:
+                out.append(
+                    f"claim {claim.id} is placed on stream {slot.domain}, outside the target's "
+                    f"{domains} streams"
+                )
+            elif slot.domain not in eligible[claim.id]:
+                out.append(f"claim {claim.id} is not eligible for stream {slot.domain}")
+            if slot.start < barrier:
+                out.append(
+                    f"claim {claim.id} starts at {slot.start}, before its phase {pid} does "
+                    f"({barrier})"
+                )
+            for pred in hazards[pid].get(claim.id, ()):
+                before = by_claim.get(pred)
+                if before is not None and slot.start < before.finish:
+                    out.append(
+                        f"claim {claim.id} starts at {slot.start}, before its hazard "
+                        f"predecessor {pred} finishes ({before.finish})"
+                    )
+            phase_end = max(phase_end, slot.finish)
+        barrier = phase_end
+    for claim_id in sorted(set(by_claim) - known):
+        out.append(f"claim {claim_id} is not a claim of the module")
+    busy: dict[int, list[Slot]] = {}
+    for slot in by_claim.values():
+        if slot.finish > slot.start:
+            busy.setdefault(slot.domain, []).append(slot)
+    for stream in sorted(busy):
+        ordered = sorted(busy[stream], key=lambda s: (s.start, s.finish, s.claim_id))
+        for first, second in zip(ordered, ordered[1:]):
+            if second.start < first.finish:
+                out.append(
+                    f"claims {first.claim_id} and {second.claim_id} overlap on "
+                    f"{'the tail' if stream == TAIL_STREAM else f'stream {stream}'}"
+                )
+    last = max((slot.finish for slot in by_claim.values()), default=0)
+    if makespan != last:
+        out.append(f"the makespan is {makespan}, the last finish {last}")
+    return out
+
+
+@paused
 def schedule_eft(
     module: Module,
     durations: dict[int, int],
@@ -701,6 +800,7 @@ class EftPlacer:
         return sched
 
 
+@paused
 def execute_tokens(
     module: Module, durations: dict[int, int], target=None, locality: bool = True
 ) -> GemSchedule:
@@ -746,6 +846,7 @@ def execute_tokens(
 SCHEDULE_MODES = ("eft", "tokens")
 
 
+@paused
 def schedule_plan(
     module: Module, result, target=None, mode: str = "eft", locality: bool = True
 ) -> GemSchedule:

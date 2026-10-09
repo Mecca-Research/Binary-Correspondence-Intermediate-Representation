@@ -239,9 +239,13 @@ Two honest limits to record now:
    Markov chain expectation, not a shortest path — or an explicitly worst-case objective
    (max-plus) for real-time work. **The semiring must be a declared parameter of the
    objective**, not a fixed choice. *In P4 it is:* `Semiring.MIN_PLUS` and
-   `Semiring.MAX_PLUS` are both reachable and the caller names which. No expected-cost
-   objective is offered, deliberately — expectation needs branch probabilities the cost
-   model does not carry, and offering one would be the overclaim this limit warns about.
+   `Semiring.MAX_PLUS` are both reachable and the caller names which. P4 offers no
+   expected-cost objective, deliberately — expectation needs branch probabilities, and
+   offering one without them would be the overclaim this limit warns about. *Since GEM+ G22*
+   the probabilities exist and so does the objective, where they live: `kbcir.expectation`
+   solves the expected cost as the absorbing Markov chain it is (exact rationals, loops
+   included, measured probabilities from a `BranchProfile` recorded as the scope's `U`), and
+   the registry's `expectation` semiring is its path sum on a DAG.
 
    A deflating result worth recording from the implementation: for a loop whose body cost is
    unaffected by unrolling, the `iterations × mean` term **cancels**, so the optimum is
