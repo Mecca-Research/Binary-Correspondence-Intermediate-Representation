@@ -63,6 +63,7 @@ from __future__ import annotations
 import struct
 import zlib
 
+from .._collector import paused
 from ..gem.execution_plan import (
     COHERENCE_ACTIONS,
     LIVENESS_DOMAINS,
@@ -446,6 +447,7 @@ def encode_plan(plan: ExecutionPlan) -> bytes:
     return body + struct.pack("<I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
+@paused
 def decode_plan(data: bytes) -> ExecutionPlan:
     """Parse the wire format (v1..v3) back into an ExecutionPlan (magic/version/reserved/CRC,
     bounds, exact consumption, then the wire laws)."""

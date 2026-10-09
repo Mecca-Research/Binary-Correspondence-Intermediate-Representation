@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .._collector import paused
 from ..model import Lane, Module
 from .streampack import Generation, generation_vector
 
@@ -200,6 +201,7 @@ class ExecutionPlan:
 # --- producers --------------------------------------------------------------------------
 
 
+@paused
 def plan_from_realization(
     module: Module,
     result,

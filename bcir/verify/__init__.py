@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from .._collector import paused
 from ..model import (
     ATOMIC_OPCODES,
     ISOLATED_DOMAINS,
@@ -932,6 +933,7 @@ def _admissible_offer(module: Module, h, steps):
     return offer, entry
 
 
+@paused
 def verify_plan(
     module: Module, result, h=None, theta=None, policy=None, budget=None
 ) -> list[Diagnostic]:
@@ -1183,6 +1185,7 @@ def _cost_law(step, prev, scope: _CostScope) -> Diagnostic | None:
     return None
 
 
+@paused
 def verify_pack(module: Module, pack, result=None) -> list[Diagnostic]:
     """GEM stream laws R10 (provenance) and R11 (generation validity).
 
@@ -1369,6 +1372,7 @@ def _pack_generation_laws(module: Module, pack) -> list[Diagnostic]:
     return diags
 
 
+@paused
 def verify_execution_plan(
     module: Module,
     plan,

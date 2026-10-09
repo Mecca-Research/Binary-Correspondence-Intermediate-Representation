@@ -76,6 +76,10 @@ table in §3 stays as measured on `5cd8e03`; what has changed since:
 - **Item 21** (hygienic substitution): its confirmed defect is fixed by ASN1-H (§4.1). It stays
   Partial for what was never built: the §9.8 tagging environment across modules,
   ObjectFromObject (§15) and a parameterized object set used as a table constraint.
+- **Item 17** (the oracle audit and migration): §5.3's first two recommendations landed with
+  OR-GC -- the collector paused inside the pure hot paths, with the zero-cyclic-garbage witness
+  and harness rows, and slots on `CostVector` and `Candidate`. The item stays Partial for the
+  C ports (CXX3, CXX4).
 - **Defects 5 and 6** (§4.4, §4.5): fixed by ASN1-T and ASN1-N.
 
 ---

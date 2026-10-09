@@ -495,3 +495,17 @@ def test_the_volatile_rows_are_exact_and_measured_or_not():
         else:
             expected = "GAIN"
         assert rows[metric.key]["verdict"] == expected, rows[metric.key]
+
+
+def test_the_collector_rows_count_no_collection_inside_a_hot_path() -> None:
+    """OR-GC: the paused paths start no collection at scale 4 (the parent started 24 to 75 per
+    call) and leave no cyclic garbage, so every row sits at its floor of 0."""
+    from tools.perf.gemplus_baseline import measure_collector
+
+    measured = measure_collector()
+    assert len(measured) == 7 and set(measured.values()) == {0.0}, measured
+    rows = {r["key"]: r for r in compare(measured, same_host=False)}
+    for key in measured:
+        assert rows[key]["headroom"] == 0.0, rows[key]
+        if key.startswith("gc.collections."):
+            assert rows[key]["verdict"] == "GAIN", rows[key]

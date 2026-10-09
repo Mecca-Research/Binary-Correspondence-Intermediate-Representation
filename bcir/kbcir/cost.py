@@ -71,7 +71,7 @@ def _mul(c: int, w: int) -> int:
     return c * w
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CostVector:
     v: tuple[int, ...]
 

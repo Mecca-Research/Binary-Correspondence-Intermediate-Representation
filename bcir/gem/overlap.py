@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .._collector import paused
 from ..model import Claim, Module
 from ..kbcir.realize import (
     Candidate,
@@ -182,6 +183,7 @@ def price_waves_legacy(
     )
 
 
+@paused
 def optimize_scheduled(
     module: Module,
     h,

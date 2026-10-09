@@ -50,6 +50,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from heapq import heapify, heappop, heappush
 
+from .._collector import paused
 from ..model import Claim, Module
 from .async_tokens import async_plan
 from .concurrency import (
@@ -475,6 +476,7 @@ def placement_violations(
     return out
 
 
+@paused
 def schedule_eft(
     module: Module,
     durations: dict[int, int],
@@ -798,6 +800,7 @@ class EftPlacer:
         return sched
 
 
+@paused
 def execute_tokens(
     module: Module, durations: dict[int, int], target=None, locality: bool = True
 ) -> GemSchedule:
@@ -843,6 +846,7 @@ def execute_tokens(
 SCHEDULE_MODES = ("eft", "tokens")
 
 
+@paused
 def schedule_plan(
     module: Module, result, target=None, mode: str = "eft", locality: bool = True
 ) -> GemSchedule:

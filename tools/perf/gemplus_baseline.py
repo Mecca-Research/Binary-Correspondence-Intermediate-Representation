@@ -435,6 +435,88 @@ METRICS: tuple[Metric, ...] = (
         "placement (§6.1)",
         slice_owner="G19",
     ),
+    # --- OR-GC: the cyclic collector out of the oracle's pure hot paths (audit section 5.1).
+    # Each row counts the collections that start inside one call on the K_BCIR -> StreamPack
+    # fixture at scale 4 (4,096 claims), after a full collection resets the generations; the
+    # baseline is the parent tree. The floor is 0 because the paths leave no cyclic garbage
+    # (`gc.cyclic_garbage.hot_paths`), so a collection inside one could free nothing.
+    Metric(
+        "gc.collections.planner.4",
+        "collector",
+        "collections inside one call of the planner (`realize.optimize`), 4,096 claims",
+        75,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.hydrate.4",
+        "collector",
+        "collections inside one call of StreamPack `hydrate_pipelined`, 4,096 claims",
+        42,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.decode.4",
+        "collector",
+        "collections inside one call of StreamPack `decode`, 4,096 claims",
+        47,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.verify_plan.4",
+        "collector",
+        "collections inside one call of R8/R9 `verify_plan`, 4,096 claims",
+        70,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.schedule_eft.4",
+        "collector",
+        "collections inside one call of the EFT dispatch (`schedule_eft`), 4,096 claims",
+        24,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.collections.plan_path.4",
+        "collector",
+        "collections inside one call of `verify_execution_plan` with its target, 4,096 claims",
+        48,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="the path leaves no cyclic garbage, so a collection inside it frees nothing",
+        slice_owner="OR-GC",
+    ),
+    Metric(
+        "gc.cyclic_garbage.hot_paths.4",
+        "collector",
+        "objects a full collection finds after one call of each paused path, 4,096 claims",
+        0,
+        "count",
+        "exact",
+        bound=0,
+        bound_source="reference counting frees everything the paths allocate (audit section 5.1)",
+        slice_owner="OR-GC",
+    ),
     Metric(
         "solver.unproved.fraction",
         "scheduler",
@@ -3160,6 +3242,65 @@ def measure_memory() -> dict[str, float]:
     return out
 
 
+def measure_collector() -> dict[str, float]:
+    """OR-GC: collections inside each paused hot path at scale 4, and the cyclic garbage the
+    paths leave (both 0 once the collector is paused; the garbage was 0 before too)."""
+    import gc
+
+    from bcir.abi.execution_plan_abi import decode_plan, encode_plan
+    from bcir.abi.streampack_abi import decode, encode
+    from bcir.gem.execution_plan import plan_from_realization
+    from bcir.gem.schedule import durations_from, schedule_eft
+    from bcir.gem.streampack import hydrate_pipelined
+    from bcir.kbcir.realize import optimize
+    from bcir.kbcir.weights import PERF
+    from bcir.performance_audit import kbcir_streampack_fixture
+    from bcir.verify import verify_execution_plan, verify_plan
+
+    module, target, theta = kbcir_streampack_fixture(4)
+    result = optimize(module, target, theta)
+    wire = encode(hydrate_pipelined(module, result, plan="tmsao", depth=2))
+    durations = durations_from(result)
+    read = decode_plan(encode_plan(plan_from_realization(module, result, target, "eft")))
+    paths = {
+        "planner": lambda: optimize(module, target, theta),
+        "hydrate": lambda: hydrate_pipelined(module, result, plan="tmsao", depth=2),
+        "decode": lambda: decode(wire),
+        "verify_plan": lambda: verify_plan(module, result, target, theta=theta, policy=PERF),
+        "schedule_eft": lambda: schedule_eft(module, durations, target),
+        "plan_path": lambda: verify_execution_plan(module, read, target=target),
+    }
+    started = [0]
+
+    def count(phase, _info):
+        started[0] += phase == "start"
+
+    out: dict[str, float] = {}
+    garbage = 0
+    enabled = gc.isenabled()
+    gc.enable()
+    gc.callbacks.append(count)
+    try:
+        for key, call in paths.items():
+            gc.collect()
+            started[0] = 0
+            call()
+            out[f"gc.collections.{key}.4"] = float(started[0])
+        gc.callbacks.remove(count)
+        for call in paths.values():
+            gc.collect()
+            gc.disable()
+            call()
+            garbage += gc.collect()
+            gc.enable()
+    finally:
+        if count in gc.callbacks:
+            gc.callbacks.remove(count)
+        (gc.enable if enabled else gc.disable)()
+    out["gc.cyclic_garbage.hot_paths.4"] = float(garbage)
+    return out
+
+
 _MEASURERS = {
     "audit": measure_audit,
     "planner": measure_planner,
@@ -3183,6 +3324,7 @@ _MEASURERS = {
     "volatile": measure_volatile,
     "movement": measure_movement,
     "memory": measure_memory,
+    "collector": measure_collector,
 }
 
 
