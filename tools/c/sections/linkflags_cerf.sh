@@ -25,7 +25,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # kernel EMITTER (emit_cerf_erfcx_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:erfcxf` edge and asserts it derives
 # `-lcerf` (the libcerf rule), with the bare erfcx too, and no regression on Sleef_* -> -lsleef, gsl_* ->
-# -lgsl, LAPACKE_* -> -llapack, fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm (incl. erfcf -- erfcx is a
+# -lgsl, LAPACKE_* -> -llapack, fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm (incl. erfcf -- erfcx is a
 # symbol libm LACKS, so erfcf/erfc still map to -lm, NOT -lcerf) -> -lm, and unknown -> no flag. The oracle
 # (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_cerf.py.
 "${HARNESS}" cerf | grep -q "^OK linkflags-cerf" \

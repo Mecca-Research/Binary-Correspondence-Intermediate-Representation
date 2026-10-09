@@ -241,7 +241,7 @@ def test_cerf_link_flag_rule():
     assert library_for_callee("Sleef_expf1_u10") == "-lsleef"  # #63 SLEEF still maps
     assert library_for_callee("gsl_stats_mean") == "-lgsl"  # #62 GSL still maps
     assert library_for_callee("LAPACKE_sgesv") == "-llapack"  # #61 LAPACK still maps
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW still maps
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # B2 FFTW still maps
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
     assert library_for_callee("expf") == "-lm"  # libm still maps (the erfcx fallback's twin)
     assert library_for_callee("free") == NO_FLAG  # libc-implicit, known (not unknown)

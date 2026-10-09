@@ -26,6 +26,8 @@ from .lower import (
     LabelNode,
     LoweredFunc,
     ReturnNode,
+    ScopeClose,
+    ScopeOpen,
     SwitchNode,
     WhileNode,
     _STRING_MEM,
@@ -796,7 +798,17 @@ def _walk(
     cont = cont if cont is not None else {}
     out: list = []
     for node in block:
-        if isinstance(node, IfNode):
+        if isinstance(
+            node, ScopeOpen
+        ):  # a block kept as its own scope: it declares a VLA (CF-VLASCOPE)
+            out.append(f"{ind}{{")
+            depth += 1
+            ind = "    " * depth
+        elif isinstance(node, ScopeClose):
+            depth -= 1
+            ind = "    " * depth
+            out.append(f"{ind}}}")
+        elif isinstance(node, IfNode):
             out.append(f"{ind}if ({ref(node.cond)}) {{")
             out += _walk(lf, node.then, ref, depth + 1, loops, cont)
             if node.els:
@@ -826,13 +838,18 @@ def _walk(
             out.append(f"{ind}switch ({ref(node.disc)}) {{")
             # each label is followed by a null statement: the block item after it is usually a declaration, and
             # until C23 a label labels a statement, which a declaration is not (CF-CASELABEL)
+            run: list = []  # the statements between two labels, walked together (a scope opens and closes in one)
             for item in node.body:
-                if isinstance(item, CaseLabel):  # exact: `Nu` past LLONG_MAX (CF-ENUMFOLD)
-                    out.append(f"{ind}case {_const_spelling(item.value)}: ;")
-                elif isinstance(item, DefaultLabel):
-                    out.append(f"{ind}default: ;")
+                if isinstance(item, (CaseLabel, DefaultLabel)):
+                    out += _walk(lf, run, ref, depth + 1, loops, cont)
+                    run = []
+                    if isinstance(item, CaseLabel):  # exact: `Nu` past LLONG_MAX (CF-ENUMFOLD)
+                        out.append(f"{ind}case {_const_spelling(item.value)}: ;")
+                    else:
+                        out.append(f"{ind}default: ;")
                 else:
-                    out += _walk(lf, [item], ref, depth + 1, loops, cont)
+                    run.append(item)
+            out += _walk(lf, run, ref, depth + 1, loops, cont)
             out.append(f"{ind}}}")
         elif isinstance(node, ReturnNode):
             out.append(f"{ind}return {ref(node.rid)};" if node.rid is not None else f"{ind}return;")

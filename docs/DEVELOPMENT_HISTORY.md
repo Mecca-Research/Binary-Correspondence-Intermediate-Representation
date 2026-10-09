@@ -2166,6 +2166,50 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
       overstated.
   - The session digest and the systems-engineer skill said everything BCIR emits was TMSAO-4 and
     that G1–G18 were open; both now say what landed and point at the ladder.
+  FFTW-PRECISION (2026-10-09): each FFTW precision links its own library, on both rails -- the
+  follow-up BUILD-4 recorded.
+  - Both rails' link-flag rules mapped `fftwf_*` to `-lfftw3`. FFTW 3 builds one library per
+    precision, and the symbol tables of Ubuntu noble's FFTW 3.3.10 packages say so: libfftw3 defines
+    `fftw_*` and no `fftwf_` symbol; `fftwf_*` is libfftw3f's, `fftwl_*` libfftw3l's, `fftwq_*`
+    libfftw3q's, an MPI entry point libfftw3<p>_mpi's (none for quad), and the threading entry
+    points (`init_threads`, `plan_with_nthreads`, ...) are defined alike by libfftw3<p>_threads and
+    libfftw3<p>_omp. A single-precision program linked with `-lfftw3` failed on `fftwf_plan_dft_1d`,
+    `fftwf_execute` and `fftwf_destroy_plan`; with `-lfftw3f` it links and transforms {1,2,3,4} to
+    10 and -2. The B2 wrap is single precision, so no unit with its edge linked with the flags BCIR
+    derived. No CI host had FFTW, and the linked tests linked with the probe's flags, not the rule's.
+  - Now `fftw_` -> `-lfftw3`, `fftwf_` -> `-lfftw3f`, `fftwl_` -> `-lfftw3l`, `fftwq_` -> `-lfftw3q`,
+    `<prefix>mpi_` -> that precision's MPI library, and a threading entry point unknown (no flag): two
+    libraries define it, so it names none, the unknown-callee policy's case. The oracle's
+    `_fftw_library` and the twin's `fftw_library`, in the same place in the rule order.
+  - Witnesses: `test_the_fftw_rule_is_one_table_on_both_rails` reads the C harness's `fftw_edges`
+    (twelve rows over every precision, MPI and threads; the `linkflags_fftw` section holds the twin
+    to them) and holds the oracle to every row. The linked B2 tests (`test_fftw`, `test_fftw2`) now
+    link with the flags the rule derives for the wrap's own callees; against the packages' libraries
+    both pass, and the old rule fails them. The oracle job installs `libfftw3-dev`, and a step fails
+    the job when the probe the tests use finds no FFTW single precision, so the linked path runs in
+    CI rather than self-skipping (L2).
+  CF-VLASCOPE (2026-10-09): a block that declares a stack VLA is emitted as a scope of its own, on
+  both rails -- the follow-up CF-CASELABEL recorded.
+  - Both rails inline every block into its parent. A VLA inlined so put the labels after its block
+    -- a later `case`, a loop's continue label, a `goto` target -- inside the array's scope, which C
+    forbids a jump to enter (C11 6.8.4.2p2, 6.8.6.1p1). Clang and GCC refused the emit, and the
+    oracle's Clang check reported the failed build as `skip:build-failed`, so the unit stayed CLEAN.
+  - The oracle's `_block` brackets a block that declares a VLA of its own with `ScopeOpen` /
+    `ScopeClose`, which the emitter renders as braces; the twin's `p_block` puts `c.scope` before
+    the block's first claim and `c.endscope` after its last. Both are emit-only: no claim the
+    digest, the plan or the hydrate reads, so every claim graph is unchanged. An inner block's VLA
+    is its own block's, not its parent's.
+  - Witness: `test_a_block_that_declares_a_vla_is_its_own_scope_on_both_rails` over
+    `runtime/c/cfront_vlascope.c` (a braced case arm before more labels, a `continue` before a VLA
+    in a `while` and a `for`, a block a `goto` passes, two VLAs and an inner block in one loop
+    body, a loop body whose only VLA is in an inner block, an `if` branch). Each rail emits
+    exactly eight scopes, the rails lower the unit to one claim graph on the four targets, and each
+    emit builds under `-std=c11 -pedantic-errors -Werror` with Clang and GCC and returns what the
+    original does. The fixture also joins the corpus's parity and equivalence check.
+  - RED: `tools/testing/faults/cfront-vlascope.json` holds four faults, each rail inlining the
+    block or counting an inner block's VLA as its parent's; all four fail the witness. The first
+    sweep caught two: the fixture had no block whose only VLA was an inner block's, so a scope
+    too many on such a parent went unseen until `vs_inner` was added.
   NDT-GEM (2026-10-09): the native C decoder trainer (#810) wired into GEM+, reviewed and made
   faster without changing one output bit.
   - The trainer's step stood outside GEM+: no lower bound priced it, and nothing but the

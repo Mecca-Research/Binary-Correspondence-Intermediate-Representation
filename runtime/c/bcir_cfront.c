@@ -270,6 +270,7 @@ typedef struct {
    * unsoundly. Reset (mut_n=0) per function. */
   mutent mut[512]; int mut_n;
   int ext_ctr;       /* §5.12 unique hidden extent-snapshot locals (`__bcir_extK`); reset per function */
+  int vla_block;     /* the innermost block being parsed has declared a stack VLA of its own (CF-VLASCOPE; `p_block`) */
   int decl_seq;      /* the unit's declarations of block-scope names and enumerators so far, in order (CF-CONSTEXPR2) */
   struct { const char *s; int n, frame; } uph[16]; int nuph;   /* the typedef names the token pre-pass has seen a
                                           * block's declaration bind as objects, to the end of that block, and the
@@ -2953,6 +2954,7 @@ static int is_value_ender(const tok *t) {
 static void scan_mutations(CC *c, int start) {
   c->mut_n = 0;
   c->ext_ctr = 0;                                         /* §5.12 reset the per-function snapshot counter */
+  c->vla_block = 0;                                       /* no block open yet (CF-VLASCOPE) */
   int depth = 1;                                           /* `start` is just past the opening `{` */
   for (int i = start; c->t[i].k != T_END && depth > 0; i++) {
     const tok *t = &c->t[i];
@@ -4152,8 +4154,32 @@ static int lapack_is_fortran(const char *s, int n) {
  * what BCIR knows about its own emitted external seams.
  *
  * EXTENSION POINT (roadmap B2): add one branch per newly-wrapped trusted library here, in the SAME
- * ORDER as the oracle's _LIBRARY_RULES (e.g. fftw_*->"-lfftw3", LAPACKE_*->"-llapack", gsl_*->"-lgsl",
+ * ORDER as the oracle's _LIBRARY_RULES (e.g. fftwf_*->"-lfftw3f", LAPACKE_*->"-llapack", gsl_*->"-lgsl",
  * Sleef_*->"-lsleef", erfcx*->"-lcerf"). First match wins, so order is significant. */
+/* FFTW 3 builds one library per precision, each prefixing its symbols (FFTW-PRECISION; the oracle's
+ * `_FFTW_PRECISIONS` / `_fftw_library`): double `fftw_` (libfftw3), single `fftwf_` (libfftw3f), long double
+ * `fftwl_` (libfftw3l), quad `fftwq_` (libfftw3q), and the MPI interface `<prefix>mpi_` in `libfftw3<p>_mpi`
+ * (no quad one). libfftw3 defines no `fftwf_` symbol. A threading entry point is defined alike by the
+ * POSIX-threads and the OpenMP library, so it names no one library: NULL, unknown. Sets *is_fftw when `s` has an
+ * FFTW prefix, whatever it returns (the rule matches; first match wins). */
+static const char *fftw_library(const char *s, int n, int *is_fftw) {
+  static const struct { const char *prefix, *lib, *mpi; } P[] = {
+    {"fftw_", "-lfftw3", "-lfftw3_mpi"}, {"fftwf_", "-lfftw3f", "-lfftw3f_mpi"},
+    {"fftwl_", "-lfftw3l", "-lfftw3l_mpi"}, {"fftwq_", "-lfftw3q", NULL}};
+  static const char *const T[] = {"init_threads", "cleanup_threads", "plan_with_nthreads", "planner_nthreads",
+                                  "make_planner_thread_safe", "threads_set_callback"};
+  *is_fftw = 0;
+  for (size_t k = 0; k < sizeof P / sizeof P[0]; k++) {
+    int pn = (int)strlen(P[k].prefix);
+    if (n < pn || memcmp(s, P[k].prefix, (size_t)pn)) continue;
+    *is_fftw = 1;
+    const char *r = s + pn; int rn = n - pn;
+    for (size_t t = 0; t < sizeof T / sizeof T[0]; t++)
+      if ((size_t)rn == strlen(T[t]) && !memcmp(r, T[t], (size_t)rn)) return NULL;
+    return rn >= 4 && !memcmp(r, "mpi_", 4) ? P[k].mpi : P[k].lib;
+  }
+  return NULL;
+}
 static const char *bcir_lib_for_callee(const char *s, int n) {
   if(n<=0) return NULL;
   /* <math.h> / <complex.h> (incl. the f/l-suffixed + fixed-int/long variants) -> -lm. */
@@ -4163,10 +4189,11 @@ static const char *bcir_lib_for_callee(const char *s, int n) {
   if(is_stdlib_alloc(s,n) || is_string_mem(s,n) || is_extern_variadic(s,n)) return "";
   /* B5 BLAS: cblas_sgemm and any cblas_* (CBLAS) -> -lcblas (the existing B5 path's choice). */
   if(n>=6 && !strncmp("cblas_",s,6)) return "-lcblas";
-  /* B2 FFTW: fftwf_* (single-prec) and fftw_* (double) -> -lfftw3 (the B2 wrap's choice -- fftwf_* also
-   * lives in -lfftw3). Matches linkflags.py's fftw rule, in the SAME order (first match wins). */
-  if(n>=6 && !strncmp("fftwf_",s,6)) return "-lfftw3";
-  if(n>=5 && !strncmp("fftw_",s,5))  return "-lfftw3";
+  /* B2 FFTW: each precision's library (`fftw_library`): fftwf_* -> -lfftw3f, the B2 wrap's single-precision
+   * library; fftw_* -> -lfftw3, fftwl_* -> -lfftw3l, fftwq_* -> -lfftw3q, an `mpi_` entry point its precision's
+   * MPI library, a threading one unknown. Matches linkflags.py's fftw rule, in the SAME order (first match
+   * wins). */
+  { int is_fftw; const char *lib = fftw_library(s, n, &is_fftw); if (is_fftw) return lib; }
   /* B-breadth (#61) LAPACK: the LAPACKE C interface (LAPACKE_sgesv et al.) and the Fortran-ABI driver
    * symbols (sgesv_/...) -> -llapack (the linear-solve wrap emit_lapack_solve_c calls LAPACKE_sgesv and
    * links -llapacke -llapack; -llapack is the load-bearing dep). Matches linkflags.py's LAPACK rule, in
@@ -7861,12 +7888,28 @@ static int enum_only_spec(CC *c,int from){
     if(tok_is(t,"enum")) e=1; }
   return e;
 }
+/* A block that declares a stack VLA is emitted inside braces of its own: `c.scope` at `at`, its first claim, and
+ * `c.endscope` after its last (CF-VLASCOPE; the oracle's `_block`, `ScopeOpen` / `ScopeClose`). The emit inlines every
+ * other block, and a VLA inlined into its parent puts the labels after the block -- a later `case`, a loop's continue
+ * label, a `goto` target -- inside the array's scope, which C forbids a jump to enter (C11 6.8.4.2p2, 6.8.6.1p1).
+ * Both are markers: no claim the digest, the plan or the hydrate reads. */
+static void scope_wrap(CC *c,size_t at){
+  bcir_func *f=c->fn;
+  if(!f || at>f->n_claims || !new_claim(c,"c.scope",BCIR_OP_NOP)) return;   /* appended, then moved to `at` */
+  bcir_claim open=f->claims[f->n_claims-1];
+  memmove(&f->claims[at+1],&f->claims[at],(f->n_claims-1-at)*sizeof *f->claims);
+  f->claims[at]=open;
+  marker(c,"c.endscope",0,0);
+}
 static void p_block(CC *c){            /* `{ stmts }` or a single statement */
   if(ENTER_REC(c)){ LEAVE_REC(c); return; }   /* depth guard: p_block<->p_stmt nesting cycle */
   if(is(c,"{")){c->i++; int env_mark=c->nenv, ec_mark=c->nec;   /* a block is a scope: its locals, enumerators
                                                 * and enumeration tags (CF-CONSTEXPR2) do not leak out */
+    size_t at=c->fn?c->fn->n_claims:0; int outer_vla=c->vla_block; c->vla_block=0;   /* its own VLAs, not an inner block's */
     while(!is(c,"}")&&!isk(c,T_END)&&!c->failed)p_stmt(c);
-    eat(c,"}"); c->nenv=env_mark; c->nec=ec_mark;}   /* pop the block scope -- restore outer name bindings */
+    eat(c,"}"); c->nenv=env_mark; c->nec=ec_mark;   /* pop the block scope -- restore outer name bindings */
+    if(c->vla_block && !c->failed) scope_wrap(c,at);
+    c->vla_block=outer_vla;}
   else p_stmt(c);
   LEAVE_REC(c);
 }
@@ -8288,6 +8331,7 @@ static void p_stmt_inner(CC *c) {
         { bcir_resource *ar=&c->fn->res[c->fn->n_res-1];
           ar->is_signed=(uint8_t)(ty.signd?1:0); ar->is_vla=1; ar->ext_var=ext;
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
+        c->vla_block=1;   /* its block is emitted as a scope of its own (CF-VLASCOPE) */
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext;vd->n_wr=1;vd->wr[0]=arid;
             if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i]` indexes via emit_index */
@@ -8330,6 +8374,7 @@ static void p_stmt_inner(CC *c) {
           ar->is_signed=(uint8_t)(nsgn?1:0); ar->is_vla=1; ar->ext_var=ext_total;
           ar->vla_ndims=(uint8_t)dim_nd; for(int d=0;d<dim_nd;d++) ar->vla_strides[d]=dim_exts[d];
           if(ty.is_bool) ar->is_bool=1; if(ty.is_plain_char) ar->is_plain_char=1; }
+        c->vla_block=1;   /* its block is emitted as a scope of its own (CF-VLASCOPE) */
         { bcir_claim *vd=new_claim(c,"c.vladecl",BCIR_OP_ADD); if(vd){vd->n_rd=1;vd->rd[0]=ext_total;vd->n_wr=1;vd->wr[0]=arid;
             if(vmm){ vd->domain=BCIR_DOM_MMIO; vd->lane=BCIR_LANE_H; vd->hazard=BCIR_HZ_BARRIERED; } } }   /* a device claim */
         env_add(c,&nm,arid,&ty,si);   /* the venv type is the element type -- `a[i][j]` indexes via emit_index */
@@ -9715,6 +9760,9 @@ static size_t emit_func(const bcir_func *f,char *o,size_t on){
     if(!strcmp(cl->op,"c.cont.tgt")){IND();
       w+=snprintf(o+EO,on-EO,"%s: ;\n",cont_label(f,own_cont,nls?lstk[nls-1]:0,cb,sizeof cb));continue;}
     if(!strcmp(cl->op,"c.endloop")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");if(nls)nls--;continue;}
+    if(!strcmp(cl->op,"c.scope")){IND();w+=snprintf(o+EO,on-EO,"{\n");depth++;continue;}   /* a block that declares a VLA,
+                                                                                    * kept as its own scope (CF-VLASCOPE) */
+    if(!strcmp(cl->op,"c.endscope")){depth--;IND();w+=snprintf(o+EO,on-EO,"}\n");continue;}
     if(!strcmp(cl->op,"c.vladecl")){IND();   /* a 1-D stack VLA, declared IN-BODY: `<elem> a[__bcir_extK];` */
       { const bcir_resource *vr=res_of(f,cl->wr[0]);   /* a volatile VLA keeps its qualifier (the oracle's decl) */
         w+=snprintf(o+EO,on-EO,"%s%s %s[%s];\n",vr&&vr->is_volatile?"volatile ":"",tty(&type_scratch,f,cl->wr[0]),rname(f,cl->wr[0],a),rname(f,cl->rd[0],b)); }

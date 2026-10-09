@@ -312,7 +312,7 @@ def test_lapack_link_flag_rule():
     assert library_for_callee("sgesv_") == "-llapack"  # the Fortran-ABI driver symbol
     assert library_for_callee("dgetrf_") == "-llapack"  # another Fortran LU/solve driver
     # no regression on the existing classifications.
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW still maps
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # B2 FFTW still maps
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS still maps
     assert library_for_callee("sqrtf") == "-lm"  # libm still maps
     assert library_for_callee("free") == NO_FLAG  # libc-implicit, known (not unknown)

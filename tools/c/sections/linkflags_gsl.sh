@@ -25,7 +25,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 # EMITTER (emit_gsl_stats_c), not reachable from a cfront source. So this probe drives the C twin's
 # bcir_cfront_link_flags over FABRICATED units carrying a `c.call.libm:gsl_stats_mean` edge and asserts it
 # derives `-lgsl` (the GSL rule), with any gsl_* -> -lgsl too, and no regression on LAPACKE_* -> -llapack,
-# fftwf_* -> -lfftw3, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
+# fftwf_* -> -lfftw3f, cblas_* -> -lcblas, libm -> -lm, and unknown -> no flag. The oracle
 # (linkflags.library_for_callee) is pinned in test_c_cfront.py + test_gsl.py.
 "${HARNESS}" gsl | grep -q "^OK linkflags-gsl" \
   && echo "  PASS linkflags-gsl: C twin derives gsl_* -> -lgsl (lapack/fftw/cblas/-lm/unknown unchanged)" \

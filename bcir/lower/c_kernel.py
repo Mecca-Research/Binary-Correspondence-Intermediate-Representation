@@ -435,7 +435,7 @@ def emit_fftw_fft_c(n: int, fn_name: str = "bcir_fft") -> str:
     don't reinvent", a genuinely NEW kernel class (a spectral transform, not a matmul). BCIR owns the
     CALLING side: it fixes the interleaved complex layout `X[2k]=Re, X[2k+1]=Im` and (with the A1.1 Q8
     bridge at the boundary) the precision, and DELEGATES the transform to FFTW's plan API
-    (`fftwf_plan_dft_1d` + `fftwf_execute` + `fftwf_destroy_plan`) when linked (`-DBCIR_USE_FFTW -lfftw3`),
+    (`fftwf_plan_dft_1d` + `fftwf_execute` + `fftwf_destroy_plan`) when linked (`-DBCIR_USE_FFTW -lfftw3f`),
     with a portable reference DFT (the naive O(n^2) `sum_k x[k]*exp(-2*pi*i*j*k/n)`) selected by the
     preprocessor when it is not. BOTH paths compute the IDENTICAL forward transform (FFTW's
     FFTW_FORWARD == the `e^{-2*pi*i*jk/n}` sign convention), so the same source is correct linked or
@@ -491,11 +491,11 @@ def emit_fftw_fft2_c(n0: int, n1: int, fn_name: str = "bcir_fft2") -> str:
     """SEG2.2: wrap a TRUSTED external FFTW 2-D complex FFT through the `c.call.libm:` FFI edge -- the 2-D
     analog of `emit_fftw_fft_c` (a genuinely NEW numerical capability: a 2-D spectral transform, the kernel
     under image/convolution spectral methods, not a 1-D transform), on the SAME FFTW library and the SAME
-    `-lfftw3` link rule (`fftwf_*` already maps there -- no registry change). BCIR owns the CALLING side: it
+    `-lfftw3f` link rule (`fftwf_*` already maps there -- no registry change). BCIR owns the CALLING side: it
     fixes the interleaved complex, ROW-MAJOR layout (element `(r,c)`'s Re at `2*(r*n1+c)`, Im at
     `2*(r*n1+c)+1` -- exactly FFTW's `fftwf_complex` row-major layout) and (with the A1.1 Q8 bridge at the
     boundary) the precision, and DELEGATES the transform to FFTW's plan API (`fftwf_plan_dft_2d` +
-    `fftwf_execute` + `fftwf_destroy_plan`) when linked (`-DBCIR_USE_FFTW -lfftw3`), with a portable
+    `fftwf_execute` + `fftwf_destroy_plan`) when linked (`-DBCIR_USE_FFTW -lfftw3f`), with a portable
     reference DFT (the naive O((n0*n1)^2) double sum over (k0,k1)) selected by the preprocessor when it is
     not. BOTH paths compute the IDENTICAL forward transform (FFTW's FFTW_FORWARD == the
     `e^{-2*pi*i*(j0*k0/n0 + j1*k1/n1)}` sign convention, UNNORMALIZED -- no 1/N), so the same source is

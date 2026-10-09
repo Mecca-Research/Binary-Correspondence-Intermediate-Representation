@@ -254,6 +254,7 @@ _PTRVALUE = [
     "cfront_vlasizeof.c",  # runtime `sizeof a` of a VLA -> extent * sizeof(elem) (#vlasizeof)
     "cfront_vlaparam.c",  # VLA function parameters `T a[n]` -> masked param bounds vs n (#vlaparam)
     "cfront_vlamd.c",  # multi-dimensional VLAs `T a[m][n]` -> flat m*n extent + Horner (#vlamd)
+    "cfront_vlascope.c",  # a block that declares a VLA is its own scope in the emit: no jump enters it (#vlascope)
     "cfront_lvassignexpr.c",  # array/deref/nested lvalue assignment used as a value (#lvassignexpr)
     "cfront_narrowcompound.c",  # a narrow-target compound assignment AS A VALUE re-reads (#narrowcompound)
     "cfront_bfassignexpr.c",  # a BITFIELD member assignment used as a value (#bfassignexpr)
@@ -925,6 +926,45 @@ def test_storage_extent_parity_catches_oversizing():
     assert _array_extents("T a[2];\nT b[2];") == (2, 2) != _array_extents("T a[2];")
 
 
+def test_the_fftw_rule_is_one_table_on_both_rails():
+    """FFTW-PRECISION: FFTW 3 builds one library per precision -- `fftw_` libfftw3, `fftwf_` libfftw3f,
+    `fftwl_` libfftw3l, `fftwq_` libfftw3q, an `mpi_` entry point its precision's MPI library -- and libfftw3
+    defines no `fftwf_` symbol, yet both rails mapped `fftwf_*` to `-lfftw3`. The twin's rows are the C
+    harness's own table (`runtime/c/test_link_flag_rules.c`, `fftw_edges`, which the `linkflags_fftw` section
+    holds the twin to); this holds the oracle to the same rows, read out of that source rather than mirrored."""
+    from bcir.frontends.cfront.linkflags import library_for_callee
+
+    with open(os.path.join(_C, "test_link_flag_rules.c"), encoding="utf-8") as fh:
+        source = fh.read()
+    table = source.split("fftw_edges[] = {", 1)[1].split("};", 1)[0]
+    rows = re.findall(r'\{"c\.call\.libm:(\w+)", "([^"]*)"\}', table)
+    assert len(rows) >= 12, rows
+    names = {name for name, _flag in rows}
+    for prefix in ("fftw_", "fftwf_", "fftwl_", "fftwq_"):  # every precision is in the table
+        assert any(n.startswith(prefix) and "mpi_" not in n for n in names), prefix
+    assert any("threads" in n for n in names) and any("mpi_" in n for n in names)
+    for name, flag in rows:
+        assert (library_for_callee(name) or "") == flag, (name, library_for_callee(name), flag)
+    if not _CC:
+        return  # the twin's side is then the `linkflags_fftw` section's alone
+    harness = _compile_once(
+        "linkflags",
+        "tlfr",
+        (
+            "test_link_flag_rules.c",
+            "bcir_cfront.c",
+            "bcir_cpp.c",
+            "bcir_verify.c",
+            "bcir_runtime.c",
+        ),
+        "link-flag rules",
+    )
+    run = subprocess.run([harness, "fftw"], capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0 and run.stdout.startswith("OK linkflags-fftw"), (
+        run.stdout + run.stderr
+    )
+
+
 def test_link_flag_derivation_dual_rail():
     """B1 (`bcir-cc --emit-link-flags`): the compiler DERIVES the linker flags a translation unit needs
     from the external-call edges it uses, instead of every harness hard-coding `-lm`. The callee->library
@@ -952,9 +992,13 @@ def test_link_flag_derivation_dual_rail():
         assert library_for_callee(name) == NO_FLAG, name
     assert library_for_callee("cblas_sgemm") == "-lcblas"  # B5 BLAS (the existing path's choice)
     assert library_for_callee("cblas_dgemm") == "-lcblas"  # any cblas_*
-    assert library_for_callee("fftwf_execute") == "-lfftw3"  # B2 FFTW (single-prec edge)
-    assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3"  # any fftwf_*
+    assert library_for_callee("fftwf_execute") == "-lfftw3f"  # B2 FFTW (single-prec edge)
+    assert library_for_callee("fftwf_plan_dft_1d") == "-lfftw3f"  # any fftwf_*
     assert library_for_callee("fftw_execute") == "-lfftw3"  # the double-prec fftw_* prefix too
+    assert library_for_callee("fftwl_execute") == "-lfftw3l"  # long double (FFTW-PRECISION)
+    assert library_for_callee("fftwq_execute") == "-lfftw3q"  # quad
+    assert library_for_callee("fftwf_mpi_init") == "-lfftw3f_mpi"  # an MPI entry point
+    assert library_for_callee("fftw_init_threads") is None  # pthreads or OpenMP: unknown
     assert (
         library_for_callee("LAPACKE_sgesv") == "-llapack"
     )  # #61 LAPACK (the linear-solve wrap's callee)
@@ -12660,6 +12704,55 @@ def test_an_emitted_switch_is_c11_on_both_rails():
     )
     _run_against_original_werror(
         "caselabel.c", _CASELABEL_UNIT, emits, driver, {"clang": ("-Werror",), "gcc": ("-Werror",)}
+    )
+
+
+# CF-VLASCOPE: both rails inline a block into its parent, and a stack VLA inlined so put the labels after its block --
+# a later `case`, a loop's continue label, a `goto` target -- inside the array's scope, which C forbids a jump to enter
+# (C11 6.8.4.2p2, 6.8.6.1p1): Clang and GCC refused the emit. A block that declares a VLA of its own is now emitted as a
+# scope (the oracle's `ScopeOpen` / `ScopeClose`, the twin's `c.scope` / `c.endscope`), on both rails alike.
+# vs_case, vs_continue, vs_for, vs_goto, vs_inner (its inner block alone) and vs_if one each; vs_nested two
+# (the loop body, its inner block)
+_VLASCOPE_SCOPES = 8
+_VLASCOPE_DRIVER = (
+    _GAPS_SAME
+    + r"""int main(void) {
+  for (unsigned i = 0; i < GAPS_N; i++) {
+    uint32_t v = gaps_in[i], c = v & 63u;
+    for (uint32_t n = 1u; n <= 8u; n++) {
+      SAME(vs_case, n, v); SAME(vs_continue, n, c); SAME(vs_for, n, v); SAME(vs_goto, n, c);
+      SAME(vs_nested, n, (v & 3u) + 1u); SAME(vs_inner, n, v); SAME(vs_if, n, v); SAME(vlascope, v, n);
+    }
+  }
+  puts("MATCH");
+  return 0;
+}
+"""
+)
+
+
+def test_a_block_that_declares_a_vla_is_its_own_scope_on_both_rails():
+    """CF-VLASCOPE: `cfront_vlascope.c` -- a VLA in a braced case arm before more labels, in a loop body after a
+    `continue` (`while` and `for`), in a block a `goto` passes, two in one loop body with an inner block of its own,
+    one in an inner block of a loop body that declares none itself, one in an `if` branch. Each rail emits exactly
+    one scope per block that declares a VLA (none for a block that does not, none twice for an inner block's), the
+    rails lower the unit to one claim graph on the four targets, and each emit builds as C11 under Clang and GCC with
+    errors for warnings and returns what the original does."""
+    if not _CC:
+        return
+    fx = "cfront_vlascope.c"
+    src, oracle_emit, c_emit = _fixture_both_rails(fx)
+    for rail, emit in (("oracle", oracle_emit), ("twin", c_emit)):
+        functions = len(re.findall(r"^static .*\)$", emit, re.M))
+        scopes = len(re.findall(r"^\s*\{$", emit, re.M)) - functions
+        assert functions == 8 and scopes == _VLASCOPE_SCOPES, (rail, functions, scopes)
+    _parity_on_targets(os.path.join(_C, fx), src)
+    _run_against_original_werror(
+        fx,
+        src,
+        (("twin", c_emit), ("oracle", oracle_emit)),
+        _VLASCOPE_DRIVER,
+        {name: ("-std=c11", "-pedantic-errors", "-Werror") for name in ("clang", "gcc")},
     )
 
 

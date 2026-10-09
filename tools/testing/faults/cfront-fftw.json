@@ -1,0 +1,39 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_cfront:_CC",
+    "bcir.tests.test_c_cfront:test_the_fftw_rule_is_one_table_on_both_rails"
+  ],
+  "faults": [
+    {
+      "expects": "test_the_fftw_rule_is_one_table_on_both_rails",
+      "label": "FF1 the oracle links single precision with libfftw3, which defines no fftwf_ symbol",
+      "new": "    (\"fftwf_\", \"-lfftw3\", \"-lfftw3f_mpi\"),\n",
+      "old": "    (\"fftwf_\", \"-lfftw3f\", \"-lfftw3f_mpi\"),\n",
+      "path": "bcir/frontends/cfront/linkflags.py"
+    },
+    {
+      "expects": "test_the_fftw_rule_is_one_table_on_both_rails",
+      "label": "FF2 the oracle names a library for a threading entry point two libraries define",
+      "new": "            if False:\n                return None\n",
+      "old": "            if rest in _FFTW_THREADS:\n                return None\n",
+      "path": "bcir/frontends/cfront/linkflags.py"
+    },
+    {
+      "expects": "test_the_fftw_rule_is_one_table_on_both_rails",
+      "label": "FF3 the twin links single precision with libfftw3",
+      "new": "{\"fftwf_\", \"-lfftw3\", \"-lfftw3f_mpi\"}",
+      "old": "{\"fftwf_\", \"-lfftw3f\", \"-lfftw3f_mpi\"}",
+      "path": "runtime/c/bcir_cfront.c"
+    },
+    {
+      "expects": "test_the_fftw_rule_is_one_table_on_both_rails",
+      "label": "FF4 the twin links an MPI entry point with its precision's serial library",
+      "new": "    return P[k].lib;",
+      "old": "    return rn >= 4 && !memcmp(r, \"mpi_\", 4) ? P[k].mpi : P[k].lib;",
+      "path": "runtime/c/bcir_cfront.c"
+    }
+  ]
+}
