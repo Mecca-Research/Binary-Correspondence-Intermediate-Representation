@@ -1,0 +1,143 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_qualification:_CC",
+    "--require",
+    "bcir.tests.test_qualification:_THOROUGH",
+    "--require",
+    "bcir.tests.test_qualification:_VALGRIND",
+    "bcir.tests.test_qualification:test_a_callgrind_part_is_read_by_its_own_grammar",
+    "bcir.tests.test_qualification:test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+    "bcir.tests.test_qualification:test_the_callgrind_build_measures_one_run_of_each_rail"
+  ],
+  "faults": [
+    {
+      "label": "QS1 a count is read by a host-language predicate that takes a non-ASCII digit",
+      "expects": "test_a_callgrind_part_is_read_by_its_own_grammar",
+      "path": "tools/models/run_qualification.py",
+      "old": "    if len(counts) > len(events) or not all(map(_CALLGRIND_COUNT.fullmatch, counts)):\n",
+      "new": "    if len(counts) > len(events) or not all(map(str.isdigit, counts)):\n"
+    },
+    {
+      "label": "QS2 more counts than events are taken, the extra dropped",
+      "expects": "test_a_callgrind_part_is_read_by_its_own_grammar",
+      "path": "tools/models/run_qualification.py",
+      "old": "    if len(counts) > len(events) or not all(map(_CALLGRIND_COUNT.fullmatch, counts)):\n",
+      "new": "    if not all(map(_CALLGRIND_COUNT.fullmatch, counts)):\n"
+    },
+    {
+      "label": "QS3 a short totals line is not padded with the zeros the format leaves out",
+      "expects": "test_a_callgrind_part_is_read_by_its_own_grammar",
+      "path": "tools/models/run_qualification.py",
+      "old": "    totals = dict.fromkeys(events, 0)\n",
+      "new": "    totals = {}\n"
+    },
+    {
+      "label": "QS4 a repeated header line is taken, its last spelling read",
+      "expects": "test_a_callgrind_part_is_read_by_its_own_grammar",
+      "path": "tools/models/run_qualification.py",
+      "old": "        if len(values) != 1:\n",
+      "new": "        if not values:\n"
+    },
+    {
+      "label": "QS5 an event named twice is taken",
+      "expects": "test_a_callgrind_part_is_read_by_its_own_grammar",
+      "path": "tools/models/run_qualification.py",
+      "old": "    if len(set(events)) != len(events) or not all(map(_CALLGRIND_EVENT.fullmatch, events)):\n",
+      "new": "    if not all(map(_CALLGRIND_EVENT.fullmatch, events)):\n"
+    },
+    {
+      "label": "QS6 a part outside the grammar is skipped, not refused",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "        trigger, totals = callgrind_part(text)\n",
+      "new": "        try:\n            trigger, totals = callgrind_part(text)\n        except ValueError:\n            continue\n"
+    },
+    {
+      "label": "QS7 a profile with no part for a rail is read as a measurement",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "    if absent:\n",
+      "new": "    if absent and 0:\n"
+    },
+    {
+      "label": "QS8 a rail dumped twice keeps its last part",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "        if rail in rails:\n",
+      "new": "        if rail in rails and 0:\n"
+    },
+    {
+      "label": "QS9 a part from a request no rail makes is taken as a rail",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "        if rail not in CALLGRIND_RAILS:\n",
+      "new": "        if rail not in CALLGRIND_RAILS and 0:\n"
+    },
+    {
+      "label": "QS10 a rail's part counted without the cache simulation is taken",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "        if missing:\n",
+      "new": "        if missing and 0:\n"
+    },
+    {
+      "label": "QS11 a rail's part that counted no instruction is taken",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "        if not totals[\"Ir\"]:\n",
+      "new": "        if 0:\n"
+    },
+    {
+      "label": "QS12 the data references leave out the writes",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "    row[\"data_refs\"] = totals[\"Dr\"] + totals[\"Dw\"]\n",
+      "new": "    row[\"data_refs\"] = totals[\"Dr\"]\n"
+    },
+    {
+      "label": "QS13 the last-level misses are counted as octets one each, not a line each",
+      "expects": "test_each_rail_is_one_part_and_an_absent_part_is_not_a_zero",
+      "path": "tools/models/run_qualification.py",
+      "old": "    row[\"ll_miss_octets\"] = row[\"ll_data_misses\"] * CACHE_MODEL[\"LL\"][2]\n",
+      "new": "    row[\"ll_miss_octets\"] = row[\"ll_data_misses\"]\n"
+    },
+    {
+      "label": "QS14 every repetition of the GEM rail is bracketed",
+      "expects": "test_the_callgrind_build_measures_one_run_of_each_rail",
+      "path": "runtime/c/bcir_qualify_cli.c",
+      "old": "    if (!i) rail_begin();\n    rc = bcir_dgem_run(&g, prompt, prompt_len, gen_gem, max_new, logits_gem);\n    if (!i) rail_end(\"gem\");\n",
+      "new": "    rail_begin();\n    rc = bcir_dgem_run(&g, prompt, prompt_len, gen_gem, max_new, logits_gem);\n    rail_end(\"gem\");\n"
+    },
+    {
+      "label": "QS15 the GEM rail's bracket is never closed",
+      "expects": "test_the_callgrind_build_measures_one_run_of_each_rail",
+      "path": "runtime/c/bcir_qualify_cli.c",
+      "old": "    if (!i) rail_end(\"gem\");\n",
+      "new": ""
+    },
+    {
+      "label": "QS16 the monolithic rail's part is named for GEM",
+      "expects": "test_the_callgrind_build_measures_one_run_of_each_rail",
+      "path": "runtime/c/bcir_qualify_cli.c",
+      "old": "    if (!i) rail_end(\"monolithic\");\n",
+      "new": "    if (!i) rail_end(\"gem\");\n"
+    },
+    {
+      "label": "QS17 the callgrind build is compiled without its brackets",
+      "expects": "test_the_callgrind_build_measures_one_run_of_each_rail",
+      "path": "tools/models/run_qualification.py",
+      "old": "    command += [\"-DBCIR_QUALIFY_CALLGRIND\", *_valgrind_include()] if callgrind else []\n",
+      "new": "    command += [*_valgrind_include()] if callgrind else []\n"
+    },
+    {
+      "label": "QS18 a profile is read from a directory an earlier profile wrote",
+      "expects": "test_the_callgrind_build_measures_one_run_of_each_rail",
+      "path": "tools/models/run_qualification.py",
+      "old": "    if any(out_dir.glob(\"callgrind.out*\")):\n",
+      "new": "    if 0:\n"
+    }
+  ]
+}

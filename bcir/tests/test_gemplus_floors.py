@@ -70,6 +70,10 @@ MEASURED_FLOORS = (
     # added with its row: the native training step (NDT-GEM), G26's roofline compute term at the
     # best rate its own kernel reaches on the step's GEMM shapes
     "train.step.ms",
+    # added with their rows: the ITS study's codec ratios, whose ASN.1 side cannot go below
+    # writing and reading its own octets once (two memcpy of the encoding, same run)
+    "its.coer.vs.binary",
+    "its.uper.vs.binary",
 )
 
 

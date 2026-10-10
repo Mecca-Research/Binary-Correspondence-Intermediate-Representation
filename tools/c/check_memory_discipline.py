@@ -133,6 +133,8 @@ def main() -> int:
         "bcir_cfront.h": ("owns", "Idempotent"),
         "bcir_q8_model.h": ("owned", "borrowed"),
         "bcir_llama.h": ("borrowed", "released"),
+        "bcir_llama_ops.h": ("borrowed", "owned", "released by bcir_llama_ws_free"),
+        "bcir_decoder_gem.h": ("borrowed", "owned", "released", "before the semantic walk"),
         "bcir_q4_kernel.h": ("borrowed", "written only on success"),
     }
     for name, markers in ownership_headers.items():

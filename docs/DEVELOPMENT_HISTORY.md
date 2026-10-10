@@ -2263,6 +2263,291 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     computes each probability adjoint twice (removing it needs a t-float workspace row, an ABI
     change, for ~1% of the bench step), and `sqrt`'s errno semantics keep the update scalar
     unless the build contract adds `-fno-math-errno`.
+  ITS (2026-10-09): the 2015 security-envelope study (Bittl et al.) re-asked with BCIR's ASN.1
+  machinery, its conclusion inverted on the same content
+  ([`BCIR_ITS_ASN1_BINARY_STUDY.md`](research/BCIR_ITS_ASN1_BINARY_STUDY.md)).
+  - The paper found TS 103 097 V1.1.1's binary encoding shorter than ASN.1 UPER in three of four
+    envelopes and "significantly faster", but its two columns encoded different data models
+    (V1.1.1, and a draft of the ASN.1 successor) through different codecs. `its_security`
+    reconstructs V1.1.1's binary rules -- ETSI's server is blocked by this environment's egress
+    policy, so the reconstruction is held to the paper's Table VI and reproduces all four lengths
+    and the 133-octet authorization ticket they imply -- and transcribes the data model into
+    ASN.1 one construct at a time. `ITS-SecuredMessage-TMSAO.asn1` moves V1.1.1's prose rules
+    into the schema: field lists as sets of OPTIONALs in canonical order, shaped integers, and an
+    X.683 instance per rule family. `its_study.framing` attributes every bit to content or to
+    one kind of framing, exactly.
+  - Size: the transcription under UPER is 92/212/223/220 octets against binary's 96/222/233/230,
+    and the TMSAO PER instance under UPER is 86/203/213/212 -- 97.7 on the paper's Table VII
+    average, against binary's 108.6 and the paper's winner (optimized EXI) at 98.4. Every TMSAO
+    encoding but DER is shorter than binary in every profile. Binary frames the CAM envelope with
+    88 bits (eight type codes and three lengths) around 680 bits of content; TMSAO UPER frames
+    the same 680 with 32.
+  - Time: `bcir.asn1.cgen` compiles the modules to straight-line C for COER, UPER and the
+    V1.1.1 byte rule (`ByteRule`) from one value model, so the binary codec comes from the same
+    generator as the ASN.1 ones. TMSAO-COER encodes and decodes every envelope in 0.55-0.74 of
+    binary's time under clang 18, GCC 13 and clang 23 (0.60-0.73 of its instructions) and is
+    smaller than binary everywhere too; UPER, the smallest, costs 1.06-1.80x, its 32-octet runs
+    at arbitrary bit offsets. No generated codec references an allocator, and the deepest stack
+    measured is 1,008 octets, where the paper measured 12-20 KB.
+  - Witnesses: `test_its_security.py` -- the reconstruction against Table VI, IntX's single
+    spelling, every malformed envelope refused, the size and Table VII results, the canonical
+    order and the bijection to the TMSAO schema, the exact partition. `test_asn1_cgen.py` --
+    octet and value parity with the oracle for every codec and envelope, an oracle differential
+    on damaged input (the same under ASan/UBSan, and a libFuzzer campaign reporting a second
+    spelling like a crash, in the thorough tier), a cyclic value refused by every encoder, no
+    allocator symbol, measured memory, a bench that refuses to time a refusing decoder, and every
+    generated file compiling alone with every name prefixed. GEM+ rows under `--group its`.
+  - Recorded, not built: an ECN replica of V1.1.1's rules. X.692 can state IntX (§19.7's `TO
+    BITS` mapping exists for self-delimiting integer codes), but BCIR's ECN rail writes fixed
+    encoding spaces and refuses §21.2.7's `self-delimiting-values`; the byte rule is a
+    `cgen.ByteRule` over the ASN.1 module instead.
+  OER-EXT (2026-10-09): X.696 extensibility on every OER rail, found by the ITS study's schema,
+  the first extensible SEQUENCEs the OER rails had been given.
+  - `oer.py`, the E1 emitter, its C twin (`bcir_emit.c`) and the plan-driven C decoder
+    (`bcir_oer.c`) wrote no §16.2.2 extension bit ahead of an extensible SEQUENCE's presence
+    bitmap, and spelled §16.4/§16.5 extension additions and §20.2 extension alternatives as root
+    ones. All four agreed, which is what a round trip cannot see. The preamble now leads with the
+    bit; additions follow the root behind a length-prefixed bitmap as open types, a version
+    bracket being one addition (its members a SEQUENCE, X.691 §19.9's structure); an extension
+    alternative is an open type; the C decoder gained `bcir_oer_decode_sequence_ext`. The vectors
+    were cross-checked against asn1tools 0.169.0's OER codec, and the one disagreement (it
+    flattens a version bracket into separate additions, which its own PER codec does not) is
+    stated in the test.
+  - Found on the way: the native bench's OER and PER field builders read attributes plan
+    version 3 had removed, so every field was described as unconstrained, and the bench timed
+    decodes that failed; each case is now decoded once before it is timed. With SIZE ranges
+    declared, the C PER plan decoder read a SIZE(2..10) length two too long (11.9.3.3's offset
+    from the lower bound, passed as 0) and applied 17.6's more-than-two-octets alignment rule to
+    length-determined strings, which 17.8 aligns whatever their count.
+  C-PERF (2026-10-09): the C ASN.1 rails faster with identical outputs.
+  - The plan-driven PER decoder reads bit fields an octet at a time and skips a string body
+    instead of reading it 64 bits at a time and discarding it: a 200-octet record 1.9 -> 0.36 µs
+    ALIGNED, 2.0 -> 0.27 µs UNALIGNED.
+  - The generated codecs: word-at-a-time bit I/O, each function's cursor in a local with only
+    the fields a call can change synchronized, single byte-swapped loads for fixed widths. GCC's
+    inliner reported `inline-unit-growth limit reached` on the generated files and left the bit
+    writer out of line, so every field went through memory -- UPER ran 1.8-3.8x slower under
+    GCC 13 than under clang; the per-field primitives are now forced inline behind a
+    `__GNUC__` guard. One bounds test serves the bit reader's fast path and its truncation
+    check, and the slow-path window takes values rather than the reader, whose escaping address
+    had kept clang's decoder cursor in memory (the same instruction count, 32-38% slower).
+    Interleaved before/after: TMSAO UPER encode 0.30-0.34x and decode 0.56-0.62x under GCC 13,
+    0.64-0.68x and 0.57-0.60x under clang 18; the binary codec, generated too, gained alike.
+  - Found and fixed in the generator: its helper selection could keep a byte-order `#if` and
+    drop its `#endif`, and dropped the cursor typedef from a file of fixed octets alone (neither
+    compiled); its macros leaked unprefixed (`P_BSWAP16`, `P_NATIVE_WORDS`). Each has a witness
+    that fails on the old generator. The stack harness read a freed pointer (GCC 13's
+    `-Werror=use-after-free`). `gemplus_baseline.py --group`'s help listed fewer than half of
+    the groups; it is now generated from the registry.
+  - RED: `tools/testing/faults/its.json` holds 13 faults across the oracle, both C twins, the
+    generator and the harness, each caught by its own witness. The first sweep missed one: a bit
+    reader over-reading its input, refused only by the final length check and so as MALFORMED,
+    which the accept/refuse differential cannot tell from TRUNC. Every cut of every encoding is
+    now held to TRUNC. Phase H's selector, given the paper's objective, selects canonical
+    UNALIGNED PER at exactly the study's sizes (`test_its_security.py`).
+  REVIEW-812 (2026-10-10): an adversarial review of the ITS / OER-EXT / C-PERF diff before it
+  merged. Ten findings, each verified against the tree before it was fixed, one more that the new
+  witnesses found themselves, and one on the last re-read.
+  - The generator (`cgen`). A variable-size INTEGER's decoder skipped the value constraint its
+    encoder checks (COER's length-prefixed forms, UPER's semi-constrained and unconstrained ones,
+    the byte rule's), so a decoded value could fail its own re-encode. A UPER preamble wider than
+    one bit read's 57 bits went out in one `P_put`: after five bits of another field, a shift by
+    a negative count. An extensible INTEGER with an open root bound printed `None` into the C. A
+    one-enumerator ENUMERATED, a single-value INTEGER and their kin were taken to encode in a bit,
+    so a SEQUENCE OF them refused its own valid encodings as truncated; such a count is now
+    bounded by its SIZE, and refused at generation without one. The byte rule ignored a variable
+    string's SIZE. A byte-rule vector moved at every doubling and abandoned each copy (33 elements
+    took 124 slots); it now grows in place while it is the arena's last allocation (64), and a
+    vector of one-size elements is counted by division (33, as COER's). The witnesses, each
+    compiled from a small schema, also found a function that never names its cursor leaving it
+    unused, which `-Werror` refuses. The last re-read found the arena rounding its fill OFFSET up
+    to an element's alignment, where it needed the address: caller memory starting off an
+    8-octet boundary got misaligned arrays (undefined behaviour, and a bus error on a core that
+    traps misaligned loads). The arena aligns the address now.
+  - The oracle. CANONICAL-OER accepted a set padding bit in the root preamble -- the C plan
+    decoder reports it as non-canonical and the generated codecs refuse it -- and, in the
+    additions' bitmap, set unused bits and an addition sent equal to its DEFAULT. Each is a second
+    spelling of one value, now refused under CANONICAL; BASIC still reads them. The V1.1.1 binary
+    decoder copied the data's prefix for every vector element and read an element of no octets
+    forever; it now threads the vector's end through and refuses both. The binary rules and the
+    byte rule hold a SIZE alike.
+  - The harness read hex with `sscanf("%2x")`, which takes one digit, a sign or a `0x` prefix as
+    an octet. GEM+'s four ITS timing ratios divide one compiled codec by another (or by a
+    `memcpy`), so like the `native.*` rows they measure the host and the compiler; they are
+    host-dependent now, INDICATIVE off the baseline host.
+  - The memory table's V1.1.1 arena (1,200 / 1,928 octets) is what its count-less vectors
+    reserve; the same structs need 684 / 1,180, what the transcription's COER codec takes. Sizing
+    them exactly costs a counting pass (1.5-1.8x the decode's time) or a give-back per vector
+    (3-9% of its instructions), so the time-optimal decoder keeps the reservation and the study
+    reports both numbers.
+  - Re-measured on the final code, fifteen interleaved repetitions per compiler: TMSAO-COER at
+    0.55-0.74 of binary's time (0.60-0.73 of its instructions, unchanged), UPER at 1.06-1.80x. An
+    A/B of two builds showed byte-identical codecs timed up to 17% apart -- code placement, with
+    the instruction counts unmoved -- so the study now states that band and rests its ratios on
+    the instruction counts.
+  - Recorded, not changed: the Python OER rail checks no INTEGER value constraint on either side
+    (`encode_oer` writes 9 for an `INTEGER (0..7)`), where the generated codecs refuse it. No ITS
+    schema has such a constraint, so no number moves.
+  - RED: 16 more faults in `tools/testing/faults/its.json` (29 in all), each caught by its own
+    witness.
+  REVIEW-812b (2026-10-10): Codex's four findings on the ready PR, each verified against the tree
+  and fixed with a witness, and the family each belonged to closed on every rail that had it.
+  - The defaults of an absent version bracket. X.680 §25.12 gives an absent DEFAULT component its
+    default, and a bracket's members are components like any other. PER and OER filled the
+    defaults of single additions only (PER, with the extension bit clear, on a path of its own),
+    so a value of `SEQUENCE { a INTEGER, ..., [[ c BOOLEAN OPTIONAL, d INTEGER DEFAULT 3 ]] }`
+    decoded without `d` on both while JER and XER returned it. Both read one predicate now,
+    `schema.addition_defaults`.
+  - One spelling under CANONICAL-OER. The oracle's CANONICAL decoder read every length
+    determinant as BASIC -- a long form for a short length, leading zero octets -- so the
+    extension bitmap's and each open type's lengths, and a string's and a quantity's, had second
+    spellings at the digest boundary; so did a variable-size INTEGER's contents, an ENUMERATED in
+    the long form, a CHOICE tag's long form and a SET OF out of order. `decode_length` takes the
+    caller's rules and every site passes them, and §31.4's fewest-octets rule is one predicate
+    (`_require_fewest`) for the INTEGER, the ENUMERATED and the quantity. The plan-driven C
+    decoder had the same hole: it read a variable-size INTEGER as BASIC, rightly, but reported it
+    canonical; `canonical` now says what the oracle refuses, field for field. A present addition
+    its encoder omits is refused under CANONICAL too, by the encoder's own `_supplied`: on OER a
+    version bracket of nothing but absent or default members (the earlier §31.9 fix looked at
+    single additions only), on PER any addition equal to its DEFAULT (§19.5) or such a bracket
+    (§19.9).
+  - Fixed sizes from 64K under UPER. X.691 §17.8 gives a SIZE-fixed OCTET STRING of 64K octets or
+    more a length determinant, fragmented at that size; the generated UPER codec wrote and read
+    the octets bare. Generation now refuses the type in both directions, at exactly the size
+    where the oracle's encoding changes form; COER is unaffected (X.696 §14.1).
+  - The TMSAO mapping's value space. A shaped integer is extensible, and BCIR reads an extensible
+    constraint by its root (the frontend keeps no AdditionalElementSetSpec), so the TMSAO module
+    admits integers V1.1.1 cannot spell, and `from_tmsao` mapped them to transcription values no
+    V1.1.1 encoder writes. Both directions now hold V1.1.1's range through the binary rules' own
+    bounds, and the module header and the study say the bijection is between V1.1.1's values and
+    their images. Keeping the additional set in the constraint model decides BCIR's posture for
+    every extensible constraint, not this module's, and is a follow-up of its own (closed by
+    ASN1-EXT, below).
+  - Recorded, not changed: the typed BER/DER rail treats a version bracket as one OPTIONAL
+    component of its own (a nested SEQUENCE named `[[n]]`), so a value with the bracket's members
+    flat -- the form PER, OER, JER and XER read -- is refused by its encoder and decoded without
+    them. A follow-up of its own (closed by ASN1-EXT, below).
+  - RED: 19 more faults in `tools/testing/faults/its.json` (48 in all), each caught by its own
+    witness.
+  ASN1-EXT (2026-10-10): REVIEW-812b's two follow-ups -- version brackets on the typed BER/DER
+  rail, and the additional set of an extensible constraint.
+  - A version bracket is flat on every rule but PER and OER. X.690 has no notion of a bracket:
+    §8.9.2 encodes one value per component type the definition lists, and a bracket lists its
+    members as component types of the enclosing SEQUENCE or SET; only X.691 §19.9 and X.696 wrap
+    it into one open type. The typed rail encoded `[[ c, d ]]` as a nested SEQUENCE named `[[n]]`,
+    refused `{"a": 1, "d": 3}` by name and decoded without the bracket's DEFAULT, and SET did the
+    same. One predicate, `schema.flat_components`, lists a SEQUENCE's or SET's components with
+    each bracket's members in its place: JER and XER had a copy each, PER and OER expanded the
+    members inline for their unknown-name check, and the typed rail had none. The ITU texts could
+    not be fetched here (the organization's proxy policy refuses itu.int), so the DER is checked
+    against two independent codecs, asn1tools 0.169.0 and pycrate 0.8.1, which agree on every
+    bracket vector, X.691 Annex A.4's record included. Where they part -- a root component after
+    the extension-marker pair, which asn1tools moves before the additions -- this rail keeps the
+    definition's order, with pycrate and §8.9.2.
+  - A bracket is absent whole or present with its mandatory members: the lowering makes the
+    bracket OPTIONAL, and X.691 §19.9 encodes a present one as a SEQUENCE of its members. JER's
+    and XER's copies of the flattening dropped that optionality, so `SEQUENCE { a, ..., [[ d
+    INTEGER, e BOOLEAN OPTIONAL ]] }` without its bracket -- a value PER, OER and both independent
+    codecs read -- was refused there. `flat_components` lists a mandatory member as OPTIONAL, and
+    `schema.bracket_violation` holds a carried bracket to its mandatory members on the typed rail,
+    JER and XER, on encode and on decode; a member at its DEFAULT does not carry its bracket
+    (canonical XER writes it out for an absent one). The bracket's pseudo-name (`[[2]]`) is no
+    component on any rule: PER and OER let it through, ignored. JER's X.697 §19.2.3 test, which
+    tells an UNWRAPPED choice's object-producing alternatives apart by a mandatory member name,
+    reads the same flat view: a bracket's mandatory member separates nothing, so an object that
+    is one alternative with its bracket absent and another without an OPTIONAL member is
+    reported ambiguous, where it was read as the second without a word.
+  - A bracket's members are extension additions of the enclosing type -- X.680 §25.1 lists a
+    bracket among the ExtensionAdditions -- and the flattening now says so. It listed each member
+    with its own `extension`, False inside a bracket, so JER's ARRAY (X.697 §27.2.1: the root,
+    then the additions) put `SEQUENCE { a, ..., b, [[ c, d ]], f }`'s `c` and `d` among the
+    root (`[a, c, d, b, f]`) and a root component after the marker pair behind a bracket;
+    canonical XER (X.693 §9.6.2: a SET's root sorted by tag, then the additions in the
+    definition's order) sorted a tagged bracket member into the root, so one addition went out
+    in two orders with and without its bracket; and X.697 §14.2 let a NULL bracket member under
+    ARRAY through, where it refuses the same plain addition. These were older than this slice.
+  - The flat view keeps a member's identity. JER files an encoding instruction by the object it
+    is assigned to, and assigns a NAME to a component (X.697 §9.9); the first cut of this slice
+    listed a mandatory member as a fresh OPTIONAL copy on every call, so a NAME on it was looked
+    up under another object and dropped, and the decoder agreed, so the round trip passed. The
+    flat members are made once per bracket (`Component.flat`), a copy leads back to its member
+    (`Component.origin`), and `JerInstructions` files a copy's instructions under that member.
+  - Recorded, not changed: a mandatory extension addition outside any bracket (`SEQUENCE { a,
+    ..., b INTEGER }` without `b`) is accepted by PER and OER and refused by DER, JER and XER --
+    the same question outside brackets. Whether a value of an earlier version is a value of the
+    type is a posture for every rule, and a follow-up of its own.
+  - An extensible constraint keeps its additional set, and the codecs keep the relay posture
+    (LangRef §17.3). Both parser sites dropped the AdditionalElementSetSpec, so `(0..7, ...,
+    8..255)` and `(0..7, ...)` were one constraint to the model, to the printer (the module did
+    not round-trip) and to every structural key built from a constraint (two instances of a
+    parameterized type that differed only in their additions were one), and a name in the
+    additions was never looked up. `Extensible.additions` carries it, the printer writes it,
+    reference resolution resolves it or refuses it, and `known` answers this version's value
+    set. No encoding moves: PER encodes a value of the additions as one beyond them (X.691
+    §13.1), OER sees no extensible constraint (X.696 §8.2.2 g), and every rule, the generated C
+    codecs included, encodes `(0..7, ..., 8..255)` exactly as `(0..7, ...)`. Enforcing the root
+    and the additions was the alternative, and it is refused: `(0..7, ...)` would then have to
+    refuse everything outside its root, and a relay could not re-encode a later version's value.
+    The TMSAO module's shaped integers state V1.1.1's range in the schema now: each one's root and
+    additions are exactly that range.
+  - RED: `tools/testing/faults/asn1-ext.json` holds 28 faults (BK1-BK19 on the brackets, AD1-AD9
+    on the additional set), each caught by its own witness. `its.json`'s RV17 -- the shared
+    predicate giving a bracket's DEFAULT members nothing -- is re-anchored on `flat_components`,
+    which `addition_defaults` now reads, and still fires (the table gate found the drift).
+  QUAL (2026-10-10): qualification on a concrete target -- one BCIR-native model, built from the
+  checkout, run through the whole stack on real hardware (`docs/BCIR_QUALIFICATION.md`).
+  - QUAL-1 made a decoder a BCIR program: `decoder_program` writes the greedy generation as one
+    claim per decoder operation per token over a RID ABI (the activations, each layer's weights
+    and cache rows), with its planned work and traffic (`program_traffic`); K_BCIR plans it and
+    GEM hydrates it like any module, and every projection (module JER; plan binary, DER, OER,
+    JER; pack native, DER, OER, JER) round-trips.
+  - QUAL-2 executed it through GEM. `bcir_decoder_gem.c` is the C interpreter `bcir_sp_execute`
+    dispatches to, `decoder_gem.py` its oracle twin; both generate what the monolithic decoders
+    do, bit for bit, on tied and untied heads and on a model wide enough that a reassociated
+    product shows. Found by its own witnesses: a run started from the activations the last run
+    left, FINAL aliased onto the activation the attention norm writes, and a claim table sized
+    from the pack header before the semantic walk read the body -- each fixed, each a fault in
+    `tools/testing/faults/qual.json`. A libFuzzer target (`fuzz_decoder_gem`) holds the
+    interpreter to its allocation and run-isolation contracts on resealed packs.
+  - QUAL-LIN made GEM linear. On a hydrated decoder pack the R10 walk and the executor rescanned
+    every earlier record per record -- quadratic, so a 2,900-claim request ran 5-14x the
+    monolithic runner. Running maxima with exact fallbacks (shortlex names, cursor searches that
+    wrap) and a run-ordered dispatch fast path keep every verdict and the dispatch order
+    identical (a differential over eleven bases in every order) and make both linear (a scaling
+    witness); the ratio is now 1.06.
+  - QUAL-M built the model from the ground up: `build_lab_model.py` runs one recipe
+    (`bcir.lab_model.v1`) through BCIR's corpus preparation, BPE, native C trainer and BCIRQ8
+    export, and a card ties the artifacts together by SHA-256. BCIR-Docs-860K: 857,216
+    parameters (4 layers, width 128, GQA 4/2, SwiGLU, RoPE, tied), 1,200 steps on the tracked
+    docs, validation perplexity 63.0. Found on the way: the builder appended a newline to the
+    tokenizer's canonical JSON, which the reader refuses, so the first model shipped a tokenizer
+    nothing could load; the file is the canonical JSON exactly, and the harness checks that the
+    card, the file and the BCIRQ8 metadata name the same tokenizer.
+  - QUAL-3, the harness (`run_qualification.py`) and CI's `qualification` job (x86-64 and native
+    AArch64, callgrind required): every check gated, every number in one report
+    (`bcir.qualification_report.v1`). On this host: the same 48 tokens on five rails, C GEM and
+    the C monolithic runner bit-identical, C and the oracle 0 apart, planned == counted traffic
+    (57,539,312 octets read, 4,236,480 written), GEM/monolithic 1.055, 918 tokens/s. The pack's
+    JER (913,010 octets) needs 100,001 nodes and the bounded JER reader refuses it by design, so
+    the JSON chain is qualified on a 12-token request of the same model, which reproduces the
+    headline's prefix.
+  - The simulated traffic is one run of each rail, read in callgrind's own format. The first CI
+    run collected it with `--toggle-collect` on each rail's entry point and scraped
+    `callgrind_annotate`'s human-readable function table: on AArch64 the line it took for a rail
+    was no function's row and the parse died on it (`int('')`), and on any host a `.` (zero)
+    column would have shifted every later event onto the wrong name. bcir-qualify's callgrind
+    build (`-DBCIR_QUALIFY_CALLGRIND`) now brackets each rail's first run with callgrind client
+    requests, a profile part per rail, and the harness reads the parts by the format's grammar:
+    exactly one part per rail, every cache event counted, ASCII decimal counts, a refusal for
+    anything else. Profiling two repetitions counts the same instructions and data references
+    per rail as profiling one, and the unbracketed build measures nothing rather than zero. The
+    header comes from the valgrind on PATH (`-idirafter` its include directory), since a
+    compiler with its own sysroot -- the local clang 23 -- does not search the system's.
+  - RED: `tools/testing/faults/qual.json` holds 28 faults (QL1-QL15 on the linear walk and
+    dispatch, QG1-QG14 on the interpreters and the planned work), each caught by its own
+    witness. QG12 was dropped as an equivalent mutant: the oracle's cache is a list, which
+    cannot hold the hole the C fault leaves. `qual-sim.json` holds 18 more (QS1-QS18) on the
+    profile reader, the derived rows, the brackets and the callgrind build.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

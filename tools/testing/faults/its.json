@@ -1,0 +1,380 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_asn1_cgen:_CC",
+    "bcir.tests.test_its_security:test_intx_is_the_shortest_spelling_and_refuses_every_other",
+    "bcir.tests.test_its_security:test_a_list_the_prose_forbids_is_refused_not_reordered",
+    "bcir.tests.test_asn1_oer:test_an_extensible_sequence_leads_its_preamble_with_the_extension_bit",
+    "bcir.tests.test_asn1_emit:test_an_extensible_sequence_carries_its_extension_bit_under_oer",
+    "bcir.tests.test_c_emit:test_the_twin_reaches_the_same_octets_for_a_constrained_type",
+    "bcir.tests.test_c_oer:test_an_extensible_sequence_is_read_with_its_extension_bit_first",
+    "bcir.tests.test_c_per_plan:test_a_size_lower_bound_offsets_the_constrained_length",
+    "bcir.tests.test_asn1_cgen:test_nothing_a_generated_file_defines_escapes_its_prefix",
+    "bcir.tests.test_asn1_cgen:test_a_file_compiles_alone_however_few_helpers_it_needs",
+    "bcir.tests.test_asn1_cgen:test_the_bench_refuses_to_time_a_decoder_that_refuses",
+    "bcir.tests.test_asn1_cgen:test_every_generated_codec_writes_and_reads_the_oracles_octets",
+    "bcir.tests.test_asn1_cgen:test_a_cut_encoding_is_refused_as_truncated_by_every_decoder",
+    "bcir.tests.test_asn1_cgen:test_the_generated_decoders_agree_with_the_oracle_on_damaged_input",
+    "bcir.tests.test_asn1_cgen:test_a_decoder_refuses_every_integer_its_encoder_refuses",
+    "bcir.tests.test_asn1_cgen:test_a_preamble_wider_than_one_bit_read_is_written_in_pieces",
+    "bcir.tests.test_asn1_cgen:test_an_extensible_integer_with_an_open_root_bound_compiles_and_round_trips",
+    "bcir.tests.test_asn1_cgen:test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input",
+    "bcir.tests.test_asn1_cgen:test_the_byte_rule_holds_a_strings_size_as_coer_does",
+    "bcir.tests.test_asn1_cgen:test_a_vector_grows_in_place_in_the_arena",
+    "bcir.tests.test_asn1_cgen:test_the_harness_refuses_what_is_not_hex",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_refuses_a_present_addition_equal_to_its_default",
+    "bcir.tests.test_its_security:test_a_vector_is_read_against_its_own_end",
+    "bcir.tests.test_its_security:test_a_vector_of_empty_elements_is_refused_rather_than_read_forever",
+    "bcir.tests.test_its_security:test_the_binary_rules_hold_a_size_constraint",
+    "bcir.tests.test_gemplus_baseline:test_every_ratio_of_compiled_kernels_is_indicative_off_its_host",
+    "bcir.tests.test_asn1_cgen:test_the_arena_aligns_an_address_not_an_offset",
+    "bcir.tests.test_asn1_oer:test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_refuses_a_present_bracket_that_carries_nothing",
+    "bcir.tests.test_asn1_oer:test_canonical_oer_spells_every_length_and_number_once",
+    "bcir.tests.test_asn1_per:test_canonical_per_refuses_a_present_addition_its_encoder_omits",
+    "bcir.tests.test_c_oer:test_a_padded_variable_size_integer_is_reported_as_non_canonical",
+    "bcir.tests.test_asn1_cgen:test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions",
+    "bcir.tests.test_its_security:test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry"
+  ],
+  "faults": [
+    {
+      "expects": "test_intx_is_the_shortest_spelling_and_refuses_every_other",
+      "label": "IT1 IntX accepts a longer spelling of a value the shorter one carries",
+      "new": "    if False:\n",
+      "old": "    if n and value < 1 << (7 + 7 * (n - 1)):\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_a_list_the_prose_forbids_is_refused_not_reordered",
+      "label": "IT2 the TMSAO mapping takes a field list out of V1.1.1's canonical order",
+      "new": "        if at == last:\n",
+      "old": "        if at <= last:\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_an_extensible_sequence_leads_its_preamble_with_the_extension_bit",
+      "label": "OE1 the oracle's OER preamble omits an extensible SEQUENCE's extension bit",
+      "new": "    if False:  # \u00a716.2.2\n        bits.append(1 if present_additions else 0)\n",
+      "old": "    if kind.extensible:  # \u00a716.2.2\n        bits.append(1 if present_additions else 0)\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_an_extensible_sequence_carries_its_extension_bit_under_oer",
+      "label": "OE2 the E1 emitter's OER preamble omits the extension bit",
+      "new": "        bits: list[int] = []\n",
+      "old": "        bits: list[int] = [0] if node.extensible else []\n",
+      "path": "bcir/asn1/emit.py"
+    },
+    {
+      "expects": "test_the_twin_reaches_the_same_octets_for_a_constrained_type",
+      "label": "OE3 the E1 emitter's C twin sizes and fills the preamble without the extension bit",
+      "new": "      size_t seen = 0u;\n",
+      "old": "      size_t seen = node->extensible ? 1u : 0u;\n",
+      "path": "runtime/c/bcir_emit.c"
+    },
+    {
+      "expects": "test_an_extensible_sequence_is_read_with_its_extension_bit_first",
+      "label": "OE4 the plan-driven C OER decoder reads presence bits from bit 0 of an extensible preamble",
+      "new": "      (void)0;\n",
+      "old": "      if (present & 1u) return fail(diag, BCIR_OER_MALFORMED, pos, 0);\n      present >>= 1;\n",
+      "path": "runtime/c/bcir_oer.c"
+    },
+    {
+      "expects": "test_a_size_lower_bound_offsets_the_constrained_length",
+      "label": "PP1 the C PER plan decoder reads a constrained length with no SIZE lower bound",
+      "new": "    st = bcir_per_length(r, 0, (int64_t)f->fixed_len, has_ub, &octets, &more);\n",
+      "old": "    st = bcir_per_length(r, f->lb, (int64_t)f->fixed_len, has_ub, &octets, &more);\n",
+      "path": "runtime/c/bcir_per_plan.c"
+    },
+    {
+      "expects": "test_nothing_a_generated_file_defines_escapes_its_prefix",
+      "label": "CG1 the generator's macros keep the library's unprefixed P_ spelling",
+      "new": "    text = re.sub(r\"\\bP_(OK|E_[A-Z]+|MAX_DEPTH|INTX_MAX|NEED|HAVE)\\b\", lambda m: f\"{up}{m.group(1)}\", text)\n",
+      "old": "    text = re.sub(r\"\\bP_([A-Z][A-Z0-9_]*)\\b\", lambda m: f\"{up}{m.group(1)}\", text)\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_file_compiles_alone_however_few_helpers_it_needs",
+      "label": "CG2 the helper selection splits a preprocessor conditional into its macros",
+      "new": "        if False:\n            depth += 1\n",
+      "old": "        if top and line.startswith(\"#if\"):\n            depth += 1\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_file_compiles_alone_however_few_helpers_it_needs",
+      "label": "CG3 the emitter names its cursor types already prefixed, out of the helper selection's sight",
+      "new": "        self.W = f\"{self.P}bw\" if self.byte else f\"{self.P}pw\"\n",
+      "old": "        self.W = \"P_bw\" if self.byte else \"P_pw\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_bench_refuses_to_time_a_decoder_that_refuses",
+      "label": "CG4 the bench times a decode its guard saw fail",
+      "new": "        (void)0;\n",
+      "old": "        printf(\"ERR bench-decode %s %d\\n\", CODECS[c], e);\n        return;\n",
+      "path": "bcir/asn1/its_native.py"
+    },
+    {
+      "expects": "test_every_generated_codec_writes_and_reads_the_oracles_octets",
+      "label": "CG5 the UPER writer's unaligned octet run carries one bit too few into the next word",
+      "new": "    P_put_be64(w->p, hi | (x >> s));\n    hi = x << (63u - s);\n",
+      "old": "    P_put_be64(w->p, hi | (x >> s));\n    hi = x << (64u - s);\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_cut_encoding_is_refused_as_truncated_by_every_decoder",
+      "label": "CG6 the bit reader takes its one-load path at the input's end, past the input",
+      "new": "  if (1) {\n    w = P_be64(r->base + byte);\n",
+      "old": "  if (byte + 8u <= r->nbytes) {\n    w = P_be64(r->base + byte);\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_decoder_refuses_every_integer_its_encoder_refuses",
+      "label": "RV1 a variable-size INTEGER's decoder skips the value constraint its encoder applies",
+      "new": "            f\"    if (st != P_OK) return st;\\n    {lv} = ({k.ctype}){t};\\n  }}\\n\"\n",
+      "old": "            f\"    if (st != P_OK) return st;\\n    {lv} = ({k.ctype}){t};\\n  }}\\n\"\n            + self._int_check(k, lv, \"P_E_MALFORMED\")\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_preamble_wider_than_one_bit_read_is_written_in_pieces",
+      "label": "RV2 the UPER preamble goes out in one P_put however wide it is",
+      "new": "_BITS_PER_CALL = 64\n",
+      "old": "_BITS_PER_CALL = 57\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_an_extensible_integer_with_an_open_root_bound_compiles_and_round_trips",
+      "label": "RV3 an extensible INTEGER's root test prints an absent bound",
+      "new": "    return f\"{var} >= {low} && {var} <= {high}\"\n",
+      "old": "    return \" && \".join(tests) if tests else \"1\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input",
+      "label": "RV4 a one-enumerator ENUMERATED is taken to encode in a bit under UPER",
+      "new": "            return 1\n",
+      "old": "            return 0 if len(k.asn1.enumeration) == 1 and not k.extensible else 1\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_byte_rule_holds_a_strings_size_as_coer_does",
+      "label": "RV5 the byte rule's decoder skips a variable string's SIZE",
+      "new": "                f\"    {lv}.p = r->p;\\n    {lv}.n = (size_t){t};\\n    r->p += {lv}.n;\\n  }}\\n\"\n",
+      "old": "                f\"    {lv}.p = r->p;\\n    {lv}.n = (size_t){t};\\n    r->p += {lv}.n;\\n  }}\\n\"\n                + self._size_check(k, lv, \"P_E_MALFORMED\")\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_vector_grows_in_place_in_the_arena",
+      "label": "RV6 a byte-rule vector moves at every doubling instead of growing in place",
+      "new": "                \"          if (0 &&\\n\"\n",
+      "old": "                \"          if ((uint8_t *)(items + cap) == a->base + a->used &&\\n\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_vector_grows_in_place_in_the_arena",
+      "label": "RV7 a function that never names its cursor leaves it unused",
+      "new": "    return \"\"\n",
+      "old": "    return \"\" if re.search(rf\"\\b{name}\\b\", body) else f\"  (void){name};\\n\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_harness_refuses_what_is_not_hex",
+      "label": "RV8 the harness takes a character that is not a hex digit as a zero",
+      "new": "  if (c >= 'A' && c <= 'F') return c - 'A' + 10;\n  return 0;\n}\n",
+      "old": "  if (c >= 'A' && c <= 'F') return c - 'A' + 10;\n  return -1;\n}\n",
+      "path": "bcir/asn1/its_native.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap",
+      "label": "RV9 CANONICAL-OER accepts a set padding bit in the root preamble",
+      "new": "        if False:\n",
+      "old": "        if rules is OerRules.CANONICAL and \"1\" in bits[width_bits:]:\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_set_padding_bit_in_either_bitmap",
+      "label": "RV10 CANONICAL-OER accepts set unused bits in the additions' bitmap",
+      "new": "        if False:\n",
+      "old": "        if rules is OerRules.CANONICAL and bitmap[-1] & ((1 << bitmap[0]) - 1):\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_present_addition_equal_to_its_default",
+      "label": "RV11 CANONICAL-OER accepts an addition sent equal to its DEFAULT",
+      "new": "            if rules is OerRules.CANONICAL and comp.group is not None and not _supplied(\n",
+      "old": "            if rules is OerRules.CANONICAL and not _supplied(\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_a_vector_is_read_against_its_own_end",
+      "label": "RV12 the binary decoder reads a vector's element past the vector's end",
+      "new": "            item, after = _decode(kind.element, data, at)\n",
+      "old": "            item, after = _decode(kind.element, data, at, stop)\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_a_vector_of_empty_elements_is_refused_rather_than_read_forever",
+      "label": "RV13 the binary decoder keeps reading an element that takes no octets",
+      "new": "            if False:\n",
+      "old": "            if after == at:\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_the_binary_rules_hold_a_size_constraint",
+      "label": "RV14 the binary rules ignore a SIZE constraint",
+      "new": "    if False:\n",
+      "old": "    if (low and count < low) or (high is not None and count > high):\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_every_ratio_of_compiled_kernels_is_indicative_off_its_host",
+      "label": "RV15 a ratio of two compiled codecs is graded on every host",
+      "new": "        slice_owner=\"C-PERF\",\n    ),\n)\n",
+      "old": "        slice_owner=\"C-PERF\",\n        host_dependent=True,  # a ratio of two COMPILED kernels: it measures this host, not the code\n    ),\n)\n",
+      "path": "tools/perf/gemplus_baseline.py"
+    },
+    {
+      "expects": "test_the_arena_aligns_an_address_not_an_offset",
+      "label": "RV16 the arena aligns its fill offset, not the address it hands out",
+      "new": "  at = (a->used + (align - 1u)) & ~(align - 1u);",
+      "old": "  at = a->used + (size_t)(((uintptr_t)0 - ((uintptr_t)a->base + a->used)) & (align - 1u));",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+      "label": "RV17 the shared predicate gives an absent bracket's DEFAULT members nothing",
+      "new": "    for member in tuple(additions):\n",
+      "old": "    for member in flat_components(tuple(additions)):\n",
+      "path": "bcir/asn1/schema.py"
+    },
+    {
+      "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+      "label": "RV18 OER fills no addition's DEFAULT",
+      "new": "    return out, cursor\n",
+      "old": "    for name, default in addition_defaults(additions):\n        out.setdefault(name, default)\n    return out, cursor\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+      "label": "RV19 PER with the extension bit clear returns before the shared defaults (the old early return)",
+      "new": "    if not has_additions:\n        for comp in additions:\n            if comp.has_default:\n                out[comp.name] = comp.default\n        return out\n    _decode_additions(reader, additions, rules, out)\n",
+      "old": "    if has_additions:\n        _decode_additions(reader, additions, rules, out)\n",
+      "path": "bcir/asn1/per.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV20 CANONICAL-OER takes a long-form length unless it is both padded and short",
+      "new": "    if rules is OerRules.CANONICAL and (data[offset + 1] == 0 and value < 0x80):\n",
+      "old": "    if rules is OerRules.CANONICAL and (data[offset + 1] == 0 or value < 0x80):\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV21 an open type's length is read under BASIC whatever the caller's rules",
+      "new": "    \"\"\"\u00a730: a length determinant and that many octets, returned for a nested decode.\"\"\"\n    length, cursor = decode_length(data, offset)\n",
+      "old": "    \"\"\"\u00a730: a length determinant and that many octets, returned for a nested decode.\"\"\"\n    length, cursor = decode_length(data, offset, rules)\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV22 a signed variable-size number's redundant 0xFF octet is taken",
+      "new": "        redundant = first == 0x00 and not second & 0x80\n",
+      "old": "        redundant = (first == 0x00 and not second & 0x80) or (first == 0xFF and second & 0x80)\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV23 a variable-size INTEGER's contents are not held to the fewest octets",
+      "new": "",
+      "old": "        if rules is OerRules.CANONICAL:\n            _require_fewest(data, cursor, end, signed, \"a variable-size INTEGER\")\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV24 CANONICAL-OER takes an ENUMERATED 0..127 in the long form",
+      "new": "",
+      "old": "            if 0 <= value < 0x80:\n                raise Asn1Error(\n                    f\"CANONICAL-OER spells ENUMERATED {value} in the short form (X.696 11.3)\",\n                    offset,\n                )\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV25 a SEQUENCE OF quantity keeps a leading zero octet",
+      "new": "",
+      "old": "        if rules is OerRules.CANONICAL:\n            _require_fewest(data, cursor, end, False, f\"{kind.name}'s quantity\")\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV26 CANONICAL-OER takes a high tag number padded with a leading 0x80",
+      "new": "    if rules is OerRules.CANONICAL and number < 63:\n",
+      "old": "    if rules is OerRules.CANONICAL and (number < 63 or data[offset + 1] == 0x80):\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_spells_every_length_and_number_once",
+      "label": "RV27 CANONICAL-OER takes a SET OF out of its encodings' order",
+      "new": "            if isinstance(kind, SequenceOf) and rules is OerRules.CANONICAL:\n",
+      "old": "            if isinstance(kind, SetOf) and rules is OerRules.CANONICAL:\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_oer_refuses_a_present_bracket_that_carries_nothing",
+      "label": "RV28 CANONICAL-OER takes a present version bracket that carries nothing",
+      "new": "            if rules is OerRules.CANONICAL and comp.group is None and not _supplied(\n",
+      "old": "            if rules is OerRules.CANONICAL and not _supplied(\n",
+      "path": "bcir/asn1/oer.py"
+    },
+    {
+      "expects": "test_canonical_per_refuses_a_present_addition_its_encoder_omits",
+      "label": "RV29 CANONICAL-PER takes a present addition equal to its DEFAULT",
+      "new": "        if rules is PerRules.CANONICAL and comp.group is not None and not _supplied(\n",
+      "old": "        if rules is PerRules.CANONICAL and not _supplied(\n",
+      "path": "bcir/asn1/per.py"
+    },
+    {
+      "expects": "test_a_padded_variable_size_integer_is_reported_as_non_canonical",
+      "label": "RV30 the C plan decoder reports a long-form length of a variable-size INTEGER as canonical",
+      "new": "  (void)length_canonical;\n  if (count < 2) return 1;\n",
+      "old": "  if (!length_canonical) return 0;\n  if (count < 2) return 1;\n",
+      "path": "runtime/c/bcir_oer.c"
+    },
+    {
+      "expects": "test_a_padded_variable_size_integer_is_reported_as_non_canonical",
+      "label": "RV31 the C plan decoder reports a negative number's redundant 0xFF octet as canonical",
+      "new": "  return !(data[start] == 0x00u && (data[start + 1] & 0x80u) == 0);\n",
+      "old": "  return !((data[start] == 0x00u && (data[start + 1] & 0x80u) == 0) ||\n           (data[start] == 0xFFu && (data[start + 1] & 0x80u) != 0));\n",
+      "path": "runtime/c/bcir_oer.c"
+    },
+    {
+      "expects": "test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions",
+      "label": "RV32 the UPER decoder reads a SIZE(64K) OCTET STRING bare",
+      "new": "            return f\"  st = P_get_octets(r, {lv}.b, {k.size});\\n  if (st != P_OK) return st;\\n\"\n",
+      "old": "            _uper_bare_size(k)\n            return f\"  st = P_get_octets(r, {lv}.b, {k.size});\\n  if (st != P_OK) return st;\\n\"\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_a_fixed_size_of_64k_or_more_is_refused_for_uper_in_both_directions",
+      "label": "RV33 the UPER refusal starts one octet past 64K",
+      "new": "    if k.size > _64K:\n",
+      "old": "    if k.size >= _64K:\n",
+      "path": "bcir/asn1/cgen.py"
+    },
+    {
+      "expects": "test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry",
+      "label": "RV34 the TMSAO mapping holds no V1.1.1 range",
+      "new": "    try:\n        pass\n    except Asn1Error as error:\n",
+      "old": "    try:\n        encode_binary(message)\n    except Asn1Error as error:\n",
+      "path": "bcir/asn1/its_security.py"
+    },
+    {
+      "expects": "test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry",
+      "label": "RV35 to_tmsao carries a value V1.1.1 cannot in",
+      "new": "",
+      "old": "    _v111(message, \"to_tmsao\")\n",
+      "path": "bcir/asn1/its_security.py"
+    }
+  ]
+}

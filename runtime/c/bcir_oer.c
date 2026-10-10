@@ -126,6 +126,25 @@ bcir_oer_status bcir_oer_integer(const uint8_t *data, size_t len, size_t pos,
   return BCIR_OER_OK;
 }
 
+/* 31.2 and 31.4 for a variable-size integer bcir_oer_integer has already read at `pos`: its
+ * length determinant and its contents in the fewest octets. An unsigned number's first octet
+ * is zero only when it is the number's one octet; a signed number's is redundant when it is
+ * all sign bits and the next octet's top bit repeats them -- what the generated codecs'
+ * P_oer_get_uvar / P_oer_get_svar refuse and bcir/asn1/oer.py's CANONICAL decode refuses.
+ * Every octet named here was in bounds for the read that just succeeded. */
+static int var_integer_canonical(const uint8_t *data, size_t len, size_t pos, int is_signed) {
+  uint64_t count = 0;
+  size_t start = pos;
+  int length_canonical = 1;
+  if (bcir_oer_length(data, len, pos, &count, &start, &length_canonical, 0) != BCIR_OER_OK)
+    return 0;
+  if (!length_canonical) return 0;
+  if (count < 2) return 1;
+  if (!is_signed) return data[start] != 0;
+  return !((data[start] == 0x00u && (data[start + 1] & 0x80u) == 0) ||
+           (data[start] == 0xFFu && (data[start + 1] & 0x80u) != 0));
+}
+
 /* --- 16.2 the SEQUENCE preamble --------------------------------------------------------------- */
 
 bcir_oer_status bcir_oer_preamble(const uint8_t *data, size_t len, size_t pos,
@@ -169,6 +188,15 @@ bcir_oer_status bcir_oer_decode_sequence(const uint8_t *data, size_t len, size_t
                                          const bcir_oer_field *fields, size_t count,
                                          bcir_oer_value *out, size_t *end,
                                          int *canonical, bcir_oer_diag *diag) {
+  return bcir_oer_decode_sequence_ext(data, len, pos, fields, count, 0, out, end, canonical,
+                                      diag);
+}
+
+bcir_oer_status bcir_oer_decode_sequence_ext(const uint8_t *data, size_t len, size_t pos,
+                                             const bcir_oer_field *fields, size_t count,
+                                             int extensible, bcir_oer_value *out,
+                                             size_t *end, int *canonical,
+                                             bcir_oer_diag *diag) {
   unsigned optional_count = 0;
   unsigned optional_seen = 0;
   uint64_t present = 0;
@@ -197,14 +225,31 @@ bcir_oer_status bcir_oer_decode_sequence(const uint8_t *data, size_t len, size_t
       return fail(diag, BCIR_OER_INVALID, BCIR_OER_NO_OFFSET, 0);
     if (f->optional) optional_count++;
   }
+  /* 16.2.2 puts the extension bit in the same 64-bit preamble word as the presence bits. */
+  if (extensible && optional_count > 63)
+    return fail(diag, BCIR_OER_INVALID, BCIR_OER_NO_OFFSET, 0);
 
   {
     size_t after = pos;
     int preamble_canonical = 1;
-    st = bcir_oer_preamble(data, len, pos, optional_count, &present, &after,
-                           &preamble_canonical, diag);
+    unsigned bits = optional_count + (extensible ? 1u : 0u);
+    st = bcir_oer_preamble(data, len, pos, bits, &present, &after, &preamble_canonical,
+                           diag);
     if (st != BCIR_OER_OK) return st;
     if (canonical != 0 && !preamble_canonical) *canonical = 0;
+    if (extensible) {
+      /* 16.2.2: an extensible type's preamble LEADS with the extension bit, so it is bit 0
+       * of the word and the presence bits follow it. Reading the presence bits from bit 0
+       * regardless (as this decoder did before it took `extensible`) shifted every one of
+       * them onto its neighbour's component.
+       *
+       * A set bit means extension additions follow the root (16.4/16.5). They are
+       * well-formed OER that a root-only plan cannot describe, so this is a refusal about
+       * the PLAN and not the octets -- bcir_per_decode_sequence's posture for X.691 19.1,
+       * kept identical so the two plan-driven twins answer the same question the same way. */
+      if (present & 1u) return fail(diag, BCIR_OER_MALFORMED, pos, 0);
+      present >>= 1;
+    }
     pos = after;
   }
 
@@ -245,6 +290,12 @@ bcir_oer_status bcir_oer_decode_sequence(const uint8_t *data, size_t len, size_t
         st = bcir_oer_integer(data, len, pos, f->width, f->is_signed, &slot->integer,
                               &after, diag);
         if (st != BCIR_OER_OK) return st;
+        /* A fixed-width word has one spelling; the variable-size form has a length and
+         * contents a BASIC-OER peer may pad, which `canonical` must report like any other
+         * length determinant this decoder reads. */
+        if (canonical != 0 && f->width == 0 &&
+            !var_integer_canonical(data, len, pos, f->is_signed))
+          *canonical = 0;
         break;
       case BCIR_OER_FIXED_OCTETS:
         /* 14.1: a SIZE-fixed string carries no length determinant at all. */

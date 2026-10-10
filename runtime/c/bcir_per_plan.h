@@ -60,7 +60,8 @@ typedef enum bcir_per_bounds {
 typedef struct bcir_per_field {
   bcir_per_kind kind;
   bcir_per_bounds bounds;
-  int64_t lb;             /* SEMI and CONSTRAINED */
+  int64_t lb;             /* SEMI and CONSTRAINED; for VAR_OCTETS, the SIZE lower bound
+                           * (read only while the upper bound in `fixed_len` is below 64K) */
   int64_t ub;             /* CONSTRAINED only */
   uint32_t fixed_len;     /* BCIR_PER_K_FIXED_OCTETS: octets. VAR_OCTETS: SIZE upper bound,
                            * or 0 for an unbounded length determinant. */

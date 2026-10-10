@@ -112,6 +112,16 @@ add_target plan_sign "plan signatures (Ed25519 + PlanStatementV1)" "-max_len=102
 # is what actually explores the parser (measured: 49 -> 228 covered blocks).
 add_target q8 "BCIRQ8 model loader" "-max_len=16384" \
   "${C}/fuzz_q8_model.c" "${C}/bcir_q8_model.c"
+# bcir_decoder_gem.c executes a StreamPack as a decoder program (QUAL-2): op strings, RIDs,
+# positions and counts all come from the pack. The input is a model and a program; the pack is
+# driven raw and RESEALED (its CRC recomputed, the BCIRQ8 repair applied to the pack), and the
+# harness asserts that a pack refused as malformed was refused before anything was allocated,
+# that an accepted program runs to the same bits every time, and that nothing leaks. Each run
+# executes real kernels, so the campaign saturates its time bound: it starts early.
+add_target dgem "decoder program interpreter" "-max_len=24576" \
+  "${C}/fuzz_decoder_gem.c" "${C}/bcir_decoder_gem.c" "${C}/bcir_llama.c" "${C}/bcir_q8_model.c" \
+  "${C}/bcir_q4_kernel.c" "${C}/bcir_ai_kernels.c" "${C}/bcir_decode.c" "${C}/bcir_exec.c" \
+  "${C}/bcir_runtime.c"
 
 # bcir_telemetry_frame.c decodes frames a DEVICE emits over a byte transport (UART --
 # docs/kernel/TELEMETRY_FRAME_ABI.md), so the count/CRC/resync fields are all hostile.
@@ -362,6 +372,35 @@ then
   echo "  SKIP BCIRQ8 seed corpus (could not build a seed artifact); fuzzing unseeded"
 fi
 
+# The decoder program interpreter: the fixture models (tied and untied) with programs of two
+# lengths, and one near miss of each refusal kind (a claim the scheme refuses, a claim out of
+# its data-flow order), so the campaign starts inside both the program and its refusals.
+python3 - "${tmp}/corpus_dgem" <<'PY' || { echo "  FAIL: decoder program seed corpus"; exit 1; }
+import sys
+from pathlib import Path
+from bcir.abi import encode
+from bcir.frontends.models.decoder_program import (
+    OP_ATTENTION, OP_KV_APPEND, OP_MATVEC, RID_X, decoder_program,
+)
+from bcir.tests import decoder_fixtures as fx
+out = Path(sys.argv[1])
+for tied in (False, True):
+    spec, _, model_bytes = fx.model(tied=tied)
+    for prompt_len, max_new in ((1, 1), (2, 2)):
+        pack, _ = fx.planned_pack(decoder_program(spec, prompt_len, max_new))
+        name = f"{'tied' if tied else 'untied'}_{prompt_len}_{max_new}"
+        out.joinpath(name + ".bin").write_bytes(fx.fuzz_seed(model_bytes, encode(pack)))
+        if (tied, prompt_len) == (False, 2):
+            q, att = fx.claim_at(pack, OP_MATVEC), fx.claim_at(pack, OP_ATTENTION, 0)
+            app = fx.claim_at(pack, OP_KV_APPEND, 0)
+            for tag, edited in (
+                ("program", fx.edit_claim(pack, q, writes=(RID_X,))),
+                ("order", fx.swap_positions(pack, app, att)),
+            ):
+                out.joinpath(f"{name}_{tag}.bin").write_bytes(
+                    fx.fuzz_seed(model_bytes, encode(edited))
+                )
+PY
 python3 - "${tmp}/corpus_control" <<'PY' || { echo "  FAIL: control-plane seed corpus"; exit 1; }
 import os, sys
 from bcir.tests.control_fixtures import malformed_variants, record_corpus

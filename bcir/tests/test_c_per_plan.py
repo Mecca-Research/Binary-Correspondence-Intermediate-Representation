@@ -385,6 +385,42 @@ def test_the_length_determinant_switches_form_at_64k() -> None:
                 assert _bits(raw, bit_offset, length) == payload, where
 
 
+def test_a_size_lower_bound_offsets_the_constrained_length() -> None:
+    """X.691 11.9.3.3 encodes a constrained length as a whole number OFFSET from the SIZE
+    lower bound: `SIZE(2..10)` writes `n - 2` in four bits. The plan decoder passed zero for
+    the lower bound, so it read every such length two too long -- and nothing saw it, because
+    the plan builder that feeds the bench never declared a bound either. The field's `lb` slot
+    carries it for VAR_OCTETS now; this drives the oracle's octets through both variants, and
+    checks the same octets under a zero lower bound misread (the failure the fix removes).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return  # no C compiler on this host
+        node = Primitive(Universal.OCTET_STRING, "OCTET STRING", constraint=Size(ValueRange(2, 10)))
+        schema = Sequence((Component("s", node), Component("t", node)), name="R")
+        value = {"s": b"ab", "t": b"0123456789"}
+        for variant, aligned in ((PerVariant.UNALIGNED, 0), (PerVariant.ALIGNED, 1)):
+            raw = encode_per(schema, value, variant=variant)
+            field = _field(_VAR_OCTETS, lb=2, fixed=10)
+            wrong = _field(_VAR_OCTETS, fixed=10)
+            good, bad = _run(
+                binary,
+                [
+                    f"sequence {raw.hex()} {aligned} 0 {field},{field}",
+                    f"sequence {raw.hex()} {aligned} 0 {wrong},{wrong}",
+                ],
+            )
+            assert good.startswith("OK"), f"{variant.value}: {good}"
+            _endbit, values = _parse(good)
+            for (_p, _i, _offset, length, bit_offset), want in zip(values, (b"ab", b"0123456789")):
+                assert length == len(want), (variant.value, length)
+                assert _bits(raw, bit_offset, length) == want, variant.value
+            # Under a zero lower bound the first length reads 0 instead of 2: a different value.
+            if bad.startswith("OK"):
+                assert _parse(bad)[1][0][3] != 2, f"{variant.value}: {bad}"
+
+
 def test_sixteen_six_short_strings_decode_in_both_variants() -> None:
     """X.691 16.6: a string of two octets or fewer is placed with NO alignment, in EITHER
     variant. The twin used to refuse exactly that shape in ALIGNED PER as MALFORMED, so a

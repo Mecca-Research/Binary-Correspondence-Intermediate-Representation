@@ -8,11 +8,53 @@
  * to prove the per-claim callback fires in the right sequence. Uses libc (a host harness).
  *
  *   clang -std=c23 test_exec.c bcir_exec.c bcir_runtime.c -I . -o t && ./t pack.bin
+ *
+ * `./t --time pack.bin REPS` sizes its buffers from the pack instead, runs the executor (R10
+ * walk included) REPS times with no kernel, and prints the fastest run: the complexity
+ * witness of test_c_executor.py times two packs of one shape at two sizes.
  *===----------------------------------------------------------------------===*/
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #include "bcir_exec.h"
+
+static int time_mode(const char *path, long reps) {
+  FILE *fp = fopen(path, "rb");
+  if (!fp || reps < 1) { if (fp) fclose(fp); fprintf(stderr, "time: bad arguments\n"); return 2; }
+  uint8_t *buf = NULL;
+  long size = 0;
+  if (fseek(fp, 0, SEEK_END) == 0 && (size = ftell(fp)) > 0 && fseek(fp, 0, SEEK_SET) == 0)
+    buf = malloc((size_t)size);
+  if (!buf || fread(buf, 1, (size_t)size, fp) != (size_t)size) {
+    fclose(fp); free(buf); fprintf(stderr, "time: cannot read %s\n", path); return 2;
+  }
+  fclose(fp);
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(buf, (size_t)size, &hdr);
+  size_t n = st == BCIR_OK ? (size_t)hdr.n_segments : 0;
+  bcir_exec_item *scratch = malloc((n ? n : 1) * sizeof *scratch);
+  bcir_phase_stat *phases = malloc((n ? n : 1) * sizeof *phases);
+  if (st != BCIR_OK || !scratch || !phases) {
+    free(buf); free(scratch); free(phases); printf("ERR %d\n", (int)st); return 1;
+  }
+  double best = -1.0;
+  bcir_exec_result res;
+  for (long r = 0; r < reps; r++) {
+    struct timespec t0, t1;
+    timespec_get(&t0, TIME_UTC);
+    st = bcir_sp_execute(buf, (size_t)size, scratch, n, phases, n, NULL, NULL, &res);
+    timespec_get(&t1, TIME_UTC);
+    if (st != BCIR_OK) break;
+    double ns = (double)(t1.tv_sec - t0.tv_sec) * 1e9 + (double)(t1.tv_nsec - t0.tv_nsec);
+    if (best < 0.0 || ns < best) best = ns;
+  }
+  free(buf); free(scratch); free(phases);
+  if (st != BCIR_OK) { printf("ERR %d\n", (int)st); return 1; }
+  printf("segments %zu ns %.0f\n", res.n_segments, best);
+  return 0;
+}
 
 static uint64_t g_order[4096];
 static size_t g_norder;
@@ -25,7 +67,8 @@ static int record(const bcir_exec_item *item, void *ctx) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) { fprintf(stderr, "usage: %s <pack-file>\n", argv[0]); return 2; }
+  if (argc == 4 && strcmp(argv[1], "--time") == 0) return time_mode(argv[2], strtol(argv[3], NULL, 10));
+  if (argc < 2) { fprintf(stderr, "usage: %s <pack-file> | --time <pack-file> <reps>\n", argv[0]); return 2; }
   FILE *fp = fopen(argv[1], "rb");
   if (!fp) { perror("fopen"); return 2; }
   static uint8_t buf[1 << 20];

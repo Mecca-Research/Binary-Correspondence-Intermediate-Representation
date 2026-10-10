@@ -443,6 +443,55 @@ def test_extension_additions_round_trip_in_both_variants():
             assert decode_per(data, extended, variant=variant) == value, (variant, value)
 
 
+def _uper_bits(bits: str) -> bytes:
+    """A UNALIGNED encoding written out bit by bit, zero-padded to an octet (§11.1)."""
+    bits += "0" * (-len(bits) % 8)
+    return int(bits, 2).to_bytes(len(bits) // 8, "big")
+
+
+def test_canonical_per_refuses_a_present_addition_its_encoder_omits():
+    """§19.5 and §19.9 under CANONICAL-PER: the encoder leaves out an addition equal to its
+    DEFAULT and a version bracket whose members are all absent or at their defaults
+    (`_supplied`), so either, sent anyway, spells the value without it a second way. The
+    root's presence bits were held to that (§18.2's check in `_decode_sequence`); the
+    additions' bitmap was not. BASIC-PER lets a sender keep a DEFAULT (BCIR's BASIC encoder
+    does), so it reads both spellings as the one value."""
+    kind = compile_module(
+        """T DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+      V ::= SEQUENCE { a INTEGER (0..255), ..., b INTEGER (0..255) DEFAULT 5,
+                       [[ c BOOLEAN OPTIONAL, d INTEGER (0..255) DEFAULT 3 ]],
+                       f INTEGER (0..255) DEFAULT 9 }
+    END""",
+        "t.asn1",
+    ).module.types["V"]
+    full = {"a": 1, "b": 5, "d": 3, "f": 9}
+
+    def refused(octets: bytes) -> str:
+        try:
+            decode_per(octets, kind)
+        except Asn1Error as error:
+            return str(error)
+        raise AssertionError(f"{octets.hex()} decoded under CANONICAL-PER")
+
+    canonical = encode_per(kind, {"a": 1})
+    assert decode_per(canonical, kind) == full
+    for value in ({"a": 1, "b": 5}, {"a": 1, "f": 9}):
+        basic = encode_per(kind, value, rules=PerRules.BASIC)  # the DEFAULT kept, as sent
+        assert basic != canonical
+        assert decode_per(basic, kind, rules=PerRules.BASIC) == full
+        assert "19.5" in refused(basic)
+    # The bracket that carries nothing, written beside the encoder's own spelling of the
+    # bracket carrying c: the extension bit, a = 1, the bitmap's normally small length (three
+    # additions), the bitmap naming the bracket, a one-octet open type -- then the bracket's
+    # SEQUENCE, its preamble (c, d) and c's value.
+    with_c = _uper_bits("10000000100000100100000000110100000")
+    assert with_c == encode_per(kind, {"a": 1, "c": True})
+    assert decode_per(with_c, kind) == dict(full, c=True)
+    empty = _uper_bits("10000000100000100100000000100000000")
+    assert decode_per(empty, kind, rules=PerRules.BASIC) == full
+    assert "version bracket" in refused(empty)
+
+
 # --- trust boundary ----------------------------------------------------------------------
 
 

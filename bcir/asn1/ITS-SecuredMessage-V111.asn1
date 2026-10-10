@@ -1,0 +1,205 @@
+-- ITS-SecuredMessage-V111.asn1: the ETSI TS 103 097 V1.1.1 security envelope's data model,
+-- transcribed into ASN.1 one-to-one (the ITS study, docs/research/BCIR_ITS_ASN1_BINARY_STUDY.md).
+--
+-- What this module is. TS 103 097 V1.1.1 (2013) specifies the security envelope in a TLS-style
+-- presentation language and encodes it with its own binary rules: a uint8 type code before every
+-- `select`, an IntX byte-length before every variable-length vector. Bittl et al. (2015) compared
+-- that binary encoding with an ASN.1 UPER encoding of a draft V2.1.1 module that is not public.
+-- This module is the same DATA MODEL as the binary format, written the way a standards editor
+-- converting the presentation language would write it: every `select` is a CHOICE whose root
+-- holds the alternatives V1.1.1 defines (the binary `unknown` arm is the extension marker),
+-- every `<var>` vector is an unconstrained SEQUENCE OF or OCTET STRING, every uintN is an
+-- INTEGER of exactly that range, and every fixed-size opaque is an OCTET STRING of that size.
+--
+-- One abstract value, two families of encodings: `bcir.asn1.its_security` encodes values of
+-- this module with the V1.1.1 binary rules (the paper's "binary" column) and BCIR's ASN.1 rails
+-- encode the same values with PER, OER and DER. So every byte of difference between the two is
+-- a difference of ENCODING, never of content.
+--
+-- Reconstruction, not transcription of the standard's text: ETSI's document server is not
+-- reachable from the environment this was written in, so the structures are the V1.1.1
+-- presentation language as the study reconstructs it, and the reconstruction is held to the
+-- paper's published binary sizes (Table VI: 96, 222, 233 and 230 octets), all four of which it
+-- reproduces exactly. The study document lists every assumption and the number that pins it.
+
+ITS-SecuredMessage-V111 DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+
+  Uint8  ::= INTEGER (0..255)
+  Uint16 ::= INTEGER (0..65535)
+  Uint32 ::= INTEGER (0..4294967295)
+  Uint64 ::= INTEGER (0..18446744073709551615)
+  -- IntX: TS 103 097's variable-length unsigned integer (a prefix of leading one bits counts
+  -- the extra octets). Its value set is the non-negative integers the prefix code can carry.
+  IntX   ::= INTEGER (0..MAX)
+
+  Time64 ::= Uint64        -- microseconds since 2004-01-01 00:00:00 UTC (TAI)
+  Time32 ::= Uint32        -- seconds since the same epoch
+  HashedId8 ::= OCTET STRING (SIZE(8))
+  HashedId3 ::= OCTET STRING (SIZE(3))
+
+  ThreeDLocation ::= SEQUENCE {
+    latitude   INTEGER (-2147483648..2147483647),
+    longitude  INTEGER (-2147483648..2147483647),
+    elevation  OCTET STRING (SIZE(2))
+  }
+
+  Time64WithStandardDeviation ::= SEQUENCE {
+    time        Time64,
+    logStdDev   Uint8
+  }
+
+  SecuredMessage ::= SEQUENCE {
+    protocolVersion  Uint8,
+    securityProfile  Uint8,
+    headerFields     SEQUENCE OF HeaderField,
+    payloadField     Payload,
+    trailerFields    SEQUENCE OF TrailerField
+  }
+
+  -- HeaderFieldType: generation_time(0), generation_time_with_standard_deviation(1),
+  -- expiration(2), generation_location(3), request_unrecognized_certificate(4),
+  -- message_type(5), signer_info(128), recipient_info(129), encryption_parameters(130).
+  HeaderField ::= CHOICE {
+    generationTime                    Time64,
+    generationTimeWithStandardDeviation Time64WithStandardDeviation,
+    expiration                        Time32,
+    generationLocation                ThreeDLocation,
+    requestUnrecognizedCertificate    SEQUENCE OF HashedId3,
+    messageType                       Uint16,
+    signerInfo                        SignerInfo,
+    recipientInfo                     OCTET STRING,
+    encryptionParameters              OCTET STRING,
+    ...
+  }
+
+  -- SignerInfoType: self(0), certificate_digest_with_ecdsap256(1), certificate(2),
+  -- certificate_chain(3), certificate_digest_with_other_algorithm(4).
+  SignerInfo ::= CHOICE {
+    self                                NULL,
+    certificateDigestWithEcdsap256      HashedId8,
+    certificate                         Certificate,
+    certificateChain                    SEQUENCE OF Certificate,
+    certificateDigestWithOtherAlgorithm DigestWithAlgorithm,
+    ...
+  }
+
+  DigestWithAlgorithm ::= SEQUENCE {
+    algorithm  PublicKeyAlgorithm,
+    digest     HashedId8
+  }
+
+  Certificate ::= SEQUENCE {
+    version               Uint8,
+    signerInfo            SignerInfo,
+    subjectInfo           SubjectInfo,
+    subjectAttributes     SEQUENCE OF SubjectAttribute,
+    validityRestrictions  SEQUENCE OF ValidityRestriction,
+    signature             Signature
+  }
+
+  SubjectType ::= ENUMERATED {
+    enrollmentCredential(0), authorizationTicket(1), authorizationAuthority(2),
+    enrollmentAuthority(3), rootCa(4), crlSigner(5), ...
+  }
+
+  SubjectInfo ::= SEQUENCE {
+    subjectType  SubjectType,
+    subjectName  OCTET STRING
+  }
+
+  -- SubjectAttributeType: verification_key(0), encryption_key(1), assurance_level(2),
+  -- reconstruction_value(3), its_aid_list(32), its_aid_ssp_list(33).
+  SubjectAttribute ::= CHOICE {
+    verificationKey      PublicKey,
+    encryptionKey        PublicKey,
+    assuranceLevel       Uint8,
+    reconstructionValue  EccPoint,
+    itsAidList           SEQUENCE OF IntX,
+    itsAidSspList        SEQUENCE OF ItsAidSsp,
+    ...
+  }
+
+  ItsAidSsp ::= SEQUENCE {
+    itsAid                      IntX,
+    serviceSpecificPermissions  OCTET STRING
+  }
+
+  -- PublicKeyAlgorithm: ecdsa_nistp256_with_sha256(0), ecies_nistp256(1).
+  PublicKeyAlgorithm ::= ENUMERATED { ecdsaNistp256WithSha256(0), eciesNistp256(1), ... }
+
+  PublicKey ::= CHOICE {
+    ecdsaNistp256WithSha256  EccPoint,
+    eciesNistp256            EciesKey,
+    ...
+  }
+
+  -- SymmetricAlgorithm: aes_128_ccm(0).
+  EciesKey ::= SEQUENCE {
+    supportedSymmAlg  ENUMERATED { aes128Ccm(0), ... },
+    publicKey         EccPoint
+  }
+
+  -- EccPointType: x_coordinate_only(0), compressed_lsb_y_0(2), compressed_lsb_y_1(3),
+  -- uncompressed(4). field_size is 32 octets for NIST P-256.
+  EccPoint ::= CHOICE {
+    xCoordinateOnly  OCTET STRING (SIZE(32)),
+    compressedLsbY0  OCTET STRING (SIZE(32)),
+    compressedLsbY1  OCTET STRING (SIZE(32)),
+    uncompressed     UncompressedPoint,
+    ...
+  }
+
+  UncompressedPoint ::= SEQUENCE {
+    x  OCTET STRING (SIZE(32)),
+    y  OCTET STRING (SIZE(32))
+  }
+
+  -- ValidityRestrictionType: time_end(0), time_start_and_end(1), time_start_and_duration(2),
+  -- region(3).
+  ValidityRestriction ::= CHOICE {
+    timeEnd               Time32,
+    timeStartAndEnd       TimeStartAndEnd,
+    timeStartAndDuration  TimeStartAndDuration,
+    region                OCTET STRING,
+    ...
+  }
+
+  TimeStartAndEnd ::= SEQUENCE {
+    startValidity  Time32,
+    endValidity    Time32
+  }
+
+  TimeStartAndDuration ::= SEQUENCE {
+    startValidity  Time32,
+    duration       Uint16
+  }
+
+  -- PublicKeyAlgorithm selects the signature: only ecdsa_nistp256_with_sha256 is defined.
+  Signature ::= CHOICE {
+    ecdsaNistp256WithSha256  EcdsaSignature,
+    ...
+  }
+
+  EcdsaSignature ::= SEQUENCE {
+    r  EccPoint,
+    s  OCTET STRING (SIZE(32))
+  }
+
+  -- PayloadType: unsecured(0), signed(1), encrypted(2), signed_external(3),
+  -- signed_and_encrypted(4).
+  Payload ::= CHOICE {
+    unsecured           OCTET STRING,
+    signed              OCTET STRING,
+    encrypted           OCTET STRING,
+    signedExternal      NULL,
+    signedAndEncrypted  OCTET STRING,
+    ...
+  }
+
+  -- TrailerFieldType: signature(1).
+  TrailerField ::= CHOICE {
+    signature  Signature,
+    ...
+  }
+
+END

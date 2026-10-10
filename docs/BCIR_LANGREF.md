@@ -1310,6 +1310,28 @@ Constraints are load-bearing rather than advisory: for PER and OER a PER-visible
 *is* the width. `INTEGER (0..255)` occupies eight bits with no length determinant; the same
 type unconstrained costs a determinant plus a minimum-octets two's-complement field.
 
+**Extensible constraints keep the relay posture.** `INTEGER (0..7, ..., 8..255)` is a root, an
+extension marker and an AdditionalElementSetSpec (X.680 §49.4). The model carries all three
+(`constraints.Extensible.root` and `.additions`), the printer writes them back, and reference
+resolution, `require_satisfiable` and every structural key built from a constraint read both
+sets: a name in the additions is resolved or refused, and two constraints that differ only in
+their additions are two constraints. No codec reads the additions, and none refuses a value on
+the strength of either set:
+
+- PER encodes a value of the additions exactly as one beyond them, with the extension bit set
+  and against no bounds (X.691 §13.1); only the root and the marker are PER-visible.
+- OER sees no extensible constraint at all (X.696 §8.2.2 g), and BER/DER, XER and JER encode a
+  value without consulting its value constraint.
+
+Enforcing the root and the additions at encode time was the alternative, and it is refused.
+`(0..7, ...)` names a subset of `(0..7, ..., 8..255)`'s value set, so it would have to refuse
+everything outside its root, and PER's extension path for it would become unreachable; and a
+relay must re-encode the values it decoded from a later version's peer, which is what the
+extension marker exists to carry. This version's value set, the root and the additions
+together, is the question a verifier asks (`Extensible.known`), never an encoder
+(`Extensible.permits` admits every value of the parent type). Serial application drops both
+halves (X.680 §50.11, `without_extension`).
+
 ### 17.4 X.692 ECN — all three parts
 
 ECN is where an encoding stops being a fixed rule and becomes a **specification with its own

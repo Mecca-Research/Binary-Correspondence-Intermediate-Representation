@@ -223,6 +223,11 @@ typedef struct bench_case {
    * would need a tag to read safely anyway. */
   int directed_per;
   int per_aligned;
+  /* Whether the root SEQUENCE has an extension marker (`dircasex`). Both rules put an
+   * extension bit FIRST in such a type's preamble (X.691 19.1, X.696 16.2.2), so a decoder
+   * not told about it reads each presence bit one component early -- and a timed decode that
+   * fails early is a real number for the wrong work, since the status only feeds `sink`. */
+  int extensible;
   size_t field_count;
   bcir_oer_field fields[MAX_PLAN_MEMBERS];
   bcir_per_field per_fields[MAX_PLAN_MEMBERS];
@@ -246,8 +251,8 @@ static uint64_t do_work(const bench_case *c) {
     bcir_per_value out[MAX_PLAN_MEMBERS];
     size_t end_bit = 0;
     sink += (uint64_t)bcir_per_decode_sequence(c->data, c->len, c->per_fields,
-                                               c->field_count, c->per_aligned, 0,
-                                               out, &end_bit);
+                                               c->field_count, c->per_aligned,
+                                               c->extensible, out, &end_bit);
     sink += end_bit;
     return sink;
   }
@@ -259,8 +264,9 @@ static uint64_t do_work(const bench_case *c) {
     bcir_oer_diag diag;
     size_t end = 0;
     int canonical = 0;
-    sink += (uint64_t)bcir_oer_decode_sequence(c->data, c->len, 0, c->fields,
-                                               c->field_count, out, &end, &canonical, &diag);
+    sink += (uint64_t)bcir_oer_decode_sequence_ext(c->data, c->len, 0, c->fields,
+                                                   c->field_count, c->extensible, out, &end,
+                                                   &canonical, &diag);
     sink += end + (uint64_t)canonical;
     return sink;
   }
@@ -371,8 +377,9 @@ int main(void) {
       continue;
     }
 
-    if (strcmp(op, "dircase") == 0) {
+    if (strcmp(op, "dircase") == 0 || strcmp(op, "dircasex") == 0) {
       /* dircase <label> <op> <fields-hex> <octets-hex>
+       * dircasex ...  the same, for a root SEQUENCE with an extension marker
        *
        * The field array is built in Python from the same encode plan, so the mapping from an
        * ASN.1 type to X.696's field kinds lives beside the plan semantics rather than being
@@ -400,6 +407,7 @@ int main(void) {
       vlen = unhex(hex, c->data, sizeof(c->data));
       if (vlen < 0) { printf("unsupported dircase bad-hex\n"); return 2; }
       c->directed = 1;
+      c->extensible = (strcmp(op, "dircasex") == 0);
       c->len = (size_t)vlen;
 
       if (strncmp(c->op, "per-d", 5) == 0) {
@@ -510,6 +518,42 @@ int main(void) {
   if (n_cases == 0) {
     printf("done 0\n");
     return 0;
+  }
+
+  /* Every schema-directed case is decoded ONCE, untimed, and must succeed and consume the
+   * whole encoding before anything is timed. `do_work` folds a decoder's status into `sink`
+   * and never inspects it -- correctly, since a branch on it would be timed too -- so a plan
+   * that disagreed with its octets used to produce a perfectly good-looking number for a
+   * decode that stopped at the first field. That is how an extensible root ran here with its
+   * presence bits read one position early and nothing said so. A refusal here names the case. */
+  for (size_t i = 0; i < n_cases; i++) {
+    const bench_case *c = &cases[i];
+    if (!c->directed) continue;
+    if (c->directed_per) {
+      bcir_per_value out[MAX_PLAN_MEMBERS];
+      size_t end_bit = 0;
+      if (bcir_per_decode_sequence(c->data, c->len, c->per_fields, c->field_count,
+                                   c->per_aligned, c->extensible, out,
+                                   &end_bit) != BCIR_PER_OK ||
+          /* X.691 11.1: a complete encoding is padded to whole octets, and an empty one is
+           * a single zero octet. */
+          (end_bit == 0 ? 1u : (end_bit + 7u) / 8u) != c->len) {
+        printf("unsupported dircase decode-failed %s\n", c->label);
+        return 2;
+      }
+    } else {
+      bcir_oer_value out[MAX_PLAN_MEMBERS];
+      bcir_oer_diag diag;
+      size_t end = 0;
+      int canonical = 0;
+      if (bcir_oer_decode_sequence_ext(c->data, c->len, 0, c->fields, c->field_count,
+                                       c->extensible, out, &end, &canonical,
+                                       &diag) != BCIR_OER_OK ||
+          end != c->len) {
+        printf("unsupported dircase decode-failed %s\n", c->label);
+        return 2;
+      }
+    }
   }
 
   /* Warmup, over every case, before any sample is kept. The first pass touches cold

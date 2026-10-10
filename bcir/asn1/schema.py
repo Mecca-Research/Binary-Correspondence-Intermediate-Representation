@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import contextvars
 import reprlib
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from dataclasses import field as _field  # OpenType has a member named `field`
 
 from .codec import Strictness, from_tlv, require_null, to_tlv
@@ -113,7 +113,22 @@ class Component:
     #: bracket. X.691 §19.9 encodes the whole group as ONE open type holding a SEQUENCE of
     #: these, so a single bit in the addition bitmap covers the bracket however many
     #: components it holds -- and a group whose members are all absent is itself absent.
+    #: Only PER and OER see the bracket; to every other rule, and to the value, its members
+    #: are components of the enclosing type (`flat_components`).
     group: tuple["Component", ...] | None = None
+    #: For a bracket: its members as components of the enclosing type (`flat_components`),
+    #: made once from `group`, so a type's flat view is the same objects on every call.
+    flat: tuple["Component", ...] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    #: For one of a bracket's `flat` members that is a copy: the member of `group` it was made
+    #: from. That member is the one a schema names, so it is the object an encoding instruction
+    #: on it is filed under (`jer.JerInstructions` files them by identity).
+    origin: "Component | None" = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.group is not None:
+            object.__setattr__(self, "flat", tuple(_as_component(m) for m in self.group))
 
     @property
     def has_default(self) -> bool:
@@ -161,6 +176,90 @@ class Component:
                 return ()
             return self.type.alternative_tags()
         return (tag,)
+
+
+def flat_components(components: tuple[Component, ...]) -> tuple[Component, ...]:
+    """The components a SEQUENCE or SET value is made of: each version bracket replaced, in
+    place, by its members. A bracket (X.680 §25.1, `[[ c, d ]]`) groups extension additions;
+    it is not a component itself, and a value names its members directly on every rule. JER
+    and XER spell each member as its own member or element; BER, CER and DER encode each as a
+    component of the enclosing type, in the definition's order and identified by its tag (X.690
+    §8.9.2, §8.11.2), as asn1tools 0.169.0 and pycrate 0.8.1 do; only PER and OER wrap a bracket
+    into one open type (X.691 §19.9, X.696 §16.5), which they read from `Component.group`.
+
+    Each member is listed as the enclosing type sees it (`_as_component`): an extension
+    addition, which is where JER's ARRAY (X.697 §27.2.1) and canonical XER's SET (X.693 §9.6.2)
+    put it, and OPTIONAL when it is mandatory inside the bracket, because the bracket itself
+    may be absent; `bracket_violation` holds a present bracket to its mandatory members. The
+    list is made once per bracket (`Component.flat`), so every call returns the same objects,
+    and a copy leads back to its member (`Component.origin`).
+
+    The one predicate for this: JER, XER and BER/DER each had a copy of it, or none -- the
+    typed BER/DER rail encoded a bracket as a nested SEQUENCE and refused its members by name,
+    and JER's and XER's copies dropped the bracket's optionality and the members' place among
+    the additions, so a value without a bracket holding a mandatory member was refused there
+    and accepted by PER and OER. A list without a bracket is returned as it is."""
+    if all(comp.group is None for comp in components):
+        return components
+    out: list[Component] = []
+    for comp in components:
+        if comp.group is None:
+            out.append(comp)
+        else:
+            out.extend(comp.flat)
+    return tuple(out)
+
+
+def _as_component(member: Component) -> Component:
+    """A bracket's member as a component of the enclosing type. X.680 §25.1 lists a bracket
+    among the ExtensionAdditions, so the member is an extension addition wherever it sits, and
+    one that is neither OPTIONAL nor DEFAULT is OPTIONAL here (see `flat_components`). A member
+    that already reads so is returned as it is; any other is a copy whose `origin` is it."""
+    required = not (member.optional or member.has_default)
+    if member.extension and not required:
+        return member
+    return replace(member, extension=True, optional=member.optional or required, origin=member)
+
+
+def bracket_violation(kind_name: str, components: tuple[Component, ...], value) -> str | None:
+    """The refusal for a value that carries a version bracket without one of the bracket's
+    mandatory members, or None. A bracket is carried when one of its members is present with
+    a value other than its DEFAULT -- PER's §19.5 reading (`_supplied`), and the one a decoder
+    can apply to its finished value, since a DEFAULT it fills in never counts. Called on the
+    value an encoder is given and on the value a decoder returns, by every rule that flattens a
+    bracket (`flat_components`); PER and OER hold a present bracket to its members by encoding
+    it as a SEQUENCE of them."""
+    if not isinstance(value, dict):
+        return None
+    for comp in components:
+        if comp.group is None:
+            continue
+        carried = any(
+            m.name in value and not (m.has_default and value[m.name] == m.default)
+            for m in comp.group
+        )
+        if not carried:
+            continue
+        for member in comp.group:
+            if not (member.optional or member.has_default) and member.name not in value:
+                members = ", ".join(m.name for m in comp.group)
+                return (
+                    f"{kind_name}: the version bracket [[{members}]] is present without its "
+                    f"mandatory component {member.name!r} (X.680 25.1, X.691 19.9)"
+                )
+    return None
+
+
+def addition_defaults(additions):
+    """(name, default) of every DEFAULT component among a SEQUENCE's extension `additions`,
+    a version bracket's members included. An addition the encoding leaves out has its DEFAULT
+    value -- alone, or as a member of a bracket left out whole (X.680 §25.12: an absent DEFAULT
+    component takes its default) -- so a decoder fills these in on every rule. The bracket's
+    members were the case PER and OER skipped while JER and XER filled them: one abstract
+    value decoded two ways depending on the encoding rule."""
+    for member in flat_components(tuple(additions)):
+        if member.has_default:
+            yield member.name, member.default
 
 
 class Asn1Type:
@@ -640,11 +739,16 @@ class Sequence(Asn1Type):
         return Tag(TagClass.UNIVERSAL, Universal.SEQUENCE, True)
 
     def encode(self, value: dict) -> Tlv:
-        unknown = set(value) - {c.name for c in self.components}
+        # A version bracket's members are components of this SEQUENCE (X.690 §8.9.2).
+        components = flat_components(self.components)
+        unknown = set(value) - {c.name for c in components}
         if unknown:
             raise Asn1Error(f"{self.name}: unknown component(s) {sorted(unknown)}")
+        violation = bracket_violation(self.name, self.components, value)
+        if violation:
+            raise Asn1Error(violation)
         children: list[Tlv] = []
-        for comp in self.components:
+        for comp in components:
             if comp.name not in value:
                 if comp.optional or comp.has_default:
                     continue
@@ -666,7 +770,7 @@ class Sequence(Asn1Type):
         out: dict[str, object] = {}
         children = list(tlv.children)
         index = 0
-        for comp in self.components:
+        for comp in flat_components(self.components):
             if index < len(children) and _matches_any(children[index], comp):
                 out[comp.name] = comp.type.decode(
                     _strip_tag(comp, children[index]), strictness=strictness
@@ -691,6 +795,9 @@ class Sequence(Asn1Type):
             raise Asn1Error(
                 f"{self.name}: {len(children) - index} unexpected trailing component(s)", tlv.offset
             )
+        violation = bracket_violation(self.name, self.components, out)
+        if violation:
+            raise Asn1Error(violation, tlv.offset)
         return out
 
 
@@ -758,11 +865,16 @@ class Set(Asn1Type):
         return Tag(TagClass.UNIVERSAL, Universal.SET, True)
 
     def encode(self, value: dict) -> Tlv:
-        unknown = set(value) - {c.name for c in self.components}
+        # A version bracket's members are components of this SET (X.690 §8.11.2).
+        components = flat_components(self.components)
+        unknown = set(value) - {c.name for c in components}
         if unknown:
             raise Asn1Error(f"{self.name}: unknown component(s) {sorted(unknown)}")
+        violation = bracket_violation(self.name, self.components, value)
+        if violation:
+            raise Asn1Error(violation)
         children: list[Tlv] = []
-        for comp in self.components:
+        for comp in components:
             if comp.name not in value:
                 if comp.optional or comp.has_default:
                     continue
@@ -782,7 +894,7 @@ class Set(Asn1Type):
             raise Asn1Error(f"{self.name} must be constructed (X.690 8.11.1)", tlv.offset)
         remaining = list(tlv.children)
         out: dict[str, object] = {}
-        for comp in self.components:
+        for comp in flat_components(self.components):
             for position, child in enumerate(remaining):
                 if _matches_any(child, comp):
                     out[comp.name] = comp.type.decode(
@@ -803,6 +915,9 @@ class Set(Asn1Type):
             raise Asn1Error(
                 f"{self.name}: {len(remaining)} component(s) match no alternative", tlv.offset
             )
+        violation = bracket_violation(self.name, self.components, out)
+        if violation:
+            raise Asn1Error(violation, tlv.offset)
         return out
 
 

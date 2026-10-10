@@ -32,7 +32,7 @@ import subprocess
 import tempfile
 
 from bcir.asn1.constraints import Size, ValueRange
-from bcir.asn1.oer import OerRules, decode_length, encode_length, encode_oer
+from bcir.asn1.oer import OerRules, decode_length, decode_oer, encode_length, encode_oer
 from bcir.asn1.schema import Component, Primitive, Sequence
 from bcir.asn1.tags import Asn1Error, Universal
 
@@ -347,6 +347,54 @@ def test_a_record_decodes_field_for_field_against_the_python_encoder():
                 assert parts[6] == "-", f"{value}: an absent component was read as present"
 
 
+def test_a_padded_variable_size_integer_is_reported_as_non_canonical():
+    """§31.2 and §31.4 for the variable-size INTEGER forms (§10.3 e, §10.4 e), whose length and
+    contents a BASIC-OER peer may pad. The sequence decoder read them as BASIC -- correctly --
+    but reported every one as canonical, so a caller digesting on `canonical` took a second
+    spelling of the value. It now reports exactly what `bcir/asn1/oer.py` refuses under
+    CANONICAL, and both rails read the same value from every spelling: the leading `00` that
+    keeps 128 positive and the `ff` that keeps -129 negative are not padding."""
+    signed = Primitive(Universal.INTEGER, "INTEGER")
+    unsigned = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, None))
+    cases = [  # (signed?, octets, value, canonical?)
+        (1, "0105", 5, 1),
+        (1, "020005", 5, 0),
+        (1, "810105", 5, 0),  # the length in the long form
+        (1, "020080", 128, 1),
+        (1, "03000080", 128, 0),
+        (1, "01ff", -1, 1),
+        (1, "02ffff", -1, 0),
+        (1, "02ff7f", -129, 1),
+        (1, "03ffff7f", -129, 0),
+        (0, "0180", 128, 1),
+        (0, "020080", 128, 0),
+        (0, "0100", 0, 1),
+        (0, "020000", 0, 0),
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return
+        answers = _run(
+            binary,
+            [f"sequence {octets} {_plan((_INTEGER, 0, s, 0, 0))}" for s, octets, _v, _c in cases],
+        )
+        for (s, octets, value, canonical), got in zip(cases, answers):
+            parts = got.split()
+            assert parts[:2] == ["OK", str(len(octets) // 2)], (octets, got)
+            assert parts[2] == str(canonical), f"{octets}: C reported canonical={parts[2]}"
+            assert parts[3] == f"i{value}", (octets, got)
+            kind = Sequence((Component("n", signed if s else unsigned),), name="N")
+            data = bytes.fromhex(octets)
+            assert decode_oer(kind, data, rules=OerRules.BASIC) == {"n": value}
+            try:
+                decode_oer(kind, data, rules=OerRules.CANONICAL)
+                oracle = 1
+            except Asn1Error:
+                oracle = 0
+            assert oracle == canonical, f"{octets}: the oracle's CANONICAL verdict differs"
+
+
 def test_an_absent_optional_component_consumes_no_octets():
     """§16.2. Absence is read from the preamble, never discovered from the contents.
 
@@ -390,6 +438,50 @@ def test_a_fixed_size_string_carries_no_length_determinant():
         assert len(octets) == 4, f"a SIZE(4,4) OCTET STRING encoded to {len(octets)} octets"
         got = _run(binary, [f"sequence {_hex(octets)} {plan}"])[0]
         assert got.split()[3] == "sdeadbeef", got
+
+
+def test_an_extensible_sequence_is_read_with_its_extension_bit_first():
+    """X.696 §16.2.2: an extensible type's preamble LEADS with the extension bit, and only a
+    plan can say a type is extensible. `sequencex` is the decode told so.
+
+    Driven three ways. The oracle's octets decode field for field. The SAME octets under the
+    non-extensible plan misread -- the extension bit is taken for `a`'s presence bit, which
+    is exactly what the plan-driven bench did to an extensible root before it carried the
+    flag. And a value whose bit is set (additions follow the root) is refused at the
+    preamble, as bcir_per_decode_sequence refuses X.691 §19.1's: a root-only plan cannot
+    describe what follows.
+    """
+    byte = Primitive(Universal.INTEGER, "INTEGER", constraint=ValueRange(0, 255))
+    kind = Sequence(
+        (Component("a", byte, optional=True), Component("b", byte)), name="X", extensible=True
+    )
+    plan = _plan((_INTEGER, 1, 0, 1, 0), (_INTEGER, 1, 0, 0, 0))
+    present = encode_oer(kind, {"a": 5, "b": 6}, rules=OerRules.CANONICAL)
+    absent = encode_oer(kind, {"b": 6}, rules=OerRules.CANONICAL)
+    assert present == bytes.fromhex("400506") and absent == bytes.fromhex("0006")
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = _build(tmp)
+        if binary is None:
+            return
+        got = _run(
+            binary,
+            [
+                f"sequencex {_hex(present)} {plan}",
+                f"sequencex {_hex(absent)} {plan}",
+                f"sequence {_hex(present)} {plan}",
+                # The extension bit set: `80` is "additions present, `a` absent".
+                f"sequencex 8006 {plan}",
+                # 63 OPTIONAL components plus the extension bit fill the preamble word; 64
+                # do not, and that is a plan refusal before any octet is read.
+                f"sequencex 00 {_plan(*[(_INTEGER, 1, 0, 1, 0)] * 64)}",
+            ],
+        )
+    assert got[0].split() == ["OK", "3", "1", "i5", "i6"], got[0]
+    assert got[1].split() == ["OK", "2", "1", "-", "i6"], got[1]
+    # The bit taken for `a`'s: `a` reads absent and `b` takes `a`'s octet, ending early.
+    assert got[2].split()[:5] == ["OK", "2", "0", "-", "i5"], got[2]
+    assert got[3].split()[:3] == ["ERR", "2", "0"], got[3]
+    assert got[4].split()[:2] == ["ERR", "5"], got[4]
 
 
 def test_a_plan_the_decoder_cannot_execute_is_refused_before_any_octet_is_read():

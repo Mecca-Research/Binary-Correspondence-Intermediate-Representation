@@ -563,6 +563,126 @@ def test_the_directed_table_reports_why_each_candidate_is_absent():
     assert "same decoder twice" in skipped["BASIC-OER"]
 
 
+def test_an_extensible_root_is_timed_decoding_what_it_claims_to():
+    """Both rules lead an extensible type's preamble with an extension bit (X.691 §19.1,
+    X.696 §16.2.2), and neither field table can say a type is extensible -- a field describes
+    a component. The harness passed zero for it unconditionally, so an extensible root was
+    timed with its presence bits read one position early: a decode that failed at once, and
+    a perfectly good-looking number for it, because a timed decoder's status only feeds the
+    sink. Now the verb carries the flag (`dircasex`) and every directed case is decoded once,
+    untimed, and must succeed over the whole encoding before anything is timed.
+
+    Driven both ways: the extensible root is measured on all three decoders, and the SAME
+    octets handed over as a non-extensible case are refused by name rather than timed.
+    """
+    import subprocess
+    import tempfile
+
+    from bcir.asn1.constraints import ValueRange
+    from bcir.asn1.native_bench import build_harness, oer_fields_for
+    from bcir.asn1.encode_plan import compile_encode_plan
+
+    if not native_available():
+        return
+    byte = Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255))
+    kind = Sequence(
+        (Component("a", byte, optional=True), Component("b", byte)),
+        name="Extensible",
+        extensible=True,
+    )
+    value = {"a": 5, "b": 6}
+    samples, skipped = run_native_directed_decode_bench(kind, value, rounds=MIN_SAMPLES)
+    for present in ("COER", "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED"):
+        assert present in samples and present not in skipped, (present, skipped)
+
+    plan = compile_encode_plan(kind, module="bench", type_name="Bench")
+    octets = _named("COER")[0].encode(kind, value)
+    with tempfile.TemporaryDirectory() as tmp:
+        binary = build_harness(tmp)
+        assert binary is not None
+        lines = f"rounds 1 {MIN_SAMPLES} 4\ndircase COER coer-d {oer_fields_for(plan).hex()} {octets.hex()}\nrun\n"
+        proc = subprocess.run([binary], input=lines, capture_output=True, text=True, timeout=120)
+    assert proc.returncode != 0, "a plan that misreads its octets was timed"
+    assert "decode-failed COER" in proc.stdout, proc.stdout
+
+
+def test_the_directed_field_tables_read_the_constraint_the_plan_records():
+    """`oer_fields_for` and `per_fields_for` predate plan version 3, which moved a member's
+    constraint into `node.constraint`. They kept reading attributes no node has any more, so
+    every INTEGER was declared unconstrained and variable-size and every string unbounded:
+    `INTEGER (0..255)` -- one octet in OER, eight bits in PER -- was decoded as a length
+    determinant it never had. The corpus had no constrained member, and a timed decode's
+    status only feeds the sink, so the bench timed that misread for as long as it existed.
+
+    The field tables now come from the emitter's predicates, and the schema here has every
+    shape they select: a fixed word, a signed word, a SIZE-fixed string, a SIZE-ranged one and
+    an unconstrained INTEGER. Each candidate must clear the harness's untimed decode -- the
+    whole encoding, status OK -- before it is timed at all.
+    """
+    from bcir.asn1.constraints import Size, ValueRange
+    from bcir.asn1.encode_plan import compile_encode_plan
+    from bcir.asn1.native_bench import per_fields_for
+
+    def octets(low, high):
+        return Primitive(Universal.OCTET_STRING, "O", constraint=Size(ValueRange(low, high)))
+
+    kind = Sequence(
+        (
+            Component("u8", Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255))),
+            Component("s16", Primitive(Universal.INTEGER, "I", constraint=ValueRange(-300, 300))),
+            Component("key", octets(32, 32)),
+            Component("ssp", octets(1, 31), optional=True),
+            Component("n", Primitive(Universal.INTEGER)),
+        ),
+        name="Shapes",
+    )
+    value = {"u8": 200, "s16": -7, "key": bytes(range(32)), "ssp": b"\x01\xff", "n": 1 << 40}
+    plan = compile_encode_plan(kind, module="bench", type_name="Bench")
+    assert oer_fields_for(plan).hex() == (
+        "0001000000000000"  # u8: a one-octet unsigned word (X.696 10.3 b)
+        "0002010000000000"  # s16: a two-octet signed word (10.4 c)
+        "0300000020000000"  # key: SIZE(32), no length determinant (14.1)
+        "0400000100000000"  # ssp: optional, length-prefixed (14.2)
+        "0000010000000000"  # n: unconstrained, variable-size signed (10.4 e)
+    )
+    assert (
+        per_fields_for(plan)
+        == "0:2:0:255:0:0,0:2:-300:300:0:0,3:0:0:0:32:0,4:0:1:0:31:1,0:0:0:0:0:0"
+    )
+    if not native_available():
+        return
+    samples, skipped = run_native_directed_decode_bench(kind, value, rounds=MIN_SAMPLES)
+    for present in ("COER", "CANONICAL-PER-ALIGNED", "CANONICAL-PER-UNALIGNED"):
+        assert present in samples and present not in skipped, (present, skipped)
+
+
+def test_a_constraint_a_plan_field_cannot_carry_is_refused_by_name():
+    """The PER field has no extension bit and reads octets, so an extensible value or SIZE
+    constraint and a known-multiplier string (characters of `b` bits, X.691 30.5) are
+    refusals naming the clause -- never a table that would time the wrong work."""
+    from bcir.asn1.constraints import Extensible, Size, ValueRange
+    from bcir.asn1.encode_plan import compile_encode_plan
+    from bcir.asn1.native_bench import per_fields_for
+
+    cases = [
+        ("13.1", Primitive(Universal.INTEGER, "I", constraint=Extensible(ValueRange(0, 7)))),
+        (
+            "17.3",
+            Primitive(Universal.OCTET_STRING, "O", constraint=Extensible(Size(ValueRange(1, 4)))),
+        ),
+        ("no field kind", Primitive(Universal.IA5_STRING, "IA5String")),
+    ]
+    for clause, node in cases:
+        plan = compile_encode_plan(
+            Sequence((Component("v", node),), name="R"), module="b", type_name="B"
+        )
+        try:
+            per_fields_for(plan)
+            raise AssertionError(f"{clause}: a field table was built")
+        except Asn1Error as error:
+            assert clause in str(error), error
+
+
 def test_the_gate_and_the_harness_link_the_same_sources():
     """`native_bench._SOURCES` and what the `#asn1bench` gate links are two lists that must
     agree, and nothing made them.

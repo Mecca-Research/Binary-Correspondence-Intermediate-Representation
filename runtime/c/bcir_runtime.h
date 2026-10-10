@@ -117,6 +117,29 @@ BCIR_NODISCARD bcir_status bcir_sp_for_each_segment(const uint8_t *BCIR_RESTRICT
                                                     size_t len, bcir_seg_fn fn,
                                                     void *ctx);
 
+/* A zero-copy view of one block record: a lowered claim's affine iteration space (base,
+ * count, strides), one per segment in a hydrated pack and in the same order. Mirrors
+ * bcir/gem/streampack.py::Block. */
+typedef struct bcir_block_view {
+  uint64_t base;
+  uint64_t count;
+  uint16_t n_strides; const uint8_t *strides;  /* little-endian u64[n_strides] */
+} bcir_block_view;
+
+/* Decode strides[i] from the raw little-endian pointer (0 when out of range). */
+uint64_t bcir_block_stride(const bcir_block_view *block, uint16_t i);
+
+/* Per-block callback; return nonzero to stop the walk early. */
+typedef int (*bcir_block_fn)(const bcir_block_view *block, void *ctx);
+
+/* Validate, then walk every block record in order, invoking `fn`. The segment and prefetch
+ * streams before the blocks are parsed and range-checked as bcir_sp_for_each_segment parses
+ * them, and every declared block is parsed even after the callback stops, so a malformed
+ * later record cannot hide behind an early stop. A hostile/truncated buffer returns
+ * BCIR_ERR_TRUNCATED (or BCIR_ERR_UTF8), never an out-of-bounds read. */
+BCIR_NODISCARD bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data,
+                                                  size_t len, bcir_block_fn fn, void *ctx);
+
 /* R11 (generation / staleness): the pack's map_gen/data_gen must match the live registry
  * generation the caller supplies, else the pack is STALE and must be rehydrated, never
  * executed silently. Pass (uint32_t)-1 for a field to skip it (a caller that only knows

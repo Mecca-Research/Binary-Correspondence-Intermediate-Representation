@@ -582,3 +582,51 @@ def test_the_collector_rows_count_no_collection_inside_a_hot_path() -> None:
         assert rows[key]["headroom"] == 0.0, rows[key]
         if key.startswith("gc.collections."):
             assert rows[key]["verdict"] == "GAIN", rows[key]
+
+
+def test_the_its_rows_hold_the_study_and_measure_the_codecs_or_not():
+    """ITS: the reconstruction and the size claims are exact and pure Python, so they gate
+    everywhere; the parity and timing rows need the generated C and are NOT-MEASURED without
+    a compiler. The timed ratios are only checked to be ratios that point the right way."""
+    from tools.perf.gemplus_baseline import measure_its
+
+    declared = {m.key: m for m in METRICS if m.group == "its"}
+    assert set(declared) == {
+        "its.reconstruction.mismatch",
+        "its.size.binary.wins",
+        "its.size.uper.avg",
+        "its.codec.parity.mismatch",
+        "its.coer.encode.floor",
+        "its.coer.decode.floor",
+        "its.coer.vs.binary",
+        "its.uper.vs.binary",
+    }
+    out = measure_its()
+    assert out["its.reconstruction.mismatch"] == 0
+    assert out["its.size.binary.wins"] == 0
+    assert out["its.size.uper.avg"] == declared["its.size.uper.avg"].baseline
+    if "its.codec.parity.mismatch" not in out:
+        return  # no C compiler on this host
+    assert out["its.codec.parity.mismatch"] == 0
+    assert out["its.coer.encode.floor"] > 1.0 and out["its.coer.decode.floor"] > 1.0
+    assert 0 < out["its.coer.vs.binary.floor"] < out["its.coer.vs.binary"]
+    assert 0 < out["its.uper.vs.binary.floor"] < out["its.uper.vs.binary"]
+
+
+def test_every_ratio_of_compiled_kernels_is_indicative_off_its_host():
+    """A ratio of two separately compiled kernels measures the host and the compiler, not the
+    code -- the `native.*` rows' lesson, and the ITS codec rows' too (GCC and clang put them
+    apart). Every such row is host-dependent, so `--compare` off the baseline host reports it
+    INDICATIVE instead of failing a slice on the machine."""
+    from tools.perf.gemplus_baseline import METRICS
+
+    rows = [m for m in METRICS if m.group in ("native", "its") and m.kind == "ratio"]
+    assert {m.key for m in rows} >= {
+        "its.coer.encode.floor",
+        "its.coer.decode.floor",
+        "its.coer.vs.binary",
+        "its.uper.vs.binary",
+    }
+    for metric in rows:
+        assert metric.host_dependent, metric.key
+        assert metric.verdict(metric.baseline * 3, same_host=False) == "INDICATIVE", metric.key

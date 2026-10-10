@@ -43,19 +43,39 @@ bcir_per_status bcir_per_get_bit(bcir_per_reader *r, unsigned *out) {
 
 bcir_per_status bcir_per_get_bits(bcir_per_reader *r, unsigned width, uint64_t *out) {
   uint64_t value = 0u;
-  unsigned i;
   if (r == NULL || out == NULL) return BCIR_PER_INVALID;
   if (width > 64u) return BCIR_PER_INVALID;
   if (width == 0u) { *out = 0u; return BCIR_PER_OK; }
   /* One bound check for the whole field: the loop below cannot then run past the end. */
   if (width > r->bit_len - r->pos || r->pos > r->bit_len) return BCIR_PER_TRUNCATED;
-  for (i = 0u; i < width; i++) {
-    size_t index = (r->pos + i) >> 3;
-    unsigned shift = 7u - (unsigned)((r->pos + i) & 7u);
-    value = (value << 1) | (uint64_t)((r->data[index] >> shift) & 1u);
+  /* An octet at a time, not a bit at a time: the field is a partial leading octet, whole
+   * octets, and a partial trailing one, so a 64-bit field is at most nine loads where it was
+   * sixty-four shift-and-mask steps -- and skipping a string's body, which reads it in
+   * 64-bit pieces, stops costing eight iterations per octet. Each step shifts by at most
+   * eight, so no shift reaches the width of `value`. */
+  {
+    size_t pos = r->pos;
+    unsigned remaining = width;
+    while (remaining > 0u) {
+      unsigned offset = (unsigned)(pos & 7u);
+      unsigned take = 8u - offset;
+      unsigned bits;
+      if (take > remaining) take = remaining;
+      bits = ((unsigned)r->data[pos >> 3] >> (8u - offset - take)) & ((1u << take) - 1u);
+      value = (value << take) | (uint64_t)bits;
+      pos += take;
+      remaining -= take;
+    }
+    r->pos = pos;
   }
-  r->pos += width;
   *out = value;
+  return BCIR_PER_OK;
+}
+
+bcir_per_status bcir_per_skip(bcir_per_reader *r, uint64_t bits) {
+  if (r == NULL) return BCIR_PER_INVALID;
+  if (r->pos > r->bit_len || bits > (uint64_t)(r->bit_len - r->pos)) return BCIR_PER_TRUNCATED;
+  r->pos += (size_t)bits;
   return BCIR_PER_OK;
 }
 

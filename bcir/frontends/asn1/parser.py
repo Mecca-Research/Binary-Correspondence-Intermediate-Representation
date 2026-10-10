@@ -297,16 +297,16 @@ class Parser:
         model cannot represent its root)."""
         self.expect_punct("{")
         root = self._unions()
-        extensible = False
+        extensible, additions = False, None
         if self.accept("punct", ","):
             self.expect_punct("...")
             extensible = True
             if self.accept("punct", ","):
-                self._unions()
+                additions = self._unions()  # §49.4 AdditionalElementSetSpec
         self.expect_punct("}")
         if root is None:
             return None
-        return constraints.Extensible(root) if extensible else root
+        return constraints.Extensible(root, additions) if extensible else root
 
     def parse_assignment_body(self, name: str):
         """Parse whatever follows an assignment's (already consumed) reference name."""
@@ -1196,16 +1196,19 @@ class Parser:
                 "(X.680 36), so it cannot be discarded like a value-set constraint"
             )
         root = self._unions()
-        extensible = False
+        extensible, additions = False, None
         if self.accept("punct", ","):
             self.expect_punct("...")
             extensible = True
             if self.accept("punct", ","):
-                self._unions()  # the additional set: not OER-visible either
+                # The AdditionalElementSetSpec: invisible to every encoding (X.691 §13.1, X.696
+                # §8.2.2 g), and kept, so the model, the printer and every structural key built
+                # from the constraint tell `(0..7, ..., 8..255)` from `(0..7, ...)`.
+                additions = self._unions()
         self.expect_punct(")")
         if root is None:
             return None
-        return constraints.Extensible(root) if extensible else root
+        return constraints.Extensible(root, additions) if extensible else root
 
     def _unions(self):
         """§49.6 `A | B`, spelled `|` or `UNION`."""

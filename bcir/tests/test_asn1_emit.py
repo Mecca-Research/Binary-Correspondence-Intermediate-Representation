@@ -443,6 +443,46 @@ def test_a_constrained_type_reaches_the_oer_form_its_constraint_selects():
         assert got == encode_oer(outer, {"v": value}), label
 
 
+def test_an_extensible_sequence_carries_its_extension_bit_under_oer():
+    """X.696 §16.2.2: the extension bit leads an extensible type's preamble. The plan refuses
+    extension additions, so the bit is always zero here -- and it must still be there, as the
+    PER emitter has always written X.691 §19.1's. Exact octets, not oracle parity: the oracle,
+    this emitter and its C twin all omitted the bit together, and parity between them passed."""
+    from bcir.asn1.constraints import ValueRange
+
+    byte = Primitive(Universal.INTEGER, "I", constraint=ValueRange(0, 255))
+    cases = [
+        (
+            Sequence(
+                (Component("a", byte, optional=True), Component("b", byte)),
+                name="S",
+                extensible=True,
+            ),
+            {"a": 5, "b": 6},
+            "400506",
+        ),
+        (
+            Sequence(
+                (Component("a", byte, optional=True), Component("b", byte)),
+                name="S",
+                extensible=True,
+            ),
+            {"b": 6},
+            "0006",
+        ),
+        (Sequence((Component("b", byte),), name="S3", extensible=True), {"b": 6}, "0006"),
+        (
+            Sequence((Component("a", byte, optional=True), Component("b", byte)), name="S2"),
+            {"a": 5, "b": 6},
+            "800506",
+        ),
+    ]
+    for kind, value, octets in cases:
+        plan = compile_encode_plan(kind, module="Test", type_name=kind.name)
+        assert emit(plan, flatten(plan, value), rules=EmitRules.COER).hex() == octets, value
+        assert encode_oer(kind, value).hex() == octets, value
+
+
 def test_an_enumerated_is_not_an_integer_under_oer():
     """The second defect the same investigation found, which no constraint was needed to hit.
 

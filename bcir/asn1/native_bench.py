@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from ..toolchain import host_c_compiler
 from .certified import MIN_SAMPLES, CostRow, EncodingCostTable, interval_of
 from .selection import ALL_CANDIDATES
-from .tags import Asn1Error
+from .tags import Asn1Error, Universal
 
 _ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _C = os.path.join(_ROOT, "runtime", "c")
@@ -406,10 +406,20 @@ def oer_fields_for(plan) -> bytes:
     kinds from a second pass over the descriptor. The mapping lives here because this is where
     the plan's semantics already live.
 
+    **The constraint is read through the emitter's own predicates** (`_oer_integer_form`,
+    `_oer_fixed_size`), never re-derived. This function used to write the variable-size form
+    for every INTEGER and every string -- it predates plan version 3, which records the
+    constraint that selects §10.3's fixed widths and §14.1's fixed sizes -- so a constrained
+    member was decoded as a length determinant it never had. Nothing noticed because the
+    corpus had no constrained member and a timed decode's status only feeds the sink; the
+    harness now decodes every case once before timing it, which is what found it.
+
     **Refuses rather than approximates.** A member this cannot map is an `Asn1Error` naming the
     kind, not a guessed field: a decode timed against the wrong field array would be a real
     number for the wrong work, which is worse than no number at all.
     """
+    from .emit import _OER_KNOWN_MULTIPLIER, _oer_fixed_size, _oer_integer_form
+
     root = plan.root
     if root.kind != "sequence":
         raise Asn1Error(
@@ -419,17 +429,24 @@ def oer_fields_for(plan) -> bytes:
     out = bytearray()
     for member in root.members:
         node = member.node
-        optional = 1 if getattr(member, "optional", False) else 0
+        optional = 1 if (getattr(member, "optional", False) or member.has_default) else 0
         if node.kind == "integer":
-            # 10.4's variable-size form: width 0 means a length determinant then the octets.
-            out += bytes((_OER_INTEGER, 0, 1, optional, 0, 0, 0, 0))
+            # §10.3/§10.4: a fixed word when the constraint selects one, else width 0 -- the
+            # length-prefixed variable-size form.
+            width, signed = _oer_integer_form(node)
+            out += bytes((_OER_INTEGER, width or 0, 1 if signed else 0, optional, 0, 0, 0, 0))
         elif node.kind == "boolean":
             out += bytes((_OER_BOOLEAN, 0, 0, optional, 0, 0, 0, 0))
         elif node.kind == "null":
             out += bytes((_OER_NULL, 0, 0, optional, 0, 0, 0, 0))
         elif node.kind in ("string", "octetstring"):
-            # 14.2/27: a length determinant then that many octets.
-            out += bytes((_OER_VAR_OCTETS, 0, 0, optional, 0, 0, 0, 0))
+            fixed = _oer_fixed_size(node)
+            if node.kind == "string" and node.universal not in _OER_KNOWN_MULTIPLIER:
+                fixed = None  # §27.1: only a known-multiplier type's SIZE fixes its octets
+            if fixed is not None:  # §14.1 / §27.2: no length determinant
+                out += bytes((_OER_FIXED_OCTETS, 0, 0, optional)) + fixed.to_bytes(4, "little")
+            else:  # §14.2 / §27.3: a length determinant then that many octets
+                out += bytes((_OER_VAR_OCTETS, 0, 0, optional, 0, 0, 0, 0))
         else:
             raise Asn1Error(
                 f"X.696: the schema-directed decode arm has no field kind for a "
@@ -457,10 +474,21 @@ def per_fields_for(plan) -> str:
     The C harness parses the same spelling `test_per_plan.c` does, so one format serves the
     differential and the bench.
 
-    **Refuses rather than approximates**, exactly as the OER mapping does: a member this
-    cannot map raises rather than guessing a field, since a decode timed against the wrong
-    field array is a real number for the wrong work.
+    **The bounds come from the emitter's predicates** (`_per_value_bounds`, `_per_size_bounds`)
+    -- the plan's recorded ROOT bounds. This function used to read `node.low`, `node.high` and
+    `node.max_size`, attributes no plan node has had since version 3 moved the constraint into
+    `node.constraint`; every INTEGER was therefore declared unconstrained and every string
+    unbounded, and a constrained member was decoded as a length determinant it never had.
+
+    **Refuses rather than approximates**, exactly as the OER mapping does: an extensible
+    constraint needs X.691 §13.1's or §17.3's extension bit, which a field cannot carry; a
+    known-multiplier character string is encoded in characters of `b` bits (§30.5), not in
+    octets; and a SIZE-fixed string of 64K or more keeps a length determinant (§17.8). Each is
+    a raise naming the clause, because a decode timed against the wrong field array is a real
+    number for the wrong work.
     """
+    from .emit import _per_size_bounds, _per_value_bounds
+
     root = plan.root
     if root.kind != "sequence":
         raise Asn1Error(
@@ -470,11 +498,15 @@ def per_fields_for(plan) -> str:
     fields = []
     for member in root.members:
         node = member.node
-        optional = 1 if getattr(member, "optional", False) else 0
-        low = getattr(node, "low", None)
-        high = getattr(node, "high", None)
+        optional = 1 if (getattr(member, "optional", False) or member.has_default) else 0
         if node.kind == "integer":
             # §13.2 decides the shape from the TYPE's constraint, never from the octets.
+            (low, high), extensible = _per_value_bounds(node)
+            if extensible:
+                raise Asn1Error(
+                    f"X.691 13.1: {member.name!r} has an extensible value constraint, and a plan "
+                    f"field has no extension bit; the plan-driven PER decoder states its subset"
+                )
             if low is not None and high is not None:
                 fields.append(f"{_PER_INTEGER}:{_PER_CONSTRAINED}:{low}:{high}:0:{optional}")
             elif low is not None:
@@ -485,17 +517,37 @@ def per_fields_for(plan) -> str:
             fields.append(f"{_PER_BOOLEAN}:0:0:0:0:{optional}")
         elif node.kind == "null":
             fields.append(f"{_PER_NULL}:0:0:0:0:{optional}")
-        elif node.kind in ("string", "octetstring"):
-            width = getattr(node, "fixed_size", None)
-            if width:
-                fields.append(f"{_PER_FIXED_OCTETS}:0:0:0:{width}:{optional}")
+        elif node.kind == "octetstring" or (
+            node.kind == "string" and node.universal == int(Universal.UTF8_STRING)
+        ):
+            # §17 for OCTET STRING. UTF8String is not a known-multiplier type, so §30.3 gives it
+            # an unconstrained length in octets whatever its SIZE says -- the bounds are not
+            # PER-visible -- and the octets follow.
+            lower, upper, extensible = (
+                _per_size_bounds(node) if node.kind == "octetstring" else (0, None, False)
+            )
+            if extensible:
+                raise Asn1Error(
+                    f"X.691 17.3: {member.name!r} has an extensible SIZE, and a plan field has "
+                    f"no extension bit; the plan-driven PER decoder states its subset"
+                )
+            if upper is not None and lower == upper:
+                if upper >= 65536:
+                    raise Asn1Error(
+                        f"X.691 17.8: {member.name!r} is SIZE-fixed at {upper} octets, where a "
+                        f"length determinant is still written; the plan's fixed form has none"
+                    )
+                fields.append(f"{_PER_FIXED_OCTETS}:0:0:0:{upper}:{optional}")
             else:
-                bound = getattr(node, "max_size", 0) or 0
-                fields.append(f"{_PER_VAR_OCTETS}:0:0:0:{bound}:{optional}")
+                # `lb` is §11.9.3.3's lower bound for the constrained length form; the decoder
+                # reads it only while `ub` (the `fixed` slot) is below 64K.
+                bound = upper if upper is not None and upper < 65536 else 0
+                fields.append(f"{_PER_VAR_OCTETS}:0:{lower if bound else 0}:0:{bound}:{optional}")
         else:
             raise Asn1Error(
                 f"X.691: the schema-directed decode arm has no field kind for a {node.kind!r} "
-                f"member; the plan-driven PER decoder states its subset rather than guessing"
+                f"member ({member.name!r}); the plan-driven PER decoder states its subset "
+                f"rather than guessing"
             )
     return ",".join(fields)
 
@@ -587,8 +639,14 @@ def run_native_directed_decode_bench(
         if binary is None:
             raise Asn1Error("no C compiler; a schema-directed decode table cannot be produced")
         lines = [f"rounds {warmup} {rounds} {iterations}"]
+        # An extensible root leads its preamble with an extension bit on BOTH rules (X.691
+        # 19.1, X.696 16.2.2), and neither field table can say so -- a field describes a
+        # component, not the type. So the verb carries it. The harness used to pass zero
+        # unconditionally, and a decoder reading an extensible type's presence bits one
+        # position early fails fast: a real number, for the wrong work.
+        verb = "dircasex" if plan.root.extensible else "dircase"
         lines += [
-            f"dircase {name} {op} "
+            f"{verb} {name} {op} "
             f"{per_fields if op.startswith('per-d') else fields.hex()} {octets.hex()}"
             for name, op, octets in cases
         ]

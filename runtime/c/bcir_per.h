@@ -76,6 +76,11 @@ size_t bcir_per_bits_left(const bcir_per_reader *r);
 /* 11.3: a non-negative-binary-integer from a bit-field of `width` bits (width <= 64). */
 bcir_per_status bcir_per_get_bits(bcir_per_reader *r, unsigned width, uint64_t *out);
 
+/* Advance past `bits` bits without reading them -- a string body a plan-driven decoder
+ * reports by position and never copies. BCIR_PER_TRUNCATED, with the cursor unmoved, when
+ * fewer remain. */
+bcir_per_status bcir_per_skip(bcir_per_reader *r, uint64_t bits);
+
 /* One bit. */
 bcir_per_status bcir_per_get_bit(bcir_per_reader *r, unsigned *out);
 

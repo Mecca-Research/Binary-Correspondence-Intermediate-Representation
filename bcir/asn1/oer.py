@@ -49,6 +49,8 @@ from .schema import (
     SequenceOf,
     Set,
     SetOf,
+    addition_defaults,
+    flat_components,
     through,
 )
 from .tags import Asn1Error, Tag, TagClass, Universal
@@ -85,8 +87,16 @@ def encode_length(value: int) -> bytes:
     return bytes([0x80 | len(octets)]) + octets
 
 
-def decode_length(data: bytes, offset: int) -> tuple[int, int]:
-    """Read a length determinant; return (value, next offset). Accepts BASIC-OER."""
+def decode_length(data: bytes, offset: int, rules: OerRules = OerRules.BASIC) -> tuple[int, int]:
+    """Read a length determinant; return (value, next offset).
+
+    BASIC-OER admits a long form for a length the short form carries, and redundant leading
+    zero octets in it (§3.7.12 NOTE). CANONICAL-OER spells every length once
+    (§31.2: the short form below 128, the long form in the fewest octets otherwise), so under
+    `rules=OerRules.CANONICAL` both are refused -- what `bcir_oer_length` reports as
+    non-canonical and the generated codecs' `P_oer_get_len` refuses. Every length this rail
+    reads -- a string's, a variable-size integer's, a quantity's, an open type's -- comes
+    through here with its caller's rules, so the check has no second site to miss."""
     if offset >= len(data):
         raise Asn1Error("truncated length determinant", offset)
     first = data[offset]
@@ -100,9 +110,14 @@ def decode_length(data: bytes, offset: int) -> tuple[int, int]:
     end = offset + 1 + count
     if end > len(data):
         raise Asn1Error("truncated long-form length determinant", offset)
-    # BASIC-OER permits redundant leading zero octets (§3.7.12 NOTE); CANONICAL-OER does
-    # not (§31.2), but a decoder accepts both -- that is the whole point of "BASIC in".
-    return int.from_bytes(data[offset + 1 : end], "big"), end
+    value = int.from_bytes(data[offset + 1 : end], "big")
+    if rules is OerRules.CANONICAL and (data[offset + 1] == 0 or value < 0x80):
+        raise Asn1Error(
+            f"CANONICAL-OER spells a length once: {value} in a {count}-octet long form has a "
+            f"shorter spelling (X.696 31.2)",
+            offset,
+        )
+    return value, end
 
 
 # --- §3.7.11 / §3.7.12 variable-size numbers -------------------------------------------
@@ -125,6 +140,27 @@ def _encode_var_unsigned(value: int) -> bytes:
     return value.to_bytes(max(1, (value.bit_length() + 7) // 8), "big")
 
 
+def _require_fewest(data: bytes, start: int, end: int, signed: bool, what: str) -> None:
+    """§31.4 under CANONICAL-OER: a variable-size number in the fewest octets, as the two
+    encoders above write it. An unsigned number's first octet is zero only when it is the
+    number's one octet; a signed number's first octet is redundant when it is all sign bits
+    and the next octet's top bit repeats them (`P_oer_get_uvar` / `P_oer_get_svar`, the
+    generated codecs' readers, refuse exactly these)."""
+    if end - start < 2:
+        return
+    first, second = data[start], data[start + 1]
+    if signed:
+        redundant = (first == 0x00 and not second & 0x80) or (first == 0xFF and second & 0x80)
+    else:
+        redundant = first == 0x00
+    if redundant:
+        raise Asn1Error(
+            f"CANONICAL-OER spells {what} in the fewest octets; the leading octet "
+            f"{first:#04x} is redundant (X.696 31.4)",
+            start,
+        )
+
+
 # --- §8.7 tag encoding (CHOICE alternatives only) --------------------------------------
 
 
@@ -143,7 +179,11 @@ def encode_tag(tag: Tag) -> bytes:
     return bytes([lead | 0x3F]) + bytes([chunk | 0x80 for chunk in chunks[:-1]] + [chunks[-1]])
 
 
-def decode_tag(data: bytes, offset: int) -> tuple[Tag, int]:
+def decode_tag(data: bytes, offset: int, rules: OerRules = OerRules.BASIC) -> tuple[Tag, int]:
+    """The inverse of `encode_tag`. Under CANONICAL-OER a tag has `encode_tag`'s one spelling:
+    a number below 63 in the first octet, and a larger one in the fewest base-128 octets (no
+    leading 0x80) -- the long form of a small number, or a padded one, names the same
+    alternative a second way, which a digest boundary cannot admit."""
     if offset >= len(data):
         raise Asn1Error("truncated tag", offset)
     first = data[offset]
@@ -159,6 +199,12 @@ def decode_tag(data: bytes, offset: int) -> tuple[Tag, int]:
         number = (number << 7) | (octet & 0x7F)
         if not octet & 0x80:
             break
+    if rules is OerRules.CANONICAL and (number < 63 or data[offset + 1] == 0x80):
+        raise Asn1Error(
+            f"CANONICAL-OER spells tag number {number} once; this long form has a shorter "
+            f"spelling (X.696 8.7.2)",
+            offset,
+        )
     return Tag(cls, number), cursor
 
 
@@ -346,10 +392,12 @@ def _decode_primitive(
             if end > len(data):
                 raise Asn1Error("truncated fixed-width INTEGER", offset)
             return int.from_bytes(data[offset:end], "big", signed=signed), end
-        length, cursor = decode_length(data, offset)
+        length, cursor = decode_length(data, offset, rules)
         end = cursor + length
         if length == 0 or end > len(data):
             raise Asn1Error("truncated INTEGER", offset)
+        if rules is OerRules.CANONICAL:
+            _require_fewest(data, cursor, end, signed, "a variable-size INTEGER")
         return int.from_bytes(data[cursor:end], "big", signed=signed), end
 
     if universal == Universal.ENUMERATED:  # §11
@@ -362,7 +410,18 @@ def _decode_primitive(
         end = offset + 1 + count
         if count == 0 or end > len(data):
             raise Asn1Error("truncated ENUMERATED long form", offset)
-        return int.from_bytes(data[offset + 1 : end], "big", signed=True), end
+        value = int.from_bytes(data[offset + 1 : end], "big", signed=True)
+        if rules is OerRules.CANONICAL:
+            # §11.4's long form carries a SIGNED variable-size number, so §31.4 holds it to
+            # the fewest octets -- and a value the short form carries (§11.3) is not spelled
+            # long at all.
+            if 0 <= value < 0x80:
+                raise Asn1Error(
+                    f"CANONICAL-OER spells ENUMERATED {value} in the short form (X.696 11.3)",
+                    offset,
+                )
+            _require_fewest(data, offset + 1, end, True, "an ENUMERATED long form")
+        return value, end
 
     if universal == Universal.NULL:  # §15
         return NULL, offset
@@ -374,7 +433,7 @@ def _decode_primitive(
             if end > len(data):
                 raise Asn1Error("truncated fixed-size OCTET STRING", offset)
             return data[offset:end], end
-        length, cursor = decode_length(data, offset)
+        length, cursor = decode_length(data, offset, rules)
         end = cursor + length
         if end > len(data):
             raise Asn1Error("truncated OCTET STRING", offset)
@@ -384,7 +443,7 @@ def _decode_primitive(
         from .codec import Oid, RelativeOid
         from .values import decode_oid, decode_relative_oid
 
-        length, cursor = decode_length(data, offset)
+        length, cursor = decode_length(data, offset, rules)
         end = cursor + length
         if end > len(data):
             raise Asn1Error("truncated OBJECT IDENTIFIER", offset)
@@ -409,7 +468,7 @@ def _decode_primitive(
             if end > len(data):
                 raise Asn1Error(f"truncated fixed-size {kind.name}", offset)
             return decode_string(Tlv(Tag(TagClass.UNIVERSAL, universal), data[offset:end])), end
-        length, cursor = decode_length(data, offset)
+        length, cursor = decode_length(data, offset, rules)
         end = cursor + length
         if end > len(data):
             raise Asn1Error(f"truncated {kind.name}", offset)
@@ -442,56 +501,144 @@ def _ordered(kind) -> tuple[Component, ...]:
     return tuple(sorted(kind.components, key=key))
 
 
-def _encode_fields(kind, value: dict, rules: OerRules) -> bytes:
+def _split_root(kind) -> tuple[tuple[Component, ...], tuple[Component, ...]]:
+    """(extension root, extension additions), each in encoding order (X.680 §25.1).
+
+    The split is the same one PER's `_split_root` makes, and for the same reason: X.696
+    encodes the two halves in different places. Root components follow the preamble;
+    additions follow the root, behind their own presence bitmap, each wrapped as an open type.
+    """
     components = _ordered(kind)
-    unknown = set(value) - {c.name for c in kind.components}
+    root = tuple(c for c in components if not c.extension)
+    additions = tuple(c for c in components if c.extension)
+    return root, additions
+
+
+def _supplied(comp: Component, value: dict) -> bool:
+    """Whether a component's encoding is present. §31.9's DEFAULT rule applies on both rule
+    sets here, as it always has on this rail's encoder (COER out); a version bracket is
+    present when any of its members is (X.696 16.5, as X.691 19.9 says it for PER)."""
+    if comp.group is not None:
+        return any(_supplied(member, value) for member in comp.group)
+    if comp.name not in value:
+        return False
+    return not (comp.has_default and value[comp.name] == comp.default)
+
+
+def _bits_to_octets(bits: list[int]) -> bytes:
+    padded = bits + [0] * (-len(bits) % 8)
+    return bytes(
+        int("".join(str(b) for b in padded[i : i + 8]), 2) for i in range(0, len(padded), 8)
+    )
+
+
+def _addition_value(comp: Component, value: dict):
+    # A version bracket's members live FLAT in the parent value (as on the PER rail), and the
+    # bracket is encoded as a SEQUENCE of them; a plain addition is its own value.
+    if comp.group is not None:
+        return {m.name: value[m.name] for m in comp.group if m.name in value}
+    return value[comp.name]
+
+
+def _encode_fields(kind, value: dict, rules: OerRules) -> bytes:
+    """§16 (§18 for SET): the preamble, the root components, then the extension additions.
+
+    **The extension bit is the preamble's FIRST bit.** §16.2.2: when the type has an extension
+    marker the preamble begins with a bit saying whether any extension addition is present,
+    and the root presence bitmap follows it. This rail used to write the bitmap alone,
+    reasoning that "this type model has no extension markers" -- true when it was written,
+    false once `Sequence.extensible` existed. From then on `SEQUENCE { a INTEGER (0..255)
+    OPTIONAL, ... }` with `a` present encoded as `80 ..` where X.696 spells it `40 ..`, a
+    well-formed document a conforming peer reads as an extension addition being present. The
+    PER rail had the bit all along (X.691 §19.1), which is what made the omission visible.
+    """
+    root, additions = _split_root(kind)
+    known = {c.name for c in flat_components(root + additions)}
+    unknown = set(value) - known
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown component(s) {sorted(unknown)}")
 
-    # §16.2: the preamble is the root component presence bitmap, one bit per component
-    # marked OPTIONAL or DEFAULT, most significant bit first, zero-padded to whole octets.
-    # There is no extension bit because this type model has no extension markers (§16.2.2).
-    optional = [c for c in components if c.optional or c.has_default]
-    present: dict[str, bool] = {}
+    present_additions = [c for c in additions if _supplied(c, value)]
+    if present_additions and not kind.extensible:  # pragma: no cover - the lowering guards it
+        raise Asn1Error(f"{kind.name}: extension additions on a non-extensible type")
+
+    bits: list[int] = []
+    if kind.extensible:  # §16.2.2
+        bits.append(1 if present_additions else 0)
     body = bytearray()
-    for comp in components:
+    for comp in root:
         if comp.name not in value:
             if not (comp.optional or comp.has_default):
                 raise Asn1Error(f"{kind.name}: component {comp.name!r} is mandatory")
-            present[comp.name] = False
+            bits.append(0)
             continue
-        item = value[comp.name]
-        # §31.9: a DEFAULT component is encoded as ABSENT when it equals its default.
-        if comp.has_default and item == comp.default:
-            present[comp.name] = False
-            continue
-        present[comp.name] = True
-        body += encode_value(comp.type, item, rules=rules)
+        if comp.optional or comp.has_default:  # §16.2.3: one bit per OPTIONAL/DEFAULT root
+            # §31.9: a DEFAULT component is encoded as ABSENT when it equals its default.
+            here = _supplied(comp, value)
+            bits.append(1 if here else 0)
+            if not here:
+                continue
+        body += encode_value(comp.type, value[comp.name], rules=rules)
 
-    preamble = bytearray()
-    if optional:  # §16.2.3 / §16.2.4
-        bits = "".join("1" if present[c.name] else "0" for c in optional)
-        bits += "0" * (-len(bits) % 8)
-        preamble += bytes(int(bits[i : i + 8], 2) for i in range(0, len(bits), 8))
-    return bytes(preamble) + bytes(body)
+    # §16.2.4: no bits, no preamble; otherwise zero-padded to whole octets.
+    out = (_bits_to_octets(bits) if bits else b"") + bytes(body)
+    if not present_additions:
+        return out
+    # §16.4: the extension addition presence bitmap, encoded as a variable-size BIT STRING
+    # (§15.3: a length determinant over the initial octet and the bitmap, the initial octet
+    # counting the unused trailing bits). It has one bit per addition IN THE TYPE, so a
+    # decoder of an older version knows how many open types follow.
+    flags = [1 if _supplied(c, value) else 0 for c in additions]
+    bitmap = _bits_to_octets(flags)
+    out += encode_length(1 + len(bitmap)) + bytes([(-len(flags)) % 8]) + bitmap
+    for comp in present_additions:  # §16.5: each present addition as an open type (§30)
+        inner = encode_value(comp.type, _addition_value(comp, value), rules=rules)
+        out += encode_length(len(inner)) + inner
+    return out
+
+
+def _decode_open_type(data: bytes, offset: int, what: str, rules: OerRules) -> tuple[bytes, int]:
+    """§30: a length determinant and that many octets, returned for a nested decode."""
+    length, cursor = decode_length(data, offset, rules)
+    end = cursor + length
+    if end > len(data):
+        raise Asn1Error(f"{what}: truncated open type (X.696 30)", offset)
+    return data[cursor:end], end
 
 
 def _decode_fields(kind, data: bytes, offset: int, rules: OerRules) -> tuple[dict, int]:
-    components = _ordered(kind)
-    optional = [c for c in components if c.optional or c.has_default]
+    root, additions = _split_root(kind)
+    optional = [c for c in root if c.optional or c.has_default]
+    width_bits = len(optional) + (1 if kind.extensible else 0)
     cursor = offset
-    flags: dict[str, bool] = {c.name: True for c in components}
-    if optional:
-        width = (len(optional) + 7) // 8
+    flags: dict[str, bool] = {c.name: True for c in root}
+    extended = False
+    if width_bits:
+        width = (width_bits + 7) // 8
         if cursor + width > len(data):
             raise Asn1Error(f"{kind.name}: truncated preamble (X.696 16.2)", offset)
         bits = "".join(f"{octet:08b}" for octet in data[cursor : cursor + width])
-        for index, comp in enumerate(optional):
-            flags[comp.name] = bits[index] == "1"
+        at = 0
+        if kind.extensible:  # §16.2.2: the extension bit leads
+            extended = bits[0] == "1"
+            at = 1
+        for comp in optional:
+            flags[comp.name] = bits[at] == "1"
+            at += 1
+        # §16.2.4 pads the preamble to an octet with ZERO bits. A set padding bit leaves every
+        # presence bit the same, so under CANONICAL it is a second spelling of one value -- the
+        # C plan decoder reports it as non-canonical and the generated codecs refuse it; this
+        # rail accepted it as canonical. BASIC keeps accepting it, as the plan decoder does.
+        if rules is OerRules.CANONICAL and "1" in bits[width_bits:]:
+            raise Asn1Error(
+                f"{kind.name}: the preamble's padding bits are not zero; CANONICAL-OER "
+                f"writes them as zero (X.696 16.2.4)",
+                offset,
+            )
         cursor += width
 
     out: dict[str, object] = {}
-    for comp in components:
+    for comp in root:
         if flags[comp.name]:
             out[comp.name], cursor = decode_value(comp.type, data, cursor, rules=rules)
             # §31.9: under CANONICAL-OER "each component that is marked DEFAULT shall be
@@ -510,6 +657,76 @@ def _decode_fields(kind, data: bytes, offset: int, rules: OerRules) -> tuple[dic
                 )
         elif comp.has_default:
             out[comp.name] = comp.default  # absent MEANS the default
+
+    if extended:
+        # §16.4: the presence bitmap of the additions, as a variable-size BIT STRING.
+        bitmap, cursor = _decode_open_type(data, cursor, f"{kind.name} addition bitmap", rules)
+        if not bitmap or bitmap[0] > 7 or (len(bitmap) == 1 and bitmap[0]):
+            raise Asn1Error(
+                f"{kind.name}: malformed extension addition presence bitmap (X.696 16.4)",
+                cursor,
+            )
+        count = (len(bitmap) - 1) * 8 - bitmap[0]
+        # The bitmap's unused trailing bits, like the preamble's padding: zero, or under
+        # CANONICAL a second spelling of the same additions.
+        if rules is OerRules.CANONICAL and bitmap[-1] & ((1 << bitmap[0]) - 1):
+            raise Asn1Error(
+                f"{kind.name}: the addition bitmap's {bitmap[0]} unused bit(s) are not zero; "
+                f"CANONICAL-OER writes them as zero (X.696 16.4)",
+                cursor,
+            )
+        present = [
+            index for index in range(count) if bitmap[1 + index // 8] & (0x80 >> (index % 8))
+        ]
+        if not present:
+            # The extension bit said an addition is present and the bitmap names none: two
+            # spellings of "no additions", and §16.2.2 sets the bit only when one is there.
+            raise Asn1Error(
+                f"{kind.name}: the extension bit is set but the addition bitmap is empty "
+                f"(X.696 16.2.2)",
+                cursor,
+            )
+        for index in present:  # §16.5: each one an open type
+            octets, cursor = _decode_open_type(data, cursor, f"{kind.name} addition {index}", rules)
+            if index >= len(additions):
+                # A peer built against a NEWER version sent an addition this type does not
+                # know. The open type's length is precisely what makes that recoverable: the
+                # octets are skipped, not misparsed (the PER rail's posture, X.691 19.9).
+                continue
+            comp = additions[index]
+            item, used = decode_value(comp.type, octets, 0, rules=rules)
+            if used != len(octets):
+                raise Asn1Error(
+                    f"{kind.name}: {len(octets) - used} octet(s) after addition "
+                    f"{comp.name!r} inside its open type (X.696 16.5)",
+                    cursor,
+                )
+            # §31.9 holds for an addition exactly as for a root component (checked above):
+            # the encoder leaves out one equal to its DEFAULT, and a version bracket whose
+            # members are all absent or at their defaults (`_supplied`, X.696 16.5), so sent
+            # anyway either is the second spelling of the value without it. The encoder's own
+            # predicate decides, so the two cannot disagree about what is present.
+            if rules is OerRules.CANONICAL and not _supplied(
+                comp, item if comp.group is not None else {comp.name: item}
+            ):
+                raise Asn1Error(
+                    (
+                        f"{kind.name}: addition {comp.name!r} is present and equal to its "
+                        f"DEFAULT {comp.default!r}"
+                        if comp.group is None
+                        else f"{kind.name}: version bracket "
+                        f"[[{', '.join(m.name for m in comp.group)}]] is present with every "
+                        f"member absent or at its DEFAULT"
+                    )
+                    + "; CANONICAL-OER encodes it as absent (X.696 16.5, 31.9)",
+                    cursor,
+                )
+            if comp.group is not None:
+                out.update(item)  # a version bracket's members are flat
+            else:
+                out[comp.name] = item
+    for name, default in addition_defaults(additions):
+        out.setdefault(name, default)
     return out, cursor
 
 
@@ -561,7 +778,13 @@ def encode_value(kind: Asn1Type, value, *, rules: OerRules = OerRules.CANONICAL)
                     f"{kind.name}: alternative {chosen!r} is an untagged CHOICE; OER "
                     f"needs its outermost tag (X.696 20.1)"
                 )
-            return encode_tag(tag) + encode_value(alt.type, payload, rules=rules)
+            inner = encode_value(alt.type, payload, rules=rules)
+            if alt.extension:
+                # §20.2: an extension alternative's value is an OPEN TYPE, so a decoder of
+                # an older version can skip what it cannot read. Writing it bare (as this
+                # rail did) made the octets after it unreadable to such a decoder.
+                return encode_tag(tag) + encode_length(len(inner)) + inner
+            return encode_tag(tag) + inner
         raise Asn1Error(f"{kind.name}: {chosen!r} is not an alternative")
 
     if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
@@ -582,15 +805,32 @@ def decode_value(
         return _decode_primitive(kind, data, offset, rules)
 
     if isinstance(kind, (SequenceOf, SetOf)):  # §17 / §19
-        width, cursor = decode_length(data, offset)
+        width, cursor = decode_length(data, offset, rules)
         end = cursor + width
         if width == 0 or end > len(data):
             raise Asn1Error(f"{kind.name}: truncated quantity field (X.696 17.2)", offset)
+        if rules is OerRules.CANONICAL:
+            _require_fewest(data, cursor, end, False, f"{kind.name}'s quantity")
         count = int.from_bytes(data[cursor:end], "big")
         cursor = end
         items = []
+        previous = None
         for _ in range(count):
+            start = cursor
             item, cursor = decode_value(kind.element, data, cursor, rules=rules)
+            if isinstance(kind, SetOf) and rules is OerRules.CANONICAL:
+                # §31.8: the encoder sorts a SET OF's encodings, the shorter zero-padded for
+                # the comparison, so any other order is a second spelling of one SET OF value.
+                octets = data[start:cursor]
+                if previous is not None:
+                    pad = max(len(previous), len(octets))
+                    if octets.ljust(pad, b"\x00") < previous.ljust(pad, b"\x00"):
+                        raise Asn1Error(
+                            f"{kind.name}: CANONICAL-OER orders a SET OF's elements by their "
+                            f"encodings (X.696 31.8)",
+                            start,
+                        )
+                previous = octets
             items.append(item)
         return items, cursor
 
@@ -598,18 +838,38 @@ def decode_value(
         return _decode_fields(kind, data, offset, rules)
 
     if isinstance(kind, OpenType):  # §30
-        length, cursor = decode_length(data, offset)
+        length, cursor = decode_length(data, offset, rules)
         end = cursor + length
         if end > len(data):
             raise Asn1Error(f"{kind.name}: truncated open type (X.696 30)", offset)
         return data[cursor:end], end
 
     if isinstance(kind, Choice):  # §20.1
-        tag, cursor = decode_tag(data, offset)
+        tag, cursor = decode_tag(data, offset, rules)
         for alt in kind.alternatives:
             if any(t.cls is tag.cls and t.number == tag.number for t in alt.expected_tags()):
-                item, cursor = decode_value(alt.type, data, cursor, rules=rules)
+                if not alt.extension:
+                    item, cursor = decode_value(alt.type, data, cursor, rules=rules)
+                    return (alt.name, item), cursor
+                # §20.2: an extension alternative arrives as an open type.
+                octets, cursor = _decode_open_type(data, cursor, f"{kind.name}.{alt.name}", rules)
+                item, used = decode_value(alt.type, octets, 0, rules=rules)
+                if used != len(octets):
+                    raise Asn1Error(
+                        f"{kind.name}: {len(octets) - used} octet(s) after {alt.name!r} "
+                        f"inside its open type (X.696 20.2)",
+                        offset,
+                    )
                 return (alt.name, item), cursor
+        if kind.extensible:
+            # An alternative added by a newer version. Its open type could be skipped, but
+            # a CHOICE has exactly one value and this type has no name for it, so the
+            # posture is the PER rail's (X.691 23.8): refuse by name rather than invent.
+            raise Asn1Error(
+                f"{kind.name}: {tag} is an extension alternative unknown to this version "
+                f"(X.696 20.2)",
+                offset,
+            )
         raise Asn1Error(f"{kind.name}: {tag} matches no alternative (X.696 20.1)", offset)
 
     if isinstance(kind, Reference):  # a recursive definition: the shared resolve and bound
