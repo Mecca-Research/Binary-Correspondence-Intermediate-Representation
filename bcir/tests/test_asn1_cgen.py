@@ -695,6 +695,33 @@ def test_an_extensible_integer_with_an_open_root_bound_compiles_and_round_trips(
         assert line.split()[0] == "OK" and line.split()[2] == w, line
 
 
+def test_an_extensible_integers_additions_move_no_generated_octet():
+    """The relay posture on the generated codecs (docs/BCIR_LANGREF.md §17.3): `INTEGER (0..7,
+    ..., 8..255)` -- whose additional set the model now carries -- is still an unbounded
+    `int64_t` with no `_int_check`, and under UPER and COER the generated codecs write and read a
+    value in the root (3), in the additions (9, 255) and beyond both (300, -1) as the oracle does,
+    and as they do for `(0..7, ...)`, whose constraint does not write the additions."""
+    from bcir.asn1.oer import encode_oer
+    from bcir.asn1.per import encode_per
+
+    values = [{"v": v} for v in (3, 9, 255, 300, -1)]
+    written = {}
+    for constraint in ("(0..7, ..., 8..255)", "(0..7, ...)"):
+        text = _HEAD + f"S ::= SEQUENCE {{ v INTEGER {constraint} }}\nEND"
+        run = _schema_codec(text, "S", [UPER, COER], values)
+        if run is None:
+            return
+        kind = _types(text)["S"]
+        for rule, oracle in ((UPER, encode_per), (COER, encode_oer)):
+            want = [oracle(kind, v).hex() for v in values]
+            got = run([f"enc {rule} {i}" for i in range(len(values))])
+            assert got == ["OK " + w for w in want], (constraint, rule, got)
+            for w, line in zip(want, run([f"dec {rule} {_ARENA} {w}" for w in want])):
+                assert line.split()[0] == "OK" and line.split()[2] == w, (constraint, line)
+            written.setdefault(rule, []).append(want)
+    assert all(a == b for a, b in written.values()), written
+
+
 def test_a_count_of_empty_elements_is_bounded_by_its_size_not_the_input():
     """A one-enumerator ENUMERATED and a single-value INTEGER encode in no bits under UPER, so
     ten of them take only the count's four bits. The decoder bounded a count by the input left

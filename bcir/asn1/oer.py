@@ -50,6 +50,7 @@ from .schema import (
     Set,
     SetOf,
     addition_defaults,
+    flat_components,
     through,
 )
 from .tags import Asn1Error, Tag, TagClass, Universal
@@ -552,10 +553,7 @@ def _encode_fields(kind, value: dict, rules: OerRules) -> bytes:
     PER rail had the bit all along (X.691 §19.1), which is what made the omission visible.
     """
     root, additions = _split_root(kind)
-    known = {c.name for c in root + additions}
-    for comp in additions:
-        if comp.group is not None:
-            known.update(member.name for member in comp.group)
+    known = {c.name for c in flat_components(root + additions)}
     unknown = set(value) - known
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown component(s) {sorted(unknown)}")

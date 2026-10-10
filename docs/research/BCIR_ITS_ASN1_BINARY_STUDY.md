@@ -114,10 +114,12 @@ type:
   reorder it, since reordering would map two binary encodings to one value.
 * **Nothing is narrowed.** Every opaque keeps its size, every CHOICE its alternatives and its
   extension marker, and every INTEGER its whole V1.1.1 range. The converse does not hold in the
-  schema: a shaped integer (below) is extensible, and BCIR reads an extensible constraint by its
-  root, so the module and the codecs generated from it admit integers past V1.1.1's range. The
-  mapping holds the range instead -- both directions refuse a value the V1.1.1 binary rules
-  cannot carry (`test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry`).
+  codecs: a shaped integer (below) is extensible, and every BCIR codec keeps the relay posture
+  for an extensible constraint (LangRef §17.3), so the codecs generated from the module admit
+  integers past V1.1.1's range. The schema states the range all the same -- each shaped
+  integer's root and additional set together are exactly V1.1.1's range (`Extensible.known`)
+  -- and the mapping holds it: both directions refuse a value the V1.1.1 binary rules cannot
+  carry (`test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry`).
 * **Some integers are shaped**: an extensible constraint whose root is the range the protocol
   produces, with the rest of V1.1.1's range as an extension addition. IntX is shaped everywhere
   (root 0..127). The rest depend on the rule, through X.683. `SecuredMessage` keeps V1.1.1's

@@ -82,7 +82,8 @@ def transcription_type(name: str = "SecuredMessage"):
 def tmsao():
     """The compiled `ITS-SecuredMessage-TMSAO` module: V1.1.1's values, field lists as sets of
     OPTIONAL components (see the module's header and `to_tmsao`). Its shaped integers are
-    extensible, so the module itself admits integers V1.1.1 cannot carry; `to_tmsao` and
+    extensible: their roots and additional sets together are V1.1.1's ranges, and its codecs, as
+    every codec of an extensible constraint, admit integers past them; `to_tmsao` and
     `from_tmsao` hold V1.1.1's range."""
     from bcir.frontends.asn1 import compile_module
 
@@ -487,9 +488,12 @@ def _v111(message: dict, direction: str) -> dict:
     The binary rules ARE V1.1.1's value space: `encode_binary` holds every width and bound the
     presentation language states -- each fixed-width integer's range, IntX's 56 bits, every
     opaque's size -- so a transcription value it writes is a V1.1.1 value. The TMSAO module's
-    shaped integers are extensible, and BCIR reads an extensible constraint by its root (the
-    frontend keeps no AdditionalElementSetSpec, X.680 §49.4), so that module admits any
-    integer there: protocolVersion 300 in `SecuredMessagePer`, a negative itsAid anywhere.
+    shaped integers are extensible, and every BCIR codec keeps the relay posture for an
+    extensible constraint (docs/BCIR_LANGREF.md §17.3): it admits any value of the parent type,
+    so that module's codecs admit any integer there -- protocolVersion 300 in
+    `SecuredMessagePer`, a negative itsAid anywhere. The module states V1.1.1's range all the
+    same: each shaped integer's root and additional set together are that range
+    (`Extensible.known`), and this check is what holds a value to it.
     Without this check `from_tmsao` mapped such a value to a transcription value no V1.1.1
     encoder writes and `to_tmsao` carried one in -- a bijection only on the values the
     fixtures happen to use. Both directions hold it, so the mapping is a bijection between

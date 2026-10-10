@@ -246,8 +246,8 @@
     {
       "expects": "test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
       "label": "RV17 the shared predicate gives an absent bracket's DEFAULT members nothing",
-      "new": "        for member in () if comp.group is not None else (comp,):\n",
-      "old": "        for member in comp.group if comp.group is not None else (comp,):\n",
+      "new": "    for member in tuple(additions):\n",
+      "old": "    for member in flat_components(tuple(additions)):\n",
       "path": "bcir/asn1/schema.py"
     },
     {

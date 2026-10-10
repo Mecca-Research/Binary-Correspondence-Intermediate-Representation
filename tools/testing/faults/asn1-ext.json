@@ -1,0 +1,217 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_asn1_cgen:_CC",
+    "bcir.tests.test_asn1_oer:test_an_absent_bracket_leaves_its_default_members_at_their_defaults_on_every_rule",
+    "bcir.tests.test_asn1_oer:test_a_version_bracket_is_flat_on_ber_and_der",
+    "bcir.tests.test_asn1_oer:test_the_annex_a4_record_is_flat_on_der_in_the_definitions_order",
+    "bcir.tests.test_asn1_oer:test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+    "bcir.tests.test_asn1_oer:test_a_jer_instruction_on_a_bracket_member_reaches_it_through_the_flat_view",
+    "bcir.tests.test_asn1_oer:test_a_bracket_member_is_an_extension_addition_on_jer_array_and_canonical_xer",
+    "bcir.tests.test_asn1_oer:test_a_bracket_member_separates_no_unwrapped_alternatives",
+    "bcir.tests.test_asn1_constraints:test_an_extensible_constraint_keeps_its_additional_set",
+    "bcir.tests.test_asn1_constraints:test_every_rule_encodes_an_extensible_integer_as_if_its_additions_were_not_written",
+    "bcir.tests.test_asn1_cgen:test_an_extensible_integers_additions_move_no_generated_octet",
+    "bcir.tests.test_its_security:test_each_shaped_integers_root_and_additions_are_v111s_range"
+  ],
+  "faults": [
+    {
+      "label": "BK1 the typed SEQUENCE encoder reads a bracket as one nested component",
+      "expects": "test_a_version_bracket_is_flat_on_ber_and_der",
+      "path": "bcir/asn1/schema.py",
+      "old": "        # A version bracket's members are components of this SEQUENCE (X.690 \u00a78.9.2).\n        components = flat_components(self.components)\n",
+      "new": "        # A version bracket's members are components of this SEQUENCE (X.690 \u00a78.9.2).\n        components = self.components\n"
+    },
+    {
+      "label": "BK2 the typed SEQUENCE decoder reads a bracket as one nested component",
+      "expects": "test_a_version_bracket_is_flat_on_ber_and_der",
+      "path": "bcir/asn1/schema.py",
+      "old": "        index = 0\n        for comp in flat_components(self.components):\n",
+      "new": "        index = 0\n        for comp in self.components:\n"
+    },
+    {
+      "label": "BK3 the typed SET encoder reads a bracket as one nested component",
+      "expects": "test_a_version_bracket_is_flat_on_ber_and_der",
+      "path": "bcir/asn1/schema.py",
+      "old": "        # A version bracket's members are components of this SET (X.690 \u00a78.11.2).\n        components = flat_components(self.components)\n",
+      "new": "        # A version bracket's members are components of this SET (X.690 \u00a78.11.2).\n        components = self.components\n"
+    },
+    {
+      "label": "BK4 the typed SET decoder reads a bracket as one nested component",
+      "expects": "test_a_version_bracket_is_flat_on_ber_and_der",
+      "path": "bcir/asn1/schema.py",
+      "old": "        out: dict[str, object] = {}\n        for comp in flat_components(self.components):\n",
+      "new": "        out: dict[str, object] = {}\n        for comp in self.components:\n"
+    },
+    {
+      "label": "BK5 a bracket's mandatory member stays mandatory with its bracket absent",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "    return replace(member, extension=True, optional=member.optional or required, origin=member)\n",
+      "new": "    return replace(member, extension=True, optional=member.optional, origin=member)\n"
+    },
+    {
+      "label": "BK6 a carried bracket is never held to its mandatory members",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "        if not carried:\n",
+      "new": "        if True:\n"
+    },
+    {
+      "label": "BK7 a member at its DEFAULT carries its bracket",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "            m.name in value and not (m.has_default and value[m.name] == m.default)\n",
+      "new": "            m.name in value\n"
+    },
+    {
+      "label": "BK8 the typed encoder skips the bracket check",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "        # A version bracket's members are components of this SEQUENCE (X.690 \u00a78.9.2).\n        components = flat_components(self.components)\n        unknown = set(value) - {c.name for c in components}\n        if unknown:\n            raise Asn1Error(f\"{self.name}: unknown component(s) {sorted(unknown)}\")\n        violation = bracket_violation(self.name, self.components, value)\n",
+      "new": "        # A version bracket's members are components of this SEQUENCE (X.690 \u00a78.9.2).\n        components = flat_components(self.components)\n        unknown = set(value) - {c.name for c in components}\n        if unknown:\n            raise Asn1Error(f\"{self.name}: unknown component(s) {sorted(unknown)}\")\n        violation = None\n"
+    },
+    {
+      "label": "BK9 the typed SEQUENCE decoder skips the bracket check",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/schema.py",
+      "old": "                f\"{self.name}: {len(children) - index} unexpected trailing component(s)\", tlv.offset\n            )\n        violation = bracket_violation(self.name, self.components, out)\n",
+      "new": "                f\"{self.name}: {len(children) - index} unexpected trailing component(s)\", tlv.offset\n            )\n        violation = None\n"
+    },
+    {
+      "label": "BK10 the JER encoder skips the bracket check",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/jer.py",
+      "old": "        raise Asn1Error(f\"{kind.name}: unknown component(s) {sorted(unknown)}\")\n    violation = bracket_violation(kind.name, kind.components, value)\n    if violation:\n        raise Asn1Error(violation)\n    members: list[str] = []\n",
+      "new": "        raise Asn1Error(f\"{kind.name}: unknown component(s) {sorted(unknown)}\")\n    members: list[str] = []\n"
+    },
+    {
+      "label": "BK11 the JER decoder skips the bracket check",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/jer.py",
+      "old": "            raise Asn1Error(f\"{kind.name}: mandatory component {comp.name!r} is missing\")\n    violation = bracket_violation(kind.name, kind.components, out)\n",
+      "new": "            raise Asn1Error(f\"{kind.name}: mandatory component {comp.name!r} is missing\")\n    violation = None\n"
+    },
+    {
+      "label": "BK12 the XER encoder skips the bracket check",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/xer.py",
+      "old": "    violation = bracket_violation(kind.name, kind.components, value)\n    if violation:\n        raise Asn1Error(violation)\n    parts: list[str] = []\n",
+      "new": "    parts: list[str] = []\n"
+    },
+    {
+      "label": "BK13 the XER decoder skips the bracket check",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/xer.py",
+      "old": "    violation = bracket_violation(kind.name, kind.components, out)\n    if violation:\n        raise reader.error(violation)\n",
+      "new": ""
+    },
+    {
+      "label": "BK14 PER takes a bracket's pseudo-name as a component",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/per.py",
+      "old": "    known = {comp.name for comp in flat_components(root + additions)}\n",
+      "new": "    known = {comp.name for comp in flat_components(root + additions)} | {c.name for c in additions}\n"
+    },
+    {
+      "label": "BK15 OER takes a bracket's pseudo-name as a component",
+      "expects": "test_a_bracket_is_absent_whole_or_present_with_its_mandatory_members_on_every_rule",
+      "path": "bcir/asn1/oer.py",
+      "old": "    known = {c.name for c in flat_components(root + additions)}\n",
+      "new": "    known = {c.name for c in flat_components(root + additions)} | {c.name for c in additions}\n"
+    },
+    {
+      "label": "BK16 JER looks an instruction on a bracket member's copy up under the copy",
+      "expects": "test_a_jer_instruction_on_a_bracket_member_reaches_it_through_the_flat_view",
+      "path": "bcir/asn1/jer.py",
+      "old": "        return self._by_id.get(id(_filed_under(target)), {}).get(category)\n",
+      "new": "        return self._by_id.get(id(target), {}).get(category)\n"
+    },
+    {
+      "label": "BK17 the flat view is made afresh on every call",
+      "expects": "test_a_jer_instruction_on_a_bracket_member_reaches_it_through_the_flat_view",
+      "path": "bcir/asn1/schema.py",
+      "old": "            out.extend(comp.flat)\n",
+      "new": "            out.extend(_as_component(m) for m in comp.group)\n"
+    },
+    {
+      "label": "BK18 a bracket member keeps its own extension flag in the flat view",
+      "expects": "test_a_bracket_member_is_an_extension_addition_on_jer_array_and_canonical_xer",
+      "path": "bcir/asn1/schema.py",
+      "old": "    return replace(member, extension=True, optional=member.optional or required, origin=member)\n",
+      "new": "    return replace(member, extension=member.extension, optional=member.optional or required, origin=member)\n"
+    },
+    {
+      "label": "BK19 JER's 19.2.3 reads a bracket's members with their declared optionality",
+      "expects": "test_a_bracket_member_separates_no_unwrapped_alternatives",
+      "path": "bcir/asn1/jer.py",
+      "old": "        for comp in _flatten(kind.components)\n        if not (comp.optional or comp.has_default)\n",
+      "new": "        for comp in (m for c in kind.components for m in (c.group or (c,)))\n        if not (comp.optional or comp.has_default)\n"
+    },
+    {
+      "label": "AD1 the constraint parser drops the additional set",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/frontends/asn1/parser.py",
+      "old": "                additions = self._unions()\n        self.expect_punct(\")\")\n",
+      "new": "                self._unions()\n        self.expect_punct(\")\")\n"
+    },
+    {
+      "label": "AD2 the value-set parser drops the additional set",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/frontends/asn1/parser.py",
+      "old": "                additions = self._unions()  # \u00a749.4 AdditionalElementSetSpec\n",
+      "new": "                self._unions()  # \u00a749.4 AdditionalElementSetSpec\n"
+    },
+    {
+      "label": "AD3 an extensible constraint prints without its additions",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/asn1/constraints.py",
+      "old": "        return f\"({root}, ..., {str(self.additions).strip('()')})\"\n",
+      "new": "        return f\"({root}, ...)\"\n"
+    },
+    {
+      "label": "AD4 reference resolution leaves the additions unresolved",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/asn1/constraints.py",
+      "old": "            additions = None if node.additions is None else go(node.additions, context)\n",
+      "new": "            additions = node.additions\n"
+    },
+    {
+      "label": "AD5 the reference walk skips the additions",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/asn1/constraints.py",
+      "old": "            walk(node.root)\n            if node.additions is not None:\n                walk(node.additions)\n",
+      "new": "            walk(node.root)\n"
+    },
+    {
+      "label": "AD6 an encoder's permits enforces the root and the additions",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/asn1/constraints.py",
+      "old": "        return True\n\n    def known(self, value) -> bool:\n",
+      "new": "        return self.known(value)\n\n    def known(self, value) -> bool:\n"
+    },
+    {
+      "label": "AD7 known ignores the additions",
+      "expects": "test_an_extensible_constraint_keeps_its_additional_set",
+      "path": "bcir/asn1/constraints.py",
+      "old": "            self.additions is not None and self.additions.permits(value)\n",
+      "new": "            False and self.additions is not None and self.additions.permits(value)\n"
+    },
+    {
+      "label": "AD8 PER sees the additions as part of the root",
+      "expects": "test_every_rule_encodes_an_extensible_integer_as_if_its_additions_were_not_written",
+      "path": "bcir/asn1/constraints.py",
+      "old": "        inner, _ = _root_bounds(constraint.root, dimension)\n        return inner, True\n",
+      "new": "        whole = constraint.root if constraint.additions is None else Union((constraint.root, constraint.additions))\n        inner, _ = _root_bounds(whole, dimension)\n        return inner, True\n"
+    },
+    {
+      "label": "AD9 the generated codecs check the additions as the value set",
+      "expects": "test_an_extensible_integers_additions_move_no_generated_octet",
+      "path": "bcir/asn1/cgen.py",
+      "old": "        if constraint is None or isinstance(constraint, Extensible):\n            return \"\"\n        low, high = constraint.value_bounds()\n",
+      "new": "        if constraint is None or (isinstance(constraint, Extensible) and constraint.additions is None):\n            return \"\"\n        low, high = (constraint.additions if isinstance(constraint, Extensible) else constraint).value_bounds()\n"
+    }
+  ]
+}

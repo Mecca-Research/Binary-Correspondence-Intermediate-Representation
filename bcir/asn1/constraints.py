@@ -279,7 +279,8 @@ class Intersection(Constraint):
 
 @dataclass(frozen=True)
 class Extensible(Constraint):
-    """§49.4 `(0..255, ...)` — a constraint with an extension marker.
+    """§49.4 `(0..255, ...)` — a constraint with an extension marker — and `(0..7, ..., 8..255)`,
+    the same with the AdditionalElementSetSpec after the marker.
 
     This is the one that changes an encoding by *removing* information. X.696 §8.2.2 g)
     makes an extensible subtype constraint **not OER-visible**: the marker says the value
@@ -288,10 +289,18 @@ class Extensible(Constraint):
     unbounded, and `value_bounds`/`size_bounds` say so.
 
     `root` is kept because it is still the value set a *verifier* should check today —
-    only the ENCODER has to ignore it.
+    only the ENCODER has to ignore it — and `additions` for the same reason: this version's
+    value set is the root and the additions together (`known`). No encoder reads the
+    additions: PER encodes a value of them exactly as one beyond them, as an extension against
+    no bounds (X.691 §13.1), and OER, BER/DER, XER and JER read neither half. The codecs keep
+    the RELAY posture (`permits`, docs/BCIR_LANGREF.md §17.3).
     """
 
     root: Constraint
+    #: The AdditionalElementSetSpec (X.680 §49.4), or None when the marker has none. The
+    #: parser used to drop it, so `(0..7, ..., 8..255)` and `(0..7, ...)` were one constraint
+    #: to the model, its printer and every structural key built from it.
+    additions: Constraint | None = None
 
     def value_bounds(self) -> Bounds:
         return UNBOUNDED  # X.696 8.2.2 g)
@@ -303,12 +312,24 @@ class Extensible(Constraint):
         return None  # X.696 8.2.2 g)
 
     def permits(self, value) -> bool:
-        # An extensible constraint admits its root today and anything a later version
-        # adds, so it cannot refuse a value on the strength of the root alone.
+        # The relay posture (docs/BCIR_LANGREF.md §17.3): an extensible constraint admits its
+        # root, its additions and anything a later version adds, so an encoder cannot refuse
+        # a value on the strength of this version's sets -- a relay re-encodes values it
+        # decoded from a newer peer.
         return True
 
+    def known(self, value) -> bool:
+        """Whether `value` is in this version's value set, the root and the additions together:
+        the question a verifier asks of a value, and one no encoder does (`permits`)."""
+        return self.root.permits(value) or (
+            self.additions is not None and self.additions.permits(value)
+        )
+
     def __str__(self) -> str:
-        return f"({str(self.root).strip('()')}, ...)"
+        root = str(self.root).strip("()")
+        if self.additions is None:
+            return f"({root}, ...)"
+        return f"({root}, ..., {str(self.additions).strip('()')})"
 
 
 def _root_bounds(constraint: Constraint, dimension: str) -> tuple[Bounds, bool]:
@@ -546,6 +567,8 @@ def references(constraint: Constraint | None) -> tuple[str, ...]:
                 walk(part)
         elif isinstance(node, Extensible):
             walk(node.root)
+            if node.additions is not None:
+                walk(node.additions)
 
     walk(constraint)
     return tuple(found)
@@ -592,7 +615,10 @@ def resolve_references(constraint: Constraint | None, lookup, subtype=None) -> C
             return type(node)(parts)
         if isinstance(node, Extensible):
             root = go(node.root, context)
-            return node if root is node.root else Extensible(root)
+            additions = None if node.additions is None else go(node.additions, context)
+            if root is node.root and additions is node.additions:
+                return node
+            return Extensible(root, additions)
         return node
 
     return None if constraint is None else go(constraint, "value")

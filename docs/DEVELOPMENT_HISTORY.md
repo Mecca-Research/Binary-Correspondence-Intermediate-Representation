@@ -2421,13 +2421,79 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     V1.1.1 encoder writes. Both directions now hold V1.1.1's range through the binary rules' own
     bounds, and the module header and the study say the bijection is between V1.1.1's values and
     their images. Keeping the additional set in the constraint model decides BCIR's posture for
-    every extensible constraint, not this module's, and is a follow-up of its own.
+    every extensible constraint, not this module's, and is a follow-up of its own (closed by
+    ASN1-EXT, below).
   - Recorded, not changed: the typed BER/DER rail treats a version bracket as one OPTIONAL
     component of its own (a nested SEQUENCE named `[[n]]`), so a value with the bracket's members
     flat -- the form PER, OER, JER and XER read -- is refused by its encoder and decoded without
-    them. A follow-up of its own.
+    them. A follow-up of its own (closed by ASN1-EXT, below).
   - RED: 19 more faults in `tools/testing/faults/its.json` (48 in all), each caught by its own
     witness.
+  ASN1-EXT (2026-10-10): REVIEW-812b's two follow-ups -- version brackets on the typed BER/DER
+  rail, and the additional set of an extensible constraint.
+  - A version bracket is flat on every rule but PER and OER. X.690 has no notion of a bracket:
+    §8.9.2 encodes one value per component type the definition lists, and a bracket lists its
+    members as component types of the enclosing SEQUENCE or SET; only X.691 §19.9 and X.696 wrap
+    it into one open type. The typed rail encoded `[[ c, d ]]` as a nested SEQUENCE named `[[n]]`,
+    refused `{"a": 1, "d": 3}` by name and decoded without the bracket's DEFAULT, and SET did the
+    same. One predicate, `schema.flat_components`, lists a SEQUENCE's or SET's components with
+    each bracket's members in its place: JER and XER had a copy each, PER and OER expanded the
+    members inline for their unknown-name check, and the typed rail had none. The ITU texts could
+    not be fetched here (the organization's proxy policy refuses itu.int), so the DER is checked
+    against two independent codecs, asn1tools 0.169.0 and pycrate 0.8.1, which agree on every
+    bracket vector, X.691 Annex A.4's record included. Where they part -- a root component after
+    the extension-marker pair, which asn1tools moves before the additions -- this rail keeps the
+    definition's order, with pycrate and §8.9.2.
+  - A bracket is absent whole or present with its mandatory members: the lowering makes the
+    bracket OPTIONAL, and X.691 §19.9 encodes a present one as a SEQUENCE of its members. JER's
+    and XER's copies of the flattening dropped that optionality, so `SEQUENCE { a, ..., [[ d
+    INTEGER, e BOOLEAN OPTIONAL ]] }` without its bracket -- a value PER, OER and both independent
+    codecs read -- was refused there. `flat_components` lists a mandatory member as OPTIONAL, and
+    `schema.bracket_violation` holds a carried bracket to its mandatory members on the typed rail,
+    JER and XER, on encode and on decode; a member at its DEFAULT does not carry its bracket
+    (canonical XER writes it out for an absent one). The bracket's pseudo-name (`[[2]]`) is no
+    component on any rule: PER and OER let it through, ignored. JER's X.697 §19.2.3 test, which
+    tells an UNWRAPPED choice's object-producing alternatives apart by a mandatory member name,
+    reads the same flat view: a bracket's mandatory member separates nothing, so an object that
+    is one alternative with its bracket absent and another without an OPTIONAL member is
+    reported ambiguous, where it was read as the second without a word.
+  - A bracket's members are extension additions of the enclosing type -- X.680 §25.1 lists a
+    bracket among the ExtensionAdditions -- and the flattening now says so. It listed each member
+    with its own `extension`, False inside a bracket, so JER's ARRAY (X.697 §27.2.1: the root,
+    then the additions) put `SEQUENCE { a, ..., b, [[ c, d ]], f }`'s `c` and `d` among the
+    root (`[a, c, d, b, f]`) and a root component after the marker pair behind a bracket;
+    canonical XER (X.693 §9.6.2: a SET's root sorted by tag, then the additions in the
+    definition's order) sorted a tagged bracket member into the root, so one addition went out
+    in two orders with and without its bracket; and X.697 §14.2 let a NULL bracket member under
+    ARRAY through, where it refuses the same plain addition. These were older than this slice.
+  - The flat view keeps a member's identity. JER files an encoding instruction by the object it
+    is assigned to, and assigns a NAME to a component (X.697 §9.9); the first cut of this slice
+    listed a mandatory member as a fresh OPTIONAL copy on every call, so a NAME on it was looked
+    up under another object and dropped, and the decoder agreed, so the round trip passed. The
+    flat members are made once per bracket (`Component.flat`), a copy leads back to its member
+    (`Component.origin`), and `JerInstructions` files a copy's instructions under that member.
+  - Recorded, not changed: a mandatory extension addition outside any bracket (`SEQUENCE { a,
+    ..., b INTEGER }` without `b`) is accepted by PER and OER and refused by DER, JER and XER --
+    the same question outside brackets. Whether a value of an earlier version is a value of the
+    type is a posture for every rule, and a follow-up of its own.
+  - An extensible constraint keeps its additional set, and the codecs keep the relay posture
+    (LangRef §17.3). Both parser sites dropped the AdditionalElementSetSpec, so `(0..7, ...,
+    8..255)` and `(0..7, ...)` were one constraint to the model, to the printer (the module did
+    not round-trip) and to every structural key built from a constraint (two instances of a
+    parameterized type that differed only in their additions were one), and a name in the
+    additions was never looked up. `Extensible.additions` carries it, the printer writes it,
+    reference resolution resolves it or refuses it, and `known` answers this version's value
+    set. No encoding moves: PER encodes a value of the additions as one beyond them (X.691
+    §13.1), OER sees no extensible constraint (X.696 §8.2.2 g), and every rule, the generated C
+    codecs included, encodes `(0..7, ..., 8..255)` exactly as `(0..7, ...)`. Enforcing the root
+    and the additions was the alternative, and it is refused: `(0..7, ...)` would then have to
+    refuse everything outside its root, and a relay could not re-encode a later version's value.
+    The TMSAO module's shaped integers state V1.1.1's range in the schema now: each one's root and
+    additions are exactly that range.
+  - RED: `tools/testing/faults/asn1-ext.json` holds 28 faults (BK1-BK19 on the brackets, AD1-AD9
+    on the additional set), each caught by its own witness. `its.json`'s RV17 -- the shared
+    predicate giving a bracket's DEFAULT members nothing -- is re-anchored on `flat_components`,
+    which `addition_defaults` now reads, and still fires (the table gate found the drift).
   QUAL (2026-10-10): qualification on a concrete target -- one BCIR-native model, built from the
   checkout, run through the whole stack on real hardware (`docs/BCIR_QUALIFICATION.md`).
   - QUAL-1 made a decoder a BCIR program: `decoder_program` writes the greedy generation as one

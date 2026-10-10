@@ -92,6 +92,10 @@ from .schema import (
     _resolve_open_type,
     through,
 )
+
+# X.680 §25.1: a version bracket's members are each their own XML element (`flat_components`).
+from .schema import bracket_violation
+from .schema import flat_components as _flatten
 from .tags import Asn1Error, TagClass, Universal
 from .tlv import decode_one, encode_tlv
 from .values import BitString, is_ascii_digits, is_number_form
@@ -455,22 +459,6 @@ def _canonical_key(comp: Component) -> tuple[int, int]:
 # --- the component list ------------------------------------------------------------------
 
 
-def _flatten(components: tuple[Component, ...]) -> tuple[Component, ...]:
-    """Expand X.680 §25.1 version brackets into their members.
-
-    A `[[ a, b ]]` group is one bit in PER's addition bitmap (X.691 §19.9) and therefore
-    one component in the type model. XER has no such wrapper — each member is its own XML
-    element — so the bracket is transparent here and only its members are encoded.
-    """
-    out: list[Component] = []
-    for comp in components:
-        if comp.group is not None:
-            out.extend(comp.group)
-        else:
-            out.append(comp)
-    return tuple(out)
-
-
 def _ordered(kind, rules: XerRules) -> tuple[Component, ...]:
     """The order the components are emitted in.
 
@@ -738,6 +726,9 @@ def _components_value(kind, value, rules: XerRules, names: XerTypeNames | None) 
     unknown = {name for name in value if name not in known and not name.endswith(".resolved")}
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown component(s) {sorted(unknown)}")
+    violation = bracket_violation(kind.name, kind.components, value)
+    if violation:
+        raise Asn1Error(violation)
     parts: list[str] = []
     for comp in components:
         if comp.name in value:
@@ -1430,6 +1421,9 @@ def _finish_components(kind, out: dict, reader: _Reader) -> dict:
             raise reader.error(
                 f"{kind.name}: mandatory component {comp.name!r} is missing (X.680 25.20)"
             )
+    violation = bracket_violation(kind.name, kind.components, out)
+    if violation:
+        raise reader.error(violation)
     return out
 
 

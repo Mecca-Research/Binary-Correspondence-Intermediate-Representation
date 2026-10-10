@@ -162,9 +162,31 @@ def test_the_tmsao_mapping_is_a_bijection_on_the_envelopes():
         assert its.from_tmsao(its.to_tmsao(value)) == value, profile
 
 
+def test_each_shaped_integers_root_and_additions_are_v111s_range():
+    """The TMSAO module states V1.1.1's range in the schema: each shaped integer's root and
+    additional set together are exactly the range the binary rules hold, at both edges
+    (`Extensible.known`). The frontend used to drop the additional set, so the model held the
+    root alone; the codecs still admit past the range (the relay posture, LangRef §17.3), and the
+    mapping is what refuses a value outside it."""
+    types = its.tmsao().module.types
+    ranges = {
+        "IntX": (0, 2**56 - 1),
+        "SmallUint8": (0, 2**8 - 1),
+        "ShapedTime64": (0, 2**64 - 1),
+        "ShapedMessageType": (0, 2**16 - 1),
+    }
+    for name, (low, high) in ranges.items():
+        constraint = types[name].constraint
+        assert constraint.additions is not None, name
+        known = [constraint.known(v) for v in (low - 1, low, high, high + 1)]
+        assert known == [False, True, True, False], (name, known)
+        assert constraint.permits(high + 1) and constraint.permits(low - 1), name
+
+
 def test_the_tmsao_mapping_refuses_a_value_v111_cannot_carry():
-    """A shaped integer is extensible, and BCIR reads an extensible constraint by its root, so
-    the TMSAO module admits integers V1.1.1 has no spelling for -- protocolVersion 300 in
+    """A shaped integer is extensible, and every BCIR codec admits any value of an extensible
+    constraint (the relay posture), so the TMSAO codecs admit integers V1.1.1 has no spelling for
+    -- protocolVersion 300 in
     `SecuredMessagePer`, a negative itsAid anywhere -- and `from_tmsao` mapped them to
     transcription values no V1.1.1 encoder writes. Both directions now hold V1.1.1's range
     (the binary rules' bounds), so the mapping is a bijection between V1.1.1's values and

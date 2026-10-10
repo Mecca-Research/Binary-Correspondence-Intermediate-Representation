@@ -93,6 +93,10 @@ from .schema import (
     resolve,
     through,
 )
+
+# X.680 §25.1: a version bracket's members are each their own JSON member (`flat_components`).
+from .schema import bracket_violation
+from .schema import flat_components as _flatten
 from .tags import Asn1Error, Universal
 from .tlv import decode_one, encode_tlv
 from .values import BitString, is_number_form
@@ -270,6 +274,7 @@ class JerInstructions:
         happen. §13.2: a negating instruction removes the instruction of that category and
         never becomes part of the set itself.
         """
+        target = _filed_under(target)
         current = self._by_id.setdefault(id(target), {})
         if not any(target is kept for kept in self._keep):
             self._keep.append(target)
@@ -287,10 +292,20 @@ class JerInstructions:
         return self
 
     def get(self, target, category: type):
-        return self._by_id.get(id(target), {}).get(category)
+        return self._by_id.get(id(_filed_under(target)), {}).get(category)
 
     def has(self, target, category: type) -> bool:
         return self.get(target, category) is not None
+
+
+def _filed_under(target):
+    """The object an instruction on `target` is filed under. A version bracket's member as the
+    enclosing type sees it may be a copy (`flat_components`); its instructions are filed under
+    the member the bracket holds (`Component.origin`), the one a schema names -- otherwise a
+    NAME on a mandatory member would be filed under one object and looked up under another."""
+    if isinstance(target, Component) and target.origin is not None:
+        return target.origin
+    return target
 
 
 def _instruction(opts: "_Opts", target, category: type):
@@ -740,18 +755,6 @@ def _oid_text(kind: Primitive, value) -> str:
     return ".".join(str(arc) for arc in arcs)
 
 
-def _flatten(components: tuple[Component, ...]) -> tuple[Component, ...]:
-    """X.680 §25.1 version brackets are transparent to JER: each member is its own JSON
-    member, exactly as each is its own XML element."""
-    out: list[Component] = []
-    for comp in components:
-        if comp.group is not None:
-            out.extend(comp.group)
-        else:
-            out.append(comp)
-    return tuple(out)
-
-
 def _encode_components(kind, value, opts: "_Opts") -> str:
     """§27.3 for a sequence, and §29 for a set — "encoded as if the type had been declared
     a sequence type".
@@ -769,6 +772,9 @@ def _encode_components(kind, value, opts: "_Opts") -> str:
     unknown = {n for n in value if n not in known and not n.endswith(".resolved")}
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown component(s) {sorted(unknown)}")
+    violation = bracket_violation(kind.name, kind.components, value)
+    if violation:
+        raise Asn1Error(violation)
     members: list[str] = []
     for comp in components:
         if comp.name in value:
@@ -806,6 +812,9 @@ def _encode_array(kind, value, opts: "_Opts") -> str:
     an optional component that could *itself* produce `null`: the two would be
     indistinguishable, and the array has no names to tell them apart.
     """
+    violation = bracket_violation(kind.name, kind.components, value)
+    if violation:
+        raise Asn1Error(violation)
     components = _flatten(kind.components)
     root = [comp for comp in components if not comp.extension]
     additions = [comp for comp in components if comp.extension]
@@ -1243,6 +1252,9 @@ def _decode_components(node, kind, opts: "_Opts") -> dict:
             out[comp.name] = comp.default  # X.680 §25.12
         elif not comp.optional:
             raise Asn1Error(f"{kind.name}: mandatory component {comp.name!r} is missing")
+    violation = bracket_violation(kind.name, kind.components, out)
+    if violation:
+        raise Asn1Error(violation)
     return out
 
 
@@ -1273,6 +1285,9 @@ def _decode_array(node, kind, opts: "_Opts") -> dict:
             out[comp.name] = comp.default
         elif not comp.optional:
             raise Asn1Error(f"{kind.name}: mandatory component {comp.name!r} is missing (27.2.1)")
+    violation = bracket_violation(kind.name, kind.components, out)
+    if violation:
+        raise Asn1Error(violation)
     return out
 
 

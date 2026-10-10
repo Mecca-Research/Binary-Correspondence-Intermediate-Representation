@@ -341,3 +341,107 @@ def test_a_constrained_type_is_a_claim_geometry():
     low, high = effective_value_constraint(ValueRange(0, 65535))
     assert (low, high) == (0, 65535)
     assert (high - low + 1).bit_length() - 1 == 16
+
+
+_ADDITIONS = """T DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+  ub INTEGER ::= 255
+  X ::= INTEGER (0..7, ..., 8..ub)
+  Y ::= INTEGER (0..7, ...)
+  S ::= OCTET STRING (SIZE (8, ..., 9..20))
+  Bounded{INTEGER:VS} ::= INTEGER (VS)
+  A ::= Bounded{{0..7, ..., 8..255}}
+  B ::= Bounded{{0..7, ..., 8..100}}
+END"""
+
+
+def test_an_extensible_constraint_keeps_its_additional_set():
+    """X.680 §49.4's AdditionalElementSetSpec -- the `8..255` of `(0..7, ..., 8..255)` -- is part of
+    the constraint. Both parser sites dropped it, so the model, the printer and every structural
+    key built from a constraint saw `(0..7, ...)`: the module did not round-trip, a name in the
+    additions was never looked up, and two instances of a parameterized type that differ only in
+    their additions were one. Now the model carries it, the walkers resolve and report the names
+    in it, and this version's value set (root and additions) is what `known` answers -- while
+    nothing a codec reads moves: the root bounds PER sees, the absent bounds OER sees, and §50.11's
+    serial application, which drops the marker and the additions together."""
+    from bcir.asn1.constraints import (
+        ValueReference,
+        references,
+        resolve_references,
+        root_value_bounds,
+        without_extension,
+    )
+
+    node = parse_module(_ADDITIONS, "t.asn1")
+    printed = print_module(node)
+    assert "(0..7, ..., 8..ub)" in printed and "(SIZE (8, ..., 9..20))" in printed, printed
+    assert parse_module(printed, "t.asn1<printed>") == node  # the round-trip law
+    t = compile_module(_ADDITIONS, "t.asn1").module.types
+    x, y = t["X"].constraint, t["Y"].constraint
+    assert x == Extensible(ValueRange(0, 7), ValueRange(8, 255)), x  # `ub`, resolved
+    assert y == Extensible(ValueRange(0, 7)) and x != y
+    assert str(t["A"].constraint) == "(0..7, ..., 8..255)"
+    assert str(t["B"].constraint) == "(0..7, ..., 8..100)"
+    assert t["S"].constraint == Size(Extensible(SingleValue(8), ValueRange(9, 20)))
+    assert [x.known(v) for v in (0, 7, 8, 255, 256, -1)] == [True] * 4 + [False] * 2
+    assert [y.known(v) for v in (7, 8)] == [True, False]
+    assert all(c.permits(v) for c in (x, y) for v in (3, 9, 300, -1))  # the relay posture
+    assert root_value_bounds(x) == root_value_bounds(y) == ((0, 7), True)
+    assert x.value_bounds() == y.value_bounds() == (None, None)
+    assert without_extension(x) == without_extension(y) == ValueRange(0, 7)
+    named = Extensible(ValueRange(0, 7), ValueRange(8, ValueReference("ub")))
+    assert references(named) == ("ub",)
+    assert resolve_references(named, lambda reference, context: 255) == x
+    try:
+        compile_module("T DEFINITIONS ::= BEGIN\n Z ::= INTEGER (0..7, ..., 8..nope)\nEND", "t")
+        raise AssertionError("a name in the additions was never looked up")
+    except Asn1SemanticError as error:
+        assert "nope" in str(error), error
+
+
+def test_every_rule_encodes_an_extensible_integer_as_if_its_additions_were_not_written():
+    """The relay posture (docs/BCIR_LANGREF.md §17.3), on every rule: a value in the root (3), in
+    the additions (9, 255) and beyond both (300, -1) encodes and reads back, and `X`, whose
+    constraint writes the additions, encodes each exactly as `Y`, whose constraint does not.
+    PER encodes a value of the additions as one beyond them -- the extension bit set, no bounds
+    (X.691 §13.1) -- OER sees no extensible constraint (X.696 §8.2.2 g), and BER/DER, XER and JER
+    read no value constraint at all."""
+    from bcir.asn1.jer import decode_jer, encode_jer
+    from bcir.asn1.oer import OerRules
+    from bcir.asn1.per import PerRules, PerVariant, decode_per, encode_per
+    from bcir.asn1.tlv import decode_one
+    from bcir.asn1.xer import decode_xer, encode_xer
+
+    source = """T DEFINITIONS AUTOMATIC TAGS ::= BEGIN
+      X ::= SEQUENCE { v INTEGER (0..7, ..., 8..255) }
+      Y ::= SEQUENCE { v INTEGER (0..7, ...) }
+    END"""
+    t = compile_module(source, "t.asn1").module.types
+    rails = [
+        (
+            "DER",
+            lambda k, v: encode_tlv(k.encode(v)),
+            lambda k, o: k.decode(decode_one(o), strictness=Strictness.DER),
+        ),
+        ("JER", encode_jer, lambda k, o: decode_jer(o, k)),
+        ("XER", encode_xer, lambda k, o: decode_xer(o, k)),
+    ]
+    rails += [
+        (f"OER/{r.name}", encode_oer, lambda k, o, r=r: decode_oer(k, o, rules=r)) for r in OerRules
+    ]
+    rails += [
+        (
+            f"PER/{a.name}/{r.name}",
+            lambda k, v, a=a, r=r: encode_per(k, v, variant=a, rules=r),
+            lambda k, o, a=a, r=r: decode_per(o, k, variant=a, rules=r),
+        )
+        for a in PerVariant
+        for r in PerRules
+    ]
+    for name, encode, decode in rails:
+        for v in (3, 9, 255, 300, -1):
+            value = {"v": v}
+            octets = encode(t["X"], value)
+            assert octets == encode(t["Y"], value), (name, v)
+            assert decode(t["X"], octets) == value, (name, v)
+    extended = {v: bool(encode_per(t["X"], {"v": v})[0] & 0x80) for v in (3, 9, 300)}
+    assert extended == {3: False, 9: True, 300: True}, extended

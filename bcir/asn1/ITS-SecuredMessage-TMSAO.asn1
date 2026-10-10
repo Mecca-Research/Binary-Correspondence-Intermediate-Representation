@@ -20,12 +20,13 @@
 -- value inside the root and a length-prefixed form outside it; OER does not see extensible
 -- constraints at all and spells such a value as a length and its octets.
 --
--- The converse does not hold in the schema. A shaped integer is extensible, and BCIR reads an
--- extensible constraint by its root (the frontend keeps no AdditionalElementSetSpec), so this
--- module, and every codec generated from it, admits any integer there, past V1.1.1's range on
--- either side. `to_tmsao` and `from_tmsao` hold V1.1.1's range instead: each refuses a value
--- the V1.1.1 binary rules cannot carry, so a value of this module outside V1.1.1's image is
--- refused rather than mapped.
+-- The converse does not hold in the codecs. A shaped integer is extensible, and every BCIR
+-- codec keeps the relay posture for an extensible constraint: it admits the values a later
+-- version may add, so every codec generated from this module admits any integer there, past
+-- V1.1.1's range on either side. The schema states V1.1.1's range all the same, since each
+-- shaped integer's root and additional set together are that range. `to_tmsao` and
+-- `from_tmsao` hold it: each refuses a value the V1.1.1 binary rules cannot carry, so a value
+-- of this module outside V1.1.1's image is refused rather than mapped.
 --
 -- IntX is shaped everywhere: root 0..127, the values IntX itself spells in one octet, so PER
 -- spends eight bits on a small one as IntX does and OER two octets, as for (0..MAX).

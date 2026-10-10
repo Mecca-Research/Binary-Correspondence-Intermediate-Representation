@@ -43,6 +43,7 @@ from .schema import (
     Set,
     SetOf,
     addition_defaults,
+    flat_components,
     through,
 )
 from .tags import Tag, Universal
@@ -1003,10 +1004,7 @@ def _encode_sequence(writer: BitWriter, kind, value: dict, rules: PerRules) -> N
     if not isinstance(value, dict):
         raise Asn1Error(f"{kind.name}: expected a mapping")
     root, additions = _split_root(kind)
-    known = {comp.name for comp in root + additions}
-    for comp in additions:
-        if comp.group is not None:
-            known.update(member.name for member in comp.group)
+    known = {comp.name for comp in flat_components(root + additions)}
     unknown = set(value) - known
     if unknown:
         raise Asn1Error(f"{kind.name}: unknown components {sorted(unknown)}")
