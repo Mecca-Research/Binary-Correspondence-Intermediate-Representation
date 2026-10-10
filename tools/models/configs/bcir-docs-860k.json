@@ -1,0 +1,57 @@
+{
+  "corpus": {
+    "include": [
+      "docs/*.md",
+      "docs/**/*.md"
+    ],
+    "license": "LicenseRef-BCIR-NC-1.0",
+    "section_marker": "## ",
+    "split_salt": "bcir-docs-v1",
+    "validation_permyriad": 500
+  },
+  "evaluation": {
+    "max_new_tokens": 48,
+    "prompt": "The StreamPack",
+    "validation_batches": 16
+  },
+  "name": "BCIR-Docs-860K",
+  "schema": "bcir.lab_model.v1",
+  "tokenizer": {
+    "kind": "bpe",
+    "min_frequency": 2,
+    "sample_bytes": 786432,
+    "vocab_size": 1024
+  },
+  "train": {
+    "activation_checkpointing": false,
+    "batch_size": 8,
+    "beta1": 0.9,
+    "beta2": 0.95,
+    "checkpoint_every": 300,
+    "context_length": 256,
+    "decoder": {
+      "activation": "silu_gate",
+      "d_ff": 344,
+      "d_model": 128,
+      "n_heads": 4,
+      "n_kv_heads": 2,
+      "n_layers": 4,
+      "rms_norm_eps": 1e-05,
+      "rope_base": 10000.0,
+      "tied_embeddings": true,
+      "vocab_size": 1024
+    },
+    "dtype": "float32",
+    "epsilon": 1e-08,
+    "grad_clip": 1.0,
+    "gradient_accumulation": 1,
+    "learning_rate": 0.003,
+    "min_learning_rate": 0.0003,
+    "optimizer": "adamw",
+    "schema": "bcir.hosted_train.v1",
+    "seed": 1729,
+    "steps": 1200,
+    "warmup_steps": 60,
+    "weight_decay": 0.1
+  }
+}

@@ -77,7 +77,7 @@
     },
     "bcir_models": {
       "class": "hosted_tool",
-      "sources": ["bcir_q8_model.c", "bcir_q4_kernel.c", "bcir_ai_kernels.c", "bcir_llama.c"],
+      "sources": ["bcir_q8_model.c", "bcir_q4_kernel.c", "bcir_ai_kernels.c", "bcir_llama.c", "bcir_decoder_gem.c"],
       "libraries": ["bcir_streampack", "bcir_base"],
       "link": ["m"],
       "options": ["-ffp-contract=off"]
@@ -122,6 +122,12 @@
     "bcir-make": {
       "sources": ["bcir_make.c"],
       "libraries": ["bcir_base"]
+    },
+    "bcir-qualify": {
+      "sources": ["bcir_qualify_cli.c"],
+      "libraries": ["bcir_models", "bcir_asn1", "bcir_streampack", "bcir_base"],
+      "link": ["m"],
+      "options": ["-ffp-contract=off"]
     }
   },
   "harnesses": {
@@ -131,6 +137,7 @@
     "test_execution_plan": {"sources": ["test_execution_plan.c"], "libraries": ["bcir_base"]},
     "test_plan_sign": {"sources": ["test_plan_sign.c"], "libraries": ["bcir_base"]},
     "test_exec": {"sources": ["test_exec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
+    "test_decoder_gem": {"sources": ["test_decoder_gem.c"], "libraries": ["bcir_models"], "options": ["-ffp-contract=off"]},
     "test_encode": {"sources": ["test_encode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_decode": {"sources": ["test_decode.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "test_binrec": {"sources": ["test_binrec.c"], "libraries": ["bcir_streampack", "bcir_base"]},
@@ -169,6 +176,7 @@
   },
   "fuzzers": {
     "fuzz_q8_model": {"sources": ["fuzz_q8_model.c"], "libraries": ["bcir_models"], "max_len": "16384"},
+    "fuzz_decoder_gem": {"sources": ["fuzz_decoder_gem.c"], "libraries": ["bcir_models"], "max_len": "24576"},
     "fuzz_telemetry_frame": {"sources": ["fuzz_telemetry_frame.c"], "libraries": ["bcir_streampack", "bcir_base"]},
     "fuzz_asn1": {"sources": ["fuzz_asn1.c"], "libraries": ["bcir_asn1"], "max_len": "8192"},
     "fuzz_per": {"sources": ["fuzz_per.c"], "libraries": ["bcir_asn1"], "max_len": "4096"},

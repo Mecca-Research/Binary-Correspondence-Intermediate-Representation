@@ -1,0 +1,224 @@
+{
+  "command": [
+    "@python",
+    "tools/testing/check_tests.py",
+    "--require",
+    "bcir.tests.test_c_executor:_CC",
+    "--require",
+    "bcir.tests.test_decoder_gem:_CC",
+    "bcir.tests.test_c_executor:test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+    "bcir.tests.test_c_executor:test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+    "bcir.tests.test_c_executor:test_intra_phase_sort_is_by_claim_id",
+    "bcir.tests.test_c_executor:test_dispatch_order_and_telemetry_match_gem_execute",
+    "bcir.tests.test_decoder_gem:test_the_c_interpreter_is_the_monolithic_runner_bit_for_bit",
+    "bcir.tests.test_decoder_gem:test_the_c_interpreter_counts_the_traffic_the_program_plans",
+    "bcir.tests.test_decoder_gem:test_the_c_interpreter_refuses_what_the_oracle_refuses",
+    "bcir.tests.test_decoder_gem:test_a_c_run_reads_what_it_wrote_or_zeros",
+    "bcir.tests.test_decoder_gem:test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+    "bcir.tests.test_decoder_gem:test_final_is_a_resource_of_its_own_on_the_c_rail",
+    "bcir.tests.test_decoder_program:test_a_program_states_every_operation_of_every_token_once",
+    "bcir.tests.test_decoder_program:test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+    "bcir.tests.test_decoder_program:test_the_oracle_refuses_a_pack_that_is_not_this_models_program",
+    "bcir.tests.test_decoder_program:test_a_run_reads_what_it_wrote_or_zeros",
+    "bcir.tests.test_decoder_program:test_final_is_a_resource_of_its_own",
+    "bcir.tests.test_decoder_program:test_planned_traffic_is_each_claims_operands"
+  ],
+  "faults": [
+    {
+      "label": "QL1 a segment claim id tying the greatest so far is taken as new",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (i == 0 || v.claim_id > seg_max)\n",
+      "new": "    if (i == 0 || v.claim_id >= seg_max)\n"
+    },
+    {
+      "label": "QL2 a segment claim id below the greatest so far is never rescanned",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    else if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))\n",
+      "new": "    else if (0 && segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))\n"
+    },
+    {
+      "label": "QL3 a trace id tying the greatest so far is taken as new",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (i == 0 || cid > trace_max) {\n",
+      "new": "    if (i == 0 || cid >= trace_max) {\n"
+    },
+    {
+      "label": "QL4 a prefetch name equal to the greatest so far sorts after it",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (a[i] != b[i]) return (unsigned char)a[i] > (unsigned char)b[i];\n  return 0;\n",
+      "new": "    if (a[i] != b[i]) return (unsigned char)a[i] > (unsigned char)b[i];\n  return 1;\n"
+    },
+    {
+      "label": "QL5 the trace search does not wrap to the records before the last match",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  for (uint32_t k = 0; k < *next && k < n_trace; k++)\n",
+      "new": "  for (uint32_t k = 0; k < 0u && k < n_trace; k++)\n"
+    },
+    {
+      "label": "QL6 the prefetch search does not wrap to the records before the last match",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  return prefetch_scan(data, body_len, version, pf_start, 0, at->index, name, name_len,\n",
+      "new": "  return 0 && prefetch_scan(data, body_len, version, pf_start, 0, at->index, name, name_len,\n"
+    },
+    {
+      "label": "QL7 a phase id that decreases in pack order still takes the run path",
+      "expects": "test_r10_and_the_dispatch_hold_to_the_pack_laws_in_every_order",
+      "path": "runtime/c/bcir_exec.c",
+      "old": "    if (scratch[i].phase_id < scratch[i - 1].phase_id) runs_ascend = 0;\n",
+      "new": "    if (scratch[i].phase_id < scratch[i - 1].phase_id && 0) runs_ascend = 0;\n"
+    },
+    {
+      "label": "QL8 the run path leaves a phase's claims in pack order",
+      "expects": "test_intra_phase_sort_is_by_claim_id",
+      "path": "runtime/c/bcir_exec.c",
+      "old": "      for (size_t k = i + 1; k < end; k++) {\n",
+      "new": "      for (size_t k = end; k < end; k++) {\n"
+    },
+    {
+      "label": "QL9 the run path counts a phase one claim short",
+      "expects": "test_dispatch_order_and_telemetry_match_gem_execute",
+      "path": "runtime/c/bcir_exec.c",
+      "old": "      phases[np].scheduled = (uint32_t)(end - i);\n",
+      "new": "      phases[np].scheduled = (uint32_t)(end - i - 1u);\n"
+    },
+    {
+      "label": "QL10 every segment's claim id rescans the segments before it",
+      "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (i == 0 || v.claim_id > seg_max)\n",
+      "new": "    if (i == 0)\n"
+    },
+    {
+      "label": "QL11 every prefetch name rescans the names before it",
+      "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "      if (i == 0 || shortlex_after(name, name_len, pf_last, pf_last_len)) {\n",
+      "new": "      if (i == 0) {\n"
+    },
+    {
+      "label": "QL12 every prefetch search starts at the first record",
+      "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  if (prefetch_scan(data, body_len, version, at->pos, at->index, n_pf, name, name_len,\n",
+      "new": "  if (prefetch_scan(data, body_len, version, pf_start, 0, n_pf, name, name_len,\n"
+    },
+    {
+      "label": "QL13 every trace search starts at the first record",
+      "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "  for (uint32_t k = *next; k < n_trace; k++)\n",
+      "new": "  for (uint32_t k = 0; k < n_trace; k++)\n"
+    },
+    {
+      "label": "QL14 every trace id rescans the ids before it",
+      "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+      "path": "runtime/c/bcir_runtime.c",
+      "old": "    if (i == 0 || cid > trace_max) {\n",
+      "new": "    if (i == 0) {\n"
+    },
+    {
+      "label": "QL15 every pack takes the general phase path",
+      "expects": "test_the_r10_walk_and_the_dispatch_cost_linear_in_the_claims",
+      "path": "runtime/c/bcir_exec.c",
+      "old": "  int runs_ascend = 1;\n",
+      "new": "  int runs_ascend = 0;\n"
+    },
+    {
+      "label": "QG1 a run starts from the activations the last run left",
+      "expects": "test_a_c_run_reads_what_it_wrote_or_zeros",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "  clear_activations(g);\n  st = bcir_sp_execute(",
+      "new": "  st = bcir_sp_execute("
+    },
+    {
+      "label": "QG2 FINAL is kept in the workspace's h, where the attention norm writes",
+      "expects": "test_final_is_a_resource_of_its_own_on_the_c_rail",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "  case BCIR_DGEM_RID_FINAL: return g->final_row;",
+      "new": "  case BCIR_DGEM_RID_FINAL: return w->h;"
+    },
+    {
+      "label": "QG3 the claim table is sized from the header before the semantic walk reads the body",
+      "expects": "test_a_count_the_body_does_not_carry_is_refused_before_anything_is_allocated",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "  if (st == BCIR_OK) st = bcir_sp_verify_semantic(pack, len, 0xFFFFFFFFu, 0xFFFFFFFFu);\n",
+      "new": ""
+    },
+    {
+      "label": "QG4 an append may skip a row of its layer's cache",
+      "expects": "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "    if (c->offset != pos || g->kv_rows[c->layer] != pos) return refuse(g, BCIR_DGEM_E_ORDER);",
+      "new": "    if (c->offset != pos) return refuse(g, BCIR_DGEM_E_ORDER);"
+    },
+    {
+      "label": "QG5 the q projection may write any activation",
+      "expects": "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "                  ((slot == BCIR_DGEM_SLOT_WQ && c->wr[0] == BCIR_DGEM_RID_Q) ||",
+      "new": "                  ((slot == BCIR_DGEM_SLOT_WQ) ||"
+    },
+    {
+      "label": "QG6 attention is counted as reading one cache row too few",
+      "expects": "test_the_c_interpreter_counts_the_traffic_the_program_plans",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "    rd = 8u * d + 16u * (uint64_t)(pos + 1u) * kvd;",
+      "new": "    rd = 8u * d + 16u * (uint64_t)pos * kvd;"
+    },
+    {
+      "label": "QG7 an embedding may run out of position order",
+      "expects": "test_the_c_interpreter_refuses_what_the_oracle_refuses",
+      "path": "runtime/c/bcir_decoder_gem.c",
+      "old": "    if (pos != g->next_position || pos >= g->filled) return refuse(g, BCIR_DGEM_E_ORDER);",
+      "new": "    if (pos >= g->filled) return refuse(g, BCIR_DGEM_E_ORDER);"
+    },
+    {
+      "label": "QG8 the oracle scales attention by the model width, not the head width",
+      "expects": "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+      "path": "bcir/frontends/models/decoder_gem.py",
+      "old": "            sc = 1.0 / math.sqrt(dk)",
+      "new": "            sc = 1.0 / math.sqrt(d)"
+    },
+    {
+      "label": "QG9 the oracle's gate multiplies in another order than the reference MLP",
+      "expects": "test_the_oracle_runs_the_pack_as_the_monolithic_decoder_bit_for_bit",
+      "path": "bcir/frontends/models/decoder_gem.py",
+      "old": "            acts[RID_FF] = [g[i] * sigmoid(g[i]) * u[i] for i in range(ff)]",
+      "new": "            acts[RID_FF] = [g[i] * (sigmoid(g[i]) * u[i]) for i in range(ff)]"
+    },
+    {
+      "label": "QG10 the oracle's head reads H",
+      "expects": "test_final_is_a_resource_of_its_own",
+      "path": "bcir/frontends/models/decoder_gem.py",
+      "old": "            acts[RID_LOGITS] = head_logits(acts[RID_FINAL], weights)",
+      "new": "            acts[RID_LOGITS] = head_logits(acts[RID_H], weights)"
+    },
+    {
+      "label": "QG11 the oracle's activations start a run unwritten",
+      "expects": "test_a_run_reads_what_it_wrote_or_zeros",
+      "path": "bcir/frontends/models/decoder_gem.py",
+      "old": "    acts = {rid: [0.0] * n for rid, n in sizes.items()}\n",
+      "new": "    acts = {}\n"
+    },
+    {
+      "label": "QG13 attention's planned work counts one row too few",
+      "expects": "test_a_program_states_every_operation_of_every_token_once",
+      "path": "bcir/frontends/models/decoder_program.py",
+      "old": "_tile(OP_ATTENTION, (RID_QR, kc, vc), (RID_CTX,), 2 * d * (pos + 1), offset=pos)",
+      "new": "_tile(OP_ATTENTION, (RID_QR, kc, vc), (RID_CTX,), 2 * d * pos, offset=pos)"
+    },
+    {
+      "label": "QG14 the traffic model has attention read one cache row too few",
+      "expects": "test_planned_traffic_is_each_claims_operands",
+      "path": "bcir/frontends/models/decoder_program.py",
+      "old": "        rows = claim.offset + 1\n",
+      "new": "        rows = claim.offset\n"
+    }
+  ]
+}

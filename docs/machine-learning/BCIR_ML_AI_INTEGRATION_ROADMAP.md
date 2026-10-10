@@ -407,6 +407,16 @@ The next slices are ordered and not yet claimed as landed:
    `Mecca-Research/BCIR-Models` under BCIR-NC terms with the TinyStories/CDLA notices and a
    reproduction container.
 
+Before that model, the path it will take is already closed end to end on a smaller one. The
+**BCIR-native lab model** BCIR-Docs-860K is defined by one recipe
+([`configs/bcir-docs-860k.json`](../../tools/models/configs/bcir-docs-860k.json)) and built by
+[`build_lab_model.py`](../../tools/models/build_lab_model.py) from the tracked docs alone --
+BCIR's corpus preparation, byte BPE, native C trainer and BCIRQ8 export, nothing downloaded --
+and the qualification harness runs it through the whole stack: a decoder program verified under
+R1-R25, planned, hydrated, carried as JSON and ASN.1, and executed by GEM bit-identically to the
+monolithic runner ([`BCIR_QUALIFICATION.md`](../BCIR_QUALIFICATION.md)). The 32M model enters the
+same harness unchanged once it exists.
+
 ### 1.6 Adaptive transformer architecture laboratory (2026-07-22)
 
 BCIR now has an **independent, bounded architecture laboratory** for five recent research

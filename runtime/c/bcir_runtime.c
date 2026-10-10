@@ -302,9 +302,14 @@ bcir_status bcir_sp_check_generation(const uint8_t *BCIR_RESTRICT data, size_t l
 /* --- R10 provenance walk (freestanding; second pass over the decoded body) ---
  * verify_pack's R10 resolves each segment's claim_id against the pack's trace records and
  * each segment's prefetch name against the declared prefetches. The body is a single forward
- * stream, so we make two cheap O(n*m) passes (no allocation, freestanding): first walk to
- * the trace/prefetch tables, then per segment confirm its claim_id is traced and its prefetch
- * resolves. Bounds-checked end to end via the same cursor. */
+ * stream, so we make two passes (no allocation, freestanding): first walk to the trace/
+ * prefetch tables, then per segment confirm its claim_id is traced and its prefetch resolves.
+ * Bounds-checked end to end via the same cursor.
+ *
+ * Every lookup is exact, and linear on the packs hydrate writes, whose segments, trace records
+ * and prefetches name their claims in one order: a search starts where the previous one matched
+ * and wraps around, and a uniqueness check rescans its prefix only for an id or a name that
+ * does not sort after every earlier one. Any other order costs rescans, never a verdict. */
 
 /* Skip one whole segment record (all versions), advancing the cursor. */
 static void skip_segment(cur *c, uint16_t version) {
@@ -321,6 +326,53 @@ static void skip_segment(cur *c, uint16_t version) {
     c_skip(c, 1);               /* dispatch u8 */
     c_skip_str(c);              /* channel */
   }
+}
+
+/* Skip one whole prefetch record (all versions), advancing the cursor. */
+static void skip_prefetch(cur *c, uint16_t version) {
+  c_skip_str(c);                /* name */
+  c_skip(c, 4);                 /* distance */
+  { uint16_t n; (void)c_u32arr(c, &n); }  /* targets */
+  c_skip_str(c);                /* hint */
+  c_skip_str(c);                /* pattern */
+  if (version >= 2) c_skip(c, 1);         /* buffers */
+}
+
+static const uint8_t *c_u64arr(cur *c, uint16_t *out_cnt) {
+  uint16_t n = c_u16(c);
+  size_t bytes = (size_t)n * 8u;
+  if (!c_has(c, bytes)) { c->err = 1; *out_cnt = 0; return 0; }
+  const uint8_t *p = c->d + c->pos;
+  c->pos += bytes; *out_cnt = n; return p;
+}
+
+uint64_t bcir_block_stride(const bcir_block_view *block, uint16_t i) {
+  return (block && block->strides && i < block->n_strides)
+             ? rd64(block->strides + (size_t)i * 8u) : 0u;
+}
+
+bcir_status bcir_sp_for_each_block(const uint8_t *BCIR_RESTRICT data, size_t len,
+                                   bcir_block_fn fn, void *ctx) {
+  bcir_streampack_header hdr;
+  bcir_status st = bcir_sp_validate(data, len, &hdr);
+  if (st != BCIR_OK) return st;
+
+  cur c;
+  c.d = data; c.len = len - 4u; c.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; c.err = 0;
+  int invoke_callback = 1;
+  c_skip_str(&c); /* source_plan */
+  for (uint32_t i = 0; i < hdr.n_segments && !c.err; i++) skip_segment(&c, hdr.version);
+  for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) skip_prefetch(&c, hdr.version);
+  for (uint32_t i = 0; i < hdr.n_blocks && !c.err; i++) {
+    bcir_block_view b;
+    b.base = c_u64(&c);
+    b.count = c_u64(&c);
+    b.strides = c_u64arr(&c, &b.n_strides);
+    if (c.err) return c_status(&c);
+    /* As the segment walk: stop invoking on request, keep parsing every declared block. */
+    if (invoke_callback && fn && fn(&b, ctx)) invoke_callback = 0;
+  }
+  return c.err ? c_status(&c) : BCIR_OK;
 }
 
 /* A StreamPack executes each claim at most once. Re-walk only the already-validated
@@ -348,15 +400,24 @@ static int str_eq(const char *a, uint16_t la, const char *b, uint16_t lb) {
   return 1;
 }
 
-/* Does a trace record with claim_id == cid exist? Re-walks the trace stream (bounded). */
-static int trace_has_claim(const uint8_t *data, size_t body_len, size_t trace_start,
-                           uint32_t n_trace, uint64_t cid) {
-  cur c; c.d = data; c.len = body_len; c.pos = trace_start; c.err = 0;
-  for (uint32_t i = 0; i < n_trace && !c.err; i++) {
-    uint64_t tc = c_u64(&c);    /* claim_id */
-    c_skip(&c, 16);             /* src_hash u64 + trace_hash u64 */
-    if (!c.err && tc == cid) return 1;
-  }
+/* Does (a,la) sort strictly after (b,lb) in shortlex order (length, then octets)? A strict
+ * total order on octet strings, so a name after the greatest earlier one repeats none. */
+static int shortlex_after(const char *a, uint16_t la, const char *b, uint16_t lb) {
+  if (la != lb) return la > lb;
+  for (uint16_t i = 0; i < la; i++)
+    if (a[i] != b[i]) return (unsigned char)a[i] > (unsigned char)b[i];
+  return 0;
+}
+
+/* Does a trace record with claim_id == cid exist? The trace stream is fixed-width records
+ * already walked to the CRC, so record k is read in place: from *next (where the previous
+ * search matched) to the end, then from the start. A match leaves *next after it. */
+static int trace_find_claim(const uint8_t *data, size_t trace_start, uint32_t n_trace,
+                            uint64_t cid, uint32_t *next) {
+  for (uint32_t k = *next; k < n_trace; k++)
+    if (rd64(data + trace_start + (size_t)k * 24u) == cid) { *next = k + 1u; return 1; }
+  for (uint32_t k = 0; k < *next && k < n_trace; k++)
+    if (rd64(data + trace_start + (size_t)k * 24u) == cid) { *next = k + 1u; return 1; }
   return 0;
 }
 
@@ -379,37 +440,60 @@ static int prefetch_has_name(const uint8_t *data, size_t body_len, size_t pf_sta
   return 0;
 }
 
-/* R10 prefetch-coverage: a segment that DECLARES a prefetch must have at least one of its
- * read RIDs among that prefetch's targets (the prefetch feeds this segment's operands --
- * the contract hydrate establishes, `pf.targets == claim.rd`). Returns 1 if some read RID is
- * a target (covered), 0 otherwise. Re-walks the prefetch stream to the named record (bounded).
- * A segment with no reads is vacuously covered. Mirrors verify_pack's prefetch provenance. */
-static int prefetch_covers_read(const uint8_t *data, size_t body_len, size_t pf_start,
-                                uint32_t n_pf, uint16_t version,
-                                const char *name, uint16_t name_len,
-                                const uint8_t *reads, uint16_t n_reads) {
-  if (n_reads == 0) return 1;
-  cur c; c.d = data; c.len = body_len; c.pos = pf_start; c.err = 0;
-  for (uint32_t i = 0; i < n_pf && !c.err; i++) {
+/* Where the previous prefetch search matched: the record after it, and that record's offset. */
+typedef struct { size_t pos; uint32_t index; } pf_cursor;
+
+/* Records [first, last) starting at offset `from`: the one named (name, name_len), its
+ * targets, and the cursor after it. The stream was walked whole in pass 1, so the re-walk
+ * cannot fail; a failure reads as "not found", a refusal, as before. */
+static int prefetch_scan(const uint8_t *data, size_t body_len, uint16_t version, size_t from,
+                         uint32_t first, uint32_t last, const char *name, uint16_t name_len,
+                         const uint8_t **targets, uint16_t *n_targets, pf_cursor *at) {
+  cur c; c.d = data; c.len = body_len; c.pos = from; c.err = 0;
+  for (uint32_t i = first; i < last && !c.err; i++) {
     uint16_t nl; const char *pn = c_str(&c, &nl);
-    if (c.err) break;
-    int is_named = str_eq(pn, nl, name, name_len);
     c_skip(&c, 4);              /* distance */
-    uint16_t nt; const uint8_t *targets = c_u32arr(&c, &nt);
-    if (c.err) break;
-    if (is_named) {
-      for (uint16_t r = 0; r < n_reads; r++) {
-        uint32_t rid = rd32(reads + (size_t)r * 4u);
-        for (uint16_t t = 0; t < nt; t++)
-          if (rd32(targets + (size_t)t * 4u) == rid) return 1;
-      }
-      return 0;                 /* the named prefetch covers no read RID -> redirected target */
-    }
+    uint16_t nt; const uint8_t *tg = c_u32arr(&c, &nt);
     c_skip_str(&c);             /* hint */
     c_skip_str(&c);             /* pattern */
     if (version >= 2) c_skip(&c, 1);
+    if (c.err) return 0;
+    if (str_eq(pn, nl, name, name_len)) {
+      *targets = tg; *n_targets = nt; at->pos = c.pos; at->index = i + 1u;
+      return 1;
+    }
   }
-  return 0;                     /* name not found -> caller's prefetch_has_name already failed */
+  return 0;
+}
+
+/* The prefetch record named (name, name_len), searched from the cursor to the end, then from
+ * the first record. Names are unique by the time this runs (pass 1 refuses a repeat), so the
+ * record found is THE named one, wherever the search starts. */
+static int prefetch_find(const uint8_t *data, size_t body_len, uint16_t version,
+                         size_t pf_start, uint32_t n_pf, pf_cursor *at,
+                         const char *name, uint16_t name_len,
+                         const uint8_t **targets, uint16_t *n_targets) {
+  if (prefetch_scan(data, body_len, version, at->pos, at->index, n_pf, name, name_len,
+                    targets, n_targets, at))
+    return 1;
+  return prefetch_scan(data, body_len, version, pf_start, 0, at->index, name, name_len,
+                       targets, n_targets, at);
+}
+
+/* R10 prefetch-coverage: a segment that DECLARES a prefetch must have at least one of its
+ * read RIDs among that prefetch's targets (the prefetch feeds this segment's operands --
+ * the contract hydrate establishes, `pf.targets == claim.rd`). Returns 1 if some read RID is
+ * a target (covered), 0 otherwise (a redirected target). A segment with no reads is vacuously
+ * covered. Mirrors verify_pack's prefetch provenance. */
+static int targets_cover_read(const uint8_t *targets, uint16_t n_targets,
+                              const uint8_t *reads, uint16_t n_reads) {
+  if (n_reads == 0) return 1;
+  for (uint16_t r = 0; r < n_reads; r++) {
+    uint32_t rid = rd32(reads + (size_t)r * 4u);
+    for (uint16_t t = 0; t < n_targets; t++)
+      if (rd32(targets + (size_t)t * 4u) == rid) return 1;
+  }
+  return 0;
 }
 
 bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t len,
@@ -439,12 +523,18 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   if (c.err) return c_status(&c);
   size_t pf_start = c.pos;
   /* validate prefetch buffers (1|2) while skipping to the blocks */
+  const char *pf_last = 0;         /* the shortlex-greatest name so far */
+  uint16_t pf_last_len = 0;
   for (uint32_t i = 0; i < hdr.n_prefetches && !c.err; i++) {
     uint16_t name_len;
     const char *name = c_str(&c, &name_len);
-    if (!c.err && prefetch_has_name(data, body_len, pf_start, i, hdr.version,
-                                    name, name_len))
-      return BCIR_ERR_PROVENANCE;  /* duplicate names make target binding ambiguous */
+    if (!c.err) {
+      if (i == 0 || shortlex_after(name, name_len, pf_last, pf_last_len)) {
+        pf_last = name; pf_last_len = name_len;  /* repeats no earlier name */
+      } else if (prefetch_has_name(data, body_len, pf_start, i, hdr.version, name, name_len)) {
+        return BCIR_ERR_PROVENANCE;  /* duplicate names make target binding ambiguous */
+      }
+    }
     c_skip(&c, 4);                 /* distance */
     { uint16_t n; (void)c_u32arr(&c, &n); }  /* targets */
     c_skip_str(&c);                /* hint */
@@ -465,12 +555,17 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   /* The declared trace stream must itself fit and must end EXACTLY at the CRC trailer. CRC alone
    * authenticates bytes, not their schema membership: accepting undeclared suffix bytes gives two
    * byte-distinct artifacts the same decoded meaning and lets future parsers disagree. */
+  uint64_t trace_max = 0;           /* the greatest claim id traced so far */
   for (uint32_t i = 0; i < hdr.n_trace && !c.err; i++) {
     uint64_t cid = c_u64(&c);
     if (c.err) break;
-    for (uint32_t j = 0; j < i; j++)
-      if (rd64(data + trace_start + (size_t)j * 24u) == cid)
-        return BCIR_ERR_PROVENANCE; /* conflicting trace hashes cannot share an id */
+    if (i == 0 || cid > trace_max) {
+      trace_max = cid;              /* repeats no earlier id */
+    } else {
+      for (uint32_t j = 0; j < i; j++)
+        if (rd64(data + trace_start + (size_t)j * 24u) == cid)
+          return BCIR_ERR_PROVENANCE; /* conflicting trace hashes cannot share an id */
+    }
     c_skip(&c, 16);                 /* src_hash + trace_hash */
   }
   if (c.err) return c_status(&c);
@@ -498,6 +593,9 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
   /* Pass 2: per segment, confirm (R10) its claim_id is traced + its prefetch resolves. */
   cur s; s.d = data; s.len = body_len; s.pos = (size_t)BCIR_STREAMPACK_HEADER_SIZE; s.err = 0;
   c_skip_str(&s);   /* source_plan */
+  uint64_t seg_max = 0;             /* the greatest segment claim id so far */
+  uint32_t trace_next = 0;          /* the trace record after the previous match */
+  pf_cursor pf_next; pf_next.pos = pf_start; pf_next.index = 0;
   for (uint32_t i = 0; i < hdr.n_segments && !s.err; i++) {
     bcir_segment_view v;
     v.name = c_str(&s, &v.name_len);
@@ -517,20 +615,23 @@ bcir_status bcir_sp_verify_semantic(const uint8_t *BCIR_RESTRICT data, size_t le
     if (s.err) return c_status(&s);
     bcir_status rg = seg_range_ok(&v);
     if (rg != BCIR_OK) return rg;
-    if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))
+    if (i == 0 || v.claim_id > seg_max)
+      seg_max = v.claim_id;         /* repeats no earlier segment's claim */
+    else if (segment_claim_seen_before(data, body_len, hdr.version, i, v.claim_id))
       return BCIR_ERR_PROVENANCE;
     /* R10: every segment maps back to a live trace note (no dangling/redirected claim_id). */
-    if (!trace_has_claim(data, body_len, trace_start, hdr.n_trace, v.claim_id))
+    if (!trace_find_claim(data, trace_start, hdr.n_trace, v.claim_id, &trace_next))
       return BCIR_ERR_PROVENANCE;
     /* R10: a declared prefetch name must resolve to a prefetch record... */
     if (v.prefetch_len > 0) {
-      if (!prefetch_has_name(data, body_len, pf_start, hdr.n_prefetches, hdr.version,
-                             v.prefetch, v.prefetch_len))
+      const uint8_t *targets = 0;
+      uint16_t n_targets = 0;
+      if (!prefetch_find(data, body_len, hdr.version, pf_start, hdr.n_prefetches, &pf_next,
+                         v.prefetch, v.prefetch_len, &targets, &n_targets))
         return BCIR_ERR_PROVENANCE;
       /* ...and that prefetch must actually feed this segment (cover >= 1 read RID), so a
        * swapped/redirected prefetch target (an undeclared RID) is caught. */
-      if (!prefetch_covers_read(data, body_len, pf_start, hdr.n_prefetches, hdr.version,
-                                v.prefetch, v.prefetch_len, v.reads, v.n_reads))
+      if (!targets_cover_read(targets, n_targets, v.reads, v.n_reads))
         return BCIR_ERR_PROVENANCE;
     }
   }

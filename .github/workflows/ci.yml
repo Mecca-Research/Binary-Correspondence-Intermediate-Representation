@@ -1125,6 +1125,61 @@ jobs:
       - name: CT4 measured-replan runbook on ARM (degrade mode; exercises the perf syscall)
         run: bash tools/silicon/measure_replan.sh
 
+  # QUAL-3: qualification on a concrete target (docs/BCIR_QUALIFICATION.md), on x86-64 and on
+  # native AArch64. The BCIR-native model is built from the checkout -- tracked corpus, BCIR's
+  # BPE, the native C trainer, BCIRQ8 -- and the whole stack runs on it: the program verified
+  # under R1-R25, its plan and pack, every JSON <-> ASN.1 <-> GEM projection, GEM against the
+  # monolithic runner on both rails (bit for bit), latency, and planned == counted memory
+  # traffic, with callgrind's simulated cache traffic REQUIRED (valgrind is installed here, so
+  # its absence is a failure, L2). The model trains for 200 of the recipe's 1200 steps: this
+  # gates the pipeline's correctness, not the model's perplexity.
+  qualification:
+    name: Qualification on a concrete target (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Harden apt (timeouts + retries; drop slow ESM/Pro sources) — stops update hangs
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*ubuntu-pro* /etc/apt/sources.list.d/*esm* /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure* 2>/dev/null || true
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\nAcquire::Languages "none";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99ci-fast >/dev/null
+
+      - name: Install the C toolchain and valgrind
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: clang valgrind
+          version: qual-${{ runner.arch }}-v1
+
+      - name: Build the BCIR-native lab model (corpus, BPE, native C trainer, BCIRQ8)
+        run: >-
+          python3 tools/models/build_lab_model.py tools/models/configs/bcir-docs-860k.json
+          --output-dir build/lab-model --steps 200
+
+      - name: Qualify it end to end (JSON <-> ASN.1 <-> GEM, latency, memory traffic)
+        run: >-
+          python3 tools/models/run_qualification.py --model-dir build/lab-model
+          --output build/qualification/report.json --require-callgrind
+
+      - name: Upload the qualification report and the model card
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bcir-qualification-${{ runner.arch }}
+          path: |
+            build/qualification/report.json
+            build/lab-model/model_card.json
+          if-no-files-found: error
+
+      - name: The qualification leaves the checkout unchanged
+        run: git diff --exit-code && test -z "$(git status --porcelain)"
+
   mlir-rail-validate:
     name: BCIR MLIR rail (LLVM ${{ matrix.llvm }})
     runs-on: ubuntu-latest

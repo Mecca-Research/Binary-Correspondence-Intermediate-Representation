@@ -179,13 +179,20 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     outsourced training claim is made. BCIRQ4T, measured schedule artifacts, expanded AD,
     and numerical-provider evidence close local reference portions of A1/B1/B3/B5 while
     leaving multi-target and production qualification open.
-14. **The first hardware-policy composition is code-backed but honestly bounded**:
+14. **A concrete-target qualification exists** ([`BCIR_QUALIFICATION.md`](BCIR_QUALIFICATION.md)):
+    a BCIR-native decoder (BCIR-Docs-860K) is built from the tracked corpus by BCIR's own BPE,
+    native C trainer and BCIRQ8 export, compiled into a decoder program verified under R1-R25,
+    planned, hydrated, carried as JSON and ASN.1, and executed by GEM's C executor bit-identically
+    to the monolithic runner, with planned == counted traffic and callgrind-simulated cache
+    traffic; CI runs it on x86-64 and native AArch64. One host's wall times, no hardware
+    counters and a deliberately small model bound the claim.
+15. **The first hardware-policy composition is code-backed but honestly bounded**:
     availability-aware telemetry and bank/link topology feed a quarantined GNN/Transformer;
     exact K_BCIR outcomes drive reward, DPO, and PPO references; bounded PUCT searches only
     feasible assessed candidates; and the winner must still pass claims, bank moves,
     StreamPack, and exact aligned static-address verification. The required gate trains twice
     on six simulated episodes and refuses live promotion from that provenance.
-15. **A bounded performance/correctness audit now spans the core data paths and ML
+16. **A bounded performance/correctness audit now spans the core data paths and ML
     references**: deep graph traversal, GEM wave/token/EFT scheduling, K_BCIR→StreamPack,
     static lifetimes, telemetry wraparound, low-bit blocks, unsupervised/classical ML,
     linear algebra, sequence models, training, and finite hardware search produce one
@@ -194,7 +201,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     partial-plan/non-finite/coercion failures. Timings are evidence rather than shared-CI
     thresholds; methodology and local observations are in
     [`PERFORMANCE_AUDIT.md`](PERFORMANCE_AUDIT.md).
-16. **The HAM/model-artifact control plane is now code-backed without overstating
+17. **The HAM/model-artifact control plane is now code-backed without overstating
     hardware support.** Metadata-only semantic resources and dependency traces compile over
     declared directed bank links; direct peer, direct DMA, staged, and host-bounce routes remain
     separately accounted; deterministic next-use, mutable generation invalidation/write-back,
@@ -203,7 +210,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     exact Q15 retrieval cannot return a candidate whose hard facts are absent. No payload is moved
     and no GDS/P2PDMA/CXL/NVMe/controller support is claimed; see
     [`BCIR_HAM_MEMORY_FABRIC.md`](kernel/BCIR_HAM_MEMORY_FABRIC.md).
-17. **The Python/native AI boundary is measured and code-backed.** Stable repeated numeric work
+18. **The Python/native AI boundary is measured and code-backed.** Stable repeated numeric work
     now has an opt-in no-heap C ABI: group Q8/Q4 conversion, Q8 input/output-major projection,
     exact hard-filtered Q15 retrieval, group-32 Q4×Q8 accumulation, and bounded native model
     measurement. The standalone C decoder consumes the Q8 kernels; schemas, laws, K_BCIR/HAM
@@ -211,13 +218,13 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     authorities. C++ is deferred until a serving/device lifecycle demonstrates an ownership need.
     The source audit, bounded evidence, and complete placement register are in
     [`BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md`](machine-learning/BCIR_PYTHON_NATIVE_BOUNDARY_AUDIT.md).
-18. **Adaptive transformer research has a bounded, verified rail.** Independent contracts cover
+19. **Adaptive transformer research has a bounded, verified rail.** Independent contracts cover
     tied physical blocks with LoopDeepNorm, fixed-residual variable widths, reference-plus-sliding
     attention/cache bounds, H0/H1 ExoFormer mixing, and coarse-to-fine image tokens. Exact hosted
     parameter/KV accounting and dominant-FLOP lower bounds feed verified claims and StreamPack;
     tiny one-thread PyTorch probes run twice deterministically. No external source/weights are
     imported, and none of these architectures is yet a BCIRQ8/C-runtime deployment claim.
-19. **Raw-byte model research has a bounded, verified rail.** Direct octets plus four control ids,
+20. **Raw-byte model research has a bounded, verified rail.** Direct octets plus four control ids,
     strict no-normalization UTF-8 references, causal fixed/entropy/learned patches, local/global/local
     BLT, joint AR/block diffusion, exact BLT-S/BLT-DV verification, selective-SSM MambaByte, and
     exact-shape global-only transplantation have dependency-free contracts and hosted probes. Exact
@@ -225,7 +232,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     StreamPack. The one-thread gate proves finite gradients, tiny loss reduction, deterministic
     reports, failure-atomic transplant, and exact verified-generation ids. It imports no upstream
     code/assets and claims no useful model, checkpoint format, native decoder, or GPU kernel.
-20. **Sequence-interface adaptation and constructive growth have a bounded, verified rail.**
+21. **Sequence-interface adaptation and constructive growth have a bounded, verified rail.**
     Minimal synchronized chunks operate on exact decoded bytes and conserve teacher chunk log
     probability; continued BPE preserves every source merge/token and initializes new rows from
     proved source decompositions; bounded Thunder-style segmentation, Pareto tokenizer evidence,
@@ -234,7 +241,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     remain bit-identical. Dense growth lowers through R1–R25-verified claims/StreamPack. No external
     source/assets, universal-tokenizer claim, glyph/PCA artifact, LoRA execution, useful model, or
     native kernel entered the tree.
-21. **Binary compatibility now has an explicit selection envelope.** BCAB preserves standard
+22. **Binary compatibility now has an explicit selection envelope.** BCAB preserves standard
     payload bytes, binds them to target/features/manifest/calibration/R12 metadata, validates the
     complete file before display or extraction, and selects identically in Python and C. Real
     resident compiler/linker products and the bounded JVM class assembler are round-trip gated;
@@ -242,7 +249,7 @@ Three implementation rails correspond under the scoped gates in [`PARITY.md`](PA
     Its additive ASN.1 DER/COER/canonical-PER projections preserve native BCAB byte identity.
     The DER projection is separately visible to the current X.690-shaped R24 rail; generic C
     X.690 validation does not overclaim a C schema transcoder for the other encodings.
-22. **The wider ASN.1 oracle is substantial but deliberately uneven across rails.**
+23. **The wider ASN.1 oracle is substantial but deliberately uneven across rails.**
     X.681/X.682/X.683, PER, OER, XER, Python-oracle JER with all six instruction
     families, ECN's built-in model, and fixed-candidate encoding measurement are landed
     within their documented subsets. JER still materializes through Python `json.loads`;

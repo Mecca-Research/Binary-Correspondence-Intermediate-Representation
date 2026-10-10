@@ -2428,6 +2428,47 @@ The full per-landing entries (one detailed paragraph each, 2026-06-07 → 2026-0
     them. A follow-up of its own.
   - RED: 19 more faults in `tools/testing/faults/its.json` (48 in all), each caught by its own
     witness.
+  QUAL (2026-10-10): qualification on a concrete target -- one BCIR-native model, built from the
+  checkout, run through the whole stack on real hardware (`docs/BCIR_QUALIFICATION.md`).
+  - QUAL-1 made a decoder a BCIR program: `decoder_program` writes the greedy generation as one
+    claim per decoder operation per token over a RID ABI (the activations, each layer's weights
+    and cache rows), with its planned work and traffic (`program_traffic`); K_BCIR plans it and
+    GEM hydrates it like any module, and every projection (module JER; plan binary, DER, OER,
+    JER; pack native, DER, OER, JER) round-trips.
+  - QUAL-2 executed it through GEM. `bcir_decoder_gem.c` is the C interpreter `bcir_sp_execute`
+    dispatches to, `decoder_gem.py` its oracle twin; both generate what the monolithic decoders
+    do, bit for bit, on tied and untied heads and on a model wide enough that a reassociated
+    product shows. Found by its own witnesses: a run started from the activations the last run
+    left, FINAL aliased onto the activation the attention norm writes, and a claim table sized
+    from the pack header before the semantic walk read the body -- each fixed, each a fault in
+    `tools/testing/faults/qual.json`. A libFuzzer target (`fuzz_decoder_gem`) holds the
+    interpreter to its allocation and run-isolation contracts on resealed packs.
+  - QUAL-LIN made GEM linear. On a hydrated decoder pack the R10 walk and the executor rescanned
+    every earlier record per record -- quadratic, so a 2,900-claim request ran 5-14x the
+    monolithic runner. Running maxima with exact fallbacks (shortlex names, cursor searches that
+    wrap) and a run-ordered dispatch fast path keep every verdict and the dispatch order
+    identical (a differential over eleven bases in every order) and make both linear (a scaling
+    witness); the ratio is now 1.06.
+  - QUAL-M built the model from the ground up: `build_lab_model.py` runs one recipe
+    (`bcir.lab_model.v1`) through BCIR's corpus preparation, BPE, native C trainer and BCIRQ8
+    export, and a card ties the artifacts together by SHA-256. BCIR-Docs-860K: 857,216
+    parameters (4 layers, width 128, GQA 4/2, SwiGLU, RoPE, tied), 1,200 steps on the tracked
+    docs, validation perplexity 63.0. Found on the way: the builder appended a newline to the
+    tokenizer's canonical JSON, which the reader refuses, so the first model shipped a tokenizer
+    nothing could load; the file is the canonical JSON exactly, and the harness checks that the
+    card, the file and the BCIRQ8 metadata name the same tokenizer.
+  - QUAL-3, the harness (`run_qualification.py`) and CI's `qualification` job (x86-64 and native
+    AArch64, callgrind required): every check gated, every number in one report
+    (`bcir.qualification_report.v1`). On this host: the same 48 tokens on five rails, C GEM and
+    the C monolithic runner bit-identical, C and the oracle 0 apart, planned == counted traffic
+    (57,539,312 octets read, 4,236,480 written), GEM/monolithic 1.055, 918 tokens/s. The pack's
+    JER (913,010 octets) needs 100,001 nodes and the bounded JER reader refuses it by design, so
+    the JSON chain is qualified on a 12-token request of the same model, which reproduces the
+    headline's prefix.
+  - RED: `tools/testing/faults/qual.json` holds 28 faults (QL1-QL15 on the linear walk and
+    dispatch, QG1-QG14 on the interpreters and the planned work), each caught by its own
+    witness. QG12 was dropped as an equivalent mutant: the oracle's cache is a list, which
+    cannot hold the hole the C fault leaves.
   S5-B (2026-09-25) landed G10: escape analysis and indirect-call target narrowing, and with them
   a sound effect footprint behind `CompileResult.commute`.
   - RED, measured on the parent (`8d3aab84`) and judged by this slice's fixtures:

@@ -62,50 +62,90 @@ bcir_status bcir_sp_execute(const uint8_t *BCIR_RESTRICT data, size_t len,
     return BCIR_ERR_NOSPACE;
   size_t n = cc.n;
 
+  /* Phase ids that never decrease in pack order -- what hydrate writes for a module whose
+   * phases are numbered in dependency order -- hold each phase as one contiguous run, so a
+   * phase's first-appearance rank is its run's index and steps 2-3 are linear. Any other
+   * order takes the general path; both compute the same table and the same order. */
+  int runs_ascend = 1;
+  for (size_t i = 1; i < n && runs_ascend; i++)
+    if (scratch[i].phase_id < scratch[i - 1].phase_id) runs_ascend = 0;
+
   /* Reject an undersized phase table before writing any partial telemetry. */
   size_t required_phases = 0;
-  for (size_t i = 0; i < n; i++) {
-    int seen = 0;
-    for (size_t j = 0; j < i; j++)
-      if (scratch[j].phase_id == scratch[i].phase_id) { seen = 1; break; }
-    if (!seen) required_phases++;
+  if (runs_ascend) {
+    for (size_t i = 0; i < n; i++)
+      if (i == 0 || scratch[i].phase_id != scratch[i - 1].phase_id) required_phases++;
+  } else {
+    for (size_t i = 0; i < n; i++) {
+      int seen = 0;
+      for (size_t j = 0; j < i; j++)
+        if (scratch[j].phase_id == scratch[i].phase_id) { seen = 1; break; }
+      if (!seen) required_phases++;
+    }
   }
   if (required_phases > phases_cap) return BCIR_ERR_NOSPACE;
 
-  /* 2) Register phases in first-appearance (topological) order + count scheduled. */
   size_t np = 0;
-  for (size_t i = 0; i < n; i++) {
-    size_t r = phase_rank(phases, np, scratch[i].phase_id);
-    if (r == np) {
+  if (runs_ascend) {
+    /* 2-3) Each run is a phase, registered in run order; its claims sorted stably by
+     * claim_id. No claim leaves its run: every earlier run has a lower rank. */
+    for (size_t i = 0; i < n;) {
+      size_t end = i + 1;
+      while (end < n && scratch[end].phase_id == scratch[i].phase_id) end++;
       phases[np].phase_id = scratch[i].phase_id;
-      phases[np].scheduled = 0;
+      phases[np].scheduled = (uint32_t)(end - i);
       phases[np].executed = 0;
-      r = np++;
+      np++;
+      for (size_t k = i + 1; k < end; k++) {
+        bcir_exec_item key = scratch[k];
+        size_t j = k;
+        while (j > i && scratch[j - 1].claim_id > key.claim_id) {
+          scratch[j] = scratch[j - 1];
+          --j;
+        }
+        scratch[j] = key;
+      }
+      i = end;
     }
-    phases[r].scheduled++;
+  } else {
+    /* 2) Register phases in first-appearance (topological) order + count scheduled. */
+    for (size_t i = 0; i < n; i++) {
+      size_t r = phase_rank(phases, np, scratch[i].phase_id);
+      if (r == np) {
+        phases[np].phase_id = scratch[i].phase_id;
+        phases[np].scheduled = 0;
+        phases[np].executed = 0;
+        r = np++;
+      }
+      phases[r].scheduled++;
+    }
+
+    /* 3) Stable insertion sort by (phase rank, claim_id) -- the GEM deterministic order. */
+    for (size_t i = 1; i < n; i++) {
+      bcir_exec_item key = scratch[i];
+      size_t krank = phase_rank(phases, np, key.phase_id);
+      size_t j = i;
+      while (j > 0) {
+        size_t prank = phase_rank(phases, np, scratch[j - 1].phase_id);
+        if (prank < krank || (prank == krank && scratch[j - 1].claim_id <= key.claim_id))
+          break;
+        scratch[j] = scratch[j - 1];
+        --j;
+      }
+      scratch[j] = key;
+    }
   }
 
-  /* 3) Stable insertion sort by (phase rank, claim_id) -- the GEM deterministic order. */
-  for (size_t i = 1; i < n; i++) {
-    bcir_exec_item key = scratch[i];
-    size_t krank = phase_rank(phases, np, key.phase_id);
-    size_t j = i;
-    while (j > 0) {
-      size_t prank = phase_rank(phases, np, scratch[j - 1].phase_id);
-      if (prank < krank || (prank == krank && scratch[j - 1].claim_id <= key.claim_id))
-        break;
-      scratch[j] = scratch[j - 1];
-      --j;
-    }
-    scratch[j] = key;
-  }
-
-  /* 4) Dispatch in order, invoking the kernel and accruing per-phase telemetry. */
+  /* 4) Dispatch in order, invoking the kernel and accruing per-phase telemetry. Ranks never
+   * decrease in dispatch order, so each claim's phase is found from the previous one's. */
   size_t executed = 0;
+  size_t rank = 0;
   for (size_t i = 0; i < n; i++) {
     if (fn && fn(&scratch[i], ctx))
       break;  /* a kernel aborted the run */
-    phases[phase_rank(phases, np, scratch[i].phase_id)].executed++;
+    while (rank < np && phases[rank].phase_id != scratch[i].phase_id) rank++;
+    if (rank == np) rank = phase_rank(phases, np, scratch[i].phase_id);  /* unreachable */
+    phases[rank].executed++;
     executed++;
   }
 

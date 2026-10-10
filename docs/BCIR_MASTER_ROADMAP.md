@@ -267,6 +267,7 @@ protobuf, gRPC, BMC, or UART delivery. Normative details live in
 | HAM/model-artifact fabric | Compiler/simulator baseline landed | Semantic DAG, exact declared-link routes, capacity/generation replay, StreamPack lowering, context-shard rollback, and dual-memory hard veto; physical GDS/P2PDMA/CXL/NVMe adapters remain driver-gated |
 | Hardware RL plan policy | Bounded simulated gate landed | Real telemetry corpus, exhaustive two-target comparison, verified rematerialization/spill actions, frozen deployment artifact, measured quiescent promotion/rollback |
 | BCIR-TinyStories-32M | Spec/pins landed | Tokenizer differential, canonical BF16 run, validation/model card, reviewed publication artifacts |
+| Concrete-target qualification ([QUAL](BCIR_QUALIFICATION.md)) | Landed on one model, one host + CI x86-64/AArch64 | A second physical target with hardware counters; BCIR-TinyStories-32M through the same harness |
 | Low-bit/model scaling | Partial | Versioned format, R17/error evidence, target execution, sampling/batching/placement gates |
 | Closed learned optimization loop | Partial | Real driver/model telemetry, exhaustive-equivalence certificate, quiescent activation and rollback |
 
